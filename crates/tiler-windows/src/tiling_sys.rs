@@ -16,13 +16,13 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use tiler_core::boundary::{CoreCommand, CoreReply};
+use tiler_core::boundary::{CoreCommand, CoreReply, NoGroupReason};
 use tiler_core::directional::WindowId;
 use tiler_core::engine::Engine;
 use tiler_core::geometry::Rect;
 use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
 use tiler_core::size_hints::WindowSizeHints;
-use windows_sys::Win32::Foundation::{GetLastError, HWND, LPARAM, RECT, SetLastError};
+use windows_sys::Win32::Foundation::{GetLastError, HWND, LPARAM, POINT, RECT, SetLastError};
 use windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute;
 use windows_sys::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW,
@@ -34,7 +34,7 @@ use windows_sys::Win32::UI::HiDpi::{
     GetSystemMetricsForDpi, GetThreadDpiAwarenessContext, SetProcessDpiAwarenessContext,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
+    GetAsyncKeyState, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::MsgWaitForMultipleObjectsEx;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -47,12 +47,18 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     PM_REMOVE, PeekMessageW, QS_ALLINPUT, SM_CXMAXTRACK, SM_CXMINTRACK, SM_CXSCREEN, SM_CYMAXTRACK,
     SM_CYMINTRACK, SM_CYSCREEN, SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SWP_NOZORDER,
     SendMessageTimeoutW, SetForegroundWindow, SetWindowPos, TranslateMessage,
-    WINEVENT_OUTOFCONTEXT, WM_GETMINMAXINFO, WS_CAPTION, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST,
+    WINEVENT_OUTOFCONTEXT, WM_GETMINMAXINFO, WM_NCHITTEST, WS_CAPTION, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
 
-use crate::active_border::{ActiveBorderOptions, border_eligible, border_outer_rect, scale_style};
-use crate::active_border_sys::{BorderOverlay, OverlayOutcome};
+use crate::active_border::{
+    ActiveBorderOptions, border_eligible, border_outer_rect, scale_style, scale_to_physical,
+};
+use crate::active_border_sys::{BorderOverlay, OverlayOutcome, UnderlayOverlay, lowest_in_z};
+use crate::group_underlay::{
+    GroupUnderlayOptions, MoveSizeKind, aggregate_chord_keys, classify_hit_test, underlay_eligible,
+    underlay_outer_rect,
+};
 use crate::lifecycle::{
     WORKSPACE_REQUEST_FILE, exe_paths_equal, is_medium_rid,
     sys::{log_path_for, snap_resume, snap_suspend, stop_requested},
@@ -61,7 +67,8 @@ use crate::model::ProcessIdentity;
 use crate::native::HeldProcess;
 use crate::snapkey::{
     KeyboardConfig, MAX_DISPATCH_PER_TICK, OriginVerdict, QueuedSnapEvent, SnapOp, SnapOrigin,
-    VK_MASK, WorkspaceOp, direction_name, resolve_origin,
+    VK_LSHIFT, VK_LWIN, VK_MASK, VK_RSHIFT, VK_RWIN, VK_SHIFT, WorkspaceOp, direction_name,
+    resolve_origin,
 };
 use crate::storage::LedgerStore;
 use crate::tiling::{
@@ -1007,6 +1014,27 @@ struct TileLoop {
     /// (visibility/rect/style/target) for change-only logging.
     border_overlay: BorderOverlay,
     border_last: Option<String>,
+    /// Group-underlay configuration for this run (default on with an explicit
+    /// off flag). Like the border it never takes geometry writes: it resolves
+    /// the focused window's immediate-parent group through the retained
+    /// Engine and paints the process-owned fill beneath the lowest member.
+    underlay: GroupUnderlayOptions,
+    /// Process-owned underlay fill plus the last logged underlay signature
+    /// for change-only logging.
+    underlay_overlay: UnderlayOverlay,
+    underlay_last: Option<String>,
+    /// Classified open move/size gestures by HWND, sampled once at START via
+    /// the official `WM_NCHITTEST` result. Only `Move` on the actual focused
+    /// window feeds the underlay trigger; resize (or unknown) never does.
+    /// Maintained alongside `active`, cleared on END/removal like
+    /// `gesture_before`.
+    move_kind: HashMap<u64, MoveSizeKind>,
+    /// Last observed Win+Shift level for the chord-edge wake. Sampled every
+    /// pump before the idle skip so a bare chord press/release wakes the
+    /// visual refresh on the 100ms cadence instead of waiting for the 2s
+    /// slow poll. Steady hold/release stays quiet; only the transition
+    /// wakes, and the normal suspend/fullscreen path below still gates it.
+    underlay_chord_last: bool,
 }
 
 /// One hidden member: the committed ledger claim (carrying the durable
@@ -1071,6 +1099,12 @@ impl TileLoop {
             // The process-owned border overlay is never a tile target, a
             // token source, or an unreadable count: skip it before any query.
             if self.border_overlay.hwnd() == Some(raw as usize as u64) {
+                continue;
+            }
+            // Same for the process-owned group-underlay fill: never a tile
+            // target, so its own move/paint events cannot retarget tiling or
+            // the underlay itself.
+            if self.underlay_overlay.hwnd() == Some(raw as usize as u64) {
                 continue;
             }
             let hwnd = raw as HWND;
@@ -1241,6 +1275,9 @@ fn publish_managed(state: &mut TileLoop, observed: &[ObservedWindow]) {
     state.stable = observed.iter().map(|w| (w.hwnd, w.visible)).collect();
     state
         .gesture_before
+        .retain(|hwnd, _| state.managed.contains(hwnd));
+    state
+        .move_kind
         .retain(|hwnd, _| state.managed.contains(hwnd));
     state.snap_origins = observed
         .iter()
@@ -1545,6 +1582,466 @@ fn refresh_active_border(state: &mut TileLoop, me: &ProcessIdentity, fulls: &[Re
                     "style_px": [width_px, gap_px, radius_px],
                     "color": color_hex,
                     "dib_checksum": state.border_overlay.snapshot()["dib_checksum"],
+                }),
+            );
+        }
+    }
+}
+
+/// Hide the underlay fill with a change-only `group-underlay` log line.
+fn hide_underlay(state: &mut TileLoop, reason: &str) {
+    let was_visible = state.underlay_overlay.is_visible();
+    state.underlay_overlay.hide();
+    let signature = format!("hidden:{reason}");
+    if state.underlay_last.as_deref() == Some(signature.as_str()) && !was_visible {
+        if state.trace {
+            log_json_at(
+                &state.log_path,
+                serde_json::json!({
+                    "event": "group-underlay",
+                    "tick": state.tick,
+                    "outcome": "hidden",
+                    "reason": reason,
+                }),
+            );
+        }
+        return;
+    }
+    state.underlay_last = Some(signature);
+    log_json_at(
+        &state.log_path,
+        serde_json::json!({
+            "event": "group-underlay",
+            "tick": state.tick,
+            "outcome": "hidden",
+            "reason": reason,
+        }),
+    );
+}
+
+/// Level-observed Win+Shift chord: either Win side plus any Shift side held.
+/// Extras are allowed (only these keys are read) and either press order works
+/// because this samples levels, never sequences edges. Independent of the
+/// keyboard-hook gesture path, so a bare hold with no other key still reads.
+fn chord_held_now() -> (bool, bool) {
+    let down = |vk: u32| unsafe { GetAsyncKeyState(vk as i32) } < 0;
+    aggregate_chord_keys(
+        down(VK_LWIN),
+        down(VK_RWIN),
+        down(VK_SHIFT),
+        down(VK_LSHIFT),
+        down(VK_RSHIFT),
+    )
+}
+
+/// `WM_NCHITTEST` timeout for one move/size classification: bounded like the
+/// minimum-hint query, fail-closed to `Unknown` on timeout or failure.
+const HITTEST_TIMEOUT_MS: u32 = 10;
+
+/// Classify one open move/size gesture at START via the official
+/// `WM_NCHITTEST` result at the current cursor position. `EVENT_SYSTEM_MOVESIZESTART`
+/// does not distinguish move from resize; asking the window itself (through
+/// `DefWindowProc`, system-marshalled like `WM_GETMINMAXINFO`) is a bounded
+/// START-drain heuristic: no new hook, no SC_MOVE/SC_SIZE interception, no
+/// deferred rect comparison (which cannot show a stationary start). Hung or
+/// unreadable windows classify `Unknown` and never trigger.
+fn classify_move_size_start(hwnd_u64: u64) -> MoveSizeKind {
+    let hwnd = hwnd_u64 as isize as HWND;
+    let mut cursor: POINT = unsafe { std::mem::zeroed() };
+    if unsafe { GetCursorPos(&mut cursor) } == 0 {
+        return MoveSizeKind::Unknown;
+    }
+    // MAKELPARAM packing: low word x, high word y (truncation is the packing).
+    let lparam = ((cursor.y as u32) << 16) | (cursor.x as u32 & 0xFFFF);
+    let mut result: usize = 0;
+    let sent = unsafe {
+        SetLastError(0);
+        SendMessageTimeoutW(
+            hwnd,
+            WM_NCHITTEST,
+            0,
+            lparam as usize as LPARAM,
+            SMTO_ABORTIFHUNG,
+            HITTEST_TIMEOUT_MS,
+            &mut result,
+        )
+    };
+    if sent == 0 {
+        return MoveSizeKind::Unknown;
+    }
+    classify_hit_test(result as u32)
+}
+
+/// Fresh renderable check for one underlay anchor candidate: a live,
+/// visible, non-iconic, non-cloaked top-level window. DWM cloak-query
+/// failure fails closed (not renderable). Smallest causal gate so a stale
+/// Engine member (minimized/hidden/cloaked between reconciles) never wins
+/// the lowest-in-z anchor.
+fn underlay_anchor_renderable(hwnd_u64: u64) -> bool {
+    let hwnd = hwnd_u64 as isize as HWND;
+    if unsafe { IsWindow(hwnd) } == 0 {
+        return false;
+    }
+    if unsafe { IsWindowVisible(hwnd) } == 0 {
+        return false;
+    }
+    if unsafe { IsIconic(hwnd) } != 0 {
+        return false;
+    }
+    let mut cloaked: i32 = 0;
+    if unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            (&mut cloaked as *mut i32).cast(),
+            std::mem::size_of::<i32>() as u32,
+        )
+    } != 0
+    {
+        return false;
+    }
+    cloaked == 0
+}
+
+/// Map one Engine `no-group` reason to the closed underlay hide vocabulary.
+/// `NoParentGroup` is the root-leaf focus the resolver reports; focus drift
+/// between the fresh foreground read and the retained focus reports
+/// `focus-changed` and may restore on the next valid refresh.
+fn underlay_no_group_reason(reason: NoGroupReason) -> &'static str {
+    match reason {
+        NoGroupReason::Pending => "pending",
+        NoGroupReason::Diverged => "diverged",
+        NoGroupReason::NoParentGroup => "root-leaf",
+        NoGroupReason::FocusMismatch | NoGroupReason::FocusUnmapped => "focus-changed",
+        NoGroupReason::NoSession
+        | NoGroupReason::DomainMismatch
+        | NoGroupReason::StaleRevision
+        | NoGroupReason::NoTree => "no-group",
+    }
+}
+
+/// Fast group-underlay refresh for one loop wake: the movement-only staged
+/// lifetime (A Win+Shift chord, B focused interactive move) over the
+/// Engine-projected source-group union.
+///
+/// Trigger is the shared OR: level-observed Win+Shift (either side, extras
+/// allowed, either order) or a classified `Move` gesture on the actual
+/// foreground window. Resize alone never triggers; the chord stays
+/// independent during resize. Move-start evidence never depends on modifier
+/// observation.
+///
+/// Geometry is the authoritative Engine route only: `CoreCommand::ActiveGroup`
+/// through `resolve_active_group`/`describe_active_group` with the fresh
+/// actual focused token (never an unfocused dragged id, which would persist
+/// false retained focus). Pending/drag residue fails closed in the resolver;
+/// the union shown is always the projected source union, never live dragged
+/// bounds. The fill lands directly beneath the lowest renderable member in
+/// `EnumWindows` order (the border surface included when visible), i.e. below
+/// members and below the active border.
+fn refresh_group_underlay(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+) {
+    if !state.underlay.enabled {
+        hide_underlay(state, "disabled");
+        return;
+    }
+    let (win_held, shift_held) = chord_held_now();
+    let chord = tiler_core::visual::group_underlay_chord_held(win_held, shift_held);
+    let foreground = unsafe { GetForegroundWindow() } as usize as u64;
+    if foreground == 0 {
+        hide_underlay(state, "no-target");
+        return;
+    }
+    if state.border_overlay.hwnd() == Some(foreground)
+        || state.underlay_overlay.hwnd() == Some(foreground)
+    {
+        return;
+    }
+    // Fresh actual focused-subject match: only a classified move on this exact
+    // foreground window feeds the move arm. Stale START entries for other
+    // windows never match, and END/removal clearing drops them.
+    let move_active = state
+        .move_kind
+        .get(&foreground)
+        .is_some_and(|kind| *kind == MoveSizeKind::Move);
+    if !tiler_core::visual::group_underlay_trigger(chord, move_active) {
+        hide_underlay(state, "idle");
+        return;
+    }
+    if let Some(entries) = state.allowlist.as_ref() {
+        let entry = entries.iter().find(|e| e.hwnd == foreground);
+        let Some(entry) = entry else {
+            hide_underlay(state, "allowlist-changed");
+            return;
+        };
+        if verify_proof_owned(foreground, entry, me).is_err() {
+            hide_underlay(state, "identity-changed");
+            return;
+        }
+    }
+    let hwnd = foreground as isize as HWND;
+    let window = match observe_window(hwnd, me, fulls, &mut state.tokens) {
+        Ok(window) => window,
+        Err(ObserveFailure::Known(_, reason)) => {
+            hide_underlay(
+                state,
+                match reason {
+                    SkipReason::Minimized => "minimized",
+                    SkipReason::Maximized => "maximized",
+                    SkipReason::Fullscreen => "fullscreen",
+                    _ => "no-target",
+                },
+            );
+            return;
+        }
+        Err(ObserveFailure::Unknown) => {
+            hide_underlay(state, "no-target");
+            return;
+        }
+    };
+    if !scope_allows(&state.scope, &window.identity.exe_path)
+        || !hosted_gate_allows(
+            &window.identity.exe_path,
+            window.hwnd,
+            window.identity.pid,
+            &state.scope_hosts,
+        )
+    {
+        hide_underlay(state, "scope-excluded");
+        return;
+    }
+    if window.facts.minimized {
+        hide_underlay(state, "minimized");
+        return;
+    }
+    if window.facts.maximized {
+        hide_underlay(state, "maximized");
+        return;
+    }
+    if window.facts.captionless_fullscreen {
+        hide_underlay(state, "fullscreen");
+        return;
+    }
+    // Tiled membership only: a focused window with no Engine membership has
+    // no group to highlight (the floating bucket until float parity lands).
+    let member_key = state
+        .member_tokens
+        .iter()
+        .find(|(_, token)| token.as_str() == window.token.as_str())
+        .map(|(key, _)| key.clone());
+    let Some(member_key) = member_key else {
+        hide_underlay(state, "floating");
+        return;
+    };
+    let Some(loc) = state.workspaces.member_loc(&member_key).cloned() else {
+        hide_underlay(state, "no-group");
+        return;
+    };
+    let Some((domain, domain_key)) = workspace_domain_for(&loc.output, &loc.workspace, areas)
+    else {
+        hide_underlay(state, "no-group");
+        return;
+    };
+    let event = tiler_core::boundary::CoreEvent {
+        owner: state.owner.clone(),
+        generation: state.generation.clone(),
+        correlation: state.correlation(),
+        revision: revision_for(state, &loc.output, &loc.workspace),
+        fingerprint: 0,
+        domain,
+        domain_key,
+        outer_gap: OUTER_GAP,
+        focused_window: WindowId(window.token.clone()),
+        windows: Vec::new(),
+        directional: None,
+        directional_target_outer_gap: None,
+        target_domain: None,
+        target_windows: Vec::new(),
+        command: CoreCommand::ActiveGroup,
+    };
+    let found = match state.engine.handle(&event) {
+        CoreReply::ActiveGroup(found) => found,
+        CoreReply::NoGroup { reason, .. } => {
+            hide_underlay(state, underlay_no_group_reason(reason));
+            return;
+        }
+        _ => {
+            hide_underlay(state, "no-group");
+            return;
+        }
+    };
+    if underlay_eligible(
+        true,
+        true,
+        true,
+        window.facts.maximized,
+        window.facts.captionless_fullscreen,
+        false,
+    )
+    .is_err()
+    {
+        hide_underlay(state, "no-group");
+        return;
+    }
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    let Some((width_px, gap_px, _)) = scale_style(&state.border.style, dpi) else {
+        hide_underlay(state, "dpi-scale");
+        return;
+    };
+    let extension_logical = tiler_core::visual::group_underlay_effective_extension(
+        state.underlay.style.extension,
+        state.border.style.width,
+    );
+    let Some(extension_px) = scale_to_physical(extension_logical, dpi) else {
+        hide_underlay(state, "dpi-scale");
+        return;
+    };
+    let Some(outer) = underlay_outer_rect(found.bounds, gap_px, width_px, extension_px) else {
+        hide_underlay(state, "geometry");
+        return;
+    };
+    // Anchor beneath the lowest renderable member; the border surface sorts
+    // into the same comparison only when visible so the fill stays below it
+    // too. Member candidates stay identity-valid (still managed) and freshly
+    // renderable (visible, non-iconic, non-cloaked); stale Engine members
+    // between reconciles fail closed to `anchor-missing`.
+    let mut candidates: Vec<u64> = found
+        .members
+        .iter()
+        .filter_map(|member| {
+            state
+                .snap_origins
+                .iter()
+                .find(|(_, origin)| origin.token == member.window.0)
+                .map(|(hwnd, _)| *hwnd)
+        })
+        .filter(|hwnd| state.managed.contains(hwnd) && underlay_anchor_renderable(*hwnd))
+        .collect();
+    if state.border_overlay.is_visible()
+        && let Some(border_hwnd) = state.border_overlay.hwnd()
+    {
+        candidates.push(border_hwnd);
+    }
+    let Some(anchor) = lowest_in_z(&candidates) else {
+        hide_underlay(state, "anchor-missing");
+        return;
+    };
+    let topmost =
+        unsafe { GetWindowLongW(anchor as isize as HWND, GWL_EXSTYLE) } as u32 & WS_EX_TOPMOST != 0;
+    let color = (
+        state.underlay.style.alpha,
+        state.underlay.style.color.0,
+        state.underlay.style.color.1,
+        state.underlay.style.color.2,
+    );
+    let outcome = state
+        .underlay_overlay
+        .show_fill_at(outer, color, &window.token, topmost, anchor);
+    let color_hex = crate::group_underlay::render_color_argb((
+        state.underlay.style.color,
+        state.underlay.style.alpha,
+    ));
+    match outcome {
+        OverlayOutcome::Hidden => {
+            let failure = format!(
+                "hidden:present-failed:{}",
+                state.underlay_overlay.last_error().unwrap_or("unknown")
+            );
+            let changed_failure = state.underlay_last.as_deref() != Some(failure.as_str());
+            if changed_failure {
+                state.underlay_last = Some(failure);
+            }
+            if changed_failure || state.trace {
+                log_json_at(
+                    &state.log_path,
+                    serde_json::json!({
+                        "event": "group-underlay",
+                        "tick": state.tick,
+                        "outcome": "hidden",
+                        "reason": "present-failed",
+                        "last_error": state.underlay_overlay.last_error(),
+                    }),
+                );
+            }
+        }
+        OverlayOutcome::Unchanged => {
+            let signature = format!(
+                "shown:{}:{}:{}:{}:{}:{}:{}:{}",
+                window.token,
+                outer.x,
+                outer.y,
+                outer.w,
+                outer.h,
+                topmost,
+                color_hex,
+                state.underlay_overlay.snapshot()["dib_checksum"],
+            );
+            let changed = state.underlay_last.as_deref() != Some(signature.as_str());
+            if changed {
+                state.underlay_last = Some(signature);
+            }
+            if state.trace && changed {
+                log_json_at(
+                    &state.log_path,
+                    serde_json::json!({
+                        "event": "group-underlay",
+                        "tick": state.tick,
+                        "outcome": "unchanged",
+                        "target": window.token,
+                    }),
+                );
+            }
+        }
+        OverlayOutcome::Moved if state.trace => {
+            log_json_at(
+                &state.log_path,
+                serde_json::json!({
+                    "event": "group-underlay",
+                    "tick": state.tick,
+                    "outcome": "moved",
+                    "target": window.token,
+                    "outer": [outer.x, outer.y, outer.w, outer.h],
+                }),
+            );
+        }
+        OverlayOutcome::Moved => {}
+        _ => {
+            let signature = format!(
+                "shown:{}:{}:{}:{}:{}:{}:{}:{}",
+                window.token,
+                outer.x,
+                outer.y,
+                outer.w,
+                outer.h,
+                topmost,
+                color_hex,
+                state.underlay_overlay.snapshot()["dib_checksum"],
+            );
+            let changed = state.underlay_last.as_deref() != Some(signature.as_str());
+            if changed {
+                state.underlay_last = Some(signature);
+            }
+            if !(changed || state.trace) {
+                return;
+            }
+            log_json_at(
+                &state.log_path,
+                serde_json::json!({
+                    "event": "group-underlay",
+                    "tick": state.tick,
+                    "outcome": match outcome {
+                        OverlayOutcome::Shown => "shown",
+                        OverlayOutcome::Redrew => "redrew",
+                        _ => "shown",
+                    },
+                    "target": window.token,
+                    "outer": [outer.x, outer.y, outer.w, outer.h],
+                    "color": color_hex,
+                    "members": found.members.len(),
+                    "dib_checksum": state.underlay_overlay.snapshot()["dib_checksum"],
                 }),
             );
         }
@@ -6044,6 +6541,7 @@ struct TileRun {
     /// Proof runs always pass empty.
     scope_hosts: Vec<ScopeHostChild>,
     border: ActiveBorderOptions,
+    underlay: GroupUnderlayOptions,
 }
 
 fn run_tile_loop(
@@ -6065,6 +6563,7 @@ fn run_tile_loop(
         scope,
         scope_hosts,
         border,
+        underlay,
     } = run;
     // Prevention needs an active loop: proof never arms it, and the guarded
     // setup already captured the preimage plus the initial effect.
@@ -6188,6 +6687,11 @@ fn run_tile_loop(
         border,
         border_overlay: BorderOverlay::default(),
         border_last: None,
+        underlay,
+        underlay_overlay: UnderlayOverlay::default(),
+        underlay_last: None,
+        move_kind: HashMap::new(),
+        underlay_chord_last: false,
     };
     state.engine.sync_binding(&owner, &generation);
     state.workspace_proof = workspace_proof;
@@ -6328,6 +6832,7 @@ fn run_tile_loop(
             }
             reconcile_tick(&mut state, me, &fulls, &areas);
             refresh_active_border(&mut state, me, &fulls);
+            refresh_group_underlay(&mut state, me, &fulls, &areas);
         }
         loop {
             if stop_requested(dir, me)? {
@@ -6347,13 +6852,17 @@ fn run_tile_loop(
                     HookEvent::Wake(raw) => {
                         // Own overlay events never wake the loop: no repeated
                         // full reconcile off our own move/paint/show.
-                        if state.border_overlay.hwnd() == Some(raw as u64) {
+                        if state.border_overlay.hwnd() == Some(raw as u64)
+                            || state.underlay_overlay.hwnd() == Some(raw as u64)
+                        {
                             continue;
                         }
                         woke = true;
                     }
                     HookEvent::MoveSizeStart(raw) => {
-                        if state.border_overlay.hwnd() == Some(raw as u64) {
+                        if state.border_overlay.hwnd() == Some(raw as u64)
+                            || state.underlay_overlay.hwnd() == Some(raw as u64)
+                        {
                             continue;
                         }
                         woke = true;
@@ -6364,13 +6873,20 @@ fn run_tile_loop(
                             state.gesture_before.entry(hwnd).or_insert(pre);
                         }
                         state.active.insert(hwnd);
+                        // Move-vs-resize classification, sampled once at START
+                        // (the WinEvent itself does not distinguish). Hung or
+                        // unreadable windows classify Unknown: never a trigger.
+                        state.move_kind.insert(hwnd, classify_move_size_start(hwnd));
                     }
                     HookEvent::MoveSizeEnd(raw) => {
-                        if state.border_overlay.hwnd() == Some(raw as u64) {
+                        if state.border_overlay.hwnd() == Some(raw as u64)
+                            || state.underlay_overlay.hwnd() == Some(raw as u64)
+                        {
                             continue;
                         }
                         woke = true;
                         state.active.remove(&(raw as u64));
+                        state.move_kind.remove(&(raw as u64));
                     }
                 }
             }
@@ -6546,6 +7062,21 @@ fn run_tile_loop(
             if dir.join(WORKSPACE_REQUEST_FILE).exists() {
                 woke = true;
             }
+            // Bare-chord edge wake: GetAsyncKeyState levels are sampled here,
+            // before the idle skip, so a Win+Shift press/release with no
+            // WinEvent wakes the visual refresh on the 100ms pump cadence
+            // instead of waiting for the 2s slow poll. Steady hold stays
+            // quiet; the suspend/fullscreen path below still gates the
+            // refresh, and tiling reconciliation keeps its normal pacing
+            // (only transition ticks reconcile). No hook, no new framework.
+            {
+                let (win_held, shift_held) = chord_held_now();
+                let chord = tiler_core::visual::group_underlay_chord_held(win_held, shift_held);
+                if state.underlay_chord_last != chord {
+                    state.underlay_chord_last = chord;
+                    woke = true;
+                }
+            }
             if !(woke || slow) {
                 continue;
             }
@@ -6592,7 +7123,9 @@ fn run_tile_loop(
                 poll_workspace_cli_request(&mut state, me, store, dir, &fulls, &areas);
                 state.gesture_before.clear();
                 state.active.clear();
+                state.move_kind.clear();
                 hide_border(&mut state, "suspended");
+                hide_underlay(&mut state, "suspended");
                 continue;
             }
             if state.suspended {
@@ -6618,6 +7151,9 @@ fn run_tile_loop(
             // including managed gestures that pause tiling below: the refresh
             // reads one fresh frame and never waits for reconciliation.
             refresh_active_border(&mut state, me, &fulls);
+            // The group fill follows on the same wake: chord/move trigger over
+            // the Engine-projected source union, same freshness contract.
+            refresh_group_underlay(&mut state, me, &fulls, &areas);
             // Only gestures on managed windows pause tiling; unrelated
             // windows never stall the loop.
             let ended: Vec<u64> = state
@@ -6704,6 +7240,9 @@ fn run_tile_loop(
             // the pre-reconcile geometry stale until the next wake. Own
             // overlay events are filtered above, so no feedback loop.
             refresh_active_border(&mut state, me, &fulls);
+            // Same for the group fill: a moved target may have joined another
+            // group, so the projected union re-resolves instead of lingering.
+            refresh_group_underlay(&mut state, me, &fulls, &areas);
         }
     })();
     for hook in hooks {
@@ -6728,6 +7267,12 @@ fn run_tile_loop(
     log_json_at(
         &log_path,
         serde_json::json!({"event":"active-border-end","overlay": border_snapshot}),
+    );
+    let underlay_snapshot = state.underlay_overlay.snapshot();
+    state.underlay_overlay.destroy();
+    log_json_at(
+        &log_path,
+        serde_json::json!({"event":"group-underlay-end","overlay": underlay_snapshot}),
     );
     log_json_at(
         &log_path,
@@ -6759,6 +7304,7 @@ pub fn cmd_tile(options: &TileOptions) -> Result<String> {
     let scope = options.scope_exes.clone();
     let scope_hosts = options.scope_hosts.clone();
     let border = options.border;
+    let underlay = options.underlay;
     crate::lifecycle::sys::run_product(trace, mouse_snap, move |dir, me, store| {
         run_tile_loop(
             dir,
@@ -6777,6 +7323,7 @@ pub fn cmd_tile(options: &TileOptions) -> Result<String> {
                 scope,
                 scope_hosts,
                 border,
+                underlay,
             },
         )
     })
@@ -6916,6 +7463,7 @@ pub fn cmd_tile_proof(options: &TileProofOptions, raw_argv: &[String]) -> Result
     let trace = options.trace;
     let seconds = options.seconds;
     let border = options.border;
+    let underlay = options.underlay;
     let raw_argv = raw_argv.to_vec();
     let keyboard = KeyboardConfig::disabled();
     // Proof installs no keyboard hook and takes no Snap setting: the proof
@@ -6938,6 +7486,7 @@ pub fn cmd_tile_proof(options: &TileProofOptions, raw_argv: &[String]) -> Result
                 scope: Vec::new(),
                 scope_hosts: Vec::new(),
                 border,
+                underlay,
             },
         )
     })
@@ -6966,6 +7515,7 @@ pub fn cmd_shortcut_proof(
     let trace = options.trace;
     let seconds = options.seconds;
     let border = options.border;
+    let underlay = options.underlay;
     let mouse_snap = !options.no_mouse_snap_prevention;
     let raw_argv = raw_argv.to_vec();
     let keyboard = KeyboardConfig {
@@ -6990,6 +7540,7 @@ pub fn cmd_shortcut_proof(
                 scope: Vec::new(),
                 scope_hosts: Vec::new(),
                 border,
+                underlay,
             },
         )
     })
@@ -7016,6 +7567,7 @@ pub fn cmd_workspace_proof(
     let trace = options.trace;
     let seconds = options.seconds;
     let border = options.border;
+    let underlay = options.underlay;
     let mouse_snap = !options.no_mouse_snap_prevention;
     let raw_argv = raw_argv.to_vec();
     let keyboard = KeyboardConfig {
@@ -7040,6 +7592,7 @@ pub fn cmd_workspace_proof(
                 scope: Vec::new(),
                 scope_hosts: Vec::new(),
                 border,
+                underlay,
             },
         )
     })
@@ -7674,6 +8227,23 @@ fn overlay_z_relation(overlay_u64: u64) -> (Option<bool>, Option<bool>) {
 /// screen capture; the owned-pixel checksum rides the owner's `active-border`
 /// log events instead.
 pub fn cmd_border_inspect() -> Result<String> {
+    inspect_carrier(crate::active_border_sys::OVERLAY_CLASS)
+}
+
+/// `underlay-inspect` command: read-only report of the running owner's
+/// process-owned group-underlay fill (geometry/visibility only), mirroring
+/// `border-inspect`. `present` means a carrier HWND was enumerated for this
+/// owner (hidden HWNDs persist: `hide` keeps the window alive for the next
+/// group, so `present` stays true with `visible=false` after the first show).
+/// It is false when the owner runs with `--no-group-underlay` or before the
+/// first show. No titles, no content, no screen capture; the owned-pixel
+/// checksum rides the owner's `group-underlay` log events instead.
+pub fn cmd_underlay_inspect() -> Result<String> {
+    inspect_carrier(crate::active_border_sys::UNDERLAY_CLASS)
+}
+
+/// Shared read-only carrier inspection for one owned overlay class.
+fn inspect_carrier(class: &str) -> Result<String> {
     use windows_sys::Win32::Foundation::RECT;
     ensure_pm_v2()?;
     let me = medium_caller()?;
@@ -7713,7 +8283,7 @@ pub fn cmd_border_inspect() -> Result<String> {
     let mut overlays = Vec::new();
     for raw in hwnds {
         let hwnd = raw as HWND;
-        if class_of(hwnd) != crate::active_border_sys::OVERLAY_CLASS {
+        if class_of(hwnd) != class {
             continue;
         }
         let mut pid: u32 = 0;

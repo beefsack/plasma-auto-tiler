@@ -24,6 +24,9 @@ fn err(msg: impl Into<String>) -> DynError {
 }
 
 pub const OVERLAY_CLASS: &str = "PlasmaAutoTilerActiveBorder";
+/// Owned group-underlay surface class: distinct from the border class so the
+/// read-only inspect commands and residue audits count each carrier exactly.
+pub const UNDERLAY_CLASS: &str = "PlasmaAutoTilerGroupUnderlay";
 
 // Stable Win32 broadcast ids (no new dependency): the overlay WndProc only
 // flags on these; the loop thread re-queries and repaints.
@@ -206,7 +209,7 @@ impl BorderOverlay {
             && self.topmost == topmost
         {
             match self.hwnd {
-                Some(hwnd) if !overlay_needs_reassert(hwnd, outer, target_hwnd) => {
+                Some(hwnd) if !overlay_needs_reassert(hwnd, outer, target_hwnd, false) => {
                     return OverlayOutcome::Unchanged;
                 }
                 Some(dead) if !is_overlay_window(dead) => {
@@ -311,14 +314,220 @@ impl BorderOverlay {
     }
 }
 
+/// Process-owned group-underlay lifecycle on the shared carrier: one
+/// `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`
+/// popup in its own window class, filled with premultiplied alpha and placed
+/// directly beneath the lowest renderable group member (KWin z=-2 analogue,
+/// below the active border at z=-1). Creation, placement, hide, and teardown
+/// reuse the border carrier paths; only the fill painter differs.
+#[derive(Default)]
+pub struct UnderlayOverlay {
+    hwnd: Option<u64>,
+    outer: Option<Rect>,
+    color: Option<(u8, u8, u8, u8)>,
+    anchor_token: Option<String>,
+    anchor_hwnd: Option<u64>,
+    topmost: bool,
+    dib_checksum: u64,
+    redraws: u64,
+    moves: u64,
+    failures: u64,
+    last_error: Option<String>,
+}
+
+impl UnderlayOverlay {
+    #[must_use]
+    pub fn hwnd(&self) -> Option<u64> {
+        self.hwnd
+    }
+
+    #[must_use]
+    pub fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
+    }
+
+    #[must_use]
+    pub fn is_visible(&self) -> bool {
+        self.outer.is_some()
+    }
+
+    /// Hide the surface (no-op when already hidden). Keeps the window alive
+    /// for the next group; failures count boundedly.
+    pub fn hide(&mut self) {
+        if self.outer.is_none() {
+            return;
+        }
+        self.outer = None;
+        self.anchor_token = None;
+        self.anchor_hwnd = None;
+        if let Some(hwnd) = self.hwnd {
+            hide_window(hwnd);
+        }
+    }
+
+    /// Destroy the surface explicitly (graceful stop). Process exit also
+    /// destroys it implicitly.
+    pub fn destroy(&mut self) {
+        if let Some(hwnd) = self.hwnd.take() {
+            destroy_window(hwnd);
+        }
+        self.outer = None;
+        self.color = None;
+        self.anchor_token = None;
+        self.anchor_hwnd = None;
+        self.topmost = false;
+    }
+
+    /// Show or move the fill for one resolved group. `anchor_hwnd` is the
+    /// lowest renderable member (or the border surface, whichever sorts
+    /// lower): the underlay lands directly beneath it. Cached equality still
+    /// probes the actual surface (visibility, rect, z against the fresh
+    /// anchor) and reasserts a hidden, misplaced, or displaced surface.
+    /// Paint/move failures hide any stale fill and return `Hidden` with
+    /// `last_error` for bounded caller logging. `color` is `(alpha, r, g, b)`.
+    pub fn show_fill_at(
+        &mut self,
+        outer: Rect,
+        color: (u8, u8, u8, u8),
+        anchor_token: &str,
+        topmost: bool,
+        anchor_hwnd: u64,
+    ) -> OverlayOutcome {
+        if self.outer == Some(outer)
+            && self.color == Some(color)
+            && self.anchor_token.as_deref() == Some(anchor_token)
+            && self.anchor_hwnd == Some(anchor_hwnd)
+            && self.topmost == topmost
+        {
+            match self.hwnd {
+                Some(hwnd) if !overlay_needs_reassert(hwnd, outer, anchor_hwnd, true) => {
+                    return OverlayOutcome::Unchanged;
+                }
+                Some(dead) if !is_overlay_window(dead) => {
+                    self.hwnd = None;
+                    self.outer = None;
+                }
+                _ => {}
+            }
+        }
+        let hwnd = match self.hwnd {
+            Some(hwnd) => hwnd,
+            None => match create_overlay_window_in(UNDERLAY_CLASS) {
+                Ok(hwnd) => {
+                    self.hwnd = Some(hwnd);
+                    self.last_error = None;
+                    hwnd
+                }
+                Err(e) => {
+                    self.failures += 1;
+                    self.last_error = Some(truncate_error(&e.to_string()));
+                    self.fail_hide();
+                    return OverlayOutcome::Hidden;
+                }
+            },
+        };
+        let first_show = self.outer.is_none();
+        let size_changed = first_show
+            || self.outer.is_none_or(|o| o.w != outer.w || o.h != outer.h)
+            || self.color != Some(color);
+        if size_changed {
+            match paint_and_present_fill(
+                hwnd,
+                outer,
+                (color.1, color.2, color.3),
+                color.0,
+                topmost,
+                anchor_hwnd,
+            ) {
+                Ok(checksum) => {
+                    self.dib_checksum = checksum;
+                    self.redraws += 1;
+                    self.last_error = None;
+                }
+                Err(e) => {
+                    self.failures += 1;
+                    self.last_error = Some(truncate_error(&e.to_string()));
+                    self.fail_hide();
+                    return OverlayOutcome::Hidden;
+                }
+            }
+        } else if let Err(e) = move_overlay(hwnd, outer, topmost, anchor_hwnd) {
+            self.failures += 1;
+            self.last_error = Some(truncate_error(&e.to_string()));
+            self.fail_hide();
+            return OverlayOutcome::Hidden;
+        } else {
+            self.moves += 1;
+        }
+        self.outer = Some(outer);
+        self.color = Some(color);
+        self.anchor_token = Some(anchor_token.to_owned());
+        self.anchor_hwnd = Some(anchor_hwnd);
+        self.topmost = topmost;
+        if first_show {
+            OverlayOutcome::Shown
+        } else if size_changed {
+            OverlayOutcome::Redrew
+        } else {
+            OverlayOutcome::Moved
+        }
+    }
+
+    fn fail_hide(&mut self) {
+        self.outer = None;
+        self.anchor_token = None;
+        self.anchor_hwnd = None;
+        if let Some(hwnd) = self.hwnd {
+            hide_window(hwnd);
+        }
+    }
+
+    /// Read-only owned-surface snapshot for proof support: geometry, colour,
+    /// opaque anchor token, and a checksum over our own DIB pixels only.
+    /// No screen capture, no titles, no content, no raw window identifiers.
+    pub fn snapshot(&self) -> serde_json::Value {
+        serde_json::json!({
+            "visible": self.is_visible(),
+            "outer": self.outer.map(|r| [r.x, r.y, r.w, r.h]),
+            "color": self.color.map(|(a, r, g, b)| crate::group_underlay::render_color_argb(((r, g, b), a))),
+            "target": self.anchor_token.clone(),
+            "dib_checksum": format!("{:016x}", self.dib_checksum),
+            "redraws": self.redraws,
+            "moves": self.moves,
+            "failures": self.failures,
+            "last_error": self.last_error.clone(),
+        })
+    }
+}
+
+/// Lowest window in `EnumWindows` top-to-bottom order among `hwnds`: the
+/// renderable anchor the underlay sorts directly beneath. `None` when no
+/// candidate is enumerated (closed, or the order is unreadable).
+pub(crate) fn lowest_in_z(hwnds: &[u64]) -> Option<u64> {
+    let order = top_to_bottom_hwnds()?;
+    order
+        .iter()
+        .rev()
+        .find(|hwnd| hwnds.contains(hwnd))
+        .copied()
+}
+
 /// True only when the cached overlay needs a same-geometry reassert: the
 /// surface is gone, hidden, misplaced, or displaced below the fresh target.
 /// Adjacent-below is the achievable correct placement for a background
 /// owner's surface under its foreground target, so only true-below (or an
-/// unreadable probe, which recovers by reasserting) reasserts. The reassert
-/// is a `place_overlay` in the target's own band directly beneath the fresh
-/// target HWND, never a blind raise over unrelated topmost or shell UI.
-fn overlay_needs_reassert(overlay_u64: u64, outer: Rect, target_hwnd: u64) -> bool {
+/// unreadable probe, which recovers by reasserting) reasserts for the border.
+/// The underlay (`for_underlay`) additionally reasserts when above its anchor:
+/// its anchor is the lowest renderable group member, so above-anchor is never
+/// an acceptable cached placement. The reassert is a `place_overlay` in the
+/// target's own band directly beneath the fresh target HWND, never a blind
+/// raise over unrelated topmost or shell UI.
+fn overlay_needs_reassert(
+    overlay_u64: u64,
+    outer: Rect,
+    target_hwnd: u64,
+    for_underlay: bool,
+) -> bool {
     use windows_sys::Win32::Foundation::{HWND, RECT};
     use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowRect, IsWindowVisible};
     if overlay_u64 == 0 {
@@ -346,13 +555,24 @@ fn overlay_needs_reassert(overlay_u64: u64, outer: Rect, target_hwnd: u64) -> bo
     // Behind means displaced (a foreign window between, or far below):
     // adjacent-below is the achievable correct placement for a background
     // owner's surface under its foreground target, so only true-below
-    // reasserts. Unknown order (endpoint vanished mid-probe, or enumeration
-    // failed) recovers by reasserting: a needless same-geometry move is
-    // harmless, a missed displacement is not.
-    matches!(
-        z_relation(overlay_u64, target_hwnd),
-        Some(ZRelation::Below) | None
-    )
+    // reasserts for the border. The underlay anchor is the lowest renderable
+    // member, so an above-anchor cached surface is equally displaced and must
+    // also reassert. Unknown order (endpoint vanished mid-probe, or
+    // enumeration failed) recovers by reasserting: a needless same-geometry
+    // move is harmless, a missed displacement is not.
+    z_needs_reassert(z_relation(overlay_u64, target_hwnd), for_underlay)
+}
+
+/// Pure z verdict shared by both carriers so the underlay Above repair is
+/// unit-covered without a live window. Border preserves its foreground-below
+/// assumption (`Above` stays acceptable); the underlay never accepts an
+/// above-anchor cached placement.
+fn z_needs_reassert(relation: Option<ZRelation>, for_underlay: bool) -> bool {
+    match relation {
+        Some(ZRelation::AdjacentBelow) => false,
+        Some(ZRelation::Above) => for_underlay,
+        Some(ZRelation::Below) | None => true,
+    }
 }
 
 fn is_overlay_window(hwnd_u64: u64) -> bool {
@@ -431,30 +651,47 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain([0]).collect()
 }
 
-fn overlay_registered_flag() -> &'static std::sync::atomic::AtomicBool {
-    use std::sync::atomic::AtomicBool;
-    static REGISTERED: AtomicBool = AtomicBool::new(false);
-    &REGISTERED
-}
-
-fn overlay_class_registered() -> bool {
-    use std::sync::atomic::Ordering;
-    overlay_registered_flag().load(Ordering::SeqCst)
-}
-
-fn mark_overlay_class_registered() {
-    use std::sync::atomic::Ordering;
-    overlay_registered_flag().store(true, Ordering::SeqCst);
-}
-
 fn create_overlay_window() -> Result<u64, DynError> {
+    create_overlay_window_in(OVERLAY_CLASS)
+}
+
+static BORDER_CLASS_REGISTERED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static UNDERLAY_CLASS_REGISTERED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn overlay_class_registered(class: &str) -> bool {
+    use std::sync::atomic::Ordering;
+    if class == UNDERLAY_CLASS {
+        UNDERLAY_CLASS_REGISTERED.load(Ordering::SeqCst)
+    } else {
+        BORDER_CLASS_REGISTERED.load(Ordering::SeqCst)
+    }
+}
+
+fn mark_overlay_class_registered(class: &str) {
+    use std::sync::atomic::Ordering;
+    if class == UNDERLAY_CLASS {
+        UNDERLAY_CLASS_REGISTERED.store(true, Ordering::SeqCst);
+    } else {
+        BORDER_CLASS_REGISTERED.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Create one owned carrier window in `class`. Registration is attempted on
+/// every creation and `ERROR_CLASS_ALREADY_EXISTS` (1410) is tolerated, so
+/// the border and underlay classes each register exactly once via the two
+/// per-class `AtomicBool`s above (`BORDER_CLASS_REGISTERED` /
+/// `UNDERLAY_CLASS_REGISTERED`). Creation is rare (at most once per carrier
+/// per process).
+pub(crate) fn create_overlay_window_in(class: &str) -> Result<u64, DynError> {
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CS_HREDRAW, CS_VREDRAW, CreateWindowExW, RegisterClassW, WNDCLASSW, WS_EX_LAYERED,
         WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
     };
-    if !overlay_class_registered() {
-        let class_w = wide(OVERLAY_CLASS);
+    if !overlay_class_registered(class) {
+        let class_w = wide(class);
         let hinst = unsafe { GetModuleHandleW(std::ptr::null()) };
         let mut cls: WNDCLASSW = unsafe { std::mem::zeroed() };
         cls.style = CS_HREDRAW | CS_VREDRAW;
@@ -467,12 +704,12 @@ fn create_overlay_window() -> Result<u64, DynError> {
             // ERROR_CLASS_ALREADY_EXISTS (1410) means the class is usable.
             let code = unsafe { windows_sys::Win32::Foundation::GetLastError() };
             if code != 1410 {
-                return Err(err("error: active-border RegisterClass failed"));
+                return Err(err("error: overlay RegisterClass failed"));
             }
         }
-        mark_overlay_class_registered();
+        mark_overlay_class_registered(class);
     }
-    let class_w = wide(OVERLAY_CLASS);
+    let class_w = wide(class);
     let hinst = unsafe { GetModuleHandleW(std::ptr::null()) };
     let hwnd = unsafe {
         CreateWindowExW(
@@ -610,27 +847,73 @@ fn paint_and_present(
     topmost: bool,
     target_hwnd: u64,
 ) -> Result<u64, DynError> {
-    use windows_sys::Win32::Foundation::{HWND, POINT, SIZE};
-    use windows_sys::Win32::Graphics::Gdi::{
-        AC_SRC_ALPHA, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CreateCompatibleDC,
-        CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, SelectObject,
-    };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{ULW_ALPHA, UpdateLayeredWindow};
-    if outer.w <= 0 || outer.h <= 0 || width_px < 0 || radius_px < 0 {
+    if width_px < 0 || radius_px < 0 {
         return Err(err("error: active-border bad paint geometry"));
     }
     if width_px == 0 {
         hide_window(hwnd_u64);
         return Ok(0);
     }
+    present_pixels(
+        hwnd_u64,
+        outer,
+        topmost,
+        target_hwnd,
+        "active-border",
+        |pixels| paint_ring(pixels, outer.w, outer.h, width_px, radius_px, color),
+    )
+}
+
+/// Paint the premultiplied-alpha group fill into a fresh 32bpp top-down DIB
+/// and present it on the shared carrier pipeline. Same checksum/placement
+/// contract as the ring path; only the painter differs.
+fn paint_and_present_fill(
+    hwnd_u64: u64,
+    outer: Rect,
+    color: (u8, u8, u8),
+    alpha: u8,
+    topmost: bool,
+    anchor_hwnd: u64,
+) -> Result<u64, DynError> {
+    present_pixels(
+        hwnd_u64,
+        outer,
+        topmost,
+        anchor_hwnd,
+        "group-underlay",
+        |pixels| crate::group_underlay::paint_fill_argb(pixels, outer.w, outer.h, color, alpha),
+    )
+}
+
+/// Shared carrier presentation: allocate one 32bpp top-down DIB, run the
+/// caller painter over the owned bytes (it returns the FNV-1a checksum),
+/// present with `UpdateLayeredWindow` (`ULW_ALPHA`), then anchor below the
+/// target in its band.
+fn present_pixels(
+    hwnd_u64: u64,
+    outer: Rect,
+    topmost: bool,
+    target_hwnd: u64,
+    what: &str,
+    paint: impl FnOnce(&mut [u8]) -> u64,
+) -> Result<u64, DynError> {
+    use windows_sys::Win32::Foundation::{HWND, POINT, SIZE};
+    use windows_sys::Win32::Graphics::Gdi::{
+        AC_SRC_ALPHA, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CreateCompatibleDC,
+        CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, SelectObject,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ULW_ALPHA, UpdateLayeredWindow};
+    if outer.w <= 0 || outer.h <= 0 {
+        return Err(err(format!("error: {what} bad paint geometry")));
+    }
     // Bound the surface: a full-monitor overlay plus ring is the largest
     // legitimate case; anything absurd fails closed instead of allocating.
     if outer.w > 16384 || outer.h > 16384 {
-        return Err(err("error: active-border surface too large"));
+        return Err(err(format!("error: {what} surface too large")));
     }
     let memdc = unsafe { CreateCompatibleDC(std::ptr::null_mut()) };
     if memdc.is_null() {
-        return Err(err("error: active-border DC failed"));
+        return Err(err(format!("error: {what} DC failed")));
     }
     let mut bmi: BITMAPINFO = unsafe { std::mem::zeroed() };
     bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
@@ -654,12 +937,12 @@ fn paint_and_present(
         unsafe {
             DeleteDC(memdc);
         }
-        return Err(err("error: active-border DIB failed"));
+        return Err(err(format!("error: {what} DIB failed")));
     }
     let stride = outer.w as usize * 4;
     let total = stride * outer.h as usize;
     let pixels = unsafe { std::slice::from_raw_parts_mut(bits as *mut u8, total) };
-    let checksum = paint_ring(pixels, outer.w, outer.h, width_px, radius_px, color);
+    let checksum = paint(pixels);
     let old = unsafe { SelectObject(memdc, hbmp) };
     let dst = POINT {
         x: outer.x,
@@ -695,7 +978,7 @@ fn paint_and_present(
         DeleteDC(memdc);
     }
     if presented == 0 {
-        return Err(err("error: active-border present failed"));
+        return Err(err(format!("error: {what} present failed")));
     }
     // Target-relative anchor (not blindly permanent TOPMOST): above the
     // ordinary frame, topmost only while the target is topmost. Task
@@ -755,5 +1038,22 @@ mod tests {
         mark_accent_dirty();
         assert!(take_accent_dirty());
         assert!(!take_accent_dirty());
+    }
+
+    #[test]
+    fn z_verdict_repairs_underlay_above_but_preserves_border() {
+        use ZRelation::{Above, AdjacentBelow, Below};
+        // Adjacent-below is the only acceptable cached placement for both.
+        assert!(!z_needs_reassert(Some(AdjacentBelow), false));
+        assert!(!z_needs_reassert(Some(AdjacentBelow), true));
+        // Far-below and unreadable probes reassert for both carriers.
+        assert!(z_needs_reassert(Some(Below), false));
+        assert!(z_needs_reassert(Some(Below), true));
+        assert!(z_needs_reassert(None, false));
+        assert!(z_needs_reassert(None, true));
+        // Above-anchor: border preserves its foreground-below assumption,
+        // the underlay (lowest-member anchor) must never accept it.
+        assert!(!z_needs_reassert(Some(Above), false));
+        assert!(z_needs_reassert(Some(Above), true));
     }
 }

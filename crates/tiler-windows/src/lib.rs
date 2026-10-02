@@ -1,6 +1,7 @@
 pub mod active_border;
 #[cfg(windows)]
 pub mod active_border_sys;
+pub mod group_underlay;
 pub mod lifecycle;
 pub mod model;
 pub mod mouse_snap;

@@ -8,13 +8,13 @@ use tiler_windows::tiling::{
     build_reconcile_event, build_reconcile_event_for, classify, classify_gesture, fingerprint,
     hosted_child_allows, inspect_stateless_verdict, is_borderless_fullscreen, min_hints_from_outer,
     normalize_min_track, parse_allowlist, parse_capture_args, parse_children_args,
-    parse_hide_proof_args, parse_inspect_args, parse_scope_host_child, parse_tile_args,
-    parse_tile_proof_args, parse_workspace_proof_args, parse_workspace_request,
+    parse_hide_proof_args, parse_inspect_args, parse_scope_host_child, parse_shortcut_proof_args,
+    parse_tile_args, parse_tile_proof_args, parse_workspace_proof_args, parse_workspace_request,
     parse_workspace_select_args, readback_outcome, render_workspace_request, scope_allows,
     scope_exe_basename, tick_summary_signature, tiling_domain_bounds,
     verify_hide_proof_argv_consistency, verify_proof_argv_consistency,
-    verify_workspace_proof_argv_consistency, verify_workspace_select_argv_consistency,
-    visible_min_from_outer,
+    verify_shortcut_proof_argv_consistency, verify_workspace_proof_argv_consistency,
+    verify_workspace_select_argv_consistency, visible_min_from_outer,
 };
 
 fn rect(x: i32, y: i32, w: i32, h: i32) -> Rect {
@@ -1571,4 +1571,96 @@ fn reconcile_builder_carries_per_window_hints() {
     assert_eq!(event.windows.len(), 2);
     assert_eq!(event.windows[0].hints, hinted);
     assert!(event.windows[1].hints.is_empty());
+}
+
+#[test]
+fn underlay_defaults_match_kde_parity() {
+    let options = parse_tile_args(&strings(&["--user-start"])).expect("parsed");
+    assert!(options.underlay.enabled);
+    assert_eq!(options.underlay.style.color, (0x80, 0x80, 0x80));
+    assert_eq!(options.underlay.style.alpha, 0x40);
+    assert_eq!(options.underlay.style.extension, -1.0);
+    let options = parse_tile_proof_args(&strings(&["--allowlist", "a.json"])).expect("parsed");
+    assert!(options.underlay.enabled);
+    assert_eq!(options.underlay.style.extension, -1.0);
+    let options = parse_workspace_proof_args(&strings(&["--allowlist", "a.json"])).expect("parsed");
+    assert!(options.underlay.enabled);
+    assert_eq!(options.underlay.style.extension, -1.0);
+    let options = parse_shortcut_proof_args(&strings(&["--allowlist", "a.json"])).expect("parsed");
+    assert!(options.underlay.enabled);
+}
+
+#[test]
+fn underlay_flags_parse_and_refuse() {
+    let options = parse_tile_args(&strings(&[
+        "--user-start",
+        "--group-underlay-color",
+        "#40808080",
+        "--group-underlay-extension",
+        "5",
+    ]))
+    .expect("parsed");
+    assert_eq!(options.underlay.style.color, (0x80, 0x80, 0x80));
+    assert_eq!(options.underlay.style.alpha, 0x40);
+    assert_eq!(options.underlay.style.extension, 5.0);
+    let options =
+        parse_tile_args(&strings(&["--user-start", "--no-group-underlay"])).expect("parsed");
+    assert!(!options.underlay.enabled);
+    // Six-digit colour (missing alpha) refuses, never silently opaque.
+    assert!(
+        parse_tile_args(&strings(&[
+            "--user-start",
+            "--group-underlay-color",
+            "#808080"
+        ]))
+        .is_err()
+    );
+    assert!(
+        parse_tile_args(&strings(&[
+            "--user-start",
+            "--group-underlay-color",
+            "#40808080",
+            "--group-underlay-extension",
+            "-2"
+        ]))
+        .is_err()
+    );
+    assert!(parse_tile_args(&strings(&["--user-start", "--group-underlay-color"])).is_err());
+    assert!(parse_tile_args(&strings(&["--user-start", "--group-underlaybogus"])).is_err());
+}
+
+#[test]
+fn proof_argv_consistency_evidences_underlay_flags() {
+    // Full delivery with underlay flags verifies on every proof command.
+    let raw = strings(&[
+        "--allowlist",
+        "a.json",
+        "--trace",
+        "--no-group-underlay",
+        "--group-underlay-color",
+        "#40808080",
+        "--group-underlay-extension",
+        "5",
+    ]);
+    let parsed = parse_tile_proof_args(&raw).expect("parsed");
+    assert!(verify_proof_argv_consistency(&raw, &parsed).is_ok());
+    let parsed = parse_workspace_proof_args(&raw).expect("parsed");
+    assert!(verify_workspace_proof_argv_consistency(&raw, &parsed).is_ok());
+    let parsed = parse_shortcut_proof_args(&raw).expect("parsed");
+    assert!(verify_shortcut_proof_argv_consistency(&raw, &parsed).is_ok());
+    // Dropped underlay flags on either side are impossible errors.
+    let raw_bare = strings(&["--allowlist", "a.json", "--trace"]);
+    let parsed_bare = parse_tile_proof_args(&raw_bare).expect("parsed");
+    assert!(verify_proof_argv_consistency(&raw, &parsed_bare).is_err());
+    let parsed_tile = parse_tile_proof_args(&raw).expect("parsed");
+    assert!(verify_proof_argv_consistency(&raw_bare, &parsed_tile).is_err());
+    // Swapped colour value is an impossible error, never a silent retarget.
+    let raw_other = strings(&[
+        "--allowlist",
+        "a.json",
+        "--trace",
+        "--group-underlay-color",
+        "#ff112233",
+    ]);
+    assert!(verify_proof_argv_consistency(&raw_other, &parsed_tile).is_err());
 }

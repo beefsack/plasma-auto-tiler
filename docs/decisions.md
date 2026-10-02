@@ -31,8 +31,9 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   flyout/Snap Assist coverage remains to be proven. Snap prevention does not
   block the tiling-only preview.
 - Experiment with custom drawing and a real group underlay, including Task
-  View and Alt+Tab behavior. An outline fallback is acceptable if the
-  underlay fails; the underlay mechanism remains unselected.
+  View and Alt+Tab behavior. Windows now uses the owned layered custom-drawing
+  carrier for the filled underlay; an outline fallback remains acceptable if
+  that mechanism proves unworkable.
 - Windows distribution should be the most obvious and unsurprising for users.
   Store availability alongside manual installation is research scope, not a
   selected package or update channel.
@@ -339,8 +340,7 @@ the corresponding item ships; each such entry names its replacement.
   Reconcile actual visibility, geometry and z-order even when cached drawing
   inputs are unchanged. DWM shadows can tint the composed ring; do not claim
   that DIB RGB equals final screen RGB. Owned-surface creation, alpha drawing,
-  placement, hiding and teardown are the carrier for later group-underlay
-  work; this decision does not implement that underlay.
+   placement, hiding and teardown also carry the Windows group underlay below.
 - Theme mapping selected for user review: KDE uses the active Selection
   background from `KColorScheme` (desktop highlight). Windows uses the official
   [`DwmGetColorizationColor`](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmgetcolorizationcolor)
@@ -360,7 +360,52 @@ the corresponding item ships; each such entry names its replacement.
   shell journeys, off and graceful/crash cleanup. Physical display/input,
   other DPI/output arrangements and topmost/style variants remain bounded
   follow-up checks. Evidence and limitations:
-  `changes/archive/windows-active-border.md`.
+   `changes/archive/windows-active-border.md`.
+
+### Windows group underlay
+
+- User decision 2026-10-02, accepted for now: implement stages A/B of
+  `changes/group-underlay-move-trigger.md` on Windows. Show for Win+Shift hold
+  (both required, either order, extra modifiers allowed) OR a matching focused
+  native title-bar interactive move. Win alone and resize alone do not trigger;
+  the chord independently works during resize. End/cancel/removal clears the
+  move arm; held chord is independent. The trigger is hard-coded with shared
+  portable policy in `tiler-core::visual`; KDE's current Meta-held behaviour
+  is unchanged. Win+drag movement itself belongs to parity item 7, which can
+  supply the same move arm later.
+- Use an enabled-by-default filled, premultiplied-alpha, layered click-through
+  nonactivating tool window on the active-border carrier. KDE defaults:
+  `#40808080`, extension -1 follows border width; explicit extension 0..32
+  logical pixels matches the KDE settings range. CLI mirrors only enable,
+  colour and extension: `--no-group-underlay`, `--group-underlay-color #aarrggbb`,
+  `--group-underlay-extension N`. No foreign-window attributes are changed.
+- Query the focused tiled window's immediate-parent group through Engine
+  `ActiveGroup` and the shared resolver/description, using the actual eligible
+  managed foreground. Render the union of Engine-projected source rectangles,
+  expanded by gap, border width and resolved extension, even while the live
+  dragged frame moves. Hide unavailable/root-leaf/floating, minimised, maximised
+  and fullscreen subjects. Existing pending/drag-residue gates fail closed;
+  Win32 interactive movement pauses reconciliation without adding core residue.
+- Anchor beneath the lowest visible, nonminimised/noncloaked managed member and
+  the visible active-border surface, matching KDE underlay Z=-2 versus border
+  Z=-1. Recheck actual surface geometry/visibility/stacking at refresh even when
+  cached inputs match; repair above-anchor displacement. Sample chord levels
+  at the existing 100ms pump and wake on transitions, without a new input hook.
+  Move/resize classification samples bounded `WM_NCHITTEST` at START delivery;
+  timeout, unknown/custom-client hit zones and keyboard-only moves do not
+  trigger the move arm. The chord remains available.
+- C is parked under the authorized simplicity checkpoint: a distinct unfocused
+  dragged subject needs new Engine resolution and invalidation lifetime.
+  Never substitute that subject into `focused_window`, which persists retained
+  focus. Native activation from an unfocused title bar remains a physical check;
+  a future movement producer should reassess the need for C.
+- Scoped synthetic evidence on Windows 11 build 26200, DPI 120, covers chord
+  combinations/releases, projected footprint and native stacking, alpha blend,
+  title-bar move/drop/cancel, brief chord handoff, resize exclusion, maximise,
+  root leaf, off and graceful/crash cleanup. Physical feel, sustained chord
+  across a complete move, fullscreen/custom-frame/topmost cases and other
+  output/DPI arrangements remain follow-up checks. Evidence:
+  `changes/windows-group-underlay.md` (completion/CI pending).
 
 ## Native Integration Boundary
 

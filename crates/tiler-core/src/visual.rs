@@ -113,6 +113,25 @@ pub fn group_visible(has_group: bool, modifier_held: bool, focus_eligible: bool)
     has_group && modifier_held && focus_eligible
 }
 
+/// Movement-only underlay chord: both Win and Shift held. Extra modifiers are
+/// allowed (callers fold only these two), and either press order works because
+/// this is level-observed, never edge-sequenced.
+#[must_use]
+pub fn group_underlay_chord_held(win_held: bool, shift_held: bool) -> bool {
+    win_held && shift_held
+}
+
+/// Movement-only underlay trigger: the observed Win+Shift chord OR a matching
+/// focused-window interactive move. Interactive resize alone never triggers;
+/// the chord stays independent and can still show the underlay during resize.
+/// Move-start evidence never depends on modifier observation: the move arm is
+/// a separate input. The same OR feeds a future Win+drag producer, which only
+/// needs to supply the move arm.
+#[must_use]
+pub fn group_underlay_trigger(chord_held: bool, matching_move_active: bool) -> bool {
+    chord_held || matching_move_active
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,5 +282,32 @@ mod tests {
         assert!(!group_visible(false, true, true));
         assert!(!group_visible(true, false, true));
         assert!(!group_visible(true, true, false));
+    }
+
+    #[test]
+    fn underlay_chord_needs_both_win_and_shift() {
+        // (win, shift) -> chord. Extras/order live outside this predicate.
+        for (win, shift, want) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (true, true, true),
+        ] {
+            assert_eq!(group_underlay_chord_held(win, shift), want);
+        }
+    }
+
+    #[test]
+    fn underlay_trigger_is_chord_or_matching_move() {
+        // (chord, matching_move) -> trigger. Resize alone feeds
+        // matching_move=false, so it never triggers; a held chord still does.
+        for (chord, moving, want) in [
+            (false, false, false),
+            (true, false, true),
+            (false, true, true),
+            (true, true, true),
+        ] {
+            assert_eq!(group_underlay_trigger(chord, moving), want);
+        }
     }
 }

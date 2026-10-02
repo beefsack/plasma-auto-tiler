@@ -931,6 +931,7 @@ pub struct TileOptions {
     pub allow_win_l: bool,
     pub no_mouse_snap_prevention: bool,
     pub border: crate::active_border::ActiveBorderOptions,
+    pub underlay: crate::group_underlay::GroupUnderlayOptions,
     pub scope_exes: Vec<String>,
     /// Explicit host-to-child scope pairs (repeatable `--scope-host-child
     /// HOST=CHILD`). Empty (default) means no child constraint. A listed host
@@ -1015,12 +1016,13 @@ pub fn parse_scope_host_child(value: &str) -> Result<ScopeHostChild, String> {
 }
 
 /// Parse `tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...]`
-/// plus the shared active-border flags (default on with `--no-active-border`).
+/// plus the shared active-border flags (default on with `--no-active-border`)
+/// and the shared group-underlay flags (default on with `--no-group-underlay`).
 /// Missing `--user-start` or any `--allowlist` is a refusal, never a silent
 /// normal run. An empty `--scope-exe` value is a refusal, never a wildcard.
 /// A malformed `--scope-host-child` value is a refusal, never a widened scope.
 pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
-    let usage = "usage: tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme]";
+    let usage = "usage: tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme] [--no-group-underlay] [--group-underlay-color #aarrggbb] [--group-underlay-extension -1..=32]";
     let mut seconds: Option<u64> = None;
     let mut trace = false;
     let mut user_start = false;
@@ -1030,9 +1032,13 @@ pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
     let mut scope_exes: Vec<String> = Vec::new();
     let mut scope_hosts: Vec<ScopeHostChild> = Vec::new();
     let mut border = crate::active_border::ActiveBorderOptions::default();
+    let mut underlay = crate::group_underlay::GroupUnderlayOptions::default();
     let mut theme_flags = 0u8;
     let mut i = 0;
     while i < args.len() {
+        if apply_underlay_arg(args, &mut i, &mut underlay, usage)? {
+            continue;
+        }
         match args[i].as_str() {
             "--trace" => {
                 trace = true;
@@ -1152,6 +1158,7 @@ pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
         allow_win_l,
         no_mouse_snap_prevention,
         border,
+        underlay,
         scope_exes,
         scope_hosts,
     })
@@ -1166,19 +1173,25 @@ pub struct TileProofOptions {
     pub trace: bool,
     pub allowlist: PathBuf,
     pub border: crate::active_border::ActiveBorderOptions,
+    pub underlay: crate::group_underlay::GroupUnderlayOptions,
 }
 
 /// Parse `tile-proof --allowlist PATH [--seconds N] [--trace]` plus the shared
-/// active-border flags (default on with `--no-active-border`).
+/// active-border flags (default on with `--no-active-border`) and the shared
+/// group-underlay flags (default on with `--no-group-underlay`).
 pub fn parse_tile_proof_args(args: &[String]) -> Result<TileProofOptions, String> {
-    let usage = "usage: tile-proof --allowlist PATH [--seconds N] [--trace] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme]";
+    let usage = "usage: tile-proof --allowlist PATH [--seconds N] [--trace] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme] [--no-group-underlay] [--group-underlay-color #aarrggbb] [--group-underlay-extension -1..=32]";
     let mut seconds: Option<u64> = None;
     let mut trace = false;
     let mut allowlist: Option<PathBuf> = None;
     let mut border = crate::active_border::ActiveBorderOptions::default();
+    let mut underlay = crate::group_underlay::GroupUnderlayOptions::default();
     let mut theme_flags = 0u8;
     let mut i = 0;
     while i < args.len() {
+        if apply_underlay_arg(args, &mut i, &mut underlay, usage)? {
+            continue;
+        }
         match args[i].as_str() {
             "--trace" => {
                 trace = true;
@@ -1261,6 +1274,7 @@ pub fn parse_tile_proof_args(args: &[String]) -> Result<TileProofOptions, String
         trace,
         allowlist,
         border,
+        underlay,
     })
 }
 
@@ -1399,23 +1413,29 @@ pub struct ShortcutProofOptions {
     pub allowlist: PathBuf,
     pub no_mouse_snap_prevention: bool,
     pub border: crate::active_border::ActiveBorderOptions,
+    pub underlay: crate::group_underlay::GroupUnderlayOptions,
 }
 
 /// Parse `shortcut-proof --allowlist PATH [--seconds N] [--trace]
-/// [--no-mouse-snap-prevention]` plus the shared active-border flags.
+/// [--no-mouse-snap-prevention]` plus the shared active-border flags and the
+/// shared group-underlay flags.
 /// Any keyboard flag (`--allow-win-l`,
 /// `--no-keyboard-snap-takeover`), `--user-start`, or unknown flag is a
 /// refusal, never a silent normal run.
 pub fn parse_shortcut_proof_args(args: &[String]) -> Result<ShortcutProofOptions, String> {
-    let usage = "usage: shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme]";
+    let usage = "usage: shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme] [--no-group-underlay] [--group-underlay-color #aarrggbb] [--group-underlay-extension -1..=32]";
     let mut seconds: Option<u64> = None;
     let mut trace = false;
     let mut allowlist: Option<PathBuf> = None;
     let mut no_mouse_snap_prevention = false;
     let mut border = crate::active_border::ActiveBorderOptions::default();
+    let mut underlay = crate::group_underlay::GroupUnderlayOptions::default();
     let mut theme_flags = 0u8;
     let mut i = 0;
     while i < args.len() {
+        if apply_underlay_arg(args, &mut i, &mut underlay, usage)? {
+            continue;
+        }
         match args[i].as_str() {
             "--trace" => {
                 trace = true;
@@ -1503,6 +1523,7 @@ pub fn parse_shortcut_proof_args(args: &[String]) -> Result<ShortcutProofOptions
         allowlist,
         no_mouse_snap_prevention,
         border,
+        underlay,
     })
 }
 
@@ -1513,9 +1534,11 @@ pub fn verify_shortcut_proof_argv_consistency(
     raw: &[String],
     parsed: &ShortcutProofOptions,
 ) -> Result<(), String> {
-    let usage = "usage: shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme]";
+    let usage = "usage: shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme] [--no-group-underlay] [--group-underlay-color #aarrggbb] [--group-underlay-extension -1..=32]";
     let (border_echo, rest) = scan_border_echo(raw, usage)?;
     verify_border_echo(&border_echo, &parsed.border, usage)?;
+    let (underlay_echo, rest) = scan_underlay_echo(&rest, usage)?;
+    verify_underlay_echo(&underlay_echo, &parsed.underlay, usage)?;
     let raw = rest;
     let mut allowlist: Option<&str> = None;
     let mut seconds: Option<&str> = None;
@@ -1642,6 +1665,43 @@ fn verify_border_echo(
     Ok(())
 }
 
+/// Apply one shared group-underlay flag (`--no-group-underlay`,
+/// `--group-underlay-color #aarrggbb`, `--group-underlay-extension -1..=32`).
+/// Returns true when `args[*i]` was an underlay flag (index advanced past its
+/// value); false leaves every other flag for the caller. Called at the top of
+/// each loop parser so all four commands share one flag shape.
+fn apply_underlay_arg(
+    args: &[String],
+    i: &mut usize,
+    underlay: &mut crate::group_underlay::GroupUnderlayOptions,
+    usage: &str,
+) -> Result<bool, String> {
+    match args[*i].as_str() {
+        "--no-group-underlay" => {
+            underlay.enabled = false;
+            *i += 1;
+            Ok(true)
+        }
+        "--group-underlay-color" => {
+            *i += 1;
+            let value = args.get(*i).ok_or_else(|| usage.to_owned())?;
+            let (color, alpha) = crate::group_underlay::parse_color_argb(value)?;
+            underlay.style.color = color;
+            underlay.style.alpha = alpha;
+            *i += 1;
+            Ok(true)
+        }
+        "--group-underlay-extension" => {
+            *i += 1;
+            let value = args.get(*i).ok_or_else(|| usage.to_owned())?;
+            underlay.style.extension = crate::group_underlay::parse_extension(value)?;
+            *i += 1;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
 /// Scan raw argv border flags into an echo. Unknown non-border flags are left
 /// for the caller: this returns the echo plus the non-border remainder.
 fn scan_border_echo(
@@ -1689,13 +1749,91 @@ fn scan_border_echo(
     Ok((echo, rest))
 }
 
+/// Scan raw argv underlay flags into an echo, mirroring `scan_border_echo`.
+fn scan_underlay_echo(
+    raw: &[String],
+    usage: &str,
+) -> Result<(crate::group_underlay::UnderlayArgvEcho, Vec<String>), String> {
+    let mut echo = crate::group_underlay::UnderlayArgvEcho::default();
+    let mut rest: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < raw.len() {
+        match raw[i].as_str() {
+            "--no-group-underlay" => {
+                echo.no_group_underlay = true;
+                i += 1;
+            }
+            "--group-underlay-color" | "--group-underlay-extension" => {
+                let flag = raw[i].clone();
+                i += 1;
+                let value = raw.get(i).ok_or_else(|| usage.to_owned())?.clone();
+                if flag == "--group-underlay-color" {
+                    echo.color = Some(value);
+                } else {
+                    echo.extension = Some(value);
+                }
+                i += 1;
+            }
+            _ => {
+                rest.push(raw[i].clone());
+                i += 1;
+            }
+        }
+    }
+    Ok((echo, rest))
+}
+
+/// Verify a raw-scanned underlay echo against parsed underlay options.
+fn verify_underlay_echo(
+    echo: &crate::group_underlay::UnderlayArgvEcho,
+    underlay: &crate::group_underlay::GroupUnderlayOptions,
+    usage: &str,
+) -> Result<(), String> {
+    let impossible = |what: &str| format!("error: argv/parsed {what} mismatch (impossible)");
+    if echo.no_group_underlay != !underlay.enabled {
+        return Err(impossible("underlay-enabled"));
+    }
+    match (&echo.color, underlay.style.color, underlay.style.alpha) {
+        (None, _, _) => {}
+        (Some(text), want_rgb, want_alpha) => {
+            let (got_rgb, got_alpha) =
+                crate::group_underlay::parse_color_argb(text).map_err(|_| usage.to_owned())?;
+            if got_rgb != want_rgb || got_alpha != want_alpha {
+                return Err(impossible("underlay-color"));
+            }
+        }
+    }
+    match &echo.extension {
+        None => {}
+        Some(text) => {
+            let got: f64 = text.parse().map_err(|_| usage.to_owned())?;
+            if (got - underlay.style.extension).abs() > f64::EPSILON {
+                return Err(impossible("underlay-extension"));
+            }
+        }
+    }
+    let defaults = crate::group_underlay::GroupUnderlayOptions::default();
+    if echo.color.is_none()
+        && (underlay.style.color != defaults.style.color
+            || underlay.style.alpha != defaults.style.alpha)
+    {
+        return Err(impossible("underlay-color"));
+    }
+    if echo.extension.is_none() && underlay.style.extension != defaults.style.extension {
+        return Err(impossible("underlay-extension"));
+    }
+    Ok(())
+}
+
 pub fn verify_proof_argv_consistency(
     raw: &[String],
     parsed: &TileProofOptions,
 ) -> Result<(), String> {
-    let usage = "usage: tile-proof --allowlist PATH [--seconds N] [--trace] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme]";
+    let usage = "usage: tile-proof --allowlist PATH [--seconds N] [--trace] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme] [--no-group-underlay] [--group-underlay-color #aarrggbb] [--group-underlay-extension -1..=32]";
     let (border_echo, rest) = scan_border_echo(raw, usage)?;
     verify_border_echo(&border_echo, &parsed.border, usage)?;
+    let (underlay_echo, rest) = scan_underlay_echo(&rest, usage)?;
+    verify_underlay_echo(&underlay_echo, &parsed.underlay, usage)?;
     let raw = rest;
     let mut allowlist: Option<&str> = None;
     let mut seconds: Option<&str> = None;
@@ -1758,22 +1896,28 @@ pub struct WorkspaceProofOptions {
     pub allowlist: PathBuf,
     pub no_mouse_snap_prevention: bool,
     pub border: crate::active_border::ActiveBorderOptions,
+    pub underlay: crate::group_underlay::GroupUnderlayOptions,
 }
 
 /// Parse `workspace-proof --allowlist PATH [--seconds N] [--trace]
-/// [--no-mouse-snap-prevention]` plus the shared active-border flags.
+/// [--no-mouse-snap-prevention]` plus the shared active-border flags and the
+/// shared group-underlay flags.
 /// Any keyboard flag, `--user-start`, or
 /// unknown flag is a refusal, never a silent normal run.
 pub fn parse_workspace_proof_args(args: &[String]) -> Result<WorkspaceProofOptions, String> {
-    let usage = "usage: workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme]";
+    let usage = "usage: workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme] [--no-group-underlay] [--group-underlay-color #aarrggbb] [--group-underlay-extension -1..=32]";
     let mut seconds: Option<u64> = None;
     let mut trace = false;
     let mut allowlist: Option<PathBuf> = None;
     let mut no_mouse_snap_prevention = false;
     let mut border = crate::active_border::ActiveBorderOptions::default();
+    let mut underlay = crate::group_underlay::GroupUnderlayOptions::default();
     let mut theme_flags = 0u8;
     let mut i = 0;
     while i < args.len() {
+        if apply_underlay_arg(args, &mut i, &mut underlay, usage)? {
+            continue;
+        }
         match args[i].as_str() {
             "--trace" => {
                 trace = true;
@@ -1861,6 +2005,7 @@ pub fn parse_workspace_proof_args(args: &[String]) -> Result<WorkspaceProofOptio
         allowlist,
         no_mouse_snap_prevention,
         border,
+        underlay,
     })
 }
 
@@ -1869,9 +2014,11 @@ pub fn verify_workspace_proof_argv_consistency(
     raw: &[String],
     parsed: &WorkspaceProofOptions,
 ) -> Result<(), String> {
-    let usage = "usage: workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme]";
+    let usage = "usage: workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme] [--no-group-underlay] [--group-underlay-color #aarrggbb] [--group-underlay-extension -1..=32]";
     let (border_echo, rest) = scan_border_echo(raw, usage)?;
     verify_border_echo(&border_echo, &parsed.border, usage)?;
+    let (underlay_echo, rest) = scan_underlay_echo(&rest, usage)?;
+    verify_underlay_echo(&underlay_echo, &parsed.underlay, usage)?;
     let raw = rest;
     let mut allowlist: Option<&str> = None;
     let mut seconds: Option<&str> = None;
