@@ -43,14 +43,15 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZESTART, EnumChildWindows, EnumWindows, GW_OWNER,
     GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetCursorPos, GetDesktopWindow, GetForegroundWindow,
     GetPropW, GetShellWindow, GetSystemMetrics, GetWindow, GetWindowLongW, GetWindowPlacement,
-    GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed,
-    MINMAXINFO, MSG, PM_REMOVE, PeekMessageW, QS_ALLINPUT, RemovePropW, SM_CXMAXTRACK,
-    SM_CXMINTRACK, SM_CXSCREEN, SM_CYMAXTRACK, SM_CYMINTRACK, SM_CYSCREEN, SMTO_ABORTIFHUNG,
-    SW_MAXIMIZE, SW_SHOWMAXIMIZED, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_NOZORDER, SendMessageTimeoutW, SetForegroundWindow, SetPropW, SetWindowLongW,
-    SetWindowPlacement, SetWindowPos, ShowWindowAsync, TranslateMessage, WINDOWPLACEMENT,
-    WINEVENT_OUTOFCONTEXT, WM_GETMINMAXINFO, WM_NCHITTEST, WPF_ASYNCWINDOWPLACEMENT, WS_CAPTION,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_THICKFRAME,
+    GetWindowRect, GetWindowThreadProcessId, HWND_NOTOPMOST, HWND_TOPMOST, IsIconic, IsWindow,
+    IsWindowVisible, IsZoomed, MINMAXINFO, MSG, PM_REMOVE, PeekMessageW, QS_ALLINPUT, RemovePropW,
+    SM_CXMAXTRACK, SM_CXMINTRACK, SM_CXSCREEN, SM_CYMAXTRACK, SM_CYMINTRACK, SM_CYSCREEN,
+    SMTO_ABORTIFHUNG, SW_MAXIMIZE, SW_SHOWMAXIMIZED, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SendMessageTimeoutW, SetForegroundWindow,
+    SetPropW, SetWindowLongW, SetWindowPlacement, SetWindowPos, ShowWindowAsync, TranslateMessage,
+    WINDOWPLACEMENT, WINEVENT_OUTOFCONTEXT, WM_GETMINMAXINFO, WM_NCHITTEST,
+    WPF_ASYNCWINDOWPLACEMENT, WS_CAPTION, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_THICKFRAME,
 };
 
 use crate::active_border::{
@@ -1056,6 +1057,13 @@ struct TileLoop {
     /// slow poll. Steady hold/release stays quiet; only the transition
     /// wakes, and the normal suspend/fullscreen path below still gates it.
     underlay_chord_last: bool,
+    /// Prior `WS_EX_TOPMOST` per intentional-float member key, read at float
+    /// time. Session-local only. Unfloat and graceful stop restore only bands
+    /// the project raised, with no frame change.
+    float_topmost_prev: std::collections::BTreeMap<crate::workspace::WindowKey, bool>,
+    /// Live float frame per Engine token. Distinct from `member_rects`, which
+    /// keeps the last tiled allocation frozen at float time.
+    float_rects: HashMap<String, Rect>,
 }
 
 /// One hidden member: the committed ledger claim (carrying the durable
@@ -1938,7 +1946,7 @@ fn refresh_group_underlay(
         return;
     }
     // Tiled membership only: a focused window with no Engine membership has
-    // no group to highlight (the floating bucket until float parity lands).
+    // no group to highlight.
     let member_key = state
         .member_tokens
         .iter()
@@ -1952,6 +1960,12 @@ fn refresh_group_underlay(
         hide_underlay(state, "no-group");
         return;
     };
+    // Floats hold no tile group: the fill stays hidden on a focused float
+    // while the active border still marks it.
+    if engine_is_float(state, &loc.output, &loc.workspace, &window.token) {
+        hide_underlay(state, "floating");
+        return;
+    }
     let Some((domain, domain_key)) = workspace_domain_for(&loc.output, &loc.workspace, areas)
     else {
         hide_underlay(state, "no-group");
@@ -2932,6 +2946,165 @@ fn overlay_refusal_for(row: &RetainedRow) -> Option<&'static str> {
     crate::tiling::overlay_refusal(row.fullscreen, row.maximized)
 }
 
+/// Whether one Engine token is currently an intentional-float exception in
+/// its domain session (floated windows hold no tile slot). Born-fullscreen
+/// holds are exceptions too; the intentional lane additionally keys off the
+/// `float_topmost_prev` preimage map. `false` when the session is unknown.
+fn engine_is_float(state: &TileLoop, output: &str, workspace: &str, token: &str) -> bool {
+    let key = tiler_core::session::DomainKey {
+        output: tiler_core::directional::OutputId(output.to_owned()),
+        workspace: tiler_core::directional::WorkspaceId(workspace.to_owned()),
+    };
+    state
+        .engine
+        .session(&key)
+        .is_some_and(|session| session.is_exception(&WindowId(token.to_owned())))
+}
+
+/// Fresh `WS_EX_TOPMOST` read on one HWND (official Win32 topmost band).
+fn read_topmost_now(hwnd_u64: u64) -> bool {
+    let hwnd = hwnd_u64 as isize as HWND;
+    (unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) }) as u32 & WS_EX_TOPMOST != 0
+}
+
+/// Set one window's topmost band without moving, sizing, or activating it.
+/// Returns whether the setter accepted; the caller re-reads for proof.
+fn set_topmost_band(hwnd_u64: u64, top: bool) -> bool {
+    let hwnd = hwnd_u64 as isize as HWND;
+    if unsafe { IsWindow(hwnd) } == 0 {
+        return false;
+    }
+    let after: HWND = if top { HWND_TOPMOST } else { HWND_NOTOPMOST };
+    let placed = unsafe {
+        SetWindowPos(
+            hwnd,
+            after,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+    };
+    placed != 0
+}
+
+/// Held ownership gates for a band-only topmost effect on a stored member
+/// with no live eligible observation (retained floats, graceful stop): the
+/// held process identity must equal the stored full identity with matching
+/// creation, same user/session as the owner, medium integrity, live lifetime
+/// tag, plus scope, hosted-child, and proof fences. The caller keeps the
+/// returned hold across the effect and rechecks pid plus band readback after.
+/// Geometry effects use `revalidate_target` (fresh eligibility classification);
+/// band effects move, size, and activate nothing.
+fn hold_band_target(
+    state: &TileLoop,
+    me: &ProcessIdentity,
+    key: &crate::workspace::WindowKey,
+) -> Option<HeldProcess> {
+    let stored = state.member_identity.get(key)?;
+    let held = HeldProcess::open(key.pid).ok()?;
+    let ident = held.identity().ok()?;
+    if ident.pid != key.pid
+        || ident.process_creation != key.creation
+        || ident.exe_path != stored.exe_path
+        || ident.user_sid != stored.user_sid
+        || ident.session_id != stored.session_id
+    {
+        return None;
+    }
+    if ident.user_sid != me.user_sid || ident.session_id != me.session_id {
+        return None;
+    }
+    if !held.integrity().is_ok_and(is_medium_rid) {
+        return None;
+    }
+    if !scope_allows(&state.scope, &stored.exe_path) {
+        return None;
+    }
+    if !hosted_gate_allows(&stored.exe_path, key.hwnd, key.pid, &state.scope_hosts) {
+        return None;
+    }
+    if let Some(entries) = state.allowlist.as_ref() {
+        let entry = entries.iter().find(|e| e.hwnd == key.hwnd)?;
+        if verify_proof_owned(key.hwnd, entry, me).is_err() {
+            return None;
+        }
+    }
+    let live_tag = crate::product_hide::sys::read_member_tag(key.hwnd);
+    let stored_tag = state.member_tags.get(key)?;
+    if !crate::workspace_owner::visible_lifetime_ok(stored_tag, live_tag.as_deref()) {
+        return None;
+    }
+    if !pid_current(key.hwnd, key.pid) {
+        return None;
+    }
+    Some(held)
+}
+
+/// Drop float runtime state whose membership is gone. No writes, no ledger;
+/// the next tick re-derives float rows from the Engine.
+fn prune_float_state(state: &mut TileLoop) {
+    state
+        .float_topmost_prev
+        .retain(|key, _| state.member_tokens.contains_key(key));
+    state
+        .float_rects
+        .retain(|token, _| state.member_tokens.values().any(|live| live == token));
+}
+
+/// One exact-window foreground check plus a single setter with readback.
+/// Already-foreground takes no setter. Token-safe outcome only.
+fn retain_float_focus(hwnd_u64: u64) -> &'static str {
+    let foreground = unsafe { GetForegroundWindow() } as usize as u64;
+    if foreground == hwnd_u64 {
+        return "float-focus-retained";
+    }
+    let hwnd = hwnd_u64 as isize as HWND;
+    if unsafe { SetForegroundWindow(hwnd) } == 0 {
+        return "float-focus-failed";
+    }
+    if unsafe { GetForegroundWindow() } as usize as u64 == hwnd_u64 {
+        "float-focus-retained"
+    } else {
+        "float-focus-failed"
+    }
+}
+
+/// Validated float focus retention for the exact toggled window: fresh
+/// revalidation holds the target across the prior band calls, then at most
+/// one setter with readback. Stale targets fail closed; failures report
+/// without claiming success. No timers or retries.
+fn retain_float_focus_validated(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    expected: &ObservedWindow,
+    member_key: &crate::workspace::WindowKey,
+) -> &'static str {
+    let member_tag = state.member_tags.get(member_key).map(String::as_str);
+    let target = match revalidate_target(
+        expected,
+        me,
+        fulls,
+        &mut state.tokens,
+        state.allowlist.is_some(),
+        state.allowlist.as_ref(),
+        &state.scope,
+        member_tag,
+        &state.scope_hosts,
+        false,
+    ) {
+        Ok(target) => target,
+        Err(_) => return "float-focus-failed",
+    };
+    let _ = &target.held;
+    if !pid_current(target.window.hwnd, target.window.identity.pid) {
+        return "float-focus-failed";
+    }
+    retain_float_focus(target.window.hwnd)
+}
+
 type DesiredEntry = crate::workspace_owner::PlannedWrite;
 
 fn desired_entries(reply: &CoreReply) -> Option<Vec<DesiredEntry>> {
@@ -2981,16 +3154,38 @@ fn assemble_domain_rows(
     let query_start = Instant::now();
     let mut stats = HintStats::default();
     let mut reasons: HashMap<String, &'static str> = HashMap::new();
+    // Intentional-float tokens in this domain session: slotless floating
+    // rows on the live native frame, no tiled writes, `member_rects` frozen
+    // while `float_rects` tracks the draggable frame.
+    let domain_key = tiler_core::session::DomainKey {
+        output: tiler_core::directional::OutputId(output.to_owned()),
+        workspace: tiler_core::directional::WorkspaceId(workspace.to_owned()),
+    };
+    let float_tokens: HashSet<String> = state
+        .engine
+        .session(&domain_key)
+        .map(|session| {
+            members
+                .iter()
+                .filter_map(|key| state.member_tokens.get(key))
+                .filter(|token| session.is_exception(&WindowId(token.to_string())))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
     for key in &members {
         let born = state.born_fullscreen.contains(key);
         if state.workspaces.is_hidden(key) {
-            if let (Some(token), Some(rect)) = (
-                state.member_tokens.get(key).cloned(),
-                state
-                    .member_tokens
-                    .get(key)
-                    .and_then(|t| state.member_rects.get(t).copied()),
-            ) {
+            let token = state.member_tokens.get(key).cloned();
+            let rect = token.as_ref().and_then(|t| {
+                crate::workspace_owner::hidden_snapshot_rect(
+                    float_tokens.contains(t),
+                    state.float_rects.get(t).copied(),
+                    state.member_rects.get(t).copied(),
+                )
+            });
+            if let (Some(token), Some(rect)) = (token, rect) {
+                let is_float = float_tokens.contains(&token);
                 let (hints, outcome) = hidden_hint_for(state, key, hint_cx);
                 stats.note(outcome);
                 reasons.insert(token.clone(), outcome.as_str());
@@ -2999,7 +3194,7 @@ fn assemble_domain_rows(
                     token,
                     rect,
                     hints,
-                    floating: born,
+                    floating: born || is_float,
                 });
             }
             continue;
@@ -3012,6 +3207,19 @@ fn assemble_domain_rows(
         if let Some(token) = state.member_tokens.get(key).cloned()
             && let Some(window) = by_token.get(token.as_str())
         {
+            if float_tokens.contains(&token) {
+                // Slotless floating row on the live native frame, no hint.
+                // The tiled allocation in `member_rects` stays frozen.
+                state.float_rects.insert(token.clone(), window.visible);
+                views.push(crate::workspace_owner::MemberView {
+                    key: key.clone(),
+                    token: token.clone(),
+                    rect: window.visible,
+                    hints: WindowSizeHints::none(),
+                    floating: true,
+                });
+                continue;
+            }
             state.member_rects.insert(token.clone(), window.visible);
             if let Some(identity) = state.member_identity.get_mut(key) {
                 identity.pid = window.identity.pid;
@@ -3049,6 +3257,33 @@ fn assemble_domain_rows(
         if let Some(row) = retained.iter().find(|r| r.key == *key) {
             if born && row.fullscreen {
                 if let Some(rect) = row.rect {
+                    views.push(crate::workspace_owner::MemberView {
+                        key: key.clone(),
+                        token: row.token.clone(),
+                        rect,
+                        hints: WindowSizeHints::none(),
+                        floating: true,
+                    });
+                }
+                continue;
+            }
+            if float_tokens.contains(&row.token) {
+                // Overlaid float (user maximized/fullscreened it natively) or
+                // frameless: slotless floating row on the fresh frame, else
+                // the last float snapshot, with no hint. Unfloat refuses
+                // until the frame reads normal again.
+                let snapshot = state.float_rects.get(&row.token).copied();
+                let kept = state.member_rects.get(&row.token).copied();
+                let rect = match row.rect {
+                    Some(fresh) => Some(crate::tiling::canonical_retained_rect(
+                        true,
+                        fresh,
+                        snapshot.or(kept),
+                    )),
+                    None => snapshot.or(kept),
+                };
+                if let Some(rect) = rect {
+                    state.float_rects.insert(row.token.clone(), rect);
                     views.push(crate::workspace_owner::MemberView {
                         key: key.clone(),
                         token: row.token.clone(),
@@ -3231,6 +3466,23 @@ fn writable_tokens(
         eligible.insert(key.clone(), window.token.clone());
     }
     let fresh: HashSet<String> = observed.iter().map(|w| w.token.clone()).collect();
+    // Floats converge Engine membership but never take tiled geometry writes.
+    let domain_key = tiler_core::session::DomainKey {
+        output: tiler_core::directional::OutputId(output.to_owned()),
+        workspace: tiler_core::directional::WorkspaceId(workspace.to_owned()),
+    };
+    let float_tokens: HashSet<String> = state
+        .engine
+        .session(&domain_key)
+        .map(|session| {
+            eligible
+                .values()
+                .filter(|token| session.is_exception(&WindowId(token.to_string())))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    eligible.retain(|_, token| !float_tokens.contains(token));
     crate::workspace_owner::writable_subset(
         &members,
         |k| state.workspaces.is_hidden(k),
@@ -4209,6 +4461,7 @@ fn keyboard_tick(
                 QueuedSnapEvent::Workspace(_) => stale += 1,
                 QueuedSnapEvent::Maximize(_) => stale += 1,
                 QueuedSnapEvent::Fullscreen(_) => stale += 1,
+                QueuedSnapEvent::Float(_) => stale += 1,
             }
         }
         if stale > 0 {
@@ -4423,6 +4676,32 @@ fn keyboard_tick(
                     );
                     continue;
                 };
+                // A focused float never starts directional navigation; floats
+                // hold no tile slot so the Engine observation already excludes
+                // them as targets.
+                if engine_is_float(state, &loc.output, &loc.workspace, &from) {
+                    let outcome = match intent.op {
+                        SnapOp::Focus => "focus-refused-floating",
+                        SnapOp::Move => "move-refused-floating",
+                    };
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "snap",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "op": intent.op.as_str(),
+                            "direction": direction_name(intent.direction),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": outcome,
+                            "origin": origin.token,
+                            "window": from,
+                        }),
+                    );
+                    continue;
+                }
                 // KDE maximize/fullscreen isolation parity: a maximized
                 // focused window keeps its tile slot but a directional move
                 // would change its retained position/share, so refuse
@@ -4804,7 +5083,9 @@ fn keyboard_tick(
                 if !lifetime_ok {
                     if let Some(token) = state.member_tokens.remove(&member_key) {
                         state.member_rects.remove(&token);
+                        state.float_rects.remove(&token);
                     }
+                    state.float_topmost_prev.remove(&member_key);
                     state.member_identity.remove(&member_key);
                     state.member_tags.remove(&member_key);
                     state.workspaces.remove_window(&member_key);
@@ -5149,7 +5430,9 @@ fn keyboard_tick(
                         if reason == "identity-changed" {
                             if let Some(token) = state.member_tokens.remove(&member_key) {
                                 state.member_rects.remove(&token);
+                                state.float_rects.remove(&token);
                             }
+                            state.float_topmost_prev.remove(&member_key);
                             state.member_identity.remove(&member_key);
                             state.member_tags.remove(&member_key);
                             state.workspaces.remove_window(&member_key);
@@ -5250,8 +5533,613 @@ fn keyboard_tick(
                     );
                 }
             }
+            QueuedSnapEvent::Float(intent) => {
+                dispatch_float_intent(state, me, fulls, areas, intent);
+            }
         }
     }
+}
+
+/// Win+G float toggle (KDE Meta+G parity): fresh observation, exact origin
+/// re-resolution, full gates, one Engine `ToggleFloat` evaluated on a local
+/// candidate that commits only after the target native effects verify, then
+/// sibling reflow through the shared write path. No compensating toggle.
+fn dispatch_float_intent(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    intent: crate::snapkey::QueuedFloatIntent,
+) {
+    let log_path = state.log_path.clone();
+    // Key-ups close the pair and passed chords never dispatch: trace-only so
+    // held-key traffic stays out of normal logs.
+    if !intent.consumed || !intent.announce {
+        if state.trace {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "float-toggle",
+                    "tick": state.tick,
+                    "edge": intent.edge.as_str(),
+                    "disposition": if intent.consumed { "consumed" } else { "passed" },
+                    "outcome": if intent.consumed { "key-up" } else { "passed" },
+                }),
+            );
+        }
+        return;
+    }
+    state.tick += 1;
+    let tick = state.tick;
+    let correlation = state.correlation();
+    let settle = |outcome: &'static str| {
+        serde_json::json!({
+            "event": "float-toggle",
+            "tick": tick,
+            "correlation": correlation.as_str(),
+            "edge": intent.edge.as_str(),
+            "disposition": "consumed",
+            "outcome": outcome,
+        })
+    };
+    let Some(origin) = intent.origin.clone() else {
+        state.snap_advance = None;
+        let line = settle("origin-vanished");
+        log_json_at(&log_path, line);
+        return;
+    };
+    let mut skipped: Vec<(String, String)> = Vec::new();
+    let mut retained: Vec<RetainedRow> = Vec::new();
+    let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained) else {
+        let mut line = settle("observation-failed");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    };
+    publish_managed(state, me, &observed, &retained);
+    ensure_workspace_assignments(state, me, &mut observed, &retained, areas);
+    // First-seen maximized windows restore once here: lifetime tags are
+    // stamped, and the cleared window converges as eligible next tick.
+    clear_maximize_at_admission(state, me, &retained);
+    let fresh: Vec<SnapOrigin> = state.snap_origins.values().cloned().collect();
+    let foreground_hwnd = Some(unsafe { GetForegroundWindow() } as usize as u64);
+    let (from, _) = match resolve_origin(
+        &origin,
+        foreground_hwnd,
+        &fresh,
+        state.snap_advance.as_ref(),
+    ) {
+        OriginVerdict::Dispatch { token, continued } => (token, continued),
+        OriginVerdict::Reject(reason) => {
+            state.snap_advance = None;
+            let mut line = settle(reason);
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            log_json_at(&log_path, line);
+            return;
+        }
+    };
+    let Some(member_key) = state
+        .member_tokens
+        .iter()
+        .find(|(_, token)| token.as_str() == from.as_str())
+        .map(|(key, _)| key.clone())
+    else {
+        state.snap_advance = None;
+        let mut line = settle("unmanaged");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    };
+    if !crate::workspace_owner::member_matches(
+        &member_key,
+        origin.hwnd,
+        origin.pid,
+        &origin.creation,
+    ) {
+        state.snap_advance = None;
+        let mut line = settle("foreground-changed");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    let Some(loc) = state.workspaces.member_loc(&member_key).cloned() else {
+        state.snap_advance = None;
+        let mut line = settle("unmanaged");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    };
+    if workspace_domain_for(&loc.output, &loc.workspace, areas).is_none() {
+        let mut line = settle("unknown-output");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    let is_float = engine_is_float(state, &loc.output, &loc.workspace, &from);
+    // Visible lifetime gate: the live member tag must equal the stored tag, so
+    // a same-process HWND reuse authorizes no native write.
+    let live_tag = crate::product_hide::sys::read_member_tag(member_key.hwnd);
+    let lifetime_ok = state.member_tags.get(&member_key).is_some_and(|stored| {
+        crate::workspace_owner::visible_lifetime_ok(stored, live_tag.as_deref())
+    });
+    if !lifetime_ok {
+        if let Some(token) = state.member_tokens.remove(&member_key) {
+            state.member_rects.remove(&token);
+            state.float_rects.remove(&token);
+        }
+        state.float_topmost_prev.remove(&member_key);
+        state.member_identity.remove(&member_key);
+        state.member_tags.remove(&member_key);
+        state.workspaces.remove_window(&member_key);
+        let mut line = settle("identity-changed");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    let Some(stored) = state.member_identity.get(&member_key).cloned() else {
+        state.snap_advance = None;
+        let mut line = settle("unmanaged");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    };
+    // Proof-mode ownership gate before any native write: helpers re-verify
+    // against the frozen allowlist exactly like the hide path.
+    if let Some(entries) = state.allowlist.as_ref() {
+        let owned = entries
+            .iter()
+            .find(|e| e.hwnd == member_key.hwnd)
+            .is_some_and(|entry| verify_proof_owned(member_key.hwnd, entry, me).is_ok());
+        if !owned {
+            let mut line = settle("identity-changed");
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            log_json_at(&log_path, line);
+            return;
+        }
+    }
+    // Explicit scope fences before any native write: out-of-scope members and
+    // listed hosts without a live matching child refuse with no writes.
+    if !scope_allows(&state.scope, &stored.exe_path)
+        || !hosted_gate_allows(
+            &stored.exe_path,
+            member_key.hwnd,
+            stored.pid,
+            &state.scope_hosts,
+        )
+    {
+        let mut line = settle("scope-excluded");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    // Overlay fences on live state: overlay targets never float, and a
+    // natively overlaid float never unfloats until it reads normal again.
+    let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
+    let live_visible = by_hwnd.get(&member_key.hwnd).map(|w| w.visible);
+    let overlay_outcome = if let Some(window) = by_hwnd.get(&member_key.hwnd) {
+        crate::tiling::float_toggle_refusal(
+            window.facts.captionless_fullscreen,
+            is_zoomed_now(member_key.hwnd),
+        )
+    } else if let Some(row) = retained.iter().find(|r| r.key == member_key) {
+        crate::tiling::float_toggle_refusal(row.fullscreen, is_zoomed_now(member_key.hwnd))
+    } else {
+        None
+    };
+    if let Some(refusal) = overlay_outcome {
+        let mut line = settle(refusal);
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    // Unfloat carries the live frame rect so a moved/resized float is
+    // retained; float carries no rect so the Engine picks the retained
+    // placement, else the centered fallback. Frameless floats unfloat with no
+    // rect and keep the Engine-retained placement.
+    let live_rect = live_visible.or_else(|| {
+        retained
+            .iter()
+            .find(|r| r.key == member_key)
+            .and_then(|row| row.rect)
+    });
+    let float_rect = if is_float { live_rect } else { None };
+    let target = if is_float { "unfloated" } else { "floated" };
+    let mut hint_cx = HintCx::new();
+    let Some(rows) = assemble_domain_rows(
+        state,
+        &loc.output,
+        &loc.workspace,
+        &observed,
+        &retained,
+        "float",
+        correlation.as_str(),
+        &mut hint_cx,
+    ) else {
+        let mut line = settle("deferred");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    };
+    if !rows.iter().any(|r| r.token == from) {
+        let mut line = settle("unmanaged");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    let windows: Vec<(WindowId, Rect, WindowSizeHints, bool)> = rows
+        .iter()
+        .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
+        .collect();
+    let fp = fingerprint(
+        &rows
+            .iter()
+            .map(|r| (r.token.clone(), r.rect))
+            .collect::<Vec<_>>(),
+    );
+    let from_id = WindowId(from.clone());
+    let Some((domain, domain_key)) = workspace_domain_for(&loc.output, &loc.workspace, areas)
+    else {
+        let mut line = settle("unknown-output");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    };
+    let mut event = crate::tiling::build_reconcile_event_for_floating(
+        &state.owner,
+        &state.generation,
+        &correlation,
+        revision_for(state, &loc.output, &loc.workspace),
+        fp,
+        &domain,
+        &domain_key,
+        OUTER_GAP,
+        &windows,
+        Some(&from_id),
+    );
+    event.command = CoreCommand::ToggleFloat {
+        window: from.clone(),
+        float_rect,
+    };
+    // Evaluated on a local candidate: the Engine commit lands only after the
+    // target native effects verify, so a failed placement, band change, or
+    // readback never strands an exception. No compensating toggle, no shared
+    // API change, no persistent transaction state.
+    let mut candidate = state.engine.clone();
+    let reply = candidate.handle(&event);
+    let CoreReply::Tiled(plan) = &reply else {
+        let mut line = settle(reply_outcome(&reply));
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        line["target"] = serde_json::Value::from(target);
+        log_json_at(&log_path, line);
+        return;
+    };
+    if !is_float {
+        // Tiled-to-float: the Engine selected the retained placement, else the
+        // centered fallback. One official SetWindowPos carries geometry plus
+        // the raised band when the project raises it; a fresh readback tells
+        // an app-held size apart from a setter failure, and the runtime state
+        // snapshots the actual frame, never the request.
+        let Some(effective) = plan.float_rect else {
+            let mut line = settle("float-missing-placement");
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            line["window"] = serde_json::Value::from(from.clone());
+            line["target"] = serde_json::Value::from(target);
+            log_json_at(&log_path, line);
+            return;
+        };
+        let Some(expected) = observed.iter().find(|w| w.hwnd == member_key.hwnd) else {
+            let mut line = settle("origin-vanished");
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            line["window"] = serde_json::Value::from(from.clone());
+            line["target"] = serde_json::Value::from(target);
+            log_json_at(&log_path, line);
+            return;
+        };
+        let proof_mode = state.allowlist.is_some();
+        let audit_pre = (
+            expected.identity.pid,
+            expected.identity.process_creation.clone(),
+            expected.identity.exe_path.clone(),
+            expected.identity.user_sid.clone(),
+            expected.identity.session_id,
+            expected.identity.tag.clone(),
+        );
+        let member_tag = state.member_tags.get(&member_key).map(String::as_str);
+        let placement = match revalidate_target(
+            expected,
+            me,
+            fulls,
+            &mut state.tokens,
+            proof_mode,
+            state.allowlist.as_ref(),
+            &state.scope,
+            member_tag,
+            &state.scope_hosts,
+            false,
+        ) {
+            Ok(target) => target,
+            Err(reason) => {
+                let mut line = settle(reason);
+                line["origin"] = serde_json::Value::from(origin.token.clone());
+                line["window"] = serde_json::Value::from(from.clone());
+                line["target"] = serde_json::Value::from(target);
+                log_json_at(&log_path, line);
+                return;
+            }
+        };
+        let Some(outer) = placement.window.insets.visible_to_outer(effective) else {
+            let mut line = settle("frame-overflow");
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            line["window"] = serde_json::Value::from(from.clone());
+            line["target"] = serde_json::Value::from(target);
+            log_json_at(&log_path, line);
+            return;
+        };
+        if suspend_read(state, me, fulls).veto.block {
+            let mut line = settle("fullscreen-foreground");
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            line["window"] = serde_json::Value::from(from.clone());
+            line["target"] = serde_json::Value::from(target);
+            log_json_at(&log_path, line);
+            return;
+        }
+        let hwnd_u64 = placement.window.hwnd;
+        let current_topmost = read_topmost_now(hwnd_u64);
+        let prior = state
+            .float_topmost_prev
+            .get(&member_key)
+            .copied()
+            .unwrap_or(current_topmost);
+        let (anchor, flags) = if current_topmost {
+            (std::ptr::null_mut(), SWP_NOACTIVATE | SWP_NOZORDER)
+        } else {
+            (HWND_TOPMOST, SWP_NOACTIVATE)
+        };
+        let placed = unsafe {
+            SetWindowPos(
+                hwnd_u64 as isize as HWND,
+                anchor,
+                outer.x,
+                outer.y,
+                outer.w,
+                outer.h,
+                flags,
+            )
+        };
+        let _ = &placement.held;
+        let pid_ok = pid_current(hwnd_u64, placement.window.identity.pid);
+        if proof_mode {
+            let (pid, creation, exe, sid, session, tag) = audit_pre;
+            audit_json(
+                state,
+                serde_json::json!({
+                    "event": "proof-write",
+                    "tick": tick,
+                    "op": "float",
+                    "window": from,
+                    "requested": [effective.x, effective.y, effective.w, effective.h],
+                    "outer": [outer.x, outer.y, outer.w, outer.h],
+                    "target": {
+                        "hwnd": placement.window.hwnd,
+                        "pid": pid,
+                        "process_creation": creation,
+                        "exe_path": exe,
+                        "user_sid": sid,
+                        "session_id": session,
+                        "tag": tag,
+                    },
+                    "flags": if current_topmost { "SWP_NOACTIVATE|SWP_NOZORDER" } else { "SWP_NOACTIVATE|TOPMOST" },
+                    "outcome": if placed != 0 && pid_ok { "written" } else if placed == 0 { "setter-failed" } else { "pid-changed" },
+                }),
+            );
+        }
+        if placed == 0 || !pid_ok {
+            let mut line = settle(if placed == 0 {
+                "setter-failed"
+            } else {
+                "pid-changed"
+            });
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            line["window"] = serde_json::Value::from(from.clone());
+            line["target"] = serde_json::Value::from(target);
+            log_json_at(&log_path, line);
+            return;
+        }
+        // The band may already have changed even if frame readback fails.
+        state.float_topmost_prev.insert(member_key.clone(), prior);
+        let actual = match observe_window(hwnd_u64 as isize as HWND, me, fulls, &mut state.tokens) {
+            Ok(fresh)
+                if fresh.token == placement.window.token
+                    && pid_current(hwnd_u64, fresh.identity.pid) =>
+            {
+                if readback_outcome(true, &effective, &fresh.visible) == ReadbackOutcome::Match {
+                    effective
+                } else {
+                    fresh.visible
+                }
+            }
+            _ => {
+                let mut line = settle("float-unverified");
+                line["origin"] = serde_json::Value::from(origin.token.clone());
+                line["window"] = serde_json::Value::from(from.clone());
+                line["target"] = serde_json::Value::from(target);
+                log_json_at(&log_path, line);
+                return;
+            }
+        };
+        if !prior && !read_topmost_now(hwnd_u64) {
+            let mut line = settle("topmost-unverified");
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            line["window"] = serde_json::Value::from(from.clone());
+            line["target"] = serde_json::Value::from(target);
+            log_json_at(&log_path, line);
+            return;
+        }
+        state.engine = candidate;
+        state.float_rects.insert(from.clone(), actual);
+        let focus = retain_float_focus_validated(state, me, fulls, expected, &member_key);
+        let writable = writable_tokens(state, &loc.output, &loc.workspace, &observed);
+        let summary = apply_geometry(
+            state,
+            ApplyInput {
+                me,
+                fulls,
+                reply: &reply,
+                observed: &observed,
+                op: "float",
+                tick,
+                correlation: correlation.as_str(),
+                skipped,
+                writable: &writable,
+                output_token: state.workspaces.output_token(&loc.output),
+                workspace_token: state
+                    .workspaces
+                    .workspace_token(&loc.output, &loc.workspace),
+                revision: revision_for(state, &loc.output, &loc.workspace),
+            },
+        );
+        // The float's own placement already read back above; the summary only
+        // settles the sibling reflow, never the float outcome by itself.
+        let outcome: &'static str = match summary {
+            Some(s) if !s.readback_ok => "float-unverified",
+            Some(s) if s.mismatched > 0 || actual != effective => "float-mismatch",
+            Some(_) => "float-applied",
+            None => reply_outcome(&reply),
+        };
+        let mut line = settle(outcome);
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        line["target"] = serde_json::Value::from(target);
+        line["focus"] = serde_json::Value::from(focus);
+        log_json_at(&log_path, line);
+        return;
+    }
+    // Float-to-tiled: the candidate already admitted the window on the fresh
+    // admission axis. Restore a project-raised band first under fresh gates;
+    // the candidate commits only after the band verifies, so a failed restore
+    // never strands an admitted tile under a wrong band. Pre-existing topmost
+    // is never touched.
+    let prior = state.float_topmost_prev.get(&member_key).copied();
+    let mut topmost_restored = false;
+    if let Some(prior) = prior {
+        let current = read_topmost_now(member_key.hwnd);
+        if crate::tiling::float_topmost_restore_needed(prior, current) {
+            let held = match observed.iter().find(|w| w.hwnd == member_key.hwnd) {
+                Some(expected) => {
+                    let member_tag = state.member_tags.get(&member_key).map(String::as_str);
+                    match revalidate_target(
+                        expected,
+                        me,
+                        fulls,
+                        &mut state.tokens,
+                        state.allowlist.is_some(),
+                        state.allowlist.as_ref(),
+                        &state.scope,
+                        member_tag,
+                        &state.scope_hosts,
+                        false,
+                    ) {
+                        Ok(target) => target.held,
+                        Err(reason) => {
+                            let mut line = settle(reason);
+                            line["origin"] = serde_json::Value::from(origin.token.clone());
+                            line["window"] = serde_json::Value::from(from.clone());
+                            line["target"] = serde_json::Value::from(target);
+                            log_json_at(&log_path, line);
+                            return;
+                        }
+                    }
+                }
+                // Retained (e.g. minimized) floats have no live frame to
+                // classify; the band effect moves and activates nothing, so
+                // held ownership gates apply instead of eligibility gates.
+                None => match hold_band_target(state, me, &member_key) {
+                    Some(held) => held,
+                    None => {
+                        let mut line = settle("identity-changed");
+                        line["origin"] = serde_json::Value::from(origin.token.clone());
+                        line["window"] = serde_json::Value::from(from.clone());
+                        line["target"] = serde_json::Value::from(target);
+                        log_json_at(&log_path, line);
+                        return;
+                    }
+                },
+            };
+            let restored = set_topmost_band(member_key.hwnd, prior)
+                && read_topmost_now(member_key.hwnd) == prior
+                && pid_current(member_key.hwnd, member_key.pid);
+            let _ = &held;
+            if state.allowlist.is_some() {
+                audit_json(
+                    state,
+                    serde_json::json!({
+                        "event": "proof-topmost",
+                        "tick": tick,
+                        "op": "unfloat",
+                        "window": from,
+                        "restored": restored,
+                    }),
+                );
+            }
+            if !restored {
+                // Preimage kept for retry; Engine and admission untouched.
+                let mut line = settle("topmost-unverified");
+                line["origin"] = serde_json::Value::from(origin.token.clone());
+                line["window"] = serde_json::Value::from(from.clone());
+                line["target"] = serde_json::Value::from(target);
+                line["topmost_restored"] = serde_json::Value::from(false);
+                log_json_at(&log_path, line);
+                return;
+            }
+            state.float_topmost_prev.remove(&member_key);
+            topmost_restored = true;
+        } else {
+            state.float_topmost_prev.remove(&member_key);
+            topmost_restored = true;
+        }
+    }
+    state.engine = candidate;
+    state.float_rects.remove(&from);
+    let focus = match observed.iter().find(|w| w.hwnd == member_key.hwnd) {
+        Some(expected) => retain_float_focus_validated(state, me, fulls, expected, &member_key),
+        None => "float-focus-failed",
+    };
+    let writable = writable_tokens(state, &loc.output, &loc.workspace, &observed);
+    let summary = apply_geometry(
+        state,
+        ApplyInput {
+            me,
+            fulls,
+            reply: &reply,
+            observed: &observed,
+            op: "unfloat",
+            tick,
+            correlation: correlation.as_str(),
+            skipped,
+            writable: &writable,
+            output_token: state.workspaces.output_token(&loc.output),
+            workspace_token: state
+                .workspaces
+                .workspace_token(&loc.output, &loc.workspace),
+            revision: revision_for(state, &loc.output, &loc.workspace),
+        },
+    );
+    let outcome: &'static str = match summary {
+        Some(s) if !s.readback_ok => "unfloat-unverified",
+        Some(s) if s.mismatched > 0 => "unfloat-mismatch",
+        Some(_) => "unfloat-applied",
+        None => reply_outcome(&reply),
+    };
+    let mut line = settle(outcome);
+    line["origin"] = serde_json::Value::from(origin.token.clone());
+    line["window"] = serde_json::Value::from(from.clone());
+    line["target"] = serde_json::Value::from(target);
+    line["focus"] = serde_json::Value::from(focus);
+    line["topmost_restored"] = serde_json::Value::from(topmost_restored);
+    log_json_at(&log_path, line);
 }
 
 /// Stable output key for a rectangle center: the monitor containing the
@@ -5411,7 +6299,9 @@ fn admit_born_fullscreen(
         for dead in stale {
             if let Some(token) = state.member_tokens.remove(&dead) {
                 state.member_rects.remove(&token);
+                state.float_rects.remove(&token);
             }
+            state.float_topmost_prev.remove(&dead);
             state.member_identity.remove(&dead);
             state.member_tags.remove(&dead);
             state.workspaces.remove_window(&dead);
@@ -5512,7 +6402,9 @@ fn ensure_workspace_assignments(
         for dead in stale {
             if let Some(token) = state.member_tokens.remove(&dead) {
                 state.member_rects.remove(&token);
+                state.float_rects.remove(&token);
             }
+            state.float_topmost_prev.remove(&dead);
             state.member_identity.remove(&dead);
             state.member_tags.remove(&dead);
             state.workspaces.remove_window(&dead);
@@ -5528,7 +6420,9 @@ fn ensure_workspace_assignments(
         if !lifetime_ok {
             if let Some(token) = state.member_tokens.remove(&key) {
                 state.member_rects.remove(&token);
+                state.float_rects.remove(&token);
             }
+            state.float_topmost_prev.remove(&key);
             state.member_identity.remove(&key);
             state.member_tags.remove(&key);
             state.workspaces.remove_window(&key);
@@ -5669,7 +6563,9 @@ fn audit_hidden_claims(state: &mut TileLoop, me: &ProcessIdentity, store: &Ledge
         state.hidden_claims.remove(&key);
         if let Some(token) = state.member_tokens.remove(&key) {
             state.member_rects.remove(&token);
+            state.float_rects.remove(&token);
         }
+        state.float_topmost_prev.remove(&key);
         state.member_identity.remove(&key);
         state.member_tags.remove(&key);
         state.workspaces.remove_window(&key);
@@ -5736,6 +6632,7 @@ fn workspace_close_cleanup(state: &mut TileLoop) {
     state
         .seen_nonfullscreen
         .retain(|key| state.last_hwnds.contains(&key.hwnd));
+    prune_float_state(state);
 }
 
 /// Hide one managed member bound to its stored full identity: the live
@@ -5779,7 +6676,9 @@ fn workspace_hide_one(
     if !crate::workspace_owner::visible_lifetime_ok(&stored_tag, live_tag.as_deref()) {
         if let Some(token) = state.member_tokens.remove(key) {
             state.member_rects.remove(&token);
+            state.float_rects.remove(&token);
         }
+        state.float_topmost_prev.remove(key);
         state.member_identity.remove(key);
         state.member_tags.remove(key);
         state.workspaces.remove_window(key);
@@ -5968,7 +6867,9 @@ fn workspace_do_select(
                     if msg.starts_with("absent:") || msg.contains("sid/session mismatch") {
                         if let Some(token) = state.member_tokens.remove(key) {
                             state.member_rects.remove(&token);
+                            state.float_rects.remove(&token);
                         }
+                        state.float_topmost_prev.remove(key);
                         state.member_identity.remove(key);
                         state.member_tags.remove(key);
                         state.workspaces.remove_window(key);
@@ -5984,7 +6885,9 @@ fn workspace_do_select(
             // owner, and retire any same-HWND claim residue without writes.
             if let Some(token) = state.member_tokens.remove(key) {
                 state.member_rects.remove(&token);
+                state.float_rects.remove(&token);
             }
+            state.float_topmost_prev.remove(key);
             state.member_identity.remove(key);
             state.member_tags.remove(key);
             state.workspaces.remove_window(key);
@@ -6003,7 +6906,9 @@ fn workspace_do_select(
         } else if outcome == "origin-vanished" || outcome == "identity-changed" {
             if let Some(token) = state.member_tokens.remove(key) {
                 state.member_rects.remove(&token);
+                state.float_rects.remove(&token);
             }
+            state.float_topmost_prev.remove(key);
             state.member_identity.remove(key);
             state.member_tags.remove(key);
             state.workspaces.remove_window(key);
@@ -6034,7 +6939,9 @@ fn workspace_do_select(
                     state.hidden_claims.remove(key);
                     if let Some(token) = state.member_tokens.remove(key) {
                         state.member_rects.remove(&token);
+                        state.float_rects.remove(&token);
                     }
+                    state.float_topmost_prev.remove(key);
                     state.member_identity.remove(key);
                     state.member_tags.remove(key);
                     state.workspaces.remove_window(key);
@@ -6075,7 +6982,9 @@ fn workspace_do_select(
                 state.hidden_claims.remove(key);
                 if let Some(token) = state.member_tokens.remove(key) {
                     state.member_rects.remove(&token);
+                    state.float_rects.remove(&token);
                 }
+                state.float_topmost_prev.remove(key);
                 state.member_identity.remove(key);
                 state.member_tags.remove(key);
                 state.workspaces.remove_window(key);
@@ -6109,7 +7018,9 @@ fn workspace_do_select(
                     state.hidden_claims.remove(key);
                     if let Some(token) = state.member_tokens.remove(key) {
                         state.member_rects.remove(&token);
+                        state.float_rects.remove(&token);
                     }
+                    state.float_topmost_prev.remove(key);
                     state.member_identity.remove(key);
                     state.member_tags.remove(key);
                     state.workspaces.remove_window(key);
@@ -6422,6 +7333,10 @@ fn workspace_do_send(
     if loc.output != output || state.workspaces.is_hidden(&mover_key) {
         return fail("unmanaged");
     }
+    // Floats never send as movers; floating survivors ride the carried rows.
+    if engine_is_float(state, &loc.output, &loc.workspace, origin_token) {
+        return fail("send-refused-floating");
+    }
     // Explicit scope fences every send before the Engine mutation: an
     // out-of-scope mover reports without touching Engine sessions,
     // membership, or layout. The hide path re-fences independently.
@@ -6447,7 +7362,9 @@ fn workspace_do_send(
     if !lifetime_ok {
         if let Some(token) = state.member_tokens.remove(&mover_key) {
             state.member_rects.remove(&token);
+            state.float_rects.remove(&token);
         }
+        state.float_topmost_prev.remove(&mover_key);
         state.member_identity.remove(&mover_key);
         state.member_tags.remove(&mover_key);
         state.workspaces.remove_window(&mover_key);
@@ -8016,6 +8933,24 @@ fn gesture_tick(
         ) {
             continue;
         }
+        // Floats never feed gesture intents to the Engine; native float
+        // move/resize stays free.
+        if let Some(loc) = state.workspaces.member_loc(&member_key).cloned()
+            && engine_is_float(state, &loc.output, &loc.workspace, &current.token)
+        {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "gesture",
+                    "tick": state.tick,
+                    "op": "gesture",
+                    "disposition": "observed",
+                    "outcome": "gesture-refused-floating",
+                    "window": current.token,
+                }),
+            );
+            continue;
+        }
         let Some(loc) = state.workspaces.member_loc(&member_key).cloned() else {
             continue;
         };
@@ -8496,6 +9431,8 @@ fn run_tile_loop(
         underlay_last: None,
         move_kind: HashMap::new(),
         underlay_chord_last: false,
+        float_topmost_prev: std::collections::BTreeMap::new(),
+        float_rects: HashMap::new(),
     };
     state.engine.sync_binding(&owner, &generation);
     state.workspace_proof = workspace_proof;
@@ -8767,7 +9704,8 @@ fn run_tile_loop(
                     QueuedSnapEvent::Mask(_)
                     | QueuedSnapEvent::Intent(_)
                     | QueuedSnapEvent::Maximize(_)
-                    | QueuedSnapEvent::Fullscreen(_) => {
+                    | QueuedSnapEvent::Fullscreen(_)
+                    | QueuedSnapEvent::Float(_) => {
                         directional_events.push(event);
                     }
                 }
@@ -9082,6 +10020,58 @@ fn run_tile_loop(
         &log_path,
         serde_json::json!({"event":"group-underlay-end","overlay": underlay_snapshot}),
     );
+    // Graceful stop restores only project-raised topmost bands with no frame
+    // change, under the same held ownership gates as dispatch. Geometry is
+    // left in place; a crash leaves every frame where it is, and restart
+    // resets this runtime-local preimage with the Engine.
+    let mut float_topmost_restored = 0u32;
+    let mut float_topmost_skipped = 0u32;
+    let float_preimages: Vec<(crate::workspace::WindowKey, bool)> = state
+        .float_topmost_prev
+        .iter()
+        .map(|(key, prior)| (key.clone(), *prior))
+        .collect();
+    for (key, prior) in float_preimages {
+        let Some(held) = hold_band_target(&state, me, &key) else {
+            float_topmost_skipped += 1;
+            continue;
+        };
+        let current = read_topmost_now(key.hwnd);
+        if !crate::tiling::float_topmost_restore_needed(prior, current) {
+            continue;
+        }
+        let ok = set_topmost_band(key.hwnd, prior)
+            && read_topmost_now(key.hwnd) == prior
+            && pid_current(key.hwnd, key.pid);
+        let _ = &held;
+        if state.audit_path.is_some() {
+            audit_json(
+                &state,
+                serde_json::json!({
+                    "event": "proof-topmost",
+                    "op": "stop",
+                    "restored": ok,
+                }),
+            );
+        }
+        if ok {
+            float_topmost_restored += 1;
+        } else {
+            float_topmost_skipped += 1;
+        }
+    }
+    state.float_topmost_prev.clear();
+    state.float_rects.clear();
+    if float_topmost_restored > 0 || float_topmost_skipped > 0 {
+        log_json_at(
+            &log_path,
+            serde_json::json!({
+                "event": "float-topmost-restore",
+                "restored": float_topmost_restored,
+                "skipped": float_topmost_skipped,
+            }),
+        );
+    }
     log_json_at(
         &log_path,
         serde_json::json!({"event":"tile-end","ticks":state.tick}),

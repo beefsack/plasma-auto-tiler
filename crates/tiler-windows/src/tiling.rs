@@ -335,6 +335,32 @@ pub const fn overlay_refusal(fullscreen: bool, maximized: bool) -> Option<&'stat
     }
 }
 
+/// Intentional-float toggle refusal for an overlay target (KDE
+/// `float-refused-fullscreen` / `float-refused-maximize` parity): a
+/// fullscreen or maximized focused window never floats, and a focused float
+/// that the user maximized or fullscreened natively never unfloats until it
+/// reads normal again. Fullscreen wins when both hold. `None` when the route
+/// may proceed.
+#[must_use]
+pub const fn float_toggle_refusal(fullscreen: bool, maximized: bool) -> Option<&'static str> {
+    if fullscreen {
+        Some("float-refused-fullscreen")
+    } else if maximized {
+        Some("float-refused-maximize")
+    } else {
+        None
+    }
+}
+
+/// Project-owned topmost restore gate for graceful stop and unfloat: only a
+/// band the project raised (`!prior && current`) restores. A pre-existing
+/// topmost stays untouched even if the user later cleared it; crash leaves
+/// every frame in place and restart resets this runtime-local preimage.
+#[must_use]
+pub const fn float_topmost_restore_needed(prior_topmost: bool, current_topmost: bool) -> bool {
+    !prior_topmost && current_topmost
+}
+
 /// Retained canonical rectangle for an overlay member (KDE carried-snapshot
 /// parity): a maximized/fullscreen member rides its last-known tile
 /// rectangle instead of the compositor-owned native maximum frame, so tile
@@ -957,11 +983,12 @@ pub fn build_reconcile_event_for(
     )
 }
 
-/// Floating-aware per-domain `Reconcile` event: born-held fullscreen members
-/// ride as slotless floating Engine exceptions (no tile slot, siblings keep
-/// the full tile area) while every other member stays tiled. Floating is an
-/// Engine observation only, never a native write; exactly the born hold sets
-/// it. Hidden born rows stay floating until a verified non-fullscreen exit.
+/// Floating-aware per-domain `Reconcile` event: intentional floats and
+/// born-held fullscreen members ride as slotless floating Engine exceptions
+/// (no tile slot, siblings keep the tile area) while every other member stays
+/// tiled. Floating is an Engine observation only, never a native write.
+/// Hidden floating rows stay floating until reveal; hidden born rows stay
+/// floating until a verified non-fullscreen exit.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn build_reconcile_event_for_floating(

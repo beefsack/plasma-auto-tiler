@@ -480,6 +480,44 @@ the corresponding item ships; each such entry names its replacement.
   Physical input/display and other output/DPI arrangements remain user-owned.
   Evidence and limitations: [Windows fullscreen](changes/archive/windows-fullscreen.md).
 
+### Windows float
+
+- Windows parity item 5 (2026-10-03): Win+G matches KDE Meta+G. Intentional
+  floats leave the shared Engine tree and siblings reflow. The first float
+  uses the Engine's centered 60% work-area fallback; subsequent floats reuse
+  retained geometry. Unfloat carries the live frame and uses ordinary
+  admission placement/axis, never a remembered tile slot. Both directions
+  retain the exact toggled focus; fullscreen/maximized targets refuse.
+- Directional focus/move and tiled pointer operations refuse a floating
+  subject; floats are excluded from directional targets. Native moving and
+  resizing remain free and never implicitly unfloat. Workspace send refuses
+  a focused float, while selection hides/reveals floating occupants with
+  geometry intact. The active border is independent of float membership and
+  group underlay is hidden for floats. Born-fullscreen holds remain distinct
+  from intentional float actuation.
+- Official Win32 topmost is the keep-above analogue; there is no keep-below
+  analogue. Record the original band, verify effects, and restore only a
+  project-raised band on unfloat/graceful stop. A pre-existing topmost band
+  is not cleared. Target effects retain existing scope, proof and native
+  lifetime fences. Evaluate ToggleFloat on a local Engine clone and commit
+  after target effects verify; failed effects do not strand float membership.
+  Preserve band preimages even when later frame readback is unavailable.
+- Float membership/geometry history is runtime-local and resets on restart,
+  matching KDE; no float persistence or new recovery ledger is introduced.
+  Stop/crash leave geometry in place. Provisional, to discuss: a crash can
+  leave the project-raised topmost band; restart treats the current band as
+  native state, rather than inferring an old preimage. Graceful stop restores
+  the verified runtime preimage. One attempt per discrete Win+G down; held
+  repeats are consumed without dispatch or automatic effect retries.
+- Native gates and independent review pass. Live float acceptance remains
+  open: the known cloaked Explorer foreground blocks both approved-app prime
+  mechanisms and suspends the owner before float actions. Machine evidence
+  establishes bounded suspension, frame-preserving graceful cleanup and
+  approved-app visibility only, not float behavior. All float/helper/ordinary-
+  app and crash/restart rows, physical input/display/feel and other output/DPI
+  arrangements remain user-owned. See
+  [Windows float](changes/archive/windows-float.md).
+
 ## Native Integration Boundary
 
 - User decision (2026-09-24; governing statement under Architecture Direction):

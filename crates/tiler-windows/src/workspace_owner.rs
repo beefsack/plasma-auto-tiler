@@ -47,8 +47,8 @@ pub fn output_context(
 
 /// One Engine window row: token, last-known rectangle, fresh
 /// application-declared minimum-size hint, and the slotless floating
-/// exception flag (born-held fullscreen only: the window rides Engine
-/// membership with no tile slot so siblings keep the full tile area).
+/// exception flag (intentional float or born-held fullscreen: the window
+/// rides Engine membership with no tile slot so siblings keep the tile area).
 /// Hidden snapshots ride the same rows so convergence never drops retained
 /// membership; hidden rows carry a fresh hint like visible rows (fresh
 /// observation only, never a stored floor) while retained rows carry none.
@@ -354,6 +354,30 @@ pub fn writable_subset(
         .collect()
 }
 
+/// Hidden snapshot rectangle for one member: intentional floats ride the live
+/// float snapshot with the tiled allocation as fallback; every other member
+/// (including born holds, which never seed a float snapshot) rides the tiled
+/// allocation with the float snapshot as fallback. `None` only when both are
+/// missing, so row assembly drops nothing it could keep.
+#[must_use]
+pub const fn hidden_snapshot_rect(
+    is_float: bool,
+    float_rect: Option<Rect>,
+    member_rect: Option<Rect>,
+) -> Option<Rect> {
+    if is_float {
+        match float_rect {
+            Some(rect) => Some(rect),
+            None => member_rect,
+        }
+    } else {
+        match member_rect {
+            Some(rect) => Some(rect),
+            None => float_rect,
+        }
+    }
+}
+
 /// Pure owner dispatch gate for one workspace digit, shared by the native
 /// loop and offline tests. `takeover` is the `--no-keyboard-snap-takeover`
 /// switch (off disables all product interception); `suspended` covers
@@ -403,8 +427,8 @@ pub fn rows_for(
 /// Engine token, best-known rectangle (fresh visible read, fresh retained
 /// frame, or hidden snapshot), fresh minimum-size hint (eligible visible
 /// reads plus verified hidden snapshots; retained rows carry no hint), and
-/// the slotless floating exception flag (born-held fullscreen only, never a
-/// native write).
+/// the slotless floating exception flag (intentional float or born-held
+/// fullscreen, never a native write).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemberView {
     pub key: WindowKey,
@@ -527,6 +551,591 @@ mod tests {
             pid: 1000 + hwnd as u32,
             creation: format!("c{hwnd:016x}"),
         }
+    }
+
+    fn seed_two_tiled(
+        engine: &mut tiler_core::engine::Engine,
+        owner: &OwnerId,
+        generation: &GenerationId,
+        domain: &(OutputDomain, DomainKey),
+        bounds: Rect,
+    ) {
+        let correlation = CorrelationId::parse("seed").expect("correlation");
+        let event = crate::tiling::build_reconcile_event_for(
+            owner,
+            generation,
+            &correlation,
+            0,
+            2,
+            &domain.0,
+            &domain.1,
+            8,
+            &[
+                (
+                    WindowId("w1".to_owned()),
+                    bounds,
+                    tiler_core::size_hints::WindowSizeHints::none(),
+                ),
+                (
+                    WindowId("w2".to_owned()),
+                    bounds,
+                    tiler_core::size_hints::WindowSizeHints::none(),
+                ),
+            ],
+            Some(&WindowId("w1".to_owned())),
+        );
+        let reply = engine.handle(&event);
+        assert!(
+            matches!(
+                reply,
+                tiler_core::boundary::CoreReply::Projection(_)
+                    | tiler_core::boundary::CoreReply::Tiled(_)
+            ),
+            "seed must converge, got {reply:?}"
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn float_event(
+        owner: &OwnerId,
+        generation: &GenerationId,
+        correlation: &str,
+        revision: u64,
+        domain: &(OutputDomain, DomainKey),
+        rows: &[(WindowId, Rect, bool)],
+        focused: &str,
+        window: &str,
+        float_rect: Option<Rect>,
+    ) -> tiler_core::boundary::CoreEvent {
+        use tiler_core::boundary::CoreCommand;
+        let correlation = CorrelationId::parse(correlation).expect("correlation");
+        let fp = crate::tiling::fingerprint(
+            &rows
+                .iter()
+                .map(|(token, rect, _)| (token.0.clone(), *rect))
+                .collect::<Vec<_>>(),
+        );
+        let carried: Vec<(
+            WindowId,
+            Rect,
+            tiler_core::size_hints::WindowSizeHints,
+            bool,
+        )> = rows
+            .iter()
+            .map(|(token, rect, floating)| {
+                (
+                    token.clone(),
+                    *rect,
+                    tiler_core::size_hints::WindowSizeHints::none(),
+                    *floating,
+                )
+            })
+            .collect();
+        let mut event = crate::tiling::build_reconcile_event_for_floating(
+            owner,
+            generation,
+            &correlation,
+            revision,
+            fp,
+            &domain.0,
+            &domain.1,
+            8,
+            &carried,
+            Some(&WindowId(focused.to_owned())),
+        );
+        event.command = CoreCommand::ToggleFloat {
+            window: window.to_owned(),
+            float_rect,
+        };
+        event
+    }
+
+    fn revision_of(engine: &tiler_core::engine::Engine, domain: &(OutputDomain, DomainKey)) -> u64 {
+        engine
+            .session(&domain.1)
+            .map(|s| s.accepted_revision())
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn toggle_float_first_float_centers_sixty_percent() {
+        // Tiled-to-float with no rect selects the centered 60% work-area
+        // fallback (KDE parity): the reply carries the placement for native
+        // actuation while sibling reflow excludes the floated window.
+        use tiler_core::boundary::CoreReply;
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = rect(0, 0);
+        let domain = workspace_domain("mon-a", "ws-1", bounds, 8);
+        seed_two_tiled(&mut engine, &owner, &generation, &domain, bounds);
+        let event = float_event(
+            &owner,
+            &generation,
+            "float-1",
+            revision_of(&engine, &domain),
+            &domain,
+            &[
+                (WindowId("w1".to_owned()), bounds, false),
+                (WindowId("w2".to_owned()), bounds, false),
+            ],
+            "w1",
+            "w1",
+            None,
+        );
+        let reply = engine.handle(&event);
+        let CoreReply::Tiled(plan) = reply else {
+            panic!("float commits, got {reply:?}");
+        };
+        // Centered 60% of the 800x600 domain: 480x360 at (160, 120).
+        let centered = Rect {
+            x: 160,
+            y: 120,
+            w: 480,
+            h: 360,
+        };
+        assert_eq!(plan.float_rect, Some(centered));
+        assert!(
+            !plan.geometry.iter().any(|g| g.window.0 == "w1"),
+            "floated window leaves the tree"
+        );
+        assert!(
+            plan.geometry.iter().any(|g| g.window.0 == "w2"),
+            "sibling reflows"
+        );
+    }
+
+    #[test]
+    fn toggle_float_retains_moved_frame() {
+        // Unfloat carries the live frame rect so a user moved/resized float is
+        // retained: floating again with no rect reuses the moved frame, never
+        // the centered fallback.
+        use tiler_core::boundary::CoreReply;
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = rect(0, 0);
+        let domain = workspace_domain("mon-a", "ws-1", bounds, 8);
+        seed_two_tiled(&mut engine, &owner, &generation, &domain, bounds);
+        let float = |engine: &tiler_core::engine::Engine,
+                     rows: &[(WindowId, Rect, bool)],
+                     correlation: &str,
+                     window: &str,
+                     float_rect: Option<Rect>| {
+            float_event(
+                &owner,
+                &generation,
+                correlation,
+                revision_of(engine, &domain),
+                &domain,
+                rows,
+                window,
+                window,
+                float_rect,
+            )
+        };
+        let moved = Rect {
+            x: 210,
+            y: 150,
+            w: 480,
+            h: 360,
+        };
+        let reply = engine.handle(&float(
+            &engine,
+            &[
+                (WindowId("w1".to_owned()), bounds, false),
+                (WindowId("w2".to_owned()), bounds, false),
+            ],
+            "float-1",
+            "w1",
+            None,
+        ));
+        assert!(
+            matches!(reply, CoreReply::Tiled(_)),
+            "float commits, got {reply:?}"
+        );
+        let reply = engine.handle(&float(
+            &engine,
+            &[
+                (WindowId("w1".to_owned()), moved, true),
+                (WindowId("w2".to_owned()), bounds, false),
+            ],
+            "float-2",
+            "w1",
+            Some(moved),
+        ));
+        let CoreReply::Tiled(plan) = reply else {
+            panic!("unfloat commits, got {reply:?}");
+        };
+        assert_eq!(plan.float_rect, None, "unfloat stages no float rect");
+        assert!(
+            plan.geometry.iter().any(|g| g.window.0 == "w2"),
+            "sibling survives readmission"
+        );
+        let reply = engine.handle(&float(
+            &engine,
+            &[
+                (
+                    WindowId("w1".to_owned()),
+                    plan.geometry
+                        .iter()
+                        .find(|g| g.window.0 == "w1")
+                        .expect("admission places the mover")
+                        .rect,
+                    false,
+                ),
+                (WindowId("w2".to_owned()), bounds, false),
+            ],
+            "float-3",
+            "w1",
+            None,
+        ));
+        let CoreReply::Tiled(plan) = reply else {
+            panic!("refloat commits, got {reply:?}");
+        };
+        assert_eq!(plan.float_rect, Some(moved));
+    }
+
+    #[test]
+    fn hidden_snapshot_rect_prefers_live_float_then_tiled() {
+        // Intentional floats ride the live float snapshot; every other member
+        // (including born holds, which never seed a float snapshot) rides the
+        // tiled allocation. Each lane falls back to the other snapshot so a
+        // hidden member is never dropped while either exists.
+        use super::hidden_snapshot_rect;
+        let float_rect = Some(Rect {
+            x: 1,
+            y: 2,
+            w: 3,
+            h: 4,
+        });
+        let member_rect = Some(Rect {
+            x: 5,
+            y: 6,
+            w: 7,
+            h: 8,
+        });
+        assert_eq!(
+            hidden_snapshot_rect(true, float_rect, member_rect),
+            float_rect
+        );
+        assert_eq!(hidden_snapshot_rect(true, None, member_rect), member_rect);
+        assert_eq!(
+            hidden_snapshot_rect(false, float_rect, member_rect),
+            member_rect
+        );
+        assert_eq!(hidden_snapshot_rect(false, float_rect, None), float_rect);
+        assert_eq!(hidden_snapshot_rect(true, None, None), None);
+        assert_eq!(hidden_snapshot_rect(false, None, None), None);
+    }
+
+    #[test]
+    fn unfloat_matches_fresh_admission_topology() {
+        // H[w1 V[w2 w3]] floats w3 to H[w1 w2]; unfloating w3 must equal a
+        // fresh admission of a new window into H[w1 w2]: same tree topology
+        // and same admitted geometry, never the old slot or domain bounds.
+        use tiler_core::boundary::CoreReply;
+        use tiler_core::directional::{Axis, Node};
+        fn wide() -> Rect {
+            Rect {
+                x: 0,
+                y: 0,
+                w: 120,
+                h: 80,
+            }
+        }
+        fn tall() -> Rect {
+            Rect {
+                x: 0,
+                y: 0,
+                w: 80,
+                h: 120,
+            }
+        }
+        fn same_topology(left: &Node, right: &Node) -> bool {
+            match (left, right) {
+                (Node::Leaf { id: l }, Node::Leaf { id: r }) => l == r,
+                (
+                    Node::Group {
+                        axis: l_axis,
+                        children: l_children,
+                        shares: l_shares,
+                        ..
+                    },
+                    Node::Group {
+                        axis: r_axis,
+                        children: r_children,
+                        shares: r_shares,
+                        ..
+                    },
+                ) => {
+                    l_axis == r_axis
+                        && l_shares == r_shares
+                        && l_children.len() == r_children.len()
+                        && l_children
+                            .iter()
+                            .zip(r_children.iter())
+                            .all(|(l, r)| same_topology(l, r))
+                }
+                _ => false,
+            }
+        }
+        fn tree_of(
+            engine: &tiler_core::engine::Engine,
+            domain: &(OutputDomain, DomainKey),
+        ) -> Node {
+            engine
+                .session(&domain.1)
+                .expect("session")
+                .snapshot()
+                .domains
+                .into_iter()
+                .next()
+                .expect("domain")
+                .tree
+                .expect("tree")
+        }
+        fn assert_nested_h_v(tree: &Node) {
+            match tree {
+                Node::Group { axis, children, .. } => {
+                    assert_eq!(*axis, Axis::Horizontal);
+                    assert_eq!(children.len(), 2);
+                    assert_eq!(children[0].id().0, "leaf-w1");
+                    match &children[1] {
+                        Node::Group { axis, children, .. } => {
+                            assert_eq!(*axis, Axis::Vertical);
+                            assert_eq!(children.len(), 2);
+                            assert_eq!(children[0].id().0, "leaf-w2");
+                            assert_eq!(children[1].id().0, "leaf-w3");
+                        }
+                        other => panic!("expected inner V[w2 w3], got {other:?}"),
+                    }
+                }
+                other => panic!("expected root H[w1 V[w2 w3]], got {other:?}"),
+            }
+        }
+        fn reconcile(
+            engine: &mut tiler_core::engine::Engine,
+            owner: &OwnerId,
+            generation: &GenerationId,
+            domain: &(OutputDomain, DomainKey),
+            correlation: &str,
+            rows: &[(WindowId, Rect)],
+            focused: &str,
+        ) -> CoreReply {
+            let correlation = CorrelationId::parse(correlation).expect("correlation");
+            let carried: Vec<(
+                WindowId,
+                Rect,
+                tiler_core::size_hints::WindowSizeHints,
+                bool,
+            )> = rows
+                .iter()
+                .map(|(token, rect)| {
+                    (
+                        token.clone(),
+                        *rect,
+                        tiler_core::size_hints::WindowSizeHints::none(),
+                        false,
+                    )
+                })
+                .collect();
+            let fp = crate::tiling::fingerprint(
+                &rows
+                    .iter()
+                    .map(|(token, rect)| (token.0.clone(), *rect))
+                    .collect::<Vec<_>>(),
+            );
+            let event = crate::tiling::build_reconcile_event_for_floating(
+                owner,
+                generation,
+                &correlation,
+                revision_of(engine, domain),
+                fp,
+                &domain.0,
+                &domain.1,
+                0,
+                &carried,
+                Some(&WindowId(focused.to_owned())),
+            );
+            engine.handle(&event)
+        }
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 120,
+            h: 80,
+        };
+        let domain = workspace_domain("mon-a", "ws-1", bounds, 0);
+        let w1 = WindowId("w1".to_owned());
+        let w2 = WindowId("w2".to_owned());
+        let w3 = WindowId("w3".to_owned());
+        // Engine A: seed H[w1 V[w2 w3]], float w3, unfloat with the live frame.
+        let mut engine_a = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine_a.sync_binding(&owner, &generation);
+        for (correlation, rows, focused) in [
+            ("seed-1", vec![(w1.clone(), wide())], "w1"),
+            (
+                "seed-2",
+                vec![(w1.clone(), wide()), (w2.clone(), wide())],
+                "w2",
+            ),
+            (
+                "seed-3",
+                vec![
+                    (w1.clone(), wide()),
+                    (w2.clone(), wide()),
+                    (w3.clone(), tall()),
+                ],
+                "w3",
+            ),
+        ] {
+            let reply = reconcile(
+                &mut engine_a,
+                &owner,
+                &generation,
+                &domain,
+                correlation,
+                &rows,
+                focused,
+            );
+            assert!(
+                matches!(
+                    reply,
+                    CoreReply::Projection(_) | CoreReply::Tiled(_) | CoreReply::SendWorkspace(_)
+                ),
+                "seed {correlation} converges, got {reply:?}"
+            );
+        }
+        assert_nested_h_v(&tree_of(&engine_a, &domain));
+        let reply = engine_a.handle(&float_event(
+            &owner,
+            &generation,
+            "float-a",
+            revision_of(&engine_a, &domain),
+            &domain,
+            &[
+                (w1.clone(), wide(), false),
+                (w2.clone(), wide(), false),
+                (w3.clone(), tall(), false),
+            ],
+            "w3",
+            "w3",
+            None,
+        ));
+        let CoreReply::Tiled(float_plan) = reply else {
+            panic!("float commits, got {reply:?}");
+        };
+        let live = float_plan.float_rect.expect("float places");
+        let reply = engine_a.handle(&float_event(
+            &owner,
+            &generation,
+            "unfloat-a",
+            revision_of(&engine_a, &domain),
+            &domain,
+            &[
+                (w1.clone(), wide(), false),
+                (w2.clone(), wide(), false),
+                (w3.clone(), live, true),
+            ],
+            "w3",
+            "w3",
+            Some(live),
+        ));
+        let CoreReply::Tiled(unfloat_plan) = reply else {
+            panic!("unfloat commits, got {reply:?}");
+        };
+        let admitted_a = unfloat_plan
+            .geometry
+            .iter()
+            .find(|g| g.window.0 == "w3")
+            .expect("admission places w3")
+            .rect;
+        let tree_a = tree_of(&engine_a, &domain);
+        assert_nested_h_v(&tree_a);
+        // Engine B: seed H[w1 w2], then freshly admit w3 with the same frame.
+        let mut engine_b = tiler_core::engine::Engine::new();
+        engine_b.sync_binding(&owner, &generation);
+        for (correlation, rows, focused) in [
+            ("seed-1", vec![(w1.clone(), wide())], "w1"),
+            (
+                "seed-2",
+                vec![(w1.clone(), wide()), (w2.clone(), wide())],
+                "w2",
+            ),
+        ] {
+            let reply = reconcile(
+                &mut engine_b,
+                &owner,
+                &generation,
+                &domain,
+                correlation,
+                &rows,
+                focused,
+            );
+            assert!(
+                matches!(
+                    reply,
+                    CoreReply::Projection(_) | CoreReply::Tiled(_) | CoreReply::SendWorkspace(_)
+                ),
+                "seed {correlation} converges, got {reply:?}"
+            );
+        }
+        let reply = reconcile(
+            &mut engine_b,
+            &owner,
+            &generation,
+            &domain,
+            "admit-b",
+            &[
+                (w1.clone(), wide()),
+                (w2.clone(), wide()),
+                (w3.clone(), live),
+            ],
+            "w3",
+        );
+        assert!(
+            matches!(
+                reply,
+                CoreReply::Projection(_) | CoreReply::Tiled(_) | CoreReply::SendWorkspace(_)
+            ),
+            "fresh admission converges, got {reply:?}"
+        );
+        let tree_b = tree_of(&engine_b, &domain);
+        assert!(
+            same_topology(&tree_a, &tree_b),
+            "unfloat reuses the fresh admission axis: {tree_a:?} vs {tree_b:?}"
+        );
+        // Admitted geometry matches the same fresh admission: compare via the
+        // converged session projection rather than the old slot.
+        let geometry_b: Vec<(String, Rect)> = match reply {
+            CoreReply::Projection(plan) => plan
+                .geometry
+                .iter()
+                .map(|g| (g.window.0.clone(), g.rect))
+                .collect(),
+            CoreReply::Tiled(plan) => plan
+                .geometry
+                .iter()
+                .map(|g| (g.window.0.clone(), g.rect))
+                .collect(),
+            CoreReply::SendWorkspace(plan) => plan
+                .geometry
+                .iter()
+                .map(|g| (g.window.0.clone(), g.rect))
+                .collect(),
+            other => panic!("fresh admission converges, got {other:?}"),
+        };
+        let admitted_b = geometry_b
+            .iter()
+            .find(|(token, _)| token == "w3")
+            .expect("fresh admission places w3")
+            .1;
+        assert_eq!(admitted_a, admitted_b, "unfloat places like a new window");
     }
 
     #[test]
@@ -691,9 +1300,8 @@ mod tests {
     #[test]
     fn domain_rows_and_send_carry_born_floating_only() {
         // Slotless born holds ride the Engine as floating exceptions while
-        // every other member stays tiled; hidden born snapshots stay
-        // floating until a verified exit. Only the born hold ever sets the
-        // flag: it is an Engine observation, never a native write.
+        // the tiled member stays tiled; the flag is an Engine observation,
+        // never a native write, and send carries it into both domains.
         use super::{MemberView, build_send_event, domain_rows};
         let born = key(11);
         let tiled = key(12);

@@ -6,7 +6,8 @@ use tiler_windows::tiling::{
     ObservedTarget, ObservedTargetRef, ReadbackOutcome, RefusedTracker, ScopeHostChild, SkipReason,
     StatelessVerdict, TokenMap, WindowFacts, WorkspaceRequest, allow_match, allowlist_digest,
     build_reconcile_event, build_reconcile_event_for, canonical_retained_rect, classify,
-    classify_focus, classify_gesture, fingerprint, fullscreen_toggle_decision, hosted_child_allows,
+    classify_focus, classify_gesture, fingerprint, float_toggle_refusal,
+    float_topmost_restore_needed, fullscreen_toggle_decision, hosted_child_allows,
     inspect_stateless_verdict, is_borderless_fullscreen, min_hints_from_outer, normalize_min_track,
     overlay_refusal, parse_allowlist, parse_capture_args, parse_children_args,
     parse_hide_proof_args, parse_inspect_args, parse_scope_host_child, parse_shortcut_proof_args,
@@ -189,6 +190,39 @@ fn maximize_overlay_refusal_orders_fullscreen_first() {
     assert_eq!(overlay_refusal(false, true), Some("maximize"));
     assert_eq!(overlay_refusal(true, false), Some("fullscreen"));
     assert_eq!(overlay_refusal(true, true), Some("fullscreen"));
+}
+
+#[test]
+fn float_toggle_refusal_covers_both_directions() {
+    // KDE float-refused-fullscreen/float-refused-maximize parity: an overlay
+    // target never floats, and a float the user maximized or fullscreened
+    // natively never unfloats until it reads normal again. Fullscreen wins
+    // when both hold; a normal tiled window or a normal float proceeds.
+    assert_eq!(float_toggle_refusal(false, false), None);
+    assert_eq!(
+        float_toggle_refusal(false, true),
+        Some("float-refused-maximize")
+    );
+    assert_eq!(
+        float_toggle_refusal(true, false),
+        Some("float-refused-fullscreen")
+    );
+    assert_eq!(
+        float_toggle_refusal(true, true),
+        Some("float-refused-fullscreen")
+    );
+}
+
+#[test]
+fn float_topmost_restores_only_project_raised_bands() {
+    // Graceful stop and unfloat restore only a band the project raised
+    // (!prior && current) with no frame change: a pre-existing topmost stays
+    // untouched even if the user later cleared it, and an untouched band
+    // never writes.
+    assert!(!float_topmost_restore_needed(false, false));
+    assert!(!float_topmost_restore_needed(true, true));
+    assert!(float_topmost_restore_needed(false, true));
+    assert!(!float_topmost_restore_needed(true, false));
 }
 
 #[test]

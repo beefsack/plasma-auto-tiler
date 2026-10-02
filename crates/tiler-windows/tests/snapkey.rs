@@ -50,7 +50,10 @@ fn push_snap(
 ) -> Option<SnapIntent> {
     match SnapClassify::push(m, vk, is_up, fg, inj)? {
         Classified::Snap(intent) => Some(intent),
-        Classified::Workspace(_) | Classified::Maximize(_) | Classified::Fullscreen(_) => {
+        Classified::Workspace(_)
+        | Classified::Maximize(_)
+        | Classified::Fullscreen(_)
+        | Classified::Float(_) => {
             panic!("expected directional chord")
         }
     }
@@ -65,7 +68,10 @@ fn push_workspace(
 ) -> Option<tiler_windows::snapkey::WorkspaceIntent> {
     match SnapClassify::push(m, vk, is_up, fg, inj)? {
         Classified::Workspace(intent) => Some(intent),
-        Classified::Snap(_) | Classified::Maximize(_) | Classified::Fullscreen(_) => {
+        Classified::Snap(_)
+        | Classified::Maximize(_)
+        | Classified::Fullscreen(_)
+        | Classified::Float(_) => {
             panic!("expected workspace digit")
         }
     }
@@ -80,7 +86,10 @@ fn push_maximize(
     use tiler_windows::snapkey::VK_M;
     match SnapClassify::push(m, VK_M, is_up, fg, inj)? {
         Classified::Maximize(intent) => Some(intent),
-        Classified::Snap(_) | Classified::Workspace(_) | Classified::Fullscreen(_) => {
+        Classified::Snap(_)
+        | Classified::Workspace(_)
+        | Classified::Fullscreen(_)
+        | Classified::Float(_) => {
             panic!("expected maximize chord")
         }
     }
@@ -94,8 +103,29 @@ fn push_fullscreen(
 ) -> Option<tiler_windows::snapkey::FullscreenIntent> {
     match SnapClassify::push(m, VK_F11, is_up, fg, inj)? {
         Classified::Fullscreen(intent) => Some(intent),
-        Classified::Snap(_) | Classified::Workspace(_) | Classified::Maximize(_) => {
+        Classified::Snap(_)
+        | Classified::Workspace(_)
+        | Classified::Maximize(_)
+        | Classified::Float(_) => {
             panic!("expected fullscreen chord")
+        }
+    }
+}
+
+fn push_float(
+    m: &mut SnapClassify,
+    is_up: bool,
+    fg: bool,
+    inj: bool,
+) -> Option<tiler_windows::snapkey::FloatIntent> {
+    use tiler_windows::snapkey::VK_G;
+    match SnapClassify::push(m, VK_G, is_up, fg, inj)? {
+        Classified::Float(intent) => Some(intent),
+        Classified::Snap(_)
+        | Classified::Workspace(_)
+        | Classified::Maximize(_)
+        | Classified::Fullscreen(_) => {
+            panic!("expected float chord")
         }
     }
 }
@@ -484,6 +514,7 @@ fn saturated_queue_passes_without_consuming() {
         QueuedSnapEvent::Workspace(_)
         | QueuedSnapEvent::Maximize(_)
         | QueuedSnapEvent::Fullscreen(_)
+        | QueuedSnapEvent::Float(_)
         | QueuedSnapEvent::Mask(_) => panic!("expected intent"),
     }
     while q.len() < INTENT_QUEUE_CAP {
@@ -1460,6 +1491,154 @@ fn fullscreen_arms_start_menu_mask() {
     }
     match q.pop_front().expect("mask") {
         QueuedSnapEvent::Mask(mask) => assert_eq!(mask.trigger, MaskTrigger::Fullscreen),
+        _ => panic!("expected mask"),
+    }
+}
+
+#[test]
+fn float_toggle_consumes_down_repeat_up_with_origin_pairing() {
+    use tiler_windows::snapkey::VK_G;
+    // Win+G (KDE Meta+G parity): down consumes with announce, held repeat is
+    // swallowed (no re-toggle, like the discrete KDE shortcut), up closes the
+    // pair without announce. Win released before the key-up still pairs by
+    // origin.
+    assert!(is_chord_vk(VK_G));
+    assert_eq!(VK_G, 0x47);
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    assert!(m.win_held());
+    assert!(!m.key_is_down(VK_G));
+    let down = push_float(&mut m, false, true, false).expect("float down");
+    assert_eq!(down.edge, SnapEdge::Down);
+    assert!(down.consumed && down.announce);
+    assert!(m.key_is_down(VK_G));
+    let repeat = push_float(&mut m, false, true, false).expect("float repeat");
+    assert_eq!(repeat.edge, SnapEdge::Repeat);
+    assert!(repeat.consumed && !repeat.announce);
+    // Win released before the key-up still pairs by origin.
+    push_snap(&mut m, VK_LWIN, true, true, false);
+    let up = push_float(&mut m, true, true, false).expect("paired up");
+    assert_eq!(up.edge, SnapEdge::Up);
+    assert!(up.consumed && !up.announce);
+    assert!(!m.key_is_down(VK_G));
+    assert_eq!(push_float(&mut m, true, true, false), None);
+    assert_eq!(
+        (
+            m.float_counts.down,
+            m.float_counts.repeat,
+            m.float_counts.up
+        ),
+        (1, 1, 1)
+    );
+    assert_eq!(m.float_counts.consumed, 3);
+    // Directional catalog untouched by the G chord.
+    assert!(m.counts.iter().all(|c| c.down == 0 && c.up == 0));
+    assert_eq!((m.max_counts.down, m.max_counts.up), (0, 0));
+}
+
+#[test]
+fn float_modifier_exactness_passes_untracked() {
+    // Win+Shift+G is unimplemented (never a sticky arm): it passes through
+    // untracked, and its paired key-up passes too. Ctrl/Alt, missing Win,
+    // bare G, and injected G never classify and never arm the mask.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    assert_eq!(push_float(&mut m, false, true, false), None);
+    assert_eq!(push_float(&mut m, true, true, false), None);
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    assert_eq!((m.float_counts.down, m.float_counts.up), (0, 0));
+    for mod_vk in [VK_CONTROL, VK_MENU, VK_LMENU] {
+        let mut m = SnapClassify::new(takeover());
+        win_down(&mut m, VK_LWIN);
+        push_snap(&mut m, mod_vk, false, true, false);
+        assert_eq!(push_float(&mut m, false, true, false), None);
+        assert_eq!(push_float(&mut m, true, true, false), None);
+        push_snap(&mut m, mod_vk, true, true, false);
+    }
+    let mut m = SnapClassify::new(takeover());
+    assert_eq!(push_float(&mut m, false, true, false), None);
+    assert_eq!(push_float(&mut m, false, true, true), None);
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    assert_eq!(push_float(&mut m, false, true, true), None);
+    assert!(!win_up_mask_reserve(
+        &mut m,
+        &mut SnapQueue::new(),
+        VK_LWIN,
+        true,
+        std::time::Instant::now()
+    ));
+}
+
+#[test]
+fn float_background_origin_never_consumes() {
+    use tiler_windows::snapkey::VK_G;
+    // The toggle needs a managed origin like send: background-origin holds
+    // never consume mid-hold, takeover off passes everything through, and a
+    // closed session gate passes everything through.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    let down = push_float(&mut m, false, false, false).expect("logged");
+    assert!(!down.consumed && !down.announce);
+    let repeat = push_float(&mut m, false, true, false).expect("logged");
+    assert!(!repeat.consumed);
+    let up = push_float(&mut m, true, true, false).expect("logged");
+    assert!(!up.consumed);
+    let mut m = SnapClassify::new(KeyboardConfig::disabled());
+    win_down(&mut m, VK_LWIN);
+    let down = push_float(&mut m, false, true, false).expect("logged");
+    assert!(!down.consumed && !down.announce);
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    let tick = std::time::Instant::now();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_G, false, None, false, tick, false),
+        Some(false)
+    );
+    match q.pop_front().expect("float intent") {
+        QueuedSnapEvent::Float(intent) => assert!(!intent.consumed),
+        _ => panic!("expected float intent"),
+    }
+}
+
+#[test]
+fn float_arms_start_menu_mask() {
+    use tiler_windows::snapkey::{MaskTrigger, QueuedFloatIntent, SnapQueue, VK_G};
+    // A consumed Win+G reserves the E8 mask at Win-up with trigger evidence.
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    let tick = std::time::Instant::now();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_G,
+            false,
+            Some(origin_of(7, "w7")),
+            false,
+            tick,
+            true
+        ),
+        Some(true)
+    );
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    match q.pop_front().expect("float intent") {
+        QueuedSnapEvent::Float(QueuedFloatIntent { origin, .. }) => {
+            assert_eq!(origin, Some(origin_of(7, "w7")));
+        }
+        _ => panic!("expected float intent"),
+    }
+    match q.pop_front().expect("mask") {
+        QueuedSnapEvent::Mask(mask) => assert_eq!(mask.trigger, MaskTrigger::Float),
         _ => panic!("expected mask"),
     }
 }
