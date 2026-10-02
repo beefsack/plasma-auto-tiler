@@ -117,6 +117,8 @@ public static class WorkspaceProofNative {
   [DllImport("user32.dll")]
   public static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
   [DllImport("user32.dll")]
+  public static extern uint GetDpiForWindow(IntPtr hWnd);
+  [DllImport("user32.dll")]
   public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
   [DllImport("user32.dll")]
   public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
@@ -480,6 +482,20 @@ function Set-UnmanagedForeground($Pool, [string]$Tag) {
   Fail-Ws "retired: GLOBAL select uses the fourth owned helper, never ordinary apps"
 }
 
+function Get-PassiveHelperRunArgs([string]$Receipt) {
+  # Actual live seam: passive creation enables PMv2 before class
+  # registration/creation so helper geometry is physical pixels.
+  return "run --receipt `"$Receipt`" --seconds 600 --passive"
+}
+
+function Get-HelperShowArgs($Snap) {
+  # Actual live seam: first-time admission binds the exact receipt HWND to
+  # its lifetime tag; the native `show` refuses any mismatch or foreground
+  # entry and shows without activation or z-order change.
+  if ([string]$Snap.tag -eq "") { Fail-Ws "show refused: helper missing lifetime tag" }
+  return @("show", "$($Snap.hwnd)", "--tag", "$($Snap.tag)")
+}
+
 function Set-WsForeground([string]$HelperBin, $Frozen, [string]$Tag) {
   # Fixture-only activation of one exact frozen owned helper: full identity
   # verify, E8 prime from the harness, temporary AttachThreadInput coupling
@@ -554,6 +570,26 @@ function Invoke-WorkspaceMock {
   Rec-Ws "digit-alias-same-vk" @{ vk0 = $VK_0; vk9 = ($VK_0 + 9); shift_flips_op = $true }
   try { Assert-NoWinLJourney @(@{ vk = $VK_L; shift = $false }); Fail-Ws "negative journey-guard did not throw" }
   catch { if ("$($_.Exception.Message)" -notmatch "Win\+L") { throw } }
+  # Offline seam checks for the passive admission fixture (no live helpers):
+  # the actual arg-builder seams used by Invoke-WorkspaceLive, plus the
+  # hidden-receipt -> exact-bound show -> verified-visible contract via
+  # Assert-WsIdentity. No source-text asserts.
+  $passiveArgs = Get-PassiveHelperRunArgs "r.json"
+  if ($passiveArgs -notmatch "--passive") { Fail-Ws "mock passive args missing --passive" }
+  if ($passiveArgs -notmatch "--receipt") { Fail-Ws "mock passive args missing --receipt" }
+  Rec-Ws "mock-passive-args" @{ args = $passiveArgs }
+  $mockHidden = [pscustomobject]@{ hwnd = [uint64]123; tag = "abcdef0123456789"; visible = $false; process = [pscustomobject]@{ pid = 1; process_creation = "c"; exe_path = "e"; user_sid = "s"; session_id = 1 } }
+  $showArgs = Get-HelperShowArgs $mockHidden
+  if (($showArgs -join " ") -cne "show 123 --tag abcdef0123456789") { Fail-Ws "mock show args not exact-bound" }
+  Rec-Ws "mock-show-args" @{ args = @($showArgs) }
+  try { $null = Get-HelperShowArgs ([pscustomobject]@{ hwnd = [uint64]123; tag = "" }); Fail-Ws "mock empty-tag show did not throw" }
+  catch { if ("$($_.Exception.Message)" -notmatch "missing lifetime tag") { throw } }
+  $mockAdmitted = [pscustomobject]@{ hwnd = [uint64]123; tag = "abcdef0123456789"; visible = $true; process = [pscustomobject]@{ pid = 1; process_creation = "c"; exe_path = "e"; user_sid = "s"; session_id = 1 } }
+  Assert-WsIdentity $mockAdmitted $mockHidden "mock-postshow"
+  if ($mockHidden.visible -ne $false -or $mockAdmitted.visible -ne $true) { Fail-Ws "mock hidden->visible transition not proven" }
+  Rec-Ws "mock-hidden-show-visible" @{ hidden = $mockHidden.visible; admitted = $mockAdmitted.visible }
+  try { Assert-WsIdentity ([pscustomobject]@{ hwnd = [uint64]123; tag = "other"; visible = $true; process = $mockHidden.process }) $mockHidden "mock-tag-negative"; Fail-Ws "mock tag mismatch did not throw" }
+  catch { if ("$($_.Exception.Message)" -notmatch "tag changed") { throw } }
   $report = @{ status = "pass"; stage = "WorkspaceProofMock"; steps = $WsSteps }
   $report | ConvertTo-Json -Depth 8 | Write-Output
 }
@@ -604,16 +640,26 @@ function Invoke-WorkspaceLive {
   Rec-Ws "preflight" @{ ledger = "clean"; arranging = $preSpi; pen = $prePen; monitors = 1 }
   $created = [System.Collections.ArrayList]@()
   try {
-    # Four visible owned helpers: exact Explorer-broker launch, receipt,
-    # peer + parent + visibility checks. The first three form the frozen
-    # managed allowlist; the fourth stays deliberately OUT of the allowlist
-    # as the owned unmanaged foreground for the GLOBAL empty-select path
-    # (identity tag-validated, never an ordinary app, never Firefox/Terminal).
+    # Four passive owned helpers: exact Explorer-broker launch with --passive
+    # (PMv2 enabled before class registration/creation, so helper geometry
+    # is physical pixels exactly as the owner observes; legacy unaware
+    # creation virtualizes rects on a 125% screen and breaks the exact
+    # zero-mismatch oracle), hidden-at-create receipt, then first-time
+    # admission via the existing identity-bound helper `show` (held full
+    # identity/tag/foreground bound, SetWindowPos SWP_NOMOVE|NOSIZE|
+    # SHOWWINDOW|NOACTIVATE|NOZORDER, visibility plus no-steal readback;
+    # never a ShowWindow bypass), then fresh inspect for exact identity and
+    # visibility. Each helper is registered in $created BEFORE its show so
+    # any admission failure is still closed by exact tag. All four share
+    # this launch/admission path; the first three form the frozen managed
+    # allowlist; the fourth stays deliberately OUT of the allowlist as the
+    # owned unmanaged foreground for the GLOBAL empty-select path (identity
+    # tag-validated, never an ordinary app, never Firefox/Terminal).
     $snaps = @()
     foreach ($n in 1..4) {
       $receipt = Join-Path $runDir "helper$n.json"
       if (Test-Path $receipt) { Fail-Ws "receipt preexists $receipt" }
-      Start-ExplorerGui $helperCopy "run --receipt `"$receipt`" --seconds 600" $runDir
+      Start-ExplorerGui $helperCopy (Get-PassiveHelperRunArgs $receipt) $runDir
       $deadline = (Get-Date).AddSeconds(10)
       while (-not (Test-Path $receipt)) {
         if ((Get-Date) -gt $deadline) { Fail-Ws "helper receipt timeout $n" }
@@ -623,11 +669,26 @@ function Invoke-WorkspaceLive {
       if (-not (Test-ExeEqualWs "$($snap.process.exe_path)" "$helperCopy")) { Fail-Ws "helper$n peer mismatch" }
       Assert-ParentIsExplorer ([int]$snap.process.pid)
       if ([string]$snap.tag -eq "") { Fail-Ws "helper$n missing tag" }
-      if ($snap.visible -ne $true) { Fail-Ws "helper$n not visible at create" }
+      if ($snap.visible -ne $false) { Fail-Ws "helper$n passive helper visible at create" }
       $null = $created.Add(@{ hwnd = [uint64]$snap.hwnd; tag = "$($snap.tag)"; pid = [int]$snap.process.pid; creation = "$($snap.process.process_creation)" })
+      $shown = Invoke-Native $helperCopy (Get-HelperShowArgs $snap) | ConvertFrom-Json
+      if ([uint64]$shown.foreground -eq [uint64]$snap.hwnd) { Fail-Ws "helper$n admission focused helper" }
+      $fresh = Invoke-Native $helperCopy @("inspect", "$($snap.hwnd)") | ConvertFrom-Json
+      Assert-WsIdentity $fresh $snap "helper$n-postshow"
+      if ($fresh.visible -ne $true) { Fail-Ws "helper$n not visible after show" }
+      # Read-only DPI evidence: per-helper GetDpiForWindow on the exact
+      # admitted window. No hardcoded 125%/120 gate here; the current
+      # preflight is one-monitor, so all four must agree with each other.
+      $dpi = [WorkspaceProofNative]::GetDpiForWindow([IntPtr][long]$snap.hwnd)
+      if ([uint32]$dpi -eq 0) { Fail-Ws "helper$n DPI unreadable" }
+      $snap = $fresh
+      $snap | Add-Member -NotePropertyName dpi -NotePropertyValue ([uint32]$dpi) -Force
       $snaps += $snap
     }
-    Rec-Ws "helpers-created" @($snaps | ForEach-Object { @{ hwnd = $_.hwnd; pid = $_.process.pid; tag = $_.tag; visible = $_.visible } })
+    Rec-Ws "helpers-created" @($snaps | ForEach-Object { @{ hwnd = $_.hwnd; pid = $_.process.pid; tag = $_.tag; visible = $_.visible; dpi = $_.dpi } })
+    $dpiSet = @($snaps | ForEach-Object { [uint32]$_.dpi } | Sort-Object -Unique)
+    if ($dpiSet.Count -ne 1) { Fail-Ws "helper DPI split: $($dpiSet -join ',')" }
+    Rec-Ws "helpers-dpi" @{ dpi = [uint32]$dpiSet[0]; helpers = @($snaps | ForEach-Object { @{ hwnd = $_.hwnd; dpi = $_.dpi } }); preflight_monitors = 1 }
     $allowPath = Join-Path $runDir "allowlist.json"
     $entries = @()
     foreach ($s in $snaps[0..2]) {

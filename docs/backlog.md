@@ -45,7 +45,11 @@ decisions of 2026-09-24 are under
   hiding and graceful/crash recovery. Terminal is an ordinary managed app by
   default. The physical send trace exposed a new-target outer-gap mismatch;
   fixed with both-domain regression coverage. Fresh independent review and
-  native gates pass. Physical retest and integration CI remain pending.
+  native gates pass. Workspace latency fix 06f9d8d passes scoped helper and
+  ordinary-app recovery/timing: 72-124 ms ordinary-app selects, 171-241 ms
+  physical select/send trace; user accepts select/send/follow and drag-resize
+  usability. [Latency evidence](changes/archive/windows-workspace-action-latency.md).
+  Integration CI remains pending.
   Next: active window border, then group underlay.
   [Managed workspaces](changes/archive/windows-managed-workspaces.md).
   [Shortcut slice and handover](changes/archive/windows-shortcut-slice.md).
@@ -65,8 +69,6 @@ decisions of 2026-09-24 are under
   honor application minimum width/height and adjust neighbours to avoid overlap,
   matching KDE. Paint currently holds a larger frame than its allocation.
   Design pending; separate from workspace delivery.
-- P1 | Windows action latency | Measure during dogfood and use structured action
-  lifecycle evidence to diagnose the latency the user felt. No cause established.
 - P2 | Windows workspace overview | Visible taskbar or other workspace overview;
   discuss design with the user later. No presentation mechanism selected.
 - P2 | Hidden-workspace Alt+Tab option | Investigate whether official Windows
