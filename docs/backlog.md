@@ -76,8 +76,10 @@ decisions of 2026-09-24 are under
   [evidence](changes/archive/windows-active-border.md); temporary development
   default `#ffff00` with theme off, `3fcc953`); (2) group underlay stages A/B
   done (`cb790d9`; [evidence](changes/archive/windows-group-underlay.md)), C
-  (unfocused dragged subject) parked for reassessment with item 7; next
-  (3) maximise; (4) fullscreen; (5) float;
+  (unfocused dragged subject) parked for reassessment with item 7;
+  (3) maximise done (`1be97a1`, Win+M; [evidence](changes/archive/windows-maximise.md);
+  physical button/input/feel checks remain; discrete one-attempt-per-press
+  Win+M is provisional, to discuss); next (4) fullscreen; (5) float;
   (6) sticky float;
   (7) mouse drag window move; (8) mouse drag drop-zone square (preview);
   (9) multi-output support; (10) taskbar item showing workspaces (design to be
