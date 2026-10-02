@@ -187,6 +187,10 @@ pub enum ForegroundVetoReason {
     Desktop,
     /// Visible captionless foreground whose frame covers a monitor.
     Fullscreen,
+    /// Valid visible foreground that the compositor reports cloaked
+    /// (`DWMWA_CLOAKED`): invisible to the compositor, so never a covering
+    /// fullscreen even when its frame spans a monitor.
+    Cloaked,
     /// Captionless monitor-covering foreground verified as a managed member
     /// or a born-held tracked window: it rides a retained overlay slot with
     /// no geometry writes, so it never suspends the workspace. Unverified
@@ -208,6 +212,7 @@ impl ForegroundVetoReason {
             Self::Nonvisible => "nonvisible",
             Self::Desktop => "desktop",
             Self::Fullscreen => "fullscreen",
+            Self::Cloaked => "cloaked",
             Self::ManagedOverlay => "managed-overlay",
             Self::Unreadable => "unreadable",
             Self::Invalid => "invalid",
@@ -230,6 +235,12 @@ pub struct ForegroundFacts {
     pub captioned: bool,
     /// DWM extended-frame-bounds read succeeded.
     pub dwm_readable: bool,
+    /// DWM cloak-attribute (`DWMWA_CLOAKED`) read succeeded. Failure fails
+    /// closed like an unreadable frame: an unknown cloak state never clears
+    /// a covering frame.
+    pub cloak_readable: bool,
+    /// DWM reports the foreground cloaked (invisible to the compositor).
+    pub cloaked: bool,
     /// Captionless frame covers a monitor full rect (portable predicate).
     pub covers_monitor: bool,
 }
@@ -247,7 +258,8 @@ pub struct ForegroundVeto {
 /// Order matters: validity first (fail closed), then exact desktop identity
 /// (classifier correctness, not an intent exception), then fresh visibility
 /// (invisible cannot cover), then readability (visible unknown stays blocked),
-/// then caption, then covering geometry.
+/// then cloak (cloaked is invisible to the compositor, unreadable cloak
+/// stays blocked), then caption, then covering geometry.
 #[must_use]
 pub const fn classify_foreground(facts: ForegroundFacts) -> ForegroundVeto {
     if !facts.valid {
@@ -272,6 +284,18 @@ pub const fn classify_foreground(facts: ForegroundFacts) -> ForegroundVeto {
         return ForegroundVeto {
             block: true,
             reason: ForegroundVetoReason::Unreadable,
+        };
+    }
+    if !facts.cloak_readable {
+        return ForegroundVeto {
+            block: true,
+            reason: ForegroundVetoReason::Unreadable,
+        };
+    }
+    if facts.cloaked {
+        return ForegroundVeto {
+            block: false,
+            reason: ForegroundVetoReason::Cloaked,
         };
     }
     if facts.captioned {
@@ -2056,6 +2080,8 @@ mod tests {
                      visible: bool,
                      captioned: bool,
                      dwm_readable: bool,
+                     cloak_readable: bool,
+                     cloaked: bool,
                      covers_monitor: bool| {
             classify_foreground(ForegroundFacts {
                 valid,
@@ -2063,29 +2089,42 @@ mod tests {
                 visible,
                 captioned,
                 dwm_readable,
+                cloak_readable,
+                cloaked,
                 covers_monitor,
             })
         };
         // Visible real fullscreen still vetoes.
-        let v = facts(true, false, true, false, true, true);
+        let v = facts(true, false, true, false, true, true, false, true);
         assert!(v.block && v.reason == ForegroundVetoReason::Fullscreen);
         // Visible unreadable foreground stays blocked (fail closed).
-        let v = facts(true, false, true, false, false, false);
+        let v = facts(true, false, true, false, false, true, false, false);
         assert!(v.block && v.reason == ForegroundVetoReason::Unreadable);
+        // Unreadable cloak state stays blocked (fail closed): an unknown
+        // cloak never clears a covering frame.
+        let v = facts(true, false, true, false, true, false, false, true);
+        assert!(v.block && v.reason == ForegroundVetoReason::Unreadable);
+        // Cloaked captionless monitor cover never vetoes: invisible to the
+        // compositor, so it cannot be a covering fullscreen.
+        let v = facts(true, false, true, false, true, true, true, true);
+        assert!(!v.block && v.reason == ForegroundVetoReason::Cloaked);
+        // Cloaked small frame never vetoes either.
+        let v = facts(true, false, true, false, true, true, true, false);
+        assert!(!v.block && v.reason == ForegroundVetoReason::Cloaked);
         // Invalid handle fails closed.
-        let v = facts(false, false, false, false, false, false);
+        let v = facts(false, false, false, false, false, false, false, false);
         assert!(v.block && v.reason == ForegroundVetoReason::Invalid);
         // Exact desktop shell handle never vetoes, even when covering.
-        let v = facts(true, true, true, false, true, true);
+        let v = facts(true, true, true, false, true, true, false, true);
         assert!(!v.block && v.reason == ForegroundVetoReason::Desktop);
         // Valid non-visible foreground never vetoes: invisible cannot cover.
-        let v = facts(true, false, false, false, true, true);
+        let v = facts(true, false, false, false, true, true, false, true);
         assert!(!v.block && v.reason == ForegroundVetoReason::Nonvisible);
         // Captioned foreground never vetoes.
-        let v = facts(true, false, true, true, true, false);
+        let v = facts(true, false, true, true, true, true, false, false);
         assert!(!v.block && v.reason == ForegroundVetoReason::Captioned);
         // Small visible borderless window never vetoes.
-        let v = facts(true, false, true, false, true, false);
+        let v = facts(true, false, true, false, true, true, false, false);
         assert!(!v.block && v.reason == ForegroundVetoReason::None);
     }
 

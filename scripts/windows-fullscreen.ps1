@@ -39,7 +39,7 @@ function Load-FsAst([string]$Path, [string[]]$Wanted) {
   foreach ($need in $Wanted) { if (-not $loaded.ContainsKey($need)) { throw "helper unavailable: $need" } }
 }
 $FsBorderWanted = @("Fail-Ab", "Install-BorderNative", "Install-FollowupNative", "Read-CompleteTextAb", "Get-CompleteLinesAb", "Get-MarkBeforeActionAb",
-  "Assert-HelperIdentityAb", "Set-OwnedForegroundAb", "Get-NativeRectAb", "Get-NativeFrameAb",
+  "Assert-HelperIdentityAb", "Set-OwnedForegroundAb", "Get-NativeRectAb", "Get-NativeFrameAb", "Get-FuCloaked",
   "Find-TitlePointAb", "Read-CorrectSpiAb", "New-HeldProcessAb", "Close-HeldProcessAb", "ConvertTo-AbsoluteAb",
   "Get-VirtualScreenAb", "Assert-ButtonReleasedAb", "Get-OverlayHwndsForOwnerAb")
 $FsShortWanted = @("Rec-Shortcut", "Fail-Shortcut", "Get-ShortcutJourney", "Assert-NoWinLJourney", "Assert-ChordSendCounts",
@@ -399,16 +399,51 @@ function Get-FsFgIdentity([long]$Hwnd) {
   return @{ hwnd = $Hwnd; class = "$cls"; pid = [int]$pidOut; exe = "$exe" }
 }
 
+function Get-FsFgPrecondition([long]$Hwnd) {
+  # Read-only environment-precondition diagnostics for the live foreground:
+  # identity (class/exe/pid; no titles, content, or screenshots) plus the
+  # exact covering signals the product veto reads (visible, DWM cloak,
+  # caption bits, DWM frame vs monitor). Labels an activation failure as an
+  # environment precondition; never product evidence.
+  Install-BorderNative
+  Install-FollowupNative
+  [ActiveBorderNative]::EnsurePMv2()
+  $id = Get-FsFgIdentity $Hwnd
+  $visible = "unreadable"
+  try { $visible = [bool][ActiveBorderNative]::IsWindowVisible([IntPtr]$Hwnd) } catch {}
+  $cloaked = "unreadable"
+  try { $cloaked = [int](Get-FuCloaked $Hwnd) } catch {}
+  $styleHex = "unreadable"; $captionless = "unreadable"
+  try {
+    $st = [FollowupNative]::GetWindowLongW([IntPtr]$Hwnd, $GWL_STYLE)
+    $styleBits = [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$st), 0)
+    $styleHex = ("0x{0:X8}" -f $styleBits)
+    $captionless = (($styleBits -band [uint32]$WS_CAPTION) -eq 0)
+  } catch {}
+  $frameKey = "unreadable"; $cover = "unreadable"
+  try {
+    $screenW = [ActiveBorderNative]::GetSystemMetrics(0); $screenH = [ActiveBorderNative]::GetSystemMetrics(1)
+    $frame = [ActiveBorderNative]::FrameOf($Hwnd)
+    if ($null -ne $frame) {
+      $frameKey = ($frame -join ",")
+      $cover = ([int]$frame[0] -le 0 -and [int]$frame[1] -le 0 -and [int]$frame[2] -ge $screenW -and [int]$frame[3] -ge $screenH)
+    }
+  } catch {}
+  return @{ hwnd = $Hwnd; class = "$($id.class)"; pid = [int]$id.pid; exe = "$($id.exe)";
+    visible = $visible; cloaked = $cloaked; style = "$styleHex"; captionless = $captionless;
+    frame = "$frameKey"; covers_monitor = $cover }
+}
+
 function Ensure-FsForeground([string]$HelperBin, $Snap, [string]$Tag) {
   # Fixture setup only (never a product oracle): one exact-bound approved
   # raise-first activation (Invoke-OwnedFocusEnsure: raise to top of normal
   # z-order, E8 prime + attach + one setter only if the raise did not
   # foreground, exact readback plus identity/rect/ancestor proof). Single
   # attempt only: no waits on foreign windows, no retries, no touches
-  # outside the exact-bound helper. Failure reports the read-only
-  # foreground identity (class/exe/pid) with the activation error so the
-  # blocker stays visible; the caller treats it as unavailable, never as
-  # product evidence.
+  # outside the exact-bound helper. Activation failure is an explicit
+  # environment-precondition failure carrying the exact observed foreground
+  # diagnostics (cloak/visible/cover included); the caller treats it as
+  # unavailable, never as product evidence.
   try {
     $null = Invoke-OwnedFocusEnsure $Snap $Snap $HelperBin "$Tag-att1"
     $fresh = Assert-HelperIdentityAb $HelperBin $Snap "$Tag-post1"
@@ -416,8 +451,10 @@ function Ensure-FsForeground([string]$HelperBin, $Snap, [string]$Tag) {
   } catch {
     $err = "$($_.Exception.Message)"
     $fg = [ActiveBorderNative]::GetForegroundWindow().ToInt64()
-    $id = Get-FsFgIdentity ([long]$fg)
-    Fail-Fs "$Tag foreground not acquired (fg=$fg class=$($id.class) pid=$($id.pid) exe=$($id.exe)): $err"
+    $pre = Get-FsFgPrecondition ([long]$fg)
+    $diag = "fg=$($pre.hwnd) class=$($pre.class) pid=$($pre.pid) exe=$($pre.exe) visible=$($pre.visible) cloaked=$($pre.cloaked) style=$($pre.style) captionless=$($pre.captionless) frame=$($pre.frame) covers_monitor=$($pre.covers_monitor)"
+    Rec-Fs "environment-precondition" @{ status = "unavailable"; tag = $Tag; activation = $err; foreground = $pre }
+    Fail-Fs "$Tag environment-precondition failure: foreground not acquired ($diag): $err"
     return $null
   }
 }
@@ -619,6 +656,27 @@ function Get-FsFocusNeighborFs([string]$Payload, [string]$AllowPath, [uint64]$Me
   return $null
 }
 
+function Test-FsReportGap($Step) {
+  # Report-gap predicate shared by the live tail and the mock offline
+  # check: an environment-precondition unavailable (or any unaccepted /
+  # skipped observation) keeps the report from passing. Required
+  # unexecuted observations never pass.
+  return (($Step.data.status -in @("unavailable", "unaccepted", "skipped")) -or
+    ("$($Step.data.plan_oracle)" -like "unaccepted-*") -or ($Step.name -like "*-skipped"))
+}
+
+function Test-FsPreconditionReport([string]$Tag) {
+  # Offline status check over the real gap predicate (not a mirrored
+  # classifier): clean steps are no gap, an environment-precondition
+  # unavailable is exactly one gap.
+  $mk = { param($n, $d) return @{ name = $n; data = $d } }
+  $okSteps = @(@(&$mk "adopted" @{}))
+  if (@($okSteps | Where-Object { Test-FsReportGap $_ }).Count -ne 0) { Fail-Fs "$Tag classifier clean steps flagged as gaps" }
+  $preSteps = @(@(&$mk "environment-precondition" @{ status = "unavailable"; reason = "test" }))
+  if (@($preSteps | Where-Object { Test-FsReportGap $_ }).Count -ne 1) { Fail-Fs "$Tag classifier precondition unavailable not a gap" }
+  Rec-Fs "$Tag-classifier" @{ pass_branch = $true; partial_branches = 1 }
+}
+
 function Invoke-FullscreenMock {
   Rec-Fs "scope" @{ helpers = "owned-only-first"; ordinary = "scoped-normal-smoke"; never = @("terminal"); kills = "exact-owner-only"; registry = "none"; screenshots = "none"; content = "none" }
   $help = & cargo run --locked --manifest-path (Join-Path $Repo "Cargo.toml") -p tiler-windows --bin tiler-windows -- help 2>$null
@@ -652,11 +710,13 @@ function Invoke-FullscreenMock {
   try { Assert-EncodingInvariant $VK_F11 $true 0 "mock-negative"; Fail-Fs "negative F11-extended did not throw" }
   catch { if ("$($_.Exception.Message)" -notmatch "EXTENDEDKEY") { throw } }
   Rec-Fs "encoding" @{ f11_plain = $true; arrows_extended = $true; input_size = $size }
+  Test-FsPreconditionReport "mock-status"
   $src = Get-Content -LiteralPath (Join-Path $Repo "scripts\windows-fullscreen.ps1") -Raw
   foreach ($need in @("Wait-FsOutcome", "Wait-FsHeld", "Wait-FsReleased", "Wait-FsSuspend", "Wait-FsResume", "Wait-MaxRefusedFs", "Assert-SendGeometryFs", "Assert-ExactForegroundFs", "Get-WorkspaceActionFs", "Get-PlannedSlotFs",
       "Set-PreformedCaptionlessFs", "Restore-SavedFrameFs", "Get-FsCoverState", "Get-FsExitState", "Install-FsPropNative", "FsPropNative", "GetPropW",
       "Assert-FsPreimageValid", "Assert-FsPropsAbsent", "Invoke-FsDragAttempt", "New-FsHelperSet", "Start-FsManagedOwner",
-      "Set-OwnedForegroundAb", "Ensure-FsForeground", "Get-FsFgIdentity", "Invoke-OwnedFocusEnsure", "Invoke-ExactHelperActivate", "Send-MarkedChord", "Assert-NoWriteForFs", "Stop-ExactOwner", "machine.json",
+      "Set-OwnedForegroundAb", "Ensure-FsForeground", "Get-FsFgIdentity", "Get-FsFgPrecondition", "Get-FuCloaked",
+      "environment-precondition", "Test-FsReportGap", "Test-FsPreconditionReport", "Invoke-OwnedFocusEnsure", "Invoke-ExactHelperActivate", "Send-MarkedChord", "Assert-NoWriteForFs", "Stop-ExactOwner", "machine.json",
       "move-refused-fullscreen", "maximize-refused-fullscreen", "send-refused-fullscreen",
       "BornCloseFs", "RecoveryFs", "Invoke-BornCloseFsLive", "Invoke-RecoveryFsLive", "Invoke-RecoveryCrashFsLive",
       "0x0082", "0x201E", "SHORTCUT_MARKER", "FollowupNative", "WS_CAPTION", "WS_THICKFRAME",
@@ -2023,10 +2083,7 @@ function Invoke-FsLive {
     $machine = @{ ownerCopy = $ownerCopy; helperCopy = $helperCopy; ownerFrozen = $Ctx.ownerFrozen;
       ledger_directory = "$($ident.ledger_directory)" }
     $machine | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $runDir "machine.json")
-    $gaps = @($FS_STEPS | Where-Object {
-      $_.data.status -in @("unavailable", "unaccepted", "skipped") -or
-      "$($_.data.plan_oracle)" -like "unaccepted-*" -or $_.name -like "*-skipped"
-    })
+    $gaps = @($FS_STEPS | Where-Object { Test-FsReportGap $_ })
     $reportStatus = if ($gaps.Count -eq 0) { "pass" } else { "partial" }
     $report = @{ status = $reportStatus; stage = $Stage; fence_refused = [bool]$Ctx.fenceRefused;
       unaccepted_steps = @($gaps | ForEach-Object { $_.name }); steps = $FS_STEPS; clean = "ledger=clean; actors=zero; spi=1/35" }

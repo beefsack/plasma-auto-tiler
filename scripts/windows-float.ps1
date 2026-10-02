@@ -40,8 +40,8 @@ function Load-FlAst([string]$Path, [string[]]$Wanted) {
   }
   foreach ($need in $Wanted) { if (-not $loaded.ContainsKey($need)) { throw "helper unavailable: $need" } }
 }
-$FlBorderWanted = @("Install-BorderNative", "Get-MarkBeforeActionAb",
-  "Assert-HelperIdentityAb", "Set-OwnedForegroundAb", "Invoke-OwnedSysCommandAb",
+$FlBorderWanted = @("Install-BorderNative", "Install-FollowupNative", "Get-MarkBeforeActionAb",
+  "Assert-HelperIdentityAb", "Set-OwnedForegroundAb", "Invoke-OwnedSysCommandAb", "Get-FuCloaked",
   "Get-OverlayHwndsForOwnerAb")
 $FlShortWanted = @("Install-ShortcutNative", "Get-ShortcutJourney", "Assert-NoWinLJourney", "Assert-ChordSendCounts",
   "Assert-InputStructSize", "Assert-EncodingInvariant", "Test-ExeEqualLocal", "Assert-FullIdentityMatches",
@@ -111,8 +111,10 @@ function Test-FloatStatusClassifier([string]$Tag) {
   if ((Get-FloatReportStatus $reqSteps "All") -ne "partial") { Fail-Fl "$Tag classifier required != partial" }
   $floatSteps = @(@(&$mk "normal-notepad" @{ float = "unaccepted-no-cli-synthetic-filtered" }))
   if ((Get-FloatReportStatus $floatSteps "All") -ne "partial") { Fail-Fl "$Tag classifier float-unaccepted != partial" }
+  $preSteps = @(@(&$mk "rows-unaccepted" @{ reason = "environment-precondition: activation-blocker fg=1 class=X pid=2 exe=Y visible=True cloaked=2 covers_monitor=True suspend-cause=fullscreen-foreground"; rows = @("x") }))
+  if ((Get-FloatReportStatus $preSteps "All") -ne "partial") { Fail-Fl "$Tag classifier precondition rows-unaccepted != partial" }
   if ((Get-FloatReportStatus $okSteps "OwnedFloat") -ne "partial") { Fail-Fl "$Tag classifier single-stage != partial" }
-  Rec-Fl "$Tag-classifier" @{ pass_branch = $true; partial_branches = 5 }
+  Rec-Fl "$Tag-classifier" @{ pass_branch = $true; partial_branches = 6 }
 }
 
 function Get-RequiredUnimplementedRows {
@@ -251,8 +253,8 @@ function Invoke-FloatMock {
   Test-FloatStatusClassifier "mock-status"
   $src = Get-Content -LiteralPath (Join-Path $Repo "scripts\windows-float.ps1") -Raw
   foreach ($need in @("Wait-FloatOutcome", "Wait-SuspendFl", "Get-TopmostFl", "Get-ExpectedCentered60", "Assert-NoWriteForFloat",
-      "Set-OwnedForegroundAb", "Set-ApprovedForegroundFl", "Get-PrimeTargetFl", "Close-PrimeExtraFl",
-      "Send-MarkedChord", "Get-FloatReportStatus", "Get-RequiredUnimplementedRows",
+      "Set-OwnedForegroundAb", "Set-ApprovedForegroundFl", "Get-PrimeTargetFl", "Get-FlFgPrecondition", "Get-FuCloaked", "Close-PrimeExtraFl",
+      "Send-MarkedChord", "Get-FloatReportStatus", "Get-RequiredUnimplementedRows", "environment-precondition",
       "Stop-ExactOwner", "Test-NoProjectActors", "Get-OriginalAppsSnapshot",
       "0x0082", "0x201E", "SHORTCUT_MARKER", "border-inspect", "underlay-inspect",
       "emergency-stop", "Get-OverlayHwndsForOwnerAb", "float-toggle", "WS_EX_TOPMOST")) {
@@ -337,6 +339,51 @@ function Get-PrimeTargetFl([string]$Payload, [string]$Tag) {
     if ($null -ne $hit) { return $hit }
   }
   return $null
+}
+
+function Get-FlFgPrecondition([string]$Tag) {
+  # Read-only environment-precondition diagnostics for the live foreground:
+  # identity (class/exe/pid; no titles, content, or screenshots) plus the
+  # exact covering signals the product veto reads (visible, DWM cloak,
+  # caption bits, DWM frame vs monitor). Labels an activation failure as an
+  # environment precondition; never product evidence. Total: every read
+  # degrades to "unreadable", never throws.
+  $GWL_STYLE = -16
+  $WS_CAPTION = 0x00C00000
+  Install-BorderNative
+  Install-FollowupNative
+  [ActiveBorderNative]::EnsurePMv2()
+  $fg = 0
+  try { $fg = [ActiveBorderNative]::GetForegroundWindow().ToInt64() } catch {}
+  $cls = "unreadable"
+  try { $cls = [ActiveBorderNative]::ClassOf([long]$fg) } catch {}
+  $pidOut = [uint32]0
+  try { $null = [ActiveBorderNative]::GetWindowThreadProcessId([IntPtr][long]$fg, [ref]$pidOut) } catch {}
+  $exe = ""
+  try { $exe = (Get-Process -Id ([int]$pidOut) -ErrorAction Stop).Path } catch {}
+  $visible = "unreadable"
+  try { $visible = [bool][ActiveBorderNative]::IsWindowVisible([IntPtr][long]$fg) } catch {}
+  $cloaked = "unreadable"
+  try { $cloaked = [int](Get-FuCloaked ([long]$fg)) } catch {}
+  $styleHex = "unreadable"; $captionless = "unreadable"
+  try {
+    $st = [ActiveBorderNative]::GetWindowLongW([IntPtr][long]$fg, $GWL_STYLE)
+    $styleBits = [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$st), 0)
+    $styleHex = ("0x{0:X8}" -f $styleBits)
+    $captionless = (($styleBits -band [uint32]$WS_CAPTION) -eq 0)
+  } catch {}
+  $frameKey = "unreadable"; $cover = "unreadable"
+  try {
+    $screenW = [ActiveBorderNative]::GetSystemMetrics(0); $screenH = [ActiveBorderNative]::GetSystemMetrics(1)
+    $frame = [ActiveBorderNative]::FrameOf([long]$fg)
+    if ($null -ne $frame) {
+      $frameKey = ($frame -join ",")
+      $cover = ([int]$frame[0] -le 0 -and [int]$frame[1] -le 0 -and [int]$frame[2] -ge $screenW -and [int]$frame[3] -ge $screenH)
+    }
+  } catch {}
+  return @{ hwnd = [uint64]$fg; class = "$cls"; pid = [int]$pidOut; exe = "$exe";
+    visible = $visible; cloaked = $cloaked; style = "$styleHex"; captionless = $captionless;
+    frame = "$frameKey"; covers_monitor = $cover }
 }
 
 function New-FloatRunDir {
@@ -483,10 +530,14 @@ function Invoke-OwnedFloatLive($Ctx) {
     # suspends and no chord can dispatch. Achievable evidence only: helpers
     # admitted, owner suspend cause observed, exact stop leaves frames,
     # independent restore clean. All activation rows stay explicitly
-    # unaccepted (no spin, no retry of the same semantic failure).
+    # unaccepted (no spin, no retry of the same semantic failure). The
+    # blocker is recorded as an environment precondition with the exact
+    # observed foreground diagnostics (cloak/visible/cover) plus the suspend
+    # cause and prime attempts, never a generic label.
     $markS = 0
     $susp = Wait-SuspendFl $logPath $markS 25 "suspend-partial"
-    Rec-Fl "suspend-observed" @{ cause = "$($susp.event.cause)" }
+    $preFg = Get-FlFgPrecondition "suspend-partial"
+    Rec-Fl "suspend-observed" @{ cause = "$($susp.event.cause)"; foreground = $preFg }
     $preFrames = @($snaps | ForEach-Object { "$($_.left),$($_.top),$($_.right),$($_.bottom)" })
     $st = Invoke-Native $ownerCopy @("stop") | ConvertFrom-Json
     if (-not $st.owner_exited) { Fail-Fl "suspend-partial stop no exit" }
@@ -498,7 +549,11 @@ function Invoke-OwnedFloatLive($Ctx) {
     Assert-LedgerClean $ownerCopy
     $Ctx.ownerRunning = $false
     Rec-Fl "suspend-partial" @{ stop = $st; restore = $r; frames = $postFrames }
-    Rec-Fl "rows-unaccepted" @{ reason = "activation-blocker: cloaked Explorer ApplicationFrameWindow holds foreground; AttachThreadInput=false; new-extra prime did not take foreground"; rows = @(
+    $primeNotes = @()
+    foreach ($p in @($FL_STEPS | Where-Object { "$($_.name)" -like "prime-*" })) {
+      $primeNotes += "$($p.name): available=$($p.data.available) method=$($p.data.method) reason=$($p.data.reason)"
+    }
+    Rec-Fl "rows-unaccepted" @{ reason = "environment-precondition: activation-blocker fg=$($preFg.hwnd) class=$($preFg.class) pid=$($preFg.pid) exe=$($preFg.exe) visible=$($preFg.visible) cloaked=$($preFg.cloaked) style=$($preFg.style) captionless=$($preFg.captionless) frame=$($preFg.frame) covers_monitor=$($preFg.covers_monitor) suspend-cause=$($susp.event.cause); prime-attempts=[$($primeNotes -join ' | ')]"; rows = @(
       "initial-centered60", "sibling-reflow", "exact-toggled-focus", "held-G-repeat-exclusion",
       "unfloat-admission-topology", "moved-float-retention", "no-reassert", "topmost-request",
       "unfloat-band-restore", "border-on-float", "underlay-hidden-on-float", "tiled-group-reshow",
@@ -979,7 +1034,8 @@ function Invoke-FloatLive {
   try {
     $prime = Get-PrimeTargetFl $ownerCopy "prime-pick"
     if ($null -eq $prime) {
-      Rec-Fl "prime-foreground" @{ available = $false; reason = "no-approved-prime-candidate" }
+      $prePick = Get-FlFgPrecondition "prime-pick"
+      Rec-Fl "prime-foreground" @{ available = $false; reason = "no-approved-prime-candidate"; foreground = $prePick }
     } else {
       $how = Set-ApprovedForegroundFl ([long]$prime.hwnd) "prime"
       $Ctx.primed = $true
@@ -1017,7 +1073,8 @@ function Invoke-FloatLive {
       $Ctx.primed = $true
       Rec-Fl "prime-foreground" @{ available = $true; method = "new-extra"; hwnd = $found.hwnd; exe = "$($found.exe)"; class = "$($found.class)" }
     } catch {
-      Rec-Fl "prime-foreground" @{ available = $false; method = "none"; reason = "$($_.Exception.Message)"; extra_bound = ($null -ne $Ctx.primeExtra) }
+      $preNone = Get-FlFgPrecondition "prime-none"
+      Rec-Fl "prime-foreground" @{ available = $false; method = "none"; reason = "$($_.Exception.Message)"; extra_bound = ($null -ne $Ctx.primeExtra); foreground = $preNone }
     }
   }
   try {

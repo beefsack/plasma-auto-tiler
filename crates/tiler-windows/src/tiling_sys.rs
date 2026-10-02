@@ -3662,7 +3662,7 @@ struct ApplySummary {
     veto: Option<VetoDiag>,
 }
 
-/// Bounded privacy-safe veto diagnostic: reason token plus the three native
+/// Bounded privacy-safe veto diagnostic: reason token plus the native
 /// booleans behind it. No handles, paths, PIDs, titles, or content; opaque
 /// managed tokens only travel in the existing skip list.
 #[derive(Debug, Clone, Copy)]
@@ -3672,6 +3672,7 @@ struct VetoDiag {
     visible: bool,
     captioned: bool,
     dwm_readable: bool,
+    cloaked: bool,
 }
 
 fn audit_json(state: &TileLoop, value: serde_json::Value) {
@@ -3834,6 +3835,7 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> Option<ApplySu
                     visible: read.visible,
                     captioned: read.captioned,
                     dwm_readable: read.dwm_readable,
+                    cloaked: read.cloaked,
                 });
             }
             skipped.push((entry.window.0.clone(), "fullscreen-foreground".to_owned()));
@@ -8368,6 +8370,7 @@ fn log_workspace_action(_state: &TileLoop, log_path: &Path, line: &ActionLine<'_
                         "visible": diag.visible,
                         "captioned": diag.captioned,
                         "dwm_readable": diag.dwm_readable,
+                        "cloaked": diag.cloaked,
                     });
                 }
                 None => {
@@ -9069,8 +9072,8 @@ fn gesture_tick(
 }
 
 /// Native foreground veto read: one fresh pass over the live foreground with
-/// exact desktop identity, fresh visibility, caption, and DWM frame facts fed
-/// into the portable [`crate::workspace_owner::classify_foreground`] policy.
+/// exact desktop identity, fresh visibility, caption, DWM frame, and DWM
+/// cloak facts fed into the portable [`crate::workspace_owner::classify_foreground`] policy.
 /// No titles, paths, PIDs, or content leave this function; the caller logs
 /// only the returned reason plus booleans. Pure reads, never IO.
 struct ForegroundRead {
@@ -9079,6 +9082,7 @@ struct ForegroundRead {
     visible: bool,
     captioned: bool,
     dwm_readable: bool,
+    cloaked: bool,
 }
 
 fn foreground_read(fulls: &[Rect]) -> ForegroundRead {
@@ -9087,20 +9091,23 @@ fn foreground_read(fulls: &[Rect]) -> ForegroundRead {
                    desktop: bool,
                    visible: bool,
                    captioned: bool,
-                   dwm_readable: bool| {
+                   dwm_readable: bool,
+                   cloaked: bool| {
         ForegroundRead {
             veto,
             desktop,
             visible,
             captioned,
             dwm_readable,
+            cloaked,
         }
     };
     let allow = |reason: ForegroundVetoReason,
                  desktop: bool,
                  visible: bool,
                  captioned: bool,
-                 dwm_readable: bool| {
+                 dwm_readable: bool,
+                 cloaked: bool| {
         settled(
             crate::workspace_owner::ForegroundVeto {
                 block: false,
@@ -9110,12 +9117,20 @@ fn foreground_read(fulls: &[Rect]) -> ForegroundRead {
             visible,
             captioned,
             dwm_readable,
+            cloaked,
         )
     };
     let foreground = unsafe { GetForegroundWindow() };
     if foreground.is_null() {
         // No foreground window: nothing covering.
-        return allow(ForegroundVetoReason::None, false, false, false, false);
+        return allow(
+            ForegroundVetoReason::None,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
     }
     if unsafe { IsWindow(foreground) } == 0 {
         // `IsWindowVisible` returns false for invalid handles, so validity is
@@ -9125,6 +9140,7 @@ fn foreground_read(fulls: &[Rect]) -> ForegroundRead {
                 block: true,
                 reason: ForegroundVetoReason::Invalid,
             },
+            false,
             false,
             false,
             false,
@@ -9157,12 +9173,26 @@ fn foreground_read(fulls: &[Rect]) -> ForegroundRead {
             std::mem::size_of::<RECT>() as u32,
         )
     } == 0;
+    // Fresh cloak fact on the same valid handle: a cloaked foreground is
+    // invisible to the compositor and never a covering fullscreen, even
+    // with a monitor-spanning frame. Query failure fails closed (unreadable)
+    // like the frame read, matching the admission and hold gates.
+    let mut cloak_val: i32 = 0;
+    let cloak_ok = unsafe {
+        DwmGetWindowAttribute(
+            foreground,
+            DWMWA_CLOAKED,
+            (&mut cloak_val as *mut i32).cast(),
+            std::mem::size_of::<i32>() as u32,
+        )
+    } == 0;
     if unsafe { IsWindow(foreground) } == 0 {
         return settled(
             crate::workspace_owner::ForegroundVeto {
                 block: true,
                 reason: ForegroundVetoReason::Invalid,
             },
+            false,
             false,
             false,
             false,
@@ -9179,9 +9209,18 @@ fn foreground_read(fulls: &[Rect]) -> ForegroundRead {
         visible,
         captioned,
         dwm_readable: readable,
+        cloak_readable: cloak_ok,
+        cloaked: cloak_val != 0,
         covers_monitor,
     });
-    settled(veto, is_desktop, visible, captioned, readable)
+    settled(
+        veto,
+        is_desktop,
+        visible,
+        captioned,
+        readable,
+        cloak_val != 0,
+    )
 }
 
 /// Managed-aware suspend read: the raw foreground veto, except a real
@@ -9219,6 +9258,7 @@ fn suspend_read(state: &mut TileLoop, me: &ProcessIdentity, fulls: &[Rect]) -> F
         visible: raw.visible,
         captioned: raw.captioned,
         dwm_readable: raw.dwm_readable,
+        cloaked: raw.cloaked,
     };
     let Some(held_key) = holdable_key(state, me, foreground) else {
         return raw;
