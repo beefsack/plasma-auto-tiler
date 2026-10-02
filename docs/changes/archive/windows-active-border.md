@@ -6,8 +6,9 @@
   `tiler-core::visual`, with fresh visible-frame geometry, suppression,
   low-latency following, diagnostics and owned-process teardown.
 - Practical machine acceptance is complete. Native gates and independent
-  live-behavior review pass. Delivery remains: commit/push, green CI, archive
-  this note and advance parity queue item 1.
+  live-behavior review pass. Implementation `b5374ce` is pushed; all four jobs
+  in [CI run 37004892347](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37004892347)
+  pass. This note is archived and parity queue item 1 is done.
 - Scope: Windows adapter/rendering and necessary scoped proof support only;
   no group underlay implementation or KDE/principles changes.
 - Source baseline: predecessor implementation at `28b8899`; resumed at
@@ -65,6 +66,8 @@ owned ring, not application content; DIB checksums alone are insufficient.
 - Latest direct audits: zero project actors/overlays, ledger/stop/request
   absent, helpers/extras closed, no hidden residue; arranging raw 1, pen raw 35
   using `SPI_GETWINARRANGING` 0x0082 / `SPI_GETPENVISUALIZATION` 0x201E.
+  Final post-commit read-only audit:
+  `ab-followup/20261002-215521-13468/final-audit.json`, 22:10:40 local.
 - Final native gates: locked stable build/test/strict all-target Clippy for
   `tiler-core`, `tiler-protocol`, `tiler-kwin-effect-ffi`, `tiler-windows`;
   workspace rustfmt; `git diff --check`; final harness `-Mock` and PS parser.
@@ -122,3 +125,5 @@ owned ring, not application content; DIB checksums alone are insufficient.
 - Task View proof hides then suspends; Start production hides as no-target;
   Alt+Tab hold-cancel avoids foreign activation. Physical shell occlusion and
   topmost underlay placement still require fresh targeted evidence.
+- Exact next action: start parity queue item 2, group underlay, using the
+  existing active-group route and owned carrier. This Lead is retired.

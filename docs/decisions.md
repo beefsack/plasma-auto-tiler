@@ -355,7 +355,7 @@ the corresponding item ships; each such entry names its replacement.
   shell journeys, off and graceful/crash cleanup. Physical display/input,
   other DPI/output arrangements and topmost/style variants remain bounded
   follow-up checks. Evidence and limitations:
-  `changes/windows-active-border.md` (archive after delivery checks).
+  `changes/archive/windows-active-border.md`.
 
 ## Native Integration Boundary
 
