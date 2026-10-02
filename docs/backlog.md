@@ -85,7 +85,10 @@ decisions of 2026-09-24 are under
   takes foreground later and blocks harness activation, plus repeat/refusal/
   underlay/workspace/crash/approved-app rows and physical dogfood;
   borderless route and discrete Win+F11 are provisional, to discuss);
-  next (5) float;
+  (5) float shipped (`d8329e3`, Win+G; [evidence](changes/archive/windows-float.md);
+  live float behaviour unaccepted under the same foreground blocker;
+  crash-retained topmost band is provisional, to discuss); next foreground
+  blocker diagnosis plus float/fullscreen acceptance reruns, then
   (6) sticky float;
   (7) mouse drag window move; (8) mouse drag drop-zone square (preview);
   (9) multi-output support; (10) taskbar item showing workspaces (design to be
