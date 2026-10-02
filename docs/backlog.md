@@ -73,13 +73,17 @@ decisions of 2026-09-24 are under
 - P0 | Windows feature parity queue | User order (2026-10-02), each matching
   KDE behavior and bindings: (1) active window border done (`b5374ce`, native
   gates/CI and scoped composed-pixel/live routes pass;
-  [evidence](changes/archive/windows-active-border.md)); next (2) group underlay
-  (custom drawing, outline fallback); (3) maximise; (4) fullscreen; (5) float;
+  [evidence](changes/archive/windows-active-border.md); temporary development
+  default `#ffff00` with theme off, `3fcc953`); (2) group underlay stages A/B
+  done (`cb790d9`; [evidence](changes/archive/windows-group-underlay.md)), C
+  (unfocused dragged subject) parked for reassessment with item 7; next
+  (3) maximise; (4) fullscreen; (5) float;
   (6) sticky float;
   (7) mouse drag window move; (8) mouse drag drop-zone square (preview);
   (9) multi-output support; (10) taskbar item showing workspaces (design to be
   discussed with the user; no presentation mechanism selected); (11) settings
-  (UI with Apply/Revert parity, including Snap takeover off).
+  (UI with Apply/Revert parity, including Snap takeover off; decide the final
+  accent/configured border default and remove the temporary yellow default).
 - P2 | Hidden-workspace Alt+Tab option | Investigate whether official Windows
   APIs can include hidden-workspace windows in Alt+Tab. Future optional behavior,
   not critical; no design selected.
