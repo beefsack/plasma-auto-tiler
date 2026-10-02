@@ -442,6 +442,44 @@ the corresponding item ships; each such entry names its replacement.
   double-click paths are machine-proven. Evidence:
   [Windows maximise](changes/archive/windows-maximise.md).
 
+### Windows fullscreen
+
+- Windows parity item 4 (2026-10-03): Win+F11 matches KDE Meta+F11. Managed
+  fullscreen retains membership, tree position and shares; native geometry
+  writes pause for that member, siblings keep their allocations, and exit
+  restores the current Engine allocation. Fullscreen precedes maximize and
+  suppresses both active border and group underlay. Unmanaged fullscreen
+  foreground retains the existing workspace suspension behavior.
+- Directional focus can leave or enter a verified managed fullscreen member.
+  Directional movement, pointer operations, maximize and workspace send refuse
+  a fullscreen subject, matching the current KDE wrappers. Workspace selection
+  hides/reveals fullscreen members without restoring their frames.
+- First-seen otherwise-eligible fullscreen windows without a retained slot
+  remain slotless Engine floating exceptions until their first native exit.
+  They still occupy a workspace and participate in hide/reveal and close
+  cleanup. A later fullscreen transition retains an existing tile slot.
+- Provisional, to discuss: Windows has no generic official fullscreen setter.
+  Win+F11 uses official Win32 style/frame APIs for borderless monitor coverage,
+  storing only the cleared frame-style bits and prior maximize state as inert
+  native window properties. Exit preserves unrelated app style changes.
+  App-owned fullscreen without that preimage refuses the project toggle;
+  never synthesize app F11 or guess a restoration state. Stop/crash preserve
+  frames and properties; the properties die with the native window. A new
+  owner applies the first-seen fullscreen hold before any later explicit exit.
+- Provisional, to discuss: one attempt per discrete Win+F11 down; held repeats
+  are consumed without another dispatch, matching the Windows maximize rule.
+  Failed effects retain any usable preimage for a later explicit press;
+  there is no automatic toggle retry or persistent attempted-state map.
+- Scoped synthetic evidence covers project entry/exit and exact retained slot,
+  stable siblings, immediate foreground retention, visual suppression, born
+  hold/hide/return/native release/close and graceful frame preservation.
+  Activation also fails without a project owner on this desktop. A subsequent
+  Explorer-owned foreground takeover remains unexplained; full focus/repeat/
+  refusal/held-underlay, crash/restart and approved-app fullscreen journeys are
+  unaccepted, user-owned checks. Shipment is scoped, not full live acceptance.
+  Physical input/display and other output/DPI arrangements remain user-owned.
+  Evidence and limitations: [Windows fullscreen](changes/archive/windows-fullscreen.md).
+
 ## Native Integration Boundary
 
 - User decision (2026-09-24; governing statement under Architecture Direction):

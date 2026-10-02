@@ -45,16 +45,19 @@ pub fn output_context(
     spaces.output_keys().into_iter().next()
 }
 
-/// One Engine window row: token, last-known rectangle, and fresh
-/// application-declared minimum-size hint. Hidden snapshots ride the same
-/// rows so convergence never drops retained membership; hidden rows carry a
-/// fresh hint like visible rows (fresh observation only, never a stored
-/// floor) while retained rows carry none.
+/// One Engine window row: token, last-known rectangle, fresh
+/// application-declared minimum-size hint, and the slotless floating
+/// exception flag (born-held fullscreen only: the window rides Engine
+/// membership with no tile slot so siblings keep the full tile area).
+/// Hidden snapshots ride the same rows so convergence never drops retained
+/// membership; hidden rows carry a fresh hint like visible rows (fresh
+/// observation only, never a stored floor) while retained rows carry none.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnerRow {
     pub token: String,
     pub rect: Rect,
     pub hints: tiler_core::size_hints::WindowSizeHints,
+    pub floating: bool,
 }
 
 /// Build the source/target domain pair plus window rows for one Engine
@@ -88,7 +91,7 @@ pub fn build_send_event(
             output: domain_key.output.clone(),
             workspace: domain_key.workspace.clone(),
             rect: row.rect,
-            floating: false,
+            floating: row.floating,
             fit_excluded: false,
             hints: row.hints,
         })
@@ -100,7 +103,7 @@ pub fn build_send_event(
             output: target_key.output.clone(),
             workspace: target_key.workspace.clone(),
             rect: row.rect,
-            floating: false,
+            floating: row.floating,
             fit_excluded: false,
             hints: row.hints,
         })
@@ -184,6 +187,11 @@ pub enum ForegroundVetoReason {
     Desktop,
     /// Visible captionless foreground whose frame covers a monitor.
     Fullscreen,
+    /// Captionless monitor-covering foreground verified as a managed member
+    /// or a born-held tracked window: it rides a retained overlay slot with
+    /// no geometry writes, so it never suspends the workspace. Unverified
+    /// fullscreen still reports `Fullscreen` and suspends.
+    ManagedOverlay,
     /// Visible foreground whose frame could not be read: fail closed.
     Unreadable,
     /// Non-null foreground handle that fails validity: fail closed.
@@ -200,6 +208,7 @@ impl ForegroundVetoReason {
             Self::Nonvisible => "nonvisible",
             Self::Desktop => "desktop",
             Self::Fullscreen => "fullscreen",
+            Self::ManagedOverlay => "managed-overlay",
             Self::Unreadable => "unreadable",
             Self::Invalid => "invalid",
         }
@@ -392,14 +401,17 @@ pub fn rows_for(
 
 /// One member's portable view for domain-row assembly: stable session key,
 /// Engine token, best-known rectangle (fresh visible read, fresh retained
-/// frame, or hidden snapshot), and fresh minimum-size hint (eligible visible
-/// reads plus verified hidden snapshots; retained rows carry no hint).
+/// frame, or hidden snapshot), fresh minimum-size hint (eligible visible
+/// reads plus verified hidden snapshots; retained rows carry no hint), and
+/// the slotless floating exception flag (born-held fullscreen only, never a
+/// native write).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemberView {
     pub key: WindowKey,
     pub token: String,
     pub rect: Rect,
     pub hints: tiler_core::size_hints::WindowSizeHints,
+    pub floating: bool,
 }
 
 /// Assemble complete Engine observation rows for one workspace domain from
@@ -423,6 +435,7 @@ pub fn domain_rows(
             token: view.token.clone(),
             rect: view.rect,
             hints: view.hints,
+            floating: view.floating,
         });
     }
     rows.sort_by(|a, b| a.token.cmp(&b.token));
@@ -553,11 +566,13 @@ mod tests {
             token: "w1".to_owned(),
             rect: bounds,
             hints: tiler_core::size_hints::WindowSizeHints::none(),
+            floating: false,
         }];
         let target_rows = vec![OwnerRow {
             token: "w2".to_owned(),
             rect: bounds,
             hints: tiler_core::size_hints::WindowSizeHints::none(),
+            floating: false,
         }];
         let mut event = build_send_event(
             &owner,
@@ -643,18 +658,21 @@ mod tests {
                 token: "w1".to_owned(),
                 rect: rect(0, 0),
                 hints: tiler_core::size_hints::WindowSizeHints::none(),
+                floating: false,
             },
             MemberView {
                 key: b.clone(),
                 token: "w2".to_owned(),
                 rect: rect(100, 100),
                 hints: tiler_core::size_hints::WindowSizeHints::none(),
+                floating: false,
             },
             MemberView {
                 key: c.clone(),
                 token: "w3".to_owned(),
                 rect: rect(200, 200),
                 hints: tiler_core::size_hints::WindowSizeHints::none(),
+                floating: false,
             },
         ];
         let rows = domain_rows(&members, &views).expect("complete rows");
@@ -668,6 +686,84 @@ mod tests {
         assert!(!member_matches(&a, 1, 1001, "c0000000000000002"));
         assert!(!member_matches(&a, 1, 9999, "c0000000000000001"));
         assert!(!member_matches(&a, 9, 1001, "c0000000000000001"));
+    }
+
+    #[test]
+    fn domain_rows_and_send_carry_born_floating_only() {
+        // Slotless born holds ride the Engine as floating exceptions while
+        // every other member stays tiled; hidden born snapshots stay
+        // floating until a verified exit. Only the born hold ever sets the
+        // flag: it is an Engine observation, never a native write.
+        use super::{MemberView, build_send_event, domain_rows};
+        let born = key(11);
+        let tiled = key(12);
+        let members: BTreeSet<WindowKey> = [born.clone(), tiled.clone()].into_iter().collect();
+        let views = vec![
+            MemberView {
+                key: born.clone(),
+                token: "w-born".to_owned(),
+                rect: rect(0, 0),
+                hints: tiler_core::size_hints::WindowSizeHints::none(),
+                floating: true,
+            },
+            MemberView {
+                key: tiled.clone(),
+                token: "w-tiled".to_owned(),
+                rect: rect(100, 100),
+                hints: tiler_core::size_hints::WindowSizeHints::none(),
+                floating: false,
+            },
+        ];
+        let rows = domain_rows(&members, &views).expect("complete rows");
+        assert!(
+            rows.iter()
+                .find(|r| r.token == "w-born")
+                .expect("born")
+                .floating
+        );
+        assert!(
+            !rows
+                .iter()
+                .find(|r| r.token == "w-tiled")
+                .expect("tiled")
+                .floating
+        );
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        let correlation = CorrelationId::parse("tick-1").expect("correlation");
+        let bounds = rect(0, 0);
+        let source = workspace_domain("mon-a", "ws-1", bounds, 8);
+        let target = workspace_domain("mon-a", "ws-2", bounds, 8);
+        let event = build_send_event(
+            &owner,
+            &generation,
+            &correlation,
+            0,
+            3,
+            source,
+            target,
+            &rows,
+            &[],
+            "w-tiled",
+            8,
+        )
+        .expect("event");
+        assert!(
+            event
+                .windows
+                .iter()
+                .find(|w| w.window.0 == "w-born")
+                .expect("born")
+                .floating
+        );
+        assert!(
+            !event
+                .windows
+                .iter()
+                .find(|w| w.window.0 == "w-tiled")
+                .expect("tiled")
+                .floating
+        );
     }
 
     #[test]
@@ -840,11 +936,13 @@ mod tests {
                     token: "w1".to_owned(),
                     rect: bounds,
                     hints: tiler_core::size_hints::WindowSizeHints::none(),
+                    floating: false,
                 },
                 OwnerRow {
                     token: "w2".to_owned(),
                     rect: bounds,
                     hints: tiler_core::size_hints::WindowSizeHints::none(),
+                    floating: false,
                 },
             ],
             &[],
@@ -993,11 +1091,13 @@ mod tests {
                     token: "w1".to_owned(),
                     rect: bounds,
                     hints: tiler_core::size_hints::WindowSizeHints::none(),
+                    floating: false,
                 },
                 OwnerRow {
                     token: "w2".to_owned(),
                     rect: bounds,
                     hints: tiler_core::size_hints::WindowSizeHints::none(),
+                    floating: false,
                 },
             ],
             &[],
@@ -1203,11 +1303,13 @@ mod tests {
                     token: "w1".to_owned(),
                     rect: bounds,
                     hints: tiler_core::size_hints::WindowSizeHints::none(),
+                    floating: false,
                 },
                 OwnerRow {
                     token: "w2".to_owned(),
                     rect: bounds,
                     hints: tiler_core::size_hints::WindowSizeHints::none(),
+                    floating: false,
                 },
             ],
             &[],
@@ -1380,6 +1482,23 @@ mod tests {
     }
 
     #[test]
+    fn managed_overlay_reason_is_opaque_and_distinct() {
+        // The managed-overlay bypass (verified member or born-held track)
+        // carries its own bounded token, never the raw fullscreen one, so
+        // lifecycle logs stay distinguishable. The classifier itself never
+        // produces it: only the native managed check may.
+        use super::ForegroundVetoReason;
+        assert_eq!(
+            ForegroundVetoReason::ManagedOverlay.as_str(),
+            "managed-overlay"
+        );
+        assert_ne!(
+            ForegroundVetoReason::ManagedOverlay,
+            ForegroundVetoReason::Fullscreen
+        );
+    }
+
+    #[test]
     fn domain_rows_propagates_hints_and_send_carries_them() {
         use super::{MemberView, build_send_event, domain_rows, stamp_send_target};
         use tiler_core::boundary::CoreReply;
@@ -1399,12 +1518,14 @@ mod tests {
                 token: "w1".to_owned(),
                 rect: rect(0, 0),
                 hints: hinted,
+                floating: false,
             },
             MemberView {
                 key: b.clone(),
                 token: "w2".to_owned(),
                 rect: rect(100, 100),
                 hints: WindowSizeHints::none(),
+                floating: false,
             },
         ];
         let rows = domain_rows(&members, &views).expect("complete rows");
@@ -1419,6 +1540,7 @@ mod tests {
             token: "w3".to_owned(),
             rect: rect(200, 200),
             hints: hinted,
+            floating: false,
         }];
         let target_rows = domain_rows(&target_members, &target_views).expect("target rows");
         assert_eq!(target_rows[0].hints, hinted);

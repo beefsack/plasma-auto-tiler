@@ -378,11 +378,11 @@ pub const fn send_flags_stable(
 }
 
 /// Focus eligibility gate (KDE `requestFocus` parity for overlays): focus
-/// carries no geometry write, so a maximized member stays focusable while
-/// every other ineligible state still refuses. Fullscreen never focuses here
-/// (the foreground fence owns it); geometry classification is untouched.
-/// Every gate except maximized is checked, so a maximized window that is
-/// also minimized/no-activate/etc still refuses for that other reason.
+/// carries no geometry write, so a maximized or fullscreen member stays
+/// focusable while every other ineligible state still refuses; geometry
+/// classification is untouched. Every gate except the two overlays is
+/// checked, so an overlay window that is also minimized/no-activate/etc
+/// still refuses for that other reason.
 pub fn classify_focus(facts: &WindowFacts) -> Result<(), SkipReason> {
     if !facts.visible {
         return Err(SkipReason::Hidden);
@@ -408,13 +408,69 @@ pub fn classify_focus(facts: &WindowFacts) -> Result<(), SkipReason> {
     if facts.dialog {
         return Err(SkipReason::Dialog);
     }
-    if facts.captionless_fullscreen {
-        return Err(SkipReason::Fullscreen);
-    }
     if facts.no_activate {
         return Err(SkipReason::NoActivate);
     }
     Ok(())
+}
+
+/// Project-owned fullscreen toggle decision for one verified managed window.
+/// Our restoration metadata is authoritative: exiting needs that preimage, so
+/// a press on any owned frame exits even when the frame no longer covers a
+/// monitor (external move or partial restore). Entering is always
+/// project-owned (the toggle stores its own restoration preimage first); an
+/// app-requested fullscreen frame carries no known preimage, so a command
+/// exit refuses with a bounded reason and the frame stays app-owned: never
+/// synthesize input, never guess restoration. Re-entry never overwrites an
+/// existing preimage: owned frames always exit first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FullscreenToggle {
+    /// Window is not fullscreen: enter via the owned style/frame route.
+    Enter,
+    /// Window is fullscreen with our restoration metadata: restore it.
+    ExitOwned,
+    /// Window is fullscreen without our metadata: refuse, leave app-owned.
+    RefuseAppOwned,
+}
+
+impl FullscreenToggle {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Enter => "enter",
+            Self::ExitOwned => "exit-owned",
+            Self::RefuseAppOwned => "refuse-app-owned",
+        }
+    }
+}
+
+/// Decide the toggle direction from fresh fullscreen state plus the presence
+/// of our restoration metadata. Owned metadata wins over geometry: an owned
+/// frame exits even when not monitor-covering. Pure so the command-exit
+/// refusal pins without native calls.
+#[must_use]
+pub const fn fullscreen_toggle_decision(fullscreen: bool, owned: bool) -> FullscreenToggle {
+    if owned {
+        FullscreenToggle::ExitOwned
+    } else if !fullscreen {
+        FullscreenToggle::Enter
+    } else {
+        FullscreenToggle::RefuseAppOwned
+    }
+}
+
+/// Born-fullscreen hold gate (KDE initial-fullscreen-hold parity): a
+/// first-seen fullscreen window without a retained tile slot is tracked as a
+/// slotless planner-only exception until its first exit, never admitted. A
+/// window with a retained slot is a managed overlay transition, and a window
+/// already seen non-fullscreen in this lifetime never becomes born again.
+#[must_use]
+pub const fn should_hold_born_fullscreen(
+    fullscreen: bool,
+    known_slot: bool,
+    seen_nonfullscreen: bool,
+) -> bool {
+    fullscreen && !known_slot && !seen_nonfullscreen
 }
 
 /// Stateless pre-frame verdict for one allowlisted entry: frozen-identity
@@ -878,6 +934,53 @@ pub fn build_reconcile_event_for(
     windows: &[(WindowId, Rect, tiler_core::size_hints::WindowSizeHints)],
     focused: Option<&WindowId>,
 ) -> CoreEvent {
+    let floating: Vec<(
+        WindowId,
+        Rect,
+        tiler_core::size_hints::WindowSizeHints,
+        bool,
+    )> = windows
+        .iter()
+        .map(|(window, rect, hints)| (window.clone(), *rect, *hints, false))
+        .collect();
+    build_reconcile_event_for_floating(
+        owner,
+        generation,
+        correlation,
+        revision,
+        fingerprint,
+        domain,
+        domain_key,
+        outer_gap,
+        &floating,
+        focused,
+    )
+}
+
+/// Floating-aware per-domain `Reconcile` event: born-held fullscreen members
+/// ride as slotless floating Engine exceptions (no tile slot, siblings keep
+/// the full tile area) while every other member stays tiled. Floating is an
+/// Engine observation only, never a native write; exactly the born hold sets
+/// it. Hidden born rows stay floating until a verified non-fullscreen exit.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn build_reconcile_event_for_floating(
+    owner: &OwnerId,
+    generation: &GenerationId,
+    correlation: &CorrelationId,
+    revision: u64,
+    fingerprint: u64,
+    domain: &OutputDomain,
+    domain_key: &DomainKey,
+    outer_gap: i32,
+    windows: &[(
+        WindowId,
+        Rect,
+        tiler_core::size_hints::WindowSizeHints,
+        bool,
+    )],
+    focused: Option<&WindowId>,
+) -> CoreEvent {
     CoreEvent {
         owner: owner.clone(),
         generation: generation.clone(),
@@ -890,12 +993,12 @@ pub fn build_reconcile_event_for(
         focused_window: focused.cloned().unwrap_or(WindowId(String::new())),
         windows: windows
             .iter()
-            .map(|(window, rect, hints)| EngineWindow {
+            .map(|(window, rect, hints, floating)| EngineWindow {
                 window: window.clone(),
                 output: domain_key.output.clone(),
                 workspace: domain_key.workspace.clone(),
                 rect: *rect,
-                floating: false,
+                floating: *floating,
                 fit_excluded: false,
                 hints: *hints,
             })

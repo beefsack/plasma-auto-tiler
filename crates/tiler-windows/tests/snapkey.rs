@@ -8,10 +8,10 @@ use tiler_windows::snapkey::{
     Classified, INTENT_QUEUE_CAP, KeyboardConfig, MARKED_DIAG_CAP, MOD_DIAG_CAP, MarkedDiagBuf,
     MarkedKeyDiag, ModDiagBuf, ModSource, ModTrafficDiag, OriginVerdict, QueuedSnapEvent,
     SnapClassify, SnapEdge, SnapIntent, SnapOp, SnapOrigin, SnapQueue, VK_0, VK_CONTROL, VK_DOWN,
-    VK_H, VK_J, VK_K, VK_L, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_M, VK_MASK, VK_MENU,
+    VK_F11, VK_H, VK_J, VK_K, VK_L, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_M, VK_MASK, VK_MENU,
     VK_RIGHT, VK_RWIN, VK_SHIFT, VK_UP, WorkspaceOp, classify_and_queue, direction_name,
-    is_chord_vk, is_proof_mod_vk, is_win_vk, marked_diag_evidence, mod_diag_evidence,
-    resolve_origin, stamp_mask_result, win_up_mask_reserve,
+    is_chord_vk, is_fullscreen_vk, is_proof_mod_vk, is_win_vk, marked_diag_evidence,
+    mod_diag_evidence, resolve_origin, stamp_mask_result, win_up_mask_reserve,
 };
 use tiler_windows::tiling::{ReconcileInput, build_reconcile_event, fingerprint, parse_tile_args};
 
@@ -50,7 +50,9 @@ fn push_snap(
 ) -> Option<SnapIntent> {
     match SnapClassify::push(m, vk, is_up, fg, inj)? {
         Classified::Snap(intent) => Some(intent),
-        Classified::Workspace(_) | Classified::Maximize(_) => panic!("expected directional chord"),
+        Classified::Workspace(_) | Classified::Maximize(_) | Classified::Fullscreen(_) => {
+            panic!("expected directional chord")
+        }
     }
 }
 
@@ -63,7 +65,9 @@ fn push_workspace(
 ) -> Option<tiler_windows::snapkey::WorkspaceIntent> {
     match SnapClassify::push(m, vk, is_up, fg, inj)? {
         Classified::Workspace(intent) => Some(intent),
-        Classified::Snap(_) | Classified::Maximize(_) => panic!("expected workspace digit"),
+        Classified::Snap(_) | Classified::Maximize(_) | Classified::Fullscreen(_) => {
+            panic!("expected workspace digit")
+        }
     }
 }
 
@@ -76,7 +80,23 @@ fn push_maximize(
     use tiler_windows::snapkey::VK_M;
     match SnapClassify::push(m, VK_M, is_up, fg, inj)? {
         Classified::Maximize(intent) => Some(intent),
-        Classified::Snap(_) | Classified::Workspace(_) => panic!("expected maximize chord"),
+        Classified::Snap(_) | Classified::Workspace(_) | Classified::Fullscreen(_) => {
+            panic!("expected maximize chord")
+        }
+    }
+}
+
+fn push_fullscreen(
+    m: &mut SnapClassify,
+    is_up: bool,
+    fg: bool,
+    inj: bool,
+) -> Option<tiler_windows::snapkey::FullscreenIntent> {
+    match SnapClassify::push(m, VK_F11, is_up, fg, inj)? {
+        Classified::Fullscreen(intent) => Some(intent),
+        Classified::Snap(_) | Classified::Workspace(_) | Classified::Maximize(_) => {
+            panic!("expected fullscreen chord")
+        }
     }
 }
 
@@ -461,9 +481,10 @@ fn saturated_queue_passes_without_consuming() {
     // The queued record carries the chord-time origin for the owner recheck.
     match q.pop_front().expect("intent") {
         QueuedSnapEvent::Intent(queued) => assert_eq!(queued.origin, origin),
-        QueuedSnapEvent::Workspace(_) | QueuedSnapEvent::Maximize(_) | QueuedSnapEvent::Mask(_) => {
-            panic!("expected intent")
-        }
+        QueuedSnapEvent::Workspace(_)
+        | QueuedSnapEvent::Maximize(_)
+        | QueuedSnapEvent::Fullscreen(_)
+        | QueuedSnapEvent::Mask(_) => panic!("expected intent"),
     }
     while q.len() < INTENT_QUEUE_CAP {
         assert!(q.push(QueuedSnapEvent::Intent(
@@ -1294,4 +1315,151 @@ fn maximize_arms_start_menu_mask_and_survives_saturation() {
     assert!(q.dropped >= 1);
     q.pop_front();
     assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+}
+
+#[test]
+fn fullscreen_toggle_consumes_down_repeat_up_with_origin_pairing() {
+    // Win+F11 (KDE Meta+F11 parity): down consumes with announce, held repeat
+    // is swallowed (no re-toggle, like the discrete shortcut), up closes the
+    // pair without announce. Win released before the key-up still pairs by
+    // origin.
+    assert!(is_chord_vk(VK_F11));
+    assert!(is_fullscreen_vk(VK_F11));
+    assert_eq!(VK_F11, 0x7A);
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    assert!(m.win_held());
+    assert!(!m.key_is_down(VK_F11));
+    let down = push_fullscreen(&mut m, false, true, false).expect("fullscreen down");
+    assert_eq!(down.edge, SnapEdge::Down);
+    assert!(down.consumed && down.announce);
+    assert!(m.key_is_down(VK_F11));
+    let repeat = push_fullscreen(&mut m, false, true, false).expect("fullscreen repeat");
+    assert_eq!(repeat.edge, SnapEdge::Repeat);
+    assert!(repeat.consumed && !repeat.announce);
+    // Win released before the key-up still pairs by origin.
+    push_snap(&mut m, VK_LWIN, true, true, false);
+    let up = push_fullscreen(&mut m, true, true, false).expect("paired up");
+    assert_eq!(up.edge, SnapEdge::Up);
+    assert!(up.consumed && !up.announce);
+    assert!(!m.key_is_down(VK_F11));
+    assert_eq!(push_fullscreen(&mut m, true, true, false), None);
+    assert_eq!(
+        (
+            m.fullscreen_counts.down,
+            m.fullscreen_counts.repeat,
+            m.fullscreen_counts.up
+        ),
+        (1, 1, 1)
+    );
+    assert_eq!(m.fullscreen_counts.consumed, 3);
+    // Directional and maximize catalogs untouched by the F11 chord.
+    assert!(m.counts.iter().all(|c| c.down == 0 && c.up == 0));
+    assert_eq!((m.max_counts.down, m.max_counts.up), (0, 0));
+}
+
+#[test]
+fn fullscreen_modifier_exactness_passes_untracked() {
+    // Any Shift/Ctrl/Alt, missing Win, bare F11, and injected F11 never
+    // classify and never arm the mask: there is no shifted fullscreen arm.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    assert_eq!(push_fullscreen(&mut m, false, true, false), None);
+    assert_eq!(push_fullscreen(&mut m, true, true, false), None);
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    assert_eq!((m.fullscreen_counts.down, m.fullscreen_counts.up), (0, 0));
+    for mod_vk in [VK_CONTROL, VK_MENU, VK_LMENU] {
+        let mut m = SnapClassify::new(takeover());
+        win_down(&mut m, VK_LWIN);
+        push_snap(&mut m, mod_vk, false, true, false);
+        assert_eq!(push_fullscreen(&mut m, false, true, false), None);
+        assert_eq!(push_fullscreen(&mut m, true, true, false), None);
+        push_snap(&mut m, mod_vk, true, true, false);
+    }
+    let mut m = SnapClassify::new(takeover());
+    assert_eq!(push_fullscreen(&mut m, false, true, false), None);
+    assert_eq!(push_fullscreen(&mut m, false, true, true), None);
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    assert_eq!(push_fullscreen(&mut m, false, true, true), None);
+    assert!(!win_up_mask_reserve(
+        &mut m,
+        &mut SnapQueue::new(),
+        VK_LWIN,
+        true,
+        std::time::Instant::now()
+    ));
+}
+
+#[test]
+fn fullscreen_background_origin_never_consumes() {
+    // The toggle needs a managed origin like send and maximize:
+    // background-origin holds never consume mid-hold, takeover off passes
+    // everything through, and a closed session gate passes everything
+    // through.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    let down = push_fullscreen(&mut m, false, false, false).expect("logged");
+    assert!(!down.consumed && !down.announce);
+    let repeat = push_fullscreen(&mut m, false, true, false).expect("logged");
+    assert!(!repeat.consumed);
+    let up = push_fullscreen(&mut m, true, true, false).expect("logged");
+    assert!(!up.consumed);
+    let mut m = SnapClassify::new(KeyboardConfig::disabled());
+    win_down(&mut m, VK_LWIN);
+    let down = push_fullscreen(&mut m, false, true, false).expect("logged");
+    assert!(!down.consumed && !down.announce);
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    let tick = std::time::Instant::now();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_F11, false, None, false, tick, false),
+        Some(false)
+    );
+    match q.pop_front().expect("fullscreen intent") {
+        QueuedSnapEvent::Fullscreen(intent) => assert!(!intent.consumed),
+        _ => panic!("expected fullscreen intent"),
+    }
+}
+
+#[test]
+fn fullscreen_arms_start_menu_mask() {
+    use tiler_windows::snapkey::{MaskTrigger, QueuedFullscreenIntent, SnapQueue};
+    // A consumed Win+F11 reserves the E8 mask at Win-up with trigger evidence.
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    let tick = std::time::Instant::now();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_F11,
+            false,
+            Some(origin_of(7, "w7")),
+            false,
+            tick,
+            true
+        ),
+        Some(true)
+    );
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    match q.pop_front().expect("fullscreen intent") {
+        QueuedSnapEvent::Fullscreen(QueuedFullscreenIntent { origin, .. }) => {
+            assert_eq!(origin, Some(origin_of(7, "w7")));
+        }
+        _ => panic!("expected fullscreen intent"),
+    }
+    match q.pop_front().expect("mask") {
+        QueuedSnapEvent::Mask(mask) => assert_eq!(mask.trigger, MaskTrigger::Fullscreen),
+        _ => panic!("expected mask"),
+    }
 }

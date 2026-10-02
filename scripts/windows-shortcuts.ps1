@@ -51,6 +51,7 @@ $VK_J = 74
 $VK_K = 75
 $VK_L = 76
 $VK_M = 77
+$VK_F11 = 122
 $VK_LEFT = 37
 $VK_UP = 38
 $VK_RIGHT = 39
@@ -101,6 +102,11 @@ function Get-ShortcutJourney {
     # until a later unit wires a live maximize journey; the mock harness
     # below pins its shape (unshifted M, no Ctrl, toggle family).
     @{ name = "maximize-toggle-m"; vk = $VK_M; shift = $false; ctrl = $false; op = "maximize"; direction = ""; family = "maximize-toggle" }
+    # Win+F11 parity item 4 (KDE Meta+F11): unshifted discrete toggle only,
+    # consumed with a managed origin; repeats never re-dispatch. Live
+    # fullscreen stages filter by this family; the mock harness pins its
+    # shape (unshifted F11 0x7A, no Ctrl, toggle family, empty direction).
+    @{ name = "fullscreen-toggle-f11"; vk = $VK_F11; shift = $false; ctrl = $false; op = "fullscreen"; direction = ""; family = "fullscreen-toggle" }
   )
 }
 

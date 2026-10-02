@@ -11,7 +11,7 @@
 //! Production log vocabulary is structured JSON with opaque window tokens
 //! only: no HWNDs, pids, process creation strings, SIDs, paths, or titles.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -42,14 +42,15 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_SHOW, EVENT_SYSTEM_FOREGROUND,
     EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZESTART, EnumChildWindows, EnumWindows, GW_OWNER,
     GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetCursorPos, GetDesktopWindow, GetForegroundWindow,
-    GetShellWindow, GetSystemMetrics, GetWindow, GetWindowLongW, GetWindowPlacement, GetWindowRect,
-    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, MINMAXINFO, MSG,
-    PM_REMOVE, PeekMessageW, QS_ALLINPUT, SM_CXMAXTRACK, SM_CXMINTRACK, SM_CXSCREEN, SM_CYMAXTRACK,
-    SM_CYMINTRACK, SM_CYSCREEN, SMTO_ABORTIFHUNG, SW_MAXIMIZE, SW_SHOWMAXIMIZED, SW_SHOWNOACTIVATE,
-    SWP_NOACTIVATE, SWP_NOZORDER, SendMessageTimeoutW, SetForegroundWindow, SetWindowPlacement,
-    SetWindowPos, ShowWindowAsync, TranslateMessage, WINDOWPLACEMENT, WINEVENT_OUTOFCONTEXT,
-    WM_GETMINMAXINFO, WM_NCHITTEST, WPF_ASYNCWINDOWPLACEMENT, WS_CAPTION, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    GetPropW, GetShellWindow, GetSystemMetrics, GetWindow, GetWindowLongW, GetWindowPlacement,
+    GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed,
+    MINMAXINFO, MSG, PM_REMOVE, PeekMessageW, QS_ALLINPUT, RemovePropW, SM_CXMAXTRACK,
+    SM_CXMINTRACK, SM_CXSCREEN, SM_CYMAXTRACK, SM_CYMINTRACK, SM_CYSCREEN, SMTO_ABORTIFHUNG,
+    SW_MAXIMIZE, SW_SHOWMAXIMIZED, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, SendMessageTimeoutW, SetForegroundWindow, SetPropW, SetWindowLongW,
+    SetWindowPlacement, SetWindowPos, ShowWindowAsync, TranslateMessage, WINDOWPLACEMENT,
+    WINEVENT_OUTOFCONTEXT, WM_GETMINMAXINFO, WM_NCHITTEST, WPF_ASYNCWINDOWPLACEMENT, WS_CAPTION,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_THICKFRAME,
 };
 
 use crate::active_border::{
@@ -77,9 +78,10 @@ use crate::tiling::{
     INNER_GAP, InspectOptions, OUTER_GAP, OWNER_ID, ObservedTarget, ObservedTargetRef,
     ReadbackOutcome, RefusedTracker, ScopeHostChild, SkipReason, StatelessVerdict, TileOptions,
     TileProofOptions, TokenMap, WindowFacts, WorkspaceSelectOptions, allow_match, allowlist_digest,
-    classify, classify_gesture, fingerprint, hosted_child_allows, inspect_stateless_verdict,
-    is_borderless_fullscreen, parse_allowlist, parse_workspace_request, readback_outcome,
-    scope_allows, scope_exe_basename, tick_summary_signature, tiling_domain_bounds,
+    classify, classify_gesture, fingerprint, fullscreen_toggle_decision, hosted_child_allows,
+    inspect_stateless_verdict, is_borderless_fullscreen, parse_allowlist, parse_workspace_request,
+    readback_outcome, scope_allows, scope_exe_basename, should_hold_born_fullscreen,
+    tick_summary_signature, tiling_domain_bounds,
 };
 use crate::workspace::ManagedWorkspaces;
 
@@ -996,6 +998,17 @@ struct TileLoop {
     /// HWND plus process creation so a recycled HWND re-arms for the fresh
     /// window while the same window never retries.
     maximize_admission_attempted: HashSet<String>,
+    /// Born-fullscreen hold (KDE initial-fullscreen-hold parity): first-seen
+    /// fullscreen windows without a retained tile slot, tracked slotless as a
+    /// planner-only exception until their first exit. Keyed by full member
+    /// identity, never HWND alone. A window already seen non-fullscreen in
+    /// this lifetime never enters.
+    born_fullscreen: BTreeSet<crate::workspace::WindowKey>,
+    /// Lifetime-known non-fullscreen member identities: every admitted or
+    /// observed-eligible member lands here, so a later fullscreen transition
+    /// is a managed overlay, never a born hold again. Pruned with the
+    /// enumeration like the hold set.
+    seen_nonfullscreen: BTreeSet<crate::workspace::WindowKey>,
     /// Last observed foreground HWND. Only an actual foreground change to a
     /// hidden member selects its workspace; event-only notifications never do.
     last_foreground: u64,
@@ -1271,6 +1284,7 @@ impl TileLoop {
                 SkipReason::Unreadable.as_str().to_owned(),
             ));
         }
+        track_fullscreen_holds(self, &out, retained);
         Some(out)
     }
 
@@ -1295,12 +1309,12 @@ fn snap_origin_of(window: &ObservedWindow) -> SnapOrigin {
 }
 
 /// Managed origins for chord resolution: eligible observed windows plus
-/// verified overlay-retained members (maximized/fullscreen). A maximized
+/// verified overlay-retained members (maximized/fullscreen). An overlay
 /// member is retained, never eligible, so eligible-only origins break Win+M
-/// restore, focus while maximized, and send from a maximized foreground.
-/// Only existing members with full identity plus live lifetime-tag match
-/// ride along: no foreign or invented members. Exactness stays with the
-/// per-intent owner recheck.
+/// restore, Win+F11 exit, focus while overlaid, and send from a maximized
+/// foreground. Only existing members with full identity plus live
+/// lifetime-tag match ride along: no foreign or invented members. Exactness
+/// stays with the per-intent owner recheck.
 fn managed_origins(
     state: &TileLoop,
     me: &ProcessIdentity,
@@ -2233,8 +2247,8 @@ fn revalidate_target(
         verify_proof_owned(fresh.hwnd, entry, me)?;
     }
     // Focus carries no geometry write, so it stays allowed onto a maximized
-    // member (KDE `requestFocus` overlay exemption); geometry never allows
-    // it. Fullscreen and every other skip still refuse on both paths.
+    // or fullscreen member (KDE `requestFocus` overlay exemption); geometry
+    // never allows either. Every other skip still refuses on both paths.
     if allow_maximized {
         crate::tiling::classify_focus(&fresh.facts).map_err(|reason| reason.as_str())?;
     } else {
@@ -2333,6 +2347,421 @@ fn toggle_zoom_async(hwnd_u64: u64, wanted: bool) -> &'static str {
     } else {
         "dispatched"
     }
+}
+
+/// Style bits the project-owned fullscreen toggle clears on entry
+/// (`WS_CAPTION` covers border+frame, `WS_THICKFRAME` the sizing border).
+/// Only these bits are ever stored and restored; unrelated style changes the
+/// application makes meanwhile are preserved.
+const FULLSCREEN_STYLE_BITS: u32 = WS_CAPTION | WS_THICKFRAME;
+/// Inert per-window ownership marker for the project-owned fullscreen toggle.
+/// Nonzero magic only; never a pointer, never trusted across window lifetime
+/// (the property dies with its window, so a recycled HWND never inherits it).
+const FULLSCREEN_MARKER: usize = 0x4653_3131;
+/// Ownership marker property: presence of the exact magic proves a
+/// project-owned fullscreen frame with restoration metadata alongside.
+const FULLSCREEN_PROP: &str = "PlasmaAutoTilerFullscreen";
+/// Stored changed style bits plus one (never zero when present, so absence
+/// stays distinguishable from a no-op clear).
+const FULLSCREEN_STYLE_PROP: &str = "PlasmaAutoTilerFullscreenStyle";
+/// Preexisting maximize state: 1 was normal, 2 was maximized. Absence means
+/// corrupt metadata, never a default.
+const FULLSCREEN_MAX_PROP: &str = "PlasmaAutoTilerFullscreenMax";
+
+fn prop_wide(name: &str) -> Vec<u16> {
+    name.encode_utf16().chain([0]).collect()
+}
+
+/// Owned restoration metadata for one project-toggled fullscreen window: the
+/// exact style bits cleared on entry plus whether the window was maximized
+/// before (fullscreen wins over maximize; exit reasserts it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FullscreenMeta {
+    changed: u32,
+    was_maximized: bool,
+}
+
+/// Read the owned fullscreen metadata. `None` means app-owned or absent:
+/// a missing marker, a wrong magic, any missing companion property, or a
+/// changed-bits value outside the owned mask all read as unowned, never as
+/// a default preimage. Only bits in `FULLSCREEN_STYLE_BITS` are ever owned;
+/// arbitrary style bits are never trusted for restoration.
+fn read_fullscreen_meta(hwnd_u64: u64) -> Option<FullscreenMeta> {
+    let hwnd = hwnd_u64 as isize as HWND;
+    if unsafe { IsWindow(hwnd) } == 0 {
+        return None;
+    }
+    let marker = unsafe { GetPropW(hwnd, prop_wide(FULLSCREEN_PROP).as_ptr()) };
+    if marker.is_null() || marker as usize != FULLSCREEN_MARKER {
+        return None;
+    }
+    let bits = unsafe { GetPropW(hwnd, prop_wide(FULLSCREEN_STYLE_PROP).as_ptr()) };
+    if bits.is_null() {
+        return None;
+    }
+    let changed = u32::try_from((bits as usize).checked_sub(1)?).ok()?;
+    if changed & !FULLSCREEN_STYLE_BITS != 0 {
+        return None;
+    }
+    let max = unsafe { GetPropW(hwnd, prop_wide(FULLSCREEN_MAX_PROP).as_ptr()) };
+    if max.is_null() {
+        return None;
+    }
+    let was_maximized = match max as usize {
+        1 => false,
+        2 => true,
+        _ => return None,
+    };
+    Some(FullscreenMeta {
+        changed,
+        was_maximized,
+    })
+}
+
+/// Remove one owned metadata property set best-effort. Used to clean partial
+/// `SetProp` writes so a failed entry never leaves a trusted-looking residue.
+fn remove_fullscreen_meta_props(hwnd: HWND) {
+    for name in [FULLSCREEN_PROP, FULLSCREEN_STYLE_PROP, FULLSCREEN_MAX_PROP] {
+        unsafe {
+            RemovePropW(hwnd, prop_wide(name).as_ptr());
+        }
+    }
+}
+
+/// Store the owned metadata with readback: all three properties must read
+/// back exactly, or the entry fails closed with no partial residue trusted.
+/// A partial `SetProp` sequence cleans up before returning false, so a later
+/// press never mistakes residue for an owned preimage.
+fn write_fullscreen_meta(hwnd_u64: u64, meta: &FullscreenMeta) -> bool {
+    let hwnd = hwnd_u64 as isize as HWND;
+    if unsafe { IsWindow(hwnd) } == 0 {
+        return false;
+    }
+    let stored_bits = (meta.changed as usize).wrapping_add(1);
+    let stored_max = if meta.was_maximized { 2usize } else { 1usize };
+    if unsafe {
+        SetPropW(
+            hwnd,
+            prop_wide(FULLSCREEN_PROP).as_ptr(),
+            FULLSCREEN_MARKER as _,
+        )
+    } == 0
+    {
+        return false;
+    }
+    if unsafe {
+        SetPropW(
+            hwnd,
+            prop_wide(FULLSCREEN_STYLE_PROP).as_ptr(),
+            stored_bits as _,
+        )
+    } == 0
+    {
+        remove_fullscreen_meta_props(hwnd);
+        return false;
+    }
+    if unsafe {
+        SetPropW(
+            hwnd,
+            prop_wide(FULLSCREEN_MAX_PROP).as_ptr(),
+            stored_max as _,
+        )
+    } == 0
+    {
+        remove_fullscreen_meta_props(hwnd);
+        return false;
+    }
+    if read_fullscreen_meta(hwnd_u64).is_some_and(|back| back == *meta) {
+        true
+    } else {
+        remove_fullscreen_meta_props(hwnd);
+        false
+    }
+}
+
+/// Remove the owned metadata after a verified restore. Best-effort removal
+/// with an absence readback; a failed removal keeps the marker so a later
+/// exit still finds its preimage rather than stranding the frame.
+fn clear_fullscreen_meta(hwnd_u64: u64) -> bool {
+    let hwnd = hwnd_u64 as isize as HWND;
+    if unsafe { IsWindow(hwnd) } == 0 {
+        return false;
+    }
+    for name in [FULLSCREEN_PROP, FULLSCREEN_STYLE_PROP, FULLSCREEN_MAX_PROP] {
+        unsafe {
+            RemovePropW(hwnd, prop_wide(name).as_ptr());
+        }
+    }
+    read_fullscreen_meta(hwnd_u64).is_none()
+}
+
+/// Enter project-owned fullscreen: store the restoration preimage first, then
+/// clear the frame bits and cover the monitor without activating. No blind
+/// input synthesis; the official style/frame APIs only. Re-entry never
+/// overwrites an existing preimage: an owned frame always exits first, so an
+/// entry that finds metadata returns without a write. Returns the
+/// readback-settled outcome: `fullscreen` when the frame bits read back
+/// cleared, `dispatched` when a setter accepted but completion is pending or
+/// uncertain (including a `SetWindowPos` failure after the chrome changed,
+/// where the preimage is preserved for a later exit), `threw` when no style
+/// effect happened (the fresh preimage is cleared, nothing is left trusted).
+/// No automatic retries on any path.
+fn enter_fullscreen(hwnd_u64: u64, full: Rect) -> &'static str {
+    let hwnd = hwnd_u64 as isize as HWND;
+    if unsafe { IsWindow(hwnd) } == 0 {
+        return "threw";
+    }
+    if read_fullscreen_meta(hwnd_u64).is_some() {
+        return "dispatched";
+    }
+    let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) } as u32;
+    let meta = FullscreenMeta {
+        changed: style & FULLSCREEN_STYLE_BITS,
+        was_maximized: is_zoomed_now(hwnd_u64),
+    };
+    if !write_fullscreen_meta(hwnd_u64, &meta) {
+        return "threw";
+    }
+    let next = (style & !FULLSCREEN_STYLE_BITS) as i32;
+    unsafe {
+        SetLastError(0);
+    }
+    let prev = unsafe { SetWindowLongW(hwnd, GWL_STYLE, next) };
+    let style_err = unsafe { GetLastError() };
+    if prev == 0 && style_err != 0 {
+        clear_fullscreen_meta(hwnd_u64);
+        return "threw";
+    }
+    let placed = unsafe {
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            full.x,
+            full.y,
+            full.w,
+            full.h,
+            SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED,
+        )
+    };
+    if placed == 0 {
+        return "dispatched";
+    }
+    if unsafe { GetWindowLongW(hwnd, GWL_STYLE) } as u32 & FULLSCREEN_STYLE_BITS == 0 {
+        "fullscreen"
+    } else {
+        "dispatched"
+    }
+}
+
+/// Exit project-owned fullscreen: restore exactly the owned mask bits
+/// (unrelated application style changes meanwhile are preserved), reapply
+/// the frame without moving (so externally moved frames still exit), reassert
+/// a preexisting maximize, then drop the metadata. A failed restore keeps
+/// the metadata so a later press can retry; nothing is guessed and nothing
+/// retries automatically. `meta.changed` is already validated to the owned
+/// mask on read, so restoration never touches arbitrary bits.
+fn exit_fullscreen_owned(hwnd_u64: u64, meta: &FullscreenMeta) -> &'static str {
+    let hwnd = hwnd_u64 as isize as HWND;
+    if unsafe { IsWindow(hwnd) } == 0 {
+        return "threw";
+    }
+    let current = unsafe { GetWindowLongW(hwnd, GWL_STYLE) } as u32;
+    let next = (current | meta.changed) as i32;
+    unsafe {
+        SetLastError(0);
+    }
+    let prev = unsafe { SetWindowLongW(hwnd, GWL_STYLE, next) };
+    let style_err = unsafe { GetLastError() };
+    if prev == 0 && style_err != 0 {
+        return "threw";
+    }
+    let placed = unsafe {
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )
+    };
+    if placed == 0 {
+        return "threw";
+    }
+    if unsafe { GetWindowLongW(hwnd, GWL_STYLE) } as u32 & meta.changed != meta.changed {
+        return "dispatched";
+    }
+    if meta.was_maximized && unsafe { ShowWindowAsync(hwnd, SW_MAXIMIZE) } == 0 {
+        return "dispatched";
+    }
+    if clear_fullscreen_meta(hwnd_u64) {
+        "restored"
+    } else {
+        "dispatched"
+    }
+}
+
+/// Fresh holdability check for one fullscreen HWND: same-session,
+/// medium-integrity identity plus every safety gate observation admission
+/// requires (never elevated, shell, tool, owned, dialog, cloaked, or
+/// no-activate; in scope with a live hosted child where listed; frozen
+/// allowlist plus owned-helper verification in proof modes). Returns the
+/// member key on pass; the caller decides hold vs exemption. Read-only.
+fn holdable_key(
+    state: &TileLoop,
+    me: &ProcessIdentity,
+    hwnd_u64: u64,
+) -> Option<crate::workspace::WindowKey> {
+    if hwnd_u64 == 0 {
+        return None;
+    }
+    let hwnd = hwnd_u64 as isize as HWND;
+    if unsafe { IsWindow(hwnd) } == 0 {
+        return None;
+    }
+    let mut pid: u32 = 0;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, &mut pid);
+    }
+    if pid == 0 || pid == me.pid {
+        return None;
+    }
+    let held = HeldProcess::open(pid).ok()?;
+    let live = held.identity().ok()?;
+    if live.pid != pid {
+        return None;
+    }
+    if live.user_sid != me.user_sid || live.session_id != me.session_id {
+        return None;
+    }
+    if held.integrity().ok().is_none_or(|rid| !is_medium_rid(rid)) {
+        return None;
+    }
+    if unsafe { IsIconic(hwnd) } != 0 {
+        return None;
+    }
+    let class = class_of(hwnd);
+    if is_shell_class(&class) || class == DIALOG_CLASS {
+        return None;
+    }
+    if !unsafe { GetWindow(hwnd, GW_OWNER) }.is_null() {
+        return None;
+    }
+    let exstyle = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) } as u32;
+    if exstyle & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) != 0 {
+        return None;
+    }
+    let mut cloaked: i32 = 0;
+    if unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            (&mut cloaked as *mut i32).cast(),
+            std::mem::size_of::<i32>() as u32,
+        )
+    } != 0
+    {
+        return None;
+    }
+    if cloaked != 0 {
+        return None;
+    }
+    if !scope_allows(&state.scope, &live.exe_path) {
+        return None;
+    }
+    if !hosted_gate_allows(&live.exe_path, hwnd_u64, pid, &state.scope_hosts) {
+        return None;
+    }
+    if let Some(entries) = state.allowlist.as_ref() {
+        let entry = entries.iter().find(|e| e.hwnd == hwnd_u64)?;
+        if verify_proof_owned(hwnd_u64, entry, me).is_err() {
+            return None;
+        }
+    }
+    Some(crate::workspace::WindowKey {
+        hwnd: hwnd_u64,
+        pid,
+        creation: live.process_creation,
+    })
+}
+
+/// Track the born-fullscreen hold after one observation (KDE
+/// initial-fullscreen-hold parity): lifetime-known non-fullscreen identities
+/// accumulate here so a later fullscreen transition is a managed overlay,
+/// never a born hold again; held keys observed non-fullscreen release for
+/// normal fresh admission; hold and seen sets prune with the enumeration.
+/// New holds are admitted in `ensure_workspace_assignments` (which owns
+/// workspace membership, lifetime tags, and the held lifecycle log), never
+/// here, so tracking never creates a non-member hold. Every observation path
+/// funnels through `observe`, so one call here covers reconcile,
+/// directional, workspace, gesture, and select ticks.
+fn track_fullscreen_holds(
+    state: &mut TileLoop,
+    observed: &[ObservedWindow],
+    retained: &[RetainedRow],
+) {
+    let mut live_nonfullscreen: BTreeSet<crate::workspace::WindowKey> = BTreeSet::new();
+    for window in observed {
+        live_nonfullscreen.insert(crate::workspace::WindowKey {
+            hwnd: window.hwnd,
+            pid: window.identity.pid,
+            creation: window.identity.process_creation.clone(),
+        });
+    }
+    for row in retained {
+        if !row.fullscreen {
+            live_nonfullscreen.insert(row.key.clone());
+        }
+    }
+    // Lifetime-known non-fullscreen (KDE `seenNonFullscreen` parity): any
+    // non-fullscreen observation, including minimized members, means a later
+    // fullscreen transition is a managed overlay, never a born hold again.
+    // Windows that could never verify holdable (scope, proof, safety gates)
+    // suspend either way, so this never weakens a fence.
+    state
+        .seen_nonfullscreen
+        .extend(live_nonfullscreen.iter().cloned());
+    let log_path = state.log_path.clone();
+    let released: Vec<crate::workspace::WindowKey> = state
+        .born_fullscreen
+        .iter()
+        .filter(|key| live_nonfullscreen.contains(key) || !state.last_hwnds.contains(&key.hwnd))
+        .cloned()
+        .collect();
+    for key in released {
+        state.born_fullscreen.remove(&key);
+        // Drop the hidden-snapshot seed so the first exit converges through
+        // normal fresh admission (and the existing maximize clear when the
+        // exit lands maximized) with no faked slot. The log below is the
+        // once-per-lifecycle release line; held was logged at admission.
+        if let Some(token) = state.member_tokens.get(&key).cloned() {
+            state.member_rects.remove(&token);
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "initial-fullscreen-released",
+                    "window": token,
+                }),
+            );
+        } else if let Some(token) = retained
+            .iter()
+            .find(|r| r.key == key)
+            .map(|r| r.token.clone())
+        {
+            state.member_rects.remove(&token);
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "initial-fullscreen-released",
+                    "window": token,
+                }),
+            );
+        }
+    }
+    state
+        .seen_nonfullscreen
+        .retain(|key| state.last_hwnds.contains(&key.hwnd));
 }
 
 /// Otherwise-eligible check for an admission-clear candidate: every safety
@@ -2553,6 +2982,7 @@ fn assemble_domain_rows(
     let mut stats = HintStats::default();
     let mut reasons: HashMap<String, &'static str> = HashMap::new();
     for key in &members {
+        let born = state.born_fullscreen.contains(key);
         if state.workspaces.is_hidden(key) {
             if let (Some(token), Some(rect)) = (
                 state.member_tokens.get(key).cloned(),
@@ -2569,6 +2999,7 @@ fn assemble_domain_rows(
                     token,
                     rect,
                     hints,
+                    floating: born,
                 });
             }
             continue;
@@ -2601,6 +3032,7 @@ fn assemble_domain_rows(
                 token: token.clone(),
                 rect: window.visible,
                 hints,
+                floating: false,
             });
             continue;
         }
@@ -2608,9 +3040,25 @@ fn assemble_domain_rows(
         // its last-known tile rectangle, never the compositor-owned native
         // maximum frame, so tile topology and sibling shares survive the
         // overlay; first sightings fall back to the fresh frame. Retained rows
-        // carry no hint and never take writes. Existing skip semantics
-        // preserved.
+        // carry no hint and never take writes. Born-held fullscreen members
+        // are the slotless exception: they ride the fresh row rect with a
+        // floating Engine observation (siblings keep the full tile area) and
+        // never write a canonical slot into `member_rects`; the admission
+        // hidden-snapshot seed stays untouched for a later hide. Existing
+        // skip semantics preserved.
         if let Some(row) = retained.iter().find(|r| r.key == *key) {
+            if born && row.fullscreen {
+                if let Some(rect) = row.rect {
+                    views.push(crate::workspace_owner::MemberView {
+                        key: key.clone(),
+                        token: row.token.clone(),
+                        rect,
+                        hints: WindowSizeHints::none(),
+                        floating: true,
+                    });
+                }
+                continue;
+            }
             let overlay = row.maximized || row.fullscreen;
             let kept = state.member_rects.get(&row.token).copied();
             let rect = match row.rect {
@@ -2624,6 +3072,7 @@ fn assemble_domain_rows(
                     token: row.token.clone(),
                     rect,
                     hints: WindowSizeHints::none(),
+                    floating: false,
                 });
             }
         }
@@ -2815,7 +3264,7 @@ fn reconcile_tick(
         return;
     };
     publish_managed(state, me, &observed, &retained);
-    ensure_workspace_assignments(state, me, &mut observed, areas);
+    ensure_workspace_assignments(state, me, &mut observed, &retained, areas);
     // First-seen maximized windows restore once here: lifetime tags are
     // stamped, and the cleared window converges as eligible next tick.
     clear_maximize_at_admission(state, me, &retained);
@@ -2877,9 +3326,9 @@ fn reconcile_tick(
         ) else {
             continue;
         };
-        let windows: Vec<(WindowId, Rect, WindowSizeHints)> = rows
+        let windows: Vec<(WindowId, Rect, WindowSizeHints, bool)> = rows
             .iter()
-            .map(|r| (WindowId(r.token.clone()), r.rect, r.hints))
+            .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
             .collect();
         let fp = fingerprint(
             &rows
@@ -2889,11 +3338,11 @@ fn reconcile_tick(
         );
         let focused = state
             .focused_token(&observed)
-            .filter(|f| windows.iter().any(|(w, _, _)| w == f));
+            .filter(|f| windows.iter().any(|(w, _, _, _)| w == f));
         let Some((domain, domain_key)) = workspace_domain_for(&output, &active, areas) else {
             continue;
         };
-        let event = crate::tiling::build_reconcile_event_for(
+        let event = crate::tiling::build_reconcile_event_for_floating(
             &state.owner,
             &state.generation,
             &correlation,
@@ -3123,7 +3572,8 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> Option<ApplySu
         // User safety across the tick: a vetoing foreground that arrived
         // after the loop guard must veto this write, not ride along. The
         // first veto pins the bounded diagnostic for the action summary.
-        let read = foreground_read(fulls);
+        // Verified managed overlays bypass like a managed maximize.
+        let read = suspend_read(state, me, fulls);
         if read.veto.block {
             if veto_diag.is_none() {
                 veto_diag = Some(VetoDiag {
@@ -3495,12 +3945,12 @@ fn actuate_focus(
         eventual: false,
         deferred: false,
     };
-    // Eligible observed target first; otherwise a verified retained maximized
-    // member (KDE `requestFocus` overlay exemption): maximized is retained,
-    // never eligible, so eligible-only lookup never focuses it. The expected
-    // identity below still revalidates fresh with the full
-    // identity/scope/hosted/proof/lifetime gates; only the geometry
-    // classifier is focus-relaxed (maximized allowed, fullscreen still
+    // Eligible observed target first; otherwise a verified retained overlay
+    // member (KDE `requestFocus` overlay exemption): maximized and fullscreen
+    // members are retained, never eligible, so eligible-only lookup never
+    // focuses them. The expected identity below still revalidates fresh with
+    // the full identity/scope/hosted/proof/lifetime gates; only the geometry
+    // classifier is focus-relaxed (overlays allowed, everything else still
     // refused). Reuses the retained-aware origin set's membership rule.
     let owned_expected: Option<ObservedWindow>;
     let expected = if let Some(found) = observed.iter().find(|w| w.token == to_token) {
@@ -3591,8 +4041,9 @@ fn actuate_focus(
     // Real fullscreen arrival fence immediately before the native setter: a
     // vetoing foreground (or an elevated foreground) that arrived during
     // validation/priming is never stolen from. The geometry path below then
-    // vetoes honestly instead of riding along. No wait, no retry.
-    if foreground_read(fulls).veto.block || foreground_elevated(me) {
+    // vetoes honestly instead of riding along. No wait, no retry. Verified
+    // managed overlays bypass like a managed maximize.
+    if suspend_read(state, me, fulls).veto.block || foreground_elevated(me) {
         return FocusActuation {
             outcome: "focus-skipped-fence",
             setter_accepted: false,
@@ -3757,6 +4208,7 @@ fn keyboard_tick(
                 QueuedSnapEvent::Intent(_) => stale += 1,
                 QueuedSnapEvent::Workspace(_) => stale += 1,
                 QueuedSnapEvent::Maximize(_) => stale += 1,
+                QueuedSnapEvent::Fullscreen(_) => stale += 1,
             }
         }
         if stale > 0 {
@@ -3850,7 +4302,7 @@ fn keyboard_tick(
                     continue;
                 };
                 publish_managed(state, me, &observed, &retained);
-                ensure_workspace_assignments(state, me, &mut observed, areas);
+                ensure_workspace_assignments(state, me, &mut observed, &retained, areas);
                 // First-seen maximized windows restore once here: lifetime tags are
                 // stamped, and the cleared window converges as eligible next tick.
                 clear_maximize_at_admission(state, me, &retained);
@@ -4044,9 +4496,9 @@ fn keyboard_tick(
                     );
                     continue;
                 }
-                let windows: Vec<(WindowId, Rect, WindowSizeHints)> = rows
+                let windows: Vec<(WindowId, Rect, WindowSizeHints, bool)> = rows
                     .iter()
-                    .map(|r| (WindowId(r.token.clone()), r.rect, r.hints))
+                    .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
                     .collect();
                 let fp = fingerprint(
                     &rows
@@ -4056,7 +4508,7 @@ fn keyboard_tick(
                 );
                 // `from` is the origin-verified token, never blind foreground.
                 let from = WindowId(from);
-                let mut event = crate::tiling::build_reconcile_event_for(
+                let mut event = crate::tiling::build_reconcile_event_for_floating(
                     &state.owner,
                     &state.generation,
                     &correlation,
@@ -4249,7 +4701,7 @@ fn keyboard_tick(
                     continue;
                 };
                 publish_managed(state, me, &observed, &retained);
-                ensure_workspace_assignments(state, me, &mut observed, areas);
+                ensure_workspace_assignments(state, me, &mut observed, &retained, areas);
                 // First-seen maximized windows restore once here: lifetime tags are
                 // stamped, and the cleared window converges as eligible next tick.
                 clear_maximize_at_admission(state, me, &retained);
@@ -4463,6 +4915,323 @@ fn keyboard_tick(
                     }),
                 );
             }
+            QueuedSnapEvent::Fullscreen(intent) => {
+                // Win+F11 toggle (KDE Meta+F11 parity): key-ups close the pair
+                // and passed chords never dispatch, trace-only like the
+                // maximize arm.
+                if !intent.consumed || !intent.announce {
+                    if state.trace {
+                        log_json_at(
+                            &log_path,
+                            serde_json::json!({
+                                "event": "fullscreen-toggle",
+                                "tick": state.tick,
+                                "edge": intent.edge.as_str(),
+                                "disposition": if intent.consumed { "consumed" } else { "passed" },
+                                "outcome": if intent.consumed { "key-up" } else { "passed" },
+                            }),
+                        );
+                    }
+                    continue;
+                }
+                state.tick += 1;
+                let tick = state.tick;
+                let correlation = state.correlation();
+                let Some(origin) = intent.origin.clone() else {
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "fullscreen-toggle",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "origin-vanished",
+                        }),
+                    );
+                    continue;
+                };
+                let mut skipped: Vec<(String, String)> = Vec::new();
+                let mut retained: Vec<RetainedRow> = Vec::new();
+                let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained)
+                else {
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "fullscreen-toggle",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "observation-failed",
+                            "origin": origin.token,
+                        }),
+                    );
+                    continue;
+                };
+                publish_managed(state, me, &observed, &retained);
+                ensure_workspace_assignments(state, me, &mut observed, &retained, areas);
+                // First-seen maximized windows restore once here: lifetime tags are
+                // stamped, and the cleared window converges as eligible next tick.
+                clear_maximize_at_admission(state, me, &retained);
+                let fresh: Vec<SnapOrigin> = state.snap_origins.values().cloned().collect();
+                let foreground_hwnd = Some(unsafe { GetForegroundWindow() } as usize as u64);
+                let (from, _) = match resolve_origin(
+                    &origin,
+                    foreground_hwnd,
+                    &fresh,
+                    state.snap_advance.as_ref(),
+                ) {
+                    OriginVerdict::Dispatch { token, continued } => (token, continued),
+                    OriginVerdict::Reject(reason) => {
+                        state.snap_advance = None;
+                        log_json_at(
+                            &log_path,
+                            serde_json::json!({
+                                "event": "fullscreen-toggle",
+                                "tick": tick,
+                                "correlation": correlation.as_str(),
+                                "edge": intent.edge.as_str(),
+                                "disposition": "consumed",
+                                "outcome": reason,
+                                "origin": origin.token,
+                            }),
+                        );
+                        continue;
+                    }
+                };
+                let Some(member_key) = state
+                    .member_tokens
+                    .iter()
+                    .find(|(_, token)| token.as_str() == from.as_str())
+                    .map(|(key, _)| key.clone())
+                else {
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "fullscreen-toggle",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "unmanaged",
+                            "origin": origin.token,
+                        }),
+                    );
+                    continue;
+                };
+                if !crate::workspace_owner::member_matches(
+                    &member_key,
+                    origin.hwnd,
+                    origin.pid,
+                    &origin.creation,
+                ) {
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "fullscreen-toggle",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "foreground-changed",
+                            "origin": origin.token,
+                        }),
+                    );
+                    continue;
+                }
+                // Fresh pre-effect revalidation through the production target
+                // gate (focus/overlay classifier, held process
+                // integrity/identity, lifetime tag, host-child, proof scope)
+                // immediately before any style/`SetWindowPos` effect, using
+                // the held handle across effects. Replaces the stale
+                // tick-observation gates: the expected window is the fresh
+                // eligible observation when present, otherwise a retained
+                // overlay construction exactly like `actuate_focus`, and only
+                // the geometry classifier is focus-relaxed (overlays allowed).
+                let owned_expected: Option<ObservedWindow>;
+                let expected =
+                    if let Some(found) = observed.iter().find(|w| w.hwnd == member_key.hwnd) {
+                        found
+                    } else {
+                        let Some(row) = retained.iter().find(|r| r.key == member_key) else {
+                            state.snap_advance = None;
+                            log_json_at(
+                                &log_path,
+                                serde_json::json!({
+                                    "event": "fullscreen-toggle",
+                                    "tick": tick,
+                                    "correlation": correlation.as_str(),
+                                    "edge": intent.edge.as_str(),
+                                    "disposition": "consumed",
+                                    "outcome": "deferred",
+                                    "origin": origin.token,
+                                }),
+                            );
+                            continue;
+                        };
+                        let Some(stored) = state.member_identity.get(&row.key).cloned() else {
+                            state.snap_advance = None;
+                            log_json_at(
+                                &log_path,
+                                serde_json::json!({
+                                    "event": "fullscreen-toggle",
+                                    "tick": tick,
+                                    "correlation": correlation.as_str(),
+                                    "edge": intent.edge.as_str(),
+                                    "disposition": "consumed",
+                                    "outcome": "unmanaged",
+                                    "origin": origin.token,
+                                }),
+                            );
+                            continue;
+                        };
+                        owned_expected = Some(ObservedWindow {
+                            hwnd: row.key.hwnd,
+                            token: row.token.clone(),
+                            outer: Rect {
+                                x: 0,
+                                y: 0,
+                                w: 0,
+                                h: 0,
+                            },
+                            visible: Rect {
+                                x: 0,
+                                y: 0,
+                                w: 0,
+                                h: 0,
+                            },
+                            insets: FrameInsets::default(),
+                            identity: crate::tiling::ObservedTarget {
+                                hwnd: row.key.hwnd,
+                                pid: row.key.pid,
+                                process_creation: row.key.creation.clone(),
+                                exe_path: stored.exe_path,
+                                user_sid: stored.user_sid,
+                                session_id: stored.session_id,
+                                tag: String::new(),
+                            },
+                            facts: row.facts.unwrap_or(crate::tiling::WindowFacts {
+                                visible: true,
+                                minimized: false,
+                                maximized: true,
+                                cloaked: false,
+                                elevated: false,
+                                shell: false,
+                                tool_window: false,
+                                owned: false,
+                                captionless_fullscreen: false,
+                                no_activate: false,
+                                dialog: false,
+                            }),
+                        });
+                        owned_expected.as_ref().expect("retained expected built")
+                    };
+                let proof_mode = state.allowlist.is_some();
+                let member_tag = state.member_tags.get(&member_key).map(String::as_str);
+                let target = match revalidate_target(
+                    expected,
+                    me,
+                    fulls,
+                    &mut state.tokens,
+                    proof_mode,
+                    state.allowlist.as_ref(),
+                    &state.scope,
+                    member_tag,
+                    &state.scope_hosts,
+                    true,
+                ) {
+                    Ok(target) => target,
+                    Err(reason) => {
+                        if reason == "identity-changed" {
+                            if let Some(token) = state.member_tokens.remove(&member_key) {
+                                state.member_rects.remove(&token);
+                            }
+                            state.member_identity.remove(&member_key);
+                            state.member_tags.remove(&member_key);
+                            state.workspaces.remove_window(&member_key);
+                        }
+                        log_json_at(
+                            &log_path,
+                            serde_json::json!({
+                                "event": "fullscreen-toggle",
+                                "tick": tick,
+                                "correlation": correlation.as_str(),
+                                "edge": intent.edge.as_str(),
+                                "disposition": "consumed",
+                                "outcome": reason,
+                                "origin": origin.token,
+                            }),
+                        );
+                        continue;
+                    }
+                };
+                // The held process keeps liveness authority across the style
+                // and frame effects below; the HWND pid is rechecked by the
+                // setters' readbacks, never trusted from the tick.
+                let _held = &target.held;
+                // Fresh pre-effect state plus our restoration metadata decide
+                // the direction: owned metadata wins over geometry, so a press
+                // on any owned frame exits even when the frame no longer
+                // covers a monitor (external move or partial restore).
+                // Entering is always project-owned; an app-owned frame
+                // refuses with a bounded reason instead of guessing.
+                let now_fullscreen = target.window.facts.captionless_fullscreen;
+                let meta = read_fullscreen_meta(member_key.hwnd);
+                let (target, outcome) =
+                    match fullscreen_toggle_decision(now_fullscreen, meta.is_some()) {
+                        crate::tiling::FullscreenToggle::RefuseAppOwned => {
+                            ("fullscreen", "fullscreen-refused-app-owned")
+                        }
+                        crate::tiling::FullscreenToggle::Enter => {
+                            // The revalidation above already proved fresh
+                            // eligibility (or a maximized overlay, where
+                            // fullscreen wins): enter with the fresh frame as
+                            // the output anchor, never a stale tick read.
+                            let full = output_for_rect(areas, &target.window.visible);
+                            let full = areas
+                                .iter()
+                                .find(|a| a.device == full)
+                                .map(|area| area.full)
+                                .or_else(|| areas.first().map(|area| area.full));
+                            match full {
+                                Some(full) => {
+                                    ("fullscreen", enter_fullscreen(member_key.hwnd, full))
+                                }
+                                None => ("fullscreen", "unknown-output"),
+                            }
+                        }
+                        crate::tiling::FullscreenToggle::ExitOwned => {
+                            let meta = meta.expect("decision owns metadata");
+                            let outcome = exit_fullscreen_owned(member_key.hwnd, &meta);
+                            // A clean exit to a normal frame restores the current
+                            // Engine allocation in the same action; a reasserted
+                            // maximize converges as a retained overlay next tick.
+                            if outcome == "restored" && !meta.was_maximized {
+                                let fulls_owned = fulls.to_vec();
+                                reconcile_tick(state, me, &fulls_owned, areas);
+                            }
+                            ("restored", outcome)
+                        }
+                    };
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": "fullscreen-toggle",
+                        "tick": tick,
+                        "correlation": correlation.as_str(),
+                        "edge": intent.edge.as_str(),
+                        "disposition": "consumed",
+                        "outcome": outcome,
+                        "target": target,
+                        "origin": origin.token,
+                        "window": from,
+                    }),
+                );
+            }
             QueuedSnapEvent::Workspace(intent) => {
                 // Routed to workspace_tick by the caller; defensive drop here
                 // stays trace-only so held-key traffic never pollutes logs.
@@ -4581,6 +5350,120 @@ fn workspace_domain_for(
     ))
 }
 
+/// Admit first-seen fullscreen windows as born-held workspace members (KDE
+/// initial-fullscreen-hold parity): managed membership with a slotless
+/// synthetic floating Engine observation, never a tile slot. First-seen
+/// applies regardless of app/project properties after a restart: a
+/// restart-owned frame (our restoration metadata still on the window) is a
+/// born hold like any first observed fullscreen, and the Win+F11 shortcut
+/// still exits through those properties. A later fullscreen on a slotted
+/// member or a lifetime-known non-fullscreen window is a managed overlay
+/// transition, never born again. Membership carries the lifetime tag,
+/// identity, and Engine token (supporting hide/reveal/recovery with no
+/// native writes); floating observation is true only for the born hold, and
+/// no `member_rects` slot is faked (the row rect / hidden snapshot carries
+/// the native frame). Release happens on the first verified non-fullscreen
+/// observation (or close), when normal fresh admission takes over; a first
+/// exit to maximized converges through the existing admission clear.
+fn admit_born_fullscreen(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    retained: &[RetainedRow],
+    areas: &[MonitorArea],
+) {
+    let log_path = state.log_path.clone();
+    for row in retained {
+        if !row.fullscreen {
+            continue;
+        }
+        let Some(frame) = row.rect else {
+            continue;
+        };
+        if state.workspaces.member_loc(&row.key).is_some()
+            || state.member_tokens.contains_key(&row.key)
+            || state.hidden_claims.keys().any(|k| k.hwnd == row.key.hwnd)
+        {
+            continue;
+        }
+        let known_slot = state.member_rects.contains_key(&row.token);
+        if !should_hold_born_fullscreen(
+            true,
+            known_slot,
+            state.seen_nonfullscreen.contains(&row.key),
+        ) {
+            continue;
+        }
+        if holdable_key(state, me, row.key.hwnd).is_none_or(|key| key != row.key) {
+            continue;
+        }
+        let live = match HeldProcess::open(row.key.pid).and_then(|held| held.identity()) {
+            Ok(live) => live,
+            Err(_) => continue,
+        };
+        if live.pid != row.key.pid || live.process_creation != row.key.creation {
+            continue;
+        }
+        let stale = crate::workspace_owner::reused_hwnd_stale(
+            &state.member_tokens.keys().cloned().collect::<Vec<_>>(),
+            &state.hidden_claims.keys().cloned().collect(),
+            &row.key,
+        );
+        for dead in stale {
+            if let Some(token) = state.member_tokens.remove(&dead) {
+                state.member_rects.remove(&token);
+            }
+            state.member_identity.remove(&dead);
+            state.member_tags.remove(&dead);
+            state.workspaces.remove_window(&dead);
+        }
+        if state.workspaces.member_loc(&row.key).is_some()
+            || state.member_tokens.contains_key(&row.key)
+        {
+            continue;
+        }
+        let fresh_tag = match crate::product_hide::sys::install_member_tag(row.key.hwnd, me.pid) {
+            Ok(tag) => tag,
+            Err(_) => continue,
+        };
+        let post_ok = crate::product_hide::sys::hold_target_verified(live.pid, &live).is_ok()
+            && pid_current(row.key.hwnd, live.pid)
+            && crate::product_hide::sys::read_member_tag(row.key.hwnd).as_deref()
+                == Some(fresh_tag.as_str());
+        if !post_ok {
+            continue;
+        }
+        let token = row.token.clone();
+        let output = output_for_rect(areas, &frame);
+        state.workspaces.ensure_output(&output);
+        let Some(active) = state.workspaces.active_id(&output) else {
+            continue;
+        };
+        if state
+            .workspaces
+            .assign(row.key.clone(), &output, &active, false)
+        {
+            state.member_tokens.insert(row.key.clone(), token.clone());
+            state.member_identity.insert(row.key.clone(), live);
+            state.member_tags.insert(row.key.clone(), fresh_tag);
+            // Hidden-snapshot seed only (never a tile slot): a born hold that
+            // is later hidden needs an existing snapshot for row assembly,
+            // while visible rows always use the fresh row rect. `known_slot`
+            // checks treat born keys as slotless regardless of this seed, and
+            // release drops it so a first exit to maximized clears normally.
+            state.member_rects.insert(token.clone(), frame);
+            if state.born_fullscreen.insert(row.key.clone()) {
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": "initial-fullscreen-held",
+                        "window": token,
+                    }),
+                );
+            }
+        }
+    }
+}
+
 /// Assign newly seen eligible windows to the active workspace of their
 /// monitor output. Hidden-claim HWNDs are never re-admitted into another
 /// domain here. A nonempty scope admits only the named executables.
@@ -4599,6 +5482,7 @@ fn ensure_workspace_assignments(
     state: &mut TileLoop,
     me: &ProcessIdentity,
     observed: &mut [ObservedWindow],
+    retained: &[RetainedRow],
     areas: &[MonitorArea],
 ) {
     for window in observed.iter_mut() {
@@ -4735,6 +5619,10 @@ fn ensure_workspace_assignments(
             .insert(window.token.clone(), window.visible);
         state.member_identity.insert(key, identity);
     }
+    // Born-held first-seen fullscreen members join the workspace slotless
+    // (floating Engine observation, no tile slot); later fullscreen on a
+    // slotted or lifetime-known window stays a managed overlay transition.
+    admit_born_fullscreen(state, me, retained, areas);
     if state.active_output.is_empty()
         && let Some(first) = state.workspaces.output_keys().into_iter().next()
     {
@@ -4812,7 +5700,9 @@ fn audit_hidden_claims(state: &mut TileLoop, me: &ProcessIdentity, store: &Ledge
 /// inventory. Retained-occupancy members (minimized, maximized, fullscreen)
 /// stay enumerated with identity, so only a truly absent HWND cleans up;
 /// hidden claims retire through the reveal path, never here. Unknown
-/// identities (enumeration without resolution) retain membership.
+/// identities (enumeration without resolution) retain membership. Born holds
+/// clean here too: a closed born window releases its hold with the
+/// once-per-lifecycle line and drops its snapshot seed.
 fn workspace_close_cleanup(state: &mut TileLoop) {
     let gone: Vec<crate::workspace::WindowKey> = state
         .member_tokens
@@ -4820,7 +5710,19 @@ fn workspace_close_cleanup(state: &mut TileLoop) {
         .filter(|k| !state.last_hwnds.contains(&k.hwnd) && !state.hidden_claims.contains_key(k))
         .cloned()
         .collect();
+    let log_path = state.log_path.clone();
     for key in gone {
+        if state.born_fullscreen.remove(&key)
+            && let Some(token) = state.member_tokens.get(&key).cloned()
+        {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "initial-fullscreen-released",
+                    "window": token,
+                }),
+            );
+        }
         if let Some(token) = state.member_tokens.remove(&key) {
             state.member_rects.remove(&token);
         }
@@ -4828,6 +5730,12 @@ fn workspace_close_cleanup(state: &mut TileLoop) {
         state.member_tags.remove(&key);
         state.workspaces.remove_window(&key);
     }
+    state
+        .born_fullscreen
+        .retain(|key| state.last_hwnds.contains(&key.hwnd));
+    state
+        .seen_nonfullscreen
+        .retain(|key| state.last_hwnds.contains(&key.hwnd));
 }
 
 /// Hide one managed member bound to its stored full identity: the live
@@ -5279,7 +6187,7 @@ fn workspace_do_select(
         .as_millis()
         .min(u128::from(u64::MAX)) as u64;
     publish_managed(state, me, &fresh_observed, &fresh_retained);
-    ensure_workspace_assignments(state, me, &mut fresh_observed, areas);
+    ensure_workspace_assignments(state, me, &mut fresh_observed, &fresh_retained, areas);
     clear_maximize_at_admission(state, me, &fresh_retained);
     workspace_close_cleanup(state);
     // Focus-before-geometry on the verified transition: the revealed target
@@ -5289,15 +6197,15 @@ fn workspace_do_select(
     // lifetime, scope, and observation gates inside `actuate_focus` still
     // apply. Skipping focus there lets geometry veto honestly.
     let members = state.workspaces.workspace_members(output, target);
-    // Retained-aware focus set: a maximized mover is retained, never
-    // eligible-observed, so its token rides along for focus only (geometry
-    // still excludes it via `writable_tokens`). Fullscreen never rides:
-    // `actuate_focus` still refuses it through `classify_focus`, and the
-    // foreground fence below never steals from it.
+    // Retained-aware focus set: maximized and fullscreen movers are
+    // retained, never eligible-observed, so their tokens ride along for focus
+    // only (geometry still excludes them via `writable_tokens`; focus carries
+    // no write, KDE `requestFocus` parity). The foreground fence below still
+    // never steals from a real arrival.
     let mut fresh_tokens: HashSet<String> =
         fresh_observed.iter().map(|w| w.token.clone()).collect();
     for row in &fresh_retained {
-        if row.maximized && !row.fullscreen {
+        if row.maximized || row.fullscreen {
             fresh_tokens.insert(row.token.clone());
         }
     }
@@ -5322,7 +6230,7 @@ fn workspace_do_select(
         if !token.is_empty() {
             if crate::workspace_owner::focus_before_geometry(
                 true,
-                foreground_fullscreen(fulls),
+                suspend_read(state, me, fulls).veto.block,
                 foreground_elevated(me),
             ) {
                 let focus_start = Instant::now();
@@ -5356,9 +6264,9 @@ fn workspace_do_select(
             &mut hint_cx,
         )
     {
-        let windows: Vec<(WindowId, Rect, WindowSizeHints)> = rows
+        let windows: Vec<(WindowId, Rect, WindowSizeHints, bool)> = rows
             .iter()
-            .map(|r| (WindowId(r.token.clone()), r.rect, r.hints))
+            .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
             .collect();
         let fp = fingerprint(
             &rows
@@ -5370,13 +6278,13 @@ fn workspace_do_select(
         // established target focus when eligible.
         let focused = state
             .focused_token(&fresh_observed)
-            .filter(|f| windows.iter().any(|(w, _, _)| w == f));
+            .filter(|f| windows.iter().any(|(w, _, _, _)| w == f));
         state.tick += 1;
         let tick = state.tick;
         let correlation =
             CorrelationId::parse(&ctx.correlation).expect("action correlation is a valid token");
         let plan_start = Instant::now();
-        let event = crate::tiling::build_reconcile_event_for(
+        let event = crate::tiling::build_reconcile_event_for_floating(
             &state.owner,
             &state.generation,
             &correlation,
@@ -5596,7 +6504,13 @@ fn workspace_do_send(
         let Some(row) = retained.iter().find(|r| r.key == mover_key) else {
             return fail_at("origin-vanished");
         };
-        if row.fullscreen || !row.maximized {
+        // Actual KDE wrapper behavior (workspace-send `non-tiled-focus`):
+        // overlay movers never send. A tiled maximized member sends (item 3
+        // contract); a fullscreen mover refuses explicitly with no writes.
+        if row.fullscreen {
+            return fail_at("send-refused-fullscreen");
+        }
+        if !row.maximized {
             return fail_at("origin-vanished");
         }
         if !is_zoomed_now(mover_hwnd) {
@@ -5714,7 +6628,10 @@ fn workspace_do_send(
         // owns fullscreen); only a maximized member proceeds, and
         // only when its live flags still match the dispatch snapshot (KDE
         // `flagsStillMatch` parity).
-        if row.fullscreen || !row.maximized {
+        if row.fullscreen {
+            return fail_at("send-refused-fullscreen");
+        }
+        if !row.maximized {
             return fail_at("origin-vanished");
         }
         if !crate::tiling::send_flags_stable(false, true, row.fullscreen, is_zoomed_now(mover_hwnd))
@@ -5934,7 +6851,7 @@ fn poll_workspace_cli_request(
         );
         return;
     }
-    if foreground_fullscreen(fulls) {
+    if suspend_read(state, me, fulls).veto.block {
         state.tick += 1;
         let tick = state.tick;
         log_json_at(
@@ -5999,7 +6916,7 @@ fn poll_workspace_cli_request(
         return;
     };
     publish_managed(state, me, &observed, &retained);
-    ensure_workspace_assignments(state, me, &mut observed, areas);
+    ensure_workspace_assignments(state, me, &mut observed, &retained, areas);
     // First-seen maximized windows restore once here: lifetime tags are
     // stamped, and the cleared window converges as eligible next tick.
     clear_maximize_at_admission(state, me, &retained);
@@ -6135,8 +7052,9 @@ fn workspace_tick(
         // Dispatch beginning: the action clock starts here, before the
         // initial observation, so queue-to-effect latency includes the
         // observation itself. `queued_at` stays the cheap callback stamp.
+        // Verified managed overlays bypass suspension like a managed maximize.
         let dispatch_start = Instant::now();
-        if foreground_fullscreen(fulls) {
+        if suspend_read(state, me, fulls).veto.block {
             log_json_at(
                 &log_path,
                 serde_json::json!({
@@ -6199,7 +7117,7 @@ fn workspace_tick(
             continue;
         };
         publish_managed(state, me, &observed, &retained);
-        ensure_workspace_assignments(state, me, &mut observed, areas);
+        ensure_workspace_assignments(state, me, &mut observed, &retained, areas);
         // First-seen maximized windows restore once here: lifetime tags are
         // stamped, and the cleared window converges as eligible next tick.
         clear_maximize_at_admission(state, me, &retained);
@@ -6990,7 +7908,7 @@ fn workspace_maintenance(
         return;
     };
     publish_managed(state, me, &observed, &retained);
-    ensure_workspace_assignments(state, me, &mut observed, areas);
+    ensure_workspace_assignments(state, me, &mut observed, &retained, areas);
     // First-seen maximized windows restore once here: lifetime tags are
     // stamped, and the cleared window converges as eligible next tick.
     clear_maximize_at_admission(state, me, &retained);
@@ -7024,7 +7942,7 @@ fn gesture_tick(
         return;
     };
     publish_managed(state, me, &observed, &retained);
-    ensure_workspace_assignments(state, me, &mut observed, areas);
+    ensure_workspace_assignments(state, me, &mut observed, &retained, areas);
     // First-seen maximized windows restore once here: lifetime tags are
     // stamped, and the cleared window converges as eligible next tick.
     clear_maximize_at_admission(state, me, &retained);
@@ -7121,9 +8039,9 @@ fn gesture_tick(
         ) else {
             continue;
         };
-        let windows: Vec<(WindowId, Rect, WindowSizeHints)> = rows
+        let windows: Vec<(WindowId, Rect, WindowSizeHints, bool)> = rows
             .iter()
-            .map(|r| (WindowId(r.token.clone()), r.rect, r.hints))
+            .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
             .collect();
         let fp = fingerprint(
             &rows
@@ -7132,7 +8050,7 @@ fn gesture_tick(
                 .collect::<Vec<_>>(),
         );
         let mover = WindowId(current.token.clone());
-        let event = crate::tiling::build_reconcile_event_for(
+        let event = crate::tiling::build_reconcile_event_for_floating(
             &state.owner,
             &state.generation,
             &correlation,
@@ -7331,12 +8249,69 @@ fn foreground_read(fulls: &[Rect]) -> ForegroundRead {
     settled(veto, is_desktop, visible, captioned, readable)
 }
 
-fn foreground_veto(fulls: &[Rect]) -> crate::workspace_owner::ForegroundVeto {
-    foreground_read(fulls).veto
-}
-
-fn foreground_fullscreen(fulls: &[Rect]) -> bool {
-    foreground_veto(fulls).block
+/// Managed-aware suspend read: the raw foreground veto, except a real
+/// fullscreen foreground verified as a managed member or a born-held
+/// first-seen fullscreen rides a retained overlay with no geometry writes
+/// and never suspends the workspace (`ManagedOverlay`, like a managed
+/// maximize which keeps its caption and never vetoes). Unverified fullscreen
+/// still suspends, and unreadable/invalid foregrounds always stay blocked:
+/// a non-covering or unreadable window is never labeled a managed overlay.
+/// The managed branch reuses the single `holdable_key` verification
+/// (identity, session, medium integrity, safety gates, scope, hosted child,
+/// proof ownership) plus membership and the live lifetime tag, so no gate
+/// is duplicated. Born tracking honors the first-seen gate: a managed
+/// overlay transition (slotted member or lifetime-known non-fullscreen)
+/// never re-enters the hold.
+fn suspend_read(state: &mut TileLoop, me: &ProcessIdentity, fulls: &[Rect]) -> ForegroundRead {
+    use crate::workspace_owner::ForegroundVetoReason;
+    let raw = foreground_read(fulls);
+    if !raw.veto.block {
+        return raw;
+    }
+    if raw.veto.reason != ForegroundVetoReason::Fullscreen {
+        return raw;
+    }
+    let foreground = unsafe { GetForegroundWindow() } as usize as u64;
+    if foreground == 0 {
+        return raw;
+    }
+    let managed = || ForegroundRead {
+        veto: crate::workspace_owner::ForegroundVeto {
+            block: false,
+            reason: ForegroundVetoReason::ManagedOverlay,
+        },
+        desktop: raw.desktop,
+        visible: raw.visible,
+        captioned: raw.captioned,
+        dwm_readable: raw.dwm_readable,
+    };
+    let Some(held_key) = holdable_key(state, me, foreground) else {
+        return raw;
+    };
+    let tag_ok = {
+        let live_tag = crate::product_hide::sys::read_member_tag(foreground);
+        state.member_tags.get(&held_key).is_some_and(|stored| {
+            crate::workspace_owner::visible_lifetime_ok(stored, live_tag.as_deref())
+        })
+    };
+    if state.workspaces.member_loc(&held_key).is_some()
+        && state.member_tokens.contains_key(&held_key)
+        && tag_ok
+    {
+        return managed();
+    }
+    let known_slot = state
+        .member_tokens
+        .get(&held_key)
+        .is_some_and(|token| state.member_rects.contains_key(token));
+    if !should_hold_born_fullscreen(
+        true,
+        known_slot,
+        state.seen_nonfullscreen.contains(&held_key),
+    ) {
+        return raw;
+    }
+    managed()
 }
 
 /// Owned inputs for one `run_tile_loop` invocation. Bundled so the loop
@@ -7506,6 +8481,8 @@ fn run_tile_loop(
         active_output: String::new(),
         workspace_proof: false,
         maximize_admission_attempted: HashSet::new(),
+        born_fullscreen: BTreeSet::new(),
+        seen_nonfullscreen: BTreeSet::new(),
         last_foreground: 0,
         known_outputs: Vec::new(),
         last_hwnds: HashSet::new(),
@@ -7639,7 +8616,8 @@ fn run_tile_loop(
         // effect; teardown and crash restore keep the lease-held guarantee.
         let mut snap_primed = false;
         // Fullscreen guard applies before the initial tick as well.
-        if foreground_fullscreen(&fulls) {
+        // Verified managed overlays bypass like a managed maximize.
+        if suspend_read(&mut state, me, &fulls).veto.block {
             state.suspended = true;
             state.snap_advance = None;
             log_json_at(
@@ -7764,7 +8742,7 @@ fn run_tile_loop(
             let snap_gate_active = state.keyboard.takeover
                 && !state.suspended
                 && !state.active.iter().any(|hwnd| state.managed.contains(hwnd))
-                && !foreground_fullscreen(&gate_fulls)
+                && !suspend_read(&mut state, me, &gate_fulls).veto.block
                 && !foreground_elevated(me);
             let snap_events = if snap_hook.is_some() {
                 crate::snapkey::sys::publish_gate(&state.snap_origins, snap_gate_active);
@@ -7788,7 +8766,8 @@ fn run_tile_loop(
                     QueuedSnapEvent::Workspace(intent) => workspace_events.push(intent),
                     QueuedSnapEvent::Mask(_)
                     | QueuedSnapEvent::Intent(_)
-                    | QueuedSnapEvent::Maximize(_) => {
+                    | QueuedSnapEvent::Maximize(_)
+                    | QueuedSnapEvent::Fullscreen(_) => {
                         directional_events.push(event);
                     }
                 }
@@ -7910,7 +8889,7 @@ fn run_tile_loop(
                 continue;
             }
             let fulls = monitor_fulls(&areas);
-            if foreground_fullscreen(&fulls) {
+            if suspend_read(&mut state, me, &fulls).veto.block {
                 if !state.suspended {
                     state.suspended = true;
                     state.snap_advance = None;

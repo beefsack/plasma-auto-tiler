@@ -2,21 +2,21 @@ use tiler_core::directional::WindowId;
 use tiler_core::geometry::Rect;
 use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
 use tiler_windows::tiling::{
-    CaptureOptions, FrameInsets, GestureIntent, INNER_GAP, OUTER_GAP, ObservedTarget,
-    ObservedTargetRef, ReadbackOutcome, RefusedTracker, ScopeHostChild, SkipReason,
+    CaptureOptions, FrameInsets, FullscreenToggle, GestureIntent, INNER_GAP, OUTER_GAP,
+    ObservedTarget, ObservedTargetRef, ReadbackOutcome, RefusedTracker, ScopeHostChild, SkipReason,
     StatelessVerdict, TokenMap, WindowFacts, WorkspaceRequest, allow_match, allowlist_digest,
     build_reconcile_event, build_reconcile_event_for, canonical_retained_rect, classify,
-    classify_focus, classify_gesture, fingerprint, hosted_child_allows, inspect_stateless_verdict,
-    is_borderless_fullscreen, min_hints_from_outer, normalize_min_track, overlay_refusal,
-    parse_allowlist, parse_capture_args, parse_children_args, parse_hide_proof_args,
-    parse_inspect_args, parse_scope_host_child, parse_shortcut_proof_args, parse_tile_args,
-    parse_tile_proof_args, parse_workspace_proof_args, parse_workspace_request,
+    classify_focus, classify_gesture, fingerprint, fullscreen_toggle_decision, hosted_child_allows,
+    inspect_stateless_verdict, is_borderless_fullscreen, min_hints_from_outer, normalize_min_track,
+    overlay_refusal, parse_allowlist, parse_capture_args, parse_children_args,
+    parse_hide_proof_args, parse_inspect_args, parse_scope_host_child, parse_shortcut_proof_args,
+    parse_tile_args, parse_tile_proof_args, parse_workspace_proof_args, parse_workspace_request,
     parse_workspace_select_args, readback_outcome, render_workspace_request, scope_allows,
     scope_exe_basename, send_flags_stable, should_clear_maximize_at_admission,
-    tick_summary_signature, tiling_domain_bounds, verify_hide_proof_argv_consistency,
-    verify_proof_argv_consistency, verify_shortcut_proof_argv_consistency,
-    verify_workspace_proof_argv_consistency, verify_workspace_select_argv_consistency,
-    visible_min_from_outer,
+    should_hold_born_fullscreen, tick_summary_signature, tiling_domain_bounds,
+    verify_hide_proof_argv_consistency, verify_proof_argv_consistency,
+    verify_shortcut_proof_argv_consistency, verify_workspace_proof_argv_consistency,
+    verify_workspace_select_argv_consistency, visible_min_from_outer,
 };
 
 fn rect(x: i32, y: i32, w: i32, h: i32) -> Rect {
@@ -264,13 +264,59 @@ fn maximize_send_flags_must_match_before_transfer() {
 }
 
 #[test]
-fn maximize_focus_allows_maximized_never_fullscreen() {
-    // Focus carries no geometry write: a maximized member stays focusable
-    // (KDE `requestFocus` overlay exemption) while geometry still refuses
-    // it. Fullscreen never focuses; every other skip refuses on both paths
-    // so the geometry classifier is never weakened. A maximized window that
-    // is also no-activate still refuses focus (NoActivate), even though
-    // geometry reports it as Maximized first.
+fn fullscreen_toggle_needs_owned_preimage_to_exit() {
+    // Owned metadata wins over geometry: a press on any owned frame exits
+    // even when the frame no longer covers a monitor (external move or
+    // partial restore). Entering is always project-owned (the preimage is
+    // stored first); an app-requested fullscreen frame refuses the command
+    // exit with a bounded reason and stays app-owned: no input synthesis, no
+    // guessed restoration. Re-entry never overwrites: owned frames exit.
+    assert_eq!(
+        fullscreen_toggle_decision(false, false),
+        FullscreenToggle::Enter
+    );
+    assert_eq!(
+        fullscreen_toggle_decision(false, true),
+        FullscreenToggle::ExitOwned
+    );
+    assert_eq!(
+        fullscreen_toggle_decision(true, true),
+        FullscreenToggle::ExitOwned
+    );
+    assert_eq!(
+        fullscreen_toggle_decision(true, false),
+        FullscreenToggle::RefuseAppOwned
+    );
+    assert_eq!(FullscreenToggle::Enter.as_str(), "enter");
+    assert_eq!(FullscreenToggle::ExitOwned.as_str(), "exit-owned");
+    assert_eq!(
+        FullscreenToggle::RefuseAppOwned.as_str(),
+        "refuse-app-owned"
+    );
+}
+
+#[test]
+fn born_fullscreen_holds_only_first_seen_slotless() {
+    // A first-seen fullscreen window without a retained tile slot is held
+    // slotless until its first exit, never admitted. A slotted member is a
+    // managed overlay transition, and a lifetime-known non-fullscreen window
+    // never becomes born again.
+    assert!(should_hold_born_fullscreen(true, false, false));
+    assert!(!should_hold_born_fullscreen(true, true, false));
+    assert!(!should_hold_born_fullscreen(true, false, true));
+    assert!(!should_hold_born_fullscreen(true, true, true));
+    assert!(!should_hold_born_fullscreen(false, false, false));
+    assert!(!should_hold_born_fullscreen(false, true, false));
+}
+
+#[test]
+fn focus_allows_managed_overlays_never_geometry() {
+    // Focus carries no geometry write: maximized and fullscreen members stay
+    // focusable (KDE `requestFocus` overlay exemption) while geometry still
+    // refuses both. Every other skip refuses on both paths so the geometry
+    // classifier is never weakened. A maximized window that is also
+    // no-activate still refuses focus (NoActivate), even though geometry
+    // reports it as Maximized first.
     let mut facts = eligible_facts();
     assert!(classify(&facts).is_ok());
     assert!(classify_focus(&facts).is_ok());
@@ -279,7 +325,7 @@ fn maximize_focus_allows_maximized_never_fullscreen() {
     assert!(classify_focus(&facts).is_ok());
     facts.captionless_fullscreen = true;
     assert_eq!(classify(&facts), Err(SkipReason::Fullscreen));
-    assert_eq!(classify_focus(&facts), Err(SkipReason::Fullscreen));
+    assert!(classify_focus(&facts).is_ok());
     let check = |mut facts: WindowFacts, reason: SkipReason| {
         facts.maximized = true;
         assert!(classify(&facts).is_err());
@@ -1828,4 +1874,206 @@ fn proof_argv_consistency_evidences_underlay_flags() {
         "#ff112233",
     ]);
     assert!(verify_proof_argv_consistency(&raw_other, &parsed_tile).is_err());
+}
+
+#[test]
+fn born_floating_rows_converge_slotless_with_siblings_tiled() {
+    // Production seams: `domain_rows` carries the born floating flag, the
+    // floating reconcile event converges the hold as an Engine exception
+    // with no tile slot, and tiled siblings keep their topology. The
+    // writable subset never includes the retained-only floating token, so
+    // no geometry write ever targets the born frame.
+    use std::collections::{BTreeMap, BTreeSet, HashSet};
+    use tiler_core::boundary::CoreReply;
+    use tiler_core::directional::{OutputId, WorkspaceId};
+    use tiler_core::engine::Engine;
+    use tiler_core::session::{DomainKey, OutputDomain};
+    use tiler_windows::tiling::build_reconcile_event_for_floating;
+    use tiler_windows::workspace::WindowKey;
+    use tiler_windows::workspace_owner::{
+        MemberView, build_send_event, domain_rows, writable_subset,
+    };
+
+    let born = WindowKey {
+        hwnd: 41,
+        pid: 100,
+        creation: "creation-born".to_owned(),
+    };
+    let tiled = WindowKey {
+        hwnd: 42,
+        pid: 101,
+        creation: "creation-tiled".to_owned(),
+    };
+    let members: BTreeSet<WindowKey> = BTreeSet::from([born.clone(), tiled.clone()]);
+    let views = vec![
+        MemberView {
+            key: born.clone(),
+            token: "w-born".to_owned(),
+            rect: rect(0, 0, 1920, 1080),
+            hints: tiler_core::size_hints::WindowSizeHints::none(),
+            floating: true,
+        },
+        MemberView {
+            key: tiled.clone(),
+            token: "w-tiled".to_owned(),
+            rect: rect(8, 8, 500, 800),
+            hints: tiler_core::size_hints::WindowSizeHints::none(),
+            floating: false,
+        },
+    ];
+    let rows = domain_rows(&members, &views).expect("complete rows");
+    assert_eq!(rows.len(), 2);
+    assert!(
+        rows.iter()
+            .find(|r| r.token == "w-born")
+            .expect("born")
+            .floating
+    );
+    assert!(
+        !rows
+            .iter()
+            .find(|r| r.token == "w-tiled")
+            .expect("tiled")
+            .floating
+    );
+
+    let owner = OwnerId::parse("tiler-windows").expect("valid");
+    let generation = GenerationId::parse("abcdef0123456789").expect("valid");
+    let correlation = CorrelationId::parse("tick-1").expect("valid");
+    let key = DomainKey {
+        output: OutputId("mon-a".to_owned()),
+        workspace: WorkspaceId("ws-1".to_owned()),
+    };
+    let domain = OutputDomain {
+        id: OutputId("mon-a".to_owned()),
+        workspace: WorkspaceId("ws-1".to_owned()),
+        bounds: rect(0, 0, 1904, 1032),
+        gap: INNER_GAP,
+        adjacent: std::collections::BTreeMap::new(),
+    };
+    let windows: Vec<(
+        WindowId,
+        Rect,
+        tiler_core::size_hints::WindowSizeHints,
+        bool,
+    )> = rows
+        .iter()
+        .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
+        .collect();
+    let mut engine = Engine::new();
+    engine.sync_binding(&owner, &generation);
+    let event = build_reconcile_event_for_floating(
+        &owner,
+        &generation,
+        &correlation,
+        0,
+        99,
+        &domain,
+        &key,
+        OUTER_GAP,
+        &windows,
+        Some(&WindowId("w-tiled".to_owned())),
+    );
+    assert!(
+        event
+            .windows
+            .iter()
+            .find(|w| w.window.0 == "w-born")
+            .expect("born")
+            .floating
+    );
+    match engine.handle(&event) {
+        CoreReply::Tiled(plan) => {
+            assert!(
+                plan.geometry.iter().all(|g| g.window.0 != "w-born"),
+                "floating hold takes no tile slot"
+            );
+            assert!(
+                plan.geometry.iter().any(|g| g.window.0 == "w-tiled"),
+                "tiled sibling keeps its topology"
+            );
+        }
+        CoreReply::Projection(plan) => {
+            assert!(
+                plan.geometry.iter().all(|g| g.window.0 != "w-born"),
+                "floating hold takes no tile slot"
+            );
+            assert!(
+                plan.geometry.iter().any(|g| g.window.0 == "w-tiled"),
+                "tiled sibling keeps its topology"
+            );
+        }
+        other => panic!("floating reconcile converges, got {other:?}"),
+    }
+
+    // Slotless occupancy: the born token is a workspace member but absent
+    // from the fresh eligible observation, so it never takes writes, while
+    // the eligible sibling stays writable.
+    let token_of: BTreeMap<WindowKey, String> = BTreeMap::from([
+        (born.clone(), "w-born".to_owned()),
+        (tiled.clone(), "w-tiled".to_owned()),
+    ]);
+    let fresh: HashSet<String> = HashSet::from(["w-tiled".to_owned()]);
+    assert_eq!(
+        writable_subset(&members, |_| false, &token_of, &fresh),
+        HashSet::from(["w-tiled".to_owned()])
+    );
+
+    // Focus stays navigable onto the held overlay: the retained-only born
+    // token rides the eligible focus set exactly like a retained maximize.
+    let mut spaces = tiler_windows::workspace::ManagedWorkspaces::new();
+    spaces.ensure_output("mon-a");
+    let active = spaces.active_id("mon-a").expect("active");
+    assert!(spaces.assign(born.clone(), "mon-a", &active, false));
+    assert!(spaces.assign(tiled.clone(), "mon-a", &active, false));
+    let eligible = spaces.eligible_focus_set(
+        &members,
+        &token_of,
+        &HashSet::from(["w-tiled".to_owned(), "w-born".to_owned()]),
+    );
+    assert!(eligible.contains(&born));
+    assert!(eligible.contains(&tiled));
+
+    // Send carries the floating flag into both Engine domains.
+    let source =
+        tiler_windows::workspace_owner::workspace_domain("mon-a", "ws-1", rect(0, 0, 800, 600), 8);
+    let target =
+        tiler_windows::workspace_owner::workspace_domain("mon-a", "ws-2", bounds_rect(), 8);
+    let send = build_send_event(
+        &owner,
+        &generation,
+        &correlation,
+        0,
+        7,
+        source,
+        target,
+        &rows,
+        &[],
+        "w-tiled",
+        8,
+    )
+    .expect("send");
+    assert!(
+        send.windows
+            .iter()
+            .find(|w| w.window.0 == "w-born")
+            .expect("born")
+            .floating
+    );
+}
+
+fn bounds_rect() -> Rect {
+    rect(0, 0, 800, 600)
+}
+
+#[test]
+fn born_hold_never_reborn_after_first_exit() {
+    // A slotted member's later fullscreen is a managed overlay transition,
+    // and a lifetime-known non-fullscreen window never becomes born again:
+    // only the first-seen slotless fullscreen holds.
+    assert!(should_hold_born_fullscreen(true, false, false));
+    assert!(!should_hold_born_fullscreen(true, true, false));
+    assert!(!should_hold_born_fullscreen(true, false, true));
+    // A non-fullscreen window never holds, even slotless and unseen.
+    assert!(!should_hold_born_fullscreen(false, false, false));
 }

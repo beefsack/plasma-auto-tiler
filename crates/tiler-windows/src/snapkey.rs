@@ -51,6 +51,7 @@ pub const VK_DOWN: u32 = 40;
 pub const VK_LWIN: u32 = 91;
 pub const VK_RWIN: u32 = 92;
 pub const VK_M: u32 = 0x4D;
+pub const VK_F11: u32 = 0x7A;
 pub const VK_SHIFT: u32 = 16;
 pub const VK_CONTROL: u32 = 17;
 pub const VK_MENU: u32 = 18;
@@ -184,11 +185,11 @@ pub const fn is_digit_vk(vk: u32) -> bool {
 }
 
 /// True for any chord key the single classifier owns: directional catalog
-/// plus workspace digits plus the maximize toggle. Modifiers, Win keys, and
-/// ordinary keys are not chord keys.
+/// plus workspace digits plus the maximize and fullscreen toggles.
+/// Modifiers, Win keys, and ordinary keys are not chord keys.
 #[must_use]
 pub fn is_chord_vk(vk: u32) -> bool {
-    catalog_index(vk).is_some() || is_digit_vk(vk) || is_maximize_vk(vk)
+    catalog_index(vk).is_some() || is_digit_vk(vk) || is_maximize_vk(vk) || is_fullscreen_vk(vk)
 }
 
 /// True only for the maximize-toggle chord key (Win+M, KDE Meta+M parity).
@@ -197,6 +198,14 @@ pub fn is_chord_vk(vk: u32) -> bool {
 #[must_use]
 pub const fn is_maximize_vk(vk: u32) -> bool {
     vk == VK_M
+}
+
+/// True only for the fullscreen-toggle chord key (Win+F11, KDE Meta+F11
+/// parity). Like maximize, any Shift/Ctrl/Alt combination passes through
+/// untracked: there is no shifted fullscreen arm.
+#[must_use]
+pub const fn is_fullscreen_vk(vk: u32) -> bool {
+    vk == VK_F11
 }
 
 /// Direction for a catalog index. Letters and arrows are exact aliases.
@@ -285,15 +294,27 @@ pub struct MaximizeIntent {
     pub announce: bool,
 }
 
-/// Unified classifier outcome: exactly one of directional, workspace, or
-/// maximize. One machine, one modifier/mask authority; maximize shares
-/// Win/Shift/Ctrl/Alt tracking, origin pairing, saturation, and the E8 mask
-/// with H/J/K/L/arrows and digits.
+/// Classifier outcome for one fullscreen-toggle event (Win+F11, KDE
+/// Meta+F11 parity). The toggle carries no direction: only downs and repeats
+/// dispatch, ups close the pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FullscreenIntent {
+    pub edge: SnapEdge,
+    pub foreground: bool,
+    pub consumed: bool,
+    pub announce: bool,
+}
+
+/// Unified classifier outcome: exactly one of directional, workspace,
+/// maximize, or fullscreen. One machine, one modifier/mask authority;
+/// maximize and fullscreen share Win/Shift/Ctrl/Alt tracking, origin pairing,
+/// saturation, and the E8 mask with H/J/K/L/arrows and digits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Classified {
     Snap(SnapIntent),
     Workspace(WorkspaceIntent),
     Maximize(MaximizeIntent),
+    Fullscreen(FullscreenIntent),
 }
 
 impl Classified {
@@ -303,6 +324,7 @@ impl Classified {
             Self::Snap(intent) => intent.consumed,
             Self::Workspace(intent) => intent.consumed,
             Self::Maximize(intent) => intent.consumed,
+            Self::Fullscreen(intent) => intent.consumed,
         }
     }
 
@@ -312,18 +334,20 @@ impl Classified {
             Self::Snap(intent) => intent.announce,
             Self::Workspace(intent) => intent.announce,
             Self::Maximize(intent) => intent.announce,
+            Self::Fullscreen(intent) => intent.announce,
         }
     }
 }
 
-/// Which chord armed the Start-menu mask. Digits and maximize arm it exactly
-/// like directional chords: any consumed chord in the Win hold needs the E8
-/// pair at Win-up, or the OS opens Start.
+/// Which chord armed the Start-menu mask. Digits, maximize, and fullscreen
+/// arm it exactly like directional chords: any consumed chord in the Win hold
+/// needs the E8 pair at Win-up, or the OS opens Start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaskTrigger {
     Snap { op: SnapOp, direction: Direction },
     Workspace { op: WorkspaceOp, index: u8 },
     Maximize,
+    Fullscreen,
 }
 
 /// Pure product chord classifier. Tracks both Win keys plus the Shift family
@@ -354,6 +378,8 @@ pub struct SnapClassify {
     digit_op: [Option<WorkspaceOp>; 10],
     maximize_down: bool,
     maximize_origin: bool,
+    fullscreen_down: bool,
+    fullscreen_origin: bool,
     pub enabled: bool,
     /// Cached session gate published by the owner (takeover plus active,
     /// non-fullscreen, non-elevated, non-gesture). Distinct from the managed
@@ -365,6 +391,7 @@ pub struct SnapClassify {
     pub counts: [SnapCounts; 8],
     pub digit_counts: [SnapCounts; 10],
     pub max_counts: SnapCounts,
+    pub fullscreen_counts: SnapCounts,
     mask_pending: bool,
     mask_trigger: Option<MaskTrigger>,
     hold_masked: bool,
@@ -391,12 +418,15 @@ impl SnapClassify {
             digit_op: [None; 10],
             maximize_down: false,
             maximize_origin: false,
+            fullscreen_down: false,
+            fullscreen_origin: false,
             enabled: config.takeover,
             gate_active: true,
             allow_win_l: config.allow_win_l,
             counts: [SnapCounts::default(); 8],
             digit_counts: [SnapCounts::default(); 10],
             max_counts: SnapCounts::default(),
+            fullscreen_counts: SnapCounts::default(),
             mask_pending: false,
             mask_trigger: None,
             hold_masked: false,
@@ -438,6 +468,9 @@ impl SnapClassify {
         }
         if is_maximize_vk(vk) {
             return self.maximize_down;
+        }
+        if is_fullscreen_vk(vk) {
+            return self.fullscreen_down;
         }
         false
     }
@@ -531,6 +564,9 @@ impl SnapClassify {
         }
         if is_maximize_vk(vk) {
             return self.push_maximize(is_up, foreground);
+        }
+        if is_fullscreen_vk(vk) {
+            return self.push_fullscreen(is_up, foreground);
         }
         let Some(idx) = catalog_index(vk) else {
             // Ordinary keys reach the OS and disguise Win by themselves.
@@ -874,6 +910,98 @@ impl SnapClassify {
             }
         }
     }
+
+    /// Fullscreen-toggle half of the unified classifier (Win+F11, KDE Meta+F11
+    /// parity): same Win/Ctrl/Alt/origin/mask contract as the maximize arm.
+    /// Any held Shift (or Ctrl/Alt, or missing Win) passes F11 through
+    /// untracked and the paired key-up also passes. Only the down dispatches:
+    /// held repeats are swallowed (mask stays armed) instead of re-toggling.
+    /// Ups close the pair. The toggle needs a managed origin like send and
+    /// maximize: background foreground never consumes.
+    fn push_fullscreen(&mut self, is_up: bool, foreground: bool) -> Option<Classified> {
+        if is_up {
+            if !self.fullscreen_down {
+                return None;
+            }
+            self.fullscreen_down = false;
+            let origin = self.fullscreen_origin;
+            self.fullscreen_origin = false;
+            self.fullscreen_counts.up += 1;
+            if self.enabled && self.gate_active && foreground && origin {
+                self.fullscreen_counts.consumed += 1;
+                Some(Classified::Fullscreen(FullscreenIntent {
+                    edge: SnapEdge::Up,
+                    foreground,
+                    consumed: true,
+                    announce: false,
+                }))
+            } else {
+                self.fullscreen_counts.passed += 1;
+                self.mask_pending = false;
+                Some(Classified::Fullscreen(FullscreenIntent {
+                    edge: SnapEdge::Up,
+                    foreground,
+                    consumed: false,
+                    announce: false,
+                }))
+            }
+        } else {
+            if self.ctrl || self.alt || self.shift || !(self.win_l || self.win_r) {
+                self.mask_pending = false;
+                return None;
+            }
+            if self.fullscreen_down {
+                self.fullscreen_counts.repeat += 1;
+                if self.enabled && self.gate_active && foreground && self.fullscreen_origin {
+                    // Held repeat: swallowed, never re-dispatched. The hold
+                    // continues to disguise Win, so the mask stays armed.
+                    self.fullscreen_counts.consumed += 1;
+                    self.mask_pending = true;
+                    self.mask_trigger = Some(MaskTrigger::Fullscreen);
+                    Some(Classified::Fullscreen(FullscreenIntent {
+                        edge: SnapEdge::Repeat,
+                        foreground,
+                        consumed: true,
+                        announce: false,
+                    }))
+                } else {
+                    self.fullscreen_counts.passed += 1;
+                    self.mask_pending = false;
+                    Some(Classified::Fullscreen(FullscreenIntent {
+                        edge: SnapEdge::Repeat,
+                        foreground,
+                        consumed: false,
+                        announce: false,
+                    }))
+                }
+            } else {
+                self.fullscreen_down = true;
+                let origin = self.enabled && self.gate_active && foreground;
+                self.fullscreen_origin = origin;
+                self.fullscreen_counts.down += 1;
+                if origin {
+                    self.fullscreen_counts.consumed += 1;
+                    self.mask_pending = true;
+                    self.mask_trigger = Some(MaskTrigger::Fullscreen);
+                    Some(Classified::Fullscreen(FullscreenIntent {
+                        edge: SnapEdge::Down,
+                        foreground,
+                        consumed: true,
+                        announce: true,
+                    }))
+                } else {
+                    self.fullscreen_counts.passed += 1;
+                    self.mask_pending = false;
+                    Some(Classified::Fullscreen(FullscreenIntent {
+                        edge: SnapEdge::Down,
+                        foreground,
+                        consumed: false,
+                        announce: false,
+                    }))
+                }
+            }
+        }
+    }
 }
 
 /// One Start-menu mask reservation: the arming chord plus the Win-up instant
@@ -993,11 +1121,25 @@ pub struct QueuedMaximizeIntent {
     pub tick: std::time::Instant,
 }
 
+/// One approved fullscreen chord captured by the callback. `origin` is the
+/// managed identity bound at chord time (`None` means background/inactive or
+/// unmanaged foreground at chord time); without an origin the toggle never
+/// dispatches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedFullscreenIntent {
+    pub edge: SnapEdge,
+    pub origin: Option<SnapOrigin>,
+    pub consumed: bool,
+    pub announce: bool,
+    pub tick: std::time::Instant,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueuedSnapEvent {
     Intent(QueuedIntent),
     Workspace(QueuedWorkspaceIntent),
     Maximize(QueuedMaximizeIntent),
+    Fullscreen(QueuedFullscreenIntent),
     Mask(QueuedMask),
 }
 
@@ -1135,6 +1277,13 @@ pub fn classify_and_queue(
             tick,
         }),
         Classified::Maximize(intent) => QueuedSnapEvent::Maximize(QueuedMaximizeIntent {
+            edge: intent.edge,
+            origin,
+            consumed: intent.consumed,
+            announce: intent.announce,
+            tick,
+        }),
+        Classified::Fullscreen(intent) => QueuedSnapEvent::Fullscreen(QueuedFullscreenIntent {
             edge: intent.edge,
             origin,
             consumed: intent.consumed,
@@ -1858,6 +2007,9 @@ pub mod sys {
             }),
             super::MaskTrigger::Maximize => serde_json::json!({
                 "trigger_op": "maximize",
+            }),
+            super::MaskTrigger::Fullscreen => serde_json::json!({
+                "trigger_op": "fullscreen",
             }),
         };
         value["inserted"] = serde_json::Value::from(mask.inserted);
