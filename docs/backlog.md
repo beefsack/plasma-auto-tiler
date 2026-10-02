@@ -87,8 +87,12 @@ decisions of 2026-09-24 are under
   borderless route and discrete Win+F11 are provisional, to discuss);
   (5) float shipped (`d8329e3`, Win+G; [evidence](changes/archive/windows-float.md);
   live float behaviour unaccepted under the same foreground blocker;
-  crash-retained topmost band is provisional, to discuss); next foreground
-  blocker diagnosis plus float/fullscreen acceptance reruns, then
+  crash-retained topmost band is provisional, to discuss); follow-up
+  `3f70136`/`41edc81` ignores cloaked fullscreen foregrounds and gates proofs
+  on an ownerless-move cloak precondition; remaining fullscreen/float journeys
+  are user-owned (recurring shell takeover, ownerless DWM cloak 0->2 after
+  helper moves; [record](changes/archive/windows-foreground-acceptance.md));
+  next
   (6) sticky float;
   (7) mouse drag window move; (8) mouse drag drop-zone square (preview);
   (9) multi-output support; (10) taskbar item showing workspaces (design to be
