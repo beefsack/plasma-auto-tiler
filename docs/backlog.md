@@ -54,7 +54,7 @@ decisions of 2026-09-24 are under
   match KDE/core R2c/R3; minimum-pinned geometry explains zero visible change.
   [Minimum-size evidence](changes/archive/windows-minimum-size-hints.md).
   [Directional diagnosis](changes/archive/windows-directional-dogfood-diagnosis.md).
-  Next: active window border, then group underlay.
+  Next: Windows feature parity queue below.
   [Managed workspaces](changes/archive/windows-managed-workspaces.md).
   [Shortcut slice and handover](changes/archive/windows-shortcut-slice.md).
   Full owned-helper proof passed `20261001-222611-6068`: 8/8 gaps at 125%,
@@ -70,8 +70,14 @@ decisions of 2026-09-24 are under
   [plan](research/windows-port/plan.md)
   [decision](decisions.md#windows-port)
   Day-one setup and pending governance: [Windows development environment](windows-dev-environment.md).
-- P2 | Windows workspace overview | Visible taskbar or other workspace overview;
-  discuss design with the user later. No presentation mechanism selected.
+- P0 | Windows feature parity queue | User order (2026-10-02), each matching
+  KDE behavior and bindings: (1) active window border (in progress,
+  [note](changes/windows-active-border.md)); (2) group underlay (custom drawing,
+  outline fallback); (3) maximise; (4) fullscreen; (5) float; (6) sticky float;
+  (7) mouse drag window move; (8) mouse drag drop-zone square (preview);
+  (9) multi-output support; (10) taskbar item showing workspaces (design to be
+  discussed with the user; no presentation mechanism selected); (11) settings
+  (UI with Apply/Revert parity, including Snap takeover off).
 - P2 | Hidden-workspace Alt+Tab option | Investigate whether official Windows
   APIs can include hidden-workspace windows in Alt+Tab. Future optional behavior,
   not critical; no design selected.
