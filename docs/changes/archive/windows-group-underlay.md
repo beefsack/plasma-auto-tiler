@@ -98,4 +98,10 @@
   topmost and other outputs/DPI. The scoped hookless proof does not prove Snap
   takeover or physical shortcut delivery.
 - A/B accepted; C parked. Durable choices promoted to `docs/decisions.md`.
-  Next: push implementation, require hosted CI green, then archive this record.
+  Implementation delivered as `cb790d9`; hosted CI 37022363374 passed Windows,
+  Rust, KWin and shell jobs. This record is archived at scoped completion.
+- Backlog handoff: mark Windows parity item 2 A/B delivered, retain C parked
+  for reassessment with parity item 7; add parity item 11 reminder to decide
+  accent/configured colour and remove the temporary yellow development default.
+  Physical follow-ups above remain explicit. Next implementation action: none
+  for this change; the next parity item belongs to a fresh Lead.

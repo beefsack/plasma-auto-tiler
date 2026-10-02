@@ -405,7 +405,7 @@ the corresponding item ships; each such entry names its replacement.
   root leaf, off and graceful/crash cleanup. Physical feel, sustained chord
   across a complete move, fullscreen/custom-frame/topmost cases and other
   output/DPI arrangements remain follow-up checks. Evidence:
-  `changes/windows-group-underlay.md` (completion/CI pending).
+  `changes/archive/windows-group-underlay.md`.
 
 ## Native Integration Boundary
 
