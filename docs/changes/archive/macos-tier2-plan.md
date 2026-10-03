@@ -3,7 +3,7 @@
 ## Goal and scope
 
 - Replace the superseded public-only default in the
-  [macOS plan](../research/macos-port/plan.md) with the user's 2026-10-03
+  [macOS plan](../../research/macos-port/plan.md) with the user's 2026-10-03
   tier-2 direction: public plus private APIs, SIP enabled, no Dock injection.
 - Research local reference implementations and map capability evidence to
   shared Rust policy and macOS adapter responsibilities.
@@ -33,7 +33,7 @@
 ## Material decisions
 
 - The tier-2 default is already user-approved in
-  [decisions](../decisions.md#windows-port). No new durable choice is needed.
+  [decisions](../../decisions.md#windows-port). No new durable choice is needed.
 - Mechanism recommendations remain proposals until authorized Mac probes;
   absent source or runtime evidence remains explicitly unknown.
 
@@ -62,7 +62,12 @@
   were clean. Static gate: ASCII, 228 local link targets/heading anchors and
   214 source line ranges passed; `git diff --check` passed.
 - No live tests, installs or product-code changes; no Worker remains running.
-- Hosted CI and archive finalization pending after the research commit push.
+- Research commit `df018fb` passed all five hosted jobs: Rust, KWin, shell,
+  Windows and macOS in
+  [CI 37131056780](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37131056780).
+  The macOS job is toolchain smoke evidence, not native-adapter proof.
+- Archived this record after source/static review and hosted CI acceptance.
+  All three sequential Workers completed; no Worker remains running.
 
 ## Handover
 
