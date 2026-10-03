@@ -92,7 +92,9 @@ decisions of 2026-09-24 are under
   on an ownerless-move cloak precondition; remaining fullscreen/float journeys
   are user-owned (recurring shell takeover, ownerless DWM cloak 0->2 after
   helper moves; [record](changes/archive/windows-foreground-acceptance.md));
-  next
+  (6) sticky float shipped (`292d8c1`, Win+Shift+G;
+  [evidence](changes/archive/windows-sticky-float.md); broader live and
+  physical checks user-owned; restart analogue provisional); next
   (6) sticky float;
   (7) mouse drag window move; (8) mouse drag drop-zone square (preview);
   (9) multi-output support; (10) taskbar item showing workspaces (design to be
