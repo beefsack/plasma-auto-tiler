@@ -118,10 +118,18 @@ decisions of 2026-09-24 are under
   the single source of truth for Linux, Windows and macOS. KDE is the current
   behavioral reference; macOS modifier mapping is decided when macOS starts.
   cosmic-comp (user favourite: n-ary splits, join/leave UX) is a key input.
-- P1 | Cross-platform dev environment (mise evaluation) | User question
-  (2026-10-03): standardise toolchain setup across Windows, macOS and NixOS
-  with `mise.toml` before macOS starts; Nix stays for Linux system libraries.
-  Needs user decision on scope before any governance change.
+- P0 | Prior-art catalogue | User (2026-10-03): maintained document of
+  popular, maintained auto-tiling projects grouped by target desktop
+  (Windows, macOS, KDE, GNOME, other Linux), split into compositor-native
+  tilers (functional-spec input) and host-integrated tilers (integration
+  mechanisms), each with a short summary: function, tiling algorithm,
+  notable implementation details, workspaces. Clone all listed projects
+  under `~/Development` for agent code review. Consolidate with
+  `reference-wm-comparison.md` and `research/macos-port/prior-art.md`.
+- P1 | Cross-platform dev environment (mise) | Approved (user 2026-10-03):
+  root `mise.toml` for Windows/macOS toolchains, devenv stays on Linux,
+  minimal `AGENTS.md` update. Before macOS starts.
+  [decision](decisions.md#windows-port)
 - P1 | Windows reference-WM comparison | Compare glazewm (Rust) and komorebi
   (cloned under `~/Development`) with our Windows implementation; record
   learnings (hiding, input, recovery, multi-monitor, gaming coexistence).
@@ -129,11 +137,11 @@ decisions of 2026-09-24 are under
   done (`f095042`): setup/TCC/signing runbook, sourced prior-art survey and
   tentative plan, which recommended public AX/AppKit. User direction
   (2026-10-03) supersedes that default: lower-level, lower-jank yabai-style
-  route first, optional higher-level AeroSpace-style alternative later.
-  Next: revise the plan from the local yabai/AeroSpace/Amethyst sources with
-  exact mechanisms, SIP/permission consequences and a proposed split between
-  lower-level and public-API features, for user approval; confirm host/floor/
-  Intel, stable signer and modifier mapping.
+  route first, optional higher-level AeroSpace-style alternative later;
+  default tier 2 (public plus private APIs, SIP enabled, no Dock injection).
+  Next: revise the plan from local sources (yabai, AeroSpace, Amethyst,
+  GlazeWM macOS backend, Rift, komorebi-for-mac) with exact tier-2
+  mechanisms; confirm host/floor/Intel, stable signer and modifier mapping.
   [setup](macos-dev-environment.md)
   [survey](research/macos-port/prior-art.md)
   [plan](research/macos-port/plan.md)

@@ -99,9 +99,16 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   clean workspaces, accepting that it may not run in locked-down
   environments. An optional higher-level public-API route (AeroSpace-style,
   e.g. off-screen parking) may be evaluated later as a configurable
-  alternative. Exact mechanisms (private APIs, SIP requirements, Dock
-  scripting addition) still need user approval once their consequences are
-  documented.
+  alternative. User decision 2026-10-03: default to tier 2, public plus
+  private APIs with SIP left enabled (AeroSpace / yabai-without-scripting-
+  addition class); no Dock injection or reduced SIP. Re-evaluate deeper
+  tiers only if tier 2 cannot solve a problem well.
+- User decision 2026-10-03 (dev environments): adopt a single root
+  `mise.toml` for Windows and macOS toolchains (for example Rust via rustup
+  stable and `just`), run from the project root; OS-specific entries stay in
+  that root file rather than child directories. devenv/Nix stays the source
+  on Linux/NixOS, including system libraries. Minimal `AGENTS.md` changes
+  needed to allow this are approved; avoid bloat.
 - Reference implementations cloned locally by the user (2026-10-03) under
   `~/Development`: macOS AeroSpace, yabai, Amethyst; Windows glazewm (Rust),
   komorebi; Linux cosmic-comp, Hyprland, i3, bspwm, qtile, PaperWM, xmonad.
