@@ -113,7 +113,14 @@ decisions of 2026-09-24 are under
   CI green (`962b0f3`, `5746fca`; the Win+F11 leak was our deliberate
   pass-through). Physical test after those commits FAILED: Win+F11 still
   opens the Xbox mode prompt and Win+G still opens Game Bar (traces
-  `run-01dd53116aa74f37.log`, `run-01dd5311a7282421.log`). (b) user chose
+  `run-01dd53116aa74f37.log`, `run-01dd5311a7282421.log`). PARKED
+  2026-10-03 (`2c9c11c`, `bbe5b0f`, `6c4ffad`): a provably current,
+  consumed Win+F11 tap still produced the Xbox prompt, also after
+  reinstalling our hook last; no official-API fix found; prior art has
+  none. Needs user choice: accept the gap with KDE bindings kept;
+  user-applied Windows setting (recommended first: Settings > Gaming >
+  Xbox mode off, then recheck); project registry/policy writes or a
+  dedicated hook thread need separate authorisation. (b) user chose
   documented-signal-only detection (2026-10-03); blocked until one exists.
   (c) researched; alternate Game Bar access deferred (see Future).
   [record](changes/windows-gaming-coexistence.md)
