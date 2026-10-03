@@ -478,7 +478,7 @@ fn origin_pairing_repeats_and_background() {
     push_snap(&mut m, VK_LWIN, true, true, false);
     let up = push_snap(&mut m, VK_H, true, true, false).expect("paired up");
     assert!(up.consumed);
-    // Repeats consume while foreground, pass while background.
+    // Authentic: a consumed hold stays consumed across foreground changes.
     let mut m = SnapClassify::new(takeover());
     win_down(&mut m, VK_LWIN);
     push_snap(&mut m, VK_K, false, true, false);
@@ -487,16 +487,20 @@ fn origin_pairing_repeats_and_background() {
         (rep.edge, rep.consumed, rep.announce),
         (SnapEdge::Repeat, true, true)
     );
-    let bg = push_snap(&mut m, VK_K, false, false, false).expect("logged");
-    assert_eq!((bg.edge, bg.consumed), (SnapEdge::Repeat, false));
-    // Background-origin holds never consume mid-hold.
+    let bg = push_snap(&mut m, VK_K, false, false, false).expect("repeat");
+    assert_eq!((bg.edge, bg.consumed), (SnapEdge::Repeat, true));
+    let up = push_snap(&mut m, VK_K, true, false, false).expect("paired up");
+    assert!(up.consumed);
+    // Unmanaged-origin holds consume at interception (owner rechecks fresh
+    // identity before any action, never manipulates protected windows).
     let mut m = SnapClassify::new(takeover());
     win_down(&mut m, VK_LWIN);
-    push_snap(&mut m, VK_J, false, false, false);
-    let rep = push_snap(&mut m, VK_J, false, true, false).expect("logged");
-    assert!(!rep.consumed);
-    let up = push_snap(&mut m, VK_J, true, true, false).expect("logged");
-    assert!(!up.consumed);
+    let down = push_snap(&mut m, VK_J, false, false, false).expect("unmanaged down");
+    assert!(down.consumed);
+    let rep = push_snap(&mut m, VK_J, false, true, false).expect("repeat");
+    assert!(rep.consumed);
+    let up = push_snap(&mut m, VK_J, true, true, false).expect("paired up");
+    assert!(up.consumed);
     assert_eq!(push_snap(&mut m, VK_J, true, true, false), None);
 }
 
@@ -515,7 +519,7 @@ fn takeover_off_passes_but_logs() {
 }
 
 #[test]
-fn saturated_queue_passes_without_consuming() {
+fn saturated_queue_swallows_and_counts_loss() {
     let mut m = SnapClassify::new(takeover());
     let mut q = SnapQueue::new();
     push_snap(&mut m, VK_LWIN, false, true, false);
@@ -558,9 +562,10 @@ fn saturated_queue_passes_without_consuming() {
         )));
     }
     assert!(q.is_full());
+    // Authentic saturation: still swallows, drops only queued evidence.
     assert_eq!(
         classify_and_queue(&mut m, &mut q, VK_H, true, origin, false, tick, true),
-        Some(false)
+        Some(true)
     );
     assert_eq!(q.dropped, 1);
     assert!(m.enabled, "saturation must not latch the machine off");
@@ -574,7 +579,7 @@ fn saturated_queue_passes_without_consuming() {
 #[test]
 fn saturated_queue_preserves_earlier_consumed_mask() {
     // A consumed chord arms the Start-menu mask; a later saturated chord
-    // passes through (disguising Win by itself) but must not disarm the
+    // still swallows (dropping only evidence) and must not disarm the
     // earlier mask. A redundant E8 pair is safe, a naked Win Start is not.
     let mut m = SnapClassify::new(takeover());
     let mut q = SnapQueue::new();
@@ -608,18 +613,16 @@ fn saturated_queue_preserves_earlier_consumed_mask() {
         )));
     }
     assert!(q.is_full());
-    // Saturated approved chord passes without consuming, counted as loss.
+    // Saturated approved chord still swallows, counted as loss.
     assert_eq!(
         classify_and_queue(&mut m, &mut q, VK_J, false, origin, false, tick, true),
-        Some(false)
+        Some(true)
     );
     assert_eq!(q.dropped, 1);
-    // The earlier consumed chord's mask is still armed for Win-up: free one
-    // slot (the owner drains bounded batches) and the next Win-up still
-    // fires instead of a naked Win Start. Without the saturation
-    // preservation the mask would already be disarmed here.
-    q.pop_front();
+    // Mask reservation gracefully makes room when full instead of skipping
+    // the necessary mask.
     assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    assert_eq!(q.dropped, 2, "mask room comes from dropped action evidence");
 }
 
 #[test]
@@ -962,9 +965,9 @@ fn digit_chords_share_modifier_mask_and_origin_authority() {
     let up = push_workspace(&mut m, VK_0 + 3, true, true, false).expect("send up");
     assert_eq!((up.op, up.consumed), (WorkspaceOp::Send, true));
     assert_eq!(up.edge, SnapEdge::Up);
-    // Unmanaged/empty foreground: select consumes globally (takeover alone,
-    // no managed origin), while send keeps the managed-origin gate and its
-    // key-up passes.
+    // Authentic: both select and send consume unmanaged at interception;
+    // the owner rechecks fresh identity before any send acts (unmanaged send
+    // settles as unmanaged, never manipulates).
     let mut m = SnapClassify::new(takeover());
     win_down(&mut m, VK_LWIN);
     let down = push_workspace(&mut m, VK_0 + 4, false, false, false).expect("global select down");
@@ -976,11 +979,11 @@ fn digit_chords_share_modifier_mask_and_origin_authority() {
     let mut m = SnapClassify::new(takeover());
     win_down(&mut m, VK_LWIN);
     push_snap(&mut m, VK_SHIFT, false, true, false);
-    let down = push_workspace(&mut m, VK_0 + 4, false, false, false).expect("bg send down");
+    let down = push_workspace(&mut m, VK_0 + 4, false, false, false).expect("unmanaged send down");
     assert_eq!(down.op, WorkspaceOp::Send);
-    assert!(!down.consumed);
+    assert!(down.consumed && down.announce);
     let repeat = push_workspace(&mut m, VK_0 + 4, false, true, false).expect("repeat");
-    assert!(!repeat.consumed);
+    assert!(repeat.consumed);
     // Takeover off passes everything through without consuming.
     let mut m = SnapClassify::new(KeyboardConfig::disabled());
     win_down(&mut m, VK_LWIN);
@@ -990,8 +993,8 @@ fn digit_chords_share_modifier_mask_and_origin_authority() {
 
 #[test]
 fn global_select_consumes_without_managed_origin() {
-    // Empty-trailing return path: Win+1 from unmanaged foreground consumes
-    // with no origin; Shift+1 from the same foreground still passes through.
+    // Authentic: both Win+1 and Win+Shift+1 from unmanaged foreground consume
+    // with no origin; the owner settles send as unmanaged without acting.
     let mut m = SnapClassify::new(takeover());
     let mut q = SnapQueue::new();
     let tick = std::time::Instant::now();
@@ -1023,7 +1026,7 @@ fn global_select_consumes_without_managed_origin() {
     );
     assert_eq!(
         classify_and_queue(&mut m, &mut q, VK_0 + 1, false, None, false, tick, true),
-        Some(false)
+        Some(true)
     );
 }
 
@@ -1067,7 +1070,7 @@ fn digit_mask_roundtrip_and_queue_saturation() {
         },
         _ => panic!("expected mask"),
     }
-    // Saturation fails closed: the digit passes through and counts loss.
+    // Authentic saturation: the digit still swallows and counts loss.
     let mut m = SnapClassify::new(takeover());
     let mut q = SnapQueue::new();
     push_snap(&mut m, VK_LWIN, false, true, false);
@@ -1094,7 +1097,7 @@ fn digit_mask_roundtrip_and_queue_saturation() {
             tick,
             true
         ),
-        Some(false)
+        Some(true)
     );
     assert!(q.dropped >= 1);
 }
@@ -1128,9 +1131,12 @@ fn engine_edge_focus_is_a_no_op_rejection() {
 }
 
 #[test]
-fn inactive_global_select_passes_through() {
-    // Cached session gate off (suspended/fullscreen/elevated): an unshifted
-    // Win+digit passes through without consuming, never swallowed.
+fn gate_disabled_select_passes_through() {
+    // Shortcut-handling gate off: a fresh Win+digit passes through without
+    // consuming and its pair passes too, even with takeover on. Inactive
+    // tiling (suspended/fullscreen/elevated/gesture, unmanaged foreground)
+    // never clears this gate - publication stays takeover-only - so those
+    // chords still swallow while the gate holds (see the unmanaged tests).
     let mut m = SnapClassify::new(takeover());
     let mut q = SnapQueue::new();
     let tick = std::time::Instant::now();
@@ -1145,16 +1151,21 @@ fn inactive_global_select_passes_through() {
     match q.pop_front().expect("workspace intent") {
         QueuedSnapEvent::Workspace(intent) => {
             assert_eq!((intent.op, intent.index), (WorkspaceOp::Select, 2));
-            assert!(!intent.consumed);
+            assert!(!intent.consumed && !intent.announce);
         }
         _ => panic!("expected workspace intent"),
     }
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_0 + 2, true, None, false, tick, false),
+        Some(false),
+        "gate-off pair stays passed"
+    );
 }
 
 #[test]
 fn active_unmanaged_select_consumes_without_origin() {
-    // Cached session gate on with no managed origin (unmanaged foreground):
-    // select still consumes globally, while send keeps the origin gate.
+    // Authentic: both select and send consume unmanaged at interception;
+    // send without an origin settles as unmanaged without acting.
     let mut m = SnapClassify::new(takeover());
     let mut q = SnapQueue::new();
     let tick = std::time::Instant::now();
@@ -1174,7 +1185,7 @@ fn active_unmanaged_select_consumes_without_origin() {
         }
         _ => panic!("expected workspace intent"),
     }
-    // Same gate, same unmanaged foreground: send still passes through.
+    // Same gate, same unmanaged foreground: send still swallows.
     let mut m = SnapClassify::new(takeover());
     let mut q = SnapQueue::new();
     assert_eq!(
@@ -1187,7 +1198,7 @@ fn active_unmanaged_select_consumes_without_origin() {
     );
     assert_eq!(
         classify_and_queue(&mut m, &mut q, VK_0 + 3, false, None, false, tick, true),
-        Some(false)
+        Some(true)
     );
 }
 
@@ -1262,18 +1273,18 @@ fn maximize_modifier_exactness_passes_untracked() {
 }
 
 #[test]
-fn maximize_background_origin_never_consumes() {
-    // The toggle needs a managed origin like send: background-origin holds
-    // never consume mid-hold, takeover off passes everything through, and a
-    // closed session gate passes everything through.
+fn maximize_unmanaged_consumes_gate_off_passes() {
+    // Unmanaged foreground with the gate on still swallows at interception
+    // (the owner settles without acting); takeover off stays passthrough,
+    // and a fresh chord with the shortcut gate off passes through.
     let mut m = SnapClassify::new(takeover());
     win_down(&mut m, VK_LWIN);
-    let down = push_maximize(&mut m, false, false, false).expect("logged");
-    assert!(!down.consumed && !down.announce);
-    let repeat = push_maximize(&mut m, false, true, false).expect("logged");
-    assert!(!repeat.consumed);
-    let up = push_maximize(&mut m, true, true, false).expect("logged");
-    assert!(!up.consumed);
+    let down = push_maximize(&mut m, false, false, false).expect("unmanaged down");
+    assert!(down.consumed && down.announce);
+    let repeat = push_maximize(&mut m, false, true, false).expect("repeat");
+    assert!(repeat.consumed);
+    let up = push_maximize(&mut m, true, true, false).expect("paired up");
+    assert!(up.consumed);
     let mut m = SnapClassify::new(KeyboardConfig::disabled());
     win_down(&mut m, VK_LWIN);
     let down = push_maximize(&mut m, false, true, false).expect("logged");
@@ -1330,8 +1341,9 @@ fn maximize_arms_start_menu_mask_and_survives_saturation() {
         QueuedSnapEvent::Mask(mask) => assert_eq!(mask.trigger, MaskTrigger::Maximize),
         _ => panic!("expected mask"),
     }
-    // Saturation fails closed: the toggle passes through and counts loss,
-    // while an earlier consumed toggle's mask stays armed.
+    // Authentic saturation: the toggle still swallows and counts loss,
+    // while an earlier consumed toggle's mask stays armed (mask reservation
+    // makes room when full).
     let mut m = SnapClassify::new(takeover());
     let mut q = SnapQueue::new();
     push_snap(&mut m, VK_LWIN, false, true, false);
@@ -1368,10 +1380,9 @@ fn maximize_arms_start_menu_mask_and_survives_saturation() {
             tick,
             true
         ),
-        Some(false)
+        Some(true)
     );
     assert!(q.dropped >= 1);
-    q.pop_front();
     assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
 }
 
@@ -1451,19 +1462,18 @@ fn fullscreen_modifier_exactness_passes_untracked() {
 }
 
 #[test]
-fn fullscreen_background_origin_never_consumes() {
-    // The toggle needs a managed origin like send and maximize:
-    // background-origin holds never consume mid-hold, takeover off passes
-    // everything through, and a closed session gate passes everything
-    // through.
+fn fullscreen_unmanaged_consumes_gate_off_passes() {
+    // Unmanaged foreground with the gate on still swallows at interception
+    // (the owner settles without acting); takeover off stays passthrough,
+    // and a fresh chord with the shortcut gate off passes through.
     let mut m = SnapClassify::new(takeover());
     win_down(&mut m, VK_LWIN);
-    let down = push_fullscreen(&mut m, false, false, false).expect("logged");
-    assert!(!down.consumed && !down.announce);
-    let repeat = push_fullscreen(&mut m, false, true, false).expect("logged");
-    assert!(!repeat.consumed);
-    let up = push_fullscreen(&mut m, true, true, false).expect("logged");
-    assert!(!up.consumed);
+    let down = push_fullscreen(&mut m, false, false, false).expect("unmanaged down");
+    assert!(down.consumed && down.announce);
+    let repeat = push_fullscreen(&mut m, false, true, false).expect("repeat");
+    assert!(repeat.consumed);
+    let up = push_fullscreen(&mut m, true, true, false).expect("paired up");
+    assert!(up.consumed);
     let mut m = SnapClassify::new(KeyboardConfig::disabled());
     win_down(&mut m, VK_LWIN);
     let down = push_fullscreen(&mut m, false, true, false).expect("logged");
@@ -1603,19 +1613,19 @@ fn float_modifier_exactness_passes_untracked() {
 }
 
 #[test]
-fn float_background_origin_never_consumes() {
+fn float_unmanaged_consumes_gate_off_passes() {
     use tiler_windows::snapkey::VK_G;
-    // The toggle needs a managed origin like send: background-origin holds
-    // never consume mid-hold, takeover off passes everything through, and a
-    // closed session gate passes everything through.
+    // Unmanaged foreground with the gate on still swallows at interception
+    // (the owner settles without acting); takeover off stays passthrough,
+    // and a fresh chord with the shortcut gate off passes through.
     let mut m = SnapClassify::new(takeover());
     win_down(&mut m, VK_LWIN);
-    let down = push_float(&mut m, false, false, false).expect("logged");
-    assert!(!down.consumed && !down.announce);
-    let repeat = push_float(&mut m, false, true, false).expect("logged");
-    assert!(!repeat.consumed);
-    let up = push_float(&mut m, true, true, false).expect("logged");
-    assert!(!up.consumed);
+    let down = push_float(&mut m, false, false, false).expect("unmanaged down");
+    assert!(down.consumed && down.announce);
+    let repeat = push_float(&mut m, false, true, false).expect("repeat");
+    assert!(repeat.consumed);
+    let up = push_float(&mut m, true, true, false).expect("paired up");
+    assert!(up.consumed);
     let mut m = SnapClassify::new(KeyboardConfig::disabled());
     win_down(&mut m, VK_LWIN);
     let down = push_float(&mut m, false, true, false).expect("logged");
@@ -1787,16 +1797,569 @@ fn sticky_modifier_exactness_and_mask() {
 }
 
 #[test]
-fn sticky_background_origin_never_consumes() {
-    // The toggle needs a managed origin like send: background-origin holds
-    // never consume mid-hold.
+fn sticky_unmanaged_consumes_gate_off_passes() {
+    // Unmanaged foreground with the gate on still swallows at interception
+    // (the owner settles without acting); a fresh chord with the shortcut
+    // gate off passes through and never arms a hold.
     let mut m = SnapClassify::new(takeover());
     win_down(&mut m, VK_LWIN);
     push_snap(&mut m, VK_SHIFT, false, true, false);
-    let down = push_sticky(&mut m, false, false, false).expect("logged");
+    let down = push_sticky(&mut m, false, false, false).expect("unmanaged down");
+    assert!(down.consumed && down.announce);
+    let repeat = push_sticky(&mut m, false, true, false).expect("repeat");
+    assert!(repeat.consumed);
+    let up = push_sticky(&mut m, true, true, false).expect("paired up");
+    assert!(up.consumed);
+    let mut m = SnapClassify::new(takeover());
+    m.set_gate_active(false);
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    let down = push_sticky(&mut m, false, true, false).expect("gate-off down");
     assert!(!down.consumed && !down.announce);
-    let repeat = push_sticky(&mut m, false, true, false).expect("logged");
-    assert!(!repeat.consumed);
-    let up = push_sticky(&mut m, true, true, false).expect("logged");
+    let up = push_sticky(&mut m, true, true, false).expect("gate-off up");
     assert!(!up.consumed);
+}
+
+#[test]
+fn authentic_matrix_every_arm_consumes_unmanaged() {
+    use tiler_windows::snapkey::{VK_G, VK_M};
+    // Directional focus arms (except default Win+L): unmanaged still swallows.
+    for vk in [VK_H, VK_J, VK_K, VK_LEFT, VK_DOWN, VK_UP, VK_RIGHT] {
+        let mut m = SnapClassify::new(takeover());
+        win_down(&mut m, VK_LWIN);
+        let down = push_snap(&mut m, vk, false, false, false).expect("unmanaged focus down");
+        assert!(
+            down.consumed && down.announce,
+            "vk {vk} focus must swallow unmanaged"
+        );
+        let up = push_snap(&mut m, vk, true, false, false).expect("unmanaged focus up");
+        assert!(up.consumed, "vk {vk} focus up must stay swallowed");
+    }
+    // Directional move arms including Shift+L: unmanaged still swallows.
+    for vk in [VK_H, VK_J, VK_K, VK_L, VK_LEFT, VK_DOWN, VK_UP, VK_RIGHT] {
+        let mut m = SnapClassify::new(takeover());
+        win_down(&mut m, VK_LWIN);
+        push_snap(&mut m, VK_SHIFT, false, false, false);
+        let down = push_snap(&mut m, vk, false, false, false).expect("unmanaged move down");
+        assert_eq!(down.op, SnapOp::Move, "vk {vk} must resolve move");
+        assert!(down.consumed, "vk {vk} move must swallow unmanaged");
+    }
+    // Digits select/send unmanaged.
+    for index in [0u8, 1, 5, 9] {
+        let vk = VK_0 + u32::from(index);
+        let mut m = SnapClassify::new(takeover());
+        win_down(&mut m, VK_LWIN);
+        let select = push_workspace(&mut m, vk, false, false, false).expect("select down");
+        assert_eq!(select.op, WorkspaceOp::Select);
+        assert!(select.consumed);
+        let mut m = SnapClassify::new(takeover());
+        win_down(&mut m, VK_LWIN);
+        push_snap(&mut m, VK_SHIFT, false, false, false);
+        let send = push_workspace(&mut m, vk, false, false, false).expect("send down");
+        assert_eq!(send.op, WorkspaceOp::Send);
+        assert!(send.consumed, "send {index} must swallow unmanaged");
+    }
+    // Toggles unmanaged: M/F11/G/Sticky all swallow.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    assert!(
+        push_maximize(&mut m, false, false, false)
+            .expect("m down")
+            .consumed
+    );
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    assert!(
+        push_fullscreen(&mut m, false, false, false)
+            .expect("f11 down")
+            .consumed
+    );
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    assert!(
+        push_float(&mut m, false, false, false)
+            .expect("g down")
+            .consumed
+    );
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, false, false);
+    assert!(
+        push_sticky(&mut m, false, false, false)
+            .expect("shift+g down")
+            .consumed
+    );
+    assert!(is_chord_vk(VK_M) && is_chord_vk(VK_G) && is_chord_vk(VK_F11));
+}
+
+#[test]
+fn authentic_hold_persists_across_foreground_gate_and_win_order() {
+    // Consumed hold stays swallowed across foreground loss, gate closure,
+    // extra modifiers, and both up orderings; op fixed at down.
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    let tick = std::time::Instant::now();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    // Managed down, then foreground lost + gate closed mid-hold.
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_H,
+            false,
+            Some(origin_of(1, "w1")),
+            false,
+            tick,
+            true
+        ),
+        Some(true)
+    );
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_H, false, None, false, tick, false),
+        Some(true),
+        "repeat must stay swallowed across foreground/gate loss"
+    );
+    // Extra Shift transition on consumed focus hold must not leak or flip op.
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_SHIFT, false, None, false, tick, false),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_H, false, None, false, tick, false),
+        Some(true)
+    );
+    match q.pop_front().expect("down") {
+        QueuedSnapEvent::Intent(i) => assert_eq!((i.op, i.consumed), (SnapOp::Focus, true)),
+        _ => panic!("intent"),
+    }
+    // Win-first ordering: Win-up arms mask, chord-up still pairs swallowed.
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_H, true, None, false, tick, false),
+        Some(true)
+    );
+    // Key-first ordering on a fresh hold.
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_J,
+            false,
+            Some(origin_of(2, "w2")),
+            false,
+            tick,
+            true
+        ),
+        Some(true)
+    );
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_J, true, None, false, tick, false),
+        Some(true),
+        "key-first up must stay swallowed"
+    );
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+}
+
+#[test]
+fn authentic_takeover_off_hold_never_starts_dispatch() {
+    // Hold began with takeover off: reenabling mid-hold must not start dispatch.
+    let mut m = SnapClassify::new(KeyboardConfig::disabled());
+    win_down(&mut m, VK_LWIN);
+    let down = push_snap(&mut m, VK_H, false, true, false).expect("off down");
+    assert!(!down.consumed);
+    m.set_enabled(true);
+    let rep = push_snap(&mut m, VK_H, false, true, false).expect("repeat");
+    assert!(
+        !rep.consumed,
+        "takeover reenabled mid-hold must not start dispatch"
+    );
+    let up = push_snap(&mut m, VK_H, true, true, false).expect("up");
+    assert!(!up.consumed);
+}
+
+#[test]
+fn authentic_mask_plain_unowned_consumed_and_saturation() {
+    use tiler_windows::snapkey::{MaskTrigger, VK_G};
+    let tick = std::time::Instant::now();
+    // Plain Win tap never masks.
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    win_down(&mut m, VK_LWIN);
+    assert!(!win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    // Unowned OS chords never arm the mask.
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_CONTROL, false, true, false);
+    assert_eq!(push_snap(&mut m, VK_H, false, true, false), None);
+    push_snap(&mut m, VK_CONTROL, true, true, false);
+    assert!(!win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    // Consumed hold arms exactly one mask per Win hold.
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_G,
+            false,
+            Some(origin_of(3, "w3")),
+            false,
+            tick,
+            true
+        ),
+        Some(true)
+    );
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    assert_eq!(m.mask_attempted, 1);
+    match q.pop_front().expect("float") {
+        QueuedSnapEvent::Float(_) => {}
+        _ => panic!("float"),
+    }
+    match q.pop_front().expect("mask") {
+        QueuedSnapEvent::Mask(mask) => assert_eq!(mask.trigger, MaskTrigger::Float),
+        _ => panic!("mask"),
+    }
+    stamp_mask_result(&mut m, &mut q, 2, false);
+    assert_eq!((m.mask_ok, m.mask_failed), (1, 0));
+    // Saturation: still swallows, drops evidence, mask makes room.
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    push_snap(&mut m, VK_LWIN, false, true, false);
+    while q.len() < INTENT_QUEUE_CAP {
+        assert!(q.push(QueuedSnapEvent::Intent(
+            tiler_windows::snapkey::QueuedIntent {
+                op: SnapOp::Focus,
+                direction: Direction::Left,
+                edge: SnapEdge::Down,
+                origin: None,
+                consumed: true,
+                announce: true,
+                tick,
+            }
+        )));
+    }
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_H,
+            false,
+            Some(origin_of(4, "w4")),
+            false,
+            tick,
+            true
+        ),
+        Some(true),
+        "saturated owned chord must still swallow"
+    );
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+}
+
+#[test]
+fn gate_disabled_hold_never_starts_dispatch() {
+    // Shortcut gate off at down: the hold starts passed and reenabling the
+    // gate mid-hold must not steal it - repeats and the paired up stay
+    // passed. A fresh chord after reenabling consumes normally.
+    let mut m = SnapClassify::new(takeover());
+    m.set_gate_active(false);
+    win_down(&mut m, VK_LWIN);
+    let down = push_snap(&mut m, VK_H, false, true, false).expect("gate-off down");
+    assert!(!down.consumed && !down.announce);
+    m.set_gate_active(true);
+    let rep = push_snap(&mut m, VK_H, false, true, false).expect("repeat");
+    assert!(
+        !rep.consumed && !rep.announce,
+        "gate reenabled mid-hold must not start dispatch"
+    );
+    let up = push_snap(&mut m, VK_H, true, true, false).expect("up");
+    assert!(!up.consumed);
+    let fresh = push_snap(&mut m, VK_H, false, true, false).expect("fresh down");
+    assert!(fresh.consumed && fresh.announce);
+}
+
+#[test]
+fn gate_off_pair_completes_consumed_hold() {
+    // Gate on at down, off mid-hold: repeats and the paired up keep the down
+    // verdict (swallowed), the mask survives the transition, and a managed
+    // origin with the gate off still passes fresh while the gate holds with
+    // no origin still swallows.
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    let tick = std::time::Instant::now();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_H,
+            false,
+            Some(origin_of(11, "w11")),
+            false,
+            tick,
+            true
+        ),
+        Some(true)
+    );
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_H, false, None, false, tick, false),
+        Some(true),
+        "consumed repeat stays swallowed across gate-off"
+    );
+    match q.pop_front().expect("down") {
+        QueuedSnapEvent::Intent(i) => assert_eq!((i.op, i.consumed), (SnapOp::Focus, true)),
+        _ => panic!("intent"),
+    }
+    match q.pop_front().expect("repeat") {
+        QueuedSnapEvent::Intent(i) => {
+            assert!(i.consumed);
+            assert!(!i.announce, "disabled handling must not dispatch repeats");
+            assert_eq!(i.op, SnapOp::Focus, "repeat pins the down-time op");
+        }
+        _ => panic!("intent"),
+    }
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_H, true, None, false, tick, false),
+        Some(true),
+        "paired up completes swallowed across gate-off"
+    );
+    assert!(
+        win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick),
+        "mask survives the gate transition"
+    );
+    // Fresh chords while the gate is off pass, even with a managed origin.
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_J,
+            false,
+            Some(origin_of(12, "w12")),
+            false,
+            tick,
+            false
+        ),
+        Some(false),
+        "managed fresh chord passes while gate off"
+    );
+    // ... while no origin with the gate on still swallows (inactive tiling
+    // never clears the gate; the owner settles without acting).
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_J, false, None, false, tick, true),
+        Some(true)
+    );
+}
+
+#[test]
+fn owned_hold_modifier_transition_matrix() {
+    // Every arm: a consumed hold stays swallowed across Ctrl/Alt/Win/Shift
+    // transitions until its matching up, repeats only announce while the
+    // live combination still matches the pinned down-time op, and fresh
+    // unowned chords still pass through untracked. No timeout recovery: only
+    // the matching up closes a hold.
+    // Directional focus: Ctrl/Alt/Shift/Win-up transitions swallow silently.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    let down = push_snap(&mut m, VK_H, false, true, false).expect("focus down");
+    assert_eq!(down.op, SnapOp::Focus);
+    assert!(down.consumed && down.announce);
+    push_snap(&mut m, VK_CONTROL, false, true, false);
+    let rep = push_snap(&mut m, VK_H, false, true, false).expect("ctrl repeat");
+    assert_eq!(rep.op, SnapOp::Focus);
+    assert!(rep.consumed && !rep.announce);
+    push_snap(&mut m, VK_CONTROL, true, true, false);
+    push_snap(&mut m, VK_MENU, false, true, false);
+    let rep = push_snap(&mut m, VK_H, false, true, false).expect("alt repeat");
+    assert!(rep.consumed && !rep.announce);
+    push_snap(&mut m, VK_MENU, true, true, false);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    let rep = push_snap(&mut m, VK_H, false, true, false).expect("shift repeat");
+    assert_eq!(rep.op, SnapOp::Focus, "armed op stays pinned under Shift");
+    assert!(rep.consumed && !rep.announce);
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    push_snap(&mut m, VK_LWIN, true, true, false);
+    let rep = push_snap(&mut m, VK_H, false, true, false).expect("bare repeat");
+    assert!(rep.consumed && !rep.announce, "no dispatch after Win-up");
+    let up = push_snap(&mut m, VK_H, true, true, false).expect("paired up");
+    assert_eq!(up.op, SnapOp::Focus);
+    assert!(up.consumed);
+    assert_eq!(push_snap(&mut m, VK_H, true, true, false), None);
+    // Directional move: releasing Shift keeps the pinned move op swallowed.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    let down = push_snap(&mut m, VK_H, false, true, false).expect("move down");
+    assert_eq!(down.op, SnapOp::Move);
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    let rep = push_snap(&mut m, VK_H, false, true, false).expect("unshift repeat");
+    assert_eq!(rep.op, SnapOp::Move);
+    assert!(rep.consumed && !rep.announce);
+    let up = push_snap(&mut m, VK_H, true, true, false).expect("paired up");
+    assert_eq!(up.op, SnapOp::Move);
+    assert!(up.consumed);
+    // Shift+L to Win+L (default gate): the move hold swallows its repeats
+    // without dispatching once Shift leaves, and the up stays swallowed.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    let down = push_snap(&mut m, VK_L, false, true, false).expect("shift+l down");
+    assert_eq!(down.op, SnapOp::Move);
+    assert!(down.consumed);
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    let rep = push_snap(&mut m, VK_L, false, true, false).expect("win+l repeat");
+    assert_eq!(rep.op, SnapOp::Move);
+    assert!(
+        rep.consumed && !rep.announce,
+        "gated Focus+L never dispatches"
+    );
+    let up = push_snap(&mut m, VK_L, true, true, false).expect("paired up");
+    assert!(up.consumed);
+    // Default Win+L without Shift still passes through untracked entirely.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    assert_eq!(push_snap(&mut m, VK_L, false, true, false), None);
+    assert_eq!(push_snap(&mut m, VK_L, true, true, false), None);
+    // Digit select: Shift mid-hold pins select, swallows silently.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    let down = push_workspace(&mut m, VK_0 + 1, false, true, false).expect("select down");
+    assert_eq!(down.op, WorkspaceOp::Select);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    let rep = push_workspace(&mut m, VK_0 + 1, false, true, false).expect("shift repeat");
+    assert_eq!(rep.op, WorkspaceOp::Select);
+    assert!(rep.consumed && !rep.announce);
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    let up = push_workspace(&mut m, VK_0 + 1, true, true, false).expect("paired up");
+    assert_eq!(up.op, WorkspaceOp::Select);
+    assert!(up.consumed);
+    // Digit send: releasing Shift pins send, swallows silently.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    let down = push_workspace(&mut m, VK_0 + 2, false, true, false).expect("send down");
+    assert_eq!(down.op, WorkspaceOp::Send);
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    let rep = push_workspace(&mut m, VK_0 + 2, false, true, false).expect("unshift repeat");
+    assert_eq!(rep.op, WorkspaceOp::Send);
+    assert!(rep.consumed && !rep.announce);
+    let up = push_workspace(&mut m, VK_0 + 2, true, true, false).expect("paired up");
+    assert_eq!(up.op, WorkspaceOp::Send);
+    assert!(up.consumed);
+    // Maximize: Shift/Ctrl/Win transitions all swallow, never re-dispatch.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    assert!(
+        push_maximize(&mut m, false, true, false)
+            .expect("m down")
+            .consumed
+    );
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    let rep = push_maximize(&mut m, false, true, false).expect("shift repeat");
+    assert!(rep.consumed && !rep.announce);
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    push_snap(&mut m, VK_CONTROL, false, true, false);
+    let rep = push_maximize(&mut m, false, true, false).expect("ctrl repeat");
+    assert!(rep.consumed && !rep.announce);
+    push_snap(&mut m, VK_CONTROL, true, true, false);
+    push_snap(&mut m, VK_LWIN, true, true, false);
+    let rep = push_maximize(&mut m, false, true, false).expect("bare repeat");
+    assert!(rep.consumed && !rep.announce);
+    assert!(
+        push_maximize(&mut m, true, true, false)
+            .expect("paired up")
+            .consumed
+    );
+    // Fullscreen: same contract across Shift and Win transitions.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    assert!(
+        push_fullscreen(&mut m, false, true, false)
+            .expect("f11 down")
+            .consumed
+    );
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    let rep = push_fullscreen(&mut m, false, true, false).expect("shift repeat");
+    assert!(rep.consumed && !rep.announce);
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    push_snap(&mut m, VK_LWIN, true, true, false);
+    let rep = push_fullscreen(&mut m, false, true, false).expect("bare repeat");
+    assert!(rep.consumed && !rep.announce);
+    assert!(
+        push_fullscreen(&mut m, true, true, false)
+            .expect("paired up")
+            .consumed
+    );
+    // Float: Shift mid-hold never flips into sticky; Win-up keeps swallowing.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    assert!(
+        push_float(&mut m, false, true, false)
+            .expect("g down")
+            .consumed
+    );
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    let rep = push_float(&mut m, false, true, false).expect("shift repeat");
+    assert!(rep.consumed && !rep.announce);
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    push_snap(&mut m, VK_LWIN, true, true, false);
+    let rep = push_float(&mut m, false, true, false).expect("bare repeat");
+    assert!(rep.consumed && !rep.announce);
+    assert!(
+        push_float(&mut m, true, true, false)
+            .expect("paired up")
+            .consumed
+    );
+    assert_eq!((m.sticky_counts.down, m.sticky_counts.up), (0, 0));
+    // Sticky: releasing Shift never flips into float.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    assert!(
+        push_sticky(&mut m, false, true, false)
+            .expect("sticky down")
+            .consumed
+    );
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    let rep = push_sticky(&mut m, false, true, false).expect("unshift repeat");
+    assert!(rep.consumed && !rep.announce);
+    let up = push_sticky(&mut m, true, true, false).expect("paired up");
+    assert!(up.consumed);
+    assert_eq!((m.float_counts.down, m.float_counts.up), (0, 0));
+    // Fresh unowned chords still pass through untracked with no hold armed.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_CONTROL, false, true, false);
+    assert_eq!(push_snap(&mut m, VK_H, false, true, false), None);
+    assert_eq!(push_snap(&mut m, VK_H, true, true, false), None);
+    push_snap(&mut m, VK_CONTROL, true, true, false);
+    let mut m = SnapClassify::new(takeover());
+    assert_eq!(push_snap(&mut m, VK_H, false, true, false), None);
 }

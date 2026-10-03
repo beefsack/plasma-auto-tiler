@@ -14,7 +14,7 @@ use tiler_windows::tiling::{
     parse_tile_args, parse_tile_proof_args, parse_workspace_proof_args, parse_workspace_request,
     parse_workspace_select_args, readback_outcome, render_workspace_request, scope_allows,
     scope_exe_basename, send_flags_stable, should_clear_maximize_at_admission,
-    should_hold_born_fullscreen, tick_summary_signature, tiling_domain_bounds,
+    should_hold_born_fullscreen, tick_summary_signature, tiling_domain_bounds, toggle_gate_outcome,
     verify_hide_proof_argv_consistency, verify_proof_argv_consistency,
     verify_shortcut_proof_argv_consistency, verify_workspace_proof_argv_consistency,
     verify_workspace_select_argv_consistency, visible_min_from_outer,
@@ -327,6 +327,21 @@ fn fullscreen_toggle_needs_owned_preimage_to_exit() {
         FullscreenToggle::RefuseAppOwned.as_str(),
         "refuse-app-owned"
     );
+}
+
+#[test]
+fn toggle_gate_settles_suspended_and_elevated_without_side_effects() {
+    // Fresh per-intent gate for the native toggle arms: suspended sessions
+    // and elevated foregrounds settle with bounded outcomes and no writes,
+    // matching the workspace dispatcher. Suspension wins when both hold;
+    // only a live session proceeds to revalidation.
+    assert_eq!(toggle_gate_outcome(true, true), Some("suspended"));
+    assert_eq!(toggle_gate_outcome(true, false), Some("suspended"));
+    assert_eq!(
+        toggle_gate_outcome(false, true),
+        Some("elevated-foreground")
+    );
+    assert_eq!(toggle_gate_outcome(false, false), None);
 }
 
 #[test]

@@ -4599,8 +4599,10 @@ fn keyboard_tick(
                 let tick = state.tick;
                 let correlation = state.correlation();
                 let Some(origin) = intent.origin.clone() else {
-                    // Consumed without an origin cannot happen through the
-                    // callback gate; settle defensively without dispatch.
+                    // Authentic interception swallows unmanaged/unadmitted/
+                    // shell/suspended/elevated chords with no origin; settle
+                    // defensively without dispatch (never acts on protected
+                    // windows).
                     state.snap_advance = None;
                     log_json_at(
                         &log_path,
@@ -5071,6 +5073,29 @@ fn keyboard_tick(
                     );
                     continue;
                 };
+                // Fresh per-intent suspension/elevation fence (workspace_tick
+                // parity): newly intercepted suspended/elevated chords settle
+                // here with no side effects. The suspend read exempts verified
+                // managed overlays, and the target revalidation below refuses
+                // protected windows, so only a live managed member toggles.
+                if let Some(outcome) = crate::tiling::toggle_gate_outcome(
+                    suspend_read(state, me, fulls).veto.block,
+                    foreground_elevated(me),
+                ) {
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "maximize-toggle",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": outcome,
+                            "origin": origin.token,
+                        }),
+                    );
+                    continue;
+                };
                 let mut skipped: Vec<(String, String)> = Vec::new();
                 let mut retained: Vec<RetainedRow> = Vec::new();
                 let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained)
@@ -5332,6 +5357,30 @@ fn keyboard_tick(
                             "edge": intent.edge.as_str(),
                             "disposition": "consumed",
                             "outcome": "origin-vanished",
+                        }),
+                    );
+                    continue;
+                };
+                // Fresh per-intent suspension/elevation fence (workspace_tick
+                // parity): newly intercepted suspended/elevated chords settle
+                // here with no side effects. The suspend read exempts the
+                // verified managed foreground, so exiting our owned
+                // fullscreen still proceeds; app-owned frames refuse below
+                // via the metadata decision, never guessing restoration.
+                if let Some(outcome) = crate::tiling::toggle_gate_outcome(
+                    suspend_read(state, me, fulls).veto.block,
+                    foreground_elevated(me),
+                ) {
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "fullscreen-toggle",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": outcome,
+                            "origin": origin.token,
                         }),
                     );
                     continue;
@@ -6492,6 +6541,19 @@ fn dispatch_float_intent(
         log_json_at(&log_path, line);
         return;
     };
+    // Fresh per-intent suspension/elevation fence (workspace_tick parity):
+    // newly intercepted suspended/elevated chords settle here with no side
+    // effects. The suspend read exempts verified managed overlays; the target
+    // revalidation below refuses protected windows.
+    if let Some(outcome) = crate::tiling::toggle_gate_outcome(
+        suspend_read(state, me, fulls).veto.block,
+        foreground_elevated(me),
+    ) {
+        let mut line = settle(outcome);
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    };
     let Some(chord) = observe_chord_intent(state, me, fulls, areas) else {
         let mut line = settle("observation-failed");
         line["origin"] = serde_json::Value::from(origin.token.clone());
@@ -6900,6 +6962,19 @@ fn dispatch_sticky_intent(
     let Some(origin) = intent.origin.clone() else {
         state.snap_advance = None;
         let line = settle("origin-vanished");
+        log_json_at(&log_path, line);
+        return;
+    };
+    // Fresh per-intent suspension/elevation fence (workspace_tick parity):
+    // newly intercepted suspended/elevated chords settle here with no side
+    // effects; the sticky mark and Engine commit below only run for a live
+    // managed member.
+    if let Some(outcome) = crate::tiling::toggle_gate_outcome(
+        suspend_read(state, me, fulls).veto.block,
+        foreground_elevated(me),
+    ) {
+        let mut line = settle(outcome);
+        line["origin"] = serde_json::Value::from(origin.token.clone());
         log_json_at(&log_path, line);
         return;
     };
@@ -10850,19 +10925,17 @@ fn run_tile_loop(
                     }
                 }
             }
-            // Cached keyboard gate for the callback (exactness stays with the
-            // per-intent owner recheck), then one bounded intent batch. A
-            // pending batch wakes the loop even with no other event. The gate
-            // folds the current fullscreen and elevated reads in here so the
-            // hook never swallows a chord during cached suspension; the owner
-            // dispatch rechecks both fresh per intent anyway. Hook-side work
-            // stays cheap reads, never expensive syscalls per key.
-            let gate_fulls = monitor_fulls(&areas);
-            let snap_gate_active = state.keyboard.takeover
-                && !state.suspended
-                && !state.active.iter().any(|hwnd| state.managed.contains(hwnd))
-                && !suspend_read(&mut state, me, &gate_fulls).veto.block
-                && !foreground_elevated(me);
+            // Shortcut-handling gate for the callback: fresh downs consume
+            // iff takeover holds with this gate active (the eventual Xbox
+            // pause will clear it; until then publication stays takeover
+            // only). Fullscreen suspension, gesture, elevated foreground,
+            // and unmanaged/unadmitted/shell foreground never enter this
+            // gate, so inactive tiling never pauses interception: those
+            // chords still swallow at the hook and the owner rechecks fresh
+            // identity/scope/elevation/fullscreen/gesture per intent before
+            // any action, never manipulating protected windows. Hook-side
+            // work stays cheap reads, never expensive syscalls per key.
+            let snap_gate_active = state.keyboard.takeover;
             let snap_events = if snap_hook.is_some() {
                 crate::snapkey::sys::publish_gate(&state.snap_origins, snap_gate_active);
                 let batch = crate::snapkey::sys::drain_up_to(MAX_DISPATCH_PER_TICK);

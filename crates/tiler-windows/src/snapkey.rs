@@ -148,8 +148,9 @@ pub const fn direction_name(direction: Direction) -> &'static str {
 /// Classifier outcome for one approved catalog key event. `None` means the
 /// input is unrelated, injected, extra-modified, or Win+L-gated: it passes
 /// through untracked and is never logged. `consumed == false` means an
-/// approved chord that passes through (takeover off, background, or saturated)
-/// and never dispatches.
+/// approved chord that passes through (takeover or the shortcut gate off)
+/// and never dispatches; saturation drops only the queued evidence while
+/// still swallowing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SnapIntent {
     pub op: SnapOp,
@@ -243,6 +244,28 @@ fn index_direction(idx: usize) -> Direction {
 /// True only for the letter L slot (unshifted Win+L is the OS lock chord).
 fn is_letter_l(idx: usize) -> bool {
     idx == 3
+}
+
+/// Whether a live modifier/Win combination still matches a pinned directional
+/// op: no extra modifiers, Win still held, Shift still selecting the pinned
+/// op, and the Win+L opt-in still satisfied. Consumed-hold repeats stay
+/// swallowed regardless; only this decides the repeat `announce` (dispatch).
+fn snap_repeat_live(shift: bool, ctrl: bool, alt: bool, win: bool, op: SnapOp) -> bool {
+    !ctrl && !alt && win && (shift == (op == SnapOp::Move))
+}
+
+/// Win+L opt-in fence for a pinned directional op: an unshifted (focus) L
+/// without opt-in never dispatches, so a Shift+L move hold whose Shift is
+/// released mid-hold swallows its repeats without dispatching.
+fn snap_op_admits(idx: usize, op: SnapOp, allow_win_l: bool) -> bool {
+    !(op == SnapOp::Focus && is_letter_l(idx) && !allow_win_l)
+}
+
+/// Whether a live modifier/Win combination still matches a pinned workspace
+/// op: no extra modifiers, Win still held, Shift still selecting the pinned
+/// op. Same swallow-but-don't-dispatch contract as [`snap_repeat_live`].
+fn digit_repeat_live(shift: bool, ctrl: bool, alt: bool, win: bool, op: WorkspaceOp) -> bool {
+    !ctrl && !alt && win && (shift == (op == WorkspaceOp::Send))
 }
 
 #[must_use]
@@ -404,17 +427,28 @@ pub enum MaskTrigger {
 
 /// Pure product chord classifier. Tracks both Win keys plus the Shift family
 /// (chord selector) and Ctrl/Alt families (extra modifiers force
-/// pass-through). Per-key down state carries the origin of the hold: only a
-/// hold that started consumed (takeover on, foreground managed) can consume,
-/// so a background-origin sequence never consumes mid-hold and its paired
-/// key-up is never stolen. The op is fixed at down time from the Shift state,
-/// so releasing Shift before the key-up cannot flip focus into move (or
-/// select into send).
+/// pass-through). Per-key down state carries the verdict of the hold: only a
+/// hold that started consumed (takeover on with the shortcut gate active) can
+/// consume, so a gate-off-origin sequence never consumes mid-hold and its
+/// paired key-up is never stolen. Fresh downs consume iff `enabled` (takeover)
+/// and the shortcut gate (`gate_active` plus the callback-passed gate) both
+/// hold; consumed-hold repeats/ups ride the stored down verdict across later
+/// gate transitions, and new chords while the gate is off pass through.
+/// Unmanaged/unadmitted/shell foreground, fullscreen suspension, gesture, and
+/// elevated foreground still consume while the gate holds (the owner rechecks
+/// fresh identity/scope/elevation/fullscreen/gesture before any action, and
+/// never manipulates protected windows). The op is fixed at down time from
+/// the Shift state, so releasing Shift before the key-up cannot flip focus
+/// into move (or select into send): repeats of a consumed hold stay swallowed
+/// until the matching up, but only announce (dispatch) while the live
+/// modifier/Win combination still matches the pinned op, so a bare-key
+/// repeat after Win-up never re-dispatches.
 ///
 /// `mask_pending` arms the Start-menu mask when a consumed chord lands in the
-/// current Win hold. Unlike the spike, Shift transitions never disarm the
-/// mask: Shift is a chord participant here, and the physical Shift press
-/// already reaches the OS. Ordinary keys and Ctrl/Alt transitions do disarm.
+/// current Win hold. Unlike the spike, no passing transition disarms the
+/// mask: a redundant E8 pair is safe while a naked Win Start is not, so a
+/// consumed hold keeps its mask across foreground/gate changes, extra
+/// modifiers, and ordinary keys until Win-up fires once per hold.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnapClassify {
     win_l: bool,
@@ -437,11 +471,13 @@ pub struct SnapClassify {
     sticky_down: bool,
     sticky_origin: bool,
     pub enabled: bool,
-    /// Cached session gate published by the owner (takeover plus active,
-    /// non-fullscreen, non-elevated, non-gesture). Distinct from the managed
-    /// origin: selects require this gate, sends additionally require a
-    /// managed origin. Defaults on so pure classifier tests keep working;
-    /// the hook path sets it per event from the cached publish.
+    /// Shortcut-handling gate published by the owner (takeover plus the
+    /// eventual pause source, e.g. Xbox detection). Fresh downs consume iff
+    /// `enabled && gate_active` (combined with the callback-passed gate in
+    /// [`classify_and_queue`]); consumed-hold repeats/ups ride the stored
+    /// down verdict across later gate transitions. Defaults on so pure
+    /// classifier tests keep working; the hook path sets it per event from
+    /// the cached publish.
     pub gate_active: bool,
     pub allow_win_l: bool,
     pub counts: [SnapCounts; 8],
@@ -519,11 +555,23 @@ impl SnapClassify {
     }
 
     /// Tracked modifier state for the callback's preheld check
-    /// `(ctrl, alt, shift)`. A physically held modifier the classifier never
+    /// `(ctrl, alt, shift)`. A physically held Ctrl/Alt the classifier never
     /// saw (held before install, or injected past the callback guard) forces
-    /// pass-through so a preheld Shift cannot flip a focus chord into move.
+    /// pass-through to preserve unowned chords. Supported Shift binds from
+    /// the official async sample instead (see `sync_shift_from_async`), so a
+    /// preheld Shift correctly selects move/sticky/send rather than leaking.
     pub fn tracked_modifiers(&self) -> (bool, bool, bool) {
         (self.ctrl, self.alt, self.shift)
+    }
+
+    /// Bind supported Shift from the official async sample for a fresh chord
+    /// down. Preheld Shift (held before install) still selects move/sticky/
+    /// send; a missed Shift-up still resolves to focus. Holds already down
+    /// keep their down-time op via stored origin, so syncing here never flips
+    /// an armed hold.
+    #[cfg(any(windows, test))]
+    pub(crate) fn sync_shift_from_async(&mut self, async_shift: bool) {
+        self.shift = async_shift;
     }
 
     /// Whether either Win key is currently held (tracked state).
@@ -622,18 +670,12 @@ impl SnapClassify {
             match vk {
                 VK_CONTROL | VK_LCONTROL | VK_RCONTROL => {
                     self.ctrl = held;
-                    // Extra-modifier traffic reaches the OS and disguises Win
-                    // by itself; a pending mask is redundant.
-                    self.mask_pending = false;
                 }
                 VK_MENU | VK_LMENU | VK_RMENU => {
                     self.alt = held;
-                    self.mask_pending = false;
                 }
                 _ => {
                     self.shift = held;
-                    // Shift participates in move chords: it passes through
-                    // physically but never disarms a pending mask.
                 }
             }
             return None;
@@ -650,11 +692,7 @@ impl SnapClassify {
         if is_float_vk(vk) || is_sticky_vk(vk) {
             return self.push_g(is_up, foreground);
         }
-        let Some(idx) = catalog_index(vk) else {
-            // Ordinary keys reach the OS and disguise Win by themselves.
-            self.mask_pending = false;
-            return None;
-        };
+        let idx = catalog_index(vk)?;
         let direction = index_direction(idx);
         if is_up {
             if !self.key_down[idx] {
@@ -666,7 +704,7 @@ impl SnapClassify {
             let op = self.key_op[idx].unwrap_or(SnapOp::Focus);
             self.key_op[idx] = None;
             self.counts[idx].up += 1;
-            if self.enabled && self.gate_active && foreground && origin {
+            if origin {
                 self.counts[idx].consumed += 1;
                 Some(Classified::Snap(SnapIntent {
                     op,
@@ -678,8 +716,6 @@ impl SnapClassify {
                 }))
             } else {
                 self.counts[idx].passed += 1;
-                // Passed ups reach the OS, which disguises Win by itself.
-                self.mask_pending = false;
                 Some(Classified::Snap(SnapIntent {
                     op,
                     direction,
@@ -690,27 +726,24 @@ impl SnapClassify {
                 }))
             }
         } else {
-            if self.ctrl || self.alt || !(self.win_l || self.win_r) {
-                // Untracked chords pass through, so the OS sees Win modify
-                // something and the pending mask is redundant.
-                self.mask_pending = false;
-                return None;
-            }
-            let op = if self.shift {
-                SnapOp::Move
-            } else {
-                SnapOp::Focus
-            };
-            // Unshifted Win+L is the OS lock chord: without explicit opt-in it
-            // passes through untracked, so its paired key-up also passes.
-            if op == SnapOp::Focus && is_letter_l(idx) && !self.allow_win_l {
-                self.mask_pending = false;
-                return None;
-            }
+            // Armed-hold repeats classify BEFORE the fresh-chord guard: a
+            // consumed hold stays swallowed until its matching up even when
+            // Ctrl/Alt arrive mid-hold, Win is released early, or Shift
+            // flips. Only the dispatch (`announce`) needs the live
+            // combination to still match the pinned op.
             if self.key_down[idx] {
                 self.counts[idx].repeat += 1;
-                let op = self.key_op[idx].unwrap_or(op);
-                if self.enabled && self.gate_active && foreground && self.key_origin[idx] {
+                let op = self.key_op[idx].unwrap_or(SnapOp::Focus);
+                if self.key_origin[idx] {
+                    let live = snap_repeat_live(
+                        self.shift,
+                        self.ctrl,
+                        self.alt,
+                        self.win_l || self.win_r,
+                        op,
+                    ) && snap_op_admits(idx, op, self.allow_win_l)
+                        && self.enabled
+                        && self.gate_active;
                     self.counts[idx].consumed += 1;
                     self.mask_pending = true;
                     self.mask_trigger = Some(MaskTrigger::Snap { op, direction });
@@ -720,11 +753,10 @@ impl SnapClassify {
                         edge: SnapEdge::Repeat,
                         foreground,
                         consumed: true,
-                        announce: true,
+                        announce: live,
                     }))
                 } else {
                     self.counts[idx].passed += 1;
-                    self.mask_pending = false;
                     Some(Classified::Snap(SnapIntent {
                         op,
                         direction,
@@ -735,8 +767,23 @@ impl SnapClassify {
                     }))
                 }
             } else {
+                if self.ctrl || self.alt || !(self.win_l || self.win_r) {
+                    return None;
+                }
+                let op = if self.shift {
+                    SnapOp::Move
+                } else {
+                    SnapOp::Focus
+                };
+                // Unshifted Win+L is the OS lock chord: without explicit opt-in it
+                // passes through untracked, so its paired key-up also passes.
+                // Established opt-in exception: an ordinary LL hook cannot
+                // reliably intercept it; left unchanged.
+                if op == SnapOp::Focus && is_letter_l(idx) && !self.allow_win_l {
+                    return None;
+                }
                 self.key_down[idx] = true;
-                let origin = self.enabled && self.gate_active && foreground;
+                let origin = self.enabled && self.gate_active;
                 self.key_origin[idx] = origin;
                 self.key_op[idx] = Some(op);
                 self.counts[idx].down += 1;
@@ -754,7 +801,6 @@ impl SnapClassify {
                     }))
                 } else {
                     self.counts[idx].passed += 1;
-                    self.mask_pending = false;
                     Some(Classified::Snap(SnapIntent {
                         op,
                         direction,
@@ -768,13 +814,15 @@ impl SnapClassify {
         }
     }
 
-    /// Digit half of the unified classifier: same Win/Ctrl/Alt/origin/mask
-    /// contract as the directional catalog. Shift flips select into send and
-    /// is fixed at down time; the op rides the paired key-up. Select consumes
-    /// on the cached session gate alone (empty workspaces and unmanaged
-    /// foreground) with no managed origin; send additionally requires a
-    /// managed origin. Fullscreen and elevated gating stays with the owner
-    /// dispatch as well, never only here.
+    /// Digit half of the unified classifier: same Win/Ctrl/Alt/armed-hold/
+    /// gate/mask contract as the directional catalog. Shift flips select into
+    /// send and is fixed at down time; the op rides the paired key-up.
+    /// Consumed-hold repeats stay swallowed until the matching up but only
+    /// announce while the live combination still matches the pinned op. Fresh
+    /// downs consume iff takeover is on with the shortcut gate active; the
+    /// owner rechecks fresh identity/scope/elevation/fullscreen/gesture
+    /// before any action (send without a live managed origin settles as
+    /// unmanaged, never acts on protected windows).
     fn push_digit(&mut self, vk: u32, is_up: bool, foreground: bool) -> Option<Classified> {
         let slot = (vk - VK_0) as usize;
         if is_up {
@@ -787,8 +835,7 @@ impl SnapClassify {
             let op = self.digit_op[slot].unwrap_or(WorkspaceOp::Select);
             self.digit_op[slot] = None;
             self.digit_counts[slot].up += 1;
-            let origin_held = origin && (foreground || op == WorkspaceOp::Select);
-            if self.enabled && self.gate_active && origin_held {
+            if origin {
                 self.digit_counts[slot].consumed += 1;
                 Some(Classified::Workspace(WorkspaceIntent {
                     op,
@@ -800,7 +847,6 @@ impl SnapClassify {
                 }))
             } else {
                 self.digit_counts[slot].passed += 1;
-                self.mask_pending = false;
                 Some(Classified::Workspace(WorkspaceIntent {
                     op,
                     index: slot as u8,
@@ -811,25 +857,24 @@ impl SnapClassify {
                 }))
             }
         } else {
-            if self.ctrl || self.alt || !(self.win_l || self.win_r) {
-                self.mask_pending = false;
-                return None;
-            }
-            let op = if self.shift {
-                WorkspaceOp::Send
-            } else {
-                WorkspaceOp::Select
-            };
+            // Armed-hold repeats classify before the fresh-chord guard, same
+            // contract as the directional catalog: consumed holds stay
+            // swallowed across mid-hold modifier/Win/Shift transitions (only
+            // `announce` follows the live combination), passed holds stay
+            // passed.
             if self.digit_down[slot] {
                 self.digit_counts[slot].repeat += 1;
-                let op = self.digit_op[slot].unwrap_or(op);
-                // Select repeats ride the down-time origin like the down
-                // itself: global selects (origin bound without a managed
-                // foreground) keep consuming while the cached gate holds;
-                // send repeats keep the live managed-foreground gate.
-                let origin_held =
-                    self.digit_origin[slot] && (foreground || op == WorkspaceOp::Select);
-                if self.enabled && self.gate_active && origin_held {
+                let op = self.digit_op[slot].unwrap_or(WorkspaceOp::Select);
+                if self.digit_origin[slot] {
+                    let live = self.enabled
+                        && self.gate_active
+                        && digit_repeat_live(
+                            self.shift,
+                            self.ctrl,
+                            self.alt,
+                            self.win_l || self.win_r,
+                            op,
+                        );
                     self.digit_counts[slot].consumed += 1;
                     self.mask_pending = true;
                     self.mask_trigger = Some(MaskTrigger::Workspace {
@@ -842,11 +887,10 @@ impl SnapClassify {
                         edge: SnapEdge::Repeat,
                         foreground,
                         consumed: true,
-                        announce: true,
+                        announce: live,
                     }))
                 } else {
                     self.digit_counts[slot].passed += 1;
-                    self.mask_pending = false;
                     Some(Classified::Workspace(WorkspaceIntent {
                         op,
                         index: slot as u8,
@@ -857,15 +901,16 @@ impl SnapClassify {
                     }))
                 }
             } else {
+                if self.ctrl || self.alt || !(self.win_l || self.win_r) {
+                    return None;
+                }
+                let op = if self.shift {
+                    WorkspaceOp::Send
+                } else {
+                    WorkspaceOp::Select
+                };
                 self.digit_down[slot] = true;
-                // Global select: unshifted digits consume on the cached
-                // session gate alone (empty workspaces and unmanaged
-                // foreground), with the origin bound for mask/queue
-                // bookkeeping but no managed foreground required. Send keeps
-                // the managed-origin gate; the owner still rechecks identity
-                // before anything moves.
-                let origin =
-                    self.enabled && self.gate_active && (foreground || op == WorkspaceOp::Select);
+                let origin = self.enabled && self.gate_active;
                 self.digit_origin[slot] = origin;
                 self.digit_op[slot] = Some(op);
                 self.digit_counts[slot].down += 1;
@@ -886,7 +931,6 @@ impl SnapClassify {
                     }))
                 } else {
                     self.digit_counts[slot].passed += 1;
-                    self.mask_pending = false;
                     Some(Classified::Workspace(WorkspaceIntent {
                         op,
                         index: slot as u8,
@@ -901,13 +945,16 @@ impl SnapClassify {
     }
 
     /// Maximize-toggle half of the unified classifier (Win+M, KDE Meta+M
-    /// parity): same Win/Ctrl/Alt/origin/mask contract as the directional
-    /// catalog. Shift selects the directional move arm instead, so any held
-    /// Shift (or Ctrl/Alt, or missing Win) passes M through untracked and the
-    /// paired key-up also passes. Only the down dispatches: KDE shortcuts are
+    /// parity): same Win/Ctrl/Alt/armed-hold/gate/mask contract as the
+    /// directional catalog. Shift selects the directional move arm instead,
+    /// so any held Shift (or Ctrl/Alt, or missing Win) passes a fresh M
+    /// through untracked and the paired key-up also passes. A consumed hold
+    /// stays swallowed across later Shift/Ctrl/Alt/Win transitions until its
+    /// matching up. Only the down dispatches: KDE shortcuts are
     /// discrete per press, so held repeats are swallowed (mask stays armed)
-    /// instead of re-toggling. Ups close the pair. The toggle needs a managed
-    /// origin like send: background foreground never consumes.
+    /// instead of re-toggling. Ups close the pair. Fresh downs consume iff
+    /// takeover is on with the shortcut gate active; the owner rechecks fresh
+    /// identity/scope/elevation/fullscreen/gesture before any action.
     fn push_maximize(&mut self, is_up: bool, foreground: bool) -> Option<Classified> {
         if is_up {
             if !self.maximize_down {
@@ -917,7 +964,7 @@ impl SnapClassify {
             let origin = self.maximize_origin;
             self.maximize_origin = false;
             self.max_counts.up += 1;
-            if self.enabled && self.gate_active && foreground && origin {
+            if origin {
                 self.max_counts.consumed += 1;
                 Some(Classified::Maximize(MaximizeIntent {
                     edge: SnapEdge::Up,
@@ -927,7 +974,6 @@ impl SnapClassify {
                 }))
             } else {
                 self.max_counts.passed += 1;
-                self.mask_pending = false;
                 Some(Classified::Maximize(MaximizeIntent {
                     edge: SnapEdge::Up,
                     foreground,
@@ -936,13 +982,12 @@ impl SnapClassify {
                 }))
             }
         } else {
-            if self.ctrl || self.alt || self.shift || !(self.win_l || self.win_r) {
-                self.mask_pending = false;
-                return None;
-            }
+            // Armed-hold repeats classify before the fresh-chord guard: a
+            // consumed M hold stays swallowed across later Shift/Ctrl/Alt/Win
+            // transitions (never re-dispatched), a passed hold stays passed.
             if self.maximize_down {
                 self.max_counts.repeat += 1;
-                if self.enabled && self.gate_active && foreground && self.maximize_origin {
+                if self.maximize_origin {
                     // Held repeat: swallowed, never re-dispatched. The hold
                     // continues to disguise Win, so the mask stays armed.
                     self.max_counts.consumed += 1;
@@ -956,7 +1001,6 @@ impl SnapClassify {
                     }))
                 } else {
                     self.max_counts.passed += 1;
-                    self.mask_pending = false;
                     Some(Classified::Maximize(MaximizeIntent {
                         edge: SnapEdge::Repeat,
                         foreground,
@@ -965,8 +1009,11 @@ impl SnapClassify {
                     }))
                 }
             } else {
+                if self.ctrl || self.alt || self.shift || !(self.win_l || self.win_r) {
+                    return None;
+                }
                 self.maximize_down = true;
-                let origin = self.enabled && self.gate_active && foreground;
+                let origin = self.enabled && self.gate_active;
                 self.maximize_origin = origin;
                 self.max_counts.down += 1;
                 if origin {
@@ -981,7 +1028,6 @@ impl SnapClassify {
                     }))
                 } else {
                     self.max_counts.passed += 1;
-                    self.mask_pending = false;
                     Some(Classified::Maximize(MaximizeIntent {
                         edge: SnapEdge::Down,
                         foreground,
@@ -994,12 +1040,15 @@ impl SnapClassify {
     }
 
     /// Fullscreen-toggle half of the unified classifier (Win+F11, KDE Meta+F11
-    /// parity): same Win/Ctrl/Alt/origin/mask contract as the maximize arm.
-    /// Any held Shift (or Ctrl/Alt, or missing Win) passes F11 through
-    /// untracked and the paired key-up also passes. Only the down dispatches:
+    /// parity): same Win/Ctrl/Alt/armed-hold/gate/mask contract as the
+    /// maximize arm. Any held Shift (or Ctrl/Alt, or missing Win) passes a
+    /// fresh F11 through untracked and the paired key-up also passes. A
+    /// consumed hold stays swallowed across later transitions until its
+    /// matching up. Only the down dispatches:
     /// held repeats are swallowed (mask stays armed) instead of re-toggling.
-    /// Ups close the pair. The toggle needs a managed origin like send and
-    /// maximize: background foreground never consumes.
+    /// Ups close the pair. Fresh downs consume iff takeover is on with the
+    /// shortcut gate active; the owner rechecks fresh identity/scope/
+    /// elevation/fullscreen/gesture before any action.
     fn push_fullscreen(&mut self, is_up: bool, foreground: bool) -> Option<Classified> {
         if is_up {
             if !self.fullscreen_down {
@@ -1009,7 +1058,7 @@ impl SnapClassify {
             let origin = self.fullscreen_origin;
             self.fullscreen_origin = false;
             self.fullscreen_counts.up += 1;
-            if self.enabled && self.gate_active && foreground && origin {
+            if origin {
                 self.fullscreen_counts.consumed += 1;
                 Some(Classified::Fullscreen(FullscreenIntent {
                     edge: SnapEdge::Up,
@@ -1019,7 +1068,6 @@ impl SnapClassify {
                 }))
             } else {
                 self.fullscreen_counts.passed += 1;
-                self.mask_pending = false;
                 Some(Classified::Fullscreen(FullscreenIntent {
                     edge: SnapEdge::Up,
                     foreground,
@@ -1028,13 +1076,12 @@ impl SnapClassify {
                 }))
             }
         } else {
-            if self.ctrl || self.alt || self.shift || !(self.win_l || self.win_r) {
-                self.mask_pending = false;
-                return None;
-            }
+            // Armed-hold repeats classify before the fresh-chord guard, same
+            // contract as maximize: consumed holds stay swallowed, passed
+            // holds stay passed.
             if self.fullscreen_down {
                 self.fullscreen_counts.repeat += 1;
-                if self.enabled && self.gate_active && foreground && self.fullscreen_origin {
+                if self.fullscreen_origin {
                     // Held repeat: swallowed, never re-dispatched. The hold
                     // continues to disguise Win, so the mask stays armed.
                     self.fullscreen_counts.consumed += 1;
@@ -1048,7 +1095,6 @@ impl SnapClassify {
                     }))
                 } else {
                     self.fullscreen_counts.passed += 1;
-                    self.mask_pending = false;
                     Some(Classified::Fullscreen(FullscreenIntent {
                         edge: SnapEdge::Repeat,
                         foreground,
@@ -1057,8 +1103,11 @@ impl SnapClassify {
                     }))
                 }
             } else {
+                if self.ctrl || self.alt || self.shift || !(self.win_l || self.win_r) {
+                    return None;
+                }
                 self.fullscreen_down = true;
-                let origin = self.enabled && self.gate_active && foreground;
+                let origin = self.enabled && self.gate_active;
                 self.fullscreen_origin = origin;
                 self.fullscreen_counts.down += 1;
                 if origin {
@@ -1073,7 +1122,6 @@ impl SnapClassify {
                     }))
                 } else {
                     self.fullscreen_counts.passed += 1;
-                    self.mask_pending = false;
                     Some(Classified::Fullscreen(FullscreenIntent {
                         edge: SnapEdge::Down,
                         foreground,
@@ -1113,12 +1161,13 @@ impl SnapClassify {
         self.push_g_arm(GArm::Float, is_up, foreground)
     }
 
-    /// Shared G-key arm (float and sticky halves): same Win/Ctrl/Alt/origin/
-    /// mask contract as the maximize arm. A fresh down routes by Shift; held
-    /// repeats ride the armed hold regardless of later Shift. Only the down
-    /// dispatches: held repeats are swallowed (mask stays armed) instead of
-    /// re-toggling. Ups close the pair. The toggle needs a managed origin like
-    /// send: background foreground never consumes.
+    /// Shared G-key arm (float and sticky halves): same Win/Ctrl/Alt/
+    /// armed-hold/gate/mask contract as the maximize arm. A fresh down routes
+    /// by Shift; held repeats ride the armed hold regardless of later Shift.
+    /// Only the down dispatches: held repeats are swallowed (mask stays
+    /// armed) instead of re-toggling. Ups close the pair. Fresh downs consume
+    /// iff takeover is on with the shortcut gate active; the owner rechecks
+    /// fresh identity/scope/elevation/fullscreen/gesture before any action.
     fn push_g_arm(&mut self, arm: GArm, is_up: bool, foreground: bool) -> Option<Classified> {
         let sticky = arm == GArm::Sticky;
         let shift = self.shift;
@@ -1165,22 +1214,20 @@ impl SnapClassify {
             let had_origin = *origin;
             *origin = false;
             counts.up += 1;
-            if self.enabled && self.gate_active && foreground && had_origin {
+            if had_origin {
                 counts.consumed += 1;
                 Some(intent(SnapEdge::Up, true, false))
             } else {
                 counts.passed += 1;
-                self.mask_pending = false;
                 Some(intent(SnapEdge::Up, false, false))
             }
         } else {
-            if self.ctrl || self.alt || !(self.win_l || self.win_r) {
-                self.mask_pending = false;
-                return None;
-            }
+            // Armed-hold repeats classify before the fresh-chord guard: a
+            // consumed G hold stays swallowed across later Ctrl/Alt/Win/Shift
+            // transitions (never flipping arms), a passed hold stays passed.
             if *down {
                 counts.repeat += 1;
-                if self.enabled && self.gate_active && foreground && *origin {
+                if *origin {
                     // Held repeat: swallowed, never re-dispatched. The hold
                     // continues to disguise Win, so the mask stays armed.
                     // Shift is op-fixed at down time: a later Shift never
@@ -1191,18 +1238,19 @@ impl SnapClassify {
                     Some(intent(SnapEdge::Repeat, true, false))
                 } else {
                     counts.passed += 1;
-                    self.mask_pending = false;
                     Some(intent(SnapEdge::Repeat, false, false))
                 }
             } else {
+                if self.ctrl || self.alt || !(self.win_l || self.win_r) {
+                    return None;
+                }
                 if shift != sticky {
                     // The other arm owns this Shift state: the dispatcher
                     // routes fresh downs there, never here.
-                    self.mask_pending = false;
                     return None;
                 }
                 *down = true;
-                let has_origin = self.enabled && self.gate_active && foreground;
+                let has_origin = self.enabled && self.gate_active;
                 *origin = has_origin;
                 counts.down += 1;
                 if has_origin {
@@ -1212,11 +1260,94 @@ impl SnapClassify {
                     Some(intent(SnapEdge::Down, true, true))
                 } else {
                     counts.passed += 1;
-                    self.mask_pending = false;
                     Some(intent(SnapEdge::Down, false, false))
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod shift_sync_tests {
+    use super::{KeyboardConfig, SnapOp, VK_LWIN};
+
+    fn enabled() -> KeyboardConfig {
+        KeyboardConfig {
+            takeover: true,
+            allow_win_l: true,
+        }
+    }
+
+    #[test]
+    fn preheld_shift_selects_move_on_fresh_down() {
+        // Preheld Shift (held before install, tracked state clear) binds from
+        // the async sample so the fresh down resolves move, not focus.
+        let mut m = super::SnapClassify::new(enabled());
+        super::SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+        assert!(!m.tracked_modifiers().2);
+        m.sync_shift_from_async(true);
+        let down = super::SnapClassify::push(&mut m, super::VK_H, false, true, false)
+            .and_then(|ev| match ev {
+                super::Classified::Snap(intent) => Some(intent),
+                _ => None,
+            })
+            .expect("fresh down");
+        assert_eq!(down.op, SnapOp::Move);
+        assert!(down.consumed);
+    }
+
+    #[test]
+    fn missed_shift_up_resolves_focus_on_fresh_down() {
+        // Missed Shift-up (tracked held, physical released) syncs back so a
+        // fresh down resolves focus, not a stale move.
+        let mut m = super::SnapClassify::new(enabled());
+        super::SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+        super::SnapClassify::push(&mut m, super::VK_SHIFT, false, true, false);
+        assert!(m.tracked_modifiers().2);
+        m.sync_shift_from_async(false);
+        let down = super::SnapClassify::push(&mut m, super::VK_H, false, true, false)
+            .and_then(|ev| match ev {
+                super::Classified::Snap(intent) => Some(intent),
+                _ => None,
+            })
+            .expect("fresh down");
+        assert_eq!(down.op, SnapOp::Focus);
+    }
+
+    #[test]
+    fn armed_hold_keeps_down_time_op_across_sync() {
+        // Syncing Shift mid-hold never flips the armed op: repeats and the
+        // paired up ride the pinned down-time op.
+        let mut m = super::SnapClassify::new(enabled());
+        super::SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+        let down = super::SnapClassify::push(&mut m, super::VK_H, false, true, false)
+            .and_then(|ev| match ev {
+                super::Classified::Snap(intent) => Some(intent),
+                _ => None,
+            })
+            .expect("fresh down");
+        assert_eq!(down.op, SnapOp::Focus);
+        m.sync_shift_from_async(true);
+        let repeat = super::SnapClassify::push(&mut m, super::VK_H, false, true, false)
+            .and_then(|ev| match ev {
+                super::Classified::Snap(intent) => Some(intent),
+                _ => None,
+            })
+            .expect("repeat");
+        assert_eq!(repeat.op, SnapOp::Focus);
+        assert!(repeat.consumed);
+        assert!(
+            !repeat.announce,
+            "shift-flipped repeat swallows without dispatch"
+        );
+        let up = super::SnapClassify::push(&mut m, super::VK_H, true, true, false)
+            .and_then(|ev| match ev {
+                super::Classified::Snap(intent) => Some(intent),
+                _ => None,
+            })
+            .expect("paired up");
+        assert_eq!(up.op, SnapOp::Focus);
+        assert!(up.consumed);
     }
 }
 
@@ -1386,8 +1517,8 @@ pub enum QueuedSnapEvent {
 }
 
 /// Bounded preallocated FIFO from the callback to the owner. `push` refuses
-/// past capacity so the callback fails closed; the caller records the loss and
-/// passes the key through.
+/// past capacity and counts the loss; the classifier's suppression verdict
+/// remains authoritative even when action evidence cannot be queued.
 #[derive(Debug)]
 pub struct SnapQueue {
     inner: std::collections::VecDeque<QueuedSnapEvent>,
@@ -1451,15 +1582,20 @@ impl Default for SnapQueue {
     }
 }
 
-/// Saturation-aware gate shared by the hook callback and tests. Bookkeeping
-/// always advances, but while the queue is full nothing consumes: the approved
-/// chord is counted as a loss and passed through. Injected and unrelated
+/// Saturation-aware gate shared by the hook callback and tests. Classifier
+/// suppression/pairing/mask semantics always advance; when full only the
+/// queued action/trace evidence is dropped (bounded `dropped` counter) while
+/// the callback verdict still swallows owned chords. Injected and unrelated
 /// inputs never touch the queue or the loss counter. `origin` is the
 /// callback-bound managed identity (`None` when background/inactive or
-/// unmanaged); `gate_active` is the cached session gate (takeover plus active,
-/// non-fullscreen, non-elevated, non-gesture) published by the owner.
-/// Selects require the gate, sends additionally require an origin. Returns
-/// whether the callback must swallow the key event.
+/// unmanaged); `gate_active` is the callback-passed shortcut-handling gate
+/// (owner-published, takeover-based until documented Xbox detection exists).
+/// Fresh downs consume iff the machine is enabled and both the machine gate
+/// and the passed gate hold; consumed-hold repeats/ups ride the stored down
+/// verdict across later gate transitions, while new chords while the gate is
+/// off pass through with their pair. The mask survives across the paired
+/// sequence. Action safety stays with the owner's fresh per-intent rechecks.
+/// Returns whether the callback must swallow the key event.
 #[allow(clippy::too_many_arguments)]
 pub fn classify_and_queue(
     machine: &mut SnapClassify,
@@ -1471,33 +1607,14 @@ pub fn classify_and_queue(
     tick: std::time::Instant,
     gate_active: bool,
 ) -> Option<bool> {
-    let saturated = queue.is_full();
-    let saved = machine.enabled;
+    // The passed gate joins the machine gate for this event only: either off
+    // keeps fresh downs passing, while armed holds keep their down verdict via
+    // the stored origin and the field restores afterwards.
     let saved_gate = machine.gate_active;
-    // Preserve an earlier consumed chord's Start-menu mask across saturation:
-    // the saturated event passes through (disguising Win by itself), but a
-    // redundant E8 pair is safe while a naked Win Start is not. The failing
-    // push below disarms via its passed path, so restore the armed state.
-    let saved_pending = machine.mask_pending;
-    let saved_trigger = machine.mask_trigger;
     machine.set_gate_active(saved_gate && gate_active);
-    if saturated {
-        machine.set_enabled(false);
-    }
     let ev = machine.push(vk, is_up, origin.is_some(), injected);
-    machine.set_enabled(saved);
     machine.set_gate_active(saved_gate);
     let ev = ev?;
-    if saturated {
-        if saved_pending {
-            machine.mask_pending = true;
-            if machine.mask_trigger.is_none() {
-                machine.mask_trigger = saved_trigger;
-            }
-        }
-        queue.record_drop();
-        return Some(false);
-    }
     let consumed = ev.consumed();
     let event = match ev {
         Classified::Snap(intent) => QueuedSnapEvent::Intent(QueuedIntent {
@@ -1547,18 +1664,25 @@ pub fn classify_and_queue(
             tick,
         }),
     };
+    if queue.is_full() {
+        queue.record_drop();
+        return Some(consumed);
+    }
     if queue.push(event) {
         Some(consumed)
     } else {
         queue.record_drop();
-        Some(false)
+        Some(consumed)
     }
 }
 
 /// Win-up mask reservation shared by the hook callback and tests. Reserves
-/// queue evidence BEFORE any SendInput: when full nothing is injected and the
-/// skip is counted, so a send is never unlogged. Returns true when the caller
-/// must send the E8 pair. The Win-up itself always passes through.
+/// queue evidence BEFORE any SendInput and returns true when the caller must
+/// send the E8 pair. When full only the oldest queued action/trace evidence
+/// is dropped (bounded `dropped`) to make room for the necessary mask, so a
+/// necessary mask is never skipped; send-result counters still reflect the
+/// actual SendInput outcome via [`stamp_mask_result`]. The Win-up itself
+/// always passes through.
 pub fn win_up_mask_reserve(
     machine: &mut SnapClassify,
     queue: &mut SnapQueue,
@@ -1569,6 +1693,15 @@ pub fn win_up_mask_reserve(
     let Some(trigger) = machine.win_up_needs_mask(vk, installed) else {
         return false;
     };
+    if queue.is_full() {
+        // Graceful saturation: drop oldest action/trace evidence (bounded,
+        // no alloc/log, callback stays prompt) to reserve the necessary
+        // mask. The dropped action is counted; the mask send still runs and
+        // its actual result is stamped.
+        if queue.pop_front().is_some() {
+            queue.record_drop();
+        }
+    }
     if queue.push(QueuedSnapEvent::Mask(QueuedMask {
         trigger,
         tick,
@@ -1578,8 +1711,8 @@ pub fn win_up_mask_reserve(
         machine.mask_attempted += 1;
         true
     } else {
-        // No room: count the skip and restore the hold so a later Win-up in
-        // the same hold can retry. Nothing was injected.
+        // Still no room (defensive): count the skip and restore the hold so
+        // a later Win-up in the same hold can retry. Nothing was injected.
         machine.mask_skipped += 1;
         if machine.win_l || machine.win_r {
             machine.hold_masked = false;
@@ -2076,16 +2209,18 @@ pub mod sys {
             }
             // Modifiers may already be held when the hook starts, or arrive
             // injected past the callback guard: when the physical async state
-            // disagrees with the tracked state, pass through untouched so a
-            // preheld Shift cannot flip a focus chord into move (or vice
-            // versa) and preheld Ctrl/Alt cannot be swallowed. Tracked state
-            // that agrees classifies normally below, so Win+Shift+L still
-            // consumes once Shift itself was seen go down.
+            // disagrees on Ctrl/Alt for a FRESH chord down, pass through
+            // untouched so preheld unowned modifiers cannot be swallowed.
+            // Armed-hold repeats skip the guard (paired-held check first) so
+            // a consumed sequence stays swallowed until its matching up.
+            // Supported Shift binds from the official async sample instead,
+            // so a preheld Shift correctly selects move/sticky/send (fresh
+            // downs only; armed holds keep their down-time op via stored
+            // origin).
             //
             // The guard and the classification share one borrow so a marked
             // catalog down records its async sample, tracked state, and final
-            // consume verdict in a single diagnostic. Behavior is unchanged:
-            // disagreement passes through without classifying.
+            // consume verdict in a single diagnostic.
             let consume = SNAP.with(|s| {
                 let mut s = s.borrow_mut();
                 let st = s.as_mut()?;
@@ -2097,9 +2232,11 @@ pub mod sys {
                     let async_ctrl = async_down(VK_CONTROL as i32);
                     let async_alt = async_down(VK_MENU as i32);
                     async_shift = async_down(VK_SHIFT as i32);
-                    guard_disagree = (async_ctrl && !ctrl)
-                        || (async_alt && !alt)
-                        || (async_shift && !shift && !st.machine.key_is_down(vk));
+                    let paired_held = st.machine.key_is_down(vk);
+                    guard_disagree = ((async_ctrl && !ctrl) || (async_alt && !alt)) && !paired_held;
+                    if !guard_disagree && !paired_held && async_shift != shift {
+                        st.machine.sync_shift_from_async(async_shift);
+                    }
                     if marked {
                         st.diag.push(MarkedKeyDiag {
                             vk,
@@ -2121,9 +2258,13 @@ pub mod sys {
                 }
                 let (ctrl_b, alt_b, shift_b) = st.machine.tracked_modifiers();
                 let win_b = st.machine.win_held();
-                // Cached session gate (no syscalls beyond the single
-                // foreground read inside `callback_origin`): selects require
-                // it, sends additionally require the managed origin.
+                // Shortcut-handling gate (no syscalls beyond the single
+                // foreground read inside `callback_origin`): fresh downs
+                // consume iff enabled with the gate active; consumed-hold
+                // pairs ride the stored down verdict. Suspended/fullscreen/
+                // gesture/elevated/unmanaged never enter this gate (takeover
+                // publication only); the owner rechecks those fresh per
+                // intent.
                 let gate = st.active;
                 let fg = callback_origin(st);
                 let tick = Instant::now();

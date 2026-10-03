@@ -538,6 +538,24 @@ pub const fn fullscreen_toggle_decision(fullscreen: bool, owned: bool) -> Fullsc
     }
 }
 
+/// Fresh per-intent gate for the native toggle arms (maximize, fullscreen,
+/// float, sticky): suspended sessions and elevated foregrounds settle without
+/// side effects, matching the workspace dispatcher. Suspension wins when both
+/// hold. `None` when the intent may proceed to its fresh revalidation. Pure
+/// so the priority pins without native calls; callers pass fresh
+/// `suspend_read(...).veto.block` and `foreground_elevated(...)` reads, whose
+/// owned-fullscreen exemption keeps exiting our own fullscreen working.
+#[must_use]
+pub const fn toggle_gate_outcome(suspended: bool, elevated: bool) -> Option<&'static str> {
+    if suspended {
+        Some("suspended")
+    } else if elevated {
+        Some("elevated-foreground")
+    } else {
+        None
+    }
+}
+
 /// Born-fullscreen hold gate (KDE initial-fullscreen-hold parity): a
 /// first-seen fullscreen window without a retained tile slot is tracked as a
 /// slotless planner-only exception until its first exit, never admitted. A

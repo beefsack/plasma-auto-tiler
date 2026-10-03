@@ -17,7 +17,7 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   setting to turn takeover off, following KDE Apply/Revert behavior.
   Product input mechanism (user-accepted 2026-10-01 on this PC):
   `WH_KEYBOARD_LL` with `vkE8` menu-mask at Win key-up while Win held,
-  consuming only approved foreground chords; `RegisterHotKey` rejected after
+  consuming only approved catalog chords; `RegisterHotKey` rejected after
   all four chords returned 1409 (owner unknown) on this PC. Win+L stays
   explicit opt-in only and remains unproven. Evidence in
   [Phase 1 note](changes/windows-phase1-implementation.md).
@@ -138,6 +138,11 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   choice may be offered on first run. Applies to KDE, Windows and macOS.
 - Until settings exist, Windows uses authentic mode: it is the user's
   preferred mode and the harder one to implement, so it is done early.
+  Owned-chord interception is independent of foreground/action eligibility;
+  unmanaged foreground and ordinary fullscreen suspension do not release those
+  shortcuts to Windows. Native actions still require the existing owner safety
+  checks. This correction is offline-verified; physical suppression and Xbox-mode
+  detection remain pending in [gaming coexistence](changes/windows-gaming-coexistence.md).
 - Coexisting with gaming is a core goal: provide some alternate access to
   OS gaming surfaces displaced by authentic bindings (Windows Game Bar,
   displaced by Win+G), and avoid behavior that anti-cheat software could
