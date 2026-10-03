@@ -100,7 +100,26 @@ decisions of 2026-09-24 are under
   (9) multi-output support; (10) taskbar item showing workspaces (design to be
   discussed with the user; no presentation mechanism selected); (11) settings
   (UI with Apply/Revert parity, including Snap takeover off; decide the final
-  accent/configured border default and remove the temporary yellow default).
+  accent/configured border default and remove the temporary yellow default;
+  per-binding OS-conflict list with compatible/authentic quick-set presets,
+  possibly offered on first run; [decision](decisions.md#cross-platform-behavior)).
+  Provisional choices 2-6 accepted by the user (2026-10-03).
+- P0 | Windows send split axis | User dogfood (2026-10-03): Terminal sent
+  from workspace 2 into workspace 1 holding Notepad + Paint 50/50 side by
+  side split horizontally (`H[W1 W2 W3]` or `H[W1 H[W2 W3]]`) instead of on
+  the target's long edge (expected like `H[W1 V[W2 W3]]`). Default split is
+  long-edge based. Check against KDE/core admission and fix.
+- P0 | Windows gaming coexistence | User (2026-10-03): (a) authentic mode
+  until settings exist: our bindings must not leak to OS shortcuts (Win+G
+  opened Xbox Game Bar when the foreground was unmanaged, and Xbox mode was
+  entered during agent tests); (b) detect Xbox mode (full screen
+  experience), pause tiling, effects and shortcuts, remember windows and
+  workspaces, restore on exit; (c) research alternate Game Bar access and
+  anti-cheat false-positive risk (LL keyboard hook, overlays, window
+  moves). [decision](decisions.md#cross-platform-behavior)
+- P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
+  plus compatible/authentic presets (user 2026-10-03); KDE builds on its
+  existing shortcut override Apply/Force/Revert; macOS when it starts.
 - P2 | Hidden-workspace Alt+Tab option | Investigate whether official Windows
   APIs can include hidden-workspace windows in Alt+Tab. Future optional behavior,
   not critical; no design selected.
@@ -233,6 +252,11 @@ decisions of 2026-09-24 are under
 ## Future
 
 Unprioritised ideas; not scheduled.
+
+- Windows app-owned fullscreen UX spike: options for exiting/toggling
+  fullscreen an application entered itself (user 2026-10-03, later).
+- Windows sticky restart analogue improvement: current restart turns sticky
+  windows into normal floats (user 2026-10-03, acceptable for now).
 
 - Uninstall revert of host settings: reset our overridden KDE settings to
   defaults on uninstall. Parked by the user (2026-09-29) pending research,

@@ -109,6 +109,26 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   hidden windows are revealed on stop/crash without geometry recovery. Terminal
   has ordinary application behavior, matching KDE. See
   [managed workspaces](changes/archive/windows-managed-workspaces.md).
+- User decision 2026-10-03 (OS shortcut conflicts, all platforms): a
+  per-binding conflict list is the model. Settings show each binding that
+  conflicts with an OS/desktop shortcut and let the user keep (override),
+  disable or rebind it. Quick-set presets apply in one step: "compatible"
+  (avoid conflicting OS bindings) and "authentic" (stay consistent with
+  tiling WMs such as COSMIC/Hyprland and override OS bindings). The preset
+  choice may be offered on first run. Applies to KDE, Windows and macOS.
+- Until settings exist, Windows uses authentic mode: it is the user's
+  preferred mode and the harder one to implement, so it is done early.
+- Coexisting with gaming is a core goal: provide some alternate access to
+  OS gaming surfaces displaced by authentic bindings (Windows Game Bar,
+  displaced by Win+G), and avoid behavior that anti-cheat software could
+  flag as a false positive.
+- User decision 2026-10-03 (Windows "Xbox mode", the Xbox full screen
+  experience): when detected, pause tiling, window effects (border/underlay)
+  and shortcut handling, while remembering windows and workspaces so they
+  are restored when Xbox mode ends.
+- User statement 2026-10-03: default split placement is long-edge based: a
+  tall target splits vertically (stacked) and a wide target horizontally
+  (side by side), including windows arriving by workspace send.
 
 ## Cross-Platform Core
 
@@ -429,7 +449,7 @@ the corresponding item ships; each such entry names its replacement.
   `WPF_ASYNCWINDOWPLACEMENT` for nonactivating restore. Dispatch is distinct
   from observed completion. Stop/crash preserve frames and maximize state;
   existing identity-safe recovery reveals hidden members.
-- Provisional, to discuss: each discrete Win+M down makes one native toggle
+- User-accepted 2026-10-03: each discrete Win+M down makes one native toggle
   attempt; held repeats are consumed without dispatch and there is no persistent
   attempted-state map. KDE's current map can refuse a later identical toggle
   after a successful shortcut maximize followed by native restore. Windows live
@@ -458,7 +478,8 @@ the corresponding item ships; each such entry names its replacement.
   remain slotless Engine floating exceptions until their first native exit.
   They still occupy a workspace and participate in hide/reveal and close
   cleanup. A later fullscreen transition retains an existing tile slot.
-- Provisional, to discuss: Windows has no generic official fullscreen setter.
+- Accepted for now (user 2026-10-03; a later spike may explore better UX
+  for app-owned fullscreen): Windows has no generic official fullscreen setter.
   Win+F11 uses official Win32 style/frame APIs for borderless monitor coverage,
   storing only the cleared frame-style bits and prior maximize state as inert
   native window properties. Exit preserves unrelated app style changes.
@@ -466,7 +487,7 @@ the corresponding item ships; each such entry names its replacement.
   never synthesize app F11 or guess a restoration state. Stop/crash preserve
   frames and properties; the properties die with the native window. A new
   owner applies the first-seen fullscreen hold before any later explicit exit.
-- Provisional, to discuss: one attempt per discrete Win+F11 down; held repeats
+- User-accepted 2026-10-03: one attempt per discrete Win+F11 down; held repeats
   are consumed without another dispatch, matching the Windows maximize rule.
   Failed effects retain any usable preimage for a later explicit press;
   there is no automatic toggle retry or persistent attempted-state map.
@@ -511,7 +532,7 @@ the corresponding item ships; each such entry names its replacement.
   Preserve band preimages even when later frame readback is unavailable.
 - Float membership/geometry history is runtime-local and resets on restart,
   matching KDE; no float persistence or new recovery ledger is introduced.
-  Stop/crash leave geometry in place. Provisional, to discuss: a crash can
+  Stop/crash leave geometry in place. User-accepted 2026-10-03: a crash can
   leave the project-raised topmost band; restart treats the current band as
   native state, rather than inferring an old preimage. Graceful stop restores
   the verified runtime preimage. One attempt per discrete Win+G down; held
@@ -549,7 +570,8 @@ the corresponding item ships; each such entry names its replacement.
   No recovery-ledger or file persistence is added. Graceful stop restores
   project-raised topmost and leaves frames in place; the existing provisional
   float crash-topmost policy also applies.
-- Provisional, to discuss: stop/crash leaves the sticky marker on surviving
+- Accepted for now (user 2026-10-03; may be improved later): stop/crash
+  leaves the sticky marker on surviving
   windows. The next owner consumes it into a normal float on the current
   managed workspace, preserving the live frame and discarding prior tiled/
   float origin. The next Win+G tiles. This simple Windows restart analogue
