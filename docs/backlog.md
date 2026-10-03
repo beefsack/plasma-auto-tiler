@@ -108,7 +108,12 @@ decisions of 2026-09-24 are under
   experience), pause tiling, effects and shortcuts, remember windows and
   workspaces, restore on exit; (c) research alternate Game Bar access and
   anti-cheat false-positive risk (LL keyboard hook, overlays, window
-  moves). [decision](decisions.md#cross-platform-behavior)
+  moves). Status 2026-10-03: (a) authentic containment offline-verified,
+  CI green (`962b0f3`, `5746fca`; the Win+F11 leak was our deliberate
+  pass-through); physical proof pending. (b) blocked on a documented Xbox
+  mode signal; (c) researched, alternate Game Bar access awaits user
+  decision. [record](changes/windows-gaming-coexistence.md)
+  [decision](decisions.md#cross-platform-behavior)
 - P0 | Windows dogfood defects (user 2026-10-03, 4 windows, trace
   `%LOCALAPPDATA%\plasma-auto-tiler\session-1\run-01dd530861947ef5.log`):
   (a) initial tiling produced splits on one axis only, where a 2x2 (split
