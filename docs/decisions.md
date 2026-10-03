@@ -150,7 +150,12 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
 - User decision 2026-10-03 (Windows "Xbox mode", the Xbox full screen
   experience): when detected, pause tiling, window effects (border/underlay)
   and shortcut handling, while remembering windows and workspaces so they
-  are restored when Xbox mode ends.
+  are restored when Xbox mode ends. Detection uses a documented Microsoft
+  signal only, no cloak/foreground heuristics (user 2026-10-03); automatic
+  pause stays unimplemented until such a signal exists.
+- Alternate Game Bar access for keyboard and mouse players (a shortcut over
+  a fullscreen game) is a later experiment, after parity and correctness
+  work (user 2026-10-03).
 - User statement 2026-10-03: default split placement is long-edge based: a
   tall target splits vertically (stacked) and a wide target horizontally
   (side by side), including windows arriving by workspace send.

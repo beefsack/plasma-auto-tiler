@@ -56,8 +56,9 @@ decisions of 2026-09-24 are under
   [Directional diagnosis](changes/archive/windows-directional-dogfood-diagnosis.md).
   Send split-axis defect fixed in `c4a837b` (shared core): stale destination
   focus after send-away/return now falls back to valid destination focus
-  history; minimum sizes did not force the axis. User physically confirmed
-  (2026-10-03, Notepad send-away/return split the tall window stacked).
+  history; minimum sizes did not force the axis. One user return split
+  stacked as expected, but a later run (2026-10-03) returned Notepad side
+  by side at the right edge, then into the middle; see dogfood defects.
   [Evidence](changes/archive/windows-send-split-axis.md).
   Next: Windows feature parity queue below.
   [Managed workspaces](changes/archive/windows-managed-workspaces.md).
@@ -110,16 +111,25 @@ decisions of 2026-09-24 are under
   anti-cheat false-positive risk (LL keyboard hook, overlays, window
   moves). Status 2026-10-03: (a) authentic containment offline-verified,
   CI green (`962b0f3`, `5746fca`; the Win+F11 leak was our deliberate
-  pass-through); physical proof pending. (b) blocked on a documented Xbox
-  mode signal; (c) researched, alternate Game Bar access awaits user
-  decision. [record](changes/windows-gaming-coexistence.md)
+  pass-through). Physical test after those commits FAILED: Win+F11 still
+  opens the Xbox mode prompt and Win+G still opens Game Bar (traces
+  `run-01dd53116aa74f37.log`, `run-01dd5311a7282421.log`). (b) user chose
+  documented-signal-only detection (2026-10-03); blocked until one exists.
+  (c) researched; alternate Game Bar access deferred (see Future).
+  [record](changes/windows-gaming-coexistence.md)
   [decision](decisions.md#cross-platform-behavior)
 - P0 | Windows dogfood defects (user 2026-10-03, 4 windows, trace
   `%LOCALAPPDATA%\plasma-auto-tiler\session-1\run-01dd530861947ef5.log`):
   (a) initial tiling produced splits on one axis only, where a 2x2 (split
   plus a cross split on each side) was expected; minimum sizes may explain
   it, unproven; (b) Win+M unmaximise briefly left windows overlapping until a
-  later retile.
+  later retile. Later runs (traces under the same folder):
+  (c) `run-01dd53116aa74f37.log`, 5 windows (Firefox, Steam, Terminal,
+  Notepad, Paint): only Terminal and Notepad tiled, both on the right of the
+  screen; cause (rejection or defect) unknown; (d) `run-01dd5311a7282421.log`,
+  3 windows tiled correctly at start; Notepad send to workspace 2 and back
+  split side by side at the right edge, a second round trip split side by
+  side in the middle.
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.
@@ -131,6 +141,12 @@ decisions of 2026-09-24 are under
   the single source of truth for Linux, Windows and macOS. KDE is the current
   behavioral reference; macOS modifier mapping is decided when macOS starts.
   cosmic-comp (user favourite: n-ary splits, join/leave UX) is a key input.
+  User proposal (2026-10-03): a reference-WM outcome matrix (action
+  scenarios x input WMs such as COSMIC, Hyprland, bspwm, i3, xmonad) as the
+  source of truth feeding the spec and its supported variants (for example
+  n-ary vs binary splits); retrofill COSMIC outcomes from tests already
+  done; every behaviour ambiguity adds a row the user can fill later when
+  source code cannot answer it. Format pending user confirmation.
 - P2 | Prior-art catalogue upkeep | Completed 2026-10-03 (`e4c1d92`):
   [maintained index](research/prior-art.md), grouped by desktop and type
   (compositor-native vs host-integrated) with algorithm families,
@@ -276,6 +292,10 @@ Unprioritised ideas; not scheduled.
 
 - Windows app-owned fullscreen UX spike: options for exiting/toggling
   fullscreen an application entered itself (user 2026-10-03, later).
+- Windows alternate Game Bar shortcut experiment: keyboard and mouse players
+  need a shortcut that opens Game Bar over a fullscreen game (for example
+  Xbox voice chat); Start menu and controller access are not enough (user
+  2026-10-03, after parity and correctness work).
 - Windows sticky restart analogue improvement: current restart turns sticky
   windows into normal floats (user 2026-10-03, acceptable for now).
 
