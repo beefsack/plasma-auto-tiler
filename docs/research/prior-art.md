@@ -14,8 +14,10 @@
   not a dependency recommendation or a new product decision.
 
 Detailed research: [WM behavior comparison](../reference-wm-comparison.md),
-[Hyprland/bspwm/PaperWM profiles](reference-wm-profile-support.md), and
-[macOS mechanisms](macos-port/prior-art.md). The macOS survey's older public-AX
+[Hyprland/bspwm/PaperWM profiles](reference-wm-profile-support.md),
+[macOS mechanisms](macos-port/prior-art.md), and
+[Windows host mechanisms](windows-port/reference-wm-comparison.md). The macOS
+survey's older public-AX
 recommendation is superseded by the tier-2 direction in
 [the backlog](../backlog.md#open-work).
 
