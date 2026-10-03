@@ -1,0 +1,9 @@
+# Windows/macOS tools; OS filters leave Linux on devenv/Nix.
+# Rolling latest CLIs and stable Rust.
+[tools]
+rust = { version = "stable", profile = "minimal", components = ["rustfmt", "clippy"], os = ["windows", "macos"] }
+just = { version = "latest", os = ["windows", "macos"] }
+jq = { version = "latest", os = ["windows", "macos"] }
+gh = { version = "latest", os = ["windows", "macos"] }
+ripgrep = { version = "latest", os = ["windows", "macos"] }
+yq = { version = "latest", os = ["windows"] }

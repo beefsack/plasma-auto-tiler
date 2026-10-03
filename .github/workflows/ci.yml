@@ -86,15 +86,40 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
-      - name: Install stable Rust toolchain
-        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - uses: jdx/mise-action@v4
+      - name: Verify mise-selected tools
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $rustcOut = mise exec -- rustc -vV
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if (($rustcOut | Out-String) -notmatch 'x86_64-pc-windows-msvc') { Write-Error "unexpected rustc host: $rustcOut"; exit 1 }
+          foreach ($tool in @('cargo', 'just', 'jq', 'gh', 'rg', 'yq')) {
+            mise exec -- $tool --version
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
       - name: Build portable crates
-        run: cargo +stable build --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows
+        run: mise exec -- cargo build --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows
       - name: Test portable crates
-        run: cargo +stable test --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows
+        run: mise exec -- cargo test --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows
       - name: Rust format
-        run: cargo +stable fmt --all -- --check
+        run: mise exec -- cargo fmt --all -- --check
       - name: Rust strict Clippy
-        run: cargo +stable clippy --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows --all-targets -- -D warnings
+        run: mise exec -- cargo clippy --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows --all-targets -- -D warnings
+      - name: Check for whitespace errors
+        run: git diff --check
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v4
+      - name: Verify mise-selected tools
+        run: |
+          mise exec -- rustc -vV | grep 'aarch64-apple-darwin'
+          for tool in cargo just jq gh rg; do
+            mise exec -- "$tool" --version
+          done
+          mise exec -- cargo fmt --version
+          mise exec -- cargo clippy --version
       - name: Check for whitespace errors
         run: git diff --check

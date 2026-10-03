@@ -29,5 +29,13 @@
   only listed tools. A new Windows dependency is added to that list first,
   with user approval. The user performs installs; ask before installing
   anything. Never add Windows tools to `devenv.nix`.
+- macOS: native dependencies and install routes are listed in
+  [docs/macos-dev-environment.md](docs/macos-dev-environment.md), same
+  user-owns-installs rule as Windows. Never add macOS tools to `devenv.nix`.
+- Windows/macOS CLI and Rust tooling is declared in root `mise.toml` with
+  OS-filtered entries (run from root: `mise trust`, `mise install`,
+  `mise exec -- <cmd>`); manual OS prerequisites (Git, MSVC Build Tools +
+  SDK, Xcode/CLT, host shell bootstrap) stay manual per the OS docs.
+  Linux ignores `mise.toml` and stays on the `devenv.nix` route.
 - Rust crate dependencies belong in `Cargo.toml`. `devenv.nix` and the
   Windows list are for system-level and toolchain dependencies only.

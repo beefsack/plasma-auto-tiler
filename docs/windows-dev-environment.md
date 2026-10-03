@@ -37,7 +37,7 @@
 | Decision | Options and consequences | Recommendation (P) |
 | --- | --- | --- |
 | Root AGENTS.md dependency rule | **Decided (user 2026-09-30):** root `AGENTS.md` keeps `devenv.nix` for Linux; on Windows this document is the dependency list. New Windows tools are added here first with user approval; the user performs installs. | Done. |
-| Dependency declaration file | **Decided (user 2026-09-30):** this runbook for now. A WinGet Configuration (`.config/configuration.winget`) may follow once the setup is proven on the PC. | Revisit after day one. |
+| Dependency declaration file | **Decided (user 2026-09-30, extended with mise):** root `mise.toml` declares the Windows/macOS CLI and Rust tooling (OS-filtered entries; user runs installs). This runbook remains the dependency list and manual-prerequisite record. A WinGet Configuration (`.config/configuration.winget`) may follow once the setup is proven on the PC. | mise route active; WinGet config on revisit. |
 | `.gitattributes` | **Decided (user 2026-09-30): repository-wide LF policy**, the contract below, added on the laptop before the Windows clone. Renormalization changed no tracked file. | Done. |
 | Rust upgrades | **Settled (user 2026-09-30, option A):** pre-1.0 track latest stable Rust and fix breakage. Windows uses rustup stable default with rustfmt/clippy, no directory override and no toolchain file. Linux and existing Linux CI use the regularly bumped nixpkgs pin in `devenv.yaml`. | Revisit the upgrade process at 1.0. |
 | Windows live-testing governance | **Decided (user 2026-09-30, option A):** write [live Windows testing](live-windows-testing.md) on the laptop before the first Windows session. Each experiment class still needs user authorization. | Done; follow the protocol before live work. |
@@ -48,7 +48,7 @@
 | --- | --- | --- |
 | Storage and long paths | **Settled (user 2026-09-30):** actual checkout `C:\Users\beefs\Development\plasma-auto-tiler`; Git longpaths per clone on; OS `LongPathsEnabled` already 1. Keep paths short without changing host registry. | Done. |
 | Credentials | **Settled (user 2026-09-30):** HTTPS + GCM. | Done; do not copy credentials into the runbook. |
-| CLI scope | **Settled (user 2026-09-30):** Git, rg, PS7, rustup, MSVC Build Tools 2022 + SDK, just, jq, yq, gh. No Coreutils; qsv skipped. | Done. |
+| CLI scope | **Settled (user 2026-09-30):** Git, rg, PS7, rustup, MSVC Build Tools 2022 + SDK, just, jq, yq, gh. No Coreutils; qsv skipped. Install route settled: root `mise.toml` manages Rust (via rustup), rg, just, jq, yq, gh; Git, MSVC Build Tools + SDK and the Store PS7 bootstrap stay manual. | Done. |
 | opencode configuration and plugin version | **Settled (user 2026-09-30):** opencode via winget, known-working config transferred; PS7 Store/MSIX, not MSI, and no explicit shell path in opencode. Routing proved by first fresh muse-spark Worker; available identity model family is muse-spark with no independent provider introspection. | Smoke-test skills and `gpt-sol` -> `muse-spark` routing before work. Stop/report incompatibility rather than silently changing routing/plugins. |
 | Isolation | **Settled (user 2026-09-30):** Sandbox enabled, installed and rebooted, then closed 2026-09-30 after a failed preflight (user dismissed the WM_CLOSE confirmation; no processes remain). Phase 1-3 live proof is physical-desktop owned windows first; Sandbox is deferred to Phase 4 clean runtime plus Win+L guest-only policy. Never host policy writes. | Physical first under the live protocol. Sandbox only for Phase 4 clean runtime and guest-only Win+L; if unavailable, defer those; no policy experiments on the daily desktop. |
 
@@ -107,6 +107,39 @@ contract (root `AGENTS.md`); agents ask before any install. Use an ordinary
 account/terminal; allow installer UAC only where required. Reopen Terminal
 after installers change PATH; restart opencode after configuration changes.
 
+### mise tool route (root `mise.toml`)
+
+**Settled:** root `mise.toml` declares the Windows/macOS CLI and Rust
+tooling with [OS-filtered entries](https://mise.jdx.dev/dev-tools/);
+Linux ignores it (devenv/Nix route). The user owns installs; agents ask
+before anything. After the clone (§2) and the manual prerequisites
+(§§1, 4), install mise itself through its
+[official winget route](https://mise.jdx.dev/installing-mise.html):
+
+```powershell
+winget install --exact --id jdx.mise --source winget
+```
+
+Reopen the terminal so PATH picks up mise, then from the repo root:
+
+```powershell
+mise --version
+mise trust
+mise install
+mise exec -- rustc -vV
+mise exec -- cargo -vV
+mise exec -- rg --version
+```
+
+- Managed by mise: stable Rust via rustup (mise installs rustup if absent;
+  [process-local `RUSTUP_TOOLCHAIN`](https://mise.jdx.dev/lang/rust.html),
+  no persisted directory override), just, jq, yq, gh, rg. Manual
+  prerequisites stay manual: Git, MSVC Build Tools 2022 + SDK, Store PS7
+  bootstrap (PowerShell stays a manual host shell; it is not mise-managed).
+- Run gates with `mise exec -- cargo ...` so they consume the
+  mise-selected toolchain. No `rust-toolchain.toml`. Require
+  `host: x86_64-pc-windows-msvc`.
+
 ### 1. Establish PowerShell 7 and a short checkout location
 
 **Settled (user 2026-09-30):** PS7 Store/MSIX, not MSI; no explicit shell
@@ -151,7 +184,7 @@ an explicit escape hatch; never the default agent shell or native build path.
 
 ```powershell
 winget install --exact --id Git.Git --source winget
-winget install --exact --id BurntSushi.ripgrep.MSVC --source winget
+# rg is mise-managed (see the mise route above), not a winget install.
 ```
 
 The following uses `C:\src\pat` as a fresh-clone example, not this PC's
@@ -168,8 +201,6 @@ git ls-files --eol
 git status --short
 git diff --check
 where.exe git
-where.exe rg
-rg.exe --version
 $env:PATH -split ';'
 ```
 
@@ -192,18 +223,12 @@ Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name
 ### 3. Optional named CLI tools and Coreutils
 
 **V: W5/W6:** only tools named by the global instructions/project are included.
-Install needed tools after recording approved versions (WinGet supports
-`--version VERSION`). qsv: choose the upstream Windows x64 MSVC release ZIP
-and put `qsv.exe` in the user's approved tools directory on PATH; no verified
-WinGet ID is assumed. No Node or additional package manager is needed for
-the official opencode CLI executable or the portable Rust gates.
-
-```powershell
-winget install --exact --id jqlang.jq --source winget
-winget install --exact --id MikeFarah.yq --source winget
-winget install --exact --id GitHub.cli --source winget
-winget install --exact --id Casey.Just --source winget
-```
+just, jq, yq and gh are mise-managed (see the mise route above).
+Verify with `mise exec -- <tool> --version`. qsv: choose the upstream
+Windows x64 MSVC release ZIP and put `qsv.exe` in the user's approved
+tools directory on PATH; no verified WinGet ID is assumed. No Node or
+additional package manager is needed for the official opencode CLI
+executable or the portable Rust gates.
 
 **V: W7:** Microsoft Coreutils is a separate preview Windows package built
 on uutils (first release `v2026.5.29`), including a hard-link utility named
@@ -229,29 +254,27 @@ components in Visual Studio Installer after installation.
 
 ```powershell
 winget install --exact --id Microsoft.VisualStudio.2022.BuildTools --source winget --override "--wait --quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --addProductLang En-us"
-winget install --exact --id Rustlang.Rustup --source winget --override "-y --default-host x86_64-pc-windows-msvc --default-toolchain none --profile minimal"
 ```
 
-Reopen PS7 at the checkout. Pre-1.0 policy is latest stable (user
-2026-09-30, option A; revisit at 1.0). First gate proved stable
-rustc/cargo 1.98.1 `x86_64-pc-windows-msvc` (official stable 2026-09-03),
-stable default, no overrides, with build/test/fmt --all/strict clippy pass
-(569 tests) and PS7 Core 7.6.6. Historical Linux rustc/cargo 1.98.1/1.98.0
-came from the `devenv.yaml` nixpkgs pin.
+Reopen PS7 at the checkout and follow the mise tool route above before
+the Rust checks below. Pre-1.0 policy is latest stable (user
+2026-09-30, option A; revisit at 1.0). Historical first-gate measurement
+(2026-09-30): stable rustc/cargo 1.98.1 `x86_64-pc-windows-msvc`
+(official stable 2026-09-03), stable default, no overrides, with
+build/test/fmt --all/strict clippy pass (569 tests) and PS7 Core 7.6.6.
+Historical Linux rustc/cargo 1.98.1/1.98.0 came from the `devenv.yaml`
+nixpkgs pin. Policy stays latest stable; do not treat the 1.98.1 numbers
+as pins.
 
 ```powershell
-rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal --component rustfmt --component clippy
-rustup default stable-x86_64-pc-windows-msvc
-rustup show
-rustup which rustc
-rustup which cargo
-rustc -vV
-cargo -vV
-where.exe rustc
-where.exe cargo
+mise exec -- rustup show
+mise exec -- rustc -vV
+mise exec -- cargo -vV
+mise exec -- where.exe rustc
+mise exec -- where.exe cargo
 ```
 
-- No directory override and no `rust-toolchain.toml`. Require
+- No persisted directory override and no `rust-toolchain.toml`. Require
   `host: x86_64-pc-windows-msvc`; never GNU/MSYS for product builds.
 
 ### 5. Prove linker discovery and run native offline-development gates
@@ -278,10 +301,10 @@ From ordinary PS7:
 
 ```powershell
 where.exe link
-cargo +stable build --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows
-cargo +stable test --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows
-cargo fmt --all -- --check
-cargo +stable clippy --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows --all-targets -- -D warnings
+mise exec -- cargo build --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows
+mise exec -- cargo test --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows
+mise exec -- cargo fmt --all -- --check
+mise exec -- cargo clippy --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows --all-targets -- -D warnings
 ```
 
 - **V: R3:** rustc's MSVC discovery normally finds an absolute VS linker and
@@ -314,7 +337,10 @@ $env:INCLUDE
   Do not permanently add SDK/MSVC or Git `usr\bin` to PATH; do not set an
   arbitrary Cargo linker override to hide incomplete installation.
 - **R:** Windows CI job: `windows-latest`, `shell: pwsh`, checkout,
-  latest stable MSVC Rust + rustfmt/clippy, the four commands above, then
+  `jdx/mise-action@v4` (runs `mise install` and exports the mise
+  environment), the four commands above via `mise exec -- cargo ...`,
+  a mise tool version/host smoke check (rustc host
+  must be `x86_64-pc-windows-msvc`; just/jq/gh/rg/yq versions), then
   `git diff --check`, with the four explicit packages above.
   No Nix/KWin/live tests in this job. Hosted runner preinstalled tools are
   **not** clean-runtime evidence [W10].

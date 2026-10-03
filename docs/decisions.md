@@ -109,6 +109,21 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   that root file rather than child directories. devenv/Nix stays the source
   on Linux/NixOS, including system libraries. Minimal `AGENTS.md` changes
   needed to allow this are approved; avoid bloat.
+- Implemented dev route (2026-10-03): root `mise.toml` declares stable Rust
+  via rustup with rustfmt/clippy and just/jq/gh/ripgrep on Windows/macOS;
+  yq is Windows-only (the approved macOS inventory does not include it).
+  Use root-run `mise trust`, `mise install` and `mise exec -- <command>`.
+  Git, MSVC/SDK, Xcode/CLT and host shell bootstrap remain manual;
+  installations remain user-owned. Mise selects Rust through process-local
+  `RUSTUP_TOOLCHAIN`, without a persisted directory override or toolchain file.
+- Provisional, to discuss (2026-10-03, dev tool versions): CLI selectors are
+  `latest`, Rust is `stable`, and no `mise.lock` is committed. This keeps the
+  initial route small; installs are rolling rather than reproducible pins.
+- Provisional, to discuss (2026-10-03, dev environment CI): verify mise installs
+  and tool/host/component smoke checks on Windows and macOS 15 arm64, retaining
+  Windows Cargo gates. No exact mise/Nix equality gate: rolling selectors are
+  not shared exact pins, and Linux Rust/CLIs follow the `devenv.yaml` nixpkgs
+  revision. A mismatch with rolling stable is permitted by the Rust policy.
 - Reference implementations cloned locally by the user (2026-10-03) under
   `~/Development`: macOS AeroSpace, yabai, Amethyst; Windows glazewm (Rust),
   komorebi; Linux cosmic-comp, Hyprland, i3, bspwm, qtile, PaperWM, xmonad.

@@ -25,7 +25,7 @@
 | Install governance | This doc as the macOS dependency list (mirrors the Windows rule in root `AGENTS.md`) vs another declaration file. New macOS tools added here first with user approval; the user performs installs. | Adopt this doc; open. |
 | OS floor and Intel | Tentative macOS 15 floor vs higher; arm64-first vs committing to Intel. Intel needs its own host and CI leg before parity claims. | Confirm macOS 15 floor; arm64-first; open. |
 | Dev signer and release membership | Local unsigned/ad-hoc vs Apple Development or persistent local self-signed cert for TCC dev; Developer ID plus paid Developer Program membership for notarized release. Choice fixes the stable identity strategy below. | Decide before first TCC grant; open. |
-| mise as install route | Tool-agnostic installs now vs adopting mise later as the cross-platform route. No `mise.toml` is adopted in this unit. | Stay tool-agnostic; revisit mise once the manual path is proven; open. |
+| mise as install route | Tool-agnostic installs now vs adopting mise later as the cross-platform route. | **Adopted:** root `mise.toml` manages Rust (via rustup), just, gh, rg, jq with OS-filtered entries (Linux ignores it); `yq` stays Windows-only and is not in the macOS inventory. Manual prerequisites stay manual: Xcode/CLT, host shell bootstrap, Git route per user choice. User runs `mise trust` / `mise install` from the repo root; gates use `mise exec -- cargo ...`. |
 | UI language | Rust AppKit bindings vs a small Swift UI bridge. | Rust-first spike; add Swift only for a demonstrated gap; open. |
 
 ## Day-one setup, in order
@@ -71,32 +71,50 @@ pkgutil --pkg-info=com.apple.pkg.CLTools_Executables
   `softwareupdate -l`; an old CLT package may be incompatible. Exact
   CLT/Xcode versions on the future host are **U** (not yet recorded).
 
-### 3. Install Rust and CLIs via the route the user chooses
+### 3. Install mise, then Rust and CLIs (root `mise.toml`)
 
-**V: S11/S12:** install via rustup; on macOS the Unix path is
-`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`.
-Pre-1.0 policy tracks latest stable (consistent with Windows); rustfmt
-plus clippy; no directory override and no toolchain file.
+**V: S11/S12:** rustup remains the Rust installer; mise drives it (installs
+rustup if absent, sets [process-local `RUSTUP_TOOLCHAIN`](https://mise.jdx.dev/lang/rust.html),
+no persisted directory override). Pre-1.0 policy tracks latest stable
+(consistent with Windows); rustfmt plus clippy; no toolchain file.
+Follow the [official mise installation route](https://mise.jdx.dev/installing-mise.html),
+then run the declared tools from the repo root:
 
 ```zsh
-rustup toolchain install stable-aarch64-apple-darwin --profile minimal --component rustfmt --component clippy
-rustup default stable-aarch64-apple-darwin
-rustup show
-rustc -vV
-cargo -vV
-rustup which rustc
-rustup which cargo
+curl -fsSL https://mise.run | sh
+# or optionally: brew install mise
 ```
 
-- `git` and `just`, plus optional `gh`, `rg`, `jq`, use the route the
-  user chooses (system Git prompt, CLT bundle, or a manager). No route
-  is prescribed. **V: S16:** just offers Homebrew, Cargo and prebuilt routes;
-  verify `just --version`. The root justfile remains Linux-oriented.
+For the curl route, add mise to this shell's PATH (and the user's zsh
+startup configuration for future shells):
+
+```zsh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+From the repo root:
+
+```zsh
+mise trust
+mise install
+mise exec -- rustup show
+mise exec -- rustc -vV
+mise exec -- cargo -vV
+mise exec -- rustup which rustc
+mise exec -- rustup which cargo
+```
+
+- Git comes from CLT or the route the user chooses (system Git prompt or
+  a manager). just, gh, rg and jq are mise-managed (root `mise.toml`,
+  [OS-filtered entries](https://mise.jdx.dev/dev-tools/)).
+  **V: S16:** just offers Homebrew, Cargo and prebuilt routes;
+  verify `mise exec -- just --version`. The root justfile remains
+  Linux-oriented.
 - **V: S14:** Homebrew is optional, never forced. Default prefix on
   Apple Silicon is `/opt/homebrew`; follow its homepage post-install
   shellenv directions for zsh.
-- **V: S15; P:** mise may become the cross-platform install route. Keep the
-  required tool inventory independent of its installer; no `mise.toml` yet.
+- Run gates with `mise exec -- cargo ...` so they consume the
+  mise-selected toolchain; no toolchain file.
 
 ### 4. Prove the portable offline Cargo baseline (allowlist only)
 
@@ -109,10 +127,10 @@ is the Windows adapter. This is a supported-gate boundary, not a claim
 that every excluded crate necessarily fails to compile on macOS.
 
 ```zsh
-cargo build --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi
-cargo test --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi
-cargo fmt --all -- --check
-cargo clippy --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi --all-targets -- -D warnings
+mise exec -- cargo build --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi
+mise exec -- cargo test --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi
+mise exec -- cargo fmt --all -- --check
+mise exec -- cargo clippy --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi --all-targets -- -D warnings
 ```
 
 - **P:** explicit `-p` flags are the boundary; do not change
@@ -193,17 +211,18 @@ tccutil reset ScreenCapture '<actual-dev-bundle-id>'
 - **V: S18:** `spctl -a -vvv -t exec <path-to-app>` reports the Gatekeeper
   assessment for a built artifact; it is a diagnostic, not a grant.
 
-### 8. CI (proposed only; no workflow edits in this unit)
+### 8. CI (cheap macOS smoke job)
 
 - **V: S13 (fetched inventory):** macOS arm64 labels are `macos-14`,
   `macos-15`, `macos-26`, `macos-latest`; Intel labels are
   `macos-15-intel`, `macos-26-intel` (plus an `xcode-27` preview label).
   `macos-latest` currently resolves to the macOS 26 arm64 image.
-- **P:** propose one arm64 job pinned at `macos-15` running the section
-  4 allowlist plus `git diff --check`, with pinned `macos-26` as the
-  optional current-image leg; avoid moving `macos-latest` as a release pin.
-  Optional Intel leg once a physical Intel host exists. No live TCC/AX claims from CI;
-  headless build/test success does not establish TCC, AX, visuals or gaming.
+- Implemented: one arm64 job pinned at `macos-15` using
+  `jdx/mise-action@v4` (runs `mise install`), with tool version smoke
+  checks (`mise exec -- <tool> --version` for rustc, cargo, just, gh, rg,
+  jq), a `rustc -vV` host check (`aarch64-apple-darwin`), rustfmt/clippy
+  component checks, and `git diff --check`. No live TCC/AX claims from CI;
+  headless success does not establish TCC, AX, visuals or gaming.
 
 ### 9. Future native iteration loop
 
@@ -220,17 +239,18 @@ tccutil reset ScreenCapture '<actual-dev-bundle-id>'
   display topology; second display noted if present.
 - [ ] CLT or Xcode path verified: `xcode-select -p`, SDK path, and
   (Xcode only) `xcodebuild -version`.
-- [ ] `rustc -vV` shows `aarch64-apple-darwin`; stable default active,
-  no override or toolchain file.
-- [ ] Section 4 allowlist build/test/fmt/strict clippy pass; root
-  Linux crate and `tiler-windows` correctly excluded.
+- [ ] `mise exec -- rustc -vV` shows `aarch64-apple-darwin`;
+  mise-selected stable toolchain, no persisted directory override or toolchain file.
+- [ ] Section 4 allowlist build/test/fmt/strict clippy pass via
+  `mise exec`; root Linux crate and `tiler-windows` correctly excluded.
 - [ ] Dev signer vs release membership decided; no cert secrets stored.
 - [ ] Only needed TCC services requested; resets understood as resets;
   `man tccutil` checked on the host; stable ID/path/identity kept.
 - [ ] Gatekeeper/SIP left on; quarantine path exercised via Open Anyway
   at most; `spctl` assessment recorded where relevant.
-- [ ] CI proposal untouched in workflows; labels re-verified at
-  authoring time (fetched labels drift).
+- [ ] CI smoke job (`macos-15`, mise install + version/host/component
+  checks) green; labels re-verified at authoring time (fetched labels
+  drift).
 
 ## Sources (only URLs fetched in this unit, 2026-10-03)
 
