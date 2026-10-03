@@ -4385,6 +4385,8 @@ mod tests {
     /// `hints` maps window id to `(min_size, max_size)` as `(w, h)` pairs.
     /// Windows absent from the map carry no hint fields (legacy shape).
     type HintPair = (Option<(i32, i32)>, Option<(i32, i32)>);
+    /// Expected tile: window plus x/y/w/h and whether it flags overconstrained.
+    type TileExpect<'a> = (&'a str, i32, i32, i32, i32, bool);
     #[allow(clippy::too_many_arguments)]
     fn retained_request_with_hints(
         correlation: &str,
@@ -9591,7 +9593,7 @@ mod tests {
     }
 
     #[test]
-    fn adoption_fit_overlap_within_tolerance_fits_and_beyond_centre_splits() {
+    fn adoption_fit_overlap_within_tolerance_fits_and_beyond_declines() {
         // Domain 1200 wide: tolerance is max(0, 36) = 36. A 5px cross-cut
         // overlap still fits clean; a 200px overlap has no valid cut and
         // centre-splits on the largest sorted centre gap.
@@ -9640,15 +9642,19 @@ mod tests {
             .engine
             .last_adoption_fit()
             .expect("split logs");
-        assert_eq!(fallback_report.outcome, "fitted", "{fallback}");
-        assert_eq!(fallback_report.reason, "ok", "{fallback}");
+        // Overlap beyond tolerance declines the centre-split fit to the
+        // normal sequential seed (equal long-edge split here).
+        assert_eq!(fallback_report.outcome, "fallback", "{fallback}");
+        assert_eq!(fallback_report.reason, "centre_split", "{fallback}");
         assert_eq!(fallback_report.centre_splits, 1, "{fallback}");
     }
 
     #[test]
-    fn adoption_fit_cascade_orders_spatially_with_centre_splits() {
-        // Overlapping cascades with both x/y offsets centre-split and project
-        // in spatial order regardless of focus or input order.
+    fn adoption_fit_cascade_declines_to_sequential_seed() {
+        // Overlapping cascades need a centre split (never-tiled input), so
+        // they decline to the normal deterministic sequential long-edge
+        // seed. Per focus the result is input-order independent and covers
+        // the domain; across focuses the focus-last order may differ.
         let horizontal = [
             ("win-1", 0, 0, 600, 600),
             ("win-2", 200, 50, 600, 600),
@@ -9660,12 +9666,12 @@ mod tests {
             ("win-2", 50, 150, 1000, 400),
             ("win-3", 100, 300, 1000, 400),
         ];
-        for (tag, windows, horizontal_axis) in [
+        for (tag, windows, _horizontal_axis) in [
             ("adopt-cascade-h", horizontal.as_slice(), true),
             ("adopt-cascade-v", vertical.as_slice(), false),
         ] {
-            let mut baseline = None;
             for focused in windows.iter().map(|w| w.0) {
+                let mut per_focus_baseline = None;
                 for reversed in [false, true] {
                     let mut ordered = windows.to_vec();
                     if reversed {
@@ -9684,28 +9690,14 @@ mod tests {
                     let got = geometry_by_window(&reply);
                     let names: Vec<&str> = windows.iter().map(|w| w.0).collect();
                     assert_geometry_covers(&reply, &names);
-                    if horizontal_axis {
-                        let mut last_x = -1;
-                        for name in names {
-                            let (x, _, _, _) = got[name];
-                            assert!(x > last_x, "{reply} focused={focused}");
-                            last_x = x;
-                        }
-                    } else {
-                        let mut last_y = -1;
-                        for name in names {
-                            let (_, y, _, _) = got[name];
-                            assert!(y > last_y, "{reply} focused={focused}");
-                            last_y = y;
-                        }
-                    }
-                    if let Some(first) = &baseline {
+                    if let Some(first) = &per_focus_baseline {
                         assert_eq!(&got, first, "focused={focused} reversed={reversed}");
                     } else {
-                        baseline = Some(got);
+                        per_focus_baseline = Some(got);
                     }
                     let report = planner.engine.last_adoption_fit().expect("fit logs");
-                    assert_eq!(report.outcome, "fitted", "{reply}");
+                    assert_eq!(report.outcome, "fallback", "{reply}");
+                    assert_eq!(report.reason, "centre_split", "{reply}");
                     assert!(report.centre_splits > 0, "{reply}");
                 }
             }
@@ -9713,9 +9705,361 @@ mod tests {
     }
 
     #[test]
-    fn adoption_fit_big_small_projects_proportional_and_focus_independent() {
-        // Overlapping big/small pairs project proportional widths/heights,
-        // not equal splits, identically for either focus choice.
+    fn adoption_fit_real5_cascade_declines_to_sequential_seed() {
+        // Real5 startup (run-01dd532e5c7fa523) with native minimums (Calc
+        // 402x627, Paint 864x617, NPs 401x246) on domain (8,8,2544,1364) gap
+        // 8. Overlap declines to the sequential seed; each focus below carries
+        // its exact allocation with the exact remaining overconstrained set
+        // (only a focused Paint still strands Calc+Paint).
+        let windows = [
+            ("win-calc", 383, 375, 734, 805),
+            ("win-paint", 83, 75, 1234, 1042),
+            ("win-np1", 157, 150, 961, 718),
+            ("win-np2", 232, 225, 961, 718),
+            ("win-np3", 307, 300, 961, 718),
+        ];
+        let mins: std::collections::BTreeMap<&str, (i32, i32)> = [
+            ("win-calc", (402, 627)),
+            ("win-paint", (864, 617)),
+            ("win-np1", (401, 246)),
+            ("win-np2", (401, 246)),
+            ("win-np3", (401, 246)),
+        ]
+        .into_iter()
+        .collect();
+        let expected: &[(&str, &[TileExpect<'_>])] = &[
+            (
+                "win-calc",
+                &[
+                    ("win-paint", 8, 8, 1268, 1364, false),
+                    ("win-np1", 1284, 8, 1268, 475, false),
+                    ("win-np2", 1284, 491, 630, 881, false),
+                    ("win-np3", 1922, 491, 630, 246, false),
+                    ("win-calc", 1922, 745, 630, 627, false),
+                ],
+            ),
+            (
+                "win-paint",
+                &[
+                    ("win-np1", 8, 8, 1263, 1364, false),
+                    ("win-np2", 1279, 8, 1273, 678, false),
+                    ("win-np3", 1279, 694, 401, 678, false),
+                    ("win-calc", 1688, 694, 864, 335, true),
+                    ("win-paint", 1688, 1037, 864, 335, true),
+                ],
+            ),
+            (
+                "win-np1",
+                &[
+                    ("win-paint", 8, 8, 1268, 1364, false),
+                    ("win-np2", 1284, 8, 1268, 475, false),
+                    ("win-np3", 1284, 491, 630, 881, false),
+                    ("win-calc", 1922, 491, 630, 627, false),
+                    ("win-np1", 1922, 1126, 630, 246, false),
+                ],
+            ),
+            (
+                "win-np2",
+                &[
+                    ("win-paint", 8, 8, 1268, 1364, false),
+                    ("win-np1", 1284, 8, 1268, 475, false),
+                    ("win-np3", 1284, 491, 630, 881, false),
+                    ("win-calc", 1922, 491, 630, 627, false),
+                    ("win-np2", 1922, 1126, 630, 246, false),
+                ],
+            ),
+            (
+                "win-np3",
+                &[
+                    ("win-paint", 8, 8, 1268, 1364, false),
+                    ("win-np1", 1284, 8, 1268, 475, false),
+                    ("win-np2", 1284, 491, 630, 881, false),
+                    ("win-calc", 1922, 491, 630, 627, false),
+                    ("win-np3", 1922, 1126, 630, 246, false),
+                ],
+            ),
+        ];
+        for (focused, tiles) in expected {
+            for reversed in [false, true] {
+                let mut ordered = windows.to_vec();
+                if reversed {
+                    ordered.reverse();
+                }
+                let base = custom_request(
+                    "adopt-real5-1",
+                    focused,
+                    (8, 8, 2544, 1364),
+                    &ordered,
+                    serde_json::json!({"op": "reconcile"}),
+                );
+                let mut value: serde_json::Value =
+                    serde_json::from_str(&base).expect("valid request");
+                value["domain"]["gap"] = serde_json::json!(8);
+                for entry in value["windows"].as_array_mut().expect("windows") {
+                    let id = entry["window"].as_str().expect("id").to_owned();
+                    let (mw, mh) = mins[id.as_str()];
+                    entry["min_size"] = serde_json::json!({"w": mw, "h": mh});
+                }
+                let mut planner = Planner::new();
+                let reply = parse_reply(&planner.evaluate(&value.to_string()));
+                assert_eq!(reply["outcome"], "planned", "{reply}");
+                let names: Vec<&str> = windows.iter().map(|w| w.0).collect();
+                assert_geometry_covers(&reply, &names);
+                let got: std::collections::BTreeMap<String, (i32, i32, i32, i32, bool)> =
+                    reply["desired_geometry"]
+                        .as_array()
+                        .expect("geometry")
+                        .iter()
+                        .map(|entry| {
+                            let rect = &entry["rect"];
+                            (
+                                entry["window"].as_str().expect("window").to_owned(),
+                                (
+                                    rect["x"].as_i64().unwrap() as i32,
+                                    rect["y"].as_i64().unwrap() as i32,
+                                    rect["w"].as_i64().unwrap() as i32,
+                                    rect["h"].as_i64().unwrap() as i32,
+                                    entry.get("overconstrained")
+                                        == Some(&serde_json::Value::Bool(true)),
+                                ),
+                            )
+                        })
+                        .collect();
+                let want: std::collections::BTreeMap<String, (i32, i32, i32, i32, bool)> = tiles
+                    .iter()
+                    .map(|(w, x, y, ww, h, f)| ((*w).to_owned(), (*x, *y, *ww, *h, *f)))
+                    .collect();
+                assert_eq!(got, want, "{reply} focused={focused} reversed={reversed}");
+                let report = planner.engine.last_adoption_fit().expect("fit logs");
+                assert_eq!(report.outcome, "fallback", "{reply}");
+                assert_eq!(report.reason, "centre_split", "{reply}");
+                assert_eq!(report.centre_splits, 4, "{reply}");
+            }
+        }
+    }
+
+    #[test]
+    fn adoption_fit_4cascade_with_real_mins_yields_bisection_chain() {
+        // Four overlapping windows decline to the sequential seed, which
+        // yields a bisection chain rather than a symmetric 2x2: the first
+        // window keeps a full-height half while the remainder subdivides.
+        // Minimums reuse the real5 native classes (NP 401x246, Calc 402x627,
+        // Paint 864x617); narrow 300-wide leaves flag exactly.
+        let windows = [
+            ("win-1", 0, 0, 600, 600),
+            ("win-2", 200, 50, 600, 600),
+            ("win-3", 400, 100, 600, 600),
+            ("win-4", 600, 150, 600, 600),
+        ];
+        let hints: std::collections::BTreeMap<&str, HintPair> = [
+            ("win-1", (Some((401, 246)), None)),
+            ("win-2", (Some((402, 627)), None)),
+            ("win-3", (Some((401, 246)), None)),
+            ("win-4", (Some((864, 617)), None)),
+        ]
+        .into_iter()
+        .collect();
+        let expected: &[(&str, &[TileExpect<'_>])] = &[
+            (
+                "win-1",
+                &[
+                    ("win-2", 0, 0, 600, 800, false),
+                    ("win-3", 600, 0, 600, 400, false),
+                    ("win-4", 600, 400, 300, 400, true),
+                    ("win-1", 900, 400, 300, 400, true),
+                ],
+            ),
+            (
+                "win-4",
+                &[
+                    ("win-1", 0, 0, 600, 800, false),
+                    ("win-2", 600, 0, 600, 400, true),
+                    ("win-3", 600, 400, 300, 400, true),
+                    ("win-4", 900, 400, 300, 400, true),
+                ],
+            ),
+        ];
+        for (focused, tiles) in expected {
+            let mut per_focus = None;
+            for reversed in [false, true] {
+                let mut ordered = windows.to_vec();
+                if reversed {
+                    ordered.reverse();
+                }
+                let mut planner = Planner::new();
+                let reply = parse_reply(&planner.evaluate(&retained_request_with_hints(
+                    "adopt-4casc-1",
+                    "owner-1",
+                    "gen-1",
+                    focused,
+                    &ordered,
+                    &hints,
+                    serde_json::json!({"op": "reconcile"}),
+                )));
+                assert_eq!(reply["outcome"], "planned", "{reply}");
+                let names: Vec<&str> = windows.iter().map(|w| w.0).collect();
+                assert_geometry_covers(&reply, &names);
+                let got: std::collections::BTreeMap<String, (i32, i32, i32, i32, bool)> =
+                    reply["desired_geometry"]
+                        .as_array()
+                        .expect("geometry")
+                        .iter()
+                        .map(|entry| {
+                            let rect = &entry["rect"];
+                            (
+                                entry["window"].as_str().expect("window").to_owned(),
+                                (
+                                    rect["x"].as_i64().unwrap() as i32,
+                                    rect["y"].as_i64().unwrap() as i32,
+                                    rect["w"].as_i64().unwrap() as i32,
+                                    rect["h"].as_i64().unwrap() as i32,
+                                    entry.get("overconstrained")
+                                        == Some(&serde_json::Value::Bool(true)),
+                                ),
+                            )
+                        })
+                        .collect();
+                let want: std::collections::BTreeMap<String, (i32, i32, i32, i32, bool)> = tiles
+                    .iter()
+                    .map(|(w, x, y, ww, h, f)| ((*w).to_owned(), (*x, *y, *ww, *h, *f)))
+                    .collect();
+                assert_eq!(got, want, "{reply} focused={focused} reversed={reversed}");
+                if let Some(first) = &per_focus {
+                    assert_eq!(&got, first, "focused={focused} reversed={reversed}");
+                } else {
+                    per_focus = Some(got);
+                }
+                // Focus lands on the focused window's own leaf.
+                let focus_leaf = reply["desired_focus"]["leaf"].as_str().expect("focus leaf");
+                let focus_entry = reply["desired_geometry"]
+                    .as_array()
+                    .expect("geometry")
+                    .iter()
+                    .find(|entry| entry["window"].as_str() == Some(*focused))
+                    .expect("focused tile");
+                assert_eq!(
+                    focus_entry["leaf"].as_str().expect("leaf"),
+                    focus_leaf,
+                    "{reply}"
+                );
+                let report = planner.engine.last_adoption_fit().expect("fit logs");
+                assert_eq!(report.outcome, "fallback", "{reply}");
+                assert_eq!(report.reason, "centre_split", "{reply}");
+                assert_eq!(report.centre_splits, 3, "{reply}");
+            }
+        }
+    }
+
+    #[test]
+    fn adoption_fit_clean_2x2_stays_fitted_with_identity_order_axes() {
+        // Clean 2x2 needs no centre split: adoption stays fitted and
+        // preserves window identity, geometry order, and split axes.
+        let windows = [
+            ("win-1", 0, 0, 600, 400),
+            ("win-2", 600, 0, 600, 400),
+            ("win-3", 0, 400, 600, 400),
+            ("win-4", 600, 400, 600, 400),
+        ];
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&retained_request(
+            "adopt-clean2x2-1",
+            "owner-1",
+            "gen-1",
+            "win-4",
+            &windows,
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-2", "win-3", "win-4"]);
+        assert_eq!(
+            geometry_by_window(&reply),
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (0, 0, 600, 400)),
+                ("win-2".to_owned(), (600, 0, 600, 400)),
+                ("win-3".to_owned(), (0, 400, 600, 400)),
+                ("win-4".to_owned(), (600, 400, 600, 400)),
+            ]),
+            "{reply}"
+        );
+        let report = planner.engine.last_adoption_fit().expect("fit logs");
+        assert_eq!(report.outcome, "fitted", "{reply}");
+        assert_eq!(report.reason, "ok", "{reply}");
+        assert_eq!(report.centre_splits, 0, "{reply}");
+        // Same 2x2 with satisfiable native minimums (NP 401x246) stays fitted
+        // with identical geometry and no flags.
+        let hinted: std::collections::BTreeMap<&str, HintPair> =
+            ["win-1", "win-2", "win-3", "win-4"]
+                .into_iter()
+                .map(|w| (w, (Some((401, 246)), None)))
+                .collect();
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&retained_request_with_hints(
+            "adopt-clean2x2-2",
+            "owner-1",
+            "gen-1",
+            "win-4",
+            &windows,
+            &hinted,
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-2", "win-3", "win-4"]);
+        assert_eq!(
+            geometry_by_window(&reply),
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (0, 0, 600, 400)),
+                ("win-2".to_owned(), (600, 0, 600, 400)),
+                ("win-3".to_owned(), (0, 400, 600, 400)),
+                ("win-4".to_owned(), (600, 400, 600, 400)),
+            ]),
+            "{reply}"
+        );
+        for entry in reply["desired_geometry"].as_array().expect("geometry") {
+            assert!(entry.get("overconstrained").is_none(), "{reply}");
+            assert!(entry.get("client_clamped").is_none(), "{reply}");
+        }
+        let report = planner.engine.last_adoption_fit().expect("fit logs");
+        assert_eq!(report.outcome, "fitted", "{reply}");
+        assert_eq!(report.reason, "ok", "{reply}");
+        assert_eq!(report.centre_splits, 0, "{reply}");
+    }
+
+    #[test]
+    fn adoption_fit_min_infeasible_clean_topology_declines_to_sequential() {
+        // Clean side-by-side topology whose carried minimums exceed the
+        // extent declines to the same sequential seed (no overconstrained
+        // adoption is committed).
+        let windows = [("win-1", 0, 0, 600, 800), ("win-2", 600, 0, 600, 800)];
+        let hints: std::collections::BTreeMap<&str, HintPair> = [
+            ("win-1", (Some((700, 100)), None)),
+            ("win-2", (Some((700, 100)), None)),
+        ]
+        .into_iter()
+        .collect();
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&retained_request_with_hints(
+            "adopt-mininfeas-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &windows,
+            &hints,
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-2"]);
+        let report = planner.engine.last_adoption_fit().expect("fit logs");
+        assert_eq!(report.outcome, "fallback", "{reply}");
+        assert_eq!(report.reason, "min_infeasible", "{reply}");
+        assert_eq!(report.centre_splits, 0, "{reply}");
+    }
+
+    #[test]
+    fn adoption_fit_big_small_declines_to_equal_seed() {
+        // Overlapping big/small pairs need a centre split, so they decline
+        // to the normal sequential seed: equal long-edge splits, not
+        // proportional shares. The focused window seeds last, so the two
+        // focus choices mirror each other.
         for (tag, windows, horizontal_axis) in [
             (
                 "adopt-sizes-h",
@@ -9736,7 +10080,7 @@ mod tests {
                 false,
             ),
         ] {
-            let mut baseline = None;
+            let mut seen = std::collections::BTreeMap::new();
             for focused in ["win-big", "win-small"] {
                 let mut planner = Planner::new();
                 let reply = parse_reply(&planner.evaluate(&retained_request(
@@ -9753,25 +10097,22 @@ mod tests {
                 let big = got["win-big"];
                 let small = got["win-small"];
                 if horizontal_axis {
-                    assert!(big.2 > small.2, "{reply} focused={focused}");
-                    assert!(big.2 > 600 && small.2 < 600, "{reply}");
+                    assert_eq!((big.2, small.2), (600, 600), "{reply} focused={focused}");
                     assert_eq!(big.2 + small.2, 1200, "{reply}");
-                    assert_eq!((big.0, small.0), (0, big.2), "{reply}");
                 } else {
-                    assert!(big.3 > small.3, "{reply} focused={focused}");
-                    assert!(big.3 > 400 && small.3 < 400, "{reply}");
-                    assert_eq!(big.3 + small.3, 800, "{reply}");
-                    assert_eq!((big.1, small.1), (0, big.3), "{reply}");
+                    // Wide domain seeds along the long edge (side-by-side),
+                    // so the vertically overlapping pair still splits width.
+                    assert_eq!((big.2, small.2), (600, 600), "{reply} focused={focused}");
+                    assert_eq!((big.3, small.3), (800, 800), "{reply} focused={focused}");
                 }
-                if let Some(first) = &baseline {
-                    assert_eq!(&got, first, "focused={focused}");
-                } else {
-                    baseline = Some(got);
-                }
+                seen.insert(focused, got);
                 let report = planner.engine.last_adoption_fit().expect("fit logs");
-                assert_eq!(report.outcome, "fitted", "{reply}");
+                assert_eq!(report.outcome, "fallback", "{reply}");
+                assert_eq!(report.reason, "centre_split", "{reply}");
                 assert!(report.centre_splits > 0, "{reply}");
             }
+            // Focus-last seeding mirrors placement across focus choices.
+            assert_ne!(seen["win-big"], seen["win-small"], "{tag}");
         }
     }
 

@@ -923,6 +923,32 @@ impl Engine {
             .map(|entry| entry.window.clone())
     }
 
+    /// Read-only adoption gate: true when the hinted projection of the clean
+    /// fitted topology flags any leaf overconstrained. Projection failure is
+    /// not infeasibility (plain validation already passed), so false.
+    fn fitted_topology_is_min_infeasible(
+        domain: &crate::session::OutputDomain,
+        tree: &Node,
+        links: &[crate::directional::WindowLink],
+        windows: &[EngineWindow],
+    ) -> bool {
+        let by_window: BTreeMap<&WindowId, crate::size_hints::WindowSizeHints> =
+            windows.iter().map(|w| (&w.window, w.hints)).collect();
+        let by_leaf: BTreeMap<&NodeId, &WindowId> =
+            links.iter().map(|l| (&l.leaf, &l.window)).collect();
+        let resolve = |leaf: &NodeId| {
+            by_leaf
+                .get(leaf)
+                .and_then(|window| by_window.get(*window))
+                .copied()
+                .unwrap_or_else(crate::size_hints::WindowSizeHints::none)
+        };
+        matches!(
+            crate::size_hints::project_with_hints(tree, domain.bounds, domain.gap, &resolve),
+            Ok(hinted) if !hinted.overconstrained.is_empty()
+        )
+    }
+
     /// Fresh floating-aware convergence build shared by fresh admit, fresh
     /// reconcile (all-floating tail), and toggle-float.
     ///
@@ -1034,62 +1060,14 @@ impl Engine {
                             rect: w.rect,
                         })
                         .collect();
-                    let (trace_leaves, trace_topology) = describe_topology(&tree);
-                    let focus_leaf = links
-                        .iter()
-                        .find(|l| l.window.0 == window.0)
-                        .map(|l| l.leaf.clone());
-                    let mut committed: Option<CoreReply> = None;
-                    if let (Some(focus_leaf), Ok(mut fitted)) = (
-                        focus_leaf,
-                        Session::new(
-                            event.owner.clone(),
-                            event.generation.clone(),
-                            0,
-                            event.fingerprint,
-                            vec![event.domain.clone()],
-                        ),
-                    ) {
-                        fitted.set_policy(self.policy.clone());
-                        let base = fitted.accepted_revision();
-                        let observation = crate::seed::session_observation_for(
-                            &event.owner,
-                            &event.generation,
-                            base,
-                            event.fingerprint,
-                            &event.windows,
-                        );
-                        if let Ok(plan) = fitted.propose_fitted_admit(
-                            tree,
-                            links,
-                            focus_leaf,
-                            window,
-                            output,
-                            workspace,
-                            &observation,
-                            &event.correlation,
-                            &LifecycleCapabilities::full(),
-                        ) {
-                            let typed = CoreReply::Tiled(TiledPlan::from_lifecycle(
-                                TiledKind::Admit,
-                                &plan,
-                            ));
-                            if Self::commit_lifecycle(&mut fitted, &plan, event, base) {
-                                self.store_committed(
-                                    event.domain_key.clone(),
-                                    fitted,
-                                    event.outer_gap,
-                                );
-                                committed = Some(typed);
-                            }
-                        }
-                    }
-                    if let Some(typed) = committed {
+                    // Fits needing a centre split (overlap/cascade never-tiled)
+                    // decline to the sequential long-edge seed.
+                    if centre_splits > 0 {
                         self.last_adoption_fit = Some(EngineAdoptionFitReport {
                             correlation: event.correlation.clone(),
-                            outcome: "fitted",
+                            outcome: "fallback",
                             windows: event.windows.len(),
-                            reason: "ok",
+                            reason: crate::seed::FitDeclineReason::CentreSplit.as_str(),
                             centre_splits,
                         });
                         self.last_startup_fit_trace = Some(EngineStartupFitTrace {
@@ -1097,32 +1075,129 @@ impl Engine {
                             windows: event.windows.len(),
                             domain_bounds: event.domain.bounds,
                             inputs: trace_inputs,
-                            outcome: "fitted",
-                            reason: "ok",
+                            outcome: "fallback",
+                            reason: crate::seed::FitDeclineReason::CentreSplit.as_str(),
                             centre_splits,
-                            leaves: trace_leaves,
-                            topology: trace_topology,
+                            leaves: 0,
+                            topology: "-".to_owned(),
                         });
-                        return typed;
+                    } else if Self::fitted_topology_is_min_infeasible(
+                        &event.domain,
+                        &tree,
+                        &links,
+                        &event.windows,
+                    ) {
+                        // Clean but minimum-infeasible fitted topology takes the
+                        // same seed instead of committing overconstrained tiles.
+                        self.last_adoption_fit = Some(EngineAdoptionFitReport {
+                            correlation: event.correlation.clone(),
+                            outcome: "fallback",
+                            windows: event.windows.len(),
+                            reason: crate::seed::FitDeclineReason::MinInfeasible.as_str(),
+                            centre_splits: 0,
+                        });
+                        self.last_startup_fit_trace = Some(EngineStartupFitTrace {
+                            correlation: event.correlation.clone(),
+                            windows: event.windows.len(),
+                            domain_bounds: event.domain.bounds,
+                            inputs: trace_inputs,
+                            outcome: "fallback",
+                            reason: crate::seed::FitDeclineReason::MinInfeasible.as_str(),
+                            centre_splits: 0,
+                            leaves: 0,
+                            topology: "-".to_owned(),
+                        });
+                    } else {
+                        let (trace_leaves, trace_topology) = describe_topology(&tree);
+                        let focus_leaf = links
+                            .iter()
+                            .find(|l| l.window.0 == window.0)
+                            .map(|l| l.leaf.clone());
+                        let mut committed: Option<CoreReply> = None;
+                        if let (Some(focus_leaf), Ok(mut fitted)) = (
+                            focus_leaf,
+                            Session::new(
+                                event.owner.clone(),
+                                event.generation.clone(),
+                                0,
+                                event.fingerprint,
+                                vec![event.domain.clone()],
+                            ),
+                        ) {
+                            fitted.set_policy(self.policy.clone());
+                            let base = fitted.accepted_revision();
+                            let observation = crate::seed::session_observation_for(
+                                &event.owner,
+                                &event.generation,
+                                base,
+                                event.fingerprint,
+                                &event.windows,
+                            );
+                            if let Ok(plan) = fitted.propose_fitted_admit(
+                                tree,
+                                links,
+                                focus_leaf,
+                                window,
+                                output,
+                                workspace,
+                                &observation,
+                                &event.correlation,
+                                &LifecycleCapabilities::full(),
+                            ) {
+                                let typed = CoreReply::Tiled(TiledPlan::from_lifecycle(
+                                    TiledKind::Admit,
+                                    &plan,
+                                ));
+                                if Self::commit_lifecycle(&mut fitted, &plan, event, base) {
+                                    self.store_committed(
+                                        event.domain_key.clone(),
+                                        fitted,
+                                        event.outer_gap,
+                                    );
+                                    committed = Some(typed);
+                                }
+                            }
+                        }
+                        if let Some(typed) = committed {
+                            self.last_adoption_fit = Some(EngineAdoptionFitReport {
+                                correlation: event.correlation.clone(),
+                                outcome: "fitted",
+                                windows: event.windows.len(),
+                                reason: "ok",
+                                centre_splits,
+                            });
+                            self.last_startup_fit_trace = Some(EngineStartupFitTrace {
+                                correlation: event.correlation.clone(),
+                                windows: event.windows.len(),
+                                domain_bounds: event.domain.bounds,
+                                inputs: trace_inputs,
+                                outcome: "fitted",
+                                reason: "ok",
+                                centre_splits,
+                                leaves: trace_leaves,
+                                topology: trace_topology,
+                            });
+                            return typed;
+                        }
+                        self.last_adoption_fit = Some(EngineAdoptionFitReport {
+                            correlation: event.correlation.clone(),
+                            outcome: "fallback",
+                            windows: event.windows.len(),
+                            reason: "commit_failed",
+                            centre_splits: 0,
+                        });
+                        self.last_startup_fit_trace = Some(EngineStartupFitTrace {
+                            correlation: event.correlation.clone(),
+                            windows: event.windows.len(),
+                            domain_bounds: event.domain.bounds,
+                            inputs: trace_inputs,
+                            outcome: "fallback",
+                            reason: "commit_failed",
+                            centre_splits: 0,
+                            leaves: 0,
+                            topology: "-".to_owned(),
+                        });
                     }
-                    self.last_adoption_fit = Some(EngineAdoptionFitReport {
-                        correlation: event.correlation.clone(),
-                        outcome: "fallback",
-                        windows: event.windows.len(),
-                        reason: "commit_failed",
-                        centre_splits: 0,
-                    });
-                    self.last_startup_fit_trace = Some(EngineStartupFitTrace {
-                        correlation: event.correlation.clone(),
-                        windows: event.windows.len(),
-                        domain_bounds: event.domain.bounds,
-                        inputs: trace_inputs,
-                        outcome: "fallback",
-                        reason: "commit_failed",
-                        centre_splits: 0,
-                        leaves: 0,
-                        topology: "-".to_owned(),
-                    });
                 }
                 Err(reason) => {
                     self.last_adoption_fit = Some(EngineAdoptionFitReport {

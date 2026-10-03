@@ -46,6 +46,10 @@ pub enum FitDeclineReason {
     InvalidGeometry,
     NoCut,
     ProjectionInvalid,
+    /// Fit needing a centre split declines to the sequential seed.
+    CentreSplit,
+    /// Clean but minimum-infeasible fitted topology declines to the same seed.
+    MinInfeasible,
 }
 
 impl FitDeclineReason {
@@ -58,6 +62,8 @@ impl FitDeclineReason {
             Self::InvalidGeometry => "invalid_geometry",
             Self::NoCut => "no_cut",
             Self::ProjectionInvalid => "projection_invalid",
+            Self::CentreSplit => "centre_split",
+            Self::MinInfeasible => "min_infeasible",
         }
     }
 }
@@ -1046,6 +1052,8 @@ mod tests {
             "invalid_geometry"
         );
         assert_eq!(FitDeclineReason::NoCut.as_str(), "no_cut");
+        assert_eq!(FitDeclineReason::CentreSplit.as_str(), "centre_split");
+        assert_eq!(FitDeclineReason::MinInfeasible.as_str(), "min_infeasible");
         let tight = OutputDomain {
             id: OutputId("out".to_owned()),
             workspace: WorkspaceId("ws".to_owned()),

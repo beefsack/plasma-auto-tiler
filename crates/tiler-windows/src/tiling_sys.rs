@@ -3479,13 +3479,15 @@ fn assemble_domain_rows(
 /// value, threaded on the real operation correlation (`tick-N` for reconcile,
 /// `act-N` for select/send/directional) with opaque output/workspace tokens
 /// so the change joins to the projection adjustment and the
-/// `overconstrained`/`client-clamped` skips in the existing apply summaries
+/// `client-clamped` skips (plus overconstrained min-clamped targets) in the
+/// existing apply summaries
 /// by `(correlation, output, workspace, window)`. Per-window hint values and
 /// per-token query reasons ride the trace log only; the normal log carries
 /// counts plus changes so steady state stays quiet. The dedupe cache is
-/// log-only and pruned by actual live membership (every member token across
+/// pruned by actual live membership (every member token across
 /// all domains), never by the current domain alone, so multi-output and send
-/// domains never re-log unchanged hints: it never feeds the Engine.
+/// domains never re-log unchanged hints. Rows feed the Engine; the cache
+/// additionally feeds the overconstrained native target (`max(planned, min)`).
 #[allow(clippy::too_many_arguments)]
 fn log_min_hint_summary(
     state: &mut TileLoop,
@@ -3879,10 +3881,6 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> Option<ApplySu
     // the transient/backoff lanes intact.
     let mut written: HashSet<String> = HashSet::new();
     for entry in &desired {
-        if entry.overconstrained {
-            skipped.push((entry.window.0.clone(), "overconstrained".to_owned()));
-            continue;
-        }
         if entry.client_clamped {
             skipped.push((entry.window.0.clone(), "client-clamped".to_owned()));
             continue;
@@ -3891,20 +3889,36 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> Option<ApplySu
             // Retained or hidden rows converge Engine membership but never
             // take geometry writes: hidden workspace geometry waits for
             // reveal and minimized/maximized/fullscreen frames stay native.
+            // Overconstrained non-writable rows stay here too; only admitted
+            // writable overconstrained windows take the min-clamped target
+            // below.
             skipped.push((entry.window.0.clone(), "retained".to_owned()));
             continue;
         }
+        // Overconstrained writables take the min-clamped tile origin instead
+        // of skipping while reserving the tile. All checks below use the
+        // effective target so clamping converges instead of retrying.
+        let effective = if entry.overconstrained {
+            let hints = state
+                .hint_logged
+                .get(entry.window.0.as_str())
+                .copied()
+                .unwrap_or(WindowSizeHints::none());
+            crate::tiling::overconstrained_effective(entry.rect, hints)
+        } else {
+            entry.rect
+        };
         let Some(expected) = by_token.get(entry.window.0.as_str()) else {
             skipped.push((entry.window.0.clone(), "vanished".to_owned()));
             continue;
         };
-        if expected.visible == entry.rect {
+        if expected.visible == effective {
             state.refused.note_match(&entry.window.0);
             continue;
         }
         if state
             .refused
-            .should_skip(&entry.window.0, &entry.rect, &expected.visible, now)
+            .should_skip(&entry.window.0, &effective, &expected.visible, now)
         {
             skipped.push((entry.window.0.clone(), "refused-intent".to_owned()));
             continue;
@@ -3956,7 +3970,7 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> Option<ApplySu
                             "tick": tick,
                             "op": op,
                             "window": entry.window.0,
-                            "requested": [entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h],
+                            "requested": [effective.x, effective.y, effective.w, effective.h],
                             "reason": reason,
                         }),
                     );
@@ -3964,7 +3978,7 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> Option<ApplySu
                 continue;
             }
         };
-        let Some(outer) = target.window.insets.visible_to_outer(entry.rect) else {
+        let Some(outer) = target.window.insets.visible_to_outer(effective) else {
             skipped.push((entry.window.0.clone(), "frame-overflow".to_owned()));
             continue;
         };
@@ -4021,7 +4035,7 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> Option<ApplySu
                     "tick": tick,
                     "op": op,
                     "window": entry.window.0,
-                    "requested": [entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h],
+                    "requested": [effective.x, effective.y, effective.w, effective.h],
                     "outer": [outer.x, outer.y, outer.w, outer.h],
                     "target": {
                         "hwnd": target.window.hwnd,
@@ -4045,7 +4059,7 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> Option<ApplySu
             skipped.push((entry.window.0.clone(), "setter-failed".to_owned()));
             state
                 .refused
-                .note_transient(&entry.window.0, &entry.rect, &target.window.visible, now);
+                .note_transient(&entry.window.0, &effective, &target.window.visible, now);
             continue;
         }
         applied += 1;
@@ -4059,7 +4073,7 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> Option<ApplySu
                     "correlation": correlation,
                     "op": op,
                     "window": entry.window.0,
-                    "desired": [entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h],
+                    "desired": [effective.x, effective.y, effective.w, effective.h],
                 }),
             );
         }
@@ -4112,11 +4126,23 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> Option<ApplySu
                 // Retained rows never took writes: no readback verdict.
                 continue;
             }
+            // Same effective target as the write pass so clamping reads back
+            // as a match and refused tracking stays stable.
+            let effective = if entry.overconstrained {
+                let hints = state
+                    .hint_logged
+                    .get(entry.window.0.as_str())
+                    .copied()
+                    .unwrap_or(WindowSizeHints::none());
+                crate::tiling::overconstrained_effective(entry.rect, hints)
+            } else {
+                entry.rect
+            };
             match reread_by_token.get(entry.window.0.as_str()) {
                 Some(visible) => {
                     match readback_outcome(
                         written.contains(entry.window.0.as_str()),
-                        &entry.rect,
+                        &effective,
                         visible,
                     ) {
                         ReadbackOutcome::Match => {
@@ -4126,7 +4152,7 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> Option<ApplySu
                             mismatched += 1;
                             state
                                 .refused
-                                .note_clamp(&entry.window.0, &entry.rect, visible);
+                                .note_clamp(&entry.window.0, &effective, visible);
                         }
                         ReadbackOutcome::Pending => {
                             // No write behind this mismatch (skipped or
@@ -4150,11 +4176,21 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> Option<ApplySu
                 .iter()
                 .map(|entry| {
                     let readback = reread_by_token.get(entry.window.0.as_str());
+                    let effective = if entry.overconstrained {
+                        let hints = state
+                            .hint_logged
+                            .get(entry.window.0.as_str())
+                            .copied()
+                            .unwrap_or(WindowSizeHints::none());
+                        crate::tiling::overconstrained_effective(entry.rect, hints)
+                    } else {
+                        entry.rect
+                    };
                     serde_json::json!({
                         "window": entry.window.0,
-                        "desired": [entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h],
+                        "desired": [effective.x, effective.y, effective.w, effective.h],
                         "readback": readback.map(|r| [r.x, r.y, r.w, r.h]),
-                        "matched": readback.is_some_and(|r| r == &entry.rect),
+                        "matched": readback.is_some_and(|r| r == &effective),
                     })
                 })
                 .collect();

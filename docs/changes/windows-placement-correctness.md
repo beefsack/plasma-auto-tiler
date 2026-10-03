@@ -41,9 +41,77 @@
   rectangle/axis. Seeded fallbacks carry their resulting tree as well.
 - Native locked build/test, strict all-target Clippy, rustfmt and diff checks
   passed after the final observability follow-up; no protocol reply changes.
+- Observability commit `174e70b`: hosted Rust/KWin/shell/Windows CI green
+  ([run](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37120915569)).
+- Real four/five-window reproduction logs:
+  `%LOCALAPPDATA%/plasma-auto-tiler/session-1/run-01dd532db76a8af6.log` and
+  `run-01dd532e5c7fa523.log`, payload SHA256
+  `0C5C5E314F3242FC5D97E1831D1A6B16FEF13C12AE4703DDBF043748FAA59149`.
+  Five-window cascade fitted with four centre splits, but Paint's 448px tile
+  height violated its 617px minimum and Calculator's 592px violated 627px;
+  three writes succeeded, two stayed at pre-start positions for 19 ticks.
+- D2/D5 proof report: temporary `d2d5-20261003-220707-17764/d2d5-report.json`.
+  D2 hint-bound equal-share strip fixture redistributes all leaves when the
+  maximized member's hint disappears; hintless live control stays stable.
+  Win+M restore dispatch tick 8 was followed by ordinary plan tick 9.
+  D5 populated returns selected remembered leaves, tall 1268x1364 -> stacked,
+  wide 2544x678 -> side-by-side. This matches the existing shared rule, not
+  a Windows-specific defect. Original dogfood anchor cannot be recovered.
+
+## Material choices
+
+- Provisional, to discuss: preserve clean cut startup adoption; decline
+  centre-split cascade inference to ordinary deterministic long-edge seeding.
+  Decline a minimum-infeasible fitted startup topology to the same seed path.
+  This shared policy changes KDE and Windows together; no topology search.
+- Provisional, to discuss: on Windows, if allocation still cannot fit declared
+  minimums, place admitted windows at their tile origin with extent at least
+  the native minimum, rather than reserve space and skip movement. Overlap
+  remains possible when no fitting seed results. Current KDE adapter also skips
+  overconstrained writes; the native-minimum placement is an explicit Windows
+  correction, not claimed current adapter parity.
+- D5: retain remembered-leaf -> focus-history -> root and projected long-edge
+  axis; recorded proof establishes this rule, not the original unlogged anchor.
+- D1/D4 implementation accepted after native gates and independent review:
+  centre-split/min-infeasible startup fits use existing seeding; Windows native
+  overconstrained placement uses known minimum extents at the planned origin
+  consistently through equality, writes, refusal and readback. Four-window
+  sequential insertion is a long-edge bisection chain, not guaranteed 2x2.
+  Real-five hinted regressions fit four focus choices; Paint focus leaves two
+  335px-high logical tiles, now covered by native minimum-clamped actuation.
+  Clean hinted 2x2 remains fitted and identity-stable. Review found no blocker;
+  missing-hint overconstraint is unreachable in current assemble/apply paths.
+  Residual: minimum-clamped windows can extend beyond work area, not just overlap.
 
 ## Candidate matrix rows
 
-- Pending bounded investigation: clean 2x2 startup versus cascaded startup;
-  infeasible minimum topology; remembered-leaf/focus-history/root workspace
-  return; minimum-constrained maximize/restore sibling stability.
+- Startup-clean-4: four contained non-overlapping windows in 2x2, fit-capable
+  minimums; enable tiling, disable/re-enable. Observe identity/order/topology,
+  allocation and movement; compare clean adoption with sequential remap.
+  Local COSMIC `src/shell/workspace.rs:1441-1452` maps floating windows
+  sequentially, not rectangle-to-tree inversion (diagnosis source citation).
+- Startup-cascade-4: four overlapping/cascaded never-tiled windows, minimums
+  fitting a 2x2; enable tiling. Observe inferred centre cuts versus long-edge
+  sequential seed, final axes and identity order. Our original shared Engine
+  can select an input-driven strip or nested layout; KDE receives the same
+  result for the same inputs. No reference live answer established.
+- Startup-minimums-5: cascade of three 401x246 Notepads, Paint 864x617,
+  Calculator 402x627 in 2544x1364 with 8px gap; enable tiling. Observe topology,
+  feasibility fallback, skipped/floated/minimum-clamped writes, final origins
+  and overlap. Local KDE adapter `kwin/src/plan-adapter.ts:7438,7469-7476`
+  skips overconstrained writes; no local upstream KWin compositor checkout
+  establishes its below-minimum setter result.
+- Return-anchor-axis: populated workspace 1, empty workspace 2, known
+  destination focus; send subject away, select destination to focus a tall
+  leaf, select away and return subject; repeat with wide leaf. Observe
+  remembered/MRU/root branch, leaf identity, projected rectangle, axis/order
+  and focus follow. Local COSMIC `src/shell/layout/tiling/mod.rs:417-436,
+  548-616` uses last-active target and its long edge; no-focus uses root/output.
+  Our proof returns used remembered tall then remembered wide leaves correctly.
+- Maximize-minimums: four minimum-bound equal-share strip leaves with minimum
+  widths 401/864/627/582 in 2544px; maximize then restore each hinted member,
+  cross-check native maximize/restore. Observe sibling desired and actual
+  stability, retained hints, restore-dispatch/convergence latency and overlap.
+  Local shared `size_hints.rs:250-305,377-419` reallocates if binding hints
+  disappear; current Windows retained rows drop hints. Hintless live control
+  was stable, with restore dispatch tick 8 then plan tick 9.

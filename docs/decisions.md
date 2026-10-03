@@ -181,6 +181,22 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   they do not search alternative axes or targets for feasibility. The shared
   Engine applies this on KDE and Windows. See
   [send-axis evidence](changes/archive/windows-send-split-axis.md).
+- Provisional, to discuss (2026-10-03, Windows placement dogfood): fresh startup
+  preserves clean/tolerance-valid recursive-cut adoption, but declines any fit
+  requiring centre splits to the existing deterministic sequential long-edge
+  seed. Minimum-infeasible clean fits use the same fallback. This supersedes
+  the overlapping centre-fit default below on KDE and Windows together; no
+  topology search or guaranteed balanced 2x2 is selected. Clean previously
+  tiled 2x2/nested layouts retain their fit and identity order.
+- Provisional, to discuss (2026-10-03, Windows infeasible minimums): writable
+  admitted windows are placed at the proportional tile's origin with each
+  native extent at least its declared minimum, rather than skipped while their
+  tile space is reserved. Equality/readback/refusal use that effective target.
+  This supersedes Windows' 2026-10-02 overconstrained skip decision; KDE's
+  current adapter still skips such writes. Oversized windows may overlap
+  siblings or extend beyond the work area when the sequential seed cannot fit;
+  no alternative-axis search, floating fallback or global optimizer is selected.
+  Evidence: [placement correctness](changes/windows-placement-correctness.md).
 
 ## Cross-Platform Core
 

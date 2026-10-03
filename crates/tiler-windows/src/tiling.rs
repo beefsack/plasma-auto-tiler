@@ -137,6 +137,29 @@ pub fn min_hints_from_outer(
     }
 }
 
+/// Effective native target for an overconstrained tile: planned origin with
+/// each extent raised to the known native minimum (`WM_GETMINMAXINFO` track
+/// minus frame insets; unknown minimums keep the planned rect). Explicit so
+/// readback matches the OS-enforced size instead of fighting every tick.
+#[must_use]
+pub fn overconstrained_effective(
+    planned: Rect,
+    hints: tiler_core::size_hints::WindowSizeHints,
+) -> Rect {
+    let w = hints
+        .meaningful_min_w()
+        .map_or(planned.w, |min| planned.w.max(min));
+    let h = hints
+        .meaningful_min_h()
+        .map_or(planned.h, |min| planned.h.max(min));
+    Rect {
+        x: planned.x,
+        y: planned.y,
+        w,
+        h,
+    }
+}
+
 /// Stable opaque per-run window tokens (`w1`, `w2`, ...). Keyed by
 /// `(HWND, process creation)` so a recycled HWND never inherits its
 /// predecessor's token, even within the same tick. HWND values never enter
@@ -2582,4 +2605,106 @@ pub fn tick_summary_signature(
         .collect::<Vec<_>>()
         .join(",");
     format!("{windows}|{applied}|{skips}|{revision}|{mismatched}|{op}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hints(min_w: Option<i32>, min_h: Option<i32>) -> tiler_core::size_hints::WindowSizeHints {
+        tiler_core::size_hints::WindowSizeHints {
+            min_w,
+            min_h,
+            max_w: None,
+            max_h: None,
+        }
+    }
+
+    #[test]
+    fn overconstrained_effective_keeps_origin_and_raises_to_minimum() {
+        // Planned tile origin is kept; each extent rises to the known native
+        // minimum. Real5 shape: a small proportional tile for Paint clamped
+        // to its 864x617-class minimum stays at the tile origin.
+        let planned = Rect {
+            x: 8,
+            y: 8,
+            w: 400,
+            h: 300,
+        };
+        let got = overconstrained_effective(planned, hints(Some(864), Some(617)));
+        assert_eq!(
+            got,
+            Rect {
+                x: 8,
+                y: 8,
+                w: 864,
+                h: 617
+            }
+        );
+        // Satisfiable extents pass through byte-identical.
+        assert_eq!(
+            overconstrained_effective(planned, hints(Some(100), Some(100))),
+            planned
+        );
+        // Unknown minimums (no hint) keep the planned rect.
+        assert_eq!(
+            overconstrained_effective(planned, tiler_core::size_hints::WindowSizeHints::none()),
+            planned
+        );
+        // Non-meaningful hints (zero/absurd) behave as absent.
+        assert_eq!(
+            overconstrained_effective(planned, hints(Some(0), Some(-5))),
+            planned
+        );
+        // Only the violating axis grows.
+        let wide = overconstrained_effective(planned, hints(Some(500), None));
+        assert_eq!((wide.x, wide.y, wide.w, wide.h), (8, 8, 500, 300));
+    }
+
+    #[test]
+    fn overconstrained_target_is_refused_stable() {
+        // Minimum clamping must not fight every tick: the identical
+        // (effective, observed) clamp pair suppresses, while any genuine
+        // change re-arms immediately.
+        let planned = Rect {
+            x: 8,
+            y: 8,
+            w: 400,
+            h: 300,
+        };
+        let effective = overconstrained_effective(planned, hints(Some(864), Some(617)));
+        let observed = effective;
+        let mut tracker = RefusedTracker::default();
+        let now = std::time::Instant::now();
+        // Exact match clears: no skip, no clamp lane.
+        tracker.note_match("w1");
+        assert!(!tracker.should_skip("w1", &effective, &observed, now));
+        // Successful write that reads back at the effective target is a
+        // match, not a clamp.
+        assert_eq!(
+            readback_outcome(true, &effective, &observed),
+            ReadbackOutcome::Match
+        );
+        // App-held larger size pins the identical pair; the same pair then
+        // suppresses instead of retrying every tick.
+        let held = Rect {
+            x: 8,
+            y: 8,
+            w: 900,
+            h: 700,
+        };
+        assert_eq!(
+            readback_outcome(true, &effective, &held),
+            ReadbackOutcome::Clamp
+        );
+        tracker.note_clamp("w1", &effective, &held);
+        assert!(tracker.should_skip("w1", &effective, &held, now));
+        // A new planned tile or a new observation re-arms.
+        let moved = Rect {
+            x: 100,
+            ..effective
+        };
+        assert!(!tracker.should_skip("w1", &moved, &held, now));
+        assert!(!tracker.should_skip("w1", &effective, &planned, now));
+    }
 }

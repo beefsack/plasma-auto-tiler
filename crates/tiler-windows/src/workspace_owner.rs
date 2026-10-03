@@ -2358,9 +2358,10 @@ mod tests {
     #[test]
     fn infeasible_hints_keep_proportional_and_flag_overconstrained() {
         // Minimums exceeding the extent keep the proportional allocation and
-        // flag every violating window: the native write path skips those
-        // entries (existing `overconstrained` skip), preserving the
-        // refused-tracker and KDE-infeasible behavior.
+        // flag every violating window: shared projection never reasserts, and
+        // the Windows native write path places writable overconstrained
+        // windows at the tile origin clamped to the known minimum (KDE keeps
+        // its existing skip).
         use tiler_core::boundary::CoreReply;
         use tiler_core::geometry::Rect;
         use tiler_core::size_hints::WindowSizeHints;
