@@ -132,6 +132,22 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
 
 ## Cross-Platform Behavior
 
+- User direction 2026-10-03: the [reference-WM outcome matrix](spec/reference-outcomes.md)
+  records minimal action sequences and per-WM outcomes as the evidence source of
+  truth feeding the cross-platform functional specification. Existing selections
+  remain authoritative; reference outcomes become supported variants only when
+  explicitly selected, with user-settable configuration where applicable.
+- Provisional, to discuss (2026-10-03, matrix format): one Markdown document,
+  tables by area, stable row IDs, precise starts/actions/observations, six outcome
+  columns (COSMIC, Hyprland, bspwm, i3, xmonad, KDE/Windows), and variant hooks.
+- Provisional, to discuss (2026-10-03, matrix evidence): compact cell citation
+  keys resolve to dated user tests, pinned source file/line ranges or linked
+  documentation; missing outcomes remain TBD, and tested versions are never
+  inferred from later source checkouts.
+- Matrix maintenance: reuse existing scenarios; for each uncovered ambiguity,
+  add the shortest discriminating action sequence. Read source where confident;
+  otherwise leave the outcome for the user's later test. Variant hook names are
+  provisional indexing, not new product or settings commitments.
 - User decision 2026-10-01: keyboard bindings and window/workspace behavior
   must be consistent across Linux, Windows and macOS so workflows transfer.
   Meta+Arrow navigates focus; Meta+Shift+Arrow moves windows. The KDE shortcut

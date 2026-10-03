@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## Functional Specification
+
+- Resolve behavioral ambiguities with a minimal discriminating action-sequence row in [docs/spec/reference-outcomes.md](docs/spec/reference-outcomes.md); leave unsupported outcomes TBD for later user testing.
+
 ## Live KWin/Plasma Testing
 
 - Before any live KWin/Plasma testing, read and follow
