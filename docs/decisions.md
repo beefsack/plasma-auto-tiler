@@ -134,7 +134,7 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   Minimum hints influence the projected target rectangle and final allocation;
   they do not search alternative axes or targets for feasibility. The shared
   Engine applies this on KDE and Windows. See
-  [send-axis evidence](changes/windows-send-split-axis.md).
+  [send-axis evidence](changes/archive/windows-send-split-axis.md).
 
 ## Cross-Platform Core
 

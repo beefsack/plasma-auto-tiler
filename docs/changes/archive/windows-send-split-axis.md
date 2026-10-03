@@ -1,5 +1,7 @@
 # Windows send split axis
 
+Status: complete, 2026-10-03. Implementation: `c4a837b`.
+
 ## Goal and acceptance
 
 - Resolve the 2026-10-03 dogfood report, checking minimum-size feasibility
@@ -49,7 +51,9 @@
   Native locked four-package build/test/strict all-target clippy, rustfmt and
   whitespace gates pass. Independent review accepted the repair and required
   this KWin fixture plus the corrected placement documentation.
-- Hosted Windows/Rust/KWin/shell CI is pending publication.
+- Hosted Windows/Rust/KWin/shell CI passed for `c4a837b`, including the new
+  KWin Engine fixture and typecheck:
+  [CI run 37094726063](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37094726063).
 
 ## Current-artifact live evidence, 2026-10-03
 
@@ -78,6 +82,14 @@
   arranging raw1 and pen raw35. A subsequent read-only check confirmed actor
   and request absence. Physical Notepad/Paint/Terminal return-send remains
   user-owned; no new provisional product decision was needed.
+
+## Outcome and succession
+
+- Minimums did not force the reported axis. The invalid remembered target was
+  a shared-core defect; destination focus-history fallback repairs it on both
+  KDE and Windows, retaining minimum-aware projection and no-focus fallback.
+- No implementation action remains. Physical ordinary-app return-send is a
+  user-owned confirmation. Local live evidence is not included in Git.
 
 ## Live scope
 
