@@ -117,14 +117,25 @@ decisions of 2026-09-24 are under
   dogfood slice, define window/workspace behavior and keyboard shortcuts as
   the single source of truth for Linux, Windows and macOS. KDE is the current
   behavioral reference; macOS modifier mapping is decided when macOS starts.
-- P2 | macOS port | After Windows. Research plan done offline: one signed
-  per-login Rust app, public Accessibility APIs, AeroSpace-style offscreen
-  parking prototype for per-display workspaces, no private Spaces APIs or
-  reduced SIP. Proposed floor macOS 15+ (~90% by Homebrew analytics,
-  2026-08/09; re-measure at release). Notarized DMG plus Homebrew cask
-  first; full-featured Mac App Store unproven. Open decisions (floor and
-  Intel coverage, App Store, shortcut consent, updates, Swift glue) deferred
-  by the user until macOS spiking starts. Needs an Apple Silicon Mac.
+  cosmic-comp (user favourite: n-ary splits, join/leave UX) is a key input.
+- P1 | Cross-platform dev environment (mise evaluation) | User question
+  (2026-10-03): standardise toolchain setup across Windows, macOS and NixOS
+  with `mise.toml` before macOS starts; Nix stays for Linux system libraries.
+  Needs user decision on scope before any governance change.
+- P1 | Windows reference-WM comparison | Compare glazewm (Rust) and komorebi
+  (cloned under `~/Development`) with our Windows implementation; record
+  learnings (hiding, input, recovery, multi-monitor, gaming coexistence).
+- P1 | macOS port | Work expected soon (user 2026-10-03). Readiness research
+  done (`f095042`): setup/TCC/signing runbook, sourced prior-art survey and
+  tentative plan, which recommended public AX/AppKit. User direction
+  (2026-10-03) supersedes that default: lower-level, lower-jank yabai-style
+  route first, optional higher-level AeroSpace-style alternative later.
+  Next: revise the plan from the local yabai/AeroSpace/Amethyst sources with
+  exact mechanisms, SIP/permission consequences and a proposed split between
+  lower-level and public-API features, for user approval; confirm host/floor/
+  Intel, stable signer and modifier mapping.
+  [setup](macos-dev-environment.md)
+  [survey](research/macos-port/prior-art.md)
   [plan](research/macos-port/plan.md)
 - P1 | Rust toolchain tracking (recurring) | User (2026-09-30): track latest
   stable Rust pre-1.0 and fix breakage. Windows uses rustup `stable`; Linux

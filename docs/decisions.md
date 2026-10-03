@@ -94,6 +94,19 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   queries supply no hint. Keep existing refused-attempt suppression.
 - macOS decisions (version floor, App Store, shortcut consent, updates, UI
   language) are deferred until macOS spiking starts.
+- User direction 2026-10-03 (macOS approach): prefer the lower-level,
+  lower-jank route first (yabai-style), since it may help window effects and
+  clean workspaces, accepting that it may not run in locked-down
+  environments. An optional higher-level public-API route (AeroSpace-style,
+  e.g. off-screen parking) may be evaluated later as a configurable
+  alternative. Exact mechanisms (private APIs, SIP requirements, Dock
+  scripting addition) still need user approval once their consequences are
+  documented.
+- Reference implementations cloned locally by the user (2026-10-03) under
+  `~/Development`: macOS AeroSpace, yabai, Amethyst; Windows glazewm (Rust),
+  komorebi; Linux cosmic-comp, Hyprland, i3, bspwm, qtile, PaperWM, xmonad.
+  cosmic-comp is the user's favourite tiling UX (n-ary splits, windows
+  joining and leaving splits) and is a key input to the functional spec.
 
 ## Cross-Platform Behavior
 
