@@ -234,3 +234,80 @@
   zero, no ledger/requests, arranging1/pen35 and exact borrowed restoration.
 - Physical feel/Start mask, custom frames, floating/sticky modifier passthrough
   and resize feel remain user-owned checks. Item 8 preview is next.
+- Win slice delivered as `7dc6aa3`; hosted CI 37150486034 passed Windows,
+  Rust, KWin, shell and macOS before preview implementation.
+
+## Item 8 Preview - Accepted
+
+- Add a separate owned click-through nonactivating filled target-slot surface
+  above windows, default KDE blue at alpha64, on both accepted move producers.
+- Use Engine DragPreview and DragDrop with fresh complete hints and carried
+  exact sticky group-edge prior. Preview must not change canonical topology,
+  focus, native subject geometry or underlay lifetime.
+- Clear on cancel, zero movement, self/centre/outside refusal, identity/domain
+  invalidation, suspension, release and owner teardown. Native resize and float
+  must not show a drop preview. Prove geometry equals final allocation and
+  overlay flags/focus/stacking, plus graceful/forced owner-loss no-residue.
+
+- Delivered a separate owned layered topmost target-slot carrier, KDE blue
+  `#2A82DA` at alpha64 (`#402A82DA`), click-through/no-activate/tool-window.
+  Both producers use fresh Engine preview/hints with opaque sticky prior
+  forwarding into the same final drop resolver. No shared/KDE code changed.
+- Independent review resolved actual stacking proof, unfocused mid-hold
+  nonactivation, prior agreement, and source-domain drift. Lead also moved
+  identity/domain/revision invalidation ahead of stationary-pointer handling.
+  START freezes token/domain/revision; invalidation kills preview eligibility
+  until settle, so a later sample cannot rebind to a different domain.
+- Native preview move classification initially failed on caption-border hit
+  tests, then on visible-vs-outer shadow padding. The accepted correction uses
+  actual same-size visible/outer lanes without imposing geometry. Pure lane
+  tests cover true resize exclusion; no failed native-loop approach was retried.
+- Final source/artifact identity, SHA-256:
+  `47662F580D989690AE989158E84F7CB1FB8B0860F61DC848C458152A2AE8A20A`.
+  Lead reran locked four-package build/test, strict all-target Clippy, rustfmt,
+  whitespace and harness mock successfully after the final production changes.
+
+| Report under `target/windows-mouse-drag/` | Accepted evidence |
+|---|---|
+| `20261004-100315-29800/report.json` | WinAll: native-caption and Win regressions, preview equals final mover allocation with fixed identity mapping, mid-hold source/siblings fixed, above-foreground stacking enforced, click-through/no-activation flags, unfocused preview keeps prior foreground, Esc hides before Up, zero/self/centre/outside no stale surface, Finish clear and exact cleanup. |
+| `20261004-095030-15704/report.json` | Sticky group-edge TOP live journey: prior remains `group-edge:top`, preview tick8/drop tick9 have equal mover rectangles and prior descriptors; screenshots show fill. Optional blend sample FAILED (worst19), excluded as colour/alpha acceptance; owned-DIB premultiplication remains deterministic proof. |
+| `20261004-100219-18616/report.json` | Preview visibly shown during stationary Win hold, frozen owner executable/PID/creation rechecked before exact emergency-stop; owner gone and all project overlays0, hosting Terminal alive, independent restore/ledger/borrowed show+geometry and arranging1/pen35 pass. |
+
+- Synthetic resize engagement could not start a move-size loop after corner/
+  child hit misses and one verified sizing-grab mechanism; stopped the fixture
+  investigation. No claim that product resize is broken. Resize/float/sticky
+  preview exclusions have code and deterministic coverage; physical journeys
+  remain user-owned. No injected Win+G was sent to work around key filtering.
+- Above-foreground z-order is a runtime gate, not merely a TOPMOST-bit claim;
+  reports persist flags/rect/focus but not that gate's boolean. Pixel blending
+  samples are optional and content-sensitive; no exact composed-alpha claim.
+- Final reports include seven borrowed HWNDs, versus six earlier. Additional
+  Notepad HWND `1968346` has uncertain provenance; it was preserved and restored,
+  not closed by guess. Known created Calculator HWNDs were closed. All identified
+  borrowed apps and the hosting Terminal process tree remain alive.
+- Unaccepted native-loop producer and dormant Win harness code were explicitly
+  removed before the title commit; failed resize probes/helpers were removed.
+  No stash or undisclosed discarded work. No Worker is running.
+
+## Final Outcome And Handover
+
+- Item7: title-bar and project-driven Win+left tiled drop delivered in separate
+  accepted units (`1b9bf7b`, `7dc6aa3`); all hosted jobs green on both. Item8:
+  preview accepted with final native/live evidence above, committed separately.
+  Underlay C remains parked; focused movement A/B supports both producers.
+- Provisional choices: title-first sequencing; stationary source/preview-only
+  Win hold; unfocused mover activates only on a valid drop. These are recorded
+  in `docs/decisions.md`, with discriminating rows R-DRAG-03..08. Exact unexecuted
+  reference fixtures and unsupported foreign-WM outcomes remain TBD.
+- User-owned physical checks: stationary Win feel versus title-frame following,
+  click suppression, fast physical Esc, both Win keys/Start suppression,
+  resize/float/sticky no-preview, custom frames, Snap bar/Assist/shake,
+  topmost/mixed-DPI appearance, and the additional Notepad window's disposition.
+- Final independent audit: no project process/overlay, ledger/request or
+  project-hidden-window residue; arranging1, pen35, taskbar present. User app
+  baseline geometry/show-state restored by per-window readbacks.
+- Proposed backlog: "Windows parity (7) mouse move and (8) drop preview delivered
+  same-output, with provisional stationary Win gesture/focus timing; physical
+  checks retained. Underlay C parked. Next (9) multi-output."
+- Exact next implementation action: none for this change. Orchestrator owns
+  backlog advancement, provisional-choice discussion and next item9 assignment.

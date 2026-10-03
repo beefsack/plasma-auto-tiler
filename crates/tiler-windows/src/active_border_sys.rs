@@ -27,6 +27,36 @@ pub const OVERLAY_CLASS: &str = "PlasmaAutoTilerActiveBorder";
 /// Owned group-underlay surface class: distinct from the border class so the
 /// read-only inspect commands and residue audits count each carrier exactly.
 pub const UNDERLAY_CLASS: &str = "PlasmaAutoTilerGroupUnderlay";
+/// Owned drop-preview surface class: distinct from the border and underlay
+/// classes so inspect commands and residue audits count each carrier exactly.
+/// Separate Z-plane above windows (KWin overlay-item analogue); never mixed
+/// with the border/underlay below-target plane.
+pub const PREVIEW_CLASS: &str = "PlasmaAutoTilerDropPreview";
+
+/// Default drop-preview fill (KDE parity): `#2A82DA` at alpha 64, i.e. ARGB
+/// `#402A82DA`. Stored as `(alpha, r, g, b)` like the underlay carrier.
+pub const PREVIEW_DEFAULT_ARGB: (u8, u8, u8, u8) = (0x40, 0x2A, 0x82, 0xDA);
+
+/// Default preview fill split into the `paint_fill_argb` argument shape
+/// (`(rgb, alpha)`).
+#[must_use]
+pub const fn preview_default_fill() -> ((u8, u8, u8), u8) {
+    (
+        (
+            PREVIEW_DEFAULT_ARGB.1,
+            PREVIEW_DEFAULT_ARGB.2,
+            PREVIEW_DEFAULT_ARGB.3,
+        ),
+        PREVIEW_DEFAULT_ARGB.0,
+    )
+}
+
+/// Degenerate preview bounds gate: non-positive or absurd surfaces never
+/// allocate or present; the caller hides instead.
+#[must_use]
+pub const fn preview_bounds_valid(outer: Rect) -> bool {
+    outer.w > 0 && outer.h > 0 && outer.w <= 16384 && outer.h <= 16384
+}
 
 // Stable Win32 broadcast ids (no new dependency): the overlay WndProc only
 // flags on these; the loop thread re-queries and repaints.
@@ -500,6 +530,190 @@ impl UnderlayOverlay {
     }
 }
 
+/// Process-owned drop-preview lifecycle on the shared carrier: one
+/// `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`
+/// popup in its own window class, filled with premultiplied alpha and placed
+/// ABOVE windows (KWin overlay-item analogue, above the active border).
+/// Creation, presentation, hide, and teardown reuse the border/underlay
+/// carrier paths; only the fill colour (default KDE `#402A82DA`) and the
+/// above-target placement differ. Never focuses, never takes geometry
+/// writes, never mixes with the border/underlay below-target plane.
+#[derive(Default)]
+pub struct PreviewOverlay {
+    hwnd: Option<u64>,
+    outer: Option<Rect>,
+    color: Option<(u8, u8, u8, u8)>,
+    anchor_token: Option<String>,
+    anchor_hwnd: Option<u64>,
+    dib_checksum: u64,
+    redraws: u64,
+    moves: u64,
+    failures: u64,
+    last_error: Option<String>,
+}
+
+impl PreviewOverlay {
+    #[must_use]
+    pub fn hwnd(&self) -> Option<u64> {
+        self.hwnd
+    }
+
+    #[must_use]
+    pub fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
+    }
+
+    #[must_use]
+    pub fn is_visible(&self) -> bool {
+        self.outer.is_some()
+    }
+
+    /// Hide the surface (no-op when already hidden). Keeps the window alive
+    /// for the next target; failures count boundedly.
+    pub fn hide(&mut self) {
+        if self.outer.is_none() {
+            return;
+        }
+        self.outer = None;
+        self.anchor_token = None;
+        self.anchor_hwnd = None;
+        if let Some(hwnd) = self.hwnd {
+            hide_window(hwnd);
+        }
+    }
+
+    /// Destroy the surface explicitly (graceful stop). Process exit also
+    /// destroys it implicitly.
+    pub fn destroy(&mut self) {
+        if let Some(hwnd) = self.hwnd.take() {
+            destroy_window(hwnd);
+        }
+        self.outer = None;
+        self.color = None;
+        self.anchor_token = None;
+        self.anchor_hwnd = None;
+    }
+
+    /// Show or move the filled target-slot rectangle above windows.
+    /// `anchor_hwnd` is the gesture mover (identity fence only, never
+    /// repositioned below it: the preview always presents in the topmost
+    /// band so it stays above normal app windows). Degenerate bounds fail
+    /// closed to `Hidden`. Cached equality still probes the actual surface
+    /// (visibility plus rect) and re-presents a hidden or misplaced
+    /// surface. Paint/move failures hide any stale fill and return
+    /// `Hidden` with `last_error`. `color` is `(alpha, r, g, b)`.
+    pub fn show_fill_above(
+        &mut self,
+        outer: Rect,
+        color: (u8, u8, u8, u8),
+        anchor_token: &str,
+        anchor_hwnd: u64,
+    ) -> OverlayOutcome {
+        if !preview_bounds_valid(outer) {
+            self.failures += 1;
+            self.last_error = Some(truncate_error("error: drop-preview bad paint geometry"));
+            self.fail_hide();
+            return OverlayOutcome::Hidden;
+        }
+        if self.outer == Some(outer)
+            && self.color == Some(color)
+            && self.anchor_token.as_deref() == Some(anchor_token)
+            && self.anchor_hwnd == Some(anchor_hwnd)
+        {
+            match self.hwnd {
+                Some(hwnd) if !preview_needs_reassert(hwnd, outer) => {
+                    return OverlayOutcome::Unchanged;
+                }
+                Some(dead) if !is_overlay_window(dead) => {
+                    self.hwnd = None;
+                    self.outer = None;
+                }
+                _ => {}
+            }
+        }
+        let hwnd = match self.hwnd {
+            Some(hwnd) => hwnd,
+            None => match create_overlay_window_in(PREVIEW_CLASS) {
+                Ok(hwnd) => {
+                    self.hwnd = Some(hwnd);
+                    self.last_error = None;
+                    hwnd
+                }
+                Err(e) => {
+                    self.failures += 1;
+                    self.last_error = Some(truncate_error(&e.to_string()));
+                    self.fail_hide();
+                    return OverlayOutcome::Hidden;
+                }
+            },
+        };
+        let first_show = self.outer.is_none();
+        let size_changed = first_show
+            || self.outer.is_none_or(|o| o.w != outer.w || o.h != outer.h)
+            || self.color != Some(color);
+        if size_changed {
+            match paint_and_present_preview_fill(hwnd, outer, (color.1, color.2, color.3), color.0)
+            {
+                Ok(checksum) => {
+                    self.dib_checksum = checksum;
+                    self.redraws += 1;
+                    self.last_error = None;
+                }
+                Err(e) => {
+                    self.failures += 1;
+                    self.last_error = Some(truncate_error(&e.to_string()));
+                    self.fail_hide();
+                    return OverlayOutcome::Hidden;
+                }
+            }
+        } else if let Err(e) = place_preview_above(hwnd, outer) {
+            self.failures += 1;
+            self.last_error = Some(truncate_error(&e.to_string()));
+            self.fail_hide();
+            return OverlayOutcome::Hidden;
+        } else {
+            self.moves += 1;
+        }
+        self.outer = Some(outer);
+        self.color = Some(color);
+        self.anchor_token = Some(anchor_token.to_owned());
+        self.anchor_hwnd = Some(anchor_hwnd);
+        if first_show {
+            OverlayOutcome::Shown
+        } else if size_changed {
+            OverlayOutcome::Redrew
+        } else {
+            OverlayOutcome::Moved
+        }
+    }
+
+    fn fail_hide(&mut self) {
+        self.outer = None;
+        self.anchor_token = None;
+        self.anchor_hwnd = None;
+        if let Some(hwnd) = self.hwnd {
+            hide_window(hwnd);
+        }
+    }
+
+    /// Read-only owned-surface snapshot for proof support: geometry, colour,
+    /// opaque anchor token, and a checksum over our own DIB pixels only.
+    /// No screen capture, no titles, no content, no raw window identifiers.
+    pub fn snapshot(&self) -> serde_json::Value {
+        serde_json::json!({
+            "visible": self.is_visible(),
+            "outer": self.outer.map(|r| [r.x, r.y, r.w, r.h]),
+            "color": self.color.map(|(a, r, g, b)| crate::group_underlay::render_color_argb(((r, g, b), a))),
+            "target": self.anchor_token.clone(),
+            "dib_checksum": format!("{:016x}", self.dib_checksum),
+            "redraws": self.redraws,
+            "moves": self.moves,
+            "failures": self.failures,
+            "last_error": self.last_error.clone(),
+        })
+    }
+}
+
 /// Lowest window in `EnumWindows` top-to-bottom order among `hwnds`: the
 /// renderable anchor the underlay sorts directly beneath. `None` when no
 /// candidate is enumerated (closed, or the order is unreadable).
@@ -659,11 +873,15 @@ static BORDER_CLASS_REGISTERED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 static UNDERLAY_CLASS_REGISTERED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+static PREVIEW_CLASS_REGISTERED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 fn overlay_class_registered(class: &str) -> bool {
     use std::sync::atomic::Ordering;
     if class == UNDERLAY_CLASS {
         UNDERLAY_CLASS_REGISTERED.load(Ordering::SeqCst)
+    } else if class == PREVIEW_CLASS {
+        PREVIEW_CLASS_REGISTERED.load(Ordering::SeqCst)
     } else {
         BORDER_CLASS_REGISTERED.load(Ordering::SeqCst)
     }
@@ -673,6 +891,8 @@ fn mark_overlay_class_registered(class: &str) {
     use std::sync::atomic::Ordering;
     if class == UNDERLAY_CLASS {
         UNDERLAY_CLASS_REGISTERED.store(true, Ordering::SeqCst);
+    } else if class == PREVIEW_CLASS {
+        PREVIEW_CLASS_REGISTERED.store(true, Ordering::SeqCst);
     } else {
         BORDER_CLASS_REGISTERED.store(true, Ordering::SeqCst);
     }
@@ -885,6 +1105,152 @@ fn paint_and_present_fill(
     )
 }
 
+/// Position the drop-preview surface ABOVE windows in the topmost band
+/// (KWin overlay-item analogue). Unlike [`place_overlay`] there is no
+/// below-target step: the filled target slot must stay above normal app
+/// windows while shown. `SWP_NOACTIVATE` keeps it nonactivating; the
+/// `WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` creation
+/// flags keep it click-through and out of Alt+Tab. Callers hide immediately
+/// on cancel/finish/suspend/teardown so the topmost band is never pinned
+/// over unrelated shell UI.
+fn place_preview_above(hwnd_u64: u64, outer: Rect) -> Result<(), DynError> {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        HWND_TOPMOST, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowPos,
+    };
+    let ok = unsafe {
+        SetWindowPos(
+            hwnd_u64 as usize as HWND,
+            HWND_TOPMOST as usize as HWND,
+            outer.x,
+            outer.y,
+            outer.w,
+            outer.h,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        )
+    };
+    if ok == 0 {
+        return Err(err("error: drop-preview position failed"));
+    }
+    Ok(())
+}
+
+/// Paint the premultiplied-alpha drop-preview fill and present it ABOVE
+/// windows on the shared DIB pipeline, then assert the topmost band.
+/// Same checksum contract as the underlay path; only the placement differs.
+fn paint_and_present_preview_fill(
+    hwnd_u64: u64,
+    outer: Rect,
+    color: (u8, u8, u8),
+    alpha: u8,
+) -> Result<u64, DynError> {
+    use windows_sys::Win32::Foundation::{HWND, POINT, SIZE};
+    use windows_sys::Win32::Graphics::Gdi::{
+        AC_SRC_ALPHA, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CreateCompatibleDC,
+        CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, SelectObject,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ULW_ALPHA, UpdateLayeredWindow};
+    if outer.w <= 0 || outer.h <= 0 {
+        return Err(err("error: drop-preview bad paint geometry"));
+    }
+    if outer.w > 16384 || outer.h > 16384 {
+        return Err(err("error: drop-preview surface too large"));
+    }
+    let memdc = unsafe { CreateCompatibleDC(std::ptr::null_mut()) };
+    if memdc.is_null() {
+        return Err(err("error: drop-preview DC failed"));
+    }
+    let mut bmi: BITMAPINFO = unsafe { std::mem::zeroed() };
+    bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+    bmi.bmiHeader.biWidth = outer.w;
+    bmi.bmiHeader.biHeight = -outer.h;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+    let hbmp = unsafe {
+        CreateDIBSection(
+            memdc,
+            &bmi,
+            DIB_RGB_COLORS,
+            &mut bits,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if hbmp.is_null() || bits.is_null() {
+        unsafe {
+            DeleteDC(memdc);
+        }
+        return Err(err("error: drop-preview DIB failed"));
+    }
+    let stride = outer.w as usize * 4;
+    let total = stride * outer.h as usize;
+    let pixels = unsafe { std::slice::from_raw_parts_mut(bits as *mut u8, total) };
+    let checksum = crate::group_underlay::paint_fill_argb(pixels, outer.w, outer.h, color, alpha);
+    let old = unsafe { SelectObject(memdc, hbmp) };
+    let dst = POINT {
+        x: outer.x,
+        y: outer.y,
+    };
+    let size = SIZE {
+        cx: outer.w,
+        cy: outer.h,
+    };
+    let src = POINT { x: 0, y: 0 };
+    let blend = BLENDFUNCTION {
+        BlendOp: 0,
+        BlendFlags: 0,
+        SourceConstantAlpha: 255,
+        AlphaFormat: AC_SRC_ALPHA as u8,
+    };
+    let presented = unsafe {
+        UpdateLayeredWindow(
+            hwnd_u64 as usize as HWND,
+            std::ptr::null_mut(),
+            &dst,
+            &size,
+            memdc,
+            &src,
+            0,
+            &blend,
+            ULW_ALPHA,
+        )
+    };
+    unsafe {
+        SelectObject(memdc, old);
+        DeleteObject(hbmp);
+        DeleteDC(memdc);
+    }
+    if presented == 0 {
+        return Err(err("error: drop-preview present failed"));
+    }
+    place_preview_above(hwnd_u64, outer)?;
+    Ok(checksum)
+}
+
+/// True only when the cached preview needs a same-geometry reassert: the
+/// surface is gone, hidden, or misplaced. Z-order against the mover is not
+/// probed here (the preview presents topmost by construction); a hidden or
+/// misplaced surface re-presents, anything else stays as-is.
+fn preview_needs_reassert(preview_u64: u64, outer: Rect) -> bool {
+    use windows_sys::Win32::Foundation::{HWND, RECT};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowRect, IsWindowVisible};
+    if preview_u64 == 0 || !is_overlay_window(preview_u64) {
+        return true;
+    }
+    if unsafe { IsWindowVisible(preview_u64 as usize as HWND) } == 0 {
+        return true;
+    }
+    let mut actual: RECT = unsafe { std::mem::zeroed() };
+    if unsafe { GetWindowRect(preview_u64 as usize as HWND, &mut actual) } == 0 {
+        return true;
+    }
+    let w = actual.right - actual.left;
+    let h = actual.bottom - actual.top;
+    actual.left != outer.x || actual.top != outer.y || w != outer.w || h != outer.h
+}
+
 /// Shared carrier presentation: allocate one 32bpp top-down DIB, run the
 /// caller painter over the owned bytes (it returns the FNV-1a checksum),
 /// present with `UpdateLayeredWindow` (`ULW_ALPHA`), then anchor below the
@@ -1055,5 +1421,64 @@ mod tests {
         // the underlay (lowest-member anchor) must never accept it.
         assert!(!z_needs_reassert(Some(Above), false));
         assert!(z_needs_reassert(Some(Above), true));
+    }
+
+    #[test]
+    fn preview_default_matches_kde_argb402a82da() {
+        // KDE parity: `#2A82DA` at alpha 64, i.e. ARGB `#402A82DA`.
+        assert_eq!(PREVIEW_DEFAULT_ARGB, (0x40, 0x2A, 0x82, 0xDA));
+        assert_eq!(preview_default_fill(), ((0x2A, 0x82, 0xDA), 0x40));
+        assert_eq!(
+            crate::group_underlay::render_color_argb(((0x2A, 0x82, 0xDA), 0x40)),
+            "#402a82da"
+        );
+        // Distinct carrier class: inspect and residue audits count each
+        // surface exactly; the preview never shares the border/underlay
+        // below-target plane.
+        assert_eq!(PREVIEW_CLASS, "PlasmaAutoTilerDropPreview");
+        assert_ne!(PREVIEW_CLASS, OVERLAY_CLASS);
+        assert_ne!(PREVIEW_CLASS, UNDERLAY_CLASS);
+    }
+
+    #[test]
+    fn preview_fill_raster_is_premultiplied_kde_blue() {
+        // Straight-to-premultiplied with rounding: (c * 0x40 + 127) / 255.
+        // 0x2A*0x40/255 is 0x0B, 0x82*0x40/255 is 0x21, 0xDA*0x40/255 is
+        // 0x37, over BGRA order with the alpha byte itself.
+        let ((r, g, b), alpha) = preview_default_fill();
+        let mut pixels = vec![0u8; 2 * 2 * 4];
+        let checksum = crate::group_underlay::paint_fill_argb(&mut pixels, 2, 2, (r, g, b), alpha);
+        assert_eq!(
+            &pixels[0..4],
+            &[0x37, 0x21, 0x0B, 0x40],
+            "BGRA premultiplied"
+        );
+        assert_eq!(pixels.len(), 16);
+        let mut other = vec![0u8; 2 * 2 * 4];
+        assert_eq!(
+            crate::group_underlay::paint_fill_argb(&mut other, 2, 2, (r, g, b), alpha),
+            checksum
+        );
+    }
+
+    #[test]
+    fn preview_degenerate_bounds_gate() {
+        // Non-positive or absurd surfaces never present: the caller hides.
+        let rect = |x: i32, y: i32, w: i32, h: i32| Rect { x, y, w, h };
+        assert!(preview_bounds_valid(rect(0, 0, 100, 80)));
+        assert!(!preview_bounds_valid(rect(0, 0, 0, 80)));
+        assert!(!preview_bounds_valid(rect(0, 0, 100, 0)));
+        assert!(!preview_bounds_valid(rect(0, 0, -5, 80)));
+        assert!(!preview_bounds_valid(rect(0, 0, 16385, 80)));
+        assert!(!preview_bounds_valid(rect(0, 0, 100, 16385)));
+        // A fresh overlay hides closed on a degenerate show: no surface,
+        // no panic, exactly one counted failure.
+        let mut overlay = PreviewOverlay::default();
+        assert_eq!(
+            overlay.show_fill_above(rect(0, 0, 0, 80), PREVIEW_DEFAULT_ARGB, "w1", 7),
+            OverlayOutcome::Hidden
+        );
+        assert!(!overlay.is_visible());
+        assert!(overlay.hwnd().is_none());
     }
 }

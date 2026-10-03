@@ -552,6 +552,15 @@ the corresponding item ships; each such entry names its replacement.
   existing identity-gated focus authority on a valid drop. Focused gestures feed
   the movement underlay A/B arm; distinct unfocused-subject underlay C remains
   parked. The exact KDE focus-timing comparison remains user-testable.
+- Windows item8 target preview: separate owned filled layered surface above
+  windows, click-through/nonactivating and absent from taskbar/Alt+Tab; KDE blue
+  `#2A82DA` at alpha64. Native title movement and project Win movement share
+  Engine DragPreview/DragDrop with fresh complete size hints and exact carried
+  32px/80px group-edge prior. Source token/domain/revision is frozen at START;
+  cancellation, invalidation, self/centre/outside refusal, Finish and teardown
+  clear the surface. Physical resize/float exclusion journeys remain user checks;
+  deterministic policy/frame gates cover their no-preview rule. Evidence:
+  `changes/archive/windows-mouse-drag.md`.
 
 ### Windows maximise
 
