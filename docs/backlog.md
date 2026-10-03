@@ -184,9 +184,12 @@ decisions of 2026-09-24 are under
   (2026-10-03) supersedes that default: lower-level, lower-jank yabai-style
   route first, optional higher-level AeroSpace-style alternative later;
   default tier 2 (public plus private APIs, SIP enabled, no Dock injection).
-  Next: revise the plan from local sources (yabai, AeroSpace, Amethyst,
-  GlazeWM macOS backend, Rift, komorebi-for-mac) with exact tier-2
-  mechanisms; confirm host/floor/Intel, stable signer and modifier mapping.
+  Plan revised to tier 2 from nine pinned local sources (`df018fb`,
+  `05d1d1f`; [record](changes/archive/macos-tier2-plan.md)). PARKED on
+  Phase 0 user inputs (recommendations in the plan): host model/macOS
+  floor (Apple Silicon, provisional 15+), Intel (arm64 first), stable
+  signer (Developer ID if available), Meta mapping (Cmd). Then Phase 1
+  lifecycle/recovery and hotkey probes on a Mac.
   [setup](macos-dev-environment.md)
   [survey](research/macos-port/prior-art.md)
   [plan](research/macos-port/plan.md)
