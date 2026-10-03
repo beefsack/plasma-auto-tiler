@@ -114,6 +114,14 @@ if ($Action -eq "dev" -or $Action -eq "stop" -or $Action -eq "tile") {
     New-Item -ItemType Directory -Force -Path $DevDir | Out-Null
     Copy-Item (Join-Path $Target "debug\$OwnerName") $payload -Force
     Copy-Item (Join-Path $Target "debug\$HelperName") (Join-Path $DevDir $HelperName) -Force
+    # Launch provenance: source + artifact identity bound immediately after
+    # build, before the owner starts. The launch commit is the build source,
+    # never a claim about an embedded binary identity.
+    $provCommit = (& git -C $Repo rev-parse HEAD | Out-String).Trim()
+    $provDirtyRaw = (& git -C $Repo status --short | Out-String).Trim()
+    $provDirty = ($provDirtyRaw.Length -gt 0)
+    $provOwnerHash = (Get-FileHash $payload -Algorithm SHA256).Hash
+    $provHelperHash = (Get-FileHash (Join-Path $DevDir $HelperName) -Algorithm SHA256).Hash
     if ($Action -eq "tile") {
       # Normal user tiling only (explicit user dogfood): requires
       # `--user-start` in TileArgs and refuses any `--allowlist`. Proof uses
@@ -134,8 +142,35 @@ if ($Action -eq "dev" -or $Action -eq "stop" -or $Action -eq "tile") {
     }
     Start-ExplorerGui $payload $runArgs $DevDir
     $ready = Assert-OwnerReady $payload $tag
+    # Launch provenance: build source commit plus dirty state and artifact
+    # hashes, bound to the ready owner/log identity. Source identity only
+    # (never a claim about an embedded binary identity); a dirty tree is
+    # allowed developer debugging state, recorded not refused. Sidecar-only
+    # plus stdout: the owner log stays single-writer.
+    $provenance = @{
+      commit        = $provCommit
+      dirty         = $provDirty
+      dirty_detail  = $provDirtyRaw
+      owner_sha256  = $provOwnerHash
+      helper_sha256 = $provHelperHash
+      argv          = $runArgs
+      payload_path  = $payload
+      log_path      = "$($ready.log_path)"
+      owner         = $ready.owner
+    }
+    $provSidecar = "$($ready.log_path).provenance.json"
+    try {
+      $provParent = Split-Path -Parent $provSidecar
+      if (-not (Test-Path -LiteralPath $provParent)) { throw "missing provenance parent: $provParent" }
+      $provenance | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $provSidecar -Encoding utf8NoBOM
+    } catch {
+      $null = Stop-PayloadOwner $payload
+      throw
+    }
     Write-Output "log_path=$($ready.log_path)"
     Write-Output "owner=$($ready.owner | ConvertTo-Json -Compress)"
+    Write-Output "provenance=$($provenance | ConvertTo-Json -Compress -Depth 8)"
+    Write-Output "provenance_path=$provSidecar"
     Write-Output "ready=true"
   } else {
     if (-not (Test-Path $payload)) { Fail "no dev payload $payload" }

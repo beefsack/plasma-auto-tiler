@@ -1,5 +1,45 @@
 # Windows gaming coexistence
 
+## Active follow-up: attributable live containment (2026-10-03)
+
+- Scope now: backlog P0 part (a), authentic owned-shortcut containment on the
+  normal desktop. KDE bindings remain mandatory. Placement defects D1/D2/D4/D5,
+  Xbox detection and alternate Game Bar access are separate work.
+- Physical dogfood T2/T3 still leaked Win+F11/Win+G after the earlier delivery;
+  inclusion of `5746fca` in that payload is undetermined. T3 logged 36 consumed
+  and zero passed classified events, without correlation to the leaking taps.
+- Current source `4b3096a` includes both earlier fixes. Product hooks ignore all
+  injected input; use the existing fixed-marker `shortcut-proof` path for
+  automated classifier-equivalent evidence, never claim physical acceptance.
+- Units: (1) source/artifact provenance and trace-only bounded callback decision
+  and timing diagnostics; (2) normal-desktop owner-ready single F11 then G taps,
+  observing OS surfaces, stopping/recovering on first leak; (3) evidence-directed
+  supported fix or install-order comparison; (4) independent review, native/CI
+  gates and handover. Extend conflict coverage only after the gaming taps pass.
+- Live authority: standing autonomous brief permits hooks, injection and owned
+  windows on this physical host. Preserve the hosting Terminal process tree.
+  End every run with no project process/overlay/ledger/hidden test window,
+  SPI 0x0082=1 and 0x201E=35, and close only disposable apps opened for this work.
+- Stop for undocumented mechanisms, registry/policy writes or architecture
+  changes. Keep this record active until containment acceptance is established.
+- Diagnostic/provenance unit accepted: `windows-dev.ps1` records source HEAD,
+  dirty state, copied-payload SHA256, argv and exact ready identity in
+  `<owner-log>.provenance.json` plus stdout. This is launch attribution, not an
+  embedded commit claim. The owner log stays single-writer; sidecar-write failure
+  requests verified stop/restore.
+- Trace-only `snap-callback` reports bounded closed-catalog decisions, modifier
+  state, source, local classification timing, mask-send count/max latency and
+  saturating loss/privacy-filter counts. Collection is disabled without trace.
+  No ordinary typed letters, app content or native window identifiers enter it.
+  Armed state is captured before classification so early-Win-up chord releases
+  remain diagnosable. Downstream-hook latency and time waiting for the owner to
+  pump messages remain outside this metric.
+- Independent review found diagnostic edge/privacy-overhead and concurrent-log
+  writer/recovery gaps. One correction resolved them before acceptance. Lead
+  inspected the final diff and ran locked four-package native tests, strict
+  all-target clippy, full rustfmt and diff checks; the explicit locked build also
+  passed. Snapkey: 58 tests. No shortcut behavior changed in this unit.
+
 ## Goal and scope
 
 - Enforce the existing authentic Windows shortcut catalog without OS leakage,

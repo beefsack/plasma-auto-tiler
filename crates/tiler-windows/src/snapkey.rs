@@ -1997,11 +1997,205 @@ pub fn mod_diag_evidence(diag: &ModTrafficDiag) -> serde_json::Value {
     })
 }
 
+/// Where one callback event came from, for the trace-only callback summary.
+/// `Physical` is a non-injected event; `ProofMarked` is an injected event
+/// carrying exactly [`SHORTCUT_PROOF_MARKER`] (only possible in
+/// `shortcut-proof`); `InjectedFiltered` passed through untouched by the
+/// product injection filter (including the untagged own E8 reentry).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallbackSource {
+    Physical,
+    ProofMarked,
+    InjectedFiltered,
+}
+
+impl CallbackSource {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Physical => "physical",
+            Self::ProofMarked => "proof-marked",
+            Self::InjectedFiltered => "injected-filtered",
+        }
+    }
+}
+
+/// Why the callback produced its verdict, for the trace-only summary.
+/// `ModifierGuard` is the preheld Ctrl/Alt pass-through; `WinUpPass` is a
+/// Win-up (always passes, mask handled separately); `Unclassified` never
+/// touched the queue (extra modifiers, Win+L gate, non-catalog, or gate-off
+/// fresh chords); `Consumed`/`Passed` mirror `classify_and_queue`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallbackReason {
+    InjectedFiltered,
+    ModifierGuard,
+    Unclassified,
+    Consumed,
+    Passed,
+    WinUpPass,
+}
+
+impl CallbackReason {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InjectedFiltered => "injected-filtered",
+            Self::ModifierGuard => "modifier-guard",
+            Self::Unclassified => "unclassified",
+            Self::Consumed => "consumed",
+            Self::Passed => "passed",
+            Self::WinUpPass => "win-up-pass",
+        }
+    }
+}
+
+/// Trace-only callback summary for one hook event. `vk`/`scan` are recorded
+/// ONLY for the closed vocabulary below (never typed content, HWNDs, PIDs,
+/// tokens, or titles): Win keys, the Shift/Ctrl/Alt families, the unassigned
+/// E8 mask, and catalog chord keys with Win held/armed or proof-marked.
+/// `duration_us` is the local callback elapsed before passing onward
+/// (classification/reserve only, excluding any mask `SendInput` plus the
+/// downstream hook chain, whose latency is not ours: mask send latency is
+/// reported separately via the hook mask-send aggregate, and time spent in
+/// hooks below ours is never observable here).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CallbackDiag {
+    pub vk: u32,
+    pub scan: u32,
+    pub is_up: bool,
+    pub source: CallbackSource,
+    pub reason: CallbackReason,
+    pub win_before: bool,
+    pub win_after: bool,
+    pub shift: bool,
+    pub ctrl: bool,
+    pub alt: bool,
+    /// The preheld Ctrl/Alt guard fired for this fresh chord down.
+    pub guard_disagree: bool,
+    /// A catalog chord observed without tracked Win (preheld Win before
+    /// install, or a bare repeat after Win-up on an armed hold).
+    pub win_untracked: bool,
+    /// `classify_and_queue` returned `Some(true)`.
+    pub consumed: bool,
+    /// Local callback microseconds before passing onward.
+    pub duration_us: u32,
+}
+
+/// Bound on trace-only callback summaries per hook lifetime.
+pub const CALLBACK_DIAG_CAP: usize = 128;
+
+/// Bounded FIFO for trace-only callback summaries. Past capacity the oldest
+/// record is evicted and the loss is counted; privacy-denied chord candidates
+/// bump `filtered` without recording any key identity. The owner drains this
+/// trace-only (never production logs without `--trace`).
+#[derive(Debug, Default)]
+pub struct CallbackDiagBuf {
+    inner: std::collections::VecDeque<CallbackDiag>,
+    pub dropped: u32,
+    pub filtered: u32,
+}
+
+impl CallbackDiagBuf {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: std::collections::VecDeque::with_capacity(CALLBACK_DIAG_CAP),
+            dropped: 0,
+            filtered: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    pub fn push(&mut self, diag: CallbackDiag) {
+        if self.inner.len() >= CALLBACK_DIAG_CAP {
+            self.inner.pop_front();
+            self.dropped = self.dropped.saturating_add(1);
+        }
+        self.inner.push_back(diag);
+    }
+
+    /// Privacy skip: a chord candidate denied by [`callback_diag_allows`]
+    /// (catalog key without Win/armed/marked). No key identity is recorded.
+    pub fn note_filtered(&mut self) {
+        self.filtered = self.filtered.saturating_add(1);
+    }
+
+    pub fn drain(&mut self) -> Vec<CallbackDiag> {
+        self.inner.drain(..).collect()
+    }
+}
+
+/// True for VKs the trace-only callback buffer may ever record: Win keys plus
+/// the Shift/Ctrl/Alt families (closed modifier vocabulary, no content), the
+/// unassigned E8 mask, and catalog chord keys. Ordinary keys are never
+/// candidates: they skip the buffer entirely without a borrow.
+#[must_use]
+pub fn is_callback_diag_candidate(vk: u32) -> bool {
+    is_proof_mod_vk(vk) || vk == VK_MASK || is_chord_vk(vk)
+}
+
+/// Privacy gate for a candidate VK: modifiers/Win/E8 are always safe closed
+/// vocabulary; catalog chord keys only with Win held, an armed hold
+/// (repeat/up riding the down verdict), or a proof-marked chord. Typed
+/// letters without Win are never recorded: letter catalog keys without any
+/// of these conditions return false, and ordinary keys never reach here.
+#[must_use]
+pub fn callback_diag_allows(vk: u32, win_before: bool, key_armed: bool, marked: bool) -> bool {
+    if is_proof_mod_vk(vk) || vk == VK_MASK {
+        return true;
+    }
+    if is_chord_vk(vk) {
+        return marked || win_before || key_armed;
+    }
+    false
+}
+
+/// A catalog chord observed without tracked Win is relevant on either path
+/// (preheld Win before install, or a bare repeat after Win-up on an armed
+/// hold): proof-marking never supplies the missing Win edge.
+#[must_use]
+pub fn callback_win_untracked(vk: u32, win_before: bool) -> bool {
+    is_chord_vk(vk) && !win_before
+}
+
+/// Owner-log evidence for one trace-only callback summary. Closed key
+/// vocabulary plus tracked state and local timing only: no HWNDs, PIDs,
+/// tokens, titles, or any native identity.
+#[must_use]
+pub fn callback_diag_evidence(diag: &CallbackDiag) -> serde_json::Value {
+    serde_json::json!({
+        "vk": diag.vk,
+        "scan": diag.scan,
+        "edge": if diag.is_up { "up" } else { "down" },
+        "source": diag.source.as_str(),
+        "reason": diag.reason.as_str(),
+        "win_before": diag.win_before,
+        "win_after": diag.win_after,
+        "shift": diag.shift,
+        "ctrl": diag.ctrl,
+        "alt": diag.alt,
+        "guard_disagree": diag.guard_disagree,
+        "win_untracked": diag.win_untracked,
+        "consumed": diag.consumed,
+        "duration_us": diag.duration_us,
+    })
+}
+
 #[cfg(windows)]
 pub mod sys {
     use super::{
-        KeyboardConfig, MarkedDiagBuf, MarkedKeyDiag, ModDiagBuf, QueuedMask, QueuedSnapEvent,
-        SnapClassify, SnapOrigin, SnapQueue,
+        CallbackDiag, CallbackDiagBuf, CallbackReason, CallbackSource, KeyboardConfig,
+        MarkedDiagBuf, MarkedKeyDiag, ModDiagBuf, QueuedMask, QueuedSnapEvent, SnapClassify,
+        SnapOrigin, SnapQueue,
     };
     use std::cell::RefCell;
     use std::collections::HashMap;
@@ -2035,6 +2229,23 @@ pub mod sys {
         /// on the product path. Complements `diag` so live runs see the
         /// actual callback modifier sequence, not just accepted synthetic.
         mod_diag: ModDiagBuf,
+        /// Trace-only callback summary for product and proof paths (closed
+        /// vocabulary only, see [`super::CallbackDiag`]). Drained trace-only
+        /// by the owner; never a synchronous log here.
+        cb_diag: CallbackDiagBuf,
+        /// Trace-only collection switch for `cb_diag` plus the mask-send
+        /// aggregate below. False until the owner enables it right after
+        /// install from `--trace`: with no trace the hook skips the timing
+        /// read and all callback filter/push work, so a default run pays
+        /// one cheap flag read per event. Proof `diag`/`mod_diag` are
+        /// unaffected (proof-only audit path, always collected).
+        cb_diag_enabled: bool,
+        /// Trace-only mask-send aggregate: saturating count of `SendInput`
+        /// mask pairs plus the max observed send microseconds. Timed with no
+        /// SNAP borrow held, outside `duration_us`; drained trace-only by
+        /// the owner alongside `cb_diag`.
+        mask_sends: u32,
+        mask_send_max_us: u32,
     }
 
     thread_local! {
@@ -2104,6 +2315,17 @@ pub mod sys {
             let vk = kb.vkCode;
             let scan = kb.scanCode;
             let flags = kb.flags;
+            // Trace-only collection switch: one cheap flag read per event.
+            // With no trace the hook skips the timing read and all callback
+            // filter/push work below (proof `diag`/`mod_diag` are separate
+            // and unaffected).
+            let diag_on = SNAP.with(|s| s.borrow().as_ref().is_some_and(|st| st.cb_diag_enabled));
+            // Local callback start: `duration_us` below covers our own
+            // classification/reserve work before passing onward, never the
+            // downstream hook chain (nor any mask `SendInput`, which runs
+            // with no borrow held after the reserve and is timed
+            // separately in the mask-send aggregate).
+            let started: Option<Instant> = diag_on.then(Instant::now);
             let injected = flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED) != 0;
             // Own-injection guard BEFORE any SNAP borrow: the SendInput pair
             // below reenters this callback on the same thread, and
@@ -2120,11 +2342,57 @@ pub mod sys {
                         .is_some_and(|st| super::accept_proof_injected(extra, st.proof_marker))
                 });
                 if !accepted {
+                    // Trace-only: record marker-rejected injected traffic for
+                    // the closed vocabulary (modifiers/Win, E8, catalog
+                    // chords with Win/armed), bounded with no state change,
+                    // so live runs can tell hook-chain/OS echoes (including
+                    // the untagged own E8 reentry) apart from classifier
+                    // state. Ordinary keys skip without a borrow and leave no
+                    // record. The borrow ends before `CallNextHookEx` below.
+                    // Skipped entirely unless trace collection is enabled.
+                    if diag_on && super::is_callback_diag_candidate(vk) {
+                        SNAP.with(|s| {
+                            let mut borrow = s.borrow_mut();
+                            let Some(st) = borrow.as_mut() else {
+                                return;
+                            };
+                            if !st.cb_diag_enabled {
+                                return;
+                            };
+                            let win_before = st.machine.win_held();
+                            let armed = st.machine.key_is_down(vk);
+                            if !super::callback_diag_allows(vk, win_before, armed, false) {
+                                st.cb_diag.note_filtered();
+                                return;
+                            }
+                            let (ctrl, alt, shift) = st.machine.tracked_modifiers();
+                            let elapsed = started
+                                .as_ref()
+                                .map(|t| t.elapsed().as_micros().min(u128::from(u32::MAX)) as u32)
+                                .unwrap_or(0);
+                            st.cb_diag.push(CallbackDiag {
+                                vk,
+                                scan,
+                                is_up: flags & LLKHF_UP != 0,
+                                source: CallbackSource::InjectedFiltered,
+                                reason: CallbackReason::InjectedFiltered,
+                                win_before,
+                                win_after: win_before,
+                                shift,
+                                ctrl,
+                                alt,
+                                guard_disagree: false,
+                                win_untracked: super::callback_win_untracked(vk, win_before),
+                                consumed: false,
+                                duration_us: elapsed,
+                            });
+                        });
+                    }
                     // Proof-only: record marker-rejected injected MODIFIER
                     // traffic (modifiers only, bounded, no state change) so
                     // live runs can tell hook-chain/OS echoes apart from
                     // classifier state. The product path (no marker) records
-                    // nothing and still passes through untouched.
+                    // nothing there and still passes through untouched.
                     if super::is_proof_mod_vk(vk) {
                         SNAP.with(|s| {
                             let mut borrow = s.borrow_mut();
@@ -2155,7 +2423,9 @@ pub mod sys {
             }
             // Reaching here with `injected` true means the fixed proof marker
             // was accepted above, which is only possible in shortcut-proof:
-            // this is the sole condition that records a diagnostic.
+            // this is the sole condition that records a proof diagnostic.
+            // The trace-only callback summary below records closed-vocabulary
+            // events on both paths.
             let marked = injected;
             let is_up = flags & LLKHF_UP != 0;
             if is_up && super::is_win_vk(vk) {
@@ -2180,13 +2450,20 @@ pub mod sys {
                         });
                     }
                     let installed = st.machine.enabled;
+                    // Trace-only Win-up summary (closed Win vocabulary, always
+                    // safe): Win-ups always pass; the mask reserve runs in
+                    // the same borrow, and the borrow ends before any
+                    // `SendInput`/`CallNextHookEx`. Duration excludes the mask
+                    // send (timed separately in the mask-send aggregate) plus
+                    // the downstream chain.
+                    let cb_win_before = st.machine.win_held();
                     // Proof-only: a non-injected Win-up classifies as physical
                     // below (via the reserve) while recording nothing
                     // elsewhere; capture its before/after here so the actual
                     // callback Win sequence stays complete. Marked Win-ups
                     // stay exclusively in the marked buffer above.
                     let win_before = if !marked && st.proof_marker.is_some() {
-                        Some(st.machine.win_held())
+                        Some(cb_win_before)
                     } else {
                         None
                     };
@@ -2197,6 +2474,35 @@ pub mod sys {
                         installed,
                         tick,
                     ));
+                    {
+                        if st.cb_diag_enabled {
+                            let (ctrl, alt, shift) = st.machine.tracked_modifiers();
+                            let elapsed = started
+                                .as_ref()
+                                .map(|t| t.elapsed().as_micros().min(u128::from(u32::MAX)) as u32)
+                                .unwrap_or(0);
+                            st.cb_diag.push(CallbackDiag {
+                                vk,
+                                scan,
+                                is_up: true,
+                                source: if marked {
+                                    CallbackSource::ProofMarked
+                                } else {
+                                    CallbackSource::Physical
+                                },
+                                reason: CallbackReason::WinUpPass,
+                                win_before: cb_win_before,
+                                win_after: st.machine.win_held(),
+                                shift,
+                                ctrl,
+                                alt,
+                                guard_disagree: false,
+                                win_untracked: false,
+                                consumed: false,
+                                duration_us: elapsed,
+                            });
+                        }
+                    }
                     if let Some(before) = win_before {
                         let (ctrl, alt, shift) = st.machine.tracked_modifiers();
                         st.mod_diag.push(super::ModTrafficDiag {
@@ -2215,7 +2521,20 @@ pub mod sys {
                     fire
                 });
                 if fire == Some(true) {
+                    // Mask `SendInput` runs with no borrow held; time it as
+                    // separate trace evidence (trace-only, bounded
+                    // aggregate), never inside `duration_us`.
+                    let send_started: Option<Instant> = diag_on.then(Instant::now);
                     let sent = send_mask_pair();
+                    if let Some(t0) = send_started.as_ref() {
+                        let send_us = t0.elapsed().as_micros().min(u128::from(u32::MAX)) as u32;
+                        SNAP.with(|s| {
+                            if let Some(st) = s.borrow_mut().as_mut() {
+                                st.mask_sends = st.mask_sends.saturating_add(1);
+                                st.mask_send_max_us = st.mask_send_max_us.max(send_us);
+                            }
+                        });
+                    }
                     SNAP.with(|s| {
                         if let Some(st) = s.borrow_mut().as_mut() {
                             super::stamp_mask_result(
@@ -2275,11 +2594,54 @@ pub mod sys {
                         });
                     }
                     if guard_disagree {
+                        // Trace-only preheld-guard evidence (chord VKs are
+                        // candidates; the privacy gate still applies so a
+                        // guard without Win/armed/marked counts filtered).
+                        // Skipped unless trace collection is enabled.
+                        if st.cb_diag_enabled {
+                            let win_g = st.machine.win_held();
+                            let armed_g = st.machine.key_is_down(vk);
+                            if super::callback_diag_allows(vk, win_g, armed_g, marked) {
+                                let elapsed = started
+                                    .as_ref()
+                                    .map(|t| {
+                                        t.elapsed().as_micros().min(u128::from(u32::MAX)) as u32
+                                    })
+                                    .unwrap_or(0);
+                                st.cb_diag.push(CallbackDiag {
+                                    vk,
+                                    scan,
+                                    is_up: false,
+                                    source: if marked {
+                                        CallbackSource::ProofMarked
+                                    } else {
+                                        CallbackSource::Physical
+                                    },
+                                    reason: CallbackReason::ModifierGuard,
+                                    win_before: win_g,
+                                    win_after: win_g,
+                                    shift,
+                                    ctrl,
+                                    alt,
+                                    guard_disagree: true,
+                                    win_untracked: super::callback_win_untracked(vk, win_g),
+                                    consumed: false,
+                                    duration_us: elapsed,
+                                });
+                            } else {
+                                st.cb_diag.note_filtered();
+                            }
+                        }
                         return None;
                     }
                 }
                 let (ctrl_b, alt_b, shift_b) = st.machine.tracked_modifiers();
                 let win_b = st.machine.win_held();
+                // Armed-hold bit BEFORE `classify_and_queue` below: the
+                // classifier clears the hold on chord-up, so reading after
+                // would lose a physical chord-up riding an armed hold whose
+                // Win-up already ran (diagnostic must still record it).
+                let armed_before = st.machine.key_is_down(vk);
                 // Shortcut-handling gate (no syscalls beyond the single
                 // foreground read inside `callback_origin`): fresh downs
                 // consume iff enabled with the gate active; consumed-hold
@@ -2350,6 +2712,54 @@ pub mod sys {
                         ctrl: ctrl_b,
                         alt: alt_b,
                     });
+                }
+                // Trace-only callback summary for the closed vocabulary
+                // (product and proof paths). Ordinary keys skip without a
+                // record; chord keys without Win/armed/marked count
+                // filtered (Win-not-tracked ambiguity volume without
+                // content). Same borrow, ends before `CallNextHookEx`.
+                // Skipped entirely unless trace collection is enabled.
+                // `guard_disagree` is always false here (the guard returns
+                // early above), so the reason mirrors `classify_and_queue`
+                // only. `armed_before`/`win_b` are pre-classification so a
+                // chord-up after an early Win-up stays diagnostic.
+                if diag_on && st.cb_diag_enabled && super::is_callback_diag_candidate(vk) {
+                    if !super::callback_diag_allows(vk, win_b, armed_before, marked) {
+                        st.cb_diag.note_filtered();
+                    } else {
+                        let (_, _, shift_a) = st.machine.tracked_modifiers();
+                        let reason = if out.is_none() {
+                            CallbackReason::Unclassified
+                        } else if out == Some(true) {
+                            CallbackReason::Consumed
+                        } else {
+                            CallbackReason::Passed
+                        };
+                        let elapsed = started
+                            .as_ref()
+                            .map(|t| t.elapsed().as_micros().min(u128::from(u32::MAX)) as u32)
+                            .unwrap_or(0);
+                        st.cb_diag.push(CallbackDiag {
+                            vk,
+                            scan,
+                            is_up,
+                            source: if marked {
+                                CallbackSource::ProofMarked
+                            } else {
+                                CallbackSource::Physical
+                            },
+                            reason,
+                            win_before: win_b,
+                            win_after: st.machine.win_held(),
+                            shift: shift_a,
+                            ctrl: ctrl_b,
+                            alt: alt_b,
+                            guard_disagree: false,
+                            win_untracked: super::callback_win_untracked(vk, win_b),
+                            consumed: out == Some(true),
+                            duration_us: elapsed,
+                        });
+                    }
                 }
                 out
             });
@@ -2456,6 +2866,10 @@ pub mod sys {
                 proof_marker: None,
                 diag: MarkedDiagBuf::new(),
                 mod_diag: ModDiagBuf::new(),
+                cb_diag: CallbackDiagBuf::new(),
+                cb_diag_enabled: false,
+                mask_sends: 0,
+                mask_send_max_us: 0,
             });
         });
         let hmod = unsafe { GetModuleHandleW(std::ptr::null()) };
@@ -2482,6 +2896,10 @@ pub mod sys {
                 proof_marker: Some(super::SHORTCUT_PROOF_MARKER),
                 diag: MarkedDiagBuf::new(),
                 mod_diag: ModDiagBuf::new(),
+                cb_diag: CallbackDiagBuf::new(),
+                cb_diag_enabled: false,
+                mask_sends: 0,
+                mask_send_max_us: 0,
             });
         });
         let hmod = unsafe { GetModuleHandleW(std::ptr::null()) };
@@ -2528,6 +2946,65 @@ pub mod sys {
                 .as_ref()
                 .map(|st| st.mod_diag.dropped)
                 .unwrap_or(0)
+        })
+    }
+
+    /// Owner drain: take all pending trace-only callback summaries, oldest
+    /// first. Bounded at [`super::CALLBACK_DIAG_CAP`]; the owner logs these
+    /// trace-only.
+    pub fn drain_callback_diag() -> Vec<super::CallbackDiag> {
+        SNAP.with(|s| {
+            s.borrow_mut()
+                .as_mut()
+                .map(|st| st.cb_diag.drain())
+                .unwrap_or_default()
+        })
+    }
+
+    /// Cumulative callback-summary evictions.
+    pub fn callback_diag_dropped() -> u32 {
+        SNAP.with(|s| {
+            s.borrow()
+                .as_ref()
+                .map(|st| st.cb_diag.dropped)
+                .unwrap_or(0)
+        })
+    }
+
+    /// Cumulative privacy-denied chord candidates (never recorded).
+    pub fn callback_diag_filtered() -> u32 {
+        SNAP.with(|s| {
+            s.borrow()
+                .as_ref()
+                .map(|st| st.cb_diag.filtered)
+                .unwrap_or(0)
+        })
+    }
+
+    /// Owner switch for trace-only callback collection (`cb_diag` plus the
+    /// mask-send aggregate). Applied immediately after install from the
+    /// owner's `--trace` flag; the hook collects nothing until enabled.
+    /// Proof `diag`/`mod_diag` are unaffected. Narrow setter (not an
+    /// install signature change) so the portable product surface is
+    /// untouched.
+    pub fn set_callback_diag_enabled(enabled: bool) {
+        SNAP.with(|s| {
+            if let Some(st) = s.borrow_mut().as_mut() {
+                st.cb_diag_enabled = enabled;
+            }
+        });
+    }
+
+    /// Trace-only mask-send aggregate: `(sends, max_send_us)`. Sends counts
+    /// `SendInput` mask pairs (saturating); `max_send_us` is the max observed
+    /// send microseconds with no borrow held. Zero unless trace collection
+    /// is enabled.
+    pub fn mask_send_stats() -> (u32, u32) {
+        SNAP.with(|s| {
+            s.borrow()
+                .as_ref()
+                .map(|st| (st.mask_sends, st.mask_send_max_us))
+                .unwrap_or((0, 0))
         })
     }
 

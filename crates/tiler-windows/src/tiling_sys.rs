@@ -947,6 +947,13 @@ struct TileLoop {
     keyboard: KeyboardConfig,
     /// Last published snap-queue loss count, for explicit drop evidence.
     snap_dropped: u32,
+    /// Last published callback-summary loss counts, for explicit drop/filter
+    /// evidence on the trace-only `snap-callback` drain.
+    cb_diag_dropped: u32,
+    cb_diag_filtered: u32,
+    /// Last published trace-only mask-send aggregate (`sends`, `max_us`).
+    mask_sends: u32,
+    mask_send_max_us: u32,
     /// Chord-time origin snapshots for the keyboard callback, refreshed with
     /// every complete observation alongside `managed`.
     snap_origins: HashMap<u64, SnapOrigin>,
@@ -10660,6 +10667,10 @@ fn run_tile_loop(
         audit_path: audit_path.clone(),
         keyboard,
         snap_dropped: 0,
+        cb_diag_dropped: 0,
+        cb_diag_filtered: 0,
+        mask_sends: 0,
+        mask_send_max_us: 0,
         snap_origins: HashMap::new(),
         snap_advance: None,
         last_enumerated: 0,
@@ -10905,6 +10916,10 @@ fn run_tile_loop(
                 match installed {
                     Ok(hook) => {
                         snap_hook = Some(hook);
+                        // Trace-only collection starts here: the hook records
+                        // nothing until this setter runs, so default runs pay
+                        // no timing/filter/push work in the callback.
+                        crate::snapkey::sys::set_callback_diag_enabled(state.trace);
                         snap_failures = 0;
                         snap_retry_at = None;
                         log_json_at(&log_path, serde_json::json!({"event":"snap-available"}));
@@ -11010,6 +11025,47 @@ fn run_tile_loop(
                             "event": "proof-mods",
                             "entries": entries,
                             "dropped": crate::snapkey::sys::mod_diag_dropped(),
+                        }),
+                    );
+                }
+            }
+            // Trace-only callback summary for product and proof paths: closed
+            // vocabulary plus verdict/source/state/local-timing only (no
+            // HWNDs, PIDs, tokens, titles). One bounded line per tick at
+            // most; losses stay visible via dropped/filtered even when the
+            // batch is empty. Mask `SendInput` latency rides the separate
+            // `mask_sends`/`mask_send_max_us` aggregate (never inside
+            // `duration_us`, never the downstream hook chain).
+            if state.trace && snap_hook.is_some() {
+                let diags = crate::snapkey::sys::drain_callback_diag();
+                let dropped = crate::snapkey::sys::callback_diag_dropped();
+                let filtered = crate::snapkey::sys::callback_diag_filtered();
+                let (mask_sends, mask_send_max_us) = crate::snapkey::sys::mask_send_stats();
+                if !diags.is_empty()
+                    || dropped != state.cb_diag_dropped
+                    || filtered != state.cb_diag_filtered
+                    || mask_sends != state.mask_sends
+                    || mask_send_max_us != state.mask_send_max_us
+                {
+                    state.cb_diag_dropped = dropped;
+                    state.cb_diag_filtered = filtered;
+                    state.mask_sends = mask_sends;
+                    state.mask_send_max_us = mask_send_max_us;
+                    let max_duration_us = diags.iter().map(|d| d.duration_us).max().unwrap_or(0);
+                    let entries: Vec<serde_json::Value> = diags
+                        .iter()
+                        .map(crate::snapkey::callback_diag_evidence)
+                        .collect();
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "snap-callback",
+                            "entries": entries,
+                            "dropped": dropped,
+                            "filtered": filtered,
+                            "max_duration_us": max_duration_us,
+                            "mask_sends": mask_sends,
+                            "mask_send_max_us": mask_send_max_us,
                         }),
                     );
                 }

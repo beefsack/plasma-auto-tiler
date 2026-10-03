@@ -2513,3 +2513,104 @@ fn bare_repeat_after_win_up_never_rearms_mask() {
     );
     assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
 }
+
+#[test]
+fn callback_diag_privacy_never_records_typed_letters_without_win() {
+    use tiler_windows::snapkey::{
+        CALLBACK_DIAG_CAP, CallbackDiag, CallbackDiagBuf, CallbackReason, CallbackSource, VK_MASK,
+        callback_diag_allows, is_callback_diag_candidate,
+    };
+    // Ordinary typing keys are never candidates: no borrow, no record.
+    assert!(!is_callback_diag_candidate(0x41));
+    assert!(!is_callback_diag_candidate(0x42));
+    assert!(!callback_diag_allows(0x41, false, false, false));
+    // Letter catalog keys without Win/armed/marked are denied (typed-letter
+    // risk); non-letter candidates stay gated the same way.
+    assert!(is_callback_diag_candidate(VK_H));
+    assert!(!callback_diag_allows(VK_H, false, false, false));
+    assert!(callback_diag_allows(VK_H, true, false, false));
+    assert!(callback_diag_allows(VK_H, false, true, false));
+    assert!(callback_diag_allows(VK_H, false, false, true));
+    // Modifiers/Win/E8 are always safe closed vocabulary.
+    assert!(callback_diag_allows(VK_SHIFT, false, false, false));
+    assert!(callback_diag_allows(VK_LWIN, false, false, false));
+    assert!(callback_diag_allows(VK_MASK, false, false, false));
+    // Evidence carries closed key vocabulary plus state/timing only: no
+    // HWNDs, PIDs, tokens, or titles.
+    let diag = CallbackDiag {
+        vk: VK_H,
+        scan: 35,
+        is_up: false,
+        source: CallbackSource::Physical,
+        reason: CallbackReason::Consumed,
+        win_before: true,
+        win_after: true,
+        shift: false,
+        ctrl: false,
+        alt: false,
+        guard_disagree: false,
+        win_untracked: false,
+        consumed: true,
+        duration_us: 12,
+    };
+    let ev = tiler_windows::snapkey::callback_diag_evidence(&diag);
+    assert_eq!(ev["vk"], serde_json::json!(VK_H));
+    assert_eq!(ev["reason"], serde_json::json!("consumed"));
+    assert_eq!(ev["duration_us"], serde_json::json!(12));
+    assert!(ev.get("hwnd").is_none());
+    assert!(ev.get("pid").is_none());
+    assert!(ev.get("token").is_none());
+    assert!(ev.get("title").is_none());
+    // Bounded eviction counts loss; privacy skips count filtered.
+    let mut buf = CallbackDiagBuf::new();
+    for _ in 0..CALLBACK_DIAG_CAP + 3 {
+        buf.push(diag);
+    }
+    assert_eq!(buf.len(), CALLBACK_DIAG_CAP);
+    assert_eq!(buf.dropped, 3);
+    buf.note_filtered();
+    assert_eq!(buf.filtered, 1);
+    assert_eq!(buf.drain().len(), CALLBACK_DIAG_CAP);
+    assert!(buf.is_empty());
+    // Loss counters saturate instead of wrapping on overflow runs.
+    buf.dropped = u32::MAX;
+    buf.push(diag);
+    buf.push(diag);
+    assert_eq!(buf.dropped, u32::MAX);
+    buf.filtered = u32::MAX;
+    buf.note_filtered();
+    assert_eq!(buf.filtered, u32::MAX);
+}
+
+#[test]
+fn callback_win_untracked_covers_physical_and_proof_paths() {
+    use tiler_windows::snapkey::{VK_H, VK_LWIN, callback_win_untracked};
+    // Missing tracked Win is relevant on either path: proof-marking never
+    // supplies the missing Win edge, so no marked exemption.
+    assert!(callback_win_untracked(VK_H, false));
+    assert!(!callback_win_untracked(VK_H, true));
+    // Non-chord vocabulary never flags, even without Win.
+    assert!(!callback_win_untracked(VK_LWIN, false));
+    assert!(!callback_win_untracked(0x41, false));
+}
+
+#[test]
+fn callback_diag_reason_vocabulary_covers_pass_through() {
+    use tiler_windows::snapkey::{CallbackReason, CallbackSource};
+    assert_eq!(CallbackSource::Physical.as_str(), "physical");
+    assert_eq!(CallbackSource::ProofMarked.as_str(), "proof-marked");
+    assert_eq!(
+        CallbackSource::InjectedFiltered.as_str(),
+        "injected-filtered"
+    );
+    for (reason, want) in [
+        (CallbackReason::InjectedFiltered, "injected-filtered"),
+        (CallbackReason::ModifierGuard, "modifier-guard"),
+        (CallbackReason::Unclassified, "unclassified"),
+        (CallbackReason::Consumed, "consumed"),
+        (CallbackReason::Passed, "passed"),
+        (CallbackReason::WinUpPass, "win-up-pass"),
+    ] {
+        assert_eq!(reason.as_str(), want);
+    }
+}
