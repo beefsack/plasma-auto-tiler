@@ -129,6 +129,12 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
 - User statement 2026-10-03: default split placement is long-edge based: a
   tall target splits vertically (stacked) and a wide target horizontally
   (side by side), including windows arriving by workspace send.
+- Workspace send resolves the valid remembered destination leaf, then valid
+  destination focus history, before the genuine no-focus root fallback.
+  Minimum hints influence the projected target rectangle and final allocation;
+  they do not search alternative axes or targets for feasibility. The shared
+  Engine applies this on KDE and Windows. See
+  [send-axis evidence](changes/windows-send-split-axis.md).
 
 ## Cross-Platform Core
 

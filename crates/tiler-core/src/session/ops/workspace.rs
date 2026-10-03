@@ -19,9 +19,10 @@ impl super::super::Session {
     /// requested non-focused tile as `FocusMismatch`. The source domain must
     /// equal the focused domain before mutation.
     ///
-    /// Target placement follows `map_to_tree` (`direction=None`): the
+    /// Target placement follows `map_to_tree` (`direction=None`): the valid
     /// remembered destination last-active leaf splits when still linked
-    /// there (axis from its projected rect), else the root/output-bounds
+    /// there (axis from its projected rect), else the valid domain-scoped
+    /// focus MRU splits, else the genuine no-focus root/output-bounds
     /// fallback applies; empty targets admit a lone root.
     ///
     /// Only same-output, distinct-workspace targets plan. Same-domain targets
@@ -114,8 +115,12 @@ impl super::super::Session {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }
         // COSMIC `map_to_tree` splits the destination last-active leaf when
-        // still linked there, else the root/output-geometry fallback applies.
-        let remembered = self.remembered_leaf(&target_key);
+        // still linked there; a stale last-active (departed mover, only the
+        // focused target domain refreshes it) falls back to the valid
+        // domain-scoped focus MRU before the genuine no-focus root fallback.
+        let remembered = self
+            .remembered_leaf(&target_key)
+            .or_else(|| self.focus_stack_fallback(&target_key, &self.trees, &self.windows));
         let target_tree = self.trees.get(&target_key).cloned().flatten();
         let axis = remembered
             .as_ref()

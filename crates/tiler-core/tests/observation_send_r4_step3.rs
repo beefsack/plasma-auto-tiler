@@ -630,3 +630,297 @@ fn stale_rapid_second_send_drops_mover_until_domain_reconcile() {
         Some(("out-1".to_owned(), "ws-c".to_owned()))
     );
 }
+
+// Causal state mirrors run-01dd52e26d954c9c act106/act109: the mover leaves
+// ws-1 for ws-4, then returns with NO ws-1 reconcile in between, so
+// last_active[ws-1] still names the departed mover leaf while the focus MRU
+// holds the valid survivor. Ordinary open order (notepad, paint, terminal)
+// via public Engine Reconcile builds the same causal focus history as the
+// live spatial seed plus focus events: stack [notepad, paint], stale
+// last_active terminal. Live physical inputs: 2560x1380 work area, gap 8,
+// outer 8, minima notepad 401x246, paint 864x617, terminal 582x95. Carried
+// rects are dummy full-bounds (topology derives from retained sessions;
+// hints drive projection), unlike live native rects.
+fn live_bounds() -> Rect {
+    Rect {
+        x: 0,
+        y: 0,
+        w: 2560,
+        h: 1380,
+    }
+}
+fn live_domain(workspace: &str) -> OutputDomain {
+    OutputDomain {
+        id: OutputId("mon-a".to_owned()),
+        workspace: WorkspaceId(workspace.to_owned()),
+        bounds: live_bounds(),
+        gap: 8,
+        adjacent: BTreeMap::new(),
+    }
+}
+fn live_hints(window: &str) -> tiler_core::size_hints::WindowSizeHints {
+    let (min_w, min_h) = match window {
+        "notepad" => (401, 246),
+        "paint" => (864, 617),
+        "terminal" => (582, 95),
+        _ => return tiler_core::size_hints::WindowSizeHints::none(),
+    };
+    tiler_core::size_hints::WindowSizeHints {
+        min_w: Some(min_w),
+        min_h: Some(min_h),
+        max_w: None,
+        max_h: None,
+    }
+}
+fn live_carried(window: &str, workspace: &str) -> EngineWindow {
+    EngineWindow {
+        window: WindowId(window.to_owned()),
+        output: OutputId("mon-a".to_owned()),
+        workspace: WorkspaceId(workspace.to_owned()),
+        rect: live_bounds(),
+        floating: false,
+        fit_excluded: false,
+        hints: live_hints(window),
+    }
+}
+fn live_rec(
+    domain_state: &OutputDomain,
+    windows: Vec<EngineWindow>,
+    focused: &str,
+    c: &str,
+) -> CoreEvent {
+    CoreEvent {
+        owner: owner(),
+        generation: generation(),
+        correlation: corr(c),
+        revision: 0,
+        fingerprint: 900,
+        domain: domain_state.clone(),
+        domain_key: domain_state.key(),
+        outer_gap: 8,
+        focused_window: WindowId(focused.to_owned()),
+        windows,
+        directional: None,
+        directional_target_outer_gap: None,
+        target_domain: None,
+        target_windows: vec![],
+        command: CoreCommand::Reconcile,
+    }
+}
+fn live_send(
+    source: &OutputDomain,
+    target: &OutputDomain,
+    src_rows: Vec<EngineWindow>,
+    tgt_rows: Vec<EngineWindow>,
+    window: &str,
+    c: &str,
+) -> CoreEvent {
+    CoreEvent {
+        owner: owner(),
+        generation: generation(),
+        correlation: corr(c),
+        revision: 0,
+        fingerprint: 901,
+        domain: source.clone(),
+        domain_key: source.key(),
+        outer_gap: 8,
+        focused_window: WindowId(window.to_owned()),
+        windows: src_rows,
+        directional: None,
+        directional_target_outer_gap: None,
+        target_domain: Some((target.clone(), target.key())),
+        target_windows: tgt_rows,
+        command: CoreCommand::SendToWorkspace {
+            window: window.to_owned(),
+            target_output: "mon-a".to_owned(),
+            target_workspace: target.workspace.0.clone(),
+        },
+    }
+}
+fn live_tree(engine: &Engine, workspace: &str) -> Option<Node> {
+    engine
+        .session(&key("mon-a", workspace))
+        .expect("session")
+        .snapshot()
+        .domains
+        .iter()
+        .find(|d| d.workspace.0 == workspace)
+        .expect("domain view")
+        .tree
+        .clone()
+}
+
+#[test]
+fn send_return_after_send_away_splits_mru_tall_target() {
+    use tiler_core::directional::Axis;
+    let ws1 = live_domain("ws-1");
+    let ws4 = live_domain("ws-4");
+    let mut engine = Engine::new();
+    engine.sync_binding(&owner(), &generation());
+    // Ordinary open order builds focus [notepad, paint, terminal].
+    for (rows, focused, c) in [
+        (vec![live_carried("notepad", "ws-1")], "notepad", "live-r1"),
+        (
+            vec![
+                live_carried("notepad", "ws-1"),
+                live_carried("paint", "ws-1"),
+            ],
+            "paint",
+            "live-r2",
+        ),
+        (
+            vec![
+                live_carried("notepad", "ws-1"),
+                live_carried("paint", "ws-1"),
+                live_carried("terminal", "ws-1"),
+            ],
+            "terminal",
+            "live-r3",
+        ),
+    ] {
+        match engine.handle(&live_rec(&ws1, rows, focused, c)) {
+            CoreReply::Projection(_) | CoreReply::Tiled(_) => {}
+            other => panic!("{c} must project, got {other:?}"),
+        }
+    }
+    // Mover away ws-1 -> ws-4 (empty target). last_active[ws-1] keeps the
+    // departed terminal leaf; the ws-1 focus stack prunes to [notepad, paint].
+    match engine.handle(&live_send(
+        &ws1,
+        &ws4,
+        vec![
+            live_carried("notepad", "ws-1"),
+            live_carried("paint", "ws-1"),
+            live_carried("terminal", "ws-1"),
+        ],
+        vec![],
+        "terminal",
+        "live-away",
+    )) {
+        CoreReply::SendWorkspace(_) => {}
+        other => panic!("send-away must commit, got {other:?}"),
+    }
+    let src = engine.session(&key("mon-a", "ws-1")).expect("ws-1");
+    assert_eq!(
+        leaves_of(src, "mon-a", "ws-1"),
+        vec!["leaf-notepad", "leaf-paint"],
+        "send-away leaves two tall survivors on ws-1"
+    );
+    // Return with NO ws-1 reconcile in between: stale remembered terminal
+    // must fall back to the MRU survivor (paint), splitting that tall leaf.
+    let geometry = match engine.handle(&live_send(
+        &ws4,
+        &ws1,
+        vec![live_carried("terminal", "ws-4")],
+        vec![
+            live_carried("notepad", "ws-1"),
+            live_carried("paint", "ws-1"),
+        ],
+        "terminal",
+        "live-back",
+    )) {
+        CoreReply::SendWorkspace(plan) => plan.geometry,
+        other => panic!("send-back must commit SendWorkspace, got {other:?}"),
+    };
+    // Native assignment plus source removal.
+    assert!(
+        geometry
+            .iter()
+            .any(|g| g.window.0 == "terminal" && g.output.0 == "mon-a" && g.workspace.0 == "ws-1"),
+        "return must carry the native assignment, got {geometry:?}"
+    );
+    assert!(
+        engine.session(&key("mon-a", "ws-4")).is_none(),
+        "ws-4 retires empty"
+    );
+    // Nested V topology splitting the MRU target: H[notepad V[paint terminal]].
+    match live_tree(&engine, "ws-1") {
+        Some(Node::Group { axis, children, .. }) => {
+            assert_eq!(axis, Axis::Horizontal, "ws-1 root stays width-split");
+            assert_eq!(children.len(), 2);
+            assert!(
+                matches!(&children[0], Node::Leaf { id } if id.0 == "leaf-notepad"),
+                "left leaf stays notepad, got {:?}",
+                children[0]
+            );
+            match &children[1] {
+                Node::Group {
+                    axis,
+                    children: inner,
+                    ..
+                } => {
+                    assert_eq!(*axis, Axis::Vertical, "tall paint target stacks arrival");
+                    assert_eq!(inner.len(), 2);
+                    assert!(
+                        matches!(&inner[0], Node::Leaf { id } if id.0 == "leaf-paint"),
+                        "split target is MRU paint, got {inner:?}"
+                    );
+                    assert!(
+                        matches!(&inner[1], Node::Leaf { id } if id.0 == "leaf-terminal"),
+                        "arrival follows paint, got {inner:?}"
+                    );
+                }
+                other => panic!("expected nested V[paint terminal], got {other:?}"),
+            }
+        }
+        other => panic!("expected H[notepad V[paint terminal]], got {other:?}"),
+    }
+    // Physical feasibility with actual minima: contained, minima met, and
+    // exact column sharing (which already implies no overlap for this
+    // topology, so no generic overlap loop).
+    let b = live_bounds();
+    let mut by_window = BTreeMap::new();
+    for g in &geometry {
+        if g.workspace.0 == "ws-1" {
+            by_window.insert(g.window.0.clone(), g.rect);
+        }
+    }
+    assert_eq!(
+        by_window.len(),
+        3,
+        "ws-1 geometry covers all three, got {geometry:?}"
+    );
+    for (w, r) in &by_window {
+        assert!(r.w > 0 && r.h > 0, "{w} positive, got {r:?}");
+        assert!(
+            r.x >= b.x && r.y >= b.y && r.x + r.w <= b.x + b.w && r.y + r.h <= b.y + b.h,
+            "{w} contained in {b:?}, got {r:?}"
+        );
+        let (mw, mh) = match w.as_str() {
+            "notepad" => (401, 246),
+            "paint" => (864, 617),
+            "terminal" => (582, 95),
+            _ => (1, 1),
+        };
+        assert!(r.w >= mw && r.h >= mh, "{w} meets min {mw}x{mh}, got {r:?}");
+    }
+    let (n, p, t) = (
+        by_window["notepad"],
+        by_window["paint"],
+        by_window["terminal"],
+    );
+    assert_eq!((p.x, p.w), (t.x, t.w), "paint/terminal share one column");
+    assert_eq!(p.y + p.h + 8, t.y, "paint stacks above terminal with gap 8");
+    assert_eq!(n.x + n.w + 8, p.x, "notepad sits left of the paint column");
+    let committed_tree = live_tree(&engine, "ws-1");
+    // Stable subsequent reconciliation preserves the repaired topology.
+    match engine.handle(&live_rec(
+        &ws1,
+        vec![
+            live_carried("notepad", "ws-1"),
+            live_carried("paint", "ws-1"),
+            live_carried("terminal", "ws-1"),
+        ],
+        "terminal",
+        "live-rec",
+    )) {
+        CoreReply::Projection(_) | CoreReply::Tiled(_) => {}
+        other => panic!("ws-1 reconcile must project, got {other:?}"),
+    }
+    assert_eq!(live_tree(&engine, "ws-1"), committed_tree);
+    let src = engine.session(&key("mon-a", "ws-1")).expect("ws-1");
+    assert_eq!(
+        leaves_of(src, "mon-a", "ws-1"),
+        vec!["leaf-notepad", "leaf-paint", "leaf-terminal"]
+    );
+}

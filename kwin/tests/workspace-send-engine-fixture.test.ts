@@ -713,6 +713,80 @@ describe("workspace-send immediate-commit behavior (real Planner)", () => {
             await h.bridge.close();
         }
     });
+
+    it("stale send-away/send-back splits the MRU survivor vertically, not the output-wide root", async () => {
+        // Long-edge repair through the real KDE send route against the
+        // persistent Rust Engine (planner_eval): ws-1 holds three tiles,
+        // the mover leaves for an empty workspace and returns immediately
+        // with NO ws-1 reconcile in between. The stale remembered leaf
+        // (departed mover) must fall back to the valid domain MRU survivor
+        // (vertical split sharing one column), never the output-wide root
+        // wrap (mover as a full-height separate column).
+        const h = await makeHarness();
+        try {
+            h.win.wt.desktops = [h.desk.d1];
+            assert.deepEqual(h.win.wt.desktops, [h.desk.d1], "third tile joins ws-1, leaving ws-2 empty");
+            async function sendTo(target: string): Promise<Record<string, unknown>> {
+                assert.equal(h.requestSend(target), true, `send to ${target} accepted`);
+                await waitFor(() => h.queued() > 0, `observer request to ${target}`);
+                await h.flush();
+                const reply = parseBody(h.calls[h.calls.length - 1], "reply");
+                assert.equal(reply["outcome"], "planned", `reply to ${target} is planned`);
+                assert.ok(
+                    emittedOps(h).every((op) => op === "send-to-workspace"),
+                    "no ack/verify/abandon protocol",
+                );
+                await settle(100);
+                return reply;
+            }
+            h.setActive(h.win.wb);
+            h.setCurrent(h.desk.d1);
+            await sendTo("ws-2");
+            assert.deepEqual(h.win.wb.desktops, [h.desk.d2], "setup mover natively on ws-2");
+            await sendTo("ws-1");
+            assert.deepEqual(h.win.wb.desktops, [h.desk.d1], "setup mover returns to ws-1");
+            h.setActive(h.win.wt);
+            h.setCurrent(h.desk.d1);
+            await sendTo("ws-4");
+            assert.deepEqual(h.win.wt.desktops, [h.desk.d4], "mover away lands on empty ws-4");
+            assert.deepEqual(h.win.wa.desktops, [h.desk.d1], "first survivor stays on ws-1");
+            assert.deepEqual(h.win.wb.desktops, [h.desk.d1], "MRU survivor stays on ws-1");
+            const back = await sendTo("ws-1");
+            assert.equal(back["outcome"], "planned", "send-back commits");
+            const geometry = back["desired_geometry"] as Array<Record<string, unknown>>;
+            const ws1 = geometry.filter((entry) => entry["workspace"] === "ws-1");
+            assert.equal(ws1.length, 3, `ws-1 geometry covers all three, got ${JSON.stringify(geometry)}`);
+            const rectOf = (id: string): { x: number; y: number; w: number; h: number } => {
+                const entry = ws1.find((item) => item["window"] === id);
+                assert.ok(entry, `ws-1 geometry covers ${id}`);
+                return entry?.["rect"] as { x: number; y: number; w: number; h: number };
+            };
+            const ra = rectOf("n-win-a");
+            const rb = rectOf("n-win-b");
+            const rt = rectOf("n-win-t");
+            assert.equal(rb.x, rt.x, "MRU survivor and arrival share one column (stale remembered falls back to MRU, not root)");
+            assert.equal(rb.w, rt.w, "shared column has equal width");
+            const stacked = rb.y + rb.h + 8 === rt.y || rt.y + rt.h + 8 === rb.y;
+            assert.ok(stacked, `MRU column stacks vertically with gap 8, got b=${JSON.stringify(rb)} t=${JSON.stringify(rt)}`);
+            assert.ok(
+                ra.x + ra.w + 8 === rb.x && ra.x + ra.w + 8 === rt.x,
+                `other survivor sits left of the MRU column, got a=${JSON.stringify(ra)} b=${JSON.stringify(rb)} t=${JSON.stringify(rt)}`,
+            );
+            assert.ok(
+                !h.logs.some((line) => line.includes("outcome=committed")),
+                "never claims native commit",
+            );
+            assert.deepEqual(h.win.wt.desktops, [h.desk.d1], "mover natively on exact target, absent source");
+            assert.deepEqual(h.win.wa.desktops, [h.desk.d1], "both-domain membership keeps first survivor");
+            assert.deepEqual(h.win.wb.desktops, [h.desk.d1], "both-domain membership keeps MRU survivor");
+            assert.deepEqual(h.switches, [h.desk.d2, h.desk.d1, h.desk.d4, h.desk.d1], "exactly one follow per arrival");
+            assert.equal(h.surface["activeWindow"], h.win.wt, "mover focused after proof");
+            assert.equal(h.isInFlight(), false, "flight released after arrival");
+        } finally {
+            h.stop();
+            await h.bridge.close();
+        }
+    });
 });
 
 describe("observation-convergence (complete observation, test-first)", () => {
