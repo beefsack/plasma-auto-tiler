@@ -143,6 +143,11 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   shortcuts to Windows. Native actions still require the existing owner safety
   checks. This correction is offline-verified; physical suppression and Xbox-mode
   detection remain pending in [gaming coexistence](changes/windows-gaming-coexistence.md).
+  Follow-up live evidence (2026-10-03) observed an Xbox-mode prompt after a
+  current, hash-attributed marked F11 tap with consumed down/up and successful
+  mask send. Callback consumption is not an OS-suppression acceptance signal.
+  Keep the authentic catalog and documented-API constraint; a mechanism or
+  architecture change, or registry/policy workaround, needs a user decision.
 - Coexisting with gaming is a core goal: provide some alternate access to
   OS gaming surfaces displaced by authentic bindings (Windows Game Bar,
   displaced by Win+G), and avoid behavior that anti-cheat software could

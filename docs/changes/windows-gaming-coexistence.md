@@ -39,6 +39,73 @@
   inspected the final diff and ran locked four-package native tests, strict
   all-target clippy, full rustfmt and diff checks; the explicit locked build also
   passed. Snapkey: 58 tests. No shortcut behavior changed in this unit.
+- `2c9c11c` hosted CI [37113756434][diagnostic-ci] passed all four jobs.
+- Fixture contract accepted after correcting stop-after-recovery, consumed-action
+  versus interception eligibility, project-overlay exclusion and newly-uncloaked
+  observation. Lead additionally bounded post-tap sampling to two seconds and
+  fenced recovery to the exact newly observed foreground shell/gaming surface.
+  Mock: 44 negative gates pass. Test observer selectors are evidence-only;
+  they are not a product Xbox-mode detector. Subsequent screenshot evidence
+  invalidated their clean-desktop inference; the fixture remains an unaccepted
+  working-tree diagnostic draft, not an acceptance gate.
+- First live run (Win11 build 26200, medium IL 8192, one display):
+  `target/windows-shortcuts/20261003-195626-33604/shortcuts-fail.json`, source
+  `2c9c11c` plus the fixture diff; owner SHA256
+  `553D839B9EC6B0503E941CF430308C9ECB753CA15CC1FDDD592298AB878679E3`.
+  One marked F11 tap, zero G taps. F11 callback down/up consumed (12/15 us),
+  mask inserted 2, mask-send 622 us, no diagnostic drops. Taskbar held;
+  no selector-recognized Game Bar/Xbox surface appeared in those samples. At
+  sample 2, new visible
+  `EdgeGameAssist.exe`/`msedge.exe` windows made observation uncertain; STOP
+  before G. They were preserved. This snapshot alone did not establish a leaked
+  shortcut or prove whether fullscreen activity triggered Game Assist.
+- First run stop/restore succeeded, helper closed, no project actors or ledger,
+  SPI arranging=1, pen=35, hosting Terminal and original apps alive. Accessible
+  exact-owner graceful and emergency routes were first proved with nonhook runs.
+- Final outcome: containment goal NOT met. Read-only shell screenshot later
+  confirmed the "Switching to XBOX mode" prompt in an Explorer-owned
+  `ApplicationFrameWindow`, not a GameBar/Xbox-named process. It was absent from
+  the first baseline window set. Exactly one gaming chord was sent across all
+  runs (marked F11); G and the remaining collision matrix were not reached.
+  Prompt onset was not timestamped, so direct key leakage, an earlier observer,
+  delayed delivery and indirect fullscreen activation remain distinguishable
+  hypotheses, not an established OS root cause. Current artifact inclusion of
+  the earlier fixes and consumption of this tap are established.
+- Ten-second no-input dwell was stable with GameBar and EdgeGameAssist running.
+  Later-owner install-order comparisons were blocked BEFORE input by the shell
+  frame's fullscreen foreground: first reconcile suspension, then foreground
+  activation refusal. One causal fixture repair moved exact helper activation
+  ahead of convergence; it did not solve refusal. Subsequent runs
+  `20261003-200151-32208`, `20261003-200738-4544` and
+  `20261003-202209-32864` contain zero F11/G taps. No install-order conclusion
+  follows from owner/process start ordering alone; no further attempt is selected.
+- Recovery: screenshot-verified exact Explorer prompt received one successful
+  Escape down/up pair; it disappeared and cloaked 0->2 with NOACTIVATE. An
+  initial malformed test INPUT struct inserted zero events and was replaced
+  with the existing proven sender before the successful pair. No Enter or
+  "Don't remind" interaction occurred. Full Xbox mode was never selected.
+  The cloaked shell frame remained the stale foreground; raise/attach activation
+  still refused. Post-recovery PMv2 screenshot confirmed normal desktop/taskbar
+  and no prompt; cloak/foreground alone are not product mode detection.
+- Final live end: all exact owners/helpers stopped and closed, restore true,
+  no project actors/overlays/ledger/stop/workspace request residue, SPI 1/35,
+  original Notepad/Paint and hosting Terminal alive. No ordinary apps were
+  launched or closed; existing GameBar/Edge processes and windows were preserved.
+- Delivery: accept the diagnostic/provenance unit only. Preserve the unaccepted
+  fixture diff in `scripts/windows-shortcuts.ps1`; do not archive this active
+  record or advance containment to done. No rebind, registry/policy write,
+  undocumented mechanism or hook-thread redesign was implemented.
+- Options/recommendation: first have the user click a normal app to clear the
+  stale shell foreground, then resume a bounded install-order comparison with
+  screenshot-confirmed baseline and delayed post-tap observation. This is the
+  smallest next step; it needs no product architecture choice. If timing evidence
+  then implicates installer-thread latency, propose a dedicated-thread experiment
+  for approval. If supported interception proves insufficient, return a policy
+  or mechanism tradeoff instead of silently disabling gaming surfaces.
+- User-owned acceptance remains all physical colliding chords, plain Win and
+  unowned chords, release ordering, holds and reversal/stop. Fast local callback
+  timing excludes neither queued callback delivery delay nor silent later hook
+  loss. Observed F11 consume/mask success is not suppression acceptance.
 
 ## Goal and scope
 
@@ -331,3 +398,4 @@
 [show-window]: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow
 [dwm-attributes]: https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute
 [first-ci]: https://github.com/beefsack/plasma-auto-tiler/actions/runs/37109086579
+[diagnostic-ci]: https://github.com/beefsack/plasma-auto-tiler/actions/runs/37113756434
