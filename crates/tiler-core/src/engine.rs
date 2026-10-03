@@ -22,7 +22,9 @@ use crate::contract::{
     LifecyclePostObservation, Observation, PostObservation, ResizeCapabilities, ResizeMode,
     ResizePostObservation,
 };
-use crate::directional::{Capabilities, Direction, MoveOperation, OutputId, WindowId, WorkspaceId};
+use crate::directional::{
+    Axis, Capabilities, Direction, MoveOperation, Node, NodeId, OutputId, WindowId, WorkspaceId,
+};
 use crate::geometry::Rect;
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
 use crate::policy::{LayoutPolicy, default_policy};
@@ -77,6 +79,20 @@ pub struct Engine {
     /// at the start of every [`Engine::handle`]. Bounded counts plus
     /// correlation/outcome/reason only, never native identifiers.
     last_adoption_fit: Option<EngineAdoptionFitReport>,
+    /// Trace-only startup fit placement diagnostic for the current op.
+    ///
+    /// Set exactly once per actual fresh adoption attempt in
+    /// [`Engine::fresh_admit_shared`], alongside `last_adoption_fit`.
+    /// Bounded domain bounds plus capped input rectangles, outcome/reason,
+    /// and the resulting tree summary (counts plus capped root shares).
+    /// Cleared at the start of every [`Engine::handle`].
+    last_startup_fit_trace: Option<EngineStartupFitTrace>,
+    /// Trace-only send placement diagnostic for the current op.
+    ///
+    /// Set when [`Engine::workspace_request`] successfully proposes a
+    /// `MoveToWorkspace` plan, copying the session's anchor/axis/projected
+    /// selection. Cleared at the start of every [`Engine::handle`].
+    last_send_placement: Option<EngineSendPlacementTrace>,
     /// Whether the current [`Engine::handle`] converged (changed or exact).
     ///
     /// Internal reseed guard only, never logged: once converged, partial or
@@ -118,6 +134,69 @@ pub struct EngineAdoptionFitReport {
     pub centre_splits: usize,
 }
 
+/// Maximum carried inputs kept in a startup trace.
+pub const STARTUP_TRACE_MAX_RECTS: usize = 8;
+/// Maximum characters kept in a startup tree description.
+pub const STARTUP_TRACE_MAX_TOPOLOGY: usize = 256;
+
+/// Trace-only bounded startup placement diagnostic for the protocol
+/// trace boundary. Domain bounds plus capped carried inputs (opaque
+/// window token plus rectangle each), fit outcome/reason, and the
+/// resulting ordered tree description with axes and nested shares.
+/// Integer geometry and opaque tokens only; never native identifiers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartupInput {
+    pub window: WindowId,
+    pub rect: Rect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineStartupFitTrace {
+    /// Validated correlation for this op (cross-service lookup key).
+    pub correlation: CorrelationId,
+    /// Complete carried window count.
+    pub windows: usize,
+    /// Adopting domain bounds.
+    pub domain_bounds: Rect,
+    /// Carried inputs in observation order, capped at
+    /// [`STARTUP_TRACE_MAX_RECTS`].
+    pub inputs: Vec<StartupInput>,
+    /// `fitted` when the fit committed, else `fallback`.
+    pub outcome: &'static str,
+    /// `ok` for fitted, else the decline token (mirrors the adoption-fit
+    /// reason vocabulary plus `commit_failed`).
+    pub reason: &'static str,
+    /// Centre splits in the committed fit (0 for clean fits and fallbacks).
+    pub centre_splits: usize,
+    /// Leaf count in the resulting tree (0 when no tree resulted).
+    pub leaves: usize,
+    /// Ordered tree description: `L` per leaf, `H[s,..]`/`V[s,..]`
+    /// per group with nested shares in child order, capped at
+    /// [`STARTUP_TRACE_MAX_TOPOLOGY`] characters (`-` when empty).
+    pub topology: String,
+}
+
+/// Trace-only bounded send placement diagnostic for the protocol trace
+/// boundary. Selected `map_to_tree` anchor branch plus its opaque leaf,
+/// the admission axis derived from its projected rectangle, that
+/// rectangle, and the target leaf count. Opaque tokens only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineSendPlacementTrace {
+    /// Validated correlation for this op (cross-service lookup key).
+    pub correlation: CorrelationId,
+    /// Selected anchor branch (`remembered`/`mru`/`fallback`/`empty`).
+    pub anchor_kind: &'static str,
+    /// Selected anchor leaf (`None` for `fallback`/`empty`).
+    pub anchor: Option<NodeId>,
+    /// Admission axis derived from the projected rectangle.
+    pub axis: Axis,
+    /// Rectangle the axis was derived from (anchor leaf rect or target
+    /// domain bounds; `empty` targets always carry the domain bounds).
+    pub projected: Rect,
+    /// Leaf count in the target tree before insertion (0 for empty).
+    pub target_leaves: usize,
+}
+
 /// Single-domain convergence routing: absent sessions run the existing seed
 /// route, converged sessions run the ordinary operation, and primitive
 /// errors return a typed rejection with no operation and no reseed.
@@ -153,6 +232,76 @@ pub fn committed_session_is_empty(session: &Session) -> bool {
     session.snapshot().windows.is_empty() && session.exception_count() == 0
 }
 
+/// Trace-only ordered tree description with axes and nested shares:
+/// leaf count plus `L` per leaf and `H[s,..]`/`V[s,..]` per group in
+/// child order, capped at [`STARTUP_TRACE_MAX_TOPOLOGY`] characters.
+fn describe_topology(tree: &Node) -> (usize, String) {
+    fn walk(node: &Node, out: &mut String, leaves: &mut usize) {
+        match node {
+            Node::Leaf { .. } => {
+                *leaves += 1;
+                out.push('L');
+            }
+            Node::Group {
+                axis,
+                children,
+                shares,
+                ..
+            } => {
+                out.push(match axis {
+                    Axis::Horizontal => 'H',
+                    Axis::Vertical => 'V',
+                });
+                out.push('[');
+                for (i, share) in shares.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&share.to_string());
+                }
+                out.push_str("](");
+                for (i, child) in children.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    walk(child, out, leaves);
+                }
+                out.push(')');
+            }
+        }
+    }
+    let mut out = String::new();
+    let mut leaves = 0usize;
+    walk(tree, &mut out, &mut leaves);
+    if out.len() > STARTUP_TRACE_MAX_TOPOLOGY {
+        out.truncate(STARTUP_TRACE_MAX_TOPOLOGY);
+    }
+    (leaves, out)
+}
+
+/// Refresh a fallback startup trace with the seeded resulting tree, if the
+/// domain now retains one. Fitted traces already carry the fit tree and
+/// are untouched.
+fn refresh_startup_seed_tree(engine: &mut Engine, event: &CoreEvent) {
+    if engine
+        .last_startup_fit_trace
+        .as_ref()
+        .is_none_or(|trace| trace.outcome != "fallback")
+    {
+        return;
+    }
+    let seeded = engine
+        .session(&event.domain_key)
+        .and_then(|session| session.tree_for(&event.domain_key))
+        .map(describe_topology);
+    if let (Some(trace), Some((leaves, topology))) =
+        (engine.last_startup_fit_trace.as_mut(), seeded)
+    {
+        trace.leaves = leaves;
+        trace.topology = topology;
+    }
+}
+
 impl Default for Engine {
     fn default() -> Self {
         Self {
@@ -163,6 +312,8 @@ impl Default for Engine {
             generation: None,
             last_convergence: None,
             last_adoption_fit: None,
+            last_startup_fit_trace: None,
+            last_send_placement: None,
             converged_this_op: false,
         }
     }
@@ -295,6 +446,21 @@ impl Engine {
     #[must_use]
     pub fn last_adoption_fit(&self) -> Option<&EngineAdoptionFitReport> {
         self.last_adoption_fit.as_ref()
+    }
+
+    /// Trace-only startup fit placement diagnostic for the current op, if a
+    /// fresh adoption was attempted. Trace boundary only; `None` for
+    /// retained reconciliations.
+    #[must_use]
+    pub fn last_startup_fit_trace(&self) -> Option<&EngineStartupFitTrace> {
+        self.last_startup_fit_trace.as_ref()
+    }
+
+    /// Trace-only send placement diagnostic for the current op, if a
+    /// `MoveToWorkspace` plan was proposed. Trace boundary only.
+    #[must_use]
+    pub fn last_send_placement(&self) -> Option<&EngineSendPlacementTrace> {
+        self.last_send_placement.as_ref()
     }
 
     /// Converge one retained single-domain session to the complete current
@@ -650,6 +816,8 @@ impl Engine {
         // double converge.
         self.last_convergence = None;
         self.last_adoption_fit = None;
+        self.last_startup_fit_trace = None;
+        self.last_send_placement = None;
         self.converged_this_op = false;
         match &event.command {
             CoreCommand::Reconcile => {
@@ -857,6 +1025,16 @@ impl Engine {
                 &event.windows,
             ) {
                 Ok((tree, links, centre_splits)) => {
+                    let trace_inputs: Vec<StartupInput> = event
+                        .windows
+                        .iter()
+                        .take(STARTUP_TRACE_MAX_RECTS)
+                        .map(|w| StartupInput {
+                            window: w.window.clone(),
+                            rect: w.rect,
+                        })
+                        .collect();
+                    let (trace_leaves, trace_topology) = describe_topology(&tree);
                     let focus_leaf = links
                         .iter()
                         .find(|l| l.window.0 == window.0)
@@ -914,6 +1092,17 @@ impl Engine {
                             reason: "ok",
                             centre_splits,
                         });
+                        self.last_startup_fit_trace = Some(EngineStartupFitTrace {
+                            correlation: event.correlation.clone(),
+                            windows: event.windows.len(),
+                            domain_bounds: event.domain.bounds,
+                            inputs: trace_inputs,
+                            outcome: "fitted",
+                            reason: "ok",
+                            centre_splits,
+                            leaves: trace_leaves,
+                            topology: trace_topology,
+                        });
                         return typed;
                     }
                     self.last_adoption_fit = Some(EngineAdoptionFitReport {
@@ -923,6 +1112,17 @@ impl Engine {
                         reason: "commit_failed",
                         centre_splits: 0,
                     });
+                    self.last_startup_fit_trace = Some(EngineStartupFitTrace {
+                        correlation: event.correlation.clone(),
+                        windows: event.windows.len(),
+                        domain_bounds: event.domain.bounds,
+                        inputs: trace_inputs,
+                        outcome: "fallback",
+                        reason: "commit_failed",
+                        centre_splits: 0,
+                        leaves: 0,
+                        topology: "-".to_owned(),
+                    });
                 }
                 Err(reason) => {
                     self.last_adoption_fit = Some(EngineAdoptionFitReport {
@@ -931,6 +1131,25 @@ impl Engine {
                         windows: event.windows.len(),
                         reason: reason.as_str(),
                         centre_splits: 0,
+                    });
+                    self.last_startup_fit_trace = Some(EngineStartupFitTrace {
+                        correlation: event.correlation.clone(),
+                        windows: event.windows.len(),
+                        domain_bounds: event.domain.bounds,
+                        inputs: event
+                            .windows
+                            .iter()
+                            .take(STARTUP_TRACE_MAX_RECTS)
+                            .map(|w| StartupInput {
+                                window: w.window.clone(),
+                                rect: w.rect,
+                            })
+                            .collect(),
+                        outcome: "fallback",
+                        reason: reason.as_str(),
+                        centre_splits: 0,
+                        leaves: 0,
+                        topology: "-".to_owned(),
                     });
                 }
             }
@@ -998,6 +1217,7 @@ impl Engine {
                         if let Some(stored) = self.session_mut(&event.domain_key) {
                             *stored = focused;
                         }
+                        refresh_startup_seed_tree(self, event);
                         return CoreReply::Tiled(TiledPlan {
                             base_revision: plan.base_revision,
                             policy_version: LIFECYCLE_POLICY_VERSION,
@@ -1027,7 +1247,7 @@ impl Engine {
         let workspace = workspace.clone();
         let domain = event.domain.clone();
         let placement_explicit = placement_bounds;
-        self.run_retained(
+        let reply = self.run_retained(
             event,
             seed_order,
             false,
@@ -1050,7 +1270,9 @@ impl Engine {
             },
             |plan| CoreReply::Tiled(TiledPlan::from_lifecycle(TiledKind::Admit, plan)),
             Self::commit_lifecycle,
-        )
+        );
+        refresh_startup_seed_tree(self, event);
+        reply
     }
 
     /// Fresh-domain reconcile on an absent domain: seed through the SAME
@@ -1786,6 +2008,16 @@ impl Engine {
             &LifecycleCapabilities::full(),
         ) {
             Ok(plan) => {
+                if let Some(trace) = session.last_send_placement().cloned() {
+                    self.last_send_placement = Some(EngineSendPlacementTrace {
+                        correlation: event.correlation.clone(),
+                        anchor_kind: trace.anchor_kind,
+                        anchor: trace.anchor,
+                        axis: trace.axis,
+                        projected: trace.projected,
+                        target_leaves: trace.target_leaves,
+                    });
+                }
                 let Some(typed) = crate::boundary::SendWorkspacePlan::from_session(&plan) else {
                     return CoreReply::SnapshotInvalid {
                         message: OBSERVATION_MESSAGE,
@@ -4705,5 +4937,48 @@ mod tests {
                 .iter()
                 .any(|l| l.window.0 == "win-m")
         );
+    }
+
+    #[test]
+    fn startup_topology_describes_axes_and_nested_shares() {
+        use crate::directional::{Axis, NodeId};
+        let leaf = |id: &str| Node::Leaf {
+            id: NodeId::from(id),
+        };
+        assert_eq!(describe_topology(&leaf("a")), (1, "L".to_owned()));
+        let tree = Node::Group {
+            id: NodeId::from("root"),
+            axis: Axis::Horizontal,
+            children: vec![
+                leaf("a"),
+                Node::Group {
+                    id: NodeId::from("g"),
+                    axis: Axis::Vertical,
+                    children: vec![leaf("b"), leaf("c")],
+                    shares: vec![1, 1],
+                },
+            ],
+            shares: vec![1, 1],
+        };
+        assert_eq!(
+            describe_topology(&tree),
+            (3, "H[1,1](L,V[1,1](L,L))".to_owned())
+        );
+        let wide = Node::Group {
+            id: NodeId::from("root"),
+            axis: Axis::Horizontal,
+            children: (0..20).map(|i| leaf(&format!("l{i}"))).collect(),
+            shares: (1..=20).collect(),
+        };
+        let (leaves, topology) = describe_topology(&wide);
+        assert_eq!(leaves, 20);
+        assert!(topology.len() <= STARTUP_TRACE_MAX_TOPOLOGY);
+    }
+
+    #[test]
+    fn fresh_traces_start_empty() {
+        let engine = Engine::new();
+        assert!(engine.last_startup_fit_trace().is_none());
+        assert!(engine.last_send_placement().is_none());
     }
 }

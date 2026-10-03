@@ -546,6 +546,21 @@ struct DragState {
     prior: Option<crate::policy::PriorGroupEdge>,
 }
 
+/// Trace-only send-to-workspace placement diagnostic: which anchor branch
+/// the `map_to_tree` (`direction=None`) resolution selected plus its opaque
+/// leaf, the admission axis, that projected rectangle, and the target leaf
+/// count. Set on successful `propose_move_to_workspace` only; the Engine
+/// copies it into its own per-op report. Opaque tokens only, never native
+/// window or platform identifiers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SendPlacementTrace {
+    pub anchor_kind: &'static str,
+    pub anchor: Option<NodeId>,
+    pub axis: Axis,
+    pub projected: Rect,
+    pub target_leaves: usize,
+}
+
 /// Durable authoritative session. See module docs for the transaction model.
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -568,6 +583,7 @@ pub struct Session {
     reconciler: Reconciler,
     pending_desired: Option<PendingDesired>,
     drag: Option<DragState>,
+    last_send_placement: Option<SendPlacementTrace>,
 }
 
 impl Session {
@@ -650,6 +666,7 @@ impl Session {
             reconciler,
             pending_desired: None,
             drag: None,
+            last_send_placement: None,
         })
     }
 
@@ -657,6 +674,13 @@ impl Session {
     #[must_use]
     pub fn accepted_revision(&self) -> u64 {
         self.reconciler.verified_revision()
+    }
+
+    /// Trace-only send placement diagnostic from the last successful
+    /// `propose_move_to_workspace` on this session, if any.
+    #[must_use]
+    pub fn last_send_placement(&self) -> Option<&SendPlacementTrace> {
+        self.last_send_placement.as_ref()
     }
 
     /// Accepted fingerprint from the last commit (or initial seed).

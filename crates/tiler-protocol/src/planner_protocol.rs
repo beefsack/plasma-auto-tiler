@@ -641,6 +641,126 @@ fn emit_engine_adoption_fit(engine: &Engine) {
     }
 }
 
+/// Trace-only placement prefix (opt-in trace wiring only, never normal logs).
+pub const PLACEMENT_TRACE_PREFIX: &str = "plasma-auto-tiler:placement-trace";
+
+/// Whether trace-only placement diagnostics are enabled (`1` only).
+/// Mirrors the Planner service trace gate so the protocol choke point can
+/// emit placement traces without new normal-level log volume.
+#[must_use]
+pub fn placement_trace_enabled() -> bool {
+    matches!(
+        std::env::var("PLASMA_AUTO_TILER_TRACE"),
+        Ok(value) if value == "1"
+    )
+}
+
+fn trace_rect(rect: &tiler_core::geometry::Rect) -> String {
+    format!("{},{},{},{}", rect.x, rect.y, rect.w, rect.h)
+}
+
+/// Sanitized opaque token for trace lines: validated project token shape
+/// only, else `unknown`. Covers window/anchor ids without echoing payloads.
+fn trace_id(raw: &str) -> String {
+    if tiler_core::bounds::is_opaque_id(raw) {
+        raw.to_owned()
+    } else {
+        "unknown".to_owned()
+    }
+}
+
+fn trace_axis(axis: tiler_core::directional::Axis) -> &'static str {
+    match axis {
+        tiler_core::directional::Axis::Horizontal => "horizontal",
+        tiler_core::directional::Axis::Vertical => "vertical",
+    }
+}
+
+/// Trace-only startup placement summary: bounded domain bounds, capped
+/// carried inputs (opaque window token plus rectangle each), fit
+/// outcome/reason, and the resulting ordered tree description with axes
+/// and nested shares. Opaque tokens and integer geometry only. Pure.
+#[must_use]
+pub fn summarize_startup_fit_trace(report: &tiler_core::engine::EngineStartupFitTrace) -> String {
+    let inputs = report
+        .inputs
+        .iter()
+        .map(|input| format!("{}={}", trace_id(&input.window.0), trace_rect(&input.rect)))
+        .collect::<Vec<_>>()
+        .join(";");
+    format!(
+        "{PLACEMENT_TRACE_PREFIX} kind=startup-fit correlation={} windows={} domain={} inputs={} outcome={} reason={} centre_splits={} leaves={} topology={}",
+        summary_correlation(Some(report.correlation.as_str())),
+        report.windows,
+        trace_rect(&report.domain_bounds),
+        if inputs.is_empty() {
+            "-".to_owned()
+        } else {
+            inputs
+        },
+        adoption_token(Some(report.outcome)),
+        adoption_token(Some(report.reason)),
+        report.centre_splits,
+        report.leaves,
+        if report.topology.is_empty() {
+            "-".to_owned()
+        } else {
+            report.topology.clone()
+        },
+    )
+}
+
+/// Trace-only send placement summary: selected anchor branch plus its
+/// opaque leaf, admission axis, projected rectangle, and target leaf
+/// count. Opaque tokens and integer geometry only. Pure.
+#[must_use]
+pub fn summarize_send_placement_trace(
+    report: &tiler_core::engine::EngineSendPlacementTrace,
+) -> String {
+    format!(
+        "{PLACEMENT_TRACE_PREFIX} kind=send-placement correlation={} anchor={} anchor_leaf={} axis={} projected={} target_leaves={}",
+        summary_correlation(Some(report.correlation.as_str())),
+        adoption_token(Some(report.anchor_kind)),
+        report
+            .anchor
+            .as_ref()
+            .map(|leaf| trace_id(&leaf.0))
+            .unwrap_or_else(|| "-".to_owned()),
+        trace_axis(report.axis),
+        trace_rect(&report.projected),
+        report.target_leaves,
+    )
+}
+
+/// Trace-only placement lines for the just-completed [`Engine::handle`]
+/// call: at most one startup-fit line plus at most one send-placement line.
+/// Empty for retained ops with no fresh/send decision. Pure over the engine.
+#[must_use]
+pub fn placement_trace_lines(engine: &Engine) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(report) = engine.last_startup_fit_trace() {
+        out.push(summarize_startup_fit_trace(report));
+    }
+    if let Some(report) = engine.last_send_placement() {
+        out.push(summarize_send_placement_trace(report));
+    }
+    out
+}
+
+/// Emit trace-only placement diagnostics for the just-completed
+/// [`Engine::handle`] call when the opt-in trace gate is set. Default off:
+/// normal runs emit nothing here, keeping the journal surface at the
+/// existing ingress/egress/convergence/adoption-fit lines.
+fn emit_engine_placement_trace(engine: &Engine) {
+    if !placement_trace_enabled() {
+        return;
+    }
+    for line in placement_trace_lines(engine) {
+        use std::io::Write;
+        let _ = writeln!(std::io::stderr(), "{line}");
+    }
+}
+
 fn rejected(correlation_id: String, kind: &str, message: &str) -> String {
     serialize_bounded(&PlanReply {
         v: PLAN_CONTRACT_VERSION,
@@ -2017,6 +2137,16 @@ impl Planner {
         self.engine.generation()
     }
 
+    /// Trace-only placement lines for the last evaluated op: at most one
+    /// startup-fit line plus at most one send-placement line. Empty when the
+    /// last op recorded no fresh/send decision. Pure read of the retained
+    /// engine; the `handle_and_serialize` choke point already emits these
+    /// under the opt-in trace gate.
+    #[must_use]
+    pub fn placement_trace_lines(&self) -> Vec<String> {
+        placement_trace_lines(&self.engine)
+    }
+
     fn sync_binding(&mut self, owner: &OwnerId, generation: &GenerationId) {
         self.engine.sync_binding(owner, generation);
     }
@@ -2102,6 +2232,7 @@ impl Planner {
         let reply = self.engine.handle(event);
         emit_engine_convergence(&self.engine);
         emit_engine_adoption_fit(&self.engine);
+        emit_engine_placement_trace(&self.engine);
         serialize_core_reply(ctx, &reply)
     }
 
@@ -9697,6 +9828,135 @@ mod tests {
         assert_eq!(excluded_reply["outcome"], "planned", "{excluded_reply}");
         let excluded_report = excluded.engine.last_adoption_fit().expect("excluded logs");
         assert_eq!(excluded_report.reason, "fit_excluded", "{excluded_reply}");
+    }
+
+    #[test]
+    fn placement_trace_summaries_carry_topology_and_anchors() {
+        use tiler_core::directional::{Axis, NodeId, WindowId};
+        use tiler_core::engine::{EngineSendPlacementTrace, EngineStartupFitTrace, StartupInput};
+        use tiler_core::geometry::Rect;
+        use tiler_core::ids::CorrelationId;
+        let correlation = CorrelationId::parse("place-trace-1").expect("valid");
+        let startup = EngineStartupFitTrace {
+            correlation: correlation.clone(),
+            windows: 2,
+            domain_bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 800,
+                h: 600,
+            },
+            inputs: vec![
+                StartupInput {
+                    window: WindowId("win-1".to_owned()),
+                    rect: Rect {
+                        x: 0,
+                        y: 0,
+                        w: 400,
+                        h: 600,
+                    },
+                },
+                StartupInput {
+                    window: WindowId("win-2".to_owned()),
+                    rect: Rect {
+                        x: 400,
+                        y: 0,
+                        w: 400,
+                        h: 600,
+                    },
+                },
+            ],
+            outcome: "fitted",
+            reason: "ok",
+            centre_splits: 0,
+            leaves: 2,
+            topology: "H[1,1](L,L)".to_owned(),
+        };
+        let line = summarize_startup_fit_trace(&startup);
+        assert!(line.starts_with(PLACEMENT_TRACE_PREFIX), "{line}");
+        assert!(line.contains("kind=startup-fit"), "{line}");
+        assert!(line.contains("windows=2"), "{line}");
+        assert!(line.contains("domain=0,0,800,600"), "{line}");
+        assert!(line.contains("win-1=0,0,400,600"), "{line}");
+        assert!(line.contains("win-2=400,0,400,600"), "{line}");
+        assert!(line.contains("outcome=fitted"), "{line}");
+        assert!(line.contains("leaves=2"), "{line}");
+        assert!(line.contains("topology=H[1,1](L,L)"), "{line}");
+        assert!(line.contains("correlation=place-trace-1"), "{line}");
+        let send = EngineSendPlacementTrace {
+            correlation,
+            anchor_kind: "remembered",
+            anchor: Some(NodeId("leaf-1".to_owned())),
+            axis: Axis::Horizontal,
+            projected: Rect {
+                x: 0,
+                y: 0,
+                w: 400,
+                h: 600,
+            },
+            target_leaves: 2,
+        };
+        let send_line = summarize_send_placement_trace(&send);
+        assert!(send_line.contains("kind=send-placement"), "{send_line}");
+        assert!(send_line.contains("anchor=remembered"), "{send_line}");
+        assert!(send_line.contains("anchor_leaf=leaf-1"), "{send_line}");
+        assert!(send_line.contains("axis=horizontal"), "{send_line}");
+        assert!(send_line.contains("projected=0,0,400,600"), "{send_line}");
+        // Fresh planner with no op records no placement lines.
+        assert!(Planner::new().placement_trace_lines().is_empty());
+    }
+
+    #[test]
+    fn fresh_reconcile_records_startup_fit_trace() {
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&retained_request(
+            "place-trace-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        let trace = planner
+            .engine
+            .last_startup_fit_trace()
+            .expect("startup trace logs");
+        assert_eq!(trace.outcome, "fallback");
+        assert_eq!(trace.reason, "single_window");
+        assert_eq!(trace.windows, 1);
+        assert_eq!(trace.inputs.len(), 1);
+        assert_eq!(trace.inputs[0].window.0, "win-1");
+        assert!(!trace.topology.is_empty(), "{trace:?}");
+        let lines = planner.placement_trace_lines();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("kind=startup-fit"), "{lines:?}");
+        assert!(lines[0].contains("correlation=place-trace-2"), "{lines:?}");
+        assert!(lines[0].contains("win-1="), "{lines:?}");
+    }
+
+    #[test]
+    fn seeded_fallback_startup_carries_resulting_tree() {
+        // A single window declines the fit (`single_window`) then seeds:
+        // the fallback trace must still carry the resulting seeded tree.
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&retained_request(
+            "place-trace-3",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 400, 600)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        let trace = planner
+            .engine
+            .last_startup_fit_trace()
+            .expect("startup trace logs");
+        assert_eq!(trace.outcome, "fallback", "{reply}");
+        assert_eq!(trace.reason, "single_window", "{reply}");
+        assert_eq!(trace.leaves, 1, "{reply}");
+        assert_eq!(trace.topology, "L", "{reply}");
     }
 
     #[test]

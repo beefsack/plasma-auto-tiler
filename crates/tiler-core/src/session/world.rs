@@ -371,6 +371,12 @@ impl super::Session {
         (self.focused_domain.clone(), self.focused_leaf.clone())
     }
 
+    /// Committed tree for one domain, if any. Trace boundary only.
+    #[must_use]
+    pub fn tree_for(&self, key: &DomainKey) -> Option<&Node> {
+        self.trees.get(key).and_then(|tree| tree.as_ref())
+    }
+
     /// Synchronize retained focus from an ordinary activation of a known
     /// tiled window in an existing domain.
     ///

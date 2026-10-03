@@ -911,6 +911,62 @@ fn log_json_at(path: &Path, value: serde_json::Value) {
     }
 }
 
+/// Trace-only placement diagnostic for the just-completed Engine op:
+/// bounded startup inputs (opaque window token plus rectangle) with fit
+/// outcome/reason and the resulting ordered tree description, and the
+/// send anchor branch plus opaque leaf with projected rectangle/axis.
+/// Gated on `state.trace`; production stays quiet. Opaque tokens and
+/// integer geometry only: no HWNDs, pids, paths, or titles.
+fn log_engine_placement_trace(state: &TileLoop, tick: u64, correlation: &str, op: &'static str) {
+    if !state.trace {
+        return;
+    }
+    let log_path = state.log_path.clone();
+    if let Some(trace) = state.engine.last_startup_fit_trace() {
+        log_json_at(
+            &log_path,
+            serde_json::json!({
+                "event": "placement-trace",
+                "tick": tick,
+                "correlation": correlation,
+                "op": op,
+                "kind": "startup-fit",
+                "windows": trace.windows,
+                "domain": [trace.domain_bounds.x, trace.domain_bounds.y, trace.domain_bounds.w, trace.domain_bounds.h],
+                "inputs": trace.inputs.iter().map(|input| serde_json::json!({
+                    "window": input.window.0,
+                    "rect": [input.rect.x, input.rect.y, input.rect.w, input.rect.h],
+                })).collect::<Vec<_>>(),
+                "outcome": trace.outcome,
+                "reason": trace.reason,
+                "centre_splits": trace.centre_splits,
+                "leaves": trace.leaves,
+                "topology": trace.topology,
+            }),
+        );
+    }
+    if let Some(trace) = state.engine.last_send_placement() {
+        log_json_at(
+            &log_path,
+            serde_json::json!({
+                "event": "placement-trace",
+                "tick": tick,
+                "correlation": correlation,
+                "op": op,
+                "kind": "send-placement",
+                "anchor": trace.anchor_kind,
+                "anchor_leaf": trace.anchor.as_ref().map(|leaf| leaf.0.as_str()),
+                "axis": match trace.axis {
+                    tiler_core::directional::Axis::Horizontal => "horizontal",
+                    tiler_core::directional::Axis::Vertical => "vertical",
+                },
+                "projected": [trace.projected.x, trace.projected.y, trace.projected.w, trace.projected.h],
+                "target_leaves": trace.target_leaves,
+            }),
+        );
+    }
+}
+
 struct TileLoop {
     engine: Engine,
     owner: OwnerId,
@@ -3696,6 +3752,7 @@ fn reconcile_tick(
             focused.as_ref(),
         );
         let reply = state.engine.handle(&event);
+        log_engine_placement_trace(state, tick, correlation.as_str(), "reconcile");
         let writable = writable_tokens(state, &output, &active, &observed);
         apply_geometry(
             state,
@@ -8714,6 +8771,12 @@ fn workspace_do_send(
     crate::workspace_owner::stamp_send_target(&mut event, &target_key);
     let source_plan_start = Instant::now();
     let reply = state.engine.handle(&event);
+    log_engine_placement_trace(
+        state,
+        ctx.tick,
+        ctx.correlation.as_str(),
+        "send-to-workspace",
+    );
     let source_plan_ms = source_plan_start
         .elapsed()
         .as_millis()

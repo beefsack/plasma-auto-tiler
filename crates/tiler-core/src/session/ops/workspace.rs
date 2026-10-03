@@ -118,10 +118,16 @@ impl super::super::Session {
         // still linked there; a stale last-active (departed mover, only the
         // focused target domain refreshes it) falls back to the valid
         // domain-scoped focus MRU before the genuine no-focus root fallback.
-        let remembered = self
-            .remembered_leaf(&target_key)
-            .or_else(|| self.focus_stack_fallback(&target_key, &self.trees, &self.windows));
+        let stored_anchor = self.remembered_leaf(&target_key);
+        let mru_anchor = self.focus_stack_fallback(&target_key, &self.trees, &self.windows);
+        let remembered = stored_anchor.clone().or_else(|| mru_anchor.clone());
         let target_tree = self.trees.get(&target_key).cloned().flatten();
+        let target_leaves = target_tree
+            .as_ref()
+            .map(|tree| collect_leaves(tree).len())
+            .unwrap_or(0);
+        let mut anchor_kind: &'static str = "fallback";
+        let mut projected = target_domain.bounds;
         let axis = remembered
             .as_ref()
             .and_then(|leaf| {
@@ -135,9 +141,21 @@ impl super::super::Session {
                 .ok()?
                 .into_iter()
                 .find(|g| &g.leaf == leaf)
-                .map(|g| self.policy().admission_axis_for_rect(&g.rect))
+                .map(|g| {
+                    projected = g.rect;
+                    self.policy().admission_axis_for_rect(&g.rect)
+                })
             })
             .unwrap_or_else(|| self.policy().admission_axis_for_rect(&target_domain.bounds));
+        if target_tree.is_none() || target_leaves == 0 {
+            anchor_kind = "empty";
+        } else if let Some(leaf) = remembered.as_ref() {
+            if stored_anchor.as_ref() == Some(leaf) {
+                anchor_kind = "remembered";
+            } else if mru_anchor.as_ref() == Some(leaf) {
+                anchor_kind = "mru";
+            }
+        }
         let mut node_ids = self.all_node_ids();
         let new_target = insert_tiled(
             self.policy(),
@@ -238,6 +256,13 @@ impl super::super::Session {
             ),
             exceptions: self.exceptions.clone(),
             retained_float_geometry: self.retained_float_geometry.clone(),
+        });
+        self.last_send_placement = Some(crate::session::SendPlacementTrace {
+            anchor_kind,
+            anchor: remembered.clone(),
+            axis,
+            projected,
+            target_leaves,
         });
         Ok(SessionPlan {
             dispatch,
