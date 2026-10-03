@@ -56,8 +56,8 @@ decisions of 2026-09-24 are under
   [Directional diagnosis](changes/archive/windows-directional-dogfood-diagnosis.md).
   Send split-axis defect fixed in `c4a837b` (shared core): stale destination
   focus after send-away/return now falls back to valid destination focus
-  history; minimum sizes did not force the axis. Physical ordinary-app
-  confirmation user-owned.
+  history; minimum sizes did not force the axis. User physically confirmed
+  (2026-10-03, Notepad send-away/return split the tall window stacked).
   [Evidence](changes/archive/windows-send-split-axis.md).
   Next: Windows feature parity queue below.
   [Managed workspaces](changes/archive/windows-managed-workspaces.md).
@@ -102,11 +102,19 @@ decisions of 2026-09-24 are under
 - P0 | Windows gaming coexistence | User (2026-10-03): (a) authentic mode
   until settings exist: our bindings must not leak to OS shortcuts (Win+G
   opened Xbox Game Bar when the foreground was unmanaged, and Xbox mode was
-  entered during agent tests); (b) detect Xbox mode (full screen
+  entered during agent tests; user dogfood 2026-10-03: Win+F11 entered Xbox
+  mode, so Win+F11 collides with the OS full screen experience shortcut);
+  (b) detect Xbox mode (full screen
   experience), pause tiling, effects and shortcuts, remember windows and
   workspaces, restore on exit; (c) research alternate Game Bar access and
   anti-cheat false-positive risk (LL keyboard hook, overlays, window
   moves). [decision](decisions.md#cross-platform-behavior)
+- P0 | Windows dogfood defects (user 2026-10-03, 4 windows, trace
+  `%LOCALAPPDATA%\plasma-auto-tiler\session-1\run-01dd530861947ef5.log`):
+  (a) initial tiling produced splits on one axis only, where a 2x2 (split
+  plus a cross split on each side) was expected; minimum sizes may explain
+  it, unproven; (b) Win+M unmaximise briefly left windows overlapping until a
+  later retile.
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.
