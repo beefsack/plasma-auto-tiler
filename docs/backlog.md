@@ -175,9 +175,12 @@ decisions of 2026-09-24 are under
   --source winget`, then `mise trust`, `mise install`,
   `mise exec -- rustc -vV` from the repo root.
   [record](changes/archive/cross-platform-mise.md)
-- P1 | Windows reference-WM comparison | Compare glazewm (Rust) and komorebi
-  (cloned under `~/Development`) with our Windows implementation; record
-  learnings (hiding, input, recovery, multi-monitor, gaming coexistence).
+- P2 | Windows reference-WM comparison | Completed 2026-10-03 (`2b0540c`,
+  `d1b22dd`): [comparison](research/windows-port/reference-wm-comparison.md)
+  keeps our public `SW_HIDE` hiding and minimum hints; Whim's projected
+  drag preview informs parity 8; komorebi-bar/Zebar/Seelen inform parity 10.
+  No official Win+G/Win+F11 suppression found. Follow-up: Steam/Firefox/UWP
+  admission observations (small).
 - P1 | macOS port | Work expected soon (user 2026-10-03). Readiness research
   done (`f095042`): setup/TCC/signing runbook, sourced prior-art survey and
   tentative plan, which recommended public AX/AppKit. User direction
