@@ -51,6 +51,9 @@ pub const VK_RIGHT: u32 = 39;
 pub const VK_DOWN: u32 = 40;
 pub const VK_LWIN: u32 = 91;
 pub const VK_RWIN: u32 = 92;
+/// Escape: observed as a pass-through down edge for explicit gesture
+/// cancellation only. Never consumed, never classified as a chord.
+pub const VK_ESCAPE: u32 = 27;
 pub const VK_M: u32 = 0x4D;
 pub const VK_F11: u32 = 0x7A;
 pub const VK_SHIFT: u32 = 16;
@@ -2246,6 +2249,19 @@ pub mod sys {
         /// the owner alongside `cb_diag`.
         mask_sends: u32,
         mask_send_max_us: u32,
+        /// Explicit Esc-cancel edge for an open managed gesture: set once on
+        /// a physical Esc down edge in the callback (pass-through always,
+        /// never consumed). The owner coordinates it by sequence: every
+        /// physical Esc down bumps `esc_seq`, and each gesture START snapshots
+        /// the current sequence, so only edges with a newer sequence latch.
+        /// An edge before START never cancels a later gesture. Hookless
+        /// proof paths never set this, so zero/no-change restore there stays
+        /// exactly as before.
+        esc_edge: bool,
+        /// Monotonic sequence of physical Esc down edges, bumped alongside
+        /// `esc_edge`. Never reset by take/clear so START snapshots stay
+        /// ordered across pumps.
+        esc_seq: u64,
     }
 
     thread_local! {
@@ -2285,6 +2301,44 @@ pub mod sys {
 
     pub fn queue_dropped() -> u32 {
         SNAP.with(|s| s.borrow().as_ref().map(|st| st.queue.dropped).unwrap_or(0))
+    }
+
+    /// Owner drain for the explicit Esc-cancel edge: consume-once, true when
+    /// a physical Esc down edge arrived since the last take. The owner latches
+    /// it per open managed gesture whose START sequence predates the edge and
+    /// treats a latched END as an explicit cancellation. Always false when
+    /// the hook is not installed, so hookless proof paths keep their
+    /// existing zero/no-change semantics. The sequence counter is never
+    /// reset here; compare with [`esc_seq`] for START/END coordination.
+    pub fn take_esc_edge() -> bool {
+        SNAP.with(|s| {
+            let mut borrow = s.borrow_mut();
+            match borrow.as_mut() {
+                Some(st) => std::mem::replace(&mut st.esc_edge, false),
+                None => false,
+            }
+        })
+    }
+
+    /// Drop a stale Esc edge without acting (suspend/teardown path only):
+    /// an edge that never latched onto a gesture must not leak into the next
+    /// one. Gesture START never calls this; it snapshots [`esc_seq`] instead
+    /// so a same-batch edge is ordered rather than discarded.
+    pub fn clear_esc_edge() {
+        SNAP.with(|s| {
+            if let Some(st) = s.borrow_mut().as_mut() {
+                st.esc_edge = false;
+            }
+        });
+    }
+
+    /// Monotonic sequence of physical Esc down edges. The owner snapshots
+    /// this at each gesture START and latches only edges with a newer
+    /// sequence, so pre-gesture taps never cancel and fast cancel taps that
+    /// arrive with the END batch still latch. Zero when the hook is not
+    /// installed.
+    pub fn esc_seq() -> u64 {
+        SNAP.with(|s| s.borrow().as_ref().map(|st| st.esc_seq).unwrap_or(0))
     }
 
     /// Bind the chord-time origin: the managed identity under the foreground
@@ -2428,6 +2482,21 @@ pub mod sys {
             // events on both paths.
             let marked = injected;
             let is_up = flags & LLKHF_UP != 0;
+            // Explicit Esc-cancel edge for an open managed gesture: physical
+            // Esc down only (auto-repeat re-sets an already-set edge and
+            // bumps the sequence again, harmlessly), never consumed, never
+            // logged, never set from injected or proof-marked input. The
+            // owner snapshots the sequence at START and latches only newer
+            // edges; hookless paths never set it so their semantics are
+            // unchanged.
+            if !marked && !is_up && vk == super::VK_ESCAPE {
+                SNAP.with(|s| {
+                    if let Some(st) = s.borrow_mut().as_mut() {
+                        st.esc_edge = true;
+                        st.esc_seq = st.esc_seq.wrapping_add(1);
+                    }
+                });
+            }
             if is_up && super::is_win_vk(vk) {
                 let tick = Instant::now();
                 let fire = SNAP.with(|s| {
@@ -2870,6 +2939,8 @@ pub mod sys {
                 cb_diag_enabled: false,
                 mask_sends: 0,
                 mask_send_max_us: 0,
+                esc_edge: false,
+                esc_seq: 0,
             });
         });
         let hmod = unsafe { GetModuleHandleW(std::ptr::null()) };
@@ -2900,6 +2971,8 @@ pub mod sys {
                 cb_diag_enabled: false,
                 mask_sends: 0,
                 mask_send_max_us: 0,
+                esc_edge: false,
+                esc_seq: 0,
             });
         });
         let hmod = unsafe { GetModuleHandleW(std::ptr::null()) };

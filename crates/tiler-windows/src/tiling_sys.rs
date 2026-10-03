@@ -79,10 +79,10 @@ use crate::tiling::{
     INNER_GAP, InspectOptions, OUTER_GAP, OWNER_ID, ObservedTarget, ObservedTargetRef,
     ReadbackOutcome, RefusedTracker, ScopeHostChild, SkipReason, StatelessVerdict, TileOptions,
     TileProofOptions, TokenMap, WindowFacts, WorkspaceSelectOptions, allow_match, allowlist_digest,
-    classify, classify_gesture, fingerprint, fullscreen_toggle_decision, hosted_child_allows,
-    inspect_stateless_verdict, is_borderless_fullscreen, parse_allowlist, parse_workspace_request,
-    readback_outcome, scope_allows, scope_exe_basename, should_hold_born_fullscreen,
-    tick_summary_signature, tiling_domain_bounds,
+    classify, classify_gesture, drop_point_in_domain, fingerprint, fullscreen_toggle_decision,
+    hosted_child_allows, inspect_stateless_verdict, is_borderless_fullscreen, parse_allowlist,
+    parse_workspace_request, readback_outcome, scope_allows, scope_exe_basename,
+    should_hold_born_fullscreen, tick_summary_signature, tiling_domain_bounds,
 };
 use crate::workspace::ManagedWorkspaces;
 
@@ -279,8 +279,20 @@ fn monitor_fulls(areas: &[MonitorArea]) -> Vec<Rect> {
 #[derive(Debug, Clone, Copy)]
 enum HookEvent {
     Wake(isize),
-    MoveSizeStart(isize),
-    MoveSizeEnd(isize),
+    /// Esc sequence captured at WinEvent delivery time in the event
+    /// callback, carried to START. The pump only carries it to the START
+    /// snapshot and never re-reads it later, so an Esc that arrives
+    /// between the real START and the owner drain still latches (mirrors
+    /// the KDE Finish pointer on MoveSizeEnd).
+    MoveSizeStart(isize, u64),
+    /// Release cursor captured at WinEvent delivery time in the event
+    /// callback, carried to settle. `None` when the read failed: settle
+    /// routes cursor-less moves as no-change. Captured here (the KDE Finish
+    /// pointer), never re-read later on the pump. The END-time Esc sequence
+    /// rides along so a physical Esc AFTER the END (before the owner drain)
+    /// can never cancel the completed drop: settle latches ended gestures
+    /// only when the END snapshot differs from START.
+    MoveSizeEnd(isize, Option<(i32, i32)>, u64),
 }
 
 fn hook_queue() -> &'static Mutex<Vec<HookEvent>> {
@@ -304,9 +316,23 @@ unsafe extern "system" fn winevent_proc(
     _time: u32,
 ) {
     if event == EVENT_SYSTEM_MOVESIZESTART {
-        push_hook(HookEvent::MoveSizeStart(hwnd as isize));
+        // Event-time Esc sequence: snapshot now in the callback so a
+        // physical Esc between the real START and the owner drain keeps a
+        // newer sequence than the snapshot and still latches.
+        push_hook(HookEvent::MoveSizeStart(
+            hwnd as isize,
+            crate::snapkey::sys::esc_seq(),
+        ));
     } else if event == EVENT_SYSTEM_MOVESIZEEND {
-        push_hook(HookEvent::MoveSizeEnd(hwnd as isize));
+        // KDE Finish pointer: capture the release cursor now, at event
+        // time in the callback. The pump only carries it to settle and
+        // never re-reads it later. The END-time Esc sequence is captured
+        // alongside so post-END edges order correctly at the drain.
+        push_hook(HookEvent::MoveSizeEnd(
+            hwnd as isize,
+            cursor_pos(),
+            crate::snapkey::sys::esc_seq(),
+        ));
     } else if id_object == OBJID_WINDOW
         && matches!(
             event,
@@ -980,8 +1006,24 @@ struct TileLoop {
     /// Open user gestures on managed windows only.
     active: HashSet<u64>,
     /// Pre-gesture rectangles captured at START (from `stable`, never from a
-    /// mid-gesture frame).
+    /// mid-gesture frame; live `GetWindowRect` fallback only when `stable`
+    /// has no entry, e.g. a window admitted between ticks).
     gesture_before: HashMap<u64, Rect>,
+    /// Release cursor captured at MOVESIZEEND event-callback time, carried
+    /// to settle. Settle never re-reads the cursor later: an END without a
+    /// captured cursor routes as no-change for moves. Cleared on
+    /// END-settle/removal like `gesture_before`.
+    gesture_end_cursor: HashMap<u64, (i32, i32)>,
+    /// START-time identity snapshot per open gesture (pid/creation from a
+    /// bounded owner-side probe plus the live visible-membership lifetime
+    /// tag). Settle requires the fresh window to still match this snapshot in
+    /// addition to the stored member, so a reuse between START and END fails
+    /// closed even when HWND/PID/creation still agree. Absent entries fall
+    /// back to the stored-member check only. The tag is the member property
+    /// (`PlasmaAutoTilerMember`), never the owned-helper property (which is
+    /// empty for ordinary windows and would refuse every ordinary gesture).
+    gesture_start_key: HashMap<u64, crate::workspace::WindowKey>,
+    gesture_start_tag: HashMap<u64, Option<String>>,
     tick: u64,
     allowlist: Option<Vec<AllowEntry>>,
     /// Explicit normal-mode scope filter (top-level exe basenames,
@@ -1120,6 +1162,27 @@ struct TileLoop {
     /// Maintained alongside `active`, cleared on END/removal like
     /// `gesture_before`.
     move_kind: HashMap<u64, MoveSizeKind>,
+    /// Escape latched per open managed gesture HWND from the explicit
+    /// keyboard-hook down edge while the gesture holds the loop. An
+    /// Esc-cancelled native move restores natively to its pre-gesture frame,
+    /// so rect comparison alone cannot tell cancel from zero-move: the latch
+    /// makes cancellation explicit at settle time. Cleared on END/removal
+    /// like `gesture_before`. Hookless runs never set it.
+    esc_latched: HashSet<u64>,
+    /// Esc sequence snapshot per open gesture HWND, taken at START from the
+    /// keyboard-hook monotonic counter. Only edges with a newer sequence
+    /// latch (pre-gesture taps never cancel; fast taps arriving with the END
+    /// batch still latch via the single post-loop drain). Cleared on
+    /// END/removal like `gesture_before`.
+    gesture_esc_seq: HashMap<u64, u64>,
+    /// Esc sequence snapshot per open gesture HWND, taken at END from the
+    /// keyboard-hook monotonic counter (event-callback time, alongside the
+    /// Finish pointer). Ended gestures latch only when this differs from
+    /// START, so a physical Esc after the END but before the owner drain can
+    /// never cancel a completed drop. Absent entries never latch (fail
+    /// closed to no-cancel; settle then classifies from geometry). Cleared
+    /// on END/removal like `gesture_before`.
+    gesture_end_seq: HashMap<u64, u64>,
     /// Last observed Win+Shift level for the chord-edge wake. Sampled every
     /// pump before the idle skip so a bare chord press/release wakes the
     /// visual refresh on the 100ms cadence instead of waiting for the 2s
@@ -1486,6 +1549,24 @@ fn publish_managed(
         .into_iter()
         .map(|origin| (origin.hwnd, origin))
         .collect();
+    state
+        .esc_latched
+        .retain(|hwnd| state.managed.contains(hwnd));
+    state
+        .gesture_esc_seq
+        .retain(|hwnd, _| state.managed.contains(hwnd));
+    state
+        .gesture_end_seq
+        .retain(|hwnd, _| state.managed.contains(hwnd));
+    state
+        .gesture_end_cursor
+        .retain(|hwnd, _| state.managed.contains(hwnd));
+    state
+        .gesture_start_key
+        .retain(|hwnd, _| state.managed.contains(hwnd));
+    state
+        .gesture_start_tag
+        .retain(|hwnd, _| state.managed.contains(hwnd));
 }
 
 /// Hide the border overlay with a change-only `active-border` log line.
@@ -1873,6 +1954,33 @@ fn classify_move_size_start(hwnd_u64: u64) -> MoveSizeKind {
         return MoveSizeKind::Unknown;
     }
     classify_hit_test(result as u32)
+}
+
+/// Fresh outer rectangle for one HWND via a single `GetWindowRect` read.
+/// START-time fallback only, when `stable` has no pre-gesture entry. `None`
+/// on failure: the caller treats the gesture as no-start.
+fn live_outer_rect(hwnd_u64: u64) -> Option<Rect> {
+    let hwnd = hwnd_u64 as isize as HWND;
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    if unsafe { GetWindowRect(hwnd, &mut rect) } == 0 {
+        return None;
+    }
+    let w = rect.right.saturating_sub(rect.left);
+    let h = rect.bottom.saturating_sub(rect.top);
+    if w <= 0 || h <= 0 {
+        return None;
+    }
+    Some(Rect {
+        x: rect.left,
+        y: rect.top,
+        w,
+        h,
+    })
 }
 
 /// Fresh renderable check for one underlay anchor candidate: a live,
@@ -10219,6 +10327,18 @@ fn workspace_maintenance(
     rehide_pass(state, me, store);
 }
 
+/// END-bound Esc latch decision: a physical Esc down cancels the gesture
+/// only when the observed sequence differs from the START snapshot. Held
+/// gestures observe the live counter; just-ended gestures observe the
+/// END-callback snapshot, so an Esc that lands after the END (before the
+/// owner drain) observes an equal snapshot and never cancels the completed
+/// drop. Pure sequence comparison (wrapping-aware by construction: the
+/// counter only moves forward one step per physical Esc down).
+#[must_use]
+fn esc_edge_cancels(start_seq: u64, observed_seq: u64) -> bool {
+    observed_seq != start_seq
+}
+
 fn gesture_tick(
     state: &mut TileLoop,
     me: &ProcessIdentity,
@@ -10243,6 +10363,44 @@ fn gesture_tick(
     clear_maximize_at_admission(state, me, &retained);
     let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
     for hwnd in ended {
+        // Title-bar-only slice: every completed move arrives via the native
+        // title-bar modal loop, so the settle producer is always `native`.
+        let producer = "native";
+        // Per-gesture START snapshot and END cursor travel with the gesture:
+        // remove them here so each END settles exactly once.
+        let start_key = state.gesture_start_key.remove(hwnd);
+        let start_tag = state.gesture_start_tag.remove(hwnd);
+        let end_cursor = state.gesture_end_cursor.remove(hwnd);
+        state.gesture_esc_seq.remove(hwnd);
+        state.gesture_end_seq.remove(hwnd);
+        // Explicit Esc cancellation first: a cancelled native move restores
+        // its pre-gesture frame, so rect equality must never decide this
+        // path. Snap back through one bounded reconcile with no Engine
+        // mutation here at all; topology unchanged by construction.
+        if state.esc_latched.remove(hwnd) {
+            let token = by_hwnd.get(hwnd).map(|w| w.token.clone()).or_else(|| {
+                state
+                    .member_tokens
+                    .iter()
+                    .find(|(key, _)| key.hwnd == *hwnd)
+                    .map(|(_, token)| token.clone())
+            });
+            let mut line = serde_json::json!({
+                "event": "gesture",
+                "tick": state.tick,
+                "op": "gesture",
+                "disposition": "observed",
+                "outcome": "gesture-cancelled-esc",
+                "producer": producer,
+            });
+            if let Some(token) = token {
+                line["window"] = serde_json::Value::from(token);
+            }
+            log_json_at(&log_path, line);
+            let fulls_owned = fulls.to_vec();
+            reconcile_tick(state, me, &fulls_owned, areas);
+            continue;
+        }
         let Some(current) = by_hwnd.get(hwnd) else {
             // A maximized/fullscreen member is retained, never eligible, so a
             // gesture ending on one misses the observation above. Refuse
@@ -10288,9 +10446,80 @@ fn gesture_tick(
             .copied()
             .or_else(|| state.stable.get(hwnd).copied());
         let Some(before) = before else {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "gesture",
+                    "tick": state.tick,
+                    "op": "gesture",
+                    "disposition": "observed",
+                    "outcome": "gesture-no-start",
+                    "window": current.token,
+                    "producer": producer,
+                }),
+            );
+            let fulls_owned = fulls.to_vec();
+            reconcile_tick(state, me, &fulls_owned, areas);
             continue;
         };
-        let Some(intent) = classify_gesture(&before, &current.visible, cursor_pos()) else {
+        // START/END reuse fence: the fresh window must still match the
+        // START-time snapshot when one was captured. A same-process HWND
+        // reuse between START and END keeps HWND/PID/creation but starts
+        // without (or with a stale) member lifetime tag, so it fails closed
+        // here exactly like every other effect gate. No snapshot falls back
+        // to the stored-member check below. The tag comparison is snapshot
+        // versus a fresh member-property read (never the owned-helper tag,
+        // which is empty for ordinary windows).
+        if let (Some(key), Some(stored)) = (start_key.as_ref(), start_tag.as_ref())
+            && (!crate::workspace_owner::member_matches(
+                key,
+                current.hwnd,
+                current.identity.pid,
+                &current.identity.process_creation,
+            ) || {
+                let live = crate::product_hide::sys::read_member_tag(current.hwnd);
+                stored != &live
+            })
+        {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "gesture",
+                    "tick": state.tick,
+                    "op": "gesture",
+                    "disposition": "refused",
+                    "outcome": "gesture-refused-identity",
+                    "window": current.token,
+                    "producer": producer,
+                }),
+            );
+            let fulls_owned = fulls.to_vec();
+            reconcile_tick(state, me, &fulls_owned, areas);
+            continue;
+        }
+        // Release cursor carried from the MOVESIZEEND event callback, never
+        // re-read later: an END without a captured cursor routes as no-change
+        // for moves (cursor-less), while resizes classify from geometry
+        // alone.
+        let cursor = end_cursor;
+        let Some(intent) = classify_gesture(&before, &current.visible, cursor) else {
+            // Zero movement (or a cursor-less move): nothing to route.
+            // Reconcile once so any native nudge is reasserted to the
+            // Engine allocation; topology unchanged.
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "gesture",
+                    "tick": state.tick,
+                    "op": "gesture",
+                    "disposition": "observed",
+                    "outcome": "gesture-no-change",
+                    "window": current.token,
+                    "producer": producer,
+                }),
+            );
+            let fulls_owned = fulls.to_vec();
+            reconcile_tick(state, me, &fulls_owned, areas);
             continue;
         };
         // The gesture window's own (output, workspace) session owns this
@@ -10351,6 +10580,37 @@ fn gesture_tick(
         else {
             continue;
         };
+        // Item 7 is same-output only: a release cursor outside the source
+        // domain bounds (including another output) refuses with snap-back
+        // and no transfer. Cross-output placement belongs to a later item;
+        // the Engine would refuse the point as well, but this explicit
+        // fence keeps the outcome attributable before any Engine call.
+        if let GestureIntent::MoveDrop { x, y } = intent
+            && !drop_point_in_domain(
+                domain.bounds.x,
+                domain.bounds.y,
+                domain.bounds.w,
+                domain.bounds.h,
+                x,
+                y,
+            )
+        {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "gesture",
+                    "tick": state.tick,
+                    "op": "drag-drop",
+                    "disposition": "refused",
+                    "outcome": "gesture-refused-cross-output",
+                    "window": current.token,
+                    "producer": producer,
+                }),
+            );
+            let fulls_owned = fulls.to_vec();
+            reconcile_tick(state, me, &fulls_owned, areas);
+            continue;
+        }
         state.tick += 1;
         let correlation = state.correlation();
         // Incomplete snapshot defers with retained Engine state.
@@ -10449,16 +10709,58 @@ fn gesture_tick(
                         revision: revision_for(state, &loc.output, &loc.workspace),
                     },
                 );
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": "gesture",
+                        "tick": state.tick,
+                        "correlation": correlation.as_str(),
+                        "op": op,
+                        "disposition": "applied",
+                        "outcome": if op == "drag-drop" { "drag-drop-applied" } else { "pointer-resize-applied" },
+                        "window": current.token,
+                        "producer": producer,
+                    }),
+                );
             }
             _ => {
-                // Refusal converges through the next ordinary reconcile,
-                // matching the KDE restore-marker outcome with no ledger.
+                // Refusal converges through one bounded reconcile (snap-back
+                // to the retained allocation), matching the KDE
+                // restore-marker outcome with no ledger. Self, centre-stack,
+                // and unsupported targets land here with no plan and no
+                // commit; the closed Engine kind rides along for attribution.
+                let kind = match &reply {
+                    CoreReply::Rejected { kind, .. } => *kind,
+                    CoreReply::Diverged(reason) => reason.as_str(),
+                    CoreReply::SnapshotInvalid { detail, .. } => *detail,
+                    _ => "unhandled-variant",
+                };
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": "gesture",
+                        "tick": state.tick,
+                        "correlation": correlation.as_str(),
+                        "op": op,
+                        "disposition": "refused",
+                        "outcome": "drag-drop-refused",
+                        "kind": kind,
+                        "window": current.token,
+                        "producer": producer,
+                    }),
+                );
                 let fulls_owned = fulls.to_vec();
                 reconcile_tick(state, me, &fulls_owned, areas);
             }
         }
     }
     state.gesture_before.clear();
+    state.esc_latched.clear();
+    state.gesture_esc_seq.clear();
+    state.gesture_end_seq.clear();
+    state.gesture_end_cursor.clear();
+    state.gesture_start_key.clear();
+    state.gesture_start_tag.clear();
 }
 
 /// Native foreground veto read: one fresh pass over the live foreground with
@@ -10823,6 +11125,9 @@ fn run_tile_loop(
         managed: HashSet::new(),
         active: HashSet::new(),
         gesture_before: HashMap::new(),
+        gesture_end_cursor: HashMap::new(),
+        gesture_start_key: HashMap::new(),
+        gesture_start_tag: HashMap::new(),
         tick: 0,
         allowlist,
         scope,
@@ -10865,6 +11170,9 @@ fn run_tile_loop(
         underlay_overlay: UnderlayOverlay::default(),
         underlay_last: None,
         move_kind: HashMap::new(),
+        esc_latched: HashSet::new(),
+        gesture_esc_seq: HashMap::new(),
+        gesture_end_seq: HashMap::new(),
         underlay_chord_last: false,
         float_topmost_prev: std::collections::BTreeMap::new(),
         float_rects: HashMap::new(),
@@ -11037,7 +11345,7 @@ fn run_tile_loop(
                         }
                         woke = true;
                     }
-                    HookEvent::MoveSizeStart(raw) => {
+                    HookEvent::MoveSizeStart(raw, start_seq) => {
                         if state.border_overlay.hwnd() == Some(raw as u64)
                             || state.underlay_overlay.hwnd() == Some(raw as u64)
                         {
@@ -11045,10 +11353,55 @@ fn run_tile_loop(
                         }
                         woke = true;
                         let hwnd = raw as u64;
+                        // Sequence-bound Esc coordination: the snapshot rode with
+                        // the START event from callback time instead of being
+                        // re-read here. Only edges with a newer sequence latch
+                        // later, so a stale pre-gesture tap never cancels and
+                        // a same-batch edge is ordered rather than discarded.
+                        // The single post-loop drain below latches edges for
+                        // both held and just-ended gestures.
+                        if let std::collections::hash_map::Entry::Vacant(e) =
+                            state.gesture_esc_seq.entry(hwnd)
+                        {
+                            e.insert(start_seq);
+                        }
                         // PRE-gesture from the last stable observation, never
-                        // from a mid-gesture frame.
-                        if let Some(pre) = state.stable.get(&hwnd).copied() {
-                            state.gesture_before.entry(hwnd).or_insert(pre);
+                        // from a mid-gesture frame. Live fallback only when
+                        // stable has no entry (admitted between ticks); a
+                        // quick START+END in one batch still sees the pre
+                        // frame because stable predates both events.
+                        if !state.gesture_before.contains_key(&hwnd) {
+                            let pre = state.stable.get(&hwnd).copied().or_else(|| {
+                                live_outer_rect(hwnd).or_else(|| state.stable.get(&hwnd).copied())
+                            });
+                            if let Some(pre) = pre {
+                                state.gesture_before.insert(hwnd, pre);
+                            }
+                        }
+                        // START-time identity snapshot for the settle-time
+                        // reuse fence: a same-process HWND reuse between
+                        // START and END fails closed even when HWND/PID/
+                        // creation still agree. Probe failure leaves no
+                        // snapshot and settle falls back to the stored-member
+                        // check only.
+                        if let std::collections::hash_map::Entry::Vacant(e) =
+                            state.gesture_start_key.entry(hwnd)
+                        {
+                            let probe = hwnd as isize as HWND;
+                            if let Some(live) = window_identity(probe, hwnd, me) {
+                                e.insert(crate::workspace::WindowKey {
+                                    hwnd,
+                                    pid: live.pid,
+                                    creation: live.process_creation.clone(),
+                                });
+                                // Member lifetime tag, not the owned-helper
+                                // tag (empty for ordinary windows): the settle
+                                // fence compares this against a fresh member
+                                // read, exactly like the admission gate.
+                                state
+                                    .gesture_start_tag
+                                    .insert(hwnd, crate::product_hide::sys::read_member_tag(hwnd));
+                            }
                         }
                         state.active.insert(hwnd);
                         // Move-vs-resize classification, sampled once at START
@@ -11056,15 +11409,36 @@ fn run_tile_loop(
                         // unreadable windows classify Unknown: never a trigger.
                         state.move_kind.insert(hwnd, classify_move_size_start(hwnd));
                     }
-                    HookEvent::MoveSizeEnd(raw) => {
+                    HookEvent::MoveSizeEnd(raw, cursor, end_seq) => {
                         if state.border_overlay.hwnd() == Some(raw as u64)
                             || state.underlay_overlay.hwnd() == Some(raw as u64)
                         {
                             continue;
                         }
                         woke = true;
-                        state.active.remove(&(raw as u64));
-                        state.move_kind.remove(&(raw as u64));
+                        let hwnd = raw as u64;
+                        // Release cursor carried from the WinEvent callback,
+                        // never re-read later. A missing capture fails closed
+                        // to no-change for moves at settle time, so drop any
+                        // stale entry rather than carrying it forward.
+                        match cursor {
+                            Some(point) => {
+                                state.gesture_end_cursor.insert(hwnd, point);
+                            }
+                            None => {
+                                state.gesture_end_cursor.remove(&hwnd);
+                            }
+                        }
+                        // END-time Esc sequence, first END stands: the drain
+                        // latches ended gestures only against this snapshot,
+                        // never against a later counter read.
+                        if let std::collections::hash_map::Entry::Vacant(e) =
+                            state.gesture_end_seq.entry(hwnd)
+                        {
+                            e.insert(end_seq);
+                        }
+                        state.active.remove(&hwnd);
+                        state.move_kind.remove(&hwnd);
                     }
                 }
             }
@@ -11365,6 +11739,14 @@ fn run_tile_loop(
                 state.gesture_before.clear();
                 state.active.clear();
                 state.move_kind.clear();
+                state.esc_latched.clear();
+                state.gesture_esc_seq.clear();
+                state.gesture_end_seq.clear();
+                state.gesture_end_cursor.clear();
+                state.gesture_start_key.clear();
+                state.gesture_start_tag.clear();
+                // A stale Esc edge must not leak into the next gesture.
+                crate::snapkey::sys::clear_esc_edge();
                 hide_border(&mut state, "suspended");
                 hide_underlay(&mut state, "suspended");
                 continue;
@@ -11407,7 +11789,66 @@ fn run_tile_loop(
             state
                 .gesture_before
                 .retain(|hwnd, _| state.managed.contains(hwnd));
+            state
+                .gesture_end_cursor
+                .retain(|hwnd, _| state.managed.contains(hwnd));
+            state
+                .gesture_start_key
+                .retain(|hwnd, _| state.managed.contains(hwnd));
+            state
+                .gesture_start_tag
+                .retain(|hwnd, _| state.managed.contains(hwnd));
+            state
+                .gesture_esc_seq
+                .retain(|hwnd, _| state.managed.contains(hwnd));
+            state
+                .gesture_end_seq
+                .retain(|hwnd, _| state.managed.contains(hwnd));
             state.active.retain(|hwnd| state.managed.contains(hwnd));
+            // Sequence-bound Esc latch, drained once per pump after event and
+            // suspend handling. Still-held gestures compare the live counter
+            // against START. Just-ended gestures compare the END-callback
+            // snapshot against START instead: a physical Esc that lands after
+            // the END but before this drain must never cancel the completed
+            // drop, while a fast cancel tap arriving with the END batch still
+            // latches. Only edges newer than the START snapshot latch, so
+            // pre-gesture taps never cancel. Fast taps arrive via the prompt
+            // callback, never via level polling. Injected Esc never sets the
+            // edge (product hook filters injected keys), so synthetic proof
+            // paths keep their no-change restore without claiming an explicit
+            // cancel.
+            {
+                let esc_hit = crate::snapkey::sys::take_esc_edge();
+                if esc_hit {
+                    let now_seq = crate::snapkey::sys::esc_seq();
+                    for hwnd in state.active.iter() {
+                        if !state.managed.contains(hwnd) {
+                            continue;
+                        }
+                        let start_seq = state.gesture_esc_seq.get(hwnd).copied().unwrap_or(0);
+                        if esc_edge_cancels(start_seq, now_seq) {
+                            state.esc_latched.insert(*hwnd);
+                        }
+                    }
+                    for hwnd in ended.iter() {
+                        if !state.managed.contains(hwnd) {
+                            continue;
+                        }
+                        // END-bound: absent snapshots never latch (fail
+                        // closed to no-cancel; settle classifies from
+                        // geometry, which a real cancel restored natively).
+                        let (Some(start_seq), Some(end_seq)) = (
+                            state.gesture_esc_seq.get(hwnd).copied(),
+                            state.gesture_end_seq.get(hwnd).copied(),
+                        ) else {
+                            continue;
+                        };
+                        if esc_edge_cancels(start_seq, end_seq) {
+                            state.esc_latched.insert(*hwnd);
+                        }
+                    }
+                }
+            }
             let paused = state.active.iter().any(|hwnd| state.managed.contains(hwnd));
             if paused {
                 // A managed gesture holds the loop and invalidates any
@@ -12624,6 +13065,26 @@ fn inspect_carrier(class: &str) -> Result<String> {
         "foreground": foreground,
     })
     .to_string())
+}
+
+#[cfg(test)]
+mod esc_sequence_tests {
+    use super::esc_edge_cancels;
+
+    #[test]
+    fn end_bound_sequence_orders_cancel() {
+        // Latest physical Esc AFTER the END (before the owner drain) must
+        // not cancel the completed drop: the END snapshot still equals
+        // START even though the live counter moved on.
+        assert!(!esc_edge_cancels(5, 5));
+        // Esc on/before the END cancels: the END snapshot is newer.
+        assert!(esc_edge_cancels(5, 6));
+        // No edge at all never cancels.
+        assert!(!esc_edge_cancels(0, 0));
+        assert!(!esc_edge_cancels(u64::MAX, u64::MAX));
+        // Multiple edges still cancel.
+        assert!(esc_edge_cancels(7, 9));
+    }
 }
 
 #[cfg(test)]

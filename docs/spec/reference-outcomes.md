@@ -142,8 +142,14 @@ Legend:
 - `D-dec-win` [decisions.md](../decisions.md#windows-port) ("Windows
   Port": managed workspaces, minimums)
 - `D-dec-nest`
-  [decisions.md](../decisions.md#nested-placement-affordance) ("Nested
-  Placement Affordance")
+   [decisions.md](../decisions.md#nested-placement-affordance) ("Nested
+   Placement Affordance")
+- `D-dec-drag`
+  [decisions.md](../decisions.md#production-interactive-edge-drag)
+  ("Production Interactive Edge Drag")
+- `D-win-drag`
+  [windows-mouse-drag.md](../changes/windows-mouse-drag.md)
+  (reopened after blocked native-loop experiment; producer slices under verification)
 - `D-dec-max` [decisions.md](../decisions.md#windows-maximise)
   ("Windows maximise")
 - `D-place`
@@ -260,6 +266,10 @@ Legend:
 |---|---|---|---|---|---|---|---|---|---|---|
 | R-DRAG-01 | `H[A,B*,C]`, B tiled | Drag B onto C's centre (not an edge); release | Stack join vs refusal; source restoration | Zone names include WindowStack `S(S-cos-zone)`; centre-drop mapping TBD (community-only `D(D-ref)`) | Drag floats, drop re-tiles; centre mapping TBD; `D(D-ref)` | Pointer move floats only; no drag reflow; `D(D-ref)` | TBD | TBD | Centre stack request refused (snap-back); `D(D-dec-cos)` + `D(D-dec-nest)`; physical check pending | V-DRAG-ZONE |
 | R-DRAG-02 | `H[A,B,C]` equal (640 each at 1920); existing N outside that group | Drag N to the between-child bar between A and B; release | Flat vs nested; mover share (n=4 after insertion) | Flat `H[A,N,B,C]`, all 480 (mover 1/n, peers scaled); `UT(2026-08-22)` + [Test B](../cosmic-move-conformance.md#follow-up-manual-observations-tests-a-c) | TBD | TBD | TBD | TBD | TBD (between-child drop not checked here) | V-DRAG-ZONE |
+| R-DRAG-03 | `H[A,B*]`, both tiled | Title-bar drag B to A's top edge; repeat from the same start with Meta/Win+left client drag | Same drop topology and mover; no client click or sibling reflow before drop | TBD | TBD | TBD | TBD | TBD | KDE: same resolver selected `D(D-dec-drag)`; Windows: title producer delivered with feasible three-window synthetic proof and mid-hold sibling stability; exact row/Win equivalence TBD `D(D-win-drag)` | V-DRAG-ZONE |
+| R-DRAG-04 | `H[A,B*]`, both tiled | Start moving B; press Esc; release | Source topology/geometry retained; no drop plan; preview cleared | TBD | TBD | TBD | TBD | TBD | KDE: cancelled verdict makes no plan and clears preview `D(D-dec-drag)`; Windows: synthetic title Esc restores all frames with no mutation on a three-window fixture; physical edge/exact row/preview TBD `D(D-win-drag)` | V-DRAG-ZONE |
+| R-DRAG-05 | `H[A,B*]`, both tiled | Press/release the move gesture on B without moving | No topology/share change or preview residue | TBD | TBD | TBD | TBD | TBD | KDE: no-change verdict makes no plan `D(D-dec-drag)`; Windows: synthetic title zero-move preserves all frames with no mutation on a three-window fixture; exact row/preview TBD `D(D-win-drag)` | V-DRAG-ZONE |
+| R-DRAG-06 | `H[A,B*]`, one output with a panel/taskbar outside the work area | Move B; release over the panel/taskbar outside the work area | Source restoration vs off-area placement; preview cleared | TBD | TBD | TBD | TBD | TBD | KDE: unresolved target snaps back `D(D-dec-drag)`; Windows: taskbar-outside refusal restores all frames with no mutation on a three-window fixture; exact row/preview TBD `D(D-win-drag)` | V-DRAG-ZONE |
 
 ## Deferred areas
 

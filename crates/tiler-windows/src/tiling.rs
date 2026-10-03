@@ -969,6 +969,28 @@ pub const fn readback_outcome(
     }
 }
 
+/// Same-output fence for a settle-time drop point: the release cursor must
+/// still sit inside the source domain bounds. Outside (including another
+/// output) refuses with snap-back and no transfer; cross-output placement
+/// belongs to a later item. Relocated from the discarded Win-drag producer;
+/// the title-bar path uses the same fence.
+#[must_use]
+pub fn drop_point_in_domain(
+    bounds_x: i32,
+    bounds_y: i32,
+    bounds_w: i32,
+    bounds_h: i32,
+    x: i32,
+    y: i32,
+) -> bool {
+    if bounds_w <= 0 || bounds_h <= 0 {
+        return false;
+    }
+    let dx = i64::from(x) - i64::from(bounds_x);
+    let dy = i64::from(y) - i64::from(bounds_y);
+    dx >= 0 && dy >= 0 && dx < i64::from(bounds_w) && dy < i64::from(bounds_h)
+}
+
 /// One settled manual gesture, derived from pre/post-gesture rectangles plus
 /// the settle-time cursor position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2761,5 +2783,20 @@ mod tests {
         };
         assert!(!tracker.should_skip("w1", &moved, &held, now));
         assert!(!tracker.should_skip("w1", &effective, &planned, now));
+    }
+
+    #[test]
+    fn drop_fence_is_source_bounds_only() {
+        // Inside (including origin edge, exclusive far edge).
+        assert!(drop_point_in_domain(0, 0, 100, 100, 0, 0));
+        assert!(drop_point_in_domain(0, 0, 100, 100, 99, 99));
+        // Outside: cross-output and off-work-area refuse alike.
+        assert!(!drop_point_in_domain(0, 0, 100, 100, 100, 50));
+        assert!(!drop_point_in_domain(0, 0, 100, 100, -1, 50));
+        assert!(!drop_point_in_domain(0, 0, 100, 100, 50, 100));
+        assert!(!drop_point_in_domain(2560, 0, 100, 100, 50, 50));
+        // Degenerate bounds never admit.
+        assert!(!drop_point_in_domain(0, 0, 0, 100, 0, 50));
+        assert!(!drop_point_in_domain(0, 0, 100, 0, 50, 0));
     }
 }

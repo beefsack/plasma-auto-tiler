@@ -534,6 +534,15 @@ the corresponding item ships; each such entry names its replacement.
   output/DPI arrangements remain follow-up checks. Evidence:
   `changes/archive/windows-group-underlay.md`.
 
+### Windows mouse movement
+
+- Orchestrator decision 2026-10-04, provisional, to discuss: Windows item 7
+  ships title-bar drag first; Win+drag follows. Each accepted producer is its
+  own committed unit before item 8 preview. The failed native SC_MOVE/non-client
+  initiation experiments select no product behavior. Investigate one bounded
+  project-driven Win+left movement path using the existing input and identity
+  gates and shared Engine drop geometry; retain KDE binding/placement parity.
+
 ### Windows maximise
 
 - Windows parity item 3 (2026-10-03): Win+M matches the KDE catalog's Meta+M.
