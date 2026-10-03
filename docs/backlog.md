@@ -154,7 +154,11 @@ decisions of 2026-09-24 are under
   source of truth feeding the spec and its supported variants (for example
   n-ary vs binary splits); retrofill COSMIC outcomes from tests already
   done; every behaviour ambiguity adds a row the user can fill later when
-  source code cannot answer it. Format pending user confirmation.
+  source code cannot answer it. Initial matrix delivered (`076aba1`,
+  [reference outcomes](spec/reference-outcomes.md), 27 scenarios, format
+  provisional); AGENTS.md now requires a row per ambiguity. Next: user
+  confirms the format and fills priority TBD rows (R-WS-02, R-WS-04,
+  R-WS-05, R-START-03, R-MAX-01), then the spec selects supported variants.
 - P2 | Prior-art catalogue upkeep | Completed 2026-10-03 (`e4c1d92`):
   [maintained index](research/prior-art.md), grouped by desktop and type
   (compositor-native vs host-integrated) with algorithm families,
