@@ -26,7 +26,7 @@
 2. Implement the root config, minimal guidance and hosted install checks.
 3. Lead review, verification, accepted evidence and archive.
 
-## Current evidence and decisions
+## Accepted evidence and decisions
 
 - Initial tree clean at `432850e`.
 - Official mise Rust backend uses rustup, installs configured components and
@@ -40,9 +40,27 @@
 - Native rustup stable MSVC baseline passes locked four-package build/test,
   rustfmt and strict all-target clippy (2026-10-03); this is not local mise proof.
 - TOML and workflow YAML parse with existing yq; `git diff --check` passes.
-- Hosted acceptance pending: Windows action installation and Cargo gates;
-  macOS 15 arm64 action installation plus tool/host/component smoke checks.
+- Implementation commit `4e95150` passed all five hosted jobs (Rust, KWin,
+  shell, Windows, macOS):
+  [CI 37126973606](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37126973606).
+- Hosted logs confirm six installed Windows tools and five on macOS 15 arm64,
+  with stable Rust 1.99.0 (`x86_64-pc-windows-msvc` and
+  `aarch64-apple-darwin`). Windows mise-selected locked Cargo gates pass;
+  macOS tool/host/rustfmt/clippy smoke checks pass (24-second job).
 - Provisional choices recorded in `docs/decisions.md`: rolling selectors without
   a lockfile; hosted installation checks instead of an exact Nix equality gate.
 - User-owned acceptance: install mise and run `mise install` from the root on
   Windows and the future macOS host; verify local tool selection and OS SDKs.
+
+## Outcome and handover
+
+- Delivered root configuration, minimal dependency guidance, both runbooks,
+  and hosted install coverage. No local installs or live desktop tests were run.
+- No semantic failed approaches or causal repairs. No Worker remains running.
+- Risks: rolling installs can change versions; local installation/SDK readiness
+  remains user-owned. macOS CI is install smoke evidence, not product acceptance.
+- Proposed backlog text: "Cross-platform dev environment (mise): delivered;
+  root Windows/macOS config and hosted install checks green. User local mise
+  setup pending; Linux remains devenv/Nix."
+- Next action: user installs mise, then runs root `mise trust`, `mise install`
+  and `mise exec -- rustc -vV`; Lead implementation work is complete.
