@@ -162,10 +162,15 @@ decisions of 2026-09-24 are under
   Linux/macOS session: FancyWM core submodules, niri/sway/river/awesome/dwm
   source analysis (web-only now). Keep it updated as projects are studied.
   [Evidence](changes/archive/prior-art-catalogue.md).
-- P1 | Cross-platform dev environment (mise) | Approved (user 2026-10-03):
-  root `mise.toml` for Windows/macOS toolchains, devenv stays on Linux,
-  minimal `AGENTS.md` update. Before macOS starts.
-  [decision](decisions.md#windows-port)
+- P1 | Cross-platform dev environment (mise) | Delivered 2026-10-03
+  (`4e95150`, `fda206b`, CI green incl. hosted Windows/macOS install
+  checks): root `mise.toml` (Rust stable, just, jq, gh, ripgrep; yq on
+  Windows), AGENTS.md and runbooks updated. Provisional: rolling `latest`/
+  `stable` without `mise.lock`; hosted install checks instead of exact
+  mise/Nix pin equality. User: `winget install --exact --id jdx.mise
+  --source winget`, then `mise trust`, `mise install`,
+  `mise exec -- rustc -vV` from the repo root.
+  [record](changes/archive/cross-platform-mise.md)
 - P1 | Windows reference-WM comparison | Compare glazewm (Rust) and komorebi
   (cloned under `~/Development`) with our Windows implementation; record
   learnings (hiding, input, recovery, multi-monitor, gaming coexistence).
