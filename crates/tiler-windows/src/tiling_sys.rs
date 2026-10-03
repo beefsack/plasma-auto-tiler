@@ -1064,6 +1064,12 @@ struct TileLoop {
     /// Live float frame per Engine token. Distinct from `member_rects`, which
     /// keeps the last tiled allocation frozen at float time.
     float_rects: HashMap<String, Rect>,
+    /// Sticky-float members by stable member key to their pre-sticky float
+    /// state (`true` when the window was already a normal float before
+    /// sticky-on). Single runtime map, never redundant sets. Sticky rides the
+    /// Engine as a slotless float plus this map plus a window-lifetime native
+    /// marker; the marker (not this map) survives owner restarts.
+    sticky: std::collections::BTreeMap<crate::workspace::WindowKey, bool>,
 }
 
 /// One hidden member: the committed ledger claim (carrying the durable
@@ -2989,15 +2995,15 @@ fn set_topmost_band(hwnd_u64: u64, top: bool) -> bool {
     placed != 0
 }
 
-/// Held ownership gates for a band-only topmost effect on a stored member
-/// with no live eligible observation (retained floats, graceful stop): the
-/// held process identity must equal the stored full identity with matching
-/// creation, same user/session as the owner, medium integrity, live lifetime
-/// tag, plus scope, hosted-child, and proof fences. The caller keeps the
-/// returned hold across the effect and rechecks pid plus band readback after.
-/// Geometry effects use `revalidate_target` (fresh eligibility classification);
-/// band effects move, size, and activate nothing.
-fn hold_band_target(
+/// Held ownership gates for one sticky-marker native write (`SetProp` /
+/// `RemoveProp`) on a stored member: the held process identity must equal
+/// the stored full identity with matching creation, same user/session as
+/// the owner, medium integrity, live lifetime tag, plus scope,
+/// hosted-child, and proof fences. The caller keeps the returned hold
+/// across the write and its readback and rechecks pid plus lifetime tag
+/// immediately before the call (a stable process handle never protects
+/// HWND reuse) with a consistent readback after.
+fn hold_sticky_target(
     state: &TileLoop,
     me: &ProcessIdentity,
     key: &crate::workspace::WindowKey,
@@ -3007,10 +3013,14 @@ fn hold_band_target(
     let ident = held.identity().ok()?;
     if ident.pid != key.pid
         || ident.process_creation != key.creation
-        || ident.exe_path != stored.exe_path
+        || stored.pid != key.pid
+        || stored.process_creation != key.creation
         || ident.user_sid != stored.user_sid
         || ident.session_id != stored.session_id
     {
+        return None;
+    }
+    if !crate::lifecycle::exe_paths_equal(&ident.exe_path, &stored.exe_path) {
         return None;
     }
     if ident.user_sid != me.user_sid || ident.session_id != me.session_id {
@@ -3042,8 +3052,58 @@ fn hold_band_target(
     Some(held)
 }
 
-/// Drop float runtime state whose membership is gone. No writes, no ledger;
-/// the next tick re-derives float rows from the Engine.
+/// Held ownership gates for a band-only topmost effect on a stored member
+/// with no live eligible observation (retained floats, graceful stop).
+/// Same bar as [`hold_sticky_target`]: the caller keeps the returned hold
+/// across the effect and rechecks pid plus band readback after.
+/// Geometry effects use `revalidate_target` (fresh eligibility classification);
+/// band effects move, size, and activate nothing.
+fn hold_band_target(
+    state: &TileLoop,
+    me: &ProcessIdentity,
+    key: &crate::workspace::WindowKey,
+) -> Option<HeldProcess> {
+    hold_sticky_target(state, me, key)
+}
+
+/// Fresh pid plus lifetime-tag recheck for one sticky-marker write: the
+/// live member tag must still equal the stored tag and the HWND must still
+/// resolve to the stored pid. Call immediately before the `SetProp` /
+/// `RemoveProp` under the held process and again after the readback.
+fn sticky_tag_pid_fresh(state: &TileLoop, key: &crate::workspace::WindowKey) -> bool {
+    state.member_tags.get(key).is_some_and(|stored| {
+        crate::workspace_owner::visible_lifetime_ok(
+            stored,
+            crate::product_hide::sys::read_member_tag(key.hwnd).as_deref(),
+        )
+    }) && pid_current(key.hwnd, key.pid)
+}
+
+/// Install one sticky marker under the fresh held gate with the guard kept
+/// across the write and its readback. Returns true only when the install
+/// reads back consistently and the pid plus lifetime tag stay fresh after.
+fn install_sticky_mark_held(
+    state: &TileLoop,
+    me: &ProcessIdentity,
+    key: &crate::workspace::WindowKey,
+    prior_floating: bool,
+) -> bool {
+    let Some(held) = hold_sticky_target(state, me, key) else {
+        return false;
+    };
+    if !sticky_tag_pid_fresh(state, key) {
+        let _ = &held;
+        return false;
+    }
+    let ok = crate::product_hide::sys::install_sticky_marker(key.hwnd, prior_floating).is_ok();
+    let fresh = sticky_tag_pid_fresh(state, key);
+    let _ = &held;
+    ok && fresh
+}
+
+/// Drop float and sticky runtime state whose membership is gone. No writes,
+/// no ledger; the next tick re-derives float rows from the Engine. Sticky
+/// markers (window properties) are never pruned here: only the runtime map.
 fn prune_float_state(state: &mut TileLoop) {
     state
         .float_topmost_prev
@@ -3051,6 +3111,24 @@ fn prune_float_state(state: &mut TileLoop) {
     state
         .float_rects
         .retain(|token, _| state.member_tokens.values().any(|live| live == token));
+    state
+        .sticky
+        .retain(|key, _| state.member_tokens.contains_key(key));
+}
+
+/// Drop every runtime table for one dead member: tokens, rects, bands, sticky,
+/// identity, tags, and workspace membership. No writes, no ledger. Sticky
+/// markers (window properties) are never pruned here: only the runtime map.
+fn drop_member_state(state: &mut TileLoop, key: &crate::workspace::WindowKey) {
+    if let Some(token) = state.member_tokens.remove(key) {
+        state.member_rects.remove(&token);
+        state.float_rects.remove(&token);
+    }
+    state.float_topmost_prev.remove(key);
+    state.sticky.remove(key);
+    state.member_identity.remove(key);
+    state.member_tags.remove(key);
+    state.workspaces.remove_window(key);
 }
 
 /// One exact-window foreground check plus a single setter with readback.
@@ -3207,7 +3285,11 @@ fn assemble_domain_rows(
         if let Some(token) = state.member_tokens.get(key).cloned()
             && let Some(window) = by_token.get(token.as_str())
         {
-            if float_tokens.contains(&token) {
+            // Slotless floating row on the live native frame, no hint. The
+            // tiled allocation in `member_rects` stays frozen. Engine-known
+            // floats and sticky members ride here; adoption commits the Engine
+            // exception inline, so the runtime map never disagrees.
+            if float_tokens.contains(&token) || state.sticky.contains_key(key) {
                 // Slotless floating row on the live native frame, no hint.
                 // The tiled allocation in `member_rects` stays frozen.
                 state.float_rects.insert(token.clone(), window.visible);
@@ -4464,6 +4546,7 @@ fn keyboard_tick(
                 QueuedSnapEvent::Maximize(_) => stale += 1,
                 QueuedSnapEvent::Fullscreen(_) => stale += 1,
                 QueuedSnapEvent::Float(_) => stale += 1,
+                QueuedSnapEvent::Sticky(_) => stale += 1,
             }
         }
         if stale > 0 {
@@ -4680,7 +4763,32 @@ fn keyboard_tick(
                 };
                 // A focused float never starts directional navigation; floats
                 // hold no tile slot so the Engine observation already excludes
-                // them as targets.
+                // them as targets. Sticky rides the same slotless float plus
+                // an explicit subject gate so a pruned-domain sticky (no
+                // Engine session) still refuses instead of navigating.
+                if state.sticky.contains_key(&member_key) {
+                    let outcome = match intent.op {
+                        SnapOp::Focus => "focus-refused-sticky",
+                        SnapOp::Move => "move-refused-sticky",
+                    };
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "snap",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "op": intent.op.as_str(),
+                            "direction": direction_name(intent.direction),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": outcome,
+                            "origin": origin.token,
+                            "window": from,
+                        }),
+                    );
+                    continue;
+                }
                 if engine_is_float(state, &loc.output, &loc.workspace, &from) {
                     let outcome = match intent.op {
                         SnapOp::Focus => "focus-refused-floating",
@@ -5083,14 +5191,7 @@ fn keyboard_tick(
                     crate::workspace_owner::visible_lifetime_ok(stored, live_tag.as_deref())
                 });
                 if !lifetime_ok {
-                    if let Some(token) = state.member_tokens.remove(&member_key) {
-                        state.member_rects.remove(&token);
-                        state.float_rects.remove(&token);
-                    }
-                    state.float_topmost_prev.remove(&member_key);
-                    state.member_identity.remove(&member_key);
-                    state.member_tags.remove(&member_key);
-                    state.workspaces.remove_window(&member_key);
+                    drop_member_state(state, &member_key);
                     log_json_at(
                         &log_path,
                         serde_json::json!({
@@ -5430,14 +5531,7 @@ fn keyboard_tick(
                     Ok(target) => target,
                     Err(reason) => {
                         if reason == "identity-changed" {
-                            if let Some(token) = state.member_tokens.remove(&member_key) {
-                                state.member_rects.remove(&token);
-                                state.float_rects.remove(&token);
-                            }
-                            state.float_topmost_prev.remove(&member_key);
-                            state.member_identity.remove(&member_key);
-                            state.member_tags.remove(&member_key);
-                            state.workspaces.remove_window(&member_key);
+                            drop_member_state(state, &member_key);
                         }
                         log_json_at(
                             &log_path,
@@ -5538,8 +5632,816 @@ fn keyboard_tick(
             QueuedSnapEvent::Float(intent) => {
                 dispatch_float_intent(state, me, fulls, areas, intent);
             }
+            QueuedSnapEvent::Sticky(intent) => {
+                dispatch_sticky_intent(state, me, fulls, areas, intent);
+            }
         }
     }
+}
+
+/// Fresh observation plus admission shared by the float and sticky chords.
+struct ChordObserved {
+    observed: Vec<ObservedWindow>,
+    retained: Vec<RetainedRow>,
+    skipped: Vec<(String, String)>,
+}
+
+fn observe_chord_intent(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+) -> Option<ChordObserved> {
+    let mut skipped = Vec::new();
+    let mut retained = Vec::new();
+    let mut observed = state.observe(me, fulls, &mut skipped, &mut retained)?;
+    publish_managed(state, me, &observed, &retained);
+    ensure_workspace_assignments(state, me, &mut observed, &retained, areas);
+    clear_maximize_at_admission(state, me, &retained);
+    Some(ChordObserved {
+        observed,
+        retained,
+        skipped,
+    })
+}
+
+/// Resolved chord target: the Engine token, member key, and domain.
+struct ChordTarget {
+    from: String,
+    member_key: crate::workspace::WindowKey,
+    loc: crate::workspace::MemberLoc,
+}
+
+/// Chord rejection: the outcome to log and the window token when the log
+/// line carries one.
+struct ChordReject {
+    outcome: &'static str,
+    window: Option<String>,
+}
+
+/// Origin-to-member resolution shared by the float and sticky chords: origin
+/// re-resolution, member binding, domain, lifetime drop, proof, and scope
+/// fences. Drops stale membership as a side effect; the caller logs.
+fn resolve_chord_target(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    areas: &[MonitorArea],
+    origin: &SnapOrigin,
+) -> std::result::Result<ChordTarget, ChordReject> {
+    let reject = |outcome: &'static str| ChordReject {
+        outcome,
+        window: None,
+    };
+    let fresh: Vec<SnapOrigin> = state.snap_origins.values().cloned().collect();
+    let foreground_hwnd = Some(unsafe { GetForegroundWindow() } as usize as u64);
+    let from = match resolve_origin(origin, foreground_hwnd, &fresh, state.snap_advance.as_ref()) {
+        OriginVerdict::Dispatch { token, .. } => token,
+        OriginVerdict::Reject(reason) => {
+            state.snap_advance = None;
+            return Err(reject(reason));
+        }
+    };
+    let Some(member_key) = state
+        .member_tokens
+        .iter()
+        .find(|(_, token)| token.as_str() == from.as_str())
+        .map(|(key, _)| key.clone())
+    else {
+        state.snap_advance = None;
+        return Err(reject("unmanaged"));
+    };
+    if !crate::workspace_owner::member_matches(
+        &member_key,
+        origin.hwnd,
+        origin.pid,
+        &origin.creation,
+    ) {
+        state.snap_advance = None;
+        return Err(reject("foreground-changed"));
+    }
+    let Some(loc) = state.workspaces.member_loc(&member_key).cloned() else {
+        state.snap_advance = None;
+        return Err(reject("unmanaged"));
+    };
+    if workspace_domain_for(&loc.output, &loc.workspace, areas).is_none() {
+        return Err(reject("unknown-output"));
+    }
+    let live_tag = crate::product_hide::sys::read_member_tag(member_key.hwnd);
+    let lifetime_ok = state.member_tags.get(&member_key).is_some_and(|stored| {
+        crate::workspace_owner::visible_lifetime_ok(stored, live_tag.as_deref())
+    });
+    if !lifetime_ok {
+        drop_member_state(state, &member_key);
+        return Err(reject("identity-changed"));
+    }
+    let Some(stored) = state.member_identity.get(&member_key).cloned() else {
+        state.snap_advance = None;
+        return Err(reject("unmanaged"));
+    };
+    if let Some(entries) = state.allowlist.as_ref() {
+        let owned = entries
+            .iter()
+            .find(|e| e.hwnd == member_key.hwnd)
+            .is_some_and(|entry| verify_proof_owned(member_key.hwnd, entry, me).is_ok());
+        if !owned {
+            return Err(reject("identity-changed"));
+        }
+    }
+    if !scope_allows(&state.scope, &stored.exe_path)
+        || !hosted_gate_allows(
+            &stored.exe_path,
+            member_key.hwnd,
+            stored.pid,
+            &state.scope_hosts,
+        )
+    {
+        return Err(ChordReject {
+            outcome: "scope-excluded",
+            window: Some(from.clone()),
+        });
+    }
+    Ok(ChordTarget {
+        from,
+        member_key,
+        loc,
+    })
+}
+
+/// Settle one rejected chord with its origin (and window when carried).
+fn settle_chord_reject(
+    log_path: &Path,
+    settle: &dyn Fn(&'static str) -> serde_json::Value,
+    origin: &SnapOrigin,
+    reject: &ChordReject,
+) {
+    let mut line = settle(reject.outcome);
+    line["origin"] = serde_json::Value::from(origin.token.clone());
+    if let Some(window) = &reject.window {
+        line["window"] = serde_json::Value::from(window.clone());
+    }
+    log_json_at(log_path, line);
+}
+
+/// Overlay refusal for one chord target, float or sticky vocabulary.
+fn chord_overlay_refusal(
+    sticky_vocab: bool,
+    observed: &[ObservedWindow],
+    retained: &[RetainedRow],
+    member_key: &crate::workspace::WindowKey,
+) -> Option<&'static str> {
+    let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
+    let zoomed = is_zoomed_now(member_key.hwnd);
+    if let Some(window) = by_hwnd.get(&member_key.hwnd) {
+        if sticky_vocab {
+            crate::tiling::sticky_toggle_refusal(window.facts.captionless_fullscreen, zoomed)
+        } else {
+            crate::tiling::float_toggle_refusal(window.facts.captionless_fullscreen, zoomed)
+        }
+    } else if let Some(row) = retained.iter().find(|r| r.key == *member_key) {
+        if sticky_vocab {
+            crate::tiling::sticky_toggle_refusal(row.fullscreen, zoomed)
+        } else {
+            crate::tiling::float_toggle_refusal(row.fullscreen, zoomed)
+        }
+    } else {
+        None
+    }
+}
+
+/// Shared `ToggleFloat` candidate for one domain member: assemble rows and
+/// evaluate on a local candidate. The caller commits the Engine only after
+/// its native effects verify, so a failed placement never strands state.
+#[allow(clippy::too_many_arguments)]
+fn prepare_toggle_float(
+    state: &mut TileLoop,
+    areas: &[MonitorArea],
+    observed: &[ObservedWindow],
+    retained: &[RetainedRow],
+    op: &'static str,
+    from: &str,
+    loc: &crate::workspace::MemberLoc,
+    float_rect: Option<Rect>,
+    origin: &SnapOrigin,
+    settle: &dyn Fn(&'static str) -> serde_json::Value,
+    log_path: &Path,
+    correlation: &CorrelationId,
+    target: &'static str,
+) -> Option<(CoreReply, tiler_core::engine::Engine)> {
+    let mut hint_cx = HintCx::new();
+    let Some(rows) = assemble_domain_rows(
+        state,
+        &loc.output,
+        &loc.workspace,
+        observed,
+        retained,
+        op,
+        correlation.as_str(),
+        &mut hint_cx,
+    ) else {
+        let mut line = settle("deferred");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(log_path, line);
+        return None;
+    };
+    if !rows.iter().any(|r| r.token == from) {
+        let mut line = settle("unmanaged");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(log_path, line);
+        return None;
+    }
+    let windows: Vec<(WindowId, Rect, WindowSizeHints, bool)> = rows
+        .iter()
+        .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
+        .collect();
+    let fp = fingerprint(
+        &rows
+            .iter()
+            .map(|r| (r.token.clone(), r.rect))
+            .collect::<Vec<_>>(),
+    );
+    let from_id = WindowId(from.to_owned());
+    let Some((domain, domain_key)) = workspace_domain_for(&loc.output, &loc.workspace, areas)
+    else {
+        let mut line = settle("unknown-output");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(log_path, line);
+        return None;
+    };
+    let mut event = crate::tiling::build_reconcile_event_for_floating(
+        &state.owner,
+        &state.generation,
+        correlation,
+        revision_for(state, &loc.output, &loc.workspace),
+        fp,
+        &domain,
+        &domain_key,
+        OUTER_GAP,
+        &windows,
+        Some(&from_id),
+    );
+    event.command = CoreCommand::ToggleFloat {
+        window: from.to_owned(),
+        float_rect,
+    };
+    let mut candidate = state.engine.clone();
+    let reply = candidate.handle(&event);
+    if !matches!(reply, CoreReply::Tiled(_)) {
+        let mut line = settle(reply_outcome(&reply));
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        line["target"] = serde_json::Value::from(target);
+        log_json_at(log_path, line);
+        return None;
+    }
+    Some((reply, candidate))
+}
+
+/// Shared tiled-to-float transition: native placement plus raised band with
+/// verified readback, Engine commit, sibling reflow, exact focus retained.
+/// With `mark_sticky` the sticky mark lands after the float verifies; a failed
+/// mark leaves a normal float for a later retry.
+#[allow(clippy::too_many_arguments)]
+fn apply_float_from_tiled(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    observed: &[ObservedWindow],
+    retained: &[RetainedRow],
+    skipped: Vec<(String, String)>,
+    member_key: &crate::workspace::WindowKey,
+    from: &str,
+    loc: &crate::workspace::MemberLoc,
+    origin: &SnapOrigin,
+    settle: &dyn Fn(&'static str) -> serde_json::Value,
+    log_path: &Path,
+    tick: u64,
+    correlation: &CorrelationId,
+    op: &'static str,
+    target: &'static str,
+    applied: &'static str,
+    mark_sticky: bool,
+) {
+    let Some((reply, candidate)) = prepare_toggle_float(
+        state,
+        areas,
+        observed,
+        retained,
+        op,
+        from,
+        loc,
+        None,
+        origin,
+        settle,
+        log_path,
+        correlation,
+        target,
+    ) else {
+        return;
+    };
+    let CoreReply::Tiled(plan) = &reply else {
+        return;
+    };
+    let Some(effective) = plan.float_rect else {
+        let mut line = settle("float-missing-placement");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        line["target"] = serde_json::Value::from(target);
+        log_json_at(log_path, line);
+        return;
+    };
+    let Some(expected) = observed.iter().find(|w| w.hwnd == member_key.hwnd) else {
+        let mut line = settle("origin-vanished");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        line["target"] = serde_json::Value::from(target);
+        log_json_at(log_path, line);
+        return;
+    };
+    let proof_mode = state.allowlist.is_some();
+    let audit_pre = (
+        expected.identity.pid,
+        expected.identity.process_creation.clone(),
+        expected.identity.exe_path.clone(),
+        expected.identity.user_sid.clone(),
+        expected.identity.session_id,
+        expected.identity.tag.clone(),
+    );
+    let member_tag = state.member_tags.get(member_key).map(String::as_str);
+    let placement = match revalidate_target(
+        expected,
+        me,
+        fulls,
+        &mut state.tokens,
+        proof_mode,
+        state.allowlist.as_ref(),
+        &state.scope,
+        member_tag,
+        &state.scope_hosts,
+        false,
+    ) {
+        Ok(target) => target,
+        Err(reason) => {
+            let mut line = settle(reason);
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            line["window"] = serde_json::Value::from(from.to_owned());
+            line["target"] = serde_json::Value::from(target);
+            log_json_at(log_path, line);
+            return;
+        }
+    };
+    let Some(outer) = placement.window.insets.visible_to_outer(effective) else {
+        let mut line = settle("frame-overflow");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        line["target"] = serde_json::Value::from(target);
+        log_json_at(log_path, line);
+        return;
+    };
+    if suspend_read(state, me, fulls).veto.block {
+        let mut line = settle("fullscreen-foreground");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        line["target"] = serde_json::Value::from(target);
+        log_json_at(log_path, line);
+        return;
+    }
+    let hwnd_u64 = placement.window.hwnd;
+    let current_topmost = read_topmost_now(hwnd_u64);
+    let prior = state
+        .float_topmost_prev
+        .get(member_key)
+        .copied()
+        .unwrap_or(current_topmost);
+    let (anchor, flags) = if current_topmost {
+        (std::ptr::null_mut(), SWP_NOACTIVATE | SWP_NOZORDER)
+    } else {
+        (HWND_TOPMOST, SWP_NOACTIVATE)
+    };
+    let placed = unsafe {
+        SetWindowPos(
+            hwnd_u64 as isize as HWND,
+            anchor,
+            outer.x,
+            outer.y,
+            outer.w,
+            outer.h,
+            flags,
+        )
+    };
+    let _ = &placement.held;
+    let pid_ok = pid_current(hwnd_u64, placement.window.identity.pid);
+    if proof_mode {
+        let (pid, creation, exe, sid, session, tag) = audit_pre;
+        audit_json(
+            state,
+            serde_json::json!({
+                "event": "proof-write",
+                "tick": tick,
+                "op": op,
+                "window": from,
+                "requested": [effective.x, effective.y, effective.w, effective.h],
+                "outer": [outer.x, outer.y, outer.w, outer.h],
+                "target": {
+                    "hwnd": placement.window.hwnd,
+                    "pid": pid,
+                    "process_creation": creation,
+                    "exe_path": exe,
+                    "user_sid": sid,
+                    "session_id": session,
+                    "tag": tag,
+                },
+                "flags": if current_topmost { "SWP_NOACTIVATE|SWP_NOZORDER" } else { "SWP_NOACTIVATE|TOPMOST" },
+                "outcome": if placed != 0 && pid_ok { "written" } else if placed == 0 { "setter-failed" } else { "pid-changed" },
+            }),
+        );
+    }
+    if placed == 0 || !pid_ok {
+        let mut line = settle(if placed == 0 {
+            "setter-failed"
+        } else {
+            "pid-changed"
+        });
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        line["target"] = serde_json::Value::from(target);
+        log_json_at(log_path, line);
+        return;
+    }
+    state.float_topmost_prev.insert(member_key.clone(), prior);
+    let actual = match observe_window(hwnd_u64 as isize as HWND, me, fulls, &mut state.tokens) {
+        Ok(fresh)
+            if fresh.token == placement.window.token
+                && pid_current(hwnd_u64, fresh.identity.pid) =>
+        {
+            if readback_outcome(true, &effective, &fresh.visible) == ReadbackOutcome::Match {
+                effective
+            } else {
+                fresh.visible
+            }
+        }
+        _ => {
+            let mut line = settle("float-unverified");
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            line["window"] = serde_json::Value::from(from.to_owned());
+            line["target"] = serde_json::Value::from(target);
+            log_json_at(log_path, line);
+            return;
+        }
+    };
+    if !prior && !read_topmost_now(hwnd_u64) {
+        let mut line = settle("topmost-unverified");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        line["target"] = serde_json::Value::from(target);
+        log_json_at(log_path, line);
+        return;
+    }
+    state.engine = candidate;
+    state.float_rects.insert(from.to_owned(), actual);
+    if mark_sticky && !install_sticky_mark_held(state, me, member_key, false) {
+        let focus = retain_float_focus_validated(state, me, fulls, expected, member_key);
+        let writable = writable_tokens(state, &loc.output, &loc.workspace, observed);
+        let summary = apply_geometry(
+            state,
+            ApplyInput {
+                me,
+                fulls,
+                reply: &reply,
+                observed,
+                op,
+                tick,
+                correlation: correlation.as_str(),
+                skipped,
+                writable: &writable,
+                output_token: state.workspaces.output_token(&loc.output),
+                workspace_token: state
+                    .workspaces
+                    .workspace_token(&loc.output, &loc.workspace),
+                revision: revision_for(state, &loc.output, &loc.workspace),
+            },
+        );
+        let outcome: &'static str = match summary {
+            Some(s) if !s.readback_ok => "float-unverified",
+            Some(s) if s.mismatched > 0 || actual != effective => "float-mismatch",
+            Some(_) => "sticky-unverified",
+            None => reply_outcome(&reply),
+        };
+        let mut line = settle(outcome);
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        line["target"] = serde_json::Value::from(target);
+        line["focus"] = serde_json::Value::from(focus);
+        log_json_at(log_path, line);
+        return;
+    }
+    if mark_sticky {
+        state.sticky.insert(member_key.clone(), false);
+    }
+    let focus = retain_float_focus_validated(state, me, fulls, expected, member_key);
+    let writable = writable_tokens(state, &loc.output, &loc.workspace, observed);
+    let summary = apply_geometry(
+        state,
+        ApplyInput {
+            me,
+            fulls,
+            reply: &reply,
+            observed,
+            op,
+            tick,
+            correlation: correlation.as_str(),
+            skipped,
+            writable: &writable,
+            output_token: state.workspaces.output_token(&loc.output),
+            workspace_token: state
+                .workspaces
+                .workspace_token(&loc.output, &loc.workspace),
+            revision: revision_for(state, &loc.output, &loc.workspace),
+        },
+    );
+    let outcome: &'static str = match summary {
+        Some(s) if !s.readback_ok => "float-unverified",
+        Some(s) if s.mismatched > 0 || actual != effective => "float-mismatch",
+        Some(_) => applied,
+        None => reply_outcome(&reply),
+    };
+    let mut line = settle(outcome);
+    line["origin"] = serde_json::Value::from(origin.token.clone());
+    line["window"] = serde_json::Value::from(from.to_owned());
+    line["target"] = serde_json::Value::from(target);
+    line["focus"] = serde_json::Value::from(focus);
+    log_json_at(log_path, line);
+}
+
+/// Restore a project-raised topmost band under held gates before an unfloat.
+/// Returns `None` after logging a failure; otherwise whether a restore ran.
+#[allow(clippy::too_many_arguments)]
+fn restore_raised_band(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    observed: &[ObservedWindow],
+    member_key: &crate::workspace::WindowKey,
+    from: &str,
+    target: &str,
+    origin: &SnapOrigin,
+    settle: &dyn Fn(&'static str) -> serde_json::Value,
+    log_path: &Path,
+    tick: u64,
+    op: &'static str,
+) -> Option<bool> {
+    let Some(prior) = state.float_topmost_prev.get(member_key).copied() else {
+        return Some(false);
+    };
+    let current = read_topmost_now(member_key.hwnd);
+    if !crate::tiling::float_topmost_restore_needed(prior, current) {
+        state.float_topmost_prev.remove(member_key);
+        return Some(true);
+    }
+    let held = match observed.iter().find(|w| w.hwnd == member_key.hwnd) {
+        Some(expected) => {
+            let member_tag = state.member_tags.get(member_key).map(String::as_str);
+            match revalidate_target(
+                expected,
+                me,
+                fulls,
+                &mut state.tokens,
+                state.allowlist.is_some(),
+                state.allowlist.as_ref(),
+                &state.scope,
+                member_tag,
+                &state.scope_hosts,
+                false,
+            ) {
+                Ok(target) => target.held,
+                Err(reason) => {
+                    let mut line = settle(reason);
+                    line["origin"] = serde_json::Value::from(origin.token.clone());
+                    line["window"] = serde_json::Value::from(from.to_owned());
+                    line["target"] = serde_json::Value::from(target);
+                    log_json_at(log_path, line);
+                    return None;
+                }
+            }
+        }
+        None => match hold_band_target(state, me, member_key) {
+            Some(held) => held,
+            None => {
+                let mut line = settle("identity-changed");
+                line["origin"] = serde_json::Value::from(origin.token.clone());
+                line["window"] = serde_json::Value::from(from.to_owned());
+                line["target"] = serde_json::Value::from(target);
+                log_json_at(log_path, line);
+                return None;
+            }
+        },
+    };
+    let restored = set_topmost_band(member_key.hwnd, prior)
+        && read_topmost_now(member_key.hwnd) == prior
+        && pid_current(member_key.hwnd, member_key.pid);
+    let _ = &held;
+    if state.allowlist.is_some() {
+        audit_json(
+            state,
+            serde_json::json!({
+                "event": "proof-topmost",
+                "tick": tick,
+                "op": op,
+                "window": from,
+                "restored": restored,
+            }),
+        );
+    }
+    if !restored {
+        let mut line = settle("topmost-unverified");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        line["target"] = serde_json::Value::from(target);
+        line["topmost_restored"] = serde_json::Value::from(false);
+        log_json_at(log_path, line);
+        return None;
+    }
+    state.float_topmost_prev.remove(member_key);
+    Some(true)
+}
+
+/// Clear one sticky mark under the fresh held gate with the guard kept
+/// across the `RemoveProp` and its readback. The live value must still
+/// equal the pre-sticky state and the pid plus lifetime tag must stay fresh
+/// before and after. A verifiably absent marker (destroyed HWND or no
+/// property) needs no native write, so runtime may still drop without the
+/// hold; a present marker without the hold stays for later recovery. Logs
+/// the failure and returns false without mutating.
+#[allow(clippy::too_many_arguments)]
+fn clear_sticky_mark(
+    state: &TileLoop,
+    me: &ProcessIdentity,
+    member_key: &crate::workspace::WindowKey,
+    expected_prior: bool,
+    from: &str,
+    target: &str,
+    origin: &SnapOrigin,
+    settle: &dyn Fn(&'static str) -> serde_json::Value,
+    log_path: &Path,
+) -> bool {
+    let Some(held) = hold_sticky_target(state, me, member_key) else {
+        if unsafe { IsWindow(member_key.hwnd as isize as HWND) } == 0
+            || crate::product_hide::sys::read_sticky_marker(member_key.hwnd).is_none()
+        {
+            return true;
+        }
+        let mut line = settle("identity-changed");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        line["target"] = serde_json::Value::from(target);
+        log_json_at(log_path, line);
+        return false;
+    };
+    if !sticky_tag_pid_fresh(state, member_key) {
+        let _ = &held;
+        let mut line = settle("identity-changed");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        line["target"] = serde_json::Value::from(target);
+        log_json_at(log_path, line);
+        return false;
+    }
+    let result = crate::product_hide::sys::remove_sticky_marker(member_key.hwnd, expected_prior);
+    let fresh = sticky_tag_pid_fresh(state, member_key);
+    let _ = &held;
+    match result {
+        Ok(true) if fresh => true,
+        Ok(true) => {
+            let mut line = settle("identity-changed");
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            line["window"] = serde_json::Value::from(from.to_owned());
+            line["target"] = serde_json::Value::from(target);
+            log_json_at(log_path, line);
+            false
+        }
+        Ok(false) => {
+            let mut line = settle("identity-changed");
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            line["window"] = serde_json::Value::from(from.to_owned());
+            line["target"] = serde_json::Value::from(target);
+            log_json_at(log_path, line);
+            false
+        }
+        Err(_) => {
+            let mut line = settle("sticky-unverified");
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            line["window"] = serde_json::Value::from(from.to_owned());
+            line["target"] = serde_json::Value::from(target);
+            log_json_at(log_path, line);
+            false
+        }
+    }
+}
+
+/// Shared float-to-tiled transition: project-raised band restored first under
+/// held gates, Engine commit, sibling reflow, exact focus retained. With
+/// `unmark_sticky` the sticky mark clears between the band and the commit.
+#[allow(clippy::too_many_arguments)]
+fn apply_unfloat_to_tiled(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    observed: &[ObservedWindow],
+    retained: &[RetainedRow],
+    skipped: Vec<(String, String)>,
+    member_key: &crate::workspace::WindowKey,
+    from: &str,
+    loc: &crate::workspace::MemberLoc,
+    live_rect: Option<Rect>,
+    origin: &SnapOrigin,
+    settle: &dyn Fn(&'static str) -> serde_json::Value,
+    log_path: &Path,
+    tick: u64,
+    correlation: &CorrelationId,
+    op: &'static str,
+    target: &'static str,
+    unmark_sticky: bool,
+) {
+    let float_rect = live_rect;
+    let Some((reply, candidate)) = prepare_toggle_float(
+        state,
+        areas,
+        observed,
+        retained,
+        op,
+        from,
+        loc,
+        float_rect,
+        origin,
+        settle,
+        log_path,
+        correlation,
+        target,
+    ) else {
+        return;
+    };
+    let Some(topmost_restored) = restore_raised_band(
+        state, me, fulls, observed, member_key, from, target, origin, settle, log_path, tick, op,
+    ) else {
+        return;
+    };
+    if unmark_sticky {
+        let expected_prior = state.sticky.get(member_key).copied().unwrap_or(false);
+        if !clear_sticky_mark(
+            state,
+            me,
+            member_key,
+            expected_prior,
+            from,
+            target,
+            origin,
+            settle,
+            log_path,
+        ) {
+            return;
+        }
+    }
+    state.engine = candidate;
+    state.sticky.remove(member_key);
+    state.float_rects.remove(from);
+    let focus = match observed.iter().find(|w| w.hwnd == member_key.hwnd) {
+        Some(expected) => retain_float_focus_validated(state, me, fulls, expected, member_key),
+        None => "float-focus-failed",
+    };
+    let writable = writable_tokens(state, &loc.output, &loc.workspace, observed);
+    let summary = apply_geometry(
+        state,
+        ApplyInput {
+            me,
+            fulls,
+            reply: &reply,
+            observed,
+            op,
+            tick,
+            correlation: correlation.as_str(),
+            skipped,
+            writable: &writable,
+            output_token: state.workspaces.output_token(&loc.output),
+            workspace_token: state
+                .workspaces
+                .workspace_token(&loc.output, &loc.workspace),
+            revision: revision_for(state, &loc.output, &loc.workspace),
+        },
+    );
+    let outcome: &'static str = match summary {
+        Some(s) if !s.readback_ok => "unfloat-unverified",
+        Some(s) if s.mismatched > 0 => "unfloat-mismatch",
+        Some(_) => "unfloat-applied",
+        None => reply_outcome(&reply),
+    };
+    let mut line = settle(outcome);
+    line["origin"] = serde_json::Value::from(origin.token.clone());
+    line["window"] = serde_json::Value::from(from.to_owned());
+    line["target"] = serde_json::Value::from(target);
+    line["focus"] = serde_json::Value::from(focus);
+    line["topmost_restored"] = serde_json::Value::from(topmost_restored);
+    log_json_at(log_path, line);
 }
 
 /// Win+G float toggle (KDE Meta+G parity): fresh observation, exact origin
@@ -5590,150 +6492,64 @@ fn dispatch_float_intent(
         log_json_at(&log_path, line);
         return;
     };
-    let mut skipped: Vec<(String, String)> = Vec::new();
-    let mut retained: Vec<RetainedRow> = Vec::new();
-    let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained) else {
+    let Some(chord) = observe_chord_intent(state, me, fulls, areas) else {
         let mut line = settle("observation-failed");
         line["origin"] = serde_json::Value::from(origin.token.clone());
         log_json_at(&log_path, line);
         return;
     };
-    publish_managed(state, me, &observed, &retained);
-    ensure_workspace_assignments(state, me, &mut observed, &retained, areas);
-    // First-seen maximized windows restore once here: lifetime tags are
-    // stamped, and the cleared window converges as eligible next tick.
-    clear_maximize_at_admission(state, me, &retained);
-    let fresh: Vec<SnapOrigin> = state.snap_origins.values().cloned().collect();
-    let foreground_hwnd = Some(unsafe { GetForegroundWindow() } as usize as u64);
-    let (from, _) = match resolve_origin(
-        &origin,
-        foreground_hwnd,
-        &fresh,
-        state.snap_advance.as_ref(),
-    ) {
-        OriginVerdict::Dispatch { token, continued } => (token, continued),
-        OriginVerdict::Reject(reason) => {
-            state.snap_advance = None;
-            let mut line = settle(reason);
-            line["origin"] = serde_json::Value::from(origin.token.clone());
-            log_json_at(&log_path, line);
+    let ChordObserved {
+        observed,
+        retained,
+        skipped,
+    } = chord;
+    let ChordTarget {
+        from,
+        member_key,
+        loc,
+        ..
+    } = match resolve_chord_target(state, me, areas, &origin) {
+        Ok(target) => target,
+        Err(reject) => {
+            settle_chord_reject(&log_path, &settle, &origin, &reject);
             return;
         }
     };
-    let Some(member_key) = state
-        .member_tokens
-        .iter()
-        .find(|(_, token)| token.as_str() == from.as_str())
-        .map(|(key, _)| key.clone())
-    else {
-        state.snap_advance = None;
-        let mut line = settle("unmanaged");
-        line["origin"] = serde_json::Value::from(origin.token.clone());
-        log_json_at(&log_path, line);
-        return;
-    };
-    if !crate::workspace_owner::member_matches(
-        &member_key,
-        origin.hwnd,
-        origin.pid,
-        &origin.creation,
-    ) {
-        state.snap_advance = None;
-        let mut line = settle("foreground-changed");
-        line["origin"] = serde_json::Value::from(origin.token.clone());
-        log_json_at(&log_path, line);
-        return;
-    }
-    let Some(loc) = state.workspaces.member_loc(&member_key).cloned() else {
-        state.snap_advance = None;
-        let mut line = settle("unmanaged");
-        line["origin"] = serde_json::Value::from(origin.token.clone());
-        log_json_at(&log_path, line);
-        return;
-    };
-    if workspace_domain_for(&loc.output, &loc.workspace, areas).is_none() {
-        let mut line = settle("unknown-output");
-        line["origin"] = serde_json::Value::from(origin.token.clone());
-        log_json_at(&log_path, line);
-        return;
-    }
     let is_float = engine_is_float(state, &loc.output, &loc.workspace, &from);
-    // Visible lifetime gate: the live member tag must equal the stored tag, so
-    // a same-process HWND reuse authorizes no native write.
-    let live_tag = crate::product_hide::sys::read_member_tag(member_key.hwnd);
-    let lifetime_ok = state.member_tags.get(&member_key).is_some_and(|stored| {
-        crate::workspace_owner::visible_lifetime_ok(stored, live_tag.as_deref())
-    });
-    if !lifetime_ok {
-        if let Some(token) = state.member_tokens.remove(&member_key) {
-            state.member_rects.remove(&token);
-            state.float_rects.remove(&token);
-        }
-        state.float_topmost_prev.remove(&member_key);
-        state.member_identity.remove(&member_key);
-        state.member_tags.remove(&member_key);
-        state.workspaces.remove_window(&member_key);
-        let mut line = settle("identity-changed");
-        line["origin"] = serde_json::Value::from(origin.token.clone());
-        log_json_at(&log_path, line);
-        return;
-    }
-    let Some(stored) = state.member_identity.get(&member_key).cloned() else {
-        state.snap_advance = None;
-        let mut line = settle("unmanaged");
-        line["origin"] = serde_json::Value::from(origin.token.clone());
-        log_json_at(&log_path, line);
-        return;
-    };
-    // Proof-mode ownership gate before any native write: helpers re-verify
-    // against the frozen allowlist exactly like the hide path.
-    if let Some(entries) = state.allowlist.as_ref() {
-        let owned = entries
-            .iter()
-            .find(|e| e.hwnd == member_key.hwnd)
-            .is_some_and(|entry| verify_proof_owned(member_key.hwnd, entry, me).is_ok());
-        if !owned {
-            let mut line = settle("identity-changed");
-            line["origin"] = serde_json::Value::from(origin.token.clone());
-            log_json_at(&log_path, line);
-            return;
-        }
-    }
-    // Explicit scope fences before any native write: out-of-scope members and
-    // listed hosts without a live matching child refuse with no writes.
-    if !scope_allows(&state.scope, &stored.exe_path)
-        || !hosted_gate_allows(
-            &stored.exe_path,
-            member_key.hwnd,
-            stored.pid,
-            &state.scope_hosts,
-        )
-    {
-        let mut line = settle("scope-excluded");
-        line["origin"] = serde_json::Value::from(origin.token.clone());
-        line["window"] = serde_json::Value::from(from.clone());
-        log_json_at(&log_path, line);
-        return;
-    }
     // Overlay fences on live state: overlay targets never float, and a
     // natively overlaid float never unfloats until it reads normal again.
-    let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
-    let live_visible = by_hwnd.get(&member_key.hwnd).map(|w| w.visible);
-    let overlay_outcome = if let Some(window) = by_hwnd.get(&member_key.hwnd) {
-        crate::tiling::float_toggle_refusal(
-            window.facts.captionless_fullscreen,
-            is_zoomed_now(member_key.hwnd),
-        )
-    } else if let Some(row) = retained.iter().find(|r| r.key == member_key) {
-        crate::tiling::float_toggle_refusal(row.fullscreen, is_zoomed_now(member_key.hwnd))
-    } else {
-        None
-    };
-    if let Some(refusal) = overlay_outcome {
+    // Sticky origins refuse with the sticky vocabulary (KDE parity).
+    let is_sticky_origin = state.sticky.contains_key(&member_key);
+    if let Some(refusal) =
+        chord_overlay_refusal(is_sticky_origin, &observed, &retained, &member_key)
+    {
         let mut line = settle(refusal);
         line["origin"] = serde_json::Value::from(origin.token.clone());
         line["window"] = serde_json::Value::from(from.clone());
         log_json_at(&log_path, line);
+        return;
+    }
+    let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
+    let live_visible = by_hwnd.get(&member_key.hwnd).map(|w| w.visible);
+    // Win+G on any sticky origin clears sticky then tiles the CURRENT
+    // workspace. Prior float or tiled both tile.
+    if is_sticky_origin {
+        sticky_off_to_current(
+            state,
+            me,
+            fulls,
+            areas,
+            &observed,
+            &retained,
+            &member_key,
+            &from,
+            &loc,
+            &origin,
+            &settle,
+            &log_path,
+            &correlation,
+            StickyOffMode::Tile,
+        );
         return;
     }
     // Unfloat carries the live frame rect so a moved/resized float is
@@ -5746,402 +6562,572 @@ fn dispatch_float_intent(
             .find(|r| r.key == member_key)
             .and_then(|row| row.rect)
     });
-    let float_rect = if is_float { live_rect } else { None };
-    let target = if is_float { "unfloated" } else { "floated" };
+    if is_float {
+        apply_unfloat_to_tiled(
+            state,
+            me,
+            fulls,
+            areas,
+            &observed,
+            &retained,
+            skipped,
+            &member_key,
+            &from,
+            &loc,
+            live_rect,
+            &origin,
+            &settle,
+            &log_path,
+            tick,
+            &correlation,
+            "float",
+            "unfloated",
+            false,
+        );
+        return;
+    }
+    apply_float_from_tiled(
+        state,
+        me,
+        fulls,
+        areas,
+        &observed,
+        &retained,
+        skipped,
+        &member_key,
+        &from,
+        &loc,
+        &origin,
+        &settle,
+        &log_path,
+        tick,
+        &correlation,
+        "float",
+        "floated",
+        "float-applied",
+        false,
+    );
+}
+
+/// Cross-domain sticky-off to the current workspace: drop the float exception
+/// from the backing domain and admit on the current domain via two reconciles
+/// on a local candidate, with no stale duplicate. With `floating` the window
+/// stays a normal float preserving the live frame (no geometry writes);
+/// otherwise it tiles current. Band restores under held gates for the tiled
+/// destination; focus is retained in both.
+#[allow(clippy::too_many_arguments)]
+fn sticky_rehome_to_current(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    observed: &[ObservedWindow],
+    retained: &[RetainedRow],
+    member_key: &crate::workspace::WindowKey,
+    from: &str,
+    loc: &crate::workspace::MemberLoc,
+    current_ws: &str,
+    origin: &SnapOrigin,
+    settle: &dyn Fn(&'static str) -> serde_json::Value,
+    log_path: &Path,
+    correlation: &CorrelationId,
+    floating: bool,
+) {
+    let target = if floating { "float" } else { "unfloated" };
+    let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
+    let live_frame = by_hwnd
+        .get(&member_key.hwnd)
+        .map(|w| w.visible)
+        .or_else(|| state.float_rects.get(from).copied())
+        .or_else(|| {
+            retained
+                .iter()
+                .find(|r| r.key == *member_key)
+                .and_then(|row| row.rect)
+        });
+    let Some(live_frame) = live_frame else {
+        let mut line = settle("deferred");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        log_json_at(log_path, line);
+        return;
+    };
     let mut hint_cx = HintCx::new();
-    let Some(rows) = assemble_domain_rows(
+    let Some(old_rows) = assemble_domain_rows(
         state,
         &loc.output,
         &loc.workspace,
-        &observed,
-        &retained,
-        "float",
+        observed,
+        retained,
+        "sticky",
         correlation.as_str(),
         &mut hint_cx,
     ) else {
         let mut line = settle("deferred");
         line["origin"] = serde_json::Value::from(origin.token.clone());
-        log_json_at(&log_path, line);
+        log_json_at(log_path, line);
         return;
     };
-    if !rows.iter().any(|r| r.token == from) {
-        let mut line = settle("unmanaged");
-        line["origin"] = serde_json::Value::from(origin.token.clone());
-        log_json_at(&log_path, line);
-        return;
-    }
-    let windows: Vec<(WindowId, Rect, WindowSizeHints, bool)> = rows
-        .iter()
-        .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
-        .collect();
-    let fp = fingerprint(
-        &rows
-            .iter()
-            .map(|r| (r.token.clone(), r.rect))
-            .collect::<Vec<_>>(),
-    );
-    let from_id = WindowId(from.clone());
-    let Some((domain, domain_key)) = workspace_domain_for(&loc.output, &loc.workspace, areas)
+    let Some((old_domain, old_key)) = workspace_domain_for(&loc.output, &loc.workspace, areas)
     else {
         let mut line = settle("unknown-output");
         line["origin"] = serde_json::Value::from(origin.token.clone());
-        log_json_at(&log_path, line);
+        log_json_at(log_path, line);
         return;
     };
-    let mut event = crate::tiling::build_reconcile_event_for_floating(
+    let old_windows: Vec<(WindowId, Rect, WindowSizeHints, bool)> = old_rows
+        .iter()
+        .filter(|r| r.token != from)
+        .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
+        .collect();
+    let old_fp = fingerprint(
+        &old_windows
+            .iter()
+            .map(|(w, r, _, _)| (w.0.clone(), *r))
+            .collect::<Vec<_>>(),
+    );
+    let Some((cur_domain, cur_key)) = workspace_domain_for(&loc.output, current_ws, areas) else {
+        let mut line = settle("unknown-output");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(log_path, line);
+        return;
+    };
+    let mut hint_cx = HintCx::new();
+    let Some(cur_rows) = assemble_domain_rows(
+        state,
+        &loc.output,
+        current_ws,
+        observed,
+        retained,
+        "sticky",
+        correlation.as_str(),
+        &mut hint_cx,
+    ) else {
+        let mut line = settle("deferred");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(log_path, line);
+        return;
+    };
+    let mut cur_windows: Vec<(WindowId, Rect, WindowSizeHints, bool)> = cur_rows
+        .iter()
+        .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
+        .collect();
+    cur_windows.push((
+        WindowId(from.to_owned()),
+        live_frame,
+        WindowSizeHints::none(),
+        floating,
+    ));
+    let cur_fp = fingerprint(
+        &cur_windows
+            .iter()
+            .map(|(w, r, _, _)| (w.0.clone(), *r))
+            .collect::<Vec<_>>(),
+    );
+    let mut candidate = state.engine.clone();
+    let old_event = crate::tiling::build_reconcile_event_for_floating(
         &state.owner,
         &state.generation,
-        &correlation,
+        correlation,
         revision_for(state, &loc.output, &loc.workspace),
-        fp,
-        &domain,
-        &domain_key,
+        old_fp,
+        &old_domain,
+        &old_key,
         OUTER_GAP,
-        &windows,
-        Some(&from_id),
+        &old_windows,
+        None,
     );
-    event.command = CoreCommand::ToggleFloat {
-        window: from.clone(),
-        float_rect,
-    };
-    // Evaluated on a local candidate: the Engine commit lands only after the
-    // target native effects verify, so a failed placement, band change, or
-    // readback never strands an exception. No compensating toggle, no shared
-    // API change, no persistent transaction state.
-    let mut candidate = state.engine.clone();
-    let reply = candidate.handle(&event);
-    let CoreReply::Tiled(plan) = &reply else {
-        let mut line = settle(reply_outcome(&reply));
+    let old_reply = candidate.handle(&old_event);
+    if matches!(
+        old_reply,
+        CoreReply::Rejected { .. } | CoreReply::Diverged(_) | CoreReply::SnapshotInvalid { .. }
+    ) {
+        let mut line = settle(reply_outcome(&old_reply));
         line["origin"] = serde_json::Value::from(origin.token.clone());
-        line["window"] = serde_json::Value::from(from.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
         line["target"] = serde_json::Value::from(target);
-        log_json_at(&log_path, line);
-        return;
-    };
-    if !is_float {
-        // Tiled-to-float: the Engine selected the retained placement, else the
-        // centered fallback. One official SetWindowPos carries geometry plus
-        // the raised band when the project raises it; a fresh readback tells
-        // an app-held size apart from a setter failure, and the runtime state
-        // snapshots the actual frame, never the request.
-        let Some(effective) = plan.float_rect else {
-            let mut line = settle("float-missing-placement");
-            line["origin"] = serde_json::Value::from(origin.token.clone());
-            line["window"] = serde_json::Value::from(from.clone());
-            line["target"] = serde_json::Value::from(target);
-            log_json_at(&log_path, line);
-            return;
-        };
-        let Some(expected) = observed.iter().find(|w| w.hwnd == member_key.hwnd) else {
-            let mut line = settle("origin-vanished");
-            line["origin"] = serde_json::Value::from(origin.token.clone());
-            line["window"] = serde_json::Value::from(from.clone());
-            line["target"] = serde_json::Value::from(target);
-            log_json_at(&log_path, line);
-            return;
-        };
-        let proof_mode = state.allowlist.is_some();
-        let audit_pre = (
-            expected.identity.pid,
-            expected.identity.process_creation.clone(),
-            expected.identity.exe_path.clone(),
-            expected.identity.user_sid.clone(),
-            expected.identity.session_id,
-            expected.identity.tag.clone(),
-        );
-        let member_tag = state.member_tags.get(&member_key).map(String::as_str);
-        let placement = match revalidate_target(
-            expected,
-            me,
-            fulls,
-            &mut state.tokens,
-            proof_mode,
-            state.allowlist.as_ref(),
-            &state.scope,
-            member_tag,
-            &state.scope_hosts,
-            false,
-        ) {
-            Ok(target) => target,
-            Err(reason) => {
-                let mut line = settle(reason);
-                line["origin"] = serde_json::Value::from(origin.token.clone());
-                line["window"] = serde_json::Value::from(from.clone());
-                line["target"] = serde_json::Value::from(target);
-                log_json_at(&log_path, line);
-                return;
-            }
-        };
-        let Some(outer) = placement.window.insets.visible_to_outer(effective) else {
-            let mut line = settle("frame-overflow");
-            line["origin"] = serde_json::Value::from(origin.token.clone());
-            line["window"] = serde_json::Value::from(from.clone());
-            line["target"] = serde_json::Value::from(target);
-            log_json_at(&log_path, line);
-            return;
-        };
-        if suspend_read(state, me, fulls).veto.block {
-            let mut line = settle("fullscreen-foreground");
-            line["origin"] = serde_json::Value::from(origin.token.clone());
-            line["window"] = serde_json::Value::from(from.clone());
-            line["target"] = serde_json::Value::from(target);
-            log_json_at(&log_path, line);
-            return;
-        }
-        let hwnd_u64 = placement.window.hwnd;
-        let current_topmost = read_topmost_now(hwnd_u64);
-        let prior = state
-            .float_topmost_prev
-            .get(&member_key)
-            .copied()
-            .unwrap_or(current_topmost);
-        let (anchor, flags) = if current_topmost {
-            (std::ptr::null_mut(), SWP_NOACTIVATE | SWP_NOZORDER)
-        } else {
-            (HWND_TOPMOST, SWP_NOACTIVATE)
-        };
-        let placed = unsafe {
-            SetWindowPos(
-                hwnd_u64 as isize as HWND,
-                anchor,
-                outer.x,
-                outer.y,
-                outer.w,
-                outer.h,
-                flags,
-            )
-        };
-        let _ = &placement.held;
-        let pid_ok = pid_current(hwnd_u64, placement.window.identity.pid);
-        if proof_mode {
-            let (pid, creation, exe, sid, session, tag) = audit_pre;
-            audit_json(
-                state,
-                serde_json::json!({
-                    "event": "proof-write",
-                    "tick": tick,
-                    "op": "float",
-                    "window": from,
-                    "requested": [effective.x, effective.y, effective.w, effective.h],
-                    "outer": [outer.x, outer.y, outer.w, outer.h],
-                    "target": {
-                        "hwnd": placement.window.hwnd,
-                        "pid": pid,
-                        "process_creation": creation,
-                        "exe_path": exe,
-                        "user_sid": sid,
-                        "session_id": session,
-                        "tag": tag,
-                    },
-                    "flags": if current_topmost { "SWP_NOACTIVATE|SWP_NOZORDER" } else { "SWP_NOACTIVATE|TOPMOST" },
-                    "outcome": if placed != 0 && pid_ok { "written" } else if placed == 0 { "setter-failed" } else { "pid-changed" },
-                }),
-            );
-        }
-        if placed == 0 || !pid_ok {
-            let mut line = settle(if placed == 0 {
-                "setter-failed"
-            } else {
-                "pid-changed"
-            });
-            line["origin"] = serde_json::Value::from(origin.token.clone());
-            line["window"] = serde_json::Value::from(from.clone());
-            line["target"] = serde_json::Value::from(target);
-            log_json_at(&log_path, line);
-            return;
-        }
-        // The band may already have changed even if frame readback fails.
-        state.float_topmost_prev.insert(member_key.clone(), prior);
-        let actual = match observe_window(hwnd_u64 as isize as HWND, me, fulls, &mut state.tokens) {
-            Ok(fresh)
-                if fresh.token == placement.window.token
-                    && pid_current(hwnd_u64, fresh.identity.pid) =>
-            {
-                if readback_outcome(true, &effective, &fresh.visible) == ReadbackOutcome::Match {
-                    effective
-                } else {
-                    fresh.visible
-                }
-            }
-            _ => {
-                let mut line = settle("float-unverified");
-                line["origin"] = serde_json::Value::from(origin.token.clone());
-                line["window"] = serde_json::Value::from(from.clone());
-                line["target"] = serde_json::Value::from(target);
-                log_json_at(&log_path, line);
-                return;
-            }
-        };
-        if !prior && !read_topmost_now(hwnd_u64) {
-            let mut line = settle("topmost-unverified");
-            line["origin"] = serde_json::Value::from(origin.token.clone());
-            line["window"] = serde_json::Value::from(from.clone());
-            line["target"] = serde_json::Value::from(target);
-            log_json_at(&log_path, line);
-            return;
-        }
-        state.engine = candidate;
-        state.float_rects.insert(from.clone(), actual);
-        let focus = retain_float_focus_validated(state, me, fulls, expected, &member_key);
-        let writable = writable_tokens(state, &loc.output, &loc.workspace, &observed);
-        let summary = apply_geometry(
-            state,
-            ApplyInput {
-                me,
-                fulls,
-                reply: &reply,
-                observed: &observed,
-                op: "float",
-                tick,
-                correlation: correlation.as_str(),
-                skipped,
-                writable: &writable,
-                output_token: state.workspaces.output_token(&loc.output),
-                workspace_token: state
-                    .workspaces
-                    .workspace_token(&loc.output, &loc.workspace),
-                revision: revision_for(state, &loc.output, &loc.workspace),
-            },
-        );
-        // The float's own placement already read back above; the summary only
-        // settles the sibling reflow, never the float outcome by itself.
-        let outcome: &'static str = match summary {
-            Some(s) if !s.readback_ok => "float-unverified",
-            Some(s) if s.mismatched > 0 || actual != effective => "float-mismatch",
-            Some(_) => "float-applied",
-            None => reply_outcome(&reply),
-        };
-        let mut line = settle(outcome);
-        line["origin"] = serde_json::Value::from(origin.token.clone());
-        line["window"] = serde_json::Value::from(from.clone());
-        line["target"] = serde_json::Value::from(target);
-        line["focus"] = serde_json::Value::from(focus);
-        log_json_at(&log_path, line);
+        log_json_at(log_path, line);
         return;
     }
-    // Float-to-tiled: the candidate already admitted the window on the fresh
-    // admission axis. Restore a project-raised band first under fresh gates;
-    // the candidate commits only after the band verifies, so a failed restore
-    // never strands an admitted tile under a wrong band. Pre-existing topmost
-    // is never touched.
-    let prior = state.float_topmost_prev.get(&member_key).copied();
-    let mut topmost_restored = false;
-    if let Some(prior) = prior {
-        let current = read_topmost_now(member_key.hwnd);
-        if crate::tiling::float_topmost_restore_needed(prior, current) {
-            let held = match observed.iter().find(|w| w.hwnd == member_key.hwnd) {
-                Some(expected) => {
-                    let member_tag = state.member_tags.get(&member_key).map(String::as_str);
-                    match revalidate_target(
-                        expected,
-                        me,
-                        fulls,
-                        &mut state.tokens,
-                        state.allowlist.is_some(),
-                        state.allowlist.as_ref(),
-                        &state.scope,
-                        member_tag,
-                        &state.scope_hosts,
-                        false,
-                    ) {
-                        Ok(target) => target.held,
-                        Err(reason) => {
-                            let mut line = settle(reason);
-                            line["origin"] = serde_json::Value::from(origin.token.clone());
-                            line["window"] = serde_json::Value::from(from.clone());
-                            line["target"] = serde_json::Value::from(target);
-                            log_json_at(&log_path, line);
-                            return;
-                        }
-                    }
-                }
-                // Retained (e.g. minimized) floats have no live frame to
-                // classify; the band effect moves and activates nothing, so
-                // held ownership gates apply instead of eligibility gates.
-                None => match hold_band_target(state, me, &member_key) {
-                    Some(held) => held,
-                    None => {
-                        let mut line = settle("identity-changed");
-                        line["origin"] = serde_json::Value::from(origin.token.clone());
-                        line["window"] = serde_json::Value::from(from.clone());
-                        line["target"] = serde_json::Value::from(target);
-                        log_json_at(&log_path, line);
-                        return;
-                    }
-                },
-            };
-            let restored = set_topmost_band(member_key.hwnd, prior)
-                && read_topmost_now(member_key.hwnd) == prior
-                && pid_current(member_key.hwnd, member_key.pid);
-            let _ = &held;
-            if state.allowlist.is_some() {
-                audit_json(
-                    state,
-                    serde_json::json!({
-                        "event": "proof-topmost",
-                        "tick": tick,
-                        "op": "unfloat",
-                        "window": from,
-                        "restored": restored,
-                    }),
-                );
-            }
-            if !restored {
-                // Preimage kept for retry; Engine and admission untouched.
-                let mut line = settle("topmost-unverified");
-                line["origin"] = serde_json::Value::from(origin.token.clone());
-                line["window"] = serde_json::Value::from(from.clone());
-                line["target"] = serde_json::Value::from(target);
-                line["topmost_restored"] = serde_json::Value::from(false);
-                log_json_at(&log_path, line);
-                return;
-            }
-            state.float_topmost_prev.remove(&member_key);
-            topmost_restored = true;
-        } else {
-            state.float_topmost_prev.remove(&member_key);
-            topmost_restored = true;
-        }
+    let cur_event = crate::tiling::build_reconcile_event_for_floating(
+        &state.owner,
+        &state.generation,
+        correlation,
+        revision_for(state, &loc.output, current_ws),
+        cur_fp,
+        &cur_domain,
+        &cur_key,
+        OUTER_GAP,
+        &cur_windows,
+        None,
+    );
+    let cur_reply = candidate.handle(&cur_event);
+    if matches!(
+        cur_reply,
+        CoreReply::Rejected { .. } | CoreReply::Diverged(_) | CoreReply::SnapshotInvalid { .. }
+    ) {
+        let mut line = settle(reply_outcome(&cur_reply));
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        line["target"] = serde_json::Value::from(target);
+        log_json_at(log_path, line);
+        return;
+    }
+    let topmost_restored = if floating {
+        true
+    } else {
+        let Some(restored) = restore_raised_band(
+            state, me, fulls, observed, member_key, from, target, origin, settle, log_path,
+            state.tick, "sticky",
+        ) else {
+            return;
+        };
+        restored
+    };
+    let expected_prior = state.sticky.get(member_key).copied().unwrap_or(false);
+    if !clear_sticky_mark(
+        state,
+        me,
+        member_key,
+        expected_prior,
+        from,
+        target,
+        origin,
+        settle,
+        log_path,
+    ) {
+        return;
     }
     state.engine = candidate;
-    state.float_rects.remove(&from);
+    if floating {
+        state.float_rects.insert(from.to_owned(), live_frame);
+    } else {
+        state.float_topmost_prev.remove(member_key);
+        state.float_rects.remove(from);
+    }
+    state.sticky.remove(member_key);
+    state.workspaces.remove_window(member_key);
+    state.workspaces.ensure_output(&loc.output);
+    state
+        .workspaces
+        .assign(member_key.clone(), &loc.output, current_ws, false);
     let focus = match observed.iter().find(|w| w.hwnd == member_key.hwnd) {
-        Some(expected) => retain_float_focus_validated(state, me, fulls, expected, &member_key),
+        Some(expected) => retain_float_focus_validated(state, me, fulls, expected, member_key),
         None => "float-focus-failed",
     };
-    let writable = writable_tokens(state, &loc.output, &loc.workspace, &observed);
+    if floating {
+        let mut line = settle("sticky-applied");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        line["target"] = serde_json::Value::from(target);
+        line["focus"] = serde_json::Value::from(focus);
+        log_json_at(log_path, line);
+        return;
+    }
+    let writable = writable_tokens(state, &loc.output, current_ws, observed);
     let summary = apply_geometry(
         state,
         ApplyInput {
             me,
             fulls,
-            reply: &reply,
-            observed: &observed,
-            op: "unfloat",
-            tick,
+            reply: &cur_reply,
+            observed,
+            op: "sticky",
+            tick: state.tick,
             correlation: correlation.as_str(),
-            skipped,
+            skipped: Vec::new(),
             writable: &writable,
             output_token: state.workspaces.output_token(&loc.output),
-            workspace_token: state
-                .workspaces
-                .workspace_token(&loc.output, &loc.workspace),
-            revision: revision_for(state, &loc.output, &loc.workspace),
+            workspace_token: state.workspaces.workspace_token(&loc.output, current_ws),
+            revision: revision_for(state, &loc.output, current_ws),
         },
     );
     let outcome: &'static str = match summary {
         Some(s) if !s.readback_ok => "unfloat-unverified",
         Some(s) if s.mismatched > 0 => "unfloat-mismatch",
         Some(_) => "unfloat-applied",
-        None => reply_outcome(&reply),
+        None => reply_outcome(&cur_reply),
     };
     let mut line = settle(outcome);
     line["origin"] = serde_json::Value::from(origin.token.clone());
-    line["window"] = serde_json::Value::from(from.clone());
+    line["window"] = serde_json::Value::from(from.to_owned());
     line["target"] = serde_json::Value::from(target);
     line["focus"] = serde_json::Value::from(focus);
     line["topmost_restored"] = serde_json::Value::from(topmost_restored);
-    log_json_at(&log_path, line);
+    log_json_at(log_path, line);
+}
+
+/// Win+Shift+G sticky toggle: origin-sensitive off to the current workspace
+/// (prior float stays float, prior tiled tiles), sticky-on from float marks
+/// only, sticky-on from tiled floats first via the shared transition.
+/// Fullscreen/maximized refuse; failures commit nothing and never retry.
+fn dispatch_sticky_intent(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    intent: crate::snapkey::QueuedStickyIntent,
+) {
+    let log_path = state.log_path.clone();
+    if !intent.consumed || !intent.announce {
+        if state.trace {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "sticky-toggle",
+                    "tick": state.tick,
+                    "edge": intent.edge.as_str(),
+                    "disposition": if intent.consumed { "consumed" } else { "passed" },
+                    "outcome": if intent.consumed { "key-up" } else { "passed" },
+                }),
+            );
+        }
+        return;
+    }
+    state.tick += 1;
+    let tick = state.tick;
+    let correlation = state.correlation();
+    let settle = |outcome: &'static str| {
+        serde_json::json!({
+            "event": "sticky-toggle",
+            "tick": tick,
+            "correlation": correlation.as_str(),
+            "edge": intent.edge.as_str(),
+            "disposition": "consumed",
+            "outcome": outcome,
+        })
+    };
+    let Some(origin) = intent.origin.clone() else {
+        state.snap_advance = None;
+        let line = settle("origin-vanished");
+        log_json_at(&log_path, line);
+        return;
+    };
+    let Some(chord) = observe_chord_intent(state, me, fulls, areas) else {
+        let mut line = settle("observation-failed");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    };
+    let ChordObserved {
+        observed,
+        retained,
+        skipped,
+    } = chord;
+    let ChordTarget {
+        from,
+        member_key,
+        loc,
+        ..
+    } = match resolve_chord_target(state, me, areas, &origin) {
+        Ok(target) => target,
+        Err(reject) => {
+            settle_chord_reject(&log_path, &settle, &origin, &reject);
+            return;
+        }
+    };
+    if let Some(refusal) = chord_overlay_refusal(true, &observed, &retained, &member_key) {
+        let mut line = settle(refusal);
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    if state.sticky.contains_key(&member_key) {
+        sticky_off_to_current(
+            state,
+            me,
+            fulls,
+            areas,
+            &observed,
+            &retained,
+            &member_key,
+            &from,
+            &loc,
+            &origin,
+            &settle,
+            &log_path,
+            &correlation,
+            StickyOffMode::PreservePrior,
+        );
+        return;
+    }
+    let is_float = engine_is_float(state, &loc.output, &loc.workspace, &from);
+    if is_float {
+        // Sticky-on from a normal float: no Engine change, live frame
+        // preserved, only the mark. Marker install verifies before the
+        // runtime map changes, so a failed write leaves no partial state.
+        if !install_sticky_mark_held(state, me, &member_key, true) {
+            let mut line = settle("sticky-unverified");
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            line["window"] = serde_json::Value::from(from.clone());
+            log_json_at(&log_path, line);
+            return;
+        }
+        state.sticky.insert(member_key.clone(), true);
+        let focus = match observed.iter().find(|w| w.hwnd == member_key.hwnd) {
+            Some(expected) => retain_float_focus_validated(state, me, fulls, expected, &member_key),
+            None => "float-focus-failed",
+        };
+        let mut line = settle("sticky-applied");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        line["target"] = serde_json::Value::from("sticky-float");
+        line["focus"] = serde_json::Value::from(focus);
+        log_json_at(&log_path, line);
+        return;
+    }
+    apply_float_from_tiled(
+        state,
+        me,
+        fulls,
+        areas,
+        &observed,
+        &retained,
+        skipped,
+        &member_key,
+        &from,
+        &loc,
+        &origin,
+        &settle,
+        &log_path,
+        tick,
+        &correlation,
+        "sticky",
+        "sticky-float",
+        "sticky-applied",
+        true,
+    );
+}
+
+/// Sticky-off destination: Win+Shift+G preserves a prior float on the current
+/// workspace, while Win+G always tiles the current workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StickyOffMode {
+    PreservePrior,
+    Tile,
+}
+
+/// Sticky-off to the current workspace: with `PreservePrior` a prior float
+/// stays a normal float preserving the live frame, otherwise the window tiles
+/// current. Same-domain tiles via the shared unfloat; cross-domain rehomes.
+#[allow(clippy::too_many_arguments)]
+fn sticky_off_to_current(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    observed: &[ObservedWindow],
+    retained: &[RetainedRow],
+    member_key: &crate::workspace::WindowKey,
+    from: &str,
+    loc: &crate::workspace::MemberLoc,
+    origin: &SnapOrigin,
+    settle: &dyn Fn(&'static str) -> serde_json::Value,
+    log_path: &Path,
+    correlation: &CorrelationId,
+    mode: StickyOffMode,
+) {
+    let prior = state.sticky.get(member_key).copied().unwrap_or(false);
+    let to_float = mode == StickyOffMode::PreservePrior && prior;
+    let Some(current_ws) = state.workspaces.active_id(&loc.output) else {
+        let mut line = settle("unknown-output");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        log_json_at(log_path, line);
+        return;
+    };
+    if to_float {
+        if current_ws == loc.workspace {
+            if clear_sticky_mark(
+                state, me, member_key, true, from, "float", origin, settle, log_path,
+            ) {
+                state.sticky.remove(member_key);
+                let focus = match observed.iter().find(|w| w.hwnd == member_key.hwnd) {
+                    Some(expected) => {
+                        retain_float_focus_validated(state, me, fulls, expected, member_key)
+                    }
+                    None => "float-focus-failed",
+                };
+                let mut line = settle("sticky-applied");
+                line["origin"] = serde_json::Value::from(origin.token.clone());
+                line["window"] = serde_json::Value::from(from.to_owned());
+                line["target"] = serde_json::Value::from("float");
+                line["focus"] = serde_json::Value::from(focus);
+                log_json_at(log_path, line);
+            }
+            return;
+        }
+        sticky_rehome_to_current(
+            state,
+            me,
+            fulls,
+            areas,
+            observed,
+            retained,
+            member_key,
+            from,
+            loc,
+            &current_ws,
+            origin,
+            settle,
+            log_path,
+            correlation,
+            true,
+        );
+        return;
+    }
+    if current_ws == loc.workspace {
+        let live_rect = observed
+            .iter()
+            .find(|w| w.hwnd == member_key.hwnd)
+            .map(|w| w.visible)
+            .or_else(|| {
+                retained
+                    .iter()
+                    .find(|r| r.key == *member_key)
+                    .and_then(|row| row.rect)
+            });
+        apply_unfloat_to_tiled(
+            state,
+            me,
+            fulls,
+            areas,
+            observed,
+            retained,
+            Vec::new(),
+            member_key,
+            from,
+            loc,
+            live_rect,
+            origin,
+            settle,
+            log_path,
+            state.tick,
+            correlation,
+            "sticky",
+            "unfloated",
+            true,
+        );
+        return;
+    }
+    sticky_rehome_to_current(
+        state,
+        me,
+        fulls,
+        areas,
+        observed,
+        retained,
+        member_key,
+        from,
+        loc,
+        &current_ws,
+        origin,
+        settle,
+        log_path,
+        correlation,
+        false,
+    );
 }
 
 /// Stable output key for a rectangle center: the monitor containing the
@@ -6299,14 +7285,7 @@ fn admit_born_fullscreen(
             &row.key,
         );
         for dead in stale {
-            if let Some(token) = state.member_tokens.remove(&dead) {
-                state.member_rects.remove(&token);
-                state.float_rects.remove(&token);
-            }
-            state.float_topmost_prev.remove(&dead);
-            state.member_identity.remove(&dead);
-            state.member_tags.remove(&dead);
-            state.workspaces.remove_window(&dead);
+            drop_member_state(state, &dead);
         }
         if state.workspaces.member_loc(&row.key).is_some()
             || state.member_tokens.contains_key(&row.key)
@@ -6356,6 +7335,208 @@ fn admit_born_fullscreen(
     }
 }
 
+/// Sticky restart adoption: the next owner consumes a surviving
+/// window-lifetime marker and adopts a normal float on its current workspace
+/// with the live frame preserved. No sticky runtime entry afterwards: the
+/// window rides ordinary float occupancy, hiding, and Win+G. Runs in the
+/// shared admission preamble, so every tick and chord adopts before any tile
+/// write. The candidate Engine must already carry the float exception before
+/// the marker clears under fresh held guards; the commit lands only then.
+/// Marker failures keep the durable marker for later recovery and commit
+/// nothing.
+fn adopt_sticky_markers(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    observed: &[ObservedWindow],
+    retained: &[RetainedRow],
+    areas: &[MonitorArea],
+) {
+    let log_path = state.log_path.clone();
+    let correlation = state.correlation();
+    for window in observed {
+        let key = crate::workspace::WindowKey {
+            hwnd: window.hwnd,
+            pid: window.identity.pid,
+            creation: window.identity.process_creation.clone(),
+        };
+        if state.sticky.contains_key(&key) {
+            continue;
+        }
+        let marker = crate::product_hide::sys::read_sticky_marker(window.hwnd);
+        let Some(prior) = marker else {
+            continue;
+        };
+        if state.hidden_claims.keys().any(|k| k.hwnd == window.hwnd) {
+            continue;
+        }
+        let Some(token) = state.member_tokens.get(&key).cloned() else {
+            continue;
+        };
+        let Some(loc) = state.workspaces.member_loc(&key).cloned() else {
+            continue;
+        };
+        let Some(stored) = state.member_identity.get(&key).cloned() else {
+            continue;
+        };
+        if !scope_allows(&state.scope, &stored.exe_path)
+            || !hosted_gate_allows(&stored.exe_path, key.hwnd, key.pid, &state.scope_hosts)
+        {
+            continue;
+        }
+        if let Some(entries) = state.allowlist.as_ref() {
+            let owned = entries
+                .iter()
+                .find(|e| e.hwnd == key.hwnd)
+                .is_some_and(|entry| verify_proof_owned(key.hwnd, entry, me).is_ok());
+            if !owned {
+                continue;
+            }
+        }
+        let live_tag = crate::product_hide::sys::read_member_tag(key.hwnd);
+        let tag_ok = state.member_tags.get(&key).is_some_and(|stored| {
+            crate::workspace_owner::visible_lifetime_ok(stored, live_tag.as_deref())
+        });
+        if !tag_ok || !pid_current(key.hwnd, key.pid) {
+            continue;
+        }
+        if engine_is_float(state, &loc.output, &loc.workspace, &token) {
+            let Some(held) = hold_sticky_target(state, me, &key) else {
+                continue;
+            };
+            if !sticky_tag_pid_fresh(state, &key) {
+                let _ = &held;
+                continue;
+            }
+            let cleared = crate::product_hide::sys::remove_sticky_marker(key.hwnd, prior)
+                .is_ok_and(|v| v)
+                && sticky_tag_pid_fresh(state, &key);
+            let _ = &held;
+            if !(marker.is_some() && cleared) {
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": "sticky-adopt",
+                        "window": token,
+                        "outcome": "sticky-unverified",
+                    }),
+                );
+                continue;
+            }
+            state.float_rects.insert(token.clone(), window.visible);
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "sticky-adopted",
+                    "window": token,
+                }),
+            );
+            continue;
+        }
+        // Temporary candidate lane: the assembled rows ride floating while the
+        // candidate verifies. The sticky map is absent at commit.
+        state.sticky.insert(key.clone(), prior);
+        let rollback = |state: &mut TileLoop| {
+            state.sticky.remove(&key);
+            state.float_rects.remove(&token);
+        };
+        let mut hint_cx = HintCx::new();
+        let Some(rows) = assemble_domain_rows(
+            state,
+            &loc.output,
+            &loc.workspace,
+            observed,
+            retained,
+            "sticky-adopt",
+            correlation.as_str(),
+            &mut hint_cx,
+        ) else {
+            rollback(state);
+            continue;
+        };
+        let Some((domain, domain_key)) = workspace_domain_for(&loc.output, &loc.workspace, areas)
+        else {
+            rollback(state);
+            continue;
+        };
+        let windows: Vec<(WindowId, Rect, WindowSizeHints, bool)> = rows
+            .iter()
+            .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
+            .collect();
+        let fp = fingerprint(
+            &rows
+                .iter()
+                .map(|r| (r.token.clone(), r.rect))
+                .collect::<Vec<_>>(),
+        );
+        let mut candidate = state.engine.clone();
+        let event = crate::tiling::build_reconcile_event_for_floating(
+            &state.owner,
+            &state.generation,
+            &correlation,
+            revision_for(state, &loc.output, &loc.workspace),
+            fp,
+            &domain,
+            &domain_key,
+            OUTER_GAP,
+            &windows,
+            None,
+        );
+        let reply = candidate.handle(&event);
+        if matches!(
+            reply,
+            CoreReply::Rejected { .. } | CoreReply::Diverged(_) | CoreReply::SnapshotInvalid { .. }
+        ) {
+            rollback(state);
+            continue;
+        }
+        let candidate_float = candidate
+            .session(&domain_key)
+            .is_some_and(|s| s.is_exception(&WindowId(token.clone())));
+        if !candidate_float {
+            rollback(state);
+            continue;
+        }
+        // Held guards immediately before the marker write: full identity,
+        // lifetime tag, scope, hosted child, and proof, all live, with the
+        // guard kept across the remove and its readback.
+        let Some(held) = hold_sticky_target(state, me, &key) else {
+            rollback(state);
+            continue;
+        };
+        if !sticky_tag_pid_fresh(state, &key) {
+            let _ = &held;
+            rollback(state);
+            continue;
+        }
+        let cleared = crate::product_hide::sys::remove_sticky_marker(key.hwnd, prior)
+            .is_ok_and(|v| v)
+            && sticky_tag_pid_fresh(state, &key);
+        let _ = &held;
+        if !(marker.is_some() && candidate_float && cleared) {
+            rollback(state);
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "sticky-adopt",
+                    "window": token,
+                    "outcome": "sticky-unverified",
+                }),
+            );
+            continue;
+        }
+        state.engine = candidate;
+        state.sticky.remove(&key);
+        state.float_rects.insert(token.clone(), window.visible);
+        log_json_at(
+            &log_path,
+            serde_json::json!({
+                "event": "sticky-adopted",
+                "window": token,
+            }),
+        );
+    }
+}
+
 /// Assign newly seen eligible windows to the active workspace of their
 /// monitor output. Hidden-claim HWNDs are never re-admitted into another
 /// domain here. A nonempty scope admits only the named executables.
@@ -6402,14 +7583,7 @@ fn ensure_workspace_assignments(
             &key,
         );
         for dead in stale {
-            if let Some(token) = state.member_tokens.remove(&dead) {
-                state.member_rects.remove(&token);
-                state.float_rects.remove(&token);
-            }
-            state.float_topmost_prev.remove(&dead);
-            state.member_identity.remove(&dead);
-            state.member_tags.remove(&dead);
-            state.workspaces.remove_window(&dead);
+            drop_member_state(state, &dead);
         }
         // Visible lifetime gate: the live tag must equal the stored tag. A
         // mismatch with the same key is a same-process reuse (or an untracked
@@ -6420,14 +7594,7 @@ fn ensure_workspace_assignments(
             crate::workspace_owner::visible_lifetime_ok(stored, live_tag.as_deref())
         });
         if !lifetime_ok {
-            if let Some(token) = state.member_tokens.remove(&key) {
-                state.member_rects.remove(&token);
-                state.float_rects.remove(&token);
-            }
-            state.float_topmost_prev.remove(&key);
-            state.member_identity.remove(&key);
-            state.member_tags.remove(&key);
-            state.workspaces.remove_window(&key);
+            drop_member_state(state, &key);
         }
         if !lifetime_ok || state.workspaces.member_loc(&key).is_none() {
             // Fresh admission binds the stamp to the expected full identity:
@@ -6519,6 +7686,7 @@ fn ensure_workspace_assignments(
     // (floating Engine observation, no tile slot); later fullscreen on a
     // slotted or lifetime-known window stays a managed overlay transition.
     admit_born_fullscreen(state, me, retained, areas);
+    adopt_sticky_markers(state, me, observed, retained, areas);
     if state.active_output.is_empty()
         && let Some(first) = state.workspaces.output_keys().into_iter().next()
     {
@@ -6563,14 +7731,7 @@ fn audit_hidden_claims(state: &mut TileLoop, me: &ProcessIdentity, store: &Ledge
             record.iconic,
         );
         state.hidden_claims.remove(&key);
-        if let Some(token) = state.member_tokens.remove(&key) {
-            state.member_rects.remove(&token);
-            state.float_rects.remove(&token);
-        }
-        state.float_topmost_prev.remove(&key);
-        state.member_identity.remove(&key);
-        state.member_tags.remove(&key);
-        state.workspaces.remove_window(&key);
+        drop_member_state(state, &key);
         retired_any = true;
     }
     if retired_any {
@@ -6584,10 +7745,13 @@ fn audit_hidden_claims(state: &mut TileLoop, me: &ProcessIdentity, store: &Ledge
                 .values()
                 .flat_map(|r| r.workspace_ids.clone())
                 .collect();
-            let (removed, append) = state.workspaces.plan_cleanup(
+            let sticky_keys: BTreeSet<crate::workspace::WindowKey> =
+                state.sticky.keys().cloned().collect();
+            let (removed, append) = state.workspaces.plan_cleanup_excluding(
                 &output,
                 std::slice::from_ref(&active_id),
                 &displaced,
+                &sticky_keys,
             );
             state.workspaces.apply_cleanup(&output, &removed, append);
         }
@@ -6610,9 +7774,9 @@ fn workspace_close_cleanup(state: &mut TileLoop) {
         .collect();
     let log_path = state.log_path.clone();
     for key in gone {
-        if state.born_fullscreen.remove(&key)
-            && let Some(token) = state.member_tokens.get(&key).cloned()
-        {
+        let born = state.born_fullscreen.remove(&key);
+        let token = state.member_tokens.get(&key).cloned();
+        if born && let Some(token) = token {
             log_json_at(
                 &log_path,
                 serde_json::json!({
@@ -6621,12 +7785,7 @@ fn workspace_close_cleanup(state: &mut TileLoop) {
                 }),
             );
         }
-        if let Some(token) = state.member_tokens.remove(&key) {
-            state.member_rects.remove(&token);
-        }
-        state.member_identity.remove(&key);
-        state.member_tags.remove(&key);
-        state.workspaces.remove_window(&key);
+        drop_member_state(state, &key);
     }
     state
         .born_fullscreen
@@ -6676,14 +7835,7 @@ fn workspace_hide_one(
     let live_tag = crate::product_hide::sys::read_member_tag(key.hwnd);
     let stored_tag = state.member_tags.get(key).cloned().unwrap_or_default();
     if !crate::workspace_owner::visible_lifetime_ok(&stored_tag, live_tag.as_deref()) {
-        if let Some(token) = state.member_tokens.remove(key) {
-            state.member_rects.remove(&token);
-            state.float_rects.remove(&token);
-        }
-        state.float_topmost_prev.remove(key);
-        state.member_identity.remove(key);
-        state.member_tags.remove(key);
-        state.workspaces.remove_window(key);
+        drop_member_state(state, key);
         return "identity-changed";
     }
     if let Some(entries) = state.allowlist.as_ref() {
@@ -6844,7 +7996,8 @@ fn workspace_do_select(
         // (same number, fresh process) reconciles membership with no writes.
         // Members absent from the tiled observation hide through a fresh
         // identity-only read so retained minimized/maximized/fullscreen
-        // members still leave the visible set.
+        // members still leave the visible set. Sticky liveness verifies here
+        // too: a dead sticky drops instead of hiding, a live one skips below.
         let (live_ok, iconic) = match by_hwnd.get(&key.hwnd) {
             Some(window) => {
                 let live_ok = crate::workspace_owner::member_matches(
@@ -6867,14 +8020,7 @@ fn workspace_do_select(
                 Err(e) => {
                     let msg = e.to_string();
                     if msg.starts_with("absent:") || msg.contains("sid/session mismatch") {
-                        if let Some(token) = state.member_tokens.remove(key) {
-                            state.member_rects.remove(&token);
-                            state.float_rects.remove(&token);
-                        }
-                        state.float_topmost_prev.remove(key);
-                        state.member_identity.remove(key);
-                        state.member_tags.remove(key);
-                        state.workspaces.remove_window(key);
+                        drop_member_state(state, key);
                     } else {
                         hide_failed = true;
                     }
@@ -6885,14 +8031,12 @@ fn workspace_do_select(
         if !live_ok {
             // Recycled HWND: drop the stale membership, never touch the new
             // owner, and retire any same-HWND claim residue without writes.
-            if let Some(token) = state.member_tokens.remove(key) {
-                state.member_rects.remove(&token);
-                state.float_rects.remove(&token);
-            }
-            state.float_topmost_prev.remove(key);
-            state.member_identity.remove(key);
-            state.member_tags.remove(key);
-            state.workspaces.remove_window(key);
+            drop_member_state(state, key);
+            continue;
+        }
+        // Verified-live sticky members never hide: they stay visible through
+        // workspace selects with no `SW_HIDE`, no claim, no backing occupancy.
+        if state.sticky.contains_key(key) {
             continue;
         }
         let had_claim = state.hidden_claims.contains_key(key);
@@ -6906,14 +8050,7 @@ fn workspace_do_select(
                 newly_hidden.push(key.clone());
             }
         } else if outcome == "origin-vanished" || outcome == "identity-changed" {
-            if let Some(token) = state.member_tokens.remove(key) {
-                state.member_rects.remove(&token);
-                state.float_rects.remove(&token);
-            }
-            state.float_topmost_prev.remove(key);
-            state.member_identity.remove(key);
-            state.member_tags.remove(key);
-            state.workspaces.remove_window(key);
+            drop_member_state(state, key);
         } else if outcome == "scope-excluded" {
             // Explicit scope fence: out-of-scope members stay visible with
             // membership intact, never hidden, never a failure.
@@ -6939,14 +8076,7 @@ fn workspace_do_select(
             ) {
                 Ok(crate::product_hide::ProductTeardown::Retired) => {
                     state.hidden_claims.remove(key);
-                    if let Some(token) = state.member_tokens.remove(key) {
-                        state.member_rects.remove(&token);
-                        state.float_rects.remove(&token);
-                    }
-                    state.float_topmost_prev.remove(key);
-                    state.member_identity.remove(key);
-                    state.member_tags.remove(key);
-                    state.workspaces.remove_window(key);
+                    drop_member_state(state, key);
                 }
                 Ok(_) => {
                     state.hidden_claims.remove(key);
@@ -7018,14 +8148,7 @@ fn workspace_do_select(
             ) {
                 Ok(crate::product_hide::ProductTeardown::Retired) => {
                     state.hidden_claims.remove(key);
-                    if let Some(token) = state.member_tokens.remove(key) {
-                        state.member_rects.remove(&token);
-                        state.float_rects.remove(&token);
-                    }
-                    state.float_topmost_prev.remove(key);
-                    state.member_identity.remove(key);
-                    state.member_tags.remove(key);
-                    state.workspaces.remove_window(key);
+                    drop_member_state(state, key);
                 }
                 Ok(_) => {
                     state.hidden_claims.remove(key);
@@ -7051,6 +8174,8 @@ fn workspace_do_select(
     state.workspaces.activate(output, target);
     state.active_output = output.to_owned();
     // Trailing maintenance: keep one empty, minimum two, active preserved.
+    // Sticky members never occupy, so a sticky-only workspace prunes like an
+    // empty one while the sticky float state itself is retained.
     let active_id = state.workspaces.active_id(output).unwrap_or_default();
     let displaced: Vec<String> = state
         .workspaces
@@ -7058,10 +8183,13 @@ fn workspace_do_select(
         .values()
         .flat_map(|r| r.workspace_ids.clone())
         .collect();
-    let (removed, append) =
-        state
-            .workspaces
-            .plan_cleanup(output, std::slice::from_ref(&active_id), &displaced);
+    let sticky_keys: BTreeSet<crate::workspace::WindowKey> = state.sticky.keys().cloned().collect();
+    let (removed, append) = state.workspaces.plan_cleanup_excluding(
+        output,
+        std::slice::from_ref(&active_id),
+        &displaced,
+        &sticky_keys,
+    );
     state.workspaces.apply_cleanup(output, &removed, append);
     // Post-reveal fresh observation: the pre-switch `observed` cannot contain
     // the hidden target set, so focusing from it always misses as `vanished`.
@@ -7336,6 +8464,11 @@ fn workspace_do_send(
         return fail("unmanaged");
     }
     // Floats never send as movers; floating survivors ride the carried rows.
+    // Sticky rides the same slotless float plus an explicit subject gate so a
+    // pruned-domain sticky still refuses.
+    if state.sticky.contains_key(&mover_key) {
+        return fail("send-refused-sticky");
+    }
     if engine_is_float(state, &loc.output, &loc.workspace, origin_token) {
         return fail("send-refused-floating");
     }
@@ -7362,14 +8495,7 @@ fn workspace_do_send(
         crate::workspace_owner::visible_lifetime_ok(stored, live_tag.as_deref())
     });
     if !lifetime_ok {
-        if let Some(token) = state.member_tokens.remove(&mover_key) {
-            state.member_rects.remove(&token);
-            state.float_rects.remove(&token);
-        }
-        state.float_topmost_prev.remove(&mover_key);
-        state.member_identity.remove(&mover_key);
-        state.member_tags.remove(&mover_key);
-        state.workspaces.remove_window(&mover_key);
+        drop_member_state(state, &mover_key);
         return fail("identity-changed");
     }
     if state.allowlist.is_some() && !state.workspace_proof {
@@ -8937,7 +10063,22 @@ fn gesture_tick(
             continue;
         }
         // Floats never feed gesture intents to the Engine; native float
-        // move/resize stays free.
+        // move/resize stays free. Sticky rides the same slotless float plus
+        // an explicit gate so a pruned-domain sticky still refuses.
+        if state.sticky.contains_key(&member_key) {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "gesture",
+                    "tick": state.tick,
+                    "op": "gesture",
+                    "disposition": "observed",
+                    "outcome": "gesture-refused-sticky",
+                    "window": current.token,
+                }),
+            );
+            continue;
+        }
         if let Some(loc) = state.workspaces.member_loc(&member_key).cloned()
             && engine_is_float(state, &loc.output, &loc.workspace, &current.token)
         {
@@ -9473,6 +10614,7 @@ fn run_tile_loop(
         underlay_chord_last: false,
         float_topmost_prev: std::collections::BTreeMap::new(),
         float_rects: HashMap::new(),
+        sticky: std::collections::BTreeMap::new(),
     };
     state.engine.sync_binding(&owner, &generation);
     state.workspace_proof = workspace_proof;
@@ -9745,7 +10887,8 @@ fn run_tile_loop(
                     | QueuedSnapEvent::Intent(_)
                     | QueuedSnapEvent::Maximize(_)
                     | QueuedSnapEvent::Fullscreen(_)
-                    | QueuedSnapEvent::Float(_) => {
+                    | QueuedSnapEvent::Float(_)
+                    | QueuedSnapEvent::Sticky(_) => {
                         directional_events.push(event);
                     }
                 }

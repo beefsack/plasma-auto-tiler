@@ -123,9 +123,9 @@ pub mod sys {
     };
     use crate::lifecycle::{exe_paths_equal, is_medium_rid};
     use crate::model::{
-        MEMBER_TAG_PROP, PRODUCT_CLAIM_PROP, ProcessIdentity, ProductShowRestore, WindowClaimKind,
-        WindowIdentity, WindowShowState, generate_claim_tag, product_show_restore, valid_claim_tag,
-        watcher_may_restore,
+        MEMBER_TAG_PROP, PRODUCT_CLAIM_PROP, ProcessIdentity, ProductShowRestore, STICKY_PROP,
+        WindowClaimKind, WindowIdentity, WindowShowState, generate_claim_tag, product_show_restore,
+        valid_claim_tag, watcher_may_restore,
     };
     use crate::native::{HeldProcess, IdentityError};
     use crate::storage::{LEDGER_FILE_NAME, LedgerStore};
@@ -474,6 +474,74 @@ pub mod sys {
     #[must_use]
     pub fn nonce_tag_matches(live: Option<&str>, expected: &str) -> bool {
         live.is_some_and(|tag| tag == expected)
+    }
+
+    fn sticky_prop_name() -> Vec<u16> {
+        wide(STICKY_PROP)
+    }
+
+    /// Fresh read of the sticky-float marker. `None` means verifiably not
+    /// sticky: absent, zero, or unknown values fail closed. Read-only; never
+    /// mutates the window. A recycled HWND starts without our property, so a
+    /// new generation never inherits stickiness.
+    pub fn read_sticky_marker(hwnd_u64: u64) -> Option<bool> {
+        use windows_sys::Win32::Foundation::HWND;
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetPropW;
+        let hwnd = hwnd_u64 as isize as HWND;
+        let name = sticky_prop_name();
+        let v = unsafe { GetPropW(hwnd, name.as_ptr()) };
+        if v.is_null() {
+            return None;
+        }
+        let value = v as usize as u64;
+        crate::tiling::parse_sticky_marker(value)
+    }
+
+    /// Stamp the sticky-float marker for one verified managed window, then
+    /// read it back. Only call after the caller bound the window to its
+    /// expected full identity plus lifetime tag, scope, hosted-child, and
+    /// proof fences. Overwrites only our own property name. A readback
+    /// mismatch fails closed with no runtime map change and no removal.
+    pub fn install_sticky_marker(hwnd_u64: u64, prior_floating: bool) -> Result<()> {
+        use windows_sys::Win32::Foundation::HWND;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SetPropW;
+        let hwnd = hwnd_u64 as isize as HWND;
+        let value = crate::tiling::sticky_marker_value(prior_floating);
+        let name = sticky_prop_name();
+        let ok = unsafe { SetPropW(hwnd, name.as_ptr(), value as usize as _) };
+        if ok == 0 {
+            return Err(err("error: SetProp failed"));
+        }
+        match read_sticky_marker(hwnd_u64) {
+            Some(back) if back == prior_floating => Ok(()),
+            _ => Err(err("error: sticky marker readback mismatch")),
+        }
+    }
+
+    /// Remove the sticky marker only when the live value still equals the
+    /// expected pre-sticky state. Returns `true` when verifiably absent
+    /// afterwards (removed or already absent), `false` when a different value
+    /// owns the window now (never touch it). Identity fencing (HWND/PID/
+    /// creation, lifetime tag) stays with the caller; this guards only the
+    /// marker value itself plus liveness.
+    pub fn remove_sticky_marker(hwnd_u64: u64, expected_prior: bool) -> Result<bool> {
+        use windows_sys::Win32::Foundation::HWND;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{IsWindow, RemovePropW};
+        let hwnd = hwnd_u64 as isize as HWND;
+        if unsafe { IsWindow(hwnd) } == 0 {
+            return Ok(true);
+        }
+        match read_sticky_marker(hwnd_u64) {
+            None => return Ok(true),
+            Some(live) if live != expected_prior => return Ok(false),
+            Some(_) => {}
+        }
+        let name = sticky_prop_name();
+        let _ = unsafe { RemovePropW(hwnd, name.as_ptr()) };
+        match read_sticky_marker(hwnd_u64) {
+            None => Ok(true),
+            Some(_) => Err(err("error: sticky marker remove failed")),
+        }
     }
 
     /// Remove the nonce only when the live window still carries the expected

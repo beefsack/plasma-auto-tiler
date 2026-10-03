@@ -352,6 +352,59 @@ pub const fn float_toggle_refusal(fullscreen: bool, maximized: bool) -> Option<&
     }
 }
 
+/// Sticky-toggle refusal for an overlay target (KDE `sticky-refused-fullscreen`
+/// / `sticky-refused-maximize` parity): a fullscreen or maximized focused
+/// window never sticks, and a sticky window that the user maximized or
+/// fullscreened natively never unsticks until it reads normal again.
+/// Fullscreen wins when both hold. `None` when the route may proceed.
+#[must_use]
+pub const fn sticky_toggle_refusal(fullscreen: bool, maximized: bool) -> Option<&'static str> {
+    if fullscreen {
+        Some("sticky-refused-fullscreen")
+    } else if maximized {
+        Some("sticky-refused-maximize")
+    } else {
+        None
+    }
+}
+
+/// Directional refusal for a sticky subject window (KDE sticky isolation
+/// parity): a sticky focused window never starts directional focus/move, and
+/// sticky windows are never directional targets (they ride slotless floats).
+/// Focus and move share the sticky subject gate; targets exclude via the
+/// floating Engine observation. `None` when the route may proceed.
+#[must_use]
+pub const fn sticky_directional_refusal(is_sticky: bool, is_move: bool) -> Option<&'static str> {
+    if !is_sticky {
+        return None;
+    }
+    if is_move {
+        Some("move-refused-sticky")
+    } else {
+        Some("focus-refused-sticky")
+    }
+}
+
+/// Sticky marker value for one pre-sticky float state: 1 when the window was
+/// tiled before sticky-on, 2 when it was already a normal float. Nonzero
+/// magic only; never a pointer, never trusted across window generations (a
+/// recycled HWND starts without our property).
+#[must_use]
+pub const fn sticky_marker_value(prior_floating: bool) -> u64 {
+    if prior_floating { 2 } else { 1 }
+}
+
+/// Decode one sticky marker value to its pre-sticky float state. `None` for
+/// absent, zero, or unknown values: fail closed, never guess.
+#[must_use]
+pub const fn parse_sticky_marker(value: u64) -> Option<bool> {
+    match value {
+        1 => Some(false),
+        2 => Some(true),
+        _ => None,
+    }
+}
+
 /// Project-owned topmost restore gate for graceful stop and unfloat: only a
 /// band the project raised (`!prior && current`) restores. A pre-existing
 /// topmost stays untouched even if the user later cleared it; crash leaves

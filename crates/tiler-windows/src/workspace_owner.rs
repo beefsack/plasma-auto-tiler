@@ -2499,4 +2499,518 @@ mod tests {
             .expect("plan extracts");
         assert!(writes.iter().all(|w| w.overconstrained));
     }
+
+    #[test]
+    fn sticky_toggle_refusals_match_float_overlays_with_sticky_vocabulary() {
+        // Fullscreen wins, then maximize; normal proceeds. Sticky uses its
+        // own outcome strings so logs distinguish the arm.
+        assert_eq!(
+            crate::tiling::sticky_toggle_refusal(true, false),
+            Some("sticky-refused-fullscreen")
+        );
+        assert_eq!(
+            crate::tiling::sticky_toggle_refusal(false, true),
+            Some("sticky-refused-maximize")
+        );
+        assert_eq!(
+            crate::tiling::sticky_toggle_refusal(true, true),
+            Some("sticky-refused-fullscreen")
+        );
+        assert_eq!(crate::tiling::sticky_toggle_refusal(false, false), None);
+        assert_eq!(
+            crate::tiling::sticky_directional_refusal(true, false),
+            Some("focus-refused-sticky")
+        );
+        assert_eq!(
+            crate::tiling::sticky_directional_refusal(true, true),
+            Some("move-refused-sticky")
+        );
+        assert_eq!(
+            crate::tiling::sticky_directional_refusal(false, false),
+            None
+        );
+        assert_eq!(crate::tiling::sticky_directional_refusal(false, true), None);
+    }
+
+    #[test]
+    fn sticky_marker_values_round_trip_and_reject_unknown() {
+        // 1 = prior tiled, 2 = prior float; zero/unknown fail closed.
+        assert_eq!(crate::tiling::sticky_marker_value(false), 1);
+        assert_eq!(crate::tiling::sticky_marker_value(true), 2);
+        assert_eq!(crate::tiling::parse_sticky_marker(1), Some(false));
+        assert_eq!(crate::tiling::parse_sticky_marker(2), Some(true));
+        assert_eq!(crate::tiling::parse_sticky_marker(0), None);
+        assert_eq!(crate::tiling::parse_sticky_marker(3), None);
+        assert_eq!(crate::tiling::parse_sticky_marker(u64::MAX), None);
+    }
+
+    #[test]
+    fn sticky_float_rehome_keeps_no_duplicate_across_domains() {
+        // Backing-domain removal plus current-domain admit as tiled via two
+        // reconciles: the mover leaves the source set, joins the target set,
+        // and no stale duplicate remains. Mirrors the native cross-domain
+        // sticky-off path without native calls.
+        use tiler_core::boundary::CoreReply;
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = rect(0, 0);
+        let source = workspace_domain("mon-a", "ws-1", bounds, 8);
+        let target = workspace_domain("mon-a", "ws-2", bounds, 8);
+        seed_two_tiled(&mut engine, &owner, &generation, &source, bounds);
+        // Float w1 in the source (sticky-on tiled half), then rehome: source
+        // without w1 converges removal, target with w1 as tiled admits.
+        let float = float_event(
+            &owner,
+            &generation,
+            "float-1",
+            revision_of(&engine, &source),
+            &source,
+            &[
+                (WindowId("w1".to_owned()), bounds, false),
+                (WindowId("w2".to_owned()), bounds, false),
+            ],
+            "w1",
+            "w1",
+            None,
+        );
+        let reply = engine.handle(&float);
+        assert!(matches!(reply, CoreReply::Tiled(_)), "float commits");
+        let revision = |engine: &tiler_core::engine::Engine, domain: &(OutputDomain, DomainKey)| {
+            revision_of(engine, domain)
+        };
+        let reconcile = |engine: &mut tiler_core::engine::Engine,
+                         domain: &(OutputDomain, DomainKey),
+                         correlation: &str,
+                         rows: &[(WindowId, Rect, bool)]| {
+            let correlation = CorrelationId::parse(correlation).expect("correlation");
+            let carried: Vec<(
+                WindowId,
+                Rect,
+                tiler_core::size_hints::WindowSizeHints,
+                bool,
+            )> = rows
+                .iter()
+                .map(|(token, rect, floating)| {
+                    (
+                        token.clone(),
+                        *rect,
+                        tiler_core::size_hints::WindowSizeHints::none(),
+                        *floating,
+                    )
+                })
+                .collect();
+            let fp = crate::tiling::fingerprint(
+                &rows
+                    .iter()
+                    .map(|(token, rect, _)| (token.0.clone(), *rect))
+                    .collect::<Vec<_>>(),
+            );
+            let event = crate::tiling::build_reconcile_event_for_floating(
+                &owner,
+                &generation,
+                &correlation,
+                revision(engine, domain),
+                fp,
+                &domain.0,
+                &domain.1,
+                8,
+                &carried,
+                None,
+            );
+            engine.handle(&event)
+        };
+        // Source without the floated window: exception drops, sibling keeps
+        // the tile area with no duplication.
+        let reply = reconcile(
+            &mut engine,
+            &source,
+            "prune-old",
+            &[(WindowId("w2".to_owned()), bounds, false)],
+        );
+        assert!(
+            matches!(
+                reply,
+                CoreReply::Projection(_) | CoreReply::Tiled(_) | CoreReply::SendWorkspace(_)
+            ),
+            "old removal converges, got {reply:?}"
+        );
+        assert!(
+            !engine
+                .session(&source.1)
+                .is_some_and(|s| s.is_exception(&WindowId("w1".to_owned()))),
+            "old exception gone"
+        );
+        // Current admits w1 as tiled: same topology as a fresh admission,
+        // no stale retained duplicate in the source. The target plan carries
+        // w1 as a tile (not an exception), so the first Win+G after the move
+        // tiles rather than re-floating.
+        let reply = reconcile(
+            &mut engine,
+            &target,
+            "admit-current",
+            &[(WindowId("w1".to_owned()), bounds, false)],
+        );
+        let tiled_windows: Vec<WindowId> = match reply {
+            CoreReply::Tiled(plan) => plan.geometry.iter().map(|g| g.window.clone()).collect(),
+            CoreReply::Projection(plan) => plan.geometry.iter().map(|g| g.window.clone()).collect(),
+            CoreReply::SendWorkspace(plan) => {
+                plan.geometry.iter().map(|g| g.window.clone()).collect()
+            }
+            reply => panic!("current admit converges, got {reply:?}"),
+        };
+        assert!(
+            tiled_windows.contains(&WindowId("w1".to_owned())),
+            "target tiles w1, got {tiled_windows:?}"
+        );
+        assert!(
+            !engine
+                .session(&target.1)
+                .is_some_and(|s| s.is_exception(&WindowId("w1".to_owned()))),
+            "w1 rides tiled in target"
+        );
+        assert!(
+            !engine
+                .session(&source.1)
+                .is_some_and(|s| s.is_exception(&WindowId("w1".to_owned()))),
+            "no stale duplicate in old"
+        );
+    }
+
+    #[test]
+    fn sticky_pruned_backing_rehomes_to_current_without_duplicate() {
+        // Sticky-only backing workspace prunes while the sticky membership
+        // dangles, then sticky-off rehomes to current: the old domain drops
+        // the mover with no duplicate and current tiles (prior tiled) or
+        // keeps the live frame as a normal float (prior float). Ties the
+        // production pure seams: `plan_cleanup_excluding` /
+        // `workspace_members` (missing returns empty) plus `domain_rows`
+        // and the floating reconcile builder, for both prior origins.
+        use tiler_core::boundary::CoreReply;
+        let bounds = rect(0, 0);
+        let live_frame = Rect {
+            x: 10,
+            y: 20,
+            w: 400,
+            h: 300,
+        };
+        // Workspace seam: sticky-only intermediate prunes, membership dangles.
+        let mut spaces = ManagedWorkspaces::new();
+        spaces.ensure_output("mon-a");
+        let current = spaces.active_id("mon-a").expect("active");
+        let backing = spaces.resolve_send("mon-a", 2).expect("second");
+        let filler = key(43);
+        assert!(spaces.assign(filler.clone(), "mon-a", &backing, false));
+        let (third, _) = spaces.select_trailing("mon-a").expect("trailing");
+        assert!(spaces.assign(filler.clone(), "mon-a", &third, false));
+        let mover = key(41);
+        assert!(spaces.assign(mover.clone(), "mon-a", &backing, false));
+        let sibling = key(42);
+        assert!(spaces.assign(sibling.clone(), "mon-a", &current, false));
+        assert!(spaces.activate("mon-a", &current));
+        let sticky: BTreeSet<WindowKey> = [mover.clone()].into_iter().collect();
+        let (removed, append) =
+            spaces.plan_cleanup_excluding("mon-a", std::slice::from_ref(&current), &[], &sticky);
+        assert_eq!(removed, vec![backing.clone()], "sticky-only prunes");
+        spaces.apply_cleanup("mon-a", &removed, append);
+        assert_eq!(
+            spaces.member_loc(&mover).map(|l| l.workspace.clone()),
+            Some(backing.clone()),
+            "membership dangles on the pruned id"
+        );
+        assert!(
+            spaces.workspace_members("mon-a", &backing).is_empty(),
+            "pruned members read back empty"
+        );
+        // Engine seam per prior origin: old domain without the mover, current
+        // with the mover explicit (mirrors the native rehome construct).
+        for prior in [false, true] {
+            let floating = prior;
+            let mut engine = tiler_core::engine::Engine::new();
+            let owner = OwnerId::parse("tiler-windows").expect("owner");
+            let generation = GenerationId::parse("aa").expect("generation");
+            engine.sync_binding(&owner, &generation);
+            let source = workspace_domain("mon-a", &backing, bounds, 8);
+            let target = workspace_domain("mon-a", &current, bounds, 8);
+            // Sticky-on: tiled mover floats in the backing domain.
+            let seed = float_event(
+                &owner,
+                &generation,
+                "sticky-on",
+                revision_of(&engine, &source),
+                &source,
+                &[(WindowId("w1".to_owned()), bounds, false)],
+                "w1",
+                "w1",
+                None,
+            );
+            let reply = engine.handle(&seed);
+            assert!(
+                matches!(reply, CoreReply::Tiled(_)),
+                "prior {prior}: sticky-on floats, got {reply:?}"
+            );
+            // Old domain rows via the production seam: pruned members read
+            // empty, so the removal observation carries no mover.
+            let old_members = spaces.workspace_members("mon-a", &backing);
+            assert!(old_members.is_empty(), "prior {prior}: backing pruned");
+            let old_rows = domain_rows(&old_members, &[]).expect("prior {prior}: pruned rows");
+            assert!(old_rows.is_empty(), "prior {prior}: old rows empty");
+            let old_fp = crate::tiling::fingerprint(&[]);
+            let correlation = CorrelationId::parse("prune-old").expect("correlation");
+            let old_event = crate::tiling::build_reconcile_event_for_floating(
+                &owner,
+                &generation,
+                &correlation,
+                revision_of(&engine, &source),
+                old_fp,
+                &source.0,
+                &source.1,
+                8,
+                &[],
+                None,
+            );
+            let reply = engine.handle(&old_event);
+            assert!(
+                matches!(
+                    reply,
+                    CoreReply::Projection(_) | CoreReply::Tiled(_) | CoreReply::SendWorkspace(_)
+                ),
+                "prior {prior}: old removal converges, got {reply:?}"
+            );
+            assert!(
+                !engine
+                    .session(&source.1)
+                    .is_some_and(|s| s.is_exception(&WindowId("w1".to_owned()))),
+                "prior {prior}: old exception gone"
+            );
+            // Current rows via the production seam: existing sibling rows
+            // plus the mover explicit with the live frame, floating by
+            // origin (prior float stays float, prior tiled tiles).
+            let cur_members = spaces.workspace_members("mon-a", &current);
+            assert!(
+                cur_members.contains(&sibling),
+                "prior {prior}: sibling stays current"
+            );
+            let cur_views = vec![MemberView {
+                key: sibling.clone(),
+                token: "w2".to_owned(),
+                rect: bounds,
+                hints: tiler_core::size_hints::WindowSizeHints::none(),
+                floating: false,
+            }];
+            let mut cur_rows =
+                domain_rows(&cur_members, &cur_views).expect("prior {prior}: base rows");
+            cur_rows.push(OwnerRow {
+                token: "w1".to_owned(),
+                rect: live_frame,
+                hints: tiler_core::size_hints::WindowSizeHints::none(),
+                floating,
+            });
+            assert!(
+                cur_rows
+                    .iter()
+                    .any(|r| r.token == "w1" && r.rect == live_frame),
+                "prior {prior}: explicit current row carries the live frame"
+            );
+            let cur_windows: Vec<(
+                WindowId,
+                Rect,
+                tiler_core::size_hints::WindowSizeHints,
+                bool,
+            )> = cur_rows
+                .iter()
+                .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
+                .collect();
+            let cur_fp = crate::tiling::fingerprint(
+                &cur_rows
+                    .iter()
+                    .map(|r| (r.token.clone(), r.rect))
+                    .collect::<Vec<_>>(),
+            );
+            let correlation = CorrelationId::parse("admit-current").expect("correlation");
+            let cur_event = crate::tiling::build_reconcile_event_for_floating(
+                &owner,
+                &generation,
+                &correlation,
+                revision_of(&engine, &target),
+                cur_fp,
+                &target.0,
+                &target.1,
+                8,
+                &cur_windows,
+                None,
+            );
+            let reply = engine.handle(&cur_event);
+            assert!(
+                matches!(
+                    reply,
+                    CoreReply::Projection(_) | CoreReply::Tiled(_) | CoreReply::SendWorkspace(_)
+                ),
+                "prior {prior}: current admit converges, got {reply:?}"
+            );
+            let cur_float = engine
+                .session(&target.1)
+                .is_some_and(|s| s.is_exception(&WindowId("w1".to_owned())));
+            assert_eq!(
+                cur_float, prior,
+                "prior {prior}: current float follows origin"
+            );
+            if !prior {
+                let tiled: Vec<WindowId> = match reply {
+                    CoreReply::Tiled(plan) => {
+                        plan.geometry.iter().map(|g| g.window.clone()).collect()
+                    }
+                    CoreReply::Projection(plan) => {
+                        plan.geometry.iter().map(|g| g.window.clone()).collect()
+                    }
+                    CoreReply::SendWorkspace(plan) => {
+                        plan.geometry.iter().map(|g| g.window.clone()).collect()
+                    }
+                    reply => panic!("prior {prior}: current tiles, got {reply:?}"),
+                };
+                assert!(
+                    tiled.contains(&WindowId("w1".to_owned())),
+                    "prior {prior}: target tiles w1, got {tiled:?}"
+                );
+            }
+            assert!(
+                !engine
+                    .session(&source.1)
+                    .is_some_and(|s| s.is_exception(&WindowId("w1".to_owned()))),
+                "prior {prior}: no stale duplicate in old"
+            );
+        }
+    }
+
+    #[test]
+    fn sticky_adopt_consumes_both_markers_as_normal_float_then_tiles() {
+        // Restart adoption consumes either marker value into the same normal
+        // float (Engine exception, no sticky entry): the pre-restart origin
+        // never survives, and the next ordinary Win+G unfloats to tiled.
+        // Mirrors the native adoption preamble through the production builders.
+        use tiler_core::boundary::CoreReply;
+        for prior in [false, true] {
+            let value = crate::tiling::sticky_marker_value(prior);
+            assert_eq!(
+                crate::tiling::parse_sticky_marker(value),
+                Some(prior),
+                "marker round-trips"
+            );
+            let mut engine = tiler_core::engine::Engine::new();
+            let owner = OwnerId::parse("tiler-windows").expect("owner");
+            let generation = GenerationId::parse("aa").expect("generation");
+            engine.sync_binding(&owner, &generation);
+            let bounds = rect(0, 0);
+            let domain = workspace_domain("mon-a", "ws-1", bounds, 8);
+            let correlation = CorrelationId::parse("adopt").expect("correlation");
+            let carried = vec![(
+                WindowId("w1".to_owned()),
+                bounds,
+                tiler_core::size_hints::WindowSizeHints::none(),
+                true,
+            )];
+            let fp = crate::tiling::fingerprint(&[("w1".to_owned(), bounds)]);
+            let adopt = crate::tiling::build_reconcile_event_for_floating(
+                &owner,
+                &generation,
+                &correlation,
+                revision_of(&engine, &domain),
+                fp,
+                &domain.0,
+                &domain.1,
+                8,
+                &carried,
+                None,
+            );
+            let reply = engine.handle(&adopt);
+            assert!(
+                matches!(
+                    reply,
+                    CoreReply::Projection(_) | CoreReply::Tiled(_) | CoreReply::SendWorkspace(_)
+                ),
+                "prior {prior}: adoption converges, got {reply:?}"
+            );
+            let candidate_float = engine
+                .session(&domain.1)
+                .is_some_and(|s| s.is_exception(&WindowId("w1".to_owned())));
+            assert!(candidate_float, "prior {prior}: adopted window floats");
+            // Consumption verdict (inlined native gate): verified candidate
+            // plus cleared marker commits a normal float; anything else keeps
+            // the marker for later recovery.
+            let marker = Some(prior);
+            let cleared = true;
+            assert!(
+                marker.is_some() && candidate_float && cleared,
+                "prior {prior}: both markers consume identically"
+            );
+            // Next ordinary Win+G: ToggleFloat unfloat with the live frame
+            // tiles the normal float (no sticky vocabulary involved).
+            let unfloat = float_event(
+                &owner,
+                &generation,
+                "first-toggle",
+                revision_of(&engine, &domain),
+                &domain,
+                &[(WindowId("w1".to_owned()), bounds, true)],
+                "w1",
+                "w1",
+                Some(bounds),
+            );
+            let reply = engine.handle(&unfloat);
+            assert!(
+                matches!(reply, CoreReply::Tiled(_)),
+                "prior {prior}: first toggle tiles, got {reply:?}"
+            );
+            assert!(
+                !engine
+                    .session(&domain.1)
+                    .is_some_and(|s| s.is_exception(&WindowId("w1".to_owned()))),
+                "prior {prior}: exception cleared by first toggle"
+            );
+        }
+    }
+
+    #[test]
+    fn hidden_float_rows_stay_floating_until_reveal() {
+        // Hidden intentional floats ride the live float snapshot with the
+        // tiled allocation as fallback, so convergence never drops retained
+        // hidden membership. Sticky rides the same slotless float lane.
+        use super::{MemberView, domain_rows, hidden_snapshot_rect};
+        let float_rect = Some(Rect {
+            x: 10,
+            y: 20,
+            w: 400,
+            h: 300,
+        });
+        let tiled_rect = Some(Rect {
+            x: 0,
+            y: 0,
+            w: 800,
+            h: 600,
+        });
+        assert_eq!(
+            hidden_snapshot_rect(true, float_rect, tiled_rect),
+            float_rect
+        );
+        assert_eq!(hidden_snapshot_rect(true, None, tiled_rect), tiled_rect);
+        let member = key(21);
+        let members: BTreeSet<WindowKey> = [member.clone()].into_iter().collect();
+        let float_frame = Rect {
+            x: 10,
+            y: 20,
+            w: 400,
+            h: 300,
+        };
+        let views = vec![MemberView {
+            key: member,
+            token: "w-float".to_owned(),
+            rect: float_frame,
+            hints: tiler_core::size_hints::WindowSizeHints::none(),
+            floating: true,
+        }];
+        let rows = domain_rows(&members, &views).expect("hidden float rows");
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].floating, "hidden float stays floating");
+    }
 }

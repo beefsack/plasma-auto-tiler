@@ -309,16 +309,15 @@ pub mod sys {
         if class != super::TEST_WINDOW_CLASS {
             return Err(absent("class mismatch"));
         }
-        // Ordinary window: no parent, no owner, not topmost.
+        // Owned-helper identity: no parent, no owner. The native topmost
+        // band (WS_EX_TOPMOST) is approved mutable product state (keep-above
+        // float/sticky) and never ownership: exe/class/PID/creation/SID/
+        // session/medium/tag above already bind the owner.
         if !unsafe { GetParent(hwnd) }.is_null() {
             return Err(absent("parented"));
         }
         if !unsafe { GetWindow(hwnd, GW_OWNER) }.is_null() {
             return Err(absent("owned window"));
-        }
-        let ex = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) } as u32;
-        if ex & WS_EX_TOPMOST != 0 {
-            return Err(absent("topmost"));
         }
         let tag = prop_tag(hwnd)?;
         let visible = unsafe { IsWindowVisible(hwnd) } != 0;

@@ -337,6 +337,22 @@ impl ManagedWorkspaces {
         visible_ids: &[String],
         retained_ids: &[String],
     ) -> (Vec<String>, bool) {
+        self.plan_cleanup_excluding(output, visible_ids, retained_ids, &BTreeSet::new())
+    }
+
+    /// Trailing-empty plan that never lets sticky members occupy their backing
+    /// workspace (KDE `occupiedIds` global-sticky exclusion parity). Sticky
+    /// members stay members but count as empty for occupancy, so a
+    /// sticky-only workspace prunes like an empty one while the sticky float
+    /// state itself is retained by the owner tables. Pure over the same
+    /// policy as [`ManagedWorkspaces::plan_cleanup`].
+    pub fn plan_cleanup_excluding(
+        &self,
+        output: &str,
+        visible_ids: &[String],
+        retained_ids: &[String],
+        sticky: &BTreeSet<WindowKey>,
+    ) -> (Vec<String>, bool) {
         let Some(state) = self.outputs.get(output) else {
             return (Vec::new(), false);
         };
@@ -344,13 +360,13 @@ impl ManagedWorkspaces {
             .order
             .iter()
             .map(|e| {
-                let occupied = !e.members.is_empty()
-                    || self
-                        .membership
-                        .values()
-                        .any(|l| l.output == output && l.workspace == e.id);
+                let non_sticky_empty = e.members.iter().all(|m| sticky.contains(m));
+                let occupied = (!e.members.is_empty() && !non_sticky_empty)
+                    || self.membership.iter().any(|(k, l)| {
+                        l.output == output && l.workspace == e.id && !sticky.contains(k)
+                    });
                 policy::WorkspaceFacts {
-                    empty: e.members.is_empty() && !occupied,
+                    empty: non_sticky_empty && !occupied,
                     visible: visible_ids.iter().any(|v| v == &e.id),
                     occupied,
                     retained: retained_ids.iter().any(|r| r == &e.id)
@@ -1003,5 +1019,63 @@ mod tests {
             [maxed.clone(), sibling.clone()].into_iter().collect()
         );
         assert_eq!(m.focus_target("mon-1", &ws2, &focus_eligible), Some(maxed));
+    }
+
+    #[test]
+    fn sticky_only_intermediate_workspace_prunes_but_keeps_membership() {
+        // Sticky members never occupy: a sticky-only intermediate workspace is
+        // reported removed like an empty one, while the sticky membership
+        // itself survives in the owner tables (retained float, rehomed by the
+        // next sticky-off, dropped only by the member-drop path).
+        use std::collections::BTreeSet;
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        let first = m.active_id("mon-1").expect("active");
+        let second = m.resolve_send("mon-1", 2).expect("second");
+        // Occupy the trailing slot so a third workspace appends, leaving the
+        // sticky-only second workspace intermediate (prunable, not floored).
+        let normal_win = key(42);
+        assert!(m.assign(normal_win.clone(), "mon-1", &second, false));
+        let (third, _) = m.select_trailing("mon-1").expect("trailing");
+        assert!(m.assign(normal_win.clone(), "mon-1", &third, false));
+        let sticky_win = key(41);
+        assert!(m.assign(sticky_win.clone(), "mon-1", &second, false));
+        assert!(m.activate("mon-1", &first));
+        let sticky: BTreeSet<WindowKey> = [sticky_win.clone()].into_iter().collect();
+        // Without exclusion the intermediate workspace looks occupied and
+        // survives; with sticky exclusion it is reported removed.
+        let (kept, _) = m.plan_cleanup("mon-1", std::slice::from_ref(&first), &[]);
+        assert!(
+            !kept.contains(&second),
+            "occupied intermediate survives, got {kept:?}"
+        );
+        let (removed, append) =
+            m.plan_cleanup_excluding("mon-1", std::slice::from_ref(&first), &[], &sticky);
+        assert_eq!(removed, vec![second.clone()], "sticky-only prunes");
+        m.apply_cleanup("mon-1", &removed, append);
+        assert_eq!(m.active_id("mon-1").as_deref(), Some(first.as_str()));
+        // Membership is untouched by the plan: the owner retains the sticky
+        // float for rehome on the next sticky-off.
+        assert_eq!(
+            m.member_loc(&sticky_win).map(|l| l.workspace.clone()),
+            Some(second.clone())
+        );
+    }
+
+    #[test]
+    fn plan_cleanup_excluding_matches_plain_without_sticky() {
+        // No sticky members: excluding degenerates to the plain plan.
+        use std::collections::BTreeSet;
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        let active = m.active_id("mon-1").expect("active");
+        let plain = m.plan_cleanup("mon-1", std::slice::from_ref(&active), &[]);
+        let excluded = m.plan_cleanup_excluding(
+            "mon-1",
+            std::slice::from_ref(&active),
+            &[],
+            &BTreeSet::new(),
+        );
+        assert_eq!(plain, excluded);
     }
 }

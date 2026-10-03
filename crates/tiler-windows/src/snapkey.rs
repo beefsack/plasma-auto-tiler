@@ -186,8 +186,8 @@ pub const fn is_digit_vk(vk: u32) -> bool {
 }
 
 /// True for any chord key the single classifier owns: directional catalog
-/// plus workspace digits plus the maximize, fullscreen, and float toggles.
-/// Modifiers, Win keys, and ordinary keys are not chord keys.
+/// plus workspace digits plus the maximize, fullscreen, float, and sticky
+/// toggles. Modifiers, Win keys, and ordinary keys are not chord keys.
 #[must_use]
 pub fn is_chord_vk(vk: u32) -> bool {
     catalog_index(vk).is_some()
@@ -214,10 +214,19 @@ pub const fn is_fullscreen_vk(vk: u32) -> bool {
 }
 
 /// True only for the float-toggle chord key (Win+G, KDE Meta+G parity).
-/// Like maximize/fullscreen, any Shift/Ctrl/Alt combination passes through
-/// untracked: Win+Shift+G is unimplemented, never a sticky arm.
+/// Unshifted G floats; shifted G is the sticky arm (see [`is_sticky_vk`]).
+/// Any Ctrl/Alt combination passes through untracked.
 #[must_use]
 pub const fn is_float_vk(vk: u32) -> bool {
+    vk == VK_G
+}
+
+/// True only for the sticky-toggle chord key (Win+Shift+G, KDE Meta+Shift+G
+/// parity). Shares the G virtual key with float: Shift selects sticky,
+/// unshifted selects float. Any Ctrl/Alt combination passes through
+/// untracked.
+#[must_use]
+pub const fn is_sticky_vk(vk: u32) -> bool {
     vk == VK_G
 }
 
@@ -329,6 +338,17 @@ pub struct FloatIntent {
     pub announce: bool,
 }
 
+/// Classifier outcome for one sticky-toggle event (Win+Shift+G, KDE
+/// Meta+Shift+G parity). Same edge contract as float: only the down
+/// dispatches, ups close the pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StickyIntent {
+    pub edge: SnapEdge,
+    pub foreground: bool,
+    pub consumed: bool,
+    pub announce: bool,
+}
+
 /// Unified classifier outcome: exactly one of directional, workspace,
 /// maximize, fullscreen, or float. One machine, one modifier/mask authority;
 /// maximize, fullscreen, and float share Win/Shift/Ctrl/Alt tracking, origin
@@ -340,6 +360,7 @@ pub enum Classified {
     Maximize(MaximizeIntent),
     Fullscreen(FullscreenIntent),
     Float(FloatIntent),
+    Sticky(StickyIntent),
 }
 
 impl Classified {
@@ -351,6 +372,7 @@ impl Classified {
             Self::Maximize(intent) => intent.consumed,
             Self::Fullscreen(intent) => intent.consumed,
             Self::Float(intent) => intent.consumed,
+            Self::Sticky(intent) => intent.consumed,
         }
     }
 
@@ -362,6 +384,7 @@ impl Classified {
             Self::Maximize(intent) => intent.announce,
             Self::Fullscreen(intent) => intent.announce,
             Self::Float(intent) => intent.announce,
+            Self::Sticky(intent) => intent.announce,
         }
     }
 }
@@ -376,6 +399,7 @@ pub enum MaskTrigger {
     Maximize,
     Fullscreen,
     Float,
+    Sticky,
 }
 
 /// Pure product chord classifier. Tracks both Win keys plus the Shift family
@@ -410,6 +434,8 @@ pub struct SnapClassify {
     fullscreen_origin: bool,
     float_down: bool,
     float_origin: bool,
+    sticky_down: bool,
+    sticky_origin: bool,
     pub enabled: bool,
     /// Cached session gate published by the owner (takeover plus active,
     /// non-fullscreen, non-elevated, non-gesture). Distinct from the managed
@@ -423,6 +449,7 @@ pub struct SnapClassify {
     pub max_counts: SnapCounts,
     pub fullscreen_counts: SnapCounts,
     pub float_counts: SnapCounts,
+    pub sticky_counts: SnapCounts,
     mask_pending: bool,
     mask_trigger: Option<MaskTrigger>,
     hold_masked: bool,
@@ -430,6 +457,15 @@ pub struct SnapClassify {
     pub mask_ok: u32,
     pub mask_failed: u32,
     pub mask_skipped: u32,
+}
+
+/// G-key arm selector: float (Win+G, KDE Meta+G) or sticky (Win+Shift+G,
+/// KDE Meta+Shift+G). The op fixes at down time; repeats ride the armed hold
+/// regardless of later Shift.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GArm {
+    Float,
+    Sticky,
 }
 
 impl SnapClassify {
@@ -453,6 +489,8 @@ impl SnapClassify {
             fullscreen_origin: false,
             float_down: false,
             float_origin: false,
+            sticky_down: false,
+            sticky_origin: false,
             enabled: config.takeover,
             gate_active: true,
             allow_win_l: config.allow_win_l,
@@ -461,6 +499,7 @@ impl SnapClassify {
             max_counts: SnapCounts::default(),
             fullscreen_counts: SnapCounts::default(),
             float_counts: SnapCounts::default(),
+            sticky_counts: SnapCounts::default(),
             mask_pending: false,
             mask_trigger: None,
             hold_masked: false,
@@ -507,7 +546,10 @@ impl SnapClassify {
             return self.fullscreen_down;
         }
         if is_float_vk(vk) {
-            return self.float_down;
+            return self.float_down || self.sticky_down;
+        }
+        if is_sticky_vk(vk) {
+            return self.float_down || self.sticky_down;
         }
         false
     }
@@ -605,8 +647,8 @@ impl SnapClassify {
         if is_fullscreen_vk(vk) {
             return self.push_fullscreen(is_up, foreground);
         }
-        if is_float_vk(vk) {
-            return self.push_float(is_up, foreground);
+        if is_float_vk(vk) || is_sticky_vk(vk) {
+            return self.push_g(is_up, foreground);
         }
         let Some(idx) = catalog_index(vk) else {
             // Ordinary keys reach the OS and disguise Win by themselves.
@@ -1043,94 +1085,135 @@ impl SnapClassify {
         }
     }
 
-    /// Float-toggle half of the unified classifier (Win+G, KDE Meta+G
-    /// parity): same Win/Ctrl/Alt/origin/mask contract as the maximize arm.
-    /// Any held Shift (Win+Shift+G is unimplemented) or Ctrl/Alt, or a missing
-    /// Win, passes G through untracked and the paired key-up also passes.
-    /// Only the down dispatches: KDE shortcuts are discrete per press, so held
-    /// repeats are swallowed (mask stays armed) instead of re-toggling. Ups
-    /// close the pair. The toggle needs a managed origin like send: background
-    /// foreground never consumes.
-    fn push_float(&mut self, is_up: bool, foreground: bool) -> Option<Classified> {
+    /// Shared G-key dispatcher (Win+G float, Win+Shift+G sticky, KDE
+    /// Meta+G / Meta+Shift+G parity). The op is fixed at down time from the
+    /// Shift state, so releasing Shift before the key-up cannot flip float
+    /// into sticky (or vice versa); repeats ride the armed hold regardless of
+    /// later Shift. Ctrl/Alt or a missing Win passes through untracked.
+    /// Ups close whichever hold is armed; untracked ups return `None`.
+    fn push_g(&mut self, is_up: bool, foreground: bool) -> Option<Classified> {
         if is_up {
-            if !self.float_down {
+            if self.float_down {
+                return self.push_g_arm(GArm::Float, is_up, foreground);
+            }
+            if self.sticky_down {
+                return self.push_g_arm(GArm::Sticky, is_up, foreground);
+            }
+            return None;
+        }
+        if self.float_down {
+            return self.push_g_arm(GArm::Float, is_up, foreground);
+        }
+        if self.sticky_down {
+            return self.push_g_arm(GArm::Sticky, is_up, foreground);
+        }
+        if self.shift {
+            return self.push_g_arm(GArm::Sticky, is_up, foreground);
+        }
+        self.push_g_arm(GArm::Float, is_up, foreground)
+    }
+
+    /// Shared G-key arm (float and sticky halves): same Win/Ctrl/Alt/origin/
+    /// mask contract as the maximize arm. A fresh down routes by Shift; held
+    /// repeats ride the armed hold regardless of later Shift. Only the down
+    /// dispatches: held repeats are swallowed (mask stays armed) instead of
+    /// re-toggling. Ups close the pair. The toggle needs a managed origin like
+    /// send: background foreground never consumes.
+    fn push_g_arm(&mut self, arm: GArm, is_up: bool, foreground: bool) -> Option<Classified> {
+        let sticky = arm == GArm::Sticky;
+        let shift = self.shift;
+        let trigger = if sticky {
+            MaskTrigger::Sticky
+        } else {
+            MaskTrigger::Float
+        };
+        let (down, origin, counts) = if sticky {
+            (
+                &mut self.sticky_down,
+                &mut self.sticky_origin,
+                &mut self.sticky_counts,
+            )
+        } else {
+            (
+                &mut self.float_down,
+                &mut self.float_origin,
+                &mut self.float_counts,
+            )
+        };
+        let intent = |edge: SnapEdge, consumed: bool, announce: bool| {
+            if sticky {
+                Classified::Sticky(StickyIntent {
+                    edge,
+                    foreground,
+                    consumed,
+                    announce,
+                })
+            } else {
+                Classified::Float(FloatIntent {
+                    edge,
+                    foreground,
+                    consumed,
+                    announce,
+                })
+            }
+        };
+        if is_up {
+            if !*down {
                 return None;
             }
-            self.float_down = false;
-            let origin = self.float_origin;
-            self.float_origin = false;
-            self.float_counts.up += 1;
-            if self.enabled && self.gate_active && foreground && origin {
-                self.float_counts.consumed += 1;
-                Some(Classified::Float(FloatIntent {
-                    edge: SnapEdge::Up,
-                    foreground,
-                    consumed: true,
-                    announce: false,
-                }))
+            *down = false;
+            let had_origin = *origin;
+            *origin = false;
+            counts.up += 1;
+            if self.enabled && self.gate_active && foreground && had_origin {
+                counts.consumed += 1;
+                Some(intent(SnapEdge::Up, true, false))
             } else {
-                self.float_counts.passed += 1;
+                counts.passed += 1;
                 self.mask_pending = false;
-                Some(Classified::Float(FloatIntent {
-                    edge: SnapEdge::Up,
-                    foreground,
-                    consumed: false,
-                    announce: false,
-                }))
+                Some(intent(SnapEdge::Up, false, false))
             }
         } else {
-            if self.ctrl || self.alt || self.shift || !(self.win_l || self.win_r) {
+            if self.ctrl || self.alt || !(self.win_l || self.win_r) {
                 self.mask_pending = false;
                 return None;
             }
-            if self.float_down {
-                self.float_counts.repeat += 1;
-                if self.enabled && self.gate_active && foreground && self.float_origin {
+            if *down {
+                counts.repeat += 1;
+                if self.enabled && self.gate_active && foreground && *origin {
                     // Held repeat: swallowed, never re-dispatched. The hold
                     // continues to disguise Win, so the mask stays armed.
-                    self.float_counts.consumed += 1;
+                    // Shift is op-fixed at down time: a later Shift never
+                    // flips this repeat into the other arm.
+                    counts.consumed += 1;
                     self.mask_pending = true;
-                    self.mask_trigger = Some(MaskTrigger::Float);
-                    Some(Classified::Float(FloatIntent {
-                        edge: SnapEdge::Repeat,
-                        foreground,
-                        consumed: true,
-                        announce: false,
-                    }))
+                    self.mask_trigger = Some(trigger);
+                    Some(intent(SnapEdge::Repeat, true, false))
                 } else {
-                    self.float_counts.passed += 1;
+                    counts.passed += 1;
                     self.mask_pending = false;
-                    Some(Classified::Float(FloatIntent {
-                        edge: SnapEdge::Repeat,
-                        foreground,
-                        consumed: false,
-                        announce: false,
-                    }))
+                    Some(intent(SnapEdge::Repeat, false, false))
                 }
             } else {
-                self.float_down = true;
-                let origin = self.enabled && self.gate_active && foreground;
-                self.float_origin = origin;
-                self.float_counts.down += 1;
-                if origin {
-                    self.float_counts.consumed += 1;
-                    self.mask_pending = true;
-                    self.mask_trigger = Some(MaskTrigger::Float);
-                    Some(Classified::Float(FloatIntent {
-                        edge: SnapEdge::Down,
-                        foreground,
-                        consumed: true,
-                        announce: true,
-                    }))
-                } else {
-                    self.float_counts.passed += 1;
+                if shift != sticky {
+                    // The other arm owns this Shift state: the dispatcher
+                    // routes fresh downs there, never here.
                     self.mask_pending = false;
-                    Some(Classified::Float(FloatIntent {
-                        edge: SnapEdge::Down,
-                        foreground,
-                        consumed: false,
-                        announce: false,
-                    }))
+                    return None;
+                }
+                *down = true;
+                let has_origin = self.enabled && self.gate_active && foreground;
+                *origin = has_origin;
+                counts.down += 1;
+                if has_origin {
+                    counts.consumed += 1;
+                    self.mask_pending = true;
+                    self.mask_trigger = Some(trigger);
+                    Some(intent(SnapEdge::Down, true, true))
+                } else {
+                    counts.passed += 1;
+                    self.mask_pending = false;
+                    Some(intent(SnapEdge::Down, false, false))
                 }
             }
         }
@@ -1280,6 +1363,17 @@ pub struct QueuedFloatIntent {
     pub tick: std::time::Instant,
 }
 
+/// One approved sticky chord captured by the callback. Same origin contract
+/// as float; without an origin the toggle never dispatches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedStickyIntent {
+    pub edge: SnapEdge,
+    pub origin: Option<SnapOrigin>,
+    pub consumed: bool,
+    pub announce: bool,
+    pub tick: std::time::Instant,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueuedSnapEvent {
     Intent(QueuedIntent),
@@ -1287,6 +1381,7 @@ pub enum QueuedSnapEvent {
     Maximize(QueuedMaximizeIntent),
     Fullscreen(QueuedFullscreenIntent),
     Float(QueuedFloatIntent),
+    Sticky(QueuedStickyIntent),
     Mask(QueuedMask),
 }
 
@@ -1438,6 +1533,13 @@ pub fn classify_and_queue(
             tick,
         }),
         Classified::Float(intent) => QueuedSnapEvent::Float(QueuedFloatIntent {
+            edge: intent.edge,
+            origin,
+            consumed: intent.consumed,
+            announce: intent.announce,
+            tick,
+        }),
+        Classified::Sticky(intent) => QueuedSnapEvent::Sticky(QueuedStickyIntent {
             edge: intent.edge,
             origin,
             consumed: intent.consumed,
@@ -2167,6 +2269,9 @@ pub mod sys {
             }),
             super::MaskTrigger::Float => serde_json::json!({
                 "trigger_op": "float",
+            }),
+            super::MaskTrigger::Sticky => serde_json::json!({
+                "trigger_op": "sticky",
             }),
         };
         value["inserted"] = serde_json::Value::from(mask.inserted);

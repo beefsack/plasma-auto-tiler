@@ -632,6 +632,12 @@ fn allowlist_exact_match_and_rejections() {
         ..observed.clone()
     };
     assert!(!allow_match(&entry, &changed), "pid reuse must not match");
+    // Stored pid equality: same creation/tag but a different pid never matches.
+    let repid = ObservedTarget {
+        pid: 8,
+        ..observed.clone()
+    };
+    assert!(!allow_match(&entry, &repid), "pid mismatch must not match");
     // Recycled HWND in the same process carries a fresh tag and never matches.
     let retagged = ObservedTarget {
         tag: "ffffffffffffffff".to_owned(),
@@ -643,6 +649,46 @@ fn allowlist_exact_match_and_rejections() {
         ..observed.clone()
     };
     assert!(!allow_match(&entry, &untagged), "empty tag must not match");
+}
+
+#[test]
+fn allowlist_identity_excludes_window_band() {
+    // Ownership identity is hwnd/pid/creation/exe/sid/session/tag only: the
+    // native topmost band (WS_EX_TOPMOST keep-above float/sticky state) is
+    // approved mutable product state and never part of the frozen identity.
+    // There is no band/topmost field on either side of the match, so a
+    // topmost transition cannot change matching; the digest binds the same
+    // seven components (pid/creation changes digest, proving full equality).
+    let entry = tiler_windows::tiling::AllowEntry {
+        hwnd: 99,
+        pid: 7,
+        process_creation: "000000000000abcd".to_owned(),
+        exe_path: "C:\\apps\\Helper.EXE".to_owned(),
+        user_sid: "sid-1".to_owned(),
+        session_id: 1,
+        tag: "18da5b07aae82240".to_owned(),
+    };
+    let observed = ObservedTarget {
+        hwnd: 99,
+        pid: 7,
+        process_creation: "000000000000abcd".to_owned(),
+        exe_path: "c:/apps/helper.exe".to_owned(),
+        user_sid: "sid-1".to_owned(),
+        session_id: 1,
+        tag: "18da5b07aae82240".to_owned(),
+    };
+    assert!(allow_match(&entry, &observed));
+    let base = allowlist_digest(std::slice::from_ref(&entry));
+    let repid = tiler_windows::tiling::AllowEntry {
+        pid: 8,
+        ..entry.clone()
+    };
+    let recreation = tiler_windows::tiling::AllowEntry {
+        process_creation: "ffffffffffffffff".to_owned(),
+        ..entry.clone()
+    };
+    assert_ne!(base, allowlist_digest(std::slice::from_ref(&repid)));
+    assert_ne!(base, allowlist_digest(std::slice::from_ref(&recreation)));
 }
 
 #[test]

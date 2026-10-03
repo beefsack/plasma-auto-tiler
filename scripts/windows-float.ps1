@@ -4,7 +4,7 @@ param(
   [switch]$Stop,
   [string]$RunDir = "",
   [int]$OwnerSeconds = 300,
-  [ValidateSet("All", "OwnedFloat", "WorkspaceFloat", "NormalSmoke")]
+  [ValidateSet("All", "OwnedFloat", "WorkspaceFloat", "NormalSmoke", "StickyFloat")]
   [string]$Stage = "All"
 )
 $ErrorActionPreference = "Stop"
@@ -40,7 +40,7 @@ function Load-FlAst([string]$Path, [string[]]$Wanted) {
   }
   foreach ($need in $Wanted) { if (-not $loaded.ContainsKey($need)) { throw "helper unavailable: $need" } }
 }
-$FlBorderWanted = @("Install-BorderNative", "Install-FollowupNative", "Get-MarkBeforeActionAb",
+$FlBorderWanted = @("Install-BorderNative", "Install-FollowupNative", "Read-CompleteTextAb", "Get-CompleteLinesAb", "Get-MarkBeforeActionAb",
   "Assert-HelperIdentityAb", "Set-OwnedForegroundAb", "Invoke-OwnedSysCommandAb", "Get-FuCloaked",
   "Test-OwnerlessMoveCloakAb", "Test-OwnerlessGateRegressionAb", "Get-OverlayHwndsForOwnerAb")
 $FlShortWanted = @("Install-ShortcutNative", "Get-ShortcutJourney", "Assert-NoWinLJourney", "Assert-ChordSendCounts",
@@ -94,15 +94,97 @@ function Get-FloatReportStatus {
     try { if ("$($s.data.float)" -match "unaccepted") { $hasUnaccepted = $true } } catch {}
   }
   if ($joined -match "rows-unaccepted|ws-rows-unaccepted|required-unimplemented") { $hasUnaccepted = $true }
+  # Sticky scope guard: a StickyFloat-scoped run never reports float-complete,
+  # even with clean sticky steps. Whole-feature pass requires Stage All.
+  if ($Stage -eq "StickyFloat") { return "partial" }
+  if ($joined -match "sticky-") { $hasUnaccepted = $true }
   if ($Stage -ne "All") { return "partial" }
   if ($hasUnaccepted) { return "partial" }
+  # Honest partial: the user-owned required checklist must be recorded (even
+  # as unimplemented, with its rows); a pass without it means the required
+  # rows never executed. Shape-based (owner=user plus rows), never the step
+  # name: the real "required-unimplemented" step already reports partial
+  # above via its name, and synthetic ledgers must not game it by name alone.
+  $hasRequired = $false
+  foreach ($s in @($Steps)) {
+    try {
+      if ("$($s.data.owner)" -eq "user" -and (@($s.data.rows)).Count -gt 0) { $hasRequired = $true }
+    } catch {}
+  }
+  if (-not $hasRequired) { return "partial" }
   return "pass"
+}
+
+function Get-StickyReportStatus {
+  # Scoped sticky contract only: pass when sticky rows executed with no
+  # unaccepted/unavailable/not-executed marker. Never implies float-complete;
+  # callers must keep the Float report (always partial for StickyFloat).
+  param($Steps, [string]$Stage)
+  $names = @($Steps | ForEach-Object { "$($_.name)" })
+  $joined = $names -join "|"
+  $bad = $false
+  foreach ($s in @($Steps)) {
+    $n = "$($s.name)"
+    if ($n -match "unaccepted|unavailable|not-executed|required-unimplemented|environment-precondition") { $bad = $true }
+  }
+  if ($joined -match "sticky-rows-unexecuted|sticky-required-unimplemented") { $bad = $true }
+  if ($Stage -ne "StickyFloat" -and $Stage -ne "All") { return "partial" }
+  if ($bad) { return "partial" }
+  if ($joined -notmatch "sticky-") { return "partial" }
+  # Honest pass: every canonical sticky leg must have executed under its own
+  # name. A generic sticky-applied plus the user checklist never suffices.
+  foreach ($leg in @(Get-StickyRequiredLegs)) {
+    if ($names -notcontains $leg) { return "partial" }
+  }
+  # Honest partial: the user-owned sticky checklist must be recorded with its
+  # sticky rows; shape-based (owner=user plus sticky-* rows), never the step
+  # name alone.
+  $hasStickyRequired = $false
+  foreach ($s in @($Steps)) {
+    try {
+      $stickyRows = @(@($s.data.rows) | Where-Object { "$_" -like "sticky-*" })
+      if ("$($s.data.owner)" -eq "user" -and $stickyRows.Count -gt 0) { $hasStickyRequired = $true }
+    } catch {}
+  }
+  if (-not $hasStickyRequired) { return "partial" }
+  return "pass"
+}
+
+function Test-StickyStatusClassifier([string]$Tag) {
+  $mk = { param($n, $d) return @{ name = $n; data = $d } }
+  $legs = @(Get-StickyRequiredLegs)
+  $okSteps = @(@(&$mk "sticky-adopted" @{}))
+  foreach ($leg in $legs) { $okSteps += @(&$mk $leg @{}) }
+  $okSteps += @(&$mk "sticky-checklist-recorded" @{ owner = "user"; rows = @("sticky-crash-recovery") })
+  if ((Get-StickyReportStatus $okSteps "StickyFloat") -ne "pass") { Fail-Fl "$Tag sticky classifier clean != pass" }
+  $missingReq = @(@(&$mk "sticky-adopted" @{}), @(&$mk "sticky-applied" @{}))
+  if ((Get-StickyReportStatus $missingReq "StickyFloat") -ne "partial") { Fail-Fl "$Tag sticky classifier missing-required != partial" }
+  # Generic sticky-applied plus checklist never passes without every leg name.
+  $genericOnly = @(@(&$mk "sticky-adopted" @{}), @(&$mk "sticky-applied" @{}),
+    @(&$mk "sticky-checklist-recorded" @{ owner = "user"; rows = @("sticky-crash-recovery") }))
+  if ((Get-StickyReportStatus $genericOnly "StickyFloat") -ne "partial") { Fail-Fl "$Tag sticky classifier generic-only != partial" }
+  $missingLeg = @(@(&$mk "sticky-adopted" @{}))
+  foreach ($leg in $legs) { if ($leg -ne "sticky-border") { $missingLeg += @(&$mk $leg @{}) } }
+  $missingLeg += @(&$mk "sticky-checklist-recorded" @{ owner = "user"; rows = @("sticky-crash-recovery") })
+  if ((Get-StickyReportStatus $missingLeg "StickyFloat") -ne "partial") { Fail-Fl "$Tag sticky classifier missing-leg != partial" }
+  $unSteps = @(@(&$mk "sticky-rows-unexecuted" @{ reason = "environment-precondition: ownerless cloak"; rows = @("x") }))
+  if ((Get-StickyReportStatus $unSteps "StickyFloat") -ne "partial") { Fail-Fl "$Tag sticky classifier unexecuted != partial" }
+  $reqSteps = @(@(&$mk "sticky-required-unimplemented" @{}))
+  if ((Get-StickyReportStatus $reqSteps "StickyFloat") -ne "partial") { Fail-Fl "$Tag sticky classifier required != partial" }
+  $noSticky = @(@(&$mk "adopted" @{}))
+  if ((Get-StickyReportStatus $noSticky "StickyFloat") -ne "partial") { Fail-Fl "$Tag sticky classifier no-sticky != partial" }
+  # Float report must never call a sticky-scoped pass float-complete.
+  if ((Get-FloatReportStatus $okSteps "StickyFloat") -ne "partial") { Fail-Fl "$Tag float report sticky-stage != partial" }
+  if ((Get-FloatReportStatus $okSteps "OwnedFloat") -ne "partial") { Fail-Fl "$Tag float report single-stage != partial" }
+  Rec-Fl "$Tag-sticky-classifier" @{ pass_branch = $true; partial_branches = 6 }
 }
 
 function Test-FloatStatusClassifier([string]$Tag) {
   $mk = { param($n, $d) return @{ name = $n; data = $d } }
-  $okSteps = @(@(&$mk "adopted" @{}))
+  $okSteps = @(@(&$mk "adopted" @{}), @(&$mk "checklist-recorded" @{ owner = "user"; rows = @("crash-recovery") }))
   if ((Get-FloatReportStatus $okSteps "All") -ne "pass") { Fail-Fl "$Tag classifier clean-All != pass" }
+  $missingReq = @(@(&$mk "adopted" @{}))
+  if ((Get-FloatReportStatus $missingReq "All") -ne "partial") { Fail-Fl "$Tag classifier missing-required != partial" }
   $unSteps = @(@(&$mk "rows-unaccepted" @{ rows = @("x") }))
   if ((Get-FloatReportStatus $unSteps "All") -ne "partial") { Fail-Fl "$Tag classifier rows-unaccepted != partial" }
   $wsSteps = @(@(&$mk "ws-rows-unaccepted" @{}))
@@ -114,7 +196,7 @@ function Test-FloatStatusClassifier([string]$Tag) {
   $preSteps = @(@(&$mk "rows-unaccepted" @{ reason = "environment-precondition: activation-blocker fg=1 class=X pid=2 exe=Y visible=True cloaked=2 covers_monitor=True suspend-cause=fullscreen-foreground"; rows = @("x") }))
   if ((Get-FloatReportStatus $preSteps "All") -ne "partial") { Fail-Fl "$Tag classifier precondition rows-unaccepted != partial" }
   if ((Get-FloatReportStatus $okSteps "OwnedFloat") -ne "partial") { Fail-Fl "$Tag classifier single-stage != partial" }
-  Rec-Fl "$Tag-classifier" @{ pass_branch = $true; partial_branches = 6 }
+  Rec-Fl "$Tag-classifier" @{ pass_branch = $true; partial_branches = 7 }
 }
 
 function Get-RequiredUnimplementedRows {
@@ -142,6 +224,132 @@ function Wait-FloatOutcome([string]$LogPath, [int]$Mark, [string[]]$Outcomes, [i
   return $null
 }
 
+function Wait-StickyOutcome([string]$LogPath, [int]$Mark, [string[]]$Outcomes, [int]$TimeoutSec, [string]$Tag) {
+  # Consumed sticky-toggle dispatch only: key-up/passed edges never satisfy.
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  while ((Get-Date) -lt $deadline) {
+    $lines = Get-CompleteLinesLocal $LogPath
+    for ($i = $Mark; $i -lt $lines.Count; $i++) {
+      if ("$($lines[$i])".Trim() -eq "") { continue }
+      $e = $lines[$i] | ConvertFrom-Json
+      if ("$($e.event)" -ne "sticky-toggle") { continue }
+      if ("$($e.disposition)" -ne "consumed") { continue }
+      if ($Outcomes -notcontains "$($e.outcome)") { continue }
+      return @{ event = $e; count = $lines.Count }
+    }
+    Start-Sleep -Milliseconds 200
+  }
+  Fail-Fl "$Tag no sticky-toggle outcome=($($Outcomes -join '|')) after mark $Mark"
+  return $null
+}
+
+function Get-VirtualDesktopDiagnostic([long]$Hwnd, [string]$Tag) {
+  # Read-only Windows virtual-desktop check via the official COM
+  # IVirtualDesktopManager (public API, no mutation/enumeration/policy).
+  # IID a5cd92ff-29be-454c-8d04-d82879fb3f1b and CLSID
+  # aa509086-5ca9-4c25-8f95-589d3c07b48a per the primary Windows SDK/docs
+  # source: Microsoft Learn IVirtualDesktopManager (shobjidl_core.h) /
+  # VirtualDesktopManager class (Shobjidl.h); three public slots with
+  # PreserveSig HRESULTs. MoveWindowToDesktop is declared for vtable order
+  # only and never called (read-only diagnostic).
+  # Returns on-current flag plus the window desktop ID; failures degrade to
+  # "unreadable", never throw. Caller decides gating; this never bypasses
+  # the product ownerless-cloak precondition.
+  try { Install-BorderNative } catch {}
+  $onCurrent = "unreadable"; $desktopId = "unreadable"; $fgId = "unreadable"; $fgOnCurrent = "unreadable"
+  try {
+    if (-not ("FloatVdm" -as [type])) {
+      Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+[ComImport, Guid("a5cd92ff-29be-454c-8d04-d82879fb3f1b"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IVirtualDesktopManager {
+  [PreserveSig] int IsWindowOnCurrentVirtualDesktop([In] IntPtr TopLevelWindow, [MarshalAs(UnmanagedType.Bool)] out bool OnCurrentDesktop);
+  [PreserveSig] int GetWindowDesktopId([In] IntPtr TopLevelWindow, out Guid CurrentDesktop);
+  [PreserveSig] int MoveWindowToDesktop([In] IntPtr TopLevelWindow, [In] ref Guid DesktopId);
+}
+[ComImport, Guid("aa509086-5ca9-4c25-8f95-589d3c07b48a")]
+class VirtualDesktopManager {}
+public static class FloatVdm {
+  public static int OnCurrent(long hwnd) {
+    var m = (IVirtualDesktopManager)new VirtualDesktopManager();
+    bool on = false;
+    int hr = m.IsWindowOnCurrentVirtualDesktop((IntPtr)hwnd, out on);
+    if (hr != 0) throw new COMException("IsWindow hr=" + hr);
+    return on ? 1 : 0;
+  }
+  public static string DesktopId(long hwnd) {
+    var m = (IVirtualDesktopManager)new VirtualDesktopManager();
+    Guid id;
+    int hr = m.GetWindowDesktopId((IntPtr)hwnd, out id);
+    if (hr != 0) throw new COMException("GetId hr=" + hr);
+    return id.ToString("D");
+  }
+}
+"@
+    }
+    $onCurrent = [int][FloatVdm]::OnCurrent($Hwnd)
+    $desktopId = [string][FloatVdm]::DesktopId($Hwnd)
+    try {
+      [ActiveBorderNative]::EnsurePMv2()
+      $fg = [ActiveBorderNative]::GetForegroundWindow().ToInt64()
+      $fgOnCurrent = [int][FloatVdm]::OnCurrent([long]$fg)
+      $fgId = [string][FloatVdm]::DesktopId([long]$fg)
+    } catch {}
+  } catch {
+    return @{ hwnd = [uint64]$Hwnd; on_current = "$onCurrent"; desktop_id = "$desktopId";
+      fg_on_current = "$fgOnCurrent"; fg_desktop_id = "$fgId"; error = "$($_.Exception.Message)"; tag = $Tag }
+  }
+  return @{ hwnd = [uint64]$Hwnd; on_current = $onCurrent; desktop_id = "$desktopId";
+    fg_on_current = "$fgOnCurrent"; fg_desktop_id = "$fgId"; tag = $Tag }
+}
+
+function Read-StickyMarkerNative([long]$Hwnd, [string]$Tag) {
+  # Read-only GetPropW for the project sticky marker (PlasmaAutoTilerSticky).
+  # Returns @{ present; prior_floating } with present=$false for absent/zero/
+  # unknown (fail closed). Never writes. Used only as a short live readback.
+  $present = $false; $prior = $null; $raw = "unreadable"
+  try {
+    if (-not ("FloatStickyProp" -as [type])) {
+      Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class FloatStickyProp {
+  [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern IntPtr GetPropW(IntPtr hWnd, string lpString);
+  [DllImport("user32.dll", SetLastError = true)]
+  public static extern bool IsWindow(IntPtr hWnd);
+}
+"@
+    }
+    if (-not [FloatStickyProp]::IsWindow([IntPtr]$Hwnd)) { return @{ present = $false; prior_floating = $null; raw = "no-window"; tag = $Tag } }
+    $v = [FloatStickyProp]::GetPropW([IntPtr]$Hwnd, "PlasmaAutoTilerSticky")
+    $raw = "$($v.ToInt64())"
+    $u = [uint64]$v.ToInt64()
+    if ($u -eq 1) { $present = $true; $prior = $false }
+    elseif ($u -eq 2) { $present = $true; $prior = $true }
+  } catch {
+    return @{ present = $false; prior_floating = $null; raw = "$raw"; error = "$($_.Exception.Message)"; tag = $Tag }
+  }
+  return @{ present = $present; prior_floating = $prior; raw = "$raw"; tag = $Tag }
+}
+
+function Get-StickyRequiredLegs {
+  # Canonical sticky proof legs: every StickyFloat run must record each name
+  # (the sticky report passes only with all of them, never a generic
+  # sticky-applied plus checklist alone).
+  return @("sticky-tiled-on-centered", "sticky-select-visible", "sticky-off-tiled-current",
+    "sticky-float-origin-preserve", "sticky-wing-clears-tiles", "sticky-marker-1-2",
+    "sticky-focus-refusal", "sticky-restart-adopt", "sticky-border")
+}
+
+function Get-StickyRequiredUnimplementedRows {
+  # Sticky rows with no fixture/user-independent implementation: user-owned
+  # acceptance only, never silently omitted.
+  return @("sticky-crash-recovery", "sticky-hidden-watcher", "sticky-restart-native-state", "sticky-born-fullscreen-refusal", "sticky-physical-acceptance")
+}
+
 function Get-TopmostFl([long]$Hwnd) {
   [ActiveBorderNative]::EnsurePMv2()
   $ex = [ActiveBorderNative]::GetWindowLongW([IntPtr]$Hwnd, $GWL_EXSTYLE)
@@ -153,6 +361,8 @@ function Get-ExpectedCentered60([string]$Tag) {
   $wa = [ActiveBorderNative]::WorkArea()
   if ($null -eq $wa) { Fail-Fl "$Tag work area unreadable" }
   $l = [int]$wa[0]; $t = [int]$wa[1]; $r = [int]$wa[2]; $b = [int]$wa[3]
+  # The Windows adapter supplies Engine bounds inset by its 8px outer gap.
+  $l += 8; $t += 8; $r -= 8; $b -= 8
   $w = $r - $l; $h = $b - $t
   $ew = [int][math]::Floor($w * 0.6); $eh = [int][math]::Floor($h * 0.6)
   $ex = $l + [int][math]::Floor(($w - $ew) / 2); $ey = $t + [int][math]::Floor(($h - $eh) / 2)
@@ -177,9 +387,129 @@ function Assert-NoWriteForFloat([string]$LogPath, [int]$Mark, [string]$Token, [s
   }
 }
 
+function Convert-PlanRectToKey($Rect) {
+  # Plan/readback rect [x,y,w,h] projects to the native l,t,r,b key format
+  # shared by Get-HelperRectKeyFl and Get-DwmFrameKeyFl ("l,t,r,b").
+  $x = [int]$Rect[0]; $y = [int]$Rect[1]; $w = [int]$Rect[2]; $h = [int]$Rect[3]
+  return "$x,$y,$($x + $w),$($y + $h)"
+}
+
+function Assert-SelectedPlanToken {
+  # Stateful tile-membership oracle for float/sticky legs. `inspect`
+  # eligibility is stateless native classify() only, so a floated window with
+  # an ordinary frame stays eligible TRUE by design: membership must come from
+  # the owner trace instead. With a toggle event, the plan+readback pair is
+  # tied to that exact action ($ToggleEvent.tick + correlation), never a
+  # background-domain plan; without one (restart adopt), the latest pair at or
+  # after $MinTick is used. Plan/detail op coherence plus the tick+correlation
+  # tie is always required. $Mode "excludes" fails when the owner token keeps a plan entry
+  # (floated); "includes" fails when the token has none (tiled) or its
+  # readback mismatches. Returns @{ tick; op; keys; key }:
+  # keys are every projected native key, key is the token's own projection
+  # (includes mode only). Callers compare keys against native DWM frames. The
+  # float target's own native effect rides the proof-write audit lane, never a
+  # normal write: absence of an ordinary write is not absence of effect, so
+  # this asserts plan membership, not writes.
+  param([string]$LogPath, [int]$Mark, $ToggleEvent, [string]$Token, [string]$Mode,
+    [string[]]$AllowedOps, [string]$Tag, [uint64]$MinTick = 0)
+  if ([string]$Token -eq "") { Fail-Fl "$Tag plan oracle missing owner token" }
+  if (@("excludes", "includes") -notcontains $Mode) { Fail-Fl "$Tag plan oracle bad mode $Mode" }
+  $tail = Get-LogEventsAfter $LogPath $Mark
+  $snap = $null
+  if ($null -ne $ToggleEvent) {
+    $plans = @{}; $details = @{}
+    foreach ($e in @($tail.events)) {
+      if ([uint64]$e.tick -ne [uint64]$ToggleEvent.tick) { continue }
+      if ($e.event -eq "plan") { $plans["$($e.correlation)"] = $e }
+      elseif ($e.event -eq "readback-detail") { $details["$($e.correlation)"] = $e }
+    }
+    $corr = "$($ToggleEvent.correlation)"
+    if ($plans.ContainsKey($corr) -and $details.ContainsKey($corr)) {
+      $snap = @{ tick = [uint64]$ToggleEvent.tick; plan = $plans[$corr]; detail = $details[$corr] }
+    }
+    if ($null -eq $snap) { Fail-Fl "$Tag no plan+readback at toggle tick $($ToggleEvent.tick) corr $corr (background-domain guard)" }
+  } else {
+    $snap = Get-PlanSnapshotLocal $tail.events
+    if ($null -eq $snap) { Fail-Fl "$Tag no plan+readback snapshot after mark $Mark" }
+    if ([uint64]$snap.tick -lt $MinTick) { Fail-Fl "$Tag latest plan tick $($snap.tick) predates min tick $MinTick" }
+  }
+  $plan = $snap.plan; $detail = $snap.detail
+  if ($AllowedOps -notcontains "$($plan.op)") { Fail-Fl "$Tag plan op $($plan.op) not in ($($AllowedOps -join '|'))" }
+  if ("$($detail.op)" -cne "$($plan.op)") { Fail-Fl "$Tag detail op $($detail.op) != plan op $($plan.op)" }
+  # Plan/readback-detail carry op+tick+correlation marks only (no per-domain
+  # output/workspace tokens; proven live tick-5 sticky plan). The tick+
+  # correlation tie to the exact toggle event is the background-domain guard;
+  # the sibling/tiled native-frame projection below positively selects the
+  # domain. The domain-marked tick summary (output/workspace tokens) at the
+  # same tick+correlation must agree on the op.
+  $tickEv = @($tail.events | Where-Object { ($_.event -eq "tick") -and ([uint64]$_.tick -eq [uint64]$snap.tick) -and ("$($_.correlation)" -ceq "$($plan.correlation)") })
+  if (@($tickEv).Count -eq 0) { Fail-Fl "$Tag no domain-marked tick summary at tick $($snap.tick)" }
+  if ("$($tickEv[0].op)" -cne "$($plan.op)") { Fail-Fl "$Tag tick summary op $($tickEv[0].op) != plan op $($plan.op)" }
+  if ("$($tickEv[0].output)" -eq "" -or "$($tickEv[0].workspace)" -eq "") { Fail-Fl "$Tag tick summary domain marks empty" }
+  $entries = @($plan.entries)
+  $hits = @($entries | Where-Object { "$($_.window)" -ceq $Token })
+  $dEntries = @($detail.entries)
+  $dHits = @($dEntries | Where-Object { "$($_.window)" -ceq $Token })
+  if ($Mode -eq "excludes") {
+    # Empty is the correct selected-domain plan when the float leaves zero
+    # tile slots (single-window domain): exclusion holds vacuously, with the
+    # tick summary and op marks agreeing.
+    if (@($hits).Count -ne 0) { Fail-Fl "$Tag floated token still planned in selected domain" }
+    if (@($dHits).Count -ne 0) { Fail-Fl "$Tag floated token still in readback detail" }
+  } else {
+    if (@($entries).Count -eq 0) { Fail-Fl "$Tag empty selected-domain plan on tiled leg" }
+    if (@($hits).Count -eq 0) { Fail-Fl "$Tag tiled token missing from selected-domain plan" }
+  }
+  $bad = @($dEntries | Where-Object { $_.matched -ne $true })
+  if (@($bad).Count -ne 0) { Fail-Fl "$Tag $($bad.Count) readback entries unmatched" }
+  $keys = @($entries | ForEach-Object { Convert-PlanRectToKey $_.rect } | Sort-Object)
+  $ownKey = ""
+  if ($Mode -eq "includes") {
+    $wantKey = Convert-PlanRectToKey $hits[0].rect
+    $dOwn = @($dHits | Select-Object -First 1)
+    if (@($dOwn).Count -eq 0) { Fail-Fl "$Tag tiled token missing from readback detail" }
+    $gotKey = Convert-PlanRectToKey $dOwn[0].readback
+    if ($gotKey -cne $wantKey) { Fail-Fl "$Tag readback [$gotKey] != desired [$wantKey] for tiled token" }
+    $ownKey = $wantKey
+  }
+  return @{ tick = [uint64]$snap.tick; op = "$($plan.op)"; keys = @($keys); key = $ownKey }
+}
+
+function Wait-StickyAdoptedFl([string]$LogPath, [int]$Mark, [int]$TimeoutSec, [string]$Tag) {
+  # Restart survivor adoption: the fresh owner issues new tokens, so the only
+  # valid token source is the sticky-adopted event in the new log.
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  while ((Get-Date) -lt $deadline) {
+    $tail = Get-LogEventsAfter $LogPath $Mark
+    foreach ($e in @($tail.events)) {
+      if ("$($e.event)" -eq "sticky-adopted" -and "$($e.window)" -ne "") {
+        return @{ event = $e; count = $tail.count }
+      }
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  Fail-Fl "$Tag no sticky-adopted after mark $Mark"
+  return $null
+}
+
 function Get-HelperRectKeyFl([string]$HelperBin, $Snap, [string]$Tag) {
   $fresh = Assert-HelperIdentityAb $HelperBin $Snap "$Tag-ident"
   return "$($fresh.left),$($fresh.top),$($fresh.right),$($fresh.bottom)"
+}
+
+function Get-DwmFrameKeyFl([long]$Hwnd, [string]$Tag) {
+  # DWM extended-frame read for float/sticky geometry readbacks (same ruler
+  # as centered-60/float legA). Returns the rectangular "l,t,r,b" key format
+  # shared with Get-HelperRectKeyFl and Convert-PlanRectToKey, so plan
+  # projections compare directly against either native read. Helper identity
+  # itself always goes through
+  # the helper `inspect` (Assert-HelperIdentityAb), which verifies ownership
+  # (exe/class/PID/creation/SID/session/medium/tag, parent/owner) and accepts
+  # the approved native topmost band, so no fallback identity path is needed.
+  [ActiveBorderNative]::EnsurePMv2()
+  $frame = [ActiveBorderNative]::FrameOf($Hwnd)
+  if ($null -eq $frame) { Fail-Fl "$Tag DWM frame unreadable" }
+  return "$($frame -join ',')"
 }
 
 function Assert-ExactForegroundFl([uint64]$Want, [string]$Tag) {
@@ -240,28 +570,34 @@ function Invoke-FloatMock {
   $size = [ShortcutProofNative]::SizeOfInput()
   Assert-InputStructSize $size
   # Win+G plain chord: Win down, G down, G up, Win up = 4 events.
+  # Win+Shift+G sticky chord: Win down, Shift down, G down, G up, Shift up, Win up = 6 events.
   Assert-ChordSendCounts 4 $false 0 "mock-plain-g"
   Assert-ChordSendCounts 6 $true 0 "mock-shift-arrow"
+  Assert-ChordSendCounts 6 $true 0 "mock-shift-g"
   Assert-EncodingInvariant $VK_G $false 0 "mock-g-plain"
+  Assert-EncodingInvariant $VK_G $false 0 "mock-g-sticky-plain"
   foreach ($vk in @(37, 38, 39, 40)) {
     $scan = [int][ShortcutProofNative]::MapVirtualKey([uint32]$vk, 0)
     Assert-EncodingInvariant ([int]$vk) $true ([int]$scan) "mock-arrow-$vk"
   }
   try { Assert-EncodingInvariant $VK_G $true 0 "mock-negative"; Fail-Fl "negative G-extended did not throw" }
   catch { if ("$($_.Exception.Message)" -notmatch "EXTENDEDKEY") { throw } }
-  Rec-Fl "encoding" @{ g_plain = $true; arrows_extended = $true; input_size = $size }
+  Rec-Fl "encoding" @{ g_plain = $true; g_sticky_plain = $true; sticky_chord_count = 6; arrows_extended = $true; input_size = $size }
   Test-FloatStatusClassifier "mock-status"
+  Test-StickyStatusClassifier "mock-status"
   $src = Get-Content -LiteralPath (Join-Path $Repo "scripts\windows-float.ps1") -Raw
-  foreach ($need in @("Wait-FloatOutcome", "Wait-SuspendFl", "Get-TopmostFl", "Get-ExpectedCentered60", "Assert-NoWriteForFloat",
+  foreach ($need in @("Wait-FloatOutcome", "Wait-StickyOutcome", "Wait-StickyAdoptedFl", "Wait-SuspendFl", "Get-TopmostFl", "Get-ExpectedCentered60", "Assert-NoWriteForFloat",
+      "Assert-SelectedPlanToken", "Convert-PlanRectToKey", "Get-StickyRequiredLegs",
       "Set-OwnedForegroundAb", "Set-ApprovedForegroundFl", "Get-PrimeTargetFl", "Get-FlFgPrecondition", "Get-FuCloaked", "Close-PrimeExtraFl",
       "Test-OwnerlessMoveCloakAb", "Test-OwnerlessGateRegressionAb", "ownerless-move-precondition", "IsZoomed",
-      "Send-MarkedChord", "Get-FloatReportStatus", "Get-RequiredUnimplementedRows", "environment-precondition",
+      "Send-MarkedChord", "Get-FloatReportStatus", "Get-StickyReportStatus", "Test-StickyStatusClassifier", "Get-RequiredUnimplementedRows", "Get-StickyRequiredUnimplementedRows", "environment-precondition",
+      "Get-VirtualDesktopDiagnostic", "Read-StickyMarkerNative", "Get-DwmFrameKeyFl", "Invoke-StickyFloatLive",
       "Stop-ExactOwner", "Test-NoProjectActors", "Get-OriginalAppsSnapshot",
       "0x0082", "0x201E", "SHORTCUT_MARKER", "border-inspect", "underlay-inspect",
-      "emergency-stop", "Get-OverlayHwndsForOwnerAb", "float-toggle", "WS_EX_TOPMOST")) {
+      "emergency-stop", "Get-OverlayHwndsForOwnerAb", "float-toggle", "sticky-toggle", "WS_EX_TOPMOST", "StickyFloat")) {
     if ($src -notmatch [regex]::Escape($need)) { Fail-Fl "mock harness missing $need" }
   }
-  foreach ($gone in @("Test-OwnerlessMove" + "CloakFl", "Get-FlHelper" + "FreshState", "Get-FlConverge" + "FailureFacts")) {
+  foreach ($gone in @("Test-OwnerlessMove" + "CloakFl", "Get-FlHelper" + "FreshState", "Get-FlConverge" + "FailureFacts", "Set-TopmostForegroundFl")) {
     if ($src -match [regex]::Escape($gone)) { Fail-Fl "mock duplicated gate remains $gone" }
   }
   Install-BorderNative
@@ -290,14 +626,71 @@ function Invoke-FloatMock {
   }
   $ksrc = Get-Content -LiteralPath (Join-Path $Repo "crates\tiler-windows\src\snapkey.rs") -Raw
   if ($ksrc -notmatch "is_float_vk") { Fail-Fl "mock classifier missing is_float_vk" }
+  if ($ksrc -notmatch "is_sticky_vk") { Fail-Fl "mock classifier missing is_sticky_vk" }
+  if ($ksrc -notmatch "StickyIntent") { Fail-Fl "mock classifier missing StickyIntent arm" }
   if ($ksrc -notmatch "Float") { Fail-Fl "mock classifier missing Float arm" }
   if ($ksrc -notmatch "0x47") { Fail-Fl "mock classifier missing VK_G 0x47" }
-  Rec-Fl "product-seams" @{ discrete_toggle = $true; preimage = $true; classifier = $true }
+  Rec-Fl "product-seams" @{ discrete_toggle = $true; preimage = $true; classifier = $true; sticky_arm = $true }
+  $stsrc = Get-Content -LiteralPath (Join-Path $Repo "crates\tiler-windows\src\tiling_sys.rs") -Raw
+  foreach ($need in @("dispatch_sticky_intent", "sticky-toggle", "sticky-applied", "sticky-adopt", "read_sticky_marker", "install_sticky_marker", "remove_sticky_marker") ) {
+    if ($stsrc -notmatch [regex]::Escape($need)) { Fail-Fl "mock sticky product missing $need" }
+  }
+  $wsrc = Get-Content -LiteralPath (Join-Path $Repo "crates\tiler-windows\src\workspace.rs") -Raw
+  if ($wsrc -notmatch "plan_cleanup_excluding") { Fail-Fl "mock sticky product missing plan_cleanup_excluding" }
+  $msrc = Get-Content -LiteralPath (Join-Path $Repo "crates\tiler-windows\src\model.rs") -Raw
+  if ($msrc -notmatch "STICKY_PROP") { Fail-Fl "mock sticky product missing STICKY_PROP" }
+  Rec-Fl "sticky-product-seams" @{ dispatch = $true; marker = $true; occupancy = $true }
   & cargo test --locked --manifest-path (Join-Path $Repo "Cargo.toml") -p tiler-windows --test tiling 2>$null | Out-Null
   if ($LASTEXITCODE -ne 0) { Fail-Fl "mock cargo test tiling failed" }
   & cargo test --locked --manifest-path (Join-Path $Repo "Cargo.toml") -p tiler-windows --test snapkey 2>$null | Out-Null
   if ($LASTEXITCODE -ne 0) { Fail-Fl "mock cargo test snapkey failed" }
   Rec-Fl "portable-tests" @{ suites = @("tiling", "snapkey"); result = "pass" }
+  # EXECUTED sticky guards (not regex-only): classifier arms, marker
+  # round-trip/refusals, workspace exclusion, adopt/rehome paths. Each suite
+  # runs once; output is captured for the ledger (no repeat runs, no tail
+  # truncation).
+  $stickyLib = & cargo test --locked --manifest-path (Join-Path $Repo "Cargo.toml") -p tiler-windows --lib sticky 2>&1 | Out-String
+  if ($LASTEXITCODE -ne 0) { Fail-Fl "mock cargo test sticky lib failed" }
+  $stickySnap = & cargo test --locked --manifest-path (Join-Path $Repo "Cargo.toml") -p tiler-windows --test snapkey sticky 2>&1 | Out-String
+  if ($LASTEXITCODE -ne 0) { Fail-Fl "mock cargo test sticky snapkey failed" }
+  Rec-Fl "sticky-guards" @{ lib = ("$stickyLib" -split "`r?`n"); snapkey = ("$stickySnap" -split "`r?`n"); result = "pass" }
+  # EXECUTED plan-oracle guards (not regex-only): the shared selected-domain
+  # assertion accepts exclusion/inclusion, rejects negative membership
+  # (floated token still planned), rejects a background-domain tick, and the
+  # sticky classifier rejects a missing leg receipt. Synthetic trace file only.
+  $mockLog = Join-Path ([System.IO.Path]::GetTempPath()) "float-mock-plan-$PID.log"
+  if (Test-Path $mockLog) { Remove-Item -LiteralPath $mockLog -Force }
+  $mkLines = @(
+    '{"event":"sticky-toggle","tick":7,"correlation":"corr-7","edge":"down","disposition":"consumed","outcome":"sticky-applied","window":"tok-float","target":"sticky-float"}',
+    '{"event":"plan","tick":7,"correlation":"corr-7","op":"sticky","entries":[{"window":"tok-sib","rect":[100,100,400,300]}]}',
+    '{"event":"readback-detail","tick":7,"correlation":"corr-7","op":"sticky","entries":[{"window":"tok-sib","desired":[100,100,400,300],"readback":[100,100,400,300],"matched":true}]}',
+    '{"event":"tick","tick":7,"correlation":"corr-7","op":"sticky","output":"o1","workspace":"ws1","applied":1,"mismatched":0,"windows":1}',
+    '{"event":"plan","tick":9,"correlation":"corr-9","op":"reconcile","entries":[{"window":"tok-float","rect":[100,100,400,300]}]}',
+    '{"event":"readback-detail","tick":9,"correlation":"corr-9","op":"reconcile","entries":[{"window":"tok-float","desired":[100,100,400,300],"readback":[100,100,400,300],"matched":true}]}',
+    '{"event":"tick","tick":9,"correlation":"corr-9","op":"reconcile","output":"o1","workspace":"ws1","applied":1,"mismatched":0,"windows":2}',
+    '{"event":"float-toggle","tick":10,"correlation":"corr-10","edge":"down","disposition":"consumed","outcome":"float-applied","window":"tok-solo","target":"floated"}',
+    '{"event":"plan","tick":10,"correlation":"corr-10","op":"float","entries":[]}',
+    '{"event":"readback-detail","tick":10,"correlation":"corr-10","op":"float","entries":[]}',
+    '{"event":"tick","tick":10,"correlation":"corr-10","op":"float","output":"o1","workspace":"ws2","applied":0,"mismatched":0,"windows":1}'
+  )
+  $mkLines | Set-Content -LiteralPath $mockLog
+  $mkToggle = '{"event":"sticky-toggle","tick":7,"correlation":"corr-7","window":"tok-float"}' | ConvertFrom-Json
+  $selEx = Assert-SelectedPlanToken $mockLog 0 $mkToggle "tok-float" "excludes" @("sticky") "mock-plan-excludes"
+  if ($selEx.keys -notcontains "100,100,500,400") { Fail-Fl "mock plan excludes projection [$($selEx.keys -join '|')] != sibling native 100,100,500,400" }
+  if ("$($selEx.op)" -cne "sticky") { Fail-Fl "mock plan excludes op wrong" }
+  try { $null = Assert-SelectedPlanToken $mockLog 0 $mkToggle "tok-sib" "excludes" @("sticky") "mock-plan-negative"; Fail-Fl "mock negative membership did not throw" }
+  catch { if ("$($_.Exception.Message)" -notmatch "still planned") { throw } }
+  $mkToggleBg = '{"event":"sticky-toggle","tick":8,"correlation":"corr-8","window":"tok-float"}' | ConvertFrom-Json
+  try { $null = Assert-SelectedPlanToken $mockLog 0 $mkToggleBg "tok-float" "excludes" @("sticky", "reconcile") "mock-plan-background"; Fail-Fl "mock background-domain plan did not throw" }
+  catch { if ("$($_.Exception.Message)" -notmatch "background-domain guard") { throw } }
+  $mkToggleIn = '{"event":"sticky-toggle","tick":9,"correlation":"corr-9","window":"tok-float"}' | ConvertFrom-Json
+  $selIn = Assert-SelectedPlanToken $mockLog 0 $mkToggleIn "tok-float" "includes" @("sticky", "reconcile") "mock-plan-includes"
+  if ($selIn.key -cne "100,100,500,400") { Fail-Fl "mock plan includes key [$($selIn.key)] != tiled native 100,100,500,400" }
+  $mkToggleSolo = '{"event":"float-toggle","tick":10,"correlation":"corr-10","window":"tok-solo"}' | ConvertFrom-Json
+  $selSolo = Assert-SelectedPlanToken $mockLog 0 $mkToggleSolo "tok-solo" "excludes" @("float") "mock-plan-excludes-empty"
+  if (@($selSolo.keys).Count -ne 0) { Fail-Fl "mock empty excludes keys not empty" }
+  Remove-Item -LiteralPath $mockLog -Force
+  Rec-Fl "mock-plan-oracle" @{ excludes = $true; includes = $true; excludes_empty = $true; negative_membership_rejected = $true; background_tick_rejected = $true }
   $report = @{ status = "pass"; stage = "FloatMock"; steps = $FL_STEPS }
   $report | ConvertTo-Json -Depth 8 | Write-Output
 }
@@ -807,7 +1200,7 @@ function Invoke-OwnedFloatLive($Ctx) {
   @{ windows = $entries2 } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $allowPath2
   Start-ExplorerGui $ownerCopy "shortcut-proof --allowlist `"$allowPath2`" --seconds $ownerSeconds --trace" $binDir
   $ready2 = Assert-OwnerReady $ownerCopy "float-restart"
-  $Ctx.ownerFrozen = $ready2.owner
+  $Ctx.ownerFrozen = $ready2.owner; $Ctx.ownerRunning = $true; $Ctx.ownerPayload = $ownerCopy
   $Ctx.allOwnerPids = @(@($Ctx.allOwnerPids) + @([int]$ready2.owner.pid) | Sort-Object -Unique)
   $logPath2 = "$($ready2.log_path)"
   Rec-Fl "legH-restart" @{ pid = $ready2.owner.pid; log = $logPath2 }
@@ -906,39 +1299,338 @@ function Invoke-WorkspaceFloatLive($Ctx) {
   $stillFloat = Get-HelperRectKeyFl $helperCopy $hA "ws-float-survivor"
   if ($stillFloat -cne $floatFrame) { Fail-Fl "ws tiled send moved float survivor [$stillFloat] vs [$floatFrame]" }
   Rec-Fl "ws-float-survivor" @{ rect = $stillFloat }
-  # Select away hides and reveals the float preserving its frame.
+  # Select away hides and reveals the float preserving its frame. Only a
+  # successful select ("ok") counts: refusals/passed edges never satisfy.
   $fgNow = [ActiveBorderNative]::GetForegroundWindow().ToInt64()
   $mark = Get-MarkBeforeActionAb $logPath
   $null = Send-MarkedChord ($VK_0 + 2) $false $false ([uint64]$fgNow) 0 $false
   $deadline = (Get-Date).AddSeconds(20)
   while ($true) {
     $tail = Get-LogEventsAfter $logPath $mark
-    $hit = @($tail.events | Where-Object { ($_.event -eq "workspace") -and ($_.op -eq "select") -and ([int]$_.index -eq 2) -and ("$($_.outcome)" -ne "key-up") })
+    $hit = @($tail.events | Where-Object { ($_.event -eq "workspace") -and ($_.op -eq "select") -and ([int]$_.index -eq 2) -and ("$($_.outcome)" -eq "ok") })
     if (@($hit).Count -gt 0) { $mark = $tail.count; break }
-    if ((Get-Date) -ge $deadline) { Fail-Fl "ws-select-2 no dispatch" }
+    if ((Get-Date) -ge $deadline) { Fail-Fl "ws-select-2 no successful select" }
     Start-Sleep -Milliseconds 400
   }
   Start-Sleep -Milliseconds 1500
   [ActiveBorderNative]::EnsurePMv2()
   if ([ActiveBorderNative]::IsWindowVisible([IntPtr][long]$hA.hwnd)) { Fail-Fl "ws-select-2 float still visible while hidden workspace selected" }
-  Rec-Fl "ws-float-hidden" @{ visible = $false }
+  if ([ActiveBorderNative]::IsWindowVisible([IntPtr][long]$hB.hwnd)) { Fail-Fl "ws-select-2 sibling still visible while hidden workspace selected" }
+  Rec-Fl "ws-float-hidden" @{ visible = $false; sibling_hidden = $true }
   $fgNow = [ActiveBorderNative]::GetForegroundWindow().ToInt64()
   $mark = Get-MarkBeforeActionAb $logPath
   $null = Send-MarkedChord ($VK_0 + 1) $false $false ([uint64]$fgNow) 0 $false
   $deadline = (Get-Date).AddSeconds(20)
   while ($true) {
     $tail = Get-LogEventsAfter $logPath $mark
-    $hit = @($tail.events | Where-Object { ($_.event -eq "workspace") -and ($_.op -eq "select") -and ([int]$_.index -eq 1) -and ("$($_.outcome)" -ne "key-up") })
+    $hit = @($tail.events | Where-Object { ($_.event -eq "workspace") -and ($_.op -eq "select") -and ([int]$_.index -eq 1) -and ("$($_.outcome)" -eq "ok") })
     if (@($hit).Count -gt 0) { $mark = $tail.count; break }
-    if ((Get-Date) -ge $deadline) { Fail-Fl "ws-select-1 no dispatch" }
+    if ((Get-Date) -ge $deadline) { Fail-Fl "ws-select-1 no successful select" }
     Start-Sleep -Milliseconds 400
   }
   Start-Sleep -Milliseconds 1500
   if (-not [ActiveBorderNative]::IsWindowVisible([IntPtr][long]$hA.hwnd)) { Fail-Fl "ws-select-1 float not visible after reveal" }
+  if (-not [ActiveBorderNative]::IsWindowVisible([IntPtr][long]$hB.hwnd)) { Fail-Fl "ws-select-1 sibling not visible after reveal" }
   $backFrame = Get-HelperRectKeyFl $helperCopy $hA "ws-float-back"
   if ($backFrame -cne $floatFrame) { Fail-Fl "ws select cycle changed float frame [$backFrame] vs [$floatFrame]" }
-  Rec-Fl "ws-float-preserved" @{ rect = $backFrame; visible = $true }
+  Rec-Fl "ws-float-preserved" @{ rect = $backFrame; visible = $true; sibling_visible = $true }
   $Ctx.ownerLog = $logPath; $Ctx.allowPath = $allowPath
+}
+
+function Invoke-StickyFloatLive($Ctx) {
+  # Bounded sticky proof on tagged disposable helpers (workspace-proof owner:
+  # frozen allowlist, marked Win+Shift+G only). Reuses float patterns: exact
+  # identity, marks-before-actions, centered-60/reflow/topmost readbacks,
+  # border present, native marker GetProp reads. No new product CLI.
+  $ownerCopy = $Ctx.ownerCopy; $helperCopy = $Ctx.helperCopy; $proofDir = $Ctx.proofDir; $ownerSeconds = $Ctx.ownerSeconds
+  if (-not $Ctx.primed) {
+    Rec-Fl "sticky-rows-unexecuted" @{ reason = "environment-precondition: activation-blocker (see rows-unaccepted); no foreground acquirable"; rows = @(
+      "sticky-tiled-on-centered", "sticky-select-visible", "sticky-off-tiled-current",
+      "sticky-float-origin-preserve", "sticky-wing-clears-tiles", "sticky-marker-1-2",
+      "sticky-focus-refusal", "sticky-restart-adopt", "sticky-border") }
+    Rec-Fl "sticky-required-unimplemented" @{ owner = "user"; rows = @(Get-StickyRequiredUnimplementedRows) }
+    return
+  }
+  $hs = Start-FloatHelperSet $helperCopy $proofDir 2 $ownerSeconds
+  $snaps = @($hs.snaps); $Ctx.created = @($hs.created)
+  Rec-Fl "sticky-helpers-created" @($snaps | ForEach-Object { @{ hwnd = $_.hwnd; pid = $_.process.pid; visible = $_.visible } })
+  $allowPath = Join-Path $proofDir "sticky-allowlist.json"
+  $entries = @()
+  foreach ($s in $snaps) {
+    $entries += @{ hwnd = [uint64]$s.hwnd; pid = [uint32]$s.process.pid; process_creation = "$($s.process.process_creation)";
+      exe_path = "$($s.process.exe_path)"; user_sid = "$($s.process.user_sid)"; session_id = [uint32]$s.process.session_id; tag = "$($s.tag)" }
+  }
+  @{ windows = $entries } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $allowPath
+  $binDir = Split-Path -Parent $ownerCopy
+  Start-ExplorerGui $ownerCopy "workspace-proof --allowlist `"$allowPath`" --seconds $ownerSeconds --trace" $binDir
+  $ready = Assert-OwnerReady $ownerCopy "sticky"
+  $Ctx.ownerFrozen = $ready.owner; $Ctx.ownerRunning = $true; $Ctx.ownerPayload = $ownerCopy
+  $Ctx.allOwnerPids = @(@($Ctx.allOwnerPids) + @([int]$ready.owner.pid) | Sort-Object -Unique)
+  $logPath = "$($ready.log_path)"
+  Rec-Fl "sticky-owner-ready" @{ pid = $ready.owner.pid; log = $logPath }
+  Start-Sleep -Milliseconds 1500
+  $hA = $snaps[0]; $hB = $snaps[1]
+  $mark0 = (Get-CompleteLinesLocal $logPath).Count
+  $conv = Wait-ConvergedFrames $ownerCopy $allowPath @($hA.hwnd, $hB.hwnd) $logPath $mark0 25 "sticky-adopt"
+  Rec-Fl "sticky-adopted" @{ tick = $conv.tick }
+  $preSib = Get-HelperRectKeyFl $helperCopy $hB "sticky-pre-sib"
+  # Tiled sticky-on: Win+Shift+G floats centered-60, sibling reflows, keep-above, marker 1.
+  $freshA = Set-OwnedForegroundAb $helperCopy $hA "sticky-on-focus"
+  $mark = Get-MarkBeforeActionAb $logPath
+  $sent = Send-MarkedChord $VK_G $true $false ([uint64]$freshA.hwnd) 0 $false
+  Assert-ChordSendCounts ([int]$sent.accepted) $true 0 "sticky-on-send"
+  $ev = Wait-StickyOutcome $logPath $mark @("sticky-applied", "sticky-unverified", "dispatched") 20 "sticky-on"
+  Rec-Fl "sticky-on-toggle" @{ outcome = "$($ev.event.outcome)"; target = "$($ev.event.target)"; accepted = [int]$sent.accepted }
+  # No retry on sticky-unverified: a failed held-marker install is a real
+  # defect (ownership now verifies across the topmost band), and retrying
+  # would mask it. `dispatched` passes only with the marker/frame/membership
+  # facts verified below; anything else fails here.
+  if ("$($ev.event.outcome)" -notin @("sticky-applied", "dispatched")) { Fail-Fl "sticky-on outcome $($ev.event.outcome) not accepted (want sticky-applied/dispatched)" }
+  Start-Sleep -Milliseconds 1500
+  $frame = [ActiveBorderNative]::FrameOf([long]$hA.hwnd)
+  if ($null -eq $frame) { Fail-Fl "sticky-on DWM frame unreadable" }
+  $exp = Get-ExpectedCentered60 "sticky-on-exp"
+  Assert-FrameApprox $frame $exp.expected 2 "sticky-on-centered60"
+  $sibDuring = Get-HelperRectKeyFl $helperCopy $hB "sticky-on-sib"
+  if ($sibDuring -ceq $preSib) { Fail-Fl "sticky-on sibling did not reflow" }
+  $insp = Invoke-Native $ownerCopy @("inspect", "--allowlist", $allowPath) | ConvertFrom-Json
+  $row = @($insp.windows | Where-Object { [uint64]$_.hwnd -eq [uint64]$hA.hwnd }) | Select-Object -First 1
+  if ($null -eq $row) { Fail-Fl "sticky-on member missing" }
+  if ($row.identity_match -ne $true) { Fail-Fl "sticky-on identity not matched" }
+  # Stateless-oracle guard: inspect eligibility is native classify() only, so a
+  # floated ordinary frame stays eligible TRUE by design and never proves tile
+  # membership. Membership comes from the owner trace: the sticky-toggle token
+  # must leave the selected-domain plan (matched readback) while the sibling
+  # native frame still projects into it.
+  $tokOn = "$($ev.event.window)"
+  $selOn = Assert-SelectedPlanToken $logPath $mark $ev.event $tokOn "excludes" @("sticky") "sticky-on-plan"
+  $sibNative = Get-DwmFrameKeyFl ([long]$hB.hwnd) "sticky-on-sib-native"
+  if ($selOn.keys -notcontains $sibNative) { Fail-Fl "sticky-on sibling native [$sibNative] not in plan [$($selOn.keys -join '|')]" }
+  Assert-NoWriteForFloat $logPath $mark $tokOn "sticky-on"
+  if (-not (Get-TopmostFl ([long]$hA.hwnd))) { Fail-Fl "sticky-on keep-above missing" }
+  $mk1 = Read-StickyMarkerNative ([long]$hA.hwnd) "sticky-on-marker"
+  if (-not $mk1.present -or ($mk1.prior_floating -ne $false)) { Fail-Fl "sticky-on marker != 1 (tiled origin) raw=$($mk1.raw)" }
+  Assert-ExactForegroundFl ([uint64]$hA.hwnd) "sticky-on"
+  $bS = Invoke-Native $ownerCopy @("border-inspect") | ConvertFrom-Json
+  $bVis = @(@($bS.overlays) | Where-Object { $_.visible -eq $true }).Count
+  if ([int]$bVis -ne 1) { Fail-Fl "sticky-on border not visible (visible=$bVis)" }
+  Rec-Fl "sticky-tiled-on-centered" @{ frame = ($frame -join ","); want = ($exp.expected -join ","); marker = $mk1.raw; border = $bVis }
+  # Select away: sticky stays visible same frame, workspace switches underneath.
+  # Only a successful select ("ok") counts: refusals/passed edges never satisfy.
+  $stickyFrame = Get-DwmFrameKeyFl ([long]$hA.hwnd) "sticky-select-pre"
+  $fgNow = [ActiveBorderNative]::GetForegroundWindow().ToInt64()
+  $mark = Get-MarkBeforeActionAb $logPath
+  $null = Send-MarkedChord ($VK_0 + 2) $false $false ([uint64]$fgNow) 0 $false
+  $deadline = (Get-Date).AddSeconds(20)
+  while ($true) {
+    $tail = Get-LogEventsAfter $logPath $mark
+    $hit = @($tail.events | Where-Object { ($_.event -eq "workspace") -and ($_.op -eq "select") -and ([int]$_.index -eq 2) -and ("$($_.outcome)" -eq "ok") })
+    if (@($hit).Count -gt 0) { $mark = $tail.count; break }
+    if ((Get-Date) -ge $deadline) { Fail-Fl "sticky-select-2 no successful select" }
+    Start-Sleep -Milliseconds 400
+  }
+  Start-Sleep -Milliseconds 1500
+  if (-not [ActiveBorderNative]::IsWindowVisible([IntPtr][long]$hA.hwnd)) { Fail-Fl "sticky-select-2 sticky hidden (must stay visible, SW_HIDE exclusion)" }
+  $sameFrame = Get-DwmFrameKeyFl ([long]$hA.hwnd) "sticky-select-mid"
+  if ($sameFrame -cne $stickyFrame) { Fail-Fl "sticky-select-2 moved sticky [$sameFrame] vs [$stickyFrame]" }
+  if ([ActiveBorderNative]::IsWindowVisible([IntPtr][long]$hB.hwnd)) { Fail-Fl "sticky-select-2 sibling still visible (workspace did not switch underneath)" }
+  Rec-Fl "sticky-select-visible" @{ rect = $sameFrame; visible = $true; sibling_hidden = $true }
+  # Shift+G off executes on the DIFFERENT workspace (ws2): off must tile
+  # current, not home. Marker must clear with membership retained eligible.
+  $freshA = Set-OwnedForegroundAb $helperCopy $hA "sticky-off-focus"
+  $mark = Get-MarkBeforeActionAb $logPath
+  $null = Send-MarkedChord $VK_G $true $false ([uint64]$freshA.hwnd) 0 $false
+  $evOff = Wait-StickyOutcome $logPath $mark @("sticky-applied", "unfloated", "unfloat-applied", "dispatched") 20 "sticky-off"
+  Start-Sleep -Milliseconds 1500
+  $mkOff = Read-StickyMarkerNative ([long]$hA.hwnd) "sticky-off-marker"
+  if ($mkOff.present) { Fail-Fl "sticky-off marker still present raw=$($mkOff.raw)" }
+  $insp2 = Invoke-Native $ownerCopy @("inspect", "--allowlist", $allowPath) | ConvertFrom-Json
+  $row2 = @($insp2.windows | Where-Object { [uint64]$_.hwnd -eq [uint64]$hA.hwnd }) | Select-Object -First 1
+  if ($null -eq $row2) { Fail-Fl "sticky-off member missing" }
+  if ($row2.identity_match -ne $true) { Fail-Fl "sticky-off identity not matched" }
+  if ($row2.eligible -ne $true) { Fail-Fl "sticky-off known-tiled not re-eligible" }
+  # Tiled-current membership via the owner trace: the toggle token must enter
+  # the selected-domain plan with matched readback projecting to the live frame.
+  $tokOff = "$($evOff.event.window)"
+  $selOff = Assert-SelectedPlanToken $logPath $mark $evOff.event $tokOff "includes" @("sticky", "reconcile") "sticky-off-plan"
+  $offNative = Get-DwmFrameKeyFl ([long]$hA.hwnd) "sticky-off-native"
+  if ($offNative -cne $selOff.key) { Fail-Fl "sticky-off native [$offNative] != plan [$($selOff.key)]" }
+  Rec-Fl "sticky-off-tiled-current" @{ outcome = "$($evOff.event.outcome)"; workspace = 2; plan_tick = $selOff.tick; plan_op = $selOff.op }
+  # Off tiled hA onto ws2 (visible); hB stays hidden on ws1. The float-origin
+  # legs below run here on ws2 with the selected visible subset (plan/native),
+  # never an all-helper convergence that would demand the hidden sibling.
+  # Plain float then sticky then Shift+G off stays normal float; next Win+G tiles.
+  # hA is tiled visible on ws2 here (hB hidden ws1); every focus below targets
+  # the visible hA exactly.
+  $freshA = Set-OwnedForegroundAb $helperCopy $hA "sticky-float-focus"
+  $mark = Get-MarkBeforeActionAb $logPath
+  $null = Send-MarkedChord $VK_G $false $false ([uint64]$freshA.hwnd) 0 $false
+  $evPf = Wait-FloatOutcome $logPath $mark @("floated", "float-applied", "dispatched") 20 "sticky-plain-float"
+  Start-Sleep -Milliseconds 1500
+  $floatFrame = Get-DwmFrameKeyFl ([long]$hA.hwnd) "sticky-plain-frame"
+  $tokPf = "$($evPf.event.window)"
+  $selPf = Assert-SelectedPlanToken $logPath $mark $evPf.event $tokPf "excludes" @("float") "sticky-plain-float-plan"
+  Assert-NoWriteForFloat $logPath $mark $tokPf "sticky-plain-float"
+  Rec-Fl "sticky-plain-floated" @{ outcome = "$($evPf.event.outcome)"; rect = $floatFrame; plan_tick = $selPf.tick }
+  $freshA = Set-OwnedForegroundAb $helperCopy $hA "sticky-from-float-focus"
+  $mark = Get-MarkBeforeActionAb $logPath
+  $null = Send-MarkedChord $VK_G $true $false ([uint64]$freshA.hwnd) 0 $false
+  $evSf = Wait-StickyOutcome $logPath $mark @("sticky-applied", "dispatched") 20 "sticky-from-float"
+  Start-Sleep -Milliseconds 1000
+  $mk2 = Read-StickyMarkerNative ([long]$hA.hwnd) "sticky-from-float-marker"
+  if (-not $mk2.present -or ($mk2.prior_floating -ne $true)) { Fail-Fl "sticky-from-float marker != 2 raw=$($mk2.raw)" }
+  $midFrame = Get-DwmFrameKeyFl ([long]$hA.hwnd) "sticky-from-float-frame"
+  if ($midFrame -cne $floatFrame) { Fail-Fl "sticky-on from float moved frame [$midFrame] vs [$floatFrame]" }
+  Rec-Fl "sticky-marker-1-2" @{ tiled_origin = "1"; float_origin = "2" }
+  $freshA = Set-OwnedForegroundAb $helperCopy $hA "sticky-off-float-focus"
+  $mark = Get-MarkBeforeActionAb $logPath
+  $null = Send-MarkedChord $VK_G $true $false ([uint64]$freshA.hwnd) 0 $false
+  $evOf = Wait-StickyOutcome $logPath $mark @("sticky-applied", "dispatched") 20 "sticky-off-float"
+  Start-Sleep -Milliseconds 1500
+  $stillFrame = Get-DwmFrameKeyFl ([long]$hA.hwnd) "sticky-off-float-frame"
+  if ($stillFrame -cne $floatFrame) { Fail-Fl "sticky-off float-origin moved frame [$stillFrame] vs [$floatFrame]" }
+  # PreservePrior off logs no geometry plan (mark only): the stateful facts are
+  # the toggle token/target plus the cleared marker and the kept frame. A
+  # stateless inspect eligible=false must NOT stand in for float membership.
+  $mkOf = Read-StickyMarkerNative ([long]$hA.hwnd) "sticky-off-float-marker"
+  if ($mkOf.present) { Fail-Fl "sticky-off float-origin marker still present raw=$($mkOf.raw)" }
+  Rec-Fl "sticky-float-origin-preserve" @{ rect = $stillFrame; outcome = "$($evOf.event.outcome)"; target = "$($evOf.event.target)" }
+  $freshA = Set-OwnedForegroundAb $helperCopy $hA "sticky-next-g-focus"
+  $mark = Get-MarkBeforeActionAb $logPath
+  $null = Send-MarkedChord $VK_G $false $false ([uint64]$freshA.hwnd) 0 $false
+  $evNg = Wait-FloatOutcome $logPath $mark @("unfloated", "unfloat-applied", "dispatched") 20 "sticky-next-g"
+  Start-Sleep -Milliseconds 1000
+  # `dispatched` alone is not success: the token must enter the selected-domain
+  # plan with matched readback projecting to the live frame, marker gone. hB is
+  # hidden on ws1, so convergence uses the selected visible subset (hA), never
+  # an all-helper Wait-ConvergedFrames and never stateless eligibility.
+  $mkNg = Read-StickyMarkerNative ([long]$hA.hwnd) "sticky-next-g-marker"
+  if ($mkNg.present) { Fail-Fl "sticky-next-g marker still present raw=$($mkNg.raw)" }
+  $tokNg = "$($evNg.event.window)"
+  $selNg = Assert-SelectedPlanToken $logPath $mark $evNg.event $tokNg "includes" @("float", "reconcile") "sticky-next-g-plan"
+  $ngNative = Get-DwmFrameKeyFl ([long]$hA.hwnd) "sticky-next-g-native"
+  if ($ngNative -cne $selNg.key) { Fail-Fl "sticky-next-g native [$ngNative] != plan [$($selNg.key)]" }
+  Rec-Fl "sticky-next-g-tiles" @{ outcome = "$($evNg.event.outcome)"; tick = $selNg.tick; plan_op = $selNg.op }
+  # Win+G on any sticky origin clears and tiles CURRENT.
+  $freshA = Set-OwnedForegroundAb $helperCopy $hA "sticky-reg-focus"
+  $mark = Get-MarkBeforeActionAb $logPath
+  $null = Send-MarkedChord $VK_G $true $false ([uint64]$freshA.hwnd) 0 $false
+  $null = Wait-StickyOutcome $logPath $mark @("sticky-applied", "dispatched") 20 "sticky-reg"
+  Start-Sleep -Milliseconds 1000
+  $freshA = Set-OwnedForegroundAb $helperCopy $hA "sticky-wing-focus"
+  $mark = Get-MarkBeforeActionAb $logPath
+  $null = Send-MarkedChord $VK_G $false $false ([uint64]$freshA.hwnd) 0 $false
+  $evW = Wait-FloatOutcome $logPath $mark @("unfloated", "unfloat-applied", "dispatched") 20 "sticky-wing"
+  Start-Sleep -Milliseconds 1000
+  $mkW = Read-StickyMarkerNative ([long]$hA.hwnd) "sticky-wing-marker"
+  if ($mkW.present) { Fail-Fl "sticky Win+G left marker raw=$($mkW.raw)" }
+  $tokW = "$($evW.event.window)"
+  $selW = Assert-SelectedPlanToken $logPath $mark $evW.event $tokW "includes" @("sticky", "float", "reconcile") "sticky-wing-plan"
+  $wingNative = Get-DwmFrameKeyFl ([long]$hA.hwnd) "sticky-wing-native"
+  if ($wingNative -cne $selW.key) { Fail-Fl "sticky-wing native [$wingNative] != plan [$($selW.key)]" }
+  $rowW = @( (Invoke-Native $ownerCopy @("inspect", "--allowlist", $allowPath) | ConvertFrom-Json).windows | Where-Object { [uint64]$_.hwnd -eq [uint64]$hA.hwnd }) | Select-Object -First 1
+  if (($null -eq $rowW) -or ($rowW.eligible -ne $true)) { Fail-Fl "sticky Win+G did not re-tile (not eligible)" }
+  Rec-Fl "sticky-wing-clears-tiles" @{ outcome = "$($evW.event.outcome)"; eligible = $true; plan_tick = $selW.tick; plan_op = $selW.op }
+  # Directional focus from sticky refuses (nav exclusion).
+  $freshA = Set-OwnedForegroundAb $helperCopy $hA "sticky-nav-focus"
+  $mark = Get-MarkBeforeActionAb $logPath
+  $null = Send-MarkedChord $VK_G $true $false ([uint64]$freshA.hwnd) 0 $false
+  $null = Wait-StickyOutcome $logPath $mark @("sticky-applied", "dispatched") 20 "sticky-nav-arm"
+  Start-Sleep -Milliseconds 1000
+  $preNav = Get-InspectFrames $ownerCopy $allowPath
+  $mark = Get-MarkBeforeActionAb $logPath
+  $sent = Send-MarkedChord $VK_H $false $false ([uint64]$hA.hwnd) 0 $false
+  Assert-ChordSendCounts ([int]$sent.accepted) $false 0 "sticky-nav-send"
+  $evN = Wait-SnapAfter $logPath $mark "focus" "left" 20 "sticky-nav"
+  if ("$($evN.outcome)" -ne "focus-refused-sticky") { Fail-Fl "sticky nav outcome $($evN.outcome) != focus-refused-sticky" }
+  $postNav = Get-InspectFrames $ownerCopy $allowPath
+  Assert-FramesEqual $preNav.frames $postNav.frames "sticky-nav-topology"
+  Rec-Fl "sticky-focus-refusal" @{ outcome = "$($evN.outcome)" }
+  # Normalize: sticky off tiles current for the restart leg.
+  $freshA = Set-OwnedForegroundAb $helperCopy $hA "sticky-norm-focus"
+  $mark = Get-MarkBeforeActionAb $logPath
+  $null = Send-MarkedChord $VK_G $true $false ([uint64]$freshA.hwnd) 0 $false
+  $null = Wait-StickyOutcome $logPath $mark @("sticky-applied", "unfloated", "unfloat-applied", "dispatched") 20 "sticky-norm"
+  Start-Sleep -Milliseconds 1000
+  # Restart: survivor sticky marker consumes into NORMAL float current (provisional).
+  $freshA = Set-OwnedForegroundAb $helperCopy $hA "sticky-surv-focus"
+  $mark = Get-MarkBeforeActionAb $logPath
+  $null = Send-MarkedChord $VK_G $true $false ([uint64]$freshA.hwnd) 0 $false
+  $evSurv = Wait-StickyOutcome $logPath $mark @("sticky-applied", "dispatched") 20 "sticky-surv"
+  Start-Sleep -Milliseconds 1000
+  $tokSurv = "$($evSurv.event.window)"
+  $selSurv = Assert-SelectedPlanToken $logPath $mark $evSurv.event $tokSurv "excludes" @("sticky") "sticky-surv-plan"
+  $mkSurvArm = Read-StickyMarkerNative ([long]$hA.hwnd) "sticky-surv-arm-marker"
+  if (-not $mkSurvArm.present) { Fail-Fl "sticky-surv marker missing raw=$($mkSurvArm.raw)" }
+  Rec-Fl "sticky-surv-armed" @{ outcome = "$($evSurv.event.outcome)"; plan_tick = $selSurv.tick }
+  $survFrame = Get-DwmFrameKeyFl ([long]$hA.hwnd) "sticky-surv-frame"
+  $st = Invoke-Native $ownerCopy @("stop") | ConvertFrom-Json
+  if (-not $st.owner_exited) { Fail-Fl "sticky-restart stop no exit" }
+  if (Test-ProcessAliveSameCreation ([int]$Ctx.ownerFrozen.pid) "$($Ctx.ownerFrozen.process_creation)") { Fail-Fl "sticky-restart owner alive" }
+  Rec-Fl "sticky-restart-stop" @{ frame = $survFrame }
+  $r = Invoke-Native $ownerCopy @("restore") | ConvertFrom-Json
+  if (-not $r.restored) { Fail-Fl "sticky-restart restore failed" }
+  Assert-LedgerClean $ownerCopy
+  $Ctx.ownerRunning = $false
+  Start-ExplorerGui $ownerCopy "workspace-proof --allowlist `"$allowPath`" --seconds $ownerSeconds --trace" $binDir
+  $ready2 = Assert-OwnerReady $ownerCopy "sticky-restart"
+  $Ctx.ownerFrozen = $ready2.owner; $Ctx.ownerRunning = $true; $Ctx.ownerPayload = $ownerCopy
+  $Ctx.allOwnerPids = @(@($Ctx.allOwnerPids) + @([int]$ready2.owner.pid) | Sort-Object -Unique)
+  $logPath2 = "$($ready2.log_path)"
+  Rec-Fl "sticky-restart-ready" @{ pid = $ready2.owner.pid }
+  # Fresh owner, fresh tokens: the only valid token source is the
+  # sticky-adopted event in the NEW log. Adoption fires on the first ticks,
+  # so the wait starts at mark 0 (a post-settle mark would miss it).
+  $adoptWait = Wait-StickyAdoptedFl $logPath2 0 25 "sticky-restart-adopt-wait"
+  $adoptHit = $adoptWait.event
+  $adoptTok = "$($adoptHit.window)"
+  if ($adoptTok -eq "") { Fail-Fl "sticky-restart adopted token empty" }
+  Start-Sleep -Milliseconds 2000
+  $mkSurv = Read-StickyMarkerNative ([long]$hA.hwnd) "sticky-restart-marker"
+  if ($mkSurv.present) { Fail-Fl "sticky-restart marker not consumed raw=$($mkSurv.raw)" }
+  $adoptFrame = Get-DwmFrameKeyFl ([long]$hA.hwnd) "sticky-restart-frame"
+  if ($adoptFrame -cne $survFrame) { Fail-Fl "sticky-restart changed live frame [$adoptFrame] vs [$survFrame]" }
+  $insp4 = Invoke-Native $ownerCopy @("inspect", "--allowlist", $allowPath) | ConvertFrom-Json
+  $row4 = @($insp4.windows | Where-Object { [uint64]$_.hwnd -eq [uint64]$hA.hwnd }) | Select-Object -First 1
+  if (($null -eq $row4) -or ($row4.identity_match -ne $true)) { Fail-Fl "sticky-restart member identity not matched" }
+  # The adopted token must leave the selected-domain tile plan (matched
+  # readback) while the sibling native frame still projects into it. Restart
+  # rehomes both helpers visible. The new log starts at restart and adoption
+  # lands on the first ticks, so every plan pair in it is post-restart; poll
+  # from 0 for an excluding pair (no toggle tick to tie here, sibling-frame
+  # presence plus op/tick-summary coherence selects the domain).
+  if (-not [ActiveBorderNative]::IsWindowVisible([IntPtr][long]$hA.hwnd)) { Fail-Fl "sticky-restart survivor hidden" }
+  if (-not [ActiveBorderNative]::IsWindowVisible([IntPtr][long]$hB.hwnd)) { Fail-Fl "sticky-restart sibling hidden" }
+  $selAdopt = $null
+  $adoptDeadline = (Get-Date).AddSeconds(25)
+  while ($null -eq $selAdopt) {
+    try { $selAdopt = Assert-SelectedPlanToken $logPath2 0 $null $adoptTok "excludes" @("reconcile", "sticky", "float") "sticky-restart-adopt-plan" } catch { $selAdopt = $null }
+    if ($null -eq $selAdopt) {
+      if ((Get-Date) -ge $adoptDeadline) { Fail-Fl "sticky-restart no post-adopt excluding plan" }
+      Start-Sleep -Milliseconds 1000
+    }
+  }
+  $sibNative2 = Get-DwmFrameKeyFl ([long]$hB.hwnd) "sticky-restart-sib-native"
+  if ($selAdopt.keys -notcontains $sibNative2) { Fail-Fl "sticky-restart sibling native [$sibNative2] not in plan [$($selAdopt.keys -join '|')]" }
+  Rec-Fl "sticky-restart-adopt" @{ rect = $adoptFrame; token_source = "sticky-adopted"; plan_tick = $selAdopt.tick }
+  $freshA = Set-OwnedForegroundAb $helperCopy $hA "sticky-restart-g-focus"
+  $mark = Get-MarkBeforeActionAb $logPath2
+  $null = Send-MarkedChord $VK_G $false $false ([uint64]$freshA.hwnd) 0 $false
+  $evRg = Wait-FloatOutcome $logPath2 $mark @("unfloated", "unfloat-applied", "dispatched") 20 "sticky-restart-g"
+  Start-Sleep -Milliseconds 1000
+  $mkRg = Read-StickyMarkerNative ([long]$hA.hwnd) "sticky-restart-g-marker"
+  if ($mkRg.present) { Fail-Fl "sticky-restart-g marker still present raw=$($mkRg.raw)" }
+  $convRg = Wait-ConvergedFrames $ownerCopy $allowPath @($hA.hwnd, $hB.hwnd) $logPath2 $mark 25 "sticky-restart-g-plan"
+  $tokRg = "$($evRg.event.window)"
+  $selRg = Assert-SelectedPlanToken $logPath2 $mark $evRg.event $tokRg "includes" @("float", "reconcile") "sticky-restart-g-oracle"
+  $rgNative = Get-DwmFrameKeyFl ([long]$hA.hwnd) "sticky-restart-g-native"
+  if ($rgNative -cne $selRg.key) { Fail-Fl "sticky-restart-g native [$rgNative] != plan [$($selRg.key)]" }
+  Rec-Fl "sticky-restart-next-g-tiles" @{ outcome = "$($evRg.event.outcome)"; tick = $convRg.tick; plan_tick = $selRg.tick; plan_op = $selRg.op }
+  $bS2 = Invoke-Native $ownerCopy @("border-inspect") | ConvertFrom-Json
+  $bVis2 = @(@($bS2.overlays) | Where-Object { $_.visible -eq $true }).Count
+  Rec-Fl "sticky-border" @{ visible = $bVis2 }
+  Rec-Fl "sticky-required-unimplemented" @{ owner = "user"; rows = @(Get-StickyRequiredUnimplementedRows) }
+  $Ctx.ownerLog = $logPath2; $Ctx.allowPath = $allowPath
 }
 
 function Get-AppRectFl([long]$Hwnd, [string]$Tag) {
@@ -1089,6 +1781,10 @@ function Invoke-FloatLive {
     $runOwned = ($Stage -eq "All") -or ($Stage -eq "OwnedFloat")
     $runWs = ($Stage -eq "All") -or ($Stage -eq "WorkspaceFloat")
     $runNormal = ($Stage -eq "All") -or ($Stage -eq "NormalSmoke")
+    # All keeps the existing float-only scope (OwnedFloat+WorkspaceFloat+
+    # NormalSmoke); StickyFloat is an explicit separate stage so a sticky
+    # pass never reports float-complete.
+    $runSticky = ($Stage -eq "StickyFloat")
     # Ownerless DWM-cloak precondition ONCE before any owner/stage, on ONE
     # disposable probe helper (never an acceptance subject). Aborts before
     # owner launch on unavailable; normal exact cleanup handles the failure.
@@ -1102,11 +1798,20 @@ function Invoke-FloatLive {
     Rec-Fl "ownerless-move-precondition" @{ status = "$($probeGate.status)"; present = [bool]$probeGate.present;
       before = $probeGate.before; mid = $probeGate.mid; restored = $probeGate.restored;
       move_to = "$($probeGate.move_to)"; expect_ltrb = "$($probeGate.expect_ltrb)"; restore_to = "$($probeGate.restore_to)" }
+    # FIRST virtual-desktop quick check on the same disposable probe (public
+    # COM IVirtualDesktopManager only: IsWindowOnCurrentVirtualDesktop plus
+    # GetWindowDesktopId for the helper and foreground; no OS desktop change,
+    # no enumeration, no policy, no product cloak bypass). Runs before any
+    # owner/hook stage.
+    $vdm = Get-VirtualDesktopDiagnostic ([long]$probeSnap.hwnd) "probe-vdm"
+    Rec-Fl "virtual-desktop-diagnostic" $vdm
+    $vdmIds = @("$($vdm.desktop_id)", "$($vdm.fg_desktop_id)" | Where-Object { $_ -ne "unreadable" } | Sort-Object -Unique)
+    Rec-Fl "virtual-desktop-ids" @{ distinct = @($vdmIds); count = @($vdmIds).Count; helper_on_current = "$($vdm.on_current)" }
     Close-FloatHelpersExact $helperCopy $Ctx.created "probe"
     $Ctx.created = @()
     if ("$($probeGate.status)" -ne "pass") {
       Rec-Fl "environment-precondition" @{ status = "unavailable";
-        reason = "environment-precondition: ownerless cloak baseline=$($probeGate.before.cloaked) mid=$($probeGate.mid.cloaked) restored=$($probeGate.restored.cloaked) on disposable probe (no owner runs)" }
+        reason = "environment-precondition: ownerless cloak baseline=$($probeGate.before.cloaked) mid=$($probeGate.mid.cloaked) restored=$($probeGate.restored.cloaked) on disposable probe (no owner runs); vdm_on_current=$($vdm.on_current) vdm_desktop=$($vdm.desktop_id) vdm_fg=$($vdm.fg_desktop_id)" }
       Fail-Fl "environment-precondition: ownerless DWM cloak baseline=$($probeGate.before.cloaked) mid=$($probeGate.mid.cloaked) restored=$($probeGate.restored.cloaked) on disposable probe (no owner runs)"
     }
     if ($runOwned) { Invoke-OwnedFloatLive $Ctx }
@@ -1132,6 +1837,13 @@ function Invoke-FloatLive {
       }
     }
     if ($runNormal) { Invoke-NormalSmokeLive $Ctx }
+    if ($runSticky) {
+      $seg = Join-Path $proofDir "sticky"
+      New-Item -ItemType Directory -Force -Path $seg | Out-Null
+      $Ctx.proofDir = $seg
+      Invoke-StickyFloatLive $Ctx
+      $Ctx.proofDir = $proofDir
+    }
     Rec-Fl "required-unimplemented" @{ owner = "user"; rows = @(Get-RequiredUnimplementedRows) }
     Close-PrimeExtraFl $Ctx "final"
     if ($Ctx.ownerRunning) { $null = Stop-FloatOwnerExact $Ctx "final" }
@@ -1161,10 +1873,12 @@ function Invoke-FloatLive {
     $audit | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $proofDir "float-audit.json")
     Rec-Fl "final-audit" $audit
     $finalStatus = Get-FloatReportStatus $FL_STEPS $Stage
-    $report = @{ status = $finalStatus; stage = "Float-$Stage"; started = (Get-Date).ToString("o"); provenance = $prov; steps = $FL_STEPS }
+    $stickyStatus = Get-StickyReportStatus $FL_STEPS $Stage
+    $report = @{ status = $finalStatus; sticky_status = $stickyStatus; stage = "Float-$Stage"; started = (Get-Date).ToString("o"); provenance = $prov; steps = $FL_STEPS }
     $report | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $reportPath
     Write-Output "float-report=$reportPath"
     Write-Output "status=$finalStatus"
+    Write-Output "sticky-status=$stickyStatus"
   } catch {
     try {
       if ($ownerCopy -ne "" -and (Test-Path $ownerCopy)) {

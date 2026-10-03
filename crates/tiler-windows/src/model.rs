@@ -16,6 +16,16 @@ pub const PRODUCT_CLAIM_PROP: &str = "PlasmaAutoTilerProductClaim";
 /// the three domains never mistake each other's tags.
 pub const MEMBER_TAG_PROP: &str = "PlasmaAutoTilerMember";
 
+/// Project-specific window-lifetime property backing sticky-float state.
+/// Stores a small nonzero marker (1 = pre-sticky tiled, 2 = pre-sticky
+/// float) so the next owner can adopt a surviving sticky window as a normal
+/// float on its current workspace. Dies with the window, never trusted across
+/// window generations, never removed except by explicit sticky-off or
+/// successful adoption. Distinct from [`MEMBER_TAG_PROP`] and
+/// [`PRODUCT_CLAIM_PROP`] so the three domains never mistake each other's
+/// values.
+pub const STICKY_PROP: &str = "PlasmaAutoTilerSticky";
+
 /// Ownership domain of one hidden-window claim. Helper claims use the owned
 /// test-window lifetime property and helper-only gates; product claims use the
 /// product nonce property on ordinary windows. Serde default is helper so

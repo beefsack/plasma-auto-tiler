@@ -526,6 +526,45 @@ the corresponding item ships; each such entry names its replacement.
   output/DPI arrangements remain user-owned. See
   [Windows float](changes/archive/windows-float.md).
 
+### Windows sticky float
+
+- Windows parity item 6 (2026-10-03): Win+Shift+G matches KDE Meta+Shift+G.
+  Sticky-on from tiled uses the existing Engine float placement and sibling
+  reflow; sticky-on from an ordinary float preserves its live frame. Sticky
+  floats stay visible across every managed workspace of their output, never
+  take workspace `SW_HIDE`, and do not occupy a backing workspace for
+  trailing-empty cleanup. This is managed-workspace stickiness, not Windows
+  virtual-desktop membership.
+- Win+Shift+G sticky-off honors the same-runtime origin: a formerly tiled
+  window fresh-admits on the current workspace; a formerly floating window
+  stays a normal float there. Win+G on either sticky origin clears sticky and
+  tiles on the current workspace. Both retain exact toggle focus. Fullscreen
+  and maximized targets refuse. Directional focus/move/resize and workspace
+  send exclude sticky subjects; tile navigation excludes their slotless
+  floating exceptions. Active border stays independent, group underlay stays
+  suppressed, and native pointer movement/resizing remains free.
+- Reuse float keep-above/topmost preimages, retained frames, native identity
+  and scope fences. Sticky native markers use a separate window-lifetime
+  property; every marker effect is held-process and lifetime-tag verified.
+  No recovery-ledger or file persistence is added. Graceful stop restores
+  project-raised topmost and leaves frames in place; the existing provisional
+  float crash-topmost policy also applies.
+- Provisional, to discuss: stop/crash leaves the sticky marker on surviving
+  windows. The next owner consumes it into a normal float on the current
+  managed workspace, preserving the live frame and discarding prior tiled/
+  float origin. The next Win+G tiles. This simple Windows restart analogue
+  avoids preserving all-workspace visibility across owner lifetimes; KDE's
+  native-sticky adoption behavior is unchanged.
+- Native gates and independent review pass. Scoped live helper evidence proves
+  both origins, select visibility, current-workspace sticky-off, Win+G clearing,
+  focus refusal, border presence and graceful restart adoption. Ownerless move
+  cloak stayed 0; the public virtual-desktop check placed the probe on the
+  current desktop with the same ID as foreground (not a desktop-count proof).
+  Crash/watcher, held-underlay, broader overlay/refusal/send/close journeys,
+  physical ordinary-app input/display/feel and other output/DPI checks remain
+  user-owned. Receipt status remains partial. See
+  [Windows sticky float](changes/archive/windows-sticky-float.md).
+
 ## Native Integration Boundary
 
 - User decision (2026-09-24; governing statement under Architecture Direction):

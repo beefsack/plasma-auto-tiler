@@ -53,7 +53,8 @@ fn push_snap(
         Classified::Workspace(_)
         | Classified::Maximize(_)
         | Classified::Fullscreen(_)
-        | Classified::Float(_) => {
+        | Classified::Float(_)
+        | Classified::Sticky(_) => {
             panic!("expected directional chord")
         }
     }
@@ -71,7 +72,8 @@ fn push_workspace(
         Classified::Snap(_)
         | Classified::Maximize(_)
         | Classified::Fullscreen(_)
-        | Classified::Float(_) => {
+        | Classified::Float(_)
+        | Classified::Sticky(_) => {
             panic!("expected workspace digit")
         }
     }
@@ -89,7 +91,8 @@ fn push_maximize(
         Classified::Snap(_)
         | Classified::Workspace(_)
         | Classified::Fullscreen(_)
-        | Classified::Float(_) => {
+        | Classified::Float(_)
+        | Classified::Sticky(_) => {
             panic!("expected maximize chord")
         }
     }
@@ -106,7 +109,8 @@ fn push_fullscreen(
         Classified::Snap(_)
         | Classified::Workspace(_)
         | Classified::Maximize(_)
-        | Classified::Float(_) => {
+        | Classified::Float(_)
+        | Classified::Sticky(_) => {
             panic!("expected fullscreen chord")
         }
     }
@@ -121,11 +125,33 @@ fn push_float(
     use tiler_windows::snapkey::VK_G;
     match SnapClassify::push(m, VK_G, is_up, fg, inj)? {
         Classified::Float(intent) => Some(intent),
+        // Shifted G routes to the sticky arm: the float arm did not fire.
+        Classified::Sticky(_) => None,
         Classified::Snap(_)
         | Classified::Workspace(_)
         | Classified::Maximize(_)
         | Classified::Fullscreen(_) => {
             panic!("expected float chord")
+        }
+    }
+}
+
+fn push_sticky(
+    m: &mut SnapClassify,
+    is_up: bool,
+    fg: bool,
+    inj: bool,
+) -> Option<tiler_windows::snapkey::StickyIntent> {
+    use tiler_windows::snapkey::VK_G;
+    match SnapClassify::push(m, VK_G, is_up, fg, inj)? {
+        Classified::Sticky(intent) => Some(intent),
+        // Unshifted G routes to the float arm: the sticky arm did not fire.
+        Classified::Float(_) => None,
+        Classified::Snap(_)
+        | Classified::Workspace(_)
+        | Classified::Maximize(_)
+        | Classified::Fullscreen(_) => {
+            panic!("expected sticky chord")
         }
     }
 }
@@ -515,6 +541,7 @@ fn saturated_queue_passes_without_consuming() {
         | QueuedSnapEvent::Maximize(_)
         | QueuedSnapEvent::Fullscreen(_)
         | QueuedSnapEvent::Float(_)
+        | QueuedSnapEvent::Sticky(_)
         | QueuedSnapEvent::Mask(_) => panic!("expected intent"),
     }
     while q.len() < INTENT_QUEUE_CAP {
@@ -1538,16 +1565,20 @@ fn float_toggle_consumes_down_repeat_up_with_origin_pairing() {
 
 #[test]
 fn float_modifier_exactness_passes_untracked() {
-    // Win+Shift+G is unimplemented (never a sticky arm): it passes through
-    // untracked, and its paired key-up passes too. Ctrl/Alt, missing Win,
-    // bare G, and injected G never classify and never arm the mask.
+    // Shifted G routes to the sticky arm (never the float arm): the float
+    // helper sees no float chord here. Ctrl/Alt, missing Win, bare G, and
+    // injected G never classify and never arm the mask.
     let mut m = SnapClassify::new(takeover());
     win_down(&mut m, VK_LWIN);
     push_snap(&mut m, VK_SHIFT, false, true, false);
     assert_eq!(push_float(&mut m, false, true, false), None);
+    // The paired key-up closes the sticky hold, not the float hold.
     assert_eq!(push_float(&mut m, true, true, false), None);
     push_snap(&mut m, VK_SHIFT, true, true, false);
     assert_eq!((m.float_counts.down, m.float_counts.up), (0, 0));
+    // A fresh shifted hold arms sticky exactly once.
+    assert_eq!(m.sticky_counts.down, 1);
+    assert_eq!(m.sticky_counts.up, 1);
     for mod_vk in [VK_CONTROL, VK_MENU, VK_LMENU] {
         let mut m = SnapClassify::new(takeover());
         win_down(&mut m, VK_LWIN);
@@ -1641,4 +1672,131 @@ fn float_arms_start_menu_mask() {
         QueuedSnapEvent::Mask(mask) => assert_eq!(mask.trigger, MaskTrigger::Float),
         _ => panic!("expected mask"),
     }
+}
+
+#[test]
+fn sticky_toggle_consumes_down_repeat_up_with_origin_pairing() {
+    use tiler_windows::snapkey::{SnapEdge, VK_G};
+    // Win+Shift+G (KDE Meta+Shift+G parity): down consumes with announce,
+    // held repeat is swallowed (no re-toggle), up closes the pair without
+    // announce. Shift released before the key-up still pairs by origin.
+    assert!(is_chord_vk(VK_G));
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    assert!(!m.key_is_down(VK_G));
+    let down = push_sticky(&mut m, false, true, false).expect("sticky down");
+    assert_eq!(down.edge, SnapEdge::Down);
+    assert!(down.consumed && down.announce);
+    assert!(m.key_is_down(VK_G));
+    // The shared G key has one hold: the armed sticky hold owns repeats.
+    let repeat = push_sticky(&mut m, false, true, false).expect("sticky repeat");
+    assert_eq!(repeat.edge, SnapEdge::Repeat);
+    assert!(repeat.consumed && !repeat.announce);
+    // Shift released before the key-up still pairs by origin (op fixed).
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    let up = push_sticky(&mut m, true, true, false).expect("paired up");
+    assert_eq!(up.edge, SnapEdge::Up);
+    assert!(up.consumed && !up.announce);
+    assert!(!m.key_is_down(VK_G));
+    assert_eq!(push_sticky(&mut m, true, true, false), None);
+    assert_eq!(
+        (
+            m.sticky_counts.down,
+            m.sticky_counts.repeat,
+            m.sticky_counts.up
+        ),
+        (1, 1, 1)
+    );
+    assert_eq!(m.sticky_counts.consumed, 3);
+    // Float counts untouched by the shifted chord.
+    assert_eq!((m.float_counts.down, m.float_counts.up), (0, 0));
+}
+
+#[test]
+fn sticky_modifier_exactness_and_mask() {
+    use tiler_windows::snapkey::{MaskTrigger, QueuedStickyIntent, SnapQueue, VK_G};
+    // Unshifted G never arms sticky; Ctrl/Alt, missing Win, bare G, and
+    // injected G never classify sticky and never arm the mask.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    assert_eq!(push_sticky(&mut m, false, true, false), None);
+    assert_eq!(push_sticky(&mut m, true, true, false), None);
+    assert_eq!((m.sticky_counts.down, m.sticky_counts.up), (0, 0));
+    for mod_vk in [VK_CONTROL, VK_MENU, VK_LMENU] {
+        let mut m = SnapClassify::new(takeover());
+        win_down(&mut m, VK_LWIN);
+        push_snap(&mut m, mod_vk, false, true, false);
+        push_snap(&mut m, VK_SHIFT, false, true, false);
+        assert_eq!(push_sticky(&mut m, false, true, false), None);
+        assert_eq!(push_sticky(&mut m, true, true, false), None);
+        push_snap(&mut m, mod_vk, true, true, false);
+        push_snap(&mut m, VK_SHIFT, true, true, false);
+    }
+    let mut m = SnapClassify::new(takeover());
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    assert_eq!(push_sticky(&mut m, false, true, false), None);
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    assert_eq!(push_sticky(&mut m, false, true, true), None);
+    assert!(!win_up_mask_reserve(
+        &mut m,
+        &mut SnapQueue::new(),
+        VK_LWIN,
+        true,
+        std::time::Instant::now()
+    ));
+    // A consumed Win+Shift+G reserves the E8 mask with sticky evidence.
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    let tick = std::time::Instant::now();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_SHIFT, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_G,
+            false,
+            Some(origin_of(9, "w9")),
+            false,
+            tick,
+            true
+        ),
+        Some(true)
+    );
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    match q.pop_front().expect("sticky intent") {
+        QueuedSnapEvent::Sticky(QueuedStickyIntent { origin, .. }) => {
+            assert_eq!(origin, Some(origin_of(9, "w9")));
+        }
+        _ => panic!("expected sticky intent"),
+    }
+    match q.pop_front().expect("mask") {
+        QueuedSnapEvent::Mask(mask) => assert_eq!(mask.trigger, MaskTrigger::Sticky),
+        _ => panic!("expected mask"),
+    }
+}
+
+#[test]
+fn sticky_background_origin_never_consumes() {
+    // The toggle needs a managed origin like send: background-origin holds
+    // never consume mid-hold.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    let down = push_sticky(&mut m, false, false, false).expect("logged");
+    assert!(!down.consumed && !down.announce);
+    let repeat = push_sticky(&mut m, false, true, false).expect("logged");
+    assert!(!repeat.consumed);
+    let up = push_sticky(&mut m, true, true, false).expect("logged");
+    assert!(!up.consumed);
 }
