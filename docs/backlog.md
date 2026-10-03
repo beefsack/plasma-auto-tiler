@@ -54,6 +54,11 @@ decisions of 2026-09-24 are under
   match KDE/core R2c/R3; minimum-pinned geometry explains zero visible change.
   [Minimum-size evidence](changes/archive/windows-minimum-size-hints.md).
   [Directional diagnosis](changes/archive/windows-directional-dogfood-diagnosis.md).
+  Send split-axis defect fixed in `c4a837b` (shared core): stale destination
+  focus after send-away/return now falls back to valid destination focus
+  history; minimum sizes did not force the axis. Physical ordinary-app
+  confirmation user-owned.
+  [Evidence](changes/archive/windows-send-split-axis.md).
   Next: Windows feature parity queue below.
   [Managed workspaces](changes/archive/windows-managed-workspaces.md).
   [Shortcut slice and handover](changes/archive/windows-shortcut-slice.md).
@@ -78,24 +83,14 @@ decisions of 2026-09-24 are under
   done (`cb790d9`; [evidence](changes/archive/windows-group-underlay.md)), C
   (unfocused dragged subject) parked for reassessment with item 7;
   (3) maximise done (`1be97a1`, Win+M; [evidence](changes/archive/windows-maximise.md);
-  physical button/input/feel checks remain; discrete one-attempt-per-press
-  Win+M is provisional, to discuss); (4) fullscreen shipped (`e84b1a7`,
-  Win+F11; [evidence](changes/archive/windows-fullscreen.md); full live
-  acceptance open: an unidentified cloaked Explorer `ApplicationFrameWindow`
-  takes foreground later and blocks harness activation, plus repeat/refusal/
-  underlay/workspace/crash/approved-app rows and physical dogfood;
-  borderless route and discrete Win+F11 are provisional, to discuss);
-  (5) float shipped (`d8329e3`, Win+G; [evidence](changes/archive/windows-float.md);
-  live float behaviour unaccepted under the same foreground blocker;
-  crash-retained topmost band is provisional, to discuss); follow-up
-  `3f70136`/`41edc81` ignores cloaked fullscreen foregrounds and gates proofs
-  on an ownerless-move cloak precondition; remaining fullscreen/float journeys
-  are user-owned (recurring shell takeover, ownerless DWM cloak 0->2 after
-  helper moves; [record](changes/archive/windows-foreground-acceptance.md));
+  physical button/input/feel checks remain); (4) fullscreen shipped
+  (`e84b1a7`, Win+F11; [evidence](changes/archive/windows-fullscreen.md));
+  (5) float shipped (`d8329e3`, Win+G; [evidence](changes/archive/windows-float.md));
   (6) sticky float shipped (`292d8c1`, Win+Shift+G;
-  [evidence](changes/archive/windows-sticky-float.md); broader live and
-  physical checks user-owned; restart analogue provisional); next
-  (6) sticky float;
+  [evidence](changes/archive/windows-sticky-float.md)). Live acceptance of
+  4-6 is user-owned: agent runs were disturbed by Xbox mode (cloaked
+  `ApplicationFrameWindow` foreground, DWM cloak 0->2;
+  [record](changes/archive/windows-foreground-acceptance.md)). Next
   (7) mouse drag window move; (8) mouse drag drop-zone square (preview);
   (9) multi-output support; (10) taskbar item showing workspaces (design to be
   discussed with the user; no presentation mechanism selected); (11) settings
@@ -104,11 +99,6 @@ decisions of 2026-09-24 are under
   per-binding OS-conflict list with compatible/authentic quick-set presets,
   possibly offered on first run; [decision](decisions.md#cross-platform-behavior)).
   Provisional choices 2-6 accepted by the user (2026-10-03).
-- P0 | Windows send split axis | User dogfood (2026-10-03): Terminal sent
-  from workspace 2 into workspace 1 holding Notepad + Paint 50/50 side by
-  side split horizontally (`H[W1 W2 W3]` or `H[W1 H[W2 W3]]`) instead of on
-  the target's long edge (expected like `H[W1 V[W2 W3]]`). Default split is
-  long-edge based. Check against KDE/core admission and fix.
 - P0 | Windows gaming coexistence | User (2026-10-03): (a) authentic mode
   until settings exist: our bindings must not leak to OS shortcuts (Win+G
   opened Xbox Game Bar when the foreground was unmanaged, and Xbox mode was
