@@ -14,6 +14,7 @@ pub mod test_window;
 pub mod tiling;
 #[cfg(windows)]
 pub mod tiling_sys;
+pub mod win_mouse;
 pub mod winarrow;
 pub mod workspace;
 pub mod workspace_owner;

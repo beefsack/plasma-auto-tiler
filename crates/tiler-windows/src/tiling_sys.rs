@@ -84,6 +84,11 @@ use crate::tiling::{
     parse_workspace_request, readback_outcome, scope_allows, scope_exe_basename,
     should_hold_born_fullscreen, tick_summary_signature, tiling_domain_bounds,
 };
+use crate::win_mouse::sys::WinDragPublished;
+use crate::win_mouse::{
+    WINDRAG_MAX_DISPATCH_PER_TICK, WinDragEdge, WinDragKind, WinDragSnapshot, WinSettle,
+    settle_pointer_journey, validate_windrag_down,
+};
 use crate::workspace::ManagedWorkspaces;
 
 type DynError = Box<dyn std::error::Error>;
@@ -1055,6 +1060,43 @@ struct TileLoop {
     /// Chord-time origin snapshots for the keyboard callback, refreshed with
     /// every complete observation alongside `managed`.
     snap_origins: HashMap<u64, SnapOrigin>,
+    /// Tiled-only managed origins for the Win+Left mouse callback,
+    /// refreshed with every complete observation alongside `managed`.
+    /// Floating and sticky members are excluded so their Win+Left passes
+    /// through natively (titlebar-only); maximized/fullscreen members are
+    /// retained, never observed, so they never appear here either.
+    /// Each entry also carries the member lifetime tag read at publish
+    /// time, so the hook can snapshot it into the Down edge with no native
+    /// reads in the callback. Exactness stays with the per-edge owner
+    /// recheck.
+    windrag_origins: HashMap<u64, WinDragPublished>,
+    /// Settle producer per open gesture HWND: `"native"` for the
+    /// title-bar modal loop, `"windrag"` for the project-driven Win+Left
+    /// stationary hold. Absent entries settle as native. Cleared on
+    /// END-settle/removal like `gesture_before`.
+    gesture_producer: HashMap<u64, &'static str>,
+    /// Down-time pointer per open windrag gesture HWND, bound in the hook
+    /// callback at down time. Settle compares it against the callback-bound
+    /// release pointer (pointer delta, not rect delta: the real window
+    /// keeps its source allocation mid-gesture). Cleared on END-settle/
+    /// removal like `gesture_before`.
+    windrag_start_cursor: HashMap<u64, (i32, i32)>,
+    /// Validated Down-time bound snapshot per open windrag gesture HWND.
+    /// Stored at arm time after the snapshot matches fresh evidence; the
+    /// Up requires this entry (bound matching, never a rebind), and settle
+    /// consumes it alongside the START fence. Cleared on END-settle/
+    /// removal like `gesture_before`.
+    windrag_bound: HashMap<u64, WinDragSnapshot>,
+    /// Last published windrag-queue loss count, for explicit drop evidence.
+    windrag_dropped: u32,
+    /// Last logged tiled-origin count for the mouse hook, for change-only
+    /// `windrag-origins` evidence (proves the hook binds against a live
+    /// managed set without logging identity).
+    windrag_origin_logged: Option<usize>,
+    /// Last logged hook delivery counters, for change-only
+    /// `windrag-hook-stats` evidence splitting callback delivery from owner
+    /// validation.
+    windrag_stats_logged: (u64, u64, u64, u64),
     /// Verified own-focus continuation across bounded drains. Set only on an
     /// exact verified owner actuation (`focus-ok`); cleared on external
     /// focus, lifetime mismatch, suspension, or gesture. Lets a stale chord
@@ -1549,6 +1591,61 @@ fn publish_managed(
         .into_iter()
         .map(|origin| (origin.hwnd, origin))
         .collect();
+    // Tiled-only mouse origins: the keyboard map minus intentional floats
+    // and sticky members, so Win+Left on those passes through natively.
+    // Maximized/fullscreen members are retained (never observed), so they
+    // are absent by construction. Each entry carries the live member tag
+    // read here on the owner thread, so the hook snapshot needs no native
+    // reads in the callback.
+    let mut windrag: HashMap<u64, WinDragPublished> = HashMap::new();
+    for window in observed {
+        let origin = snap_origin_of(window);
+        let Some(key) = state
+            .member_tokens
+            .iter()
+            .find(|(_, token)| token.as_str() == window.token.as_str())
+            .map(|(key, _)| key.clone())
+        else {
+            continue;
+        };
+        if state.sticky.contains_key(&key) {
+            continue;
+        }
+        if let Some(loc) = state.workspaces.member_loc(&key)
+            && engine_is_float(state, &loc.output, &loc.workspace, &window.token)
+        {
+            continue;
+        }
+        windrag.insert(
+            origin.hwnd,
+            WinDragPublished {
+                origin,
+                tag: crate::product_hide::sys::read_member_tag(window.hwnd),
+            },
+        );
+    }
+    state.windrag_origins = windrag;
+    // Change-only hook-feed evidence: the callback binds against this many
+    // tiled origins (identity stays out of the log).
+    let origin_count = state.windrag_origins.len();
+    if state.windrag_origin_logged != Some(origin_count) {
+        state.windrag_origin_logged = Some(origin_count);
+        log_json_at(
+            &state.log_path,
+            serde_json::json!({"event":"windrag-origins","tick":state.tick,"count": origin_count}),
+        );
+    }
+    // Drop pre-gesture state for windows that left management, and disarm
+    // the hook slot for them so a stale bound down can never settle later.
+    for hwnd in state
+        .gesture_producer
+        .keys()
+        .copied()
+        .filter(|hwnd| !state.managed.contains(hwnd))
+        .collect::<Vec<_>>()
+    {
+        crate::win_mouse::sys::invalidate(hwnd);
+    }
     state
         .esc_latched
         .retain(|hwnd| state.managed.contains(hwnd));
@@ -1566,6 +1663,15 @@ fn publish_managed(
         .retain(|hwnd, _| state.managed.contains(hwnd));
     state
         .gesture_start_tag
+        .retain(|hwnd, _| state.managed.contains(hwnd));
+    state
+        .gesture_producer
+        .retain(|hwnd, _| state.managed.contains(hwnd));
+    state
+        .windrag_start_cursor
+        .retain(|hwnd, _| state.managed.contains(hwnd));
+    state
+        .windrag_bound
         .retain(|hwnd, _| state.managed.contains(hwnd));
 }
 
@@ -10339,6 +10445,195 @@ fn esc_edge_cancels(start_seq: u64, observed_seq: u64) -> bool {
     observed_seq != start_seq
 }
 
+/// Shared START capture for both gesture producers (native WinEvent and
+/// project Win+Left): the Esc-sequence snapshot, the PRE-gesture rectangle,
+/// and the START-time identity snapshot. PRE comes from the last stable
+/// observation, never from a mid-gesture frame; live `GetWindowRect` is the
+/// fallback only when `stable` has no entry. Probe failure leaves no
+/// snapshot and settle falls back to the stored-member check only.
+fn capture_gesture_start(state: &mut TileLoop, me: &ProcessIdentity, hwnd: u64, start_seq: u64) {
+    // Sequence-bound Esc coordination: the snapshot rode with the START
+    // event from callback time instead of being re-read here. Only edges
+    // with a newer sequence latch later, so a stale pre-gesture tap never
+    // cancels and a same-batch edge is ordered rather than discarded.
+    if let std::collections::hash_map::Entry::Vacant(e) = state.gesture_esc_seq.entry(hwnd) {
+        e.insert(start_seq);
+    }
+    if !state.gesture_before.contains_key(&hwnd) {
+        let pre = state
+            .stable
+            .get(&hwnd)
+            .copied()
+            .or_else(|| live_outer_rect(hwnd).or_else(|| state.stable.get(&hwnd).copied()));
+        if let Some(pre) = pre {
+            state.gesture_before.insert(hwnd, pre);
+        }
+    }
+    // START-time identity snapshot for the settle-time reuse fence: a
+    // same-process HWND reuse between START and END fails closed even when
+    // HWND/PID/creation still agree.
+    if let std::collections::hash_map::Entry::Vacant(e) = state.gesture_start_key.entry(hwnd) {
+        let probe = hwnd as isize as HWND;
+        if let Some(live) = window_identity(probe, hwnd, me) {
+            e.insert(crate::workspace::WindowKey {
+                hwnd,
+                pid: live.pid,
+                creation: live.process_creation.clone(),
+            });
+            // Member lifetime tag, not the owned-helper tag (empty for
+            // ordinary windows): the settle fence compares this against a
+            // fresh member read, exactly like the admission gate.
+            state
+                .gesture_start_tag
+                .insert(hwnd, crate::product_hide::sys::read_member_tag(hwnd));
+        }
+    }
+}
+
+/// One drained project Win+Left down edge: validate the callback-bound
+/// candidate against fresh evidence BEFORE any effect or focus, then arm
+/// the shared gesture maps so the hold pauses tiling and the release
+/// settles through the shared route. No geometry, no focus, no Engine call
+/// here. Returns the bound token when the gesture armed.
+///
+/// The callback snapshot (published origin plus member tag cloned at Down
+/// time) must still match the current published entry AND a fresh live
+/// probe on every field, closing the callback-to-drain HWND-reuse gap: a
+/// different-process reuse fails PID/creation, a same-process reuse fails
+/// the lifetime tag, and a retokened member fails the token. The validated
+/// snapshot is stored as the bound generation; the Up requires it and never
+/// rebinds.
+///
+/// A refused Down carries no identity: only the closed refusal reason
+/// enters the log, never HWNDs or tokens.
+fn windrag_down(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    edge: &WinDragEdge,
+) -> std::result::Result<String, &'static str> {
+    let hwnd = edge.hwnd;
+    let Some(snapshot) = edge.snapshot.as_ref() else {
+        return Err("no-snapshot");
+    };
+    // Tiled-only published origins plus current management: floating,
+    // sticky, unmanaged, and unknown subjects never arm (their Win+Left
+    // passed through natively hook-side).
+    if !state.managed.contains(&hwnd) {
+        return Err("unmanaged");
+    }
+    let Some(published) = state.windrag_origins.get(&hwnd) else {
+        return Err("unknown-subject");
+    };
+    if state.active.contains(&hwnd)
+        || state.gesture_before.contains_key(&hwnd)
+        || state.windrag_bound.contains_key(&hwnd)
+    {
+        return Err("busy");
+    }
+    // Fresh live evidence on the owner thread: the snapshot must still
+    // match the live window, not just the last publish.
+    let probe = hwnd as isize as HWND;
+    let Some(live) = window_identity(probe, hwnd, me) else {
+        return Err("identity-changed");
+    };
+    let live_tag = crate::product_hide::sys::read_member_tag(hwnd);
+    if !validate_windrag_down(
+        snapshot,
+        &published.origin,
+        &published.tag,
+        live.pid,
+        &live.process_creation,
+        &live_tag,
+    ) {
+        return Err("stale-snapshot");
+    }
+    // The snapshot token must still name this exact live member.
+    let live_key = crate::workspace::WindowKey {
+        hwnd,
+        pid: live.pid,
+        creation: live.process_creation.clone(),
+    };
+    if state
+        .member_tokens
+        .get(&live_key)
+        .is_none_or(|token| token != &snapshot.origin.token)
+    {
+        return Err("no-token");
+    }
+    capture_gesture_start(state, me, hwnd, edge.esc_seq);
+    if !state.gesture_before.contains_key(&hwnd) {
+        // No PRE frame (not stable and unreadable live): fail closed with
+        // no arm rather than settling without a source allocation.
+        state.gesture_esc_seq.remove(&hwnd);
+        state.gesture_start_key.remove(&hwnd);
+        state.gesture_start_tag.remove(&hwnd);
+        return Err("no-pre");
+    }
+    state.gesture_producer.insert(hwnd, "windrag");
+    state.windrag_start_cursor.insert(hwnd, (edge.x, edge.y));
+    state.windrag_bound.insert(hwnd, snapshot.clone());
+    // A/B move arm: the project hold classifies as a move, so a focused
+    // Win+Left hold reveals the projected group underlay while held (no
+    // stage C, no unfocused Engine focus substitution). Cleaned on
+    // Up/cancel/suspend/settle like every other gesture map.
+    state.move_kind.insert(hwnd, MoveSizeKind::Move);
+    state.active.insert(hwnd);
+    Ok(snapshot.origin.token.clone())
+}
+
+/// One drained project Win+Left up edge: carry the callback-bound release
+/// pointer to settle and close the hold. Requires the bound generation
+/// stored at arm time, so a stray or replayed Up can never rebind or
+/// settle a gesture it did not close. The shared `ended` computation below
+/// settles it through `gesture_tick` on this same pump.
+fn windrag_up(state: &mut TileLoop, hwnd: u64, x: i32, y: i32, esc_seq: u64) {
+    if !state.windrag_bound.contains_key(&hwnd) {
+        return;
+    }
+    if state.gesture_producer.get(&hwnd).copied() != Some("windrag") {
+        return;
+    }
+    if !state.active.contains(&hwnd) {
+        return;
+    }
+    state.gesture_end_cursor.insert(hwnd, (x, y));
+    if let std::collections::hash_map::Entry::Vacant(e) = state.gesture_end_seq.entry(hwnd) {
+        e.insert(esc_seq);
+    }
+    state.active.remove(&hwnd);
+    state.move_kind.remove(&hwnd);
+}
+
+/// Clear every project-gesture map for one HWND (owner-side Cancel): the
+/// hook already disarmed and queued this edge, so the paired Up stays
+/// swallowed hook-side while the owner drops the gesture with no plan and
+/// no geometry change. Native gestures on the same HWND are untouched:
+/// only entries produced by a validated windrag arm are removed.
+fn clear_windrag_gesture(state: &mut TileLoop, hwnd: u64) -> Option<String> {
+    if state.gesture_producer.get(&hwnd).copied() != Some("windrag")
+        && !state.windrag_bound.contains_key(&hwnd)
+    {
+        return None;
+    }
+    let token = state
+        .windrag_bound
+        .get(&hwnd)
+        .map(|bound| bound.origin.token.clone());
+    state.active.remove(&hwnd);
+    state.gesture_before.remove(&hwnd);
+    state.gesture_end_cursor.remove(&hwnd);
+    state.gesture_start_key.remove(&hwnd);
+    state.gesture_start_tag.remove(&hwnd);
+    state.gesture_esc_seq.remove(&hwnd);
+    state.gesture_end_seq.remove(&hwnd);
+    state.esc_latched.remove(&hwnd);
+    state.gesture_producer.remove(&hwnd);
+    state.windrag_start_cursor.remove(&hwnd);
+    state.windrag_bound.remove(&hwnd);
+    state.move_kind.remove(&hwnd);
+    token
+}
+
 fn gesture_tick(
     state: &mut TileLoop,
     me: &ProcessIdentity,
@@ -10363,14 +10658,17 @@ fn gesture_tick(
     clear_maximize_at_admission(state, me, &retained);
     let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
     for hwnd in ended {
-        // Title-bar-only slice: every completed move arrives via the native
-        // title-bar modal loop, so the settle producer is always `native`.
-        let producer = "native";
+        // Settle producer travels with the gesture: `native` for the
+        // title-bar modal loop, `windrag` for the project-driven Win+Left
+        // stationary hold. Absent entries settle as native.
+        let producer = state.gesture_producer.remove(hwnd).unwrap_or("native");
         // Per-gesture START snapshot and END cursor travel with the gesture:
         // remove them here so each END settles exactly once.
         let start_key = state.gesture_start_key.remove(hwnd);
         let start_tag = state.gesture_start_tag.remove(hwnd);
         let end_cursor = state.gesture_end_cursor.remove(hwnd);
+        let start_cursor = state.windrag_start_cursor.remove(hwnd);
+        state.windrag_bound.remove(hwnd);
         state.gesture_esc_seq.remove(hwnd);
         state.gesture_end_seq.remove(hwnd);
         // Explicit Esc cancellation first: a cancelled native move restores
@@ -10500,27 +10798,73 @@ fn gesture_tick(
         // Release cursor carried from the MOVESIZEEND event callback, never
         // re-read later: an END without a captured cursor routes as no-change
         // for moves (cursor-less), while resizes classify from geometry
-        // alone.
-        let cursor = end_cursor;
-        let Some(intent) = classify_gesture(&before, &current.visible, cursor) else {
-            // Zero movement (or a cursor-less move): nothing to route.
-            // Reconcile once so any native nudge is reasserted to the
-            // Engine allocation; topology unchanged.
-            log_json_at(
-                &log_path,
-                serde_json::json!({
-                    "event": "gesture",
-                    "tick": state.tick,
-                    "op": "gesture",
-                    "disposition": "observed",
-                    "outcome": "gesture-no-change",
-                    "window": current.token,
-                    "producer": producer,
-                }),
-            );
-            let fulls_owned = fulls.to_vec();
-            reconcile_tick(state, me, &fulls_owned, areas);
-            continue;
+        // alone. The project Win+Left hold bypasses rect classification
+        // entirely: its frames stay at source by design, so the tracked
+        // POINTER journey (down point versus callback-bound release point)
+        // decides, through the same Engine drop route below.
+        let intent = if producer == "windrag" {
+            let (Some(start), Some(end)) = (start_cursor, end_cursor) else {
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": "gesture",
+                        "tick": state.tick,
+                        "op": "gesture",
+                        "disposition": "observed",
+                        "outcome": "gesture-no-change",
+                        "window": current.token,
+                        "producer": producer,
+                    }),
+                );
+                let fulls_owned = fulls.to_vec();
+                reconcile_tick(state, me, &fulls_owned, areas);
+                continue;
+            };
+            match settle_pointer_journey(start.0, start.1, end.0, end.1, false) {
+                WinSettle::Cancelled | WinSettle::NoChange => {
+                    // Esc reaches here only via the latch above; a zero
+                    // pointer journey makes no plan and changes no geometry.
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "gesture",
+                            "tick": state.tick,
+                            "op": "gesture",
+                            "disposition": "observed",
+                            "outcome": "gesture-no-change",
+                            "window": current.token,
+                            "producer": producer,
+                        }),
+                    );
+                    let fulls_owned = fulls.to_vec();
+                    reconcile_tick(state, me, &fulls_owned, areas);
+                    continue;
+                }
+                WinSettle::Drop { x, y } => GestureIntent::MoveDrop { x, y },
+            }
+        } else {
+            let cursor = end_cursor;
+            let Some(classified) = classify_gesture(&before, &current.visible, cursor) else {
+                // Zero movement (or a cursor-less move): nothing to route.
+                // Reconcile once so any native nudge is reasserted to the
+                // Engine allocation; topology unchanged.
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": "gesture",
+                        "tick": state.tick,
+                        "op": "gesture",
+                        "disposition": "observed",
+                        "outcome": "gesture-no-change",
+                        "window": current.token,
+                        "producer": producer,
+                    }),
+                );
+                let fulls_owned = fulls.to_vec();
+                reconcile_tick(state, me, &fulls_owned, areas);
+                continue;
+            };
+            classified
         };
         // The gesture window's own (output, workspace) session owns this
         // settle: same per-workspace routing as directional chords.
@@ -10610,6 +10954,46 @@ fn gesture_tick(
             let fulls_owned = fulls.to_vec();
             reconcile_tick(state, me, &fulls_owned, areas);
             continue;
+        }
+        // Project-driven Win+Left focus binding (KDE mover parity): the
+        // gesture owns the mover even when native focus lags (unfocused
+        // Win+Left starts without focusing). The Engine binds logical focus
+        // to the mover itself, but the native foreground needs the existing
+        // safe focus authority (E8-prime plus attach plus one setter with an
+        // exact readback; never the underlay `focused_window` value). Every
+        // gate above (START identity/lifetime fence, member match,
+        // sticky/float refusal, domain routing, same-output fence) passed
+        // before this effect. A failed actuation refuses with snap-back and
+        // no plan instead of dropping under a diverged foreground.
+        if producer == "windrag" {
+            let actuation = actuate_focus(state, me, fulls, &observed, &retained, &current.token);
+            if actuation.outcome != "focus-ok" {
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": "gesture",
+                        "tick": state.tick,
+                        "op": "gesture",
+                        "disposition": "refused",
+                        "outcome": "gesture-refused-focus",
+                        "window": current.token,
+                        "producer": producer,
+                    }),
+                );
+                let fulls_owned = fulls.to_vec();
+                reconcile_tick(state, me, &fulls_owned, areas);
+                continue;
+            }
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "windrag-focus",
+                    "tick": state.tick,
+                    "outcome": "focus-ok",
+                    "window": current.token,
+                    "producer": producer,
+                }),
+            );
         }
         state.tick += 1;
         let correlation = state.correlation();
@@ -10761,6 +11145,9 @@ fn gesture_tick(
     state.gesture_end_cursor.clear();
     state.gesture_start_key.clear();
     state.gesture_start_tag.clear();
+    state.gesture_producer.clear();
+    state.windrag_start_cursor.clear();
+    state.windrag_bound.clear();
 }
 
 /// Native foreground veto read: one fresh pass over the live foreground with
@@ -11144,6 +11531,13 @@ fn run_tile_loop(
         mask_sends: 0,
         mask_send_max_us: 0,
         snap_origins: HashMap::new(),
+        windrag_origins: HashMap::new(),
+        gesture_producer: HashMap::new(),
+        windrag_start_cursor: HashMap::new(),
+        windrag_bound: HashMap::new(),
+        windrag_dropped: 0,
+        windrag_origin_logged: None,
+        windrag_stats_logged: (0, 0, 0, 0),
         snap_advance: None,
         last_enumerated: 0,
         workspaces: ManagedWorkspaces::new(),
@@ -11287,6 +11681,27 @@ fn run_tile_loop(
     let mut snap_hook = None;
     let mut snap_failures: u32 = 0;
     let mut snap_retry_at: Option<Instant> = None;
+    // Project Win+Left hook on the loop thread, same pump as the keyboard
+    // hook. Installed once when takeover holds; install failure degrades
+    // to title-bar-only movement (Win+Left passes through natively) while
+    // tiling continues, never a refused run.
+    let windrag_hook = if takeover {
+        match crate::win_mouse::sys::install() {
+            Ok(hook) => {
+                log_json_at(&log_path, serde_json::json!({"event":"windrag-available"}));
+                Some(hook)
+            }
+            Err(message) => {
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({"event":"windrag-unavailable","cause": message}),
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
     let deadline = seconds.map(|s| Instant::now() + Duration::from_secs(s));
     let mut slow_last = Instant::now();
     let result = (|| -> Result<()> {
@@ -11353,56 +11768,11 @@ fn run_tile_loop(
                         }
                         woke = true;
                         let hwnd = raw as u64;
-                        // Sequence-bound Esc coordination: the snapshot rode with
-                        // the START event from callback time instead of being
-                        // re-read here. Only edges with a newer sequence latch
-                        // later, so a stale pre-gesture tap never cancels and
-                        // a same-batch edge is ordered rather than discarded.
-                        // The single post-loop drain below latches edges for
+                        // Shared START capture (Esc snapshot, PRE frame,
+                        // identity fence); see `capture_gesture_start`. The
+                        // single post-loop drain below latches edges for
                         // both held and just-ended gestures.
-                        if let std::collections::hash_map::Entry::Vacant(e) =
-                            state.gesture_esc_seq.entry(hwnd)
-                        {
-                            e.insert(start_seq);
-                        }
-                        // PRE-gesture from the last stable observation, never
-                        // from a mid-gesture frame. Live fallback only when
-                        // stable has no entry (admitted between ticks); a
-                        // quick START+END in one batch still sees the pre
-                        // frame because stable predates both events.
-                        if !state.gesture_before.contains_key(&hwnd) {
-                            let pre = state.stable.get(&hwnd).copied().or_else(|| {
-                                live_outer_rect(hwnd).or_else(|| state.stable.get(&hwnd).copied())
-                            });
-                            if let Some(pre) = pre {
-                                state.gesture_before.insert(hwnd, pre);
-                            }
-                        }
-                        // START-time identity snapshot for the settle-time
-                        // reuse fence: a same-process HWND reuse between
-                        // START and END fails closed even when HWND/PID/
-                        // creation still agree. Probe failure leaves no
-                        // snapshot and settle falls back to the stored-member
-                        // check only.
-                        if let std::collections::hash_map::Entry::Vacant(e) =
-                            state.gesture_start_key.entry(hwnd)
-                        {
-                            let probe = hwnd as isize as HWND;
-                            if let Some(live) = window_identity(probe, hwnd, me) {
-                                e.insert(crate::workspace::WindowKey {
-                                    hwnd,
-                                    pid: live.pid,
-                                    creation: live.process_creation.clone(),
-                                });
-                                // Member lifetime tag, not the owned-helper
-                                // tag (empty for ordinary windows): the settle
-                                // fence compares this against a fresh member
-                                // read, exactly like the admission gate.
-                                state
-                                    .gesture_start_tag
-                                    .insert(hwnd, crate::product_hide::sys::read_member_tag(hwnd));
-                            }
-                        }
+                        capture_gesture_start(&mut state, me, hwnd, start_seq);
                         state.active.insert(hwnd);
                         // Move-vs-resize classification, sampled once at START
                         // (the WinEvent itself does not distinguish). Hung or
@@ -11527,6 +11897,110 @@ fn run_tile_loop(
                 woke = true;
             }
             let snap_events = directional_events;
+            // Project Win+Left edges ride the same pump and gate: the hook
+            // consumes downs/ups only while takeover holds, and every bound
+            // candidate revalidates against the last complete observation in
+            // `windrag_down` before anything arms. Downs pause tiling through
+            // the shared `active` set (frames stay at source: no mid-gesture
+            // writes); ups feed the shared `ended` settle below.
+            if windrag_hook.is_some() {
+                crate::win_mouse::sys::publish(&state.windrag_origins, snap_gate_active);
+                let stats = crate::win_mouse::sys::hook_stats();
+                if stats != state.windrag_stats_logged {
+                    state.windrag_stats_logged = stats;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "windrag-hook-stats",
+                            "tick": state.tick,
+                            "downs_seen": stats.0,
+                            "downs_consumed": stats.1,
+                            "ups_seen": stats.2,
+                            "ups_consumed": stats.3,
+                        }),
+                    );
+                }
+                let edges = crate::win_mouse::sys::drain_up_to(WINDRAG_MAX_DISPATCH_PER_TICK);
+                if !edges.is_empty() {
+                    woke = true;
+                }
+                let dropped = crate::win_mouse::sys::queue_dropped();
+                if dropped > state.windrag_dropped {
+                    let lost = dropped - state.windrag_dropped;
+                    state.windrag_dropped = dropped;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({"event":"windrag-drop","lost": lost}),
+                    );
+                    // A lost edge may have carried a Down whose gesture is
+                    // open or an Up that would have closed one: discard every
+                    // affected open project gesture rather than risk a
+                    // stranded hold or a journey without its close. The hook
+                    // is disarmed for them; their paired Ups stay swallowed.
+                    if !state.windrag_bound.is_empty() {
+                        let open: Vec<u64> = state.windrag_bound.keys().copied().collect();
+                        for hwnd in open {
+                            clear_windrag_gesture(&mut state, hwnd);
+                            crate::win_mouse::sys::invalidate(hwnd);
+                        }
+                        log_json_at(
+                            &log_path,
+                            serde_json::json!({"event":"windrag-drop-loss","cleared": true}),
+                        );
+                        let fulls_owned = fulls.to_vec();
+                        reconcile_tick(&mut state, me, &fulls_owned, &areas);
+                    }
+                }
+                for edge in edges {
+                    match edge.kind {
+                        WinDragKind::Down => match windrag_down(&mut state, me, &edge) {
+                            Ok(token) => {
+                                log_json_at(
+                                    &log_path,
+                                    serde_json::json!({
+                                        "event": "windrag-down",
+                                        "tick": state.tick,
+                                        "window": token,
+                                        "producer": "windrag",
+                                    }),
+                                );
+                            }
+                            Err(reason) => {
+                                log_json_at(
+                                    &log_path,
+                                    serde_json::json!({
+                                        "event": "windrag-down-refused",
+                                        "tick": state.tick,
+                                        "reason": reason,
+                                        "producer": "windrag",
+                                    }),
+                                );
+                            }
+                        },
+                        WinDragKind::Up => {
+                            windrag_up(&mut state, edge.hwnd, edge.x, edge.y, edge.esc_seq);
+                        }
+                        WinDragKind::Cancel => {
+                            // Hook-side disarm after a consumed Down: drop
+                            // the owner gesture with no plan and no geometry
+                            // change. The paired Up stays swallowed
+                            // hook-side; native gestures are untouched.
+                            if let Some(token) = clear_windrag_gesture(&mut state, edge.hwnd) {
+                                log_json_at(
+                                    &log_path,
+                                    serde_json::json!({
+                                        "event": "windrag-cancel",
+                                        "tick": state.tick,
+                                        "outcome": "gesture-no-change",
+                                        "window": token,
+                                        "producer": "windrag",
+                                    }),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             // Proof-only callback diagnostics for shortcut-proof: accepted
             // marked events as the callback saw them, drained to the proof
             // audit (never production logs) so live runs can distinguish
@@ -11745,8 +12219,15 @@ fn run_tile_loop(
                 state.gesture_end_cursor.clear();
                 state.gesture_start_key.clear();
                 state.gesture_start_tag.clear();
+                state.gesture_producer.clear();
+                state.windrag_start_cursor.clear();
+                state.windrag_bound.clear();
                 // A stale Esc edge must not leak into the next gesture.
                 crate::snapkey::sys::clear_esc_edge();
+                // A suspended session disarms the project hold with no
+                // replay; the consumed click already passed, so no half
+                // gesture can strand later.
+                crate::win_mouse::sys::clear_armed();
                 hide_border(&mut state, "suspended");
                 hide_underlay(&mut state, "suspended");
                 continue;
@@ -11804,6 +12285,15 @@ fn run_tile_loop(
             state
                 .gesture_end_seq
                 .retain(|hwnd, _| state.managed.contains(hwnd));
+            state
+                .gesture_producer
+                .retain(|hwnd, _| state.managed.contains(hwnd));
+            state
+                .windrag_start_cursor
+                .retain(|hwnd, _| state.managed.contains(hwnd));
+            state
+                .windrag_bound
+                .retain(|hwnd, _| state.managed.contains(hwnd));
             state.active.retain(|hwnd| state.managed.contains(hwnd));
             // Sequence-bound Esc latch, drained once per pump after event and
             // suspend handling. Still-held gestures compare the live counter
@@ -11814,9 +12304,11 @@ fn run_tile_loop(
             // latches. Only edges newer than the START snapshot latch, so
             // pre-gesture taps never cancel. Fast taps arrive via the prompt
             // callback, never via level polling. Injected Esc never sets the
-            // edge (product hook filters injected keys), so synthetic proof
-            // paths keep their no-change restore without claiming an explicit
-            // cancel.
+            // native edge (product hook filters injected keys), so synthetic
+            // title-bar proof paths keep their no-change restore without
+            // claiming an explicit cancel; the project windrag edge below is
+            // the one deliberate injected exception (the stationary hold has
+            // no native modal loop to cancel it).
             {
                 let esc_hit = crate::snapkey::sys::take_esc_edge();
                 if esc_hit {
@@ -11837,6 +12329,43 @@ fn run_tile_loop(
                         // END-bound: absent snapshots never latch (fail
                         // closed to no-cancel; settle classifies from
                         // geometry, which a real cancel restored natively).
+                        let (Some(start_seq), Some(end_seq)) = (
+                            state.gesture_esc_seq.get(hwnd).copied(),
+                            state.gesture_end_seq.get(hwnd).copied(),
+                        ) else {
+                            continue;
+                        };
+                        if esc_edge_cancels(start_seq, end_seq) {
+                            state.esc_latched.insert(*hwnd);
+                        }
+                    }
+                }
+                // Project-gesture cancel edge (physical or injected Esc):
+                // latches open windrag gestures only, with the same
+                // START/END sequence ordering. Never admits a command;
+                // settle reports the explicit `gesture-cancelled-esc`.
+                let windrag_hit = crate::snapkey::sys::take_windrag_esc_edge();
+                if windrag_hit {
+                    let now_seq = crate::snapkey::sys::windrag_esc_seq();
+                    for hwnd in state.active.iter() {
+                        if !state.managed.contains(hwnd) {
+                            continue;
+                        }
+                        if state.gesture_producer.get(hwnd).copied() != Some("windrag") {
+                            continue;
+                        }
+                        let start_seq = state.gesture_esc_seq.get(hwnd).copied().unwrap_or(0);
+                        if esc_edge_cancels(start_seq, now_seq) {
+                            state.esc_latched.insert(*hwnd);
+                        }
+                    }
+                    for hwnd in ended.iter() {
+                        if !state.managed.contains(hwnd) {
+                            continue;
+                        }
+                        if state.gesture_producer.get(hwnd).copied() != Some("windrag") {
+                            continue;
+                        }
                         let (Some(start_seq), Some(end_seq)) = (
                             state.gesture_esc_seq.get(hwnd).copied(),
                             state.gesture_end_seq.get(hwnd).copied(),
@@ -11949,6 +12478,14 @@ fn run_tile_loop(
         // case, but success is recorded, never fabricated.
         let ok = crate::snapkey::sys::uninstall(&mut snap);
         let mut release = serde_json::json!({"event":"snap-release","ok": ok});
+        if !ok {
+            release["note"] = serde_json::json!("release failed; process exit releases the hook");
+        }
+        log_json_at(&log_path, release);
+    }
+    if let Some(mut mouse) = windrag_hook {
+        let ok = crate::win_mouse::sys::uninstall(&mut mouse);
+        let mut release = serde_json::json!({"event":"windrag-release","ok": ok});
         if !ok {
             release["note"] = serde_json::json!("release failed; process exit releases the hook");
         }

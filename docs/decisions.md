@@ -542,6 +542,16 @@ the corresponding item ships; each such entry names its replacement.
   initiation experiments select no product behavior. Investigate one bounded
   project-driven Win+left movement path using the existing input and identity
   gates and shared Engine drop geometry; retain KDE binding/placement parity.
+- Provisional, to discuss: the project-driven Win+left tiled gesture keeps the
+  real window at its source allocation while tracking the pointer; release
+  places through the shared Engine, and item 8 supplies the moving target-slot
+  preview. Native title-bar movement still follows the pointer. This selects
+  no native-loop injection or floating-window modifier-move implementation.
+- Provisional, to discuss: an unfocused Windows project-drag subject keeps the
+  current native foreground during the stationary hold and activates through
+  existing identity-gated focus authority on a valid drop. Focused gestures feed
+  the movement underlay A/B arm; distinct unfocused-subject underlay C remains
+  parked. The exact KDE focus-timing comparison remains user-testable.
 
 ### Windows maximise
 

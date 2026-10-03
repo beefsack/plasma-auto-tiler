@@ -417,7 +417,10 @@ impl Classified {
 
 /// Which chord armed the Start-menu mask. Digits, maximize, fullscreen, and
 /// float arm it exactly like directional chords: any consumed chord in the Win
-/// hold needs the E8 pair at Win-up, or the OS opens Start.
+/// hold needs the E8 pair at Win-up, or the OS opens Start. `WinDrag` arms it
+/// for the project-driven Win+Left stationary gesture (parity item 7 second
+/// unit): the mouse hook consumes the click, so the keyboard classifier never
+/// sees a chord, but the Win hold still needs the same mask at release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaskTrigger {
     Snap { op: SnapOp, direction: Direction },
@@ -426,6 +429,7 @@ pub enum MaskTrigger {
     Fullscreen,
     Float,
     Sticky,
+    WinDrag,
 }
 
 /// Pure product chord classifier. Tracks both Win keys plus the Shift family
@@ -557,6 +561,25 @@ impl SnapClassify {
         self.gate_active = gate_active;
     }
 
+    /// Arm the Start-menu mask for a consumed project Win+Left gesture. The
+    /// mouse hook consumes the click so no keyboard chord ever lands, but a
+    /// physical Win hold still needs the E8 pair at Win-up or the OS opens
+    /// Start. Idempotent per hold: a second call keeps the first trigger.
+    /// NOOP absent tracked physical Win held: a synthetic Win hold never
+    /// enters classifier tracking (injected input is filtered), so arming
+    /// for it would persist pending and wrongly mask the next bare physical
+    /// Win tap. The existing Win-up reserve fires it once per hold and the
+    /// both-Wins terminal clears it, so no stale flag survives the hold.
+    pub fn note_windrag_consumed(&mut self) {
+        if !(self.win_l || self.win_r) {
+            return;
+        }
+        if self.mask_trigger.is_none() {
+            self.mask_trigger = Some(MaskTrigger::WinDrag);
+        }
+        self.mask_pending = true;
+    }
+
     /// Tracked modifier state for the callback's preheld check
     /// `(ctrl, alt, shift)`. A physically held Ctrl/Alt the classifier never
     /// saw (held before install, or injected past the callback guard) forces
@@ -638,6 +661,14 @@ impl SnapClassify {
         } else {
             None
         };
+        // A project Win+Left hold masks only at the terminal release: with
+        // both Win sides genuinely held, the first Win-up keeps the hold
+        // masked-pending instead of firing into a still-held Win (which
+        // would leave the second release unmasked). Catalog chord triggers
+        // keep the existing first-up policy; only WinDrag waits.
+        if trigger == Some(MaskTrigger::WinDrag) && (self.win_l || self.win_r) {
+            return None;
+        }
         if trigger.is_some() {
             self.mask_pending = false;
             self.hold_masked = true;
@@ -1373,6 +1404,90 @@ mod shift_sync_tests {
             .expect("paired up");
         assert_eq!(up.op, SnapOp::Focus);
         assert!(up.consumed);
+    }
+}
+
+#[cfg(test)]
+mod windrag_mask_tests {
+    use super::{KeyboardConfig, MaskTrigger, SnapClassify, VK_LWIN, VK_RWIN};
+
+    fn enabled() -> KeyboardConfig {
+        KeyboardConfig {
+            takeover: true,
+            allow_win_l: true,
+        }
+    }
+
+    #[test]
+    fn windrag_arms_mask_once_and_both_win_terminal_clears() {
+        let mut m = SnapClassify::new(enabled());
+        SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+        m.note_windrag_consumed();
+        m.note_windrag_consumed();
+        let first = m.win_up_needs_mask(VK_LWIN, true);
+        assert_eq!(first, Some(MaskTrigger::WinDrag));
+        // A fresh hold arms and fires exactly once; a stale extra Win-up
+        // after the both-Wins terminal cleared the hold never re-fires.
+        SnapClassify::push(&mut m, VK_RWIN, false, true, false);
+        m.note_windrag_consumed();
+        let _ = m.win_up_needs_mask(VK_RWIN, true);
+        let second = m.win_up_needs_mask(VK_LWIN, true);
+        assert_eq!(second, None);
+    }
+
+    #[test]
+    fn windrag_mask_state_only_path_leaves_no_stale_flag() {
+        // State-only path (installed=false, e.g. synthetic Win traffic the
+        // callback filtered) updates bookkeeping without arming a send, and
+        // the both-Wins-up terminal clears any pending flag.
+        let mut m = SnapClassify::new(enabled());
+        SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+        m.note_windrag_consumed();
+        let _ = m.win_up_needs_mask(VK_LWIN, false);
+        let again = m.win_up_needs_mask(VK_LWIN, false);
+        assert_eq!(again, None);
+    }
+
+    #[test]
+    fn injected_win_never_arms_mask() {
+        // Injected input returns None before any bookkeeping: a synthetic
+        // Win hold leaves no mask obligation, so a later physical Win-up
+        // sends no product mask for it.
+        let mut m = SnapClassify::new(enabled());
+        let out = SnapClassify::push(&mut m, VK_LWIN, false, true, true);
+        assert_eq!(out, None);
+        let fire = m.win_up_needs_mask(VK_LWIN, true);
+        assert_eq!(fire, None);
+    }
+
+    #[test]
+    fn synthetic_note_cannot_corrupt_next_bare_physical_win() {
+        // A synthetic mouse gesture notes while no physical Win is tracked:
+        // the note must NOOP, so the next bare physical Win tap opens Start
+        // normally with no product mask.
+        let mut m = SnapClassify::new(enabled());
+        m.note_windrag_consumed();
+        SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+        let fire = m.win_up_needs_mask(VK_LWIN, true);
+        assert_eq!(fire, None);
+    }
+
+    #[test]
+    fn windrag_mask_waits_for_both_tracked_wins_up() {
+        // Genuinely simultaneous both-Win hold: the first Win-up must not
+        // fire while the other side is still tracked held; the terminal
+        // release fires exactly once, then the hold is clean.
+        let mut m = SnapClassify::new(enabled());
+        SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+        SnapClassify::push(&mut m, VK_RWIN, false, true, false);
+        m.note_windrag_consumed();
+        assert_eq!(m.win_up_needs_mask(VK_LWIN, true), None);
+        assert_eq!(
+            m.win_up_needs_mask(VK_RWIN, true),
+            Some(MaskTrigger::WinDrag)
+        );
+        assert_eq!(m.win_up_needs_mask(VK_LWIN, true), None);
+        assert_eq!(m.win_up_needs_mask(VK_RWIN, true), None);
     }
 }
 
@@ -2262,6 +2377,22 @@ pub mod sys {
         /// `esc_edge`. Never reset by take/clear so START snapshots stay
         /// ordered across pumps.
         esc_seq: u64,
+        /// Project-gesture cancel edge for an open Win+Left drag: set on
+        /// EVERY Esc down (physical or injected, marked or unmarked),
+        /// pass-through always, never consumed, never a command, never
+        /// classifier state. The product hook filters injected keys from
+        /// all commands; this edge is the one deliberate exception so a
+        /// synthetic SendInput Esc still cancels the pointer-tracked
+        /// project journey (there is no native modal loop to cancel it, so
+        /// without this the synthetic proof could never cancel). A physical
+        /// Esc sets both this and the native `esc_edge`; a synthetic Esc
+        /// sets only this. The owner latches it per open windrag gesture
+        /// whose START sequence predates the edge, exactly like the native
+        /// path. Hookless runs never set it.
+        windrag_esc_edge: bool,
+        /// Monotonic sequence of all Esc down edges (physical plus
+        /// injected) backing the windrag cancel edge. Never reset.
+        windrag_esc_seq: u64,
     }
 
     thread_local! {
@@ -2339,6 +2470,49 @@ pub mod sys {
     /// installed.
     pub fn esc_seq() -> u64 {
         SNAP.with(|s| s.borrow().as_ref().map(|st| st.esc_seq).unwrap_or(0))
+    }
+
+    /// Owner drain for the project-gesture cancel edge: consume-once, true
+    /// when any Esc down (physical or injected) arrived since the last take.
+    /// The owner latches it per open windrag gesture whose down-time
+    /// sequence predates the edge. Always false when the hook is not
+    /// installed. The sequence counter is never reset here; compare with
+    /// [`windrag_esc_seq`].
+    pub fn take_windrag_esc_edge() -> bool {
+        SNAP.with(|s| {
+            let mut borrow = s.borrow_mut();
+            match borrow.as_mut() {
+                Some(st) => std::mem::replace(&mut st.windrag_esc_edge, false),
+                None => false,
+            }
+        })
+    }
+
+    /// Monotonic sequence of all Esc down edges (physical plus injected).
+    /// The owner snapshots this at each windrag down and latches only edges
+    /// with a newer sequence. Zero when the hook is not installed.
+    pub fn windrag_esc_seq() -> u64 {
+        SNAP.with(|s| {
+            s.borrow()
+                .as_ref()
+                .map(|st| st.windrag_esc_seq)
+                .unwrap_or(0)
+        })
+    }
+
+    /// Arm the Start-menu mask for a consumed project Win+Left gesture.
+    /// Called by the mouse hook on the same thread after it consumes a
+    /// Win+Left down: the physical Win hold still needs the E8 pair at
+    /// Win-up. No-op when the keyboard hook is not installed. Injected
+    /// Win-ups never reach the reserve (the callback filters injected
+    /// input), so a synthetic hold never sends the product mask and leaves
+    /// no stale flag: the classifier never saw the synthetic Win at all.
+    pub fn arm_windrag_mask() {
+        SNAP.with(|s| {
+            if let Some(st) = s.borrow_mut().as_mut() {
+                st.machine.note_windrag_consumed();
+            }
+        });
     }
 
     /// Bind the chord-time origin: the managed identity under the foreground
@@ -2472,6 +2646,22 @@ pub mod sys {
                             });
                         });
                     }
+                    // Project-gesture cancel edge: an injected Esc down still
+                    // cancels an open Win+Left drag even though injected keys
+                    // never become commands. Pass-through always, never
+                    // consumed, never classifier state, never a log: the
+                    // owner latches it per open windrag gesture only. This
+                    // is the one deliberate injected exception (the native
+                    // modal loop cancels synthetics natively, but the
+                    // stationary project hold has no modal loop).
+                    if vk == super::VK_ESCAPE && flags & LLKHF_UP == 0 {
+                        SNAP.with(|s| {
+                            if let Some(st) = s.borrow_mut().as_mut() {
+                                st.windrag_esc_edge = true;
+                                st.windrag_esc_seq = st.windrag_esc_seq.wrapping_add(1);
+                            }
+                        });
+                    }
                     return unsafe { CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam) };
                 }
             }
@@ -2488,12 +2678,16 @@ pub mod sys {
             // logged, never set from injected or proof-marked input. The
             // owner snapshots the sequence at START and latches only newer
             // edges; hookless paths never set it so their semantics are
-            // unchanged.
+            // unchanged. A physical Esc down additionally sets the
+            // project-gesture cancel edge below so open Win+Left drags
+            // cancel through the same keypress.
             if !marked && !is_up && vk == super::VK_ESCAPE {
                 SNAP.with(|s| {
                     if let Some(st) = s.borrow_mut().as_mut() {
                         st.esc_edge = true;
                         st.esc_seq = st.esc_seq.wrapping_add(1);
+                        st.windrag_esc_edge = true;
+                        st.windrag_esc_seq = st.windrag_esc_seq.wrapping_add(1);
                     }
                 });
             }
@@ -2915,6 +3109,9 @@ pub mod sys {
             super::MaskTrigger::Sticky => serde_json::json!({
                 "trigger_op": "sticky",
             }),
+            super::MaskTrigger::WinDrag => serde_json::json!({
+                "trigger_op": "windrag",
+            }),
         };
         value["inserted"] = serde_json::Value::from(mask.inserted);
         value["release_sent"] = serde_json::Value::from(mask.release_sent);
@@ -2941,6 +3138,8 @@ pub mod sys {
                 mask_send_max_us: 0,
                 esc_edge: false,
                 esc_seq: 0,
+                windrag_esc_edge: false,
+                windrag_esc_seq: 0,
             });
         });
         let hmod = unsafe { GetModuleHandleW(std::ptr::null()) };
@@ -2973,6 +3172,8 @@ pub mod sys {
                 mask_send_max_us: 0,
                 esc_edge: false,
                 esc_seq: 0,
+                windrag_esc_edge: false,
+                windrag_esc_seq: 0,
             });
         });
         let hmod = unsafe { GetModuleHandleW(std::ptr::null()) };

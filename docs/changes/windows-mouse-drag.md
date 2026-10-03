@@ -180,3 +180,57 @@
   pen35, taskbar visible, six borrowed HWNDs restored and hosting Terminal intact.
 - Provisional, to discuss: Windows item 7 ships title-bar drag first; Win+drag
   follows. Next bounded unit investigates project-driven movement only.
+- Title slice delivered as `1b9bf7b`; hosted CI 37145619279 passed all five
+  jobs (Windows, Rust, KWin, shell, macOS) before the next implementation unit.
+
+## Project-Driven Win Producer - Selected Investigation
+
+- Bounded read-only investigation recommends a stationary tiled mover: consume
+  Win+left initiation, track pointer in a prompt low-level mouse hook, and use
+  the same Engine drop path once on release. Item 8 later supplies the ghost
+  preview. No native move loop or mid-gesture foreign-frame writes are needed.
+- The new producer must preserve mover identity/focus semantics, bind a complete
+  eligible tiled observation, cancel on Esc/zero/invalidation/outside, and retain
+  title-bar/native resize behavior. Stage C stays parked. Do not restrict the
+  gesture to a pre-focused subject merely to avoid the existing activation gates.
+- This is the one project-driven mechanism investigation selected by the
+  Orchestrator. If it fails the simplicity or acceptance checkpoint, discard
+  its unaccepted code explicitly and continue preview on the accepted title path.
+
+## Item 7 Project-Driven Win Slice - Accepted
+
+- The bounded stationary producer is operational: one prompt WH_MOUSE_LL arm,
+  coalesced pointer, bounded Down/Up/Cancel queue, shared owner gesture hold and
+  Engine release. No native-loop entry or mid-hold foreign-frame writes.
+- Independent review covered live input/lifecycle. Lead additionally tightened
+  callback-bound full origin/member-tag identity, guaranteed terminal delivery
+  on saturation, swallowed Up pairing after cancellation/suspension, synthetic
+  mask-state isolation and both-Win terminal release. Deterministic regressions
+  cover same-process HWND reuse and those input-lifetime cases.
+- Focused Win movement feeds the existing known-Move underlay A/B arm; native
+  underlay readback proves projected source geometry during the stationary hold.
+  Unfocused subject retains native foreground during hold and activates through
+  existing focus authority only on a valid drop. C stays parked.
+- Latest accepted complete report:
+  `target/windows-mouse-drag/20261004-070437-21516/report.json` (WinAll).
+  Title six rows, WinDrop, unfocused WinFocus, WinCancel, WinZero, WinSelf,
+  WinCentre, WinOutside and caption regression pass; fixed token/native-HWND
+  mapping and mover plus sibling mid-hold freeze, complete desired readbacks,
+  no-overconstrained gates, Finish stability and underlay readback pass.
+  Owner SHA-256:
+  `6BC6C81C0BA1D2CDDD8EAFDF42212A6EBE0605B80F7D8B624618C0CA541DC45C`.
+- Synthetic mouse is admitted like native caption proof; injected Esc supplies
+  a pass-through cancellation edge for project gestures, never a command.
+  Injected Win remains command-filtered and cannot arm the product Start mask;
+  synthetic Start dismissal is recorded separately from physical mask behavior.
+- During correction a duplicate hook arm invocation consumed no Down and failed
+  underlay proof twice; hook-side arm/consume counts located the defect, and one
+  causal removal restored the original intended contract. Fixture feed-mark and
+  reused target-zone failures were repaired; no SC_MOVE experiment was repeated.
+  Bounded recovery released two synthetic held-button leftovers and verified
+  async release. Latest full run is clean, with no repeated failed mechanism.
+- Four-package native locked build/test, strict all-target Clippy, rustfmt,
+  whitespace and mock contracts pass. Latest live cleanup proves actors/overlays
+  zero, no ledger/requests, arranging1/pen35 and exact borrowed restoration.
+- Physical feel/Start mask, custom frames, floating/sticky modifier passthrough
+  and resize feel remain user-owned checks. Item 8 preview is next.

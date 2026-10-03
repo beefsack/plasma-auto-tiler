@@ -4,7 +4,7 @@ param(
   [switch]$Stop,
   [string]$RunDir = "",
   [int]$OwnerSeconds = 300,
-  [ValidateSet("All", "TitleDrag", "Cancel", "Zero", "SelfCentre", "SameOutput")]
+  [ValidateSet("All", "TitleDrag", "Cancel", "Zero", "SelfCentre", "SameOutput", "WinDrag", "WinAll")]
   [string]$Stage = "All"
 )
 $ErrorActionPreference = "Stop"
@@ -27,8 +27,14 @@ if ("$($MyInvocation.InvocationName)" -eq ".") { return }
 # (preview) excluded.
 #
 #   pwsh -NoProfile -File scripts/windows-mouse-drag.ps1 -Mock
-#   pwsh -NoProfile -File scripts/windows-mouse-drag.ps1 -Live [-Stage <name>]
+#   pwsh -NoProfile -File scripts/windows-mouse-drag.ps1 -Live [-Stage <name>] [-OwnerSeconds 600]
 #   pwsh -NoProfile -File scripts/windows-mouse-drag.ps1 -Stop -RunDir '<dir>'
+#
+# Title stages (-All and the six singletons) are the accepted slice and stay
+# stable. -WinDrag runs the seven project Win+Left rows on the same 3-app
+# fixture (plus a caption-regression title drop at the end); -WinAll runs the
+# six title rows first, then the Win rows. Win rows need a longer owner
+# budget: pass -OwnerSeconds 600 for -WinAll.
 #
 # Safety: explicit flags mandatory; bare invocation parses and exits. Live
 # borrows the three approved ordinary apps by exact HWND (existing windows
@@ -52,6 +58,7 @@ function Fail-Md([string]$Msg) { throw $Msg }
 
 $MD_SCOPE_ARGS = " --scope-exe notepad.exe --scope-exe ApplicationFrameHost.exe --scope-exe mspaint.exe --scope-host-child ApplicationFrameHost.exe=CalculatorApp.exe"
 $MD_VK_ESC = 27
+$MD_VK_LWIN = 0x5B; $MD_VK_RWIN = 0x5C
 $MD_MOUSE_MOVE = 0x0001; $MD_MOUSE_ABS = 0x8000; $MD_MOUSE_DOWN = 0x0002; $MD_MOUSE_UP = 0x0004
 $MD_INPUT_SIZE_X64 = 40
 $MD_MAX_OWNER_SECONDS = 600
@@ -466,6 +473,175 @@ function Send-MdVerifiedDrag([int]$FromX, [int]$FromY, [int]$ToX, [int]$ToY, [in
   if ($siblingFrames.Count -gt 0) { Rec-Md "$Tag-siblings-held" @{ count = $siblingFrames.Count; samples = 2; stable = $true } }
   if ([MouseDragNative]::SendMouse($MD_MOUSE_UP, 0, 0) -ne 1) { Fail-Md "$Tag drag button-up rejected" }
   Start-Sleep -Milliseconds 600
+}
+
+function Assert-MdWinReleased([string]$Tag) {  # Real Win-state gate: both Win async high bits must clear.
+  [MouseDragNative]::EnsurePMv2()
+  $deadline = (Get-Date).AddSeconds(3)
+  while ((Get-Date) -lt $deadline) {
+    $l = [MouseDragNative]::GetAsyncKeyState($MD_VK_LWIN)
+    $r = [MouseDragNative]::GetAsyncKeyState($MD_VK_RWIN)
+    if ((([int]$l -band 0x8000) -eq 0) -and (([int]$r -band 0x8000) -eq 0)) { return }
+    Start-Sleep -Milliseconds 50
+  }
+  Fail-Md "$Tag Win key still down after winup"
+}
+
+function Send-MdWinDown([string]$Tag) {
+  # Synthetic Win hold for the project gesture (unmarked SendInput, same as
+  # the native caption proof path; no physical-mask claim). The product
+  # keyboard hook filters injected keys, so this never arms classifier or
+  # mask state; the mouse hook samples the async level instead.
+  if ([MouseDragNative]::SendKey($MD_VK_LWIN, $false) -ne 1) { Fail-Md "$Tag win-down rejected" }
+  Start-Sleep -Milliseconds 350
+  [MouseDragNative]::EnsurePMv2()
+  if (([int][MouseDragNative]::GetAsyncKeyState($MD_VK_LWIN) -band 0x8000) -eq 0) { Fail-Md "$Tag win hold not visible in async state" }
+}
+
+function Send-MdWinUp([string]$Tag) {
+  # Synthetic Win release: the product mask never fires for injected Win
+  # (keyboard hook filters it), so a transient Start menu may appear; the
+  # caller records/dismisses it via Test-MdStartQuiet. Never claims a mask.
+  if ([MouseDragNative]::SendKey($MD_VK_LWIN, $true) -ne 1) { Fail-Md "$Tag win-up rejected" }
+  Start-Sleep -Milliseconds 500
+  Assert-MdWinReleased $Tag
+}
+
+function Wait-MdWindragOrigins([string]$LogPath, [int]$Mark, [int]$Want, [int]$TimeoutSec, [string]$Tag) {
+  # The mouse hook binds only against published tiled origins: wait until
+  # the owner reports exactly the managed count, so a drag never starts
+  # against a stale/empty feed. The feed line is run-scoped (change-only),
+  # so it is scanned from the run start, not the stage mark. Evidence, not
+  # a substitute for per-edge owner validation.
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  while ((Get-Date) -lt $deadline) {
+    $got = Get-MdEvents $LogPath $Mark
+    foreach ($e in $got.events) {
+      if ("$($e.event)" -eq "windrag-origins" -and [int]$e.count -eq $Want) {
+        Rec-Md "$Tag-windrag-feed" @{ count = $Want }
+        return
+      }
+    }
+    Start-Sleep -Milliseconds 300
+  }
+  Fail-Md "$Tag windrag-origins feed never reached $Want"
+}
+
+function Get-MdClientPoint([long]$Hwnd, [string]$Tag) {
+  # Client-interior start for Win+Left (the gesture binds anywhere on the
+  # window, not just the caption): frame centre. The WindowFromPoint hit
+  # must root-resolve (GA_ROOT) to the bound HWND; anything else is cover.
+  $frame = Get-MdFrame $Hwnd
+  $cx = [int]$frame[0] + [int]([int]$frame[2] / 2)
+  $cy = [int]$frame[1] + [int]([int]$frame[3] / 2)
+  [MouseDragNative]::EnsurePMv2()
+  $pt = New-Object MouseDragNative+POINT
+  $pt.x = $cx; $pt.y = $cy
+  $hit = [MouseDragNative]::WindowFromPoint($pt).ToInt64()
+  $root = $hit
+  try { $root = (Get-MdRootHwnd $hit) } catch {}
+  if ([uint64]$root -ne [uint64]$Hwnd) { Fail-Md "$Tag client point ($cx,$cy) covered (hit root $root != $Hwnd)" }
+  return @($cx, $cy)
+}
+
+function Send-MdWinDrag([int]$FromX, [int]$FromY, [int]$ToX, [int]$ToY, [int]$Steps, [long]$Hwnd, [string]$Tag, [string]$OwnerCopy, [array]$Siblings = @(), [string]$LogPath = "", [int]$Mark = 0, [string]$MoverToken = "") {
+  # Project-gesture drag: Win held, left down on the client point, pointer
+  # journey, left up, Win up. Opposite of the native verified drag: the
+  # mover AND every sibling must stay at source mid-hold (two samples prove
+  # the stationary hold before release). Any mid-hold motion releases both
+  # buttons/keys and fails loudly.
+  $releaseAll = {
+    [void][MouseDragNative]::SendMouse($MD_MOUSE_UP, 0, 0)
+    [void][MouseDragNative]::SendKey($MD_VK_LWIN, $true)
+  }
+  $screen = Get-MdVirtualScreen
+  $fx = ConvertTo-MdAbsolute $FromX ([int]$screen[0]) ([int]$screen[2])
+  $fy = ConvertTo-MdAbsolute $FromY ([int]$screen[1]) ([int]$screen[3])
+  if ([MouseDragNative]::SendMouse($MD_MOUSE_MOVE -bor $MD_MOUSE_ABS, $fx, $fy) -ne 1) { Fail-Md "$Tag windrag pre-move rejected" }
+  Start-Sleep -Milliseconds 250
+  $inv0 = Invoke-MdNative $OwnerCopy @("inventory") | ConvertFrom-Json
+  $n0 = @($inv0.windows | Where-Object { @("notepad.exe", "mspaint.exe", "applicationframehost.exe") -contains "$($_.exe)".ToLowerInvariant() }).Count
+  $mover0 = ((Get-MdFrame $Hwnd) -join ",")
+  $frozen = @()
+  foreach ($sibling in $Siblings) {
+    $frozen += [pscustomobject]@{ hwnd = [long]$sibling.hwnd; frame = ((Get-MdFrame ([long]$sibling.hwnd)) -join ',') }
+  }
+  Send-MdWinDown "$Tag-winhold"
+  if ([MouseDragNative]::SendMouse($MD_MOUSE_DOWN, 0, 0) -ne 1) { & $releaseAll; Fail-Md "$Tag windrag button-down rejected" }
+  Start-Sleep -Milliseconds 500
+  for ($i = 1; $i -le $Steps; $i++) {
+    $x = $FromX + [int](($ToX - $FromX) * $i / $Steps)
+    $y = $FromY + [int](($ToY - $FromY) * $i / $Steps)
+    $nx = ConvertTo-MdAbsolute $x ([int]$screen[0]) ([int]$screen[2])
+    $ny = ConvertTo-MdAbsolute $y ([int]$screen[1]) ([int]$screen[3])
+    if ([MouseDragNative]::SendMouse($MD_MOUSE_MOVE -bor $MD_MOUSE_ABS, $nx, $ny) -ne 1) { & $releaseAll; Fail-Md "$Tag windrag step $i rejected" }
+    Start-Sleep -Milliseconds 60
+    if ($i -eq [int]($Steps / 2) -or $i -eq $Steps) {
+      Start-Sleep -Milliseconds 350
+      if ($mover0 -cne ((Get-MdFrame $Hwnd) -join ',')) { & $releaseAll; Fail-Md "$Tag mover moved mid-hold (project gesture must hold source)" }
+      foreach ($snapshot in $frozen) {
+        if ($snapshot.frame -cne ((Get-MdFrame $snapshot.hwnd) -join ',')) { & $releaseAll; Fail-Md "$Tag sibling moved mid-hold hwnd=$($snapshot.hwnd)" }
+      }
+      if ($i -eq $Steps -and $MoverToken -ne "" -and $LogPath -ne "") {
+        # A/B move-arm readback: a focused Win+Left hold feeds the projected
+        # group underlay while held (stationary frames, real union). The
+        # underlay carrier must be present+visible and the owner log must
+        # carry a shown/moved verdict for the mover token with 2+ members.
+        # Unfocused holds never query this (stage C parked).
+        try {
+          $insp = Invoke-MdNative $OwnerCopy @("underlay-inspect") | ConvertFrom-Json
+        } catch { & $releaseAll; Fail-Md "$Tag underlay-inspect failed: $($_.Exception.Message)" }
+        if (-not $insp.present) { & $releaseAll; Fail-Md "$Tag underlay carrier absent mid-hold" }
+        $vis = @($insp.overlays | Where-Object { $_.visible -eq $true })
+        if ($vis.Count -eq 0) { & $releaseAll; Fail-Md "$Tag underlay overlay not visible mid-hold" }
+        $fgMid = [MouseDragNative]::GetForegroundWindow().ToInt64()
+        if ([uint64]$fgMid -ne [uint64]$Hwnd) { & $releaseAll; Fail-Md "$Tag foreground moved mid-hold (got $fgMid, want $Hwnd)" }
+        $found = $null
+        $lines = Get-MdLines $LogPath
+        for ($li = $Mark; $li -lt $lines.Count; $li++) {
+          if ("$($lines[$li])".Trim() -eq "") { continue }
+          $ev = ($lines[$li] | ConvertFrom-Json)
+          if ("$($ev.event)" -eq "group-underlay" -and "$($ev.target)" -ceq $MoverToken -and "$($ev.outcome)" -in @("shown", "moved", "redrew")) {
+            if ([int]$ev.members -ge 2) { $found = $ev }
+          }
+        }
+        if ($null -eq $found) { & $releaseAll; Fail-Md "$Tag no group-underlay union verdict for $MoverToken mid-hold" }
+        Rec-Md "$Tag-underlay" @{ target = $MoverToken; members = [int]$found.members; outer = ($found.outer -join ","); foreground = "held-no-activation" }
+      }
+    }
+  }
+  Start-Sleep -Milliseconds 400
+  $inv1 = Invoke-MdNative $OwnerCopy @("inventory") | ConvertFrom-Json
+  $n1 = @($inv1.windows | Where-Object { @("notepad.exe", "mspaint.exe", "applicationframehost.exe") -contains "$($_.exe)".ToLowerInvariant() }).Count
+  if ($n1 -gt $n0) { & $releaseAll; Assert-MdButtonReleased "$Tag-tear"; Fail-Md "$Tag new approved HWND mid-hold ($n0 -> $n1)" }
+  Rec-Md "$Tag-hold-frozen" @{ mover = $true; siblings = $frozen.Count; samples = 2; stationary = $true }
+  if ([MouseDragNative]::SendMouse($MD_MOUSE_UP, 0, 0) -ne 1) { & $releaseAll; Fail-Md "$Tag windrag button-up rejected" }
+  Start-Sleep -Milliseconds 600
+  Assert-MdButtonReleased "$Tag-release"
+  Send-MdWinUp "$Tag-winrelease"
+  Start-Sleep -Milliseconds 600
+}
+
+function Test-MdStartQuiet([string]$LogPath, [int]$Mark, [string]$Tag) {
+  # A synthetic Win release never sends the product E8 mask, so the OS may
+  # transiently open Start: dismiss it (outside any gesture) and record it
+  # honestly. Fails only when the log claims a physical product mask for the
+  # synthetic hold.
+  $fg = [MouseDragNative]::GetForegroundWindow().ToInt64()
+  $cls = ""
+  try { $cls = [MouseDragNative]::ClassOf($fg) } catch {}
+  $dismissed = $false
+  if ($cls -like "*Start*" -or $cls -eq "Windows.UI.Core.CoreWindow") {
+    Send-MdDismissStart "$Tag"
+    $dismissed = $true
+  }
+  $tail = Get-MdEvents $LogPath $Mark
+  foreach ($e in $tail.events) {
+    if ("$($e.event)" -eq "snap" -and "$($e.trigger_op)" -eq "windrag" -and "$($e.result)" -eq "mask-ok") {
+      Fail-Md "$Tag product mask claimed for synthetic Win hold"
+    }
+  }
+  Rec-Md "$Tag-start" @{ dismissed = $dismissed; foreground_class = $cls; mask_claim = "none" }
 }
 
 function Save-MdShot([string]$Dir, [string]$Tag) {
@@ -931,6 +1107,12 @@ function Invoke-MouseDragMock {
   $t = (& cargo test --locked --manifest-path (Join-Path $Repo "Cargo.toml") -p tiler-windows --lib drop_fence 2>&1 | Out-String)
   if ($LASTEXITCODE -ne 0) { Fail-Md "mock cargo test drop_fence failed: $t" }
   Rec-Md "portable-tests" @{ suite = "drop_fence"; result = "pass" }
+  $t = (& cargo test --locked --manifest-path (Join-Path $Repo "Cargo.toml") -p tiler-windows --lib win_mouse 2>&1 | Out-String)
+  if ($LASTEXITCODE -ne 0) { Fail-Md "mock cargo test win_mouse failed: $t" }
+  Rec-Md "portable-tests-windrag" @{ suite = "win_mouse"; result = "pass" }
+  $t = (& cargo test --locked --manifest-path (Join-Path $Repo "Cargo.toml") -p tiler-windows --lib windrag_mask 2>&1 | Out-String)
+  if ($LASTEXITCODE -ne 0) { Fail-Md "mock cargo test windrag_mask failed: $t" }
+  Rec-Md "portable-tests-mask" @{ suite = "windrag_mask"; result = "pass" }
   # Contract fixtures: the harness's own plan/frame matcher must accept an
   # exact multiset (order-independent, all matched) and reject a moved frame,
   # a count mismatch, and an unmatched readback. This exercises parser logic,
@@ -953,15 +1135,15 @@ function Invoke-MouseDragMock {
   try { $null = Test-MdFramesMatchPlan $detailUnmatched @(@(0, 0, 800, 600), @(800, 0, 800, 600)) "mock-fixture-unmatched"; Fail-Md "mock fixture unmatched did not throw" }
   catch { if ("$($_.Exception.Message)" -notmatch "unmatched") { throw } }
   Rec-Md "fixture-negative" @{ moved = "rejected"; unmatched = "rejected" }
-  # Harness structure contract via own AST: required title-slice stages (the
-  # native-loop Win producer is discarded, no dormant stage), per-app
-  # finally closure with no-throw cleanup legs, taskbar (not offscreen)
-  # outside-point, and no registry writes.
+  # Harness structure contract via own AST: required title-slice stages plus
+  # the project Win+Left stages (stationary producer, separate -WinDrag /
+  # -WinAll), per-app finally closure with no-throw cleanup legs, taskbar
+  # (not offscreen) outside-point, and no registry writes.
   $toks = $null; $errs = $null
   $ast = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref]$toks, [ref]$errs)
   if ($errs.Count -ne 0) { Fail-Md "mock self-parse errors $($errs.Count)" }
   $text = Get-Content -LiteralPath $PSCommandPath -Raw
-  foreach ($need in @("TitleDrop", "Cancel", "Zero", "Self", "Centre", "Outside", "Test-MdFramesMatchPlan", "Resolve-MdTokenMap", "Close-MdApp", "Get-MdTileStart", "Shell_TrayWnd", "taskbar")) {
+  foreach ($need in @("TitleDrop", "Cancel", "Zero", "Self", "Centre", "Outside", "WinDrop", "WinFocus", "WinCancel", "WinZero", "WinSelf", "WinCentre", "WinOutside", "WinAll", "windrag", "windrag-focus", "Test-MdFramesMatchPlan", "Resolve-MdTokenMap", "Close-MdApp", "Get-MdTileStart", "Shell_TrayWnd", "taskbar")) {
     if ($text -notmatch [regex]::Escape($need)) { Fail-Md "mock harness missing $need" }
   }
   if ($text -notmatch "finally") { Fail-Md "mock harness missing per-app finally closure" }
@@ -969,7 +1151,7 @@ function Invoke-MouseDragMock {
   if ($text -match $regPat) { Fail-Md "mock registry/policy write present" }
   $secondOut = ', 25' + '60|25' + '60,'
   if ($text -match $secondOut) { Fail-Md "mock hardcoded second-output origin present" }
-  Rec-Md "harness-contract" @{ stages = 6; rows = @("TitleDrop", "Cancel", "Zero", "Self", "Centre", "Outside"); outside = "taskbar"; registry = "none"; win_producer = "discarded" }
+  Rec-Md "harness-contract" @{ stages = 13; rows = @("TitleDrop", "Cancel", "Zero", "Self", "Centre", "Outside", "WinDrop", "WinFocus", "WinCancel", "WinZero", "WinSelf", "WinCentre", "WinOutside"); outside = "taskbar"; registry = "none"; win_producer = "project-stationary" }
   # Negative cleanup contract: the verdict is written AFTER every cleanup leg
   # ran, so no success can hide a cleanup error. Statically: the finally
   # region (up to the single-verdict marker) holds no bare `throw` that
@@ -1256,6 +1438,305 @@ function Invoke-MdOutsideStage($Owner, [string]$ProofDir, $Start, [array]$Apps, 
   Rec-Md "Outside" @{ outcome = "$($got.event.outcome)"; restored = $true; outside = "taskbar" }
 }
 
+function Invoke-MdReadoptStage($Owner, [string]$ProofDir, $Start, [array]$Apps, [array]$Managed) {
+  # WinAll only: the six title rows reorganise the adopted layout, so the
+  # Win rows re-adopt the deterministic H-thirds fixture before starting.
+  # Same arrange/converge/token-map gates as fixture setup; extras stay
+  # minimized from setup, so managed must still be exactly the triple.
+  Set-MdArrangeH $Apps $Start.work "win-fixture"
+  Save-MdShot $ProofDir "win-arranged" | Out-Null
+  $eligPost = Get-MdEligibleApps $Owner.ownerCopy "win-managed"
+  $reManaged = @()
+  foreach ($w in @($eligPost)) {
+    $reManaged += @{ hwnd = [long]$w.hwnd; pid = [int]$w.pid }
+  }
+  foreach ($a in @($Apps)) {
+    if (@($reManaged | Where-Object { [uint64]$_.hwnd -eq [uint64]$a.hwnd }).Count -eq 0) {
+      Fail-Md "win fixture managed set missing bound app hwnd $($a.hwnd)"
+    }
+  }
+  if ($reManaged.Count -ne 3) { Fail-Md "win fixture managed $($reManaged.Count) != 3" }
+  $markR = (Get-MdLines $Owner.log).Count
+  $conv = Wait-MdConverged $Owner.log $markR $reManaged 30 "win-adopt"
+  $null = Resolve-MdTokenMap $conv.detail $reManaged "win-adopt"
+  $hintsR = Get-MdMinHintsDetail $Owner.log $markR
+  Assert-MdNoOverconstrained $conv $hintsR "win-adopt"
+  Rec-Md "win-adopted" @{ tick = $conv.tick; managed = $reManaged.Count }
+  Save-MdShot $ProofDir "win-adopted" | Out-Null
+}
+
+function Invoke-MdWinDropStage($Owner, [string]$ProofDir, $Start, [array]$Apps, [array]$Managed) {
+
+  # Applied project mover: Win+Left client drag reorganises through the
+  # shared Engine drop with producer `windrag`. Identity-specific token
+  # mapping is fixed BEFORE/DURING/AFTER (no re-resolve of the wrong
+  # subject). The mover is the middle tile (a nested binary split always
+  # gives it a parent group), focused, so the mid-hold underlay probe reads
+  # back the projected union (A/B move arm; unfocused holds stay C-parked
+  # and never query).
+  $mover = $Apps[1]
+  Set-MdForeground ([long]$mover.hwnd) "windrop-focus"
+  Start-Sleep -Seconds 2
+  $preFrames = @(); foreach ($a in $Managed) { $preFrames += , (Get-MdFrame ([long]$a.hwnd)) }
+  $moverIdx = -1
+  for ($i = 0; $i -lt $Managed.Count; $i++) { if ([uint64]$Managed[$i].hwnd -eq [uint64]$mover.hwnd) { $moverIdx = $i } }
+  if ($moverIdx -lt 0) { Fail-Md "WinDrop mover not in managed set" }
+  $mark = (Get-MdLines $Owner.log).Count
+  Save-MdShot $ProofDir "windrop-before" | Out-Null
+  Wait-MdWindragOrigins $Owner.log 0 $Managed.Count 30 "windrop"
+  $client = Get-MdClientPoint ([long]$mover.hwnd) "windrop"
+  $refFrame = Get-MdFrame ([long]$Apps[2].hwnd)
+  $targetX = [int]$refFrame[0] + 20
+  $targetY = [int]$refFrame[1] + [int]([int]$refFrame[3] / 2)
+  $domain = $Start.work
+  if ($targetX -lt [int]$domain[0] -or $targetX -ge ([int]$domain[0] + [int]$domain[2]) -or $targetY -lt [int]$domain[1] -or $targetY -ge ([int]$domain[1] + [int]$domain[3])) {
+    Fail-Md "WinDrop edge target outside source work area"
+  }
+  $preMap = Resolve-MdTokenMap ((Get-MdPlanSnapshot (Get-MdEvents $Owner.log 0).events).detail) $Managed "windrop-pre"
+  $moverToken = ""
+  foreach ($k in @($preMap.Keys)) { if ([uint64]$preMap[$k] -eq [uint64]$mover.hwnd) { $moverToken = "$k" } }
+  if ($moverToken -eq "") { Fail-Md "WinDrop mover token not in pre map" }
+  $siblings = @($Managed | Where-Object { [long]$_.hwnd -ne [long]$mover.hwnd })
+  Send-MdWinDrag ([int]$client[0]) ([int]$client[1]) $targetX $targetY 12 ([long]$mover.hwnd) "windrop" $Owner.ownerCopy $siblings $Owner.log $mark $moverToken
+  $got = Wait-MdGesture $Owner.log $mark @("drag-drop-applied") 25 "windrop"
+  if ("$($got.event.producer)" -ne "windrag") { Fail-Md "WinDrop producer $($got.event.producer) != windrag" }
+  $after = Get-MdEvents $Owner.log $mark
+  $snap = Get-MdPlanSnapshot $after.events
+  if ($null -eq $snap) { Fail-Md "WinDrop no plan snapshot" }
+  $postFrames = @(); foreach ($a in $Managed) { $postFrames += , (Get-MdFrame ([long]$a.hwnd)) }
+  $null = Test-MdFramesMatchPlan $snap.detail $postFrames "windrop-plan"
+  $postMap = Resolve-MdTokenMap $snap.detail $Managed "windrop"
+  foreach ($k in @($preMap.Keys)) {
+    if ([uint64]$postMap[$k] -ne [uint64]$preMap[$k]) { Fail-Md "WinDrop token $k remapped ($($preMap[$k]) -> $($postMap[$k]))" }
+  }
+  $hints = Get-MdMinHintsDetail $Owner.log $mark
+  Assert-MdNoOverconstrained $snap $hints "windrop"
+  $moved = "$($preFrames[$moverIdx] -join ',')" -cne "$($postFrames[$moverIdx] -join ',')"
+  if (-not $moved) { Fail-Md "WinDrop mover topology unchanged" }
+  Assert-MdDropStable $Owner $Managed $snap "windrop"
+  Save-MdShot $ProofDir "windrop-after" | Out-Null
+  Test-MdStartQuiet $Owner.log $mark "windrop"
+  Rec-Md "WinDrop" @{ outcome = "drag-drop-applied"; producer = "windrag"; tick = $snap.tick; zone = "other-tile-left-edge" }
+}
+
+function Invoke-MdWinFocusStage($Owner, [string]$ProofDir, $Start, [array]$Apps, [array]$Managed) {
+  # Unfocused mover: Win+Left binds the tiled subject without prior focus;
+  # release activates it through the safe focus authority (same gesture
+  # mover as KDE). Foreground readback on the mover is the proof.
+  $mover = $Apps[2]
+  $other = $Apps[1]
+  Set-MdForeground ([long]$other.hwnd) "winfocus-other"
+  Start-Sleep -Seconds 2
+  $fgPre = [MouseDragNative]::GetForegroundWindow().ToInt64()
+  if ([uint64]$fgPre -ne [uint64]$other.hwnd) { Fail-Md "WinFocus setup foreground != other app" }
+  $mark = (Get-MdLines $Owner.log).Count
+  $client = Get-MdClientPoint ([long]$mover.hwnd) "winfocus"
+  $refFrame = Get-MdFrame ([long]$other.hwnd)
+  $targetX = [int]$refFrame[0] + 20
+  $targetY = [int]$refFrame[1] + [int]([int]$refFrame[3] / 2)
+  $siblings = @($Managed | Where-Object { [long]$_.hwnd -ne [long]$mover.hwnd })
+  Send-MdWinDrag ([int]$client[0]) ([int]$client[1]) $targetX $targetY 12 ([long]$mover.hwnd) "winfocus" $Owner.ownerCopy $siblings
+  $got = Wait-MdGesture $Owner.log $mark @("drag-drop-applied") 25 "winfocus"
+  if ("$($got.event.producer)" -ne "windrag") { Fail-Md "WinFocus producer $($got.event.producer) != windrag" }
+  $focusLines = @((Get-MdEvents $Owner.log $mark).events | Where-Object { "$($_.event)" -eq "windrag-focus" -and "$($_.outcome)" -eq "focus-ok" })
+  if (@($focusLines).Count -eq 0) { Fail-Md "WinFocus no windrag-focus focus-ok evidence" }
+  $fgPost = [MouseDragNative]::GetForegroundWindow().ToInt64()
+  if ([uint64]$fgPost -ne [uint64]$mover.hwnd) { Fail-Md "WinFocus mover not foreground after drop (got $fgPost)" }
+  $after = Get-MdEvents $Owner.log $mark
+  $snap = Get-MdPlanSnapshot $after.events
+  if ($null -eq $snap) { Fail-Md "WinFocus no plan snapshot" }
+  $postFrames = @(); foreach ($a in $Managed) { $postFrames += , (Get-MdFrame ([long]$a.hwnd)) }
+  $null = Test-MdFramesMatchPlan $snap.detail $postFrames "winfocus-plan"
+  $null = Resolve-MdTokenMap $snap.detail $Managed "winfocus"
+  Test-MdStartQuiet $Owner.log $mark "winfocus"
+  Rec-Md "WinFocus" @{ outcome = "drag-drop-applied"; producer = "windrag"; activated = $true; underlay = "not-queried-unfocused-parked" }
+}
+
+function Invoke-MdWinCancelStage($Owner, [string]$ProofDir, [array]$Apps, [array]$Managed) {
+  # Injected Esc cancels the tracked project journey (the product keyboard
+  # edge stays unset for injected input; the dedicated windrag cancel edge
+  # carries it with no command admitted). Source geometry retained, no plan.
+  $mover = $Apps[0]
+  Set-MdForeground ([long]$mover.hwnd) "wincancel-focus"
+  Start-Sleep -Seconds 2
+  $preFrames = @(); foreach ($a in $Managed) { $preFrames += , (Get-MdFrame ([long]$a.hwnd)) }
+  $mark = (Get-MdLines $Owner.log).Count
+  $client = Get-MdClientPoint ([long]$mover.hwnd) "wincancel"
+  $screen = Get-MdVirtualScreen
+  $nx = ConvertTo-MdAbsolute ([int]$client[0]) ([int]$screen[0]) ([int]$screen[2])
+  $ny = ConvertTo-MdAbsolute ([int]$client[1]) ([int]$screen[1]) ([int]$screen[3])
+  if ([MouseDragNative]::SendMouse($MD_MOUSE_MOVE -bor $MD_MOUSE_ABS, $nx, $ny) -ne 1) { Fail-Md "wincancel pre-move rejected" }
+  Start-Sleep -Milliseconds 250
+  Send-MdWinDown "wincancel-winhold"
+  if ([MouseDragNative]::SendMouse($MD_MOUSE_DOWN, 0, 0) -ne 1) { Fail-Md "wincancel button-down rejected" }
+  Start-Sleep -Milliseconds 400
+  Send-MdMouseMove (([int]$client[0]) + 120) (([int]$client[1]) + 60)
+  Start-Sleep -Milliseconds 300
+  if ([MouseDragNative]::SendKey($MD_VK_ESC, $false) -ne 1) { Fail-Md "wincancel esc down rejected" }
+  Start-Sleep -Milliseconds 200
+  if ([MouseDragNative]::SendKey($MD_VK_ESC, $true) -ne 1) { Fail-Md "wincancel esc up rejected" }
+  Start-Sleep -Milliseconds 300
+  if ([MouseDragNative]::SendMouse($MD_MOUSE_UP, 0, 0) -ne 1) { Fail-Md "wincancel button-up rejected" }
+  Start-Sleep -Milliseconds 600
+  Assert-MdButtonReleased "wincancel"
+  Send-MdWinUp "wincancel-winrelease"
+  Start-Sleep -Milliseconds 800
+  $got = Wait-MdGesture $Owner.log $mark @("gesture-cancelled-esc") 25 "wincancel"
+  if ("$($got.event.producer)" -ne "windrag") { Fail-Md "WinCancel producer $($got.event.producer) != windrag" }
+  $postFrames = @(); foreach ($a in $Managed) { $postFrames += , (Get-MdFrame ([long]$a.hwnd)) }
+  for ($i = 0; $i -lt $Managed.Count; $i++) {
+    if ("$($preFrames[$i] -join ',')" -cne "$($postFrames[$i] -join ',')") { Fail-Md "wincancel frame $i not restored" }
+  }
+  $after = Get-MdEvents $Owner.log $mark
+  foreach ($e in $after.events) {
+    if ("$($e.event)" -eq "gesture" -and "$($e.outcome)" -in @("drag-drop-applied", "pointer-resize-applied")) {
+      Fail-Md "wincancel planned an Engine mutation"
+    }
+  }
+  Test-MdStartQuiet $Owner.log $mark "wincancel"
+  Rec-Md "WinCancel" @{ outcome = "gesture-cancelled-esc"; producer = "windrag"; restored = $true; injected_esc = "windrag-edge-no-command" }
+}
+
+function Invoke-MdWinZeroStage($Owner, [string]$ProofDir, [array]$Apps, [array]$Managed) {
+  # Press/release without a pointer journey: no plan, no geometry change.
+  # Unlike the native zero-click (which may emit no START at all), the
+  # project down always arms, so an explicit no-change settle is expected.
+  $mover = $Apps[1]
+  Set-MdForeground ([long]$mover.hwnd) "winzero-focus"
+  Start-Sleep -Seconds 2
+  $preFrames = @(); foreach ($a in $Managed) { $preFrames += , (Get-MdFrame ([long]$a.hwnd)) }
+  $mark = (Get-MdLines $Owner.log).Count
+  $client = Get-MdClientPoint ([long]$mover.hwnd) "winzero"
+  $screen = Get-MdVirtualScreen
+  $nx = ConvertTo-MdAbsolute ([int]$client[0]) ([int]$screen[0]) ([int]$screen[2])
+  $ny = ConvertTo-MdAbsolute ([int]$client[1]) ([int]$screen[1]) ([int]$screen[3])
+  if ([MouseDragNative]::SendMouse($MD_MOUSE_MOVE -bor $MD_MOUSE_ABS, $nx, $ny) -ne 1) { Fail-Md "winzero pre-move rejected" }
+  Start-Sleep -Milliseconds 250
+  Send-MdWinDown "winzero-winhold"
+  if ([MouseDragNative]::SendMouse($MD_MOUSE_DOWN, 0, 0) -ne 1) { Fail-Md "winzero button-down rejected" }
+  Start-Sleep -Milliseconds 400
+  if ([MouseDragNative]::SendMouse($MD_MOUSE_UP, 0, 0) -ne 1) { Fail-Md "winzero button-up rejected" }
+  Start-Sleep -Milliseconds 600
+  Assert-MdButtonReleased "winzero"
+  Send-MdWinUp "winzero-winrelease"
+  Start-Sleep -Milliseconds 800
+  $got = Wait-MdGesture $Owner.log $mark @("gesture-no-change") 25 "winzero"
+  if ("$($got.event.producer)" -ne "windrag") { Fail-Md "WinZero producer $($got.event.producer) != windrag" }
+  $postFrames = @(); foreach ($a in $Managed) { $postFrames += , (Get-MdFrame ([long]$a.hwnd)) }
+  for ($i = 0; $i -lt $Managed.Count; $i++) {
+    if ("$($preFrames[$i] -join ',')" -cne "$($postFrames[$i] -join ',')") { Fail-Md "winzero frame $i changed" }
+  }
+  $after = Get-MdEvents $Owner.log $mark
+  foreach ($e in $after.events) {
+    if ("$($e.event)" -eq "gesture" -and "$($e.outcome)" -in @("drag-drop-applied", "pointer-resize-applied")) {
+      Fail-Md "winzero planned an Engine mutation"
+    }
+  }
+  Test-MdStartQuiet $Owner.log $mark "winzero"
+  Rec-Md "WinZero" @{ outcome = "gesture-no-change"; producer = "windrag"; restored = $true }
+}
+
+function Invoke-MdWinSelfStage($Owner, [string]$ProofDir, [array]$Apps, [array]$Managed) {
+  # Drop back onto the mover's own centre: self refuses with snap-back and
+  # no transfer.
+  $mover = $Apps[1]
+  Set-MdForeground ([long]$mover.hwnd) "winself-focus"
+  Start-Sleep -Seconds 2
+  $preFrames = @(); foreach ($a in $Managed) { $preFrames += , (Get-MdFrame ([long]$a.hwnd)) }
+  $mark = (Get-MdLines $Owner.log).Count
+  $frame = Get-MdFrame ([long]$mover.hwnd)
+  $selfX = [int]$frame[0] + [int]([int]$frame[2] / 2)
+  $selfY = [int]$frame[1] + [int]([int]$frame[3] / 2)
+  # Real journey (not a zero press): start offset inside the client area so
+  # the pointer travels back onto the mover's own centre. A zero journey
+  # would prove nothing about self-drop refusal.
+  $startX = $selfX + 120; $startY = $selfY + 60
+  if ($startX -ge ([int]$frame[0] + [int]$frame[2] - 8) -or $startY -ge ([int]$frame[1] + [int]$frame[3] - 8)) {
+    $startX = $selfX - 120; $startY = $selfY - 60
+  }
+  [MouseDragNative]::EnsurePMv2()
+  $pt = New-Object MouseDragNative+POINT
+  $pt.x = $startX; $pt.y = $startY
+  $hit = [MouseDragNative]::WindowFromPoint($pt).ToInt64()
+  $root = $hit
+  try { $root = (Get-MdRootHwnd $hit) } catch {}
+  if ([uint64]$root -ne [uint64]$mover.hwnd) { Fail-Md "winself start point ($startX,$startY) covered (hit root $root != $($mover.hwnd))" }
+  Send-MdWinDrag $startX $startY $selfX $selfY 12 ([long]$mover.hwnd) "winself" $Owner.ownerCopy (@($Managed | Where-Object { [long]$_.hwnd -ne [long]$mover.hwnd }))
+  $got = Wait-MdGesture $Owner.log $mark @("drag-drop-refused") 25 "winself"
+  $postFrames = @(); foreach ($a in $Managed) { $postFrames += , (Get-MdFrame ([long]$a.hwnd)) }
+  for ($i = 0; $i -lt $Managed.Count; $i++) {
+    if ("$($preFrames[$i] -join ',')" -cne "$($postFrames[$i] -join ',')") { Fail-Md "winself frame $i not restored" }
+  }
+  $after = Get-MdEvents $Owner.log $mark
+  foreach ($e in $after.events) {
+    if ("$($e.event)" -eq "gesture" -and "$($e.outcome)" -in @("drag-drop-applied", "pointer-resize-applied")) {
+      Fail-Md "winself planned an Engine mutation"
+    }
+  }
+  Test-MdStartQuiet $Owner.log $mark "winself"
+  Rec-Md "WinSelf" @{ outcome = "$($got.event.outcome)"; producer = "windrag"; restored = $true }
+}
+
+function Invoke-MdWinCentreStage($Owner, [string]$ProofDir, [array]$Apps, [array]$Managed) {
+  # Drop the mover onto ANOTHER window's centre (centre-stack target):
+  # refuses with snap-back, no transfer.
+  $mover = $Apps[0]
+  $target = $Apps[1]
+  Set-MdForeground ([long]$mover.hwnd) "wincentre-focus"
+  Start-Sleep -Seconds 2
+  $preFrames = @(); foreach ($a in $Managed) { $preFrames += , (Get-MdFrame ([long]$a.hwnd)) }
+  $mark = (Get-MdLines $Owner.log).Count
+  $client = Get-MdClientPoint ([long]$mover.hwnd) "wincentre"
+  $tframe = Get-MdFrame ([long]$target.hwnd)
+  $cx = [int]$tframe[0] + [int]([int]$tframe[2] / 2)
+  $cy = [int]$tframe[1] + [int]([int]$tframe[3] / 2)
+  Send-MdWinDrag ([int]$client[0]) ([int]$client[1]) $cx $cy 12 ([long]$mover.hwnd) "wincentre" $Owner.ownerCopy (@($Managed | Where-Object { [long]$_.hwnd -ne [long]$mover.hwnd }))
+  $got = Wait-MdGesture $Owner.log $mark @("drag-drop-refused", "gesture-no-change") 25 "wincentre"
+  $postFrames = @(); foreach ($a in $Managed) { $postFrames += , (Get-MdFrame ([long]$a.hwnd)) }
+  for ($i = 0; $i -lt $Managed.Count; $i++) {
+    if ("$($preFrames[$i] -join ',')" -cne "$($postFrames[$i] -join ',')") { Fail-Md "wincentre frame $i not restored" }
+  }
+  $after = Get-MdEvents $Owner.log $mark
+  foreach ($e in $after.events) {
+    if ("$($e.event)" -eq "gesture" -and "$($e.outcome)" -in @("drag-drop-applied", "pointer-resize-applied")) {
+      Fail-Md "wincentre planned an Engine mutation"
+    }
+  }
+  Test-MdStartQuiet $Owner.log $mark "wincentre"
+  Rec-Md "WinCentre" @{ outcome = "$($got.event.outcome)"; producer = "windrag"; restored = $true; target = "other-centre" }
+}
+
+function Invoke-MdWinOutsideStage($Owner, [string]$ProofDir, $Start, [array]$Apps, [array]$Managed) {
+  # Release over the taskbar strip outside the source work area: same-output
+  # fence refuses with snap-back, no transfer.
+  $mover = $Apps[2]
+  Set-MdForeground ([long]$mover.hwnd) "winoutside-focus"
+  Start-Sleep -Seconds 2
+  $preFrames = @(); foreach ($a in $Managed) { $preFrames += , (Get-MdFrame ([long]$a.hwnd)) }
+  $mark = (Get-MdLines $Owner.log).Count
+  Save-MdShot $ProofDir "winoutside-before" | Out-Null
+  $client = Get-MdClientPoint ([long]$mover.hwnd) "winoutside"
+  $work = $Start.work; $full = $Start.full
+  $targetX = [int]$work[0] + [int]([int]$work[2] / 2)
+  $targetY = [int]$work[1] + [int]$work[3] + 10
+  if ($targetY -ge ([int]$full[1] + [int]$full[3])) { Fail-Md "winoutside taskbar point outside full bounds (no normal taskbar?)" }
+  Send-MdWinDrag ([int]$client[0]) ([int]$client[1]) $targetX $targetY 12 ([long]$mover.hwnd) "winoutside" $Owner.ownerCopy (@($Managed | Where-Object { [long]$_.hwnd -ne [long]$mover.hwnd }))
+  $got = Wait-MdGesture $Owner.log $mark @("gesture-refused-cross-output", "drag-drop-refused", "gesture-no-change") 25 "winoutside"
+  $postFrames = @(); foreach ($a in $Managed) { $postFrames += , (Get-MdFrame ([long]$a.hwnd)) }
+  for ($i = 0; $i -lt $Managed.Count; $i++) {
+    if ("$($preFrames[$i] -join ',')" -cne "$($postFrames[$i] -join ',')") { Fail-Md "winoutside frame $i moved" }
+  }
+  $after = Get-MdEvents $Owner.log $mark
+  foreach ($e in $after.events) {
+    if ("$($e.event)" -eq "gesture" -and "$($e.outcome)" -in @("drag-drop-applied", "pointer-resize-applied")) {
+      Fail-Md "winoutside planned an Engine mutation"
+    }
+  }
+  Save-MdShot $ProofDir "winoutside-after" | Out-Null
+  Test-MdStartQuiet $Owner.log $mark "winoutside"
+  Rec-Md "WinOutside" @{ outcome = "$($got.event.outcome)"; producer = "windrag"; restored = $true; outside = "taskbar" }
+}
+
 function Invoke-MouseDragLive {
   if ($RunDir -ne "") { Fail-Md "refuse: -Live always creates a new run dir; -RunDir is for -Stop only" }
   Install-MdNative
@@ -1374,18 +1855,31 @@ function Invoke-MouseDragLive {
     Assert-MdNoOverconstrained $conv $hints0 "adopt"
     Rec-Md "adopted" @{ tick = $conv.tick; managed = $managed.Count }
     Save-MdShot $proofDir "adopted" | Out-Null
-    $runTitle = ($Stage -eq "All" -or $Stage -eq "TitleDrag")
-    $runCancel = ($Stage -eq "All" -or $Stage -eq "Cancel")
-    $runZero = ($Stage -eq "All" -or $Stage -eq "Zero")
-    $runSelf = ($Stage -eq "All" -or $Stage -eq "SelfCentre")
-    $runCentre = ($Stage -eq "All" -or $Stage -eq "SelfCentre")
-    $runSame = ($Stage -eq "All" -or $Stage -eq "SameOutput")
+    $runTitle = ($Stage -eq "All" -or $Stage -eq "TitleDrag" -or $Stage -eq "WinAll")
+    $runCancel = ($Stage -eq "All" -or $Stage -eq "Cancel" -or $Stage -eq "WinAll")
+    $runZero = ($Stage -eq "All" -or $Stage -eq "Zero" -or $Stage -eq "WinAll")
+    $runSelf = ($Stage -eq "All" -or $Stage -eq "SelfCentre" -or $Stage -eq "WinAll")
+    $runCentre = ($Stage -eq "All" -or $Stage -eq "SelfCentre" -or $Stage -eq "WinAll")
+    $runSame = ($Stage -eq "All" -or $Stage -eq "SameOutput" -or $Stage -eq "WinAll")
+    $runWin = ($Stage -eq "WinDrag" -or $Stage -eq "WinAll")
     if ($runTitle) { Invoke-MdTitleDropStage $owner $proofDir $start $apps $managed }
     if ($runCancel) { Invoke-MdCancelStage $owner $proofDir $apps $managed }
     if ($runZero) { Invoke-MdZeroStage $owner $proofDir $apps $managed }
     if ($runSelf) { Invoke-MdSelfStage $owner $proofDir $apps $managed }
     if ($runCentre) { Invoke-MdCentreStage $owner $proofDir $apps $managed }
     if ($runSame) { Invoke-MdOutsideStage $owner $proofDir $start $apps $managed }
+    if ($runWin) {
+      if ($Stage -eq "WinAll") { Invoke-MdReadoptStage $owner $proofDir $start $apps $managed }
+      Invoke-MdWinDropStage $owner $proofDir $start $apps $managed
+      Invoke-MdWinFocusStage $owner $proofDir $start $apps $managed
+      Invoke-MdWinCancelStage $owner $proofDir $apps $managed
+      Invoke-MdWinZeroStage $owner $proofDir $apps $managed
+      Invoke-MdWinSelfStage $owner $proofDir $apps $managed
+      Invoke-MdWinCentreStage $owner $proofDir $apps $managed
+      Invoke-MdWinOutsideStage $owner $proofDir $start $apps $managed
+      Invoke-MdTitleDropStage $owner $proofDir $start $apps $managed
+      Rec-Md "WinCaptionRegression" @{ outcome = "drag-drop-applied"; producer = "native" }
+    }
     # No SPI acceptance while the owner runs: takeover/prevention owns those
     # values mid-run. Arranging/pen are asserted after restore below.
     Rec-Md "stages-done" @{ stage = $Stage }
