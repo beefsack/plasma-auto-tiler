@@ -91,10 +91,17 @@ decisions of 2026-09-24 are under
   [evidence](changes/archive/windows-sticky-float.md)). Live acceptance of
   4-6 is user-owned: agent runs were disturbed by Xbox mode (cloaked
   `ApplicationFrameWindow` foreground, DWM cloak 0->2;
-  [record](changes/archive/windows-foreground-acceptance.md)). Next
-  (7) mouse drag window move; (8) mouse drag drop-zone square (preview);
-  (9) multi-output support; (10) taskbar item showing workspaces (design to be
-  discussed with the user; no presentation mechanism selected); (11) settings
+  [record](changes/archive/windows-foreground-acceptance.md)).
+  (7) mouse drag move and (8) drop preview delivered same-output
+  (`1b9bf7b` title-bar drag, `7dc6aa3` Win+left drag, `b68d490` preview; CI
+  green; [evidence](changes/archive/windows-mouse-drag.md)); provisional:
+  title-bar first, Win+drag keeps the source frame and moves only the
+  preview, unfocused subject activates on drop; physical feel checks
+  user-owned; underlay C stays parked (needs extra machinery).
+  (9) multi-output support PARKED: needs the multi-output PC for live work;
+  (10) taskbar item showing workspaces PARKED on the user design discussion
+  (options in the [comparison](research/windows-port/reference-wm-comparison.md));
+  (11) settings
   (UI with Apply/Revert parity, including Snap takeover off; decide the final
   accent/configured border default and remove the temporary yellow default;
   per-binding OS-conflict list with compatible/authentic quick-set presets,
