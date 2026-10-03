@@ -1,7 +1,6 @@
 # Windows reference-WM comparison
 
-Status: research complete, 2026-10-04. Publication acceptance requires the
-commit's hosted CI to pass; its run is reported in the terminal handover.
+Status: complete, 2026-10-04. Research published as `2b0540c` with hosted CI green.
 
 ## Goal and scope
 
@@ -62,8 +61,9 @@ commit's hosted CI to pass; its run is reported in the terminal handover.
   pins and cited source-path/line-range existence. Lead reviewed the final diff.
 - No test actors, input hooks, overlays or desktop mutations were launched by
   this research change. All four sequential research/documentation units ended.
-- Hosted CI is the publication gate for the pushed commit; see that commit's
-  GitHub Actions checks for the durable result.
+- Hosted [CI run 37134290598](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37134290598)
+  passed all five jobs (Rust, KWin, shell, Windows, macOS) for `2b0540c`.
+  The evidence-only record commit is also gated by hosted CI after push.
 
 ## Verification and decisions
 
