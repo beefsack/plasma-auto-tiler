@@ -48,6 +48,9 @@
 - Saturation drops action/trace evidence, not interception. A full queue evicts
   one oldest record to reserve necessary E8 mask evidence; losses are counted.
   The mask survives consumed holds and its actual send result is recorded.
+  Bare swallowed repeats after Win-up do not rearm it, so a subsequent naked
+  Win tap retains normal Start behavior. This follow-up regression was found
+  during Lead integration and fixed across every classifier arm.
 - Fresh Shift state binds supported preheld move/send/sticky combinations;
   fresh Ctrl/Alt combinations remain unowned. The callback stays bounded with
   no synchronous logging, Engine work or window mutations.
@@ -224,9 +227,12 @@
 - Latest native verification passed after the corrective unit and Lead gate-repeat
   integration: locked build/test for `tiler-core`, `tiler-protocol`,
   `tiler-kwin-effect-ffi`, `tiler-windows`; strict all-target clippy; full rustfmt;
-  `git diff --check`. Snapkey suite: 54 passing, including modifier/Win ordering,
+  `git diff --check`. Snapkey suite: 55 passing, including modifier/Win ordering,
   unmanaged interception, disabled-gate pairs and saturated queues. Three pure
-  Shift-sync tests pass. Hosted CI must be checked on the pushed revision.
+  Shift-sync tests pass. First delivered unit `962b0f3` passed all four hosted
+  jobs (Windows, Rust, KWin, shell), [run 37109086579][first-ci]. The follow-up
+  mask correction passed native gates; delivered-head CI is checked in the
+  terminal handover.
 - No live run was performed for this change. Required normal-desktop test, only
   after the user frees the desktop and authorizes the bounded run:
   1. Read the live guide, confirm taskbar/normal desktop, no game/anti-cheat or
@@ -284,3 +290,4 @@
 [set-window-pos]: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos
 [show-window]: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow
 [dwm-attributes]: https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute
+[first-ci]: https://github.com/beefsack/plasma-auto-tiler/actions/runs/37109086579

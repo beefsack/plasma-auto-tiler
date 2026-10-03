@@ -2363,3 +2363,153 @@ fn owned_hold_modifier_transition_matrix() {
     let mut m = SnapClassify::new(takeover());
     assert_eq!(push_snap(&mut m, VK_H, false, true, false), None);
 }
+
+#[test]
+fn bare_repeat_after_win_up_never_rearms_mask() {
+    use tiler_windows::snapkey::{VK_G, VK_M};
+    // Every arm: consumed down, Win-up fires the mask once, the bare repeat
+    // after Win-up stays swallowed without rearming, the key-up closes the
+    // hold, and a later naked Win tap never masks Start.
+    let tick = std::time::Instant::now();
+    for vk in [VK_H, VK_J, VK_K, VK_LEFT, VK_DOWN, VK_UP, VK_RIGHT] {
+        let mut m = SnapClassify::new(takeover());
+        let mut q = SnapQueue::new();
+        win_down(&mut m, VK_LWIN);
+        assert!(
+            push_snap(&mut m, vk, false, true, false)
+                .expect("down")
+                .consumed
+        );
+        assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+        let rep = push_snap(&mut m, vk, false, true, false).expect("bare repeat");
+        assert!(rep.consumed, "vk {vk} bare repeat stays swallowed");
+        assert!(
+            push_snap(&mut m, vk, true, true, false)
+                .expect("up")
+                .consumed
+        );
+        win_down(&mut m, VK_LWIN);
+        assert!(
+            !win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick),
+            "vk {vk} must not rearm the mask for a naked Win tap"
+        );
+    }
+    for index in [1u32, 5, 9] {
+        let vk = VK_0 + index;
+        let mut m = SnapClassify::new(takeover());
+        let mut q = SnapQueue::new();
+        win_down(&mut m, VK_LWIN);
+        assert!(
+            push_workspace(&mut m, vk, false, true, false)
+                .expect("down")
+                .consumed
+        );
+        assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+        let rep = push_workspace(&mut m, vk, false, true, false).expect("bare repeat");
+        assert!(rep.consumed);
+        assert!(
+            push_workspace(&mut m, vk, true, true, false)
+                .expect("up")
+                .consumed
+        );
+        win_down(&mut m, VK_LWIN);
+        assert!(!win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    }
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    win_down(&mut m, VK_LWIN);
+    assert!(
+        push_maximize(&mut m, false, true, false)
+            .expect("down")
+            .consumed
+    );
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    let rep = push_maximize(&mut m, false, true, false).expect("bare repeat");
+    assert!(rep.consumed && !rep.announce);
+    assert!(
+        push_maximize(&mut m, true, true, false)
+            .expect("up")
+            .consumed
+    );
+    win_down(&mut m, VK_LWIN);
+    assert!(!win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    win_down(&mut m, VK_LWIN);
+    assert!(
+        push_fullscreen(&mut m, false, true, false)
+            .expect("down")
+            .consumed
+    );
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    let rep = push_fullscreen(&mut m, false, true, false).expect("bare repeat");
+    assert!(rep.consumed && !rep.announce);
+    assert!(
+        push_fullscreen(&mut m, true, true, false)
+            .expect("up")
+            .consumed
+    );
+    win_down(&mut m, VK_LWIN);
+    assert!(!win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    win_down(&mut m, VK_LWIN);
+    assert!(
+        push_float(&mut m, false, true, false)
+            .expect("down")
+            .consumed
+    );
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    let rep = push_float(&mut m, false, true, false).expect("bare repeat");
+    assert!(rep.consumed && !rep.announce);
+    assert!(push_float(&mut m, true, true, false).expect("up").consumed);
+    win_down(&mut m, VK_LWIN);
+    assert!(!win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    assert!(
+        push_sticky(&mut m, false, true, false)
+            .expect("down")
+            .consumed
+    );
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    let rep = push_sticky(&mut m, false, true, false).expect("bare repeat");
+    assert!(rep.consumed && !rep.announce);
+    assert!(push_sticky(&mut m, true, true, false).expect("up").consumed);
+    win_down(&mut m, VK_LWIN);
+    assert!(!win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    assert!(is_chord_vk(VK_M) && is_chord_vk(VK_G));
+    // Key-first order still masks exactly once: key-up while Win is held,
+    // then Win-up fires.
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    win_down(&mut m, VK_LWIN);
+    assert!(
+        push_snap(&mut m, VK_H, false, true, false)
+            .expect("down")
+            .consumed
+    );
+    assert!(
+        push_snap(&mut m, VK_H, true, true, false)
+            .expect("up")
+            .consumed
+    );
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    win_down(&mut m, VK_LWIN);
+    assert!(
+        push_maximize(&mut m, false, true, false)
+            .expect("down")
+            .consumed
+    );
+    assert!(
+        push_maximize(&mut m, true, true, false)
+            .expect("up")
+            .consumed
+    );
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+}

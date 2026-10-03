@@ -735,18 +735,25 @@ impl SnapClassify {
                 self.counts[idx].repeat += 1;
                 let op = self.key_op[idx].unwrap_or(SnapOp::Focus);
                 if self.key_origin[idx] {
-                    let live = snap_repeat_live(
-                        self.shift,
-                        self.ctrl,
-                        self.alt,
-                        self.win_l || self.win_r,
-                        op,
-                    ) && snap_op_admits(idx, op, self.allow_win_l)
-                        && self.enabled
-                        && self.gate_active;
+                    let live = self.enabled
+                        && self.gate_active
+                        && snap_repeat_live(
+                            self.shift,
+                            self.ctrl,
+                            self.alt,
+                            self.win_l || self.win_r,
+                            op,
+                        )
+                        && snap_op_admits(idx, op, self.allow_win_l);
                     self.counts[idx].consumed += 1;
-                    self.mask_pending = true;
-                    self.mask_trigger = Some(MaskTrigger::Snap { op, direction });
+                    // Only a Win-held repeat rearms the Start-menu mask: a
+                    // bare repeat after Win-up stays swallowed but must not
+                    // create a new mask obligation, or a later naked Win tap
+                    // would mask Start incorrectly.
+                    if self.win_l || self.win_r {
+                        self.mask_pending = true;
+                        self.mask_trigger = Some(MaskTrigger::Snap { op, direction });
+                    }
                     Some(Classified::Snap(SnapIntent {
                         op,
                         direction,
@@ -876,11 +883,15 @@ impl SnapClassify {
                             op,
                         );
                     self.digit_counts[slot].consumed += 1;
-                    self.mask_pending = true;
-                    self.mask_trigger = Some(MaskTrigger::Workspace {
-                        op,
-                        index: slot as u8,
-                    });
+                    // Win-held repeats only rearm the mask; bare repeats
+                    // after Win-up stay swallowed without a new obligation.
+                    if self.win_l || self.win_r {
+                        self.mask_pending = true;
+                        self.mask_trigger = Some(MaskTrigger::Workspace {
+                            op,
+                            index: slot as u8,
+                        });
+                    }
                     Some(Classified::Workspace(WorkspaceIntent {
                         op,
                         index: slot as u8,
@@ -988,11 +999,15 @@ impl SnapClassify {
             if self.maximize_down {
                 self.max_counts.repeat += 1;
                 if self.maximize_origin {
-                    // Held repeat: swallowed, never re-dispatched. The hold
-                    // continues to disguise Win, so the mask stays armed.
+                    // Held repeat: swallowed, never re-dispatched. A Win-held
+                    // hold continues to disguise Win, so the mask stays
+                    // armed; a bare repeat after Win-up must not create a new
+                    // mask obligation.
                     self.max_counts.consumed += 1;
-                    self.mask_pending = true;
-                    self.mask_trigger = Some(MaskTrigger::Maximize);
+                    if self.win_l || self.win_r {
+                        self.mask_pending = true;
+                        self.mask_trigger = Some(MaskTrigger::Maximize);
+                    }
                     Some(Classified::Maximize(MaximizeIntent {
                         edge: SnapEdge::Repeat,
                         foreground,
@@ -1082,11 +1097,15 @@ impl SnapClassify {
             if self.fullscreen_down {
                 self.fullscreen_counts.repeat += 1;
                 if self.fullscreen_origin {
-                    // Held repeat: swallowed, never re-dispatched. The hold
-                    // continues to disguise Win, so the mask stays armed.
+                    // Held repeat: swallowed, never re-dispatched. A Win-held
+                    // hold continues to disguise Win, so the mask stays
+                    // armed; a bare repeat after Win-up must not create a new
+                    // mask obligation.
                     self.fullscreen_counts.consumed += 1;
-                    self.mask_pending = true;
-                    self.mask_trigger = Some(MaskTrigger::Fullscreen);
+                    if self.win_l || self.win_r {
+                        self.mask_pending = true;
+                        self.mask_trigger = Some(MaskTrigger::Fullscreen);
+                    }
                     Some(Classified::Fullscreen(FullscreenIntent {
                         edge: SnapEdge::Repeat,
                         foreground,
@@ -1228,13 +1247,16 @@ impl SnapClassify {
             if *down {
                 counts.repeat += 1;
                 if *origin {
-                    // Held repeat: swallowed, never re-dispatched. The hold
-                    // continues to disguise Win, so the mask stays armed.
-                    // Shift is op-fixed at down time: a later Shift never
-                    // flips this repeat into the other arm.
+                    // Held repeat: swallowed, never re-dispatched. A Win-held
+                    // hold continues to disguise Win, so the mask stays
+                    // armed; a bare repeat after Win-up must not create a new
+                    // mask obligation. Shift is op-fixed at down time: a
+                    // later Shift never flips this repeat into the other arm.
                     counts.consumed += 1;
-                    self.mask_pending = true;
-                    self.mask_trigger = Some(trigger);
+                    if self.win_l || self.win_r {
+                        self.mask_pending = true;
+                        self.mask_trigger = Some(trigger);
+                    }
                     Some(intent(SnapEdge::Repeat, true, false))
                 } else {
                     counts.passed += 1;
