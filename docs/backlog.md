@@ -118,14 +118,13 @@ decisions of 2026-09-24 are under
   the single source of truth for Linux, Windows and macOS. KDE is the current
   behavioral reference; macOS modifier mapping is decided when macOS starts.
   cosmic-comp (user favourite: n-ary splits, join/leave UX) is a key input.
-- P0 | Prior-art catalogue | User (2026-10-03): maintained document of
-  popular, maintained auto-tiling projects grouped by target desktop
-  (Windows, macOS, KDE, GNOME, other Linux), split into compositor-native
-  tilers (functional-spec input) and host-integrated tilers (integration
-  mechanisms), each with a short summary: function, tiling algorithm,
-  notable implementation details, workspaces. Clone all listed projects
-  under `~/Development` for agent code review. Consolidate with
-  `reference-wm-comparison.md` and `research/macos-port/prior-art.md`.
+- P2 | Prior-art catalogue upkeep | Completed 2026-10-03 (`e4c1d92`):
+  [maintained index](research/prior-art.md), grouped by desktop and type
+  (compositor-native vs host-integrated) with algorithm families,
+  mechanisms, workspaces, licences and clone inventory. Deferred to a
+  Linux/macOS session: FancyWM core submodules, niri/sway/river/awesome/dwm
+  source analysis (web-only now). Keep it updated as projects are studied.
+  [Evidence](changes/archive/prior-art-catalogue.md).
 - P1 | Cross-platform dev environment (mise) | Approved (user 2026-10-03):
   root `mise.toml` for Windows/macOS toolchains, devenv stays on Linux,
   minimal `AGENTS.md` update. Before macOS starts.
