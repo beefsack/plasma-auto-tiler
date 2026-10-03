@@ -82,6 +82,76 @@
   Clean hinted 2x2 remains fitted and identity-stable. Review found no blocker;
   missing-hint overconstraint is unreachable in current assemble/apply paths.
   Residual: minimum-clamped windows can extend beyond work area, not just overlap.
+- D1/D4 commit `2c918d3`: hosted Rust/KWin/shell/Windows CI green
+  ([run](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37123627664)).
+- D2 accepted: tiled overlays reuse lifetime-bound last-known minimum hints.
+  Async restore arms a bounded completion wake, consumed only after gated
+  reconciliation; key-up dispatch/gesture/suspend cannot prematurely clear it.
+  Native gates pass. Regression proves removing a binding hint changes all
+  four strip allocations, retention preserves them, and completion survives
+  a concurrent dispatch before reconciliation. Initial wake implementation
+  cleared before dispatch routing; Lead review caught and corrected this before
+  acceptance. No failed product semantic approach was accepted.
+
+## Live verification outcome
+
+- Final implementation payload on `2c918d3` plus D2 source diff, SHA256
+  `95EE37EDEEC43254C2612DEDF54BC81EF0657BBCDABF6890F034EB396BCFE488`.
+  Windows 11 build 26200, session 1, medium integrity 8192, one physical
+  2560x1440 monitor at 125%, work area 2560x1380, gaps 8. Exact identities,
+  baselines, launch arguments and stop/restore receipts retained under temporary
+  `worker-20261003-225703-29012/`; production logs contain only opaque tokens.
+- Clean real-app 2x2: `tile5-run.log` tick 1 fitted with zero centre splits,
+  identity-stable 1268x678 allocations, all minimums satisfied; no six-second
+  write churn. The fifth app in this run was an incremental admission, not
+  five-window startup; only subsequent fresh runs establish that acceptance.
+- Cascade four: `runA-tick1.log` / production `run-01dd5337d5dbc7ca.log`,
+  four already-open windows, three centre splits declined, resulting
+  `H[1,1](L,V[1,1](L,H[1,1](L,L)))`. Four writes, zero mismatches, all real
+  minimums satisfied, no further writes over six seconds. Sequential layout
+  is a bisection chain; the original four-column dogfood input is unavailable.
+- Cascade five with Paint pre-start foreground independently verified:
+  `runB-tick1.log` / production `run-01dd53380f3362ae.log`, four centre splits
+  declined. Paint/Calculator logical tiles had 335px height; actual writes
+  kept their origins and raised heights to 617/627px. All five readbacks
+  matched effective targets, no overconstrained skips, five writes then no
+  churn over six seconds. Paint bottom reached y=1654, below work-area y=1380:
+  explicitly observed residual of the provisional origin/minimum policy.
+- Real-app native maximize/restore: Paint retained 864x617 hints with
+  `reason=retained-hint`; all four sibling actual and desired rectangles stayed
+  byte-identical, no writes during maximize; restore regained the exact slot
+  and normal fresh hint query. Native state changes observed in approximately
+  22ms polls. This tests minimum-binding placement without shortcut injection.
+- Marked shortcut proof `d2d5-20261003-230127-4376/d2d5-report.json`: Win+M
+  restore dispatch tick 8, first reconcile/readback tick 9, confirmed tick 10,
+  exact slot return. Nominal pump is 100ms; no measured wall-clock latency
+  claim (observer polls were 200ms). D5 remembered tall return stacked at
+  1268x1364, remembered wide return side-by-side at 2544x678, both focus and
+  readback successful. Logs `run-01dd53374eb38cd6.log` and
+  `run-01dd53375205c58e.log`; product injected-input filtering unchanged.
+- Verification corrections: an initial test report incorrectly called an
+  incremental fifth admission a fresh cascade/min-clamp test; direct inspection
+  rejected that claim and two fresh runs supplied the missing evidence.
+  A Calculator activation attempt failed once and was not escalated; a
+  temporary inventory redirection pipe error received one temp-only repair.
+- Cleanup: all owners stopped by exact identity and independently restored;
+  no project owners/helpers/overlays, ledger/request files or hidden windows.
+  Arranging=1, pen visualization=35, taskbar visible. All newly opened
+  Calculators closed; baseline three Notepads and Paint left alive, visible,
+  unminimized/unmaximized with unchanged process identities. Pre-existing extra
+  Notepads preserved because title alone cannot establish empty content.
+  Hosting Terminal/process tree never closed, killed or typed into.
+
+## Remaining user-owned acceptance
+
+- Physically judge cascade sequential layout versus a desired balanced 2x2,
+  five-window origin/minimum placement and overflow tradeoff; approve/revise
+  the precisely recorded provisional choices.
+- Physical Win+M/native-button maximize/restore timing, sibling stability and
+  send-away/return with recorded destination focus; current desktop synthetic
+  API/log evidence does not establish physical feel.
+- KDE dogfood of the shared startup-policy revision; hosted KDE fixtures pass,
+  but no live KDE test was possible in this Windows session.
 
 ## Candidate matrix rows
 

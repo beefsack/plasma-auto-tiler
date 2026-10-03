@@ -2172,3 +2172,152 @@ fn born_hold_never_reborn_after_first_exit() {
     // A non-fullscreen window never holds, even slotless and unseen.
     assert!(!should_hold_born_fullscreen(false, false, false));
 }
+
+#[test]
+fn retained_maximized_hint_keeps_min_bound_strip_stable() {
+    // Bug fixture: 2544-wide equal-share strip, minimums 401/864/627/582.
+    // The shared projector funds the 864 minimum from sibling slack:
+    // 456/864/629/595. Dropping the maximized member's hint (hintless
+    // retained row) collapses to 636 all and siblings jump; reusing the
+    // last-known hint keeps the min-bound projection stable.
+    use tiler_core::directional::{Axis, Node, NodeId};
+    use tiler_core::size_hints::{WindowSizeHints, project_with_hints};
+    use tiler_windows::tiling::{RESTORE_WAKE_MS, retained_overlay_hint};
+    let tree = Node::Group {
+        id: NodeId::from("root"),
+        axis: Axis::Horizontal,
+        children: vec![
+            Node::Leaf {
+                id: NodeId::from("a"),
+            },
+            Node::Leaf {
+                id: NodeId::from("b"),
+            },
+            Node::Leaf {
+                id: NodeId::from("c"),
+            },
+            Node::Leaf {
+                id: NodeId::from("d"),
+            },
+        ],
+        shares: vec![1, 1, 1, 1],
+    };
+    let bounds = rect(0, 0, 2544, 1364);
+    let hinted = |min_w: Option<i32>| WindowSizeHints {
+        min_w,
+        min_h: None,
+        max_w: None,
+        max_h: None,
+    };
+    let full = project_with_hints(&tree, bounds, 0, &|leaf: &NodeId| match leaf.0.as_str() {
+        "a" => hinted(Some(401)),
+        "b" => hinted(Some(864)),
+        "c" => hinted(Some(627)),
+        "d" => hinted(Some(582)),
+        _ => WindowSizeHints::none(),
+    })
+    .expect("hinted strip projects");
+    let widths: Vec<i32> = full.leaves.iter().map(|leaf| leaf.rect.w).collect();
+    assert_eq!(widths, vec![456, 864, 629, 595]);
+    // Hintless retained row for the maximized 864 member: siblings collapse.
+    let dropped = project_with_hints(&tree, bounds, 0, &|leaf: &NodeId| match leaf.0.as_str() {
+        "a" => hinted(Some(401)),
+        "b" => WindowSizeHints::none(),
+        "c" => hinted(Some(627)),
+        "d" => hinted(Some(582)),
+        _ => WindowSizeHints::none(),
+    })
+    .expect("hintless strip projects");
+    let flat: Vec<i32> = dropped.leaves.iter().map(|leaf| leaf.rect.w).collect();
+    assert_eq!(flat, vec![636, 636, 636, 636]);
+    assert_ne!(widths, flat, "dropped hint moves siblings");
+    // Retained reuse restores the declared hint: same Engine input, stable.
+    let reused = retained_overlay_hint(Some(hinted(Some(864))), true, true, false, false, true);
+    assert!(!reused.is_empty());
+    let stable = project_with_hints(&tree, bounds, 0, &|leaf: &NodeId| match leaf.0.as_str() {
+        "a" => hinted(Some(401)),
+        "b" => reused,
+        "c" => hinted(Some(627)),
+        "d" => hinted(Some(582)),
+        _ => WindowSizeHints::none(),
+    })
+    .expect("retained strip projects");
+    let kept: Vec<i32> = stable.leaves.iter().map(|leaf| leaf.rect.w).collect();
+    assert_eq!(kept, widths, "retained hint keeps siblings stable");
+    // Lifetime gates never reuse: gone identity, float, born hold, slotless,
+    // non-overlay, and empty cache all stay hintless.
+    assert!(
+        retained_overlay_hint(Some(hinted(Some(864))), false, true, false, false, true).is_empty()
+    );
+    assert!(
+        retained_overlay_hint(Some(hinted(Some(864))), true, true, true, false, true).is_empty()
+    );
+    assert!(
+        retained_overlay_hint(Some(hinted(Some(864))), true, true, false, true, true).is_empty()
+    );
+    assert!(
+        retained_overlay_hint(Some(hinted(Some(864))), true, true, false, false, false).is_empty()
+    );
+    assert!(
+        retained_overlay_hint(Some(hinted(Some(864))), true, false, false, false, true).is_empty()
+    );
+    assert!(retained_overlay_hint(None, true, true, false, false, true).is_empty());
+    assert!(
+        retained_overlay_hint(
+            Some(WindowSizeHints::none()),
+            true,
+            true,
+            false,
+            false,
+            true
+        )
+        .is_empty()
+    );
+    assert_eq!(RESTORE_WAKE_MS, 2000);
+}
+
+#[test]
+fn restore_wake_survives_pending_dispatch_until_reconcile() {
+    use tiler_windows::tiling::{restore_wake_arm, restore_wake_step};
+    assert!(restore_wake_arm("dispatched", true));
+    assert!(!restore_wake_arm("restored", true));
+    assert!(!restore_wake_arm("threw", true));
+    assert!(!restore_wake_arm("dispatched", false));
+    // Still pending: keep waiting, no demand.
+    assert_eq!(
+        restore_wake_step(true, false, false, false, false),
+        (true, false)
+    );
+    // Observed but a key-up batch routes to dispatch instead: survive, demand.
+    assert_eq!(
+        restore_wake_step(true, false, false, true, false),
+        (true, true)
+    );
+    // Next pump with no pending intents reconciles: consume.
+    assert_eq!(
+        restore_wake_step(true, false, false, true, true),
+        (false, true)
+    );
+    // Gesture/suspend pauses defer the same way: survive, demand.
+    assert_eq!(
+        restore_wake_step(true, false, false, true, false),
+        (true, true)
+    );
+    // Expiry, window loss, and identity loss clear without demand.
+    assert_eq!(
+        restore_wake_step(true, true, false, true, false),
+        (false, false)
+    );
+    assert_eq!(
+        restore_wake_step(true, false, true, true, false),
+        (false, false)
+    );
+    assert_eq!(
+        restore_wake_step(true, true, false, false, false),
+        (false, false)
+    );
+    assert_eq!(
+        restore_wake_step(false, false, false, true, true),
+        (false, false)
+    );
+}

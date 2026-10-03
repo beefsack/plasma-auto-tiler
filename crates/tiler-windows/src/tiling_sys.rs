@@ -1086,11 +1086,17 @@ struct TileLoop {
     /// for the survivor chooser, never post-disconnect frames as proxy.
     last_areas: Vec<MonitorArea>,
     /// Last logged minimum-size hint per Engine token, for bounded
-    /// hint-change summaries only. Never an Engine input: every row assembly
-    /// queries fresh and feeds fresh-or-none to the Engine, so a recycled
-    /// HWND (fresh token via reissue) never inherits a hint and a failed
-    /// query never reuses a stale one.
+    /// hint-change summaries plus the lifetime-bound retained overlay reuse:
+    /// a retained tiled maximized/fullscreen member rides its last-known
+    /// declared hint until a normal fresh query resumes. Keyed by Engine
+    /// token (never HWND alone) so a recycled HWND mints a fresh token and
+    /// never inherits; pruned by live membership plus row presence, and
+    /// dropped immediately with member state. Float, born-hold, hidden-fresh,
+    /// minimized, and cloaked rows never reuse it.
     hint_logged: HashMap<String, WindowSizeHints>,
+    /// Prompt-restore wake armed by one async restore dispatch, cleared only
+    /// after a gated reconcile consumes it, on expiry, or on member loss.
+    restore_wake: Option<RestoreWake>,
     /// Active-border configuration for this run (default on with an explicit
     /// off flag). The border never takes geometry writes: it only reads the
     /// foreground target's fresh frame and paints the process-owned overlay.
@@ -1133,6 +1139,14 @@ struct TileLoop {
     /// Engine as a slotless float plus this map plus a window-lifetime native
     /// marker; the marker (not this map) survives owner restarts.
     sticky: std::collections::BTreeMap<crate::workspace::WindowKey, bool>,
+}
+
+/// Armed prompt-restore wake: the restored member by full identity plus the
+/// Engine token, so a recycled HWND can never count as completion proof.
+struct RestoreWake {
+    key: crate::workspace::WindowKey,
+    token: String,
+    until: Instant,
 }
 
 /// One hidden member: the committed ledger claim (carrying the durable
@@ -2363,6 +2377,17 @@ fn is_zoomed_now(hwnd_u64: u64) -> bool {
     zoomed != 0
 }
 
+// Probe one armed wake: `(expired, lost, done)` for the routing seam.
+fn restore_wake_probe(state: &TileLoop, wake: &RestoreWake, now: Instant) -> (bool, bool, bool) {
+    let expired = now >= wake.until;
+    let lost = state
+        .member_tokens
+        .get(&wake.key)
+        .is_none_or(|live| *live != wake.token)
+        || unsafe { IsWindow(wake.key.hwnd as isize as HWND) } == 0;
+    (expired, lost, !is_zoomed_now(wake.key.hwnd))
+}
+
 /// Restore one maximized window to its normal placement without activating
 /// it: the official `GetWindowPlacement`/`SetWindowPlacement` route with
 /// `SW_SHOWNOACTIVATE` (restores in place, active window stays active) plus
@@ -3180,12 +3205,16 @@ fn prune_float_state(state: &mut TileLoop) {
 }
 
 /// Drop every runtime table for one dead member: tokens, rects, bands, sticky,
-/// identity, tags, and workspace membership. No writes, no ledger. Sticky
+/// identity, tags, hints, and workspace membership. No writes, no ledger. Sticky
 /// markers (window properties) are never pruned here: only the runtime map.
 fn drop_member_state(state: &mut TileLoop, key: &crate::workspace::WindowKey) {
     if let Some(token) = state.member_tokens.remove(key) {
         state.member_rects.remove(&token);
         state.float_rects.remove(&token);
+        state.hint_logged.remove(&token);
+    }
+    if state.restore_wake.as_ref().is_some_and(|w| w.key == *key) {
+        state.restore_wake = None;
     }
     state.float_topmost_prev.remove(key);
     state.sticky.remove(key);
@@ -3264,8 +3293,10 @@ fn desired_entries(reply: &CoreReply) -> Option<Vec<DesiredEntry>> {
 /// fresh hint the same way (fresh identity fences plus fresh `GetWindowRect`
 /// and `DWMWA_EXTENDED_FRAME_BOUNDS` for current insets, never shown or
 /// moved); a failed hidden measurement is unknown, never a stale inset.
-/// Retained rows (minimized without a frame, or maximized/fullscreen/cloaked
-/// with existing skip semantics) carry no hint. `hint_cx` shares one
+/// Retained tiled maximized/fullscreen members ride their last-known declared
+/// hint (lifetime-bound by Engine token, never derived from the maximized
+/// frame); minimized without a frame, cloaked, float, and born-hold rows
+/// carry no hint. `hint_cx` shares one
 /// aggregate deadline across every domain in
 /// the operation, so a send's source plus target never independently blow
 /// the per-operation budget; remaining members report unknown with no hint.
@@ -3447,11 +3478,34 @@ fn assemble_domain_rows(
             };
             if let Some(rect) = rect {
                 state.member_rects.insert(row.token.clone(), rect);
+                // Retained tiled overlay keeps its last-known declared hint
+                // so min-bound siblings stay stable; minimized/frameless,
+                // cloaked, float, and born-hold rows stay hintless.
+                let token_matches = state
+                    .member_tokens
+                    .get(key)
+                    .is_some_and(|live| live == &row.token);
+                let hints = crate::tiling::retained_overlay_hint(
+                    state.hint_logged.get(&row.token).copied(),
+                    token_matches,
+                    overlay,
+                    float_tokens.contains(&row.token),
+                    born,
+                    true,
+                );
+                reasons.insert(
+                    row.token.clone(),
+                    if hints.is_empty() {
+                        "retained"
+                    } else {
+                        "retained-hint"
+                    },
+                );
                 views.push(crate::workspace_owner::MemberView {
                     key: key.clone(),
                     token: row.token.clone(),
                     rect,
-                    hints: WindowSizeHints::none(),
+                    hints,
                     floating: false,
                 });
             }
@@ -3488,6 +3542,8 @@ fn assemble_domain_rows(
 /// all domains), never by the current domain alone, so multi-output and send
 /// domains never re-log unchanged hints. Rows feed the Engine; the cache
 /// additionally feeds the overconstrained native target (`max(planned, min)`).
+/// Retained overlay rows reuse the cached hint, so syncing here keeps (never
+/// drops) that reused value.
 #[allow(clippy::too_many_arguments)]
 fn log_min_hint_summary(
     state: &mut TileLoop,
@@ -5409,6 +5465,14 @@ fn keyboard_tick(
                 // again. Matches KDE's visible toggle while fixing the sticky
                 // `attempted` refusal after a native restore.
                 let outcome = toggle_zoom_async(member_key.hwnd, wanted);
+                if crate::tiling::restore_wake_arm(outcome, !wanted) {
+                    state.restore_wake = Some(RestoreWake {
+                        key: member_key.clone(),
+                        token: from.clone(),
+                        until: Instant::now()
+                            + Duration::from_millis(crate::tiling::RESTORE_WAKE_MS),
+                    });
+                }
                 log_json_at(
                     &log_path,
                     serde_json::json!({
@@ -8290,6 +8354,10 @@ fn workspace_do_select(
                 if let Some(token) = state.member_tokens.remove(key) {
                     state.member_rects.remove(&token);
                     state.float_rects.remove(&token);
+                    state.hint_logged.remove(&token);
+                }
+                if state.restore_wake.as_ref().is_some_and(|w| w.key == *key) {
+                    state.restore_wake = None;
                 }
                 state.float_topmost_prev.remove(key);
                 state.member_identity.remove(key);
@@ -10789,6 +10857,7 @@ fn run_tile_loop(
         last_hwnds: HashSet::new(),
         last_areas: Vec::new(),
         hint_logged: HashMap::new(),
+        restore_wake: None,
         border,
         border_overlay: BorderOverlay::default(),
         border_last: None,
@@ -11234,6 +11303,21 @@ fn run_tile_loop(
                     woke = true;
                 }
             }
+            // Armed restore demands a reconcile once observed; the wake
+            // survives pending dispatches and gesture/suspend pauses and is
+            // consumed only by a gated reconcile below, on expiry, or on loss.
+            if state.restore_wake.is_some() {
+                let (expired, lost, done) =
+                    restore_wake_probe(&state, state.restore_wake.as_ref().expect("armed"), now);
+                let (keep, demand) =
+                    crate::tiling::restore_wake_step(true, expired, lost, done, false);
+                if demand {
+                    woke = true;
+                }
+                if !keep {
+                    state.restore_wake = None;
+                }
+            }
             if !(woke || slow) {
                 continue;
             }
@@ -11350,6 +11434,18 @@ fn run_tile_loop(
             if ended.is_empty() {
                 if snap_events.is_empty() && workspace_events.is_empty() {
                     reconcile_tick(&mut state, me, &fulls, &areas);
+                    if state.restore_wake.is_some() {
+                        let (expired, lost, done) = restore_wake_probe(
+                            &state,
+                            state.restore_wake.as_ref().expect("armed"),
+                            Instant::now(),
+                        );
+                        let (keep, _) =
+                            crate::tiling::restore_wake_step(true, expired, lost, done, true);
+                        if !keep {
+                            state.restore_wake = None;
+                        }
+                    }
                     workspace_maintenance(&mut state, me, store, dir, &fulls, &areas);
                     poll_workspace_cli_request(&mut state, me, store, dir, &fulls, &areas);
                 } else {

@@ -450,6 +450,61 @@ pub const fn canonical_retained_rect(overlay: bool, fresh: Rect, retained: Optio
     }
 }
 
+/// Bound for the prompt-restore owner-loop wake after one async dispatch.
+pub const RESTORE_WAKE_MS: u64 = 2000;
+
+/// Last-known minimum hint for a retained tiled overlay member (maximized or
+/// fullscreen sharing this path): the fresh `WM_GETMINMAXINFO` query is
+/// unavailable while overlaid, so the last-known declared hint rides the
+/// canonical slot until a normal fresh query resumes. Never derived from the
+/// maximized frame, never stale: `None`/empty when the token moved on
+/// (recycled HWND mints a fresh token), when the member floats or holds a
+/// born-fullscreen slotless row, or when no canonical slot exists yet.
+#[must_use]
+pub fn retained_overlay_hint(
+    logged: Option<tiler_core::size_hints::WindowSizeHints>,
+    token_matches: bool,
+    overlay: bool,
+    is_float: bool,
+    born_hold: bool,
+    has_slot: bool,
+) -> tiler_core::size_hints::WindowSizeHints {
+    if !token_matches || !overlay || is_float || born_hold || !has_slot {
+        return tiler_core::size_hints::WindowSizeHints::none();
+    }
+    match logged {
+        Some(hints) if !hints.is_empty() => hints,
+        _ => tiler_core::size_hints::WindowSizeHints::none(),
+    }
+}
+
+/// Arm only on a restore request whose async setter is still pending.
+#[must_use]
+pub fn restore_wake_arm(outcome: &str, wanted_restored: bool) -> bool {
+    wanted_restored && outcome == "dispatched"
+}
+
+/// One pump of the armed restore wake. Returns `(keep, woke)`: `woke`
+/// demands a reconcile once completion is observed; `keep` survives pending
+/// dispatches and gesture/suspend pauses and clears only after a gated
+/// reconcile consumes it, on expiry, or on window/identity loss.
+#[must_use]
+pub const fn restore_wake_step(
+    armed: bool,
+    expired: bool,
+    gone: bool,
+    observed_done: bool,
+    reconciled: bool,
+) -> (bool, bool) {
+    if !armed || expired || gone {
+        return (false, false);
+    }
+    if observed_done {
+        return (!reconciled, true);
+    }
+    (true, false)
+}
+
 /// One-shot maximize-clear gate for first admission (KDE
 /// `maximize-admission-clear` parity): the first non-fullscreen admission of
 /// a maximized window without a retained tiled slot restores the native

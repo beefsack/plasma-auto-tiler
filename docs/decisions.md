@@ -197,6 +197,14 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   siblings or extend beyond the work area when the sequential seed cannot fit;
   no alternative-axis search, floating fallback or global optimizer is selected.
   Evidence: [placement correctness](changes/windows-placement-correctness.md).
+- Provisional, to discuss (2026-10-03, retained Windows overlay minimums):
+  tiled maximized/fullscreen members retain their last-known declared minimum
+  hints, bound to the member's lifetime token and canonical slot, until normal
+  fresh queries resume. This keeps minimum-bound sibling allocations stable;
+  floating/born-slotless, minimized and cloaked rows do not reuse hints.
+  A successful asynchronous Win+M restore dispatch arms a two-second bounded
+  completion wake on the existing 100ms pump. It reconciles once restore is
+  observed, preserving dispatch/gesture/suspend gates and single-attempt toggles.
 
 ## Cross-Platform Core
 
