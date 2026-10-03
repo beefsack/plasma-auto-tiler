@@ -125,18 +125,19 @@ decisions of 2026-09-24 are under
   (c) researched; alternate Game Bar access deferred (see Future).
   [record](changes/windows-gaming-coexistence.md)
   [decision](decisions.md#cross-platform-behavior)
-- P0 | Windows dogfood defects (user 2026-10-03, 4 windows, trace
-  `%LOCALAPPDATA%\plasma-auto-tiler\session-1\run-01dd530861947ef5.log`):
-  (a) initial tiling produced splits on one axis only, where a 2x2 (split
-  plus a cross split on each side) was expected; minimum sizes may explain
-  it, unproven; (b) Win+M unmaximise briefly left windows overlapping until a
-  later retile. Later runs (traces under the same folder):
-  (c) `run-01dd53116aa74f37.log`, 5 windows (Firefox, Steam, Terminal,
-  Notepad, Paint): only Terminal and Notepad tiled, both on the right of the
-  screen; cause (rejection or defect) unknown; (d) `run-01dd5311a7282421.log`,
-  3 windows tiled correctly at start; Notepad send to workspace 2 and back
-  split side by side at the right edge, a second round trip split side by
-  side in the middle.
+- P1 | Windows placement physical acceptance | User dogfood defects
+  (2026-10-03) fixed and live-API verified (`174e70b` diagnostics,
+  `2c918d3` startup/minimum placement, `4a636ae` maximise/restore,
+  `832e171` record; CI green): overlapping cascades and minimum-infeasible
+  fits use long-edge sequential seeding (KDE and Windows; a bisection
+  chain, not guaranteed 2x2); Windows infeasible tiles move to their origin
+  at minimum size instead of staying put; maximise keeps siblings stable and
+  restore reconciles promptly. Send return rule verified unchanged; the
+  original dogfood anchor is unknown. Provisional choices to review; user
+  to dogfood startup (both platforms), Win+M and send returns. Risk:
+  minimum-sized windows can overlap or extend past the work area; the KDE
+  adapter still skips overconstrained writes.
+  [record](changes/archive/windows-placement-correctness.md)
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.
