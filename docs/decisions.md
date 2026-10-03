@@ -148,6 +148,17 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   mask send. Callback consumption is not an OS-suppression acceptance signal.
   Keep the authentic catalog and documented-API constraint; a mechanism or
   architecture change, or registry/policy workaround, needs a user decision.
+  Bounded continuation (2026-10-03): a later project-hook install with gaming
+  components already running still produced the Xbox prompt within two seconds
+  of consumed marked F11; G was withheld on first leak. Containment part (a)
+  is parked, with no catalog exception selected. Microsoft's Win-key-swallowing
+  hook sample explicitly excludes Game Bar hotkeys, but does not establish
+  impossibility of consuming G/F11. User-applied Xbox-mode settings or accepting
+  the gap are pending choices; Game Bar keyboard-disable controls remain
+  unverified. Callback consumption and process-start order remain insufficient
+  suppression/hook-order evidence. The unaccepted large gaming fixture draft
+  was discarded under the simplicity principle; the active record owns options
+  and accepted evidence.
 - Coexisting with gaming is a core goal: provide some alternate access to
   OS gaming surfaces displaced by authentic bindings (Windows Game Bar,
   displaced by Win+G), and avoid behavior that anti-cheat software could

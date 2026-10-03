@@ -1,5 +1,131 @@
 # Windows gaming coexistence
 
+## PARKED: bounded install-order continuation (2026-10-03)
+
+- Part (a) remains unaccepted. No official-API correction was established;
+  stop further containment experiments pending the user's coexistence choice.
+  Keep this record active. The earlier follow-up below is historical evidence;
+  its proposed foreground-clear/install-order next step has now been exercised.
+- Quick read-only prior-art check, at the revisions in the table below:
+  - komorebi `docs/installation.md:17-24` warns about whkd Win-key restrictions;
+    `docs/example-configurations.md:200-203` says whkd >=0.2.4 overrides most,
+    with Win+L still requiring a registry change. Neither establishes G/F11
+    containment. No separate local whkd clone was available; no clone attempted.
+  - GlazeWM `keyboard_hook.rs:117-119,190-194` installs WH_KEYBOARD_LL and
+    returns 1 for interception. `README.md:129` recommends Alt because Windows
+    reserves some Win bindings. Whim `KeybindHook.cs:29-34,60,78-81` also uses
+    WH_KEYBOARD_LL, consuming matched key-downs. No G/F11-specific guarantee
+    or Game Bar-disable instruction was found in either inspected source.
+  - Seelen `src/service/hotkeys.rs:12-20,44-70` uses win-hotkeys. Its matching
+    cached dependency `9123179` (`windows-keyboard-hook/src/hook.rs:61,128-135,
+    163-191`) uses WH_KEYBOARD_LL, return 1 and injected E8 masking. No G/F11
+    containment-specific solution was found. These absences are search-limited.
+- Microsoft [LL-hook docs][ll-hook] describe callbacks before posting to a
+  thread input queue and permit nonzero return to block the remaining chain
+  and target procedure. [Hook-chain docs][hook-order] put each new hook at the
+  beginning. Neither establishes shell gaming-shortcut dispatch ordering.
+  [RegisterHotKey][register-hotkey] reserves Win combinations for the OS and
+  is not a demonstrated replacement. Microsoft's [game shortcut sample][game-shortcut-hook]
+  explicitly says swallowing Win with WH_KEYBOARD_LL does not block Game Bar
+  hotkeys (Win+G etc.). That sample does not consume G/F11; it is not proof
+  that consuming those keys is universally impossible. No official fix for
+  this host's consumed-F11 prompt was found.
+- Live scope: physical Win11 build 26200, medium IL 8192, session 1, one
+  2560x1440 display at 125%; existing gaming components preserved. Source
+  `bbe5b0f` plus only the unaccepted fixture draft; fresh locked build owner
+  SHA256 `553D839B9EC6B0503E941CF430308C9ECB753CA15CC1FDDD592298AB878679E3`,
+  helper `8C9C2EBDFF54F9E525A690720692BE5A73AB02AEE85F1C1C9F52A03D2100E991`.
+  Evidence root: `%TEMP%/opencode/gaming-installorder-20261003-203852-2136/`.
+- Foreground cleared without gaming input: Explorer-brokered tagged helper,
+  exact exposed-caption ancestor gate and one unmarked mouse click, cursor
+  restored. Notepad activation preparation had instead merged into the
+  original process; an Explorer error dialog was attributed to a Paint launch
+  (launch not stored), then dismissed by one exact guarded OK click. No original
+  app process was closed.
+- One causal capture repair: DPI-unaware CopyFromScreen metrics cropped the
+  2560x1440 desktop to 2048x1152, hiding the taskbar. PMv2 on the capture thread
+  restored full screenshots. The black field was the expanded helper client,
+  not a failed capture. No product/helper code changed. Preparation owners
+  sent zero gaming input; timeout-expiry/restore and exact emergency-stop/restore
+  were verified before proceeding.
+- Comparison owner: `shortcut-proof --allowlist <round2/allowlist2.json>
+  --seconds 300 --trace`, Explorer-brokered, exact ready identity, takeover,
+  one eligible helper and `snap-available`. GameBar/FTServer/Widgets,
+  EdgeGameAssist and XboxPcAppFT pre-existed this new owner. This establishes
+  a later project-hook install, not the other components' actual hook order.
+  Activation used raise/attach with E8 prime, not a click; the ancestor probe
+  failed because of mixed DPI coordinates. The fresh exact-foreground key-send
+  gate passed. No occlusion-free activation claim is accepted.
+- `round2/shot-12-baseline3.png`: helper covering the work area with project
+  border, taskbar/clock visible, no Xbox prompt. At 21:01:21 local, ONE marked
+  Win+F11 tap inserted 4/4 transitions. Raw owner log
+  `session-1/run-01dd532662fcc85d.log:311-331`: proof-marked F11 down/up
+  consumed, 6/5 us; Win down present and Win-up passed; E8 filtered;
+  mask send 470 us, inserted 2 / mask-ok, zero reported diagnostic drops.
+  Project fullscreen action also occurred. These are callback/action facts,
+  not shell-suppression proof.
+- `round2/shot-13-f11-plus2s.png` and `shot-14-f11-plus10s.png` show
+  "Switching to XBOX mode" in the exact Explorer-owned ApplicationFrameWindow.
+  Prompt onset <=2 seconds; first-leak STOP, ZERO Win+G taps. Later install
+  did not contain this F11 tap. Root cause remains unresolved: an earlier or
+  outside-chain observer, queued callback delivery delay, or indirect
+  fullscreen/mask/release activation. Fast callback timing does not measure
+  message-pump wait. No hypothesis justifies a thread redesign here.
+- Exact screenshot-identified foreground prompt received one unmarked Escape
+  pair, no Enter or "Don't remind" interaction; prompt cloak read 2 afterwards and
+  foreground returned to helper. `shot-15-after-esc.png` confirms dismissal;
+  full Xbox mode was not selected. Exact graceful stop/restore and tagged
+  helper close succeeded. `shot-16-end.png` confirms normal desktop, no prompt.
+  `round2/end-state.json`: no project actors or ledger/request residue,
+  SPI 0x0082=1 and 0x201E=35; original process starts and hosting Terminal
+  survived. Both helpers exited, so no project overlay/hidden window remains.
+- Independent review found two evidence projections to correct: the initial
+  callback summary projected nested entries as empty vk0 rows; use raw lines
+  above or `f11-correlation-corrected.json`. Activation JSON did not prove its
+  ancestor guard; use `helper2-activation-correction.json`. Neither changes
+  the correlated consume-plus-visible-prompt result.
+- Cleanup exception: preparation launched Notepad into its existing process,
+  but failed to capture a full pre-launch HWND set. Two extra empty Notepad
+  windows may be launch-created residue. Their attribution is not established;
+  they were preserved rather than risking closure of original user windows.
+  Original Notepad HWND survives. See `notepad-attribution-correction.json`;
+  user-owned visual identification/closure is the remaining desktop cleanup.
+- Simplicity decision: discard the +880/-6 unaccepted GamingContainment draft
+  from `scripts/windows-shortcuts.ps1`; its observer is not a suppression
+  oracle, and expanding it does not solve the blocker. File restored exactly
+  to committed baseline; existing mock passes (21 negative gates). No product
+  behavior, binding, registry/policy or architecture change was made.
+- Continuation verification: independent review accepted the corrected evidence
+  and parking record. Locked four-package native build/test and strict all-target
+  clippy, full rustfmt and diff checks pass. Delivery/hosted CI is reported in
+  the terminal handover; acceptance is documentation of the blocker, not gaming
+  shortcut containment or complete desktop cleanup.
+
+### Parked choices and recommendation
+
+| Option | Boundary / consequence |
+| --- | --- |
+| Accept this OS limitation while retaining KDE bindings | Catalog stays authentic; F11 may also activate the Xbox prompt and G suppression remains unproven. This is acceptance of a known gap, not guaranteed impossibility. |
+| User-applied Windows settings | Recommended first reversible route if preserving KDE bindings matters: Settings > Gaming > Xbox mode, turn off Enable Xbox mode (PC); handheld Choose home app > None is documented separately. Verify F11 physically afterwards. No documented current-host setting that reliably disables keyboard Win+G was established; controller-open/capture toggles are not that guarantee. Research/verify the exact Game Bar UI before claiming this solves G. |
+| Registry/policy changes by project | Not authorized; affects host gaming behavior and needs a user decision plus bounded restoration semantics. Recording-disable policies are not established Win+G/F11 suppression guarantees. |
+| Dedicated hook thread | Microsoft recommends it for prompt callback delivery, but no evidence here establishes pump wait as the cause. Architecture change needs authorization and a separate latency hypothesis/experiment; not selected. |
+
+- Recommendation: keep part (a) PARKED and the KDE catalog unchanged; user
+  chooses whether to accept the gap or personally disable Xbox mode and
+  evaluate Game Bar's actual keyboard-shortcut controls. Do not spend another
+  install-order attempt or grow the fixture. No provisional product exception
+  was selected. Physical taps, holds/releases, plain Win/unowned chords,
+  stop/reversal and ordinary-app/game feel remain user-owned.
+- Proposed backlog text: "P0 Windows gaming coexistence (a) PARKED: later
+  project-hook install still yields Xbox prompt after marked consumed F11
+  (6/5 us, mask-ok, screenshots <=2s/10s); G withheld on first leak. No
+  official-API fix established. User decision: accept limitation or personally
+  disable Xbox mode/evaluate Game Bar keyboard controls; thread/policy changes
+  need separate authorization. Record stays active."
+- Exact next action: user identifies/closes any newly opened empty Notepad
+  windows, then chooses the coexistence option. Resume containment only with
+  that choice or new supported-mechanism evidence.
+
 ## Active follow-up: attributable live containment (2026-10-03)
 
 - Scope now: backlog P0 part (a), authentic owned-shortcut containment on the
@@ -399,3 +525,6 @@
 [dwm-attributes]: https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute
 [first-ci]: https://github.com/beefsack/plasma-auto-tiler/actions/runs/37109086579
 [diagnostic-ci]: https://github.com/beefsack/plasma-auto-tiler/actions/runs/37113756434
+[hook-order]: https://learn.microsoft.com/en-us/windows/win32/winmsg/about-hooks
+[register-hotkey]: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey
+[game-shortcut-hook]: https://learn.microsoft.com/en-us/windows/win32/dxtecharts/disabling-shortcut-keys-in-games
