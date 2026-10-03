@@ -196,7 +196,7 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   current adapter still skips such writes. Oversized windows may overlap
   siblings or extend beyond the work area when the sequential seed cannot fit;
   no alternative-axis search, floating fallback or global optimizer is selected.
-  Evidence: [placement correctness](changes/windows-placement-correctness.md).
+  Evidence: [placement correctness](changes/archive/windows-placement-correctness.md).
 - Provisional, to discuss (2026-10-03, retained Windows overlay minimums):
   tiled maximized/fullscreen members retain their last-known declared minimum
   hints, bound to the member's lifetime token and canonical slot, until normal

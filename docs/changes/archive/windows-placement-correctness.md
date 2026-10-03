@@ -1,5 +1,8 @@
 # Windows placement correctness
 
+- Status: implementation and automated/live-API verification complete
+  (2026-10-03); provisional product review and physical dogfood remain user-owned.
+
 ## Goal and acceptance
 
 - Resolve dogfood D1 (startup strips), D4 (admitted but unmoved minimum-size
@@ -92,6 +95,9 @@
   a concurrent dispatch before reconciliation. Initial wake implementation
   cleared before dispatch routing; Lead review caught and corrected this before
   acceptance. No failed product semantic approach was accepted.
+- D2 commit `4a636ae` contains the live-verified source diff: hosted
+  Rust/KWin/shell/Windows CI green
+  ([run](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37125264718)).
 
 ## Live verification outcome
 
@@ -159,7 +165,7 @@
   minimums; enable tiling, disable/re-enable. Observe identity/order/topology,
   allocation and movement; compare clean adoption with sequential remap.
   Local COSMIC `src/shell/workspace.rs:1441-1452` maps floating windows
-  sequentially, not rectangle-to-tree inversion (diagnosis source citation).
+  sequentially, not rectangle-to-tree inversion (local source read verified).
 - Startup-cascade-4: four overlapping/cascaded never-tiled windows, minimums
   fitting a 2x2; enable tiling. Observe inferred centre cuts versus long-edge
   sequential seed, final axes and identity order. Our original shared Engine
@@ -178,10 +184,29 @@
   and focus follow. Local COSMIC `src/shell/layout/tiling/mod.rs:417-436,
   548-616` uses last-active target and its long edge; no-focus uses root/output.
   Our proof returns used remembered tall then remembered wide leaves correctly.
+  Repeat after the remembered leaf leaves the destination to observe valid
+  focus-history fallback, and without any valid destination focus to observe
+  root fallback; these branches remain source/test-established, not live-proven.
 - Maximize-minimums: four minimum-bound equal-share strip leaves with minimum
   widths 401/864/627/582 in 2544px; maximize then restore each hinted member,
   cross-check native maximize/restore. Observe sibling desired and actual
   stability, retained hints, restore-dispatch/convergence latency and overlap.
   Local shared `size_hints.rs:250-305,377-419` reallocates if binding hints
-  disappear; current Windows retained rows drop hints. Hintless live control
-  was stable, with restore dispatch tick 8 then plan tick 9.
+  disappear; pre-fix Windows retained rows dropped hints. Final Windows retains
+  them and real-app siblings stayed stable. External reference-WM maximize
+  outcomes are unestablished locally; record their allocation/restore behavior.
+
+## Completion and succession
+
+- No Worker remains running. Lead final readback: zero project actors,
+  no ledger/stop/workspace requests, arranging query=true/value=1,
+  pen query=true/value=35, taskbar visible. User application identities and
+  visibility verified by the final live Worker; user windows remain arranged.
+- Proposed backlog replacement: "P1 | Windows placement physical acceptance |
+  D1/D4 startup and minimum-placement corrections, D2 retained hints/prompt
+  restore delivered; D5 remembered projected-long-edge rule verified. Review
+  provisional cascade/minimum-overflow choices and physically dogfood Win+M
+  and send returns; evidence in archived windows-placement-correctness."
+- Exact next action: Orchestrator moves Candidate matrix rows into the matrix
+  document and advances the backlog; user reviews the provisional choices and
+  runs the physical checks above. No remaining autonomous implementation action.
