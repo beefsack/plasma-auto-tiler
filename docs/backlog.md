@@ -101,7 +101,15 @@ decisions of 2026-09-24 are under
   (9) multi-output support PARKED: needs the multi-output PC for live work;
   (10) taskbar item showing workspaces PARKED on the user design discussion
   (options in the [comparison](research/windows-port/reference-wm-comparison.md));
-  (11) settings
+  (11) settings core slice delivered (`df4edc5`, `1c97c52`, `999f2f3`,
+  `81986ab`; CI green; `just --justfile windows.justfile settings`;
+  [evidence](changes/archive/windows-settings.md)): JSON store under
+  LocalAppData, plain Win32 Apply/Revert UI, live gaps/visuals/Snap
+  takeover, conflict list and presets (compatible disables 35 conflicting
+  chords, authentic stays the default), system accent border default with
+  KDE `#2a82da` fallback (yellow removed). All provisional. Remaining:
+  first-run preset prompt, tray entry, broader rebinding, physical checks.
+  Original item 11 scope: settings
   (UI with Apply/Revert parity, including Snap takeover off; decide the final
   accent/configured border default and remove the temporary yellow default;
   per-binding OS-conflict list with compatible/authentic quick-set presets,
