@@ -274,6 +274,14 @@ Legend:
 | R-DRAG-07 | `H[A,B*]`, both tiled | Meta/Win+left client drag B to A's edge; pause before release | Native frame follows pointer vs retained source allocation with target-slot preview; final placement unchanged | TBD | TBD | TBD | TBD | TBD | KDE: native frame moves and target-slot preview is selected `D(D-dec-drag)`; Windows: provisional stationary source with visible target-slot preview, three-window synthetic freeze/preview/drop proof; exact row TBD `D(D-win-drag)` | V-DRAG-ZONE |
 | R-DRAG-08 | `H[A*,B]`, B unfocused tiled | Meta/Win+left client press on B; move; release at A's edge | Native focus changes at press vs drop; dragged group visual without changing retained focus | TBD | TBD | TBD | TBD | TBD | KDE: exact focus timing TBD; Windows: provisional foreground retained during hold, B activated on valid drop; synthetic unfocused-mover proof, C parked `D(D-win-drag)` | V-DRAG-ZONE |
 
+## 11. Owner controls and startup settings
+
+| ID | Start | Action | Observe | COSMIC | Hyprland | bspwm | i3 | xmonad | Ours (KDE/Windows) | Variant |
+|---|---|---|---|---|---|---|---|---|---|---|
+| R-CTL-01 | Windows settings absent | Start owner; choose Compatible; stop; restart | Preset persists; first-run prompt does not recur | TBD | TBD | TBD | TBD | TBD | Windows: authentic default offered, compatible saves 35 disabled rows; existing-file startup skips prompt; synthetic/native proof [tray record](../changes/archive/windows-tray-first-run.md); KDE first-run TBD | V-FIRST-RUN |
+| R-CTL-02 | Owner's first-run prompt open, settings absent | Publish settings from another writer; accept stale prompt choice | Preserve newer settings vs overwrite | TBD | TBD | TBD | TBD | TBD | Windows: discard stale choice, load authoritative file, bytes unchanged; same record; other platforms TBD | V-FIRST-RUN |
+| R-CTL-03 | Running owner with notification icon | Lose icon registration; post TaskbarCreated; stop from menu | Exactly one icon returns; Stop removes icon and owner effects | TBD | TBD | TBD | TBD | TBD | Windows: GUID-delete fixture then posted message re-adds one icon; actual menu Stop cleans up; same record. Real Explorer restart TBD; KDE lifecycle is separate | V-TRAY-LIFECYCLE |
+
 ## Deferred areas
 
 - Ratio equalize/balance command: bspwm `-E`/`-B` evidenced

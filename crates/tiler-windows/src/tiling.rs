@@ -261,7 +261,9 @@ pub struct WindowFacts {
     pub owned: bool,
     pub captionless_fullscreen: bool,
     pub no_activate: bool,
-    /// Generic Win32 dialog class (`#32770`) without an owner window.
+    /// Generic Win32 dialog class (`#32770`) without an owner window, plus
+    /// the project's own Settings UI (own executable plus
+    /// [`OWN_SETTINGS_WINDOW_CLASS`], set by the native gates).
     /// Owned dialogs are reported as `OwnedDialog` instead.
     pub dialog: bool,
 }
@@ -277,7 +279,8 @@ pub enum SkipReason {
     Shell,
     Tool,
     OwnedDialog,
-    /// Unowned generic dialog (`#32770`): never a tile target.
+    /// Unowned generic dialog (`#32770`) or the project's own Settings UI
+    /// (own executable plus settings class): never a tile target.
     Dialog,
     Fullscreen,
     NoActivate,
@@ -307,6 +310,24 @@ impl SkipReason {
             Self::IdentityChanged => "identity-changed",
         }
     }
+}
+
+/// Native window class of the project's own Settings UI. Must stay in sync
+/// with `crate::settings_ui::SETTINGS_WINDOW_CLASS` (duplicated here so this
+/// portable policy compiles everywhere).
+pub const OWN_SETTINGS_WINDOW_CLASS: &str = "PlasmaAutoTilerSettings";
+
+/// True when a top-level window is the project's own Settings UI: its class
+/// is the settings class and its executable matches the owner's exactly
+/// (slash/case-insensitive, same [`crate::lifecycle::exe_paths_equal`]
+/// identity the owner checks use). Class alone never excludes: a foreign app
+/// reusing the class name stays eligible, and our own executable with any
+/// other class stays eligible. Native gates classify this as a dialog so the
+/// existing skip/recovery fences keep it unmanaged.
+#[must_use]
+pub fn is_own_settings_window(class: &str, exe_path: &str, owner_exe_path: &str) -> bool {
+    class == OWN_SETTINGS_WINDOW_CLASS
+        && crate::lifecycle::exe_paths_equal(exe_path, owner_exe_path)
 }
 
 /// Eligibility gate. Terminal windows are ordinary tile targets (KDE

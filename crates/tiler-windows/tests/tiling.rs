@@ -3,15 +3,16 @@ use tiler_core::geometry::Rect;
 use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
 use tiler_windows::tiling::{
     CaptureOptions, FrameInsets, FullscreenToggle, GestureIntent, INNER_GAP, OUTER_GAP,
-    ObservedTarget, ObservedTargetRef, ReadbackOutcome, RefusedTracker, ScopeHostChild, SkipReason,
-    StatelessVerdict, TokenMap, WindowFacts, WorkspaceRequest, allow_match, allowlist_digest,
-    build_reconcile_event, build_reconcile_event_for, canonical_retained_rect, classify,
-    classify_focus, classify_gesture, fingerprint, float_toggle_refusal,
-    float_topmost_restore_needed, fullscreen_toggle_decision, hosted_child_allows,
-    inspect_stateless_verdict, is_borderless_fullscreen, min_hints_from_outer, normalize_min_track,
-    overlay_refusal, parse_allowlist, parse_capture_args, parse_children_args,
-    parse_hide_proof_args, parse_inspect_args, parse_scope_host_child, parse_shortcut_proof_args,
-    parse_tile_args, parse_tile_proof_args, parse_workspace_proof_args, parse_workspace_request,
+    OWN_SETTINGS_WINDOW_CLASS, ObservedTarget, ObservedTargetRef, ReadbackOutcome, RefusedTracker,
+    ScopeHostChild, SkipReason, StatelessVerdict, TokenMap, WindowFacts, WorkspaceRequest,
+    allow_match, allowlist_digest, build_reconcile_event, build_reconcile_event_for,
+    canonical_retained_rect, classify, classify_focus, classify_gesture, fingerprint,
+    float_toggle_refusal, float_topmost_restore_needed, fullscreen_toggle_decision,
+    hosted_child_allows, inspect_stateless_verdict, is_borderless_fullscreen,
+    is_own_settings_window, min_hints_from_outer, normalize_min_track, overlay_refusal,
+    parse_allowlist, parse_capture_args, parse_children_args, parse_hide_proof_args,
+    parse_inspect_args, parse_scope_host_child, parse_shortcut_proof_args, parse_tile_args,
+    parse_tile_proof_args, parse_workspace_proof_args, parse_workspace_request,
     parse_workspace_select_args, readback_outcome, render_workspace_request, scope_allows,
     scope_exe_basename, send_flags_stable, should_clear_maximize_at_admission,
     should_hold_born_fullscreen, tick_summary_signature, tiling_domain_bounds, toggle_gate_outcome,
@@ -155,6 +156,37 @@ fn eligibility_exclusions() {
     facts.owned = true;
     facts.dialog = true;
     assert_eq!(classify(&facts), Err(SkipReason::OwnedDialog));
+}
+
+#[test]
+fn own_settings_window_gate() {
+    let owner_exe = "C:\\Program Files\\plasma-auto-tiler\\tiler-windows.exe";
+    // Own executable plus the settings class refuses management through the
+    // existing dialog skip.
+    assert!(is_own_settings_window(
+        OWN_SETTINGS_WINDOW_CLASS,
+        owner_exe,
+        owner_exe
+    ));
+    // Same-executable path spellings still match the exact owner identity.
+    assert!(is_own_settings_window(
+        OWN_SETTINGS_WINDOW_CLASS,
+        "c:/program files/plasma-auto-tiler/tiler-windows.exe",
+        owner_exe
+    ));
+    let mut facts = eligible_facts();
+    facts.dialog = true;
+    assert_eq!(classify(&facts), Err(SkipReason::Dialog));
+    // Same executable with any other class stays eligible.
+    assert!(!is_own_settings_window("Notepad", owner_exe, owner_exe));
+    assert!(!is_own_settings_window("#32770", owner_exe, owner_exe));
+    // A foreign app reusing the class name stays eligible: class alone never
+    // excludes.
+    assert!(!is_own_settings_window(
+        OWN_SETTINGS_WINDOW_CLASS,
+        "C:\\Windows\\System32\\notepad.exe",
+        owner_exe
+    ));
 }
 
 #[test]

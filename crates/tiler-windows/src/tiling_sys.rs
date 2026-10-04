@@ -160,7 +160,9 @@ fn exe_file_name(exe_path: &str) -> &str {
 }
 
 /// Generic Win32 dialog class. Unowned top-level dialogs are never tile
-/// targets; owned ones are already excluded as owned dialogs.
+/// targets; owned ones are already excluded as owned dialogs. The project's
+/// own Settings UI (own executable plus settings class) rides the same gate
+/// via [`crate::tiling::is_own_settings_window`].
 const DIALOG_CLASS: &str = "#32770";
 
 fn rect_from_win(rect: RECT) -> Option<Rect> {
@@ -412,7 +414,9 @@ fn window_identity(hwnd: HWND, hwnd_u64: u64, me: &ProcessIdentity) -> Option<Ob
     unsafe {
         GetWindowThreadProcessId(hwnd, &mut pid);
     }
-    // The owner never tiles itself.
+    // The owner never tiles its own process. Its separate-process Settings
+    // UI (same executable, settings class) is excluded at the dialog gate
+    // below, not here.
     if pid == 0 || pid == me.pid {
         return None;
     }
@@ -600,7 +604,8 @@ fn observe_window(
         owned,
         captionless_fullscreen: is_borderless_fullscreen(captionless, visible, fulls),
         no_activate: exstyle & WS_EX_NOACTIVATE != 0,
-        dialog: !owned && class == DIALOG_CLASS,
+        dialog: (!owned && class == DIALOG_CLASS)
+            || crate::tiling::is_own_settings_window(&class, &identity.exe_path, &me.exe_path),
     };
     Ok(ObservedWindow {
         hwnd: hwnd_u64,
@@ -3583,8 +3588,8 @@ fn exit_fullscreen_owned(hwnd_u64: u64, meta: &FullscreenMeta) -> &'static str {
 
 /// Fresh holdability check for one fullscreen HWND: same-session,
 /// medium-integrity identity plus every safety gate observation admission
-/// requires (never elevated, shell, tool, owned, dialog, cloaked, or
-/// no-activate; in scope with a live hosted child where listed; frozen
+/// requires (never elevated, shell, tool, owned, dialog including the own
+/// Settings UI, cloaked, or no-activate; in scope with a live hosted child where listed; frozen
 /// allowlist plus owned-helper verification in proof modes). Returns the
 /// member key on pass; the caller decides hold vs exemption. Read-only.
 fn holdable_key(
@@ -3621,7 +3626,10 @@ fn holdable_key(
         return None;
     }
     let class = class_of(hwnd);
-    if is_shell_class(&class) || class == DIALOG_CLASS {
+    if is_shell_class(&class)
+        || class == DIALOG_CLASS
+        || crate::tiling::is_own_settings_window(&class, &live.exe_path, &me.exe_path)
+    {
         return None;
     }
     if !unsafe { GetWindow(hwnd, GW_OWNER) }.is_null() {
@@ -12338,6 +12346,14 @@ struct TileRun {
     raw_argv: Vec<String>,
     keyboard: KeyboardConfig,
     mouse_snap: bool,
+    /// First-run note for the `tile-start` log (`None` on proof paths, which
+    /// never prompt): the chosen preset plus whether it persisted.
+    first_run: Option<String>,
+    /// Normal owner only (`None` on proof paths): the parsed options plus the
+    /// pre-lease settings state, resolved into the effective options under
+    /// the owner lease before any effect or hook (so a refused second owner
+    /// never prompts and a mid-prompt file race never overwrites).
+    first_run_pending: Option<FirstRunPending>,
     /// Live inner/outer gaps for this run (settings base, CLI overrides).
     inner_gap: i32,
     outer_gap: i32,
@@ -12538,17 +12554,19 @@ fn run_tile_loop(
         shortcut_proof,
         workspace_proof,
         raw_argv,
-        keyboard,
-        mouse_snap,
-        inner_gap,
-        outer_gap,
-        settings_dir,
-        settings_live,
+        mut keyboard,
+        mut mouse_snap,
+        mut first_run,
+        first_run_pending,
+        mut inner_gap,
+        mut outer_gap,
+        mut settings_dir,
+        mut settings_live,
         cli_overrides,
-        scope,
-        scope_hosts,
-        border,
-        underlay,
+        mut scope,
+        mut scope_hosts,
+        mut border,
+        mut underlay,
     } = run;
     // Prevention needs an active loop: proof never arms it, and the guarded
     // setup already captured the preimage plus the initial effect. The live
@@ -12564,6 +12582,28 @@ fn run_tile_loop(
     } else {
         None
     };
+    // First-run preset under the owner lease (normal owner only): the lease
+    // refusal already stopped a second owner before any UI, and the resolved
+    // choice reapplies every explicit CLI lane before effects or hooks.
+    // Proof paths carry no pending state and keep deterministic config.
+    if !proof && let Some(pending) = first_run_pending {
+        let resolved = resolve_first_run(dir, me, pending, &cli_overrides, &log_path)?;
+        keyboard = KeyboardConfig {
+            takeover: !resolved.options.no_keyboard_snap_takeover,
+            allow_win_l: resolved.options.allow_win_l,
+        };
+        mouse_snap = !resolved.options.no_mouse_snap_prevention;
+        snap_want = mouse_snap;
+        first_run = resolved.first_run;
+        inner_gap = resolved.options.inner_gap;
+        outer_gap = resolved.options.outer_gap;
+        settings_dir = resolved.settings_dir;
+        settings_live = resolved.live;
+        scope = resolved.options.scope_exes.clone();
+        scope_hosts = resolved.options.scope_hosts.clone();
+        border = resolved.options.border;
+        underlay = resolved.options.underlay;
+    }
     // Proof audit starts before any geometry: raw received argv (elements
     // stay separate strings so spaces survive without quoting), parsed
     // seconds/trace/mode, and allowlist digest/count. The frozen identity
@@ -12757,6 +12797,7 @@ fn run_tile_loop(
             "keyboard": {"takeover": takeover, "allow_win_l": state.keyboard.allow_win_l},
             "mouse_snap_prevention": snap_want,
             "settings": state.settings_live.as_ref().map(|live| live.status.clone()),
+            "first_run": first_run,
             "scope_count": state.scope.len(),
             "active_border": {
                 "enabled": state.border.enabled,
@@ -12825,6 +12866,46 @@ fn run_tile_loop(
         }
         return Err(err("error: SetWinEventHook failed"));
     }
+    // Owner-owned notification tray (normal owner only; proof owners stay
+    // deterministic with no icon). Created after the hooks so no hook-failure
+    // early return can leak it, and RAII `Drop` covers every later path.
+    // Creation failure degrades to tray-less tiling, never a refused run.
+    // The hidden owner window rides the loop-thread pump below, so its
+    // TaskbarCreated and tray callbacks dispatch on this same thread. The
+    // conflict projection uses the effective runtime keyboard policy
+    // (takeover off passes everything through, so nothing warns; the Win+L
+    // opt-in follows the runtime allow_win_l) over the CLI-overridden
+    // settings base.
+    let mut tray: Option<crate::tray_sys::TrayOwner> = if proof {
+        None
+    } else {
+        let (conflict_empty, settings_status) = match state.settings_live.as_ref() {
+            Some(live) => (
+                crate::tray::unresolved_conflicts(
+                    &live.settings,
+                    state.keyboard.takeover,
+                    state.keyboard.allow_win_l,
+                )
+                .is_empty(),
+                live.status.clone(),
+            ),
+            None => (true, "saved:unknown".to_owned()),
+        };
+        match crate::tray_sys::TrayOwner::create(
+            conflict_empty,
+            &settings_status,
+            Some(log_path.clone()),
+        ) {
+            Ok(owner) => Some(owner),
+            Err(error) => {
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({"event":"tray-unavailable","cause": error.to_string()}),
+                );
+                None
+            }
+        }
+    };
     // Product keyboard takeover on the loop thread: the callback runs during
     // pump_wait on this same thread, so install/uninstall bracket the loop
     // with no join. Plain proof mode never installs a hook; shortcut-proof
@@ -12894,7 +12975,7 @@ fn run_tile_loop(
             refresh_group_underlay(&mut state, me, &fulls, &areas);
         }
         loop {
-            if stop_requested(dir, me)? {
+            if stop_requested(dir, me)? || tray.as_ref().is_some_and(|t| t.stop_requested()) {
                 return Ok(());
             }
             if deadline.is_some_and(|end| Instant::now() >= end) {
@@ -13054,6 +13135,26 @@ fn run_tile_loop(
             // so gap adoption reconciles promptly.
             if poll_live_settings(&mut state, dir, me, store, &mut snap_want) {
                 woke = true;
+            }
+            // Tray follows live settings on the same pump: badge and tooltip
+            // track the validated effective bindings under the runtime
+            // keyboard policy (takeover plus the runtime Win+L opt-in), and a
+            // pending add retries through the state gate (no duplicate
+            // icons). `sync` itself is change-gated.
+            if let Some(tray) = tray.as_mut() {
+                let (conflict_empty, settings_status) = match state.settings_live.as_ref() {
+                    Some(live) => (
+                        crate::tray::unresolved_conflicts(
+                            &live.settings,
+                            state.keyboard.takeover,
+                            state.keyboard.allow_win_l,
+                        )
+                        .is_empty(),
+                        live.status.clone(),
+                    ),
+                    None => (true, "saved:unknown".to_owned()),
+                };
+                tray.sync(conflict_empty, &settings_status);
             }
             // Shortcut-handling gate for the callback: fresh downs consume
             // iff takeover holds with this gate active (the eventual Xbox
@@ -13746,6 +13847,14 @@ fn run_tile_loop(
         }
         log_json_at(&log_path, release);
     }
+    // Owner tray teardown: graceful stop removes the icon (`NIM_DELETE`
+    // through RAII `Drop`); a crash ghost is pruned by the next startup or
+    // independent restore through the stable GUID. The explicit end line
+    // marks graceful stop only.
+    if let Some(tray) = tray {
+        drop(tray);
+        log_json_at(&log_path, serde_json::json!({"event":"tray-end"}));
+    }
     // Owned overlay teardown: explicit destroy on graceful stop (process exit
     // destroys it implicitly after a crash, so no residue either way).
     let border_snapshot = state.border_overlay.snapshot();
@@ -13846,6 +13955,11 @@ pub fn cmd_tile(
     if !options.user_start {
         return Err(err("refuse: tile requires explicit --user-start"));
     }
+    // The first-run preset resolves under the owner lease inside the loop
+    // below (never before it): a refused second owner never prompts, and a
+    // mid-prompt file race reloads instead of overwriting. These pre-lease
+    // values are the no-prompt fallback; the lease-held resolution may
+    // replace every derived lane before any effect or hook.
     let trace = options.trace;
     let seconds = options.seconds;
     let keyboard = KeyboardConfig {
@@ -13859,6 +13973,12 @@ pub fn cmd_tile(
     let underlay = options.underlay;
     let inner_gap = options.inner_gap;
     let outer_gap = options.outer_gap;
+    let options = options.clone();
+    let pending = FirstRunPending {
+        options,
+        live: live.clone(),
+        settings_dir: settings_dir.clone(),
+    };
     crate::lifecycle::sys::run_product(trace, mouse_snap, move |dir, me, store| {
         run_tile_loop(
             dir,
@@ -13874,6 +13994,8 @@ pub fn cmd_tile(
                 raw_argv: Vec::new(),
                 keyboard,
                 mouse_snap,
+                first_run: None,
+                first_run_pending: Some(pending),
                 inner_gap,
                 outer_gap,
                 settings_dir,
@@ -13886,6 +14008,206 @@ pub fn cmd_tile(
             },
         )
     })
+}
+
+/// Deferred first-run inputs for the normal `tile` owner only. The parsed
+/// options plus the pre-lease settings state travel into the owned loop and
+/// resolve under the lease before any effect or hook.
+struct FirstRunPending {
+    options: TileOptions,
+    live: Option<LiveSettings>,
+    settings_dir: Option<std::path::PathBuf>,
+}
+
+struct FirstRunResolved {
+    options: TileOptions,
+    live: Option<LiveSettings>,
+    settings_dir: Option<std::path::PathBuf>,
+    first_run: Option<String>,
+}
+
+/// Carry the CLI/run-only lanes over a settings base: explicit CLI switches
+/// re-apply over the base, and seconds/trace/scope plus the user-start fence
+/// (never from the file) carry over from the parsed options.
+fn options_with_cli(
+    base_settings: &crate::settings::Settings,
+    cli_overrides: &crate::tiling::CliOverrides,
+    run_options: &TileOptions,
+) -> TileOptions {
+    let mut base = crate::settings::tile_options_from_settings(base_settings);
+    crate::tiling::apply_cli_overrides(&mut base, cli_overrides);
+    base.seconds = run_options.seconds;
+    base.trace = run_options.trace;
+    base.user_start = run_options.user_start;
+    base.scope_exes = run_options.scope_exes.clone();
+    base.scope_hosts = run_options.scope_hosts.clone();
+    base
+}
+
+/// Authoritative base when the prompt choice is discarded (a file appeared
+/// mid-prompt, the create race was lost, or the choice failed validation):
+/// the file wins when it loads, otherwise last-good defaults stay live with
+/// a degraded status. Explicit CLI switches and run-only lanes re-apply over
+/// either base. Nothing is written.
+fn authoritative_base(
+    dir: &std::path::Path,
+    run_options: &TileOptions,
+    cli_overrides: &crate::tiling::CliOverrides,
+) -> (TileOptions, Option<LiveSettings>) {
+    let mtime = std::fs::metadata(dir.join(crate::settings::SETTINGS_FILE_NAME))
+        .and_then(|meta| meta.modified())
+        .ok();
+    match crate::settings::load_from_dir(dir) {
+        crate::settings::LoadOutcome::Loaded(settings) => {
+            let options = options_with_cli(&settings, cli_overrides, run_options);
+            (options, Some(LiveSettings::fresh(settings, mtime)))
+        }
+        crate::settings::LoadOutcome::Missing => {
+            let mut live = LiveSettings::fresh(crate::settings::Settings::default(), mtime);
+            live.status = "missing: defaults".to_owned();
+            let options = options_with_cli(&live.settings.clone(), cli_overrides, run_options);
+            (options, Some(live))
+        }
+        crate::settings::LoadOutcome::Invalid(error) => {
+            let mut live = LiveSettings::fresh(crate::settings::Settings::default(), mtime);
+            live.status = format!("degraded:{error}");
+            let options = options_with_cli(&live.settings.clone(), cli_overrides, run_options);
+            (options, Some(live))
+        }
+    }
+}
+
+/// Lease-held first-run resolution for the normal `tile` owner only. The
+/// caller holds the single-owner lease, so a second owner never reaches
+/// here (its lease refusal lands before any UI). A stop racing startup
+/// skips the modal UI and the loop exits promptly. After the choice, the
+/// file is rechecked: a file that appeared mid-prompt discards the choice
+/// and reloads the authoritative base without writing. An absent file
+/// persists through the atomic create-if-absent publish: the winner's bytes
+/// land complete, a lost race discards the choice and reloads instead of
+/// overwriting, and a plain I/O failure keeps the choice in memory for this
+/// run only with an explicit unsaved status plus a `first-run-save-failed`
+/// line (never a silent success claim).
+fn resolve_first_run(
+    dir: &Path,
+    me: &ProcessIdentity,
+    pending: FirstRunPending,
+    cli_overrides: &crate::tiling::CliOverrides,
+    log_path: &Path,
+) -> Result<FirstRunResolved> {
+    let FirstRunPending {
+        options,
+        live,
+        settings_dir,
+    } = pending;
+    let done = |options, live, settings_dir, first_run| FirstRunResolved {
+        options,
+        live,
+        settings_dir,
+        first_run,
+    };
+    let Some(sdir) = settings_dir.clone() else {
+        return Ok(done(options, live, settings_dir, None));
+    };
+    let file_present = !matches!(
+        crate::settings::load_from_dir(&sdir),
+        crate::settings::LoadOutcome::Missing
+    );
+    if file_present {
+        return Ok(done(options, live, settings_dir, None));
+    }
+    if stop_requested(dir, me)? {
+        return Ok(done(options, live, settings_dir, None));
+    }
+    let outcome = crate::tray_sys::first_run_prompt();
+    let Some(choice) = outcome.choice() else {
+        return Ok(done(
+            options,
+            live,
+            settings_dir,
+            Some("first-run:dismissed:unsaved".to_owned()),
+        ));
+    };
+    if !matches!(
+        crate::settings::load_from_dir(&sdir),
+        crate::settings::LoadOutcome::Missing
+    ) {
+        let (options, live) = authoritative_base(&sdir, &options, cli_overrides);
+        log_json_at(
+            log_path,
+            serde_json::json!({"event": "first-run-discarded", "reason": "file-appeared"}),
+        );
+        return Ok(done(
+            options,
+            live,
+            settings_dir,
+            Some("first-run:discarded:present".to_owned()),
+        ));
+    }
+    let chosen = crate::tray::settings_for_choice(choice);
+    if let Err(reason) = crate::settings::validate_settings(&chosen) {
+        let (options, live) = authoritative_base(&sdir, &options, cli_overrides);
+        log_json_at(
+            log_path,
+            serde_json::json!({"event": "first-run-discarded", "reason": reason.to_string()}),
+        );
+        return Ok(done(
+            options,
+            live,
+            settings_dir,
+            Some("first-run:discarded:invalid".to_owned()),
+        ));
+    }
+    let bytes =
+        serde_json::to_vec_pretty(&chosen).map_err(|_| err("error: first-run serialize"))?;
+    match crate::storage::publish_no_overwrite(
+        &sdir,
+        crate::settings::SETTINGS_FILE_NAME,
+        &bytes,
+        "first-run",
+    ) {
+        Ok(()) => {
+            let mtime = std::fs::metadata(sdir.join(crate::settings::SETTINGS_FILE_NAME))
+                .and_then(|meta| meta.modified())
+                .ok();
+            let options = options_with_cli(&chosen, cli_overrides, &options);
+            let live = Some(LiveSettings::fresh(chosen, mtime));
+            Ok(done(
+                options,
+                live,
+                settings_dir,
+                Some(format!("first-run:{}:saved", choice.as_str())),
+            ))
+        }
+        Err(crate::storage::PublishError::Pending) => {
+            let (options, live) = authoritative_base(&sdir, &options, cli_overrides);
+            log_json_at(
+                log_path,
+                serde_json::json!({"event": "first-run-discarded", "reason": "save-race"}),
+            );
+            Ok(done(
+                options,
+                live,
+                settings_dir,
+                Some("first-run:discarded:raced".to_owned()),
+            ))
+        }
+        Err(crate::storage::PublishError::Io(error)) => {
+            let mut fresh = LiveSettings::fresh(chosen.clone(), None);
+            fresh.status = format!("first-run:{}:unsaved", choice.as_str());
+            let options = options_with_cli(&chosen, cli_overrides, &options);
+            log_json_at(
+                log_path,
+                serde_json::json!({"event": "first-run-save-failed", "error": error.to_string()}),
+            );
+            Ok(done(
+                options,
+                Some(fresh),
+                settings_dir,
+                Some(format!("first-run:{}:unsaved", choice.as_str())),
+            ))
+        }
+    }
 }
 
 /// Load the normal-owner settings base: persisted settings supply the
@@ -14081,6 +14403,8 @@ pub fn cmd_tile_proof(options: &TileProofOptions, raw_argv: &[String]) -> Result
                 raw_argv,
                 keyboard,
                 mouse_snap: false,
+                first_run: None,
+                first_run_pending: None,
                 inner_gap: INNER_GAP,
                 outer_gap: OUTER_GAP,
                 settings_dir: None,
@@ -14140,6 +14464,8 @@ pub fn cmd_shortcut_proof(
                 raw_argv,
                 keyboard,
                 mouse_snap,
+                first_run: None,
+                first_run_pending: None,
                 inner_gap: INNER_GAP,
                 outer_gap: OUTER_GAP,
                 settings_dir: None,
@@ -14197,6 +14523,8 @@ pub fn cmd_workspace_proof(
                 raw_argv,
                 keyboard,
                 mouse_snap,
+                first_run: None,
+                first_run_pending: None,
                 inner_gap: INNER_GAP,
                 outer_gap: OUTER_GAP,
                 settings_dir: None,

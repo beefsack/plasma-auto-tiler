@@ -145,15 +145,18 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   existing session-only preimage/readback/conditional restoration, no policy.
 - Provisional, to discuss: use plain official Win32 controls through the existing
   Rust `windows-sys` dependency, with `tiler-windows settings` and
-  `just --justfile windows.justfile settings`. No Windows tray exists; tray access
-  is deferred. UI instances are single per user/session; external stale edits
+  `just --justfile windows.justfile settings`, plus the running owner's tray.
+  UI instances are single per user/session; external stale edits
   trigger reload/refusal. The file store and existing-pump polling are the small
   Windows analogue of KDE's existing config/reconfigure route.
 - Provisional, to discuss: default Windows border to system accent/theme on,
   with KDE configured `#2a82da` fallback, replacing the temporary yellow default.
   Configured colour wins when theme is off or no usable accent is available.
-- Provisional, to discuss: authentic remains the first-start preset; defer an
-  automatic first-run prompt and offer both presets prominently in Settings.
+- Provisional, to discuss (updated 2026-10-04): normal startup with no settings
+  file offers a native Yes=Authentic (default), No=Compatible prompt, briefly
+  explaining Win+G/F11 Game Bar/Xbox implications. The owner lease precedes UI;
+  atomic create-if-absent publication never replaces a file appearing during
+  the prompt. Both presets remain prominently available in Settings.
   Compatible resets to the default catalog then disables 35 OS-conflicting
   physical chords, including Win+G/F11; it invents no replacement defaults.
 - Per-binding Keep/Disable/Rebind is available for implemented actions, with
@@ -167,6 +170,33 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
 - Synthetic native UI/Apply/Revert, live geometry/border/SPI and cleanup proof
   passed; physical shortcut/Snap/Xbox and other DPI/output checks stay user-owned.
   Evidence and limitations: [Windows settings](changes/archive/windows-settings.md).
+
+### Windows tray and first-run follow-up
+
+- Provisional, to discuss (2026-10-04): the normal running owner owns one
+  official `Shell_NotifyIconW` icon. Both clicks open its menu: optional top
+  "Conflicting Windows settings...", disabled live status, Settings and Stop.
+  Settings and the conflict row open the existing singleton UI; Stop follows
+  ordinary owner teardown. Explorer may initially place the icon in overflow.
+- Provisional, to discuss: an amber warning overlay and conflict row identify
+  enabled effective Win+G/F11 chords with known incomplete containment, plus
+  kept Win+L when runtime opt-in allows the unreliable lock override. Disable,
+  rebind-away, compatible or keyboard takeover off clears the warning; other
+  unproven chords do not gain a claim of proven containment from its absence.
+- Workspace tiling/floating and new-workspace default controls are omitted:
+  Windows has no corresponding runtime workspace-mode state. The taskbar
+  workspace indicator remains parked separately.
+- One stable icon GUID supports graceful deletion and dead-owner cleanup under
+  the existing recovery lease. TaskbarCreated revalidates a surviving icon or
+  re-adds a missing one; proof owners do not create a tray or first-run prompt.
+- Provisional, to discuss: the own-executable Settings control window is
+  unmanaged through existing dialog gates, preserving its fixed-size controls
+  under an unfiltered owner. Other applications are unaffected by that test.
+- Synthetic/native live proof covers both presets, stale-choice refusal, both
+  menu buttons, usable Settings/Apply, warning changes, Stop, posted
+  TaskbarCreated and crash recovery. Real Explorer restart, physical input and
+  other DPI/output arrangements remain user-owned. Evidence:
+  [Windows tray and first run](changes/archive/windows-tray-first-run.md).
 
 ## Cross-Platform Behavior
 

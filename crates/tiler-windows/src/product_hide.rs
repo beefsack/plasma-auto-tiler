@@ -31,6 +31,8 @@ pub fn shell_class_excluded(class: &str) -> bool {
 }
 
 /// Generic dialog class: unowned top-level dialogs are never hide targets.
+/// The project's own Settings UI (own executable plus settings class, see
+/// [`crate::tiling::is_own_settings_window`]) refuses on the same gate.
 pub const DIALOG_CLASS: &str = "#32770";
 
 /// Watcher readiness marker `watcher-<owner-creation>.ready`: three lines of
@@ -278,7 +280,9 @@ pub mod sys {
         if ex & WS_EX_NOACTIVATE != 0 {
             return Err(err("refuse: no-activate"));
         }
-        if class == super::DIALOG_CLASS {
+        if class == super::DIALOG_CLASS
+            || crate::tiling::is_own_settings_window(&class, &ident.exe_path, &owner.exe_path)
+        {
             return Err(err("refuse: dialog"));
         }
         {
@@ -772,7 +776,9 @@ pub mod sys {
         if ex & WS_EX_NOACTIVATE != 0 {
             return CandidateStatus::Refused("no-activate");
         }
-        if class == super::DIALOG_CLASS {
+        if class == super::DIALOG_CLASS
+            || crate::tiling::is_own_settings_window(&class, &ident.exe_path, &owner.exe_path)
+        {
             return CandidateStatus::Refused("dialog");
         }
         let Ok(nonce) = get_nonce(hwnd) else {

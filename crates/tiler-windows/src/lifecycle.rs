@@ -737,6 +737,10 @@ pub mod sys {
         // No live owner holds the lease here: any workspace request residue is
         // dead and must not block the new owner.
         cleanup_stale_workspace_request(dir);
+        // Same lease, same guarantee: no live project icon exists, so prune
+        // a crash ghost through the stable GUID before this owner adds its
+        // own (tolerant, unclaimed).
+        let _ = crate::tray_sys::remove_stale_icon();
         let windows = if let Some(hwnd) = hide_hwnd {
             let helper_exe =
                 crate::test_window::sys::sibling_helper_exe().map_err(|e| err(e.to_string()))?;
@@ -1046,6 +1050,9 @@ pub mod sys {
                 None => {}
             }
             cleanup_own_workspace_request(&dir, &me.process_creation);
+            // No committed owner means no live icon: prune a crash ghost, if
+            // any, through the stable project GUID (tolerant, unclaimed).
+            let _ = crate::tray_sys::remove_stale_icon();
             return Ok((0, false));
         };
         if !caller_owns(&me, &record)? {
@@ -1060,6 +1067,10 @@ pub mod sys {
         if !owner_dead(&record.owner)? {
             return Err(err("refuse: owner still active"));
         }
+        // The owner is dead, so no live project icon exists: prune the crash
+        // ghost through the stable GUID before revealing windows (tolerant,
+        // unclaimed; same-user trust like every recovery step here).
+        let _ = crate::tray_sys::remove_stale_icon();
         let helper_exe =
             crate::test_window::sys::sibling_helper_exe().map_err(|e| err(e.to_string()))?;
         for w in &record.windows {
