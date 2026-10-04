@@ -55,7 +55,7 @@ pub const fn is_digit_vk(vk: u32) -> bool {
 /// Hidden claims bind the ephemeral nonce separately in the owner table and
 /// the ledger; same-process HWND reuse fences on `(hwnd, creation)` plus the
 /// live nonce check before any effect.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WindowKey {
     pub hwnd: u64,
     pub pid: u32,
@@ -91,19 +91,114 @@ pub struct DisplacedRecord {
     pub dest_key: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ManagedWorkspaces {
     outputs: BTreeMap<String, OutputState>,
     displaced: BTreeMap<String, DisplacedRecord>,
     membership: BTreeMap<WindowKey, MemberLoc>,
     next_ws: u64,
     next_output: u64,
+    /// Persisted default for newly created workspaces (KDE `defaultTiled`
+    /// parity, initially true). Live default edits affect only workspaces
+    /// created after the edit; existing entries keep their session state.
+    /// Overrides reset on owner restart (nothing persists per workspace).
+    default_tiled: bool,
+    /// Session-local per-workspace tiled state, keyed by workspace id.
+    /// Absent entries read as the default (see [`ManagedWorkspaces::is_tiled`]).
+    tiled: BTreeMap<String, bool>,
+}
+
+impl Default for ManagedWorkspaces {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ManagedWorkspaces {
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            outputs: BTreeMap::new(),
+            displaced: BTreeMap::new(),
+            membership: BTreeMap::new(),
+            next_ws: 0,
+            next_output: 0,
+            default_tiled: true,
+            tiled: BTreeMap::new(),
+        }
+    }
+
+    /// Persisted default applied to newly created workspaces only.
+    #[must_use]
+    pub fn default_tiled(&self) -> bool {
+        self.default_tiled
+    }
+
+    /// Adopt a live default change: future workspaces seed from it, existing
+    /// entries keep their session state. Returns true when the value changed.
+    pub fn set_default_tiled(&mut self, value: bool) -> bool {
+        if self.default_tiled == value {
+            return false;
+        }
+        self.default_tiled = value;
+        true
+    }
+
+    /// Session tiled state for one workspace. Unknown workspaces and entries
+    /// without an explicit override read as the current default.
+    #[must_use]
+    pub fn is_tiled(&self, output: &str, workspace: &str) -> bool {
+        let known = self
+            .outputs
+            .get(output)
+            .is_some_and(|s| s.order.iter().any(|e| e.id == workspace));
+        if !known {
+            return self.default_tiled;
+        }
+        self.tiled
+            .get(workspace)
+            .copied()
+            .unwrap_or(self.default_tiled)
+    }
+
+    /// Set the session tiled state for one workspace. Returns false and
+    /// changes nothing when the workspace is unknown on the output.
+    pub fn set_tiled(&mut self, output: &str, workspace: &str, tiled: bool) -> bool {
+        let known = self
+            .outputs
+            .get(output)
+            .is_some_and(|s| s.order.iter().any(|e| e.id == workspace));
+        if !known {
+            return false;
+        }
+        self.tiled.insert(workspace.to_owned(), tiled);
+        true
+    }
+
+    /// Tiled state of the output's active workspace, or `None` when the
+    /// output is unknown. Truthful tray scope: the caller disables the
+    /// checkbox on `None`, never guesses.
+    #[must_use]
+    pub fn current_tiled(&self, output: &str) -> Option<bool> {
+        let active = self.active_id(output)?;
+        Some(self.is_tiled(output, &active))
+    }
+
+    /// Seed one workspace id from the current default when it carries no
+    /// explicit session state yet.
+    fn seed_mode(&mut self, id: &str) {
+        let default = self.default_tiled;
+        self.tiled.entry(id.to_owned()).or_insert(default);
+    }
+
+    /// Drop session state for workspaces that no longer exist.
+    fn prune_modes(&mut self) {
+        let live: BTreeSet<String> = self
+            .outputs
+            .values()
+            .flat_map(|s| s.order.iter().map(|e| e.id.clone()))
+            .collect();
+        self.tiled.retain(|id, _| live.contains(id));
     }
 
     pub fn ensure_output(&mut self, key: &str) -> &mut OutputState {
@@ -118,8 +213,10 @@ impl ManagedWorkspaces {
             };
             for _ in 0..policy::MIN_WORKSPACES {
                 self.next_ws += 1;
+                let id = format!("ws-{}", self.next_ws);
+                self.seed_mode(&id);
                 state.order.push(WorkspaceEntry {
-                    id: format!("ws-{}", self.next_ws),
+                    id,
                     token: format!("ws{}", self.next_ws),
                     members: BTreeSet::new(),
                     last_focus: None,
@@ -163,21 +260,32 @@ impl ManagedWorkspaces {
     }
 
     pub fn select_trailing(&mut self, output: &str) -> Option<(String, bool)> {
-        let next_ws = &mut self.next_ws;
-        let state = self.outputs.get_mut(output)?;
-        if state.order.is_empty() {
+        let reuse = self.outputs.get_mut(output).and_then(|state| {
+            if state.order.is_empty() {
+                return None;
+            }
+            let last = state.order.len() - 1;
+            if state.order[last].members.is_empty() {
+                state.active = last;
+                Some(state.order[last].id.clone())
+            } else {
+                None
+            }
+        });
+        if let Some(id) = reuse {
+            return Some((id, false));
+        }
+        if self.outputs.get(output).is_none_or(|s| s.order.is_empty()) {
             return None;
         }
-        let last = state.order.len() - 1;
-        if state.order[last].members.is_empty() {
-            state.active = last;
-            return Some((state.order[last].id.clone(), false));
-        }
-        *next_ws += 1;
-        let id = format!("ws-{next_ws}");
+        self.next_ws += 1;
+        let id = format!("ws-{}", self.next_ws);
+        let token = format!("ws{}", self.next_ws);
+        self.seed_mode(&id);
+        let state = self.outputs.get_mut(output)?;
         state.order.push(WorkspaceEntry {
             id: id.clone(),
-            token: format!("ws{next_ws}"),
+            token,
             members: BTreeSet::new(),
             last_focus: None,
         });
@@ -193,20 +301,31 @@ impl ManagedWorkspaces {
     }
 
     pub fn resolve_send_trailing(&mut self, output: &str) -> Option<(String, bool)> {
-        let next_ws = &mut self.next_ws;
-        let state = self.outputs.get_mut(output)?;
-        if state.order.is_empty() {
+        let reuse = self.outputs.get(output).and_then(|state| {
+            if state.order.is_empty() {
+                return None;
+            }
+            let last = state.order.len() - 1;
+            if state.order[last].members.is_empty() {
+                Some(state.order[last].id.clone())
+            } else {
+                None
+            }
+        });
+        if let Some(id) = reuse {
+            return Some((id, false));
+        }
+        if self.outputs.get(output).is_none_or(|s| s.order.is_empty()) {
             return None;
         }
-        let last = state.order.len() - 1;
-        if state.order[last].members.is_empty() {
-            return Some((state.order[last].id.clone(), false));
-        }
-        *next_ws += 1;
-        let id = format!("ws-{next_ws}");
+        self.next_ws += 1;
+        let id = format!("ws-{}", self.next_ws);
+        let token = format!("ws{}", self.next_ws);
+        self.seed_mode(&id);
+        let state = self.outputs.get_mut(output)?;
         state.order.push(WorkspaceEntry {
             id: id.clone(),
-            token: format!("ws{next_ws}"),
+            token,
             members: BTreeSet::new(),
             last_focus: None,
         });
@@ -388,22 +507,29 @@ impl ManagedWorkspaces {
 
     pub fn apply_cleanup(&mut self, output: &str, removed: &[String], append: bool) {
         let active_id = self.active_id(output);
+        let mut seeded: Vec<String> = Vec::new();
         if let Some(state) = self.outputs.get_mut(output) {
             state.order.retain(|e| !removed.contains(&e.id));
             if append {
                 self.next_ws += 1;
+                let id = format!("ws-{}", self.next_ws);
+                let token = format!("ws{}", self.next_ws);
+                seeded.push(id.clone());
                 state.order.push(WorkspaceEntry {
-                    id: format!("ws-{}", self.next_ws),
-                    token: format!("ws{}", self.next_ws),
+                    id,
+                    token,
                     members: BTreeSet::new(),
                     last_focus: None,
                 });
             }
             while state.order.len() < policy::MIN_WORKSPACES {
                 self.next_ws += 1;
+                let id = format!("ws-{}", self.next_ws);
+                let token = format!("ws{}", self.next_ws);
+                seeded.push(id.clone());
                 state.order.push(WorkspaceEntry {
-                    id: format!("ws-{}", self.next_ws),
-                    token: format!("ws{}", self.next_ws),
+                    id,
+                    token,
                     members: BTreeSet::new(),
                     last_focus: None,
                 });
@@ -413,6 +539,10 @@ impl ManagedWorkspaces {
                 .unwrap_or(0)
                 .min(state.order.len().saturating_sub(1));
         }
+        for id in &seeded {
+            self.seed_mode(id);
+        }
+        self.prune_modes();
         let live: BTreeSet<String> = self
             .outputs
             .values()
@@ -516,6 +646,11 @@ impl ManagedWorkspaces {
                 },
             );
         }
+        // Returning workspaces keep their stored session state; ids without
+        // one seed from the current default (never a stale foreign value).
+        for id in &record.workspace_ids {
+            self.seed_mode(id);
+        }
         self.displaced.remove(origin);
         true
     }
@@ -598,6 +733,100 @@ pub fn verify_send_follow(
     target_members: &BTreeSet<WindowKey>,
 ) -> bool {
     !source_members.contains(mover) && target_members.contains(mover)
+}
+
+/// Unconfirmed workspace-domain releases (workspace-mode toggle edges).
+/// Keyed by `(output, workspace)`: the latest intent wins, so a failed float
+/// release followed by a successful retile leaves no stale float entry that
+/// a later retry could fire at the retiled layout. A confirmed toggle clears
+/// its domain entry. A pending entry is stale once its workspace reads tiled
+/// again: both intents imply a floating workspace, so a tiled workspace must
+/// never release.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PendingReleases {
+    inner: BTreeMap<(String, String), bool>,
+}
+
+impl PendingReleases {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            inner: BTreeMap::new(),
+        }
+    }
+
+    /// Queue the latest intent for one domain, overwriting any earlier one.
+    pub fn queue(&mut self, output: &str, workspace: &str, retile: bool) {
+        self.inner
+            .insert((output.to_owned(), workspace.to_owned()), retile);
+    }
+
+    /// Drop the entry for one domain after its release confirms (or after a
+    /// successful toggle that supersedes it). Returns true when one existed.
+    pub fn confirm(&mut self, output: &str, workspace: &str) -> bool {
+        self.inner
+            .remove(&(output.to_owned(), workspace.to_owned()))
+            .is_some()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Snapshot of pending `(output, workspace, retile)` intents.
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<(String, String, bool)> {
+        self.inner
+            .iter()
+            .map(|((o, w), r)| (o.clone(), w.clone(), *r))
+            .collect()
+    }
+
+    /// True when the intent must not fire: the workspace is known and reads
+    /// tiled, so releasing would destroy the live tiled layout. Unknown
+    /// workspaces are not stale (an empty-rows release still cleans up).
+    #[must_use]
+    pub const fn is_stale(tiled: Option<bool>) -> bool {
+        matches!(tiled, Some(true))
+    }
+}
+
+/// Topology fingerprint for pending-release retries: monitor devices plus
+/// work/full rects, workspace order per output, member identities, and the
+/// raw HWND inventory size. Retries fire only when this changes, so a pending
+/// release never polls or logs on quiet ticks.
+///
+/// Rectangles ride as packed `(x, y, w, h)` tuples so the inputs stay
+/// `Ord` for the canonical sort.
+pub type TopologyArea = (String, (i32, i32, i32, i32), (i32, i32, i32, i32));
+
+#[must_use]
+pub fn topology_fingerprint(
+    areas: &[TopologyArea],
+    workspaces: &[(String, Vec<String>)],
+    members: &[WindowKey],
+    hwnd_count: usize,
+) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    let mut sorted_areas = areas.to_vec();
+    sorted_areas.sort();
+    sorted_areas.hash(&mut hasher);
+    let mut sorted_ws = workspaces.to_vec();
+    sorted_ws.sort();
+    sorted_ws.hash(&mut hasher);
+    let mut sorted_members = members.to_vec();
+    sorted_members.sort();
+    sorted_members.hash(&mut hasher);
+    hwnd_count.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[must_use]
@@ -1077,5 +1306,144 @@ mod tests {
             &BTreeSet::new(),
         );
         assert_eq!(plain, excluded);
+    }
+
+    #[test]
+    fn workspace_mode_defaults_tiled_and_toggles_per_workspace() {
+        let mut m = ManagedWorkspaces::new();
+        assert!(m.default_tiled());
+        m.ensure_output("mon-1");
+        let ws1 = m.resolve_send("mon-1", 1).expect("ws1");
+        let ws2 = m.resolve_send("mon-1", 2).expect("ws2");
+        assert!(m.is_tiled("mon-1", &ws1));
+        assert!(m.is_tiled("mon-1", &ws2));
+        assert!(m.set_tiled("mon-1", &ws1, false));
+        assert!(!m.is_tiled("mon-1", &ws1));
+        assert!(m.is_tiled("mon-1", &ws2));
+        assert!(!m.set_tiled("mon-1", "ws-missing", false));
+        assert!(!m.set_tiled("mon-missing", &ws1, false));
+    }
+
+    #[test]
+    fn live_default_applies_only_to_future_workspaces() {
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        let ws1 = m.resolve_send("mon-1", 1).expect("ws1");
+        assert!(m.set_default_tiled(false));
+        assert!(!m.set_default_tiled(false));
+        // Existing workspaces keep their session state.
+        assert!(m.is_tiled("mon-1", &ws1));
+        // New workspaces seed from the live default.
+        m.ensure_output("mon-2");
+        let other = m.resolve_send("mon-2", 1).expect("other");
+        assert!(!m.is_tiled("mon-2", &other));
+        // Unknown workspaces read as the current default.
+        assert!(!m.is_tiled("mon-2", "ws-missing"));
+    }
+
+    #[test]
+    fn current_tiled_is_none_without_scope() {
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        assert_eq!(m.current_tiled("mon-1"), Some(true));
+        assert_eq!(m.current_tiled("mon-missing"), None);
+        let active = m.active_id("mon-1").expect("active");
+        assert!(m.set_tiled("mon-1", &active, false));
+        assert_eq!(m.current_tiled("mon-1"), Some(false));
+    }
+
+    #[test]
+    fn cleanup_prunes_mode_state_with_workspaces() {
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        let first = m.active_id("mon-1").expect("active");
+        let second = m.resolve_send("mon-1", 2).expect("second");
+        assert!(m.set_tiled("mon-1", &second, false));
+        // An empty intermediate workspace prunes while survivors keep their
+        // own session state; the pruned floating state leaves with it.
+        assert!(m.assign(key(5), "mon-1", &first, false));
+        assert!(m.assign(key(6), "mon-1", &second, false));
+        let (third, created) = m.select_trailing("mon-1").expect("trailing");
+        assert!(created);
+        assert!(m.assign(key(6), "mon-1", &third, false));
+        assert!(m.activate("mon-1", &first));
+        let sticky: BTreeSet<WindowKey> = BTreeSet::new();
+        let (removed, append) =
+            m.plan_cleanup_excluding("mon-1", std::slice::from_ref(&first), &[], &sticky);
+        assert!(removed.contains(&second));
+        m.apply_cleanup("mon-1", &removed, append);
+        assert!(!m.tiled.contains_key(&second));
+        assert!(m.is_tiled("mon-1", &first));
+    }
+
+    #[test]
+    fn floating_workspaces_keep_project_membership_for_new_windows() {
+        // New windows admitted to a floating workspace join project
+        // membership (hide/reveal scope) with frames untouched: mode never
+        // gates assignment, only geometry/effects.
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        let ws1 = m.resolve_send("mon-1", 1).expect("ws1");
+        assert!(m.set_tiled("mon-1", &ws1, false));
+        let w = key(31);
+        assert!(m.assign(w.clone(), "mon-1", &ws1, false));
+        assert_eq!(m.member_loc(&w).expect("loc").workspace, ws1);
+        assert!(!m.is_tiled("mon-1", &ws1));
+        assert!(!m.is_hidden(&w));
+    }
+
+    #[test]
+    fn pending_releases_keep_latest_intent_per_domain() {
+        // A failed float release queued as non-retile is superseded by the
+        // later retile intent for the same domain: exactly one entry rides,
+        // so a retry can never fire the stale float at a retiled layout.
+        let mut pending = PendingReleases::new();
+        assert!(pending.is_empty());
+        pending.queue("mon-1", "ws-1", false);
+        pending.queue("mon-1", "ws-1", true);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(
+            pending.snapshot(),
+            vec![("mon-1".to_owned(), "ws-1".to_owned(), true)]
+        );
+        // A confirmed toggle clears its domain only.
+        pending.queue("mon-1", "ws-2", false);
+        assert!(pending.confirm("mon-1", "ws-1"));
+        assert!(!pending.confirm("mon-1", "ws-1"));
+        assert_eq!(
+            pending.snapshot(),
+            vec![("mon-1".to_owned(), "ws-2".to_owned(), false)]
+        );
+    }
+
+    #[test]
+    fn pending_releases_go_stale_once_tiled() {
+        // Both intents imply a floating workspace: a workspace reading tiled
+        // again must never release. Unknown workspaces still release (empty
+        // rows clean up the orphaned Engine session).
+        assert!(PendingReleases::is_stale(Some(true)));
+        assert!(!PendingReleases::is_stale(Some(false)));
+        assert!(!PendingReleases::is_stale(None));
+    }
+
+    #[test]
+    fn topology_fingerprint_moves_only_with_topology() {
+        let areas = vec![("mon-1".to_owned(), (0, 0, 800, 600), (0, 0, 800, 600))];
+        let workspaces = vec![("mon-1".to_owned(), vec!["ws-1".to_owned()])];
+        let members = vec![key(1)];
+        let base = topology_fingerprint(&areas, &workspaces, &members, 1);
+        assert_eq!(topology_fingerprint(&areas, &workspaces, &members, 1), base);
+        // Member swap at the same count still moves: a same-count change is
+        // a topology edge, never a quiet tick.
+        assert_ne!(
+            topology_fingerprint(&areas, &workspaces, &[key(2)], 1),
+            base
+        );
+        assert_ne!(topology_fingerprint(&areas, &workspaces, &members, 2), base);
+        let moved_areas = vec![("mon-1".to_owned(), (0, 0, 1024, 768), (0, 0, 1024, 768))];
+        assert_ne!(
+            topology_fingerprint(&moved_areas, &workspaces, &members, 1),
+            base
+        );
     }
 }

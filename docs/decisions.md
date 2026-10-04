@@ -81,7 +81,7 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   approved; on Win11 build 26200 disabling via pvParam FALSE requires uiParam
   TRUE. Automation commands are welcome only as needed, not the primary route.
   Terminal is ordinary by default with no product special-case. Current CLI is
-  `workspace --select N` (existing/trailing) and opt-in tile
+  `workspace --select N` / `workspace --send N` (existing/trailing) and opt-in tile
   `--scope-exe`/`--scope-host-child` proof fences with no default filtering.
   Recovery ledger v4 stores min/max show-state without geometry; readers accept
   v1-v3. The window-lifetime membership property is inert, remains until window
@@ -165,8 +165,8 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   and undocumented chords do not claim conflict-free certainty.
 - Provisional, to discuss: this first slice limits manual rebinds to Win plus
   the action's existing Shift arm; Alt/Ctrl and unshifted Win+L rebind targets
-  refuse. Keyboard resize rows are visibly unavailable; unsupported workspace
-  modes/default-tiled controls await their runtime implementation.
+  refuse. Keyboard resize rows are visibly unavailable; the additional
+  global-unique/shared workspace mappings await runtime implementation.
 - Synthetic native UI/Apply/Revert, live geometry/border/SPI and cleanup proof
   passed; physical shortcut/Snap/Xbox and other DPI/output checks stay user-owned.
   Evidence and limitations: [Windows settings](changes/archive/windows-settings.md).
@@ -175,7 +175,8 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
 
 - Provisional, to discuss (2026-10-04): the normal running owner owns one
   official `Shell_NotifyIconW` icon. Both clicks open its menu: optional top
-  "Conflicting Windows settings...", disabled live status, Settings and Stop.
+  "Conflicting Windows settings...", disabled live status, current-workspace
+  tiling, new-workspace Tiled/Floating default, Settings and Stop.
   Settings and the conflict row open the existing singleton UI; Stop follows
   ordinary owner teardown. Explorer may initially place the icon in overflow.
 - Provisional, to discuss: an amber warning overlay and conflict row identify
@@ -183,9 +184,8 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   kept Win+L when runtime opt-in allows the unreliable lock override. Disable,
   rebind-away, compatible or keyboard takeover off clears the warning; other
   unproven chords do not gain a claim of proven containment from its absence.
-- Workspace tiling/floating and new-workspace default controls are omitted:
-  Windows has no corresponding runtime workspace-mode state. The taskbar
-  workspace indicator remains parked separately.
+- Workspace tiling/floating and new-workspace default controls shipped with
+  the runtime below. The taskbar workspace indicator remains parked separately.
 - One stable icon GUID supports graceful deletion and dead-owner cleanup under
   the existing recovery lease. TaskbarCreated revalidates a surviving icon or
   re-adds a missing one; proof owners do not create a tray or first-run prompt.
@@ -197,6 +197,41 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   TaskbarCreated and crash recovery. Real Explorer restart, physical input and
   other DPI/output arrangements remain user-owned. Evidence:
   [Windows tray and first run](changes/archive/windows-tray-first-run.md).
+
+### Windows workspace tiling mode
+
+- KDE parity (2026-10-04): each managed workspace owns a session-local tiled/
+  floating flag. Startup seeds all workspaces from saved `defaultTiled=true`;
+  live default changes seed only subsequently created workspaces. Overrides
+  reset on owner restart and never persist. The tray shows a current-workspace
+  checkbox and new-workspace default choices; Settings exposes the same default.
+  There is no keyboard binding: KDE's tray action has an empty key sequence.
+- Floating preserves native frames, membership and hide/reveal while stopping
+  domain tiling, directional tile navigation, group underlay and drop preview.
+  Independent active border remains. Retile releases the exact shared Engine
+  domain without writes, then freshly adopts observed geometry with the existing
+  recursive-cut/centre-split fit. Intentional per-window float/sticky and native
+  maximize/fullscreen exceptions keep their semantics; exact-lifetime float
+  intent survives Engine domain release. Mode flips cancel stale gesture effects.
+- Sends touching a floating workspace use project membership transfer and the
+  existing verified follow path, without a two-domain Engine plan. Only the
+  tiled side reconciles: source survivors before hide/follow, or destination
+  fresh admission after reveal. Floating-side frames remain untouched. Sticky
+  movers refuse, and intentional floats on tiled sources remain ineligible.
+- Provisional, to discuss: store KDE's `defaultTiled` equivalent as
+  `core.workspace.default_tiled` in the existing version-1 Windows JSON settings;
+  older settings backfill true. Tray picks update only that saved field through
+  the existing store; settings polling confirms runtime adoption.
+- Provisional, to discuss: extend the existing exact-owner automation transport
+  with `workspace --send N`, acting on fresh foreground managed focus through
+  the normal send path. It is needed for automated boundary proof because normal
+  owners deliberately reject injected shortcut input. Dispatch acknowledgement
+  alone is not effect proof; ordinary keyboard bindings remain the user route.
+- Native locked gates and scoped Notepad/Calculator/Paint synthetic/native
+  effect proof pass, including both boundary sends, fresh retile, active drag
+  effects and default creation/startup. Physical feel and other output/DPI
+  arrangements remain user-owned. Evidence:
+  [Windows workspace tiling](changes/archive/windows-workspace-tiling.md).
 
 ## Cross-Platform Behavior
 

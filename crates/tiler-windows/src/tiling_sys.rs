@@ -13,7 +13,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use tiler_core::boundary::{CoreCommand, CoreReply, NoGroupReason};
@@ -81,11 +81,12 @@ use crate::tiling::{
     AllowEntry, CaptureOptions, ChildrenOptions, FrameInsets, GestureIntent, HideProofOptions,
     INNER_GAP, InspectOptions, OUTER_GAP, OWNER_ID, ObservedTarget, ObservedTargetRef,
     ReadbackOutcome, RefusedTracker, ScopeHostChild, SkipReason, StatelessVerdict, TileOptions,
-    TileProofOptions, TokenMap, WindowFacts, WorkspaceSelectOptions, allow_match, allowlist_digest,
-    classify, classify_gesture, drop_point_in_domain, fingerprint, fullscreen_toggle_decision,
-    hosted_child_allows, inspect_stateless_verdict, is_borderless_fullscreen, parse_allowlist,
-    parse_workspace_request, readback_outcome, scope_allows, scope_exe_basename,
-    should_hold_born_fullscreen, tick_summary_signature, tiling_domain_bounds_with,
+    TileProofOptions, TokenMap, WindowFacts, WorkspaceAction, WorkspaceOptions, allow_match,
+    allowlist_digest, classify, classify_gesture, drop_point_in_domain, fingerprint,
+    fullscreen_toggle_decision, hosted_child_allows, inspect_stateless_verdict,
+    is_borderless_fullscreen, parse_allowlist, parse_workspace_request, readback_outcome,
+    scope_allows, scope_exe_basename, should_hold_born_fullscreen, tick_summary_signature,
+    tiling_domain_bounds_with,
 };
 use crate::win_mouse::sys::WinDragPublished;
 use crate::win_mouse::{
@@ -1140,6 +1141,11 @@ fn preview_hide_for_refusal(kind: &str) -> &str {
     }
 }
 
+/// Unconfirmed workspace-mode toggle releases queue in
+/// [`crate::workspace::PendingReleases`]: keyed by domain with
+/// latest-intent-wins so a stale float can never fire at a retiled layout,
+/// dropped on confirmed toggles, stale once tiled, and retried only on
+/// topology edges with current observed geometry (never polled).
 struct TileLoop {
     engine: Engine,
     owner: OwnerId,
@@ -1435,12 +1441,28 @@ struct TileLoop {
     /// Live float frame per Engine token. Distinct from `member_rects`, which
     /// keeps the last tiled allocation frozen at float time.
     float_rects: HashMap<String, Rect>,
+    /// Intentional per-window float lifetimes (exact `(hwnd, pid, creation)`
+    /// identity, never HWND alone). The Engine exception is dropped by every
+    /// domain release, so this carries the exception across floating
+    /// release/retiling and boundary sends: row assembly rides these tokens
+    /// floating even when the session carries no exception, and the next
+    /// Engine observation re-adopts it. Cleared on verified unfloat, window
+    /// close, and stop; pruned with membership. Sticky, born-fullscreen, and
+    /// native overlays keep their own lanes and never enter here.
+    floated: BTreeSet<crate::workspace::WindowKey>,
     /// Sticky-float members by stable member key to their pre-sticky float
     /// state (`true` when the window was already a normal float before
     /// sticky-on). Single runtime map, never redundant sets. Sticky rides the
     /// Engine as a slotless float plus this map plus a window-lifetime native
     /// marker; the marker (not this map) survives owner restarts.
     sticky: std::collections::BTreeMap<crate::workspace::WindowKey, bool>,
+    /// Unconfirmed workspace-domain releases (toggle edges). Retried on
+    /// topology edges only (never polled) until the exact domain release
+    /// confirms; keyed by domain with latest-intent-wins.
+    pending_releases: crate::workspace::PendingReleases,
+    /// Topology fingerprint of the last pending-release retry attempt: equal
+    /// fingerprints skip silently, so quiet ticks never poll or log.
+    pending_retry_fp: u64,
 }
 
 /// Armed prompt-restore wake: the restored member by full identity plus the
@@ -1809,7 +1831,8 @@ fn publish_managed(
             continue;
         }
         if let Some(loc) = state.workspaces.member_loc(&key)
-            && engine_is_float(state, &loc.output, &loc.workspace, &window.token)
+            && (engine_is_float(state, &loc.output, &loc.workspace, &window.token)
+                || !workspace_mode_tiled(state, &loc.output, &loc.workspace))
         {
             continue;
         }
@@ -2477,8 +2500,11 @@ fn refresh_group_underlay(
         return;
     };
     // Floats hold no tile group: the fill stays hidden on a focused float
-    // while the active border still marks it.
-    if engine_is_float(state, &loc.output, &loc.workspace, &window.token) {
+    // while the active border still marks it. Floating workspaces hold no
+    // tiled group either: every member frame stays native.
+    if engine_is_float(state, &loc.output, &loc.workspace, &window.token)
+        || !workspace_mode_tiled(state, &loc.output, &loc.workspace)
+    {
         hide_underlay(state, "floating");
         return;
     }
@@ -2910,7 +2936,8 @@ fn refresh_drag_preview(
     let float_hold = start_key
         .as_ref()
         .is_some_and(|key| state.sticky.contains_key(key))
-        || engine_is_float(state, &start.output, &start.workspace, &start.token);
+        || engine_is_float(state, &start.output, &start.workspace, &start.token)
+        || !workspace_mode_tiled(state, &start.output, &start.workspace);
     let domain = workspace_domain_for(
         &start.output,
         &start.workspace,
@@ -3934,6 +3961,17 @@ fn engine_is_float(state: &TileLoop, output: &str, workspace: &str, token: &str)
         .is_some_and(|session| session.is_exception(&WindowId(token.to_owned())))
 }
 
+/// Session workspace-mode gate: tiled workspaces run every Engine/geometry
+/// path; floating workspaces leave frames untouched and stop all tiled
+/// geometry, group-underlay, and drop-preview operations for that domain
+/// while the independent active border still marks focus. Intentional
+/// per-window float/sticky and native maximize/fullscreen overlays keep
+/// their own semantics on either mode.
+#[must_use]
+fn workspace_mode_tiled(state: &TileLoop, output: &str, workspace: &str) -> bool {
+    state.workspaces.is_tiled(output, workspace)
+}
+
 /// Fresh `WS_EX_TOPMOST` read on one HWND (official Win32 topmost band).
 fn read_topmost_now(hwnd_u64: u64) -> bool {
     let hwnd = hwnd_u64 as isize as HWND;
@@ -4079,6 +4117,9 @@ fn prune_float_state(state: &mut TileLoop) {
         .float_rects
         .retain(|token, _| state.member_tokens.values().any(|live| live == token));
     state
+        .floated
+        .retain(|key| state.member_tokens.contains_key(key));
+    state
         .sticky
         .retain(|key, _| state.member_tokens.contains_key(key));
 }
@@ -4096,6 +4137,7 @@ fn drop_member_state(state: &mut TileLoop, key: &crate::workspace::WindowKey) {
         state.restore_wake = None;
     }
     state.float_topmost_prev.remove(key);
+    state.floated.remove(key);
     state.sticky.remove(key);
     state.member_identity.remove(key);
     state.member_tags.remove(key);
@@ -4224,6 +4266,17 @@ fn assemble_domain_rows(
                 .collect()
         })
         .unwrap_or_default();
+    // Runtime intent carries the exception across domain releases (which drop
+    // every Engine exception) and boundary-send fresh adoption: a released
+    // then retiled workspace re-adopts its intentional floats on the next
+    // observation instead of tiling them. Lifetime keyed, pruned with
+    // membership; sticky/born-fullscreen keep their own lanes.
+    let mut float_tokens = float_tokens;
+    for token in
+        crate::workspace_owner::float_carry_tokens(&members, &state.member_tokens, &state.floated)
+    {
+        float_tokens.insert(token);
+    }
     for key in &members {
         let born = state.born_fullscreen.contains(key);
         if state.workspaces.is_hidden(key) {
@@ -4260,11 +4313,9 @@ fn assemble_domain_rows(
         {
             // Slotless floating row on the live native frame, no hint. The
             // tiled allocation in `member_rects` stays frozen. Engine-known
-            // floats and sticky members ride here; adoption commits the Engine
-            // exception inline, so the runtime map never disagrees.
+            // floats, runtime-intent floats, and sticky members ride here;
+            // adoption commits the Engine exception inline.
             if float_tokens.contains(&token) || state.sticky.contains_key(key) {
-                // Slotless floating row on the live native frame, no hint.
-                // The tiled allocation in `member_rects` stays frozen.
                 state.float_rects.insert(token.clone(), window.visible);
                 views.push(crate::workspace_owner::MemberView {
                     key: key.clone(),
@@ -4643,6 +4694,12 @@ fn reconcile_tick(
         let Some(active) = state.workspaces.active_id(&output) else {
             continue;
         };
+        // Floating workspaces leave frames untouched: no Engine reconcile
+        // and no geometry writes for that domain. Membership, hide/reveal,
+        // and the independent active border still run.
+        if !workspace_mode_tiled(state, &output, &active) {
+            continue;
+        }
         if tiling_domain_bounds_with(area.work, state.outer_gap).is_none() {
             continue;
         }
@@ -5849,6 +5906,31 @@ fn keyboard_tick(
                         SnapOp::Focus => "focus-refused-floating",
                         SnapOp::Move => "move-refused-floating",
                     };
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "snap",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "op": intent.op.as_str(),
+                            "direction": direction_name(intent.direction),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": outcome,
+                            "origin": origin.token,
+                            "window": from,
+                        }),
+                    );
+                    continue;
+                }
+                // Floating workspaces run no tile layout: both focus and move
+                // refuse with the matching workspace-floating vocabulary (KDE
+                // plan-adapter parity). Frames stay native.
+                if let Some(outcome) = crate::workspace_owner::directional_workspace_refusal(
+                    intent.op,
+                    workspace_mode_tiled(state, &loc.output, &loc.workspace),
+                ) {
                     state.snap_advance = None;
                     log_json_at(
                         &log_path,
@@ -7239,6 +7321,12 @@ fn apply_float_from_tiled(
     }
     state.engine = candidate;
     state.float_rects.insert(from.to_owned(), actual);
+    // Intentional-float lifetime: row assembly rides this token floating
+    // across domain releases and boundary sends even when the Engine session
+    // carries no exception yet. Sticky-on keeps its own lane instead.
+    if !mark_sticky {
+        state.floated.insert(member_key.clone());
+    }
     if mark_sticky && !install_sticky_mark_held(state, me, member_key, false) {
         let focus = retain_float_focus_validated(state, me, fulls, expected, member_key);
         let writable = writable_tokens(state, &loc.output, &loc.workspace, observed);
@@ -7544,6 +7632,7 @@ fn apply_unfloat_to_tiled(
     }
     state.engine = candidate;
     state.sticky.remove(member_key);
+    state.floated.remove(member_key);
     state.float_rects.remove(from);
     let focus = match observed.iter().find(|w| w.hwnd == member_key.hwnd) {
         Some(expected) => retain_float_focus_validated(state, me, fulls, expected, member_key),
@@ -7669,6 +7758,19 @@ fn dispatch_float_intent(
         }
     };
     let is_float = engine_is_float(state, &loc.output, &loc.workspace, &from);
+    // Overlay fences on live state: overlay targets never float, and a
+    // natively overlaid float never unfloats until it reads normal again.
+    // Sticky origins refuse with the sticky vocabulary (KDE parity).
+    // Floating workspaces take no per-window float toggles: the domain is
+    // released and every frame stays native.
+    if !workspace_mode_tiled(state, &loc.output, &loc.workspace) {
+        state.snap_advance = None;
+        let mut line = settle("workspace-floating");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
     // Overlay fences on live state: overlay targets never float, and a
     // natively overlaid float never unfloats until it reads normal again.
     // Sticky origins refuse with the sticky vocabulary (KDE parity).
@@ -7965,8 +8067,10 @@ fn sticky_rehome_to_current(
     state.engine = candidate;
     if floating {
         state.float_rects.insert(from.to_owned(), live_frame);
+        state.floated.insert(member_key.clone());
     } else {
         state.float_topmost_prev.remove(member_key);
+        state.floated.remove(member_key);
         state.float_rects.remove(from);
     }
     state.sticky.remove(member_key);
@@ -8105,6 +8209,16 @@ fn dispatch_sticky_intent(
     };
     if let Some(refusal) = chord_overlay_refusal(true, &observed, &retained, &member_key) {
         let mut line = settle(refusal);
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    // Floating workspaces take no per-window sticky toggles: the domain is
+    // released and every frame stays native.
+    if !workspace_mode_tiled(state, &loc.output, &loc.workspace) {
+        state.snap_advance = None;
+        let mut line = settle("workspace-floating");
         line["origin"] = serde_json::Value::from(origin.token.clone());
         line["window"] = serde_json::Value::from(from.clone());
         log_json_at(&log_path, line);
@@ -9157,6 +9271,410 @@ fn workspace_proof_reveal_gate(
     verify_proof_owned(hwnd, entry, me).map_err(|_| "identity-changed")
 }
 
+/// Dispatch one exact shared-Engine domain release for a workspace-mode
+/// toggle: the current observed rows ride the event with `ReleaseDomain`
+/// (no geometry), so nothing is written and no stale layout is retained.
+/// Returns true exactly when the Engine confirms the release.
+fn dispatch_workspace_release(
+    state: &mut TileLoop,
+    output: &str,
+    workspace: &str,
+    areas: &[MonitorArea],
+    observed: &[ObservedWindow],
+    retained: &[RetainedRow],
+    correlation: &str,
+) -> bool {
+    let Some((domain, domain_key)) =
+        workspace_domain_for(output, workspace, areas, state.inner_gap, state.outer_gap)
+    else {
+        return false;
+    };
+    let mut hint_cx = HintCx::new();
+    let Some(rows) = assemble_domain_rows(
+        state,
+        output,
+        workspace,
+        observed,
+        retained,
+        "release",
+        correlation,
+        &mut hint_cx,
+    ) else {
+        return false;
+    };
+    let windows: Vec<(WindowId, Rect, WindowSizeHints, bool)> = rows
+        .iter()
+        .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
+        .collect();
+    let fp = fingerprint(
+        &rows
+            .iter()
+            .map(|r| (r.token.clone(), r.rect))
+            .collect::<Vec<_>>(),
+    );
+    let Some(correlation_id) = CorrelationId::parse(correlation) else {
+        return false;
+    };
+    let mut event = crate::tiling::build_reconcile_event_for_floating(
+        &state.owner,
+        &state.generation,
+        &correlation_id,
+        revision_for(state, output, workspace),
+        fp,
+        &domain,
+        &domain_key,
+        state.outer_gap,
+        &windows,
+        None,
+    );
+    event.command = CoreCommand::ReleaseDomain;
+    match state.engine.handle(&event) {
+        CoreReply::Released => {
+            log_json_at(
+                &state.log_path,
+                serde_json::json!({
+                    "event": "workspace-released",
+                    "output": state.workspaces.output_token(output),
+                    "workspace": state.workspaces.workspace_token(output, workspace),
+                    "outcome": "released",
+                    "members": rows.len(),
+                }),
+            );
+            true
+        }
+        reply => {
+            log_json_at(
+                &state.log_path,
+                serde_json::json!({
+                    "event": "workspace-released",
+                    "output": state.workspaces.output_token(output),
+                    "workspace": state.workspaces.workspace_token(output, workspace),
+                    "outcome": reply_outcome(&reply),
+                    "recovery": "retry-on-event",
+                }),
+            );
+            false
+        }
+    }
+}
+
+/// Cancel stale drag and queued-action effects for one workspace after a
+/// mode toggle: in-flight gesture, preview, and Win+Left bindings anchored
+/// to its members can never settle into geometry writes afterwards. Queued
+/// keyboard intents re-resolve the live mode at dispatch and refuse there.
+fn cancel_workspace_effects(state: &mut TileLoop, output: &str, workspace: &str) {
+    let members = state.workspaces.workspace_members(output, workspace);
+    let hwnds: HashSet<u64> = members.iter().map(|k| k.hwnd).collect();
+    let mut cancelled = 0u32;
+    let mut drop_entries = |before: usize, after: usize| {
+        cancelled += (before - after) as u32;
+    };
+    let before = state.gesture_before.len();
+    state.gesture_before.retain(|hwnd, _| !hwnds.contains(hwnd));
+    drop_entries(before, state.gesture_before.len());
+    let before = state.gesture_end_cursor.len();
+    state
+        .gesture_end_cursor
+        .retain(|hwnd, _| !hwnds.contains(hwnd));
+    drop_entries(before, state.gesture_end_cursor.len());
+    let before = state.windrag_start_cursor.len();
+    state
+        .windrag_start_cursor
+        .retain(|hwnd, _| !hwnds.contains(hwnd));
+    drop_entries(before, state.windrag_start_cursor.len());
+    let before = state.gesture_start_key.len();
+    state
+        .gesture_start_key
+        .retain(|hwnd, _| !hwnds.contains(hwnd));
+    drop_entries(before, state.gesture_start_key.len());
+    let before = state.gesture_start_tag.len();
+    state
+        .gesture_start_tag
+        .retain(|hwnd, _| !hwnds.contains(hwnd));
+    drop_entries(before, state.gesture_start_tag.len());
+    let before = state.gesture_preview_start.len();
+    state
+        .gesture_preview_start
+        .retain(|hwnd, _| !hwnds.contains(hwnd));
+    drop_entries(before, state.gesture_preview_start.len());
+    let before = state.gesture_esc_seq.len();
+    state
+        .gesture_esc_seq
+        .retain(|hwnd, _| !hwnds.contains(hwnd));
+    drop_entries(before, state.gesture_esc_seq.len());
+    let before = state.gesture_end_seq.len();
+    state
+        .gesture_end_seq
+        .retain(|hwnd, _| !hwnds.contains(hwnd));
+    drop_entries(before, state.gesture_end_seq.len());
+    let before = state.windrag_bound.len();
+    state.windrag_bound.retain(|hwnd, _| !hwnds.contains(hwnd));
+    drop_entries(before, state.windrag_bound.len());
+    let before = state.move_kind.len();
+    state.move_kind.retain(|hwnd, _| !hwnds.contains(hwnd));
+    drop_entries(before, state.move_kind.len());
+    let before = state.gesture_start_cursor.len();
+    state
+        .gesture_start_cursor
+        .retain(|hwnd, _| !hwnds.contains(hwnd));
+    drop_entries(before, state.gesture_start_cursor.len());
+    let before = state.preview_bound.len();
+    state.preview_bound.retain(|hwnd, _| !hwnds.contains(hwnd));
+    drop_entries(before, state.preview_bound.len());
+    let before = state.gesture_producer.len();
+    state
+        .gesture_producer
+        .retain(|hwnd, _| !hwnds.contains(hwnd));
+    drop_entries(before, state.gesture_producer.len());
+    let before = state.active.len();
+    state.active.retain(|hwnd| !hwnds.contains(hwnd));
+    drop_entries(before, state.active.len());
+    let before = state.preview_dead.len();
+    state.preview_dead.retain(|hwnd| !hwnds.contains(hwnd));
+    drop_entries(before, state.preview_dead.len());
+    let before = state.esc_latched.len();
+    state.esc_latched.retain(|hwnd| !hwnds.contains(hwnd));
+    drop_entries(before, state.esc_latched.len());
+    if let Some(advance) = state.snap_advance.clone()
+        && hwnds.contains(&advance.hwnd)
+    {
+        state.snap_advance = None;
+        cancelled += 1;
+    }
+    hide_preview(state, "workspace-mode");
+    log_json_at(
+        &state.log_path,
+        serde_json::json!({
+            "event": "workspace-mode",
+            "op": "effects-cancelled",
+            "output": state.workspaces.output_token(output),
+            "workspace": state.workspaces.workspace_token(output, workspace),
+            "cancelled": cancelled,
+        }),
+    );
+}
+
+/// Toggle the tiling mode of the owner's current workspace (tray edge).
+/// Floating applies immediately with frames untouched, then the exact shared
+/// Engine domain releases with no writes. Retile releases first and stays
+/// floating until the release confirms, then marks tiled with a fresh
+/// complete reconcile on current observed geometry. Release failures queue
+/// for retry on later topology edges; per-window float/sticky and native
+/// maximize/fullscreen exceptions are never touched.
+fn toggle_workspace_tiling(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    output: &str,
+) {
+    state.workspaces.ensure_output(output);
+    let Some(current) = state.workspaces.active_id(output) else {
+        return;
+    };
+    state.tick += 1;
+    let tick = state.tick;
+    let correlation = format!("ws-mode-{tick}");
+    let mut skipped: Vec<(String, String)> = Vec::new();
+    let mut retained: Vec<RetainedRow> = Vec::new();
+    let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained) else {
+        log_json_at(
+            &state.log_path,
+            serde_json::json!({
+                "event": "workspace-mode",
+                "op": "toggle",
+                "outcome": "observation-failed",
+            }),
+        );
+        return;
+    };
+    publish_managed(state, me, &observed, &retained);
+    ensure_workspace_assignments(state, me, &mut observed, &retained, areas);
+    let current_clone = current.clone();
+    if state.workspaces.is_tiled(output, &current_clone) {
+        state.workspaces.set_tiled(output, &current_clone, false);
+        cancel_workspace_effects(state, output, &current_clone);
+        let confirmed = dispatch_workspace_release(
+            state,
+            output,
+            &current_clone,
+            areas,
+            &observed,
+            &retained,
+            &correlation,
+        );
+        if !confirmed {
+            state.pending_releases.queue(output, &current_clone, false);
+        } else {
+            // A confirming toggle supersedes any earlier intent for the
+            // domain (e.g. a failed float queued before a successful retile):
+            // without this the stale entry would later fire at live layout.
+            state.pending_releases.confirm(output, &current_clone);
+        }
+        log_json_at(
+            &state.log_path,
+            serde_json::json!({
+                "event": "workspace-mode",
+                "op": "toggle",
+                "output": state.workspaces.output_token(output),
+                "workspace": state.workspaces.workspace_token(output, &current),
+                "tiled": false,
+                "outcome": "applied",
+            }),
+        );
+    } else {
+        let confirmed = dispatch_workspace_release(
+            state,
+            output,
+            &current_clone,
+            areas,
+            &observed,
+            &retained,
+            &correlation,
+        );
+        if confirmed {
+            // The successful retile supersedes every earlier intent for the
+            // domain: drop the entry so no stale float can fire later.
+            state.pending_releases.confirm(output, &current_clone);
+            state.workspaces.set_tiled(output, &current_clone, true);
+            cancel_workspace_effects(state, output, &current_clone);
+            log_json_at(
+                &state.log_path,
+                serde_json::json!({
+                    "event": "workspace-mode",
+                    "op": "toggle",
+                    "output": state.workspaces.output_token(output),
+                    "workspace": state.workspaces.workspace_token(output, &current),
+                    "tiled": true,
+                    "outcome": "applied",
+                }),
+            );
+            reconcile_tick(state, me, fulls, areas);
+            refresh_active_border(state, me, fulls);
+        } else {
+            state.pending_releases.queue(output, &current_clone, true);
+            log_json_at(
+                &state.log_path,
+                serde_json::json!({
+                    "event": "workspace-mode",
+                    "op": "toggle",
+                    "output": state.workspaces.output_token(output),
+                    "workspace": state.workspaces.workspace_token(output, &current),
+                    "tiled": false,
+                    "outcome": "pending-retile",
+                }),
+            );
+        }
+    }
+}
+
+/// Retry unconfirmed workspace-domain releases on a topology edge with the
+/// maintenance observation (no second enumeration). Confirmed retiles mark
+/// tiled with a fresh complete reconcile; confirmed float releases stay
+/// floating. Entries whose workspace reads tiled again drop stale without
+/// dispatch: releasing would destroy the live tiled layout. Failures stay
+/// queued and the fingerprint gate retries them on the next topology edge
+/// only, so quiet ticks never poll or log.
+fn retry_pending_releases(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    observed: &[ObservedWindow],
+    retained: &[RetainedRow],
+) {
+    if state.pending_releases.is_empty() {
+        return;
+    }
+    let fingerprint_now = pending_topology_fingerprint(state, areas);
+    if fingerprint_now == state.pending_retry_fp {
+        return;
+    }
+    state.pending_retry_fp = fingerprint_now;
+    let mut retiled = false;
+    for (output, workspace, retile) in state.pending_releases.snapshot() {
+        let current = workspace_mode_known(state, &output, &workspace);
+        if crate::workspace::PendingReleases::is_stale(current) {
+            state.pending_releases.confirm(&output, &workspace);
+            log_json_at(
+                &state.log_path,
+                serde_json::json!({
+                    "event": "workspace-mode",
+                    "op": "retry",
+                    "output": state.workspaces.output_token(&output),
+                    "workspace": state.workspaces.workspace_token(&output, &workspace),
+                    "outcome": "stale-dropped",
+                }),
+            );
+            continue;
+        }
+        state.tick += 1;
+        let tick = state.tick;
+        let correlation = format!("ws-retry-{tick}");
+        if dispatch_workspace_release(
+            state,
+            &output,
+            &workspace,
+            areas,
+            observed,
+            retained,
+            &correlation,
+        ) {
+            state.pending_releases.confirm(&output, &workspace);
+            if retile {
+                state.workspaces.set_tiled(&output, &workspace, true);
+                cancel_workspace_effects(state, &output, &workspace);
+                retiled = true;
+            }
+        }
+    }
+    if retiled {
+        reconcile_tick(state, me, fulls, areas);
+        refresh_active_border(state, me, fulls);
+    }
+}
+
+/// Session tiled state for one workspace, or `None` when the workspace is
+/// unknown on the output. Stale-intent detection must distinguish unknown
+/// (still releasable with empty rows) from tiled (never releasable).
+fn workspace_mode_known(state: &TileLoop, output: &str, workspace: &str) -> Option<bool> {
+    state
+        .workspaces
+        .workspace_ids(output)
+        .iter()
+        .any(|id| id == workspace)
+        .then(|| state.workspaces.is_tiled(output, workspace))
+}
+
+/// Topology fingerprint behind the pending-release retry gate: monitor
+/// devices plus work/full rects, workspace order per output, member
+/// identities, and the raw HWND inventory size.
+fn pending_topology_fingerprint(state: &TileLoop, areas: &[MonitorArea]) -> u64 {
+    fn pack(rect: &Rect) -> (i32, i32, i32, i32) {
+        (rect.x, rect.y, rect.w, rect.h)
+    }
+    let area_tuples: Vec<crate::workspace::TopologyArea> = areas
+        .iter()
+        .map(|area| (area.device.clone(), pack(&area.work), pack(&area.full)))
+        .collect();
+    let workspace_tuples: Vec<(String, Vec<String>)> = state
+        .workspaces
+        .output_keys()
+        .into_iter()
+        .map(|output| {
+            let ids = state.workspaces.workspace_ids(&output);
+            (output, ids)
+        })
+        .collect();
+    let members: Vec<crate::workspace::WindowKey> = state.member_tokens.keys().cloned().collect();
+    crate::workspace::topology_fingerprint(
+        &area_tuples,
+        &workspace_tuples,
+        &members,
+        state.last_hwnds.len(),
+    )
+}
+
 /// Switch the visible set from the output's active workspace to `target`:
 /// hide the prior set, reveal the target set, preserve Engine sessions for
 /// both, prune trailing empties, then re-enumerate fresh, establish the
@@ -9357,6 +9875,7 @@ fn workspace_do_select(
                     state.restore_wake = None;
                 }
                 state.float_topmost_prev.remove(key);
+                state.floated.remove(key);
                 state.member_identity.remove(key);
                 state.member_tags.remove(key);
                 state.workspaces.remove_window(key);
@@ -9531,10 +10050,13 @@ fn workspace_do_select(
         }
     }
     let mut geometry: Option<ApplySummary> = None;
-    // One shared hint-query budget for the select's row assembly.
+    // One shared hint-query budget for the select's row assembly. Floating
+    // targets take no geometry: hide/reveal and focus above already ran, and
+    // frames stay untouched.
     let mut hint_cx = HintCx::new();
-    if let Some((domain, domain_key)) =
-        workspace_domain_for(output, target, areas, state.inner_gap, state.outer_gap)
+    if workspace_mode_tiled(state, output, target)
+        && let Some((domain, domain_key)) =
+            workspace_domain_for(output, target, areas, state.inner_gap, state.outer_gap)
         && let Some(rows) = assemble_domain_rows(
             state,
             output,
@@ -9652,9 +10174,241 @@ fn workspace_do_select(
     }
 }
 
-/// Send the focused tiled window to an existing/trailing same-output
-/// workspace through the retained Engine `MoveToWorkspace` route, verify the
-/// project-owned membership transfer, then follow. Refuses unmanaged focus,
+/// Native cross-boundary send for any boundary touching a floating
+/// workspace: transfer project native membership (verified exactly like the
+/// Engine route), reflow the tiled source survivors when the source is tiled,
+/// then follow through the shared tail so the target reveals and reconciles
+/// when tiled. No two-domain Engine plan, no floating-side geometry; the
+/// tiled target admits normally through the ordinary follow select.
+/// Sticky movers never transfer as a single-desktop write; intentional
+/// per-window float movers ride along only from an actually floating source.
+#[allow(clippy::too_many_arguments)]
+fn workspace_do_send_native(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    dir: &Path,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    observed: &mut [ObservedWindow],
+    retained: &[RetainedRow],
+    output: &str,
+    target_id: &str,
+    mover_key: &crate::workspace::WindowKey,
+    mover_hwnd: u64,
+    source_token: &str,
+    target_token: &str,
+    source_tiled: bool,
+    target_tiled: bool,
+    ctx: &ActionCtx,
+) -> SendEffect {
+    let fail_at = |outcome: &'static str| SendEffect {
+        outcome,
+        focus: "none",
+        source: None,
+        target: None,
+        transition_ms: 0,
+        observation_ms: 0,
+        source_geometry_ms: 0,
+        target_geometry_ms: 0,
+        hide_ms: 0,
+        reveal_ms: 0,
+        focus_ms: 0,
+        source_plan_ms: 0,
+        target_plan_ms: 0,
+        source_workspace: source_token.to_owned(),
+        target_workspace: target_token.to_owned(),
+    };
+    let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
+    let Some(stored) = state.member_identity.get(mover_key).cloned() else {
+        return fail_at("unmanaged");
+    };
+    let source_workspace = state
+        .workspaces
+        .member_loc(mover_key)
+        .map(|loc| loc.workspace.clone())
+        .unwrap_or_default();
+    let mover_minimized = if let Some(fresh) = by_hwnd.get(&mover_hwnd) {
+        if !crate::workspace_owner::member_matches(
+            mover_key,
+            fresh.hwnd,
+            fresh.identity.pid,
+            &fresh.identity.process_creation,
+        ) || fresh.identity.exe_path != stored.exe_path
+            || fresh.identity.user_sid != stored.user_sid
+            || fresh.identity.session_id != stored.session_id
+        {
+            return fail_at("origin-vanished");
+        }
+        fresh.facts.minimized
+    } else if let Some(row) = retained.iter().find(|r| r.key == *mover_key) {
+        if row.fullscreen {
+            return fail_at("send-refused-fullscreen");
+        }
+        if !row.maximized {
+            return fail_at("origin-vanished");
+        }
+        if !crate::tiling::send_flags_stable(false, true, row.fullscreen, is_zoomed_now(mover_hwnd))
+        {
+            return fail_at("deferred");
+        }
+        if !is_zoomed_now(mover_hwnd) {
+            return fail_at("deferred");
+        }
+        if stored.pid != mover_key.pid || stored.process_creation != mover_key.creation {
+            return fail_at("origin-vanished");
+        }
+        false
+    } else {
+        return fail_at("origin-vanished");
+    };
+    let post_tag = crate::product_hide::sys::read_member_tag(mover_hwnd);
+    if !state
+        .member_tags
+        .get(mover_key)
+        .is_some_and(|tag| crate::workspace_owner::visible_lifetime_ok(tag, post_tag.as_deref()))
+    {
+        return fail_at("identity-changed");
+    }
+    if !state
+        .workspaces
+        .assign(mover_key.clone(), output, target_id, true)
+    {
+        return fail_at("refused");
+    }
+    let source_now = state
+        .workspaces
+        .workspace_members(output, &source_workspace);
+    let target_now = state.workspaces.workspace_members(output, target_id);
+    if !crate::workspace_owner::verify_membership_transfer(mover_key, &source_now, &target_now) {
+        return fail_at("unverified");
+    }
+    // Tiled-source survivor reflow before hide/follow: the transfer above
+    // already moved the mover out, so a complete reconcile on current
+    // observed geometry converges the survivors (no layout hole left in the
+    // retained Engine session). No two-domain plan, no floating-side writes:
+    // floating sources skip entirely (frames untouched), and the follow
+    // select admits the target normally below. Best-effort: an incomplete
+    // source observation skips the reflow and the follow still runs, with
+    // convergence on the next return select.
+    if source_tiled {
+        let mut hint_cx = HintCx::new();
+        if let Some(source_rows) = assemble_domain_rows(
+            state,
+            output,
+            &source_workspace,
+            observed,
+            retained,
+            "send-source",
+            ctx.correlation.as_str(),
+            &mut hint_cx,
+        ) && let Some((source_domain, source_key)) = workspace_domain_for(
+            output,
+            &source_workspace,
+            areas,
+            state.inner_gap,
+            state.outer_gap,
+        ) {
+            let source_windows: Vec<(WindowId, Rect, WindowSizeHints, bool)> = source_rows
+                .iter()
+                .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
+                .collect();
+            let source_fp = fingerprint(
+                &source_rows
+                    .iter()
+                    .map(|r| (r.token.clone(), r.rect))
+                    .collect::<Vec<_>>(),
+            );
+            let focused = state
+                .focused_token(observed)
+                .filter(|f| source_windows.iter().any(|(w, _, _, _)| w == f));
+            let revision = revision_for(state, output, &source_workspace);
+            let action_correlation = CorrelationId::parse(&ctx.correlation)
+                .expect("action correlation is a valid token");
+            adopt_gaps_for_route(
+                state,
+                &source_domain,
+                &source_key,
+                state.outer_gap,
+                &source_windows,
+                focused.as_ref(),
+                revision,
+                source_fp,
+                &action_correlation,
+            );
+            let event = crate::tiling::build_reconcile_event_for_floating(
+                &state.owner,
+                &state.generation,
+                &action_correlation,
+                revision,
+                source_fp,
+                &source_domain,
+                &source_key,
+                state.outer_gap,
+                &source_windows,
+                focused.as_ref(),
+            );
+            let reply = state.engine.handle(&event);
+            let writable = writable_tokens(state, output, &source_workspace, observed);
+            state.tick += 1;
+            let source_tick = state.tick;
+            apply_geometry(
+                state,
+                ApplyInput {
+                    me,
+                    fulls,
+                    reply: &reply,
+                    observed,
+                    op: "send-source",
+                    tick: source_tick,
+                    correlation: ctx.correlation.as_str(),
+                    skipped: Vec::new(),
+                    writable: &writable,
+                    output_token: state.workspaces.output_token(output),
+                    workspace_token: state.workspaces.workspace_token(output, &source_workspace),
+                    revision: revision_for(state, output, &source_workspace),
+                },
+            );
+        }
+    }
+    let effect = workspace_send_follow(
+        state,
+        me,
+        store,
+        dir,
+        fulls,
+        areas,
+        observed,
+        mover_key,
+        &stored,
+        mover_minimized,
+        output,
+        target_id,
+        source_token,
+        target_token,
+        ctx,
+        None,
+        0,
+        0,
+    );
+    log_json_at(
+        &state.log_path,
+        serde_json::json!({
+            "event": "workspace-send-native",
+            "source_tiled": source_tiled,
+            "target_tiled": target_tiled,
+            "outcome": effect.outcome,
+        }),
+    );
+    effect
+}
+
+/// Send the focused window to an existing/trailing same-output workspace,
+/// then follow. Tiled-to-tiled sends run the retained Engine
+/// `MoveToWorkspace` route with source reflow; any boundary touching a
+/// floating workspace transfers project native membership instead (no
+/// two-domain Engine plan, no floating-side geometry) and reflows only the
+/// tiled side through the ordinary follow select. Refuses unmanaged focus,
 /// no-op/foreign transfers, and proof modes without workspace hides.
 ///
 /// Source reflow consumes the existing `SendWorkspace` plan while the source
@@ -9721,13 +10475,17 @@ fn workspace_do_send(
     if loc.output != output || state.workspaces.is_hidden(&mover_key) {
         return fail("unmanaged");
     }
-    // Floats never send as movers; floating survivors ride the carried rows.
-    // Sticky rides the same slotless float plus an explicit subject gate so a
-    // pruned-domain sticky still refuses.
+    // Floats never send as movers on the Engine route; floating survivors
+    // ride the carried rows. Sticky rides the same slotless float plus an
+    // explicit subject gate so a pruned-domain sticky still refuses.
+    // Floating-source boundary sends skip this refusal (eligibility derives
+    // from the actual source below): their movers ride the native route.
     if state.sticky.contains_key(&mover_key) {
         return fail("send-refused-sticky");
     }
-    if engine_is_float(state, &loc.output, &loc.workspace, origin_token) {
+    if state.workspaces.is_tiled(&loc.output, &loc.workspace)
+        && engine_is_float(state, &loc.output, &loc.workspace, origin_token)
+    {
         return fail("send-refused-floating");
     }
     // Explicit scope fences every send before the Engine mutation: an
@@ -9793,6 +10551,36 @@ fn workspace_do_send(
         source_workspace: source_token.clone(),
         target_workspace: target_token.clone(),
     };
+    // Cross-boundary route from the actual workspace modes: tiled-to-tiled
+    // runs the shared two-domain Engine plan below; any floating boundary
+    // transfers project native membership instead with no plan and no
+    // floating-side geometry, reflows only the tiled side, and follows only
+    // after the existing exact membership confirmation.
+    let source_tiled = state.workspaces.is_tiled(output, &loc.workspace);
+    let target_tiled = state.workspaces.is_tiled(output, &target_id);
+    if crate::workspace_owner::send_route(source_tiled, target_tiled)
+        == crate::workspace_owner::SendRoute::Native
+    {
+        return workspace_do_send_native(
+            state,
+            me,
+            store,
+            dir,
+            fulls,
+            areas,
+            observed,
+            retained,
+            output,
+            &target_id,
+            &mover_key,
+            mover_hwnd,
+            &source_token,
+            &target_token,
+            source_tiled,
+            target_tiled,
+            ctx,
+        );
+    }
     // Full source+target observations including hidden snapshots, so the
     // planned mutation reuses topology instead of remove/reseed. Either side
     // incomplete defers with retained state, never a falsely complete pair.
@@ -10072,10 +10860,56 @@ fn workspace_do_send(
     // post-follow enumeration here. A committed claim is owned even on
     // uncertain post-hide readback: flag it hidden and report the stall
     // without pretending follow success.
+    workspace_send_follow(
+        state,
+        me,
+        store,
+        dir,
+        fulls,
+        areas,
+        observed,
+        &mover_key,
+        &stored,
+        mover_minimized,
+        output,
+        &target_id,
+        &source_token,
+        &target_token,
+        ctx,
+        source,
+        source_ms,
+        source_plan_ms,
+    )
+}
+
+/// Shared send tail for both the Engine plan route and the native
+/// cross-boundary route: commit-before-hide the mover, then follow by
+/// selecting the target (which reveals it and reconciles it when tiled).
+#[allow(clippy::too_many_arguments)]
+fn workspace_send_follow(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    dir: &Path,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    observed: &mut [ObservedWindow],
+    mover_key: &crate::workspace::WindowKey,
+    stored: &ProcessIdentity,
+    mover_minimized: bool,
+    output: &str,
+    target_id: &str,
+    source_token: &str,
+    target_token: &str,
+    ctx: &ActionCtx,
+    source: Option<ApplySummary>,
+    source_ms: u64,
+    source_plan_ms: u64,
+) -> SendEffect {
     let hide_outcome =
-        workspace_hide_one(state, me, store, dir, &mover_key, &stored, mover_minimized);
-    if state.hidden_claims.contains_key(&mover_key) {
-        state.workspaces.set_hidden(&mover_key, true);
+        workspace_hide_one(state, me, store, dir, mover_key, stored, mover_minimized);
+    if state.hidden_claims.contains_key(mover_key) {
+        state.workspaces.set_hidden(mover_key, true);
     }
     if hide_outcome != "hidden" {
         return SendEffect {
@@ -10092,8 +10926,8 @@ fn workspace_do_send(
             focus_ms: 0,
             source_plan_ms,
             target_plan_ms: 0,
-            source_workspace: source_token.clone(),
-            target_workspace: target_token.clone(),
+            source_workspace: source_token.to_owned(),
+            target_workspace: target_token.to_owned(),
         };
     }
     let select = workspace_do_select(
@@ -10105,9 +10939,9 @@ fn workspace_do_send(
         areas,
         observed,
         output,
-        &target_id,
+        target_id,
         ctx,
-        Some(&mover_key),
+        Some(mover_key),
     );
     if select.outcome != "ok" {
         return SendEffect {
@@ -10124,7 +10958,7 @@ fn workspace_do_send(
             focus_ms: select.focus_ms,
             source_plan_ms,
             target_plan_ms: select.plan_ms,
-            source_workspace: source_token.clone(),
+            source_workspace: source_token.to_owned(),
             target_workspace: select.target_workspace.clone(),
         };
     }
@@ -10147,20 +10981,24 @@ fn workspace_do_send(
         focus_ms: select.focus_ms,
         source_plan_ms,
         target_plan_ms: select.plan_ms,
-        source_workspace: source_token.clone(),
+        source_workspace: source_token.to_owned(),
         target_workspace: select.target_workspace.clone(),
     }
 }
 
-/// Exact-owner out-of-hook workspace select: one bounded `workspace.request`
-/// file consumed once through the existing `workspace_do_select` resolver.
-/// Normal `tile` only (proof owners refuse without effect); fullscreen and
-/// elevated foreground gate like the hook path; the keyboard takeover switch
-/// never gates this (out-of-hook dogfood/recovery). The request is deleted
-/// before dispatch so there is no replay; a malformed or mismatched body is
-/// consumed the same way with a `refused` outcome. Production log carries
-/// op/index/edge/outcome only (no HWNDs, tokens, or identity bytes); the
-/// client correlation is opaque and never logged.
+/// Exact-owner out-of-hook workspace control: one bounded `workspace.request`
+/// file consumed once through the existing `workspace_do_select` /
+/// `workspace_do_send` resolvers. Normal `tile` only (proof owners refuse
+/// without effect); fullscreen and elevated foreground gate like the hook
+/// path; the keyboard takeover switch never gates this (out-of-hook
+/// dogfood/recovery). The request is deleted before dispatch so there is no
+/// replay; a malformed or mismatched body is consumed the same way with a
+/// `refused` outcome. Send carries no chord origin: the mover is the live
+/// foreground managed window at dispatch, resolved through the same
+/// `snap_origins` map the hook binds chords against, then the exact same
+/// `workspace_do_send` focus/identity/scope/owner gates. Production log
+/// carries op/index/edge/outcome only (no HWNDs, tokens, or identity bytes);
+/// the client correlation is opaque and never logged.
 fn poll_workspace_cli_request(
     state: &mut TileLoop,
     me: &ProcessIdentity,
@@ -10175,15 +11013,25 @@ fn poll_workspace_cli_request(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
         Err(_) => return,
     };
+    // Honest op label for the pre-parse refusal: the parsed op when the body
+    // is well-formed JSON carrying a known action, else `select`.
+    let op_hint = |body: &str| -> String {
+        serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|v| v.get("action").and_then(|a| a.as_str().map(str::to_owned)))
+            .filter(|a| a == "select" || a == "send")
+            .unwrap_or_else(|| "select".to_owned())
+    };
     // Proof owners never serve the normal control: consume once with an
     // honest refusal and no native effect so the queue cannot wedge.
     if state.allowlist.is_some() {
+        let op = op_hint(text.trim());
         let _ = std::fs::remove_file(&path);
         state.tick += 1;
         let tick = state.tick;
         log_json_at(
             &state.log_path,
-            workspace_log(state, tick, "select", 0, "cli", "refused-proof"),
+            workspace_log(state, tick, &op, 0, "cli", "refused-proof"),
         );
         return;
     }
@@ -10194,15 +11042,17 @@ fn poll_workspace_cli_request(
     let request = match parsed {
         Ok(request) => request,
         Err(_) => {
+            let op = op_hint(text.trim());
             state.tick += 1;
             let tick = state.tick;
             log_json_at(
                 &state.log_path,
-                workspace_log(state, tick, "select", 0, "cli", "refused"),
+                workspace_log(state, tick, &op, 0, "cli", "refused"),
             );
             return;
         }
     };
+    let op = request.action.as_str();
     if request.creation != me.process_creation
         || request.pid != me.pid
         || !exe_paths_equal(&request.exe_path, &me.exe_path)
@@ -10213,7 +11063,7 @@ fn poll_workspace_cli_request(
         let tick = state.tick;
         log_json_at(
             &state.log_path,
-            workspace_log(state, tick, "select", request.index, "cli", "refused"),
+            workspace_log(state, tick, op, request.index, "cli", "refused"),
         );
         return;
     }
@@ -10222,7 +11072,7 @@ fn poll_workspace_cli_request(
         let tick = state.tick;
         log_json_at(
             &state.log_path,
-            workspace_log(state, tick, "select", request.index, "cli", "suspended"),
+            workspace_log(state, tick, op, request.index, "cli", "suspended"),
         );
         return;
     }
@@ -10231,14 +11081,7 @@ fn poll_workspace_cli_request(
         let tick = state.tick;
         log_json_at(
             &state.log_path,
-            workspace_log(
-                state,
-                tick,
-                "select",
-                request.index,
-                "cli",
-                "elevated-foreground",
-            ),
+            workspace_log(state, tick, op, request.index, "cli", "elevated-foreground"),
         );
         return;
     }
@@ -10247,14 +11090,7 @@ fn poll_workspace_cli_request(
         let tick = state.tick;
         log_json_at(
             &state.log_path,
-            workspace_log(
-                state,
-                tick,
-                "select",
-                request.index,
-                "cli",
-                "unknown-output",
-            ),
+            workspace_log(state, tick, op, request.index, "cli", "unknown-output"),
         );
         return;
     };
@@ -10270,14 +11106,7 @@ fn poll_workspace_cli_request(
     let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained) else {
         log_json_at(
             &state.log_path,
-            workspace_log(
-                state,
-                tick,
-                "select",
-                request.index,
-                "cli",
-                "observation-failed",
-            ),
+            workspace_log(state, tick, op, request.index, "cli", "observation-failed"),
         );
         return;
     };
@@ -10287,6 +11116,80 @@ fn poll_workspace_cli_request(
     // stamped, and the cleared window converges as eligible next tick.
     clear_maximize_at_admission(state, me, &retained);
     workspace_close_cleanup(state);
+    let ctx = ActionCtx {
+        correlation: format!("act-{tick}"),
+        tick,
+        queued_at: start,
+        start,
+    };
+    if request.action == WorkspaceAction::Send {
+        // Boundary-send testing affordance: the normal loop deliberately
+        // rejects injected keys, so the mover is the live foreground managed
+        // window at dispatch (same `snap_origins` map the hook binds chords
+        // against), never a carried HWND. Every other gate stays inside the
+        // existing `workspace_do_send`.
+        let foreground_hwnd = unsafe { GetForegroundWindow() } as usize as u64;
+        let origin = state.snap_origins.get(&foreground_hwnd).cloned();
+        match origin.filter(|o| !o.token.is_empty()) {
+            Some(o) => {
+                let effect = workspace_do_send(
+                    state,
+                    me,
+                    store,
+                    dir,
+                    fulls,
+                    areas,
+                    &mut observed,
+                    &retained,
+                    &output,
+                    request.index,
+                    o.hwnd,
+                    &o.token,
+                    o.pid,
+                    &o.creation,
+                    &ctx,
+                );
+                log_json_at(
+                    &state.log_path,
+                    workspace_log(state, tick, op, request.index, "cli", effect.outcome),
+                );
+                log_workspace_action(
+                    state,
+                    &state.log_path.clone(),
+                    &ActionLine {
+                        ctx: &ctx,
+                        op,
+                        index: request.index,
+                        edge: "cli",
+                        outcome: effect.outcome,
+                        focus: effect.focus,
+                        timings: &ActionTimings {
+                            transition_ms: effect.transition_ms,
+                            observation_ms: effect.observation_ms,
+                            source_plan_ms: effect.source_plan_ms,
+                            target_plan_ms: effect.target_plan_ms,
+                            source_geometry_ms: effect.source_geometry_ms,
+                            target_geometry_ms: effect.target_geometry_ms,
+                            hide_ms: effect.hide_ms,
+                            reveal_ms: effect.reveal_ms,
+                            focus_ms: effect.focus_ms,
+                        },
+                        source_workspace: &effect.source_workspace,
+                        target_workspace: &effect.target_workspace,
+                        source: effect.source.as_ref(),
+                        target: effect.target.as_ref(),
+                    },
+                );
+            }
+            _ => {
+                log_json_at(
+                    &state.log_path,
+                    workspace_log(state, tick, op, request.index, "cli", "unmanaged"),
+                );
+            }
+        }
+        return;
+    }
     // Resolve without preactivating (same as the hook select path):
     // `resolve_send*` never touch ACTIVE; only the transition activates.
     let target = if request.index == 0 {
@@ -10305,15 +11208,9 @@ fn poll_workspace_cli_request(
         };
         log_json_at(
             &state.log_path,
-            workspace_log(state, tick, "select", request.index, "cli", outcome),
+            workspace_log(state, tick, op, request.index, "cli", outcome),
         );
         return;
-    };
-    let ctx = ActionCtx {
-        correlation: format!("act-{tick}"),
-        tick,
-        queued_at: start,
-        start,
     };
     let effect = workspace_do_select(
         state,
@@ -10330,14 +11227,14 @@ fn poll_workspace_cli_request(
     );
     log_json_at(
         &state.log_path,
-        workspace_log(state, tick, "select", request.index, "cli", effect.outcome),
+        workspace_log(state, tick, op, request.index, "cli", effect.outcome),
     );
     log_workspace_action(
         state,
         &state.log_path.clone(),
         &ActionLine {
             ctx: &ctx,
-            op: "select",
+            op,
             index: request.index,
             edge: "cli",
             outcome: effect.outcome,
@@ -11281,6 +12178,10 @@ fn workspace_maintenance(
     // stamped, and the cleared window converges as eligible next tick.
     clear_maximize_at_admission(state, me, &retained);
     workspace_close_cleanup(state);
+    // Unconfirmed toggle releases retry here on the maintenance observation
+    // (no second enumeration): the fingerprint gate inside fires only on a
+    // real topology edge, so quiet ticks never poll or log.
+    retry_pending_releases(state, me, fulls, areas, &observed, &retained);
     // Periodic hidden-claim retirement before any foreground-driven switch so
     // dead claims never select.
     audit_hidden_claims(state, me, store);
@@ -11808,7 +12709,8 @@ fn gesture_tick(
             continue;
         }
         if let Some(loc) = state.workspaces.member_loc(&member_key).cloned()
-            && engine_is_float(state, &loc.output, &loc.workspace, &current.token)
+            && (engine_is_float(state, &loc.output, &loc.workspace, &current.token)
+                || !workspace_mode_tiled(state, &loc.output, &loc.workspace))
         {
             log_json_at(
                 &log_path,
@@ -12419,6 +13321,24 @@ fn apply_live_settings(
         lanes.push("gaps");
         changed = true;
     }
+    // Live default edits adopt for future workspaces only: existing session
+    // overrides keep their state, exactly like startup seeding.
+    if state
+        .workspaces
+        .set_default_tiled(settings.core.workspace.default_tiled)
+    {
+        lanes.push("workspace-default");
+        changed = true;
+        log_json_at(
+            &log_path,
+            serde_json::json!({
+                "event": "workspace-default",
+                "default_tiled": settings.core.workspace.default_tiled,
+                "outcome": "adopted",
+                "scope": "future-workspaces",
+            }),
+        );
+    }
     if base.border != state.border {
         state.border = base.border;
         lanes.push("border");
@@ -12762,10 +13682,31 @@ fn run_tile_loop(
         underlay_chord_last: false,
         float_topmost_prev: std::collections::BTreeMap::new(),
         float_rects: HashMap::new(),
+        floated: BTreeSet::new(),
         sticky: std::collections::BTreeMap::new(),
+        pending_releases: crate::workspace::PendingReleases::new(),
+        pending_retry_fp: 0,
     };
     state.engine.sync_binding(&owner, &generation);
     state.workspace_proof = workspace_proof;
+    // Existing workspaces take the saved default at owner startup (initially
+    // tiled); live default edits later affect only newly created workspaces.
+    // Overrides reset on owner restart: nothing persists per workspace.
+    let startup_default = state
+        .settings_live
+        .as_ref()
+        .map(|live| live.settings.core.workspace.default_tiled)
+        .unwrap_or(true);
+    state.workspaces.set_default_tiled(startup_default);
+    log_json_at(
+        &log_path,
+        serde_json::json!({
+            "event": "workspace-default",
+            "default_tiled": startup_default,
+            "outcome": "adopted",
+            "scope": "startup",
+        }),
+    );
     let mut areas = all_monitors()?;
     let (mut monitor, mut monitor_count) = (areas[0].clone(), areas.len());
     let mode = if workspace_proof {
@@ -12891,10 +13832,17 @@ fn run_tile_loop(
             ),
             None => (true, "saved:unknown".to_owned()),
         };
+        // Session-only workspace toggle: the menu carries its rendered
+        // opaque scope, the owner loop drains it once on its pump via
+        // `take_toggle_request` and verifies it below. Default picks persist
+        // through the settings file (normal owner).
+        let toggle = Arc::new(Mutex::new(None::<crate::tray::ToggleScope>));
         match crate::tray_sys::TrayOwner::create(
             conflict_empty,
             &settings_status,
             Some(log_path.clone()),
+            &toggle,
+            state.settings_dir.clone(),
         ) {
             Ok(owner) => Some(owner),
             Err(error) => {
@@ -13155,6 +14103,66 @@ fn run_tile_loop(
                     None => (true, "saved:unknown".to_owned()),
                 };
                 tray.sync(conflict_empty, &settings_status);
+                // Truthful workspace section: the opaque live scope plus its
+                // tiled state and the persisted default. The next menu renders
+                // exactly this; a toggle pick drains once below and flips the
+                // mode on the loop thread only when the live active pair still
+                // matches the rendered scope (stale/mismatched refuses with no
+                // guessed fallback).
+                let scope = if state.active_output.is_empty() {
+                    None
+                } else {
+                    state
+                        .workspaces
+                        .active_id(&state.active_output)
+                        .map(|workspace| (state.active_output.clone(), workspace))
+                };
+                let current = scope.as_ref().and_then(|(output, workspace)| {
+                    state
+                        .workspaces
+                        .workspace_ids(output)
+                        .iter()
+                        .any(|id| id == workspace)
+                        .then(|| state.workspaces.is_tiled(output, workspace))
+                });
+                tray.sync_workspace(scope, current, state.workspaces.default_tiled());
+                if let Some(request) = tray.take_toggle_request() {
+                    let live = if state.active_output.is_empty() {
+                        None
+                    } else {
+                        state
+                            .workspaces
+                            .active_id(&state.active_output)
+                            .map(|workspace| (state.active_output.clone(), workspace))
+                    };
+                    let rendered = Some((request.output.as_str(), request.workspace.as_str()));
+                    let live_ref = live
+                        .as_ref()
+                        .map(|(output, workspace)| (output.as_str(), workspace.as_str()));
+                    if crate::tray::verify_toggle_scope(rendered, live_ref) {
+                        let toggle_fulls = monitor_fulls(&areas);
+                        toggle_workspace_tiling(
+                            &mut state,
+                            me,
+                            &toggle_fulls,
+                            &areas,
+                            &request.output,
+                        );
+                        woke = true;
+                    } else {
+                        // Stale or mismatched menu scope (output switch or a
+                        // pruned workspace between render and pick): refuse
+                        // with opaque tokens only, never raw scope ids.
+                        log_json_at(
+                            &log_path,
+                            serde_json::json!({
+                                "event": "workspace-mode",
+                                "op": "toggle",
+                                "outcome": "refused-stale-scope",
+                            }),
+                        );
+                    }
+                }
             }
             // Shortcut-handling gate for the callback: fresh downs consume
             // iff takeover holds with this gate active (the eventual Xbox
@@ -13919,6 +14927,7 @@ fn run_tile_loop(
         }
     }
     state.float_topmost_prev.clear();
+    state.floated.clear();
     state.float_rects.clear();
     if float_topmost_restored > 0 || float_topmost_skipped > 0 {
         log_json_at(
@@ -14249,18 +15258,18 @@ pub fn load_normal_tile_base() -> (
     }
 }
 
-/// `workspace --select INDEX` command: exact-owner out-of-hook select for the
-/// normal `tile` loop only. Queues one bounded `workspace.request` file; the
-/// owner validates the full owner binding (creation/pid/exe/sid/session plus
-/// a client correlation) and dispatches once through the existing
-/// `workspace_do_select` resolver. No window actuation here, no synthetic
-/// input, no keyboard acceptance. Refuses when no normal owner runs, when the
-/// caller is not the same medium path (SID/session/exe), when the ledger
-/// owner is a proof run, and when a request is already pending
-/// (single-pending queue, no overwrite, no replay). Stdout reports
-/// `dispatched` (queued) honestly; completion is the owner's `workspace`
-/// log outcome, observed natively by the caller.
-pub fn cmd_workspace_select(options: &WorkspaceSelectOptions) -> Result<String> {
+/// `workspace (--select|--send) INDEX` command: exact-owner out-of-hook
+/// control for the normal `tile` loop only. Queues one bounded
+/// `workspace.request` file; the owner validates the full owner binding
+/// (creation/pid/exe/sid/session plus a client correlation) and dispatches
+/// once through the existing `workspace_do_select` / `workspace_do_send`
+/// resolvers. No window actuation here, no synthetic input, no keyboard
+/// acceptance. Refuses when no normal owner runs, when the caller is not the
+/// same medium path (SID/session/exe), when the ledger owner is a proof run,
+/// and when a request is already pending (single-pending queue, no overwrite,
+/// no replay). Stdout reports `dispatched` (queued) honestly; completion is
+/// the owner's `workspace` log outcome, observed natively by the caller.
+pub fn cmd_workspace(options: &WorkspaceOptions) -> Result<String> {
     use crate::tiling::{WORKSPACE_REQUEST_VERSION, WorkspaceRequest, render_workspace_request};
     ensure_pm_v2()?;
     let me = medium_caller()?;
@@ -14314,7 +15323,7 @@ pub fn cmd_workspace_select(options: &WorkspaceSelectOptions) -> Result<String> 
         return Err(err(format!("refuse: target integrity {rid} is not medium")));
     }
     if options.index > 9 {
-        return Err(err("refuse: select index must be 0..=9"));
+        return Err(err("refuse: workspace index must be 0..=9"));
     }
     let path = dir.join(WORKSPACE_REQUEST_FILE);
     if path.exists() {
@@ -14335,6 +15344,7 @@ pub fn cmd_workspace_select(options: &WorkspaceSelectOptions) -> Result<String> 
         exe_path: record.owner.exe_path.clone(),
         user_sid: record.owner.user_sid.clone(),
         session_id: record.owner.session_id,
+        action: options.action,
         index: options.index,
         correlation: correlation.clone(),
     };
@@ -14360,7 +15370,7 @@ pub fn cmd_workspace_select(options: &WorkspaceSelectOptions) -> Result<String> 
             return Err(err(format!("error: request write: {e}")));
         }
     }
-    Ok(serde_json::json!({"dispatched": true, "index": options.index}).to_string())
+    Ok(serde_json::json!({"dispatched": true, "op": options.action.as_str(), "index": options.index}).to_string())
 }
 
 /// `tile-proof` command: owned-helpers-only proof loop. Requires a nonempty

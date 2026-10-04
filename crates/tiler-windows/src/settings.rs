@@ -109,6 +109,8 @@ pub struct CoreSettings {
     pub keyboard: KeyboardSettings,
     #[serde(default)]
     pub mouse: MouseSettings,
+    #[serde(default)]
+    pub workspace: WorkspaceSettings,
 }
 
 fn default_inner_gap() -> i32 {
@@ -128,6 +130,7 @@ impl Default for CoreSettings {
             underlay: UnderlaySettings::default(),
             keyboard: KeyboardSettings::default(),
             mouse: MouseSettings::default(),
+            workspace: WorkspaceSettings::default(),
         }
     }
 }
@@ -240,6 +243,24 @@ impl Default for MouseSettings {
     fn default() -> Self {
         Self {
             snap_prevention: true,
+        }
+    }
+}
+
+/// Managed-workspace settings. `default_tiled` (KDE `defaultTiled` parity,
+/// initially true) seeds every newly created workspace; live edits affect
+/// only workspaces created after the edit. Per-workspace session overrides
+/// never persist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceSettings {
+    #[serde(default = "default_true")]
+    pub default_tiled: bool,
+}
+
+impl Default for WorkspaceSettings {
+    fn default() -> Self {
+        Self {
+            default_tiled: true,
         }
     }
 }
@@ -1811,6 +1832,7 @@ mod tests {
         assert!(settings.core.keyboard.takeover);
         assert!(!settings.core.keyboard.allow_win_l);
         assert!(settings.core.mouse.snap_prevention);
+        assert!(settings.core.workspace.default_tiled);
         assert!(validate_settings(&settings).is_ok());
     }
 

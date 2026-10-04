@@ -2781,67 +2781,107 @@ pub fn parse_inspect_args(args: &[String]) -> Result<InspectOptions, String> {
     Ok(InspectOptions { allowlist })
 }
 
-/// CLI options for the exact-owner `workspace --select INDEX` control
-/// (normal `tile` only): one digit index 0..=9. The CLI only queues a bounded
-/// single-pending request file; the owner loop validates the full owner
-/// binding and dispatches through the existing `workspace_do_select`
-/// resolver. No synthetic input, no keyboard acceptance, never a proof path.
+/// Exact-owner `workspace` control action (normal `tile` only): `select`
+/// focuses an existing/trailing same-output workspace, `send` moves the
+/// focused managed window there and follows. No synthetic input, no keyboard
+/// acceptance, never a proof path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum WorkspaceAction {
+    #[serde(rename = "select")]
+    Select,
+    #[serde(rename = "send")]
+    Send,
+}
+
+impl WorkspaceAction {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Select => "select",
+            Self::Send => "send",
+        }
+    }
+}
+
+/// CLI options for the exact-owner `workspace (--select|--send) INDEX`
+/// control (normal `tile` only): one digit index 0..=9 plus the action. The
+/// CLI only queues a bounded single-pending request file; the owner loop
+/// validates the full owner binding and dispatches through the existing
+/// `workspace_do_select` / `workspace_do_send` resolvers. No synthetic input,
+/// no keyboard acceptance, never a proof path.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkspaceSelectOptions {
+pub struct WorkspaceOptions {
+    pub action: WorkspaceAction,
     pub index: u8,
 }
 
-/// Parse `workspace --select INDEX`. Exactly one `--select` with a digit
-/// 0..=9; anything else (including a missing value) is a refusal.
-pub fn parse_workspace_select_args(args: &[String]) -> Result<WorkspaceSelectOptions, String> {
-    let usage = "usage: workspace --select INDEX";
+/// Parse `workspace (--select|--send) INDEX`. Exactly one flag with a digit
+/// 0..=9; anything else (including a missing value or both flags) refuses.
+pub fn parse_workspace_args(args: &[String]) -> Result<WorkspaceOptions, String> {
+    let usage = "usage: workspace (--select|--send) INDEX";
+    let mut action: Option<WorkspaceAction> = None;
     let mut index: Option<u8> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--select" => {
+            "--select" | "--send" => {
+                let next = if args[i].as_str() == "--select" {
+                    WorkspaceAction::Select
+                } else {
+                    WorkspaceAction::Send
+                };
                 i += 1;
                 let value = args.get(i).ok_or_else(|| usage.to_owned())?;
-                if index.is_some() {
+                if action.is_some() {
                     return Err(usage.to_owned());
                 }
                 let parsed: u8 = value.parse().map_err(|_| usage.to_owned())?;
                 if parsed > 9 {
-                    return Err("refuse: select index must be 0..=9".to_owned());
+                    return Err("refuse: workspace index must be 0..=9".to_owned());
                 }
+                action = Some(next);
                 index = Some(parsed);
                 i += 1;
             }
             _ => return Err(usage.to_owned()),
         }
     }
-    let Some(index) = index else {
-        return Err(usage.to_owned());
-    };
-    Ok(WorkspaceSelectOptions { index })
+    match (action, index) {
+        (Some(action), Some(index)) => Ok(WorkspaceOptions { action, index }),
+        _ => Err(usage.to_owned()),
+    }
 }
 
-/// Verify the raw received argv against the parsed `workspace --select`
-/// options: exactly `--select INDEX` with matching value, no unknown flags.
-pub fn verify_workspace_select_argv_consistency(
+/// Verify the raw received argv against the parsed `workspace` options:
+/// exactly one `--select`/`--send` plus matching INDEX, no unknown flags.
+pub fn verify_workspace_argv_consistency(
     raw: &[String],
-    parsed: &WorkspaceSelectOptions,
+    parsed: &WorkspaceOptions,
 ) -> Result<(), String> {
-    let usage = "usage: workspace --select INDEX";
-    if raw.len() != 2 || raw[0] != "--select" {
+    let usage = "usage: workspace (--select|--send) INDEX";
+    if raw.len() != 2 {
+        return Err(usage.to_owned());
+    }
+    let want = match parsed.action {
+        WorkspaceAction::Select => "--select",
+        WorkspaceAction::Send => "--send",
+    };
+    if raw[0] != want {
         return Err(usage.to_owned());
     }
     let got: u8 = raw[1].parse().map_err(|_| usage.to_owned())?;
     if got != parsed.index {
-        return Err("error: argv/parsed select mismatch (impossible)".to_owned());
+        return Err("error: argv/parsed workspace mismatch (impossible)".to_owned());
     }
     Ok(())
 }
 
 /// Versioned exact-owner workspace request body. `creation`/`pid`/`exe_path`/
-/// `user_sid`/`session_id` bind the exact ledger owner; `index` is the digit;
-/// `correlation` is a client-generated opaque token the owner echoes in its
-/// dispatch log. No titles, no geometry, no secrets.
+/// `user_sid`/`session_id` bind the exact ledger owner; `action` is the
+/// transport op (`select` focuses, `send` moves the focused managed window
+/// and follows); `index` is the digit; `correlation` is a client-generated
+/// opaque token the owner echoes in its dispatch log. No titles, no geometry,
+/// no secrets.
 pub const WORKSPACE_REQUEST_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -2852,6 +2892,7 @@ pub struct WorkspaceRequest {
     pub exe_path: String,
     pub user_sid: String,
     pub session_id: u32,
+    pub action: WorkspaceAction,
     pub index: u8,
     pub correlation: String,
 }
@@ -2881,7 +2922,7 @@ pub fn parse_workspace_request(json: &str) -> Result<WorkspaceRequest, String> {
         return Err("refuse: malformed workspace request".to_owned());
     }
     if request.index > 9 {
-        return Err("refuse: select index must be 0..=9".to_owned());
+        return Err("refuse: workspace index must be 0..=9".to_owned());
     }
     if tiler_core::ids::CorrelationId::parse(&request.correlation).is_none() {
         return Err("refuse: malformed workspace request".to_owned());

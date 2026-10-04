@@ -76,6 +76,8 @@ pub const ID_APPLY: u32 = 127;
 pub const ID_REVERT: u32 = 128;
 pub const ID_CLOSE: u32 = 129;
 pub const ID_STATUS: u32 = 130;
+pub const ID_DEFAULT_TILED: u32 = 131;
+pub const ID_DEFAULT_FLOATING: u32 = 132;
 
 const ESCAPE_VK: usize = 0x1B;
 
@@ -309,6 +311,8 @@ fn refresh_all(app: &App) {
     set_checked(app.ctl(ID_KEYBOARD_TAKEOVER), core.keyboard.takeover);
     set_checked(app.ctl(ID_MOUSE_SNAP), core.mouse.snap_prevention);
     set_checked(app.ctl(ID_ALLOW_WIN_L), core.keyboard.allow_win_l);
+    set_checked(app.ctl(ID_DEFAULT_TILED), core.workspace.default_tiled);
+    set_checked(app.ctl(ID_DEFAULT_FLOATING), !core.workspace.default_tiled);
     refresh_list(app);
     enable(app.ctl(ID_APPLY), app.invalid.is_none());
 }
@@ -385,6 +389,9 @@ fn collect_draft(app: &mut App) -> Result<Settings, String> {
     draft.core.keyboard.takeover = checked(app.ctl(ID_KEYBOARD_TAKEOVER));
     draft.core.keyboard.allow_win_l = checked(app.ctl(ID_ALLOW_WIN_L));
     draft.core.mouse.snap_prevention = checked(app.ctl(ID_MOUSE_SNAP));
+    // New-workspace default radios: exactly one is checked after any load;
+    // a checked Floating wins, otherwise the default stays tiled.
+    draft.core.workspace.default_tiled = !checked(app.ctl(ID_DEFAULT_FLOATING));
     draft.revision = app.base.revision;
     validate_settings(&draft).map_err(|e| e.to_string())?;
     Ok(draft)
@@ -934,12 +941,12 @@ pub fn cmd_settings() -> Result<String, DynError> {
     use windows_sys::Win32::System::SystemServices::SS_LEFT;
     use windows_sys::Win32::UI::HiDpi::GetDpiForSystem;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        AdjustWindowRect, BS_AUTOCHECKBOX, BS_DEFPUSHBUTTON, BS_GROUPBOX, BS_PUSHBUTTON,
-        CreateWindowExW, DispatchMessageW, ES_AUTOHSCROLL, ES_AUTOVSCROLL, ES_MULTILINE,
-        ES_READONLY, GetMessageW, IDC_ARROW, IsDialogMessageW, LBS_NOINTEGRALHEIGHT, LBS_NOTIFY,
-        LoadCursorW, RegisterClassW, SW_SHOWNORMAL, ShowWindow, TranslateMessage, WM_KEYDOWN,
-        WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CLIPCHILDREN, WS_EX_DLGMODALFRAME, WS_HSCROLL,
-        WS_MINIMIZEBOX, WS_SYSMENU, WS_TABSTOP, WS_VSCROLL,
+        AdjustWindowRect, BS_AUTOCHECKBOX, BS_AUTORADIOBUTTON, BS_DEFPUSHBUTTON, BS_GROUPBOX,
+        BS_PUSHBUTTON, CreateWindowExW, DispatchMessageW, ES_AUTOHSCROLL, ES_AUTOVSCROLL,
+        ES_MULTILINE, ES_READONLY, GetMessageW, IDC_ARROW, IsDialogMessageW, LBS_NOINTEGRALHEIGHT,
+        LBS_NOTIFY, LoadCursorW, RegisterClassW, SW_SHOWNORMAL, ShowWindow, TranslateMessage,
+        WM_KEYDOWN, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CLIPCHILDREN, WS_EX_DLGMODALFRAME,
+        WS_HSCROLL, WS_MINIMIZEBOX, WS_SYSMENU, WS_TABSTOP, WS_VSCROLL,
     };
     crate::tiling_sys::ensure_pm_v2()?;
     let _singleton = match acquire_settings_singleton()? {
@@ -976,7 +983,7 @@ pub fn cmd_settings() -> Result<String, DynError> {
 
     let style = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
     let client_w = px(924, dpi);
-    let client_h = px(732, dpi);
+    let client_h = px(796, dpi);
     let mut rect = windows_sys::Win32::Foundation::RECT {
         left: 0,
         top: 0,
@@ -1028,6 +1035,7 @@ pub fn cmd_settings() -> Result<String, DynError> {
     let edits = ES_AUTOHSCROLL as u32;
     let push = BS_PUSHBUTTON as u32;
     let check = BS_AUTOCHECKBOX as u32;
+    let radio = BS_AUTORADIOBUTTON as u32;
     let group = BS_GROUPBOX as u32;
     let defpush = BS_DEFPUSHBUTTON as u32;
     let label = SS_LEFT;
@@ -1078,18 +1086,22 @@ pub fn cmd_settings() -> Result<String, DynError> {
         Ctl { id: ID_PRESET_AUTHENTIC, class: "BUTTON", text: "Authentic".to_owned(), x: 632, y: 162, w: 132, h: 28, style: push | tab },
         Ctl { id: ID_PRESET_COMPATIBLE, class: "BUTTON", text: "Compatible".to_owned(), x: 772, y: 162, w: 132, h: 28, style: push | tab },
         Ctl { id: ID_PRESET_EXPLAIN, class: "STATIC", text: "Authentic restores KDE defaults for every binding (Win+L opt-in preserved). Compatible disables every OS-conflicting chord and leaves the conflict-free set (letter moves, sticky). No replacement defaults are invented; manual rebind stays available.".to_owned(), x: 632, y: 196, w: 272, h: 174, style: label },
-        Ctl { id: 0, class: "BUTTON", text: "Shortcuts (48 rows)".to_owned(), x: 10, y: 388, w: 904, h: 268, style: group },
-        Ctl { id: ID_BINDING_LIST, class: "LISTBOX", text: String::new(), x: 20, y: 410, w: 540, h: 230, style: list_style | tab },
-        Ctl { id: ID_BINDING_INFO, class: "EDIT", text: String::new(), x: 570, y: 410, w: 324, h: 100, style: info_style },
-        Ctl { id: ID_BIND_KEEP, class: "BUTTON", text: "Keep".to_owned(), x: 570, y: 514, w: 100, h: 26, style: push | tab },
-        Ctl { id: ID_BIND_DISABLE, class: "BUTTON", text: "Disable".to_owned(), x: 676, y: 514, w: 100, h: 26, style: push | tab },
-        Ctl { id: ID_BIND_CHORD, class: "EDIT", text: String::new(), x: 570, y: 546, w: 150, h: 24, style: edit_style | tab },
-        Ctl { id: ID_BIND_REBIND, class: "BUTTON", text: "Set rebind".to_owned(), x: 726, y: 544, w: 120, h: 26, style: push | tab },
-        Ctl { id: ID_REBIND_NOTE, class: "STATIC", text: "Rebind: Win[+Shift]+Key, keeping this action's Shift arm (focus/select unshifted, move/send shifted). Alt/Ctrl refused; Win+L can never be a target. Win+G / Win+F11 cannot fully contain the OS Xbox/Game Bar handlers.".to_owned(), x: 570, y: 574, w: 324, h: 74, style: label },
-        Ctl { id: ID_STATUS, class: "STATIC", text: "Status: ready.".to_owned(), x: 20, y: 664, w: 540, h: 60, style: label },
-        Ctl { id: ID_APPLY, class: "BUTTON", text: "Apply".to_owned(), x: 580, y: 664, w: 100, h: 30, style: defpush | tab },
-        Ctl { id: ID_REVERT, class: "BUTTON", text: "Revert".to_owned(), x: 690, y: 664, w: 100, h: 30, style: push | tab },
-        Ctl { id: ID_CLOSE, class: "BUTTON", text: "Close".to_owned(), x: 800, y: 664, w: 100, h: 30, style: push | tab },
+        Ctl { id: 0, class: "BUTTON", text: "New workspaces".to_owned(), x: 10, y: 388, w: 904, h: 56, style: group },
+        Ctl { id: ID_DEFAULT_TILED, class: "BUTTON", text: "Tiled".to_owned(), x: 20, y: 410, w: 140, h: 24, style: radio | tab },
+        Ctl { id: ID_DEFAULT_FLOATING, class: "BUTTON", text: "Floating".to_owned(), x: 170, y: 410, w: 140, h: 24, style: radio | tab },
+        Ctl { id: 0, class: "STATIC", text: "New workspaces start tiled or floating. Applies to workspaces created after Apply; existing workspaces keep their session tiling. Only the default is saved.".to_owned(), x: 320, y: 408, w: 584, h: 30, style: label },
+        Ctl { id: 0, class: "BUTTON", text: "Shortcuts (48 rows)".to_owned(), x: 10, y: 452, w: 904, h: 268, style: group },
+        Ctl { id: ID_BINDING_LIST, class: "LISTBOX", text: String::new(), x: 20, y: 474, w: 540, h: 230, style: list_style | tab },
+        Ctl { id: ID_BINDING_INFO, class: "EDIT", text: String::new(), x: 570, y: 474, w: 324, h: 100, style: info_style },
+        Ctl { id: ID_BIND_KEEP, class: "BUTTON", text: "Keep".to_owned(), x: 570, y: 578, w: 100, h: 26, style: push | tab },
+        Ctl { id: ID_BIND_DISABLE, class: "BUTTON", text: "Disable".to_owned(), x: 676, y: 578, w: 100, h: 26, style: push | tab },
+        Ctl { id: ID_BIND_CHORD, class: "EDIT", text: String::new(), x: 570, y: 610, w: 150, h: 24, style: edit_style | tab },
+        Ctl { id: ID_BIND_REBIND, class: "BUTTON", text: "Set rebind".to_owned(), x: 726, y: 608, w: 120, h: 26, style: push | tab },
+        Ctl { id: ID_REBIND_NOTE, class: "STATIC", text: "Rebind: Win[+Shift]+Key, keeping this action's Shift arm (focus/select unshifted, move/send shifted). Alt/Ctrl refused; Win+L can never be a target. Win+G / Win+F11 cannot fully contain the OS Xbox/Game Bar handlers.".to_owned(), x: 570, y: 638, w: 324, h: 74, style: label },
+        Ctl { id: ID_STATUS, class: "STATIC", text: "Status: ready.".to_owned(), x: 20, y: 728, w: 540, h: 60, style: label },
+        Ctl { id: ID_APPLY, class: "BUTTON", text: "Apply".to_owned(), x: 580, y: 728, w: 100, h: 30, style: defpush | tab },
+        Ctl { id: ID_REVERT, class: "BUTTON", text: "Revert".to_owned(), x: 690, y: 728, w: 100, h: 30, style: push | tab },
+        Ctl { id: ID_CLOSE, class: "BUTTON", text: "Close".to_owned(), x: 800, y: 728, w: 100, h: 30, style: push | tab },
     ];
     // Group/label/statics carry id 0 and skip automation lookup. Groupboxes
     // are pinned behind every sibling (see below); their handles ride here.

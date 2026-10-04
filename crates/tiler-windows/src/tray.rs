@@ -12,11 +12,11 @@
 //! `docs/reference-cosmic-tray-menu.md` (status/menu/Settings shape). Windows
 //! differences are explicit and reported to the Lead:
 //!
-//! - No current-workspace tiled/floating toggle and no new-workspace
-//!   Tiled/Floating radios: Windows has no per-workspace tiled/floating
-//!   runtime (managed workspaces track membership and hide/reveal only; see
-//!   `crate::workspace::ManagedWorkspaces`), so there is nothing truthful to
-//!   toggle. The menu is conflict row, status row, Settings, Stop.
+//! - KDE parity: a current-workspace tiled checkbox plus new-workspace
+//!   Tiled/Floating default choices. The checkbox reflects the session-local
+//!   per-workspace mode (`crate::workspace::ManagedWorkspaces`); a missing
+//!   current scope disables only the checkbox while the default choices stay
+//!   usable. Only the default persists.
 //! - The conflict row names Windows OS shortcut conflicts (there is no
 //!   `kwinrc [Windows]` edge-key analogue on Windows).
 //! - The warning fires only for kept effective bindings with known-unresolved
@@ -60,6 +60,12 @@ pub const MENU_ID_STATUS: u32 = 1002;
 pub const MENU_ID_SETTINGS: u32 = 1003;
 /// Menu command: graceful owner stop through the normal cleanup path.
 pub const MENU_ID_STOP: u32 = 1004;
+/// Menu command: toggle tiling for the current workspace (session-only).
+pub const MENU_ID_WORKSPACE_TOGGLE: u32 = 1005;
+/// Menu command: new workspaces start tiled (persisted default).
+pub const MENU_ID_DEFAULT_TILED: u32 = 1006;
+/// Menu command: new workspaces start floating (persisted default).
+pub const MENU_ID_DEFAULT_FLOATING: u32 = 1007;
 
 /// Top conflict row label (KDE names its `[Windows]` edge keys here; Windows
 /// names OS shortcut conflicts instead).
@@ -68,6 +74,11 @@ pub const CONFLICT_LABEL: &str = "Conflicting Windows settings...";
 pub const SETTINGS_LABEL: &str = "Settings...";
 /// Stop row label.
 pub const STOP_LABEL: &str = "Stop";
+/// Current-workspace tiling checkbox label (checked means tiled).
+pub const WORKSPACE_TOGGLE_LABEL: &str = "Tiling for current workspace";
+/// New-workspace default choice labels (exactly one checked).
+pub const DEFAULT_TILED_LABEL: &str = "New workspaces: Tiled";
+pub const DEFAULT_FLOATING_LABEL: &str = "New workspaces: Floating";
 
 /// Icon pixel dimension (square).
 pub const TRAY_ICON_SIZE: usize = 32;
@@ -153,28 +164,115 @@ pub enum MenuItem {
         label: String,
         enabled: bool,
         visible: bool,
+        /// Checked presentation (tiled checkbox, default radios).
+        checked: bool,
     },
     Separator,
 }
 
-/// Build the tray menu: the conflict row (top, only with unresolved
-/// conflicts), the disabled live-status row, then Settings and Stop. There is
-/// no workspace toggle: Windows has no per-workspace tiled/floating runtime
-/// to toggle.
+/// Workspace section of the tray menu: the current-workspace tiled state
+/// (`None` when the scope is unreadable: the checkbox disables while the
+/// default choices stay usable) plus the persisted new-workspace default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceMenu {
+    pub current_tiled: Option<bool>,
+    pub default_tiled: bool,
+}
+
+impl WorkspaceMenu {
+    #[must_use]
+    pub const fn new(current_tiled: Option<bool>, default_tiled: bool) -> Self {
+        Self {
+            current_tiled,
+            default_tiled,
+        }
+    }
+}
+
+/// Scoped tray-toggle request: the opaque `(output, workspace)` rendered with
+/// the menu. The owner drains it once on its pump and applies it only when
+/// the live active workspace still matches exactly; a stale render or a
+/// switched output refuses with no guessed fallback scope. Same-process
+/// menu-to-pump lifetime needs no generation: the modal menu blocks the pump
+/// between render and pick, so a drained request is either current or refused
+/// below, never replayed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToggleScope {
+    pub output: String,
+    pub workspace: String,
+}
+
+impl ToggleScope {
+    #[must_use]
+    pub fn new(output: &str, workspace: &str) -> Self {
+        Self {
+            output: output.to_owned(),
+            workspace: workspace.to_owned(),
+        }
+    }
+}
+
+/// Verify one drained toggle request against the live active workspace.
+/// True only when the rendered scope still names the live active pair;
+/// `None` on either side (unreadable render scope, unknown live output)
+/// refuses. The checkbox truth visible on the immediately following menu
+/// comes from the per-pump `sync_workspace` refresh, never from this.
 #[must_use]
-pub fn menu_items(conflict_visible: bool, status_line: &str) -> Vec<MenuItem> {
+pub fn verify_toggle_scope(rendered: Option<(&str, &str)>, live: Option<(&str, &str)>) -> bool {
+    match (rendered, live) {
+        (Some((output, workspace)), Some((live_output, live_workspace))) => {
+            output == live_output && workspace == live_workspace
+        }
+        _ => false,
+    }
+}
+
+/// Build the tray menu: the conflict row (top, only with unresolved
+/// conflicts), the disabled live-status row, the current-workspace tiling
+/// checkbox (disabled without a readable scope), the new-workspace
+/// Tiled/Floating choices (exactly one checked), then Settings and Stop.
+#[must_use]
+pub fn menu_items(
+    conflict_visible: bool,
+    status_line: &str,
+    workspace: WorkspaceMenu,
+) -> Vec<MenuItem> {
     vec![
         MenuItem::Command {
             id: MENU_ID_CONFLICT,
             label: CONFLICT_LABEL.to_owned(),
             enabled: true,
             visible: conflict_visible,
+            checked: false,
         },
         MenuItem::Command {
             id: MENU_ID_STATUS,
             label: status_line.to_owned(),
             enabled: false,
             visible: true,
+            checked: false,
+        },
+        MenuItem::Separator,
+        MenuItem::Command {
+            id: MENU_ID_WORKSPACE_TOGGLE,
+            label: WORKSPACE_TOGGLE_LABEL.to_owned(),
+            enabled: workspace.current_tiled.is_some(),
+            visible: true,
+            checked: workspace.current_tiled.unwrap_or(false),
+        },
+        MenuItem::Command {
+            id: MENU_ID_DEFAULT_TILED,
+            label: DEFAULT_TILED_LABEL.to_owned(),
+            enabled: true,
+            visible: true,
+            checked: workspace.default_tiled,
+        },
+        MenuItem::Command {
+            id: MENU_ID_DEFAULT_FLOATING,
+            label: DEFAULT_FLOATING_LABEL.to_owned(),
+            enabled: true,
+            visible: true,
+            checked: !workspace.default_tiled,
         },
         MenuItem::Separator,
         MenuItem::Command {
@@ -182,12 +280,14 @@ pub fn menu_items(conflict_visible: bool, status_line: &str) -> Vec<MenuItem> {
             label: SETTINGS_LABEL.to_owned(),
             enabled: true,
             visible: true,
+            checked: false,
         },
         MenuItem::Command {
             id: MENU_ID_STOP,
             label: STOP_LABEL.to_owned(),
             enabled: true,
             visible: true,
+            checked: false,
         },
     ]
 }
@@ -546,16 +646,18 @@ mod tests {
 
     #[test]
     fn menu_hides_conflict_row_without_conflicts() {
+        let tiled = WorkspaceMenu::new(Some(true), true);
         let with = menu_items(
             !unresolved_conflicts(&authentic(), true, false).is_empty(),
             "Status: Enabled (saved:1)",
+            tiled,
         );
         let conflict = with.iter().find_map(|item| match item {
             MenuItem::Command { id, visible, .. } if *id == MENU_ID_CONFLICT => Some(*visible),
             _ => None,
         });
         assert_eq!(conflict, Some(true));
-        let without = menu_items(false, "Status: Enabled (saved:1)");
+        let without = menu_items(false, "Status: Enabled (saved:1)", tiled);
         let conflict = without.iter().find_map(|item| match item {
             MenuItem::Command { id, visible, .. } if *id == MENU_ID_CONFLICT => Some(*visible),
             _ => None,
@@ -576,7 +678,111 @@ mod tests {
                 ids.push(*id);
             }
         }
-        assert_eq!(ids, vec![MENU_ID_STATUS, MENU_ID_SETTINGS, MENU_ID_STOP]);
+        assert_eq!(
+            ids,
+            vec![
+                MENU_ID_STATUS,
+                MENU_ID_WORKSPACE_TOGGLE,
+                MENU_ID_DEFAULT_TILED,
+                MENU_ID_DEFAULT_FLOATING,
+                MENU_ID_SETTINGS,
+                MENU_ID_STOP
+            ]
+        );
+    }
+
+    #[test]
+    fn menu_workspace_toggle_reflects_current_scope_truthfully() {
+        let entry = |items: &Vec<MenuItem>, id: u32| {
+            items.iter().find_map(|item| match item {
+                MenuItem::Command {
+                    id: found,
+                    enabled,
+                    checked,
+                    visible,
+                    ..
+                } if *found == id => Some((*enabled, *checked, *visible)),
+                _ => None,
+            })
+        };
+        // Tiled scope: checkbox enabled and checked; Tiled default checked.
+        let tiled = menu_items(
+            false,
+            "Status: Enabled (saved:1)",
+            WorkspaceMenu::new(Some(true), true),
+        );
+        assert_eq!(
+            entry(&tiled, MENU_ID_WORKSPACE_TOGGLE),
+            Some((true, true, true))
+        );
+        assert_eq!(
+            entry(&tiled, MENU_ID_DEFAULT_TILED),
+            Some((true, true, true))
+        );
+        assert_eq!(
+            entry(&tiled, MENU_ID_DEFAULT_FLOATING),
+            Some((true, false, true))
+        );
+        // Floating scope with a floating default: checkbox enabled,
+        // unchecked; Floating default checked.
+        let floating = menu_items(
+            false,
+            "Status: Enabled (saved:1)",
+            WorkspaceMenu::new(Some(false), false),
+        );
+        assert_eq!(
+            entry(&floating, MENU_ID_WORKSPACE_TOGGLE),
+            Some((true, false, true))
+        );
+        assert_eq!(
+            entry(&floating, MENU_ID_DEFAULT_TILED),
+            Some((true, false, true))
+        );
+        assert_eq!(
+            entry(&floating, MENU_ID_DEFAULT_FLOATING),
+            Some((true, true, true))
+        );
+        // Missing scope disables only the checkbox; the default choices
+        // stay usable and exactly one stays checked.
+        let missing = menu_items(
+            false,
+            "Status: Enabled (saved:1)",
+            WorkspaceMenu::new(None, true),
+        );
+        assert_eq!(
+            entry(&missing, MENU_ID_WORKSPACE_TOGGLE),
+            Some((false, false, true))
+        );
+        assert_eq!(
+            entry(&missing, MENU_ID_DEFAULT_TILED),
+            Some((true, true, true))
+        );
+        assert_eq!(
+            entry(&missing, MENU_ID_DEFAULT_FLOATING),
+            Some((true, false, true))
+        );
+    }
+
+    #[test]
+    fn toggle_scope_refuses_stale_or_mismatched_without_fallback() {
+        // The drained request applies only when it still names the live
+        // active pair: a switched workspace or output refuses, and an
+        // unreadable side never guesses a scope.
+        assert!(verify_toggle_scope(
+            Some(("mon-1", "ws-1")),
+            Some(("mon-1", "ws-1"))
+        ));
+        assert!(!verify_toggle_scope(
+            Some(("mon-1", "ws-1")),
+            Some(("mon-1", "ws-2"))
+        ));
+        assert!(!verify_toggle_scope(
+            Some(("mon-1", "ws-1")),
+            Some(("mon-2", "ws-1"))
+        ));
+        assert!(!verify_toggle_scope(None, Some(("mon-1", "ws-1"))));
+        assert!(!verify_toggle_scope(Some(("mon-1", "ws-1")), None));
+        assert!(!verify_toggle_scope(None, None));
     }
 
     #[test]

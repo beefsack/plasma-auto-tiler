@@ -15,6 +15,7 @@ use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
 use tiler_core::seed::EngineWindow;
 use tiler_core::session::{DomainKey, OutputDomain};
 
+use crate::snapkey::SnapOp;
 use crate::workspace::{ManagedWorkspaces, WindowKey, verify_send_follow};
 
 /// Resolve which output a digit chord acts on: the cached active output when
@@ -155,6 +156,64 @@ pub fn verify_membership_transfer(
     target_members: &BTreeSet<WindowKey>,
 ) -> bool {
     verify_send_follow(mover, source_members, target_members)
+}
+
+/// Planned send route across one workspace boundary. Tiled-to-tiled sends
+/// run the shared two-domain Engine plan; any boundary touching a floating
+/// workspace transfers project native membership instead (no two-domain
+/// plan, no floating-side geometry) and reflows only the tiled side.
+/// Eligibility derives from the actual source workspace mode, never from the
+/// mover's per-window float flag alone: a mover leaving a floating source is
+/// a native-boundary send even when it carries a slotless float exception.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendRoute {
+    Engine,
+    Native,
+}
+
+#[must_use]
+pub const fn send_route(source_tiled: bool, target_tiled: bool) -> SendRoute {
+    if source_tiled && target_tiled {
+        SendRoute::Engine
+    } else {
+        SendRoute::Native
+    }
+}
+
+/// Directional refusal on a floating workspace (KDE plan-adapter parity:
+/// `focus-refused-workspace-floating` plus `move-refused-workspace-floating`).
+/// Both focus and move refuse: a floating workspace runs no tile layout, so
+/// directional navigation has no topology to move through or focus within.
+/// `None` when the workspace is tiled.
+#[must_use]
+pub const fn directional_workspace_refusal(op: SnapOp, tiled: bool) -> Option<&'static str> {
+    if tiled {
+        return None;
+    }
+    Some(match op {
+        SnapOp::Focus => "focus-refused-workspace-floating",
+        SnapOp::Move => "move-refused-workspace-floating",
+    })
+}
+
+/// Engine tokens that must ride floating through the runtime intent even when
+/// the Engine session carries no exception: a session freshly released by a
+/// workspace-mode toggle, or a boundary-send adoption the target session has
+/// never seen. Keyed by exact window lifetime, so a recycled HWND never
+/// inherits and dead lifetimes prune with membership. Sticky and
+/// born-fullscreen members keep their own lanes and never enter here.
+#[must_use]
+pub fn float_carry_tokens(
+    members: &BTreeSet<WindowKey>,
+    token_of: &BTreeMap<WindowKey, String>,
+    intent: &BTreeSet<WindowKey>,
+) -> BTreeSet<String> {
+    members
+        .iter()
+        .filter(|key| intent.contains(*key))
+        .filter_map(|key| token_of.get(key))
+        .cloned()
+        .collect()
 }
 
 /// Focus-before-geometry gate for a verified workspace transition: establish
@@ -1254,6 +1313,302 @@ mod tests {
             &BTreeSet::new(),
             &BTreeSet::new()
         ));
+    }
+
+    #[test]
+    fn send_route_splits_engine_from_native_boundary() {
+        use super::{SendRoute, send_route};
+        // Tiled-to-tiled keeps the shared two-domain Engine plan.
+        assert_eq!(send_route(true, true), SendRoute::Engine);
+        // Any floating boundary transfers native membership instead: no
+        // two-domain plan, no floating-side geometry, tiled side reflows.
+        assert_eq!(send_route(false, true), SendRoute::Native);
+        assert_eq!(send_route(true, false), SendRoute::Native);
+        assert_eq!(send_route(false, false), SendRoute::Native);
+    }
+
+    #[test]
+    fn directional_refuses_both_focus_and_move_on_floating() {
+        // KDE plan-adapter parity: a floating workspace runs no tile layout,
+        // so directional focus refuses exactly like directional move, with
+        // the matching workspace-floating vocabulary. Tiled workspaces pass.
+        use super::directional_workspace_refusal;
+        use crate::snapkey::SnapOp;
+        assert_eq!(
+            directional_workspace_refusal(SnapOp::Focus, false),
+            Some("focus-refused-workspace-floating")
+        );
+        assert_eq!(
+            directional_workspace_refusal(SnapOp::Move, false),
+            Some("move-refused-workspace-floating")
+        );
+        assert_eq!(directional_workspace_refusal(SnapOp::Focus, true), None);
+        assert_eq!(directional_workspace_refusal(SnapOp::Move, true), None);
+    }
+
+    #[test]
+    fn float_carry_survives_a_fresh_engine_session() {
+        // After a workspace-mode release the Engine session carries no
+        // exception, and a boundary-send target session has never seen the
+        // mover: the lifetime-keyed intent still rides the token floating,
+        // while tiled members and recycled lifetimes stay out.
+        use super::float_carry_tokens;
+        use std::collections::{BTreeMap, BTreeSet};
+        let floated = key(11);
+        let tiled = key(12);
+        let members: BTreeSet<WindowKey> = [floated.clone(), tiled.clone()].into_iter().collect();
+        let mut token_of: BTreeMap<WindowKey, String> = BTreeMap::new();
+        token_of.insert(floated.clone(), "w-float".to_owned());
+        token_of.insert(tiled.clone(), "w-tiled".to_owned());
+        let intent: BTreeSet<WindowKey> = [floated.clone()].into_iter().collect();
+        // Empty Engine set (fresh after release): intent still carries.
+        let carried = float_carry_tokens(&members, &token_of, &intent);
+        assert_eq!(carried, ["w-float".to_owned()].into_iter().collect());
+        // A recycled HWND (same number, fresh lifetime) never inherits.
+        let recycled = WindowKey {
+            hwnd: 11,
+            pid: 9000,
+            creation: "c000000000009000".to_owned(),
+        };
+        let members: BTreeSet<WindowKey> = [recycled.clone(), tiled.clone()].into_iter().collect();
+        let mut token_of: BTreeMap<WindowKey, String> = BTreeMap::new();
+        token_of.insert(recycled, "w-new".to_owned());
+        token_of.insert(tiled, "w-tiled".to_owned());
+        assert!(float_carry_tokens(&members, &token_of, &intent).is_empty());
+        // Actual Engine sequence: per-window float, release the exact domain,
+        // then a fresh reconcile carrying the intent. The floated window stays
+        // a slotless exception with no geometry target; the sibling reflows.
+        use tiler_core::boundary::{CoreCommand, CoreReply};
+        use tiler_core::directional::WindowId;
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = rect(0, 0);
+        let domain = workspace_domain("mon-a", "ws-1", bounds, 8);
+        seed_two_tiled(&mut engine, &owner, &generation, &domain, bounds);
+        let float = engine.handle(&float_event(
+            &owner,
+            &generation,
+            "float-carry-1",
+            revision_of(&engine, &domain),
+            &domain,
+            &[
+                (WindowId("w1".to_owned()), bounds, false),
+                (WindowId("w2".to_owned()), bounds, false),
+            ],
+            "w1",
+            "w1",
+            None,
+        ));
+        let CoreReply::Tiled(float_plan) = float else {
+            panic!("float commits, got {float:?}");
+        };
+        assert!(
+            !float_plan.geometry.iter().any(|g| g.window.0 == "w1"),
+            "floated window leaves the tree"
+        );
+        assert!(
+            engine
+                .session(&domain.1)
+                .is_some_and(|s| s.is_exception(&WindowId("w1".to_owned()))),
+            "floated window rides as an exception"
+        );
+        let mut release = crate::tiling::build_reconcile_event_for(
+            &owner,
+            &generation,
+            &CorrelationId::parse("float-carry-release").expect("correlation"),
+            revision_of(&engine, &domain),
+            2,
+            &domain.0,
+            &domain.1,
+            8,
+            &[
+                (
+                    WindowId("w1".to_owned()),
+                    bounds,
+                    tiler_core::size_hints::WindowSizeHints::none(),
+                ),
+                (
+                    WindowId("w2".to_owned()),
+                    bounds,
+                    tiler_core::size_hints::WindowSizeHints::none(),
+                ),
+            ],
+            Some(&WindowId("w2".to_owned())),
+        );
+        release.command = CoreCommand::ReleaseDomain;
+        match engine.handle(&release) {
+            CoreReply::Released => {}
+            other => panic!("release drops the exact domain, got {other:?}"),
+        }
+        assert!(!engine.contains(&domain.1));
+        // The intent outlives the released session: the fresh observation
+        // still carries the floated token while the tiled sibling stays out.
+        let carry_keys: BTreeSet<WindowKey> = [key(11), key(12)].into_iter().collect();
+        let carry_tokens: BTreeMap<WindowKey, String> =
+            [(key(11), "w1".to_owned()), (key(12), "w2".to_owned())]
+                .into_iter()
+                .collect();
+        let carry_intent: BTreeSet<WindowKey> = [key(11)].into_iter().collect();
+        let carried = float_carry_tokens(&carry_keys, &carry_tokens, &carry_intent);
+        assert_eq!(carried, ["w1".to_owned()].into_iter().collect());
+        let carried_rows: Vec<(
+            WindowId,
+            Rect,
+            tiler_core::size_hints::WindowSizeHints,
+            bool,
+        )> = ["w1", "w2"]
+            .iter()
+            .map(|token| {
+                (
+                    WindowId((*token).to_owned()),
+                    bounds,
+                    tiler_core::size_hints::WindowSizeHints::none(),
+                    carried.contains(*token),
+                )
+            })
+            .collect();
+        let fp = crate::tiling::fingerprint(
+            &carried_rows
+                .iter()
+                .map(|(token, rect, _, _)| (token.0.clone(), *rect))
+                .collect::<Vec<_>>(),
+        );
+        let fresh = crate::tiling::build_reconcile_event_for_floating(
+            &owner,
+            &generation,
+            &CorrelationId::parse("float-carry-fresh").expect("correlation"),
+            0,
+            fp,
+            &domain.0,
+            &domain.1,
+            8,
+            &carried_rows,
+            Some(&WindowId("w2".to_owned())),
+        );
+        match engine.handle(&fresh) {
+            CoreReply::Tiled(plan) => {
+                assert!(
+                    !plan.geometry.iter().any(|g| g.window.0 == "w1"),
+                    "carried float takes no geometry target"
+                );
+                assert!(
+                    plan.geometry.iter().any(|g| g.window.0 == "w2"),
+                    "sibling reflows around the exception"
+                );
+            }
+            CoreReply::Projection(plan) => {
+                assert!(
+                    !plan.geometry.iter().any(|g| g.window.0 == "w1"),
+                    "carried float takes no geometry target"
+                );
+                assert!(
+                    plan.geometry.iter().any(|g| g.window.0 == "w2"),
+                    "sibling reflows around the exception"
+                );
+            }
+            CoreReply::SendWorkspace(plan) => {
+                assert!(
+                    !plan.geometry.iter().any(|g| g.window.0 == "w1"),
+                    "carried float takes no geometry target"
+                );
+                assert!(
+                    plan.geometry.iter().any(|g| g.window.0 == "w2"),
+                    "sibling reflows around the exception"
+                );
+            }
+            other => panic!("fresh reconcile converges, got {other:?}"),
+        }
+        assert!(
+            engine
+                .session(&domain.1)
+                .is_some_and(|s| s.is_exception(&WindowId("w1".to_owned()))),
+            "exception survives the release through the carried intent"
+        );
+    }
+
+    #[test]
+    fn native_boundary_source_reconcile_drops_mover_and_reflows_survivor() {
+        // Native-boundary sends transfer membership with no Engine plan and no
+        // floating-side geometry: the runtime source phase is a complete
+        // reconcile carrying only the survivors. The shared Engine must drop
+        // the mover and reflow the survivor, never retain the stale member.
+        use tiler_core::boundary::CoreReply;
+        use tiler_core::directional::WindowId;
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = rect(0, 0);
+        let source = workspace_domain("mon-a", "ws-1", bounds, 8);
+        seed_two_tiled(&mut engine, &owner, &generation, &source, bounds);
+        // Native transfer of w1 out: no send plan, source membership is now
+        // exactly the survivor.
+        let correlation = CorrelationId::parse("native-source-1").expect("correlation");
+        let event = crate::tiling::build_reconcile_event_for(
+            &owner,
+            &generation,
+            &correlation,
+            revision_of(&engine, &source),
+            1,
+            &source.0,
+            &source.1,
+            8,
+            &[(
+                WindowId("w2".to_owned()),
+                bounds,
+                tiler_core::size_hints::WindowSizeHints::none(),
+            )],
+            Some(&WindowId("w2".to_owned())),
+        );
+        match engine.handle(&event) {
+            CoreReply::Tiled(plan) => {
+                assert!(
+                    !plan.geometry.iter().any(|g| g.window.0 == "w1"),
+                    "dropped mover takes no source geometry"
+                );
+                let survivor = plan
+                    .geometry
+                    .iter()
+                    .find(|g| g.window.0 == "w2")
+                    .expect("survivor reflows");
+                assert_eq!(survivor.workspace.0, "ws-1");
+                assert!(
+                    survivor.rect.w > 0 && survivor.rect.h > 0,
+                    "survivor reflows, got {:?}",
+                    survivor.rect
+                );
+            }
+            CoreReply::Projection(plan) => {
+                assert!(
+                    !plan.geometry.iter().any(|g| g.window.0 == "w1"),
+                    "dropped mover takes no source geometry"
+                );
+                let survivor = plan
+                    .geometry
+                    .iter()
+                    .find(|g| g.window.0 == "w2")
+                    .expect("survivor reflows");
+                assert_eq!(survivor.workspace.0, "ws-1");
+                assert!(
+                    survivor.rect.w > 0 && survivor.rect.h > 0,
+                    "survivor reflows, got {:?}",
+                    survivor.rect
+                );
+            }
+            CoreReply::SendWorkspace(plan) => {
+                assert!(
+                    !plan.geometry.iter().any(|g| g.window.0 == "w1"),
+                    "dropped mover takes no source geometry"
+                );
+                assert!(
+                    plan.geometry.iter().any(|g| g.window.0 == "w2"),
+                    "survivor reflows"
+                );
+            }
+            other => panic!("source survivor converges, got {other:?}"),
+        }
     }
 
     #[test]

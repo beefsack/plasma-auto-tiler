@@ -2,9 +2,10 @@ pub const DEFAULT_RUN_SECONDS: u64 = 120;
 pub const MAX_RUN_SECONDS: u64 = 600;
 pub const STOP_REQUEST_FILE: &str = "stop.request";
 /// Exact-owner out-of-hook workspace request (normal `tile` only): one JSON
-/// object naming the owner creation plus a digit index 0..=9. The owner loop
-/// validates the full owner binding and consumes the file once through the
-/// existing `workspace_do_select` resolver; the CLI never actuates windows.
+/// object naming the owner creation plus an action (`select`/`send`) and a
+/// digit index 0..=9. The owner loop validates the full owner binding and
+/// consumes the file once through the existing `workspace_do_select` /
+/// `workspace_do_send` resolvers; the CLI never actuates windows.
 pub const WORKSPACE_REQUEST_FILE: &str = "workspace.request";
 /// Pointer to the current per-run log file name (never geometry).
 pub const RUN_CURRENT_FILE: &str = "run-current.txt";

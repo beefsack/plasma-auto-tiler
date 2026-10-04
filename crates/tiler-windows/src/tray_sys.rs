@@ -37,15 +37,18 @@
 //! registration (the sample's `DeleteNotificationIcon` does exactly this).
 
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::core::GUID;
 
 use crate::tray::{
-    FIRST_RUN_TITLE, MENU_ID_CONFLICT, MENU_ID_SETTINGS, MENU_ID_STATUS, MENU_ID_STOP,
+    FIRST_RUN_TITLE, MENU_ID_CONFLICT, MENU_ID_DEFAULT_FLOATING, MENU_ID_DEFAULT_TILED,
+    MENU_ID_SETTINGS, MENU_ID_STATUS, MENU_ID_STOP, MENU_ID_WORKSPACE_TOGGLE,
     TASKBAR_CREATED_MESSAGE, TRAY_CALLBACK_MESSAGE, TRAY_ICON_SIZE, TRAY_TOOLTIP_TITLE,
-    TRAY_WINDOW_CLASS, TrayIconState, first_run_body, menu_items, status_line,
+    TRAY_WINDOW_CLASS, ToggleScope, TrayIconState, WorkspaceMenu, first_run_body, menu_items,
+    status_line,
 };
 
 type DynError = Box<dyn std::error::Error>;
@@ -147,6 +150,22 @@ struct Inner {
     taskbar_created: u32,
     stop: Arc<AtomicBool>,
     log_path: Option<std::path::PathBuf>,
+    /// Cached current-workspace tiled state (`None` without a readable
+    /// scope: the checkbox disables). Refreshed by `sync_workspace`.
+    workspace_current: Option<bool>,
+    /// Opaque `(output, workspace)` scope the checkbox rendered with. A
+    /// toggle pick carries exactly this scope to the owner loop, which
+    /// refuses it when the live active pair no longer matches.
+    workspace_scope: Option<(String, String)>,
+    /// Cached persisted new-workspace default. Refreshed by
+    /// `sync_workspace` and by successful default picks below.
+    workspace_default: bool,
+    /// Scoped workspace-toggle request (rendered output+workspace); the
+    /// owner loop drains it once and refuses stale/mismatched scopes.
+    toggle: Arc<Mutex<Option<ToggleScope>>>,
+    /// Settings directory for persisting the default choice (normal owner
+    /// only; `None` leaves the default rows as no-ops with a log line).
+    settings_dir: Option<std::path::PathBuf>,
 }
 
 impl Inner {
@@ -260,19 +279,25 @@ fn inner_of(hwnd: HWND) -> *mut Inner {
 
 fn show_menu(hwnd: HWND) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreatePopupMenu, DestroyMenu, GetCursorPos, MF_DISABLED, MF_GRAYED, MF_SEPARATOR,
-        MF_STRING, PostMessageW, SetForegroundWindow, TPM_RETURNCMD, TrackPopupMenu, WM_NULL,
+        CreatePopupMenu, DestroyMenu, GetCursorPos, MF_CHECKED, MF_DISABLED, MF_GRAYED,
+        MF_SEPARATOR, MF_STRING, PostMessageW, SetForegroundWindow, TPM_RETURNCMD, TrackPopupMenu,
+        WM_NULL,
     };
     let raw = inner_of(hwnd);
     if raw.is_null() {
         return;
     }
-    let inner = unsafe { &*raw };
-    let cached_conflicts_empty = inner.conflict_empty;
-    let cached_status = inner.status.clone();
+    let cached = unsafe { &*raw };
+    let cached_conflicts_empty = cached.conflict_empty;
+    let cached_status = cached.status.clone();
+    let cached_workspace = WorkspaceMenu::new(cached.workspace_current, cached.workspace_default);
     // Rebuild the visible menu from cached state: no syscalls here, so a
-    // stale poll can never project a wrong conflict row.
-    let items = menu_items(!cached_conflicts_empty, &status_line(&cached_status));
+    // stale poll can never project a wrong conflict row or workspace check.
+    let items = menu_items(
+        !cached_conflicts_empty,
+        &status_line(&cached_status),
+        cached_workspace,
+    );
     let menu = unsafe { CreatePopupMenu() };
     if menu.is_null() {
         return;
@@ -283,6 +308,7 @@ fn show_menu(hwnd: HWND) {
             label,
             enabled,
             visible,
+            checked,
         } = item
         else {
             unsafe {
@@ -299,8 +325,15 @@ fn show_menu(hwnd: HWND) {
             continue;
         }
         // The disabled status row renders greyed; every other visible row is
-        // a live command.
-        let flags = MF_STRING | if *enabled { 0 } else { MF_DISABLED | MF_GRAYED };
+        // a live command. The workspace checkbox and default choices render
+        // their truthful checked state.
+        let mut flags = MF_STRING;
+        if *checked {
+            flags |= MF_CHECKED;
+        }
+        if !enabled {
+            flags |= MF_DISABLED | MF_GRAYED;
+        }
         let text = wide(label);
         unsafe {
             windows_sys::Win32::UI::WindowsAndMessaging::AppendMenuW(
@@ -346,7 +379,58 @@ fn show_menu(hwnd: HWND) {
     } else if picked == MENU_ID_STATUS {
         // Disabled status row: unreachable through the menu, kept for the
         // stable automation surface.
+    } else if picked == MENU_ID_WORKSPACE_TOGGLE {
+        // Session-only toggle: carry the rendered opaque scope to the owner
+        // loop, which drains it once on its pump and flips the mode there
+        // only when the live active pair still matches (never here, so a
+        // stale menu can never project or flip a wrong check).
+        let inner = unsafe { &*raw };
+        if inner.workspace_current.is_some()
+            && let Some((output, workspace)) = inner.workspace_scope.clone()
+        {
+            *inner
+                .toggle
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()) =
+                Some(ToggleScope::new(&output, &workspace));
+        }
+    } else if picked == MENU_ID_DEFAULT_TILED || picked == MENU_ID_DEFAULT_FLOATING {
+        let inner = unsafe { &mut *raw };
+        persist_default_choice(inner, picked == MENU_ID_DEFAULT_TILED);
     }
+}
+
+/// Persist one new-workspace default choice (`true` for Tiled): load,
+/// modify only `workspace.default_tiled`, and atomically save. Only the
+/// default persists; per-workspace session overrides never touch the file.
+/// An invalid on-disk file refuses with a log line and no write.
+fn persist_default_choice(inner: &mut Inner, default_tiled: bool) {
+    let outcome = (|| -> &'static str {
+        let Some(dir) = inner.settings_dir.clone() else {
+            return "no-settings-dir";
+        };
+        let mut settings = match crate::settings::load_from_dir(&dir) {
+            crate::settings::LoadOutcome::Loaded(settings) => settings,
+            crate::settings::LoadOutcome::Missing => crate::settings::Settings::default(),
+            crate::settings::LoadOutcome::Invalid(_) => return "refused-invalid",
+        };
+        if settings.core.workspace.default_tiled == default_tiled {
+            return "unchanged";
+        }
+        settings.core.workspace.default_tiled = default_tiled;
+        match crate::settings::save_to_dir(&dir, &mut settings) {
+            Ok(()) => {
+                inner.workspace_default = default_tiled;
+                "written"
+            }
+            Err(_) => "write-failed",
+        }
+    })();
+    inner.log_line(serde_json::json!({
+        "event": "tray-default",
+        "default_tiled": default_tiled,
+        "outcome": outcome,
+    }));
 }
 
 /// Open the existing native Settings window as a detached child: the
@@ -404,6 +488,7 @@ unsafe extern "system" fn tray_wnd_proc(
 pub struct TrayOwner {
     hwnd: HWND,
     stop: Arc<AtomicBool>,
+    toggle: Arc<Mutex<Option<ToggleScope>>>,
 }
 
 impl TrayOwner {
@@ -411,11 +496,17 @@ impl TrayOwner {
     /// `conflict_empty` and `settings_status` seed the first presentation;
     /// `sync` refreshes them later. Icon-add failure is not fatal: the next
     /// `sync` retries through the state gate. `log_path` receives the single
-    /// bounded `tray-taskbar` line per Explorer restart, if any.
+    /// bounded `tray-taskbar` line per Explorer restart, if any, plus the
+    /// bounded `tray-default` lines for default picks. `toggle` carries the
+    /// scoped workspace-toggle request to the owner loop (drained once via
+    /// `take_toggle_request`); `settings_dir` persists default picks
+    /// (normal owner only).
     pub fn create(
         conflict_empty: bool,
         settings_status: &str,
         log_path: Option<std::path::PathBuf>,
+        toggle: &Arc<Mutex<Option<ToggleScope>>>,
+        settings_dir: Option<std::path::PathBuf>,
     ) -> Result<Self, DynError> {
         use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
         use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -463,6 +554,11 @@ impl TrayOwner {
             taskbar_created,
             stop: Arc::clone(&stop),
             log_path,
+            workspace_current: None,
+            workspace_scope: None,
+            workspace_default: true,
+            toggle: Arc::clone(toggle),
+            settings_dir,
         });
         let raw = Box::into_raw(inner);
         let hwnd = unsafe {
@@ -495,7 +591,11 @@ impl TrayOwner {
             (*raw).hwnd = hwnd;
             (*raw).add();
         }
-        Ok(Self { hwnd, stop })
+        Ok(Self {
+            hwnd,
+            stop,
+            toggle: Arc::clone(toggle),
+        })
     }
 
     /// Refresh the badge/tooltip from live owner state and retry a pending
@@ -526,6 +626,36 @@ impl TrayOwner {
     #[must_use]
     pub fn stop_requested(&self) -> bool {
         self.stop.load(Ordering::SeqCst)
+    }
+
+    /// Drain one pending scoped workspace-toggle request (set by the menu,
+    /// consumed once by the owner loop). Returns `None` when no pick waits.
+    pub fn take_toggle_request(&self) -> Option<ToggleScope> {
+        self.toggle
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .take()
+    }
+
+    /// Refresh the cached workspace section from live owner state: the opaque
+    /// scope the checkbox rendered with, its tiled state, and the persisted
+    /// default. The next menu open renders it; no syscalls here. `None`
+    /// scope disables only the checkbox while the default choices stay
+    /// usable.
+    pub fn sync_workspace(
+        &mut self,
+        scope: Option<(String, String)>,
+        current_tiled: Option<bool>,
+        default_tiled: bool,
+    ) {
+        let raw = inner_of(self.hwnd);
+        if raw.is_null() {
+            return;
+        }
+        let inner = unsafe { &mut *raw };
+        inner.workspace_scope = scope;
+        inner.workspace_current = current_tiled;
+        inner.workspace_default = default_tiled;
     }
 }
 
@@ -633,8 +763,9 @@ mod tests {
     fn menu_model_projects_cached_conflict_visibility() {
         // Sys menu builder consumes the portable model: visible conflict
         // row exactly when the cache is non-empty.
-        let shown = menu_items(true, &status_line("saved:2"));
-        let hidden = menu_items(false, &status_line("saved:2"));
+        let workspace = crate::tray::WorkspaceMenu::new(Some(true), true);
+        let shown = menu_items(true, &status_line("saved:2"), workspace);
+        let hidden = menu_items(false, &status_line("saved:2"), workspace);
         let visible_of = |items: &Vec<crate::tray::MenuItem>| {
             items.iter().find_map(|item| match item {
                 crate::tray::MenuItem::Command { id, visible, .. } if *id == MENU_ID_CONFLICT => {

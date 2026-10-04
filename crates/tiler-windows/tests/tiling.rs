@@ -4,21 +4,21 @@ use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
 use tiler_windows::tiling::{
     CaptureOptions, FrameInsets, FullscreenToggle, GestureIntent, INNER_GAP, OUTER_GAP,
     OWN_SETTINGS_WINDOW_CLASS, ObservedTarget, ObservedTargetRef, ReadbackOutcome, RefusedTracker,
-    ScopeHostChild, SkipReason, StatelessVerdict, TokenMap, WindowFacts, WorkspaceRequest,
-    allow_match, allowlist_digest, build_reconcile_event, build_reconcile_event_for,
-    canonical_retained_rect, classify, classify_focus, classify_gesture, fingerprint,
-    float_toggle_refusal, float_topmost_restore_needed, fullscreen_toggle_decision,
+    ScopeHostChild, SkipReason, StatelessVerdict, TokenMap, WindowFacts, WorkspaceAction,
+    WorkspaceRequest, allow_match, allowlist_digest, build_reconcile_event,
+    build_reconcile_event_for, canonical_retained_rect, classify, classify_focus, classify_gesture,
+    fingerprint, float_toggle_refusal, float_topmost_restore_needed, fullscreen_toggle_decision,
     hosted_child_allows, inspect_stateless_verdict, is_borderless_fullscreen,
     is_own_settings_window, min_hints_from_outer, normalize_min_track, overlay_refusal,
     parse_allowlist, parse_capture_args, parse_children_args, parse_hide_proof_args,
     parse_inspect_args, parse_scope_host_child, parse_shortcut_proof_args, parse_tile_args,
-    parse_tile_proof_args, parse_workspace_proof_args, parse_workspace_request,
-    parse_workspace_select_args, readback_outcome, render_workspace_request, scope_allows,
+    parse_tile_proof_args, parse_workspace_args, parse_workspace_proof_args,
+    parse_workspace_request, readback_outcome, render_workspace_request, scope_allows,
     scope_exe_basename, send_flags_stable, should_clear_maximize_at_admission,
     should_hold_born_fullscreen, tick_summary_signature, tiling_domain_bounds, toggle_gate_outcome,
     verify_hide_proof_argv_consistency, verify_proof_argv_consistency,
-    verify_shortcut_proof_argv_consistency, verify_workspace_proof_argv_consistency,
-    verify_workspace_select_argv_consistency, visible_min_from_outer,
+    verify_shortcut_proof_argv_consistency, verify_workspace_argv_consistency,
+    verify_workspace_proof_argv_consistency, visible_min_from_outer,
 };
 
 fn rect(x: i32, y: i32, w: i32, h: i32) -> Rect {
@@ -1729,23 +1729,39 @@ fn retain_keeps_known_identities_across_reconcile_passes() {
 }
 
 #[test]
-fn workspace_select_cli_parses_single_digit_only() {
+fn workspace_cli_parses_select_and_send_exclusively() {
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(|s| (*s).to_owned()).collect()
     }
-    let ok = parse_workspace_select_args(&strings(&["--select", "2"])).expect("parsed");
-    assert_eq!(ok.index, 2);
-    assert!(verify_workspace_select_argv_consistency(&strings(&["--select", "2"]), &ok).is_ok());
-    assert!(parse_workspace_select_args(&[]).is_err());
-    assert!(parse_workspace_select_args(&strings(&["--select"])).is_err());
-    assert!(parse_workspace_select_args(&strings(&["--select", "10"])).is_err());
-    assert!(parse_workspace_select_args(&strings(&["--select", "2", "--select", "1"])).is_err());
-    assert!(parse_workspace_select_args(&strings(&["--send", "2"])).is_err());
-    let ok0 = parse_workspace_select_args(&strings(&["--select", "0"])).expect("zero");
+    let select = parse_workspace_args(&strings(&["--select", "2"])).expect("parsed");
+    assert_eq!(select.action, WorkspaceAction::Select);
+    assert_eq!(select.index, 2);
+    assert!(verify_workspace_argv_consistency(&strings(&["--select", "2"]), &select).is_ok());
+    let send = parse_workspace_args(&strings(&["--send", "2"])).expect("parsed");
+    assert_eq!(send.action, WorkspaceAction::Send);
+    assert_eq!(send.index, 2);
+    assert!(verify_workspace_argv_consistency(&strings(&["--send", "2"]), &send).is_ok());
+    // Exclusivity: exactly one flag, one digit, no mixing.
+    assert!(parse_workspace_args(&[]).is_err());
+    assert!(parse_workspace_args(&strings(&["--select"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--send"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--select", "10"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--send", "10"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--select", "2", "--select", "1"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--send", "2", "--send", "1"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--select", "1", "--send", "1"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--send", "1", "--select", "1"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--other", "1"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--select", "1", "extra"])).is_err());
+    let ok0 = parse_workspace_args(&strings(&["--select", "0"])).expect("zero");
     assert_eq!(ok0.index, 0);
-    let ok9 = parse_workspace_select_args(&strings(&["--select", "9"])).expect("nine");
+    let ok9 = parse_workspace_args(&strings(&["--send", "9"])).expect("nine");
     assert_eq!(ok9.index, 9);
-    assert!(verify_workspace_select_argv_consistency(&strings(&["--select", "1"]), &ok).is_err());
+    // Consistency binds the flag and the value: cross-flag and cross-value
+    // bodies refuse.
+    assert!(verify_workspace_argv_consistency(&strings(&["--select", "1"]), &select).is_err());
+    assert!(verify_workspace_argv_consistency(&strings(&["--send", "2"]), &select).is_err());
+    assert!(verify_workspace_argv_consistency(&strings(&["--select", "2"]), &send).is_err());
 }
 
 #[test]
@@ -1757,14 +1773,22 @@ fn workspace_request_roundtrip_and_refusals() {
         exe_path: "C:\\bin\\tiler-windows.exe".to_owned(),
         user_sid: "S-1-5-21-1".to_owned(),
         session_id: 1,
+        action: WorkspaceAction::Send,
         index: 2,
         correlation: "cli-4242-ab12".to_owned(),
     };
     let body = render_workspace_request(&request);
     assert!(body.contains("abc123") && body.contains("cli-4242-ab12"));
+    assert!(body.contains("send"));
     assert!(!body.contains("hwnd"));
     let parsed = parse_workspace_request(&body).expect("roundtrip");
     assert_eq!(parsed, request);
+    let select = WorkspaceRequest {
+        action: WorkspaceAction::Select,
+        ..request.clone()
+    };
+    let parsed = parse_workspace_request(&render_workspace_request(&select)).expect("select");
+    assert_eq!(parsed.action, WorkspaceAction::Select);
     let mut bad_version = request.clone();
     bad_version.v = 2;
     assert!(parse_workspace_request(&render_workspace_request(&bad_version)).is_err());
@@ -1777,6 +1801,22 @@ fn workspace_request_roundtrip_and_refusals() {
     let mut bad_owner = request.clone();
     bad_owner.creation = String::new();
     assert!(parse_workspace_request(&render_workspace_request(&bad_owner)).is_err());
+    // Missing action (old select-only body) and unknown action refuse: the
+    // transport carries exactly select/send, never a default.
+    let legacy = serde_json::json!({
+        "v": 1, "creation": "abc123", "pid": 4242,
+        "exe_path": "C:\\bin\\tiler-windows.exe", "user_sid": "S-1-5-21-1",
+        "session_id": 1, "index": 2, "correlation": "cli-4242-ab12",
+    })
+    .to_string();
+    assert!(parse_workspace_request(&legacy).is_err());
+    let unknown = serde_json::json!({
+        "v": 1, "creation": "abc123", "pid": 4242,
+        "exe_path": "C:\\bin\\tiler-windows.exe", "user_sid": "S-1-5-21-1",
+        "session_id": 1, "action": "focus", "index": 2, "correlation": "cli-4242-ab12",
+    })
+    .to_string();
+    assert!(parse_workspace_request(&unknown).is_err());
     assert!(parse_workspace_request("not json").is_err());
 }
 
