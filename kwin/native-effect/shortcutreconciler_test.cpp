@@ -1691,12 +1691,24 @@ void keyedDesktopOnlyBlocksRelocator()
         QList<ShortcutKeyHolder> holders;
         QString keyedError;
         CHECK(store.shortcutsByKey(META_ESC, &holders, &keyedError));
-        CHECK(holders.size() == 1);
-        if (holders.size() == 1) {
-            CHECK(holders.at(0).component == foreign.component);
-            CHECK(holders.at(0).action == foreign.action);
-            CHECK(holders.at(0).active.isEmpty());
-            CHECK(holders.at(0).defaults == QList<int>{META_ESC});
+        CHECK(holders.size() == 2);
+        {
+            bool sawOwn = false;
+            bool sawForeign = false;
+            for (const ShortcutKeyHolder &holder : holders) {
+                if (holder.component == foreign.component && holder.action == foreign.action) {
+                    sawForeign = true;
+                    CHECK(holder.active.isEmpty());
+                    CHECK(holder.defaults == QList<int>{META_ESC});
+                } else if (holder.component == shortcutLockComponent()
+                    && holder.action == shortcutLockAction()) {
+                    sawOwn = true;
+                    CHECK(holder.active.contains(META_ESC));
+                    CHECK(ShortcutReconciler::isHolderExempt(holder.component, holder.action, META_ESC));
+                }
+            }
+            CHECK(sawOwn);
+            CHECK(sawForeign);
         }
     }
     FakeClearedActions cleared;

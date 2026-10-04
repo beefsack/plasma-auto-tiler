@@ -547,8 +547,6 @@ void selectionPresetsAndDraft()
     // daemon or cleared-store writes either way.
     FakeShortcutStore store;
     seedReady(store);
-    store.tuples.append(
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"), QList<int>{SHORTCUT_META_1}));
     store.tuples.append(makeTuple(QStringLiteral("org.example"), QStringLiteral("other-ws"),
                                   QList<int>{SHORTCUT_META_1}));
     FakeClearedStore cleared;
@@ -593,8 +591,6 @@ void selectionDisabledApplyIgnoresForeign()
     // only the project's own assignment, and never writes the holder.
     FakeShortcutStore store;
     seedReady(store);
-    store.tuples.append(
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"), QList<int>{SHORTCUT_META_1}));
     store.tuples.append(makeTuple(QStringLiteral("org.example"), QStringLiteral("other-ws"),
                                   QList<int>{SHORTCUT_META_1}));
     FakeClearedStore cleared;
@@ -1102,8 +1098,8 @@ void forcePreviewAcceptCancelRevert()
     CHECK(module.isShortcutForceCancelVisible());
     CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("org.kde.unknown")));
     CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("other-launch")));
-    CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("268435527")));
-    CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("999")));
+    CHECK(module.shortcutForcePreviewText().contains(ShortcutReconciler::keyDisplayName(META_G)));
+    CHECK(module.shortcutForcePreviewText().contains(ShortcutReconciler::keyDisplayName(999)));
     CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("will remove")));
     CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("keep")));
     QLabel *preview = labelByName(module, "shortcutForcePreviewLabel");
