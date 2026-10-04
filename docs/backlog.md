@@ -107,8 +107,13 @@ decisions of 2026-09-24 are under
   LocalAppData, plain Win32 Apply/Revert UI, live gaps/visuals/Snap
   takeover, conflict list and presets (compatible disables 35 conflicting
   chords, authentic stays the default), system accent border default with
-  KDE `#2a82da` fallback (yellow removed). All provisional. Remaining:
-  first-run preset prompt, tray entry, broader rebinding, physical checks.
+  KDE `#2a82da` fallback (yellow removed). All provisional. Tray
+  (Settings, Stop, shortcut-conflict warning, TaskbarCreated re-add) and
+  first-run Authentic/Compatible prompt delivered (`60fd7bb`, `533f3c9`;
+  [evidence](changes/archive/windows-tray-first-run.md)); tray workspace
+  mode toggle omitted (no Windows floating-workspace runtime yet).
+  Remaining: broader rebinding, physical checks incl. real Explorer
+  restart.
   Original item 11 scope: settings
   (UI with Apply/Revert parity, including Snap takeover off; decide the final
   accent/configured border default and remove the temporary yellow default;
