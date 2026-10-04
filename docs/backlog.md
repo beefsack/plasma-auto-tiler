@@ -167,6 +167,11 @@ decisions of 2026-09-24 are under
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.
+  KDE Keep/Disable list (66 bindings) and presets delivered offline
+  (`e1bb52a`, `cdd4ef4`, `96d04ab`; CI green); provisional choices in
+  decisions; integrated rebind and KDE first-run prompt deferred. KDE live
+  acceptance pending: [checks](live-shortcut-override-verification.md),
+  [record](changes/kde-shortcut-conflicts.md).
 - P2 | Hidden-workspace Alt+Tab option | Investigate whether official Windows
   APIs can include hidden-workspace windows in Alt+Tab. Future optional behavior,
   not critical; no design selected.
