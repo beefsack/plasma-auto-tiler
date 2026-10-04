@@ -130,6 +130,43 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   cosmic-comp is the user's favourite tiling UX (n-ary splits, windows
   joining and leaving splits) and is a key input to the functional spec.
 
+### Windows settings
+
+- Windows parity item 11 (2026-10-04): validated version-1 JSON settings persist
+  in `%LOCALAPPDATA%\plasma-auto-tiler\settings.json`. Normal owners read them at
+  startup and poll on the existing pump for live gaps, border/underlay, keyboard
+  bindings/takeover and mouse Snap prevention. Proof owners stay isolated;
+  explicit normal CLI switches remain authoritative for their settings fields.
+  Malformed live files keep last-good state with degraded diagnostics.
+- Apply validates and atomically saves; Revert discards unsaved edits and reloads
+  the saved file, without undoing prior Apply. Close never saves. The UI separates
+  saved/adopted configuration from native-effect proof; mouse prevention uses
+  existing session-only preimage/readback/conditional restoration, no policy.
+- Provisional, to discuss: use plain official Win32 controls through the existing
+  Rust `windows-sys` dependency, with `tiler-windows settings` and
+  `just --justfile windows.justfile settings`. No Windows tray exists; tray access
+  is deferred. UI instances are single per user/session; external stale edits
+  trigger reload/refusal. The file store and existing-pump polling are the small
+  Windows analogue of KDE's existing config/reconfigure route.
+- Provisional, to discuss: default Windows border to system accent/theme on,
+  with KDE configured `#2a82da` fallback, replacing the temporary yellow default.
+  Configured colour wins when theme is off or no usable accent is available.
+- Provisional, to discuss: authentic remains the first-start preset; defer an
+  automatic first-run prompt and offer both presets prominently in Settings.
+  Compatible resets to the default catalog then disables 35 OS-conflicting
+  physical chords, including Win+G/F11; it invents no replacement defaults.
+- Per-binding Keep/Disable/Rebind is available for implemented actions, with
+  separate directional letter/arrow rows and actual rebound-chord conflicts.
+  Win+G/F11 explicitly show incomplete containment, Win+L keeps explicit opt-in,
+  and undocumented chords do not claim conflict-free certainty.
+- Provisional, to discuss: this first slice limits manual rebinds to Win plus
+  the action's existing Shift arm; Alt/Ctrl and unshifted Win+L rebind targets
+  refuse. Keyboard resize rows are visibly unavailable; unsupported workspace
+  modes/default-tiled controls await their runtime implementation.
+- Synthetic native UI/Apply/Revert, live geometry/border/SPI and cleanup proof
+  passed; physical shortcut/Snap/Xbox and other DPI/output checks stay user-owned.
+  Evidence and limitations: [Windows settings](changes/windows-settings.md).
+
 ## Cross-Platform Behavior
 
 - User direction 2026-10-03: the [reference-WM outcome matrix](spec/reference-outcomes.md)
@@ -167,8 +204,8 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   (avoid conflicting OS bindings) and "authentic" (stay consistent with
   tiling WMs such as COSMIC/Hyprland and override OS bindings). The preset
   choice may be offered on first run. Applies to KDE, Windows and macOS.
-- Until settings exist, Windows uses authentic mode: it is the user's
-  preferred mode and the harder one to implement, so it is done early.
+- Windows defaults to authentic mode, with compatible now available in Settings:
+  authentic is the user's preferred mode and the harder one to implement.
   Owned-chord interception is independent of foreground/action eligibility;
   unmanaged foreground and ordinary fullscreen suspension do not release those
   shortcuts to Windows. Native actions still require the existing owner safety
@@ -473,13 +510,12 @@ the corresponding item ships; each such entry names its replacement.
   [`DwmGetColorizationColor`](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmgetcolorizationcolor)
   system colourization/accent analogue, with the core availability/positive-
    alpha gate and configured fallback. The owned window flags a
-  requery on `WM_DWMCOLORIZATIONCOLORCHANGED` or `WM_SETTINGCHANGE`; repaint
-   only if the resolved colour changes. User decision 2026-10-02: temporarily
-   default to bright-yellow `#ffff00` with theme/accent off during Windows
-   development to aid testing. `--active-border-theme` opts into accent;
-   `--no-active-border-theme` remains accepted and selects configured colour.
-   Revisit this default when the settings dialog (parity item 11) lands: the
-   long-term choice is system accent or settings-configured colour.
+   requery on `WM_DWMCOLORIZATIONCOLORCHANGED` or `WM_SETTINGCHANGE`; repaint
+   only if the resolved colour changes. Provisional, to discuss (settings slice,
+   2026-10-04): default theme/accent on with configured `#2a82da` fallback,
+   superseding the temporary 2026-10-02 yellow/theme-off development default.
+   `--active-border-theme` selects accent;
+   `--no-active-border-theme` selects configured colour.
    `--no-active-border` disables the surface.
 - Scoped machine evidence on Windows 11 build 26200, one 2560x1440 display at
   DPI 120, covers composed owned-ring pixels, focus, real directional/workspace

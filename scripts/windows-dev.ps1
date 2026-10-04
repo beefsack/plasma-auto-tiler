@@ -1,5 +1,5 @@
 param(
-  [ValidateSet("dev", "stop", "proof", "tile")]
+  [ValidateSet("dev", "stop", "proof", "tile", "settings")]
   [string]$Action = "dev",
   [string]$Mode = "",
   [string]$TileArgs = ""
@@ -102,6 +102,20 @@ function Stop-OwnerVerified([string]$Payload, [bool]$Force, [string]$Tag) {
 # Dot-source guard: reusable helpers above stay available when sourced;
 # direct -File execution continues to the action blocks below.
 if ("$($MyInvocation.InvocationName)" -eq ".") { return }
+if ($Action -eq "settings") {
+  if (-not (Test-Path $Target)) { Fail "missing target/ parent" }
+  if (-not (Test-Path $Scripts)) { Fail "missing scripts/ parent" }
+  & cargo build --locked -p tiler-windows
+  if ($LASTEXITCODE -ne 0) { Fail "cargo build failed" }
+  $exe = Join-Path $Target "debug\$OwnerName"
+  if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { Fail "refuse: missing exe: $exe" }
+  # Same Explorer-broker launch as dev/tile: the caller never becomes the
+  # window's parent (protected terminal tree stays out of the actor path).
+  # The settings window has no ready endpoint; the recipe returns after launch.
+  Start-ExplorerGui $exe "settings" $Target
+  Write-Output "settings launched via Explorer broker; close the window to finish (Close never applies)"
+  exit 0
+}
 if ($Action -eq "dev" -or $Action -eq "stop" -or $Action -eq "tile") {
   if (-not (Test-Path $Target)) { Fail "missing target/ parent" }
   if (-not (Test-Path $Scripts)) { Fail "missing scripts/ parent" }

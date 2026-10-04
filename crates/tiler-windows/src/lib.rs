@@ -9,6 +9,8 @@ pub mod mouse_snap;
 pub mod native;
 pub mod product_hide;
 pub mod settings;
+#[cfg(windows)]
+pub mod settings_ui;
 pub mod snapkey;
 pub mod storage;
 pub mod test_window;

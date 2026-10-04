@@ -89,3 +89,8 @@ workspace-normal-stop run_dir:
 # Out-of-hook recovery for the spike; works from a separate shell with the exact printed RunDir.
 winarrow-stop run_dir:
     pwsh -NoProfile -File scripts/windows-winarrow.ps1 -Stop -RunDir {{run_dir}}
+
+# Native settings window (no tray exists): build then launch via the Explorer
+# broker like dev/tile. Close the window to finish; nothing is applied on close.
+settings:
+    pwsh -NoProfile -File scripts/windows-dev.ps1 -Action settings

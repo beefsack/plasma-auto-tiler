@@ -920,10 +920,15 @@ fn directional_conflict(id: &str) -> Option<&'static str> {
 }
 
 /// OS conflict for one physical Win-family chord, for the settings UI: what
-/// the OS owns at the rebound chord, not the stale original. `None` means
-/// clean (no known OS owner) or unparsable. Only containment with live trace
-/// evidence claims containment (Game Bar, Xbox mode); every other kept chord
-/// honestly reports override-needs-takeover with containment unproven.
+/// the OS owns at the rebound chord, not the stale original. Documented
+/// owners follow the official Microsoft "Keyboard shortcuts in Windows" list
+/// (Windows 11 tab; Windows 10 tab for the Win+U Ease-of-Access origin).
+/// Chords the list does not document carry the honest unverified note instead
+/// of a definitive clean claim; unparsable or Alt/Ctrl chords (outside the
+/// Win[+Shift] rebind model) report `None` (not applicable). Only containment
+/// with live trace evidence claims containment (Game Bar, Xbox mode); every
+/// other kept chord honestly reports override-needs-takeover with containment
+/// unproven.
 #[must_use]
 pub fn chord_conflict(text: &str) -> Option<&'static str> {
     let chord = parse_chord(text).ok()?;
@@ -931,9 +936,18 @@ pub fn chord_conflict(text: &str) -> Option<&'static str> {
         return None;
     }
     match (chord.vk, chord.shift) {
+        (0x41, false) => Some("Action Center owns Win+A; override needs takeover"),
+        (0x42, false) => Some("notification area focus owns Win+B; override needs takeover"),
+        (0x43, false) => Some(
+            "Copilot owns Win+C (search when Copilot unavailable); override needs takeover, containment unproven live",
+        ),
+        (0x44, false) => Some("desktop show/hide owns Win+D; override needs takeover"),
+        (0x45, false) => Some("File Explorer owns Win+E; override needs takeover"),
+        (0x46, false) => Some("Feedback Hub owns Win+F; override needs takeover"),
         (0x48, false) => {
             Some("Voice dictation owns Win+H; override needs takeover, containment unproven live")
         }
+        (0x49, false) => Some("Settings owns Win+I; override needs takeover"),
         (0x4A, false) => Some(
             "Recall owns Win+J on supported devices; override needs takeover, containment unproven live",
         ),
@@ -943,6 +957,22 @@ pub fn chord_conflict(text: &str) -> Option<&'static str> {
         (0x4C, false) => Some(
             "OS lock owns unshifted Win+L: the hook cannot reliably intercept it; needs explicit opt-in",
         ),
+        (0x4D, false) => Some("minimize-all owns Win+M; override needs takeover"),
+        (0x4E, false) => Some("notification center owns Win+N; override needs takeover"),
+        (0x4F, false) => Some("orientation lock owns Win+O; override needs takeover"),
+        (0x50, false) => Some("project mode owns Win+P; override needs takeover"),
+        (0x51, false) => Some("search owns Win+Q; override needs takeover"),
+        (0x52, false) => Some("Run dialog owns Win+R; override needs takeover"),
+        (0x53, false) => Some("search owns Win+S; override needs takeover"),
+        (0x54, false) => Some("taskbar cycle owns Win+T; override needs takeover"),
+        (0x55, false) => Some(
+            "Accessibility settings owns Win+U; override needs takeover, containment unproven live",
+        ),
+        (0x56, false) => Some("clipboard history owns Win+V; override needs takeover"),
+        (0x57, false) => Some("Widgets owns Win+W; override needs takeover"),
+        (0x58, false) => Some("Quick Link menu owns Win+X; override needs takeover"),
+        (0x59, false) => Some("Mixed Reality owns Win+Y; override needs takeover"),
+        (0x5A, false) => Some("snap layouts owns Win+Z; override needs takeover"),
         (VK_LEFT, false) => Some("Snap owns Win+Left; override needs takeover"),
         (VK_RIGHT, false) => Some("Snap owns Win+Right; override needs takeover"),
         (VK_UP, false) => Some("native maximize owns Win+Up; override needs takeover"),
@@ -953,10 +983,17 @@ pub fn chord_conflict(text: &str) -> Option<&'static str> {
         (VK_UP, true) | (VK_DOWN, true) => {
             Some("stretch vertically / restore owns Win+Shift+Up/Down; override needs takeover")
         }
+        (0x41, true) => Some(
+            "Windows tip focus owns Win+Shift+A; override needs takeover, containment unproven live",
+        ),
         (0x47, false) => {
             Some("Xbox Game Bar owns Win+G; the hook cannot fully contain the OS override")
         }
-        (0x4D, false) => Some("minimize-all owns Win+M; override needs takeover"),
+        (0x4D, true) => Some("restore minimized owns Win+Shift+M; override needs takeover"),
+        (0x52, true) => Some("Snipping screen recording owns Win+Shift+R; override needs takeover"),
+        (0x53, true) => Some("Snipping screenshot owns Win+Shift+S; override needs takeover"),
+        (0x54, true) => Some("previous taskbar app owns Win+Shift+T; override needs takeover"),
+        (0x56, true) => Some("notifications cycle owns Win+Shift+V; override needs takeover"),
         (0x7A, false) => Some("Xbox mode owns Win+F11; containment is incomplete"),
         (vk, false) if (0x30..=0x39).contains(&vk) => {
             Some("taskbar launch owns Win+digits; override needs takeover")
@@ -964,7 +1001,7 @@ pub fn chord_conflict(text: &str) -> Option<&'static str> {
         (vk, true) if (0x30..=0x39).contains(&vk) => {
             Some("taskbar new instance owns Win+Shift+digits; override needs takeover")
         }
-        _ => None,
+        _ => Some("No documented conflict in this list; other apps may bind it"),
     }
 }
 
@@ -1001,7 +1038,9 @@ pub struct EffectiveBinding {
     /// Live OS conflict for the UI: the catalog conflict for kept bindings,
     /// the same OS-owner text for disabled bindings (the OS action is live
     /// there), and the rebound chord's own conflict (see [`chord_conflict`])
-    /// for rebinds. `None` means clean or not applicable.
+    /// for rebinds. `None` means not applicable (unparsable or Alt/Ctrl,
+    /// outside the rebind model); every plain Win[+Shift] chord carries
+    /// either its documented owner or the honest unverified note.
     pub conflict: Option<&'static str>,
 }
 
@@ -1416,8 +1455,8 @@ pub enum Preset {
     /// float (Win+G Game Bar), maximize (Win+M minimize-all), fullscreen
     /// (Win+F11 Xbox mode), and all workspace digits (Win[/Shift]+digits
     /// taskbar launch/new-instance) are disabled. What stays is exactly the
-    /// conflict-free set: letter moves (Win+Shift+H/J/K/L) and sticky
-    /// (Win+Shift+G). Applies as a deterministic reset: all overrides are
+    /// undocumented set: letter moves (Win+Shift+H/J/K/L) and sticky
+    /// (Win+Shift+G) carry no documented owner in the official list. Applies as a deterministic reset: all overrides are
     /// dropped first, then the conflicts disable. Resize rows already pass
     /// through untracked and are untouched. Manual rebinding stays available
     /// afterwards; no replacement defaults are invented. The Win+L opt-in is
@@ -2129,15 +2168,31 @@ mod tests {
             chord_conflict("Win+H")
                 .is_some_and(|text| text.contains("Voice") && text.contains("unproven"))
         );
-        assert!(chord_conflict("Win+Shift+H").is_none());
-        assert!(chord_conflict("Win+U").is_none());
+        // Win+Shift+H has no documented owner: honest unverified note, never
+        // a definitive clean claim.
+        assert!(
+            chord_conflict("Win+Shift+H")
+                .is_some_and(|text| text.contains("No documented conflict"))
+        );
+        // Win+U opens Accessibility settings (official list, Windows 11 tab;
+        // Ease of Access Center on Windows 10): rebinding onto it stays
+        // allowed (conflict text is advisory; only lock-chord targets refuse
+        // in validation), but the UI must name the owner.
+        assert!(chord_conflict("Win+U").is_some_and(|text| text.contains("Accessibility")));
+        assert!(chord_conflict("Win+E").is_some_and(|text| text.contains("File Explorer")));
+        assert!(chord_conflict("Win+Z").is_some_and(|text| text.contains("snap layouts")));
+        assert!(chord_conflict("Win+Shift+S").is_some_and(|text| text.contains("Snipping")));
         assert!(chord_conflict("Win+G").is_some_and(|text| text.contains("cannot fully contain")));
-        assert!(chord_conflict("Win+Shift+G").is_none());
+        assert!(
+            chord_conflict("Win+Shift+G")
+                .is_some_and(|text| text.contains("No documented conflict"))
+        );
         assert!(chord_conflict("Win+L").is_some_and(|text| text.contains("opt-in")));
         assert!(chord_conflict("Win+1").is_some_and(|text| text.contains("taskbar")));
         assert!(chord_conflict("bogus").is_none());
         // Rebind rows report the rebound chord's conflict, not the stale
-        // original: focus-left onto Win+U is clean despite H's conflict.
+        // original: focus-left onto Win+U names Accessibility despite H's
+        // voice-dictation owner, and the rebind itself still validates.
         let mut settings = Settings::default();
         settings.bindings.insert(
             "focus-left".to_owned(),
@@ -2146,13 +2201,17 @@ mod tests {
                 chord: Some("Win+U".to_owned()),
             },
         );
+        assert!(validate_settings(&settings).is_ok());
         let effective = effective_bindings(&settings);
         let row = effective
             .iter()
             .find(|row| row.id == "focus-left")
             .expect("row");
         assert_eq!(row.chords, vec!["Win+U".to_owned()]);
-        assert_eq!(row.conflict, None);
+        assert!(
+            row.conflict
+                .is_some_and(|text| text.contains("Accessibility"))
+        );
     }
 
     #[test]

@@ -64,4 +64,55 @@
   and physical Win+L rebind targets refuse. Broader modifier rebinding is deferred.
 - Owner settings lifecycle logs acknowledge validated configuration adoption;
   native geometry/SPI logs and readbacks remain the effect oracle, not that ack.
-- Unit 2 UI/live proof remains pending.
+- Unit 1 committed as `df4edc5`; hosted CI green:
+  <https://github.com/beefsack/plasma-auto-tiler/actions/runs/37164626150>.
+- Unit 2 accepted: native Win32 settings window, CLI and Explorer-broker just
+  recipe, per-user/session singleton, full-content stale-edit refusal,
+  Apply/Revert/Close, scrolling conflict detail and preset/binding editors.
+  Only feature flags on the existing `windows-sys` dependency were added.
+- Initial UI screenshot acceptance failed: opaque topmost groupboxes covered
+  their controls. Parent clipping alone did not fix it; native sibling-order
+  inspection identified the cause, and lowering the groupboxes before show
+  corrected both screen and PrintWindow output. Final screenshots were inspected
+  by the Lead. CRLF details and saved-state labels were corrected too.
+- Live proof on 2026-10-04, physical Windows 11 build 26200, medium/session 1,
+  one output/DPI 120: two identified owned helpers, normal owner scoped to
+  `tiler-test-window.exe`, native Settings window, and our own settings file.
+  Proven exact-owner stop/restore and original file preimage were retained.
+  No ordinary app was opened; gaming/lock chords were not injected.
+- Evidence is local/ignored: `target/windows-settings/evidence.jsonl` and
+  `shot-01-initial.png`, `shot-02-applied.png`, `shot-03-final.png`.
+  Final run owner creation `01dd539f2f665289`; payload SHA-256
+  `48D2A36CF93BA1ABDBC919023157ECD68D692D8A26C731306825CB3A7DB31BE6`.
+  Final UI screenshot SHA-256
+  `0EFE70CE226DEE908BCE370623303B1EAF2E99CF3577C7B81B4277D29BF7AE2B`.
+- Apply demonstrated gap re-spacing (8/8 to 12/20), live red border/width 5
+  with exact native outer geometry and one red-dominant composed pixel, border
+  off/on, underlay hold/release visibility, mouse prevention off/on SPI 1/0,
+  keyboard off/on configuration, compatible/authentic and rebind/disable live
+  adoption through revision 12. Revert/validation/Close left saved bytes intact.
+  Two opens retained one UI; a newly appeared revision-1 file refused stale
+  Apply without overwrite. Save/adoption logs are not native-effect confirmation.
+- Verification gotchas: use UI Automation or WM_GETTEXT for cross-process edit
+  reads; native EDIT details require CRLF. Reuse the established x64 SendInput
+  structure: the first hand-built prime failed, then the proven structure sent
+  2/2 events. Owner/helper duration cap is 600 seconds; 900-second launches
+  refused before effects. An earlier run expired before rebind adoption, so its
+  revision-8 live claim was rejected and superseded by the final run.
+- Latest native locked build/test, strict all-target clippy for the four Windows
+  packages, full rustfmt and diff checks pass. Local mise was unavailable; direct
+  installed MSVC Rust was used. Hosted Linux/Windows gates follow on push.
+- Final exact-tag helper close, exact-owner stop then restore: no processes,
+  overlays, ledger or hidden helper; original settings-file absence restored;
+  SPI arranging 1, pen visualization 35, normal taskbar present. Lead read-only
+  cleanup recheck agrees. No Worker remains running.
+
+## User-owned checks and deferred scope
+
+- Physical input/Start/Snap containment, Win+L opt-in, real Xbox/Game Bar access,
+  other output/DPI arrangements and Settings keyboard-navigation feel.
+- Snap Layouts coverage remains unverified; G/F11 incomplete containment is
+  displayed, and compatible disables their bindings rather than solving it.
+- Optional later slice: first-run prompt, tray access, broader modifier rebinding.
+  Workspace mode/default-tiled controls and keyboard resize await their runtime
+  implementations. This slice exposes existing supported capabilities only.

@@ -25,7 +25,8 @@ fn real_main() -> Result<(), (i32, String)> {
   workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]  owned-helpers-only automated workspace proof (select/send/follow with hide/reveal for exactly the allowlist; never falls back to normal)
   Active-border options for tile and proof loops: --no-active-border, --active-border-width N (0..32, default 3), --active-border-gap N (0..64, default 0), --active-border-radius N (0..64, default 0), --active-border-color #rrggbb (fallback #2a82da), --active-border-theme|--no-active-border-theme (system accent, default on: configured color wins unless --active-border-theme finds an accent). Border is on by default; dimensions are logical pixels.
   Group-underlay options for tile and proof loops: --no-group-underlay, --group-underlay-color #aarrggbb (fill #40808080), --group-underlay-extension N (-1..=32, default -1 follows the border width). Underlay is on by default and shows for Win+Shift hold (either order, extras allowed, stationary allowed) or a focused titlebar move; resize alone never shows it.
-  workspace --select INDEX  exact-owner out-of-hook select for the normal tile loop only (queues one bounded request 0..9; proof owners refuse)\n  capture --out PATH --hwnd HWND [--hwnd HWND ...]  read-only frozen-allowlist capture of explicitly listed owned helpers\n  inventory  read-only top-level window list for selecting capture targets (no titles)\n  children --hwnd HWND [--hwnd HWND ...]  read-only child-window report with verified process identity (no titles)\n  inspect --allowlist PATH  read-only fresh-state report for exactly the frozen allowlist (no titles)\n  border-inspect  read-only report of the running owner's process-owned border overlay (geometry/visibility only; no titles, no content, no screen capture)\n             underlay-inspect  read-only report of the running owner's process-owned group-underlay fill
+  workspace --select INDEX  exact-owner out-of-hook select for the normal tile loop only (queues one bounded request 0..9; proof owners refuse)
+  settings  open the native settings window (gaps, border, underlay, takeover, shortcuts with authentic/compatible presets; Apply validates and saves, Revert discards edits, Close never applies)\n  capture --out PATH --hwnd HWND [--hwnd HWND ...]  read-only frozen-allowlist capture of explicitly listed owned helpers\n  inventory  read-only top-level window list for selecting capture targets (no titles)\n  children --hwnd HWND [--hwnd HWND ...]  read-only child-window report with verified process identity (no titles)\n  inspect --allowlist PATH  read-only fresh-state report for exactly the frozen allowlist (no titles)\n  border-inspect  read-only report of the running owner's process-owned border overlay (geometry/visibility only; no titles, no content, no screen capture)\n             underlay-inspect  read-only report of the running owner's process-owned group-underlay fill
            (geometry/visibility only; no titles, no content, no screen capture)\n  preview-inspect  read-only report of the running owner's
            process-owned drop-preview fill (geometry/visibility only; no titles, no content, no screen capture)"
             );
@@ -144,6 +145,12 @@ fn real_main() -> Result<(), (i32, String)> {
             }
             tiler_windows::tiling_sys::cmd_preview_inspect().map_err(|e| (1, e.to_string()))?
         }
+        "settings" => {
+            if !rest.is_empty() {
+                return Err((2, "usage: tiler-windows settings".to_owned()));
+            }
+            tiler_windows::settings_ui::cmd_settings().map_err(|e| (1, e.to_string()))?
+        }
         "emergency-stop" => {
             if !rest.is_empty() {
                 return Err((2, "usage: tiler-windows emergency-stop".to_owned()));
@@ -158,7 +165,7 @@ fn real_main() -> Result<(), (i32, String)> {
         _ => {
             return Err((
                 2,
-                "usage: tiler-windows identity|run --seconds N [--trace] [--hide HWND]|ready|restore|stop|emergency-stop|watch-owner --pid PID --creation HEX|tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--inner-gap N] [--outer-gap N] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...]|tile-proof --allowlist PATH [--seconds N] [--trace]|shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]|workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]|workspace --select INDEX|hide-proof --allowlist PATH [--seconds N] [--trace]|capture --out PATH --hwnd HWND|inventory|children --hwnd HWND|inspect --allowlist            PATH|border-inspect|underlay-inspect|preview-inspect"
+                "usage: tiler-windows identity|run --seconds N [--trace] [--hide HWND]|ready|restore|stop|emergency-stop|watch-owner --pid PID --creation HEX|tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--inner-gap N] [--outer-gap N] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...]|tile-proof --allowlist PATH [--seconds N] [--trace]|shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]|workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]|workspace --select INDEX|hide-proof --allowlist PATH [--seconds N] [--trace]|capture --out PATH --hwnd HWND|inventory|children --hwnd HWND|inspect --allowlist            PATH|border-inspect|underlay-inspect|preview-inspect|settings"
                     .to_owned(),
             ));
         }
