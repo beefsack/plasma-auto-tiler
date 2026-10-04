@@ -115,6 +115,10 @@
   this artifact; cleanup confirms settings absent, no actors/UI/ledger, SPI 1/35.
   `lockcheck-menu-allowed.png` SHA-256:
   `72B6E5A00FA945058E9F85D1676276C77FB336D6B7F8DBD61D9A72D94F2C112C`.
+- Implementation and decisions committed/pushed as `60fd7bb`; all hosted CI
+  jobs green (Windows native, Linux Rust/KWin/shell, macOS tooling):
+  <https://github.com/beefsack/plasma-auto-tiler/actions/runs/37175689240>.
+  Accepted evidence complete; record archived. No implementation next action.
 
 ## Residual user-owned checks
 
@@ -123,4 +127,4 @@
 - Explorer controls overflow placement; UIA may concatenate old/new tooltip
   strings after updates. Menu, saved revision and glyph are the effect evidence.
 - Workspace-mode controls await runtime support; taskbar workspace indicator
-  remains parked. Hosted CI and archival follow acceptance of this source unit.
+  remains parked.
