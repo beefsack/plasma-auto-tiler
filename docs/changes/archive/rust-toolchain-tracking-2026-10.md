@@ -50,8 +50,8 @@ derivation. Record their separate version baselines and host-check limits.
   The `native` job uses the flake input for CMake/Rust FFI/CTest. Native
   development uses the exact installed KWin derivation, including its Qt/KF
   build environment, as documented in
-  [host-matched builds](archive/host-matched-native-development-builds.md) and
-  [the earlier patch-version ABI failure](archive/native-dev-setup-lifecycle.md).
+  [host-matched builds](host-matched-native-development-builds.md) and
+  [the earlier patch-version ABI failure](native-dev-setup-lifecycle.md).
   Changing only the devenv pin does not replace that host-native authority.
 - Source paths at each revision: Rust version in
   `pkgs/development/compilers/rust/1_97.nix` or `1_98.nix`, default selection
@@ -70,7 +70,7 @@ derivation. Record their separate version baselines and host-check limits.
   or an overlay (separate decision, expands dependency/toolchain scope); bump
   to `c59305ba` now (no Rust/KDE version improvement, unrelated package churn).
 - Added the missing procedure in
-  [Windows development environment](../windows-dev-environment.md#nixpkgs-rust-pin-bump-procedure-linux-pin-bump-windows-refresh-below).
+  [Windows development environment](../../windows-dev-environment.md#nixpkgs-rust-pin-bump-procedure-linux-pin-bump-windows-refresh-below).
   `devenv update nixpkgs` syntax was checked against
   [CI's v2.4.0 CLI source](https://github.com/cachix/devenv/blob/v2.4.0/devenv/src/cli.rs).
 - Windows local stable remains rustc 1.98.1, MSVC host, default with no override;
@@ -85,8 +85,13 @@ derivation. Record their separate version baselines and host-check limits.
   `mise exec -- rustup update stable --no-self-update` before Windows/macOS
   version checks, and print full rustc identity while retaining host guards.
   This applies the existing rolling-stable policy; no toolchain-file/overlay
-  or local install. `rustup update --help` confirms the flag. Hosted verification
-  of the refreshed toolchain is pending.
+  or local install. `rustup update --help` confirms the flag.
+- Accepted hosted [CI for `929adf5`](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37190601471):
+  all six jobs passed. Windows/macOS logs show the refresh from rustc 1.98.1
+  to 1.99.0, with the required MSVC/Apple host identities. Windows locked
+  build/test (1004 tests), rustfmt and strict all-target Clippy passed on
+  1.99.0. Linux workspace/KWin/shell gates and all 33 native CTest cases passed
+  on their existing separate pins. No Rust lint or KWin/Qt source fix needed.
 - No live desktop testing, host realization, or native ABI claim from Windows.
 
 ## Handover and next action
