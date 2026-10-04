@@ -1,5 +1,17 @@
 # Windows workspace tiling mode
 
+## Final status
+
+- Complete: original workspace-mode implementation `90ee5c2` plus R-MAX-03
+  correction `ace352c`. Earlier incomplete/blocked sections below are historical,
+  superseded by the accepted correction at the end of this record.
+- Native locked gates, independent review, Notepad/Paint plan/write/matched
+  readback and screenshot proof pass. Hosted CI for `ace352c` is green across
+  Windows, Linux Rust, KWin, shell, native effect and macOS:
+  <https://github.com/beefsack/plasma-auto-tiler/actions/runs/37196192226>.
+- Decisions and R-MAX-03 promoted; record archived. Physical checks remain
+  user-owned. Live cleanup independently verified; no Worker remains running.
+
 ## Goal and scope
 
 - Match KDE's session-local per-workspace tiled/floating state, current-workspace
@@ -309,7 +321,8 @@
   slotted skip and intentional float. No shared core/KDE source changes.
 - Lead independently ran locked build/test and strict all-target clippy for all
   four Windows-built packages, full rustfmt and diff checks after the final
-  source/test edit: all pass. Hosted CI pending for the accepted commit.
+  source/test edit: all pass. Accepted commit `ace352c` pushed; hosted CI green
+  across all six jobs (run linked in Final status).
 - Live 2026-10-04, Windows 11 build 26200, medium/session 1, DISPLAY1
   2560x1440/work 2560x1380, DPI120. Artifact SHA-256
   `F29F89325468826E043841823BC797E798FBCB50FD4E3FC8F3AB8471C58821B5`,
@@ -350,4 +363,6 @@
   successful numeric SPI GET arranging 1/pen 35, normal taskbar, original hosting
   Terminal alive with unchanged creation. No Worker remains running.
 - No new provisional product decision. Physical feel, rapid toggles and other
-  DPI/output setups remain user-owned. Archive and promote after hosted CI green.
+  DPI/output setups remain user-owned. Decisions/matrix updated and record
+  archived after hosted CI green. Exact next action: none for this correction;
+  Orchestrator owns advancing the backlog and its archived-record link.

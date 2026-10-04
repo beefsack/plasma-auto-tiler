@@ -206,8 +206,7 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   reset on owner restart and never persist. The tray shows a current-workspace
   checkbox and new-workspace default choices; Settings exposes the same default.
   There is no keyboard binding: KDE's tray action has an empty key sequence.
-- Subject to the first-seen-maximized admission limitation below, floating
-  preserves native frames, membership and hide/reveal while stopping
+- Floating preserves native frames, membership and hide/reveal while stopping
   domain tiling, directional tile navigation, group underlay and drop preview.
   Independent active border remains. Retile releases the exact shared Engine
   domain without writes, then freshly adopts observed geometry with the existing
@@ -232,21 +231,18 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   effect proof pass, including both boundary sends, fresh retile, active drag
   effects and default creation/startup. Physical feel and other output/DPI
   arrangements remain user-owned. Evidence:
-  [Windows workspace tiling](changes/windows-workspace-tiling.md).
-- Known limitation (2026-10-04, user-authorized fallback after three failed
-  corrections): first-seen maximized windows can be restored prematurely while
-  their workspace is floating. The admission-clear path runs before the
-  workspace-mode gate in implementation `90ee5c2`. KDE skips that clear on a
-  floating domain, then restores an unslotted maximum once on tiled admission;
-  previously slotted overlays skip re-clear and restore through normal tiling.
-  KDE source: `kwin/src/plan-adapter.ts:4905-4909,5213-5216,5351-5418`.
-  The rejected Windows candidates preserve floating geometry/membership but
-  fail actual fresh tiled admission after retile because temporary Engine float
-  state remains latched. All unaccepted source/test changes were discarded;
-  neither those holds nor their attempted release fix are shipped. This is a
-  recorded defect, not a selected behavior divergence. The change record remains
-  active and matrix row R-MAX-03 records the missing parity. No further attempt
-  is authorized in this unit.
+  [Windows workspace tiling](changes/archive/windows-workspace-tiling.md).
+- R-MAX-03 resolved (2026-10-04): first-seen maximized windows join their
+  workspace slotless, preserving floating native geometry and managed
+  hide/reveal without creating an Engine float exception. Floating skips
+  admission clear and tile-slot seeding; first tiled admission restores the
+  unslotted maximum once and refetches for fresh tiling. Previously slotted
+  overlays skip re-clear and restore through normal tiling. This follows KDE
+  `kwin/src/plan-adapter.ts:4905-4909,5213-5216,5351-5418`.
+  Adapter assembly/Engine regressions and scoped Notepad/Paint native proof
+  establish actual tiled plan/write/matched readback, not inventory presence.
+  Earlier rejected hold/release approaches remain historical evidence in the
+  archived record. Physical feel and other DPI/output setups remain user-owned.
 
 ## Cross-Platform Behavior
 
