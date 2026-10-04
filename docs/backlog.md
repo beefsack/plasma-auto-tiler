@@ -111,7 +111,13 @@ decisions of 2026-09-24 are under
   (Settings, Stop, shortcut-conflict warning, TaskbarCreated re-add) and
   first-run Authentic/Compatible prompt delivered (`60fd7bb`, `533f3c9`;
   [evidence](changes/archive/windows-tray-first-run.md)); tray workspace
-  mode toggle omitted (no Windows floating-workspace runtime yet).
+  mode toggle omitted at first, then delivered with per-workspace
+  tiling/floating modes and `core.workspace.default_tiled` (`90ee5c2`,
+  `0fa3d29`; [record](changes/windows-workspace-tiling.md)). Known
+  limitation: a maximized window first seen on a floating workspace is
+  restored too early and does not get fresh tiled admission after retile
+  (KDE: restore once on first tiled admission); three corrections failed,
+  needs a separate follow-up (matrix R-MAX-03).
   Remaining: broader rebinding, physical checks incl. real Explorer
   restart.
   Original item 11 scope: settings
