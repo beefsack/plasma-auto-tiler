@@ -70,6 +70,17 @@
   recipe, per-user/session singleton, full-content stale-edit refusal,
   Apply/Revert/Close, scrolling conflict detail and preset/binding editors.
   Only feature flags on the existing `windows-sys` dependency were added.
+- Unit 2 committed as `1c97c52`; all hosted CI jobs green:
+  <https://github.com/beefsack/plasma-auto-tiler/actions/runs/37168520942>.
+- Final pairing review reproduced two extra rebound-key faults: concurrent
+  distinct physical keys sharing a canonical slot could steal each other's
+  releases, and an untracked rebound-away key-up could close the held remap.
+  A large per-family draft was rejected in favour of a bounded central guard:
+  unpinned ups pass; colliding owned downs retain their own consumed refusal
+  until release, without touching the original slot or dispatching an action.
+  Four regression sequences cover both release orders, multiple colliders,
+  modifier flips and remap removal. Current native gates pass after this fix;
+  UI/native-effect evidence above remains the scoped pre-fix live run.
 - Initial UI screenshot acceptance failed: opaque topmost groupboxes covered
   their controls. Parent clipping alone did not fix it; native sibling-order
   inspection identified the cause, and lowering the groupboxes before show

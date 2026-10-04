@@ -121,7 +121,8 @@ impl SnapOp {
 /// virtual key. Entries are single-polarity (one per explicit rebind chord):
 /// the rebind's Shift must match the binding's native arm, so the classifier's
 /// Shift-derived op keeps meaning what the binding says. Downs match the entry
-/// strictly; ups fall back across a mid-hold Shift flip so pairs never orphan
+/// strictly; ups resolve through the down-time pin, so a mid-hold Shift flip
+/// still closes the pair instead of orphaning a stuck down slot
 /// (see [`SnapClassify::push`]). Entries are owner state, never callback
 /// state: the owner publishes the table and the callback only reads it through
 /// the machine (one cheap scan per event).
@@ -314,6 +315,80 @@ fn snap_op_admits(physical_vk: u32, op: SnapOp, allow_win_l: bool) -> bool {
 /// op. Same swallow-but-don't-dispatch contract as [`snap_repeat_live`].
 fn digit_repeat_live(shift: bool, ctrl: bool, alt: bool, win: bool, op: WorkspaceOp) -> bool {
     !ctrl && !alt && win && (shift == (op == WorkspaceOp::Send))
+}
+
+/// Collision refusal from the live owner's hold shape: same variant and
+/// action identity, refreshed edge/foreground, the collider's own consumed
+/// verdict, and never dispatched (`announce` is always false, so the owner
+/// drain settles it without acting).
+fn collide_refusal(
+    shape: Classified,
+    edge: SnapEdge,
+    foreground: bool,
+    consumed: bool,
+) -> Classified {
+    match shape {
+        Classified::Snap(intent) => Classified::Snap(SnapIntent {
+            op: intent.op,
+            direction: intent.direction,
+            edge,
+            foreground,
+            consumed,
+            announce: false,
+        }),
+        Classified::Workspace(intent) => Classified::Workspace(WorkspaceIntent {
+            op: intent.op,
+            index: intent.index,
+            edge,
+            foreground,
+            consumed,
+            announce: false,
+        }),
+        Classified::Maximize(_) => Classified::Maximize(MaximizeIntent {
+            edge,
+            foreground,
+            consumed,
+            announce: false,
+        }),
+        Classified::Fullscreen(_) => Classified::Fullscreen(FullscreenIntent {
+            edge,
+            foreground,
+            consumed,
+            announce: false,
+        }),
+        Classified::Float(_) => Classified::Float(FloatIntent {
+            edge,
+            foreground,
+            consumed,
+            announce: false,
+        }),
+        Classified::Sticky(_) => Classified::Sticky(StickyIntent {
+            edge,
+            foreground,
+            consumed,
+            announce: false,
+        }),
+    }
+}
+
+/// Start-menu mask trigger matching a hold shape: a consumed collision
+/// refusal keeps the same Win-hold mask obligation as the owner (a redundant
+/// E8 pair is safe while a naked Win Start is not).
+fn collide_trigger(shape: &Classified) -> Option<MaskTrigger> {
+    match *shape {
+        Classified::Snap(intent) => Some(MaskTrigger::Snap {
+            op: intent.op,
+            direction: intent.direction,
+        }),
+        Classified::Workspace(intent) => Some(MaskTrigger::Workspace {
+            op: intent.op,
+            index: intent.index,
+        }),
+        Classified::Maximize(_) => Some(MaskTrigger::Maximize),
+        Classified::Fullscreen(_) => Some(MaskTrigger::Fullscreen),
+        Classified::Float(_) => Some(MaskTrigger::Float),
+        Classified::Sticky(_) => Some(MaskTrigger::Sticky),
+    }
 }
 
 #[must_use]
@@ -549,8 +624,17 @@ pub struct SnapClassify {
     /// orphan the hold (ups resolve through the pin) nor leak its pair
     /// (repeats ride the stored verdict with dispatch gated on the chord
     /// still routing live), and the Start-menu mask obligation survives
-    /// untouched.
+    /// untouched. Only a hold the family actually owns pins: refused fresh
+    /// downs (bare, extra-modified, arm-refused, fenced, suppressed, gated
+    /// off) leave no pin, so their paired key-up passes through as well.
     phys_pin: [Option<u32>; 256],
+    /// Live safe-refusal holds per physical key: a different physical routing
+    /// to an already-held canonical is swallowed here (consumed, never
+    /// dispatched) with its own down-time verdict until its paired key-up,
+    /// never touching the canonical slot. Pairs can therefore neither be
+    /// stolen nor orphaned, whatever the release order or mid-hold table
+    /// changes; each entry clears on its own physical's key-up.
+    collide: [Option<Classified>; 256],
     pub counts: [SnapCounts; 8],
     pub digit_counts: [SnapCounts; 10],
     pub max_counts: SnapCounts,
@@ -604,6 +688,7 @@ impl SnapClassify {
             vk_remap: Vec::new(),
             vk_disabled: Vec::new(),
             phys_pin: [None; 256],
+            collide: [None; 256],
             counts: [SnapCounts::default(); 8],
             digit_counts: [SnapCounts::default(); 10],
             max_counts: SnapCounts::default(),
@@ -632,10 +717,9 @@ impl SnapClassify {
     /// in-flight held keys keep their down-time slots: consumed holds ride
     /// their stored verdict to the paired key-up, and the Start-menu mask
     /// obligation survives, so no orphan key-up reaches the OS and no naked
-    /// Win tap opens Start. A rebound whose mapping vanishes mid-hold orphans
-    /// its slot only until the next full press-release cycle of the canonical
-    /// key (narrow, self-healing); repeats of held keys ride the stored
-    /// verdict and never dispatch new actions under the changed config.
+    /// Win tap opens Start. Down-time physical routing survives a removed
+    /// mapping through the paired release; held repeats keep their consumed
+    /// verdict and dispatch only while the pinned route still matches.
     pub fn set_remap(&mut self, remap: Vec<ChordRemap>) {
         self.vk_remap = remap;
     }
@@ -714,26 +798,6 @@ impl SnapClassify {
         }
     }
 
-    /// Translate one chord key through the rebound table. Downs match the
-    /// entry's Shift polarity strictly (the rebind's Shift must equal the
-    /// binding's native arm); ups fall back across a mid-hold Shift flip so a
-    /// consumed hold's pair always closes instead of orphaning a stuck down
-    /// slot. Non-chord keys (Win, modifiers) never match: rebind sources are
-    /// known key names only.
-    fn remap_vk(&self, vk: u32, is_up: bool) -> u32 {
-        if let Some(entry) = self
-            .vk_remap
-            .iter()
-            .find(|entry| entry.from_vk == vk && entry.from_shift == self.shift)
-        {
-            return entry.to_vk;
-        }
-        if is_up && let Some(entry) = self.vk_remap.iter().find(|entry| entry.from_vk == vk) {
-            return entry.to_vk;
-        }
-        vk
-    }
-
     /// Arm the Start-menu mask for a consumed project Win+Left gesture. The
     /// mouse hook consumes the click so no keyboard chord ever lands, but a
     /// physical Win hold still needs the E8 pair at Win-up or the OS opens
@@ -778,23 +842,95 @@ impl SnapClassify {
         self.win_l || self.win_r
     }
 
-    /// Whether a physical key currently holds a down without its up. Physical-
-    /// aware for rebound sources: a held rebound reports through its pinned
-    /// down-time routing first, else through the live rebound table, and the
-    /// canonical slot carries the hold verdict. The callback's preheld guard
-    /// and async Shift sync read this with the raw callback vk, so rebound
-    /// sources get exactly the catalog-key treatment.
+    /// Whether a physical key currently holds a down without its up: its own
+    /// live safe-refusal hold, else its own down-time pin resolved against
+    /// the canonical slot it opened. Never reports another physical's
+    /// canonical occupant: an unpressed rebound source reads false even
+    /// while its canonical target is held elsewhere.
     pub fn key_is_down(&self, vk: u32) -> bool {
-        let mapped = self
-            .pin_get(vk)
-            .or_else(|| {
-                self.vk_remap
-                    .iter()
-                    .find(|entry| entry.from_vk == vk)
-                    .map(|entry| entry.to_vk)
-            })
-            .unwrap_or(vk);
-        self.canon_is_down(mapped)
+        if (vk as usize) < PIN_KEYS && self.collide[vk as usize].is_some() {
+            return true;
+        }
+        match self.pin_get(vk) {
+            Some(canon) => self.canon_is_down(canon),
+            None => false,
+        }
+    }
+
+    /// Live shape of the hold owning a canonical key, for a colliding
+    /// physical's safe refusal: same variant and action identity as the
+    /// owner's down (the op stays pinned at the owner's down time, so a
+    /// later Shift flip cannot rewrite it). `None` when no hold owns it.
+    fn held_shape(&self, canon: u32) -> Option<Classified> {
+        if let Some(idx) = catalog_index(canon) {
+            if !self.key_down[idx] {
+                return None;
+            }
+            return Some(Classified::Snap(SnapIntent {
+                op: self.key_op[idx].unwrap_or(SnapOp::Focus),
+                direction: index_direction(idx),
+                edge: SnapEdge::Down,
+                foreground: true,
+                consumed: self.key_origin[idx],
+                announce: false,
+            }));
+        }
+        if is_digit_vk(canon) {
+            let slot = (canon - VK_0) as usize;
+            if !self.digit_down[slot] {
+                return None;
+            }
+            return Some(Classified::Workspace(WorkspaceIntent {
+                op: self.digit_op[slot].unwrap_or(WorkspaceOp::Select),
+                index: slot as u8,
+                edge: SnapEdge::Down,
+                foreground: true,
+                consumed: self.digit_origin[slot],
+                announce: false,
+            }));
+        }
+        if is_maximize_vk(canon) {
+            if !self.maximize_down {
+                return None;
+            }
+            return Some(Classified::Maximize(MaximizeIntent {
+                edge: SnapEdge::Down,
+                foreground: true,
+                consumed: self.maximize_origin,
+                announce: false,
+            }));
+        }
+        if is_fullscreen_vk(canon) {
+            if !self.fullscreen_down {
+                return None;
+            }
+            return Some(Classified::Fullscreen(FullscreenIntent {
+                edge: SnapEdge::Down,
+                foreground: true,
+                consumed: self.fullscreen_origin,
+                announce: false,
+            }));
+        }
+        if is_float_vk(canon) || is_sticky_vk(canon) {
+            if self.float_down {
+                return Some(Classified::Float(FloatIntent {
+                    edge: SnapEdge::Down,
+                    foreground: true,
+                    consumed: self.float_origin,
+                    announce: false,
+                }));
+            }
+            if self.sticky_down {
+                return Some(Classified::Sticky(StickyIntent {
+                    edge: SnapEdge::Down,
+                    foreground: true,
+                    consumed: self.sticky_origin,
+                    announce: false,
+                }));
+            }
+            return None;
+        }
+        None
     }
 
     /// Whether a canonical chord key currently holds a down without its up.
@@ -908,38 +1044,113 @@ impl SnapClassify {
         }
         // Down-time physical routing pinned through the matching up (see
         // `phys_pin`): fresh downs route live (rebound wins over
-        // suppression) and pin their canonical key; pinned-hold repeats ride
-        // the down-time routing with dispatch gated on the chord still
-        // routing live, so a mid-hold table change swallows without
-        // dispatching instead of leaking; ups resolve through the pin, so a
-        // removed remap can never orphan the canonical slot or let the
-        // physical up through. The Win+L fence keys on the physical chord
-        // only: a safe rebound into the canonical L slot works without
-        // opt-in, while physical unshifted Win+L stays gated.
+        // suppression); pinned-hold repeats ride the down-time routing with
+        // dispatch gated on the chord still routing live, so a mid-hold
+        // table change swallows without dispatching instead of leaking. The
+        // Win+L fence keys on the physical chord only: a safe rebound into
+        // the canonical L slot works without opt-in, while physical
+        // unshifted Win+L stays gated.
+        //
+        // Physical identity safety: only a hold the family actually owns
+        // pins. Unpinned key-ups always pass untracked (no remap/canonical
+        // fallback), so an unrelated release can never consume or clear
+        // another physical's slot. A fresh physical routing to an
+        // already-held canonical is a collision, never the owner's repeat:
+        // it is swallowed as a safe consumed refusal from the live owner's
+        // hold shape with its own down-time verdict, paired repeat/up
+        // included, never touching the canonical slot and never dispatching.
         let physical = vk;
-        let (vk, route_live) = if is_up {
-            (
-                self.pin_take(physical)
-                    .unwrap_or_else(|| self.remap_vk(physical, true)),
-                true,
-            )
-        } else if let Some(canon) = self.pin_get(physical) {
-            (canon, self.route_matches(physical, canon))
-        } else {
-            match self.fresh_route(physical, self.shift) {
-                Route::Suppressed => return None,
-                Route::Remap(canon) => {
-                    self.pin_set(physical, canon);
-                    (canon, true)
-                }
-                Route::Direct => {
-                    if is_chord_vk(physical) {
-                        self.pin_set(physical, physical);
-                    }
-                    (physical, true)
-                }
+        let pidx = physical as usize;
+        if pidx < PIN_KEYS
+            && let Some(tmpl) = self.collide[pidx]
+        {
+            if is_up {
+                self.collide[pidx] = None;
+                return Some(collide_refusal(
+                    tmpl,
+                    SnapEdge::Up,
+                    foreground,
+                    tmpl.consumed(),
+                ));
             }
+            if tmpl.consumed() && (self.win_l || self.win_r) {
+                self.mask_pending = true;
+                self.mask_trigger = collide_trigger(&tmpl);
+            }
+            return Some(collide_refusal(
+                tmpl,
+                SnapEdge::Repeat,
+                foreground,
+                tmpl.consumed(),
+            ));
+        }
+        if is_up {
+            // The pin proves this physical opened the hold; the family
+            // closes its own paired slot below.
+            let canon = self.pin_take(physical)?;
+            return self.push_owned(physical, canon, true, foreground, true);
+        }
+        if let Some(canon) = self.pin_get(physical) {
+            let live = self.route_matches(physical, canon);
+            return self.push_owned(physical, canon, false, foreground, live);
+        }
+        // Fresh down: refuse before pinning, so a refused chord leaves no
+        // orphan pin and its paired key-up passes through as well. The
+        // checks mirror the family fresh guards (bare, extra-modified, and
+        // Shift-refused arms plus the physical lock fence).
+        if self.ctrl || self.alt || !(self.win_l || self.win_r) {
+            return None;
+        }
+        let (canon, remapped) = match self.fresh_route(physical, self.shift) {
+            Route::Suppressed => return None,
+            Route::Remap(c) => (c, true),
+            Route::Direct => (physical, false),
         };
+        if self.shift
+            && !is_digit_vk(canon)
+            && catalog_index(canon).is_none()
+            && !is_float_vk(canon)
+            && !is_sticky_vk(canon)
+        {
+            return None;
+        }
+        if physical == VK_L && !self.shift && !self.allow_win_l && catalog_index(canon) == Some(3) {
+            return None;
+        }
+        if self.canon_is_down(canon) {
+            // Owned by a different physical: swallow as a safe consumed
+            // refusal with its own down-time verdict. Passed while the gate
+            // is off never holds: it passes through like a suppression.
+            if !(self.enabled && self.gate_active) {
+                return None;
+            }
+            let shape = self.held_shape(canon)?;
+            let down = collide_refusal(shape, SnapEdge::Down, foreground, true);
+            if pidx < PIN_KEYS {
+                self.collide[pidx] = Some(down);
+            }
+            self.mask_pending = true;
+            self.mask_trigger = collide_trigger(&shape);
+            return Some(down);
+        }
+        if remapped || is_chord_vk(physical) {
+            self.pin_set(physical, canon);
+        }
+        self.push_owned(physical, canon, false, foreground, true)
+    }
+
+    /// Owned-chord dispatch for [`SnapClassify::push`]: `physical` opened the
+    /// hold (or repeats it) and `vk` is its down-time canonical key. Family
+    /// pairing, op pinning, gate riding, and mask semantics are unchanged;
+    /// the central guard above guarantees only true owners arrive here.
+    fn push_owned(
+        &mut self,
+        physical: u32,
+        vk: u32,
+        is_up: bool,
+        foreground: bool,
+        route_live: bool,
+    ) -> Option<Classified> {
         let physical_lock = physical == VK_L;
         if is_digit_vk(vk) {
             return self.push_digit(vk, is_up, foreground, route_live);

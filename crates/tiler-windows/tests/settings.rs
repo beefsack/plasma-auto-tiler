@@ -471,6 +471,206 @@ fn remap_up_survives_mid_hold_shift_flip() {
 }
 
 #[test]
+fn rebound_collision_shifted_native_never_repeats_owner() {
+    // focus-left rebound Win+U (canonical H) with native shifted
+    // Win+Shift+H (move-left) kept: Win, U down (consumed focus), Shift,
+    // H down is swallowed as a safe consumed refusal (inheriting the live
+    // owner's shape, never dispatched), never U's repeat. Both paired ups
+    // stay consumed with no stuck slot.
+    use tiler_windows::snapkey::{SnapEdge, SnapOp};
+    let mut machine = SnapClassify::new(takeover());
+    machine.set_remap(vec![ChordRemap {
+        from_vk: VK_U,
+        from_shift: false,
+        to_vk: VK_H,
+    }]);
+    machine.set_disabled(vec![ChordDisable {
+        vk: VK_H,
+        shift: false,
+    }]);
+    SnapClassify::push(&mut machine, VK_LWIN, false, true, false);
+    let down = SnapClassify::push(&mut machine, VK_U, false, true, false).expect("U down");
+    let Classified::Snap(focus) = down else {
+        panic!("rebound U classifies directional");
+    };
+    assert_eq!((focus.op, focus.edge), (SnapOp::Focus, SnapEdge::Down));
+    assert!(focus.consumed && focus.announce);
+    SnapClassify::push(&mut machine, VK_SHIFT, false, true, false);
+    let hit = SnapClassify::push(&mut machine, VK_H, false, true, false).expect("H down");
+    let Classified::Snap(refused) = hit else {
+        panic!("colliding H classifies directional");
+    };
+    // Never U's repeat: a fresh safe refusal down, consumed and never
+    // dispatched. Old shared-slot code returned U's Focus repeat.
+    assert_eq!(
+        refused.edge,
+        SnapEdge::Down,
+        "colliding H is a fresh down, not U's repeat"
+    );
+    assert!(refused.consumed && !refused.announce);
+    let h_up = SnapClassify::push(&mut machine, VK_H, true, true, false).expect("H up");
+    assert!(h_up.consumed() && !h_up.announce());
+    let u_up = SnapClassify::push(&mut machine, VK_U, true, true, false).expect("U up");
+    assert!(u_up.consumed() && !u_up.announce());
+    assert!(!machine.key_is_down(VK_U));
+    assert!(!machine.key_is_down(VK_H));
+    assert_eq!(
+        SnapClassify::push(&mut machine, VK_H, true, true, false),
+        None,
+        "no stuck slot: extra up passes"
+    );
+    assert_eq!(
+        SnapClassify::push(&mut machine, VK_U, true, true, false),
+        None,
+        "no stuck slot: extra up passes"
+    );
+}
+
+#[test]
+fn suppressed_rebound_away_up_never_steals_owner_pair() {
+    // First U consumed down, suppressed rebound-away H down passes, H up
+    // must PASS untracked without closing U's slot; U up still consumed.
+    // Old unpinned-up fallback mapped H up to canonical H and stole U's hold.
+    let mut machine = SnapClassify::new(takeover());
+    machine.set_remap(vec![ChordRemap {
+        from_vk: VK_U,
+        from_shift: false,
+        to_vk: VK_H,
+    }]);
+    machine.set_disabled(vec![ChordDisable {
+        vk: VK_H,
+        shift: false,
+    }]);
+    SnapClassify::push(&mut machine, VK_LWIN, false, true, false);
+    let down = SnapClassify::push(&mut machine, VK_U, false, true, false).expect("U down");
+    assert!(down.consumed());
+    assert_eq!(
+        SnapClassify::push(&mut machine, VK_H, false, true, false),
+        None,
+        "rebound-away H down passes suppressed"
+    );
+    assert_eq!(
+        SnapClassify::push(&mut machine, VK_H, true, true, false),
+        None,
+        "unrelated H up passes without stealing U's slot"
+    );
+    assert!(
+        machine.key_is_down(VK_U),
+        "U hold survives the foreign H tap"
+    );
+    let u_up = SnapClassify::push(&mut machine, VK_U, true, true, false).expect("U up");
+    assert!(u_up.consumed() && !u_up.announce());
+    assert!(!machine.key_is_down(VK_U));
+}
+
+#[test]
+fn same_physical_rebound_pins_across_shift_flip() {
+    // Same physical U rebound to H: Shift flip mid-hold keeps the pinned
+    // Focus op, repeats stay swallowed without dispatching, pair closes
+    // consumed. Per-binding single-polarity holds: shifted U never routes.
+    use tiler_windows::snapkey::{SnapEdge, SnapOp};
+    let mut machine = SnapClassify::new(takeover());
+    machine.set_remap(vec![ChordRemap {
+        from_vk: VK_U,
+        from_shift: false,
+        to_vk: VK_H,
+    }]);
+    machine.set_disabled(vec![ChordDisable {
+        vk: VK_H,
+        shift: false,
+    }]);
+    SnapClassify::push(&mut machine, VK_LWIN, false, true, false);
+    let down = SnapClassify::push(&mut machine, VK_U, false, true, false).expect("U down");
+    let Classified::Snap(focus) = down else {
+        panic!("rebound U classifies directional");
+    };
+    assert_eq!(focus.op, SnapOp::Focus);
+    SnapClassify::push(&mut machine, VK_SHIFT, false, true, false);
+    let repeat = SnapClassify::push(&mut machine, VK_U, false, true, false).expect("U repeat");
+    let Classified::Snap(rep) = repeat else {
+        panic!("pinned U repeat classifies directional");
+    };
+    assert_eq!((rep.op, rep.edge), (SnapOp::Focus, SnapEdge::Repeat));
+    assert!(rep.consumed && !rep.announce);
+    SnapClassify::push(&mut machine, VK_SHIFT, true, true, false);
+    let up = SnapClassify::push(&mut machine, VK_U, true, true, false).expect("U up");
+    assert!(up.consumed() && !up.announce());
+    assert!(!machine.key_is_down(VK_U));
+}
+
+#[test]
+fn three_colliders_pair_in_any_release_order_across_remap_change() {
+    // Arbitrary bare-API mapping: two rebound physicals plus the native key
+    // share one canonical. Owner plus both colliders each close consumed in
+    // any release order with no stuck slot and no OS leak, even when the
+    // mapping vanishes mid-hold (colliders ride their cached verdict, the
+    // owner rides its pin).
+    const VK_I: u32 = 0x49;
+    let tables = || {
+        (
+            vec![
+                ChordRemap {
+                    from_vk: VK_U,
+                    from_shift: false,
+                    to_vk: VK_H,
+                },
+                ChordRemap {
+                    from_vk: VK_I,
+                    from_shift: false,
+                    to_vk: VK_H,
+                },
+            ],
+            vec![ChordDisable {
+                vk: VK_H,
+                shift: false,
+            }],
+        )
+    };
+    for owner_first in [false, true] {
+        let mut machine = SnapClassify::new(takeover());
+        let (remap, disabled) = tables();
+        machine.set_remap(remap);
+        machine.set_disabled(disabled);
+        SnapClassify::push(&mut machine, VK_LWIN, false, true, false);
+        let down = SnapClassify::push(&mut machine, VK_U, false, true, false).expect("U down");
+        assert!(down.consumed() && down.announce());
+        // Native H routes only shifted here (unshifted H is suppressed);
+        // rebound I routes only unshifted (single-polarity entries).
+        SnapClassify::push(&mut machine, VK_SHIFT, false, true, false);
+        let h = SnapClassify::push(&mut machine, VK_H, false, true, false).expect("H collider");
+        assert!(h.consumed() && !h.announce());
+        SnapClassify::push(&mut machine, VK_SHIFT, true, true, false);
+        let i = SnapClassify::push(&mut machine, VK_I, false, true, false).expect("I collider");
+        assert!(i.consumed() && !i.announce());
+        assert!(machine.key_is_down(VK_U));
+        assert!(machine.key_is_down(VK_H));
+        assert!(machine.key_is_down(VK_I));
+        // Mapping vanishes mid-hold: pairs must still close consumed.
+        machine.set_remap(Vec::new());
+        if owner_first {
+            let up = SnapClassify::push(&mut machine, VK_U, true, true, false).expect("U up");
+            assert!(up.consumed() && !up.announce());
+        }
+        let up = SnapClassify::push(&mut machine, VK_I, true, true, false).expect("I up");
+        assert!(up.consumed() && !up.announce());
+        let up = SnapClassify::push(&mut machine, VK_H, true, true, false).expect("H up");
+        assert!(up.consumed() && !up.announce());
+        if !owner_first {
+            let up = SnapClassify::push(&mut machine, VK_U, true, true, false).expect("U up");
+            assert!(up.consumed() && !up.announce());
+        }
+        assert!(!machine.key_is_down(VK_U));
+        assert!(!machine.key_is_down(VK_H));
+        assert!(!machine.key_is_down(VK_I));
+        assert_eq!(
+            SnapClassify::push(&mut machine, VK_U, true, true, false),
+            None,
+            "no leak: extra U up passes"
+        );
+    }
+}
+
+#[test]
 fn compatible_preset_disables_os_conflicting_rows() {
     let mut settings = Settings::default();
     let changed = tiler_windows::settings::apply_preset(&mut settings, Preset::Compatible);
