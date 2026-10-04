@@ -1,5 +1,8 @@
 # Hidden-workspace Alt+Tab research
 
+Status: complete, 2026-10-04. Research published as `580c766`; all six hosted
+CI jobs passed. This archive is evidence-only.
+
 ## Goal and scope
 
 - Investigate official Windows mechanisms for including inactive managed-workspace
@@ -23,7 +26,7 @@
 
 ## Outcome
 
-- Delivered [research](../research/windows-port/alt-tab-hidden-workspaces.md)
+- Delivered [research](../../research/windows-port/alt-tab-hidden-workspaces.md)
   comparing five options. No public hidden-foreign-window Alt+Tab inclusion
   contract established; recommend current SW_HIDE omission, with parking only
   a future investigation candidate. No mechanism or public behavior selected.
@@ -52,4 +55,10 @@
   inactive ledger.lock file remains. Read-only baseline: taskbar present/visible,
   SPI arranging = 1, pen visualization = 35. No experiment-created hidden windows.
   All four sequential Workers completed; no Worker running.
-- Hosted CI pending publication; archive after green.
+- Hosted [CI run 37192477029](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37192477029)
+  passed Rust, KWin, shell, native, Windows and macOS for `580c766`.
+- Proposed backlog outcome: research complete; keep the optional feature
+  deferred, with no design selected. Reopen only when demand warrants a parking
+  probe or a separately approved native-desktop/private-API architecture change.
+- Research implementation next action: none. Physical shell/app compatibility
+  checks belong to any future selected implementation, not this survey.
