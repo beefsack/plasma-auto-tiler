@@ -80,7 +80,9 @@
   until release, without touching the original slot or dispatching an action.
   Four regression sequences cover both release orders, multiple colliders,
   modifier flips and remap removal. Current native gates pass after this fix;
-  UI/native-effect evidence above remains the scoped pre-fix live run.
+   UI/native-effect evidence below remains the scoped pre-fix live run.
+- Pairing correction committed as `999f2f3`; all hosted CI jobs green:
+  <https://github.com/beefsack/plasma-auto-tiler/actions/runs/37169854020>.
 - Initial UI screenshot acceptance failed: opaque topmost groupboxes covered
   their controls. Parent clipping alone did not fix it; native sibling-order
   inspection identified the cause, and lowering the groupboxes before show
@@ -112,7 +114,8 @@
   revision-8 live claim was rejected and superseded by the final run.
 - Latest native locked build/test, strict all-target clippy for the four Windows
   packages, full rustfmt and diff checks pass. Local mise was unavailable; direct
-  installed MSVC Rust was used. Hosted Linux/Windows gates follow on push.
+  installed MSVC Rust was used. Hosted Linux Rust/KWin/shell, Windows native
+  gates and macOS tool smoke checks are green for every implementation unit.
 - Final exact-tag helper close, exact-owner stop then restore: no processes,
   overlays, ledger or hidden helper; original settings-file absence restored;
   SPI arranging 1, pen visualization 35, normal taskbar present. Lead read-only

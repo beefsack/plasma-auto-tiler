@@ -57,7 +57,8 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   single-display PC; Engine-driven tiling and the focus/move shortcut preview
   now have automated native evidence. Managed Windows workspaces also have
   automated native evidence (2026-10-02);
-  physical shortcut and proper settings UI Apply/Revert checks remain pending.
+  physical shortcut acceptance remains pending. Scoped native Settings UI
+  Apply/Revert proof passed on 2026-10-04; physical feel stays user-owned.
 - Sandbox closed 2026-09-30 (user dismissed the WM_CLOSE close confirmation;
   no Sandbox processes remain): Phase 1-3 live proof runs on the physical
   desktop with owned disposable windows first; Sandbox is deferred to Phase 4
@@ -165,7 +166,7 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   modes/default-tiled controls await their runtime implementation.
 - Synthetic native UI/Apply/Revert, live geometry/border/SPI and cleanup proof
   passed; physical shortcut/Snap/Xbox and other DPI/output checks stay user-owned.
-  Evidence and limitations: [Windows settings](changes/windows-settings.md).
+  Evidence and limitations: [Windows settings](changes/archive/windows-settings.md).
 
 ## Cross-Platform Behavior
 
