@@ -231,6 +231,12 @@ decisions of 2026-09-24 are under
   stable Rust pre-1.0 and fix breakage. Windows uses rustup `stable`; Linux
   and CI get Rust from the nixpkgs pin in `devenv.yaml`, which must be bumped
   regularly to stay close to stable. Revisit the upgrade process at 1.0.
+  Checked 2026-10-04 (`4212456`, `929adf5`, `c486c59`; CI green): hosted
+  Windows/macOS CI now refreshes stable (1.99.0); Linux devenv stays at
+  1.98.1 and native CI flake at 1.97.1 until 1.99.0 reaches nixos-unstable
+  (now only on staging). Next: recheck, then bump devenv and native flake
+  pins; user re-enters devenv after the bump.
+  [record](changes/archive/rust-toolchain-tracking-2026-10.md)
 - P1 | Tray tiling/floating workspace toggle | Shipped `e407531`; user
   confirmed live (2026-09-29) that toggling a workspace floating and back to
   tiled behaves as expected. Remaining live: default change, cross-boundary
