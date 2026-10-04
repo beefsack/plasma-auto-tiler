@@ -65,8 +65,14 @@
 - Remaining send proof needs a minimal automation `workspace --send` command:
   normal owner intentionally rejects injected keyboard input. Reuse existing
   exact-owner request transport and native send dispatch with all fences.
-- Cross-boundary sends and active gesture effects accepted below. Hosted CI
-  pending before archival.
+- Cross-boundary sends and active gesture effects accepted below. Implementation
+  `90ee5c2` pushed; hosted Windows/Linux Rust/KWin/shell/macOS CI green:
+  <https://github.com/beefsack/plasma-auto-tiler/actions/runs/37181616531>.
+- Final inspection reproduced first-seen maximized-window restore on a floating
+  workspace. Mode-gating the admission clear fixes geometry, but first-seen
+  maximized rows also need managed workspace membership so switching hides them.
+  Two correction approaches have not completed the full invariant; blocked as
+  detailed below. Preserve candidate diff; do not commit or archive as complete.
 
 ## Accepted verification and outcome
 
@@ -149,3 +155,123 @@
 - Application minimums may still cause overlap/overflow on dense tiled layouts
   under the pre-existing minimum-size policy; workspace-mode toggles do not
   change that policy. No gaming/lock chord was injected in these proofs.
+
+## Blocking admission follow-up (not accepted)
+
+- Required invariant: first-seen maximized windows on a floating workspace
+  preserve native geometry, participate in managed hide/reveal, and on first
+  tiled admission restore once then receive a real fresh tile. Previously
+  slotted native overlays must not re-clear across a mode flip.
+- Approach 1: gate `clear_maximize_at_admission` by workspace mode. Reproduction
+  on the committed artifact restored a maximized Notepad while default floating;
+  the guard fixes that geometry mutation, but leaves first-seen maxima without
+  workspace membership, so selecting away does not hide them. Rejected as
+  incomplete. Local evidence: `target/windows-workspace-tiling/max-admission/`.
+- Approach 2: add exact-lifetime `floating_max_hold`, hidden-frame seed, managed
+  membership and release on fresh non-maximized observation. Live proof confirms
+  untouched floating maximum and select-away/back hide/reveal, one admission
+  clear on retile, and no re-clear after subsequent maximize/mode flips. However
+  Lead rejects the claimed fresh tile: after clear, the window stays at native
+  restore frame `(40,40,1611,725)`, and the next normal observations still omit
+  `w7` from every plan. The fixture incorrectly used `inventory` presence as
+  managed/tiled proof. The temporary floating observation seeds an Engine
+  exception which `assemble_domain_rows` continues to carry after the hold
+  clears. No actual tiled write/readback for the restored window was proven.
+- Latest candidate remains uncommitted in `tiling.rs`, `tiling_sys.rs` and
+  `tests/tiling.rs`. Native locked build/test/clippy/fmt pass but do not establish
+  this missing behavior. Candidate artifact SHA-256:
+  `2810681BF0B953340DD8498238A9CCC83878EEFEDE400DF4AC78F8FB581EED8A`.
+  Evidence: `target/windows-workspace-tiling/max-membership/evidence.jsonl`;
+  owner log `run-01dd53ca153e8b1f.log`, clear at line 863, normal observation
+  at 879 and five-window plan at 882 exclude `w7`.
+- Candidate also carries native-send source summary/timings through the existing
+  action log. Live `act-239` reports source applied 4, mismatched 0, readback_ok
+  true and geometry 47ms; this narrowly corrects the earlier absent source
+  summary. Floating mover frame remains unchanged. This part is accepted evidence
+  but remains in the uncommitted candidate with the admission correction.
+- No causal evidence-plumbing repair or product retry follows the second failed
+  semantic approach. Stop threshold reached; Orchestrator owns whether to
+  authorize a third correction. Exact next action: distinguish the temporary
+  max-hold Engine exception from intentional float state on release, then assert
+  actual tiled plan/write/native readback after retile before accepting it.
+- Final candidate run stopped/restored, exact extras closed, baseline Notepads
+  visible, original settings absence restored, project actors/UI/overlays gone,
+  SPI numeric arranging 1/pen 35, normal taskbar and original hosting Terminal
+  alive. Earlier incorrect SPI action-name readings in this fixture are
+  superseded by explicit numeric GET readbacks. No Worker remains running.
+- Main implementation `90ee5c2` is pushed with green CI but the overall change
+  is incomplete. Keep this record active; backlog must not mark it complete.
+
+## Authorized third correction
+
+- User authorizes one third semantic correction: retire only the temporary
+  max-hold Engine exception; prove actual tiled plan, write and native readback,
+  run gates, commit/push, green CI and archive. If it fails, discard unaccepted
+  source changes, record the known limitation here and in decisions, commit
+  documentation and leave the tree clean. No further semantic iteration.
+- KDE source establishes parity: `plan-adapter.ts:4905-4909` and `5213-5216`
+  skip floating domains before admission clear; `5351-5418` restores unslotted
+  maxima once and refetches native state for normal admission, while previously
+  applied/slotted windows skip re-clear. Native user restore provides ordinary
+  non-maximized observations. Only initial fullscreen has a synthetic floating
+  hold (`2249-2297`); no maximize hold exists in KDE.
+- Ordinary Windows integration choice: exclude only retired temporary max-hold
+  state from Engine-exception feedback on fresh admission. Preserve exact
+  lifetime/scope fences, intentional float/sticky/fullscreen state and previously
+  slotted overlays. No new behavioral divergence or provisional choice needed.
+- Third correction failed live; user-authorized fallback executed below.
+
+## Third correction outcome and known limitation
+
+- KDE behavior is established by source, not ambiguous: floating skips clear;
+  first tiled admission of an unslotted maximum restores once and refetches for
+  fresh tiling. A previously slotted native maximum skips admission clear and
+  restores through ordinary native-state observation. No provisional divergence
+  was selected.
+- Third approach added exact-lifetime released-max tracking and excluded that
+  token's stale Engine exception from observation/write eligibility, preserving
+  intentional floats. An actual Engine regression passed flag adoption into a
+  tiled plan; this did not prove the Windows owner supplied that observation.
+- Candidate locked four-package build/test/clippy/fmt passed. Live final
+  artifact `target/windows-workspace-tiling/third-correction/tiler-windows.exe`
+  SHA-256 `8A274DC470F7BB9BAC76CA121688333CF3BAF92BE91B9761FB6385F5A64C2130`,
+  source `90ee5c2` plus rejected candidate diff. Scoped Explorer-broker owner
+  creation `01dd53cd55933c0b`, medium/session 1, Notepad only, DPI120 display.
+- Live floating maximum and select-away/back geometry/visibility passed, but
+  retile failed the required effect criterion: after one clear the frame
+  remained `(120,120,1691,805)` through a 12-second settle. Token `w8` never
+  appeared in a tiled plan, write or matched readback. Observation assignment
+  seeded `member_rects` before the suppression gate, so its `known_slot` test
+  prevented retiring the temporary Engine exception. No follow-up correction
+  or further semantic iteration was attempted.
+- Evidence retained locally under ignored
+  `target/windows-workspace-tiling/third-correction/evidence.jsonl` and owner
+  log `run-01dd53cd55933c0b.log`. Lead inspected the final checked-Tiling menu
+  screenshot; that check proves only mode, not tile admission. Screenshot
+  `shot-menu-tiled.png` SHA-256:
+  `2BF8F34CEA1DA1D978EE804D5423A9A9C1D5E34B5D95A28901AF36990634126A`.
+- Per user fallback, all unaccepted changes in `tiler-windows` source/tests
+  and `tiler-core/tests/session_observation_convergence.rs` were discarded to
+  `90ee5c2`. This also discards the uncommitted source-summary/timing repair.
+  Earlier candidate evidence remains historical only; no candidate source or
+  regression is delivered. Committed native-send source tick/readback evidence
+  remains valid even though its action summary has no source summary.
+- Known limitation of retained implementation `90ee5c2`: first-seen maximized
+  windows may be restored prematurely on a floating workspace because the
+  admission clear precedes the mode gate. Full KDE parity for this case remains
+  incomplete. The rejected hold/release implementations and their stale
+  exceptions are not shipped. Record this as a defect in decisions and R-MAX-03;
+  keep this one change record active, not archived as completed.
+- Stop/restore succeeded, exact newly opened Notepad closed, baseline five
+  Notepad HWNDs preserved, settings-file absence restored, project actors and
+  recovery effects removed, numeric SPI GET arranging 1/pen 35, normal taskbar,
+  original hosting Terminal alive. No Worker remains running. Final Lead
+  independent recheck confirms owner/UI/ledger/pending/request absent, settings
+  absent, both SPI GET calls successful with 1/35, and original Terminal PID
+  18224 creation `01dd512e9194d8b9` unchanged.
+- After discarding the candidates, the retained `90ee5c2` source passes locked
+  four-package native build/test, strict all-target clippy, full rustfmt and diff
+  checks. Only this record, decisions and the outcome matrix are committed in
+  the fallback follow-up; no further source change or live attempt.
+- Exact next action: none in this unit. Any further admission correction needs
+  a separately authorized task; backlog should retain the known limitation.
