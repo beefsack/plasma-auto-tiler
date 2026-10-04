@@ -100,7 +100,7 @@ UTF-8 without BOM for project text. Future CMD/batch files check out as CRLF.
   not align CI. Rustup proxies elsewhere would honor it and might download
   a toolchain. Verify actual command paths before claiming cross-OS parity.
 
-### Nixpkgs Rust pin bump procedure (Linux; Windows unaffected)
+### Nixpkgs Rust pin bump procedure (Linux pin bump; Windows refresh below)
 
 - **P: scope:** the `devenv.yaml` nixpkgs pin drives Linux Rust/KWin/shell
   (`devenv.nix` selects default nixpkgs Rust; Ubuntu CI invokes Cargo
@@ -132,7 +132,8 @@ UTF-8 without BOM for project text. Future CMD/batch files check out as CRLF.
      `scripts/nix-host-kwin-build.sh resolve`, rebuilds the native
      effect host-matched, and activates in a fresh Plasma session.
 - **P: Windows:** unchanged. `mise.toml` tracks rolling stable Rust; the
-  user owns updates (`mise install`).
+  user owns updates (`mise exec -- rustup update stable --no-self-update`).
+  `mise install` can reuse an already-installed stable without refreshing it.
 
 ## Day-one setup, in order
 

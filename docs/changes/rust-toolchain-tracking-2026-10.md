@@ -8,13 +8,15 @@
   preserve the host-derived native development build authority.
 - Document the missing bump procedure, run local Windows gates, and require all
   hosted CI jobs green for the delivered commit. Archive this record at handover.
-- No tool installs, host/session changes, or backlog/principles edits.
+- No local tool installs, host/session changes, or backlog/principles edits.
 
 ## Approach and material finding
 
 1. Investigate upstream releases, pin sources, lockfiles and build consumers.
 2. Confirm candidate availability and native CI versions; document the procedure.
 3. Verify Windows stable gates and hosted CI; fix concrete breakage if any.
+4. Ensure hosted rolling stable refreshes the runner's existing toolchain;
+   verify the actual Rust version in logs before accepting latest-stable gates.
 
 Rust 1.99.0 was released on 2026-10-01. The current devenv pin and checked
 `nixos-unstable`/`master` still package 1.98.1. A freshness-only bump would not
@@ -68,15 +70,24 @@ derivation. Record their separate version baselines and host-check limits.
   or an overlay (separate decision, expands dependency/toolchain scope); bump
   to `c59305ba` now (no Rust/KDE version improvement, unrelated package churn).
 - Added the missing procedure in
-  [Windows development environment](../windows-dev-environment.md#nixpkgs-rust-pin-bump-procedure-linux-windows-unaffected).
+  [Windows development environment](../windows-dev-environment.md#nixpkgs-rust-pin-bump-procedure-linux-pin-bump-windows-refresh-below).
   `devenv update nixpkgs` syntax was checked against
   [CI's v2.4.0 CLI source](https://github.com/cachix/devenv/blob/v2.4.0/devenv/src/cli.rs).
 - Windows local stable remains rustc 1.98.1, MSVC host, default with no override;
   mise is absent from this shell's PATH. The four-package locked build/test
   (1004 tests), all-workspace rustfmt check and strict all-target Clippy passed
   via the installed `cargo +stable`. No local Rust lint breakage found.
-- Hosted CI for this record/procedure commit is pending. No live desktop
-  testing, host realization, or native ABI claim from Windows.
+- Initial hosted [CI](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37190113214)
+  for `4212456` passed all six jobs. Logs showed mise reusing installed stable:
+  Cargo 1.98.1 on Windows/macOS, macOS rustfmt/Clippy from the 1.98.1 compiler.
+  Passing that run did not establish latest-stable coverage.
+- Fixed `.github/workflows/ci.yml` to explicitly run
+  `mise exec -- rustup update stable --no-self-update` before Windows/macOS
+  version checks, and print full rustc identity while retaining host guards.
+  This applies the existing rolling-stable policy; no toolchain-file/overlay
+  or local install. `rustup update --help` confirms the flag. Hosted verification
+  of the refreshed toolchain is pending.
+- No live desktop testing, host realization, or native ABI claim from Windows.
 
 ## Handover and next action
 
@@ -86,7 +97,8 @@ derivation. Record their separate version baselines and host-check limits.
   compare KDE versions, regenerate the devenv lock on Linux, and rerun CI.
   Review the separate flake input when extending latest-stable coverage to
   native CI/standalone packages; do not infer it follows the devenv pin.
-- User-owned: update Windows stable through mise when available; after any
+- User-owned: refresh Windows with
+  `mise exec -- rustup update stable --no-self-update`; after any
   future Linux pin bump, exit and re-enter devenv before using new tools.
   Validate host-native builds on the user's KDE machines with `resolve`,
   host-matched rebuild and fresh Plasma activation. The host state cannot be

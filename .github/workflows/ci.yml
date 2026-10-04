@@ -100,11 +100,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v4
+      - name: Refresh stable Rust
+        run: |
+          $ErrorActionPreference = 'Stop'
+          mise exec -- rustup update stable --no-self-update
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Verify mise-selected tools
         run: |
           $ErrorActionPreference = 'Stop'
           $rustcOut = mise exec -- rustc -vV
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          $rustcOut
           if (($rustcOut | Out-String) -notmatch 'x86_64-pc-windows-msvc') { Write-Error "unexpected rustc host: $rustcOut"; exit 1 }
           foreach ($tool in @('cargo', 'just', 'jq', 'gh', 'rg', 'yq')) {
             mise exec -- $tool --version
@@ -126,9 +132,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v4
+      - name: Refresh stable Rust
+        run: mise exec -- rustup update stable --no-self-update
       - name: Verify mise-selected tools
         run: |
-          mise exec -- rustc -vV | grep 'aarch64-apple-darwin'
+          rustc_out="$(mise exec -- rustc -vV)"
+          echo "$rustc_out"
+          echo "$rustc_out" | grep 'aarch64-apple-darwin'
           for tool in cargo just jq gh rg; do
             mise exec -- "$tool" --version
           done
