@@ -172,9 +172,12 @@ decisions of 2026-09-24 are under
   decisions; integrated rebind and KDE first-run prompt deferred. KDE live
   acceptance pending: [checks](live-shortcut-override-verification.md),
   [record](changes/kde-shortcut-conflicts.md).
-- P2 | Hidden-workspace Alt+Tab option | Investigate whether official Windows
-  APIs can include hidden-workspace windows in Alt+Tab. Future optional behavior,
-  not critical; no design selected.
+- P3 | Hidden-workspace Alt+Tab option | Research complete (`580c766`,
+  `8129b37`; [note](research/windows-port/alt-tab-hidden-workspaces.md)):
+  keep SW_HIDE (no supported reinsertion); public off-screen parking is the
+  only official candidate, with visibility/recovery costs; native desktops
+  and private cloaking need separate API decisions. Activation behaviour
+  is matrix row R-WS-07. Implementation deferred; no design selected.
 - P1 | Cross-platform functional specification | After the Windows tiling
   dogfood slice, define window/workspace behavior and keyboard shortcuts as
   the single source of truth for Linux, Windows and macOS. KDE is the current
