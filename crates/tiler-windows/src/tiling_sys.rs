@@ -3817,6 +3817,15 @@ fn clear_maximize_at_admission(
         if row.fullscreen || !row.maximized {
             continue;
         }
+        // Floating workspaces preserve the native maximum until the first
+        // tiled admission (KDE floating-gate parity). Unassigned rows fail
+        // closed: `ensure_workspace_assignments` owns membership and runs
+        // before this clear on every path.
+        let domain_tiled = state
+            .workspaces
+            .member_loc(&row.key)
+            .and_then(|loc| workspace_mode_known(state, &loc.output, &loc.workspace));
+        let tiled = matches!(domain_tiled, Some(true));
         if !row.facts.is_some_and(admission_clear_eligible) {
             continue;
         }
@@ -3881,6 +3890,7 @@ fn clear_maximize_at_admission(
             row.maximized,
             false,
             state.maximize_admission_attempted.contains(&attempt_key),
+            tiled,
         ) {
             continue;
         }
@@ -4277,17 +4287,27 @@ fn assemble_domain_rows(
     {
         float_tokens.insert(token);
     }
+    // A slotless maximized row on a floating domain keeps no tile slot, so
+    // the deferred admission clear still fires on retile. Unknown domains
+    // seed as today (assembly implies a live domain).
+    let domain_tiled = workspace_mode_known(state, output, workspace).unwrap_or(true);
     for key in &members {
         let born = state.born_fullscreen.contains(key);
         if state.workspaces.is_hidden(key) {
             let token = state.member_tokens.get(key).cloned();
-            let rect = token.as_ref().and_then(|t| {
-                crate::workspace_owner::hidden_snapshot_rect(
-                    float_tokens.contains(t),
-                    state.float_rects.get(t).copied(),
-                    state.member_rects.get(t).copied(),
-                )
-            });
+            let rect = token
+                .as_ref()
+                .and_then(|t| {
+                    crate::workspace_owner::hidden_snapshot_rect(
+                        float_tokens.contains(t),
+                        state.float_rects.get(t).copied(),
+                        state.member_rects.get(t).copied(),
+                    )
+                })
+                // Slotless members carry no snapshot yet: fall back to the
+                // fresh retained frame so the observation stays complete
+                // without seeding a tile slot. No insert here, ever.
+                .or_else(|| retained.iter().find(|r| r.key == *key).and_then(|r| r.rect));
             if let (Some(token), Some(rect)) = (token, rect) {
                 let is_float = float_tokens.contains(&token);
                 let (hints, outcome) = hidden_hint_for(state, key, hint_cx);
@@ -4407,7 +4427,15 @@ fn assemble_domain_rows(
                 None => kept,
             };
             if let Some(rect) = rect {
-                state.member_rects.insert(row.token.clone(), rect);
+                // Slotless maxima on floating domains stay slotless (flag
+                // above); every other row seeds or refreshes as before.
+                if crate::tiling::should_seed_member_slot(
+                    domain_tiled,
+                    row.maximized,
+                    state.member_rects.contains_key(&row.token),
+                ) {
+                    state.member_rects.insert(row.token.clone(), rect);
+                }
                 // Retained tiled overlay keeps its last-known declared hint
                 // so min-bound siblings stay stable; minimized/frameless,
                 // cloaked, float, and born-hold rows stay hintless.
@@ -8680,6 +8708,98 @@ fn admit_born_fullscreen(
     }
 }
 
+/// Slotless maximized admission (R-MAX-03 / KDE floating parity): first-seen
+/// maximized, non-fullscreen retained windows without workspace membership
+/// and without a retained tile slot join the active workspace slotless:
+/// membership plus stable token, identity, and lifetime tag for hide/reveal
+/// and focus, but no `member_rects` tile slot, no Engine exception, and no
+/// hold set. A floating workspace therefore preserves the native frame (the
+/// mode-gated clear skips) while select-away/back still hides and reveals;
+/// the first tiled admission clears once through the existing gate and the
+/// refetched normal observation tiles normally. Same exact-lifetime, scope,
+/// hosted-child, and proof fences as the born-fullscreen admission.
+fn admit_slotless_maximized(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    retained: &[RetainedRow],
+    areas: &[MonitorArea],
+) {
+    let log_path = state.log_path.clone();
+    for row in retained {
+        let is_member = state.workspaces.member_loc(&row.key).is_some()
+            || state.member_tokens.contains_key(&row.key)
+            || state.hidden_claims.keys().any(|k| k.hwnd == row.key.hwnd);
+        if !crate::tiling::should_admit_slotless_maximized(
+            row.maximized,
+            row.fullscreen,
+            is_member,
+            state.member_rects.contains_key(&row.token),
+        ) {
+            continue;
+        }
+        let Some(frame) = row.rect else {
+            continue;
+        };
+        if holdable_key(state, me, row.key.hwnd).is_none_or(|key| key != row.key) {
+            continue;
+        }
+        let live = match HeldProcess::open(row.key.pid).and_then(|held| held.identity()) {
+            Ok(live) => live,
+            Err(_) => continue,
+        };
+        if live.pid != row.key.pid || live.process_creation != row.key.creation {
+            continue;
+        }
+        let stale = crate::workspace_owner::reused_hwnd_stale(
+            &state.member_tokens.keys().cloned().collect::<Vec<_>>(),
+            &state.hidden_claims.keys().cloned().collect(),
+            &row.key,
+        );
+        for dead in stale {
+            drop_member_state(state, &dead);
+        }
+        if state.workspaces.member_loc(&row.key).is_some()
+            || state.member_tokens.contains_key(&row.key)
+        {
+            continue;
+        }
+        let fresh_tag = match crate::product_hide::sys::install_member_tag(row.key.hwnd, me.pid) {
+            Ok(tag) => tag,
+            Err(_) => continue,
+        };
+        let post_ok = crate::product_hide::sys::hold_target_verified(live.pid, &live).is_ok()
+            && pid_current(row.key.hwnd, live.pid)
+            && crate::product_hide::sys::read_member_tag(row.key.hwnd).as_deref()
+                == Some(fresh_tag.as_str());
+        if !post_ok {
+            continue;
+        }
+        let token = row.token.clone();
+        let output = output_for_rect(areas, &frame);
+        state.workspaces.ensure_output(&output);
+        let Some(active) = state.workspaces.active_id(&output) else {
+            continue;
+        };
+        if state
+            .workspaces
+            .assign(row.key.clone(), &output, &active, false)
+        {
+            state.member_tokens.insert(row.key.clone(), token.clone());
+            state.member_identity.insert(row.key.clone(), live);
+            state.member_tags.insert(row.key.clone(), fresh_tag);
+            // Deliberately no `member_rects` seed: slotless until the tiled
+            // admission clear. No Engine exception, no hold set.
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "maximize-admitted-slotless",
+                    "window": token,
+                }),
+            );
+        }
+    }
+}
+
 /// Sticky restart adoption: the next owner consumes a surviving
 /// window-lifetime marker and adopts a normal float on its current workspace
 /// with the live frame preserved. No sticky runtime entry afterwards: the
@@ -9036,6 +9156,9 @@ fn ensure_workspace_assignments(
     // (floating Engine observation, no tile slot); later fullscreen on a
     // slotted or lifetime-known window stays a managed overlay transition.
     admit_born_fullscreen(state, me, retained, areas);
+    // First-seen maximized members join slotless the same way (membership
+    // without a tile slot); the mode-gated clear restores them on tiled.
+    admit_slotless_maximized(state, me, retained, areas);
     adopt_sticky_markers(state, me, observed, retained, areas);
     if state.active_output.is_empty()
         && let Some(first) = state.workspaces.output_keys().into_iter().next()
@@ -16929,5 +17052,316 @@ mod preview_tests {
             }
             other => panic!("sticky drop must plan, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod rmax03_adapter_tests {
+    use super::{
+        HintCx, RetainedRow, TileLoop, assemble_domain_rows, workspace_mode_known, writable_tokens,
+    };
+
+    fn test_state() -> TileLoop {
+        use tiler_core::ids::{GenerationId, OwnerId};
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("rmax03-adapter").expect("generation");
+        let mut state = TileLoop {
+            engine: tiler_core::engine::Engine::new(),
+            owner: owner.clone(),
+            generation: generation.clone(),
+            tokens: crate::tiling::TokenMap::default(),
+            refused: crate::tiling::RefusedTracker::default(),
+            stable: std::collections::HashMap::new(),
+            managed: std::collections::HashSet::new(),
+            active: std::collections::HashSet::new(),
+            gesture_before: std::collections::HashMap::new(),
+            gesture_end_cursor: std::collections::HashMap::new(),
+            gesture_start_key: std::collections::HashMap::new(),
+            gesture_start_tag: std::collections::HashMap::new(),
+            tick: 0,
+            allowlist: None,
+            scope: Vec::new(),
+            scope_hosts: Vec::new(),
+            trace: false,
+            suspended: false,
+            last_summary: None,
+            log_path: std::path::PathBuf::from("test"),
+            audit_path: None,
+            keyboard: crate::snapkey::KeyboardConfig::disabled(),
+            inner_gap: crate::tiling::INNER_GAP,
+            outer_gap: crate::tiling::OUTER_GAP,
+            settings_live: None,
+            settings_dir: None,
+            last_remap: Vec::new(),
+            last_disabled: Vec::new(),
+            cli_overrides: crate::tiling::CliOverrides::default(),
+            snap_dropped: 0,
+            cb_diag_dropped: 0,
+            cb_diag_filtered: 0,
+            mask_sends: 0,
+            mask_send_max_us: 0,
+            snap_origins: std::collections::HashMap::new(),
+            windrag_origins: std::collections::HashMap::new(),
+            gesture_producer: std::collections::HashMap::new(),
+            windrag_start_cursor: std::collections::HashMap::new(),
+            windrag_bound: std::collections::HashMap::new(),
+            windrag_dropped: 0,
+            windrag_origin_logged: None,
+            windrag_stats_logged: (0, 0, 0, 0),
+            snap_advance: None,
+            last_enumerated: 0,
+            workspaces: crate::workspace::ManagedWorkspaces::new(),
+            member_tokens: std::collections::BTreeMap::new(),
+            member_rects: std::collections::HashMap::new(),
+            hidden_claims: std::collections::BTreeMap::new(),
+            member_identity: std::collections::BTreeMap::new(),
+            member_tags: std::collections::BTreeMap::new(),
+            active_output: String::new(),
+            workspace_proof: false,
+            maximize_admission_attempted: std::collections::HashSet::new(),
+            born_fullscreen: std::collections::BTreeSet::new(),
+            seen_nonfullscreen: std::collections::BTreeSet::new(),
+            last_foreground: 0,
+            known_outputs: Vec::new(),
+            last_hwnds: std::collections::HashSet::new(),
+            last_areas: Vec::new(),
+            hint_logged: std::collections::HashMap::new(),
+            restore_wake: None,
+            border: crate::active_border::ActiveBorderOptions::default(),
+            border_overlay: crate::active_border_sys::BorderOverlay::default(),
+            border_last: None,
+            underlay: crate::group_underlay::GroupUnderlayOptions::default(),
+            underlay_overlay: crate::active_border_sys::UnderlayOverlay::default(),
+            underlay_last: None,
+            move_kind: std::collections::HashMap::new(),
+            gesture_start_cursor: std::collections::HashMap::new(),
+            preview_overlay: crate::active_border_sys::PreviewOverlay::default(),
+            preview_last: None,
+            preview_bound: std::collections::HashMap::new(),
+            gesture_preview_start: std::collections::HashMap::new(),
+            preview_dead: std::collections::HashSet::new(),
+            esc_latched: std::collections::HashSet::new(),
+            gesture_esc_seq: std::collections::HashMap::new(),
+            gesture_end_seq: std::collections::HashMap::new(),
+            underlay_chord_last: false,
+            float_topmost_prev: std::collections::BTreeMap::new(),
+            float_rects: std::collections::HashMap::new(),
+            floated: std::collections::BTreeSet::new(),
+            sticky: std::collections::BTreeMap::new(),
+            pending_releases: crate::workspace::PendingReleases::new(),
+            pending_retry_fp: 0,
+        };
+        state.engine.sync_binding(&owner, &generation);
+        state
+    }
+
+    #[test]
+    fn floating_retained_max_stays_slotless_then_tiled_seeds_and_plans() {
+        use tiler_core::boundary::CoreReply;
+        use tiler_core::directional::WindowId;
+        use tiler_core::geometry::Rect;
+        use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
+
+        let mut state = test_state();
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 1920,
+            h: 1040,
+        };
+        let native_max = Rect {
+            x: -8,
+            y: -8,
+            w: 1936,
+            h: 1056,
+        };
+        let restored = Rect {
+            x: 120,
+            y: 120,
+            w: 800,
+            h: 600,
+        };
+        let output = "mon-1".to_owned();
+        state.workspaces.ensure_output(&output);
+        let active = state.workspaces.active_id(&output).expect("active");
+        assert!(state.workspaces.set_tiled(&output, &active, false));
+        assert_eq!(workspace_mode_known(&state, &output, &active), Some(false));
+
+        // Slotless admission outcome without native effects: production
+        // `admit_slotless_maximized` membership plus stable token, deliberately
+        // no `member_rects` seed, no Engine exception, no hold.
+        let key = crate::workspace::WindowKey {
+            hwnd: 101,
+            pid: 7,
+            creation: "creation-max".to_owned(),
+        };
+        assert!(
+            state
+                .workspaces
+                .assign(key.clone(), &output, &active, false)
+        );
+        state.member_tokens.insert(key.clone(), "w8".to_owned());
+        assert!(!state.member_rects.contains_key("w8"));
+
+        // Floating release assembly over the retained maximum: the actual
+        // production row path, not the pure `should_seed_member_slot`
+        // predicate. Mutation oracle: removing the `should_seed` guard (always
+        // seeding) inserts `w8` here and fails the assertion below.
+        let retained = vec![RetainedRow {
+            key: key.clone(),
+            token: "w8".to_owned(),
+            rect: Some(native_max),
+            maximized: true,
+            fullscreen: false,
+            facts: Some(crate::tiling::WindowFacts {
+                visible: true,
+                minimized: false,
+                maximized: true,
+                cloaked: false,
+                elevated: false,
+                shell: false,
+                tool_window: false,
+                owned: false,
+                captionless_fullscreen: false,
+                no_activate: false,
+                dialog: false,
+            }),
+        }];
+        let observed: Vec<super::ObservedWindow> = Vec::new();
+        let mut hint_cx = HintCx::new();
+        let rows = assemble_domain_rows(
+            &mut state,
+            &output,
+            &active,
+            &observed,
+            &retained,
+            "release",
+            "rmax-03",
+            &mut hint_cx,
+        )
+        .expect("floating rows assemble");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].token, "w8");
+        assert!(
+            !state.member_rects.contains_key("w8"),
+            "floating retained maximum must stay slotless so the tiled admission clear still fires"
+        );
+        let (_, domain_key) = crate::workspace_owner::workspace_domain(
+            &output,
+            &active,
+            bounds,
+            crate::tiling::INNER_GAP,
+        );
+        assert!(state.engine.session(&domain_key).is_none());
+        assert!(writable_tokens(&state, &output, &active, &observed).is_empty());
+
+        // Toggle tiled, then refetch the restored frame into tiled assembly:
+        // member-path seed plus an actual fresh Engine tile with an eligible
+        // production writable token.
+        assert!(state.workspaces.set_tiled(&output, &active, true));
+        assert_eq!(workspace_mode_known(&state, &output, &active), Some(true));
+        let refetched = vec![super::ObservedWindow {
+            hwnd: 101,
+            token: "w8".to_owned(),
+            outer: restored,
+            visible: restored,
+            insets: crate::tiling::FrameInsets {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
+            identity: crate::tiling::ObservedTarget {
+                hwnd: 101,
+                pid: 7,
+                process_creation: "creation-max".to_owned(),
+                exe_path: "C:\\test\\app.exe".to_owned(),
+                user_sid: "S-1".to_owned(),
+                session_id: 1,
+                tag: String::new(),
+            },
+            facts: crate::tiling::WindowFacts {
+                visible: true,
+                minimized: false,
+                maximized: false,
+                cloaked: false,
+                elevated: false,
+                shell: false,
+                tool_window: false,
+                owned: false,
+                captionless_fullscreen: false,
+                no_activate: false,
+                dialog: false,
+            },
+        }];
+        let mut hint_cx = HintCx::new();
+        let rows = assemble_domain_rows(
+            &mut state,
+            &output,
+            &active,
+            &refetched,
+            &[],
+            "reconcile",
+            "rmax-03",
+            &mut hint_cx,
+        )
+        .expect("tiled rows assemble");
+        assert_eq!(rows.len(), 1);
+        assert!(
+            state.member_rects.contains_key("w8"),
+            "tiled refetch must seed the tile slot"
+        );
+        let (domain, domain_key) = crate::workspace_owner::workspace_domain(
+            &output,
+            &active,
+            bounds,
+            crate::tiling::INNER_GAP,
+        );
+        let windows: Vec<(
+            WindowId,
+            Rect,
+            tiler_core::size_hints::WindowSizeHints,
+            bool,
+        )> = rows
+            .iter()
+            .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
+            .collect();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("rmax03-adapter").expect("generation");
+        let fp = crate::tiling::fingerprint(
+            &rows
+                .iter()
+                .map(|r| (r.token.clone(), r.rect))
+                .collect::<Vec<_>>(),
+        );
+        let event = crate::tiling::build_reconcile_event_for_floating(
+            &owner,
+            &generation,
+            &CorrelationId::parse("rmax-03").expect("correlation"),
+            0,
+            fp,
+            &domain,
+            &domain_key,
+            crate::tiling::OUTER_GAP,
+            &windows,
+            None,
+        );
+        let reply = state.engine.handle(&event);
+        let writes = crate::workspace_owner::planned_writes(&reply).expect("fresh tile plan");
+        let tile = writes
+            .iter()
+            .find(|w| w.window.0 == "w8")
+            .expect("tile contains the restored token");
+        assert_ne!(tile.rect, native_max);
+        assert_ne!(tile.rect, restored);
+        assert!(
+            matches!(reply, CoreReply::Tiled(_) | CoreReply::Projection(_)),
+            "unexpected reply: {reply:?}"
+        );
+        assert_eq!(
+            writable_tokens(&state, &output, &active, &refetched),
+            std::collections::HashSet::from(["w8".to_owned()]),
+            "restored member takes the production tiled write"
+        );
     }
 }

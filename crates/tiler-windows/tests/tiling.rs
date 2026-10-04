@@ -293,26 +293,34 @@ fn classify_orders_fullscreen_before_maximized() {
 
 #[test]
 fn maximize_admission_clears_once_never_fullscreen() {
-    // First non-fullscreen admission without a retained tiled slot restores
-    // once; fullscreen, already-slotted, and already-attempted members never
-    // clear, so there is no automatic retry loop.
+    // First non-fullscreen admission on a tiled workspace without a retained
+    // tiled slot restores once; fullscreen, already-slotted, and
+    // already-attempted members never clear, so there is no automatic retry
+    // loop. Floating workspaces never clear: the maximum is preserved until
+    // the first tiled admission.
     assert!(should_clear_maximize_at_admission(
-        false, true, false, false
+        false, true, false, false, true
     ));
     assert!(!should_clear_maximize_at_admission(
-        true, true, false, false
+        false, true, false, false, false
     ));
     assert!(!should_clear_maximize_at_admission(
-        false, true, true, false
+        true, true, false, false, true
     ));
     assert!(!should_clear_maximize_at_admission(
-        false, true, false, true
+        false, true, true, false, true
     ));
     assert!(!should_clear_maximize_at_admission(
-        false, false, false, false
+        false, true, false, true, true
     ));
     assert!(!should_clear_maximize_at_admission(
-        true, false, false, false
+        false, false, false, false, true
+    ));
+    assert!(!should_clear_maximize_at_admission(
+        true, false, false, false, true
+    ));
+    assert!(!should_clear_maximize_at_admission(
+        false, true, true, true, false
     ));
 }
 
@@ -2391,5 +2399,227 @@ fn restore_wake_survives_pending_dispatch_until_reconcile() {
     assert_eq!(
         restore_wake_step(false, false, false, true, true),
         (false, false)
+    );
+}
+
+#[test]
+fn r_max_03_floating_first_seen_max_defers_clear_then_tiles_on_retile() {
+    // R-MAX-03 parity with KDE `plan-adapter.ts` floating admission: a
+    // first-seen maximized window on a floating workspace keeps workspace
+    // membership (hide/reveal) with no retained tile slot and no native
+    // clear; the first tiled admission restores once, refetches normal state,
+    // and receives an actual fresh Engine tile with an eligible write.
+    // Previously slotted overlays never re-clear; intentional floats ride on
+    // untouched as Engine exceptions with no tile geometry.
+    use std::collections::{BTreeMap, BTreeSet, HashSet};
+    use tiler_core::boundary::CoreReply;
+    use tiler_core::directional::WindowId;
+    use tiler_core::engine::Engine;
+    use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
+    use tiler_windows::tiling::{
+        INNER_GAP, OUTER_GAP, build_reconcile_event_for_floating, fingerprint,
+        should_admit_slotless_maximized, should_clear_maximize_at_admission,
+    };
+    use tiler_windows::workspace::{ManagedWorkspaces, WindowKey};
+    use tiler_windows::workspace_owner::{
+        MemberView, domain_rows, planned_writes, workspace_domain, writable_subset,
+    };
+
+    let owner = OwnerId::parse("tiler-windows").expect("valid");
+    let generation = GenerationId::parse("abcdef0123456789").expect("valid");
+    let bounds = rect(0, 0, 1920, 1040);
+    let native_max = rect(-8, -8, 1936, 1056);
+    let restored = rect(120, 120, 800, 600);
+
+    // Floating workspace with the first-seen maximized member admitted
+    // slotless: workspace membership without a retained tile slot.
+    let mut spaces = ManagedWorkspaces::new();
+    spaces.ensure_output("mon-1");
+    let active = spaces.active_id("mon-1").expect("active");
+    assert!(spaces.set_tiled("mon-1", &active, false));
+    assert!(!spaces.is_tiled("mon-1", &active));
+    let key = WindowKey {
+        hwnd: 101,
+        pid: 7,
+        creation: "creation-max".to_owned(),
+    };
+    assert!(spaces.assign(key.clone(), "mon-1", &active, false));
+    assert!(
+        spaces.member_loc(&key).is_some(),
+        "floating maximum keeps hide/reveal membership"
+    );
+
+    // No native clear while the domain reads floating (KDE 4905-4909 gate).
+    // The slotless-seed guard itself is covered through the actual production
+    // row assembly in `tiling_sys::rmax03_adapter_tests`, not repeated here.
+    assert!(should_admit_slotless_maximized(true, false, false, false));
+    assert!(!should_admit_slotless_maximized(true, false, true, false));
+    assert!(!should_admit_slotless_maximized(true, false, false, true));
+    assert!(!should_admit_slotless_maximized(false, false, false, false));
+    assert!(!should_admit_slotless_maximized(true, true, false, false));
+    assert!(
+        !should_clear_maximize_at_admission(false, true, false, false, false),
+        "floating first-seen maximum must keep its native frame"
+    );
+
+    // No tile while floating: production never reconciles a floating domain,
+    // so no Engine session exists and nothing is writable.
+    let mut engine = Engine::new();
+    engine.sync_binding(&owner, &generation);
+    let (domain, domain_key) = workspace_domain("mon-1", &active, bounds, INNER_GAP);
+    assert!(engine.session(&domain_key).is_none());
+    let members: BTreeSet<WindowKey> = BTreeSet::from([key.clone()]);
+    let token_of: BTreeMap<WindowKey, String> = BTreeMap::from([(key.clone(), "w8".to_owned())]);
+    assert!(
+        writable_subset(&members, |_| false, &token_of, &HashSet::new()).is_empty(),
+        "slotless floating maximum takes no tiled write"
+    );
+
+    // Toggle tiled: the unslotted maximum restores exactly once, with no
+    // automatic retry.
+    assert!(spaces.set_tiled("mon-1", &active, true));
+    assert!(should_clear_maximize_at_admission(
+        false, true, false, false, true
+    ));
+    assert!(
+        !should_clear_maximize_at_admission(false, true, false, true, true),
+        "one-shot clear never retries"
+    );
+
+    // Refetched restored observation converges through the real Engine into
+    // an actual fresh tile with an eligible write (not inventory presence).
+    let views = vec![MemberView {
+        key: key.clone(),
+        token: "w8".to_owned(),
+        rect: restored,
+        hints: tiler_core::size_hints::WindowSizeHints::none(),
+        floating: false,
+    }];
+    let rows = domain_rows(&members, &views).expect("complete rows");
+    assert_eq!(rows.len(), 1);
+    let windows = vec![(
+        WindowId("w8".to_owned()),
+        restored,
+        tiler_core::size_hints::WindowSizeHints::none(),
+        false,
+    )];
+    let fp = fingerprint(&[("w8".to_owned(), restored)]);
+    let event = build_reconcile_event_for_floating(
+        &owner,
+        &generation,
+        &CorrelationId::parse("rmax-1").expect("valid"),
+        0,
+        fp,
+        &domain,
+        &domain_key,
+        OUTER_GAP,
+        &windows,
+        None,
+    );
+    let reply = engine.handle(&event);
+    let writes = planned_writes(&reply).expect("fresh tile plan carries writes");
+    let tile = writes
+        .iter()
+        .find(|w| w.window.0 == "w8")
+        .expect("actual fresh tile contains the restored token");
+    assert_ne!(tile.rect, native_max, "tile is layout, not the max frame");
+    assert_ne!(
+        tile.rect, restored,
+        "tile is planned, not the observed frame"
+    );
+    let base = match &reply {
+        CoreReply::Tiled(plan) => plan.base_revision,
+        CoreReply::Projection(plan) => plan.base_revision,
+        other => panic!("unexpected reply: {other:?}"),
+    };
+    let fresh: HashSet<String> = HashSet::from(["w8".to_owned()]);
+    assert_eq!(
+        writable_subset(&members, |_| false, &token_of, &fresh),
+        HashSet::from(["w8".to_owned()]),
+        "restored member is eligible for the tiled write"
+    );
+
+    // Previously slotted native overlays never re-clear across the mode flip.
+    assert!(!should_clear_maximize_at_admission(
+        false, true, true, false, true
+    ));
+    assert!(!should_clear_maximize_at_admission(
+        false, true, true, true, true
+    ));
+    assert!(!should_clear_maximize_at_admission(
+        true, true, false, false, true
+    ));
+
+    // Intentional float preserved alongside: it rides the same Engine as an
+    // exception with no tile geometry while the restored member keeps its.
+    let float_key = WindowKey {
+        hwnd: 102,
+        pid: 8,
+        creation: "creation-float".to_owned(),
+    };
+    let both: BTreeSet<WindowKey> = BTreeSet::from([key.clone(), float_key.clone()]);
+    let float_views = vec![
+        MemberView {
+            key: key.clone(),
+            token: "w8".to_owned(),
+            rect: restored,
+            hints: tiler_core::size_hints::WindowSizeHints::none(),
+            floating: false,
+        },
+        MemberView {
+            key: float_key.clone(),
+            token: "w9".to_owned(),
+            rect: rect(400, 400, 640, 480),
+            hints: tiler_core::size_hints::WindowSizeHints::none(),
+            floating: true,
+        },
+    ];
+    let float_rows = domain_rows(&both, &float_views).expect("complete float rows");
+    assert_eq!(float_rows.len(), 2);
+    let float_windows = vec![
+        (
+            WindowId("w8".to_owned()),
+            restored,
+            tiler_core::size_hints::WindowSizeHints::none(),
+            false,
+        ),
+        (
+            WindowId("w9".to_owned()),
+            rect(400, 400, 640, 480),
+            tiler_core::size_hints::WindowSizeHints::none(),
+            true,
+        ),
+    ];
+    let float_fp = fingerprint(&[
+        ("w8".to_owned(), restored),
+        ("w9".to_owned(), rect(400, 400, 640, 480)),
+    ]);
+    let float_event = build_reconcile_event_for_floating(
+        &owner,
+        &generation,
+        &CorrelationId::parse("rmax-2").expect("valid"),
+        base,
+        float_fp,
+        &domain,
+        &domain_key,
+        OUTER_GAP,
+        &float_windows,
+        None,
+    );
+    let float_reply = engine.handle(&float_event);
+    let float_writes = planned_writes(&float_reply).expect("shared plan carries writes");
+    assert!(
+        float_writes.iter().any(|w| w.window.0 == "w8"),
+        "tiled member keeps its plan entry"
+    );
+    assert!(
+        float_writes.iter().all(|w| w.window.0 != "w9"),
+        "intentional float takes no tile geometry"
+    );
+    assert!(
+        engine
+            .session(&domain_key)
+            .is_some_and(|s| s.is_exception(&WindowId("w9".to_owned()))),
+        "intentional float exception survives the shared plan"
     );
 }

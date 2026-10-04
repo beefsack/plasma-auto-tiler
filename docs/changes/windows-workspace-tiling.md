@@ -275,3 +275,79 @@
   the fallback follow-up; no further source change or live attempt.
 - Exact next action: none in this unit. Any further admission correction needs
   a separately authorized task; backlog should retain the known limitation.
+
+## Bounded R-MAX-03 follow-up
+
+- User authorizes fresh investigation, deterministic failing offline reproduction,
+  then at most two semantic candidates with live Notepad/Paint plan/write/native
+  readback and screenshots. Native gates, independent live-boundary review,
+  commit/push and green hosted CI are required. Discard unaccepted changes if
+  both candidates fail; preserve findings and keep this record active.
+- Candidate 1 follows KDE's separation of workspace membership from Engine
+  admission: first-seen maxima join slotless without synthetic floating state;
+  floating skips clear and slot seeding, first tiled admission clears once and
+  refetches ordinary state. Prior exception-release approaches are not reused.
+- Offline reproduction before production edits failed with `floating first-seen
+  maximum must keep its native frame` (`cargo test --locked -p tiler-windows
+  --test tiling r_max_03`). Candidate Windows source/test changes pass native
+  tests, strict clippy and format checks. Live effect acceptance remains pending.
+
+## R-MAX-03 accepted correction
+
+- Candidate 1 accepted after independent review and Lead inspection. Windows
+  classified first-seen maxima as retained, outside normal membership admission;
+  its clear ran before the workspace-mode gate. Temporary Engine floats in the
+  rejected candidates conflated native maximum state with intentional float.
+  The correction separates slotless membership from Engine admission: preserve
+  floating maximum, seed no tile slot during floating release assembly, clear
+  once on tiled admission, then refetch and tile normally. Exact-lifetime/scope
+  fences remain; intentional float/sticky/fullscreen lanes retain their rules.
+- The regression was strengthened after review to run actual Windows
+  `assemble_domain_rows` on floating retained and tiled refetched observations,
+  the real Engine and production writable selection. Removing the slot-seed
+  guard makes it fail. Portable admission/Engine tests cover one-shot clear,
+  slotted skip and intentional float. No shared core/KDE source changes.
+- Lead independently ran locked build/test and strict all-target clippy for all
+  four Windows-built packages, full rustfmt and diff checks after the final
+  source/test edit: all pass. Hosted CI pending for the accepted commit.
+- Live 2026-10-04, Windows 11 build 26200, medium/session 1, DISPLAY1
+  2560x1440/work 2560x1380, DPI120. Artifact SHA-256
+  `F29F89325468826E043841823BC797E798FBCB50FD4E3FC8F3AB8471C58821B5`,
+  source `84c34b6` plus accepted Windows diff. Explorer-broker owners scoped
+  Notepad/Paint; hosting Terminal excluded. Both new maximized actors preserve
+  their floating frames with zero clear/write and hide/reveal maximized intact.
+- Notepad owner `01dd53e92e1d1445`: token `w7`, exactly one clear, correlation
+  `tick-26` has plan/native write/target-entry matched readback all
+  `[8,8,1268,1364]`, agreeing with fresh DWM frame `(8,8,1276,1372)`.
+  Previously slotted remax stays maximized through floating/tiled flips with no
+  re-clear. Native restore returns to that tile; subsequent ticks 70/71 have
+  plan and matched readback with zero writes because geometry already agrees.
+  Accepted as a no-op restore, not a fresh-admission write claim.
+- Paint owner `01dd53ec4fd098a8`: token `w5`, exactly one clear, `tick-18`
+  plan/native write/matched target readback all `[8,8,1268,1364]`, fresh DWM
+  agreement `(8,8,1276,1372)`, stable at tick 33. Lead inspected both tiled-frame
+  screenshots. Accepted local evidence:
+  `target/windows-workspace-tiling/rmax03-final/` (Notepad) and
+  `target/windows-workspace-tiling/rmax03-paint-native/` (Paint).
+- Screenshot SHA-256:
+  - Notepad `shot-np-tiled-frame.png`:
+    `850428CFFCE154FB57AAAF2DF80478B7FF16EB3C6866BD9DEBC33BCA9C0A0A10`.
+  - Paint `shot-paint-tiled-frame.png`:
+    `B9F2603C7915DC906EE800854EA4A0E6E492AC09A408C1DE5C9571ADE00ACA1A`.
+- Fixture findings: post-toggle samples can already be tiled; compare DWM
+  extended-frame coordinates, not invisible native borders. Anchor initial
+  admission proof on the same token/tick/correlation for plan/write/matched
+  readback. UIA icon/menu discovery failed pre-effect for Paint; its accepted
+  proof opens the exact owner's normal tray menu via synthetic tray callback,
+  then official `GetMenuBarInfo`/`GetMenuStringW`/`GetMenuItemRect` identify the
+  enabled checkbox and exact click rectangle. No production fixture path added.
+  Harness-only parsing/marshalling failures were repaired; one semantic candidate,
+  zero failed product approaches in this follow-up. Earlier three rejected
+  approaches remain historical evidence above.
+- Every owner stopped/restored, all new extras closed by exact identity. Lead
+  read-only recheck confirms baseline five Notepads/one Paint visible, settings
+  original absence restored, no owner/helper/UI/overlay/ledger/pending/request,
+  successful numeric SPI GET arranging 1/pen 35, normal taskbar, original hosting
+  Terminal alive with unchanged creation. No Worker remains running.
+- No new provisional product decision. Physical feel, rapid toggles and other
+  DPI/output setups remain user-owned. Archive and promote after hosted CI green.

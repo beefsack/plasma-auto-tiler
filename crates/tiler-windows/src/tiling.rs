@@ -544,15 +544,42 @@ pub const fn restore_wake_step(
 /// a maximized window without a retained tiled slot restores the native
 /// maximize exactly once with no automatic retry. Fullscreen never clears,
 /// already-slotted members never re-clear, and an attempted identity never
-/// retries.
+/// retries. Floating workspaces never clear (KDE floating-gate parity): the
+/// maximum is preserved until the first tiled admission.
 #[must_use]
 pub const fn should_clear_maximize_at_admission(
     fullscreen: bool,
     maximized: bool,
     known_slot: bool,
     attempted: bool,
+    tiled: bool,
 ) -> bool {
-    !fullscreen && maximized && !known_slot && !attempted
+    tiled && !fullscreen && maximized && !known_slot && !attempted
+}
+
+/// Slotless maximized admission rule (R-MAX-03): a first-seen maximized,
+/// non-fullscreen retained window without workspace membership and without a
+/// retained tile slot joins its workspace slotless (membership for
+/// hide/reveal and focus, no tile slot, no Engine exception), so a floating
+/// workspace preserves its native frame until the first tiled admission
+/// clears it once.
+#[must_use]
+pub const fn should_admit_slotless_maximized(
+    maximized: bool,
+    fullscreen: bool,
+    is_member: bool,
+    has_slot: bool,
+) -> bool {
+    maximized && !fullscreen && !is_member && !has_slot
+}
+
+/// Retained-slot seed rule for row assembly: a slotless maximized row on a
+/// floating domain keeps no tile slot, so the deferred admission clear still
+/// sees it slotless on retile. Every other combination seeds or refreshes
+/// the last-known rectangle as before.
+#[must_use]
+pub const fn should_seed_member_slot(domain_tiled: bool, maximized: bool, has_slot: bool) -> bool {
+    domain_tiled || !maximized || has_slot
 }
 
 /// Flag-stability gate before a workspace-send membership transfer (KDE
