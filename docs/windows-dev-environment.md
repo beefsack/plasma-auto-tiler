@@ -100,6 +100,40 @@ UTF-8 without BOM for project text. Future CMD/batch files check out as CRLF.
   not align CI. Rustup proxies elsewhere would honor it and might download
   a toolchain. Verify actual command paths before claiming cross-OS parity.
 
+### Nixpkgs Rust pin bump procedure (Linux; Windows unaffected)
+
+- **P: scope:** the `devenv.yaml` nixpkgs pin drives Linux Rust/KWin/shell
+  (`devenv.nix` selects default nixpkgs Rust; Ubuntu CI invokes Cargo
+  inside devenv). The `flake.nix` pin is separately reviewed scope: it
+  supports native CI (`nix build .#checks.x86_64-linux.native-effect-tests`)
+  and standalone delivery; the KWin CI job runs script tests in devenv,
+  not a native effect
+  compile. `scripts/nix-host-kwin-build.sh` always resolves the exact
+  installed host KWin derivation, so a devenv bump never changes host
+  KWin build authority. Never edit a flake input without regenerating
+  its lock.
+- **P: procedure (on Linux):**
+  1. Compare the candidate `nixos-unstable` revision first: its `1_xx.nix`
+     `rustcVersion` must equal latest stable (confirm the default `rust =`
+     selection in `pkgs/top-level/all-packages.nix`), plus the KWin/Qt/KF
+     versions (`pkgs/kde/generated/sources/{plasma,frameworks}.json`,
+     `pkgs/development/libraries/qt-6/srcs.nix`).
+     If latest stable is not yet on `nixos-unstable`, defer and retry a
+     later revision. Overlay or `staging` routes need a separate decision.
+  2. Edit the `devenv.yaml` nixpkgs `url` rev, then run
+     `devenv update nixpkgs` (pinned CI CLI `github:cachix/devenv/v2.4.0`).
+     Inspect the rev/hash/`devenv.lock` diff; never hand-edit hashes.
+  3. Restart the Linux devenv session, then verify the selected version with
+     `devenv shell --impure -- rustc -vV` before running gates.
+  4. Run the Linux gates per `.github/workflows/ci.yml` (kwin, rust,
+     shell, native jobs) plus the local Windows gates via the approved
+     tool (`mise exec -- cargo ...`).
+  5. Only when validating/activating a native build: host user runs
+     `scripts/nix-host-kwin-build.sh resolve`, rebuilds the native
+     effect host-matched, and activates in a fresh Plasma session.
+- **P: Windows:** unchanged. `mise.toml` tracks rolling stable Rust; the
+  user owns updates (`mise install`).
+
 ## Day-one setup, in order
 
 Commands are for the **user on the PC**. This list is the Windows dependency
