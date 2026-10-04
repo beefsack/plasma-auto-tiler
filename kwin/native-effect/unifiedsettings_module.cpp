@@ -11,7 +11,10 @@
 #include <QDBusInterface>
 #include <QDBusMessage>
 #include <QLabel>
+#include <QListWidget>
+#include <QListWidgetItem>
 #include <QMessageBox>
+#include <QMetaObject>
 #include <QPushButton>
 #include <QSpinBox>
 
@@ -117,6 +120,18 @@ UnifiedSettingsModule::UnifiedSettingsModule(QObject *parent, const KPluginMetaD
     connect(m_ui.shortcutRevertButton, &QPushButton::clicked, this, &UnifiedSettingsModule::requestShortcutRevert);
     connect(m_ui.shortcutForceApplyButton, &QPushButton::clicked, this, &UnifiedSettingsModule::requestShortcutForceApply);
     connect(m_ui.shortcutForceCancelButton, &QPushButton::clicked, this, &UnifiedSettingsModule::requestShortcutForceCancel);
+    if (m_ui.shortcutAuthenticButton != nullptr) {
+        connect(m_ui.shortcutAuthenticButton, &QPushButton::clicked, this,
+                &UnifiedSettingsModule::requestShortcutPresetAuthentic);
+    }
+    if (m_ui.shortcutCompatibleButton != nullptr) {
+        connect(m_ui.shortcutCompatibleButton, &QPushButton::clicked, this,
+                &UnifiedSettingsModule::requestShortcutPresetCompatible);
+    }
+    if (m_ui.shortcutConflictList != nullptr) {
+        connect(m_ui.shortcutConflictList, &QListWidget::itemChanged, this,
+                &UnifiedSettingsModule::onShortcutDraftChanged);
+    }
     refreshShortcutState();
 
     if (m_ui.windowTilingFixButton != nullptr) {
@@ -235,6 +250,24 @@ void UnifiedSettingsModule::setShortcutStores(ShortcutStore *store, ClearedActio
     }
     m_shortcutStore = store;
     m_clearedStore = cleared;
+    // Reopening stages live-disabled rows: present own assignments that are
+    // empty restage Disable. Missing rows are not Disable; absence and read
+    // failure stage Authentic. Refresh never clobbers the staged draft.
+    m_shortcutDisabledDraft.clear();
+    if (m_shortcutStore != nullptr) {
+        QList<ShortcutTuple> tuples;
+        QString readError;
+        if (m_shortcutStore->readAll(&tuples, &readError)) {
+            for (const ShortcutCatalogEntry &entry : shortcutProjectCatalog()) {
+                for (const ShortcutTuple &tuple : tuples) {
+                    if (tuple.component == entry.component && tuple.action == entry.action && tuple.active.isEmpty()) {
+                        m_shortcutDisabledDraft.insert(shortcutCatalogId(entry.component, entry.action));
+                        break;
+                    }
+                }
+            }
+        }
+    }
     clearForcePreview();
     refreshShortcutState();
 }
@@ -269,6 +302,111 @@ bool UnifiedSettingsModule::isShortcutForceCancelVisible() const
     return m_ui.shortcutForceCancelButton != nullptr && !m_ui.shortcutForceCancelButton->isHidden();
 }
 
+QStringList UnifiedSettingsModule::shortcutDisabledIds() const
+{
+    QStringList out(m_shortcutDisabledDraft.begin(), m_shortcutDisabledDraft.end());
+    out.sort();
+    return out;
+}
+
+void UnifiedSettingsModule::requestShortcutPresetAuthentic()
+{
+    // Authentic is the default: reset the staged draft to Keep and drop any
+    // pending preview bound to the previous draft. No store writes.
+    m_shortcutDisabledDraft.clear();
+    ShortcutDiag::log(QtDebugMsg, "preset", "authentic", "staged", QStringLiteral("disabled=0"));
+    clearForcePreview();
+    refreshShortcutState();
+}
+
+void UnifiedSettingsModule::requestShortcutPresetCompatible()
+{
+    // Compatible explicitly resets the draft, then disables the
+    // known-conflicting canonical rows plus rows whose canonical chord
+    // currently collides with a live holder or a live foreign wire default
+    // (actives cleared but defaults still claim the chord). Deterministic
+    // catalog order; the rest stay Keep. Never writes the daemon and never
+    // invents replacement chords. Any failed read/query aborts honestly with
+    // the previous draft kept.
+    if (m_shortcutStore == nullptr || m_clearedStore == nullptr) {
+        m_shortcutError = QStringLiteral("reconciler is not configured");
+        updateShortcutPresentation();
+        return;
+    }
+    const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
+    QList<ShortcutTuple> tuples;
+    QString readError;
+    if (!m_shortcutStore->readAll(&tuples, &readError)) {
+        m_shortcutError = QStringLiteral("Compatible preset unavailable: %1")
+                              .arg(readError.isEmpty() ? QStringLiteral("tuple query failed") : readError);
+        ShortcutDiag::log(QtWarningMsg, "preset", "compatible", "unavailable", m_shortcutError);
+        updateShortcutPresentation();
+        return;
+    }
+    QSet<QString> colliding;
+    for (const ShortcutCatalogEntry &entry : catalog) {
+        QList<ShortcutKeyHolder> holders;
+        QString queryError;
+        if (!m_shortcutStore->shortcutsByKey(entry.canonicalKey, &holders, &queryError)) {
+            m_shortcutError = QStringLiteral("Compatible preset unavailable: %1")
+                                  .arg(queryError.isEmpty() ? QStringLiteral("holder query failed") : queryError);
+            ShortcutDiag::log(QtWarningMsg, "preset", "compatible", "unavailable", m_shortcutError);
+            updateShortcutPresentation();
+            return;
+        }
+        for (const ShortcutKeyHolder &holder : holders) {
+            if (!ShortcutReconciler::isHolderExempt(holder.component, holder.action, entry.canonicalKey)) {
+                colliding.insert(shortcutCatalogId(entry.component, entry.action));
+                break;
+            }
+        }
+        if (!colliding.contains(shortcutCatalogId(entry.component, entry.action))
+            && !ShortcutReconciler::foreignDefaultIdsForKey(entry.canonicalKey, tuples).isEmpty()) {
+            colliding.insert(shortcutCatalogId(entry.component, entry.action));
+        }
+    }
+    const QStringList disabled =
+        presetCompatibleDisabledIds(catalog, shortcutKnownConflictIds(), colliding);
+    m_shortcutDisabledDraft = QSet<QString>(disabled.begin(), disabled.end());
+    ShortcutDiag::log(QtDebugMsg, "preset", "compatible", "staged",
+                      QStringLiteral("disabled=%1").arg(disabled.size()));
+    clearForcePreview();
+    refreshShortcutState();
+}
+
+void UnifiedSettingsModule::onShortcutDraftChanged()
+{
+    if (m_ui.shortcutConflictList == nullptr) {
+        return;
+    }
+    QSet<QString> draft;
+    for (int i = 0; i < m_ui.shortcutConflictList->count(); ++i) {
+        QListWidgetItem *item = m_ui.shortcutConflictList->item(i);
+        if (item == nullptr) {
+            continue;
+        }
+        if (item->checkState() != Qt::Checked) {
+            const QString id = item->data(Qt::UserRole).toString();
+            if (!id.isEmpty()) {
+                draft.insert(id);
+            }
+        }
+    }
+    if (draft == m_shortcutDisabledDraft) {
+        return;
+    }
+    // Any draft edit cancels the pending preview: the preview binds its
+    // exact draft and a changed draft must re-preview before forcing. The
+    // state refresh is queued: rebuilding the list here would delete the
+    // edited item while its change signal is still on the stack.
+    m_shortcutDisabledDraft = draft;
+    ShortcutDiag::log(QtDebugMsg, "preset", "draft", "edited",
+                      QStringLiteral("disabled=%1").arg(draft.size()));
+    clearForcePreview();
+    updateShortcutPresentation();
+    QMetaObject::invokeMethod(this, &UnifiedSettingsModule::refreshShortcutState, Qt::QueuedConnection);
+}
+
 void UnifiedSettingsModule::requestShortcutApply()
 {
     runShortcutApply("apply");
@@ -293,6 +431,21 @@ void UnifiedSettingsModule::requestShortcutForceApply()
     if (!m_forcePreviewValid || !m_forcePreview.forceable) {
         return;
     }
+    // The preview binds its exact staged draft; a draft edit since cancels
+    // the preview, and this residual check fails closed as stale.
+    {
+        QStringList draftNow(m_shortcutDisabledDraft.begin(), m_shortcutDisabledDraft.end());
+        draftNow.sort();
+        if (draftNow != m_forcePreview.disabledIds) {
+            m_shortcutError =
+                QStringLiteral("confirmed force image is stale; re-preview before forcing");
+            ShortcutDiag::log(QtWarningMsg, "force-apply", "result", "failed",
+                              QStringLiteral("reason=stale-draft writes=0"));
+            clearForcePreview();
+            refreshShortcutState();
+            return;
+        }
+    }
     if (!confirmShortcutAction(QStringLiteral("Force Apply Shortcuts"), m_forcePreviewText)) {
         return;
     }
@@ -304,10 +457,10 @@ void UnifiedSettingsModule::requestShortcutForceApply()
         return;
     }
     ShortcutReconciler reconciler(m_shortcutStore, m_clearedStore);
-    // applyForced revalidates the confirmed snapshot against fresh live
-    // state before any write (including cleared-list writes); stale
-    // snapshots fail with zero writes.
-    const ShortcutForceApplyResult result = reconciler.applyForced(m_forcePreview);
+    // applyForced revalidates the confirmed snapshot and the staged draft
+    // against fresh live state before any write (including cleared-list
+    // writes); stale snapshots fail with zero writes.
+    const ShortcutForceApplyResult result = reconciler.applyForcedSelected(m_forcePreview, m_shortcutDisabledDraft);
     if (result.ok) {
         m_shortcutError.clear();
     } else {
@@ -343,36 +496,46 @@ void UnifiedSettingsModule::clearForcePreview()
 QString UnifiedSettingsModule::buildForcePreviewText(const ShortcutForcePreview &preview)
 {
     QStringList lines;
-    lines.append(QStringLiteral("Force Apply will clear %1 binding(s). Each row shows the exact required keys "
-                                "removed and the unrelated keys kept. Revalidation runs again after confirmation; "
+    lines.append(QStringLiteral("Force Apply will clear %1 binding(s) with %2 disabled binding(s) kept out of scope. "
+                                "Each row shows the exact required keys removed and the unrelated keys kept. "
+                                "Revalidation runs again after confirmation against the same staged selection; "
                                 "stale state aborts without writes.")
-                     .arg(preview.mismatches.size()));
+                     .arg(preview.mismatches.size())
+                     .arg(preview.disabledIds.size()));
     for (const ShortcutForceMismatch &mismatch : preview.mismatches) {
         lines.append(QStringLiteral("- %1/%2: found %3; will remove %4 and keep %5.")
                          .arg(mismatch.component, mismatch.action,
-                              ShortcutReconciler::keysDisplay(mismatch.actual),
-                              ShortcutReconciler::keysDisplay(mismatch.expectedPre),
-                              ShortcutReconciler::keysDisplay(mismatch.post)));
+                              ShortcutReconciler::keysDisplayNames(mismatch.actual),
+                              ShortcutReconciler::keysDisplayNames(mismatch.expectedPre),
+                              ShortcutReconciler::keysDisplayNames(mismatch.post)));
     }
     return lines.join(QStringLiteral("\n"));
 }
 
 void UnifiedSettingsModule::runShortcutApply(const char *operation)
 {
-    const QList<ShortcutConflictRow> &table = shortcutConflictTable();
-    const int prefixSize = QStringLiteral("plasma-auto-tiler-").size();
-    QStringList assigns;
-    assigns.append(QStringLiteral("Assign %1 to %2 and move %3 to %4")
-                       .arg(table.at(0).projectAction.mid(prefixSize), table.at(0).projectDisplay,
-                            table.at(0).foreignAction, table.at(0).targetDisplay));
-    for (int i = 1; i < table.size(); ++i) {
-        assigns.append(QStringLiteral("assign %1 to %2")
-                           .arg(table.at(i).projectAction.mid(prefixSize), table.at(i).projectDisplay));
+    const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
+    const QString focusId = shortcutCatalogId(shortcutFocusComponent(), shortcutFocusAction());
+    const bool focusEnabled = !m_shortcutDisabledDraft.contains(focusId);
+    int enabled = 0;
+    for (const ShortcutCatalogEntry &entry : catalog) {
+        if (!m_shortcutDisabledDraft.contains(shortcutCatalogId(entry.component, entry.action))) {
+            ++enabled;
+        }
     }
-    if (!confirmShortcutAction(QStringLiteral("Apply Shortcuts"),
-                               assigns.join(QStringLiteral("; "))
-                                   + QStringLiteral("? Conflicting bindings refuse Apply; Force lists each holder "
-                                                    "with the exact keys removed and kept."))) {
+    const int disabled = catalog.size() - enabled;
+    QString confirmText = QStringLiteral("Assign %1 enabled binding(s) to their canonical chords").arg(enabled);
+    if (focusEnabled) {
+        confirmText += QStringLiteral("; focus-right takes Meta+L and Lock Session moves to Meta+Esc");
+    } else {
+        confirmText += QStringLiteral("; focus-right stays disabled and Lock Session is untouched");
+    }
+    if (disabled > 0) {
+        confirmText += QStringLiteral("; clear %1 disabled own binding(s)").arg(disabled);
+    }
+    confirmText += QStringLiteral("? Kept conflicting bindings refuse Apply; Force lists each holder "
+                                   "with the exact keys removed and kept.");
+    if (!confirmShortcutAction(QStringLiteral("Apply Shortcuts"), confirmText)) {
         return;
     }
     if (m_shortcutStore == nullptr || m_clearedStore == nullptr) {
@@ -383,7 +546,7 @@ void UnifiedSettingsModule::runShortcutApply(const char *operation)
         return;
     }
     ShortcutReconciler reconciler(m_shortcutStore, m_clearedStore);
-    const ShortcutApplyResult result = reconciler.apply();
+    const ShortcutApplyResult result = reconciler.applySelected(m_shortcutDisabledDraft);
     if (result.ok) {
         m_shortcutError.clear();
         clearForcePreview();
@@ -391,7 +554,7 @@ void UnifiedSettingsModule::runShortcutApply(const char *operation)
         m_shortcutError = result.error.isEmpty() ? QStringLiteral("Apply failed") : result.error;
         // Explicit Force preview only when a holder claims a required key;
         // every other refusal clears any pending preview.
-        const ShortcutForcePreview preview = reconciler.previewForceApply();
+        const ShortcutForcePreview preview = reconciler.previewForceApplySelected(m_shortcutDisabledDraft);
         if (preview.forceable) {
             m_forcePreview = preview;
             m_forcePreviewValid = true;
@@ -404,6 +567,87 @@ void UnifiedSettingsModule::runShortcutApply(const char *operation)
                       result.ok ? QStringLiteral("writes=%1").arg(result.writes)
                                 : QStringLiteral("reason=%1 writes=%2").arg(result.error).arg(result.writes));
     refreshShortcutState();
+}
+
+QString UnifiedSettingsModule::buildConflictRowText(const ShortcutRowDisplay &row, bool disabled)
+{
+    const QString current = row.present ? ShortcutReconciler::keysDisplayNames(row.current)
+                                        : QStringLiteral("missing");
+    const QString ownDefault = row.present ? ShortcutReconciler::keysDisplayNames(row.projectDefaults)
+                                           : QStringLiteral("missing");
+    QString known;
+    if (row.catalog.knownForeignComponent.isEmpty() && row.foreignDefaultIds.isEmpty()) {
+        known = row.foreignDefaultsKnown ? QStringLiteral("none known") : QStringLiteral("defaults unavailable");
+    } else if (!row.defaultsKnown || !row.foreignDefaultsKnown) {
+        known = QStringLiteral("defaults unavailable");
+    } else {
+        QStringList defaults;
+        if (!row.catalog.knownForeignComponent.isEmpty()) {
+            defaults.append(QStringLiteral("%1/%2 defaults %3")
+                                .arg(row.catalog.knownForeignComponent, row.catalog.knownForeignAction,
+                                     ShortcutReconciler::keysDisplayNames(row.knownDefaults)));
+        }
+        if (!row.foreignDefaultIds.isEmpty()) {
+            defaults.append(QStringLiteral("foreign defaults %1 claim %2")
+                                .arg(row.foreignDefaultIds.join(QStringLiteral(", ")),
+                                     ShortcutReconciler::keyDisplayName(row.catalog.canonicalKey)));
+        }
+        known = defaults.join(QStringLiteral("; "));
+    }
+    QString holders;
+    if (!row.holdersKnown) {
+        holders = QStringLiteral("holders unavailable");
+    } else {
+        QStringList own;
+        QStringList foreign;
+        for (const ShortcutKeyHolder &holder : row.holders) {
+            const QString id = QStringLiteral("%1/%2").arg(holder.component, holder.action);
+            if (ShortcutReconciler::isHolderExempt(holder.component, holder.action, row.catalog.canonicalKey)) {
+                if (holder.component == row.catalog.component && holder.action == row.catalog.action) {
+                    own.append(QStringLiteral("own %1").arg(id));
+                } else {
+                    own.append(id);
+                }
+            } else {
+                foreign.append(QStringLiteral("conflict %1").arg(id));
+            }
+        }
+        QStringList parts;
+        if (!own.isEmpty()) {
+            parts.append(QStringLiteral("own [%1]").arg(own.join(QStringLiteral(", "))));
+        }
+        if (!foreign.isEmpty()) {
+            const int shown = qMin(static_cast<int>(foreign.size()), 5);
+            QStringList shownForeign = foreign.mid(0, shown);
+            if (static_cast<int>(foreign.size()) > shown) {
+                shownForeign.append(QStringLiteral("(+%1 more)").arg(static_cast<int>(foreign.size()) - shown));
+            }
+            parts.append(QStringLiteral("foreign [%1]").arg(shownForeign.join(QStringLiteral(", "))));
+        }
+        holders = parts.isEmpty() ? QStringLiteral("none") : parts.join(QStringLiteral("; "));
+    }
+    return QStringLiteral("%1 [%2]: canonical %3, current %4; own default %5; known KDE %6; holders %7.")
+        .arg(row.catalog.action, disabled ? QStringLiteral("Disable") : QStringLiteral("Keep"),
+             row.catalog.canonicalDisplay, current, ownDefault, known, holders);
+}
+
+void UnifiedSettingsModule::refreshShortcutConflictList(const QList<ShortcutRowDisplay> &rows)
+{
+    if (m_ui.shortcutConflictList == nullptr) {
+        return;
+    }
+    m_ui.shortcutConflictList->blockSignals(true);
+    m_ui.shortcutConflictList->clear();
+    for (const ShortcutRowDisplay &row : rows) {
+        const QString id = shortcutCatalogId(row.catalog.component, row.catalog.action);
+        const bool disabled = m_shortcutDisabledDraft.contains(id);
+        QListWidgetItem *item = new QListWidgetItem(buildConflictRowText(row, disabled));
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(disabled ? Qt::Unchecked : Qt::Checked);
+        item->setData(Qt::UserRole, id);
+        m_ui.shortcutConflictList->addItem(item);
+    }
+    m_ui.shortcutConflictList->blockSignals(false);
 }
 
 void UnifiedSettingsModule::runShortcutRevert(const char *operation)
@@ -499,6 +743,16 @@ void UnifiedSettingsModule::refreshShortcutState()
         return;
     }
     const QList<ShortcutConflictRow> &table = shortcutConflictTable();
+    const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
+    auto catalogPost = [&](const ShortcutCatalogEntry &entry, QList<int> *post) {
+        for (const ShortcutConflictRow &row : table) {
+            if (row.projectComponent == entry.component && row.projectAction == entry.action) {
+                *post = row.projectPost;
+                return;
+            }
+        }
+        *post = QList<int>{entry.canonicalKey};
+    };
     QList<const ShortcutTuple *> projectCurrents;
     projectCurrents.reserve(table.size());
     for (int i = 0; i < table.size(); ++i) {
@@ -523,14 +777,42 @@ void UnifiedSettingsModule::refreshShortcutState()
             lockCurrent = &tuple;
         }
     }
-    bool projectsMissing = lockMatches != 1 || lockCurrent == nullptr;
+    {
+        QString idError;
+        if (!ShortcutReconciler::disabledIdsValid(m_shortcutDisabledDraft, &idError)) {
+            m_shortcutStatus = QStringLiteral("Shortcut state unavailable: %1").arg(idError);
+            refreshShortcutConflictList(QList<ShortcutRowDisplay>());
+            updateShortcutPresentation();
+            return;
+        }
+    }
+    // Missing disabled rows stay allowed (no assignment); duplicates fail
+    // even when disabled. A disabled focus-right leaves the lock out of
+    // scope entirely, so an absent lock still shows the row list.
+    const QString refreshFocusId =
+        shortcutCatalogId(table.at(0).projectComponent, table.at(0).projectAction);
+    const bool refreshFocusEnabled = !m_shortcutDisabledDraft.contains(refreshFocusId);
+    bool projectsMissing = false;
+    if (refreshFocusEnabled && (lockMatches != 1 || lockCurrent == nullptr)) {
+        projectsMissing = true;
+    }
     for (int i = 0; i < table.size(); ++i) {
-        if (projectMatches.at(i) != 1 || projectCurrents.at(i) == nullptr) {
+        const QString rowId =
+            shortcutCatalogId(table.at(i).projectComponent, table.at(i).projectAction);
+        if (projectMatches.at(i) > 1) {
             projectsMissing = true;
+            break;
+        }
+        if (projectMatches.at(i) != 1 || projectCurrents.at(i) == nullptr) {
+            if (!m_shortcutDisabledDraft.contains(rowId)) {
+                projectsMissing = true;
+                break;
+            }
         }
     }
     if (projectsMissing) {
         m_shortcutStatus = QStringLiteral("Shortcut state unavailable: project bindings are missing.");
+        refreshShortcutConflictList(QList<ShortcutRowDisplay>());
         updateShortcutPresentation();
         return;
     }
@@ -541,16 +823,39 @@ void UnifiedSettingsModule::refreshShortcutState()
         }
         if (!ShortcutReconciler::keysValid(tuple.active)) {
             m_shortcutStatus = QStringLiteral("Shortcut state unavailable: unrelated tuple is unbounded.");
+            refreshShortcutConflictList(QList<ShortcutRowDisplay>());
             updateShortcutPresentation();
             return;
         }
     }
-    // Authoritative keyed foreign-occupancy gate for the project-required
-    // chords, never tuple enumeration. Typed outcome keeps Conflict vs
-    // unavailable semantics without substring matching. The explicit System
-    // Monitor `_launch` Meta+Esc holder is user-authorized.
+    // Full-catalog conflict list: canonical chord, current assignment, and
+    // known/current holders per row. Unavailable queries are reported
+    // honestly per row; a failed collection leaves the list empty. Missing
+    // enabled rows display honestly as missing and never count as applied.
     {
-        const KeyedOccupancyResult keyed = ShortcutReconciler::checkKeyedForeignOccupancyDetailed(m_shortcutStore);
+        QList<ShortcutRowDisplay> displays;
+        if (!ShortcutReconciler::collectRowDisplays(m_shortcutStore, &displays, &error)) {
+            m_shortcutStatus = QStringLiteral("Shortcut state unavailable: %1").arg(error);
+            refreshShortcutConflictList(QList<ShortcutRowDisplay>());
+            updateShortcutPresentation();
+            return;
+        }
+        refreshShortcutConflictList(displays);
+        for (const ShortcutRowDisplay &row : displays) {
+            const QString id = shortcutCatalogId(row.catalog.component, row.catalog.action);
+            if (!row.present && !m_shortcutDisabledDraft.contains(id)) {
+                m_shortcutStatus = QStringLiteral("Shortcut state unavailable: project bindings are missing.");
+                updateShortcutPresentation();
+                return;
+            }
+        }
+    }
+    // Keyed holder gate over the enabled chords only, never tuple
+    // enumeration. Typed outcome keeps Conflict vs unavailable semantics.
+    // A disabled focus-right excludes the Meta+L/Meta+Esc chords here.
+    {
+        const KeyedOccupancyResult keyed =
+            ShortcutReconciler::checkKeyedForeignOccupancyDetailedFor(m_shortcutStore, m_shortcutDisabledDraft);
         if (keyed.status != KeyedOccupancy::Clear) {
             if (keyed.status == KeyedOccupancy::Conflict) {
                 m_shortcutStatus = QStringLiteral("Conflict: %1. Apply is refused.").arg(keyed.detail);
@@ -561,54 +866,81 @@ void UnifiedSettingsModule::refreshShortcutState()
             return;
         }
     }
+    const QString focusId = shortcutCatalogId(table.at(0).projectComponent, table.at(0).projectAction);
+    const bool focusEnabled = !m_shortcutDisabledDraft.contains(focusId);
     bool allAtPost = true;
-    for (int i = 0; i < table.size(); ++i) {
-        if (projectCurrents.at(i)->active != table.at(i).projectPost) {
+    for (const ShortcutCatalogEntry &entry : catalog) {
+        const QString id = shortcutCatalogId(entry.component, entry.action);
+        const ShortcutTuple *current = nullptr;
+        for (const ShortcutTuple &tuple : tuples) {
+            if (tuple.component == entry.component && tuple.action == entry.action) {
+                current = &tuple;
+                break;
+            }
+        }
+        if (current == nullptr) {
+            // Enabled missing already returned unavailable above; disabled
+            // missing stays out of scope here.
+            continue;
+        }
+        if (m_shortcutDisabledDraft.contains(id)) {
+            if (!current->active.isEmpty()) {
+                allAtPost = false;
+            }
+            continue;
+        }
+        QList<int> post;
+        catalogPost(entry, &post);
+        if (current->active != post) {
             allAtPost = false;
             break;
         }
     }
     bool lockHasPre = false;
     bool lockHasTarget = false;
-    for (int key : table.at(0).foreignExpectedPre) {
-        if (lockCurrent->active.contains(key)) {
-            lockHasPre = true;
+    if (focusEnabled && lockCurrent != nullptr) {
+        for (int key : table.at(0).foreignExpectedPre) {
+            if (lockCurrent->active.contains(key)) {
+                lockHasPre = true;
+            }
         }
-    }
-    for (int key : table.at(0).resolutionTarget) {
-        if (lockCurrent->active.contains(key)) {
-            lockHasTarget = true;
+        for (int key : table.at(0).resolutionTarget) {
+            if (lockCurrent->active.contains(key)) {
+                lockHasTarget = true;
+            }
         }
+    } else if (!focusEnabled) {
+        lockHasTarget = true;
     }
     QString clearedHint;
     if (!cleared.isEmpty()) {
         clearedHint = QStringLiteral(" %1 cleared binding(s) recorded; Revert restores KDE defaults.")
                           .arg(cleared.size());
     }
-    const int prefixSize = QStringLiteral("plasma-auto-tiler-").size();
+    QString draftHint;
+    if (!m_shortcutDisabledDraft.isEmpty()) {
+        draftHint = QStringLiteral(" %1 disabled binding(s) staged.").arg(m_shortcutDisabledDraft.size());
+    }
     if (allAtPost && !lockHasPre && lockHasTarget) {
-        QStringList owns;
-        owns.append(QStringLiteral("%1 owns %2, %3 owns %4")
-                        .arg(table.at(0).projectAction.mid(prefixSize), table.at(0).projectDisplay,
-                             table.at(0).foreignAction, table.at(0).targetDisplay));
-        for (int i = 1; i < table.size(); ++i) {
-            owns.append(QStringLiteral("%1 owns %2")
-                            .arg(table.at(i).projectAction.mid(prefixSize), table.at(i).projectDisplay));
-        }
-        m_shortcutStatus = QStringLiteral("Shortcuts applied (%1 rows): %2.").arg(table.size()).arg(owns.join(QStringLiteral(", ")))
+        m_shortcutStatus = QStringLiteral("Shortcuts applied (%1 rows%2): enabled bindings own their canonical "
+                                           "chords%3.")
+                               .arg(catalog.size())
+                               .arg(m_shortcutDisabledDraft.isEmpty() ? QString()
+                                                                      : QStringLiteral(", %1 disabled")
+                                                                            .arg(m_shortcutDisabledDraft.size()))
+                               .arg(focusEnabled ? QStringLiteral(", Lock Session owns Meta+Esc")
+                                                 : QStringLiteral(", focus-right disabled"))
             + clearedHint;
         updateShortcutPresentation();
         return;
     }
-    QStringList assigns;
-    assigns.append(QStringLiteral("assign %1 to %2 and move %3 to %4")
-                       .arg(table.at(0).projectAction.mid(prefixSize), table.at(0).projectDisplay,
-                            table.at(0).foreignAction, table.at(0).targetDisplay));
-    for (int i = 1; i < table.size(); ++i) {
-        assigns.append(QStringLiteral("assign %1 to %2")
-                           .arg(table.at(i).projectAction.mid(prefixSize), table.at(i).projectDisplay));
-    }
-    m_shortcutStatus = QStringLiteral("Ready (%1 rows): Apply will %2.").arg(table.size()).arg(assigns.join(QStringLiteral("; ")))
+    m_shortcutStatus = QStringLiteral("Ready (%1 rows%2): Apply will assign enabled bindings and clear disabled "
+                                       "own bindings%3.")
+                           .arg(catalog.size())
+                           .arg(m_shortcutDisabledDraft.isEmpty()
+                                    ? QString()
+                                    : QStringLiteral(", %1 disabled").arg(m_shortcutDisabledDraft.size()))
+                           .arg(draftHint)
         + clearedHint;
     updateShortcutPresentation();
 }
@@ -654,6 +986,25 @@ void UnifiedSettingsModule::load()
 {
     KCModule::load();
 
+    // Reopening stages live-disabled rows (present own assignments that
+    // are empty); missing rows are not Disable and read failure stages
+    // Authentic. Authentic/defaults explicitly restage Keep; Compatible
+    // explicitly resets and recomputes. Refresh never clobbers the draft.
+    m_shortcutDisabledDraft.clear();
+    if (m_shortcutStore != nullptr) {
+        QList<ShortcutTuple> liveTuples;
+        QString liveError;
+        if (m_shortcutStore->readAll(&liveTuples, &liveError)) {
+            for (const ShortcutCatalogEntry &entry : shortcutProjectCatalog()) {
+                for (const ShortcutTuple &tuple : liveTuples) {
+                    if (tuple.component == entry.component && tuple.action == entry.action && tuple.active.isEmpty()) {
+                        m_shortcutDisabledDraft.insert(shortcutCatalogId(entry.component, entry.action));
+                        break;
+                    }
+                }
+            }
+        }
+    }
     clearForcePreview();
     refreshShortcutState();
     m_windowConflictError.clear();
@@ -847,6 +1198,11 @@ void UnifiedSettingsModule::defaults()
     m_ui.workspaceModeCombo->setCurrentIndex(m_ui.workspaceModeCombo->findData(QStringLiteral("per-output-local")));
     m_ui.innerGapSpinBox->setValue(kGapDefault);
     m_ui.outerGapSpinBox->setValue(kGapDefault);
+    // Defaults restage Authentic for the shortcut draft with no preview;
+    // persisting still never writes shortcuts.
+    m_shortcutDisabledDraft.clear();
+    clearForcePreview();
+    refreshShortcutState();
     updateScriptState();
 }
 

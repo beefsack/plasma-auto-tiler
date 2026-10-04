@@ -296,6 +296,8 @@ if(BUILD_TESTING)
         COMMAND plasma-auto-tiler-active-border-kcm-shortcut-test force)
     add_test(NAME native-effect-kcm-shortcut-migration
         COMMAND plasma-auto-tiler-active-border-kcm-shortcut-test migration)
+    add_test(NAME native-effect-kcm-shortcut-selection
+        COMMAND plasma-auto-tiler-active-border-kcm-shortcut-test selection)
     set_tests_properties(
         native-effect-kcm-shortcut-ordinary
         native-effect-kcm-shortcut-recovery
@@ -303,6 +305,7 @@ if(BUILD_TESTING)
         native-effect-kcm-shortcut-state
         native-effect-kcm-shortcut-force
         native-effect-kcm-shortcut-migration
+        native-effect-kcm-shortcut-selection
         PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
@@ -390,6 +393,8 @@ if(BUILD_TESTING)
         COMMAND plasma-auto-tiler-shortcut-reconciler-test force)
     add_test(NAME native-effect-shortcut-diag
         COMMAND plasma-auto-tiler-shortcut-reconciler-test diag)
+    add_test(NAME native-effect-shortcut-selection
+        COMMAND plasma-auto-tiler-shortcut-reconciler-test selection)
     set_tests_properties(
         native-effect-shortcut-success
         native-effect-shortcut-conflict
@@ -400,6 +405,7 @@ if(BUILD_TESTING)
         native-effect-shortcut-journal
         native-effect-shortcut-force
         native-effect-shortcut-diag
+        native-effect-shortcut-selection
         PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

@@ -3,7 +3,9 @@
 #include <KCModule>
 
 #include <QDBusMessage>
+#include <QSet>
 #include <QString>
+#include <QStringList>
 #include <QVariantMap>
 
 #include <functional>
@@ -43,6 +45,9 @@ public:
     QString shortcutForcePreviewText() const;
     bool isShortcutForceApplyVisible() const;
     bool isShortcutForceCancelVisible() const;
+    // Staged Keep/Disable draft as sorted catalog IDs ("component/action").
+    // Empty means Authentic (keep every binding).
+    QStringList shortcutDisabledIds() const;
     void refreshShortcutState();
     virtual bool confirmShortcutAction(const QString &title, const QString &text);
 
@@ -62,13 +67,18 @@ public Q_SLOTS:
     void requestShortcutRevert();
     void requestShortcutForceApply();
     void requestShortcutForceCancel();
+    void requestShortcutPresetAuthentic();
+    void requestShortcutPresetCompatible();
 
 private:
     void runShortcutApply(const char *operation);
     void runShortcutRevert(const char *operation);
     void clearForcePreview();
     static QString buildForcePreviewText(const ShortcutForcePreview &preview);
+    static QString buildConflictRowText(const ShortcutRowDisplay &row, bool disabled);
     void updateShortcutPresentation();
+    void refreshShortcutConflictList(const QList<ShortcutRowDisplay> &rows);
+    void onShortcutDraftChanged();
 
     QVariantMap currentScriptValues() const;
     void updateScriptState();
@@ -92,6 +102,10 @@ private:
     ShortcutForcePreview m_forcePreview;
     bool m_forcePreviewValid = false;
     QString m_forcePreviewText;
+    // Staged Keep/Disable draft as catalog IDs ("component/action").
+    // Checked list rows are kept; unchecked rows are disabled. Staged only:
+    // ordinary Save, startup, and installation never apply it.
+    QSet<QString> m_shortcutDisabledDraft;
 
     QVariantMap m_loadedScriptValues;
     bool m_loadedInnerGapRawValid = true;

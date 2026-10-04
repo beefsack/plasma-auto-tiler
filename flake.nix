@@ -43,47 +43,30 @@
       nativeEffectSource = pkgs: pkgs.lib.fileset.toSource {
         root = ./.;
         fileset = pkgs.lib.fileset.unions [
-          ./kwin/native-effect/CMakeLists.txt
-          ./kwin/native-effect/validate-metadata.cmake
-          ./kwin/native-effect/metadata.json
-          ./kwin/native-effect/activewindowborder.h
-          ./kwin/native-effect/activewindowborder.cpp
-          ./kwin/native-effect/activeborderlogic.h
-          ./kwin/native-effect/oraclepress.h
-          ./kwin/native-effect/group_highlight_ffi.h
-          ./kwin/native-effect/activeborderconfig_module.json
-          ./kwin/native-effect/activeborderconfig_module.h
-          ./kwin/native-effect/activeborderconfig_module.cpp
-          ./kwin/native-effect/unifiedsettings_module.h
-          ./kwin/native-effect/unifiedsettings_module.cpp
-          ./kwin/native-effect/unifiedsettings.ui
-          ./kwin/native-effect/activeborderconfig.kcfg
-          ./kwin/native-effect/activeborderconfig.kcfgc
-          ./kwin/native-effect/shortcutreconciler.h
-          ./kwin/native-effect/shortcutreconciler.cpp
-          ./kwin/native-effect/drag_oracle_ffi.h
-          ./kwin/native-effect/scriptconfig_module.json
-          ./kwin/native-effect/scriptconfig_module.h
-          ./kwin/native-effect/scriptconfig_module.cpp
-          ./kwin/native-effect/scriptconfig_module_test.cpp
-          ./kwin/native-effect/validate-scriptconfig.cmake
-          ./kwin/native-effect/validate-unified-lifecycle.cmake
+          # Complete native-effect subtree for BUILD_TESTING (effect, KCM,
+          # all test sources, validators, headers) plus the script metadata
+          # referenced by discovery validation. Individual file lists drift;
+          # the subtree keeps the fileset exact.
+          ./kwin/native-effect
+          ./kwin/metadata.json
+          # All workspace manifests/targets: Cargo requires every member
+          # manifest+targets to resolve the workspace even when building
+          # only -p tiler-kwin-effect-ffi. Unrelated trees (kwin script
+          # sources, tray assets, test-fixtures) stay excluded.
           ./Cargo.toml
           ./Cargo.lock
           ./crates/tiler-kwin-effect-ffi
           ./crates/tiler-core
-          # Remaining workspace members: Cargo requires every member
-          # manifest+targets to resolve the workspace even when building
-          # only -p tiler-kwin-effect-ffi. Unrelated trees (kwin script,
-          # tray assets, test-fixtures) stay excluded.
           ./crates/tiler-protocol
           ./crates/plasma-auto-tiler
+          ./crates/tiler-windows
         ];
       };
 
       mkNativeEffect =
         { pkgs
         , kwin ? pkgs.kdePackages.kwin
+        , withTests ? false
         }:
         let
           kde = pkgs.kdePackages;
@@ -139,7 +122,7 @@
           dontWrapQtApps = true;
 
           cmakeFlags = [
-            "-DBUILD_TESTING=OFF"
+            "-DBUILD_TESTING=${if withTests then "ON" else "OFF"}"
             "-DKDE_INSTALL_PLUGINDIR=lib/qt-6/plugins"
             "-DKWin_DIR=${kwinDev}/lib/cmake/KWin"
           ];
@@ -152,6 +135,16 @@
             test -f "$out/lib/qt-6/plugins/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
             test ! -e "$out/lib/qt-6/plugins/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
             test ! -e "$out/lib/qt-6/plugins/kwin/scripts/configs/plasma-auto-tiler-drag-oracle_config.so"
+            ${if withTests then ''
+              # Hermetic native gates: offscreen platform, isolated config
+              # home; the test binaries isolate the session bus themselves.
+              # installCheck runs with the build directory as cwd, so invoke
+              # ctest directly.
+              export QT_QPA_PLATFORM=offscreen
+              export XDG_CONFIG_HOME="$NIX_BUILD_TOP/check-home"
+              mkdir -p "$XDG_CONFIG_HOME"
+              ctest --output-on-failure
+            '' else ""}
             runHook postInstallCheck
           '';
         };
@@ -431,6 +424,11 @@
             touch "$out"
           '';
           native-effect = nativeEffect;
+          # Test-enabled native build: compiles the KCM/effect sources
+          # with BUILD_TESTING=ON and runs the full hermetic CTest suite
+          # (reconciler, KCM shortcut/config, metadata validation, Rust
+          # FFI) offscreen. Same inputs as the delivery derivation.
+          native-effect-tests = self.lib.mkNativeEffect { inherit pkgs; withTests = true; };
         });
 
       packages = forAllSystems (system:

@@ -83,6 +83,60 @@ inline constexpr int SHORTCUT_META_UP = 285212691; // Meta+Up catalog focus-up-a
 inline constexpr int SHORTCUT_META_RIGHT = 285212692; // Meta+Right catalog focus-right-arrow
 inline constexpr int SHORTCUT_META_SHIFT_LEFT = 318767122; // Meta+Shift+Left catalog move-left-arrow
 inline constexpr int SHORTCUT_META_SHIFT_RIGHT = 318767124; // Meta+Shift+Right catalog move-right-arrow
+// Full project catalog chords (plan directional/toggle core plus workspace
+// digits and shifted symbols). Combined Qt key ints: Meta 0x10000000,
+// Shift 0x02000000, Alt 0x08000000 ORed with the Qt key code.
+inline constexpr int SHORTCUT_META_H = 268435528; // Meta+H focus-left
+inline constexpr int SHORTCUT_META_J = 268435530; // Meta+J focus-down
+inline constexpr int SHORTCUT_META_K = 268435531; // Meta+K focus-up
+inline constexpr int SHORTCUT_META_SHIFT_H = 301989960; // Meta+Shift+H move-left
+inline constexpr int SHORTCUT_META_SHIFT_J = 301989962; // Meta+Shift+J move-down
+inline constexpr int SHORTCUT_META_SHIFT_K = 301989963; // Meta+Shift+K move-up
+inline constexpr int SHORTCUT_META_SHIFT_L = 301989964; // Meta+Shift+L move-right
+inline constexpr int SHORTCUT_META_SHIFT_DOWN = 318767125; // Meta+Shift+Down move-down-arrow
+inline constexpr int SHORTCUT_META_SHIFT_UP = 318767123; // Meta+Shift+Up move-up-arrow
+inline constexpr int SHORTCUT_META_ALT_H = 402653256; // Meta+Alt+H resize-outwards-left
+inline constexpr int SHORTCUT_META_ALT_J = 402653258; // Meta+Alt+J resize-outwards-down
+inline constexpr int SHORTCUT_META_ALT_SHIFT_H = 436207688; // Meta+Alt+Shift+H resize-inwards-left
+inline constexpr int SHORTCUT_META_ALT_SHIFT_J = 436207690; // Meta+Alt+Shift+J resize-inwards-down
+inline constexpr int SHORTCUT_META_ALT_SHIFT_K = 436207691; // Meta+Alt+Shift+K resize-inwards-up
+inline constexpr int SHORTCUT_META_ALT_SHIFT_L = 436207692; // Meta+Alt+Shift+L resize-inwards-right
+inline constexpr int SHORTCUT_META_ALT_SHIFT_LEFT = 452984850; // Meta+Alt+Shift+Left resize-inwards-left-arrow
+inline constexpr int SHORTCUT_META_ALT_SHIFT_DOWN = 452984853; // Meta+Alt+Shift+Down resize-inwards-down-arrow
+inline constexpr int SHORTCUT_META_ALT_SHIFT_UP = 452984851; // Meta+Alt+Shift+Up resize-inwards-up-arrow
+inline constexpr int SHORTCUT_META_ALT_SHIFT_RIGHT = 452984852; // Meta+Alt+Shift+Right resize-inwards-right-arrow
+inline constexpr int SHORTCUT_META_SHIFT_G = 301989959; // Meta+Shift+G toggle-sticky
+inline constexpr int SHORTCUT_META_F11 = 285212730; // Meta+F11 toggle-fullscreen
+inline constexpr int SHORTCUT_META_0 = 268435504; // Meta+0 workspace select trailing
+inline constexpr int SHORTCUT_META_1 = 268435505; // Meta+1 workspace select 1
+inline constexpr int SHORTCUT_META_2 = 268435506;
+inline constexpr int SHORTCUT_META_3 = 268435507;
+inline constexpr int SHORTCUT_META_4 = 268435508;
+inline constexpr int SHORTCUT_META_5 = 268435509;
+inline constexpr int SHORTCUT_META_6 = 268435510;
+inline constexpr int SHORTCUT_META_7 = 268435511;
+inline constexpr int SHORTCUT_META_8 = 268435512;
+inline constexpr int SHORTCUT_META_9 = 268435513; // Meta+9 workspace select 9
+inline constexpr int SHORTCUT_META_SHIFT_0 = 301989936; // Meta+Shift+0 move to trailing
+inline constexpr int SHORTCUT_META_SHIFT_1 = 301989937; // Meta+Shift+1 move to workspace 1
+inline constexpr int SHORTCUT_META_SHIFT_2 = 301989938;
+inline constexpr int SHORTCUT_META_SHIFT_3 = 301989939;
+inline constexpr int SHORTCUT_META_SHIFT_4 = 301989940;
+inline constexpr int SHORTCUT_META_SHIFT_5 = 301989941;
+inline constexpr int SHORTCUT_META_SHIFT_6 = 301989942;
+inline constexpr int SHORTCUT_META_SHIFT_7 = 301989943;
+inline constexpr int SHORTCUT_META_SHIFT_8 = 301989944;
+inline constexpr int SHORTCUT_META_SHIFT_9 = 301989945; // Meta+Shift+9 move to workspace 9
+inline constexpr int SHORTCUT_META_EXCLAM = 268435489; // Meta+! move-to-1 symbol alias
+inline constexpr int SHORTCUT_META_AT = 268435520; // Meta+@ move-to-2 symbol alias
+inline constexpr int SHORTCUT_META_NUMBERSIGN = 268435491; // Meta+# move-to-3 symbol alias
+inline constexpr int SHORTCUT_META_DOLLAR = 268435492; // Meta+$ move-to-4 symbol alias
+inline constexpr int SHORTCUT_META_PERCENT = 268435493; // Meta+% move-to-5 symbol alias
+inline constexpr int SHORTCUT_META_ASCIICIRCUM = 268435550; // Meta+^ move-to-6 symbol alias
+inline constexpr int SHORTCUT_META_AMPERSAND = 268435494; // Meta+& move-to-7 symbol alias
+inline constexpr int SHORTCUT_META_ASTERISK = 268435498; // Meta+* move-to-8 symbol alias
+inline constexpr int SHORTCUT_META_PARENLEFT = 268435496; // Meta+( move-to-9 symbol alias
+inline constexpr int SHORTCUT_META_PARENRIGHT = 268435497; // Meta+) move-to-trailing symbol alias
 inline constexpr uint SHORTCUT_SET_FLAGS = 6; // SetPresent|NoAutoloading
 inline constexpr int SHORTCUT_MAX_KEYS_PER_TUPLE = 16;
 inline constexpr int SHORTCUT_MAX_TUPLES = 16384;
@@ -250,6 +304,10 @@ struct ShortcutTuple
     QString componentFriendly;
     QString friendly;
     QList<int> active;
+    // Authoritative defaults carried on the wire (ssssss + ai + ai) but
+    // previously dropped here. Kept so defaults stay visible even after
+    // Force clears the active list; empty when the holder reports none.
+    QList<int> defaults;
 };
 
 struct ShortcutConflictRow
@@ -272,11 +330,46 @@ struct ShortcutConflictRow
 };
 
 const QList<ShortcutConflictRow> &shortcutConflictTable();
-// Max project writes derived from the table: one write per project row plus
-// the Lock Session relocation.
+// Full project catalog: 36 directional/toggle rows from planShortcutCatalog
+// (focus/move letters plus arrows, outwards/inwards resize letters plus
+// arrows, four toggles) followed by 30 workspace rows from
+// workspaceShortcutCatalog (Meta+0..9 select, Meta+Shift+0..9 move,
+// shifted-symbol move aliases). Deterministic order, unique canonical keys.
+// kind is one of focus, move, resize, toggle, workspace-select,
+// workspace-move. knownForeign* is the compiled KDE conflict for the 15
+// conflict-table rows only; empty (key 0) means no known conflict and the
+// row must report honestly instead of inventing one.
+struct ShortcutCatalogEntry
+{
+    QString component;
+    QString action;
+    int canonicalKey = 0;
+    QString canonicalDisplay;
+    QString knownForeignComponent;
+    QString knownForeignAction;
+    int knownForeignKey = 0;
+    QString kind;
+};
+
+const QList<ShortcutCatalogEntry> &shortcutProjectCatalog();
+// "component/action" identity string for staged Keep/Disable drafts.
+QString shortcutCatalogId(const QString &component, const QString &action);
+bool shortcutCatalogContains(const QString &component, const QString &action);
+// Canonical key for a catalog project action; *found false when absent.
+int shortcutCatalogKeyFor(const QString &component, const QString &action, bool *found = nullptr);
+// The 15 conflict-table project IDs: the known-conflicting canonical rows
+// Compatible always disables.
+QSet<QString> shortcutKnownConflictIds();
+// Pure preset seam: union of known-conflict IDs and live-colliding IDs in
+// catalog order. The caller supplies both sets from live queries.
+QStringList presetCompatibleDisabledIds(const QList<ShortcutCatalogEntry> &catalog,
+                                        const QSet<QString> &knownConflictIds,
+                                        const QSet<QString> &collidingIds);
+// Max project writes derived from the catalog: one write per catalog row
+// plus the Lock Session relocation.
 inline int shortcutMaxProjectWrites()
 {
-    return static_cast<int>(shortcutConflictTable().size()) + 1;
+    return static_cast<int>(shortcutProjectCatalog().size()) + 1;
 }
 
 // Typed keyed-occupancy outcome (no substring classification):
@@ -376,9 +469,19 @@ struct ShortcutForcePreview
     // not merely the rows that initially needed clearing.
     QString owner;
     uint uid = 0;
-    // Full bounded preflight image in table order: projects.at(0), lock,
-    // projects.at(1..). Any drift fails the confirmation as stale.
+    // Full bounded preflight image in catalog order (one active list per
+    // catalog entry, empty list when the entry is missing live), followed
+    // by the Lock Session image (empty when focus-right is disabled and the
+    // lock is out of scope). Any drift fails the confirmation as stale.
+    // livePresent binds presence per image (missing vs empty share the same
+    // active image, so presence is compared too; last element is the lock
+    // in-scope flag).
     QList<QList<int>> liveImages;
+    QList<bool> livePresent;
+    // Exact staged Keep/Disable draft this preview was built for, sorted.
+    // Force applies only against the same draft; draft edits cancel the
+    // pending preview and a mismatched draft fails as stale.
+    QStringList disabledIds;
 };
 
 struct ShortcutForceApplyResult
@@ -409,6 +512,31 @@ struct ShortcutRevertResult
     bool ok = false;
     QString error;
     int writes = 0;
+};
+
+// One full-catalog row for the staged conflict list: canonical chord,
+// current live assignment, known KDE default, current holders, and live
+// foreign-default collisions from readAll tuple defaults.
+// holdersKnown/defaultsKnown false means the keyed query failed and the
+// row must report unavailable honestly instead of claiming clarity.
+// foreignDefaultIds lists non-project foreign tuple IDs whose wire defaults
+// contain the canonical key (own project defaults are never listed);
+// foreignDefaultsKnown false means readAll failed and defaults are unknown.
+struct ShortcutRowDisplay
+{
+    ShortcutCatalogEntry catalog;
+    bool present = false;
+    QList<int> current;
+    QList<int> projectDefaults;
+    QList<ShortcutKeyHolder> holders;
+    bool holdersKnown = false;
+    // Live foreign defaults for compiled known-conflict rows (empty plus
+    // true means no known default to show; false means the defaults query
+    // failed and the row must report unavailable).
+    QList<int> knownDefaults;
+    bool defaultsKnown = false;
+    QStringList foreignDefaultIds;
+    bool foreignDefaultsKnown = false;
 };
 
 class ShortcutStore
@@ -532,6 +660,14 @@ class ShortcutReconciler
 public:
     explicit ShortcutReconciler(ShortcutStore *store, ClearedActionsStore *cleared = nullptr);
     ShortcutApplyResult apply();
+    // Selection-aware Apply: enabled catalog rows are assigned their
+    // canonical chords (and Lock Session is relocated only when focus-right
+    // is enabled); disabled catalog rows present live with a non-empty
+    // active list are cleared to empty through the existing own-action
+    // transport and rely on native persistence (no parallel local state).
+    // Disabled rows never scan, refuse, clear foreign holders, or relocate
+    // the lock. Empty disabled set preserves the legacy apply() behavior.
+    ShortcutApplyResult applySelected(const QSet<QString> &disabledIds);
     // Revert restores defaults for every non-project ID in the durable
     // cleared list (project-owned kwin/plasma-auto-tiler-* IDs, including
     // legacy ones, stay cleared) and empties the list only after all of
@@ -547,6 +683,8 @@ public:
     // Monitor Meta+Esc holder. Never forceable when any store, ownership,
     // transport, or parsing check fails.
     ShortcutForcePreview previewForceApply();
+    // Selection-aware Force preview bound to the exact draft.
+    ShortcutForcePreview previewForceApplySelected(const QSet<QString> &disabledIds);
     // Confirmed force: revalidates the preview snapshot against a fresh live
     // read (stale snapshots fail closed with zero writes, including zero
     // cleared-list writes when stale before persist), persists the union of
@@ -560,10 +698,15 @@ public:
     // holder was never cleared); a later Revert may therefore restore
     // defaults for an action Force never cleared.
     ShortcutForceApplyResult applyForced(const ShortcutForcePreview &confirmed);
+    // Selection-aware confirmed Force: revalidates the preview snapshot and
+    // the draft against fresh live state before any write. A draft mismatch
+    // fails as stale with zero writes.
+    ShortcutForceApplyResult applyForcedSelected(const ShortcutForcePreview &confirmed,
+                                                const QSet<QString> &disabledIds);
 
     static bool isAllowlisted(const QString &component, const QString &action);
-    // Current project-owned action (one of the conflict-table project
-    // rows). Never cleared by Force, never restored by Revert.
+    // Current project-owned action: any full-catalog project row. Never
+    // cleared by Force, never restored by Revert.
     static bool isProjectAction(const QString &component, const QString &action);
     // Any own-prefix action: kwin/plasma-auto-tiler-*, covering the current
     // project rows and legacy IDs (e.g. plasma-auto-tiler-float-toggle,
@@ -577,6 +720,10 @@ public:
     // Remainder kept on a cleared holder (active minus required chords),
     // order-preserving.
     static QList<int> remainderAfterClear(const QList<int> &active);
+    // Selection-scoped variants over the enabled catalog chords only. A
+    // disabled focus-right additionally drops the Meta+L/Meta+Esc chords.
+    static QList<int> conflictingKeysFor(const QList<int> &active, const QSet<QString> &disabledIds);
+    static QList<int> remainderAfterClearFor(const QList<int> &active, const QSet<QString> &disabledIds);
     static QList<int> lockPostFor(const QList<int> &lockPre);
     static QList<int> dedupKeys(const QList<int> &keys);
     static bool keysValid(const QList<int> &keys);
@@ -636,10 +783,22 @@ public:
     static bool clearedActionsPathSafe(const QString &path, QString *error);
     // Defect B keyed conflict detection (authoritative, not enumeration).
     static QList<int> relevantConflictKeys();
+    // Selection-scoped required chords: canonical keys of enabled catalog
+    // rows, plus the Lock Session relocation chords only when focus-right
+    // is enabled. Catalog order, deduplicated.
+    static QList<int> enabledRequiredKeys(const QSet<QString> &disabledIds);
     static QString keyDisplayName(int key);
     // Bounded safe key-list image for diagnostics/preview: "none" for empty,
     // otherwise comma-joined ints. Only ever called with validated key lists.
     static QString keysDisplay(const QList<int> &keys);
+    // Human-readable chord image for UI rows: "none" for empty, otherwise
+    // comma-joined keyDisplayName values. Diagnostics keep keysDisplay raw.
+    static QString keysDisplayNames(const QList<int> &keys);
+    // Unknown disabled IDs fail closed before any write.
+    static bool disabledIdsValid(const QSet<QString> &disabledIds, QString *error);
+    // Non-project foreign tuple IDs whose wire defaults contain the key.
+    // Own project defaults are never listed; Lock Session is exempt.
+    static QStringList foreignDefaultIdsForKey(int key, const QList<ShortcutTuple> &tuples);
     static bool isAuthorizedDisplacement(int key, const QString &component, const QString &action);
     static bool parseGlobalShortcutsByKeyReply(QDBusMessage::MessageType replyType, const QString &replySignature,
                                                const QList<QVariant> &replyArgs,
@@ -699,6 +858,14 @@ public:
     // (whole-key semantics).
     static KeyedOccupancyResult checkKeyedForeignOccupancyDetailed(ShortcutStore *store);
     static bool checkKeyedForeignOccupancy(ShortcutStore *store, QString *error);
+    // Selection-scoped occupancy gate over the enabled required chords.
+    static KeyedOccupancyResult checkKeyedForeignOccupancyDetailedFor(ShortcutStore *store,
+                                                                     const QSet<QString> &disabledIds);
+    // Full-catalog row displays in catalog order: one keyed holder query
+    // per row for current holders, plus the known compiled default and the
+    // live project defaults from readAll. Any store failure fails closed
+    // with the row marked unknown; never invents holders or defaults.
+    static bool collectRowDisplays(ShortcutStore *store, QList<ShortcutRowDisplay> *rows, QString *error);
     // Shared occupancy exemption behind the status check and the backend
     // holder scan: project actions own their chords, Lock Session owns
     // its chord, and the explicit System Monitor Meta+Esc holder is
@@ -738,22 +905,33 @@ private:
         QString owner;
         uint uid = 0;
         ShortcutTuple lock;
+        bool lockResolved = false;
         QList<ShortcutTuple> projects;
+        // Full-catalog actives in catalog order (empty when the entry is
+        // missing live). The confirmed Force image binds this snapshot.
+        QList<QList<int>> catalogActives;
+        QList<bool> catalogPresent;
         QList<ClearRow> rows;
         QList<Blocker> blocked;
     };
     // Shared fresh read for apply and force preview: setter contract, owner,
     // project/lock tuple resolution with key bounds, and the per-required-key
     // holder scan. Zero writes. Fails closed on any transport, parsing,
-    // consistency, or lock-precondition failure.
+    // consistency, or lock-precondition failure. Disabled catalog rows are
+    // out of scope: their chords are never scanned and their holders never
+    // become clear rows or blockers; a disabled focus-right additionally
+    // leaves the lock unresolved with no Meta+L/Meta+Esc scan.
     bool collectHolderSnapshot(HolderSnapshot *snapshot, QString *error);
+    bool collectHolderSnapshotFor(HolderSnapshot *snapshot, const QSet<QString> &disabledIds, QString *error);
     // Assigns project posts and relocates Lock Session from a fresh read.
     // Used by both apply (no holders present) and the second half of force
     // (holders just cleared). Owner-pinned with confirmed replies.
     ShortcutApplyResult writeProjectKeys(const char *operation);
+    ShortcutApplyResult writeProjectKeysFor(const char *operation, const QSet<QString> &disabledIds);
     // Fresh preview builder behind previewForceApply and the force
     // revalidation inside applyForced.
     ShortcutForcePreview buildForcePreview();
+    ShortcutForcePreview buildForcePreviewFor(const QSet<QString> &disabledIds);
     static bool forceMismatchFromRow(const ClearRow &row, ShortcutForceMismatch *out);
 };
 

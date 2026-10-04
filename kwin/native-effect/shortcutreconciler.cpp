@@ -490,8 +490,225 @@ const QList<ShortcutConflictRow> &shortcutConflictTable()
     return table;
 }
 
+const QList<ShortcutCatalogEntry> &shortcutProjectCatalog()
+{
+    // 36 plan rows then 30 workspace rows. Canonical keys are unique across
+    // the catalog (letters vs digits/symbols vs arrows/F11 across distinct
+    // modifier arms). knownForeign* mirrors the conflict table for its 15
+    // project actions; every other row carries empty known foreign state.
+    static const QList<ShortcutCatalogEntry> catalog = {
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-left"), SHORTCUT_META_H,
+         QStringLiteral("Meta+H"), {}, {}, 0, QStringLiteral("focus")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-left-arrow"), SHORTCUT_META_LEFT,
+         QStringLiteral("Meta+Left"), shortcutQuickTileLeftComponent(), shortcutQuickTileLeftAction(),
+         SHORTCUT_META_LEFT, QStringLiteral("focus")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-down"), SHORTCUT_META_J,
+         QStringLiteral("Meta+J"), {}, {}, 0, QStringLiteral("focus")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-down-arrow"), SHORTCUT_META_DOWN,
+         QStringLiteral("Meta+Down"), shortcutQuickTileBottomComponent(), shortcutQuickTileBottomAction(),
+         SHORTCUT_META_DOWN, QStringLiteral("focus")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-up"), SHORTCUT_META_K,
+         QStringLiteral("Meta+K"), {}, {}, 0, QStringLiteral("focus")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-up-arrow"), SHORTCUT_META_UP,
+         QStringLiteral("Meta+Up"), shortcutQuickTileTopComponent(), shortcutQuickTileTopAction(), SHORTCUT_META_UP,
+         QStringLiteral("focus")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), SHORTCUT_META_L,
+         QStringLiteral("Meta+L"), shortcutLockComponent(), shortcutLockAction(), SHORTCUT_META_L,
+         QStringLiteral("focus")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right-arrow"), SHORTCUT_META_RIGHT,
+         QStringLiteral("Meta+Right"), shortcutQuickTileRightComponent(), shortcutQuickTileRightAction(),
+         SHORTCUT_META_RIGHT, QStringLiteral("focus")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-left"), SHORTCUT_META_SHIFT_H,
+         QStringLiteral("Meta+Shift+H"), {}, {}, 0, QStringLiteral("move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-left-arrow"), SHORTCUT_META_SHIFT_LEFT,
+         QStringLiteral("Meta+Shift+Left"), shortcutToPrevScreenComponent(), shortcutToPrevScreenAction(),
+         SHORTCUT_META_SHIFT_LEFT, QStringLiteral("move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-down"), SHORTCUT_META_SHIFT_J,
+         QStringLiteral("Meta+Shift+J"), {}, {}, 0, QStringLiteral("move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-down-arrow"), SHORTCUT_META_SHIFT_DOWN,
+         QStringLiteral("Meta+Shift+Down"), {}, {}, 0, QStringLiteral("move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-up"), SHORTCUT_META_SHIFT_K,
+         QStringLiteral("Meta+Shift+K"), {}, {}, 0, QStringLiteral("move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-up-arrow"), SHORTCUT_META_SHIFT_UP,
+         QStringLiteral("Meta+Shift+Up"), {}, {}, 0, QStringLiteral("move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-right"), SHORTCUT_META_SHIFT_L,
+         QStringLiteral("Meta+Shift+L"), {}, {}, 0, QStringLiteral("move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-right-arrow"), SHORTCUT_META_SHIFT_RIGHT,
+         QStringLiteral("Meta+Shift+Right"), shortcutToNextScreenComponent(), shortcutToNextScreenAction(),
+         SHORTCUT_META_SHIFT_RIGHT, QStringLiteral("move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-left"), SHORTCUT_META_ALT_H,
+         QStringLiteral("Meta+Alt+H"), {}, {}, 0, QStringLiteral("resize")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-left-arrow"),
+         SHORTCUT_META_ALT_LEFT, QStringLiteral("Meta+Alt+Left"), shortcutSwitchLeftComponent(),
+         shortcutSwitchLeftAction(), SHORTCUT_META_ALT_LEFT, QStringLiteral("resize")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-down"), SHORTCUT_META_ALT_J,
+         QStringLiteral("Meta+Alt+J"), {}, {}, 0, QStringLiteral("resize")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-down-arrow"),
+         SHORTCUT_META_ALT_DOWN, QStringLiteral("Meta+Alt+Down"), shortcutSwitchDownComponent(),
+         shortcutSwitchDownAction(), SHORTCUT_META_ALT_DOWN, QStringLiteral("resize")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-up"), SHORTCUT_META_ALT_K,
+         QStringLiteral("Meta+Alt+K"), shortcutSwitchNextComponent(), shortcutSwitchNextAction(), SHORTCUT_META_ALT_K,
+         QStringLiteral("resize")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow"), SHORTCUT_META_ALT_UP,
+         QStringLiteral("Meta+Alt+Up"), shortcutSwitchUpComponent(), shortcutSwitchUpAction(), SHORTCUT_META_ALT_UP,
+         QStringLiteral("resize")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-right"), SHORTCUT_META_ALT_L,
+         QStringLiteral("Meta+Alt+L"), shortcutSwitchLastComponent(), shortcutSwitchLastAction(), SHORTCUT_META_ALT_L,
+         QStringLiteral("resize")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-right-arrow"),
+         SHORTCUT_META_ALT_RIGHT, QStringLiteral("Meta+Alt+Right"), shortcutSwitchRightComponent(),
+         shortcutSwitchRightAction(), SHORTCUT_META_ALT_RIGHT, QStringLiteral("resize")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-inwards-left"), SHORTCUT_META_ALT_SHIFT_H,
+         QStringLiteral("Meta+Alt+Shift+H"), {}, {}, 0, QStringLiteral("resize")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-inwards-left-arrow"),
+         SHORTCUT_META_ALT_SHIFT_LEFT, QStringLiteral("Meta+Alt+Shift+Left"), {}, {}, 0, QStringLiteral("resize")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-inwards-down"), SHORTCUT_META_ALT_SHIFT_J,
+         QStringLiteral("Meta+Alt+Shift+J"), {}, {}, 0, QStringLiteral("resize")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-inwards-down-arrow"),
+         SHORTCUT_META_ALT_SHIFT_DOWN, QStringLiteral("Meta+Alt+Shift+Down"), {}, {}, 0, QStringLiteral("resize")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-inwards-up"), SHORTCUT_META_ALT_SHIFT_K,
+         QStringLiteral("Meta+Alt+Shift+K"), {}, {}, 0, QStringLiteral("resize")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-inwards-up-arrow"),
+         SHORTCUT_META_ALT_SHIFT_UP, QStringLiteral("Meta+Alt+Shift+Up"), {}, {}, 0, QStringLiteral("resize")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-inwards-right"), SHORTCUT_META_ALT_SHIFT_L,
+         QStringLiteral("Meta+Alt+Shift+L"), {}, {}, 0, QStringLiteral("resize")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-inwards-right-arrow"),
+         SHORTCUT_META_ALT_SHIFT_RIGHT, QStringLiteral("Meta+Alt+Shift+Right"), {}, {}, 0, QStringLiteral("resize")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-float"), SHORTCUT_META_G,
+         QStringLiteral("Meta+G"), shortcutGridViewComponent(), shortcutGridViewAction(), SHORTCUT_META_G,
+         QStringLiteral("toggle")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-sticky"), SHORTCUT_META_SHIFT_G,
+         QStringLiteral("Meta+Shift+G"), {}, {}, 0, QStringLiteral("toggle")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-maximize"), SHORTCUT_META_M,
+         QStringLiteral("Meta+M"), shortcutMonocleComponent(), shortcutMonocleAction(), SHORTCUT_META_M,
+         QStringLiteral("toggle")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-fullscreen"), SHORTCUT_META_F11,
+         QStringLiteral("Meta+F11"), {}, {}, 0, QStringLiteral("toggle")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"), SHORTCUT_META_1,
+         QStringLiteral("Meta+1"), {}, {}, 0, QStringLiteral("workspace-select")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-2"), SHORTCUT_META_2,
+         QStringLiteral("Meta+2"), {}, {}, 0, QStringLiteral("workspace-select")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-3"), SHORTCUT_META_3,
+         QStringLiteral("Meta+3"), {}, {}, 0, QStringLiteral("workspace-select")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-4"), SHORTCUT_META_4,
+         QStringLiteral("Meta+4"), {}, {}, 0, QStringLiteral("workspace-select")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-5"), SHORTCUT_META_5,
+         QStringLiteral("Meta+5"), {}, {}, 0, QStringLiteral("workspace-select")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-6"), SHORTCUT_META_6,
+         QStringLiteral("Meta+6"), {}, {}, 0, QStringLiteral("workspace-select")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-7"), SHORTCUT_META_7,
+         QStringLiteral("Meta+7"), {}, {}, 0, QStringLiteral("workspace-select")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-8"), SHORTCUT_META_8,
+         QStringLiteral("Meta+8"), {}, {}, 0, QStringLiteral("workspace-select")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-9"), SHORTCUT_META_9,
+         QStringLiteral("Meta+9"), {}, {}, 0, QStringLiteral("workspace-select")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-0"), SHORTCUT_META_0,
+         QStringLiteral("Meta+0"), {}, {}, 0, QStringLiteral("workspace-select")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-1"), SHORTCUT_META_SHIFT_1,
+         QStringLiteral("Meta+Shift+1"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-1-symbol"), SHORTCUT_META_EXCLAM,
+         QStringLiteral("Meta+!"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-2"), SHORTCUT_META_SHIFT_2,
+         QStringLiteral("Meta+Shift+2"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-2-symbol"), SHORTCUT_META_AT,
+         QStringLiteral("Meta+@"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-3"), SHORTCUT_META_SHIFT_3,
+         QStringLiteral("Meta+Shift+3"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-3-symbol"),
+         SHORTCUT_META_NUMBERSIGN, QStringLiteral("Meta+#"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-4"), SHORTCUT_META_SHIFT_4,
+         QStringLiteral("Meta+Shift+4"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-4-symbol"), SHORTCUT_META_DOLLAR,
+         QStringLiteral("Meta+$"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-5"), SHORTCUT_META_SHIFT_5,
+         QStringLiteral("Meta+Shift+5"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-5-symbol"), SHORTCUT_META_PERCENT,
+         QStringLiteral("Meta+%"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-6"), SHORTCUT_META_SHIFT_6,
+         QStringLiteral("Meta+Shift+6"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-6-symbol"),
+         SHORTCUT_META_ASCIICIRCUM, QStringLiteral("Meta+^"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-7"), SHORTCUT_META_SHIFT_7,
+         QStringLiteral("Meta+Shift+7"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-7-symbol"),
+         SHORTCUT_META_AMPERSAND, QStringLiteral("Meta+&"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-8"), SHORTCUT_META_SHIFT_8,
+         QStringLiteral("Meta+Shift+8"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-8-symbol"),
+         SHORTCUT_META_ASTERISK, QStringLiteral("Meta+*"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-9"), SHORTCUT_META_SHIFT_9,
+         QStringLiteral("Meta+Shift+9"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-9-symbol"),
+         SHORTCUT_META_PARENLEFT, QStringLiteral("Meta+("), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-append"), SHORTCUT_META_SHIFT_0,
+         QStringLiteral("Meta+Shift+0"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-append-symbol"),
+         SHORTCUT_META_PARENRIGHT, QStringLiteral("Meta+)"), {}, {}, 0, QStringLiteral("workspace-move")},
+    };
+    return catalog;
+}
+
+QString shortcutCatalogId(const QString &component, const QString &action)
+{
+    return component + QStringLiteral("/") + action;
+}
+
+bool shortcutCatalogContains(const QString &component, const QString &action)
+{
+    for (const ShortcutCatalogEntry &entry : shortcutProjectCatalog()) {
+        if (entry.component == component && entry.action == action) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int shortcutCatalogKeyFor(const QString &component, const QString &action, bool *found)
+{
+    for (const ShortcutCatalogEntry &entry : shortcutProjectCatalog()) {
+        if (entry.component == component && entry.action == action) {
+            if (found) {
+                *found = true;
+            }
+            return entry.canonicalKey;
+        }
+    }
+    if (found) {
+        *found = false;
+    }
+    return 0;
+}
+
+QSet<QString> shortcutKnownConflictIds()
+{
+    QSet<QString> out;
+    for (const ShortcutConflictRow &row : shortcutConflictTable()) {
+        out.insert(shortcutCatalogId(row.projectComponent, row.projectAction));
+    }
+    return out;
+}
+
+QStringList presetCompatibleDisabledIds(const QList<ShortcutCatalogEntry> &catalog,
+                                        const QSet<QString> &knownConflictIds,
+                                        const QSet<QString> &collidingIds)
+{
+    QStringList out;
+    for (const ShortcutCatalogEntry &entry : catalog) {
+        const QString id = shortcutCatalogId(entry.component, entry.action);
+        if (knownConflictIds.contains(id) || collidingIds.contains(id)) {
+            out.append(id);
+        }
+    }
+    return out;
+}
+
 bool ShortcutReconciler::isAllowlisted(const QString &component, const QString &action)
 {
+    // Project writes cover the full catalog; foreign writes stay on the
+    // exact conflict-table foreign rows (Lock Session relocation path).
+    if (shortcutCatalogContains(component, action)) {
+        return true;
+    }
     for (const ShortcutConflictRow &row : shortcutConflictTable()) {
         if ((component == row.projectComponent && action == row.projectAction)
             || (component == row.foreignComponent && action == row.foreignAction)) {
@@ -503,13 +720,7 @@ bool ShortcutReconciler::isAllowlisted(const QString &component, const QString &
 
 bool ShortcutReconciler::isProjectAction(const QString &component, const QString &action)
 {
-    const QList<ShortcutConflictRow> &table = shortcutConflictTable();
-    for (const ShortcutConflictRow &row : table) {
-        if (component == row.projectComponent && action == row.projectAction) {
-            return true;
-        }
-    }
-    return false;
+    return shortcutCatalogContains(component, action);
 }
 
 bool ShortcutReconciler::isProjectOwned(const QString &component, const QString &action)
@@ -538,9 +749,35 @@ QList<int> ShortcutReconciler::conflictingKeys(const QList<int> &active)
     return out;
 }
 
+QList<int> ShortcutReconciler::conflictingKeysFor(const QList<int> &active, const QSet<QString> &disabledIds)
+{
+    const QList<int> required = enabledRequiredKeys(disabledIds);
+    QList<int> out;
+    out.reserve(active.size());
+    for (int key : active) {
+        if (required.contains(key) && !out.contains(key)) {
+            out.append(key);
+        }
+    }
+    return out;
+}
+
 QList<int> ShortcutReconciler::remainderAfterClear(const QList<int> &active)
 {
     const QList<int> required = relevantConflictKeys();
+    QList<int> out;
+    out.reserve(active.size());
+    for (int key : active) {
+        if (!required.contains(key)) {
+            out.append(key);
+        }
+    }
+    return out;
+}
+
+QList<int> ShortcutReconciler::remainderAfterClearFor(const QList<int> &active, const QSet<QString> &disabledIds)
+{
+    const QList<int> required = enabledRequiredKeys(disabledIds);
     QList<int> out;
     out.reserve(active.size());
     for (int key : active) {
@@ -1120,8 +1357,44 @@ QList<int> ShortcutReconciler::relevantConflictKeys()
     return out;
 }
 
+QList<int> ShortcutReconciler::enabledRequiredKeys(const QSet<QString> &disabledIds)
+{
+    QList<int> out;
+    const bool focusEnabled =
+        !disabledIds.contains(shortcutCatalogId(shortcutFocusComponent(), shortcutFocusAction()));
+    for (const ShortcutCatalogEntry &entry : shortcutProjectCatalog()) {
+        if (disabledIds.contains(shortcutCatalogId(entry.component, entry.action))) {
+            continue;
+        }
+        if (!out.contains(entry.canonicalKey)) {
+            out.append(entry.canonicalKey);
+        }
+    }
+    // The Lock Session relocation chords stay required only while focus-right
+    // itself is enabled; a disabled focus-right never scans Meta+Esc.
+    if (focusEnabled) {
+        const ShortcutConflictRow &lockRow = shortcutConflictTable().at(0);
+        for (int key : lockRow.resolutionTarget) {
+            if (!out.contains(key)) {
+                out.append(key);
+            }
+        }
+        for (int key : lockRow.foreignExpectedPre) {
+            if (!out.contains(key)) {
+                out.append(key);
+            }
+        }
+    }
+    return out;
+}
+
 QString ShortcutReconciler::keyDisplayName(int key)
 {
+    for (const ShortcutCatalogEntry &entry : shortcutProjectCatalog()) {
+        if (entry.canonicalKey == key && !entry.canonicalDisplay.isEmpty()) {
+            return entry.canonicalDisplay;
+        }
+    }
     for (const ShortcutConflictRow &row : shortcutConflictTable()) {
         if (row.projectPost.contains(key) && !row.projectDisplay.isEmpty()) {
             return row.projectDisplay;
@@ -1134,6 +1407,12 @@ QString ShortcutReconciler::keyDisplayName(int key)
         if (row.foreignExpectedPre.contains(key) && !row.projectDisplay.isEmpty()) {
             return row.projectDisplay;
         }
+    }
+    // Custom/unrelated chords still render readably through QKeySequence;
+    // only an invalid or empty rendering falls back to the raw key int.
+    const QString portable = QKeySequence(key, 0, 0, 0).toString(QKeySequence::PortableText);
+    if (!portable.isEmpty()) {
+        return portable;
     }
     return QStringLiteral("key %1").arg(key);
 }
@@ -1149,6 +1428,62 @@ QString ShortcutReconciler::keysDisplay(const QList<int> &keys)
         parts.append(QString::number(key));
     }
     return parts.join(QStringLiteral(","));
+}
+
+QString ShortcutReconciler::keysDisplayNames(const QList<int> &keys)
+{
+    if (keys.isEmpty()) {
+        return QStringLiteral("none");
+    }
+    QStringList parts;
+    parts.reserve(keys.size());
+    for (int key : keys) {
+        parts.append(keyDisplayName(key));
+    }
+    return parts.join(QStringLiteral(", "));
+}
+
+bool ShortcutReconciler::disabledIdsValid(const QSet<QString> &disabledIds, QString *error)
+{
+    for (const QString &id : disabledIds) {
+        bool found = false;
+        const int slash = id.indexOf(QChar::fromLatin1('/'));
+        if (slash > 0) {
+            const QString component = id.left(slash);
+            const QString action = id.mid(slash + 1);
+            if (!component.isEmpty() && !action.isEmpty() && shortcutCatalogContains(component, action)) {
+                found = true;
+            }
+        }
+        if (!found) {
+            if (error) {
+                *error = QStringLiteral("unknown disabled binding; refusing apply");
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+QStringList ShortcutReconciler::foreignDefaultIdsForKey(int key, const QList<ShortcutTuple> &tuples)
+{
+    QStringList out;
+    if (key == 0) {
+        return out;
+    }
+    for (const ShortcutTuple &tuple : tuples) {
+        if (isProjectAction(tuple.component, tuple.action) || isLockAction(tuple.component, tuple.action)) {
+            continue;
+        }
+        if (tuple.defaults.contains(key)) {
+            const QString id = shortcutCatalogId(tuple.component, tuple.action);
+            if (!out.contains(id)) {
+                out.append(id);
+            }
+        }
+    }
+    out.sort();
+    return out;
 }
 
 bool ShortcutReconciler::isAuthorizedDisplacement(int key, const QString &component, const QString &action)
@@ -1233,6 +1568,7 @@ bool ShortcutReconciler::tuplesFromInfoFields(const QList<ShortcutInfoFields> &i
         tuple.componentFriendly = info.compFriendly;
         tuple.friendly = info.friendly;
         tuple.active = info.active;
+        tuple.defaults = info.defaults;
         parsed.append(tuple);
         if (parsed.size() > SHORTCUT_MAX_TUPLES) {
             return fail(QStringLiteral("unexpected allShortcutInfos reply: too many tuples"));
@@ -1327,6 +1663,13 @@ bool ShortcutReconciler::parseGlobalShortcutAvailableReply(QDBusMessage::Message
 
 KeyedOccupancyResult ShortcutReconciler::checkKeyedForeignOccupancyDetailed(ShortcutStore *store)
 {
+    // Legacy entry point: full catalog with an empty (Authentic) draft.
+    return checkKeyedForeignOccupancyDetailedFor(store, QSet<QString>());
+}
+
+KeyedOccupancyResult ShortcutReconciler::checkKeyedForeignOccupancyDetailedFor(ShortcutStore *store,
+                                                                              const QSet<QString> &disabledIds)
+{
     KeyedOccupancyResult result;
     result.status = KeyedOccupancy::Clear;
     auto unavailable = [&](const QString &message) {
@@ -1342,7 +1685,13 @@ KeyedOccupancyResult ShortcutReconciler::checkKeyedForeignOccupancyDetailed(Shor
     if (!store) {
         return unavailable(QStringLiteral("reconciler is not configured"));
     }
-    const QList<int> keys = relevantConflictKeys();
+    {
+        QString idError;
+        if (!disabledIdsValid(disabledIds, &idError)) {
+            return unavailable(idError);
+        }
+    }
+    const QList<int> keys = enabledRequiredKeys(disabledIds);
     for (int key : keys) {
         // Disjoint single-key range checks without duplicate validation:
         // negative first, then zero (non-positive), then over-max. The
@@ -1442,6 +1791,98 @@ bool ShortcutReconciler::checkKeyedForeignOccupancy(ShortcutStore *store, QStrin
             *error = detailed.detail;
         }
         return false;
+    }
+    return true;
+}
+
+bool ShortcutReconciler::collectRowDisplays(ShortcutStore *store, QList<ShortcutRowDisplay> *rows, QString *error)
+{
+    if (!store) {
+        if (error) {
+            *error = QStringLiteral("reconciler is not configured");
+        }
+        return false;
+    }
+    if (!store->checkSetterContract(error)) {
+        return false;
+    }
+    QString owner;
+    uint uid = 0;
+    if (!store->currentOwner(&owner, &uid, error)) {
+        return false;
+    }
+    QList<ShortcutTuple> tuples;
+    if (!store->readAll(&tuples, error)) {
+        return false;
+    }
+    QList<ShortcutRowDisplay> out;
+    const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
+    out.reserve(catalog.size());
+    for (const ShortcutCatalogEntry &entry : catalog) {
+        ShortcutRowDisplay row;
+        row.catalog = entry;
+        for (const ShortcutTuple &tuple : tuples) {
+            if (tuple.component == entry.component && tuple.action == entry.action) {
+                if (row.present) {
+                    if (error) {
+                        *error = QStringLiteral("allowlisted tuple %1/%2 has multiple records, expected exactly one")
+                                     .arg(entry.component, entry.action);
+                    }
+                    return false;
+                }
+                row.present = true;
+                row.current = tuple.active;
+                row.projectDefaults = tuple.defaults;
+            }
+        }
+        // Current holders via the authoritative keyed query. A failed query
+        // marks this row unknown; other rows still report.
+        QList<ShortcutKeyHolder> holders;
+        QString holderError;
+        if (!store->shortcutsByKey(entry.canonicalKey, &holders, &holderError)) {
+            row.holdersKnown = false;
+        } else {
+            row.holdersKnown = true;
+            row.holders = holders;
+        }
+        // Known KDE default for the compiled rows, read live so a cleared
+        // foreign holder still shows its default. Failures mark the known
+        // default unknown rather than inventing one.
+        if (!entry.knownForeignComponent.isEmpty()) {
+            QList<int> defaults;
+            QString defaultError;
+            ShortcutTuple foreignCurrent;
+            bool foreignFound = false;
+            for (const ShortcutTuple &tuple : tuples) {
+                if (tuple.component == entry.knownForeignComponent
+                    && tuple.action == entry.knownForeignAction) {
+                    foreignCurrent = tuple;
+                    foreignFound = true;
+                    break;
+                }
+            }
+            if (foreignFound
+                && store->defaultShortcutKeys(entry.knownForeignComponent, entry.knownForeignAction,
+                                              foreignCurrent.componentFriendly, foreignCurrent.friendly, &defaults,
+                                              &defaultError)) {
+                row.knownDefaults = defaults;
+                row.defaultsKnown = true;
+            } else {
+                row.defaultsKnown = false;
+            }
+        } else {
+            row.defaultsKnown = true;
+            row.knownDefaults = QList<int>();
+        }
+        // Live foreign wire defaults from readAll for every row (compiled
+        // table stays the fallback above). Own project defaults and Lock
+        // Session are never OS conflicts.
+        row.foreignDefaultIds = foreignDefaultIdsForKey(entry.canonicalKey, tuples);
+        row.foreignDefaultsKnown = true;
+        out.append(row);
+    }
+    if (rows) {
+        *rows = out;
     }
     return true;
 }
@@ -2416,10 +2857,19 @@ void ShortcutDiag::log(QtMsgType type, const char *operation, const char *stage,
 
 bool ShortcutReconciler::collectHolderSnapshot(HolderSnapshot *snapshot, QString *error)
 {
+    return collectHolderSnapshotFor(snapshot, QSet<QString>(), error);
+}
+
+bool ShortcutReconciler::collectHolderSnapshotFor(HolderSnapshot *snapshot, const QSet<QString> &disabledIds,
+                                                  QString *error)
+{
     if (!m_store) {
         if (error) {
             *error = QStringLiteral("reconciler is not configured");
         }
+        return false;
+    }
+    if (!disabledIdsValid(disabledIds, error)) {
         return false;
     }
     if (!m_store->checkSetterContract(error)) {
@@ -2440,23 +2890,63 @@ bool ShortcutReconciler::collectHolderSnapshot(HolderSnapshot *snapshot, QString
         return false;
     }
     const QList<ShortcutConflictRow> &table = shortcutConflictTable();
+    const QString focusId = shortcutCatalogId(table.at(0).projectComponent, table.at(0).projectAction);
+    const bool focusEnabled = !disabledIds.contains(focusId);
     snap.projects.reserve(table.size());
-    ShortcutTuple focusCurrent;
-    if (!findAllowlisted(tuples, table.at(0).projectComponent, table.at(0).projectAction, &focusCurrent, error)) {
-        return false;
+    if (focusEnabled) {
+        ShortcutTuple focusCurrent;
+        if (!findAllowlisted(tuples, table.at(0).projectComponent, table.at(0).projectAction, &focusCurrent,
+                             error)) {
+            return false;
+        }
+        if (!findAllowlisted(tuples, table.at(0).foreignComponent, table.at(0).foreignAction, &snap.lock,
+                             error)) {
+            return false;
+        }
+        snap.lockResolved = true;
+        snap.projects.append(focusCurrent);
+    } else {
+        // Disabled focus-right leaves the lock out of scope: no resolution,
+        // no relocation, and no Meta+L/Meta+Esc holder scan below.
+        snap.projects.append(ShortcutTuple());
     }
-    if (!findAllowlisted(tuples, table.at(0).foreignComponent, table.at(0).foreignAction, &snap.lock, error)) {
-        return false;
-    }
-    snap.projects.append(focusCurrent);
     for (int i = 1; i < table.size(); ++i) {
+        const QString rowId =
+            shortcutCatalogId(table.at(i).projectComponent, table.at(i).projectAction);
+        if (disabledIds.contains(rowId)) {
+            // Disabled table rows stay allowed when absent live (no
+            // assignment); duplicates still fail closed even when disabled.
+            int matches = 0;
+            ShortcutTuple found;
+            for (const ShortcutTuple &tuple : tuples) {
+                if (tuple.component == table.at(i).projectComponent
+                    && tuple.action == table.at(i).projectAction) {
+                    ++matches;
+                    found = tuple;
+                }
+            }
+            if (matches > 1) {
+                if (error) {
+                    *error = QStringLiteral("allowlisted tuple %1/%2 has %3 records, expected exactly one")
+                                 .arg(table.at(i).projectComponent, table.at(i).projectAction)
+                                 .arg(matches);
+                }
+                return false;
+            }
+            if (matches == 0) {
+                snap.projects.append(ShortcutTuple());
+                continue;
+            }
+            snap.projects.append(found);
+            continue;
+        }
         ShortcutTuple current;
         if (!findAllowlisted(tuples, table.at(i).projectComponent, table.at(i).projectAction, &current, error)) {
             return false;
         }
         snap.projects.append(current);
     }
-    if (!keysValid(snap.projects.at(0).active) || !keysValid(snap.lock.active)) {
+    if (focusEnabled && (!keysValid(snap.projects.at(0).active) || !keysValid(snap.lock.active))) {
         if (error) {
             *error = QStringLiteral("allowlisted tuple is unbounded");
         }
@@ -2468,6 +2958,54 @@ bool ShortcutReconciler::collectHolderSnapshot(HolderSnapshot *snapshot, QString
                 *error = QStringLiteral("allowlisted tuple is unbounded");
             }
             return false;
+        }
+    }
+    // Full-catalog image in catalog order for the confirmed Force snapshot
+    // and the disable-clear phase. Missing enabled rows fail closed with
+    // zero writes; missing disabled rows stay allowed (no assignment).
+    // Duplicates always fail closed.
+    {
+        const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
+        snap.catalogActives.reserve(catalog.size());
+        snap.catalogPresent.reserve(catalog.size());
+        for (const ShortcutCatalogEntry &entry : catalog) {
+            const QString id = shortcutCatalogId(entry.component, entry.action);
+            int matches = 0;
+            ShortcutTuple found;
+            for (const ShortcutTuple &tuple : tuples) {
+                if (tuple.component == entry.component && tuple.action == entry.action) {
+                    ++matches;
+                    found = tuple;
+                }
+            }
+            if (matches > 1) {
+                if (error) {
+                    *error = QStringLiteral("allowlisted tuple %1/%2 has %3 records, expected exactly one")
+                                 .arg(entry.component, entry.action)
+                                 .arg(matches);
+                }
+                return false;
+            }
+            if (matches == 0) {
+                if (!disabledIds.contains(id)) {
+                    if (error) {
+                        *error = QStringLiteral("allowlisted tuple %1/%2 has 0 records, expected exactly one")
+                                     .arg(entry.component, entry.action);
+                    }
+                    return false;
+                }
+                snap.catalogActives.append(QList<int>());
+                snap.catalogPresent.append(false);
+                continue;
+            }
+            if (!keysValid(found.active)) {
+                if (error) {
+                    *error = QStringLiteral("allowlisted tuple is unbounded");
+                }
+                return false;
+            }
+            snap.catalogActives.append(found.active);
+            snap.catalogPresent.append(true);
         }
     }
     // Independent structural validation of enumerated state: unbounded
@@ -2486,13 +3024,15 @@ bool ShortcutReconciler::collectHolderSnapshot(HolderSnapshot *snapshot, QString
         cosmetics.insert(tuple.component + QStringLiteral("/") + tuple.action,
                          qMakePair(tuple.componentFriendly, tuple.friendly));
     }
-    // Authoritative per-required-key holder scan. Project actions and Lock
-    // Session own their chords; the explicit System Monitor Meta+Esc holder
-    // is user-authorized. Every other actual holder becomes a clear row,
-    // whatever its identity (known, unknown, or legacy project IDs).
+    // Authoritative per-required-key holder scan over the enabled chords.
+    // Project actions and Lock Session own their chords; the explicit
+    // System Monitor Meta+Esc holder is user-authorized. Every other actual
+    // holder becomes a clear row, whatever its identity (known, unknown, or
+    // legacy project IDs). Disabled rows are never scanned and never become
+    // rows or blockers.
     // Transport, parsing, and consistency failures sort before the lock
     // gate below, matching the historical refusal precedence.
-    const QList<int> required = relevantConflictKeys();
+    const QList<int> required = enabledRequiredKeys(disabledIds);
     QMap<QString, int> rowIndex;
     for (int key : required) {
         QString keyError;
@@ -2592,7 +3132,7 @@ bool ShortcutReconciler::collectHolderSnapshot(HolderSnapshot *snapshot, QString
             const QString id = holder.component + QStringLiteral("/") + holder.action;
             const auto existing = rowIndex.find(id);
             if (existing == rowIndex.end()) {
-                const QList<int> removals = conflictingKeys(holder.active);
+                const QList<int> removals = conflictingKeysFor(holder.active, disabledIds);
                 if (removals.isEmpty()) {
                     // Listed for the key but holds no required chord in its
                     // active list: claims the chord (e.g. via a
@@ -2614,7 +3154,7 @@ bool ShortcutReconciler::collectHolderSnapshot(HolderSnapshot *snapshot, QString
                 }
                 row.active = holder.active;
                 row.removals = removals;
-                row.remainder = remainderAfterClear(holder.active);
+                row.remainder = remainderAfterClearFor(holder.active, disabledIds);
                 rowIndex.insert(id, snap.rows.size());
                 snap.rows.append(row);
                 if (snap.rows.size() > SHORTCUT_MAX_TUPLES) {
@@ -2655,9 +3195,11 @@ bool ShortcutReconciler::collectHolderSnapshot(HolderSnapshot *snapshot, QString
         }
         return a.action < b.action;
     });
-    // Lock preconditions are relocate logic: without the preimage to replace
-    // and without the target already held there is nothing safe to do.
-    {
+    // Lock preconditions are relocate logic and apply only while focus-right
+    // is enabled: without the preimage to replace and without the target
+    // already held there is nothing safe to do. A disabled focus-right
+    // skips this gate entirely with the lock out of scope.
+    if (focusEnabled) {
         const ShortcutConflictRow &lockRow = shortcutConflictTable().at(0);
         bool hasPre = false;
         bool hasTarget = false;
@@ -2686,21 +3228,27 @@ bool ShortcutReconciler::collectHolderSnapshot(HolderSnapshot *snapshot, QString
 
 ShortcutApplyResult ShortcutReconciler::writeProjectKeys(const char *operation)
 {
+    return writeProjectKeysFor(operation, QSet<QString>());
+}
+
+ShortcutApplyResult ShortcutReconciler::writeProjectKeysFor(const char *operation, const QSet<QString> &disabledIds)
+{
     ShortcutApplyResult result;
     if (!m_store) {
         result.error = QStringLiteral("reconciler is not configured");
         return result;
     }
     const QList<ShortcutConflictRow> &table = shortcutConflictTable();
+    const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
     ShortcutDiag::log(QtDebugMsg, operation, "start", "running",
-                      QStringLiteral("rows=%1").arg(table.size()));
+                      QStringLiteral("rows=%1 disabled=%2").arg(catalog.size()).arg(disabledIds.size()));
     const int startWrites = m_store->writeCount();
     auto usedWrites = [&]() {
         return m_store->writeCount() - startWrites;
     };
     QString error;
     HolderSnapshot snap;
-    if (!collectHolderSnapshot(&snap, &error)) {
+    if (!collectHolderSnapshotFor(&snap, disabledIds, &error)) {
         result.error = error;
         ShortcutDiag::log(QtWarningMsg, operation, "preflight", "refused", error);
         return result;
@@ -2760,50 +3308,86 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeys(const char *operation)
         }
         return checkOwner(writeError);
     };
+    auto isTableProject = [&](const QString &component, const QString &action) {
+        for (const ShortcutConflictRow &row : table) {
+            if (row.projectComponent == component && row.projectAction == action) {
+                return true;
+            }
+        }
+        return false;
+    };
+    auto expectedPost = [&](const ShortcutCatalogEntry &entry, QList<int> *post) {
+        for (const ShortcutConflictRow &row : table) {
+            if (row.projectComponent == entry.component && row.projectAction == entry.action) {
+                *post = row.projectPost;
+                return;
+            }
+        }
+        *post = QList<int>{entry.canonicalKey};
+    };
+    auto whatFor = [&](const ShortcutCatalogEntry &entry) {
+        for (const ShortcutConflictRow &row : table) {
+            if (row.projectComponent == entry.component && row.projectAction == entry.action
+                && !row.projectDiag.isEmpty()) {
+                return row.projectDiag;
+            }
+        }
+        return entry.action;
+    };
+    const QString focusId = shortcutCatalogId(table.at(0).projectComponent, table.at(0).projectAction);
+    const bool focusEnabled = !disabledIds.contains(focusId);
     // Phase 1: focus must own its post before lock drops the preimage.
-    const QList<int> focusPost = table.at(0).projectPost;
-    const ShortcutTuple &focusSnap = snap.projects.at(0);
-    if (focusSnap.active != focusPost) {
-        if (!writeOne(focusSnap.component, focusSnap.action, focusSnap.componentFriendly, focusSnap.friendly,
-                      focusPost, "focus", &error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-    }
-    // Phase 2: lock relocation preserving exact other keys/order, gated on a
-    // fresh read showing focus still owning its post.
-    {
-        QList<ShortcutTuple> tuples;
-        if (!m_store->readAll(&tuples, &error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-        ShortcutTuple focusGate;
-        ShortcutTuple lockGate;
-        if (!findAllowlisted(tuples, table.at(0).projectComponent, table.at(0).projectAction, &focusGate, &error)
-            || !findAllowlisted(tuples, table.at(0).foreignComponent, table.at(0).foreignAction, &lockGate, &error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-        if (focusGate.active != focusPost) {
-            result.error = QStringLiteral("refusing the lock write while focus does not own Meta+L");
-            result.writes = usedWrites();
-            return result;
-        }
-        const QList<int> lockPost = lockPostFor(lockGate.active);
-        if (lockGate.active != lockPost) {
-            if (!writeOne(lockGate.component, lockGate.action, lockGate.componentFriendly, lockGate.friendly, lockPost,
-                          "lock", &error)) {
+    // Skipped entirely while focus-right is disabled.
+    if (snap.lockResolved) {
+        const QList<int> focusPost = table.at(0).projectPost;
+        const ShortcutTuple &focusSnap = snap.projects.at(0);
+        if (focusSnap.active != focusPost) {
+            if (!writeOne(focusSnap.component, focusSnap.action, focusSnap.componentFriendly, focusSnap.friendly,
+                           focusPost, "focus", &error)) {
                 result.error = error;
                 result.writes = usedWrites();
                 return result;
             }
         }
+        // Phase 2: lock relocation preserving exact other keys/order, gated
+        // on a fresh read showing focus still owning its post.
+        {
+            QList<ShortcutTuple> tuples;
+            if (!m_store->readAll(&tuples, &error)) {
+                result.error = error;
+                result.writes = usedWrites();
+                return result;
+            }
+            ShortcutTuple focusGate;
+            ShortcutTuple lockGate;
+            if (!findAllowlisted(tuples, table.at(0).projectComponent, table.at(0).projectAction, &focusGate,
+                                 &error)
+                || !findAllowlisted(tuples, table.at(0).foreignComponent, table.at(0).foreignAction, &lockGate,
+                                     &error)) {
+                result.error = error;
+                result.writes = usedWrites();
+                return result;
+            }
+            if (focusGate.active != focusPost) {
+                result.error = QStringLiteral("refusing the lock write while focus does not own Meta+L");
+                result.writes = usedWrites();
+                return result;
+            }
+            const QList<int> lockPost = lockPostFor(lockGate.active);
+            if (lockGate.active != lockPost) {
+                if (!writeOne(lockGate.component, lockGate.action, lockGate.componentFriendly, lockGate.friendly,
+                               lockPost, "lock", &error)) {
+                    result.error = error;
+                    result.writes = usedWrites();
+                    return result;
+                }
+            }
+        }
     }
-    // Phase 3: remaining project assignments from a fresh read, in table order.
+    // Phase 3: enabled project assignments from a fresh read, in catalog
+    // order. Missing enabled rows fail closed; missing disabled rows stay
+    // allowed (no assignment). Phase 4 clears disabled own rows to empty
+    // through the existing transport; foreign holders are never touched.
     {
         QList<ShortcutTuple> tuples;
         if (!m_store->readAll(&tuples, &error)) {
@@ -2818,30 +3402,110 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeys(const char *operation)
             QString what;
         };
         QList<Need> needs;
-        for (int i = 1; i < table.size(); ++i) {
+        struct Clear
+        {
             ShortcutTuple current;
-            if (!findAllowlisted(tuples, table.at(i).projectComponent, table.at(i).projectAction, &current,
-                                 &error)) {
+            QString what;
+        };
+        QList<Clear> clears;
+        for (const ShortcutCatalogEntry &entry : catalog) {
+            const QString id = shortcutCatalogId(entry.component, entry.action);
+            if (id == focusId && focusEnabled) {
+                continue; // phase 1 owns the enabled focus row
+            }
+            ShortcutTuple current;
+            const bool tableRow = isTableProject(entry.component, entry.action);
+            if (tableRow) {
+                if (disabledIds.contains(id)) {
+                    int matches = 0;
+                    ShortcutTuple found;
+                    for (const ShortcutTuple &tuple : tuples) {
+                        if (tuple.component == entry.component && tuple.action == entry.action) {
+                            ++matches;
+                            found = tuple;
+                        }
+                    }
+                    if (matches > 1) {
+                        result.error =
+                            QStringLiteral("allowlisted tuple %1/%2 has %3 records, expected exactly one")
+                                .arg(entry.component, entry.action)
+                                .arg(matches);
+                        result.writes = usedWrites();
+                        return result;
+                    }
+                    if (matches == 0) {
+                        continue;
+                    }
+                    current = found;
+                } else if (!findAllowlisted(tuples, entry.component, entry.action, &current, &error)) {
+                    result.error = error;
+                    result.writes = usedWrites();
+                    return result;
+                }
+            } else {
+                int matches = 0;
+                ShortcutTuple found;
+                for (const ShortcutTuple &tuple : tuples) {
+                    if (tuple.component == entry.component && tuple.action == entry.action) {
+                        ++matches;
+                        found = tuple;
+                    }
+                }
+                if (matches > 1) {
+                    result.error =
+                        QStringLiteral("allowlisted tuple %1/%2 has %3 records, expected exactly one")
+                            .arg(entry.component, entry.action)
+                            .arg(matches);
+                    result.writes = usedWrites();
+                    return result;
+                }
+                if (matches == 0) {
+                    if (!disabledIds.contains(id)) {
+                        result.error =
+                            QStringLiteral("allowlisted tuple %1/%2 has 0 records, expected exactly one")
+                                .arg(entry.component, entry.action);
+                        result.writes = usedWrites();
+                        return result;
+                    }
+                    continue;
+                }
+                current = found;
+            }
+            if (disabledIds.contains(id)) {
+                if (!current.active.isEmpty()) {
+                    clears.append({current, whatFor(entry)});
+                }
+                continue;
+            }
+            QList<int> post;
+            expectedPost(entry, &post);
+            if (current.active != post) {
+                needs.append({current, post, whatFor(entry)});
+            }
+        }
+        for (const Need &need : needs) {
+            const QByteArray whatBytes = need.what.toUtf8();
+            if (!writeOne(need.current.component, need.current.action, need.current.componentFriendly,
+                           need.current.friendly, need.post, whatBytes.constData(), &error)) {
                 result.error = error;
                 result.writes = usedWrites();
                 return result;
             }
-            needs.append({current, table.at(i).projectPost, table.at(i).projectDiag});
         }
-        for (const Need &need : needs) {
-            if (need.current.active == need.post) {
-                continue;
-            }
-            const QByteArray whatBytes = need.what.toUtf8();
-            if (!writeOne(need.current.component, need.current.action, need.current.componentFriendly,
-                          need.current.friendly, need.post, whatBytes.constData(), &error)) {
+        for (const Clear &clear : clears) {
+            const QByteArray whatBytes = clear.what.toUtf8();
+            if (!writeOne(clear.current.component, clear.current.action, clear.current.componentFriendly,
+                           clear.current.friendly, QList<int>(), whatBytes.constData(), &error)) {
                 result.error = error;
                 result.writes = usedWrites();
                 return result;
             }
         }
     }
-    // Finish: only the expected image is permitted.
+    // Finish: only the expected image is permitted. Enabled rows sit at
+    // their posts, disabled rows are empty, missing disabled rows are out
+    // of scope, missing enabled rows fail, duplicates fail, and the lock
+    // is verified only while it is in scope.
     {
         QList<ShortcutTuple> finalTuples;
         if (!m_store->readAll(&finalTuples, &error)) {
@@ -2849,37 +3513,126 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeys(const char *operation)
             result.writes = usedWrites();
             return result;
         }
-        ShortcutTuple lockFinal;
-        QList<ShortcutTuple> projectFinals;
-        projectFinals.reserve(table.size());
-        bool lookupOk = true;
-        for (const ShortcutConflictRow &row : table) {
-            ShortcutTuple current;
-            if (!findAllowlisted(finalTuples, row.projectComponent, row.projectAction, &current, &error)) {
-                lookupOk = false;
-                break;
+        bool verified = true;
+        for (const ShortcutCatalogEntry &entry : catalog) {
+            const QString id = shortcutCatalogId(entry.component, entry.action);
+            if (id == focusId) {
+                if (!focusEnabled) {
+                    // Focus disabled leaves the focus row out of scope when
+                    // absent; duplicates still fail closed.
+                    int matches = 0;
+                    ShortcutTuple found;
+                    for (const ShortcutTuple &tuple : finalTuples) {
+                        if (tuple.component == entry.component && tuple.action == entry.action) {
+                            ++matches;
+                            found = tuple;
+                        }
+                    }
+                    if (matches > 1) {
+                        result.error =
+                            QStringLiteral("allowlisted tuple %1/%2 has %3 records, expected exactly one")
+                                .arg(entry.component, entry.action)
+                                .arg(matches);
+                        result.writes = usedWrites();
+                        return result;
+                    }
+                    if (matches == 0) {
+                        continue;
+                    }
+                    if (!found.active.isEmpty()) {
+                        verified = false;
+                    }
+                    continue;
+                }
+                ShortcutTuple current;
+                if (!findAllowlisted(finalTuples, entry.component, entry.action, &current, &error)) {
+                    result.error = error;
+                    result.writes = usedWrites();
+                    return result;
+                }
+                QList<int> post;
+                expectedPost(entry, &post);
+                if (current.active != post) {
+                    verified = false;
+                }
+                continue;
             }
-            projectFinals.append(current);
+            const bool tableRow = isTableProject(entry.component, entry.action);
+            ShortcutTuple current;
+            bool present = false;
+            if (tableRow) {
+                if (disabledIds.contains(id)) {
+                    int matches = 0;
+                    for (const ShortcutTuple &tuple : finalTuples) {
+                        if (tuple.component == entry.component && tuple.action == entry.action) {
+                            ++matches;
+                            current = tuple;
+                            present = true;
+                        }
+                    }
+                    if (matches > 1) {
+                        result.error =
+                            QStringLiteral("allowlisted tuple %1/%2 has %3 records, expected exactly one")
+                                .arg(entry.component, entry.action)
+                                .arg(matches);
+                        result.writes = usedWrites();
+                        return result;
+                    }
+                    if (!present) {
+                        continue;
+                    }
+                } else {
+                    if (!findAllowlisted(finalTuples, entry.component, entry.action, &current, &error)) {
+                        result.error = error;
+                        result.writes = usedWrites();
+                        return result;
+                    }
+                    present = true;
+                }
+            } else {
+                int matches = 0;
+                for (const ShortcutTuple &tuple : finalTuples) {
+                    if (tuple.component == entry.component && tuple.action == entry.action) {
+                        ++matches;
+                        current = tuple;
+                        present = true;
+                    }
+                }
+                if (matches > 1) {
+                    result.error =
+                        QStringLiteral("allowlisted tuple %1/%2 has %3 records, expected exactly one")
+                            .arg(entry.component, entry.action)
+                            .arg(matches);
+                    result.writes = usedWrites();
+                    return result;
+                }
+                if (!present) {
+                    if (!disabledIds.contains(id)) {
+                        verified = false;
+                    }
+                    continue;
+                }
+            }
+            if (disabledIds.contains(id)) {
+                if (!current.active.isEmpty()) {
+                    verified = false;
+                }
+                continue;
+            }
+            QList<int> post;
+            expectedPost(entry, &post);
+            if (current.active != post) {
+                verified = false;
+            }
         }
-        if (lookupOk) {
+        if (verified && snap.lockResolved) {
+            ShortcutTuple lockFinal;
             if (!findAllowlisted(finalTuples, table.at(0).foreignComponent, table.at(0).foreignAction, &lockFinal,
                                  &error)) {
-                lookupOk = false;
+                result.error = error;
+                result.writes = usedWrites();
+                return result;
             }
-        }
-        if (!lookupOk) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-        bool verified = true;
-        for (int i = 0; i < table.size(); ++i) {
-            if (projectFinals.at(i).active != table.at(i).projectPost) {
-                verified = false;
-                break;
-            }
-        }
-        if (verified) {
             const ShortcutConflictRow &lockRow = table.at(0);
             for (int key : lockRow.foreignExpectedPre) {
                 if (lockFinal.active.contains(key)) {
@@ -2922,6 +3675,11 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeys(const char *operation)
 ShortcutApplyResult ShortcutReconciler::apply()
 {
     return writeProjectKeys("apply");
+}
+
+ShortcutApplyResult ShortcutReconciler::applySelected(const QSet<QString> &disabledIds)
+{
+    return writeProjectKeysFor("apply", disabledIds);
 }
 
 ShortcutRevertResult ShortcutReconciler::revert()
@@ -3062,6 +3820,11 @@ bool ShortcutReconciler::forceMismatchFromRow(const ClearRow &row, ShortcutForce
 
 ShortcutForcePreview ShortcutReconciler::buildForcePreview()
 {
+    return buildForcePreviewFor(QSet<QString>());
+}
+
+ShortcutForcePreview ShortcutReconciler::buildForcePreviewFor(const QSet<QString> &disabledIds)
+{
     ShortcutForcePreview preview;
     auto refuse = [&](const QString &message) {
         preview.forceable = false;
@@ -3073,13 +3836,14 @@ ShortcutForcePreview ShortcutReconciler::buildForcePreview()
     }
     HolderSnapshot snap;
     QString error;
-    if (!collectHolderSnapshot(&snap, &error)) {
+    if (!collectHolderSnapshotFor(&snap, disabledIds, &error)) {
         return refuse(error);
     }
     // Lock preconditions are relocate logic, never forceable: even with
     // clearable holders, a lock binding with nothing to replace refuses the
-    // preview up front instead of failing mid-force after clearing.
-    {
+    // preview up front instead of failing mid-force after clearing. Out of
+    // scope while focus-right is disabled.
+    if (snap.lockResolved) {
         const ShortcutConflictRow &lockRow = shortcutConflictTable().at(0);
         bool hasPre = false;
         bool hasTarget = false;
@@ -3099,14 +3863,22 @@ ShortcutForcePreview ShortcutReconciler::buildForcePreview()
     }
     preview.owner = snap.owner;
     preview.uid = snap.uid;
-    preview.liveImages.reserve(snap.projects.size() + 1);
-    if (!snap.projects.isEmpty()) {
-        preview.liveImages.append(snap.projects.at(0).active);
+    // Full fresh image: every catalog active in catalog order (empty when
+    // the entry is missing live), then the lock image (empty while the
+    // lock is out of scope). Presence is bound too: missing vs empty share
+    // the same active image.
+    preview.liveImages.reserve(snap.catalogActives.size() + 1);
+    for (const QList<int> &active : snap.catalogActives) {
+        preview.liveImages.append(active);
     }
-    preview.liveImages.append(snap.lock.active);
-    for (int i = 1; i < snap.projects.size(); ++i) {
-        preview.liveImages.append(snap.projects.at(i).active);
+    preview.liveImages.append(snap.lockResolved ? snap.lock.active : QList<int>());
+    preview.livePresent.reserve(snap.catalogPresent.size() + 1);
+    for (bool present : snap.catalogPresent) {
+        preview.livePresent.append(present);
     }
+    preview.livePresent.append(snap.lockResolved);
+    preview.disabledIds = QStringList(disabledIds.begin(), disabledIds.end());
+    preview.disabledIds.sort();
     if (!snap.blocked.isEmpty()) {
         const Blocker &first = snap.blocked.first();
         return refuse(QStringLiteral("refusing force: %1 is claimed by %2/%3 with no active binding to clear")
@@ -3141,7 +3913,31 @@ ShortcutForcePreview ShortcutReconciler::previewForceApply()
     return preview;
 }
 
+ShortcutForcePreview ShortcutReconciler::previewForceApplySelected(const QSet<QString> &disabledIds)
+{
+    ShortcutForcePreview preview = buildForcePreviewFor(disabledIds);
+    if (preview.forceable) {
+        QStringList rows;
+        for (const ShortcutForceMismatch &mismatch : preview.mismatches) {
+            rows.append(QStringLiteral("%1/%2 actual=%3 remove=%4 keep=%5")
+                            .arg(mismatch.component, mismatch.action, keysDisplay(mismatch.actual),
+                                 keysDisplay(mismatch.expectedPre), keysDisplay(mismatch.post)));
+        }
+        rows.prepend(QStringLiteral("disabled=%1").arg(preview.disabledIds.size()));
+        ShortcutDiag::log(QtInfoMsg, "force-preview", "preview", "forceable", rows.join(QStringLiteral("; ")));
+    } else {
+        ShortcutDiag::log(QtDebugMsg, "force-preview", "preview", "not-forceable", preview.error);
+    }
+    return preview;
+}
+
 ShortcutForceApplyResult ShortcutReconciler::applyForced(const ShortcutForcePreview &confirmed)
+{
+    return applyForcedSelected(confirmed, QSet<QString>());
+}
+
+ShortcutForceApplyResult ShortcutReconciler::applyForcedSelected(const ShortcutForcePreview &confirmed,
+                                                                const QSet<QString> &disabledIds)
 {
     ShortcutForceApplyResult result;
     auto fail = [&](const QString &message, const char *outcome) {
@@ -3157,15 +3953,32 @@ ShortcutForceApplyResult ShortcutReconciler::applyForced(const ShortcutForcePrev
         }
         return fail(QStringLiteral("cleared shortcut store is not configured"), "unconfigured");
     }
+    {
+        QString idError;
+        if (!disabledIdsValid(disabledIds, &idError)) {
+            return fail(idError, "unbounded");
+        }
+    }
     if (!confirmed.forceable) {
         return fail(QStringLiteral("no confirmed forced override to apply"), "no-confirmation");
     }
     if (confirmed.mismatches.isEmpty() || confirmed.mismatches.size() > SHORTCUT_MAX_TUPLES) {
         return fail(QStringLiteral("forced override is unbounded"), "unbounded");
     }
+    // The preview binds its exact staged draft: a draft edit cancels the
+    // pending preview, and any residual mismatch fails here as stale with
+    // zero writes.
+    {
+        QStringList current = QStringList(disabledIds.begin(), disabledIds.end());
+        current.sort();
+        if (current != confirmed.disabledIds) {
+            return fail(QStringLiteral("confirmed force image is stale; re-preview before forcing"),
+                        "stale-draft");
+        }
+    }
     // No arbitrary action/key inputs: every confirmed row must carry a
     // bounded identity with removals/remainder exactly derived from its
-    // actuals. Anything forged fails closed here.
+    // actuals under the confirmed draft. Anything forged fails closed here.
     QStringList seen;
     for (const ShortcutForceMismatch &mismatch : confirmed.mismatches) {
         if (!stringValid(mismatch.component) || !stringValid(mismatch.action)
@@ -3179,22 +3992,22 @@ ShortcutForceApplyResult ShortcutReconciler::applyForced(const ShortcutForcePrev
             return fail(QStringLiteral("forced override is unbounded"), "duplicate");
         }
         seen.append(id);
-        if (mismatch.expectedPre != conflictingKeys(mismatch.actual)
-            || mismatch.post != remainderAfterClear(mismatch.actual)) {
+        if (mismatch.expectedPre != conflictingKeysFor(mismatch.actual, disabledIds)
+            || mismatch.post != remainderAfterClearFor(mismatch.actual, disabledIds)) {
             return fail(QStringLiteral("forced override is unbounded"), "image-mismatch");
         }
     }
     // Revalidation after confirmation, before any write (including
-    // cleared-list writes): recompute the full preflight and require the
-    // exact confirmed snapshot.
-    const ShortcutForcePreview current = buildForcePreview();
+    // cleared-list writes): recompute the full preflight under the same
+    // draft and require the exact confirmed snapshot.
+    const ShortcutForcePreview current = buildForcePreviewFor(disabledIds);
     if (!current.forceable) {
         return fail(current.error.isEmpty() ? QStringLiteral("confirmed force image is stale; re-preview before forcing")
                                             : current.error,
                     "stale");
     }
     if (current.owner != confirmed.owner || current.uid != confirmed.uid
-        || current.liveImages != confirmed.liveImages
+        || current.liveImages != confirmed.liveImages || current.livePresent != confirmed.livePresent
         || current.mismatches.size() != confirmed.mismatches.size()) {
         return fail(QStringLiteral("confirmed force image is stale; re-preview before forcing"), "stale");
     }
@@ -3318,7 +4131,7 @@ ShortcutForceApplyResult ShortcutReconciler::applyForced(const ShortcutForcePrev
         }
     }
     // Project assignments from a fresh read now that holders are cleared.
-    const ShortcutApplyResult projects = writeProjectKeys("force-apply");
+    const ShortcutApplyResult projects = writeProjectKeysFor("force-apply", disabledIds);
     result.ok = projects.ok;
     result.error = projects.error;
     result.writes = usedWrites();

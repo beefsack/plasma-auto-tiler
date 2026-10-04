@@ -497,6 +497,22 @@ public:
 
 QString oversizedString();
 
+void seedFullCatalogQuietExtras(FakeShortcutStore &store)
+{
+    for (const ShortcutCatalogEntry &entry : shortcutProjectCatalog()) {
+        bool found = false;
+        for (const ShortcutTuple &tuple : store.tuples) {
+            if (tuple.component == entry.component && tuple.action == entry.action) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            store.tuples.append(makeTuple(entry.component, entry.action, QList<int>{entry.canonicalKey}));
+        }
+    }
+}
+
 void seedReady6(FakeShortcutStore &store, const QList<int> &focusPre, const QList<int> &lockPre)
 {
     // Twenty tuples: the original fourteen plus the six focus/move-arrow
@@ -536,6 +552,7 @@ void seedReady6(FakeShortcutStore &store, const QList<int> &focusPre, const QLis
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-right-arrow"),
                   QList<int>{META_SHIFT_RIGHT}),
     };
+    seedFullCatalogQuietExtras(store);
 }
 
 // Quiet state: projects own their chords, Lock Session holds the given pre,
@@ -584,6 +601,7 @@ void seedQuietState(FakeShortcutStore &store, const QList<int> &focusPre, const 
                   QList<int>{META_SHIFT_RIGHT}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("Window to Next Screen"), QList<int>{}),
     };
+    seedFullCatalogQuietExtras(store);
 }
 
 // In-memory cleared-actions store mirroring the real KConfig bounds.
@@ -1646,9 +1664,10 @@ void keyedDesktopOnlyBlocksRelocator()
     // .desktop-declared-only holder on Meta+Esc: absent from readAll tuples,
     // present via globalShortcutsByKey with empty active and defaults
     // containing Meta+Esc (authoritative primitive sees defaults).
-    // Must block with zero writes, independently of readAll.
+    // Must block with zero writes, independently of readAll. The quiet seed
+    // keeps the Esc blocker the first conflict in catalog order.
     FakeShortcutStore store;
-    seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+    seedQuietState(store, QList<int>{META_L}, QList<int>{META_ESC});
     ShortcutKeyHolder foreign;
     foreign.component = QStringLiteral("org.kde.unexpected");
     foreign.action = QStringLiteral("other-launch");
@@ -1694,7 +1713,7 @@ void keyedDesktopOnlyBlocksClearTargets()
 {
     for (int chord : {META_ALT_K, META_ALT_L}) {
         FakeShortcutStore store;
-        seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+        seedQuietState(store, QList<int>{META_L}, QList<int>{META_ESC});
         ShortcutKeyHolder foreign;
         foreign.component = QStringLiteral("org.kde.unexpected");
         foreign.action = QStringLiteral("other-action");
@@ -1960,9 +1979,11 @@ void keyedAvailabilityConsistencyBothDirections()
         CHECK(cleared.stored.isEmpty());
     }
     {
-        // Authorized holder with inconsistent availability still fails.
+        // Authorized holder with inconsistent availability still fails. The
+        // quiet seed keeps the Esc inconsistency the first conflict in
+        // catalog order.
         FakeShortcutStore store;
-        seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+        seedQuietState(store, QList<int>{META_L}, QList<int>{META_ESC});
         ShortcutKeyHolder sysmon;
         sysmon.component = shortcutAuthorizedEscComponent();
         sysmon.action = shortcutAuthorizedEscAction();
@@ -1977,9 +1998,10 @@ void keyedAvailabilityConsistencyBothDirections()
         CHECK(cleared.stored.isEmpty());
     }
     {
-        // Typed outcome preserves semantics: Conflict vs Unavailable.
+        // Typed outcome preserves semantics: Conflict vs Unavailable. The
+        // quiet seed keeps the Esc holder the first conflict in order.
         FakeShortcutStore store;
-        seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+        seedQuietState(store, QList<int>{META_L}, QList<int>{META_ESC});
         ShortcutKeyHolder foreign;
         foreign.component = QStringLiteral("org.kde.unexpected");
         foreign.action = QStringLiteral("other-launch");
@@ -4103,6 +4125,495 @@ void clearedPathIsNewAndAbsolute()
     delete live;
 }
 
+// Full-catalog quiet state: every catalog project at its canonical chord,
+// Lock Session relocated, and all 14 known foreign holders cleared. Plain
+// Apply is a no-op here; deviations drive refusal and Force tests.
+void seedFullQuiet(FakeShortcutStore &store)
+{
+    store.tuples.clear();
+    for (const ShortcutCatalogEntry &entry : shortcutProjectCatalog()) {
+        store.tuples.append(makeTuple(entry.component, entry.action, QList<int>{entry.canonicalKey}));
+    }
+    store.tuples.append(makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"),
+                                  QList<int>{META_ESC}));
+    const QList<ShortcutConflictRow> &table = shortcutConflictTable();
+    for (int i = 1; i < table.size(); ++i) {
+        store.tuples.append(
+            makeTuple(table.at(i).foreignComponent, table.at(i).foreignAction, QList<int>()));
+    }
+}
+
+void selectionCatalogCounts()
+{
+    // Research catalog: 36 directional/toggle plus 30 workspace rows.
+    const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
+    CHECK(catalog.size() == 66);
+    int focus = 0;
+    int move = 0;
+    int resize = 0;
+    int toggle = 0;
+    int select = 0;
+    int workspaceMove = 0;
+    QSet<int> keys;
+    for (const ShortcutCatalogEntry &entry : catalog) {
+        if (entry.kind == QStringLiteral("focus")) {
+            ++focus;
+        } else if (entry.kind == QStringLiteral("move")) {
+            ++move;
+        } else if (entry.kind == QStringLiteral("resize")) {
+            ++resize;
+        } else if (entry.kind == QStringLiteral("toggle")) {
+            ++toggle;
+        } else if (entry.kind == QStringLiteral("workspace-select")) {
+            ++select;
+        } else if (entry.kind == QStringLiteral("workspace-move")) {
+            ++workspaceMove;
+        }
+        CHECK(entry.canonicalKey != 0);
+        CHECK(!entry.canonicalDisplay.isEmpty());
+        keys.insert(entry.canonicalKey);
+        bool found = false;
+        CHECK(shortcutCatalogKeyFor(entry.component, entry.action, &found) == entry.canonicalKey);
+        CHECK(found);
+        CHECK(shortcutCatalogContains(entry.component, entry.action));
+    }
+    CHECK(focus == 8);
+    CHECK(move == 8);
+    CHECK(resize == 16);
+    CHECK(toggle == 4);
+    CHECK(select == 10);
+    CHECK(workspaceMove == 20);
+    CHECK(keys.size() == 66);
+    CHECK(!shortcutCatalogContains(QStringLiteral("kwin"), QStringLiteral("other-action")));
+    bool found = true;
+    CHECK(shortcutCatalogKeyFor(QStringLiteral("kwin"), QStringLiteral("other-action"), &found) == 0);
+    CHECK(!found);
+    // Known conflicts are exactly the 15 conflict-table project rows.
+    CHECK(shortcutKnownConflictIds().size() == 15);
+    CHECK(shortcutKnownConflictIds().contains(
+        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"))));
+    CHECK(!shortcutKnownConflictIds().contains(
+        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"))));
+    CHECK(shortcutMaxProjectWrites() == 67);
+    // Displays resolve through the catalog first, table targets preserved.
+    CHECK(ShortcutReconciler::keyDisplayName(SHORTCUT_META_1) == QStringLiteral("Meta+1"));
+    CHECK(ShortcutReconciler::keyDisplayName(SHORTCUT_META_EXCLAM) == QStringLiteral("Meta+!"));
+    CHECK(ShortcutReconciler::keyDisplayName(META_L) == QStringLiteral("Meta+L"));
+    CHECK(ShortcutReconciler::keyDisplayName(META_ESC) == QStringLiteral("Meta+Esc"));
+    // Selection-scoped key images: disabling drops the chord; disabling
+    // focus-right additionally drops the lock relocation chords.
+    CHECK(ShortcutReconciler::conflictingKeysFor(QList<int>{SHORTCUT_META_1, 999}, QSet<QString>())
+          == QList<int>{SHORTCUT_META_1});
+    CHECK(ShortcutReconciler::remainderAfterClearFor(QList<int>{SHORTCUT_META_1, 999}, QSet<QString>())
+          == QList<int>{999});
+    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"));
+    CHECK(ShortcutReconciler::conflictingKeysFor(QList<int>{SHORTCUT_META_1, 999}, QSet<QString>{ws1}).isEmpty());
+    CHECK(ShortcutReconciler::enabledRequiredKeys(QSet<QString>()).contains(SHORTCUT_META_1));
+    CHECK(ShortcutReconciler::enabledRequiredKeys(QSet<QString>()).contains(META_ESC));
+    CHECK(ShortcutReconciler::enabledRequiredKeys(QSet<QString>{ws1}).contains(SHORTCUT_META_1) == false);
+    const QString focusId =
+        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"));
+    CHECK(ShortcutReconciler::enabledRequiredKeys(QSet<QString>{focusId}).contains(META_L) == false);
+    CHECK(ShortcutReconciler::enabledRequiredKeys(QSet<QString>{focusId}).contains(META_ESC) == false);
+    // Preset seam is a deterministic catalog-ordered union.
+    const QStringList preset =
+        presetCompatibleDisabledIds(catalog, shortcutKnownConflictIds(), QSet<QString>{ws1});
+    CHECK(preset.size() == 16);
+    CHECK(preset.contains(focusId));
+    CHECK(preset.contains(ws1));
+    CHECK(preset.indexOf(focusId) < preset.indexOf(ws1));
+    // Project identity covers the full catalog for writes and exemptions.
+    CHECK(ShortcutReconciler::isProjectAction(QStringLiteral("kwin"),
+                                              QStringLiteral("plasma-auto-tiler-workspace-1")));
+    CHECK(ShortcutReconciler::isAllowlisted(QStringLiteral("kwin"),
+                                            QStringLiteral("plasma-auto-tiler-workspace-1")));
+    CHECK(!ShortcutReconciler::isAllowlisted(QStringLiteral("kwin"), QStringLiteral("other-action")));
+}
+
+void selectionDisabledSkipsRefusalAndClearsOwn()
+{
+    // Disabled toggle-float with its known holder claiming the chord:
+    // Apply succeeds, clears only the project's own assignment, never the
+    // foreign holder, and persists nothing locally.
+    FakeShortcutStore store;
+    seedFullQuiet(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Grid View")) {
+            tuple.active = QList<int>{META_G};
+        }
+    }
+    const QString floatId =
+        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-float"));
+    FakeClearedActions cleared;
+    const ShortcutApplyResult result =
+        ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>{floatId});
+    CHECK(result.ok);
+    CHECK(result.error.isEmpty());
+    CHECK(result.writes == 1);
+    CHECK(store.foreignWriteLog.isEmpty());
+    CHECK(cleared.stored.isEmpty());
+    CHECK(cleared.saves == 0);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            CHECK(tuple.active.isEmpty());
+        }
+        if (tuple.action == QStringLiteral("Grid View")) {
+            CHECK(tuple.active == (QList<int>{META_G}));
+        }
+    }
+}
+
+void selectionDisabledFocusSkipsLockAndEsc()
+{
+    // Disabled focus-right with Lock Session still on the preimage and an
+    // unknown Meta+Esc holder: Apply succeeds, the lock is never relocated,
+    // Meta+Esc is never scanned, and the focus row itself is cleared.
+    FakeShortcutStore store;
+    seedFullQuiet(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Lock Session")) {
+            tuple.active = QList<int>{META_L};
+        }
+    }
+    store.tuples.append(makeTuple(QStringLiteral("kwin"), QStringLiteral("other-action"), QList<int>{META_ESC}));
+    const QString focusId =
+        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"));
+    FakeClearedActions cleared;
+    const ShortcutApplyResult result =
+        ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>{focusId});
+    CHECK(result.ok);
+    CHECK(result.error.isEmpty());
+    CHECK(store.foreignWriteLog.isEmpty());
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+            CHECK(tuple.active.isEmpty());
+        }
+        if (tuple.action == QStringLiteral("Lock Session")) {
+            CHECK(tuple.active == (QList<int>{META_L}));
+        }
+        if (tuple.action == QStringLiteral("other-action")) {
+            CHECK(tuple.active == (QList<int>{META_ESC}));
+        }
+    }
+}
+
+void selectionMixedRefusesEnabledOnly()
+{
+    // An enabled-row holder refuses naming exactly that row while a
+    // disabled-row holder on another chord is ignored with zero writes.
+    FakeShortcutStore store;
+    seedFullQuiet(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Window Quick Tile Left")) {
+            tuple.active = QList<int>{META_LEFT};
+        }
+    }
+    store.tuples.append(
+        makeTuple(QStringLiteral("org.example"), QStringLiteral("other-ws"), QList<int>{SHORTCUT_META_1}));
+    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"));
+    FakeClearedActions cleared;
+    const ShortcutApplyResult refused =
+        ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>{ws1});
+    CHECK(!refused.ok);
+    CHECK(refused.error.contains(QStringLiteral("Meta+Left")));
+    CHECK(refused.error.contains(QStringLiteral("Window Quick Tile Left")));
+    CHECK(refused.writes == 0);
+    CHECK(store.writeCount() == 0);
+    CHECK(cleared.stored.isEmpty());
+    const ShortcutForcePreview preview =
+        ShortcutReconciler(&store, &cleared).previewForceApplySelected(QSet<QString>{ws1});
+    CHECK(preview.forceable);
+    CHECK(preview.mismatches.size() == 1);
+    CHECK(preview.mismatches.at(0).action == QStringLiteral("Window Quick Tile Left"));
+    CHECK(preview.disabledIds == QStringList{ws1});
+}
+
+void selectionForceBindsDraftAndDrift()
+{
+    // Force binds its exact draft: a changed draft fails as stale with zero
+    // writes before any persist, and holder drift fails as stale too.
+    FakeShortcutStore store;
+    seedFullQuiet(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Window Quick Tile Left")) {
+            tuple.active = QList<int>{META_LEFT, 4242};
+        }
+    }
+    store.defaultKeysById[QStringLiteral("kwin/Window Quick Tile Left")] = QList<int>{META_LEFT};
+    FakeClearedActions cleared;
+    const ShortcutForcePreview preview =
+        ShortcutReconciler(&store, &cleared).previewForceApplySelected(QSet<QString>());
+    CHECK(preview.forceable);
+    CHECK(preview.disabledIds.isEmpty());
+    CHECK(preview.liveImages.size() == 67);
+    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"));
+    const ShortcutForceApplyResult staleDraft =
+        ShortcutReconciler(&store, &cleared).applyForcedSelected(preview, QSet<QString>{ws1});
+    CHECK(!staleDraft.ok);
+    CHECK(staleDraft.error.contains(QStringLiteral("stale")));
+    CHECK(staleDraft.writes == 0);
+    CHECK(store.writeCount() == 0);
+    CHECK(cleared.saves == 0);
+    const ShortcutForceApplyResult forced =
+        ShortcutReconciler(&store, &cleared).applyForcedSelected(preview, QSet<QString>());
+    CHECK(forced.ok);
+    CHECK(cleared.stored.size() == 1);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Window Quick Tile Left")) {
+            CHECK(tuple.active == (QList<int>{4242}));
+        }
+    }
+    CHECK(ShortcutReconciler(&store, &cleared).revert().ok);
+    CHECK(cleared.stored.isEmpty());
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Window Quick Tile Left")) {
+            CHECK(tuple.active == (QList<int>{META_LEFT}));
+        }
+    }
+    // Drift after preview fails as stale with zero further writes.
+    {
+        FakeShortcutStore drifted;
+        seedFullQuiet(drifted);
+        for (ShortcutTuple &tuple : drifted.tuples) {
+            if (tuple.action == QStringLiteral("Window Quick Tile Left")) {
+                tuple.active = QList<int>{META_LEFT, 4242};
+            }
+        }
+        drifted.defaultKeysById[QStringLiteral("kwin/Window Quick Tile Left")] = QList<int>{META_LEFT};
+        FakeClearedActions driftedCleared;
+        const ShortcutForcePreview driftPreview =
+            ShortcutReconciler(&drifted, &driftedCleared).previewForceApplySelected(QSet<QString>());
+        CHECK(driftPreview.forceable);
+        const int savesBefore = driftedCleared.saves;
+        const int writesBefore = drifted.writeCount();
+        for (ShortcutTuple &tuple : drifted.tuples) {
+            if (tuple.action == QStringLiteral("Window Quick Tile Left")) {
+                tuple.active = QList<int>{META_LEFT, 5555};
+            }
+        }
+        const ShortcutForceApplyResult stale =
+            ShortcutReconciler(&drifted, &driftedCleared).applyForcedSelected(driftPreview, QSet<QString>());
+        CHECK(!stale.ok);
+        CHECK(stale.writes == 0);
+        CHECK(drifted.writeCount() == writesBefore);
+        CHECK(driftedCleared.saves == savesBefore);
+    }
+}
+
+void selectionDefaultsCarried()
+{
+    // Wire defaults survive into tuples and holder views so defaults stay
+    // visible even after Force clears the active list.
+    ShortcutInfoFields info;
+    info.action = QStringLiteral("plasma-auto-tiler-workspace-1");
+    info.friendly = QString();
+    info.compUnique = QStringLiteral("kwin");
+    info.compFriendly = QStringLiteral("KWin");
+    info.contextUnique = QString();
+    info.contextFriendly = QString();
+    info.active = QList<int>{SHORTCUT_META_1};
+    info.defaults = QList<int>{SHORTCUT_META_1};
+    QList<ShortcutTuple> tuples;
+    QString error;
+    CHECK(ShortcutReconciler::tuplesFromInfoFields(QList<ShortcutInfoFields>{info}, &tuples, &error));
+    CHECK(tuples.size() == 1);
+    CHECK(tuples.at(0).active == (QList<int>{SHORTCUT_META_1}));
+    CHECK(tuples.at(0).defaults == (QList<int>{SHORTCUT_META_1}));
+    QList<ShortcutKeyHolder> holders;
+    CHECK(ShortcutReconciler::holdersFromInfoFields(QList<ShortcutInfoFields>{info}, &holders, &error));
+    CHECK(holders.size() == 1);
+    CHECK(holders.at(0).defaults == (QList<int>{SHORTCUT_META_1}));
+}
+
+void selectionMissingEnabledFailsClosed()
+{
+    // Missing enabled rows fail closed with zero writes; missing disabled
+    // rows stay allowed.
+    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"));
+    {
+        FakeShortcutStore store;
+        seedFullQuiet(store);
+        for (int i = static_cast<int>(store.tuples.size()) - 1; i >= 0; --i) {
+            if (store.tuples.at(i).action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+                store.tuples.removeAt(i);
+            }
+        }
+        FakeClearedActions cleared;
+        const ShortcutApplyResult result = ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>());
+        CHECK(!result.ok);
+        CHECK(result.writes == 0);
+        CHECK(store.writeCount() == 0);
+    }
+    {
+        FakeShortcutStore store;
+        seedFullQuiet(store);
+        for (int i = static_cast<int>(store.tuples.size()) - 1; i >= 0; --i) {
+            if (store.tuples.at(i).action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+                store.tuples.removeAt(i);
+            }
+        }
+        FakeClearedActions cleared;
+        const ShortcutApplyResult result =
+            ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>{ws1});
+        CHECK(result.ok);
+    }
+}
+
+void selectionUnknownIdFailsClosed()
+{
+    FakeShortcutStore store;
+    seedFullQuiet(store);
+    FakeClearedActions cleared;
+    const QSet<QString> bad{QStringLiteral("kwin/other-action")};
+    const ShortcutApplyResult result = ShortcutReconciler(&store, &cleared).applySelected(bad);
+    CHECK(!result.ok);
+    CHECK(result.writes == 0);
+    CHECK(store.writeCount() == 0);
+    const ShortcutForcePreview preview =
+        ShortcutReconciler(&store, &cleared).previewForceApplySelected(bad);
+    CHECK(!preview.forceable);
+}
+
+void selectionForeignDefaultConflictAfterClear()
+{
+    // Noncompiled foreign wire default still collides after its active list
+    // is cleared; own project defaults never count as OS conflicts.
+    FakeShortcutStore store;
+    seedFullQuiet(store);
+    ShortcutTuple foreign;
+    foreign.component = QStringLiteral("org.example");
+    foreign.action = QStringLiteral("other-ws");
+    foreign.componentFriendly = QStringLiteral("Example");
+    foreign.friendly = QStringLiteral("Other");
+    foreign.active = QList<int>();
+    foreign.defaults = QList<int>{SHORTCUT_META_1};
+    store.tuples.append(foreign);
+    const QStringList ids = ShortcutReconciler::foreignDefaultIdsForKey(SHORTCUT_META_1, store.tuples);
+    CHECK(ids.contains(QStringLiteral("org.example/other-ws")));
+    // Own project defaults are never listed.
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+            tuple.defaults = QList<int>{SHORTCUT_META_1};
+        }
+    }
+    const QStringList ownIds = ShortcutReconciler::foreignDefaultIdsForKey(SHORTCUT_META_1, store.tuples);
+    CHECK(!ownIds.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-1")));
+    CHECK(ownIds.contains(QStringLiteral("org.example/other-ws")));
+    // Readable chord image for UI rows.
+    CHECK(ShortcutReconciler::keysDisplayNames(QList<int>{SHORTCUT_META_1}) == QStringLiteral("Meta+1"));
+    CHECK(ShortcutReconciler::keysDisplayNames(QList<int>()) == QStringLiteral("none"));
+    // Custom/unrelated chords render through QKeySequence, not raw ints.
+    const int ctrlF12 = 0x04000000 | 0x0100003B; // Ctrl+F12, no catalog row
+    CHECK(ShortcutReconciler::keyDisplayName(ctrlF12) == QStringLiteral("Ctrl+F12"));
+}
+
+void selectionDisabledTableRowAbsentAllowed()
+{
+    // Table rows follow the same rule: enabled missing fails closed with
+    // zero writes, disabled missing stays allowed, duplicates fail even
+    // when disabled.
+    const QString floatId =
+        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-float"));
+    {
+        FakeShortcutStore store;
+        seedFullQuiet(store);
+        for (int i = static_cast<int>(store.tuples.size()) - 1; i >= 0; --i) {
+            if (store.tuples.at(i).action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+                store.tuples.removeAt(i);
+            }
+        }
+        FakeClearedActions cleared;
+        const ShortcutApplyResult result =
+            ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>());
+        CHECK(!result.ok);
+        CHECK(result.writes == 0);
+        CHECK(store.writeCount() == 0);
+    }
+    {
+        FakeShortcutStore store;
+        seedFullQuiet(store);
+        for (int i = static_cast<int>(store.tuples.size()) - 1; i >= 0; --i) {
+            if (store.tuples.at(i).action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+                store.tuples.removeAt(i);
+            }
+        }
+        FakeClearedActions cleared;
+        const ShortcutApplyResult result =
+            ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>{floatId});
+        CHECK(result.ok);
+    }
+    {
+        FakeShortcutStore store;
+        seedFullQuiet(store);
+        store.tuples.append(
+            makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-float"),
+                      QList<int>{META_G}));
+        FakeClearedActions cleared;
+        const ShortcutApplyResult result =
+            ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>{floatId});
+        CHECK(!result.ok);
+        CHECK(result.writes == 0);
+        CHECK(store.writeCount() == 0);
+    }
+}
+
+void selectionFocusDisabledLockAbsentAllowed()
+{
+    // A disabled focus-right leaves the lock out of scope: an absent lock
+    // still applies cleanly and clears only the disabled focus row.
+    const QString focusId =
+        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"));
+    FakeShortcutStore store;
+    seedFullQuiet(store);
+    for (int i = static_cast<int>(store.tuples.size()) - 1; i >= 0; --i) {
+        if (store.tuples.at(i).action == QStringLiteral("Lock Session")) {
+            store.tuples.removeAt(i);
+        }
+    }
+    FakeClearedActions cleared;
+    const ShortcutApplyResult result =
+        ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>{focusId});
+    CHECK(result.ok);
+    CHECK(cleared.stored.isEmpty());
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+            CHECK(tuple.active.isEmpty());
+        }
+    }
+}
+
+void selectionPresenceBindsForceSnapshot()
+{
+    // Missing vs empty share the same active image; presence is bound so an
+    // appearing disabled row fails as stale.
+    FakeShortcutStore store;
+    seedFullQuiet(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Window Quick Tile Left")) {
+            tuple.active = QList<int>{META_LEFT, 4242};
+        }
+    }
+    store.defaultKeysById[QStringLiteral("kwin/Window Quick Tile Left")] = QList<int>{META_LEFT};
+    FakeClearedActions cleared;
+    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"));
+    const ShortcutForcePreview preview =
+        ShortcutReconciler(&store, &cleared).previewForceApplySelected(QSet<QString>{ws1});
+    CHECK(preview.forceable);
+    CHECK(preview.livePresent.size() == preview.liveImages.size());
+    // Simulate the disabled row appearing live after preview: remove it, then
+    // re-add as present-empty and require stale.
+    for (int i = static_cast<int>(store.tuples.size()) - 1; i >= 0; --i) {
+        if (store.tuples.at(i).action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+            store.tuples.removeAt(i);
+        }
+    }
+    // Preview was built with the row present; removing it flips presence
+    // while the active image stays empty, so the snapshot must differ.
+    const ShortcutForcePreview current =
+        ShortcutReconciler(&store, &cleared).previewForceApplySelected(QSet<QString>{ws1});
+    CHECK(current.livePresent != preview.livePresent);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -4194,10 +4705,25 @@ int main(int argc, char **argv)
         diagPrefixAndForeignDataAreSafe();
         diagThrowingSinkPreservesBehavior();
     }
+    if (scenario == QStringLiteral("all") || scenario == QStringLiteral("selection")) {
+        selectionCatalogCounts();
+        selectionDisabledSkipsRefusalAndClearsOwn();
+        selectionDisabledFocusSkipsLockAndEsc();
+        selectionMixedRefusesEnabledOnly();
+        selectionForceBindsDraftAndDrift();
+        selectionDefaultsCarried();
+        selectionMissingEnabledFailsClosed();
+        selectionUnknownIdFailsClosed();
+        selectionForeignDefaultConflictAfterClear();
+        selectionDisabledTableRowAbsentAllowed();
+        selectionFocusDisabledLockAbsentAllowed();
+        selectionPresenceBindsForceSnapshot();
+    }
     if (scenario != QStringLiteral("all") && scenario != QStringLiteral("success") && scenario != QStringLiteral("conflict")
         && scenario != QStringLiteral("malformed") && scenario != QStringLiteral("owner") && scenario != QStringLiteral("recovery")
         && scenario != QStringLiteral("external") && scenario != QStringLiteral("journal")
-        && scenario != QStringLiteral("force") && scenario != QStringLiteral("diag")) {
+        && scenario != QStringLiteral("force") && scenario != QStringLiteral("diag")
+        && scenario != QStringLiteral("selection")) {
         std::fprintf(stderr, "unknown scenario: %s\n", argv[1]);
         return EXIT_FAILURE;
     }

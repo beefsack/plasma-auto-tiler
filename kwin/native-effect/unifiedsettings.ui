@@ -200,16 +200,54 @@
          </property>
         </widget>
        </item>
-        <item>
-         <widget class="QLabel" name="shortcutForcePreviewLabel">
-          <property name="text">
-           <string></string>
-          </property>
-          <property name="wordWrap">
-           <bool>true</bool>
-          </property>
-         </widget>
-        </item>
+         <item>
+          <widget class="QLabel" name="shortcutForcePreviewLabel">
+           <property name="text">
+            <string></string>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="shortcutConflictHintLabel">
+           <property name="text">
+            <string>Per-binding conflicts (checked = Keep, unchecked = Disable). Staged only until Apply Shortcuts.</string>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QListWidget" name="shortcutConflictList">
+           <property name="minimumHeight">
+            <number>180</number>
+           </property>
+           <property name="alternatingRowColors">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="shortcutPresetLayout">
+           <item>
+            <widget class="QPushButton" name="shortcutAuthenticButton">
+             <property name="text">
+              <string>Authentic (keep all)</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="shortcutCompatibleButton">
+             <property name="text">
+              <string>Compatible (disable conflicting)</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
         <item>
          <layout class="QHBoxLayout" name="shortcutButtonLayout">
          <item>
@@ -245,7 +283,7 @@
         <item>
          <widget class="QLabel" name="shortcutDescription">
           <property name="text">
-            <string>Focus-right takes Meta+L; Apply moves Lock Session to Meta+Esc. Grow arrows take Meta+Alt+Left/Down/Up/Right (Switch Window cleared). Arrows take Meta+Left/Down/Up/Right (Quick Tile cleared). Move arrows take Meta+Shift+Left/Right (Window to Screen cleared). Settings Apply never changes shortcuts; use these buttons with confirmation. Force Apply appears only for a pending preview that lists every holder with the exact keys removed and kept. Cancel discards the preview without writes. Revert restores KDE defaults for cleared bindings.</string>
+             <string>The full project catalog (directional, toggle, and workspace bindings) lists each canonical chord with its current assignment and known/current holders; unavailable queries are reported honestly. Checked rows are kept, unchecked rows are disabled. Authentic keeps every binding; Compatible disables known-conflicting rows and current holder collisions without replacement chords. Settings Apply never changes shortcuts; use Apply Shortcuts with confirmation. Disabling clears only the project's own assignment. Force Apply appears only for a pending preview that lists every holder with the exact keys removed and kept. Cancel discards the preview without writes. Revert restores KDE defaults for cleared bindings.</string>
           </property>
          <property name="wordWrap">
           <bool>true</bool>

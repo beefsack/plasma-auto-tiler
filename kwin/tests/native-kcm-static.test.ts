@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { planShortcutCatalog } from "../src/plan-adapter-entry";
+import { workspaceShortcutCatalog } from "../src/workspace-native";
 
 const read = (path: string): string => readFileSync(join(process.cwd(), path), "utf8");
 
@@ -26,6 +28,8 @@ const scriptFactoryHeader = read("native-effect/scriptconfig_module.h");
 const unified = read("native-effect/unifiedsettings_module.cpp");
 const unifiedHeader = read("native-effect/unifiedsettings_module.h");
 const unifiedUi = read("native-effect/unifiedsettings.ui");
+const reconcilerHeader = read("native-effect/shortcutreconciler.h");
+const reconciler = read("native-effect/shortcutreconciler.cpp");
 const effect = read("native-effect/activewindowborder.cpp");
 const logic = read("native-effect/activeborderlogic.h");
 
@@ -344,8 +348,7 @@ describe("native KCM static contract", () => {
         assert.doesNotMatch(unifiedUi, /kcfg_BorderColor[\s\S]{0,400}?enabled[\s\S]{0,20}?false/);
     });
 
-    it("routes script settings through the native script KCM on the shared unified page", () => {
-        assert.match(unifiedHeader, /requestScriptReconfigure/);
+    it("routes script settings through the native script KCM on the shared unified page", () => {        assert.match(unifiedHeader, /requestScriptReconfigure/);
         assert.match(unifiedHeader, /isScriptRestartRequired/);
         assert.match(unifiedHeader, /isGapReconfigurePending/);
         assert.match(unified, /m_gapReconfigurePending/);
@@ -379,5 +382,99 @@ describe("native KCM static contract", () => {
         assert.doesNotMatch(unifiedUi, /shortcut profile/i);
         assert.doesNotMatch(unifiedUi, /unconsumed settings have no running effect/i);
         assert.doesNotMatch(read("metadata.json"), /Other script settings require a script reload or session restart\./);
+    });
+
+    it("lists the full shortcut catalog with staged Keep-Disable and Authentic-Compatible presets", () => {
+        // Conflict list widgets on the shared page.
+        assert.match(unifiedUi, /name="shortcutConflictList"/);
+        assert.match(unifiedUi, /name="shortcutConflictHintLabel"/);
+        assert.match(unifiedUi, /name="shortcutAuthenticButton"/);
+        assert.match(unifiedUi, /name="shortcutCompatibleButton"/);
+        assert.match(unifiedUi, /checked = Keep, unchecked = Disable/);
+        // Full catalog in the reconciler: plan core plus workspace digits
+        // and shifted symbols, selection-scoped holder math, and the draft
+        // bound into the Force preview.
+        for (const token of [
+            "shortcutProjectCatalog",
+            "shortcutCatalogId",
+            "shortcutKnownConflictIds",
+            "presetCompatibleDisabledIds",
+            "enabledRequiredKeys",
+            "conflictingKeysFor",
+            "remainderAfterClearFor",
+            "collectRowDisplays",
+            "applySelected",
+            "previewForceApplySelected",
+            "applyForcedSelected",
+            "disabledIds",
+            "workspace-select",
+            "workspace-move",
+        ]) {
+            assert.match(reconcilerHeader, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+        }
+        assert.match(reconciler, /enabledRequiredKeys/);
+        assert.match(reconciler, /collectRowDisplays/);
+        assert.match(reconcilerHeader, /SHORTCUT_META_SHIFT_1 = 301989937/);
+        assert.match(reconcilerHeader, /SHORTCUT_META_EXCLAM = 268435489/);
+        // Staged draft and presets in the module; only explicit confirmed
+        // Apply and Force write, and the draft cancels pending previews.
+        for (const token of [
+            "m_shortcutDisabledDraft",
+            "shortcutDisabledIds",
+            "requestShortcutPresetAuthentic",
+            "requestShortcutPresetCompatible",
+            "onShortcutDraftChanged",
+            "refreshShortcutConflictList",
+            "buildConflictRowText",
+        ]) {
+            assert.match(unified, new RegExp(token));
+            assert.match(unifiedHeader, new RegExp(token));
+        }
+        assert.match(unified, /checkKeyedForeignOccupancyDetailedFor/);
+        assert.match(unified, /collectRowDisplays/);
+        assert.match(unifiedUi, /Authentic \(keep all\)/);
+        assert.match(unifiedUi, /Compatible \(disable conflicting\)/);
+        // Selection scenarios run in hosted native CI.
+        assert.ok(cmake.includes("native-effect-shortcut-selection"));
+        assert.ok(cmake.includes("native-effect-kcm-shortcut-selection"));
+    });
+
+    it("keeps the native shortcut catalog in parity with the TS shortcut catalogs", () => {
+        const plan = planShortcutCatalog("cosmic");
+        const workspace = workspaceShortcutCatalog();
+        const tsByAction = new Map<string, string>();
+        for (const row of plan) {
+            tsByAction.set(row.action, row.sequence);
+        }
+        for (const row of workspace) {
+            tsByAction.set(row.action, row.sequence);
+        }
+        assert.equal(tsByAction.size, 66);
+        const nativeByAction = new Map<string, string>();
+        const entryPattern =
+            /QStringLiteral\("(plasma-auto-tiler-[^"]+)"\),\s*(SHORTCUT_[A-Z0-9_]+),\s*QStringLiteral\("([^"]+)"\)/g;
+        for (const match of reconciler.matchAll(entryPattern)) {
+            const action = match[1];
+            const display = match[3];
+            if (action === undefined || display === undefined) {
+                assert.fail("native catalog entry must declare action and display");
+            }
+            if (!nativeByAction.has(action)) {
+                nativeByAction.set(action, display);
+            }
+        }
+        assert.equal(nativeByAction.size, 66);
+        assert.deepEqual(new Set(nativeByAction.keys()), new Set(tsByAction.keys()));
+        for (const [action, sequence] of tsByAction) {
+            assert.equal(nativeByAction.get(action), sequence);
+        }
+        // UI rows use readable chords and distinguish own from foreign holders.
+        assert.match(unified, /keysDisplayNames/);
+        assert.match(unified, /own \[/);
+        assert.match(unified, /foreign \[/);
+        assert.match(reconcilerHeader, /keysDisplayNames/);
+        assert.match(reconcilerHeader, /foreignDefaultIdsForKey/);
+        assert.match(reconcilerHeader, /disabledIdsValid/);
+        assert.match(reconcilerHeader, /livePresent/);
     });
 });

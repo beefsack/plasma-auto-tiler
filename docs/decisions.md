@@ -308,6 +308,28 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   suppression/hook-order evidence. The unaccepted large gaming fixture draft
   was discarded under the simplicity principle; the active record owns options
   and accepted evidence.
+- Provisional, to discuss (2026-10-04, KDE conflict controls): the unified
+  Settings page lists all 66 current project bindings, including arrow and
+  shifted-symbol aliases. Keep/Disable and Authentic/Compatible stage choices;
+  explicit confirmed Apply Shortcuts or Force Apply commits them. Authentic
+  resets to the canonical catalog; ordinary settings Save remains isolated.
+- Provisional, to discuss (2026-10-04, KDE Compatible): reset to Keep, then
+  disable compiled known conflicts and discovered foreign default/current-holder
+  collisions. No replacement chords or automatic foreign-default restoration;
+  use the existing Revert Shortcuts separately after earlier Force clearing.
+  Disabled focus-right leaves Lock Session and Meta+Esc untouched.
+- Provisional, to discuss (2026-10-04, KDE persistence): Disable clears only
+  the project's KGlobalAccel assignment through the existing setter. Reopening
+  initializes choices from present empty assignments; native shortcut storage
+  is authoritative, with no parallel preset file. Empty assignments cannot
+  distinguish deliberate disabling from an earlier unresolved registration.
+  Restart persistence remains user-owned live acceptance.
+- Provisional, to discuss (2026-10-04, KDE deferred controls): a first-run
+  preset prompt and integrated rebind editor are deferred in this smallest
+  slice. Existing KDE Shortcuts remains the custom-binding editor; explicit
+  project Apply resets kept bindings to canonical chords. No startup correction
+  or shortcut re-registration is added. See
+  [KDE conflict model](changes/kde-shortcut-conflicts.md).
 - Coexisting with gaming is a core goal: provide some alternate access to
   OS gaming surfaces displaced by authentic bindings (Windows Game Bar,
   displaced by Win+G), and avoid behavior that anti-cheat software could
