@@ -10,15 +10,15 @@ fn strings(values: &[&str]) -> Vec<String> {
 }
 
 #[test]
-fn border_defaults_on_with_yellow_dev_default() {
+fn border_defaults_on_with_kde_accent_fallback() {
     let options = parse_tile_args(&strings(&["--user-start"])).expect("parsed");
     assert!(options.border.enabled);
     assert_eq!(options.border.style.width, 3.0);
     assert_eq!(options.border.style.gap, 0.0);
     assert_eq!(options.border.style.radius, 0.0);
     assert_eq!(options.border.style.color, DEFAULT_COLOR_RGB);
-    assert_eq!(render_color(options.border.style.color), "#ffff00");
-    assert!(!options.border.style.use_theme);
+    assert_eq!(render_color(options.border.style.color), "#2a82da");
+    assert!(options.border.style.use_theme);
 }
 
 #[test]

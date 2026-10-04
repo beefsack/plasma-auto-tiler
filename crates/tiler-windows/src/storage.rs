@@ -43,7 +43,7 @@ impl From<std::io::Error> for StorageError {
 }
 
 #[cfg(windows)]
-fn atomic_replace(from: &Path, to: &Path) -> Result<(), StorageError> {
+pub(crate) fn atomic_replace(from: &Path, to: &Path) -> Result<(), StorageError> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
         MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
@@ -65,7 +65,7 @@ fn atomic_replace(from: &Path, to: &Path) -> Result<(), StorageError> {
 }
 
 #[cfg(not(windows))]
-fn atomic_replace(from: &Path, to: &Path) -> Result<(), StorageError> {
+pub(crate) fn atomic_replace(from: &Path, to: &Path) -> Result<(), StorageError> {
     std::fs::rename(from, to).map_err(StorageError::Io)
 }
 

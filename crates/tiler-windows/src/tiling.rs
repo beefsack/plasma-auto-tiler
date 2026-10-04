@@ -34,7 +34,20 @@ pub const OWNER_ID: &str = "tiler-windows";
 /// Engine state rather than tiling an un-inset domain.
 #[must_use]
 pub fn tiling_domain_bounds(work: Rect) -> Option<Rect> {
-    tiler_core::geometry::inset_bounds(work, OUTER_GAP).ok()
+    tiling_domain_bounds_with(work, OUTER_GAP)
+}
+
+/// Outer-gap-parameterized domain inset for live settings: the protocol
+/// layer owns the outer inset and this adapter constructs `CoreEvent`
+/// directly, so inset here. `None` when the work area cannot carry the
+/// margin: the caller skips the tick with retained Engine state rather than
+/// tiling an un-inset domain.
+#[must_use]
+pub fn tiling_domain_bounds_with(work: Rect, outer_gap: i32) -> Option<Rect> {
+    if outer_gap < 0 {
+        return None;
+    }
+    tiler_core::geometry::inset_bounds(work, outer_gap).ok()
 }
 
 /// Measured per-app frame: outer `GetWindowRect` minus visible
@@ -1336,6 +1349,12 @@ pub struct TileOptions {
     pub no_mouse_snap_prevention: bool,
     pub border: crate::active_border::ActiveBorderOptions,
     pub underlay: crate::group_underlay::GroupUnderlayOptions,
+    /// Live inner gap (KDE 0..64, default 8). Saved settings supply the base;
+    /// `--inner-gap` overrides explicitly.
+    pub inner_gap: i32,
+    /// Live outer gap (KDE 0..64, default 8). Saved settings supply the base;
+    /// `--outer-gap` overrides explicitly.
+    pub outer_gap: i32,
     pub scope_exes: Vec<String>,
     /// Explicit host-to-child scope pairs (repeatable `--scope-host-child
     /// HOST=CHILD`). Empty (default) means no child constraint. A listed host
@@ -1419,28 +1438,160 @@ pub fn parse_scope_host_child(value: &str) -> Result<ScopeHostChild, String> {
     Ok(ScopeHostChild { host, child })
 }
 
-/// Parse `tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...]`
-/// plus the shared active-border flags (default on with `--no-active-border`)
-/// and the shared group-underlay flags (default on with `--no-group-underlay`).
-/// Missing `--user-start` or any `--allowlist` is a refusal, never a silent
-/// normal run. An empty `--scope-exe` value is a refusal, never a wildcard.
-/// A malformed `--scope-host-child` value is a refusal, never a widened scope.
+/// Parse one live gap value in `0..=64` (KDE `domain-gap.ts` parity).
+pub fn parse_gap_value(value: &str) -> Result<i32, String> {
+    let usage = "refuse: gap needs 0..=64";
+    let parsed: i32 = value.parse().map_err(|_| usage.to_owned())?;
+    if !(0..=64).contains(&parsed) {
+        return Err(usage.to_owned());
+    }
+    Ok(parsed)
+}
+
+/// Effective defaults for the normal `tile` command: shipped KDE parity
+/// (gaps 8/8, border on with theme accent, underlay on, both takeovers on).
+/// Saved settings supply an alternate base via
+/// [`crate::settings::tile_options_from_settings`]; explicit CLI switches
+/// always override the base they start from.
+///
+/// Explicit switches stay authoritative for the whole run: the owner records
+/// them in [`CliOverrides`] at startup and re-applies them over every live
+/// settings-file change, so an unrelated file edit never silently drops a
+/// CLI lane.
+#[must_use]
+pub fn tile_options_defaults() -> TileOptions {
+    TileOptions {
+        seconds: None,
+        trace: false,
+        user_start: false,
+        no_keyboard_snap_takeover: false,
+        allow_win_l: false,
+        no_mouse_snap_prevention: false,
+        border: crate::active_border::ActiveBorderOptions::default(),
+        underlay: crate::group_underlay::GroupUnderlayOptions::default(),
+        inner_gap: INNER_GAP,
+        outer_gap: OUTER_GAP,
+        scope_exes: Vec::new(),
+        scope_hosts: Vec::new(),
+    }
+}
+
+/// Parse `tile` args with compiled-in defaults (no settings file).
 pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
-    let usage = "usage: tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme] [--no-group-underlay] [--group-underlay-color #aarrggbb] [--group-underlay-extension -1..=32]";
-    let mut seconds: Option<u64> = None;
-    let mut trace = false;
+    parse_tile_args_from(args, &tile_options_defaults())
+}
+
+/// Explicit per-lane CLI overrides captured at startup. Every `Some` value
+/// came from an explicit switch and stays authoritative for the whole run:
+/// live settings-file changes apply underneath these lanes (see
+/// [`apply_cli_overrides`]). Scope, seconds, trace, and the user-start fence
+/// are CLI/run-only and never come from the file, so they carry no override.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CliOverrides {
+    pub inner_gap: Option<i32>,
+    pub outer_gap: Option<i32>,
+    pub no_keyboard_snap_takeover: Option<bool>,
+    pub allow_win_l: Option<bool>,
+    pub no_mouse_snap_prevention: Option<bool>,
+    pub border_enabled: Option<bool>,
+    pub border_width: Option<f64>,
+    pub border_gap: Option<f64>,
+    pub border_radius: Option<f64>,
+    pub border_color: Option<(u8, u8, u8)>,
+    pub border_use_theme: Option<bool>,
+    pub underlay_enabled: Option<bool>,
+    pub underlay_color: Option<((u8, u8, u8), u8)>,
+    pub underlay_extension: Option<f64>,
+}
+
+/// Re-apply explicit startup CLI switches over a settings-file base. Called
+/// at startup (equivalent to parsing over the base) and on every live
+/// settings apply, so unrelated file edits never drop a CLI lane.
+pub fn apply_cli_overrides(base: &mut TileOptions, cli: &CliOverrides) {
+    if let Some(value) = cli.inner_gap {
+        base.inner_gap = value;
+    }
+    if let Some(value) = cli.outer_gap {
+        base.outer_gap = value;
+    }
+    if let Some(value) = cli.no_keyboard_snap_takeover {
+        base.no_keyboard_snap_takeover = value;
+    }
+    if let Some(value) = cli.allow_win_l {
+        base.allow_win_l = value;
+    }
+    if let Some(value) = cli.no_mouse_snap_prevention {
+        base.no_mouse_snap_prevention = value;
+    }
+    if let Some(value) = cli.border_enabled {
+        base.border.enabled = value;
+    }
+    if let Some(value) = cli.border_width {
+        base.border.style.width = value;
+    }
+    if let Some(value) = cli.border_gap {
+        base.border.style.gap = value;
+    }
+    if let Some(value) = cli.border_radius {
+        base.border.style.radius = value;
+    }
+    if let Some(value) = cli.border_color {
+        base.border.style.color = value;
+    }
+    if let Some(value) = cli.border_use_theme {
+        base.border.style.use_theme = value;
+    }
+    if let Some(value) = cli.underlay_enabled {
+        base.underlay.enabled = value;
+    }
+    if let Some((color, alpha)) = cli.underlay_color {
+        base.underlay.style.color = color;
+        base.underlay.style.alpha = alpha;
+    }
+    if let Some(value) = cli.underlay_extension {
+        base.underlay.style.extension = value;
+    }
+}
+
+/// Parse `tile --user-start [...]` starting from a caller-supplied base
+/// (normally the persisted settings, so saved values are the defaults and
+/// every explicit switch overrides its corresponding value). All existing
+/// switches are preserved; `--inner-gap N` and `--outer-gap N` (0..64) are
+/// new. `--user-start` always starts false: saved settings can never satisfy
+/// the explicit user-start fence, so agents never run this path by accident.
+pub fn parse_tile_args_from(
+    args: &[String],
+    defaults: &TileOptions,
+) -> Result<TileOptions, String> {
+    parse_tile_args_from_with_overrides(args, defaults).map(|(options, _)| options)
+}
+
+/// Parse `tile` args plus the explicit per-lane [`CliOverrides`] (see
+/// [`apply_cli_overrides`]): same grammar as [`parse_tile_args_from`], but
+/// every explicit switch is also recorded so it stays authoritative across
+/// live settings-file changes.
+pub fn parse_tile_args_from_with_overrides(
+    args: &[String],
+    defaults: &TileOptions,
+) -> Result<(TileOptions, CliOverrides), String> {
+    let usage = "usage: tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--inner-gap 0..=64] [--outer-gap 0..=64] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme] [--no-group-underlay] [--group-underlay-color #aarrggbb] [--group-underlay-extension -1..=32]";
+    let mut seconds: Option<u64> = defaults.seconds;
+    let mut trace = defaults.trace;
     let mut user_start = false;
-    let mut no_keyboard_snap_takeover = false;
-    let mut allow_win_l = false;
-    let mut no_mouse_snap_prevention = false;
-    let mut scope_exes: Vec<String> = Vec::new();
-    let mut scope_hosts: Vec<ScopeHostChild> = Vec::new();
-    let mut border = crate::active_border::ActiveBorderOptions::default();
-    let mut underlay = crate::group_underlay::GroupUnderlayOptions::default();
+    let mut no_keyboard_snap_takeover = defaults.no_keyboard_snap_takeover;
+    let mut allow_win_l = defaults.allow_win_l;
+    let mut no_mouse_snap_prevention = defaults.no_mouse_snap_prevention;
+    let mut scope_exes: Vec<String> = defaults.scope_exes.clone();
+    let mut scope_hosts: Vec<ScopeHostChild> = defaults.scope_hosts.clone();
+    let mut border = defaults.border;
+    let mut underlay = defaults.underlay;
+    let mut inner_gap = defaults.inner_gap;
+    let mut outer_gap = defaults.outer_gap;
     let mut theme_flags = 0u8;
+    let mut cli = CliOverrides::default();
     let mut i = 0;
     while i < args.len() {
-        if apply_underlay_arg(args, &mut i, &mut underlay, usage)? {
+        if apply_underlay_arg_tracked(args, &mut i, &mut underlay, &mut cli, usage)? {
             continue;
         }
         match args[i].as_str() {
@@ -1454,42 +1605,64 @@ pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
             }
             "--no-keyboard-snap-takeover" => {
                 no_keyboard_snap_takeover = true;
+                cli.no_keyboard_snap_takeover = Some(true);
                 i += 1;
             }
             "--allow-win-l" => {
                 allow_win_l = true;
+                cli.allow_win_l = Some(true);
                 i += 1;
             }
             "--no-mouse-snap-prevention" => {
                 no_mouse_snap_prevention = true;
+                cli.no_mouse_snap_prevention = Some(true);
+                i += 1;
+            }
+            "--inner-gap" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                inner_gap = parse_gap_value(value)?;
+                cli.inner_gap = Some(inner_gap);
+                i += 1;
+            }
+            "--outer-gap" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                outer_gap = parse_gap_value(value)?;
+                cli.outer_gap = Some(outer_gap);
                 i += 1;
             }
             "--no-active-border" => {
                 border.enabled = false;
+                cli.border_enabled = Some(false);
                 i += 1;
             }
             "--active-border-width" => {
                 i += 1;
                 let value = args.get(i).ok_or_else(|| usage.to_owned())?;
                 border.style.width = crate::active_border::parse_width(value)?;
+                cli.border_width = Some(border.style.width);
                 i += 1;
             }
             "--active-border-gap" => {
                 i += 1;
                 let value = args.get(i).ok_or_else(|| usage.to_owned())?;
                 border.style.gap = crate::active_border::parse_gap(value)?;
+                cli.border_gap = Some(border.style.gap);
                 i += 1;
             }
             "--active-border-radius" => {
                 i += 1;
                 let value = args.get(i).ok_or_else(|| usage.to_owned())?;
                 border.style.radius = crate::active_border::parse_radius(value)?;
+                cli.border_radius = Some(border.style.radius);
                 i += 1;
             }
             "--active-border-color" => {
                 i += 1;
                 let value = args.get(i).ok_or_else(|| usage.to_owned())?;
                 border.style.color = crate::active_border::parse_color(value)?;
+                cli.border_color = Some(border.style.color);
                 i += 1;
             }
             "--no-active-border-theme" => {
@@ -1498,6 +1671,7 @@ pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
                 }
                 theme_flags |= 0x01;
                 border.style.use_theme = false;
+                cli.border_use_theme = Some(false);
                 i += 1;
             }
             "--active-border-theme" => {
@@ -1506,6 +1680,7 @@ pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
                 }
                 theme_flags |= 0x02;
                 border.style.use_theme = true;
+                cli.border_use_theme = Some(true);
                 i += 1;
             }
             "--scope-exe" => {
@@ -1554,18 +1729,23 @@ pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
     if !user_start {
         return Err("refuse: tile requires explicit --user-start".to_owned());
     }
-    Ok(TileOptions {
-        seconds,
-        trace,
-        user_start,
-        no_keyboard_snap_takeover,
-        allow_win_l,
-        no_mouse_snap_prevention,
-        border,
-        underlay,
-        scope_exes,
-        scope_hosts,
-    })
+    Ok((
+        TileOptions {
+            seconds,
+            trace,
+            user_start,
+            no_keyboard_snap_takeover,
+            allow_win_l,
+            no_mouse_snap_prevention,
+            border,
+            underlay,
+            inner_gap,
+            outer_gap,
+            scope_exes,
+            scope_hosts,
+        },
+        cli,
+    ))
 }
 
 /// CLI options for the proof-only `tile-proof` command (owned helpers only).
@@ -2099,6 +2279,46 @@ fn apply_underlay_arg(
             *i += 1;
             let value = args.get(*i).ok_or_else(|| usage.to_owned())?;
             underlay.style.extension = crate::group_underlay::parse_extension(value)?;
+            *i += 1;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// Tracked underlay-arg scan for the normal `tile` parser: same grammar as
+/// [`apply_underlay_arg`] (used by the proof parsers), but every explicit
+/// switch is also recorded in [`CliOverrides`] so it stays authoritative
+/// across live settings-file changes.
+fn apply_underlay_arg_tracked(
+    args: &[String],
+    i: &mut usize,
+    underlay: &mut crate::group_underlay::GroupUnderlayOptions,
+    cli: &mut CliOverrides,
+    usage: &str,
+) -> Result<bool, String> {
+    match args[*i].as_str() {
+        "--no-group-underlay" => {
+            underlay.enabled = false;
+            cli.underlay_enabled = Some(false);
+            *i += 1;
+            Ok(true)
+        }
+        "--group-underlay-color" => {
+            *i += 1;
+            let value = args.get(*i).ok_or_else(|| usage.to_owned())?;
+            let (color, alpha) = crate::group_underlay::parse_color_argb(value)?;
+            underlay.style.color = color;
+            underlay.style.alpha = alpha;
+            cli.underlay_color = Some((color, alpha));
+            *i += 1;
+            Ok(true)
+        }
+        "--group-underlay-extension" => {
+            *i += 1;
+            let value = args.get(*i).ok_or_else(|| usage.to_owned())?;
+            underlay.style.extension = crate::group_underlay::parse_extension(value)?;
+            cli.underlay_extension = Some(underlay.style.extension);
             *i += 1;
             Ok(true)
         }

@@ -239,8 +239,7 @@ pub fn current_integrity_level() -> Result<u32, IdentityError> {
     let token = Handle(token);
     integrity_of_token(token.get())
 }
-
-pub fn ledger_directory() -> Result<PathBuf, IdentityError> {
+fn local_app_data() -> Result<PathBuf, IdentityError> {
     let mut out: PWSTR = std::ptr::null_mut();
     let hr =
         unsafe { SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, std::ptr::null_mut(), &mut out) };
@@ -253,10 +252,21 @@ pub fn ledger_directory() -> Result<PathBuf, IdentityError> {
     unsafe {
         CoTaskMemFree(out.cast());
     }
+    Ok(PathBuf::from(base))
+}
+
+pub fn ledger_directory() -> Result<PathBuf, IdentityError> {
     let session = session_of(unsafe { GetCurrentProcessId() })?;
-    Ok(PathBuf::from(base)
+    Ok(local_app_data()?
         .join("plasma-auto-tiler")
         .join(format!("session-{session}")))
+}
+
+/// Per-user settings directory (`%LOCALAPPDATA%\plasma-auto-tiler`, no
+/// session suffix): the product root proven by the known-folder path above.
+/// The settings file lives here so every session owner shares one store.
+pub fn settings_directory() -> Result<PathBuf, IdentityError> {
+    Ok(local_app_data()?.join("plasma-auto-tiler"))
 }
 
 pub struct HeldProcess {

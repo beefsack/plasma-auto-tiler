@@ -116,6 +116,49 @@ impl SnapOp {
     }
 }
 
+/// One classifier remap entry for a rebound shortcut binding: one rebound
+/// physical chord routes into the existing action classifier at its canonical
+/// virtual key. Entries are single-polarity (one per explicit rebind chord):
+/// the rebind's Shift must match the binding's native arm, so the classifier's
+/// Shift-derived op keeps meaning what the binding says. Downs match the entry
+/// strictly; ups fall back across a mid-hold Shift flip so pairs never orphan
+/// (see [`SnapClassify::push`]). Entries are owner state, never callback
+/// state: the owner publishes the table and the callback only reads it through
+/// the machine (one cheap scan per event).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChordRemap {
+    pub from_vk: u32,
+    pub from_shift: bool,
+    pub to_vk: u32,
+}
+
+/// One classifier suppression entry for a disabled or rebound-away chord: a
+/// physical chord the owner no longer intercepts passes through untracked.
+/// Entries are single-polarity physical chords (virtual key plus the Shift
+/// state that selects the arm). Fresh downs check the rebound table first (a
+/// rebound claims its physical chord even when the old default is suppressed),
+/// then this table; in-flight consumed holds ride their stored down verdict
+/// to their paired key-up regardless of later table changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChordDisable {
+    pub vk: u32,
+    pub shift: bool,
+}
+
+/// Physical routing-table size: every chord virtual key fits in one byte.
+const PIN_KEYS: usize = 256;
+
+/// Fresh-down routing outcome for one physical chord (see
+/// [`SnapClassify::fresh_route`], a private helper).
+enum Route {
+    /// Routes into the classifier at the canonical key.
+    Remap(u32),
+    /// Passes through untracked.
+    Suppressed,
+    /// Classifies as itself.
+    Direct,
+}
+
 /// Which key edge an approved chord represents. Repeats are held-key
 /// auto-repeats; only downs and repeats dispatch, ups just close the pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -257,11 +300,13 @@ fn snap_repeat_live(shift: bool, ctrl: bool, alt: bool, win: bool, op: SnapOp) -
     !ctrl && !alt && win && (shift == (op == SnapOp::Move))
 }
 
-/// Win+L opt-in fence for a pinned directional op: an unshifted (focus) L
-/// without opt-in never dispatches, so a Shift+L move hold whose Shift is
-/// released mid-hold swallows its repeats without dispatching.
-fn snap_op_admits(idx: usize, op: SnapOp, allow_win_l: bool) -> bool {
-    !(op == SnapOp::Focus && is_letter_l(idx) && !allow_win_l)
+/// Physical Win+L opt-in fence for a pinned directional op: an unshifted
+/// (focus) physical L without opt-in never dispatches, so a Shift+L move hold
+/// whose Shift is released mid-hold swallows its repeats without dispatching.
+/// Takes the physical chord key: a safe rebound into the canonical L slot is
+/// not the OS lock chord and always admits.
+fn snap_op_admits(physical_vk: u32, op: SnapOp, allow_win_l: bool) -> bool {
+    !(op == SnapOp::Focus && physical_vk == VK_L && !allow_win_l)
 }
 
 /// Whether a live modifier/Win combination still matches a pinned workspace
@@ -487,6 +532,25 @@ pub struct SnapClassify {
     /// the cached publish.
     pub gate_active: bool,
     pub allow_win_l: bool,
+    /// Owner-published rebound-chord table (empty means no rebinds): one rebound
+    /// physical chord translates to its canonical virtual key on entry, so
+    /// physical tracking, pairing, release, and repeat safety ride the
+    /// existing per-key slots unchanged. Single-polarity: the rebind's Shift
+    /// must match the binding's native arm.
+    vk_remap: Vec<ChordRemap>,
+    /// Owner-published suppression table (empty means everything kept):
+    /// disabled or rebound-away physical chords pass through untracked.
+    /// Checked after the rebound table, fresh downs only; paired key-ups ride
+    /// their stored down verdict.
+    vk_disabled: Vec<ChordDisable>,
+    /// Down-time physical routing pinned through the matching up: index by
+    /// physical virtual key (all chord keys fit in one byte), value is the
+    /// canonical key the down routed to. A mid-hold table change can neither
+    /// orphan the hold (ups resolve through the pin) nor leak its pair
+    /// (repeats ride the stored verdict with dispatch gated on the chord
+    /// still routing live), and the Start-menu mask obligation survives
+    /// untouched.
+    phys_pin: [Option<u32>; 256],
     pub counts: [SnapCounts; 8],
     pub digit_counts: [SnapCounts; 10],
     pub max_counts: SnapCounts,
@@ -537,6 +601,9 @@ impl SnapClassify {
             enabled: config.takeover,
             gate_active: true,
             allow_win_l: config.allow_win_l,
+            vk_remap: Vec::new(),
+            vk_disabled: Vec::new(),
+            phys_pin: [None; 256],
             counts: [SnapCounts::default(); 8],
             digit_counts: [SnapCounts::default(); 10],
             max_counts: SnapCounts::default(),
@@ -559,6 +626,112 @@ impl SnapClassify {
 
     pub fn set_gate_active(&mut self, gate_active: bool) {
         self.gate_active = gate_active;
+    }
+
+    /// Publish the owner-side rebound table. Takes effect on the next event;
+    /// in-flight held keys keep their down-time slots: consumed holds ride
+    /// their stored verdict to the paired key-up, and the Start-menu mask
+    /// obligation survives, so no orphan key-up reaches the OS and no naked
+    /// Win tap opens Start. A rebound whose mapping vanishes mid-hold orphans
+    /// its slot only until the next full press-release cycle of the canonical
+    /// key (narrow, self-healing); repeats of held keys ride the stored
+    /// verdict and never dispatch new actions under the changed config.
+    pub fn set_remap(&mut self, remap: Vec<ChordRemap>) {
+        self.vk_remap = remap;
+    }
+
+    /// Publish the owner-side suppression table (disabled or rebound-away
+    /// physical chords). Same in-flight contract as [`SnapClassify::set_remap`].
+    pub fn set_disabled(&mut self, disabled: Vec<ChordDisable>) {
+        self.vk_disabled = disabled;
+    }
+
+    /// True when the physical chord is suppressed: it passes through untracked
+    /// instead of entering the classifier. Rebound chords never reach here
+    /// (the rebound table wins); paired key-ups never reach here either (they
+    /// ride their stored down verdict).
+    fn is_suppressed(&self, vk: u32, shift: bool) -> bool {
+        self.vk_disabled
+            .iter()
+            .any(|entry| entry.vk == vk && entry.shift == shift)
+    }
+
+    /// True for any physical key the classifier owns: catalog chord keys plus
+    /// rebound sources. The callback's preheld-modifier guard and async Shift
+    /// sync must treat rebound sources exactly like catalog keys.
+    #[must_use]
+    pub fn is_owned_physical(&self, vk: u32) -> bool {
+        is_chord_vk(vk) || self.vk_remap.iter().any(|entry| entry.from_vk == vk)
+    }
+
+    /// Fresh-down routing for one physical chord at the given Shift state:
+    /// rebound wins over suppression; suppression passes through; otherwise
+    /// the physical key classifies as itself.
+    fn fresh_route(&self, physical: u32, shift: bool) -> Route {
+        if let Some(entry) = self
+            .vk_remap
+            .iter()
+            .find(|entry| entry.from_vk == physical && entry.from_shift == shift)
+        {
+            return Route::Remap(entry.to_vk);
+        }
+        if self.is_suppressed(physical, shift) {
+            return Route::Suppressed;
+        }
+        Route::Direct
+    }
+
+    /// True when the physical chord still routes to the pinned canonical key
+    /// under the live tables. Pinned-hold repeats dispatch only while this
+    /// holds; otherwise they stay swallowed without dispatching.
+    fn route_matches(&self, physical: u32, canon: u32) -> bool {
+        match self.fresh_route(physical, self.shift) {
+            Route::Remap(target) => target == canon,
+            Route::Direct => physical == canon,
+            Route::Suppressed => false,
+        }
+    }
+
+    fn pin_get(&self, physical: u32) -> Option<u32> {
+        if (physical as usize) < PIN_KEYS {
+            self.phys_pin[physical as usize]
+        } else {
+            None
+        }
+    }
+
+    fn pin_set(&mut self, physical: u32, canon: u32) {
+        if (physical as usize) < PIN_KEYS {
+            self.phys_pin[physical as usize] = Some(canon);
+        }
+    }
+
+    fn pin_take(&mut self, physical: u32) -> Option<u32> {
+        if (physical as usize) < PIN_KEYS {
+            self.phys_pin[physical as usize].take()
+        } else {
+            None
+        }
+    }
+
+    /// Translate one chord key through the rebound table. Downs match the
+    /// entry's Shift polarity strictly (the rebind's Shift must equal the
+    /// binding's native arm); ups fall back across a mid-hold Shift flip so a
+    /// consumed hold's pair always closes instead of orphaning a stuck down
+    /// slot. Non-chord keys (Win, modifiers) never match: rebind sources are
+    /// known key names only.
+    fn remap_vk(&self, vk: u32, is_up: bool) -> u32 {
+        if let Some(entry) = self
+            .vk_remap
+            .iter()
+            .find(|entry| entry.from_vk == vk && entry.from_shift == self.shift)
+        {
+            return entry.to_vk;
+        }
+        if is_up && let Some(entry) = self.vk_remap.iter().find(|entry| entry.from_vk == vk) {
+            return entry.to_vk;
+        }
+        vk
     }
 
     /// Arm the Start-menu mask for a consumed project Win+Left gesture. The
@@ -605,8 +778,27 @@ impl SnapClassify {
         self.win_l || self.win_r
     }
 
-    /// Whether a catalog key currently holds a down without its up.
+    /// Whether a physical key currently holds a down without its up. Physical-
+    /// aware for rebound sources: a held rebound reports through its pinned
+    /// down-time routing first, else through the live rebound table, and the
+    /// canonical slot carries the hold verdict. The callback's preheld guard
+    /// and async Shift sync read this with the raw callback vk, so rebound
+    /// sources get exactly the catalog-key treatment.
     pub fn key_is_down(&self, vk: u32) -> bool {
+        let mapped = self
+            .pin_get(vk)
+            .or_else(|| {
+                self.vk_remap
+                    .iter()
+                    .find(|entry| entry.from_vk == vk)
+                    .map(|entry| entry.to_vk)
+            })
+            .unwrap_or(vk);
+        self.canon_is_down(mapped)
+    }
+
+    /// Whether a canonical chord key currently holds a down without its up.
+    fn canon_is_down(&self, vk: u32) -> bool {
         if let Some(idx) = catalog_index(vk) {
             return self.key_down[idx];
         }
@@ -714,17 +906,52 @@ impl SnapClassify {
             }
             return None;
         }
+        // Down-time physical routing pinned through the matching up (see
+        // `phys_pin`): fresh downs route live (rebound wins over
+        // suppression) and pin their canonical key; pinned-hold repeats ride
+        // the down-time routing with dispatch gated on the chord still
+        // routing live, so a mid-hold table change swallows without
+        // dispatching instead of leaking; ups resolve through the pin, so a
+        // removed remap can never orphan the canonical slot or let the
+        // physical up through. The Win+L fence keys on the physical chord
+        // only: a safe rebound into the canonical L slot works without
+        // opt-in, while physical unshifted Win+L stays gated.
+        let physical = vk;
+        let (vk, route_live) = if is_up {
+            (
+                self.pin_take(physical)
+                    .unwrap_or_else(|| self.remap_vk(physical, true)),
+                true,
+            )
+        } else if let Some(canon) = self.pin_get(physical) {
+            (canon, self.route_matches(physical, canon))
+        } else {
+            match self.fresh_route(physical, self.shift) {
+                Route::Suppressed => return None,
+                Route::Remap(canon) => {
+                    self.pin_set(physical, canon);
+                    (canon, true)
+                }
+                Route::Direct => {
+                    if is_chord_vk(physical) {
+                        self.pin_set(physical, physical);
+                    }
+                    (physical, true)
+                }
+            }
+        };
+        let physical_lock = physical == VK_L;
         if is_digit_vk(vk) {
-            return self.push_digit(vk, is_up, foreground);
+            return self.push_digit(vk, is_up, foreground, route_live);
         }
         if is_maximize_vk(vk) {
-            return self.push_maximize(is_up, foreground);
+            return self.push_maximize(is_up, foreground, route_live);
         }
         if is_fullscreen_vk(vk) {
-            return self.push_fullscreen(is_up, foreground);
+            return self.push_fullscreen(is_up, foreground, route_live);
         }
         if is_float_vk(vk) || is_sticky_vk(vk) {
-            return self.push_g(is_up, foreground);
+            return self.push_g(is_up, foreground, route_live);
         }
         let idx = catalog_index(vk)?;
         let direction = index_direction(idx);
@@ -771,6 +998,7 @@ impl SnapClassify {
                 if self.key_origin[idx] {
                     let live = self.enabled
                         && self.gate_active
+                        && route_live
                         && snap_repeat_live(
                             self.shift,
                             self.ctrl,
@@ -778,7 +1006,7 @@ impl SnapClassify {
                             self.win_l || self.win_r,
                             op,
                         )
-                        && snap_op_admits(idx, op, self.allow_win_l);
+                        && snap_op_admits(physical, op, self.allow_win_l);
                     self.counts[idx].consumed += 1;
                     // Only a Win-held repeat rearms the Start-menu mask: a
                     // bare repeat after Win-up stays swallowed but must not
@@ -816,15 +1044,17 @@ impl SnapClassify {
                 } else {
                     SnapOp::Focus
                 };
-                // Unshifted Win+L is the OS lock chord: without explicit opt-in it
-                // passes through untracked, so its paired key-up also passes.
+                // Unshifted physical Win+L is the OS lock chord: without explicit
+                // opt-in it passes through untracked, so its paired key-up also
+                // passes. The fence keys on the physical chord: a safe rebound
+                // into the canonical L slot works without opt-in.
                 // Established opt-in exception: an ordinary LL hook cannot
                 // reliably intercept it; left unchanged.
-                if op == SnapOp::Focus && is_letter_l(idx) && !self.allow_win_l {
+                if op == SnapOp::Focus && is_letter_l(idx) && physical_lock && !self.allow_win_l {
                     return None;
                 }
                 self.key_down[idx] = true;
-                let origin = self.enabled && self.gate_active;
+                let origin = self.enabled && self.gate_active && route_live;
                 self.key_origin[idx] = origin;
                 self.key_op[idx] = Some(op);
                 self.counts[idx].down += 1;
@@ -864,7 +1094,16 @@ impl SnapClassify {
     /// owner rechecks fresh identity/scope/elevation/fullscreen/gesture
     /// before any action (send without a live managed origin settles as
     /// unmanaged, never acts on protected windows).
-    fn push_digit(&mut self, vk: u32, is_up: bool, foreground: bool) -> Option<Classified> {
+    /// `route_live` gates fresh consumption and repeat dispatch: a pinned
+    /// hold whose chord no longer routes live stays swallowed without
+    /// dispatching until its matching up.
+    fn push_digit(
+        &mut self,
+        vk: u32,
+        is_up: bool,
+        foreground: bool,
+        route_live: bool,
+    ) -> Option<Classified> {
         let slot = (vk - VK_0) as usize;
         if is_up {
             if !self.digit_down[slot] {
@@ -909,6 +1148,7 @@ impl SnapClassify {
                 if self.digit_origin[slot] {
                     let live = self.enabled
                         && self.gate_active
+                        && route_live
                         && digit_repeat_live(
                             self.shift,
                             self.ctrl,
@@ -955,7 +1195,7 @@ impl SnapClassify {
                     WorkspaceOp::Select
                 };
                 self.digit_down[slot] = true;
-                let origin = self.enabled && self.gate_active;
+                let origin = self.enabled && self.gate_active && route_live;
                 self.digit_origin[slot] = origin;
                 self.digit_op[slot] = Some(op);
                 self.digit_counts[slot].down += 1;
@@ -1000,7 +1240,12 @@ impl SnapClassify {
     /// instead of re-toggling. Ups close the pair. Fresh downs consume iff
     /// takeover is on with the shortcut gate active; the owner rechecks fresh
     /// identity/scope/elevation/fullscreen/gesture before any action.
-    fn push_maximize(&mut self, is_up: bool, foreground: bool) -> Option<Classified> {
+    fn push_maximize(
+        &mut self,
+        is_up: bool,
+        foreground: bool,
+        route_live: bool,
+    ) -> Option<Classified> {
         if is_up {
             if !self.maximize_down {
                 return None;
@@ -1062,7 +1307,7 @@ impl SnapClassify {
                     return None;
                 }
                 self.maximize_down = true;
-                let origin = self.enabled && self.gate_active;
+                let origin = self.enabled && self.gate_active && route_live;
                 self.maximize_origin = origin;
                 self.max_counts.down += 1;
                 if origin {
@@ -1098,7 +1343,12 @@ impl SnapClassify {
     /// Ups close the pair. Fresh downs consume iff takeover is on with the
     /// shortcut gate active; the owner rechecks fresh identity/scope/
     /// elevation/fullscreen/gesture before any action.
-    fn push_fullscreen(&mut self, is_up: bool, foreground: bool) -> Option<Classified> {
+    fn push_fullscreen(
+        &mut self,
+        is_up: bool,
+        foreground: bool,
+        route_live: bool,
+    ) -> Option<Classified> {
         if is_up {
             if !self.fullscreen_down {
                 return None;
@@ -1160,7 +1410,7 @@ impl SnapClassify {
                     return None;
                 }
                 self.fullscreen_down = true;
-                let origin = self.enabled && self.gate_active;
+                let origin = self.enabled && self.gate_active && route_live;
                 self.fullscreen_origin = origin;
                 self.fullscreen_counts.down += 1;
                 if origin {
@@ -1192,26 +1442,26 @@ impl SnapClassify {
     /// into sticky (or vice versa); repeats ride the armed hold regardless of
     /// later Shift. Ctrl/Alt or a missing Win passes through untracked.
     /// Ups close whichever hold is armed; untracked ups return `None`.
-    fn push_g(&mut self, is_up: bool, foreground: bool) -> Option<Classified> {
+    fn push_g(&mut self, is_up: bool, foreground: bool, route_live: bool) -> Option<Classified> {
         if is_up {
             if self.float_down {
-                return self.push_g_arm(GArm::Float, is_up, foreground);
+                return self.push_g_arm(GArm::Float, is_up, foreground, route_live);
             }
             if self.sticky_down {
-                return self.push_g_arm(GArm::Sticky, is_up, foreground);
+                return self.push_g_arm(GArm::Sticky, is_up, foreground, route_live);
             }
             return None;
         }
         if self.float_down {
-            return self.push_g_arm(GArm::Float, is_up, foreground);
+            return self.push_g_arm(GArm::Float, is_up, foreground, route_live);
         }
         if self.sticky_down {
-            return self.push_g_arm(GArm::Sticky, is_up, foreground);
+            return self.push_g_arm(GArm::Sticky, is_up, foreground, route_live);
         }
         if self.shift {
-            return self.push_g_arm(GArm::Sticky, is_up, foreground);
+            return self.push_g_arm(GArm::Sticky, is_up, foreground, route_live);
         }
-        self.push_g_arm(GArm::Float, is_up, foreground)
+        self.push_g_arm(GArm::Float, is_up, foreground, route_live)
     }
 
     /// Shared G-key arm (float and sticky halves): same Win/Ctrl/Alt/
@@ -1221,7 +1471,13 @@ impl SnapClassify {
     /// armed) instead of re-toggling. Ups close the pair. Fresh downs consume
     /// iff takeover is on with the shortcut gate active; the owner rechecks
     /// fresh identity/scope/elevation/fullscreen/gesture before any action.
-    fn push_g_arm(&mut self, arm: GArm, is_up: bool, foreground: bool) -> Option<Classified> {
+    fn push_g_arm(
+        &mut self,
+        arm: GArm,
+        is_up: bool,
+        foreground: bool,
+        route_live: bool,
+    ) -> Option<Classified> {
         let sticky = arm == GArm::Sticky;
         let shift = self.shift;
         let trigger = if sticky {
@@ -1306,7 +1562,7 @@ impl SnapClassify {
                     return None;
                 }
                 *down = true;
-                let has_origin = self.enabled && self.gate_active;
+                let has_origin = self.enabled && self.gate_active && route_live;
                 *origin = has_origin;
                 counts.down += 1;
                 if has_origin {
@@ -1701,6 +1957,16 @@ impl SnapQueue {
 
     pub fn record_drop(&mut self) {
         self.dropped += 1;
+    }
+
+    /// Drop every queued record for a live config change: stale actions must
+    /// never dispatch under a new config. Returns the dropped count; the
+    /// bounded loss counter absorbs them like saturation drops.
+    pub fn drain_stale(&mut self) -> usize {
+        let dropped = self.inner.len();
+        self.inner.clear();
+        self.dropped = self.dropped.saturating_add(dropped as u32);
+        dropped
     }
 
     pub fn pop_front(&mut self) -> Option<QueuedSnapEvent> {
@@ -2311,9 +2577,9 @@ pub fn callback_diag_evidence(diag: &CallbackDiag) -> serde_json::Value {
 #[cfg(windows)]
 pub mod sys {
     use super::{
-        CallbackDiag, CallbackDiagBuf, CallbackReason, CallbackSource, KeyboardConfig,
-        MarkedDiagBuf, MarkedKeyDiag, ModDiagBuf, QueuedMask, QueuedSnapEvent, SnapClassify,
-        SnapOrigin, SnapQueue,
+        CallbackDiag, CallbackDiagBuf, CallbackReason, CallbackSource, ChordDisable, ChordRemap,
+        KeyboardConfig, MarkedDiagBuf, MarkedKeyDiag, ModDiagBuf, QueuedMask, QueuedSnapEvent,
+        SnapClassify, SnapOrigin, SnapQueue,
     };
     use std::cell::RefCell;
     use std::collections::HashMap;
@@ -2409,6 +2675,36 @@ pub mod sys {
                 st.active = active;
             }
         });
+    }
+
+    /// Owner-side live config apply for settings changes (takeover/binding
+    /// updates through the ~100ms pump, never the hook callback): publishes
+    /// the new takeover/Win+L policy plus the rebound-chord and suppression
+    /// tables, and drains queued stale actions so nothing dispatches under the
+    /// new config. In-flight held keys keep their down-time slots: consumed
+    /// holds ride their stored verdict to the paired key-up (no orphan ups
+    /// reach the OS) and the Start-menu mask obligation survives the change;
+    /// repeats ride the stored verdict and only announce while the live
+    /// combination still matches, so no new stale action dispatches. Returns
+    /// the drained stale count. Zero when the hook is not installed (hookless
+    /// runs keep their existing pass-through semantics; the next install uses
+    /// fresh config).
+    pub fn apply_live_config(
+        config: KeyboardConfig,
+        remap: &[ChordRemap],
+        disabled: &[ChordDisable],
+    ) -> usize {
+        SNAP.with(|s| {
+            let mut borrow = s.borrow_mut();
+            let Some(st) = borrow.as_mut() else {
+                return 0;
+            };
+            st.machine.set_enabled(config.takeover);
+            st.machine.allow_win_l = config.allow_win_l;
+            st.machine.set_remap(remap.to_vec());
+            st.machine.set_disabled(disabled.to_vec());
+            st.queue.drain_stale()
+        })
     }
 
     /// Owner drain: take up to `limit` queued records, oldest first. The
@@ -2930,7 +3226,7 @@ pub mod sys {
                 );
                 if marked {
                     let (_, _, shift_a) = st.machine.tracked_modifiers();
-                    if !is_up && super::is_chord_vk(vk) {
+                    if !is_up && st.machine.is_owned_physical(vk) {
                         // The guard record just pushed is the newest record:
                         // stamp the consume verdict onto it (same borrow, no
                         // interleaving; classify_and_queue cannot push diag).

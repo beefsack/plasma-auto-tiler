@@ -70,6 +70,7 @@ use crate::lifecycle::{
 };
 use crate::model::ProcessIdentity;
 use crate::native::HeldProcess;
+use crate::settings::LiveSettings;
 use crate::snapkey::{
     KeyboardConfig, MAX_DISPATCH_PER_TICK, OriginVerdict, QueuedSnapEvent, SnapOp, SnapOrigin,
     VK_LSHIFT, VK_LWIN, VK_MASK, VK_RSHIFT, VK_RWIN, VK_SHIFT, WorkspaceOp, direction_name,
@@ -84,7 +85,7 @@ use crate::tiling::{
     classify, classify_gesture, drop_point_in_domain, fingerprint, fullscreen_toggle_decision,
     hosted_child_allows, inspect_stateless_verdict, is_borderless_fullscreen, parse_allowlist,
     parse_workspace_request, readback_outcome, scope_allows, scope_exe_basename,
-    should_hold_born_fullscreen, tick_summary_signature, tiling_domain_bounds,
+    should_hold_born_fullscreen, tick_summary_signature, tiling_domain_bounds_with,
 };
 use crate::win_mouse::sys::WinDragPublished;
 use crate::win_mouse::{
@@ -1183,7 +1184,30 @@ struct TileLoop {
     log_path: std::path::PathBuf,
     audit_path: Option<std::path::PathBuf>,
     /// Product keyboard policy for this run (takeover switch + Win+L opt-in).
+    /// Live settings edits update this in place; the hook gate republishes
+    /// every pump and the classifier applies policy plus the rebound table
+    /// through `apply_live_config`.
     keyboard: KeyboardConfig,
+    /// Live inner/outer gaps (KDE 0..64). Saved settings supply the startup
+    /// base and explicit CLI switches override; live file edits flip these
+    /// and adopt through the retained update-gaps path, never a reseed.
+    inner_gap: i32,
+    outer_gap: i32,
+    /// Live settings polling for the normal owner only (`None` on proof
+    /// paths, which keep deterministic explicit configuration and never read
+    /// the user's store).
+    settings_live: Option<LiveSettings>,
+    /// Settings directory for live polling (mirrors `settings_live`).
+    settings_dir: Option<std::path::PathBuf>,
+    /// Last applied rebound-chord table, so binding-only edits re-apply even
+    /// when the keyboard policy is unchanged.
+    last_remap: Vec<crate::snapkey::ChordRemap>,
+    /// Last applied suppression table (disabled or rebound-away chords), same
+    /// re-apply contract as the rebound table.
+    last_disabled: Vec<crate::snapkey::ChordDisable>,
+    /// Explicit startup CLI switches, authoritative for the whole run: every
+    /// live settings-file apply re-applies these lanes over the file base.
+    cli_overrides: crate::tiling::CliOverrides,
     /// Last published snap-queue loss count, for explicit drop evidence.
     snap_dropped: u32,
     /// Last published callback-summary loss counts, for explicit drop/filter
@@ -2453,8 +2477,13 @@ fn refresh_group_underlay(
         hide_underlay(state, "floating");
         return;
     }
-    let Some((domain, domain_key)) = workspace_domain_for(&loc.output, &loc.workspace, areas)
-    else {
+    let Some((domain, domain_key)) = workspace_domain_for(
+        &loc.output,
+        &loc.workspace,
+        areas,
+        state.inner_gap,
+        state.outer_gap,
+    ) else {
         hide_underlay(state, "no-group");
         return;
     };
@@ -2466,7 +2495,7 @@ fn refresh_group_underlay(
         fingerprint: 0,
         domain,
         domain_key,
-        outer_gap: OUTER_GAP,
+        outer_gap: state.outer_gap,
         focused_window: WindowId(window.token.clone()),
         windows: Vec::new(),
         directional: None,
@@ -2877,7 +2906,13 @@ fn refresh_drag_preview(
         .as_ref()
         .is_some_and(|key| state.sticky.contains_key(key))
         || engine_is_float(state, &start.output, &start.workspace, &start.token);
-    let domain = workspace_domain_for(&start.output, &start.workspace, areas);
+    let domain = workspace_domain_for(
+        &start.output,
+        &start.workspace,
+        areas,
+        state.inner_gap,
+        state.outer_gap,
+    );
     let inside = domain.as_ref().is_some_and(|(domain, _)| {
         drop_point_in_domain(
             domain.bounds.x,
@@ -4600,7 +4635,7 @@ fn reconcile_tick(
         let Some(active) = state.workspaces.active_id(&output) else {
             continue;
         };
-        if tiling_domain_bounds(area.work).is_none() {
+        if tiling_domain_bounds_with(area.work, state.outer_gap).is_none() {
             continue;
         }
         // Incomplete snapshot defers with retained Engine state: a falsely
@@ -4630,10 +4665,21 @@ fn reconcile_tick(
         let focused = state
             .focused_token(&observed)
             .filter(|f| windows.iter().any(|(w, _, _, _)| w == f));
-        let Some((domain, domain_key)) = workspace_domain_for(&output, &active, areas) else {
+        let Some((domain, domain_key)) =
+            workspace_domain_for(&output, &active, areas, state.inner_gap, state.outer_gap)
+        else {
             continue;
         };
-        let event = crate::tiling::build_reconcile_event_for_floating(
+        // Retained gap drift adopts through the topology-preserving
+        // update-gaps path: plain reconcile refuses domain-mismatch instead
+        // of adopting it, and fresh domains still seed via reconcile.
+        let gaps_adopted = crate::settings::retained_gaps_match(
+            &state.engine,
+            &domain_key,
+            state.inner_gap,
+            state.outer_gap,
+        );
+        let mut event = crate::tiling::build_reconcile_event_for_floating(
             &state.owner,
             &state.generation,
             &correlation,
@@ -4641,10 +4687,13 @@ fn reconcile_tick(
             fp,
             &domain,
             &domain_key,
-            OUTER_GAP,
+            state.outer_gap,
             &windows,
             focused.as_ref(),
         );
+        if !gaps_adopted {
+            event.command = CoreCommand::UpdateGaps;
+        }
         let reply = state.engine.handle(&event);
         log_engine_placement_trace(state, tick, correlation.as_str(), "reconcile");
         let writable = writable_tokens(state, &output, &active, &observed);
@@ -5736,9 +5785,13 @@ fn keyboard_tick(
                     );
                     continue;
                 };
-                let Some((domain, domain_key)) =
-                    workspace_domain_for(&loc.output, &loc.workspace, areas)
-                else {
+                let Some((domain, domain_key)) = workspace_domain_for(
+                    &loc.output,
+                    &loc.workspace,
+                    areas,
+                    state.inner_gap,
+                    state.outer_gap,
+                ) else {
                     log_json_at(
                         &log_path,
                         serde_json::json!({
@@ -5891,6 +5944,23 @@ fn keyboard_tick(
                 );
                 // `from` is the origin-verified token, never blind foreground.
                 let from = WindowId(from);
+                // Live gap edits adopt here so the focus/move convergence
+                // below sees matching gaps instead of refusing the keypress.
+                {
+                    let revision = revision_for(state, &loc.output, &loc.workspace);
+                    let outer_gap = state.outer_gap;
+                    adopt_gaps_for_route(
+                        state,
+                        &domain,
+                        &domain_key,
+                        outer_gap,
+                        &windows,
+                        Some(&from),
+                        revision,
+                        fp,
+                        &correlation,
+                    );
+                }
                 let mut event = crate::tiling::build_reconcile_event_for_floating(
                     &state.owner,
                     &state.generation,
@@ -5899,7 +5969,7 @@ fn keyboard_tick(
                     fp,
                     &domain,
                     &domain_key,
-                    OUTER_GAP,
+                    state.outer_gap,
                     &windows,
                     Some(&from),
                 );
@@ -6772,7 +6842,15 @@ fn resolve_chord_target(
         state.snap_advance = None;
         return Err(reject("unmanaged"));
     };
-    if workspace_domain_for(&loc.output, &loc.workspace, areas).is_none() {
+    if workspace_domain_for(
+        &loc.output,
+        &loc.workspace,
+        areas,
+        state.inner_gap,
+        state.outer_gap,
+    )
+    .is_none()
+    {
         return Err(reject("unknown-output"));
     }
     let live_tag = crate::product_hide::sys::read_member_tag(member_key.hwnd);
@@ -6909,8 +6987,13 @@ fn prepare_toggle_float(
             .collect::<Vec<_>>(),
     );
     let from_id = WindowId(from.to_owned());
-    let Some((domain, domain_key)) = workspace_domain_for(&loc.output, &loc.workspace, areas)
-    else {
+    let Some((domain, domain_key)) = workspace_domain_for(
+        &loc.output,
+        &loc.workspace,
+        areas,
+        state.inner_gap,
+        state.outer_gap,
+    ) else {
         let mut line = settle("unknown-output");
         line["origin"] = serde_json::Value::from(origin.token.clone());
         log_json_at(log_path, line);
@@ -7730,8 +7813,13 @@ fn sticky_rehome_to_current(
         log_json_at(log_path, line);
         return;
     };
-    let Some((old_domain, old_key)) = workspace_domain_for(&loc.output, &loc.workspace, areas)
-    else {
+    let Some((old_domain, old_key)) = workspace_domain_for(
+        &loc.output,
+        &loc.workspace,
+        areas,
+        state.inner_gap,
+        state.outer_gap,
+    ) else {
         let mut line = settle("unknown-output");
         line["origin"] = serde_json::Value::from(origin.token.clone());
         log_json_at(log_path, line);
@@ -7748,7 +7836,13 @@ fn sticky_rehome_to_current(
             .map(|(w, r, _, _)| (w.0.clone(), *r))
             .collect::<Vec<_>>(),
     );
-    let Some((cur_domain, cur_key)) = workspace_domain_for(&loc.output, current_ws, areas) else {
+    let Some((cur_domain, cur_key)) = workspace_domain_for(
+        &loc.output,
+        current_ws,
+        areas,
+        state.inner_gap,
+        state.outer_gap,
+    ) else {
         let mut line = settle("unknown-output");
         line["origin"] = serde_json::Value::from(origin.token.clone());
         log_json_at(log_path, line);
@@ -8286,19 +8380,73 @@ fn revision_for(state: &TileLoop, output: &str, workspace: &str) -> u64 {
 }
 
 /// Portable domain value for one workspace on its monitor's work area.
+/// Gaps ride the owner's live settings (inner gap in the domain, outer gap
+/// in both the inset bounds and the carried event value).
 fn workspace_domain_for(
     output: &str,
     workspace: &str,
     areas: &[MonitorArea],
+    inner_gap: i32,
+    outer_gap: i32,
 ) -> Option<(
     tiler_core::session::OutputDomain,
     tiler_core::session::DomainKey,
 )> {
     let area = areas.iter().find(|a| a.device == output)?;
-    let bounds = tiling_domain_bounds(area.work)?;
+    let bounds = tiling_domain_bounds_with(area.work, outer_gap)?;
     Some(crate::workspace_owner::workspace_domain(
-        output, workspace, bounds, OUTER_GAP,
+        output, workspace, bounds, inner_gap,
     ))
+}
+
+/// Adopt drifted live gaps through the retained topology-preserving
+/// update-gaps path before a domain operation (focus/move/select/send/
+/// gesture). A live gap edit between the last reconcile and this intent would
+/// otherwise make the operation's own convergence refuse with
+/// `domain-mismatch` (safe, but the keypress is lost) or, on a domain the
+/// Engine has never seen, seed fresh with mixed gap generations. Best effort:
+/// returns true when the retained gaps now match the carried values; false
+/// leaves the caller's Engine outcome (refusal or fresh seed) as the honest
+/// evidence and topology is never destroyed either way.
+#[allow(clippy::too_many_arguments)]
+fn adopt_gaps_for_route(
+    state: &mut TileLoop,
+    domain: &tiler_core::session::OutputDomain,
+    domain_key: &tiler_core::session::DomainKey,
+    outer_gap: i32,
+    windows: &[(WindowId, Rect, WindowSizeHints, bool)],
+    focused: Option<&WindowId>,
+    revision: u64,
+    fingerprint: u64,
+    correlation: &CorrelationId,
+) -> bool {
+    if crate::settings::retained_gaps_match(&state.engine, domain_key, state.inner_gap, outer_gap) {
+        return true;
+    }
+    let mut event = crate::tiling::build_reconcile_event_for_floating(
+        &state.owner,
+        &state.generation,
+        correlation,
+        revision,
+        fingerprint,
+        domain,
+        domain_key,
+        outer_gap,
+        windows,
+        focused,
+    );
+    event.command = CoreCommand::UpdateGaps;
+    let adopted = matches!(
+        state.engine.handle(&event),
+        CoreReply::Projection(_) | CoreReply::Tiled(_)
+    );
+    adopted
+        && crate::settings::retained_gaps_match(
+            &state.engine,
+            domain_key,
+            state.inner_gap,
+            outer_gap,
+        )
 }
 
 /// Admit first-seen fullscreen windows as born-held workspace members (KDE
@@ -8528,8 +8676,13 @@ fn adopt_sticky_markers(
             rollback(state);
             continue;
         };
-        let Some((domain, domain_key)) = workspace_domain_for(&loc.output, &loc.workspace, areas)
-        else {
+        let Some((domain, domain_key)) = workspace_domain_for(
+            &loc.output,
+            &loc.workspace,
+            areas,
+            state.inner_gap,
+            state.outer_gap,
+        ) else {
             rollback(state);
             continue;
         };
@@ -8552,7 +8705,7 @@ fn adopt_sticky_markers(
             fp,
             &domain,
             &domain_key,
-            OUTER_GAP,
+            state.outer_gap,
             &windows,
             None,
         );
@@ -9372,7 +9525,8 @@ fn workspace_do_select(
     let mut geometry: Option<ApplySummary> = None;
     // One shared hint-query budget for the select's row assembly.
     let mut hint_cx = HintCx::new();
-    if let Some((domain, domain_key)) = workspace_domain_for(output, target, areas)
+    if let Some((domain, domain_key)) =
+        workspace_domain_for(output, target, areas, state.inner_gap, state.outer_gap)
         && let Some(rows) = assemble_domain_rows(
             state,
             output,
@@ -9403,6 +9557,23 @@ fn workspace_do_select(
         let tick = state.tick;
         let correlation =
             CorrelationId::parse(&ctx.correlation).expect("action correlation is a valid token");
+        // Live gap edits adopt here so the select convergence below sees
+        // matching gaps instead of refusing.
+        {
+            let revision = revision_for(state, output, target);
+            let outer_gap = state.outer_gap;
+            adopt_gaps_for_route(
+                state,
+                &domain,
+                &domain_key,
+                outer_gap,
+                &windows,
+                focused.as_ref(),
+                revision,
+                fp,
+                &correlation,
+            );
+        }
         let plan_start = Instant::now();
         let event = crate::tiling::build_reconcile_event_for_floating(
             &state.owner,
@@ -9412,7 +9583,7 @@ fn workspace_do_select(
             fp,
             &domain,
             &domain_key,
-            OUTER_GAP,
+            state.outer_gap,
             &windows,
             focused.as_ref(),
         );
@@ -9669,11 +9840,18 @@ fn workspace_do_send(
     if !source_rows.iter().any(|r| r.token == origin_token) {
         return fail_at("unmanaged");
     }
-    let Some((source_domain, source_key)) = workspace_domain_for(output, &loc.workspace, areas)
-    else {
+    let Some((source_domain, source_key)) = workspace_domain_for(
+        output,
+        &loc.workspace,
+        areas,
+        state.inner_gap,
+        state.outer_gap,
+    ) else {
         return fail_at("unknown-output");
     };
-    let Some((target_domain, target_key)) = workspace_domain_for(output, &target_id, areas) else {
+    let Some((target_domain, target_key)) =
+        workspace_domain_for(output, &target_id, areas, state.inner_gap, state.outer_gap)
+    else {
         return fail_at("unknown-output");
     };
     let fingerprint = {
@@ -9693,6 +9871,56 @@ fn workspace_do_send(
     let action_correlation =
         CorrelationId::parse(&ctx.correlation).expect("action correlation is a valid token");
     let revision = revision_for(state, output, &loc.workspace);
+    // Live gap edits adopt on both domains first, so the pair convergence
+    // below never straddles gap generations (an unseen target would
+    // otherwise seed fresh with new gaps beside a retained stale source).
+    {
+        let outer_gap = state.outer_gap;
+        let mover = WindowId(origin_token.to_owned());
+        let source_windows: Vec<(WindowId, Rect, WindowSizeHints, bool)> = source_rows
+            .iter()
+            .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
+            .collect();
+        let source_fp = crate::tiling::fingerprint(
+            &source_rows
+                .iter()
+                .map(|r| (r.token.clone(), r.rect))
+                .collect::<Vec<_>>(),
+        );
+        adopt_gaps_for_route(
+            state,
+            &source_domain,
+            &source_key,
+            outer_gap,
+            &source_windows,
+            Some(&mover),
+            revision,
+            source_fp,
+            &action_correlation,
+        );
+        let target_windows: Vec<(WindowId, Rect, WindowSizeHints, bool)> = target_rows
+            .iter()
+            .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
+            .collect();
+        let target_fp = crate::tiling::fingerprint(
+            &target_rows
+                .iter()
+                .map(|r| (r.token.clone(), r.rect))
+                .collect::<Vec<_>>(),
+        );
+        let target_revision = revision_for(state, output, &target_id);
+        adopt_gaps_for_route(
+            state,
+            &target_domain,
+            &target_key,
+            outer_gap,
+            &target_windows,
+            None,
+            target_revision,
+            target_fp,
+            &action_correlation,
+        );
+    }
     let Some(mut event) = crate::workspace_owner::build_send_event(
         &state.owner,
         &state.generation,
@@ -9704,7 +9932,7 @@ fn workspace_do_send(
         &source_rows,
         &target_rows,
         origin_token,
-        OUTER_GAP,
+        state.outer_gap,
     ) else {
         return fail_at("refused");
     };
@@ -10888,7 +11116,7 @@ fn sync_monitor_outputs(state: &mut TileLoop, areas: &[MonitorArea]) {
                 let bounds = areas
                     .iter()
                     .find(|a| a.device == dest)
-                    .and_then(|a| tiling_domain_bounds(a.work));
+                    .and_then(|a| tiling_domain_bounds_with(a.work, state.outer_gap));
                 let Some(bounds) = bounds else {
                     retained_count += 1;
                     continue;
@@ -10897,13 +11125,14 @@ fn sync_monitor_outputs(state: &mut TileLoop, areas: &[MonitorArea]) {
                     id: tiler_core::directional::OutputId(dest.clone()),
                     workspace: tiler_core::directional::WorkspaceId(ws.clone()),
                     bounds,
-                    gap: OUTER_GAP,
+                    gap: state.inner_gap,
                     adjacent: std::collections::BTreeMap::new(),
                 };
-                if state
-                    .engine
-                    .try_relocate_for_target(&target_key, &target_domain, OUTER_GAP)
-                {
+                if state.engine.try_relocate_for_target(
+                    &target_key,
+                    &target_domain,
+                    state.outer_gap,
+                ) {
                     relocated += 1;
                 } else {
                     retained_count += 1;
@@ -10967,7 +11196,7 @@ fn sync_monitor_outputs(state: &mut TileLoop, areas: &[MonitorArea]) {
                 let bounds = areas
                     .iter()
                     .find(|a| a.device == origin)
-                    .and_then(|a| tiling_domain_bounds(a.work));
+                    .and_then(|a| tiling_domain_bounds_with(a.work, state.outer_gap));
                 if let Some(bounds) = bounds {
                     for ws in &record.workspace_ids {
                         let target_key = tiler_core::session::DomainKey {
@@ -10978,7 +11207,7 @@ fn sync_monitor_outputs(state: &mut TileLoop, areas: &[MonitorArea]) {
                             id: tiler_core::directional::OutputId(origin.clone()),
                             workspace: tiler_core::directional::WorkspaceId(ws.clone()),
                             bounds,
-                            gap: OUTER_GAP,
+                            gap: state.inner_gap,
                             adjacent: std::collections::BTreeMap::new(),
                         };
                         state.engine.try_relocate_for_target(
@@ -11589,8 +11818,13 @@ fn gesture_tick(
         let Some(loc) = state.workspaces.member_loc(&member_key).cloned() else {
             continue;
         };
-        let Some((domain, domain_key)) = workspace_domain_for(&loc.output, &loc.workspace, areas)
-        else {
+        let Some((domain, domain_key)) = workspace_domain_for(
+            &loc.output,
+            &loc.workspace,
+            areas,
+            state.inner_gap,
+            state.outer_gap,
+        ) else {
             continue;
         };
         // Item 7 is same-output only: a release cursor outside the source
@@ -11691,6 +11925,23 @@ fn gesture_tick(
                 .collect::<Vec<_>>(),
         );
         let mover = WindowId(current.token.clone());
+        // Live gap edits adopt here so the drop convergence below sees
+        // matching gaps instead of refusing the gesture.
+        {
+            let revision = revision_for(state, &loc.output, &loc.workspace);
+            let outer_gap = state.outer_gap;
+            adopt_gaps_for_route(
+                state,
+                &domain,
+                &domain_key,
+                outer_gap,
+                &windows,
+                Some(&mover),
+                revision,
+                fp,
+                &correlation,
+            );
+        }
         let event = crate::tiling::build_reconcile_event_for_floating(
             &state.owner,
             &state.generation,
@@ -11699,7 +11950,7 @@ fn gesture_tick(
             fp,
             &domain,
             &domain_key,
-            OUTER_GAP,
+            state.outer_gap,
             &windows,
             Some(&mover),
         );
@@ -12087,6 +12338,17 @@ struct TileRun {
     raw_argv: Vec<String>,
     keyboard: KeyboardConfig,
     mouse_snap: bool,
+    /// Live inner/outer gaps for this run (settings base, CLI overrides).
+    inner_gap: i32,
+    outer_gap: i32,
+    /// Settings directory for live polling (`None` disables polling: proof
+    /// owners never load the user's store).
+    settings_dir: Option<std::path::PathBuf>,
+    /// Initialized last-good live settings (`None` disables polling).
+    settings_live: Option<LiveSettings>,
+    /// Explicit startup CLI switches, authoritative for the whole run (empty
+    /// on proof paths, which never poll the file).
+    cli_overrides: crate::tiling::CliOverrides,
     /// Explicit normal-mode scope filter (empty means no filter). Proof runs
     /// always pass empty (frozen allowlist is the gate there).
     scope: Vec<String>,
@@ -12095,6 +12357,171 @@ struct TileRun {
     scope_hosts: Vec<ScopeHostChild>,
     border: ActiveBorderOptions,
     underlay: GroupUnderlayOptions,
+}
+
+/// Apply validated live settings through the owner's pump (normal owner
+/// only). Returns true when owner state changed, so the caller wakes the pump
+/// and gap adoption reconciles promptly. Gaps flip immediately and adopt
+/// through the retained update-gaps path in `reconcile_tick` (plain reconcile
+/// would refuse the drift); border/underlay assign directly for the next
+/// overlay refresh; keyboard plus rebound/suppression chords route through the
+/// hook's `apply_live_config` (in-flight holds keep their down-time verdict
+/// and mask, the stale queue drains, nothing dispatches under the new
+/// config); mouse prevention toggles through the existing conditional
+/// restore (off) and fresh-preimage disable (on) routines, flag-only while
+/// suspended so the resume transition drives the effect.
+///
+/// Status semantics are honest by construction: `saved:{revision}` means the
+/// file revision is assigned to owner state (per-lane evidence rides the
+/// `settings-applied` lanes plus the `settings-keyboard` row); the mouse
+/// effect rides the existing suspend/resume outcome logs (`mouse-pending`
+/// while suspended defers it to resume); gap adoption rides the Engine
+/// update-gaps trace. Invalid files keep last-good with a `degraded:{reason}`
+/// status and are never rewritten here.
+///
+/// Explicit startup CLI switches stay authoritative: the file base applies
+/// underneath [`crate::tiling::CliOverrides`], so an unrelated file edit
+/// never drops a CLI lane.
+#[allow(clippy::too_many_arguments)]
+fn apply_live_settings(
+    state: &mut TileLoop,
+    dir: &Path,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    snap_want: &mut bool,
+    settings: crate::settings::Settings,
+    mtime: Option<std::time::SystemTime>,
+) -> bool {
+    let log_path = state.log_path.clone();
+    let mut base = crate::settings::tile_options_from_settings(&settings);
+    crate::tiling::apply_cli_overrides(&mut base, &state.cli_overrides);
+    let mut lanes: Vec<&'static str> = Vec::new();
+    let mut changed = false;
+    if base.inner_gap != state.inner_gap || base.outer_gap != state.outer_gap {
+        state.inner_gap = base.inner_gap;
+        state.outer_gap = base.outer_gap;
+        lanes.push("gaps");
+        changed = true;
+    }
+    if base.border != state.border {
+        state.border = base.border;
+        lanes.push("border");
+        changed = true;
+    }
+    if base.underlay != state.underlay {
+        state.underlay = base.underlay;
+        lanes.push("underlay");
+        changed = true;
+    }
+    let keyboard = KeyboardConfig {
+        takeover: !base.no_keyboard_snap_takeover,
+        allow_win_l: base.allow_win_l,
+    };
+    let remap = crate::settings::build_remap(&settings);
+    let disabled = crate::settings::build_disabled(&settings);
+    if keyboard != state.keyboard || remap != state.last_remap || disabled != state.last_disabled {
+        state.keyboard = keyboard;
+        state.last_remap = remap.clone();
+        state.last_disabled = disabled.clone();
+        let drained = crate::snapkey::sys::apply_live_config(keyboard, &remap, &disabled);
+        lanes.push("keyboard");
+        changed = true;
+        log_json_at(
+            &log_path,
+            serde_json::json!({
+                "event": "settings-keyboard",
+                "takeover": keyboard.takeover,
+                "allow_win_l": keyboard.allow_win_l,
+                "remap": remap.len(),
+                "disabled": disabled.len(),
+                "drained": drained,
+            }),
+        );
+    }
+    let want_snap = !base.no_mouse_snap_prevention;
+    if want_snap != *snap_want {
+        // Mirror the suspend/resume fencing: while suspended the ledger
+        // already holds the restored state, so only the flag flips and the
+        // resume transition drives the effect.
+        if want_snap {
+            if !state.suspended {
+                snap_resume(dir, me, store);
+            }
+        } else if !state.suspended {
+            snap_suspend(dir, me, store);
+        }
+        *snap_want = want_snap;
+        lanes.push(if state.suspended {
+            "mouse-pending"
+        } else {
+            "mouse"
+        });
+        changed = true;
+    }
+    let revision = settings.revision;
+    if let Some(live) = state.settings_live.as_mut() {
+        live.settings = settings;
+        live.mtime = mtime;
+        live.status = format!("saved:{revision}");
+    }
+    log_json_at(
+        &log_path,
+        serde_json::json!({
+            "event": "settings-applied",
+            "revision": revision,
+            "lanes": lanes,
+        }),
+    );
+    changed
+}
+
+/// Poll the settings file once per pump (normal owner only; proof owners
+/// never poll). Changed files validate then apply (returns true when owner
+/// state changed); invalid files keep the last-good values live with a
+/// degraded status and are never rewritten here (no blind reset). Degraded
+/// transitions log once per status.
+fn poll_live_settings(
+    state: &mut TileLoop,
+    dir: &Path,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    snap_want: &mut bool,
+) -> bool {
+    let Some(settings_dir) = state.settings_dir.clone() else {
+        return false;
+    };
+    let Some(last) = state.settings_live.clone() else {
+        return false;
+    };
+    match crate::settings::poll_for_change(&settings_dir, &last) {
+        crate::settings::PollOutcome::Unchanged => false,
+        crate::settings::PollOutcome::Changed(settings) => {
+            let mtime = std::fs::metadata(settings_dir.join(crate::settings::SETTINGS_FILE_NAME))
+                .and_then(|meta| meta.modified())
+                .ok();
+            apply_live_settings(state, dir, me, store, snap_want, settings, mtime)
+        }
+        crate::settings::PollOutcome::InvalidKept(reason) => {
+            let degraded = format!("degraded:{reason}");
+            let changed = state
+                .settings_live
+                .as_ref()
+                .is_some_and(|live| live.status != degraded);
+            if changed {
+                if let Some(live) = state.settings_live.as_mut() {
+                    live.status = degraded.clone();
+                }
+                log_json_at(
+                    &state.log_path.clone(),
+                    serde_json::json!({
+                        "event": "settings-degraded",
+                        "status": degraded,
+                    }),
+                );
+            }
+            false
+        }
+    }
 }
 
 fn run_tile_loop(
@@ -12113,14 +12540,20 @@ fn run_tile_loop(
         raw_argv,
         keyboard,
         mouse_snap,
+        inner_gap,
+        outer_gap,
+        settings_dir,
+        settings_live,
+        cli_overrides,
         scope,
         scope_hosts,
         border,
         underlay,
     } = run;
     // Prevention needs an active loop: proof never arms it, and the guarded
-    // setup already captured the preimage plus the initial effect.
-    let snap_want = mouse_snap && (!proof || shortcut_proof || workspace_proof);
+    // setup already captured the preimage plus the initial effect. The live
+    // settings poll may flip this per pump (normal owner only).
+    let mut snap_want = mouse_snap && (!proof || shortcut_proof || workspace_proof);
     ensure_pm_v2()?;
     let owner = OwnerId::parse(OWNER_ID).expect("static owner token is valid");
     let generation =
@@ -12200,6 +12633,14 @@ fn run_tile_loop(
             );
         }
     }
+    let last_remap = settings_live
+        .as_ref()
+        .map(|live| crate::settings::build_remap(&live.settings))
+        .unwrap_or_default();
+    let last_disabled = settings_live
+        .as_ref()
+        .map(|live| crate::settings::build_disabled(&live.settings))
+        .unwrap_or_default();
     let mut state = TileLoop {
         engine: Engine::new(),
         owner: owner.clone(),
@@ -12223,6 +12664,13 @@ fn run_tile_loop(
         log_path: log_path.clone(),
         audit_path: audit_path.clone(),
         keyboard,
+        inner_gap,
+        outer_gap,
+        settings_live,
+        settings_dir,
+        last_remap,
+        last_disabled,
+        cli_overrides,
         snap_dropped: 0,
         cb_diag_dropped: 0,
         cb_diag_filtered: 0,
@@ -12304,10 +12752,11 @@ fn run_tile_loop(
             "monitors": monitor_count,
             "work": [monitor.work.x, monitor.work.y, monitor.work.w, monitor.work.h],
             "full": [monitor.full.x, monitor.full.y, monitor.full.w, monitor.full.h],
-            "inner": INNER_GAP,
-            "outer": OUTER_GAP,
+            "inner": state.inner_gap,
+            "outer": state.outer_gap,
             "keyboard": {"takeover": takeover, "allow_win_l": state.keyboard.allow_win_l},
             "mouse_snap_prevention": snap_want,
+            "settings": state.settings_live.as_ref().map(|live| live.status.clone()),
             "scope_count": state.scope.len(),
             "active_border": {
                 "enabled": state.border.enabled,
@@ -12386,10 +12835,12 @@ fn run_tile_loop(
     let mut snap_failures: u32 = 0;
     let mut snap_retry_at: Option<Instant> = None;
     // Project Win+Left hook on the loop thread, same pump as the keyboard
-    // hook. Installed once when takeover holds; install failure degrades
-    // to title-bar-only movement (Win+Left passes through natively) while
-    // tiling continues, never a refused run.
-    let windrag_hook = if takeover {
+    // hook. Installed once when takeover holds; normal runs also install it
+    // while takeover is off so a live settings re-enable takes effect (the
+    // gate below keeps everything passing through until then). Install
+    // failure degrades to title-bar-only movement (Win+Left passes through
+    // natively) while tiling continues, never a refused run.
+    let windrag_hook = if takeover || !proof {
         match crate::win_mouse::sys::install() {
             Ok(hook) => {
                 log_json_at(&log_path, serde_json::json!({"event":"windrag-available"}));
@@ -12428,7 +12879,10 @@ fn run_tile_loop(
                 snap_suspend(dir, me, store);
             }
         } else {
-            if !areas.iter().any(|a| tiling_domain_bounds(a.work).is_some()) {
+            if !areas
+                .iter()
+                .any(|a| tiling_domain_bounds_with(a.work, state.outer_gap).is_some())
+            {
                 return Err(err("error: work area cannot carry outer gap"));
             }
             if snap_want {
@@ -12547,12 +13001,17 @@ fn run_tile_loop(
             // doubling, 60s cap): failure logs one `snap-unavailable` per
             // attempt, never per-poll noise, and the loop keeps tiling with
             // nothing consuming. Resume and work-area changes re-arm an
-            // immediate retry; there is no permanent disable.
-            if takeover && snap_hook.is_none() && snap_retry_at.is_none_or(|at| now >= at) {
+            // immediate retry; there is no permanent disable. The gate
+            // follows the live takeover setting so a settings re-enable
+            // installs the hook, and a fresh install publishes the live
+            // rebound table immediately.
+            let takeover_live =
+                (state.keyboard.takeover && !proof) || shortcut_proof || workspace_proof;
+            if takeover_live && snap_hook.is_none() && snap_retry_at.is_none_or(|at| now >= at) {
                 let installed = if shortcut_proof || workspace_proof {
-                    crate::snapkey::sys::install_proof(keyboard)
+                    crate::snapkey::sys::install_proof(state.keyboard)
                 } else {
-                    crate::snapkey::sys::install(keyboard)
+                    crate::snapkey::sys::install(state.keyboard)
                 };
                 match installed {
                     Ok(hook) => {
@@ -12561,6 +13020,12 @@ fn run_tile_loop(
                         // nothing until this setter runs, so default runs pay
                         // no timing/filter/push work in the callback.
                         crate::snapkey::sys::set_callback_diag_enabled(state.trace);
+                        // Publish the live policy plus the rebound/suppression
+                        // tables onto the fresh machine (a fresh install never
+                        // carries held keys, so nothing drains here).
+                        let remap = state.last_remap.clone();
+                        let disabled = state.last_disabled.clone();
+                        crate::snapkey::sys::apply_live_config(state.keyboard, &remap, &disabled);
                         snap_failures = 0;
                         snap_retry_at = None;
                         log_json_at(&log_path, serde_json::json!({"event":"snap-available"}));
@@ -12580,6 +13045,15 @@ fn run_tile_loop(
                         );
                     }
                 }
+            }
+            // Live settings poll (normal owner only; proof owners never
+            // poll): validated edits apply BEFORE the hook-queue drain, so
+            // `apply_live_config` drains stale intents before this pump
+            // pulls them and nothing dispatches under the old config.
+            // Invalid files keep last-good. A changed apply wakes the pump
+            // so gap adoption reconciles promptly.
+            if poll_live_settings(&mut state, dir, me, store, &mut snap_want) {
+                woke = true;
             }
             // Shortcut-handling gate for the callback: fresh downs consume
             // iff takeover holds with this gate active (the eventual Xbox
@@ -12840,9 +13314,15 @@ fn run_tile_loop(
                         let Some(active) = state.workspaces.active_id(&output) else {
                             continue;
                         };
-                        if let Some((_, key)) = workspace_domain_for(&output, &active, &areas)
-                            && let Some(area) = areas.iter().find(|a| a.device == output)
-                            && let Some(bounds) = tiling_domain_bounds(area.work)
+                        if let Some((_, key)) = workspace_domain_for(
+                            &output,
+                            &active,
+                            &areas,
+                            state.inner_gap,
+                            state.outer_gap,
+                        ) && let Some(area) = areas.iter().find(|a| a.device == output)
+                            && let Some(bounds) =
+                                tiling_domain_bounds_with(area.work, state.outer_gap)
                         {
                             state.engine.reproject_retained(&key, bounds);
                         }
@@ -13357,7 +13837,12 @@ fn run_tile_loop(
 /// opt-in). Session-only mouse-Snap prevention is default on with the
 /// visible `--no-mouse-snap-prevention` off switch; the exact preimage is
 /// restored conditionally on stop.
-pub fn cmd_tile(options: &TileOptions) -> Result<String> {
+pub fn cmd_tile(
+    options: &TileOptions,
+    live: Option<LiveSettings>,
+    settings_dir: Option<std::path::PathBuf>,
+    cli_overrides: crate::tiling::CliOverrides,
+) -> Result<String> {
     if !options.user_start {
         return Err(err("refuse: tile requires explicit --user-start"));
     }
@@ -13372,6 +13857,8 @@ pub fn cmd_tile(options: &TileOptions) -> Result<String> {
     let scope_hosts = options.scope_hosts.clone();
     let border = options.border;
     let underlay = options.underlay;
+    let inner_gap = options.inner_gap;
+    let outer_gap = options.outer_gap;
     crate::lifecycle::sys::run_product(trace, mouse_snap, move |dir, me, store| {
         run_tile_loop(
             dir,
@@ -13387,6 +13874,11 @@ pub fn cmd_tile(options: &TileOptions) -> Result<String> {
                 raw_argv: Vec::new(),
                 keyboard,
                 mouse_snap,
+                inner_gap,
+                outer_gap,
+                settings_dir,
+                settings_live: live,
+                cli_overrides,
                 scope,
                 scope_hosts,
                 border,
@@ -13394,6 +13886,45 @@ pub fn cmd_tile(options: &TileOptions) -> Result<String> {
             },
         )
     })
+}
+
+/// Load the normal-owner settings base: persisted settings supply the
+/// `TileOptions` defaults that explicit CLI switches override. Proof owners
+/// never call this (deterministic explicit configuration only). Returns the
+/// base options plus the initialized last-good live state and directory for
+/// pump polling (`None` live state disables polling).
+pub fn load_normal_tile_base() -> (
+    TileOptions,
+    Option<LiveSettings>,
+    Option<std::path::PathBuf>,
+) {
+    let defaults = crate::tiling::tile_options_defaults();
+    let Ok(dir) = crate::native::settings_directory() else {
+        return (defaults, None, None);
+    };
+    let mtime = std::fs::metadata(dir.join(crate::settings::SETTINGS_FILE_NAME))
+        .and_then(|meta| meta.modified())
+        .ok();
+    match crate::settings::load_from_dir(&dir) {
+        crate::settings::LoadOutcome::Loaded(settings) => {
+            let options = crate::settings::tile_options_from_settings(&settings);
+            (
+                options,
+                Some(LiveSettings::fresh(settings, mtime)),
+                Some(dir),
+            )
+        }
+        crate::settings::LoadOutcome::Missing => {
+            let mut live = LiveSettings::fresh(crate::settings::Settings::default(), mtime);
+            live.status = "missing: defaults".to_owned();
+            (defaults, Some(live), Some(dir))
+        }
+        crate::settings::LoadOutcome::Invalid(error) => {
+            let mut live = LiveSettings::fresh(crate::settings::Settings::default(), mtime);
+            live.status = format!("degraded:{error}");
+            (defaults, Some(live), Some(dir))
+        }
+    }
 }
 
 /// `workspace --select INDEX` command: exact-owner out-of-hook select for the
@@ -13550,6 +14081,11 @@ pub fn cmd_tile_proof(options: &TileProofOptions, raw_argv: &[String]) -> Result
                 raw_argv,
                 keyboard,
                 mouse_snap: false,
+                inner_gap: INNER_GAP,
+                outer_gap: OUTER_GAP,
+                settings_dir: None,
+                settings_live: None,
+                cli_overrides: crate::tiling::CliOverrides::default(),
                 scope: Vec::new(),
                 scope_hosts: Vec::new(),
                 border,
@@ -13604,6 +14140,11 @@ pub fn cmd_shortcut_proof(
                 raw_argv,
                 keyboard,
                 mouse_snap,
+                inner_gap: INNER_GAP,
+                outer_gap: OUTER_GAP,
+                settings_dir: None,
+                settings_live: None,
+                cli_overrides: crate::tiling::CliOverrides::default(),
                 scope: Vec::new(),
                 scope_hosts: Vec::new(),
                 border,
@@ -13656,6 +14197,11 @@ pub fn cmd_workspace_proof(
                 raw_argv,
                 keyboard,
                 mouse_snap,
+                inner_gap: INNER_GAP,
+                outer_gap: OUTER_GAP,
+                settings_dir: None,
+                settings_live: None,
+                cli_overrides: crate::tiling::CliOverrides::default(),
                 scope: Vec::new(),
                 scope_hosts: Vec::new(),
                 border,
