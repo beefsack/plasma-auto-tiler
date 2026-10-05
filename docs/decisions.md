@@ -1207,6 +1207,37 @@ the corresponding item ships; each such entry names its replacement.
   window, even if its former tile belonged to another workspace. A subsequent
   `Meta+G` on a plain floating window must still tile it; moving or resizing
   a float alone never tiles it.
+- User decision 2026-10-05: float-origin directional focus and move follow
+  COSMIC. KDE delivers focus plus the first half-snap step; Windows remains
+  pending for the next PC session because Linux gates do not verify native
+  Windows actuation. Tile-origin navigation continues to skip floats.
+- KDE float-origin focus searches only ordinary/sticky floats on the current
+  output/workspace, by top-left position on the requested axis, ignoring the
+  perpendicular coordinate. Up/Left include equal positions and select the
+  first nearest tie; Down/Right require positive movement and select the last
+  nearest tie. Sticky candidates precede ordinary floats, each in KWin native
+  encounter order; equal-distance outcomes can differ from COSMIC Space order.
+- On a local miss, reuse our existing edge behavior: no workspace cycling;
+  Up/Down retain focus; Left/Right try reciprocal horizontal adjacent output
+  remembered eligible tiled focus, otherwise retain. This deliberately differs
+  from COSMIC's configured workspace-axis then output navigation. A float-only
+  source can cross. Local tiles are never floating-search targets.
+- Local selection and explicit native half-snaps stay host-synchronous in the
+  KWin adapter. Rust keeps remembered cross-output focus authority through the
+  minimal internal `focus.float_subject` flag, leafless `from_leaf: null`, and
+  `focused-floating-window` precondition; tiled wire replies stay unchanged.
+- Meta+Shift+arrow snaps an ordinary/sticky float to that work-area half,
+  retaining floating/sticky membership and focus. Match COSMIC's integer
+  `relative_geometry` formula: use the configured inner gap on outer edges and
+  between halves, ignoring the separate outer gap. Every arrow requests its
+  half again; quarter/maximize/outward workspace-output transfer transitions
+  are deferred because they need per-window snap state and transfer integration.
+  Fullscreen/maximized, interactive resize and incompatible declared-size
+  constraints refuse geometry writes. One explicit write, no reassertion.
+- Offline regression gates pass; laptop physical acceptance remains user-owned.
+  Evidence and next checks:
+  [KDE floating navigation](changes/archive/kde-floating-directional-navigation.md).
+
 - Intentional normal and sticky floating request KWin's public `keepAbove=true`.
   KWin owns the normal keep-above/keep-below exclusive transition. The adapter
   records the prior pair and restores a project-cleared `keepBelow` (or prior

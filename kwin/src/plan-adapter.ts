@@ -1000,6 +1000,55 @@ export function selectFloatFocusTarget(
     return best;
 }
 
+// COSMIC float half-snap (stateless first step, `floating/mod.rs`
+// `TiledCorners::relative_geometry` at 3d55cba0, caller input
+// `layers.non_exclusive_zone()` work-area plus `gaps()` tuple
+// `(outer, inner)` with outer ignored): left/top origin `loc + inner`;
+// right `x = loc.x + floor(W/2) + floor(inner/2)`; widths
+// `floor(W/2) - floor(3*inner/2)`; height `H - 2*inner` (up/down
+// analogous). Uses the current domain work-area bounds in global
+// coordinates with `domainGap` as inner. Every repeated arrow requests
+// the same half again; quarter/maximize/transfer complexity is deferred.
+// Returns null for invalid/nonpositive input or output rectangles.
+export function floatHalfSnapRect(
+    bounds: PlanRect,
+    gapInner: number,
+    direction: PlanDirection,
+): PlanRect | null {
+    if (!isTargetRect({ x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h })) {
+        return null;
+    }
+    if (!isFiniteInt(gapInner) || gapInner < 0 || gapInner > 64) {
+        return null;
+    }
+    if (direction !== "left" && direction !== "right" && direction !== "up" && direction !== "down") {
+        return null;
+    }
+    const inner = gapInner;
+    const bx = bounds.x;
+    const by = bounds.y;
+    const w = bounds.w;
+    const h = bounds.h;
+    const halfW = Math.trunc(w / 2);
+    const halfH = Math.trunc(h / 2);
+    const halfInner = Math.trunc(inner / 2);
+    const threeHalfInner = Math.trunc((3 * inner) / 2);
+    let rect: PlanRect;
+    if (direction === "left") {
+        rect = { x: bx + inner, y: by + inner, w: halfW - threeHalfInner, h: h - 2 * inner };
+    } else if (direction === "right") {
+        rect = { x: bx + halfW + halfInner, y: by + inner, w: halfW - threeHalfInner, h: h - 2 * inner };
+    } else if (direction === "up") {
+        rect = { x: bx + inner, y: by + inner, w: w - 2 * inner, h: halfH - threeHalfInner };
+    } else {
+        rect = { x: bx + inner, y: by + halfH + halfInner, w: w - 2 * inner, h: halfH - threeHalfInner };
+    }
+    if (!isTargetRect(rect)) {
+        return null;
+    }
+    return rect;
+}
+
 function isResizeMode(value: unknown): value is PlanResizeMode {
     return value === "inwards" || value === "outwards";
 }
@@ -2382,6 +2431,110 @@ export class PlanAdapter {
         });
     }
 
+    // COSMIC float-origin half-snap (stateless first step, ordinary and
+    // sticky share the floating layer; tile-origin move above is unchanged).
+    // Synchronous explicit geometry: exactly one `setGeometry` with the
+    // COSMIC `relative_geometry` half for the direction, then focus retention
+    // on the same subject. No Engine admission, no dispatch, no overlay
+    // clear, no transfer/maximize, no reassertion/learning/auto-float, no
+    // repeat state: every repeated arrow requests the same half again.
+    private requestFloatMove(observed: PlanObserved, direction: PlanDirection): void {
+        const subject = floatSubjectEntry(observed);
+        if (subject === null) {
+            this.logToken(`${LOG_PREFIX}:move-refused-floating`);
+            return;
+        }
+        if (!this.isTiledDomain(observed.domainOutput, observed.domainWorkspace)) {
+            this.logToken(`${LOG_PREFIX}:move-refused-workspace-floating`);
+            return;
+        }
+        if (this.windowIsFullscreen(observed, observed.focusedId)) {
+            this.logToken(`${LOG_PREFIX}:move-refused-fullscreen`);
+            return;
+        }
+        if (this.windowIsMaximized(observed, observed.focusedId)) {
+            this.logToken(`${LOG_PREFIX}:move-refused-maximize`);
+            return;
+        }
+        const rect = floatHalfSnapRect(observed.domainBounds, observed.domainGap, direction);
+        if (rect === null) {
+            this.logToken(`${LOG_PREFIX}:move-float-refused-invalid-geometry direction=${direction}`);
+            return;
+        }
+        if (this.interactiveResizeActive()) {
+            this.logToken(`${LOG_PREFIX}:move-float-refused-interactive direction=${direction}`);
+            return;
+        }
+        let valid = false;
+        try {
+            valid = observed.revalidate();
+        } catch (error) {
+            void error;
+            valid = false;
+        }
+        if (!valid) {
+            this.logToken(`${LOG_PREFIX}:move-float-refused-stale direction=${direction}`);
+            return;
+        }
+        let currentActive: object | null = null;
+        try {
+            currentActive = this.env.active();
+        } catch (error) {
+            void error;
+            currentActive = null;
+        }
+        if (currentActive !== observed.activeRef || currentActive !== subject.ref) {
+            this.logToken(`${LOG_PREFIX}:move-float-refused-stale direction=${direction}`);
+            return;
+        }
+        try {
+            const reader = this.env.readWindowConstraints;
+            if (typeof reader === "function") {
+                const constraints = reader(subject.ref);
+                if (constraints !== null && typeof constraints === "object") {
+                    const typed = constraints as PlanWindowConstraints;
+                    if (typed.resizeable === false) {
+                        this.logToken(`${LOG_PREFIX}:move-float-refused-constraints direction=${direction}`);
+                        return;
+                    }
+                    const min = typed.minSize;
+                    if (min !== null && min !== undefined && Number.isInteger(min.w) && Number.isInteger(min.h)) {
+                        if (min.w > rect.w || min.h > rect.h) {
+                            this.logToken(`${LOG_PREFIX}:move-float-refused-constraints direction=${direction}`);
+                            return;
+                        }
+                    }
+                    const max = typed.maxSize;
+                    if (max !== null && max !== undefined && Number.isInteger(max.w) && Number.isInteger(max.h)) {
+                        if ((max.w > 0 && max.w < rect.w) || (max.h > 0 && max.h < rect.h)) {
+                            this.logToken(`${LOG_PREFIX}:move-float-refused-constraints direction=${direction}`);
+                            return;
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            void error;
+        }
+        let written = false;
+        try {
+            written = this.env.setGeometry(subject.ref, rect) === true;
+        } catch (error) {
+            void error;
+            written = false;
+        }
+        if (!written) {
+            this.logToken(`${LOG_PREFIX}:move-float-write-failed direction=${direction}`);
+            return;
+        }
+        const resourceClass = isOpaqueId(subject.resourceClass) ? subject.resourceClass : "unknown";
+        if (!this.retainFloatFocus(subject.id, subject.ref, resourceClass)) {
+            this.logToken(`${LOG_PREFIX}:move-float-focus-failed direction=${direction}`);
+            return;
+        }
+        this.logToken(`${LOG_PREFIX}:move-float-applied direction=${direction}`);
+    }
+
     // A fullscreen focused window keeps its planner-tree slot but is never
     // actuated or reflowed: directional move/resize on it would change its
     // retained position/share, so it is refused fail-closed before dispatch.
@@ -2820,7 +2973,7 @@ export class PlanAdapter {
             return;
         }
         if (observed.activeExcluded) {
-            this.logToken(`${LOG_PREFIX}:move-refused-floating`);
+            this.requestFloatMove(observed, direction);
             return;
         }
         if (!this.isTiledDomain(observed.domainOutput, observed.domainWorkspace)) {

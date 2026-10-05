@@ -3797,10 +3797,11 @@ describe("plan entry live observation and shortcuts", () => {
         const active = world.wins[0] as Record<string, unknown>;
         assert.deepEqual(active["frameGeometry"], { x: 240, y: 160, width: 720, height: 480 });
         handle?.requestMove("left");
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:move-refused-floating"));
+        assert.ok(mocks.logs.some((line) => line.includes("move-float-applied direction=left")));
+        assert.deepEqual(active["frameGeometry"], { x: 8, y: 8, width: 588, height: 784 });
         handle?.requestFloat();
         const unfloat = JSON.parse(mocks.dbusCalls[1]?.payload as string) as Record<string, unknown>;
-        assert.deepEqual(unfloat["command"], { op: "toggle-float", window: "win-a", float_rect: { x: 240, y: 160, w: 720, h: 480 } });
+        assert.deepEqual(unfloat["command"], { op: "toggle-float", window: "win-a", float_rect: { x: 8, y: 8, w: 588, h: 784 } });
         mocks.callbacks[1]?.(JSON.stringify({
             v: 1, correlation_id: unfloat["correlation_id"], outcome: "planned", desired_geometry: [
                 { window: "win-a", leaf: "leaf-a", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
@@ -8691,6 +8692,126 @@ describe("plan entry sticky workspace-switch regression", () => {
             assert.ok(mocks.logs.some((line) => line.includes("focus-skipped") && line.includes("kind=reconcile") && line.includes("reason=floating-active")), "skip gate engages instead of actuating survivor focus");
             assert.equal(world.workspace["activeWindow"], winA, "auto reconcile keeps the subject active");
             assert.ok(!activeWrites.includes(winB), "zero native writes activating the sibling across the automatic reconcile");
+        } finally {
+            handle?.stop();
+            await engine.close();
+        }
+    });
+
+    it("half-snap on an ordinary float survives the automatic post-snap reconcile", async () => {
+        // Causal follow-up for the float-origin half-snap: the synchronous
+        // snap writes native geometry, the real frameGeometryChanged signal
+        // plus debounce dispatches one automatic reconcile, and the Engine
+        // reply must not rewrite the snapped float, admit it to tiling, or
+        // steal its focus. Assertions land after the reconcile callback.
+        const world = fakeWorld();
+        const winA = world.wins[0] as Record<string, unknown>;
+        const winB = world.wins[1] as Record<string, unknown>;
+        const activeWrites: object[] = [];
+        let activeCurrent: object = winA;
+        Object.defineProperty(world.workspace, "activeWindow", {
+            get: (): object => activeCurrent,
+            set: (value: object): void => {
+                activeWrites.push(value);
+                activeCurrent = value;
+            },
+            enumerable: true,
+            configurable: true,
+        });
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "entry enabled");
+        const engine = StickyEngineBridge.start();
+        try {
+            const resolved = handle as StickyHandle;
+            fireAdded(world, mocks);
+            assert.equal(mocks.dbusCalls.length, 1, `seed dispatches once, logs: ${tailLogs(mocks)}`);
+            reconcileOp(mocks, 0);
+            const seed = await flushPlan(mocks, engine, 0);
+            assert.equal(seed["outcome"], "planned", `setup: seed plans, engine replied ${JSON.stringify(seed)}`);
+            resolved.requestFloat();
+            assert.equal(mocks.dbusCalls.length, 2, `float dispatches, logs: ${tailLogs(mocks)}`);
+            const floated = await flushPlan(mocks, engine, 1);
+            assert.equal(floated["outcome"], "planned", `setup: float plans, engine replied ${JSON.stringify(floated)}`);
+            assert.equal(world.workspace["activeWindow"], winA, "setup: float keeps the subject active");
+            const callsBeforeSnap = mocks.dbusCalls.length;
+            resolved.requestMove("left");
+            assert.ok(mocks.logs.some((line) => line.includes("move-float-applied direction=left")), `snap applies, logs: ${tailLogs(mocks)}`);
+            assert.equal(mocks.dbusCalls.length, callsBeforeSnap, "snap dispatches nothing to the Engine");
+            const snapped = { ...(winA["frameGeometry"] as Record<string, unknown>) };
+            assert.deepEqual(snapped, { x: 8, y: 8, width: 588, height: 784 }, "snap writes the COSMIC left half");
+            const writesBeforeReconcile = activeWrites.length;
+            fireGeometry(world, winA);
+            runEntryDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, callsBeforeSnap + 1, `post-snap geometry dispatches one auto reconcile, logs: ${tailLogs(mocks)}`);
+            reconcileOp(mocks, callsBeforeSnap);
+            const reply = await flushPlan(mocks, engine, callsBeforeSnap);
+            assert.equal(reply["outcome"], "planned", `auto reconcile plans, engine replied ${JSON.stringify(reply)}`);
+            const desired = reply["desired_geometry"] as Array<Record<string, unknown>> | undefined;
+            assert.ok(Array.isArray(desired) && !desired.some((entry) => entry["window"] === "win-a"), `no tile admission for the snapped float, got ${JSON.stringify(reply)}`);
+            assert.deepEqual(winA["frameGeometry"], snapped, "reconcile rewrites nothing on the snapped float");
+            assert.equal(world.workspace["activeWindow"], winA, "reconcile keeps the snapped float focused");
+            assert.ok(!activeWrites.slice(writesBeforeReconcile).includes(winB), "zero sibling activation across the post-snap reconcile");
+            assert.ok(mocks.logs.some((line) => line.includes("focus-skipped") && line.includes("kind=reconcile")), "skip gate holds survivor focus instead of actuating it");
+        } finally {
+            handle?.stop();
+            await engine.close();
+        }
+    });
+
+    it("half-snap on a sticky float survives the automatic post-snap reconcile", async () => {
+        // Sticky counterpart: sticky-on from the floated origin, then the
+        // same snap plus signal plus debounce plus reconcile path. The
+        // snapped sticky keeps native geometry and focus with no admission.
+        const world = fakeWorld();
+        const winA = world.wins[0] as Record<string, unknown>;
+        const winB = world.wins[1] as Record<string, unknown>;
+        const activeWrites: object[] = [];
+        let activeCurrent: object = winA;
+        Object.defineProperty(world.workspace, "activeWindow", {
+            get: (): object => activeCurrent,
+            set: (value: object): void => {
+                activeWrites.push(value);
+                activeCurrent = value;
+            },
+            enumerable: true,
+            configurable: true,
+        });
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "entry enabled");
+        const engine = StickyEngineBridge.start();
+        try {
+            const resolved = handle as StickyHandle;
+            fireAdded(world, mocks);
+            reconcileOp(mocks, 0);
+            const seed = await flushPlan(mocks, engine, 0);
+            assert.equal(seed["outcome"], "planned", `setup: seed plans, engine replied ${JSON.stringify(seed)}`);
+            resolved.requestFloat();
+            const floated = await flushPlan(mocks, engine, 1);
+            assert.equal(floated["outcome"], "planned", `setup: float plans, engine replied ${JSON.stringify(floated)}`);
+            resolved.requestSticky();
+            assert.equal(winA["onAllDesktops"], true, "setup: sticky-on takes native all-desktops");
+            assert.equal(world.workspace["activeWindow"], winA, "setup: sticky-on retains the subject");
+            const callsBeforeSnap = mocks.dbusCalls.length;
+            resolved.requestMove("right");
+            assert.ok(mocks.logs.some((line) => line.includes("move-float-applied direction=right")), `snap applies, logs: ${tailLogs(mocks)}`);
+            assert.equal(mocks.dbusCalls.length, callsBeforeSnap, "snap dispatches nothing to the Engine");
+            const snapped = { ...(winA["frameGeometry"] as Record<string, unknown>) };
+            assert.deepEqual(snapped, { x: 604, y: 8, width: 588, height: 784 }, "snap writes the COSMIC right half");
+            assert.equal(winA["onAllDesktops"], true, "snap keeps native stickiness");
+            const writesBeforeReconcile = activeWrites.length;
+            fireGeometry(world, winA);
+            runEntryDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, callsBeforeSnap + 1, `post-snap geometry dispatches one auto reconcile, logs: ${tailLogs(mocks)}`);
+            reconcileOp(mocks, callsBeforeSnap);
+            const reply = await flushPlan(mocks, engine, callsBeforeSnap);
+            assert.equal(reply["outcome"], "planned", `auto reconcile plans, engine replied ${JSON.stringify(reply)}`);
+            const desired = reply["desired_geometry"] as Array<Record<string, unknown>> | undefined;
+            assert.ok(Array.isArray(desired) && !desired.some((entry) => entry["window"] === "win-a"), `no tile admission for the snapped sticky, got ${JSON.stringify(reply)}`);
+            assert.deepEqual(winA["frameGeometry"], snapped, "reconcile rewrites nothing on the snapped sticky");
+            assert.equal(winA["onAllDesktops"], true, "reconcile keeps native stickiness");
+            assert.equal(world.workspace["activeWindow"], winA, "reconcile keeps the snapped sticky focused");
+            assert.ok(!activeWrites.slice(writesBeforeReconcile).includes(winB), "zero sibling activation across the post-snap reconcile");
+            assert.ok(mocks.logs.some((line) => line.includes("focus-skipped") && line.includes("kind=reconcile")), "skip gate holds survivor focus instead of actuating it");
         } finally {
             handle?.stop();
             await engine.close();

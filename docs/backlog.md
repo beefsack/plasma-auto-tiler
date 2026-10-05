@@ -192,14 +192,16 @@ decisions of 2026-09-24 are under
   FFI signature change; C parked); user tested A/B on the laptop
   (2026-10-05): all good; PC remap checks later. Next: B8 after user acceptance of the existing KDE
   shortcut controls. Core extraction: no new move until macOS starts.
-- P1 | Directional focus/move from floating windows | COSMIC source
-  (2026-10-05, rows R-FLT-07..10,
-  [research](changes/archive/cosmic-floating-navigation-research.md)):
-  tile-origin focus skips floats (we match); float-origin focus moves
-  between floats only, falling back to workspace/output navigation; float
-  move half/quarter-snaps within the floating layer. KDE and Windows refuse
-  float-origin focus and move. Needs user choice: both COSMIC behaviors,
-  focus only, or keep refusals.
+- P1 | Directional focus/move from floating windows | Partial delivery
+  (user decision 2026-10-05, rows R-FLT-07..11): KDE COSMIC float/sticky-only
+  top-left-axis focus and explicit four-direction half-snaps delivered offline;
+  tile-origin still skips floats. Misses reuse existing horizontal output-edge
+  behavior, without COSMIC workspace cycling. 897 KWin / 1107 Rust tests and
+  all gates pass; laptop live check pending. Windows implementation pending
+  next PC session. Quarter/maximize/repeated-outward transfer snap states
+  deferred: require per-window state and transfer integration. Next: user laptop
+  focus/snap/reconcile check, then PC parity.
+  [Delivery and live steps](changes/archive/kde-floating-directional-navigation.md).
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.
