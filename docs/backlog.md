@@ -171,18 +171,35 @@ decisions of 2026-09-24 are under
   (2026-10-05): Meta+M, then Meta+Shift+G refused while maximized, then
   Meta+M restored, as decided. DEFECT: Meta+Shift+G on a tiled window
   floats it sticky but focus moves to another window (Meta+G keeps focus);
-  contradicts the exact-toggle focus retention decision; may relate to
-  the B2 sticky change; needs investigation. Still pending: native-change
-  repeats and held-key autorepeat. Open user choices with evidence in the note: B6 infeasible
-  minimums (float fallback asked; recommendation origin+minimum or
-  admission-only float) and admission-time unmaximize vs games
-  (recommendation: preserve slotless until native restore if changed);
-  pinned 11-WM source comparison added, recommendations unchanged. B7
+  contradicted the exact-toggle focus retention decision. Supplied trace plus
+  real Engine replay identified the follow-up foreground flag reconcile
+  actuating survivor focus (pre-existing source defect, not B2). Repaired
+  offline by skipping that activation over a focused float/sticky subject;
+  faithful regression red/green, 846 KWin tests and all gates pass. User
+  laptop re-check (2026-10-05): normal and sticky float focus correct
+  ([evidence](changes/archive/kde-post-windows-followups.md#laptop-re-check-user-owned)).
+  Still pending: native-change repeats and held-key autorepeat.
+  User decisions 2026-10-05, implementation pending: B6 infeasible
+  minimums use origin+minimum on both platforms (Windows already does it;
+  KDE replaces skip-writes). Q3 born-maximized admission follows COSMIC:
+  tile with a reserved slot and keep the maximize as an overlay, no launch
+  unmaximize (KDE and Windows). B9 overlaid intentional unfloat:
+  provisionally unfloat and stay maximized (KDE dispatches already; settled
+  result unverified); Windows changes from refusal after the user's COSMIC
+  check of R-FLT-06. Pinned 11-WM source comparison added. B7
   movement-only underlay A/B delivered offline (Meta+Shift chord or focused
   native user move; host-matched native build and all gates pass; paired
   FFI signature change; C parked); user tested A/B on the laptop
   (2026-10-05): all good; PC remap checks later. Next: B8 after user acceptance of the existing KDE
   shortcut controls. Core extraction: no new move until macOS starts.
+- P1 | Directional focus/move from floating windows | COSMIC source
+  (2026-10-05, rows R-FLT-07..10,
+  [research](changes/archive/cosmic-floating-navigation-research.md)):
+  tile-origin focus skips floats (we match); float-origin focus moves
+  between floats only, falling back to workspace/output navigation; float
+  move half/quarter-snaps within the floating layer. KDE and Windows refuse
+  float-origin focus and move. Needs user choice: both COSMIC behaviors,
+  focus only, or keep refusals.
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.

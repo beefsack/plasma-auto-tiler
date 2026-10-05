@@ -221,6 +221,68 @@ Legend:
   (official docs, pinned KWin/reference source and upstream reports; no live probe)
 - `D-cosmic-kb` COSMIC keybindings.ron / support articles via `D-ref`
   (Super+O/S/G/M/F11 bindings)
+- `S-cos-flt-focus` cosmic-comp:src/shell/mod.rs:4136-4210 and
+  src/shell/layout/tiling/mod.rs:1835-1852,1899-2087
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (ordinary tiled subjects search the tile tree; floating subjects search
+  ordinary/sticky floats by top-left coordinate delta on the requested axis)
+- `S-cos-focus-fallback` cosmic-comp:src/input/actions.rs:535-541,745-810
+  and src/shell/mod.rs:2273-2302
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (no local focus target falls through to workspace/output navigation;
+  no next output means no output switch)
+- `S-cos-flt-move` cosmic-comp:src/shell/mod.rs:4225-4253,
+  src/shell/layout/floating/mod.rs:184-189,252-265,1184-1288 and
+  src/input/actions.rs:812-881 @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (free float snaps to a half; quarter/maximize transitions and repeated
+  outward movement use floating snap state, not tiling-tree admission)
+- `S-cos-sticky-layer` cosmic-comp:src/shell/mod.rs:4769-4800,4834-4849
+  and src/shell/workspace.rs:418-471
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (sticky windows use a separate floating layer; pinned denotes workspaces)
+- `S-hyp-flt-focus` Hyprland:src/desktop/state/WindowQuery.cpp:23-46,67-99,130-207,209-256
+  and src/config/shared/actions/ConfigActions.cpp:476-526
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (tiled search excludes ordinary floats even on retry; float search uses
+  angle/distance among floats, with monitor/edge fallback)
+- `S-hyp-flt-move` Hyprland:src/layout/algorithm/Algorithm.cpp:163-168
+  and src/layout/algorithm/floating/default/DefaultFloatingAlgorithm.cpp:255-272
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (floating directional move snaps position to work-area edge, retains size)
+- `S-hyp-flt-pin` Hyprland:src/config/shared/actions/ConfigActions.cpp:286-294
+  @19fb395d45314960e6f79f17994a84094f1cd4f6 (pin is float-only)
+- `S-bsp-flt-focus` bspwm:src/query.c:583-584,
+  src/tree.c:1124-1149,2250-2261, src/geometry.c:49-154 and
+  src/settings.c:108 @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (unqualified directional selector includes tiles/floats; boundary distance
+  first, history rank only breaks ties; default tightness HIGH)
+- `S-bsp-flt-swap` bspwm:src/tree.c:101-134,1489-1623
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (same-desktop node swap retains client state/floating rectangle and focus;
+  tiled arrangement is recomputed)
+- `S-i3-flt-focus` i3:src/tree.c:503-577 and src/commands.c:1515-1542
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (tiled walk excludes floating list; floating left/right cycles that list
+  with wrapping; up/down returns no target; sticky does not change this path)
+- `S-i3-flt-move` i3:src/commands.c:1554-1588 and
+  parser-specs/commands.spec:407-411
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (bare directional move shifts floating frame by 10px, retains floating)
+- `S-xmo-core-nav` xmonad:src/XMonad/Config.hs:185-215
+  @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+  (default core navigation is stack focus/swap; these directional scenarios
+  require a separately specified custom/contrib implementation, hence TBD)
+- `S-ours-flt-target` plasma-auto-tiler:crates/tiler-core/src/session/world.rs:769-835
+  and crates/tiler-core/src/directional.rs:1108-1135
+  @2bdd944536fa2608f60b68686f8ec57d61663726
+  (floating windows hold exceptions, not tile leaves; directional focus
+  selects only tree siblings/descendants)
+- `S-ours-flt-subject` plasma-auto-tiler:kwin/src/plan-adapter-entry.ts:1697,
+  kwin/src/plan-adapter.ts:2155-2200,2639-2645 and
+  crates/tiler-windows/src/tiling_sys.rs:5904-5954
+  @2bdd944536fa2608f60b68686f8ec57d61663726
+  (KDE excludes floating/sticky subjects; Windows refuses each explicitly;
+  cited lines are unchanged by the current uncommitted KDE reconcile fix)
 
 ## Variant hooks (provisional, not commitments)
 
@@ -275,6 +337,20 @@ Legend:
 
 ## 4. Float / sticky
 
+R-FLT-07 through R-FLT-10 use one output, scale 1, a tiled workspace,
+zero gaps, and work-area/frame geometry in a 2560x1440 area: A
+`(0,0,1280,1440)`, B `(1280,0,1280,1440)`. No fullscreen, maximized,
+stacked or input-blocked windows. COSMIC uses Vertical workspace layout,
+so a missed horizontal focus target tries another output, not workspace
+cycling. Each row starts afresh; run once with F ordinary floating, then
+repeat with F sticky floating where supported (Hyprland calls this pinned).
+COSMIC pinned *workspaces* are unrelated to sticky windows
+`S(S-cos-sticky-layer)`. i3 has only F/G in its floating list in R-FLT-09;
+its choice there cannot establish geometric ordering. bspwm uses unqualified
+`node -f DIR` for focus and the profile's `node -s DIR --follow` for move.
+These are source predictions, not live executions; frame delivery and
+unspecified tie/config-dependent outcomes remain TBD.
+
 | ID | Start | Action | Observe | COSMIC | Hyprland | bspwm | i3 | xmonad | Ours (KDE/Windows) | Variant |
 |---|---|---|---|---|---|---|---|---|---|---|
 | R-FLT-01 | `H[A,B*,C]` | Toggle float on B, then unfloat | Sibling reflow on float; unfloat placement + focus | Super+G toggle; `D(D-cosmic-kb)`; floats above tiles `D(D-ref)`; tree relation TBD | Float outside layout; `D(D-ref)`; geometry expressions | Stays in tree, uses no tiling space; `S(S-bsp-float)` | TBD | TBD | KDE: leaves tree, siblings reflow; first float centered 60%, then retained frame; unfloat fresh admission, focus retained; `D(D-dec-ww)`; Windows same + keep-above preimages; behavior rows user-owned `D(D-float)` | V-FLOAT-GEO |
@@ -283,6 +359,10 @@ Legend:
 | R-FLT-04 | Workspace tiled with A/B, optionally intentional per-window float C | Toggle workspace floating; move A; open D; toggle tiled | Untouched frames/native new window, fresh fit vs retained layout; C exception and effects | TBD | TBD | TBD | TBD | TBD | KDE: floating/tiled user-confirmed, no-write release/fresh fit selected `D(D-dec-ww)`; Windows: native move/new-window/frame preservation, release/fresh fit, independent border and floating drag underlay/preview suppression proven synthetically; C exception preserved by actual Engine regression, physical row TBD [record](../changes/archive/windows-workspace-tiling.md) | V-WS-TILING |
 | R-FLT-05 | B sticky floating on WS1; WS2 exists | Restart tiler owner; select WS2 | B remains sticky-visible vs becomes ordinary float; remembered origin | TBD | TBD | TBD | TBD | TBD | KDE source adopts surviving native sticky as unknown-origin sticky float; Windows consumes surviving project marker into normal float on current managed workspace, discarding origin; `S(S-ours-sticky-restart)` + `D(D-sticky)`; exact restart/visibility journey TBD | V-STICKY-SCOPE |
 | R-FLT-06 | Workspace tiled; B is intentional ordinary float, then natively maximized | With B focused, toggle ordinary float once | Overlay refusal vs logical unfloat beneath retained maximize; settled slot/frame/focus | TBD | TBD | TBD | TBD | TBD | KDE dispatch gate allows floating target despite maximize; unfloat transition clears floating intent while overlay writes are skipped, settled result TBD. Windows refuses `float-refused-maximize`; `S(S-ours-overlay-unfloat)`; physical outcome TBD | V-FLOAT-GEO / V-MAX-MODEL |
+| R-FLT-07 | `H[A,B*]` + F floating `(1000,500,300,200)` | Focus left | Can tile-origin focus enter ordinary/sticky F | A; F excluded from tiled search, ordinary/sticky alike; `S(S-cos-flt-focus)` | A; ordinary/pinned F excluded; `S(S-hyp-flt-focus)` + `S(S-hyp-flt-pin)` | A; F is eligible but boundary distance A=1 < F=19; sticky same; `S(S-bsp-flt-focus)` | A; floating/sticky F outside tiled walk; `S(S-i3-flt-focus)` | TBD (directional implementation unspecified; `S(S-xmo-core-nav)`) | KDE/Windows: A; ordinary/sticky F has no tile leaf, hence never a target; `S(S-ours-flt-target)` | - |
+| R-FLT-08 | `H[A,B]` + F* floating `(500,500,300,200)`; no other floats | Focus right | Float-origin focus enters tiles vs misses/refuses | No local target: tiles excluded; output fallback has no next output, F retained. Sticky same; `S(S-cos-flt-focus)` + `S(S-cos-focus-fallback)` | No-op: float-only search and edge retry find no other float; pinned same; `S(S-hyp-flt-focus)` + `S(S-hyp-flt-pin)` | B; unqualified selector crosses layers (distance B=481 < A=799); sticky same; `S(S-bsp-flt-focus)` | F retained: horizontal floating-list wrap selects self; sticky same; `S(S-i3-flt-focus)` | TBD (directional implementation unspecified; `S(S-xmo-core-nav)`) | KDE: refuses `focus-refused-floating` for ordinary/sticky F. Windows: refuses `focus-refused-floating` / `focus-refused-sticky`; F retained; `S(S-ours-flt-subject)` | - |
+| R-FLT-09 | `H[A,B]` + F* floating `(500,500,300,200)` + ordinary float G `(1800,500,300,200)` | Focus right | Farther float G vs nearer tile B; sticky-to-ordinary focus | G; ordinary/sticky floats share candidates, tiles excluded; x-coordinate delta selects G; `S(S-cos-flt-focus)` | G by floating angle/distance search, not COSMIC's top-left-axis rule; pinned F same; `S(S-hyp-flt-focus)` + `S(S-hyp-flt-pin)` | B; all layers eligible, boundary distance B=481 < G=1001; sticky F same; `S(S-bsp-flt-focus)` | G; next floating-list entry (wrap if needed), not geometry; sticky F same; `S(S-i3-flt-focus)` | TBD (directional implementation unspecified; `S(S-xmo-core-nav)`) | KDE/Windows: F retained; same subject refusals as R-FLT-08, G never considered; `S(S-ours-flt-subject)` | - |
+| R-FLT-10 | `H[A,B]` + free, unsnapped F* floating `(1000,500,300,200)` | Move right once | Move/resize geometry vs tree swap vs refusal; remains floating vs tiles | Right-half snap `(1280,0,1280,1440)` in floating layer, not tile-tree admission; sticky same. Later snap-state transitions can quarter/maximize or request workspace/output transfer; `S(S-cos-flt-move)` | Snap F to right work-area edge, retain size/y and floating state (reserved extents affect exact x); pinned same; `S(S-hyp-flt-move)` + `S(S-hyp-flt-pin)` | Profile swaps F/B tree nodes; F stays floating at its original frame/focus, tile arrangement recomputed (B exact frame TBD). Sticky same; `S(S-bsp-flt-focus)` + `S(S-bsp-flt-swap)`. Separate pixel `-v` moves F, not this profile action; `S(S-bsp-move)` | Bare `move right`: F.x += 10px, stays floating; sticky same; `S(S-i3-flt-move)` | TBD (directional implementation unspecified; `S(S-xmo-core-nav)`) | KDE: refuses `move-refused-floating` for ordinary/sticky F. Windows: refuses `move-refused-floating` / `move-refused-sticky`; frame/state retained; `S(S-ours-flt-subject)` | V-FLOAT-GEO |
 
 ## 5. Maximise / fullscreen
 
