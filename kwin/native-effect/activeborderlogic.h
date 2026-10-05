@@ -94,4 +94,13 @@ inline QRectF groupUnderlayOuterRect(const QRectF &unionRect, double gap, double
         visual_group_underlay_outer_rect(visualPolicyRectFromQRectF(unionRect), gap, borderWidth, extension));
 }
 
+// Movement-only group-underlay chord: both Win and Shift held. Extra
+// modifiers are allowed (callers fold only these two), and either press
+// order works because this is level-observed, never edge-sequenced. The
+// predicate lives in Rust; this is only the native observation fold.
+inline bool groupUnderlayChordHeld(bool winHeld, bool shiftHeld)
+{
+    return visual_group_underlay_chord_held(winHeld ? 1 : 0, shiftHeld ? 1 : 0) != 0;
+}
+
 } // namespace KWin

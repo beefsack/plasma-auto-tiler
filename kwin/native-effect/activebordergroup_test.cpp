@@ -51,12 +51,29 @@ std::string validPayload(const std::string &correlation, uint64_t revision)
         + ",\"group\":\"group-1\",\"focused_window\":\"win-2\",\"members\":[\"win-1\",\"win-2\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":1200,\"h\":800}}";
 }
 
+std::string validPayloadFocused(const std::string &correlation, uint64_t revision, const char *focused)
+{
+    return "{\"v\":1,\"correlation_id\":\"" + correlation
+        + "\",\"owner\":\"owner-1\",\"generation\":\"gen-1\",\"revision\":" + std::to_string(revision)
+        + ",\"group\":\"group-1\",\"focused_window\":\"" + focused + "\",\"members\":[\"" + focused
+        + "\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":1200,\"h\":800}}";
+}
+
 int32_t applyStr(GroupHighlightState *state, const std::string &payload, const char *active)
 {
     const uint8_t *payloadPtr = payload.empty() ? nullptr : reinterpret_cast<const uint8_t *>(payload.data());
     const size_t activeLen = active == nullptr ? 0 : std::strlen(active);
     const uint8_t *activePtr = activeLen == 0 ? nullptr : reinterpret_cast<const uint8_t *>(active);
     return group_highlight_apply(state, payloadPtr, payload.size(), activePtr, activeLen);
+}
+
+uint8_t armStr(GroupHighlightState *state, const char *dragged, const char *active)
+{
+    const size_t draggedLen = dragged == nullptr ? 0 : std::strlen(dragged);
+    const size_t activeLen = active == nullptr ? 0 : std::strlen(active);
+    const uint8_t *draggedPtr = draggedLen == 0 ? nullptr : reinterpret_cast<const uint8_t *>(dragged);
+    const uint8_t *activePtr = activeLen == 0 ? nullptr : reinterpret_cast<const uint8_t *>(active);
+    return group_highlight_move_arm_matches(state, draggedPtr, draggedLen, activePtr, activeLen);
 }
 
 void validPayloadAppliesWithUnionBounds()
@@ -67,7 +84,7 @@ void validPayloadAppliesWithUnionBounds()
     GroupHighlightRect rect{};
     CHECK(group_highlight_rect(&state, &rect) == 1);
     CHECK(rect.x == 0 && rect.y == 0 && rect.w == 1200 && rect.h == 800);
-    CHECK(group_highlight_is_visible(&state, 1, 1, 1, 1) == 1);
+    CHECK(group_highlight_is_visible(&state, 1, 1, 1, 1, 0) == 1);
 }
 
 void qstringBoundaryEmptyClears()
@@ -256,22 +273,59 @@ void modifierVisibilityRequiresFirstSignalAndMetaAndEligibility()
     GroupHighlightState state{};
     CHECK(group_highlight_state_init(&state) == 0);
     CHECK(applyStr(&state, validPayload("gen-1-g0", 1), "win-2") == 1);
-    CHECK(group_highlight_is_visible(&state, 1, 0, 1, 1) == 0);
-    CHECK(group_highlight_is_visible(&state, 0, 1, 1, 1) == 0);
-    CHECK(group_highlight_is_visible(&state, 1, 1, 0, 1) == 0);
-    CHECK(group_highlight_is_visible(&state, 1, 1, 1, 0) == 0);
-    CHECK(group_highlight_is_visible(&state, 1, 1, 1, 1) == 1);
+    CHECK(group_highlight_is_visible(&state, 1, 0, 1, 1, 0) == 0);
+    CHECK(group_highlight_is_visible(&state, 0, 1, 1, 1, 0) == 0);
+    CHECK(group_highlight_is_visible(&state, 1, 1, 0, 1, 0) == 0);
+    CHECK(group_highlight_is_visible(&state, 1, 1, 1, 0, 0) == 0);
+    CHECK(group_highlight_is_visible(&state, 1, 1, 1, 1, 0) == 1);
+    // A matching focused-window interactive move shows without modifier
+    // observation; resize alone (move=0) never triggers.
+    CHECK(group_highlight_is_visible(&state, 0, 0, 1, 1, 1) == 1);
+    CHECK(group_highlight_is_visible(&state, 1, 0, 1, 1, 1) == 1);
+    CHECK(group_highlight_is_visible(&state, 0, 0, 1, 1, 0) == 0);
+    // A matching move still needs group, focus, and endpoint gates.
+    CHECK(group_highlight_is_visible(&state, 0, 0, 0, 1, 1) == 0);
+    CHECK(group_highlight_is_visible(&state, 0, 0, 1, 0, 1) == 0);
     CHECK(group_highlight_clear(&state) == 1);
-    CHECK(group_highlight_is_visible(&state, 1, 1, 1, 1) == 0);
+    CHECK(group_highlight_is_visible(&state, 1, 1, 1, 1, 0) == 0);
+    CHECK(group_highlight_is_visible(&state, 0, 0, 1, 1, 1) == 0);
     GroupHighlightRect rect{};
     CHECK(group_highlight_rect(&state, &rect) == 0);
+}
+
+void moveArmMatchesOnlyFocusedAcceptedSubject()
+{
+    GroupHighlightState state{};
+    CHECK(group_highlight_state_init(&state) == 0);
+    CHECK(applyStr(&state, validPayload("gen-1-g1", 3), "win-2") == 1);
+    const uint8_t *win2 = reinterpret_cast<const uint8_t *>("win-2");
+    const uint8_t *win3 = reinterpret_cast<const uint8_t *>("win-3");
+    const uint8_t *win9 = reinterpret_cast<const uint8_t *>("win-9");
+    // Dragged window is the live active window and the accepted subject.
+    CHECK(group_highlight_move_arm_matches(&state, win2, 5, win2, 5) != 0);
+    // Unrelated focused group: dragged differs from the subject.
+    CHECK(group_highlight_move_arm_matches(&state, win3, 5, win3, 5) == 0);
+    // Non-activating drag: dragged is the subject but not the active window.
+    CHECK(group_highlight_move_arm_matches(&state, win2, 5, win9, 5) == 0);
+    // Empty sides fail closed.
+    CHECK(group_highlight_move_arm_matches(&state, nullptr, 0, win2, 5) == 0);
+    CHECK(group_highlight_move_arm_matches(&state, win2, 5, nullptr, 0) == 0);
+    CHECK(group_highlight_move_arm_matches(nullptr, win2, 5, win2, 5) == 0);
+    // Clearing the display (focus change) drops the arm.
+    CHECK(group_highlight_clear(&state) == 1);
+    CHECK(armStr(&state, "win-2", "win-2") == 0);
+    // Subject rotation while the old native drag pointer persists: a newly
+    // accepted different subject leaves the retained old drag disarmed.
+    CHECK(applyStr(&state, validPayloadFocused("gen-1-g2", 3, "win-9"), "win-9") == 1);
+    CHECK(armStr(&state, "win-2", "win-2") == 0);
+    CHECK(armStr(&state, "win-9", "win-9") != 0);
 }
 
 void nullStateIsUsageError()
 {
     CHECK(group_highlight_state_init(nullptr) == -1);
     CHECK(group_highlight_clear(nullptr) == -1);
-    CHECK(group_highlight_is_visible(nullptr, 1, 1, 1, 1) == -1);
+    CHECK(group_highlight_is_visible(nullptr, 1, 1, 1, 1, 0) == -1);
     CHECK(group_highlight_rect(nullptr, nullptr) == -1);
 }
 
@@ -294,6 +348,7 @@ int main(int argc, char **argv)
     focusBindingMatchesLiveActiveOnly();
     suppressedFocusStates();
     modifierVisibilityRequiresFirstSignalAndMetaAndEligibility();
+    moveArmMatchesOnlyFocusedAcceptedSubject();
     statusClassifiesReceiptsWithoutMutation();
     nullStateIsUsageError();
 

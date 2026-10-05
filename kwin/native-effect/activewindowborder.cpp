@@ -81,7 +81,7 @@ public Q_SLOTS:
     }
     Q_SCRIPTABLE QString GetGroupHighlightStatus()
     {
-        return m_effect ? m_effect->groupHighlightStatus() : QStringLiteral("v=1;rx=0;ok=0;parse_rej=0;focus_mm=0;stale=0;clr=0;has=0;ord=0;first=0;meta=0;foc=0;ep=0;gl=0;vis=0");
+        return m_effect ? m_effect->groupHighlightStatus() : QStringLiteral("v=1;rx=0;ok=0;parse_rej=0;focus_mm=0;stale=0;clr=0;has=0;ord=0;first=0;chord=0;move=0;foc=0;ep=0;gl=0;vis=0");
     }
 
 private:
@@ -634,6 +634,11 @@ void ActiveWindowBorderEffect::forgetOracleWindow(EffectWindow *window)
     if (m_oraclePress.window == window) {
         m_oraclePress = OraclePressCandidate{};
     }
+    // Removal clears the exact tracked window arm; any other window's arm
+    // (or none) is untouched. Callers refresh visibility after this.
+    if (m_groupMoveWindow == window) {
+        m_groupMoveWindow.clear();
+    }
     m_oracleAttached.remove(window);
 }
 
@@ -708,11 +713,62 @@ void ActiveWindowBorderEffect::noteOraclePointerPress(PointerButtonEvent *event)
     emitOraclePressDiag("captured", configured);
 }
 
+void ActiveWindowBorderEffect::updateGroupMoveArm(EffectWindow *window)
+{
+    // Capture is move-vs-resize only: any interactive-move Started records
+    // the exact window (latest gesture wins), even before the group's async
+    // payload arrives. Display stays gated on the fresh match below, so an
+    // unfocused or not-yet-accepted drag shows nothing. A same-window
+    // resize Started clears a stale own arm instead of retaining it.
+    bool isMove = false;
+    try {
+        if (Window *inner = window->window()) {
+            isMove = inner->isInteractiveMove();
+        }
+    } catch (...) {
+        isMove = false;
+    }
+    if (!isMove) {
+        if (m_groupMoveWindow == window) {
+            m_groupMoveWindow.clear();
+            updateGroupVisibility();
+            emitGroupTransitionDiag();
+        }
+        return;
+    }
+    m_groupMoveWindow = window;
+    updateGroupVisibility();
+    emitGroupTransitionDiag();
+}
+
+bool ActiveWindowBorderEffect::groupMoveMatchesNow() const
+{
+    // Start-time matches do not persist: the captured window revalidates
+    // against the live active window and the accepted Rust subject here, so
+    // a focus change plus an unrelated new group can never ride an old drag.
+    EffectWindow *dragged = m_groupMoveWindow;
+    if (dragged == nullptr || dragged->isDeleted()) {
+        return false;
+    }
+    EffectWindow *active = effects->activeWindow();
+    if (active == nullptr) {
+        return false;
+    }
+    const QByteArray draggedId = dragged->internalId().toString(QUuid::WithoutBraces).toUtf8();
+    const QByteArray activeId = active->internalId().toString(QUuid::WithoutBraces).toUtf8();
+    const uint8_t *draggedPtr = draggedId.isEmpty() ? nullptr : reinterpret_cast<const uint8_t *>(draggedId.constData());
+    const uint8_t *activePtr = activeId.isEmpty() ? nullptr : reinterpret_cast<const uint8_t *>(activeId.constData());
+    return group_highlight_move_arm_matches(&m_groupState, draggedPtr, static_cast<size_t>(draggedId.size()), activePtr,
+               static_cast<size_t>(activeId.size()))
+        != 0;
+}
+
 void ActiveWindowBorderEffect::onOracleDragStart(EffectWindow *window)
 {
     if (window == nullptr || window->isDeleted()) {
         return;
     }
+    updateGroupMoveArm(window);
     m_oracleStartRects.insert(window, oracleMoveResizeRect(window));
     // A repeated start supersedes any prior unconsumed slot for this window:
     // drop it before evaluating the candidate so a stale slot can never leak
@@ -752,6 +808,14 @@ void ActiveWindowBorderEffect::onOracleDragStart(EffectWindow *window)
 
 void ActiveWindowBorderEffect::onOracleDragFinish(EffectWindow *window)
 {
+    // Finish/cancel clears the exact tracked window arm first, before any
+    // oracle-state read: move cleanup never depends on verdict success or
+    // readable geometry. The held chord stays independent.
+    if (window != nullptr && m_groupMoveWindow == window) {
+        m_groupMoveWindow.clear();
+        updateGroupVisibility();
+        emitGroupTransitionDiag();
+    }
     if (window == nullptr || window->isDeleted()) {
         return;
     }
@@ -777,9 +841,9 @@ void ActiveWindowBorderEffect::updateMaximizedState(EffectWindow *window, bool m
     }
     if (m_trackedWindow == window) {
         updateBorder();
-        // A displayed Meta-held group must hide immediately on entering
+        // A displayed chord/move-held group must hide immediately on
         // maximize and may only return after the restore transition; the
-        // focus-eligibility gate above keeps a maximized-before-Meta window
+        // focus-eligibility gate above keeps a maximized-before-chord window
         // from ever showing it.
         updateGroupVisibility();
     }
@@ -936,12 +1000,13 @@ void ActiveWindowBorderEffect::emitGroupSetterDiag(const char *outcome)
     // Every SetGroupHighlight receipt: Rust outcome plus bounded scalars.
     try {
         const int members = m_groupMemberIds.size() > 9999 ? 9999 : static_cast<int>(m_groupMemberIds.size());
-        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:group-highlight:setter outcome=%1 members=%2 anchor=%3 first=%4 meta=%5 foc=%6 ep=%7 vis=%8")
+        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:group-highlight:setter outcome=%1 members=%2 anchor=%3 first=%4 chord=%5 move=%6 foc=%7 ep=%8 vis=%9")
                 .arg(QString::fromUtf8(outcome))
                 .arg(members)
                 .arg(QString::fromUtf8(m_groupAnchorDiag))
                 .arg(m_firstMouseSeen ? 1 : 0)
-                .arg(m_metaHeld ? 1 : 0)
+                .arg(m_chordHeld ? 1 : 0)
+                .arg(groupMoveMatchesNow() ? 1 : 0)
                 .arg(isGroupFocusEligible() ? 1 : 0)
                 .arg(m_groupDbusAvailable ? 1 : 0)
                 .arg(m_groupVisible ? 1 : 0));
@@ -969,11 +1034,12 @@ void ActiveWindowBorderEffect::emitGroupTransitionDiag()
         m_groupTransDiagVisible = m_groupVisible;
         m_groupTransDiagEmitted = true;
         const int members = m_groupMemberIds.size() > 9999 ? 9999 : static_cast<int>(m_groupMemberIds.size());
-        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:group-highlight:transition anchor=%1 members=%2 first=%3 meta=%4 foc=%5 ep=%6 vis=%7")
+        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:group-highlight:transition anchor=%1 members=%2 first=%3 chord=%4 move=%5 foc=%6 ep=%7 vis=%8")
                 .arg(curAnchor)
                 .arg(members)
                 .arg(m_firstMouseSeen ? 1 : 0)
-                .arg(m_metaHeld ? 1 : 0)
+                .arg(m_chordHeld ? 1 : 0)
+                .arg(groupMoveMatchesNow() ? 1 : 0)
                 .arg(isGroupFocusEligible() ? 1 : 0)
                 .arg(m_groupDbusAvailable ? 1 : 0)
                 .arg(m_groupVisible ? 1 : 0));
@@ -1149,7 +1215,7 @@ QString ActiveWindowBorderEffect::groupHighlightStatus() const
         status = GroupHighlightStatus{};
     }
     const bool focusEligible = isGroupFocusEligible();
-    return QStringLiteral("v=1;rx=%1;ok=%2;parse_rej=%3;focus_mm=%4;stale=%5;clr=%6;has=%7;ord=%8;first=%9;meta=%10;foc=%11;ep=%12;gl=%13;vis=%14")
+    return QStringLiteral("v=1;rx=%1;ok=%2;parse_rej=%3;focus_mm=%4;stale=%5;clr=%6;has=%7;ord=%8;first=%9;chord=%10;move=%11;foc=%12;ep=%13;gl=%14;vis=%15")
         .arg(QString::number(status.receipts))
         .arg(QString::number(status.accepted))
         .arg(QString::number(status.parse_rejected))
@@ -1159,7 +1225,8 @@ QString ActiveWindowBorderEffect::groupHighlightStatus() const
         .arg(status.has_group != 0 ? 1 : 0)
         .arg(status.order_initialized != 0 ? 1 : 0)
         .arg(m_firstMouseSeen ? 1 : 0)
-        .arg(m_metaHeld ? 1 : 0)
+        .arg(m_chordHeld ? 1 : 0)
+        .arg(groupMoveMatchesNow() ? 1 : 0)
         .arg(focusEligible ? 1 : 0)
         .arg(m_groupDbusAvailable ? 1 : 0)
         .arg(m_isOpenGL ? 1 : 0)
@@ -1187,7 +1254,12 @@ void ActiveWindowBorderEffect::onMouseChanged(const QPointF &pos, const QPointF 
     Q_UNUSED(oldButtons);
     Q_UNUSED(oldModifiers);
     m_firstMouseSeen = true;
-    m_metaHeld = modifiers.testFlag(Qt::MetaModifier);
+    // Movement-only chord: both Win and Shift held (extras allowed, either
+    // press order). The predicate lives in Rust; only these two level bits
+    // fold here. Unknown before the first signal hides via the first-seen
+    // gate in updateGroupVisibility.
+    m_chordHeld = groupUnderlayChordHeld(
+        modifiers.testFlag(Qt::MetaModifier), modifiers.testFlag(Qt::ShiftModifier));
     updateGroupVisibility();
     emitGroupTransitionDiag();
 }
@@ -1197,15 +1269,18 @@ void ActiveWindowBorderEffect::updateGroupVisibility()
     if (!m_isOpenGL) {
         return;
     }
-    // Fail-closed endpoint gate plus the passive Meta gate plus live focus
-    // eligibility (fullscreen/minimized/hidden/deleted/maximized hide
-    // immediately via the tracked-signal connections above). Member validity
-    // is never derived native-side beyond the Rust-accepted list used for
-    // the lowest-stacked anchor; the carried union outer rect renders.
+    // Fail-closed endpoint gate plus the passive Win+Shift chord gate (or a
+    // matching focused-window interactive move, which needs no modifier
+    // observation) plus live focus eligibility (fullscreen/minimized/hidden/
+    // deleted/maximized hide immediately via the tracked-signal connections
+    // above). Member validity is never derived native-side beyond the
+    // Rust-accepted list used for the lowest-stacked anchor; the carried
+    // union outer rect renders.
     // Policy lives in Rust; C++ supplies POD observer flags and renders.
     // A missing anchor (no live member window) keeps the underlay hidden.
-    const bool groupShow = group_highlight_is_visible(&m_groupState, m_metaHeld ? 1 : 0, m_firstMouseSeen ? 1 : 0,
-                               isGroupFocusEligible() ? 1 : 0, m_groupDbusAvailable ? 1 : 0)
+    const bool matchingMove = groupMoveMatchesNow();
+    const bool groupShow = group_highlight_is_visible(&m_groupState, m_chordHeld ? 1 : 0, m_firstMouseSeen ? 1 : 0,
+                               isGroupFocusEligible() ? 1 : 0, m_groupDbusAvailable ? 1 : 0, matchingMove ? 1 : 0)
         == 1;
     const bool anchorOk = !m_groupAnchor.isNull() && m_groupAnchor->windowItem() != nullptr && !m_groupMemberIds.isEmpty();
     const bool show = groupShow && anchorOk;

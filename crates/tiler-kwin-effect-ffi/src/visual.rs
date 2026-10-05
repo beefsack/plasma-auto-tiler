@@ -155,6 +155,19 @@ pub extern "C" fn visual_group_underlay_outer_rect(
     }
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn visual_group_underlay_chord_held(win_held: u8, shift_held: u8) -> u8 {
+    match std::panic::catch_unwind(|| {
+        u8::from(core::group_underlay_chord_held(
+            win_held != 0,
+            shift_held != 0,
+        ))
+    }) {
+        Ok(value) => value,
+        Err(_) => 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

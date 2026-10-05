@@ -64,6 +64,12 @@ private:
     void forgetOracleWindow(EffectWindow *window);
     void onOracleDragStart(EffectWindow *window);
     void onOracleDragFinish(EffectWindow *window);
+    // Captures the exact interactive-move window at Started; display stays
+    // gated on a fresh live-active plus accepted-subject match each refresh.
+    void updateGroupMoveArm(EffectWindow *window);
+    // Fresh move trigger: captured window revalidated against the live
+    // active window and the accepted Rust subject on every call.
+    bool groupMoveMatchesNow() const;
     // Passive press capture: a public InputEventSpy observes pointer presses
     // without grabbing or intercepting. A press matching the live configured
     // MouseUnrestrictedResize binding (or the Alt+Right source default while
@@ -112,6 +118,11 @@ private:
     // no new FFI storage. Never logged.
     QStringList m_groupMemberIds;
     QPointer<EffectWindow> m_groupAnchor;
+    // Exact interactive-move window captured at Started (latest gesture
+    // wins). Display needs a fresh live-active plus accepted-subject match,
+    // so a stale pointer alone never shows. Cleared on Finish/cancel or
+    // removal of that exact window; the chord stays independent.
+    QPointer<EffectWindow> m_groupMoveWindow;
     // Filled-translucent preview above windows (ImageItem with a 1x1 solid
     // configured-color image scaled to the stored rect). Value member for
     // auto-lifetime with the effect; visual parent is the scene overlay.
@@ -167,7 +178,7 @@ private:
     void ensureEndpointsRegistered();
     void emitActiveBorderVisible(bool visible, const char *reason, bool appletPopup);
     bool m_groupVisible = false;
-    bool m_metaHeld = false;
+    bool m_chordHeld = false;
     bool m_firstMouseSeen = false;
     bool m_groupDbusAvailable = false;
     bool m_oracleDbusAvailable = false;

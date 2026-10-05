@@ -58,15 +58,25 @@ int32_t group_highlight_clear(GroupHighlightState *state);
 // Pure focus-identity match: both sides non-empty and byte-equal.
 uint8_t group_highlight_focus_matches(
     const uint8_t *focused, size_t focusedLen, const uint8_t *active, size_t activeLen);
+// Move-arm match for the group underlay: 1 only when the dragged window is
+// the live active window AND the accepted Rust payload subject (both compared
+// through the shared focus binding, empty sides fail closed). Resize never
+// arms: the C++ caller classifies move vs resize before calling.
+uint8_t group_highlight_move_arm_matches(const GroupHighlightState *state, const uint8_t *dragged, size_t draggedLen,
+    const uint8_t *active, size_t activeLen);
 // Pure focus eligibility from POD observer flags. The trailing maximized
 // flag collapses any native H/V/full maximize (matching
 // activeBorderIsMaximized); fullscreen stays suppressed independently.
 uint8_t group_highlight_focus_eligible(uint8_t hasWindow, uint8_t deleted, uint8_t minimized, uint8_t fullscreen,
     uint8_t hidden, uint8_t maximized);
 // Visibility gate reading the display flag from state plus POD observer
-// flags. Returns 1 visible, 0 hidden, -1 on null state.
-int32_t group_highlight_is_visible(const GroupHighlightState *state, uint8_t metaHeld,
-    uint8_t firstSignalSeen, uint8_t focusEligible, uint8_t endpointUsable);
+// flags. The chord flag carries the observed Win+Shift hold (both required,
+// extras allowed, either press order); unknown before the first signal hides
+// via firstSignalSeen. matchingMoveActive carries a matching focused-window
+// interactive move and shows without modifier observation. Returns 1
+// visible, 0 hidden, -1 on null state.
+int32_t group_highlight_is_visible(const GroupHighlightState *state, uint8_t chordHeld,
+    uint8_t firstSignalSeen, uint8_t focusEligible, uint8_t endpointUsable, uint8_t matchingMoveActive);
 // Copies the displayed rect. Returns 1 with *out written, 0 when clear,
 // -1 on null pointers.
 int32_t group_highlight_rect(const GroupHighlightState *state, GroupHighlightRect *out);

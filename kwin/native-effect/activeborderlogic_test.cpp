@@ -276,6 +276,16 @@ void groupUnderlayDefaultExtensionMatchesBorderWidth()
     CHECK(outerExplicit0 == QRectF(-5.0, -5.0, 110.0, 110.0));
 }
 
+void groupUnderlayChordNeedsBothWinAndShift()
+{
+    // (win, shift) -> chord. Extras and press order live outside this
+    // predicate: the native fold passes only these two level bits.
+    CHECK(!KWin::groupUnderlayChordHeld(false, false));
+    CHECK(!KWin::groupUnderlayChordHeld(true, false));
+    CHECK(!KWin::groupUnderlayChordHeld(false, true));
+    CHECK(KWin::groupUnderlayChordHeld(true, true));
+}
+
 } // namespace
 
 int main()
@@ -304,6 +314,7 @@ int main()
     pressAgeGateBoundsTwoSecondsMonotonic();
     pressBindingNameIsClosedVocabulary();
     dragPreviewAcceptsCarriedGeometryBounds();
+    groupUnderlayChordNeedsBothWinAndShift();
     groupUnderlayOuterExpandsByGapWidthAndExtension();
     groupUnderlayDefaultExtensionMatchesBorderWidth();
 

@@ -511,14 +511,21 @@ pub fn focus_eligible(
 
 pub fn should_show(
     has_group: bool,
-    meta_held: bool,
+    chord_held: bool,
     first_signal_seen: bool,
     focus_ok: bool,
     endpoint_usable: bool,
+    matching_move_active: bool,
 ) -> bool {
-    first_signal_seen
-        && endpoint_usable
-        && tiler_core::visual::group_visible(has_group, meta_held, focus_ok)
+    // The first-signal gate applies to the chord branch only: move-start
+    // evidence never depends on modifier observation.
+    let chord_ready = first_signal_seen && chord_held;
+    endpoint_usable
+        && tiler_core::visual::group_visible(
+            has_group,
+            tiler_core::visual::group_underlay_trigger(chord_ready, matching_move_active),
+            focus_ok,
+        )
 }
 
 // Apply codes: 1 accepted (display updated), 2 ignored stale/out-of-order
@@ -636,6 +643,44 @@ pub extern "C" fn group_highlight_focus_matches(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn group_highlight_move_arm_matches(
+    state: *const GroupHighlightState,
+    dragged_ptr: *const u8,
+    dragged_len: usize,
+    active_ptr: *const u8,
+    active_len: usize,
+) -> u8 {
+    match std::panic::catch_unwind(|| {
+        if state.is_null() {
+            return 0;
+        }
+        // SAFETY: non-null `state` borrows a live caller struct for this call.
+        let state: &GroupHighlightState = unsafe { &*state };
+        let dragged = match slice_of(dragged_ptr, dragged_len) {
+            Some(dragged) => dragged,
+            None => return 0,
+        };
+        let active: &[u8] = if active_len == 0 {
+            &[]
+        } else {
+            match slice_of(active_ptr, active_len) {
+                Some(active) => active,
+                None => return 0,
+            }
+        };
+        // Arm only when the dragged window is the live active window AND the
+        // accepted Rust group payload subject: a global move flag must never
+        // show an unrelated focused group. Cleared/empty subjects fail
+        // closed through the shared focus binding.
+        let focused = &state.focused[..state.focused_len.min(GROUP_HIGHLIGHT_MAX_ID_LEN)];
+        u8::from(focus_matches(focused, dragged) && focus_matches(dragged, active))
+    }) {
+        Ok(value) => value,
+        Err(_) => 0,
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn group_highlight_focus_eligible(
     has_window: u8,
     deleted: u8,
@@ -662,10 +707,11 @@ pub extern "C" fn group_highlight_focus_eligible(
 #[unsafe(no_mangle)]
 pub extern "C" fn group_highlight_is_visible(
     state: *const GroupHighlightState,
-    meta_held: u8,
+    chord_held: u8,
     first_signal_seen: u8,
     focus_ok: u8,
     endpoint_usable: u8,
+    matching_move_active: u8,
 ) -> i32 {
     match std::panic::catch_unwind(|| {
         if state.is_null() {
@@ -675,10 +721,11 @@ pub extern "C" fn group_highlight_is_visible(
         let state: &GroupHighlightState = unsafe { &*state };
         i32::from(u8::from(should_show(
             state.has_group != 0,
-            meta_held != 0,
+            chord_held != 0,
             first_signal_seen != 0,
             focus_ok != 0,
             endpoint_usable != 0,
+            matching_move_active != 0,
         )))
     }) {
         Ok(code) => code,
@@ -747,6 +794,13 @@ mod tests {
     fn payload(correlation: &str, revision: u64) -> Vec<u8> {
         format!(
             "{{\"v\":1,\"correlation_id\":\"{correlation}\",\"owner\":\"owner-1\",\"generation\":\"gen-1\",\"revision\":{revision},\"group\":\"group-1\",\"focused_window\":\"win-2\",\"members\":[\"win-1\",\"win-2\"],\"bounds\":{{\"x\":0,\"y\":0,\"w\":1200,\"h\":800}}}}"
+        )
+        .into_bytes()
+    }
+
+    fn payload_focused(correlation: &str, revision: u64, focused: &str) -> Vec<u8> {
+        format!(
+            "{{\"v\":1,\"correlation_id\":\"{correlation}\",\"owner\":\"owner-1\",\"generation\":\"gen-1\",\"revision\":{revision},\"group\":\"group-1\",\"focused_window\":\"{focused}\",\"members\":[\"{focused}\"],\"bounds\":{{\"x\":0,\"y\":0,\"w\":1200,\"h\":800}}}}"
         )
         .into_bytes()
     }
@@ -1082,12 +1136,81 @@ mod tests {
         assert!(!focus_eligible(true, false, false, false, true, false));
         assert!(!focus_eligible(true, false, false, false, false, true));
         assert!(!focus_eligible(true, false, false, true, false, true));
-        assert!(!should_show(true, true, false, true, true));
-        assert!(!should_show(true, false, true, true, true));
-        assert!(!should_show(false, true, true, true, true));
-        assert!(!should_show(true, true, true, false, true));
-        assert!(!should_show(true, true, true, true, false));
-        assert!(should_show(true, true, true, true, true));
+        // (has, chord, first, focus, endpoint, move) -> visible. The
+        // first-signal gate applies to the chord branch only; a matching
+        // move shows without any modifier observation, and resize alone
+        // (move=false) never triggers.
+        assert!(!should_show(true, true, false, true, true, false));
+        assert!(!should_show(true, false, true, true, true, false));
+        assert!(!should_show(false, true, true, true, true, false));
+        assert!(!should_show(true, true, true, false, true, false));
+        assert!(!should_show(true, true, true, true, false, false));
+        assert!(should_show(true, true, true, true, true, false));
+        assert!(should_show(true, false, false, true, true, true));
+        assert!(should_show(true, true, false, true, true, true));
+        assert!(!should_show(false, false, false, true, true, true));
+        assert!(!should_show(true, false, false, false, true, true));
+        assert!(!should_show(true, false, false, true, false, true));
+    }
+
+    #[test]
+    fn move_arm_matches_only_focused_accepted_subject() {
+        let mut state = GroupHighlightState::zero();
+        assert_eq!(apply(&mut state, "gen-1-g1", 3), 1);
+        let addr = &state as *const GroupHighlightState;
+        let arm = |dragged: &[u8], active: &[u8]| {
+            let dragged_ptr = if dragged.is_empty() {
+                std::ptr::null()
+            } else {
+                dragged.as_ptr()
+            };
+            let active_ptr = if active.is_empty() {
+                std::ptr::null()
+            } else {
+                active.as_ptr()
+            };
+            group_highlight_move_arm_matches(
+                addr,
+                dragged_ptr,
+                dragged.len(),
+                active_ptr,
+                active.len(),
+            )
+        };
+        // Dragged window is the live active window and the accepted subject.
+        assert_eq!(arm(b"win-2", b"win-2"), 1);
+        // Unrelated focused group: dragged differs from the subject.
+        assert_eq!(arm(b"win-3", b"win-3"), 0);
+        // Non-activating drag: dragged is the subject but not the active.
+        assert_eq!(arm(b"win-2", b"win-9"), 0);
+        // Empty sides fail closed.
+        assert_eq!(arm(b"", b"win-2"), 0);
+        assert_eq!(arm(b"win-2", b""), 0);
+        // Null state never arms.
+        assert_eq!(
+            group_highlight_move_arm_matches(
+                std::ptr::null(),
+                b"win-2".as_ptr(),
+                5,
+                b"win-2".as_ptr(),
+                5
+            ),
+            0
+        );
+        // Clearing the display (focus change) drops the arm: the subject is
+        // empty again.
+        assert_eq!(
+            group_highlight_clear(&mut state as *mut GroupHighlightState),
+            1
+        );
+        assert_eq!(arm(b"win-2", b"win-2"), 0);
+        // Subject rotation while the old native drag pointer persists: a
+        // newly accepted different subject leaves the retained old drag
+        // disarmed; only the new subject arms.
+        let rotated = payload_focused("gen-1-g2", 3, "win-9");
+        assert_eq!(apply_inner(&mut state, &rotated, b"win-9"), 1);
+        assert_eq!(arm(b"win-2", b"win-2"), 0);
+        assert_eq!(arm(b"win-9", b"win-9"), 1);
     }
 
     #[test]
@@ -1105,7 +1228,10 @@ mod tests {
             -1
         );
         assert_eq!(group_highlight_clear(std::ptr::null_mut()), -1);
-        assert_eq!(group_highlight_is_visible(std::ptr::null(), 1, 1, 1, 1), -1);
+        assert_eq!(
+            group_highlight_is_visible(std::ptr::null(), 1, 1, 1, 1, 0),
+            -1
+        );
         assert_eq!(
             group_highlight_rect(std::ptr::null(), std::ptr::null_mut()),
             -1
@@ -1155,12 +1281,17 @@ mod tests {
             }
         );
         assert_eq!(
-            group_highlight_is_visible(&state as *const GroupHighlightState, 1, 1, 1, 1),
+            group_highlight_is_visible(&state as *const GroupHighlightState, 1, 1, 1, 1, 0),
             1
         );
         assert_eq!(
-            group_highlight_is_visible(&state as *const GroupHighlightState, 0, 1, 1, 1),
+            group_highlight_is_visible(&state as *const GroupHighlightState, 0, 1, 1, 1, 0),
             0
+        );
+        // A matching move shows without modifier observation.
+        assert_eq!(
+            group_highlight_is_visible(&state as *const GroupHighlightState, 0, 0, 1, 1, 1),
+            1
         );
     }
 

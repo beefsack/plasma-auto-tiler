@@ -107,7 +107,7 @@ foreach(GROUP_FORBIDDEN_FFI "QString" "QRect" "QUuid" "EffectWindow" "qreal" "QB
         message(FATAL_ERROR "group-highlight FFI validation failed: '${GROUP_FORBIDDEN_FFI}' must not cross into Rust")
     endif()
 endforeach()
-foreach(GROUP_SYMBOL "group_highlight_state_init" "group_highlight_apply" "group_highlight_clear" "group_highlight_focus_matches" "group_highlight_focus_eligible" "group_highlight_is_visible" "group_highlight_rect" "group_highlight_status")
+foreach(GROUP_SYMBOL "group_highlight_state_init" "group_highlight_apply" "group_highlight_clear" "group_highlight_focus_matches" "group_highlight_move_arm_matches" "group_highlight_focus_eligible" "group_highlight_is_visible" "group_highlight_rect" "group_highlight_status")
     string(FIND "${GROUP_FFI_TEXT}" "${GROUP_SYMBOL}" GROUP_FFI_SYMBOL_POS)
     if(GROUP_FFI_SYMBOL_POS EQUAL -1)
         message(FATAL_ERROR "group-highlight FFI validation failed: '${GROUP_SYMBOL}' missing from FFI header")
@@ -161,7 +161,7 @@ foreach(GROUP_MOVED "parseGroupHighlightPayload" "acceptGroupHighlightOrder" "Pa
         message(FATAL_ERROR "group-highlight layering validation failed: '${GROUP_MOVED}' must not exist in shared logic (policy lives in Rust)")
     endif()
 endforeach()
-foreach(GROUP_FFI_USE "group_highlight_state_init" "group_highlight_apply" "group_highlight_clear" "group_highlight_is_visible" "group_highlight_focus_eligible" "group_highlight_rect" "group_highlight_status")
+foreach(GROUP_FFI_USE "group_highlight_state_init" "group_highlight_apply" "group_highlight_clear" "group_highlight_is_visible" "group_highlight_move_arm_matches" "group_highlight_focus_eligible" "group_highlight_rect" "group_highlight_status")
     string(FIND "${GROUP_IMPL_TEXT}" "${GROUP_FFI_USE}" GROUP_FFI_USE_POS)
     if(GROUP_FFI_USE_POS EQUAL -1)
         message(FATAL_ERROR "group-highlight wiring validation failed: '${GROUP_FFI_USE}' not found in implementation")
@@ -228,12 +228,12 @@ foreach(GROUP_NO_OUTLINE "m_groupItem.setOutline" "m_groupItem.setInnerRect")
     endif()
 endforeach()
 
-# Passive Meta observation only: mouseChanged plus MetaModifier, unknown
-# before the first signal. No polling, timers, grabs, interception,
+# Passive Win+Shift chord observation only: mouseChanged plus both modifier
+# bits, unknown before the first signal. No polling, timers, grabs,
 # filters, shortcut mutation, or paint hooks. Policy predicates arrive via
 # the Rust FFI; the QString-to-UTF8 boundary plus native identity stay here.
 # Qt JSON reads only the already-accepted "members" list for the anchor.
-foreach(GROUP_PASSIVE "mouseChanged" "MetaModifier" "m_firstMouseSeen" "m_metaHeld" "toUtf8" "internalId" "group_highlight_apply" "group_highlight_is_visible" "group_highlight_focus_eligible" "QJsonDocument" "members")
+foreach(GROUP_PASSIVE "mouseChanged" "MetaModifier" "ShiftModifier" "m_firstMouseSeen" "m_chordHeld" "toUtf8" "internalId" "group_highlight_apply" "group_highlight_is_visible" "group_highlight_focus_eligible" "QJsonDocument" "members")
     string(FIND "${GROUP_IMPL_TEXT}" "${GROUP_PASSIVE}" GROUP_PASSIVE_POS)
     if(GROUP_PASSIVE_POS EQUAL -1)
         string(FIND "${GROUP_LOGIC_TEXT}" "${GROUP_PASSIVE}" GROUP_PASSIVE_LOGIC_POS)
@@ -248,7 +248,7 @@ endforeach()
 # registration failure must fail closed with no retry. Maximize observation
 # seeds directly from the native committed maximizeMode(); native transition
 # signals stay authoritative after the seed.
-foreach(GROUP_BINDING "m_groupDbusAvailable" "internalId" "group_highlight_focus_matches" "group_highlight_focus_eligible" "windowClosed" "clearGroupHighlight" "maximizeMode" "activeBorderSeedMaximized" "observe-seed")
+foreach(GROUP_BINDING "m_groupDbusAvailable" "internalId" "group_highlight_focus_matches" "group_highlight_move_arm_matches" "group_highlight_focus_eligible" "isInteractiveMove" "windowClosed" "clearGroupHighlight" "maximizeMode" "activeBorderSeedMaximized" "observe-seed")
     string(FIND "${GROUP_IMPL_TEXT}" "${GROUP_BINDING}" GROUP_BINDING_POS)
     if(GROUP_BINDING_POS EQUAL -1)
         string(FIND "${GROUP_RUST_TEXT}" "${GROUP_BINDING}" GROUP_BINDING_RUST_POS)
@@ -280,7 +280,7 @@ endforeach()
 
 # Offline state coverage must exist through the Rust FFI and must poison the
 # session bus before any Qt setup, mirroring the native KCM tests.
-foreach(GROUP_COVERAGE "group_highlight_apply" "group_highlight_clear" "group_highlight_is_visible" "group_highlight_focus_eligible" "group_highlight_focus_matches" "group_highlight_rect" "group_highlight_status" "DBUS_SESSION_BUS_ADDRESS")
+foreach(GROUP_COVERAGE "group_highlight_apply" "group_highlight_clear" "group_highlight_is_visible" "group_highlight_move_arm_matches" "group_highlight_focus_eligible" "group_highlight_focus_matches" "group_highlight_rect" "group_highlight_status" "DBUS_SESSION_BUS_ADDRESS")
     string(FIND "${GROUP_TEST_TEXT}" "${GROUP_COVERAGE}" GROUP_COVERAGE_POS)
     if(GROUP_COVERAGE_POS EQUAL -1)
         message(FATAL_ERROR "group-highlight test validation failed: '${GROUP_COVERAGE}' not covered by the offline test")

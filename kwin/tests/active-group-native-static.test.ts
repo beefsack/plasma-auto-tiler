@@ -96,14 +96,16 @@ describe("active-group native static contract", () => {
         assert.match(effectImpl, /m_borderItem\.setVisible\(visible\)/);
     });
 
-    it("gates group visibility on passive Meta observation with unknown-before-first-signal invisible", () => {
+    it("gates group visibility on the passive Meta+Shift chord with unknown-before-first-signal invisible", () => {
         assert.match(effectImpl, /mouseChanged/);
         assert.match(effectImpl, /Qt::MetaModifier/);
+        assert.match(effectImpl, /Qt::ShiftModifier/);
         assert.match(effectImpl, /m_firstMouseSeen/);
-        assert.match(effectImpl, /m_metaHeld/);
+        assert.match(effectImpl, /m_chordHeld/);
+        assert.match(effectImpl, /groupUnderlayChordHeld/);
         assert.match(effectImpl, /group_highlight_is_visible/);
         assert.match(effectImpl, /group_highlight_focus_eligible/);
-        assert.match(rust, /first_signal_seen\s*&& endpoint_usable\s*&& tiler_core::visual::group_visible\(has_group, meta_held, focus_ok\)/);
+        assert.match(rust, /tiler_core::visual::group_underlay_trigger\(chord_ready, matching_move_active\)/);
         assert.match(rust, /tiler_core::visual::group_focus_eligible\(/);
         // Fullscreen/minimized/hidden/deleted hide via owned tracked signals
         // without pointer movement.
@@ -113,9 +115,59 @@ describe("active-group native static contract", () => {
         assert.match(effectImpl, /updateGroupVisibility/);
     });
 
+    it("arms a matching focused interactive move without modifier observation", () => {
+        // Classification at Started via the underlying Window; resize alone
+        // never arms and the chord stays independent.
+        assert.match(effectImpl, /isInteractiveMove/);
+        assert.match(effectImpl, /updateGroupMoveArm/);
+        assert.match(effectImpl, /m_groupMoveWindow/);
+        assert.match(effectImpl, /group_highlight_move_arm_matches/);
+        assert.match(ffi, /group_highlight_move_arm_matches/);
+        assert.match(rust, /group_highlight_move_arm_matches/);
+        // The chord fold stays shared policy in logic; the trigger OR lives
+        // in the group FFI policy (should_show), with no native wrapper.
+        assert.match(logic, /groupUnderlayChordHeld/);
+        assert.doesNotMatch(logic, /groupUnderlayTrigger/);
+        // End/cancel/removal clears the exact tracked window arm only.
+        assert.match(effectImpl, /m_groupMoveWindow == window/);
+        assert.match(effectImpl, /m_groupMoveWindow\.clear\(\)/);
+        // The move flag reaches visibility; the first-signal gate stays on
+        // the chord branch only.
+        assert.match(effectImpl, /matchingMove/);
+        assert.match(rust, /first_signal_seen && chord_held/);
+        // Visibility revalidates through the matcher each refresh: the body
+        // of updateGroupVisibility must route through groupMoveMatchesNow,
+        // never a bare pointer check, and that helper must call the actual
+        // Rust subject matcher against the live active window.
+        const bodyOf = (marker: string): string => {
+            const start = effectImpl.indexOf(marker);
+            assert.ok(start >= 0, marker);
+            const end = effectImpl.indexOf("\n}\n", start);
+            assert.ok(end > start, marker);
+            return effectImpl.slice(start, end + 3);
+        };
+        const visBody = bodyOf("void ActiveWindowBorderEffect::updateGroupVisibility()");
+        assert.match(visBody, /groupMoveMatchesNow/);
+        assert.doesNotMatch(visBody, /!m_groupMoveWindow\.isNull\(\)/);
+        const freshBody = bodyOf("bool ActiveWindowBorderEffect::groupMoveMatchesNow()");
+        assert.match(freshBody, /group_highlight_move_arm_matches/);
+        assert.match(freshBody, /activeWindow/);
+        // Finish clears the exact arm before any oracle-state read, so move
+        // cleanup never depends on verdict success or readable geometry.
+        const finishBody = bodyOf("void ActiveWindowBorderEffect::onOracleDragFinish(");
+        const armClear = finishBody.indexOf("m_groupMoveWindow.clear()");
+        const verdict = finishBody.indexOf("drag_oracle_record");
+        assert.ok(armClear >= 0 && verdict > armClear);
+        // Same-window resize Started clears a stale own arm via the current
+        // move classification.
+        const armBody = bodyOf("void ActiveWindowBorderEffect::updateGroupMoveArm(");
+        assert.match(armBody, /isInteractiveMove/);
+        assert.match(armBody, /m_groupMoveWindow == window/);
+    });
+
     it("reports bounded native setter and anchor outcomes without raw identities", () => {
-        assert.match(effectImpl, /group-highlight:setter outcome=%1 members=%2 anchor=%3 first=%4 meta=%5 foc=%6 ep=%7 vis=%8/);
-        assert.match(effectImpl, /group-highlight:transition anchor=%1 members=%2 first=%3 meta=%4 foc=%5 ep=%6 vis=%7/);
+        assert.match(effectImpl, /group-highlight:setter outcome=%1 members=%2 anchor=%3 first=%4 chord=%5 move=%6 foc=%7 ep=%8 vis=%9/);
+        assert.match(effectImpl, /group-highlight:transition anchor=%1 members=%2 first=%3 chord=%4 move=%5 foc=%6 ep=%7 vis=%8/);
         for (const outcome of ["accepted", "stale", "endpoint-unavailable"]) {
             assert.match(effectImpl, new RegExp(`emitGroupSetterDiag\\("${outcome}"\\)`));
         }

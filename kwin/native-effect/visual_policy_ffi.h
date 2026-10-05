@@ -23,4 +23,8 @@ uint8_t visual_drag_preview_rect_valid(int32_t x, int32_t y, int32_t w, int32_t 
 double visual_group_underlay_effective_extension(double extension, double border_width);
 VisualPolicyRect visual_group_underlay_outer_rect(
     VisualPolicyRect union_rect, double gap, double border_width, double resolved_extension);
+// Movement-only underlay chord: both Win and Shift held (extras allowed,
+// either press order). Level-observed through mouseChanged; the Rust core
+// owns the predicate so native code holds no independent modifier policy.
+uint8_t visual_group_underlay_chord_held(uint8_t win_held, uint8_t shift_held);
 } // extern "C"
