@@ -2624,7 +2624,10 @@ impl Engine {
     fn directional_focus_request(&mut self, event: &CoreEvent) -> CoreReply {
         use crate::boundary::FocusPlanReply;
         let CoreCommand::Focus {
-            window, direction, ..
+            window,
+            direction,
+            float_subject,
+            ..
         } = &event.command
         else {
             return CoreReply::Rejected {
@@ -2688,40 +2691,91 @@ impl Engine {
             Err(reply) => return *reply,
         };
         let _ = session.sync_focus_from_window(source_key, &event.focused_window.clone());
-        let (plan, crossed) = match session.propose_focus(
-            source_key,
-            &window,
-            direction,
-            &observation,
-            &event.correlation,
-            &FocusCapabilities::full(),
-        ) {
-            Ok(plan) => (plan, false),
-            Err(ProposeError::Refused(RefusalKind::Unchanged))
-                if matches!(direction, Direction::Left | Direction::Right) =>
-            {
-                match session.propose_cross_output_focus(
-                    source_key,
-                    &window,
-                    direction,
-                    &observation,
-                    &event.correlation,
-                    &FocusCapabilities::full(),
-                ) {
-                    Ok(plan) => (plan, true),
-                    Err(error) => {
-                        return CoreReply::Rejected {
-                            kind: error.kind(),
-                            message: error.message(),
-                        };
-                    }
+        // Float-origin cross-output focus (adapter local float search missed
+        // Left/Right): the subject is a floating/sticky exception, so the
+        // tiled local proposal (which refuses exceptions before any edge
+        // check) is skipped and the shared reciprocal-adjacency remembered
+        // target fallback applies directly. The subject stays bound to the
+        // active window; anything else refuses fail-closed.
+        let (plan, crossed) = if *float_subject {
+            if !matches!(direction, Direction::Left | Direction::Right) {
+                return CoreReply::Rejected {
+                    kind: RefusalKind::Unchanged.as_str(),
+                    message: RefusalKind::Unchanged.message(),
+                };
+            }
+            if window.0 != event.focused_window.0 {
+                return CoreReply::Rejected {
+                    kind: RefusalKind::FocusMismatch.as_str(),
+                    message: RefusalKind::FocusMismatch.message(),
+                };
+            }
+            // Home-bind the flagged subject: the active window must be
+            // observed floating on the source domain (sticky rides the
+            // adapter floating flag). Anything else refuses fail-closed.
+            if !event.windows.iter().any(|entry| {
+                entry.window == window
+                    && entry.output == source_key.output
+                    && entry.workspace == source_key.workspace
+                    && entry.floating
+            }) {
+                return CoreReply::Rejected {
+                    kind: RefusalKind::FocusMismatch.as_str(),
+                    message: RefusalKind::FocusMismatch.message(),
+                };
+            }
+            match session.propose_float_cross_output_focus(
+                source_key,
+                &window,
+                direction,
+                &observation,
+                &event.correlation,
+                &FocusCapabilities::full(),
+            ) {
+                Ok(plan) => (plan, true),
+                Err(error) => {
+                    return CoreReply::Rejected {
+                        kind: error.kind(),
+                        message: error.message(),
+                    };
                 }
             }
-            Err(error) => {
-                return CoreReply::Rejected {
-                    kind: error.kind(),
-                    message: error.message(),
-                };
+        } else {
+            match session.propose_focus(
+                source_key,
+                &window,
+                direction,
+                &observation,
+                &event.correlation,
+                &FocusCapabilities::full(),
+            ) {
+                Ok(plan) => (plan, false),
+                Err(ProposeError::Refused(RefusalKind::Unchanged))
+                    if matches!(direction, Direction::Left | Direction::Right) =>
+                {
+                    match session.propose_cross_output_focus(
+                        source_key,
+                        &window,
+                        direction,
+                        &observation,
+                        &event.correlation,
+                        &FocusCapabilities::full(),
+                    ) {
+                        Ok(plan) => (plan, true),
+                        Err(error) => {
+                            return CoreReply::Rejected {
+                                kind: error.kind(),
+                                message: error.message(),
+                            };
+                        }
+                    }
+                }
+                Err(error) => {
+                    return CoreReply::Rejected {
+                        kind: error.kind(),
+                        message: error.message(),
+                    };
+                }
             }
         };
         let typed = if crossed {

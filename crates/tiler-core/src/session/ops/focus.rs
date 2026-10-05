@@ -136,14 +136,14 @@ impl super::super::Session {
         let intent = FocusIntent {
             domain_output: domain.output.clone(),
             domain_workspace: domain.workspace.clone(),
-            focused_leaf: focused_leaf.clone(),
+            focused_leaf: Some(focused_leaf.clone()),
             focused_window: focused_window.clone(),
             direction,
         };
         let operation = FocusOperation {
             domain_output: domain.output.clone(),
             domain_workspace: domain.workspace.clone(),
-            from_leaf: focused_leaf.clone(),
+            from_leaf: Some(focused_leaf.clone()),
             to_leaf: target_leaf.clone(),
             from_window: focused_window.clone(),
             to_window: target_window.clone(),
@@ -258,6 +258,68 @@ impl super::super::Session {
         correlation_id: &CorrelationId,
         capabilities: &FocusCapabilities,
     ) -> Result<SessionFocusPlan, ProposeError> {
+        self.cross_output_focus_impl(
+            domain,
+            window,
+            direction,
+            session_observation,
+            correlation_id,
+            capabilities,
+            false,
+        )
+    }
+
+    /// Propose cross-output directional focus from a floating/sticky subject
+    /// after the adapter's local float search found no same-domain target
+    /// (`Left`/`Right` miss only; `Up`/`Down` misses retain without dispatch).
+    ///
+    /// Same reciprocal-adjacency, remembered eligible tiled target, geometry,
+    /// and commit semantics as
+    /// [`Session::propose_cross_output_focus`], except the subject is a
+    /// known floating/sticky exception (never a tile leaf), so the tiled
+    /// focus-match and local-edge-exhaustion checks do not apply. The subject
+    /// must be observed floating/sticky homed in `domain`; the caller binds
+    /// it to the active window. Unknown, tiled, non-floating, or
+    /// cross-homed subjects refuse fail-closed with no plan and no pending.
+    pub fn propose_float_cross_output_focus(
+        &mut self,
+        domain: &DomainKey,
+        window: &WindowId,
+        direction: Direction,
+        session_observation: &SessionObservation,
+        correlation_id: &CorrelationId,
+        capabilities: &FocusCapabilities,
+    ) -> Result<SessionFocusPlan, ProposeError> {
+        self.cross_output_focus_impl(
+            domain,
+            window,
+            direction,
+            session_observation,
+            correlation_id,
+            capabilities,
+            true,
+        )
+    }
+
+    /// Shared cross-output focus implementation. `float_subject` selects the
+    /// float-origin subject branch (exception eligibility, leafless source,
+    /// no local-edge check); otherwise the exact tiled
+    /// behavior above. Everything past subject resolution (adjacency,
+    /// reciprocity, remembered target, geometry, dispatch, commit staging)
+    /// is shared so the two origins cannot drift.
+    // Seven-arg proposal signature shared verbatim with the public wrappers
+    // plus the origin flag; splitting it would duplicate the fences instead.
+    #[allow(clippy::too_many_arguments)]
+    fn cross_output_focus_impl(
+        &mut self,
+        domain: &DomainKey,
+        window: &WindowId,
+        direction: Direction,
+        session_observation: &SessionObservation,
+        correlation_id: &CorrelationId,
+        capabilities: &FocusCapabilities,
+        float_subject: bool,
+    ) -> Result<SessionFocusPlan, ProposeError> {
         if let Some(reason) = self.reconciler.divergence() {
             return Err(ProposeError::Diverged(reason));
         }
@@ -303,34 +365,63 @@ impl super::super::Session {
         if !self.windows.contains_key(window) && !self.exceptions.contains_key(window) {
             return Err(ProposeError::Refused(RefusalKind::UnknownWindow));
         }
-        if self.exceptions.contains_key(window) {
-            return Err(ProposeError::Refused(RefusalKind::NotTiled));
-        }
-        let (Some(focused_domain), Some(focused_leaf)) =
-            (self.focused_domain.clone(), self.focused_leaf.clone())
-        else {
-            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        // Subject resolution per origin. Tiled behavior below is unchanged:
+        // exceptions are never tile-origin subjects. Float-origin subjects
+        // must be known floating/sticky exceptions homed in `domain`; they
+        // carry no tile leaf, so the operation stays honestly leafless
+        // (`from_leaf: None` with the floating-subject precondition) and no
+        // local tile-edge check applies. No surviving source tile is needed:
+        // float-only domains cross the same way.
+        let focused_leaf: Option<NodeId> = if float_subject {
+            if !self.exceptions.contains_key(window) {
+                return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+            }
+            let Some(entry) = session_observation
+                .windows
+                .iter()
+                .find(|entry| &entry.window == window)
+            else {
+                return Err(ProposeError::Refused(RefusalKind::PartialObservation));
+            };
+            if !(entry.floating || entry.sticky)
+                || entry.output != domain.output
+                || entry.workspace != domain.workspace
+            {
+                return Err(ProposeError::Refused(RefusalKind::NotTiled));
+            }
+            None
+        } else {
+            if self.exceptions.contains_key(window) {
+                return Err(ProposeError::Refused(RefusalKind::NotTiled));
+            }
+            let (Some(focused_domain), Some(focused_leaf)) =
+                (self.focused_domain.clone(), self.focused_leaf.clone())
+            else {
+                return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+            };
+            if &focused_domain != domain {
+                return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+            }
+            let Some(focused_window) = self.focused_window_for(&focused_leaf, domain) else {
+                return Err(ProposeError::Refused(RefusalKind::NotTiled));
+            };
+            if window != &focused_window {
+                return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+            }
+            // Local focus must be exhausted: any local target wins (no cross).
+            let Some(tree) = self.trees.get(domain).cloned().flatten() else {
+                return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+            };
+            let Some(focus_plan) = crate::directional::plan_focus(&tree, &focused_leaf, direction)
+            else {
+                return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+            };
+            if !matches!(focus_plan, FocusPlan::Edge) {
+                return Err(ProposeError::Refused(RefusalKind::Unchanged));
+            }
+            Some(focused_leaf)
         };
-        if &focused_domain != domain {
-            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
-        }
-        let Some(focused_window) = self.focused_window_for(&focused_leaf, domain) else {
-            return Err(ProposeError::Refused(RefusalKind::NotTiled));
-        };
-        if window != &focused_window {
-            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
-        }
-        // Local focus must be exhausted: any local target wins (no cross).
-        let Some(tree) = self.trees.get(domain).cloned().flatten() else {
-            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
-        };
-        let Some(focus_plan) = crate::directional::plan_focus(&tree, &focused_leaf, direction)
-        else {
-            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
-        };
-        if !matches!(focus_plan, FocusPlan::Edge) {
-            return Err(ProposeError::Refused(RefusalKind::Unchanged));
-        }
+        let focused_window = window.clone();
         // Adjacent output in D; exactly one domain must own that output id
         // (ambiguity fails closed).
         let source_domain = self

@@ -922,7 +922,7 @@ fn cross_kind_verify_diverges() {
     let focus_op = tiler_core::contract::FocusOperation {
         domain_output: k.output.clone(),
         domain_workspace: k.workspace.clone(),
-        from_leaf: NodeId("leaf-win-2".to_owned()),
+        from_leaf: Some(NodeId("leaf-win-2".to_owned())),
         to_leaf: NodeId("leaf-win-3".to_owned()),
         from_window: WindowId("win-2".to_owned()),
         to_window: WindowId("win-3".to_owned()),

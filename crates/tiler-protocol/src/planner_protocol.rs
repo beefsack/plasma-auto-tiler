@@ -1463,6 +1463,7 @@ fn focus_precondition_str(value: tiler_core::contract::FocusPrecondition) -> &'s
         tiler_core::contract::FocusPrecondition::FocusedLeafOccupiedByFocusedWindow => {
             "focused-leaf-occupied-by-focused-window"
         }
+        tiler_core::contract::FocusPrecondition::FocusedFloatingWindow => "focused-floating-window",
         tiler_core::contract::FocusPrecondition::TargetLeafOccupied => "target-leaf-occupied",
         tiler_core::contract::FocusPrecondition::FocusTargetsSameDomain => {
             "focus-targets-same-domain"
@@ -1491,7 +1492,7 @@ fn cross_focus_planned_reply(
         "op": "focus",
         "domain_output": operation.domain_output.0,
         "domain_workspace": operation.domain_workspace.0,
-        "from_leaf": operation.from_leaf.0,
+        "from_leaf": operation.from_leaf.as_ref().map(|id| id.0.clone()),
         "to_leaf": operation.to_leaf.0,
         "from_window": operation.from_window.0,
         "to_window": operation.to_window.0,
@@ -2307,6 +2308,7 @@ impl Planner {
                     window,
                     direction,
                     cross_output_transfer,
+                    float_subject: false,
                 },
                 Ok(_) => {
                     return snapshot_invalid(
@@ -2370,10 +2372,12 @@ impl Planner {
                     window,
                     direction,
                     cross_output_transfer,
+                    float_subject,
                 }) => DirectedCommand {
                     window,
                     direction,
                     cross_output_transfer,
+                    float_subject,
                 },
                 Ok(_) => {
                     return snapshot_invalid(
@@ -2415,6 +2419,17 @@ impl Planner {
                 MSG_DIRECTION,
             );
         }
+        // Float-origin subjects never take the single-domain local route
+        // (the adapter retains Up/Down and no-adjacent misses without
+        // dispatch); a flagged single-domain request is misuse and refuses
+        // before the Engine. Tile-origin requests are unaffected.
+        if command.float_subject {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OBSERVATION,
+                "domain-invalid",
+            );
+        }
         // Engine-owned local orchestration: the validated window/direction
         // cross opaquely in the typed command; seed ordering, focus sync,
         // relocation, propose/commit, and store run in `Engine::handle`
@@ -2424,6 +2439,7 @@ impl Planner {
             window: command.window.clone(),
             direction: command.direction.clone(),
             cross_output_transfer: command.cross_output_transfer,
+            float_subject: false,
         };
         let event = core_event(ctx, &core_command);
         self.handle_and_serialize(ctx, &event)
@@ -2473,10 +2489,17 @@ impl Planner {
         if directional_pair(ctx).is_none() {
             return snapshot_invalid(cid, MSG_OBSERVATION, "domain-invalid");
         }
+        // Float-origin misuse fails closed: the flag rides Left/Right
+        // two-domain requests only (adapter retains Up/Down misses without
+        // dispatch, and single-domain flagged requests refuse above).
+        if command.float_subject && !matches!(command.direction.as_str(), "left" | "right") {
+            return snapshot_invalid(cid, MSG_OPAQUE_ID, "focus-op-invalid");
+        }
         let core_command = core_command_from_sync(&SyncCommand::Focus {
             window: command.window.clone(),
             direction: command.direction.clone(),
             cross_output_transfer: command.cross_output_transfer,
+            float_subject: command.float_subject,
         })
         .expect("focus sync op converts");
         let event = core_event(ctx, &core_command);
@@ -3150,6 +3173,11 @@ struct DirectedCommand {
     /// while rejecting R4 before the planner stages any state. Omitted legacy
     /// requests retain their historical full-capability behavior.
     cross_output_transfer: bool,
+    /// Float-origin subject marker for focus only (ignored on move): true
+    /// means the subject is a floating/sticky exception and the Engine must
+    /// use the shared cross-output remembered-target fallback without the
+    /// tiled local-edge check. Move commands never set this.
+    float_subject: bool,
 }
 
 const fn default_cross_output_transfer() -> bool {
@@ -3359,6 +3387,13 @@ enum SyncCommand {
         direction: String,
         #[serde(default = "default_cross_output_transfer")]
         cross_output_transfer: bool,
+        /// Float-origin cross-output focus (adapter local float search missed
+        /// Left/Right). Absent/false preserves every existing tile-origin
+        /// request byte-for-byte; true requires a two-domain Left/Right
+        /// request and fails closed otherwise. Non-boolean values refuse via
+        /// the established parse-error path.
+        #[serde(default)]
+        float_subject: bool,
     },
     #[serde(rename = "resize")]
     Resize {
@@ -3438,10 +3473,12 @@ fn core_command_from_sync(command: &SyncCommand) -> Option<tiler_core::boundary:
             window,
             direction,
             cross_output_transfer,
+            float_subject,
         } => Some(CoreCommand::Focus {
             window: window.clone(),
             direction: direction.clone(),
             cross_output_transfer: *cross_output_transfer,
+            float_subject: *float_subject,
         }),
         SyncCommand::Resize {
             window,
@@ -4813,6 +4850,281 @@ mod tests {
     }
 
     #[test]
+    fn float_subject_cross_output_focus_plans_remembered_target() {
+        // Float-origin Left/Right miss with no local float target: the
+        // adapter searches native float geometry locally, so the wire only
+        // carries the float_subject marker into the shared cross-output
+        // remembered-target fallback. Seeds mirror the directional edge
+        // test, then win-1b floats on the source output.
+        fn reconcile_for(
+            correlation: &str,
+            output: &str,
+            workspace: &str,
+            bounds: serde_json::Value,
+            focused: &str,
+            windows: serde_json::Value,
+        ) -> String {
+            serde_json::json!({
+                "v": 1,
+                "correlation_id": correlation,
+                "owner": "owner-1",
+                "generation": "gen-1",
+                "revision": 0,
+                "fingerprint": 7,
+                "domain": {
+                    "output": output,
+                    "workspace": workspace,
+                    "bounds": bounds,
+                    "gap": 8,
+                    "outer_gap": 8,
+                },
+                "focused_window": focused,
+                "windows": windows,
+                "command": {"op": "reconcile"},
+            })
+            .to_string()
+        }
+        fn directional_for(
+            correlation: &str,
+            focused: &str,
+            command: serde_json::Value,
+            windows: serde_json::Value,
+        ) -> String {
+            let domains = serde_json::json!([
+                {
+                    "output": "DP-6",
+                    "workspace": "ws-1",
+                    "bounds": {"x": 0, "y": 44, "w": 2048, "h": 1108},
+                    "gap": 8,
+                    "outer_gap": 8,
+                    "adjacent": {"right": "HDMI-A-2"},
+                },
+                {
+                    "output": "HDMI-A-2",
+                    "workspace": "ws-1",
+                    "bounds": {"x": 2048, "y": 116, "w": 1920, "h": 1036},
+                    "gap": 8,
+                    "outer_gap": 8,
+                    "adjacent": {"left": "DP-6"},
+                },
+            ]);
+            let domain_entries: Vec<DirectionalDomainDto> =
+                serde_json::from_value(domains.clone()).expect("domains decode");
+            let window_entries: Vec<ObservedDto> =
+                serde_json::from_value(windows.clone()).expect("windows decode");
+            let fingerprint = directional_fingerprint(&domain_entries, focused, &window_entries);
+            serde_json::json!({
+                "v": 1,
+                "correlation_id": correlation,
+                "owner": "owner-1",
+                "generation": "gen-1",
+                "revision": 0,
+                "fingerprint": fingerprint,
+                "domain": {
+                    "output": "DP-6",
+                    "workspace": "ws-1",
+                    "bounds": {"x": 0, "y": 44, "w": 2048, "h": 1108},
+                    "gap": 8,
+                    "outer_gap": 8,
+                },
+                "domains": domains,
+                "focused_window": focused,
+                "windows": windows,
+                "command": command,
+            })
+            .to_string()
+        }
+        fn seed_pair() -> Planner {
+            let mut planner = Planner::new();
+            let source = parse_reply(&planner.evaluate(&reconcile_for(
+                "float-cross-seed-1",
+                "DP-6",
+                "ws-1",
+                serde_json::json!({"x": 0, "y": 44, "w": 2048, "h": 1108}),
+                "win-1",
+                serde_json::json!([
+                    {"window": "win-1", "output": "DP-6", "workspace": "ws-1", "rect": {"x": 0, "y": 44, "w": 1024, "h": 1108}},
+                    {"window": "win-1b", "output": "DP-6", "workspace": "ws-1", "rect": {"x": 1024, "y": 44, "w": 1024, "h": 1108}},
+                ]),
+            )));
+            assert_eq!(source["outcome"], "planned", "{source}");
+            let target = parse_reply(&planner.evaluate(&reconcile_for(
+                "float-cross-seed-2",
+                "HDMI-A-2",
+                "ws-1",
+                serde_json::json!({"x": 2048, "y": 116, "w": 1920, "h": 1036}),
+                "win-2",
+                serde_json::json!([
+                    {"window": "win-2", "output": "HDMI-A-2", "workspace": "ws-1", "rect": {"x": 2048, "y": 116, "w": 960, "h": 1036}},
+                ]),
+            )));
+            assert_eq!(target["outcome"], "planned", "{target}");
+            // Float win-1b on the source output (focused while floating).
+            let floated = parse_reply(&planner.evaluate(&reconcile_for(
+                "float-cross-seed-3",
+                "DP-6",
+                "ws-1",
+                serde_json::json!({"x": 0, "y": 44, "w": 2048, "h": 1108}),
+                "win-1b",
+                serde_json::json!([
+                    {"window": "win-1", "output": "DP-6", "workspace": "ws-1", "rect": {"x": 0, "y": 44, "w": 1024, "h": 1108}},
+                    {"window": "win-1b", "output": "DP-6", "workspace": "ws-1", "rect": {"x": 1024, "y": 44, "w": 1024, "h": 1108}},
+                ]),
+            )));
+            assert_eq!(floated["outcome"], "planned", "{floated}");
+            let toggled = parse_reply(
+                &planner.evaluate(
+                    &serde_json::json!({
+                        "v": 1,
+                        "correlation_id": "float-cross-seed-4",
+                        "owner": "owner-1",
+                        "generation": "gen-1",
+                        "revision": 0,
+                        "fingerprint": 7,
+                        "domain": {
+                            "output": "DP-6",
+                            "workspace": "ws-1",
+                            "bounds": {"x": 0, "y": 44, "w": 2048, "h": 1108},
+                            "gap": 8,
+                            "outer_gap": 8,
+                        },
+                        "focused_window": "win-1b",
+                        "windows": [
+                            {"window": "win-1", "output": "DP-6", "workspace": "ws-1", "rect": {"x": 0, "y": 44, "w": 1024, "h": 1108}},
+                            {"window": "win-1b", "output": "DP-6", "workspace": "ws-1", "rect": {"x": 1024, "y": 44, "w": 1024, "h": 1108}},
+                        ],
+                        "command": {"op": "toggle-float", "window": "win-1b"},
+                    })
+                    .to_string(),
+                ),
+            );
+            assert_eq!(toggled["outcome"], "planned", "{toggled}");
+            planner
+        }
+        fn float_windows() -> serde_json::Value {
+            serde_json::json!([
+                {"window": "win-1", "output": "DP-6", "workspace": "ws-1", "rect": {"x": 0, "y": 44, "w": 1024, "h": 1108}},
+                {"window": "win-1b", "output": "DP-6", "workspace": "ws-1", "rect": {"x": 1024, "y": 44, "w": 1024, "h": 1108}, "floating": true, "fit_excluded": true},
+                {"window": "win-2", "output": "HDMI-A-2", "workspace": "ws-1", "rect": {"x": 2048, "y": 116, "w": 960, "h": 1036}},
+            ])
+        }
+        // The flagged miss plans onto the adjacent output's remembered tile
+        // with the float as the recorded source; no geometry is fabricated
+        // for the float itself.
+        let mut planner = seed_pair();
+        let crossed = parse_reply(&planner.evaluate(&directional_for(
+            "float-cross-1",
+            "win-1b",
+            serde_json::json!({"op": "focus", "window": "win-1b", "direction": "right", "float_subject": true}),
+            float_windows(),
+        )));
+        assert_eq!(crossed["outcome"], "planned", "{crossed}");
+        assert_eq!(crossed["detail"]["kind"], "focus", "{crossed}");
+        assert_eq!(crossed["detail"]["to_window"], "win-2", "{crossed}");
+        assert_eq!(crossed["operation"]["from_window"], "win-1b", "{crossed}");
+        assert_eq!(
+            crossed["operation"]["from_leaf"],
+            serde_json::Value::Null,
+            "{crossed}"
+        );
+        assert_eq!(
+            crossed["preconditions"][0], "focused-floating-window",
+            "{crossed}"
+        );
+        assert_eq!(crossed["operation"]["to_window"], "win-2", "{crossed}");
+        assert_eq!(
+            crossed["operation"]["cross_source_output"], "DP-6",
+            "{crossed}"
+        );
+        assert_eq!(
+            crossed["desired_focus"]["domain_output"], "HDMI-A-2",
+            "{crossed}"
+        );
+        for entry in crossed["desired_geometry"].as_array().expect("geometry") {
+            assert_ne!(entry["window"], "win-1b", "{crossed}");
+        }
+        // Omitted flag keeps tile-origin behavior: a floating subject
+        // without the marker refuses as not-tiled, never crossing.
+        let mut unflagged = seed_pair();
+        let refused = parse_reply(&unflagged.evaluate(&directional_for(
+            "float-cross-2",
+            "win-1b",
+            serde_json::json!({"op": "focus", "window": "win-1b", "direction": "right"}),
+            float_windows(),
+        )));
+        assert_eq!(refused["outcome"], "rejected", "{refused}");
+        assert_eq!(refused["kind"], "not-tiled", "{refused}");
+        // A tiled subject carrying the marker refuses as a focus mismatch.
+        let mut tiled_flagged = seed_pair();
+        let mismatch = parse_reply(&tiled_flagged.evaluate(&directional_for(
+            "float-cross-3",
+            "win-1",
+            serde_json::json!({"op": "focus", "window": "win-1", "direction": "right", "float_subject": true}),
+            float_windows(),
+        )));
+        assert_eq!(mismatch["outcome"], "rejected", "{mismatch}");
+        assert_eq!(mismatch["kind"], "focus-mismatch", "{mismatch}");
+        // The marker rides Left/Right two-domain requests only: Up refuses
+        // as a malformed focus op, single-domain flagged requests refuse as
+        // domain-invalid, and a non-boolean marker refuses malformed.
+        let mut up = seed_pair();
+        let up_refused = parse_reply(&up.evaluate(&directional_for(
+            "float-cross-4",
+            "win-1b",
+            serde_json::json!({"op": "focus", "window": "win-1b", "direction": "up", "float_subject": true}),
+            float_windows(),
+        )));
+        assert_eq!(up_refused["outcome"], "rejected", "{up_refused}");
+        assert_eq!(up_refused["kind"], "snapshot-invalid", "{up_refused}");
+        assert_eq!(up_refused["detail"], "focus-op-invalid", "{up_refused}");
+        let mut single = seed_pair();
+        let single_refused = parse_reply(
+            &single.evaluate(
+                &serde_json::json!({
+                    "v": 1,
+                    "correlation_id": "float-cross-5",
+                    "owner": "owner-1",
+                    "generation": "gen-1",
+                    "revision": 0,
+                    "fingerprint": 7,
+                    "domain": {
+                        "output": "DP-6",
+                        "workspace": "ws-1",
+                        "bounds": {"x": 0, "y": 44, "w": 2048, "h": 1108},
+                        "gap": 8,
+                        "outer_gap": 8,
+                    },
+                    "focused_window": "win-1b",
+                    "windows": [
+                        {"window": "win-1", "output": "DP-6", "workspace": "ws-1", "rect": {"x": 0, "y": 44, "w": 1024, "h": 1108}},
+                        {"window": "win-1b", "output": "DP-6", "workspace": "ws-1", "rect": {"x": 1024, "y": 44, "w": 1024, "h": 1108}, "floating": true, "fit_excluded": true},
+                    ],
+                    "command": {"op": "focus", "window": "win-1b", "direction": "right", "float_subject": true},
+                })
+                .to_string(),
+            ),
+        );
+        assert_eq!(single_refused["outcome"], "rejected", "{single_refused}");
+        assert_eq!(
+            single_refused["kind"], "snapshot-invalid",
+            "{single_refused}"
+        );
+        assert_eq!(
+            single_refused["detail"], "domain-invalid",
+            "{single_refused}"
+        );
+        let mut typed = seed_pair();
+        let malformed = parse_reply(&typed.evaluate(&directional_for(
+            "float-cross-6",
+            "win-1b",
+            serde_json::json!({"op": "focus", "window": "win-1b", "direction": "right", "float_subject": "yes"}),
+            float_windows(),
+        )));
+        assert_eq!(malformed["outcome"], "rejected", "{malformed}");
+        assert_eq!(malformed["kind"], "request-malformed", "{malformed}");
+    }
+
+    #[test]
     fn retained_ordinary_activation_resyncs_focus_for_directional() {
         // Part A: ordinary KWin activation changes only the observed
         // `focused_window`; retained Session focus otherwise only moves via
@@ -5723,7 +6035,7 @@ mod tests {
             cross_operation: Some(FocusOperation {
                 domain_output: OutputId::from("out-2"),
                 domain_workspace: WorkspaceId::from("ws-1"),
-                from_leaf: NodeId::from("a"),
+                from_leaf: Some(NodeId::from("a")),
                 to_leaf: NodeId::from("b"),
                 from_window: WindowId::from("win-1"),
                 to_window: WindowId::from("win-2"),

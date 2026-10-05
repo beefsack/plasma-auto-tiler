@@ -53,6 +53,12 @@ pub enum CoreCommand {
         window: String,
         direction: String,
         cross_output_transfer: bool,
+        /// Float-origin cross-output focus (Left/Right miss with no local
+        /// float target): the subject is a floating/sticky exception, so the
+        /// local tile-edge check is skipped and the existing reciprocal
+        /// adjacent remembered-tiled-target fallback applies. False for every
+        /// tile-origin request; true only from the adapter float path.
+        float_subject: bool,
     },
     Resize {
         window: String,
@@ -971,6 +977,7 @@ mod tests {
                 window: "w".to_owned(),
                 direction: "left".to_owned(),
                 cross_output_transfer: true,
+                float_subject: false,
             },
             CoreCommand::Resize {
                 window: "w".to_owned(),
@@ -1409,7 +1416,7 @@ mod tests {
         let operation = FocusOperation {
             domain_output: key.output.clone(),
             domain_workspace: key.workspace.clone(),
-            from_leaf: NodeId::from("a"),
+            from_leaf: Some(NodeId::from("a")),
             to_leaf: NodeId::from("b"),
             from_window: WindowId("win-1".to_owned()),
             to_window: WindowId("win-2".to_owned()),
@@ -1429,7 +1436,7 @@ mod tests {
                 intent: FocusIntent {
                     domain_output: key.output.clone(),
                     domain_workspace: key.workspace.clone(),
-                    focused_leaf: NodeId::from("a"),
+                    focused_leaf: Some(NodeId::from("a")),
                     focused_window: WindowId("win-1".to_owned()),
                     direction: Direction::Right,
                 },

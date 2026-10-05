@@ -606,20 +606,27 @@ impl FocusCapabilities {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FocusPrecondition {
     FocusedLeafOccupiedByFocusedWindow,
+    /// Float-origin subject: the focused window is a floating/sticky
+    /// exception with no tile leaf, so no leaf-occupancy claim applies.
+    /// Selected exactly when the operation carries no `from_leaf`; tile
+    /// operations always carry the leaf-occupancy token instead.
+    FocusedFloatingWindow,
     TargetLeafOccupied,
     FocusTargetsSameDomain,
     FocusTargetsAdjacentOutput,
     AdapterMustVerifyPostconditions,
 }
 
-/// Semantic focus intent: directional navigation from the focused leaf in one
-/// exact logical domain. Records the originating request so a plan can be
-/// interpreted without retaining caller-side state.
+/// Semantic focus intent: directional navigation from the focused window in
+/// one exact logical domain. Records the originating request so a plan can
+/// be interpreted without retaining caller-side state. Tile origins carry
+/// the focused tile leaf; float origins (floating/sticky exception subject)
+/// carry `None`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FocusIntent {
     pub domain_output: OutputId,
     pub domain_workspace: WorkspaceId,
-    pub focused_leaf: NodeId,
+    pub focused_leaf: Option<NodeId>,
     pub focused_window: WindowId,
     pub direction: Direction,
 }
@@ -633,13 +640,16 @@ pub struct FocusIntent {
 /// name the TARGET domain, `from_*` name the source focused leaf/window,
 /// `to_*` name the target focused leaf/window, `cross_source` names the
 /// source domain, and `route` is the single-element `[to_leaf]` (no
-/// tree-relative descent across domains). No geometry or native handles;
-/// desired topology is unmodified and carried by the session layer.
+/// tree-relative descent across domains). Float-origin cross-output focus
+/// (adapter local float search missed Left/Right) carries `from_leaf: None`:
+/// the subject is a floating/sticky exception with no tile leaf, so `from`
+/// names only the source window. No geometry or native handles; desired
+/// topology is unmodified and carried by the session layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FocusOperation {
     pub domain_output: OutputId,
     pub domain_workspace: WorkspaceId,
-    pub from_leaf: NodeId,
+    pub from_leaf: Option<NodeId>,
     pub to_leaf: NodeId,
     pub from_window: WindowId,
     pub to_window: WindowId,
@@ -657,7 +667,10 @@ impl FocusOperation {
     }
 
     /// Explicit preconditions for realization (always terminated by
-    /// [`FocusPrecondition::AdapterMustVerifyPostconditions`]).
+    /// [`FocusPrecondition::AdapterMustVerifyPostconditions`]). Leafless
+    /// (float-origin) operations select
+    /// [`FocusPrecondition::FocusedFloatingWindow`] instead of the
+    /// leaf-occupancy token; every other shape is unchanged.
     #[must_use]
     pub fn preconditions(&self) -> Vec<FocusPrecondition> {
         let domain_target =
@@ -666,8 +679,13 @@ impl FocusOperation {
             } else {
                 FocusPrecondition::FocusTargetsSameDomain
             };
+        let source_token = if self.from_leaf.is_none() {
+            FocusPrecondition::FocusedFloatingWindow
+        } else {
+            FocusPrecondition::FocusedLeafOccupiedByFocusedWindow
+        };
         vec![
-            FocusPrecondition::FocusedLeafOccupiedByFocusedWindow,
+            source_token,
             FocusPrecondition::TargetLeafOccupied,
             domain_target,
             FocusPrecondition::AdapterMustVerifyPostconditions,

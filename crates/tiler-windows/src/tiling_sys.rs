@@ -6097,6 +6097,7 @@ fn keyboard_tick(
                         window: from.0.clone(),
                         direction,
                         cross_output_transfer: false,
+                        float_subject: false,
                     },
                     SnapOp::Move => CoreCommand::Move {
                         window: from.0.clone(),

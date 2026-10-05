@@ -646,7 +646,13 @@ impl Reconciler {
             let reason = self.diverge(DivergenceKind::PostconditionMismatch);
             return Err(ProposeError::Diverged(reason));
         }
-        if plan.operation.from_leaf == plan.operation.to_leaf {
+        if plan.operation.from_leaf.as_ref() == Some(&plan.operation.to_leaf) {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        // Leafless (float-origin) operations ride the explicit cross-output
+        // route only: a missing `from_leaf` without a cross source diverges.
+        if plan.operation.from_leaf.is_none() && !plan.operation.is_cross_output() {
             let reason = self.diverge(DivergenceKind::PostconditionMismatch);
             return Err(ProposeError::Diverged(reason));
         }
@@ -3517,14 +3523,14 @@ mod tests {
             crate::contract::FocusIntent {
                 domain_output: OutputId("out-1".to_owned()),
                 domain_workspace: crate::directional::WorkspaceId("ws-1".to_owned()),
-                focused_leaf: NodeId("a".to_owned()),
+                focused_leaf: Some(NodeId("a".to_owned())),
                 focused_window: WindowId("win-a".to_owned()),
                 direction: Direction::Right,
             },
             crate::contract::FocusOperation {
                 domain_output: OutputId("out-1".to_owned()),
                 domain_workspace: crate::directional::WorkspaceId("ws-1".to_owned()),
-                from_leaf: NodeId("a".to_owned()),
+                from_leaf: Some(NodeId("a".to_owned())),
                 to_leaf: NodeId("b".to_owned()),
                 from_window: WindowId("win-a".to_owned()),
                 to_window: WindowId("win-b".to_owned()),
@@ -3726,7 +3732,7 @@ mod tests {
         let operation = crate::contract::FocusOperation {
             domain_output: OutputId("out-1".to_owned()),
             domain_workspace: crate::directional::WorkspaceId("ws-1".to_owned()),
-            from_leaf: NodeId("a".to_owned()),
+            from_leaf: Some(NodeId("a".to_owned())),
             to_leaf: NodeId("b".to_owned()),
             from_window: WindowId("win-a".to_owned()),
             to_window: WindowId("win-b".to_owned()),
@@ -3738,7 +3744,7 @@ mod tests {
         let intent = crate::contract::FocusIntent {
             domain_output: OutputId("out-1".to_owned()),
             domain_workspace: crate::directional::WorkspaceId("ws-1".to_owned()),
-            focused_leaf: NodeId("a".to_owned()),
+            focused_leaf: Some(NodeId("a".to_owned())),
             focused_window: WindowId("win-a".to_owned()),
             direction: Direction::Right,
         };

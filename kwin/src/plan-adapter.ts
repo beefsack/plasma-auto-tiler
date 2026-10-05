@@ -915,6 +915,91 @@ function isDirection(value: unknown): value is PlanDirection {
     return value === "left" || value === "right" || value === "up" || value === "down";
 }
 
+// Float-origin subject gate: the focused window must resolve to a
+// same-domain floating/sticky entry. Anything else (unknown, tiled,
+// cross-homed, flag-flipped) refuses before any search or dispatch.
+function floatSubjectEntry(observed: PlanObserved): PlanObservedWindow | null {
+    for (const entry of observed.windows) {
+        if (entry.id === observed.focusedId) {
+            if (
+                entry.output === observed.domainOutput &&
+                entry.workspace === observed.domainWorkspace &&
+                (entry.floating === true || entry.sticky === true)
+            ) {
+                return entry;
+            }
+            return null;
+        }
+    }
+    return null;
+}
+
+// COSMIC float-origin focus target (source `shell/mod.rs` float search):
+// strictly same-domain floating/sticky candidates compared by top-left
+// coordinate on the requested axis only. Candidate order is the sticky
+// layer first in native encounter order, then ordinary floats in native
+// encounter order (KWin `windowList` order; ties can differ from COSMIC's
+// native Space order). Up/Left admit non-positive deltas (equal included)
+// and keep the first nearest tie; Down/Right require strictly positive
+// deltas and keep the last nearest tie. Tiles are never candidates.
+// Returns the winning entry, or null when there is no local target or the
+// subject itself is not an eligible same-domain float/sticky window.
+export function selectFloatFocusTarget(
+    observed: PlanObserved,
+    direction: PlanDirection,
+): PlanObservedWindow | null {
+    const subject = floatSubjectEntry(observed);
+    if (subject === null) {
+        return null;
+    }
+    const vertical = direction === "up" || direction === "down";
+    const negative = direction === "up" || direction === "left";
+    const sticky: PlanObservedWindow[] = [];
+    const ordinary: PlanObservedWindow[] = [];
+    for (const entry of observed.windows) {
+        if (
+            entry.id === observed.focusedId ||
+            entry.output !== observed.domainOutput ||
+            entry.workspace !== observed.domainWorkspace ||
+            (entry.floating !== true && entry.sticky !== true)
+        ) {
+            continue;
+        }
+        if (entry.sticky === true) {
+            sticky.push(entry);
+        } else {
+            ordinary.push(entry);
+        }
+    }
+    let best: PlanObservedWindow | null = null;
+    let bestDist = 0;
+    const consider = (entry: PlanObservedWindow): void => {
+        const delta = vertical ? entry.rect.y - subject.rect.y : entry.rect.x - subject.rect.x;
+        if (negative) {
+            if (delta > 0) {
+                return;
+            }
+        } else if (delta <= 0) {
+            return;
+        }
+        const dist = delta < 0 ? -delta : delta;
+        if (best === null || dist < bestDist) {
+            best = entry;
+            bestDist = dist;
+        } else if (dist === bestDist && !negative) {
+            // Down/Right keep the last nearest tie; Up/Left keep the first.
+            best = entry;
+        }
+    };
+    for (const entry of sticky) {
+        consider(entry);
+    }
+    for (const entry of ordinary) {
+        consider(entry);
+    }
+    return best;
+}
+
 function isResizeMode(value: unknown): value is PlanResizeMode {
     return value === "inwards" || value === "outwards";
 }
@@ -1031,7 +1116,10 @@ export interface PlanFocusOperation {
     readonly op: "focus";
     readonly domainOutput: string;
     readonly domainWorkspace: string;
-    readonly fromLeaf: string;
+    // Leafless for float-origin cross-output focus (null on the wire):
+    // the subject is a floating/sticky exception with no tile leaf. Tile
+    // operations always carry a leaf string.
+    readonly fromLeaf: string | null;
     readonly toLeaf: string;
     readonly fromWindow: string;
     readonly toWindow: string;
@@ -1217,11 +1305,24 @@ function validatePlanned(reply: unknown, correlationId: string): PlannedReply | 
         if (operation !== null && operation.op === "focus") {
             const hasAdjacent = preconditions !== null && preconditions.indexOf("focus-targets-adjacent-output") >= 0;
             const hasSame = preconditions !== null && preconditions.indexOf("focus-targets-same-domain") >= 0;
+            const hasLeaf = preconditions !== null && preconditions.indexOf("focused-leaf-occupied-by-focused-window") >= 0;
+            const hasFloat = preconditions !== null && preconditions.indexOf("focused-floating-window") >= 0;
             const isCross = operation.crossSourceOutput !== null || operation.crossSourceWorkspace !== null;
             if (isCross !== hasAdjacent || (!isCross && !hasSame)) {
                 return null;
             }
             if (hasAdjacent && hasSame) {
+                return null;
+            }
+            // Leafless operations bind exactly to the floating-subject
+            // token: null from_leaf requires the float token (and never the
+            // leaf token), a leaf string requires the reverse. The float
+            // token additionally rides cross-output replies only.
+            const leafless = operation.fromLeaf === null;
+            if (leafless !== hasFloat || (hasFloat && (!isCross || hasLeaf || hasSame))) {
+                return null;
+            }
+            if (!leafless && !hasLeaf) {
                 return null;
             }
         } else if (operation !== null && operation.op === "move") {
@@ -1357,11 +1458,17 @@ function validateFocusOperation(value: unknown): PlanFocusOperation | null | und
     if (
         !isOpaqueId(value["domain_output"]) ||
         !isOpaqueId(value["domain_workspace"]) ||
-        !isOpaqueId(value["from_leaf"]) ||
         !isOpaqueId(value["to_leaf"]) ||
         !isOpaqueId(value["from_window"]) ||
         !isOpaqueId(value["to_window"])
     ) {
+        return undefined;
+    }
+    // Leafless (null) from_leaf rides float-origin cross-output replies
+    // only; whether it belongs there is decided with the preconditions and
+    // the flight below, never here alone.
+    const fromLeaf = value["from_leaf"];
+    if (fromLeaf !== null && !isOpaqueId(fromLeaf)) {
         return undefined;
     }
     const direction = value["direction"];
@@ -1391,7 +1498,7 @@ function validateFocusOperation(value: unknown): PlanFocusOperation | null | und
         op: "focus",
         domainOutput: value["domain_output"] as string,
         domainWorkspace: value["domain_workspace"] as string,
-        fromLeaf: value["from_leaf"] as string,
+        fromLeaf: (fromLeaf as string | null) ?? null,
         toLeaf: value["to_leaf"] as string,
         fromWindow: value["from_window"] as string,
         toWindow: value["to_window"] as string,
@@ -1411,6 +1518,7 @@ function validatePreconditions(value: unknown): ReadonlyArray<string> | null | u
     }
     const allowed = new Set([
         "focused-leaf-occupied-by-focused-window",
+        "focused-floating-window",
         "target-leaf-occupied",
         "focus-targets-same-domain",
         "focus-targets-adjacent-output",
@@ -2181,7 +2289,7 @@ export class PlanAdapter {
             return;
         }
         if (observed.activeExcluded) {
-            this.logToken(`${LOG_PREFIX}:focus-refused-floating`);
+            this.requestFloatFocus(observed, directional.kind === "ready", direction);
             return;
         }
         if (!this.isTiledDomain(observed.domainOutput, observed.domainWorkspace)) {
@@ -2195,6 +2303,81 @@ export class PlanAdapter {
             snapshot,
             removed: null,
             body: { op: "focus", window: snapshot.focusedId, direction },
+            direction,
+        });
+    }
+
+    // COSMIC float-origin directional focus (ordinary and sticky floats share
+    // the floating candidate layer; tile-origin behavior above is unchanged).
+    // Local search runs synchronously over the existing observation via
+    // `selectFloatFocusTarget` and actuates with exactly one `setActive`
+    // (fenced by revalidation plus active identity, no planner dispatch, no
+    // geometry writes). A Left/Right miss with a ready directional
+    // observation routes to the shared cross-output remembered-tiled
+    // target (`float_subject`); Up/Down misses and misses with no adjacent
+    // output retain focus. Unknown/non-floating subjects refuse fail-closed.
+    private requestFloatFocus(observed: PlanObserved, crossEligible: boolean, direction: PlanDirection): void {
+        // Ineligible subjects refuse immediately: no local actuation and no
+        // cross dispatch, even on a miss that would otherwise fall through.
+        if (floatSubjectEntry(observed) === null) {
+            this.logToken(`${LOG_PREFIX}:focus-refused-floating`);
+            return;
+        }
+        const target = selectFloatFocusTarget(observed, direction);
+        if (target !== null) {
+            let valid = false;
+            try {
+                valid = observed.revalidate();
+            } catch (error) {
+                void error;
+                valid = false;
+            }
+            if (!valid) {
+                this.logToken(`${LOG_PREFIX}:focus-float-refused-stale direction=${direction}`);
+                return;
+            }
+            let currentActive: object | null = null;
+            try {
+                currentActive = this.env.active();
+            } catch (error) {
+                void error;
+                currentActive = null;
+            }
+            if (currentActive !== observed.activeRef) {
+                this.logToken(`${LOG_PREFIX}:focus-float-refused-stale direction=${direction}`);
+                return;
+            }
+            if (currentActive !== target.ref) {
+                let focused = false;
+                try {
+                    focused = this.env.setActive(target.ref) === true;
+                } catch (error) {
+                    void error;
+                    focused = false;
+                }
+                if (!focused) {
+                    this.logToken(`${LOG_PREFIX}:focus-float-write-failed direction=${direction}`);
+                    return;
+                }
+            }
+            this.logToken(`${LOG_PREFIX}:focus-float-applied direction=${direction}`);
+            return;
+        }
+        if (direction === "up" || direction === "down" || !crossEligible) {
+            this.logToken(`${LOG_PREFIX}:focus-float-retained direction=${direction} reason=no-target`);
+            return;
+        }
+        if (!this.isTiledDomain(observed.domainOutput, observed.domainWorkspace)) {
+            this.logToken(`${LOG_PREFIX}:focus-refused-workspace-floating`);
+            return;
+        }
+        const snapshot = this.carriedSnapshot(observed);
+        this.noteObservation(snapshot.fingerprint);
+        this.dispatch({
+            op: "focus",
+            snapshot,
+            removed: null,
+            body: { op: "focus", window: snapshot.focusedId, direction, float_subject: true },
             direction,
         });
     }
@@ -7029,12 +7212,50 @@ export class PlanAdapter {
         if (operation.route.length !== 1 || operation.route[0] !== operation.toLeaf) {
             return false;
         }
-        const expected = [
-            "focused-leaf-occupied-by-focused-window",
-            "target-leaf-occupied",
-            "focus-targets-adjacent-output",
-            "adapter-must-verify-postconditions",
-        ];
+        // Float-origin flights (explicit `float_subject` in the retained
+        // dispatch body, never inferred from observation flags alone) carry
+        // the leafless floating-subject precondition and a null from_leaf;
+        // tile flights carry the leaf-occupancy token and a leaf string.
+        // The subject itself is verified against the retained flight
+        // snapshot below: id-bound to the dispatched focus, homed on the
+        // source domain, and floating/sticky there.
+        const floatFlight = (flightState.body as Record<string, unknown>)["float_subject"] === true;
+        if (floatFlight) {
+            if (operation.fromLeaf !== null) {
+                return false;
+            }
+            let subjectEligible = false;
+            for (const entry of flightState.snapshot.windows) {
+                if (
+                    entry.id === operation.fromWindow &&
+                    entry.id === flightState.snapshot.focusedId &&
+                    entry.output === source.output &&
+                    entry.workspace === source.workspace &&
+                    (entry.floating === true || entry.sticky === true)
+                ) {
+                    subjectEligible = true;
+                    break;
+                }
+            }
+            if (!subjectEligible) {
+                return false;
+            }
+        } else if (operation.fromLeaf === null) {
+            return false;
+        }
+        const expected = floatFlight
+            ? [
+                  "focused-floating-window",
+                  "target-leaf-occupied",
+                  "focus-targets-adjacent-output",
+                  "adapter-must-verify-postconditions",
+              ]
+            : [
+                  "focused-leaf-occupied-by-focused-window",
+                  "target-leaf-occupied",
+                  "focus-targets-adjacent-output",
+                  "adapter-must-verify-postconditions",
+              ];
         const actual = planned.preconditions;
         if (actual.length !== expected.length) {
             return false;
@@ -7503,6 +7724,17 @@ export class PlanAdapter {
         if (flightState.op === "focus" || flightState.op === "move") {
             const domains = flightState.snapshot.domains;
             if (domains !== undefined && domains.length === 2) {
+                // Float-origin focus flights accept only the fenced
+                // cross-output target above: a local plan never actuates on
+                // them, even when it homes to the source.
+                if (
+                    flightState.op === "focus" &&
+                    (flightState.body as Record<string, unknown>)["float_subject"] === true
+                ) {
+                    this.ordinaryTerminal(flightState, planned, "uncertain", "apply");
+                    this.failFlight(flightState, "precondition-mismatch");
+                    return;
+                }
                 const source = domains[0] as PlanDomain;
                 const focusOnSource =
                     planned.focus !== null &&

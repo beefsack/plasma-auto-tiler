@@ -148,6 +148,7 @@ fn focus_command(window: &str, direction: &str) -> CoreCommand {
         window: window.to_owned(),
         direction: direction.to_owned(),
         cross_output_transfer: false,
+        float_subject: false,
     }
 }
 
@@ -853,6 +854,7 @@ fn engine_paired_focus_with_source_skew_converges() {
             window: "win-b".to_owned(),
             direction: "left".to_owned(),
             cross_output_transfer: false,
+            float_subject: false,
         },
     };
     match engine.handle(&event) {

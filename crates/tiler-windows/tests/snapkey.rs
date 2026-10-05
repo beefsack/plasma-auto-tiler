@@ -897,6 +897,7 @@ fn engine_focus_moves_through_nested_topology() {
         window: w1.0.clone(),
         direction: "right".to_owned(),
         cross_output_transfer: false,
+        float_subject: false,
     };
     assert_eq!(focus.command.op(), "focus");
     let reply = engine.handle(&focus);
@@ -1122,6 +1123,7 @@ fn engine_edge_focus_is_a_no_op_rejection() {
         window: w1.0.clone(),
         direction: "left".to_owned(),
         cross_output_transfer: false,
+        float_subject: false,
     };
     let reply = engine.handle(&edge);
     assert!(
