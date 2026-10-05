@@ -241,6 +241,7 @@ decisions of 2026-09-24 are under
   (R-WS-02, R-WS-04, R-WS-05, R-START-03, R-MAX-01), then selects which
   reference differences the functional spec adopts; source filling alone
   makes no product decision.
+  [Cross-WM consensus analysis](research/reference-wm-consensus.md) covers all 58 rows, with cross-family candidates and evidence gaps.
 - P2 | Prior-art catalogue upkeep | Completed 2026-10-03 (`e4c1d92`):
   [maintained index](research/prior-art.md), grouped by desktop and type
   (compositor-native vs host-integrated) with algorithm families,
