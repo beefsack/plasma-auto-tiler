@@ -387,6 +387,14 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   difference classification stay in the KWin script, because sharing them
   needs a new JS-to-Rust route; they are revisited when the Windows port
   needs a shared contract. Next: Windows spikes.
+- User decision 2026-10-05: no new core extraction now; revisit when macOS
+  starts, using the candidates and boundary costs in the
+  [post-Windows audit](research/cross-platform-core/post-windows-audit.md).
+  This supersedes the earlier Windows-triggered extraction timing.
+- User decision 2026-10-05, KDE follow-up order: B1/B2 toggle repair, then
+  B3-B5 shared-change fixture coverage, then B7 underlay A/B, then B8
+  shortcut controls. B6 minimum fallback and the admission-maximize/game
+  question remain research, not selected behavior changes.
 
 ## Architecture Direction
 
@@ -558,7 +566,7 @@ the corresponding item ships; each such entry names its replacement.
   native maximize axis, matching the adapter's nonzero maximize collapse. The
   public KWin maximize transition signals update the border before and after
   geometry changes. The user manually accepted active-border suppression on
-  2026-09-21 and additionally requires the Meta-held group visual to hide
+  2026-09-21 and additionally requires the group visual to hide
   while maximized: neither visual may be visible.
 - User decision 2026-09-29: hide the native active border when the active
   window is an applet popup (`EffectWindow::isAppletPopup()`), restoring it on
@@ -632,8 +640,8 @@ the corresponding item ships; each such entry names its replacement.
   native title-bar interactive move. Win alone and resize alone do not trigger;
   the chord independently works during resize. End/cancel/removal clears the
   move arm; held chord is independent. The trigger is hard-coded with shared
-  portable policy in `tiler-core::visual`; KDE's current Meta-held behaviour
-  is unchanged. Win+drag movement itself belongs to parity item 7, which can
+  portable policy in `tiler-core::visual`; KDE adopted A/B offline on
+  2026-10-05, superseding its Meta-held trigger. Win+drag movement itself belongs to parity item 7, which can
   supply the same move arm later.
 - Use an enabled-by-default filled, premultiplied-alpha, layered click-through
   nonactivating tool window on the active-border carrier. KDE defaults:
@@ -1248,6 +1256,13 @@ the corresponding item ships; each such entry names its replacement.
   clearing. Current read-only enumeration found `kwin/KrohnkiteMonocleLayout`
   on `Meta+M`; registration preserves that record and emits the shadowed-
   delivery diagnostic until the user applies the exact reversible KCM override.
+- KDE toggle activation (user 2026-10-05, delivered offline): each explicit
+  maximize/sticky activation makes at most one native toggle attempt; no
+  persistent attempted-state map or automatic retry. Exact-reference echo
+  fences, refusal gates and focus retention remain. Admission-time maximize
+  clearing retains its separate one-shot rule. Physical held-key/autorepeat
+  delivery through KGlobalAccel remains user-owned acceptance. Evidence:
+  [KDE follow-up](changes/archive/kde-post-windows-followups.md).
 - H/V maximize is deliberately not modeled in the engine. Maximize is a
   recorded overlay state over the original layer, not a distinct topology or
   managed layer, so the engine carries no horizontal/vertical maximize concept.
@@ -1588,28 +1603,24 @@ the corresponding item ships; each such entry names its replacement.
 - Grouped/tabbed windows remain deferred pending compositor-owned KWin support
   and a live multi-window Custom Tile stability proof. No tab or stack carrier,
   controls, or bindings are selected.
-- Active-group highlighting: Meta-held observation is the user-approved
-  selected lifetime. One-second accepted/applied open/move/close behavior is
-  a fallback only if Meta-held proves unavailable or impractical,
-  never automatic when Meta is not held. The shipped route observes passive
-  public `EffectsHandler::mouseChanged(...)`. KWin Script workspace exposes
-  only cursor position, so Script alone cannot observe Meta hold. Additional
-  native input capability follows the Native Integration Boundary.
-- On a recognized Meta press, show the current valid active immediate group;
-  while held update/clear it on qualifying tiling/focus/domain changes; clear
-  on Meta release. First visibility does not require a tiling mutation. Only
-  if Meta-held proves unavailable or impractical, show about one second after
-  accepted/applied opening, moving, or closing tiling changes only; never
-  automatically when Meta is not held. Focus, resize, and general geometry
-  never start the timer. Qualifying tiling changes during hold update the
-  current visual without starting the timer; focus/domain changes during hold
-  may update or clear valid state but never start a timed flash. Fullscreen or
-  any native maximize axis hides both the group visual and active border,
-  including while Meta is held. Rust owns the group visibility policy.
-- Held-before-first-public-signal source limitation: minimal state and no
-  polling. Last modifier state is unknown until the first public
-  `mouseChanged`; do not assume Meta held. The effect remains hidden for that
-  missed initial-held edge.
+- KDE active-group underlay (user 2026-09-30, A/B delivered offline
+  2026-10-05): hard-coded Meta+Shift hold (both required, either order, extra
+  modifiers allowed) OR a matching focused-window native interactive move.
+  This supersedes Meta-only lifetime and the earlier timed-flash fallback.
+  Meta alone and resize alone do not trigger; the chord works independently
+  during resize. Existing shared `tiler-core::visual` policy is reached through
+  the effect FFI; no new script/Planner route or settings.
+- The effect captures the exact move window at Started and rechecks live
+  active focus plus the Rust-accepted group subject on every visibility
+  refresh. Title-bar and native modifier drags use the same move arm; finish,
+  cancel and exact-window removal clear it without clearing the chord. Existing
+  geometry, anchor, focus/domain, root-leaf, floating, fullscreen/maximize and
+  endpoint suppression remain. Unfocused-subject resolution (C) stays parked.
+- Passive `EffectsHandler::mouseChanged(...)` modifier state is unknown before
+  its first public signal; only the chord branch waits for that observation.
+  Matching native movement does not. No polling, timed flash or new input hook.
+  Native timing/pixels and multi-output behavior remain user-owned acceptance:
+  [A/B evidence and checks](changes/group-underlay-move-trigger.md).
 - Renderer: the active `OutlinedBorderItem` is a negative-z child of its
   target `EffectWindow::windowItem()`; KWin's public `Item::setParentItem()`
   and `mapFromScene()` keep its geometry window-local. The target texture and
@@ -1776,7 +1787,7 @@ the corresponding item ships; each such entry names its replacement.
   let a source-scoped restore marker fight the placement. During a tiled move,
   a separate native-effect filled translucent target-slot rectangle appears
   above windows, hidden for center/snap-back targets and cleared at drop,
-  cancellation or refusal. Its lifetime is independent of the Meta-held group
+  cancellation or refusal. Its lifetime is independent of the group
   outline. Orchestrator choices: carry the existing exact 80px sticky group-edge
   hover prior across preview samples into drop and derive preview from fresh
   complete observations with size hints using the same resolver. The default

@@ -118,6 +118,34 @@ Legend:
   above focus) @a8055cd
 - `S-xmo-shift` xmonad:src/XMonad/StackSet.hs:572-585 (`shiftWin`
   via `insertUp`/`delete'`) @a8055cd
+- `S-cos-min` cosmic-comp:src/shell/layout/tiling/mod.rs:3119-3128,3183-3185
+  and src/shell/layout/mod.rs:46-52 @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (tile allocation/cropping without minimum enforcement; fixed-size admission floats)
+- `S-cos-bornmax` cosmic-comp:src/shell/mod.rs:3001-3022,4461-4500
+  and src/shell/workspace.rs:1002-1043 @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (newcomer tiles then requested maximum overlays retained slot;
+  preceding unmaximize loop targets other existing maxima)
+- `S-hyp-min` Hyprland:src/layout/target/WindowTarget.cpp:236-247
+  and src/config/values/ConfigValues.cpp:604 @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (tiled size limits default off; opt-in size clamp/recenter, not auto-float)
+- `S-hyp-bornmax` Hyprland:src/desktop/view/window/Window.cpp:883-897,1230-1233,1527-1562
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (pending client maximum consumed/applied at map)
+- `S-bsp-min` bspwm:src/tree.c:101-134,150-170 and src/window.c:699-701
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (opt-in leaf size-hint clamp on every reflow; constraint-fence wiring TBD)
+- `S-bsp-admit` bspwm:src/rule.c:256-293 and src/tree.c:787-795
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (fullscreen state/fixed-size floating admission; maximum flags not admission state)
+- `S-i3-min` i3:src/render.c:43-124 and src/manage.c:461-474,528-533
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (tiled render allocation; fixed-size admission floats separately)
+- `S-i3-admit` i3:src/manage.c:139-143,402-421 and src/con.c:428-474,
+  src/x.c:834-864 @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (fullscreen atom admission; maximize flags derived from layout)
+- `S-xmo-admit` xmonad:src/XMonad/Operations.hs:90-124,328-335
+  @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+  (core-only ordinary manage/tile path; configured hooks/contrib remain TBD)
 - `D-move` [cosmic-move-conformance.md](../cosmic-move-conformance.md)
   (S1-S3 UT 2026-08-20, version unknown; S4-S23 authored observations;
   S1-17/S3-05 unconfirmed corrections)
@@ -167,6 +195,27 @@ Legend:
 - `D-sticky`
   [windows-sticky-float.md](../changes/archive/windows-sticky-float.md)
   (scoped helper proof, remainder user-owned)
+- `D-kde-follow` [KDE post-Windows follow-ups](../changes/archive/kde-post-windows-followups.md)
+  (2026-10-05 fixture-first explicit toggle repair and KDE/Engine coverage;
+  offline evidence, physical delivery remains TBD)
+- `D-min-games` [minimums and game admission](../research/cross-platform-core/post-windows-audit.md#2026-10-05-follow-up-q2-minimum-infeasibility--q3-games)
+  (2026-10-05 current project source and pinned upstream comparison;
+  unsupported exact native outcomes remain TBD, not inferred from source policy)
+- `S-ours-toggle` plasma-auto-tiler:kwin/src/plan-adapter.ts:2873-2899,4793-4801
+  and crates/tiler-windows/src/tiling_sys.rs:6482-6491 @ad6d69c
+  (persistent KDE attempted-state fence vs discrete Windows dispatch;
+  source paths, not physical repeat-delivery proof)
+- `S-ours-fs-exit` plasma-auto-tiler:kwin/src/plan-adapter.ts:2926-2938
+  and crates/tiler-windows/src/tiling.rs:635-677 @ad6d69c
+  (public KDE fullscreen setter vs Windows project-preimage exit gate)
+- `S-ours-sticky-restart` plasma-auto-tiler:kwin/src/plan-adapter.ts:3007-3036
+  and crates/tiler-windows/src/tiling_sys.rs:8867-8898,8981-8999 @ad6d69c
+  (native-sticky unknown-float adoption vs marker consumption into normal float)
+- `S-ours-overlay-unfloat` plasma-auto-tiler:kwin/src/plan-adapter.ts:2815-2841,7645-7648,7750-7765
+  and crates/tiler-windows/src/tiling.rs:395-410,
+  crates/tiler-windows/src/tiling_sys.rs:7788-7813 @ad6d69c
+  (KDE floating target bypasses overlay dispatch refusal; Windows refuses;
+  settled KDE native outcome remains TBD)
 - `D-alt-tab`
   [hidden-workspace Alt+Tab research](../research/windows-port/alt-tab-hidden-workspaces.md)
   (official docs, pinned KWin/reference source and upstream reports; no live probe)
@@ -232,6 +281,8 @@ Legend:
 | R-FLT-02 | `H[A,B*]` + WS2 | Sticky-on B, switch WS, sticky-off | Visibility across WS; off placement | Excluded from tiling, stays on top; `D(D-ref)` | Float-only guard `S(S-hyp-pin)`; all-workspaces per docs `D(D-ref)` | Monitor-desktop scope only; `S(S-bsp-sticky)` | TBD | TBD | All managed workspaces of output, float-only; Win+Shift+G; origin-honoring off (tiled fresh-admits, float stays float); `D(D-dec-ww)` KDE + `D(D-sticky)` Windows scoped proof | V-STICKY-SCOPE |
 | R-FLT-03 | 1920px effective parent width; `H[A,B,C]` 50/30/20 (960/576/384) | Float A (50% child); do not unfloat | Survivor widths: ratio-preserve vs equalize | B/C become 60/40 at 1152/768, ratio preserved; `UT(2026-08-22)` + [Test C](../cosmic-move-conformance.md#follow-up-manual-observations-tests-a-c) | TBD | TBD | TBD | TBD | TBD (Engine removal reflow not checked here) | V-FLOAT-REFLOW |
 | R-FLT-04 | Workspace tiled with A/B, optionally intentional per-window float C | Toggle workspace floating; move A; open D; toggle tiled | Untouched frames/native new window, fresh fit vs retained layout; C exception and effects | TBD | TBD | TBD | TBD | TBD | KDE: floating/tiled user-confirmed, no-write release/fresh fit selected `D(D-dec-ww)`; Windows: native move/new-window/frame preservation, release/fresh fit, independent border and floating drag underlay/preview suppression proven synthetically; C exception preserved by actual Engine regression, physical row TBD [record](../changes/archive/windows-workspace-tiling.md) | V-WS-TILING |
+| R-FLT-05 | B sticky floating on WS1; WS2 exists | Restart tiler owner; select WS2 | B remains sticky-visible vs becomes ordinary float; remembered origin | TBD | TBD | TBD | TBD | TBD | KDE source adopts surviving native sticky as unknown-origin sticky float; Windows consumes surviving project marker into normal float on current managed workspace, discarding origin; `S(S-ours-sticky-restart)` + `D(D-sticky)`; exact restart/visibility journey TBD | V-STICKY-SCOPE |
+| R-FLT-06 | Workspace tiled; B is intentional ordinary float, then natively maximized | With B focused, toggle ordinary float once | Overlay refusal vs logical unfloat beneath retained maximize; settled slot/frame/focus | TBD | TBD | TBD | TBD | TBD | KDE dispatch gate allows floating target despite maximize; unfloat transition clears floating intent while overlay writes are skipped, settled result TBD. Windows refuses `float-refused-maximize`; `S(S-ours-overlay-unfloat)`; physical outcome TBD | V-FLOAT-GEO / V-MAX-MODEL |
 
 ## 5. Maximise / fullscreen
 
@@ -239,7 +290,11 @@ Legend:
 |---|---|---|---|---|---|---|---|---|---|---|
 | R-MAX-01 | `H[A,B*,C,D]` equal shares, effective width 2544px, gap 8; min widths 401/864/627/582 constrain actual allocation | Maximize B, then restore B | Sibling desired/actual stability, retained hints, exact slot, convergence delay | Super+M distinct from F11; `D(D-cosmic-kb)`; numeric sibling behavior TBD | `maximized` vs `fullscreen` modes; `D(D-ref)`; numeric result TBD | No maximize state (`monocle` is layout); `D(D-ref)` | TBD | TBD | KDE: slot/share kept, no writes, exact restore `D(D-dec-ww)`; Windows: same + retained hints + bounded async restore; synthetic proof `D(D-max)` + `D(D-place)`; physical feel pending | V-MAX-MODEL |
 | R-MAX-02 | `H[A,B*]` | Fullscreen B; focus A; focus B; exit fullscreen | Tree mutation; focus enter/leave; restore | Separate focus surface; `D(D-ref)`; sequence outcome TBD | Covers, returns to slot; `D(D-ref)`; focus sequence TBD | Fills monitor, tree kept; `D(D-ref)`; focus sequence TBD | TBD | TBD | Retained slot overlay; focus may enter/leave; `D(D-dec-ww)` KDE + `D(D-fs)` Windows scoped proof; physical focus sequence pending | V-FS-SLOT |
-| R-MAX-03 | Workspace floating, first-seen maximized A without a prior tile slot | Toggle tiled; restore A if still maximized | Preserve floating maximum, then one-shot native restore and actual fresh tiled plan/write/readback | TBD | TBD | TBD | TBD | TBD | KDE source: floating gate skips admission clear; first tiled admission restores unslotted maximum once and refetches normal state (`kwin/src/plan-adapter.ts:4905-4909,5351-5418`); Windows: slotless membership preserves floating maximum and hide/reveal, then one clear and fresh tiled plan/native write/matched target readback proven with Notepad/Paint; slotted overlays skip re-clear [accepted correction](../changes/archive/windows-workspace-tiling.md#r-max-03-accepted-correction); physical feel TBD | V-WS-TILING |
+| R-MAX-03 | Workspace floating, first-seen maximized A without a prior tile slot | Toggle tiled; restore A if still maximized | Preserve floating maximum, then one-shot native restore and actual fresh tiled plan/write/readback | TBD | TBD | TBD | TBD | TBD | KDE source: floating gate skips admission clear; first tiled admission restores unslotted maximum once and refetches normal state (`kwin/src/plan-adapter.ts:4883-4888,5330-5397`); Windows: slotless membership preserves floating maximum and hide/reveal, then one clear and fresh tiled plan/native write/matched target readback proven with Notepad/Paint; slotted overlays skip re-clear [accepted correction](../changes/archive/windows-workspace-tiling.md#r-max-03-accepted-correction); physical feel TBD | V-WS-TILING |
+| R-MAX-04 | `H[A,B*]`; B normal and remains the same native window | Shortcut-maximize B; native-restore B; press the same shortcut again | New maximize attempt vs persistent attempted-state refusal | TBD | TBD | TBD | TBD | TBD | KDE repaired 2026-10-05: same-ref adapter regression issues a new native attempt after restore (and reverse ordering), `D(D-kde-follow)`; earlier refusal remains historical `S(S-ours-toggle)`. Windows dispatches one attempt per new discrete down, `D(D-dec-max)`; physical repeat/delivery outcome TBD | V-MAX-MODEL |
+| R-MAX-05 | B entered app-owned fullscreen without a tiler fullscreen preimage | Focus B; request project fullscreen toggle | Native exit attempt vs refusal of app-owned fullscreen; slot/geometry after exit | TBD | TBD | TBD | TBD | TBD | KDE invokes public fullscreen setter toward normal; Windows refuses app-owned exit without its restoration preimage, never synthesizes app F11; `S(S-ours-fs-exit)` + `D(D-fs)`; app-specific native completion/slot outcome TBD | V-FS-SLOT |
+| R-MAX-06 | Tiled workspace with B; first-seen eligible maximized A has no retained tile slot and is not fullscreen | Admit A; later natively restore A | One-shot launch restore vs reserved-slot overlay vs slotless hold; B allocation, A admission and focus | Tiles A then applies requested maximum as overlay with tile slot retained; other existing maxima unmaximized first; `S(S-cos-bornmax)`; exact focus/restore TBD | Pending maximum applied at map as maximized mode; `S(S-hyp-bornmax)`; exact siblings/focus TBD | Ordinary tile state; maximum flags not admission state, fullscreen handled separately; `S(S-bsp-admit)`; exact focus TBD | Ordinary tiling; maximum flags derive from layout; `S(S-i3-admit)`; exact focus TBD | Core ordinary manage/tile path; `S(S-xmo-admit)`; hooks/contrib and exact focus TBD | Current KDE/Windows make one admission-time clear attempt; retained slots/fullscreen/floating domains are exempt. Proposed preserve variants and later setting are unselected; exact native journey TBD, `D(D-min-games)` | V-MAX-MODEL |
+| R-MAX-07 | Captionless window covers the full monitor; KDE native fullscreen and maximize flags are false | First observe/admit it | Fullscreen exemption vs ordinary tiling despite monitor coverage | TBD (size-inference path not fully established) | TBD (size-inference path not fully established) | Ordinary manage absent fullscreen atom/rule; `S(S-bsp-admit)`; exact fixture TBD | Ordinary manage absent fullscreen atom/override-redirect; `S(S-i3-admit)`; exact fixture TBD | Core ordinary manage path; `S(S-xmo-admit)`; hooks/contrib and exact fixture TBD | KDE does not infer fullscreen from size, so no maximize-clear but ordinary tiling is possible; Windows captionless monitor containment classifies fullscreen. Actual game presentation mode is not established by either shape; `D(D-min-games)` | V-FS-SLOT |
 
 ## 6. Startup adoption
 
@@ -293,6 +348,14 @@ Legend:
 | R-CTL-05 | KDE focus-right kept; Lock Session on Meta+L | Stage Compatible; ordinary settings Save; Apply Shortcuts; reopen; restart session | Staging/Save leave shortcuts untouched; Disable survives; Lock Session unchanged | TBD | TBD | TBD | TBD | TBD | KDE selected: explicit own-action clear, native storage authoritative, no Lock relocation while disabled; live restart/physical delivery TBD [record](../changes/kde-shortcut-conflicts.md) | V-SHORTCUT-CONFLICT |
 | R-CTL-06 | KDE foreign action has a project chord plus an unrelated chord | Keep conflicting row; Apply; preview Force; edit row to Disable; try Force; Apply | Draft edit invalidates preview; disabled row causes no foreign clearing; unrelated chord survives | TBD | TBD | TBD | TBD | TBD | KDE selected: exact draft/owner/presence/active-image revalidation, no disabled-key holder mutation; live outcome TBD [record](../changes/kde-shortcut-conflicts.md) | V-SHORTCUT-CONFLICT |
 | R-CTL-07 | KDE Force previously cleared a noncompiled foreign default chord | Stage Compatible; Apply; Revert Shortcuts | Default conflict still disabled; no automatic restore; separate Revert restores foreign defaults and retains own Disable | TBD | TBD | TBD | TBD | TBD | KDE selected: compiled plus discovered defaults/current holders; Revert remains default restoration, not preimage recovery; live outcome TBD [record](../changes/kde-shortcut-conflicts.md) | V-SHORTCUT-CONFLICT |
+
+## 12. Minimum-size transitions
+
+| ID | Start | Action | Observe | COSMIC | Hyprland | bspwm | i3 | xmonad | Ours (KDE/Windows) | Variant |
+|---|---|---|---|---|---|---|---|---|---|---|
+| R-MIN-01 | Tiled `H[A*,B]`, inner area 1080x300, gap 8; A/B minima 500x100 | Open C with minimum 100x100 | Newcomer vs existing member infeasibility; which window floats, skips or overlaps; alternative arrangement considered or not | Traced allocation/cropping without minimum enforcement; fixed-size admission floats separately; `S(S-cos-min)`; exact native fixture TBD | Tiled limits off by default; opt-in clamp/recenter may overlap/overflow, not auto-float; `S(S-hyp-min)`; exact fixture TBD | Hints default off `S(S-bsp-hint)`; opt-in clamps every leaf on reflow, including existing members `S(S-bsp-min)`; exact fixture/fence wiring TBD | Traced tiled render without minimum clamping; fixed-size admission floats separately; `S(S-i3-min)`; exact fixture TBD | Core tile sizing without hint clamp; fixed/transient admission floats separately; `S(S-xmo-admit)`; hooks/layout/exact fixture TBD | Shared projection reallocates within the selected tree, without alternative-arrangement search; overconstrained members keep slots, KDE skips writes, Windows uses origin+minimum. Exact fixture/result TBD; automatic victim/return policy unselected, `D(D-min-games)` | V-START-MIN |
+| R-MIN-02 | Tiled `H[A,B]`, inner width 1220, gap 8; both minimum widths 600 | Shrink inner width to 1080 | Existing members become infeasible; native frames, focus, float intent and recovery after width grows | Same traced allocation/cropping `S(S-cos-min)`; native shrink/grow/focus TBD | Same tiled clamp setting `S(S-hyp-min)`; default unclamped, opt-in recentered clamp; exact shrink/grow/focus TBD | Same per-leaf hint clamp when enabled `S(S-bsp-min)`; off by default; exact recovery/fence TBD | Same tiled allocation `S(S-i3-min)`; exact shrink/grow/focus TBD | Core unconditional tile sizing `S(S-xmo-admit)`; hooks/exact shrink/grow/focus TBD | Same shared minimum projection; current KDE skip/Windows origin+minimum, neither auto-floats. Exact shrink/grow journey TBD. A hint-only change on KDE is not an independent dispatch trigger, `D(D-min-games)` | V-START-MIN |
+| R-MIN-03 | Empty tiled domain, inner area 1080x600 | Open A with declared minimum 1200x500 | Tile/flag vs automatic float; overflow remains even without siblings | Same tile allocation/cropping; fixed-size exception not oversized-min policy; `S(S-cos-min)`; native sole-leaf result TBD | Same default-unclamped/opt-in-clamped tiling `S(S-hyp-min)`; native sole-leaf result TBD | Default hints off; honored hints grow leaf at origin `S(S-bsp-min)`; native exact frame TBD | Same tiled render for ordinary resizable client `S(S-i3-min)`; native exact result TBD | Core asks for sole tile rectangle regardless of minimum `S(S-xmo-admit)`; native/hooks result TBD | Core projects the sole leaf and flags its violated minimum; KDE skips, writable Windows raises width at tile origin. Floating cannot make this minimum fit the work area; exact native journey TBD, `D(D-min-games)` | V-START-MIN |
 
 ## Deferred areas
 
