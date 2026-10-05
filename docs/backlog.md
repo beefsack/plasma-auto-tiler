@@ -228,16 +228,19 @@ decisions of 2026-09-24 are under
   done; every behaviour ambiguity adds a row the user can fill later when
   source code cannot answer it. Initial matrix delivered (`076aba1`,
   [reference outcomes](spec/reference-outcomes.md), 27 scenarios, format
-  provisional); AGENTS.md now requires a row per ambiguity. Next: user
-  confirms the format and fills priority TBD rows (R-WS-02, R-WS-04,
-  R-WS-05, R-START-03, R-MAX-01), then the spec selects supported variants.
-  COSMIC column filled from source (`bdb205f`, 37 rows sourced, native
-  outcomes still TBD where only live testing can answer). Open user choice:
-  which COSMIC differences to adopt (R-WS-01/02/04/06/07, R-FLT-01/02/04/06,
-  R-FLT-11 quarter-snap, float-origin miss workspace cycling, R-MAX-02/05/07,
-  R-START-01, R-MIN, R-GRP-01, R-DRAG-01/04/06/07/08, R-CTL-04). User
-  (2026-10-05): fill Hyprland, sway, i3, xmonad, bspwm, qtile and awesome
-  columns from source next (sway/qtile/awesome are new columns).
+  provisional); AGENTS.md now requires a row per ambiguity. All eight
+  reference columns source-filled under pinned profiles: COSMIC (`bdb205f`),
+  Hyprland (`4f82534`), bspwm (`e6b71cc`), i3 (`4128bdf`), xmonad (`548146d`),
+  sway (`332afdc`), qtile (`c32eb48`) and awesome (`046a1e8`). Matrix now has
+  58 scenarios; source policy is qualified where fixtures/actions differ,
+  and native outcomes remain TBD for user testing. Open user choice: which
+  reference differences to adopt as supported variants, including COSMIC
+  workspace send/return, float/sticky, quarter-snap and miss cycling,
+  maximize/fullscreen, startup/minimums, stacks, drag and owner controls.
+  Next: user confirms the format and tests priority native TBD rows
+  (R-WS-02, R-WS-04, R-WS-05, R-START-03, R-MAX-01), then selects which
+  reference differences the functional spec adopts; source filling alone
+  makes no product decision.
 - P2 | Prior-art catalogue upkeep | Completed 2026-10-03 (`e4c1d92`):
   [maintained index](research/prior-art.md), grouped by desktop and type
   (compositor-native vs host-integrated) with algorithm families,

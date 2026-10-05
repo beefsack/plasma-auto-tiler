@@ -55,6 +55,7 @@
 - Tiled mouse movement swaps on hover, with no stack join, pickup threshold or Escape cancellation. Mod4 and titlebar producers are source-qualified. Explicit floating state and client order persist; sticky is also restored through EWMH hint roundtrip, with native visibility/origin journey TBD.
 - Independent review corrected Mod1 to Mod4, traced insertion/order and native maximize requests into core C, and completed sticky restart evidence. Lead reconciliation rejected an initial unsupported-enable interpretation (one semantic failed approach): a workspace-scoped action maps to per-tag layout.set, not a nonexistent global flag. Review then corrected START-01..03/FLT-04/MAX-03 consistently. No unresolved findings or causal harness repair.
 - Lead integrity verification passed against c32eb48: 12 14-column tables, 58 unchanged IDs/order, protected cells/profiles/register/prose identical, citations resolve and target pins/ranges valid; git diff --check clean. No new rows or live testing.
+- Committed and pushed as 046a1e8, Record source-proven awesome reference outcomes.
 
 ### awesome residual TBD accounting
 
@@ -63,3 +64,11 @@
 | Inapplicable N-ary/nested fixture | MOV-01, MOV-03..04, FLT-03, CLOSE-01, OUT-02 |
 | Unsupported parameter/owner control/switcher | WS-03, WS-07, GRP-01, CTL-01..07 |
 | Geometry/focus/native/identity-order journey | INS-01..02, MOV-02, WS-01..02, WS-04..06, FLT-01..02, FLT-04..06, FLT-10..11, MAX-01..07, START-01..03, CLOSE-02, OUT-01, DRAG-01..04, DRAG-06..08, MIN-01..03 |
+
+## Handover
+
+- Sequential muse-spark Workers completed two bounded source units and one independent review per column, using direct Lead-to-Worker dispatch without nested delegation.
+- All earlier columns, Ours and Variant preserved; no product/decision changes, new rows, live testing, dependency installs or user-owned devenv.nix staging. No suspected earlier-column source errors confirmed.
+- Backlog advanced by explicit user authorization: all eight reference source passes complete, all eight commits listed, native user testing and reference-variant choices remain open.
+- Reusable gotchas: qtile has backend-specific native maximize handling; awesome floating layout is not per-client floating intent, directional verbs are APIs rather than shipped keys, and EWMH sticky persists independently of the Lua persistent-property register.
+- Exact next action: user tests native priority TBD rows R-WS-02, R-WS-04, R-WS-05, R-START-03 and R-MAX-01, then chooses reference differences to adopt. No further source-column work remains.
