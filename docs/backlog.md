@@ -162,6 +162,27 @@ decisions of 2026-09-24 are under
   minimum-sized windows can overlap or extend past the work area; the KDE
   adapter still skips overconstrained writes.
   [record](changes/archive/windows-placement-correctness.md)
+- P1 | KDE follow-ups from the Windows port | Audit 2026-10-05
+  ([note](research/cross-platform-core/post-windows-audit.md)); user order
+  B1/B2, B3-B5, B7, B8. B1/B2 stale maximize/sticky attempted-state
+  refusals repaired offline (one attempt per activation; 843 KWin tests
+  pass); B3-B5 shared-core KDE fixtures added, no defect found
+  ([record](changes/archive/kde-post-windows-followups.md)). User laptop
+  (2026-10-05): Meta+M, then Meta+Shift+G refused while maximized, then
+  Meta+M restored, as decided. DEFECT: Meta+Shift+G on a tiled window
+  floats it sticky but focus moves to another window (Meta+G keeps focus);
+  contradicts the exact-toggle focus retention decision; may relate to
+  the B2 sticky change; needs investigation. Still pending: native-change
+  repeats and held-key autorepeat. Open user choices with evidence in the note: B6 infeasible
+  minimums (float fallback asked; recommendation origin+minimum or
+  admission-only float) and admission-time unmaximize vs games
+  (recommendation: preserve slotless until native restore if changed);
+  pinned 11-WM source comparison added, recommendations unchanged. B7
+  movement-only underlay A/B delivered offline (Meta+Shift chord or focused
+  native user move; host-matched native build and all gates pass; paired
+  FFI signature change; C parked); user tested A/B on the laptop
+  (2026-10-05): all good; PC remap checks later. Next: B8 after user acceptance of the existing KDE
+  shortcut controls. Core extraction: no new move until macOS starts.
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.
@@ -252,7 +273,8 @@ decisions of 2026-09-24 are under
   underlay only while moving windows, replacing Meta-held. Staged: A
   Meta+Shift hold; B focused-window interactive move (Meta+drag, title-bar
   drag); C unfocused dragged-window support. Move-only, hard-coded. Stop and
-  report if any stage (especially C) grows complex. Next: stage A.
+  report if any stage (especially C) grows complex. A/B delivered
+  2026-10-05, user laptop check good (see KDE follow-ups above); C parked.
   [change](changes/group-underlay-move-trigger.md)
 - P1 | Ghostty/local native alignment | The ~56 px shortfall is unexplained
   (source-only baseline fix is in; needs a fresh `just dev trace` local-move
