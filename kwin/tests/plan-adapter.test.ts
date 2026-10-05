@@ -2527,6 +2527,60 @@ describe("plan adapter sticky and maximize toggles", () => {
         ]);
     });
 
+    it("tiled-origin sticky-on keeps the exact subject active across a synchronous membership steal", () => {
+        // Tiled-origin sticky-on under a synchronous membership steal: the
+        // all-desktops write flips activation to the sibling while Rust
+        // desired_focus names the survivor; the subject keeps focus with one write.
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let floating = false;
+        let sticky = false;
+        let keepAbove = false;
+        let active: object = refs.a;
+        mocks.observeImpl = () => makeObserved(refs, { focused: active, floating: { "win-a": floating }, sticky: { "win-a": sticky } });
+        mocks.activeImpl = () => active;
+        const writableEnv = mocks.env as { setActive: (target: object) => boolean };
+        const origSetActive = writableEnv.setActive;
+        writableEnv.setActive = (target: object) => {
+            const ok = origSetActive(target);
+            if (ok) {
+                active = target;
+            }
+            return ok;
+        };
+        mocks.keepAboveReadImpl = (target) => (target === refs.a ? keepAbove : null);
+        mocks.keepAboveToggleImpl = (target, value) => {
+            assert.equal(target, refs.a);
+            keepAbove = value;
+            return "invoked";
+        };
+        mocks.desktopToggleImpl = (target, allDesktops) => {
+            assert.equal(target, refs.a);
+            sticky = allDesktops;
+            if (allDesktops) {
+                active = refs.b;
+            }
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        const floatPayload = plannerPayload(mocks, 0);
+        assert.deepEqual(floatPayload["command"], { op: "toggle-float", window: "win-a" });
+        floating = true;
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: floatPayload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            desired_focus: { domain_output: "out-1", domain_workspace: "ws-1", leaf: "win-b-leaf" },
+            float_geometry: { window: "win-a", rect: { x: 100, y: 100, w: 600, h: 400 } },
+        }));
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: true }]);
+        assert.equal(active, refs.a, "exact subject remains active across the membership steal");
+        assert.deepEqual(mocks.actives, [refs.a], "one synchronous retention write, never a survivor focus write");
+    });
+
     it("option A Meta+G on sticky from tiled origin clears all-desktops, restores keep-above, tiles, and stays tiled", () => {
         // User decision 2026-09-25 option A (tiled origin, trace-essential):
         // sticky-on (Meta+Shift+G) -> Meta+G -> native sticky off -> tile ->
@@ -8548,6 +8602,95 @@ describe("plan entry sticky workspace-switch regression", () => {
             assert.deepEqual((retry["command"] as Record<string, unknown>)["op"], "update-gaps");
             const retried = await flushPlan(mocks, engine, 2);
             assert.equal(retried["outcome"], "planned", `update-gaps retry plans, engine replied ${JSON.stringify(retried)}`);
+        } finally {
+            handle?.stop();
+            await engine.close();
+        }
+    });
+
+    it("sticky-on then automatic flag reconcile keeps the exact subject active", async () => {
+        // Trace plan-1 p5/p6 against the real Engine: synchronous sticky echo
+        // inside the native write, then the automatic flag-change reconcile
+        // must not activate the tiled survivor.
+        const world = fakeWorld();
+        const winA = world.wins[0] as Record<string, unknown>;
+        const winB = world.wins[1] as Record<string, unknown>;
+        let stickyFlag = false;
+        Object.defineProperty(winA, "onAllDesktops", {
+            get: (): boolean => stickyFlag,
+            set: (value: unknown): void => {
+                stickyFlag = value === true;
+                for (const handler of [...(world.winDesktops.get(winA)?.handlers ?? [])]) {
+                    handler();
+                }
+            },
+            enumerable: true,
+            configurable: true,
+        });
+        const activeWrites: object[] = [];
+        let activeCurrent: object = winA;
+        Object.defineProperty(world.workspace, "activeWindow", {
+            get: (): object => activeCurrent,
+            set: (value: object): void => {
+                activeWrites.push(value);
+                activeCurrent = value;
+            },
+            enumerable: true,
+            configurable: true,
+        });
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "entry enabled");
+        const engine = StickyEngineBridge.start();
+        try {
+            const resolved = handle as StickyHandle;
+            assert.equal(world.workspace["activeWindow"], winA, "setup: subject starts active");
+            fireAdded(world, mocks);
+            assert.equal(mocks.dbusCalls.length, 1, `startup dispatches once, logs: ${tailLogs(mocks)}`);
+            reconcileOp(mocks, 0);
+            const seed = await flushPlan(mocks, engine, 0);
+            assert.equal(seed["outcome"], "planned", `setup: startup fits, engine replied ${JSON.stringify(seed)}`);
+            assert.equal(world.workspace["activeWindow"], winA, "setup: startup keeps the subject active");
+            resolved.requestFloat();
+            assert.equal(mocks.dbusCalls.length, 2, `float dispatches, logs: ${tailLogs(mocks)}`);
+            const floated = await flushPlan(mocks, engine, 1);
+            assert.equal(floated["outcome"], "planned", `setup: float plans, engine replied ${JSON.stringify(floated)}`);
+            assert.equal(world.workspace["activeWindow"], winA, "setup: plain float retains the subject");
+            resolved.requestFloat();
+            assert.equal(mocks.dbusCalls.length, 3, `unfloat dispatches, logs: ${tailLogs(mocks)}`);
+            const tiled = await flushPlan(mocks, engine, 2);
+            assert.equal(tiled["outcome"], "planned", `setup: unfloat plans, engine replied ${JSON.stringify(tiled)}`);
+            assert.equal(world.workspace["activeWindow"], winA, "setup: unfloat retains the subject");
+            const base = mocks.logs.length;
+            resolved.requestSticky();
+            assert.equal(mocks.dbusCalls.length, 4, `sticky-on dispatches, logs: ${tailLogs(mocks)}`);
+            const stickyReply = await flushPlan(mocks, engine, 3);
+            assert.equal(stickyReply["outcome"], "planned", `setup: sticky-on plans, engine replied ${JSON.stringify(stickyReply)}`);
+            assert.equal(winA["onAllDesktops"], true, "setup: sticky-on takes native all-desktops");
+            const trail = mocks.logs.slice(base);
+            const order = (token: string): number => trail.findIndex((line) => line.includes(token));
+            const issued = order("target=all-desktops outcome=issued");
+            const consumed = order("sticky-echo-consumed");
+            const invoked = order("target=all-desktops outcome=invoked");
+            const retained = order("sticky-focus-retained");
+            const applied = order("outcome=planned-applied");
+            assert.ok(issued >= 0 && consumed > issued && invoked > consumed && retained > invoked && applied > retained, `native order issued<consumed<invoked<retained<applied, logs: ${trail.join(" | ")}`);
+            assert.equal(world.workspace["activeWindow"], winA, "setup: sticky-on retains the subject");
+            fireGeometry(world, winA);
+            runEntryDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, 5, `flag change dispatches one auto reconcile, logs: ${tailLogs(mocks)}`);
+            const autoPayload = reconcileOp(mocks, 4);
+            assert.equal(autoPayload["focused_window"], "win-a", "auto reconcile request still names the subject");
+            const autoReply = await flushPlan(mocks, engine, 4);
+            assert.equal(autoReply["outcome"], "planned", `auto reconcile plans, engine replied ${JSON.stringify(autoReply)}`);
+            const focus = autoReply["desired_focus"] as Record<string, unknown> | undefined;
+            const geometry = autoReply["desired_geometry"] as Array<Record<string, unknown>> | undefined;
+            const focusWindow = Array.isArray(geometry)
+                ? geometry.find((entry) => entry["leaf"] === focus?.["leaf"])?.["window"]
+                : undefined;
+            assert.equal(focusWindow, "win-b", "planner names the tiled survivor while native focus stays on the subject");
+            assert.ok(mocks.logs.some((line) => line.includes("focus-skipped") && line.includes("kind=reconcile") && line.includes("reason=floating-active")), "skip gate engages instead of actuating survivor focus");
+            assert.equal(world.workspace["activeWindow"], winA, "auto reconcile keeps the subject active");
+            assert.ok(!activeWrites.includes(winB), "zero native writes activating the sibling across the automatic reconcile");
         } finally {
             handle?.stop();
             await engine.close();

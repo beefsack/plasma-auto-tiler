@@ -7794,28 +7794,44 @@ export class PlanAdapter {
                 focus.domainOutput === current.domainOutput &&
                 focus.domainWorkspace === current.domainWorkspace
             ) {
-                const target = byRef.get(focusWindow);
-                if (target !== undefined) {
-                    let currentActive: object | null = null;
-                    try {
-                        currentActive = this.env.active();
-                    } catch (error) {
-                        void error;
-                        currentActive = null;
+                // Automatic reconciles never actuate survivor bookkeeping
+                // focus over a floating/sticky focused subject (e.g. the
+                // sticky-triggered flag reconcile): the excluded subject keeps
+                // native focus. Tiled reconciles and explicit focus/move
+                // commands actuate unchanged.
+                let focusSkipped = false;
+                if (flightState.op === "reconcile" && focusWindow !== current.focusedId) {
+                    const focusedEntry = current.windows.find((entry) => entry.id === current.focusedId);
+                    if (focusedEntry !== undefined && (focusedEntry.floating === true || focusedEntry.sticky === true)) {
+                        const reason = focusedEntry.floating === true ? "floating-active" : "sticky-active";
+                        this.logToken(`${LOG_PREFIX}:focus-skipped correlation=${flightState.correlation} kind=reconcile reason=${reason} window=${current.focusedId} target=${focusWindow}`);
+                        focusSkipped = true;
                     }
-                    if (currentActive !== target) {
-                        let focused = false;
+                }
+                if (!focusSkipped) {
+                    const target = byRef.get(focusWindow);
+                    if (target !== undefined) {
+                        let currentActive: object | null = null;
                         try {
-                            focused = this.env.setActive(target) === true;
+                            currentActive = this.env.active();
                         } catch (error) {
                             void error;
-                            focused = false;
+                            currentActive = null;
                         }
-                        if (!focused) {
-                            this.lifecycleDiag(flightState, "apply", "setters", "write-failed", "write-failed", this.ordinaryRevision(planned, flightState));
-                            this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
-                            this.failFlight(flightState, "write-failed");
-                            return;
+                        if (currentActive !== target) {
+                            let focused = false;
+                            try {
+                                focused = this.env.setActive(target) === true;
+                            } catch (error) {
+                                void error;
+                                focused = false;
+                            }
+                            if (!focused) {
+                                this.lifecycleDiag(flightState, "apply", "setters", "write-failed", "write-failed", this.ordinaryRevision(planned, flightState));
+                                this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
+                                this.failFlight(flightState, "write-failed");
+                                return;
+                            }
                         }
                     }
                 }
