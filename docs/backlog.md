@@ -197,10 +197,10 @@ decisions of 2026-09-24 are under
   top-left-axis focus and explicit four-direction half-snaps delivered offline;
   tile-origin still skips floats. Misses reuse existing horizontal output-edge
   behavior, without COSMIC workspace cycling. 897 KWin / 1107 Rust tests and
-  all gates pass; laptop live check pending. Windows implementation pending
-  next PC session. Quarter/maximize/repeated-outward transfer snap states
-  deferred: require per-window state and transfer integration. Next: user laptop
-  focus/snap/reconcile check, then PC parity.
+  all gates pass. User laptop check passed (2026-10-05): float-to-float
+  Meta+arrow focus (ordinary and sticky) and Meta+Shift+arrow half-snaps.
+  Windows implementation pending next PC session. Quarter/maximize/repeated-outward transfer snap states
+  deferred: require per-window state and transfer integration. Next: PC parity.
   [Delivery and live steps](changes/archive/kde-floating-directional-navigation.md).
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
