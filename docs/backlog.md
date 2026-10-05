@@ -231,6 +231,13 @@ decisions of 2026-09-24 are under
   provisional); AGENTS.md now requires a row per ambiguity. Next: user
   confirms the format and fills priority TBD rows (R-WS-02, R-WS-04,
   R-WS-05, R-START-03, R-MAX-01), then the spec selects supported variants.
+  COSMIC column filled from source (`bdb205f`, 37 rows sourced, native
+  outcomes still TBD where only live testing can answer). Open user choice:
+  which COSMIC differences to adopt (R-WS-01/02/04/06/07, R-FLT-01/02/04/06,
+  R-FLT-11 quarter-snap, float-origin miss workspace cycling, R-MAX-02/05/07,
+  R-START-01, R-MIN, R-GRP-01, R-DRAG-01/04/06/07/08, R-CTL-04). User
+  (2026-10-05): fill Hyprland, sway, i3, xmonad, bspwm, qtile and awesome
+  columns from source next (sway/qtile/awesome are new columns).
 - P2 | Prior-art catalogue upkeep | Completed 2026-10-03 (`e4c1d92`):
   [maintained index](research/prior-art.md), grouped by desktop and type
   (compositor-native vs host-integrated) with algorithm families,
