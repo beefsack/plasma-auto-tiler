@@ -199,6 +199,8 @@ interface FakeWindow {
     desktops: Array<object>;
     internalId: string;
     frameGeometry: { x: number; y: number; width: number; height: number };
+    minSize?: unknown;
+    maxSize?: unknown;
     desktopsChanged: FakeSignal;
     frameGeometryChanged: FakeSignal;
 }
@@ -233,6 +235,7 @@ interface Harness {
     readonly timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean }>;
     readonly logs: string[];
     readonly switches: object[];
+    readonly geometries: Array<{ target: object; rect: { x: number; y: number; w: number; h: number } }>;
     readonly bridge: EngineBridge;
     readonly requestSend: (target: unknown) => boolean;
     readonly stop: () => void;
@@ -285,6 +288,7 @@ async function makeHarness(opts: HarnessOpts = {}): Promise<Harness> {
     const timers: Harness["timers"] = [];
     const logs: string[] = [];
     const switches: object[] = [];
+    const geometries: Harness["geometries"] = [];
     const pending: Array<{ payload: string; callback: (reply: unknown) => void }> = [];
     const entry = startWorkspaceSendAdapterEntry({
         workspace: surface,
@@ -339,6 +343,7 @@ async function makeHarness(opts: HarnessOpts = {}): Promise<Harness> {
         timers,
         logs,
         switches,
+        geometries,
         bridge,
         requestSend: (target) => entry.requestSend(target),
         isInFlight: () => entry.isInFlight(),
@@ -370,8 +375,30 @@ async function makeHarness(opts: HarnessOpts = {}): Promise<Harness> {
                 isSendActive: () => entry.isInFlight(),
                 observe: () => null,
                 observeHidden: () => observeHiddenDomains(surface, cache, floating, { innerGap: 8, outerGap: 8 }),
+                readWindowConstraints: (ref) => {
+                    const record = ref as Record<string, unknown>;
+                    const sizeOf = (value: unknown): { w: number; h: number } | null => {
+                        if (typeof value !== "object" || value === null) {
+                            return null;
+                        }
+                        const entry = value as Record<string, unknown>;
+                        const w = entry["width"] ?? entry["w"];
+                        const h = entry["height"] ?? entry["h"];
+                        if (typeof w !== "number" || typeof h !== "number" || !Number.isInteger(w) || !Number.isInteger(h)) {
+                            return null;
+                        }
+                        return { w, h };
+                    };
+                    const min = sizeOf(record["minSize"]);
+                    const max = sizeOf(record["maxSize"]);
+                    if (min === null && max === null) {
+                        return null;
+                    }
+                    return { resizeable: null, minSize: min, maxSize: max };
+                },
                 clearMaximize: () => "invoked",
                 setGeometry: (ref, rect) => {
+                    geometries.push({ target: ref, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h } });
                     (ref as FakeWindow).frameGeometry = { x: rect.x, y: rect.y, width: rect.w, height: rect.h };
                     return true;
                 },
@@ -787,6 +814,81 @@ describe("workspace-send immediate-commit behavior (real Planner)", () => {
             await h.bridge.close();
         }
     });
+
+    it("send into a new destination inherits the carried outer gap on retained reconcile", async () => {
+        // Outer-gap inheritance (Engine e3e0c32) through the real KDE send
+        // route against the persistent Rust Engine (planner_eval): ws-4
+        // starts empty and unretained, the flight carries nonzero outer gap
+        // 8 on both domains, and a retained reconcile on the adopted target
+        // must plan with that same gap instead of refusing domain-mismatch.
+        const h = await makeHarness();
+        const plan = h.makePlan();
+        try {
+            assert.equal(h.requestSend("ws-4"), true, "send to new destination accepted");
+            await waitFor(() => h.queued() > 0, "observer request to new destination");
+            await h.flush();
+            const sendPayload = parseBody(h.calls[h.calls.length - 1], "payload");
+            assert.equal((sendPayload["domain"] as Record<string, unknown>)["outer_gap"], 8, "carried source outer gap nonzero");
+            assert.equal((sendPayload["target_domain"] as Record<string, unknown>)["outer_gap"], 8, "carried target outer gap nonzero");
+            const sendReply = parseBody(h.calls[h.calls.length - 1], "reply");
+            assert.equal(sendReply["outcome"], "planned", "send to new destination plans");
+            const sendGeometry = sendReply["desired_geometry"] as Array<Record<string, unknown>>;
+            const mover = sendGeometry.find((entry) => entry["window"] === "n-win-a");
+            assert.ok(mover !== undefined && mover["workspace"] === "ws-4", "actual projection covers the mover on the new target");
+            const moverRect = mover?.["rect"] as { x: number; y: number; w: number; h: number };
+            await settle(100);
+            assert.deepEqual(h.win.wa.desktops, [h.desk.d4], "mover natively on exact new target, absent source");
+            assert.deepEqual(h.switches, [h.desk.d4], "exactly one follow switch to the new target");
+            assert.equal(h.surface["activeWindow"], h.win.wa, "mover focused after proof");
+            assert.deepEqual(
+                { ...h.win.wa.frameGeometry },
+                { x: moverRect.x, y: moverRect.y, width: moverRect.w, height: moverRect.h },
+                "native readback matches the Engine projection on the new target",
+            );
+            // Retained reconcile on the adopted target with the same carried
+            // gap: foreground returns to ws-1 so ws-4 reconciles hidden.
+            h.setActive(h.win.wb);
+            h.setCurrent(h.desk.d1);
+            plan.requestResync();
+            for (const timer of h.timers.filter((item) => item.delayMs === PLAN_DEBOUNCE_MS && !item.cancelled)) {
+                timer.callback();
+            }
+            const wsOfPayload = (payload: string): string | null => {
+                const body = tryParse(payload);
+                const domain = body?.["domain"] as Record<string, unknown> | undefined;
+                const ws = domain?.["workspace"];
+                return typeof ws === "string" ? ws : null;
+            };
+            // The round dispatches the changed source first and chains the
+            // adopted target as replies are processed; drain fully, then
+            // read the ws-4 reconcile from the retained Engine replies.
+            const reconcilesFrom = h.calls.length;
+            await waitFor(() => h.queued() > 0, "retained reconcile dispatch");
+            for (let index = 0; index < 10 && h.queued() > 0; index += 1) {
+                await h.flush();
+            }
+            const targetCalls = h.calls.slice(reconcilesFrom).filter((call) => wsOfPayload(call.payload) === "ws-4");
+            assert.ok(targetCalls.length >= 1, "adopted target reconciles");
+            const retained = targetCalls[targetCalls.length - 1] as { payload: string; reply: string };
+            assert.equal((tryParse(retained.payload)?.["domain"] as Record<string, unknown>)?.["outer_gap"], 8, "retained reconcile carries the inherited gap");
+            const retainedReply = tryParse(retained.reply);
+            assert.equal(retainedReply?.["outcome"], "planned", "inherited gap avoids outer-gap mismatch");
+            const retainedGeometry = (retainedReply?.["desired_geometry"] as Array<Record<string, unknown>> | undefined) ?? [];
+            assert.ok(
+                retainedGeometry.some((entry) => entry["window"] === "n-win-a"),
+                "retained projection still covers the adopted mover",
+            );
+            assert.ok(
+                !h.logs.some((line) => line.includes("outer gap does not match retained state")),
+                "no outer-gap mismatch refusal",
+            );
+            assert.deepEqual(h.win.wa.desktops, [h.desk.d4], "retained reconcile keeps adopted membership");
+        } finally {
+            plan.disable();
+            h.stop();
+            await h.bridge.close();
+        }
+    });
 });
 
 describe("observation-convergence (complete observation, test-first)", () => {
@@ -1052,6 +1154,224 @@ describe("observation-convergence (complete observation, test-first)", () => {
             plan.disable();
             h.stop();
             await h.bridge.close();
+        }
+    });
+
+    it("centre-cut cascade declines to the deterministic sequential seed with native readback", async () => {
+        // Startup-fit decline (Engine 2c918d3) through the real KDE adoption
+        // path: native observation -> PlanAdapter -> protocol/Engine ->
+        // native apply. Three overlapping cascade frames on fresh ws-4 need
+        // centre splits, so the Engine declines the recursive-cut fit to the
+        // deterministic sequential seed (focus-last: the spatial-first
+        // anchor lands last). Proves identity/topology/geometry, not a Rust
+        // unit pin: the request carries native frames with no hints, the
+        // reply leaves are seed leaves, and native frames become the Engine
+        // tiles.
+        const h = await makeHarness();
+        const plan = h.makePlan();
+        try {
+            await backgroundWs1(h);
+            const c1 = makeWindow("n-win-c1", h.win.wa.output, h.desk.d4);
+            const c2 = makeWindow("n-win-c2", h.win.wa.output, h.desk.d4);
+            const c3 = makeWindow("n-win-c3", h.win.wa.output, h.desk.d4);
+            c1.frameGeometry = { x: 8, y: 8, width: 600, height: 600 };
+            c2.frameGeometry = { x: 208, y: 58, width: 600, height: 600 };
+            c3.frameGeometry = { x: 408, y: 108, width: 600, height: 600 };
+            h.addWindow(c1);
+            h.addWindow(c2);
+            h.addWindow(c3);
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "cascade baseline dispatch");
+            for (let index = 0; index < 10 && h.queued() > 0; index += 1) {
+                await h.flush();
+            }
+            // The first round dispatches ws-1 and chains ws-2 then ws-4 as
+            // each reply is processed; drain fully, then read the ws-4
+            // adoption from the retained Engine replies.
+            const targetCalls = h.calls.filter((call) => wsOf(call.payload) === "ws-4");
+            assert.ok(targetCalls.length >= 1, "fresh cascade domain adopts");
+            const target = targetCalls[targetCalls.length - 1] as { payload: string; reply: string };
+            const requestBody = tryParse(target.payload);
+            assert.equal(requestBody?.["focused_window"], "n-win-c1", "hidden anchor is the spatial-first cascade member");
+            const requestWindows = (requestBody?.["windows"] as Array<Record<string, unknown>> | undefined) ?? [];
+            assert.equal(requestWindows.length, 3, "complete observation carries the cascade");
+            for (const entry of requestWindows) {
+                assert.ok(!("min_size" in entry), "hintless natives ride without min_size");
+            }
+            const reply = tryParse(target.reply);
+            assert.equal(reply?.["outcome"], "planned", "cascade adoption plans through the seed");
+            const geometry = (reply?.["desired_geometry"] as Array<Record<string, unknown>> | undefined) ?? [];
+            assert.equal(geometry.length, 3, "seed geometry covers the cascade");
+            const rectOf = (id: string): { x: number; y: number; w: number; h: number } => {
+                const entry = geometry.find((item) => item["window"] === id);
+                assert.ok(entry !== undefined, `seed geometry covers ${id}`);
+                return entry?.["rect"] as { x: number; y: number; w: number; h: number };
+            };
+            // Deterministic sequential seed with focus-last anchor c1:
+            // c2 keeps the full-height half, c3/c1 stack the other column.
+            assert.deepEqual(rectOf("n-win-c2"), { x: 8, y: 8, w: 588, h: 784 }, "seed keeps first tile full-height");
+            assert.deepEqual(rectOf("n-win-c3"), { x: 604, y: 8, w: 588, h: 388 }, "seed stacks second tile top-right");
+            assert.deepEqual(rectOf("n-win-c1"), { x: 604, y: 404, w: 588, h: 388 }, "focus-last anchor lands bottom-right");
+            for (const entry of geometry) {
+                assert.ok(String(entry["leaf"] as string).startsWith("leaf-"), "seed topology leaves, never fitted leaves");
+                assert.ok(!("overconstrained" in entry), "unhinted seed carries no flags");
+            }
+            const focus = reply?.["desired_focus"] as Record<string, unknown> | undefined;
+            const focusTile = geometry.find((entry) => entry["window"] === "n-win-c1");
+            assert.equal(focus?.["leaf"], focusTile?.["leaf"], "focus lands on the anchor leaf");
+            assert.deepEqual(
+                { ...c1.frameGeometry },
+                { x: 604, y: 404, width: 588, height: 388 },
+                "native readback applies the seed tile over the overlapping input",
+            );
+            assert.deepEqual(
+                { ...c2.frameGeometry },
+                { x: 8, y: 8, width: 588, height: 784 },
+                "native readback applies the full-height seed tile",
+            );
+            assert.deepEqual(
+                { ...c3.frameGeometry },
+                { x: 604, y: 8, width: 588, height: 388 },
+                "native readback applies the stacked seed tile",
+            );
+        } finally {
+            plan.disable();
+            h.stop();
+            await h.bridge.close();
+        }
+    });
+
+    it("min-infeasible clean fit declines with overconstrained skip while feasible retains fit", async () => {
+        // Same side-by-side frames, distinguished only by native minSize:
+        // 700-wide minimums decline to the seed (flags, zero writes),
+        // 100-wide minimums retain the fit (identity, applied).
+        for (const [tag, minW, expectFallback] of [["infeasible", 700, true], ["feasible", 100, false]] as const) {
+            const h = await makeHarness();
+            const plan = h.makePlan();
+            try {
+                await backgroundWs1(h);
+                const left = makeWindow("n-win-m1", h.win.wa.output, h.desk.d4);
+                const right = makeWindow("n-win-m2", h.win.wa.output, h.desk.d4);
+                left.frameGeometry = { x: 8, y: 8, width: 588, height: 784 };
+                right.frameGeometry = { x: 604, y: 8, width: 588, height: 784 };
+                left.minSize = { width: minW, height: 100 };
+                right.minSize = { width: minW, height: 100 };
+                h.addWindow(left);
+                h.addWindow(right);
+                plan.requestResync();
+                firePlan(h);
+                await waitFor(() => h.queued() > 0, `ws-4 ${tag} baseline dispatch`);
+                for (let index = 0; index < 10 && h.queued() > 0; index += 1) {
+                    await h.flush();
+                }
+                // The first round dispatches the changed ws-1 first and
+                // chains ws-2 then ws-4 as replies are processed; drain
+                // fully, then read the ws-4 adoption from the replies.
+                const targetCalls = h.calls.filter((call) => wsOf(call.payload) === "ws-4");
+                assert.ok(targetCalls.length >= 1, `fresh ${tag} domain adopts`);
+                const target = targetCalls[targetCalls.length - 1] as { payload: string; reply: string };
+                const requestBody = tryParse(target.payload);
+                const requestWindows = (requestBody?.["windows"] as Array<Record<string, unknown>> | undefined) ?? [];
+                assert.equal(requestWindows.length, 2, "complete observation carries both members");
+                for (const entry of requestWindows) {
+                    assert.deepEqual(entry["min_size"], { w: minW, h: 100 }, "native minSize rides the wire");
+                }
+                const reply = tryParse(target.reply);
+                assert.equal(reply?.["outcome"], "planned", `${tag} adoption plans`);
+                const geometry = (reply?.["desired_geometry"] as Array<Record<string, unknown>> | undefined) ?? [];
+                assert.equal(geometry.length, 2, `${tag} geometry covers both members`);
+                if (expectFallback) {
+                    const rectOf = (id: string): { x: number; y: number; w: number; h: number } => {
+                        const entry = geometry.find((item) => item["window"] === id);
+                        assert.ok(entry !== undefined, `seed geometry covers ${id}`);
+                        return entry?.["rect"] as { x: number; y: number; w: number; h: number };
+                    };
+                    // Focus-last seed reverses the two IDs: m2 takes the left
+                    // half, the m1 anchor lands right.
+                    assert.deepEqual(rectOf("n-win-m2"), { x: 8, y: 8, w: 588, h: 784 }, "seed assigns left half to m2");
+                    assert.deepEqual(rectOf("n-win-m1"), { x: 604, y: 8, w: 588, h: 784 }, "seed assigns right half to the anchor");
+                    for (const entry of geometry) {
+                        assert.equal(entry["overconstrained"], true, "declined seed flags both tiles overconstrained");
+                    }
+                    assert.equal(
+                        h.geometries.filter((call) => call.target === left || call.target === right).length,
+                        0,
+                        "overconstrained members receive zero native writes",
+                    );
+                    assert.ok(
+                        h.logs.some((line) => line.includes("overconstrained-skipped")),
+                        "adapter logs the overconstrained skip",
+                    );
+                } else {
+                    for (const entry of geometry) {
+                        assert.ok(!("overconstrained" in entry), "retained fit carries no flags");
+                        assert.ok(!("client_clamped" in entry), "retained fit carries no clamp");
+                    }
+                    const rectOf = (id: string): { x: number; y: number; w: number; h: number } => {
+                        const entry = geometry.find((item) => item["window"] === id);
+                        assert.ok(entry !== undefined, `fitted geometry covers ${id}`);
+                        return entry?.["rect"] as { x: number; y: number; w: number; h: number };
+                    };
+                    assert.deepEqual(rectOf("n-win-m1"), { x: 8, y: 8, w: 588, h: 784 }, "retained fit keeps left identity");
+                    assert.deepEqual(rectOf("n-win-m2"), { x: 604, y: 8, w: 588, h: 784 }, "retained fit keeps right identity");
+                    // Fitted output equals the adopted frames, so the round
+                    // writes nothing; drift both natively and reconcile again
+                    // so the retained projection must reassert each member.
+                    left.frameGeometry = { x: 8, y: 8, width: 500, height: 784 };
+                    right.frameGeometry = { x: 516, y: 8, width: 676, height: 784 };
+                    const adoptedCalls = h.calls.length;
+                    plan.requestResync();
+                    firePlan(h);
+                    await waitFor(
+                        () => h.peekQueued().some((payload) => wsOf(payload) === "ws-4"),
+                        "ws-4 feasible drift dispatch",
+                    );
+                    for (let index = 0; index < 10 && h.queued() > 0; index += 1) {
+                        await h.flush();
+                    }
+                    const driftCalls = h.calls.slice(adoptedCalls).filter((call) => wsOf(call.payload) === "ws-4");
+                    assert.ok(driftCalls.length >= 1, "drifted feasible domain reconciles");
+                    const driftReply = tryParse(driftCalls[driftCalls.length - 1]?.reply ?? "");
+                    assert.equal(driftReply?.["outcome"], "planned", "drift reconcile plans");
+                    const driftGeometry = (driftReply?.["desired_geometry"] as Array<Record<string, unknown>> | undefined) ?? [];
+                    const driftRectOf = (id: string): { x: number; y: number; w: number; h: number } => {
+                        const entry = driftGeometry.find((item) => item["window"] === id);
+                        assert.ok(entry !== undefined, `reasserted geometry covers ${id}`);
+                        return entry?.["rect"] as { x: number; y: number; w: number; h: number };
+                    };
+                    assert.deepEqual(driftRectOf("n-win-m1"), { x: 8, y: 8, w: 588, h: 784 }, "reassert keeps left identity");
+                    assert.deepEqual(driftRectOf("n-win-m2"), { x: 604, y: 8, w: 588, h: 784 }, "reassert keeps right identity");
+                    const appliedTo = (target: object): Array<{ x: number; y: number; w: number; h: number }> =>
+                        h.geometries.filter((call) => call.target === target).map((call) => call.rect);
+                    assert.ok(
+                        appliedTo(left).some((rect) => rect.x === 8 && rect.y === 8 && rect.w === 588 && rect.h === 784),
+                        "fitted left tile is natively applied",
+                    );
+                    assert.ok(
+                        appliedTo(right).some((rect) => rect.x === 604 && rect.y === 8 && rect.w === 588 && rect.h === 784),
+                        "fitted right tile is natively applied",
+                    );
+                    assert.deepEqual(
+                        { ...left.frameGeometry },
+                        { x: 8, y: 8, width: 588, height: 784 },
+                        "native readback keeps the fitted left tile",
+                    );
+                    assert.deepEqual(
+                        { ...right.frameGeometry },
+                        { x: 604, y: 8, width: 588, height: 784 },
+                        "native readback keeps the fitted right tile",
+                    );
+                    assert.ok(
+                        !h.logs.some((line) => line.includes("overconstrained-skipped")),
+                        "retained fit skips nothing",
+                    );
+                }
+            } finally {
+                plan.disable();
+                h.stop();
+                await h.bridge.close();
+            }
         }
     });
 

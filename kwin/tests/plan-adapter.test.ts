@@ -2364,12 +2364,12 @@ describe("plan adapter sticky and maximize toggles", () => {
         const adapter = enableAdapter(mocks);
         adapter.requestMaximize();
         adapter.requestMaximize();
-        assert.equal(mocks.maximizeToggles.length, 1);
+        assert.equal(mocks.maximizeToggles.length, 2, "each discrete activation issues one native write");
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-toggle-echo-cleared-no-signal"));
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-refused-attempted window=win-a resource_class=unknown"));
+        assert.ok(!mocks.logs.some((line) => line.includes("maximize-refused-attempted")), "per-activation semantics never refuse an attempted repeat");
     });
 
-    it("evicts only the exact removed sticky attempt and survives churn without inferring from incomplete observations", () => {
+    it("issues one sticky write per discrete activation and never infers from incomplete observations", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": true } });
@@ -2378,31 +2378,30 @@ describe("plan adapter sticky and maximize toggles", () => {
         adapter.requestSticky();
         assert.equal(mocks.desktopToggles.length, 1);
         adapter.requestSticky();
-        assert.equal(mocks.desktopToggles.length, 1, "live ref retains the one-shot fence");
-        assert.ok(mocks.logs.some((line) => line.includes("sticky-refused-attempted")), "repeat on the live ref refuses");
+        assert.equal(mocks.desktopToggles.length, 2, "a discrete repeat issues again with no persistent suppression");
+        assert.ok(!mocks.logs.some((line) => line.includes("sticky-refused-attempted")), "per-activation semantics never refuse an attempted repeat");
         const savedObserve = mocks.observeImpl;
         mocks.observeImpl = () => null;
         fire(mocks, "geometry");
         runDebounce(mocks);
         mocks.observeImpl = savedObserve;
+        const beforeIncomplete = mocks.desktopToggles.length;
         adapter.requestSticky();
-        assert.equal(mocks.desktopToggles.length, 1, "incomplete observation never infers removal");
+        assert.equal(mocks.desktopToggles.length, beforeIncomplete + 1, "a complete observation after an incomplete round still issues");
+        mocks.observeImpl = () => null;
+        adapter.requestSticky();
+        assert.equal(mocks.desktopToggles.length, beforeIncomplete + 1, "incomplete observation still refuses without a write");
+        assert.ok(mocks.logs.some((line) => line.includes("sticky-refused-observe")));
+        mocks.observeImpl = savedObserve;
         fire(mocks, "removed", refs.b);
         adapter.requestSticky();
-        assert.equal(mocks.desktopToggles.length, 1, "unrelated removal retains the live fence");
+        assert.equal(mocks.desktopToggles.length, beforeIncomplete + 2, "unrelated removal never suppresses the next activation");
         fire(mocks, "removed", refs.a);
         adapter.requestSticky();
-        assert.equal(mocks.desktopToggles.length, 2, "exact removed object evicts its fence");
-        for (let index = 0; index < 3; index += 1) {
-            fire(mocks, "removed", refs.a);
-            adapter.requestSticky();
-        }
-        assert.equal(mocks.desktopToggles.length, 5, "removal plus retry churn converges without pinning");
-        adapter.requestSticky();
-        assert.equal(mocks.desktopToggles.length, 5, "fence re-arms after churn");
+        assert.equal(mocks.desktopToggles.length, beforeIncomplete + 3, "exact removed object never suppresses the next activation");
     });
 
-    it("a failed maximize write clears its attempt so a later identical press retries once", () => {
+    it("a failed maximize write allows one attempt on a later identical activation", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         let fail = true;
@@ -2419,6 +2418,113 @@ describe("plan adapter sticky and maximize toggles", () => {
         adapter.requestMaximize();
         assert.equal(mocks.maximizeToggles.length, 2, "identical repeat retries after a non-invoked write");
         assert.deepEqual(mocks.maximizeToggles[1], { target: refs.a, maximized: true });
+    });
+
+    it("reissues an identical maximize after a same-ref native restore", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let maximized = false;
+        mocks.observeImpl = () => makeObserved(refs, { maximized: { "win-a": maximized } });
+        mocks.maximizeToggleImpl = (_target, value) => {
+            maximized = value;
+            fire(mocks, "maximize", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestMaximize();
+        assert.deepEqual(mocks.maximizeToggles, [{ target: refs.a, maximized: true }]);
+        maximized = false;
+        fire(mocks, "maximize", refs.a);
+        adapter.requestMaximize();
+        assert.deepEqual(mocks.maximizeToggles, [
+            { target: refs.a, maximized: true },
+            { target: refs.a, maximized: true },
+        ]);
+    });
+
+    it("reissues an identical restore after a same-ref native maximize", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let maximized = true;
+        mocks.observeImpl = () => makeObserved(refs, { maximized: { "win-a": maximized } });
+        mocks.maximizeToggleImpl = (_target, value) => {
+            maximized = value;
+            fire(mocks, "maximize", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestMaximize();
+        assert.deepEqual(mocks.maximizeToggles, [{ target: refs.a, maximized: false }]);
+        maximized = true;
+        fire(mocks, "maximize", refs.a);
+        adapter.requestMaximize();
+        assert.deepEqual(mocks.maximizeToggles, [
+            { target: refs.a, maximized: false },
+            { target: refs.a, maximized: false },
+        ]);
+    });
+
+    it("reissues sticky-on from a tiled origin after a same-ref native unstick", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let floating = false;
+        let sticky = false;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": floating }, sticky: { "win-a": sticky } });
+        mocks.desktopToggleImpl = (_target, allDesktops) => {
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        const floatPayload = plannerPayload(mocks, 0);
+        assert.deepEqual(floatPayload["command"], { op: "toggle-float", window: "win-a" });
+        floating = true;
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: floatPayload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 100, y: 100, w: 600, h: 400 } },
+        }));
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: true }]);
+        sticky = false;
+        fire(mocks, "desktops", refs.a);
+        adapter.requestSticky();
+        assert.deepEqual(mocks.desktopToggles, [
+            { target: refs.a, allDesktops: true },
+            { target: refs.a, allDesktops: true },
+        ]);
+    });
+
+    it("reissues sticky-off from a float origin after a same-ref native restick", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        (mocks.env as { readDesktopIds?: (target: object) => ReadonlyArray<string> | null }).readDesktopIds = () => [];
+        let floating = true;
+        let sticky = false;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": floating }, sticky: { "win-a": sticky } });
+        mocks.desktopToggleImpl = (_target, allDesktops) => {
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: true }]);
+        adapter.requestSticky();
+        assert.deepEqual(mocks.desktopToggles, [
+            { target: refs.a, allDesktops: true },
+            { target: refs.a, allDesktops: false },
+        ]);
+        sticky = true;
+        fire(mocks, "desktops", refs.a);
+        adapter.requestSticky();
+        assert.deepEqual(mocks.desktopToggles, [
+            { target: refs.a, allDesktops: true },
+            { target: refs.a, allDesktops: false },
+            { target: refs.a, allDesktops: false },
+        ]);
     });
 
     it("option A Meta+G on sticky from tiled origin clears all-desktops, restores keep-above, tiles, and stays tiled", () => {

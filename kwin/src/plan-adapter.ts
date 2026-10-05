@@ -1885,8 +1885,6 @@ export class PlanAdapter {
     // The native setters own mutual exclusivity. Retain only the prior pair so
     // a project float can restore an initial keep-below choice exactly.
     private keepAbovePrevious = new Map<string, { ref: object; above: boolean; below: boolean }>();
-    private maximizeToggleAttempts = new Map<object, boolean>();
-    private stickyAttempts = new Map<object, boolean>();
     // Owner-pinned Planner transport plus confirmed-loss recovery. The
     // in-memory Planner survives sleep: same-owner failures retain applied
     // evidence and never rebuild. Only actual absence/identity evidence
@@ -2036,8 +2034,6 @@ export class PlanAdapter {
         this.stickyPreviousFloating.clear();
         this.adoptedSticky.clear();
         this.keepAbovePrevious.clear();
-        this.maximizeToggleAttempts.clear();
-        this.stickyAttempts.clear();
         this.pinnedOwner = null;
         this.activationStep = 0;
         this.plannerSession = 0;
@@ -2078,8 +2074,6 @@ export class PlanAdapter {
         this.stickyPreviousFloating.clear();
         this.adoptedSticky.clear();
         this.keepAbovePrevious.clear();
-        this.maximizeToggleAttempts.clear();
-        this.stickyAttempts.clear();
         this.pinnedOwner = null;
         this.activationStep = 0;
         this.knownOwner = null;
@@ -2871,11 +2865,6 @@ export class PlanAdapter {
             return;
         }
         const wanted = !target.maximized;
-        if (this.maximizeToggleAttempts.get(target.ref) === wanted) {
-            this.logToken(`${LOG_PREFIX}:maximize-refused-attempted window=${target.id} resource_class=${resourceClass}`);
-            return;
-        }
-        this.maximizeToggleAttempts.set(target.ref, wanted);
         this.maximizeToggleEcho = { ref: target.ref, id: target.id, resourceClass };
         this.logToken(`${LOG_PREFIX}:maximize-toggle window=${target.id} resource_class=${resourceClass} target=${wanted ? "maximized" : "restored"} outcome=issued`);
         this.logToken(`${LOG_PREFIX}:maximize-toggle-echo-armed`);
@@ -2887,10 +2876,8 @@ export class PlanAdapter {
         }
         this.logToken(`${LOG_PREFIX}:maximize-toggle window=${target.id} resource_class=${resourceClass} target=${wanted ? "maximized" : "restored"} outcome=${outcome}`);
         if (outcome !== "invoked") {
-            // A missing/throwing native write never retries automatically and
-            // never holds the one-shot attempt fence: clear it so a later
-            // deliberate identical press can retry.
-            this.maximizeToggleAttempts.delete(target.ref);
+            // A missing/throwing native write never retries automatically;
+            // a later deliberate identical press retries once.
             this.logToken(`${LOG_PREFIX}:maximize-retry-armed window=${target.id} resource_class=${resourceClass} target=${wanted ? "maximized" : "restored"} cause=native-write-${outcome} recovery=retry-on-next-press`);
         }
         if (this.maximizeToggleEcho !== null) {
@@ -3133,14 +3120,9 @@ export class PlanAdapter {
 
     private issueSticky(target: PlanObservedWindow, allDesktops: boolean, previousFloating: boolean): void {
         const resourceClass = isOpaqueId(target.resourceClass) ? target.resourceClass : "unknown";
-        if (this.stickyAttempts.get(target.ref) === allDesktops) {
-            this.logToken(`${LOG_PREFIX}:sticky-refused-attempted window=${target.id} resource_class=${resourceClass}`);
-            return;
-        }
         if (allDesktops && !this.ensureKeepAbove(target.ref, target.id, resourceClass)) {
             return;
         }
-        this.stickyAttempts.set(target.ref, allDesktops);
         this.stickyEcho = { ref: target.ref, id: target.id, resourceClass, allDesktops, previousFloating };
         this.logToken(`${LOG_PREFIX}:sticky-toggle window=${target.id} resource_class=${resourceClass} target=${allDesktops ? "all-desktops" : "current-desktop"} outcome=issued`);
         this.logToken(`${LOG_PREFIX}:sticky-echo-armed`);
@@ -3153,11 +3135,9 @@ export class PlanAdapter {
         this.logToken(`${LOG_PREFIX}:sticky-toggle window=${target.id} resource_class=${resourceClass} target=${allDesktops ? "all-desktops" : "current-desktop"} outcome=${outcome}`);
         if (outcome !== "invoked") {
             // A false/missing/throwing native assignment never retries,
-            // replays, or fabricates success. Clear the one-shot attempt fence
-            // so later explicit commands stay usable, and drop a stale
+            // replays, or fabricates success. Drop a stale
             // sticky-on claim (the window never became sticky) while keeping a
             // failed sticky-off origin for a later explicit retry.
-            this.stickyAttempts.delete(target.ref);
             if (allDesktops) {
                 this.stickyPreviousFloating.delete(target.id);
                 this.adoptedSticky.delete(target.id);
@@ -4756,7 +4736,6 @@ export class PlanAdapter {
         // native reads, no id logging, no per-domain inference: relocation
         // survivors carry a different live ref and keep their markers.
         if (kind === "removed" && typeof target === "object" && target !== null) {
-            this.stickyAttempts.delete(target);
             try {
                 this.env.noteNativeRemoved?.(target);
             } catch (error) {
