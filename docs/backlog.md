@@ -246,26 +246,24 @@ decisions of 2026-09-24 are under
   reference columns source-filled under pinned profiles: COSMIC (`bdb205f`),
   Hyprland (`4f82534`), bspwm (`e6b71cc`), i3 (`4128bdf`), xmonad (`548146d`),
   sway (`332afdc`), qtile (`c32eb48`) and awesome (`046a1e8`). Matrix now has
-  58 scenarios; source policy is qualified where fixtures/actions differ,
-  and native outcomes remain TBD for user testing. Open user choice: which
-  reference differences to adopt as supported variants, including COSMIC
-  workspace send/return, float/sticky, quarter-snap and miss cycling,
-  maximize/fullscreen, startup/minimums, stacks, drag and owner controls.
-  Next: user confirms the format and tests priority native TBD rows
-  (R-WS-02, R-WS-04, R-WS-05, R-START-03, R-MAX-01), then selects which
-  reference differences the functional spec adopts; source filling alone
-  makes no product decision.
-  [Cross-WM consensus analysis](research/reference-wm-consensus.md) covers all 58 rows, with cross-family candidates and evidence gaps.
-  Its Table A lists strong consensus where ours differs, for user choice
-  (keep ours, adopt, or make a variant): R-WS-01 send stays vs our follow;
-  R-MOV-03 flat swap vs our nested wrap; R-MIN-01..03 unclamped minima vs
-  B6; R-DRAG-04 Esc does not cancel vs our cancel; R-MAX-05 no refusal of
-  app-owned fullscreen exit vs Windows refusal; R-MAX-07 captionless
-  full-monitor window tiles vs Windows fullscreen inference; R-FLT-05
-  sticky survives restart vs Windows normal float; R-FLT-06/R-FLT-09
-  Windows refusals (covered by the Windows parity item). Unresolved splits
-  needing a choice: R-DRAG-07 Win-drag (KDE frame follows pointer, Windows
-  stationary preview) and R-DRAG-08 focus at press vs Windows on drop.
+  58 scenarios. End-to-end expansion completed 2026-10-07 (`9241c94`..
+  `9168508`, [record](changes/archive/reference-matrix-expansion.md)):
+  matrix split into per-area files, GWT format confirmed (decisions.md),
+  scrolling profiles niri/PaperWM/karousel/paneru added, 125 scenarios
+  (67 new incl. 10 column mechanics), all 14 profiles per new scenario;
+  1198 assessed cells: 372 evidenced, 237 partial, 224 TBD, 328 qualified,
+  37 mixed. Source filling makes no product decision.
+  [Cross-WM consensus analysis](research/reference-wm-consensus.md) Table A
+  now lists 24 Ours-vs-strong-consensus differences with recommendations
+  (see Open user decisions), plus strong-consensus predicates where Ours is
+  TBD pending native observation. Unresolved splits needing a choice:
+  R-DRAG-07 Win-drag (KDE frame follows pointer, Windows stationary
+  preview) and R-DRAG-08 focus at press vs Windows on drop. Live-test
+  queue: 508 cells grouped by environment (per reference WM, Ours KDE 39,
+  Ours Windows 37, macOS/paneru 82) in the archived record; candidate for
+  per-WM VM (possibly nix) setups, not yet designed. Next: user reviews
+  Table A; plan live-test environments; priority native TBD rows R-WS-02,
+  R-WS-04, R-WS-05, R-START-03, R-MAX-01 remain.
 - P2 | Prior-art catalogue upkeep | Completed 2026-10-03 (`e4c1d92`):
   [maintained index](research/prior-art.md), grouped by desktop and type
   (compositor-native vs host-integrated) with algorithm families,
@@ -658,11 +656,17 @@ All items below shipped offline with no live result claimed.
 - Q3 scope: whether the reserved-slot maximize overlay also replaces the
   R-MAX-03 one-shot restore on floating-to-tiled toggle (recommended yes).
 - Reference consensus differences (functional specification line above):
-  keep, adopt or make variants for each Table A row and the R-DRAG-07/08
-  splits.
+  keep, adopt or make variants for each of the 24 Table A rows (new since
+  2026-10-07: R-MOV-08 vertical output crossing, R-LAY-01 axis toggle,
+  R-LAY-04 per-workspace layout, R-WS-08/11/12/14 workspace verbs,
+  R-OUT-04 output send, R-MAX-09 fullscreen send, R-SPC-04 fixed-size
+  float, R-RST-01 float identity across restart, R-RSZ-01 Windows keyboard
+  resize, R-GRP-03) and the R-DRAG-07/08 splits.
+- Live-test environment plan for the 508-cell matrix queue (user idea:
+  preconfigured per-WM VMs, possibly a nix config each).
 - Review of 2026-10-03/04 autonomous provisional choices (all marked
   "Provisional, to discuss" in [decisions](decisions.md)): mise rolling
-  versions, matrix format, Windows settings/tray/presets, drag producers,
+  versions, Windows settings/tray/presets, drag producers,
   sequential startup seeding, KDE conflict controls.
 
 ## Known issues and risks
