@@ -115,7 +115,7 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
 Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts are per-predicate: A 11, B 14, U 6, C 15, W 3;
+Summary counts including insertion are per-predicate: A 11, B 15, U 6, C 15, W 3;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
 
 ## Table A: strong cross-family consensus where ours differs (11)
@@ -141,9 +141,11 @@ alternate Move-verb inventory is a 4/4 tie (C/H/B/Q follow vs I/X/S/A
 default-stay), reported as inventory, never read as Send consensus. COSMIC
 MoveToWorkspace follow is not a Send vote.
 
-## Table B: strong consensus ours matches (14; pending explicit)
+## Table B: strong consensus ours matches (15; pending explicit)
 
 | Row | Consensus | Count | COSMIC | Ours KDE / Windows |
+|---|---|---|---|---|
+| R-INS-03 empty admission | first open tiles at full work area, newcomer focused | 8/8, 4/4 fam | partial-offline (allocation + desired focus; native activation TBD) | partial-offline (allocation + desired focus; native activation TBD) |
 |---|---|---|---|---|
 | R-WS-02 anchor | return lands at A | A6/6ev (C,B,I,X,S,Q), 4/4 fam | yes (target MRU) | yes (remembered A) |
 | R-FLT-01 | unfloat is fresh admission (old-slot excluded only) | F6/8, 4/4 fam | yes | yes / yes |
@@ -273,36 +275,45 @@ outcomes.
 
 | Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
 |---|---|---|---|
-| R-INS-03 empty admission | anchor fallback; complete topology; newcomer focus; exact frames | partial policy branches: C `S-cos-axis`, H `S-hyp-ins`, B `S-bsp-insert`, S `S-sway-ins`, Q `S-qti-add`, A `S-awe-tile`/`S-awe-manage`; I/X focused-branch tags do not cover no-focus; empty-fixture topology/frames unresolved, focus policies partial (H,B; S gate, Q current-position fallback unresolved) | C audit-only (no agreed single predicate; applicable unknowns TBD) |
-| R-INS-04 chained admission | leg 1 inherits R-INS-01 policy branches only (landscape work area does not prove B at 1200x600, so no dimension is re-voted); legs 2-3 topology/focus/geometry | leg-1 policy branches all 8 (P); legs 2-3: 0/8 evidenced (live-test route: pointer/focus updates plus repeated recalc) | C audit-only |
-| R-INS-05 float-focus anchor | anchor exclusion vs fallback; newcomer layer/focus | 0/8 complete (anchor-branch notes only: C `S-cos-last`, H `S-hyp-ins`, B `S-bsp-insert`, S `S-sway-ins`; none proves float exclusion) | C audit-only |
+| R-INS-03 empty admission | first open tiles and focuses | unanimous 8/8, 4/4 fam: every profile tiles A at full work area (partitioning) with newcomer focus (C `S-cos-axis`+`S-cos-mapfocus`, H `S-hyp-ins`+`S-hyp-newfocus`, B `S-bsp-insert`+`S-bsp-ins`, I `S-i3-ins`, X `S-xmo-admit`+`S-xmo-ins`, S `S-sway-ins`+`S-sway-wsdefault`, Q `S-qti-add`, A `S-awe-tile`+`S-awe-manage`) | B unanimous (ours offline-match: single leaf, geometry applied, desired focus; native activation TBD) |
+| R-INS-04 chained admission | leg 1 inherits R-INS-01 policy branches only (landscape work area does not prove B at 1200x600, so no dimension is re-voted); legs 2-3 topology/focus/geometry | leg-1 topology stated per profile in the matrix (all 8 leg-1 complete at policy level except Hyprland newcomer side and Ours/scroll remainders noted there); legs 2-3: 0/8 evidenced (live-test route: pointer/focus updates plus repeated recalc); position sub-leg inherits R-INS-01 U | C audit-only |
+| R-INS-05 float-focus anchor | anchor exclusion vs fallback; newcomer layer/focus | anchor to B evidenced: C (`S-cos-last` tiling-tree search skips the float), I (floating-con descends to the tiling descendant, `S-i3-ins`), S (focus-inactive tiling anchor, `S-sway-ins`); partial: H (float excluded from the active-tiled candidate, but pointer-hit vs active-tile under shipped follow_mouse leaves B unresolved); Ours differs (fallback wraps the whole root old/new, desired focus newcomer); TBD: B,X,Q,A; newcomer-tiles-focused 4/8 thin (C,H,I,S) | C audit-only |
 | R-INS-06 over overlay | overlay retained/cleared/covering; newcomer focus/visibility; underlying layout; separate `B:max` vs fresh `B:full` legs | `B:max` leg no-counterpart: B (no maximize in the state inventory, `S-bsp-fs`), I (`S-i3-max`), X (`S-xmo-layout`), S (`S-sway-max`), all consistent with the R-FLT-06 no-native-max classification; `B:full` legs applicable but TBD in those four; C/H/Q/A legs applicable but TBD | C audit-only |
 | R-INS-07 inactive-workspace routing | target-local anchor vs global focus; no focus steal; no output switch | 0/8 complete (routing TBD at pin in all eight) | C audit-only |
-| R-INS-08 preselected direction | verb inventory; override vs unsupported; one-shot vs persistent | verb+override+consumption: H (`S-hyp-pre`: preselect verb, forced axis/side, one-shot reset under shipped default); verb+manual-mode: B (`S-bsp-pre`); verb only: I (`S-i3-split`), S (`S-sway-default`+`S-sway-split`); no-counterpart: X (`S-xmo-layout` fixed Tall); TBD: C,Q,A (a missing search term is not inventory proof) | C audit-only |
+| R-INS-08 preselected direction | verb inventory; override vs unsupported; one-shot vs persistent | complete: H (`S-hyp-pre`: preselect verb, forced axis/side, one-shot reset under shipped default); verb+manual-mode: B (`S-bsp-pre`); verb+orientation-set: I (`S-i3-split`), S (`S-sway-default`+`S-sway-split`); no-counterpart: X (`S-xmo-layout` fixed Tall); TBD: C,Q,A (a missing search term is not inventory proof) | C audit-only |
 | R-INS-01 scrolling supplement | column admission position/focus/viewport under the separate column Given (no exact H projection; same A/B/C identities) | position-policy branches: niri (`S-nir-ins`: new column after active), PaperWM (`S-pap-ins`: selected+1 RIGHT), karousel (`S-kar-ins`: new column after last-focused), paneru (`S-pan-ins`: rule-index/overlap/end); focus/viewport 0/4 | non-voting comparison only |
-| R-INS-02 scrolling supplement | tab join vs ordinary admission under `COL[C1[S[A*,B]]]` with open C (same identities/action as the tree fixture) | non-join position: niri (ordinary open wraps a new column, `S-nir-ins`), karousel (ordinary open a new column, `S-kar-ins`; stacked display exists but off default); TBD: PaperWM (accordion is not exact tabs), paneru (`Stack` is vertical, `Tabs` app-native, `S-pan-model`; exact fixture/admission TBD) | non-voting comparison only |
+| R-INS-02 scrolling supplement | tab join vs ordinary admission under `COL[C1[S[A*,B]]]` with open C (same identities/action as the tree fixture) | non-join position: niri (ordinary open wraps a new column, `S-nir-ins`), karousel (ordinary open a new column, `S-kar-ins`; stacked display exists but off default); active-tab/focus TBD in both; TBD: PaperWM (no tabbed-display column evidenced at pin); fixture-inapplicable: paneru (`Stack` is visible stacking, `Tabs` app-native, `S-pan-model`; exact S fixture has no counterpart, native-tab variant under R-COL-10) | non-voting comparison only |
 
 Counts for this expansion (92 cells: 84 new + 8 backfill; mutually
-exclusive E/P/T/Q/M). Original-eight new-row cells (6x8=48): E 0, P 18
-(R-INS-03: 6; R-INS-04: 8 leg-1-policy; R-INS-08: 4), T 25 (R-INS-03: 2;
-R-INS-05: 8; R-INS-06: 4; R-INS-07: 8; R-INS-08: 3), Q 1
-(R-INS-08: X), M 4 (R-INS-06: B,I,X,S each has no-counterpart `B:max`
+exclusive E/P/T/Q/M). Original-eight new-row cells (6x8=48): E 12
+(R-INS-03: 8; R-INS-05: 3 C/I/S; R-INS-08: 1 H), P 12 (R-INS-04: 8
+leg-1-stated with legs 2-3 TBD; R-INS-05: 1 H pointer-vs-B partial;
+R-INS-08: 3 B/I/S verb-level), T 19 (R-INS-05: 4 B/X/Q/A; R-INS-06: 4
+C/H/Q/A; R-INS-07: 8; R-INS-08: 3 C/Q/A), Q 1 (R-INS-08: X), M 4
+(R-INS-06: B,I,X,S each has no-counterpart `B:max`
 and applicable-TBD `B:full`). Scrolling new-row cells (6x4=24): P 6
-(R-INS-03: 4; R-INS-07 niri routing and PaperWM routing+no-steal: 2),
+(R-INS-03: 4 position-at-default-width with focus/width remainders;
+R-INS-07 niri routing and PaperWM routing+no-steal: 2),
 T 18, Q 0, M 0.
-Backfill cells (2x4=8): P 6 (R-INS-01: 4 position-policy; R-INS-02:
-niri+karousel non-join: 2), T 2 (R-INS-02: PaperWM, paneru), Q 0. Ours
+Backfill cells (2x4=8): P 6 (R-INS-01: 4 position with widths/focus/viewport
+TBD; R-INS-02: niri+karousel non-join: 2), T 1 (R-INS-02: PaperWM),
+Q 1 (R-INS-02: paneru fixture-inapplicable per `S-pan-model`). Ours
 cells (6x2=12; backfill blocks carry no Ours cells): P 6 (R-INS-03
-topology+desired-focus: 2; R-INS-04 leg-1 topology: 2; R-INS-05
-anchor-predicate: 2), T 6 (R-INS-06/07/08: 6), Q 0. Grand totals: E 0,
-P 36, T 51, Q 1, M 4 (92 cells). All 36 P cells retain TBD remainders;
-all four M cells retain applicable fullscreen TBD legs. These cell counts
+single-leaf+geometry+desired-focus with native activation TBD: 2; R-INS-04
+leg-1 topology+desired-focus with legs 2-3 TBD: 2; R-INS-05
+fallback root-wrap+desired-focus with native activation TBD: 2),
+T 6 (R-INS-06/07/08: 6), Q 0. Grand totals: E 12,
+P 30, T 44, Q 2, M 4 (92 cells). E cells carry no TBD; every P/M cell
+names its explicit load-bearing remainder. These cell counts
 measure documentation coverage, not consensus votes.
 
-Ours-vs-consensus position (no behavior selected): the six new rows carry
-no strong consensus (all C audit-only), so no new ours-vs-consensus
-conflict is established. Ours empty-tree single-leaf and desired-focus
-branches are sourced; reference empty-fixture comparisons remain partial.
-Hyprland/bspwm preselect verbs are evidenced; Ours preselect inventory and
-admission-over-overlay stay TBD on both platforms. No product choice is
+Ours-vs-consensus position (no behavior selected): R-INS-03 establishes
+strong consensus (B unanimous) with Ours offline-matching on both
+platforms; native activation stays the explicit pending leg. The other
+five new rows carry no strong consensus (all C audit-only with explicit
+sub-leg voters), so no further ours-vs-consensus conflict is
+established. Ours empty-tree single-leaf geometry and desired-focus
+branches are sourced; Hyprland preselect is completely sourced (E cell)
+while bspwm/i3/sway preselect stay verb-level (P cells); Ours preselect
+inventory and admission-over-overlay stay TBD on both platforms. No product choice is
 selected by these source findings.

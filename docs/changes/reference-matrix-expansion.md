@@ -1,6 +1,6 @@
 # Reference matrix expansion
 
-- Status: active; step 1 approved; restructure and insertion complete; focus next.
+- Status: active; restructure and insertion accepted; semantic insertion correction accepted; focus next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
@@ -310,6 +310,8 @@
 
 - SC candidates become live-test candidates whenever only policy, not the discriminator's requested outcome, is established. Source estimates do not promise all-WM coverage.
 
+- User correction (2026-10-06): answer each Observe at the semantic level first; cited pinned source reasonably establishing that predicate is evidence without every guard or native/pixel confirmation. Pixel frames, animation and incidental details are not prerequisites unless load-bearing. Keep Then outcomes to one to three lines; use TBD only for genuinely unresolved discriminatory parts. Counts below use this standard; earlier piece-B1 counts are historical.
+
 ### Insertion queue additions (piece B1)
 
 These are applicable unknown legs or applicability/inventory checks, not
@@ -318,16 +320,16 @@ live fixture; source pins and shipped baselines stay those in the index.
 
 | IDs / profiles | Required discriminator / state | Why source evidence stops |
 |---|---|---|
-| R-INS-03, all 14 | Empty domain, ordinary first open; actual frame, focus and viewport | Admission/position policy is partial; physical focus and settled geometry unestablished. i3/xmonad empty fallback remains untraced |
+| R-INS-03, four scrolling profiles and Ours KDE/Windows | Empty domain, ordinary first open; unresolved column width/focus or Ours native activation | Original eight semantic predicates fully sourced, no live confirmation required for those cells. PaperWM width, niri/karousel focus, paneru width/focus, and Ours activation remain unresolved |
 | R-INS-04, all 14 | Pointer outside eligible windows, no refocus, C/D/E chain; record B's dimensions | Landscape output alone does not establish R-INS-01's target rectangle; repeated focus/pointer/recalc legs 2-3 complex and TBD |
-| R-INS-05, all 14 | Ordinary float focused, B prior tiled focus; open C and observe anchor/layer/focus | Eligible-anchor branches do not establish the actual float-focused resolution, including Ours |
+| R-INS-05, Hyprland/bspwm/xmonad/qtile/awesome and four scrolling profiles plus Ours KDE/Windows | Ordinary float focused, B prior tiled focus; open C; record pointer for Hyprland | COSMIC/i3/sway B-anchor outcomes sourced. Hyprland pointer-vs-B unresolved; other reference anchors unresolved; Ours whole-root fallback sourced, native activation unresolved |
 | R-INS-06, COSMIC/Hyprland/qtile/awesome and four scrolling profiles plus Ours KDE/Windows | Fresh max and full fixtures; open C; native state acknowledgements, visibility and focus | Born-max/unfloat paths are not open-over-overlay evidence; render/focus interplay TBD. paneru native-zoom and fullscreen preparation require confirmation |
 | R-INS-06, bspwm/i3/xmonad/sway | Fresh fullscreen fixture only | Maximize has evidenced no-counterpart; fullscreen remains applicable and TBD, not excluded with maximize |
 | R-INS-07, all 14 | One-case destination rule into inactive WS2/R; source output focused, pointer on L | niri routing and PaperWM routing/no-steal branches sourced; target anchor and full journey unresolved. Verify karousel cross-output and paneru native Space/virtual-row applicability first |
-| R-INS-08, Hyprland/bspwm/i3/sway | Named preselect/split verb, open C then D; axis/order and persistence | Hyprland forced direction/one-shot reset sourced, exact geometry TBD; bspwm consumption and i3/sway admission/persistence not traced confidently |
+| R-INS-08, bspwm/i3/sway | Named preselect/split verb, open C then D; override and persistence | Hyprland semantic override/one-shot outcome fully sourced and removed from queue; bspwm consumption and i3/sway admission/persistence unresolved |
 | R-INS-08, COSMIC/qtile/awesome/four scrolling profiles/Ours KDE/Windows | Native command inventory before any fixture | A missing search term is not absence evidence; applicability remains TBD. xmonad/Tall's fixed master/stack model has no-counterpart |
-| R-INS-01 scrolling backfill, all four | Separate two-column Given; open C; sizes/focus/viewport | Position-policy branches sourced, settled viewport/frames and focus remainder TBD |
-| R-INS-02 scrolling backfill, all four | Exact tabbed-display Given and open C; preserve app-native-tab distinction | niri/karousel new-column non-join branch sourced; active-member/focus remainder TBD. PaperWM accordion and paneru vertical Stack are not exact S; native-tab variant applicability unresolved |
+| R-INS-01 scrolling backfill, all four | Separate two-column Given; open C; stable-vs-rescaled widths, focus and viewport | Position sourced and PaperWM activate-on-show sourced; widths/viewport and other focus remainders unresolved |
+| R-INS-02 scrolling backfill, niri/PaperWM/karousel | Exact tabbed-display Given and open C | niri/karousel non-join sourced; active-member/focus unresolved. PaperWM fixture applicability unresolved. Paneru exact S fixture is inapplicable per model source, not a live no-op; native-tab journey belongs to R-COL-10 |
 
 - Source routes retained: niri `scrolling.rs`/`workspace.rs`/`xdg_shell.rs`; PaperWM `tiling.js` insertion, actor-show and inactive-space paths; karousel `Tiled.ts`/`Grid.ts`/`Column.ts`; paneru `triggers.rs` plus `layout.rs` model. Ours shared `session.rs`, `lifecycle.rs`, `world.rs` with adapter boundary citations at `9241c94`. No source branch is promoted to physical delivery evidence.
 
@@ -351,4 +353,6 @@ live fixture; source pins and shipped baselines stay those in the index.
 - Insertion coverage (92 cells = 84 new + 8 backfill): 0 fully evidenced, 36 partial-source with TBD remainders, 51 TBD-only, 1 qualified (xmonad R-INS-08), 4 mixed qualified maximize/applicable-TBD fullscreen cells. Original-eight 48: P18/T25/Q1/M4; scrolling new 24: P6/T18; backfill 8: P6/T2; Ours 12: P6/T6. Counts measure coverage, not votes. No new strong consensus or product choice established.
 - Insertion review: initial branch-only draft rejected for insufficient pinned admission assessment; corrected with actual source routes and inventory evidence. Independent evidence review exposed mixed-leg count errors and unsupported COSMIC absence. Lead corrected these, the sway split binding and paneru Stack/native-Tabs distinction; no evidence is inferred from search absence. Geometry, actual focus and difficult source routes stay TBD and queued above.
 - Insertion verification: six IDs with 14 Then entries each, two backfills with four each, original row preservation, all source keys resolved, unchanged original pins, pinned source spot review, ASCII and whitespace checks. No live tests.
+- Insertion semantic correction: six scenarios and two scrolling backfills tightened from 365 to 239 lines. Coverage now E12/P30/T44/Q2/M4 (92 cells; M = qualified maximize + applicable-TBD fullscreen). Original-eight E12/P12/T19/Q1/M4; scrolling new P6/T18; backfill P6/T1/Q1; Ours P6/T6. First-window tile/full-area/focus is unanimous 8/8 across four families; Ours allocation/desired focus match, native activation unknown. Float-focused admission differs: COSMIC/i3/sway use B, Ours wraps the whole root, Hyprland pointer-vs-active-tile is config-qualified; no strong anchor consensus or product decision. Hyprland preselect fully evidenced. Queue narrowed, no additions.
+- Correction review: initial Worker accounting still treated fully semantic outcomes as partial; resumed once to align E/P classes and consensus with Observe. Lead checked actual diff, Ours insertion/eligible-focus code, count consistency and cited routes; removed unsupported side-by-side claim when B's dimensions are unstated. Accepted verification: GWT profile counts, citation resolution, ASCII, original wide-row preservation, whitespace; no live tests.
 - Exact next action: focus, R-FOC-01..04; reuse directional floating-layer coverage without changing it, add pinned outcomes/qualifications and consensus entries, queue difficult ties, then commit/push that area.

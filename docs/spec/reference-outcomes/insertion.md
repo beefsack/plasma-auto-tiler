@@ -33,49 +33,20 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   adapter `admit` op (`S(S-ours-ins)`).
 - Observe: first tile size/anchor and focus vs leaving the app
   unmanaged/floating.
-- Then COSMIC: anchor branch only - no-focus fallback splits root using
-  output dimensions; `S(S-cos-axis)`; newcomer focus and exact frames TBD.
-- Then Hyprland/Dwindle: anchor fallback branch only (mouse-hit, else
-  active tiled, else first/closest node); `S(S-hyp-ins)`; ordinary newcomer
-  focus per `S(S-hyp-newfocus)`; exact first frames TBD.
-- Then bspwm: anchor at desktop focus; `S(S-bsp-insert)`; ordinary newcomer
-  takes focus per the same branch; size scheme per `S(S-bsp-ins)`; exact
-  first frames TBD.
-- Then i3: TBD. Focused-branch `S(S-i3-ins)` (attach after focus, newcomer
-  takes focus) does not cover the no-focus start; empty fallback TBD.
-- Then xmonad/Tall+Navigation2D: TBD. Core manage path `S(S-xmo-admit)`
-  plus `insertUp` `S(S-xmo-ins)` cover the focused case; empty Tall
-  anchor/frames TBD.
-- Then sway: fallback branch only - `workspace_add_tiling` when no
-  focus-inactive node; `S(S-sway-ins)`; focus gate and geometry-default
-  branches per `S(S-sway-ins)` + `S(S-sway-wsdefault)`; exact frames TBD.
-- Then qtile/Columns: admission path only - focused-position insert with
-  newcomer focus; `S(S-qti-add)` under `S(S-qti-default)`; no-focus current
-  fallback and exact frames TBD.
-- Then awesome/tile: manage-append path only - newcomer last in tiled
-  order; `S(S-awe-tile)` + `S(S-awe-manage)`; empty-tag first frames TBD.
-- Then niri: position leg - ordinary open wraps A in a new column at
-  index active+1, or index 0 on the empty strip with the view offset
-  reset; activated when told to; `S(S-nir-ins)`; settled width, viewport,
-  and smart-activation remainder TBD.
-- Then PaperWM: position and focus legs - A inserts at selected+1 under
-  the shipped RIGHT default and activates on actor show;
-  `S(S-pap-base)` + `S(S-pap-ins)`; settled frames TBD.
-- Then karousel/Lazy: position leg - A opens a new column after the
-  last-focused column (else the last column); a null left column inserts
-  at the start of an empty grid, with A appended at the bottom;
-  `S(S-kar-base)` + `S(S-kar-ins)`; KWin-side focus, viewport,
-  and settled widths TBD.
-- Then paneru: position-policy leg - A lands in the active strip at the
-  config `insertion()` index, else the visually overlapped column, else
-  the end, then reshuffles; `S(S-pan-base)` + `S(S-pan-ins)`; focus TBD.
-- Then Ours KDE: topology and desired-focus legs - empty tree returns the
-  single new leaf, and the admitted newcomer becomes the desired focus
-  leaf with `last_active` updated; `S(S-ours-ins)` + `S(S-ours-admit)`;
-  exact frames and adapter-side physical focus confirmation TBD.
-- Then Ours Windows: same two legs as Ours KDE via the shared Engine
-  plus the managed-claim gate and adapter admit application;
-  `S(S-ours-ins)` + `S(S-ours-admit)`; frames and physical focus TBD.
+- Then COSMIC: A tiles full work area, focused. `S(S-cos-axis)` + `S(S-cos-mapfocus)`.
+- Then Hyprland/Dwindle: A tiles full work area, focused. `S(S-hyp-ins)` + `S(S-hyp-newfocus)`.
+- Then bspwm: A tiles full desktop, focused. `S(S-bsp-insert)` + `S(S-bsp-ins)`.
+- Then i3: A tiles workspace, focused. `S(S-i3-ins)`.
+- Then xmonad/Tall+Navigation2D: A tiles as sole stack entry, focused. `S(S-xmo-admit)` + `S(S-xmo-ins)`.
+- Then sway: A tiles workspace, focused. `S(S-sway-ins)` + `S(S-sway-wsdefault)`.
+- Then qtile/Columns: A tiles, focused. `S(S-qti-add)` under `S(S-qti-default)`.
+- Then awesome/tile: A tiles full tag, focused. `S(S-awe-tile)` + `S(S-awe-manage)`.
+- Then niri: A opens a new column at index 0 at the default column width. `S(S-nir-base)` + `S(S-nir-ins)`; activation/focus TBD.
+- Then PaperWM: A inserts as a new column at selected+1 under the shipped RIGHT default, activated on show. `S(S-pap-base)` + `S(S-pap-ins)`; settled width TBD.
+- Then karousel/Lazy: A opens a new column at the start of the empty grid, width from the client preferred width. `S(S-kar-base)` + `S(S-kar-ins)`; KWin-side focus TBD.
+- Then paneru: A lands in the active strip per the `insertion()` index path, then reshuffles. `S(S-pan-base)` + `S(S-pan-ins)`; width and focus TBD.
+- Then Ours KDE: A is the single new leaf with full-work-area geometry applied via the admit geometry plan; newcomer is the desired focus leaf. `S(S-ours-ins)` + `S(S-ours-admit)`; native activation TBD.
+- Then Ours Windows: same single-leaf leg as Ours KDE via the shared Engine plus the managed-claim gate. `S(S-ours-ins)` + `S(S-ours-admit)`; native activation TBD.
 - Variant hook: V-INS-AXIS.
 
 ### R-INS-04: chained admission with a fixed pointer
@@ -93,35 +64,22 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   candidates (admission plus pointer/focus updates and repeated geometry
   recalculation).
 - Fixture-equivalence qualifier: the landscape-work-area fixture does NOT
-  establish B at 1200x600, so first-leg reuse below is policy-branch only
-  (admission axis, anchor, and newcomer-focus rules); exact R-INS-01
-  dimensions and pixel frames stay TBD and are never re-voted here.
-- Then COSMIC: first leg per the R-INS-01 cell (`S(S-cos-last)` +
-  `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-mapfocus)`); legs 2-3
-  TBD.
-- Then Hyprland/Dwindle: first leg per the R-INS-01 cell (`S(S-hyp-ins)` +
-  `S(S-hyp-newfocus)`); pointer-half ordering and legs 2-3 TBD.
-- Then bspwm: first leg per the R-INS-01 cell (`S(S-bsp-ins)` +
-  `S(S-bsp-insert)`); legs 2-3 TBD.
-- Then i3: first leg per the R-INS-01 cell (`S(S-i3-ins)`); legs 2-3 TBD.
-- Then xmonad/Tall+Navigation2D: first leg per the R-INS-01 cell
-  (`S(S-xmo-ins)` + `S(S-xmo-layout)` + `S(S-xmo-admit)`); legs 2-3 TBD.
-- Then sway: first leg per the R-INS-01 cell (`S(S-sway-ins)` +
-  `S(S-sway-wsdefault)`); legs 2-3 TBD.
-- Then qtile/Columns: first leg per the R-INS-01 cell (`S(S-qti-default)`
-  + `S(S-qti-add)`); legs 2-3 TBD.
-- Then awesome/tile: first leg per the R-INS-01 cell (`S(S-awe-tile)` +
-  `S(S-awe-manage)`); legs 2-3 TBD.
-- Then niri: TBD (all three legs; links R-COL-01 rather than duplicating
-  its chain).
+  establish B at 1200x600, so first-leg reuse below is policy-branch only;
+  pixel dimensions stay TBD and are never re-voted here.
+- Then COSMIC: C splits B's long edge after B, focused (axis follows B's actual frame); legs 2-3 TBD. `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-mapfocus)`.
+- Then Hyprland/Dwindle: C splits B's long-edge axis, focused; newcomer side follows the pointer half under follow_mouse (pointer outside eligible windows, side TBD); legs 2-3 TBD. `S(S-hyp-ins)` + `S(S-hyp-newfocus)`.
+- Then bspwm: C splits B's long edge as second child after B, focused (axis follows B's actual frame); legs 2-3 TBD. `S(S-bsp-ins)` + `S(S-bsp-insert)`.
+- Then i3: flat `H[A,B,C*]`, C after B, focused; legs 2-3 TBD. `S(S-i3-ins)`.
+- Then xmonad/Tall+Navigation2D: StackSet `[A,C*,B]` projected `H[A,V[C*,B]]`, newcomer focused; legs 2-3 TBD. `S(S-xmo-ins)` + `S(S-xmo-layout)` + `S(S-xmo-admit)`.
+- Then sway: flat `H[A,B,C*]`, C after B, focused; legs 2-3 TBD. `S(S-sway-ins)` + `S(S-sway-wsdefault)`.
+- Then qtile/Columns: C joins the focused column at the current position pushing B after, focused; legs 2-3 TBD. `S(S-qti-default)` + `S(S-qti-add)`.
+- Then awesome/tile: C appended last (`[A,B,C]`, A master, B/C stacked), focused; legs 2-3 TBD. `S(S-awe-tile)` + `S(S-awe-manage)`.
+- Then niri: TBD (all three legs; links R-COL-01 rather than duplicating its chain).
 - Then PaperWM: TBD (all three legs; links R-COL-01).
 - Then karousel/Lazy: TBD (all three legs; links R-COL-01).
 - Then paneru: TBD (all three legs; links R-COL-01).
-- Then Ours KDE: first leg topology per `S(S-ours-ins)` (focused-leaf
-  wrap, admission-axis split, equal shares); newcomer focus, order, and
-  legs 2-3 TBD.
-- Then Ours Windows: first leg topology per `S(S-ours-ins)`; focus, order,
-  and legs 2-3 TBD.
+- Then Ours KDE: leg-1 topology per `S(S-ours-ins)` (focused-leaf wrap old/new, admission-axis split, equal shares), newcomer desired focus; legs 2-3 TBD.
+- Then Ours Windows: leg-1 topology per `S(S-ours-ins)` (same old/new wrap), newcomer desired focus; legs 2-3 TBD.
 - Variant hook: V-INS-AXIS.
 
 ### R-INS-05: admission while an ordinary float has focus
@@ -135,33 +93,20 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   (source-clear route: do not assume floats split).
 - Observe: float focus as anchor, fallback to last tile, root or pointer
   target; newcomer layer and focus.
-- Then COSMIC: TBD. Last-active branch `S(S-cos-last)` covers MRU
-  resolution, not the float-exclusion predicate; outcome TBD.
-- Then Hyprland/Dwindle: TBD. Anchor branches in `S(S-hyp-ins)` name
-  mouse-hit/active-tiled candidates; float-focus exclusion TBD.
-- Then bspwm: TBD. Desktop-focus anchor `S(S-bsp-insert)` names the
-  anchor domain; float-focus behavior TBD.
-- Then i3: TBD. `S(S-i3-ins)` covers focused-parent attach; float-focus
-  anchor TBD.
-- Then xmonad/Tall+Navigation2D: TBD. Manage path `S(S-xmo-admit)` does
-  not settle float-focus anchoring; TBD.
-- Then sway: TBD. Focus-inactive anchor `S(S-sway-ins)` names the tiling
-  anchor; float-focus exclusion TBD.
-- Then qtile/Columns: TBD. `S(S-qti-add)` covers the tiled admit path;
-  float-focus anchor TBD.
-- Then awesome/tile: TBD. `S(S-awe-tile)` + `S(S-awe-manage)` cover the
-  tiled arrange path; float-focus anchor TBD.
+- Then COSMIC: C tiles at the last-active tile (float focus is not in the tiling tree, so B anchors), newcomer focused. `S(S-cos-last)` + `S(S-cos-mapfocus)`.
+- Then Hyprland/Dwindle: float focus excluded from the active-tiled candidate, but the anchor is the pointer-hit window under shipped follow_mouse else the active tile - pointer unstated here, so B vs pointer-hit TBD; newcomer tiles focused. `S(S-hyp-ins)` + `S(S-hyp-newfocus)` + `S(S-hyp-defaults)`.
+- Then bspwm: TBD. Desktop-focus anchor `S(S-bsp-insert)` does not settle float-focus anchoring; TBD.
+- Then i3: C tiles at the tiling-focused descendant (float focus excluded), newcomer focused. `S(S-i3-ins)`.
+- Then xmonad/Tall+Navigation2D: TBD. Manage path `S(S-xmo-admit)` does not settle float-focus anchoring; TBD.
+- Then sway: C tiles at the focus-inactive tiling anchor (float focus excluded), newcomer focused. `S(S-sway-ins)`.
+- Then qtile/Columns: TBD. `S(S-qti-add)` covers the tiled admit path; float-focus anchor TBD.
+- Then awesome/tile: TBD. `S(S-awe-tile)` + `S(S-awe-manage)` cover the tiled arrange path; float-focus anchor TBD.
 - Then niri: TBD.
 - Then PaperWM: TBD.
 - Then karousel/Lazy: TBD.
 - Then paneru: TBD.
-- Then Ours KDE: anchor-predicate leg - the admission anchor is the
-  focused leaf only while the focused domain is the target domain and the
-  leaf is still a linked tile leaf (`eligible_focus_in`), and the admitted
-  newcomer becomes the desired focus leaf; `S(S-ours-admit)`; how an
-  F*-focused state resolves through that predicate stays TBD.
-- Then Ours Windows: same anchor-predicate leg as Ours KDE via the shared
-  Engine; `S(S-ours-admit)`; float-focus resolution TBD.
+- Then Ours KDE: no eligible tile focus (float holds an exception, not a tile leaf), so C wraps the whole root old/new via the fallback, desired focus newcomer. `S(S-ours-ins)` + `S(S-ours-admit)` + `S(S-ours-flt-target)`; native activation TBD.
+- Then Ours Windows: same fallback root-wrap as Ours KDE via the shared Engine. `S(S-ours-admit)` + `S(S-ours-flt-target)` + `S(S-ours-ins)`; native activation TBD.
 - Variant hook: provisional/TBD (no suitable existing hook; do not reuse
   V-FLOAT-FOCUS, which covers directional search, not admission anchor).
 
@@ -178,44 +123,19 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   and focus paths).
 - Observe: overlay retained, cleared, or covering a newly admitted window;
   newcomer focus/visibility and underlying layout.
-- Then COSMIC: TBD (`B:max` preparable via the maximize-request path;
-  `S(S-cos-maxpolicy)`; overlay admission/render/focus TBD; fresh `B:full`
-  leg likewise TBD).
-- Then Hyprland/Dwindle: TBD (pending-maximum consume/apply
-  `S(S-hyp-bornmax)` covers born-max, not open-over-existing-max; the
-  fresh `B:full` leg likewise TBD).
-- Then bspwm: `B:max` leg no-counterpart - the state inventory has no
-  maximize (tiled/pseudo_tiled/floating/fullscreen only; `S(S-bsp-fs)`,
-  consistent with the existing R-FLT-06 no-native-max classification);
-  fresh `B:full` leg applicable but TBD.
-- Then i3: `B:max` leg no-counterpart - the command inventory has no
-  maximize verb (`S(S-i3-max)`, consistent with R-FLT-06); fresh `B:full`
-  leg applicable via `S(S-i3-fs)` but TBD.
-- Then xmonad/Tall+Navigation2D: `B:max` leg no-counterpart - no maximize
-  state in this profile (`S(S-xmo-layout)`, consistent with R-FLT-06);
-  fresh `B:full` leg applicable via the EWMH fullscreen path
-  (`S(S-xmo-ewmh)`) but TBD.
-- Then sway: `B:max` leg no-counterpart - the command inventory has no
-  maximize verb (`S(S-sway-max)`, consistent with R-FLT-06); fresh `B:full`
-  leg applicable via `S(S-sway-full)` but TBD.
-- Then qtile/Columns: TBD (`B:max` preparable as a maximized float state;
-  `S(S-qti-fs)`; overlay admission TBD; fresh `B:full` leg likewise TBD).
-- Then awesome/tile: TBD (`B:max` preparable as a boolean property;
-  `S(S-awe-fs)`; overlay admission TBD; fresh `B:full` leg likewise TBD).
-- Then niri: TBD (`B:max` preparable via `set_maximized`;
-  pending-maximized tiles open in the scrolling layout per `S(S-nir-ins)`;
-  overlay admission/render/focus TBD; fresh `B:full` leg likewise TBD).
-- Then PaperWM: TBD (maximized state handled at admission per
-  `S(S-pap-ins)`; open-over-existing-max TBD; fresh `B:full` leg: born
-  fullscreen inserts normally then re-fullscreens, overlay interplay TBD).
-- Then karousel/Lazy: TBD (maximized newcomers skip arrange per
-  `S(S-kar-ins)`; open-over-existing-max TBD; fresh `B:full` leg likewise
-  TBD).
-- Then paneru: TBD (`Fullscren` is a column kind, `S(S-pan-model)`;
-  native fullscreen preparation and native-zoom `B:max` applicability
-  require confirmation; overlay admission TBD).
-- Then Ours KDE: TBD. Overlay-unfloat path `S(S-ours-overlay-unfloat)`
-  covers toggle refusal, not admission over an overlay; both legs TBD.
+- Then COSMIC: TBD (both legs; overlay admission/render/focus unresolved). `B:max` preparable via `S(S-cos-maxpolicy)`.
+- Then Hyprland/Dwindle: TBD (both legs; born-max `S(S-hyp-bornmax)` is not open-over-existing-max).
+- Then bspwm: `B:max` leg no-counterpart (no maximize in the state inventory; `S(S-bsp-fs)`); fresh `B:full` leg applicable but TBD.
+- Then i3: `B:max` leg no-counterpart (no maximize verb; `S(S-i3-max)`); fresh `B:full` leg applicable via `S(S-i3-fs)` but TBD.
+- Then xmonad/Tall+Navigation2D: `B:max` leg no-counterpart (no maximize state; `S(S-xmo-layout)`); fresh `B:full` leg applicable via `S(S-xmo-ewmh)` but TBD.
+- Then sway: `B:max` leg no-counterpart (no maximize verb; `S(S-sway-max)`); fresh `B:full` leg applicable via `S(S-sway-full)` but TBD.
+- Then qtile/Columns: TBD (both legs; `B:max` preparable as a maximized float state per `S(S-qti-fs)`).
+- Then awesome/tile: TBD (both legs; `B:max` preparable as a boolean property per `S(S-awe-fs)`).
+- Then niri: TBD (both legs; pending-maximized tiles open in the scrolling layout per `S(S-nir-ins)`).
+- Then PaperWM: TBD (both legs; maximized/born-fullscreen admission per `S(S-pap-ins)`, open-over-existing-max TBD).
+- Then karousel/Lazy: TBD (both legs; maximized newcomers skip arrange per `S(S-kar-ins)`).
+- Then paneru: TBD (both legs; `Fullscren` is a column kind per `S(S-pan-model)`, native preparation requires confirmation).
+- Then Ours KDE: TBD (both legs; overlay-unfloat `S(S-ours-overlay-unfloat)` covers toggle refusal, not admission over an overlay).
 - Then Ours Windows: TBD, same split as Ours KDE.
 - Variant hook: V-MAX-MODEL for the `B:max` leg; V-FS-SLOT for the fresh
   `B:full` leg.
@@ -239,14 +159,8 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
 - Then sway: TBD.
 - Then qtile/Columns: TBD.
 - Then awesome/tile: TBD.
-- Then niri: routing-mechanism leg only - an `open_on_workspace` window
-  rule can target the destination workspace (`S(S-nir-ins)`); whether the
-  one-case fixture rule realizes through it, and the resulting anchor,
-  focus-steal, and output-switch behavior, stay TBD.
-- Then PaperWM: routing and no-steal legs - a winprop `spaceIndex` moves
-  the window to that space and re-inserts it there, and inserts landing
-  on an inactive space only ensure the viewport without stealing focus;
-  `S(S-pap-ins)`; target-local anchor TBD.
+- Then niri: routing-mechanism leg only - an `open_on_workspace` rule can target the destination (`S(S-nir-ins)`); anchor, focus-steal, and output-switch TBD.
+- Then PaperWM: routing and no-steal legs - winprop `spaceIndex` re-inserts there, and inactive-space inserts only ensure the viewport without stealing focus (`S(S-pap-ins)`); target-local anchor TBD.
 - Then karousel/Lazy: TBD (single-screen profile; cross-output leg
   applicability TBD).
 - Then paneru: TBD.
@@ -272,41 +186,19 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   automatic chain.
 - Observe: explicit direction overrides auto axis vs unsupported;
   consumed one-shot vs persistent direction on the next admission.
-- Then COSMIC: TBD. The inspected direction-selection path is an
-  interactive drop zone (`S(S-cos-drop)`), not preselection. A missing
-  search term does not establish an absent native verb; inventory TBD.
-- Then Hyprland/Dwindle: verb, override, and consumption legs - preselect
-  writes the direction override, the next admission takes the forced axis
-  and newcomer side, and the override resets after one opening under the
-  shipped `permanent_direction_override=false` default;
-  `S(S-hyp-pre)` + `S(S-hyp-defaults)`; exact C/D frames TBD.
-- Then bspwm: verb and manual-mode legs - `-p DIR` preselects the
-  splitting area (manual insertion mode) with `~` cancel;
-  `S(S-bsp-pre)`; one-shot consumption and exact C/D geometry TBD.
-- Then i3: verb and orientation-set legs - `split vertical` dispatches
-  to `cmd_split`/`tree_split` VERT (`S(S-i3-split)`); override vs
-  automatic admission and persistence TBD.
-- Then xmonad/Tall+Navigation2D: no-counterpart - Tall tiles by a fixed
-  master/stack algorithm with stack-only core verbs (`S(S-xmo-layout)` +
-  `S(S-xmo-core-nav)`); an explicit split direction has no counterpart.
-- Then sway: verb and dispatch legs - `splitv` ships on `$mod+v` (`$mod+b`
-  is `splith`)
-  and dispatches through `do_split` (`S(S-sway-default)` +
-  `S(S-sway-split)`); override outcome and persistence TBD.
-- Then qtile/Columns: TBD (tiny search finds no "preselect" in libqtile;
-  `toggle_split` is a different concept per `S(S-qti-split)`; verb
-  inventory TBD).
-- Then awesome/tile: TBD (tiny search finds no "preselect" in the shipped
-  layout sources; verb inventory TBD).
-- Then niri: TBD (no "preselect" hits in `src/`; insertion-index model in
-  `S(S-nir-ins)` is rule/target-driven, not a direction preselect).
-- Then PaperWM: TBD (no "preselect" hits; position model is the
-  open-position index per `S(S-pap-ins)`).
-- Then karousel/Lazy: TBD (no "preselect" hits; column model only).
-- Then paneru: TBD (no "preselect" hits; insertion-index model per
-  `S(S-pan-ins)`).
-- Then Ours KDE: TBD (no preselection concept evidenced at `9241c94`;
-  not claimed absent - verb inventory TBD).
+- Then COSMIC: TBD (no preselection verb evidenced; drop-zone `S(S-cos-drop)` is a different path, not absence proof).
+- Then Hyprland/Dwindle: preselect forces the next admission axis and newcomer side, then resets under the shipped default. `S(S-hyp-pre)` + `S(S-hyp-defaults)`.
+- Then bspwm: `-p DIR` preselects the splitting area with `~` cancel (manual insertion mode). `S(S-bsp-pre)`; consumption and geometry TBD.
+- Then i3: `split vertical` sets VERT orientation. `S(S-i3-split)`; override and persistence TBD.
+- Then xmonad/Tall+Navigation2D: no-counterpart - fixed master/stack algorithm has no split-direction verb. `S(S-xmo-layout)` + `S(S-xmo-core-nav)`.
+- Then sway: `splitv` dispatches through `do_split`. `S(S-sway-default)` + `S(S-sway-split)`; override and persistence TBD.
+- Then qtile/Columns: TBD (verb inventory TBD; `toggle_split` is a different concept per `S(S-qti-split)`).
+- Then awesome/tile: TBD (verb inventory TBD in the shipped layout sources).
+- Then niri: TBD (insertion-index model per `S(S-nir-ins)`, not a direction preselect).
+- Then PaperWM: TBD (open-position index model per `S(S-pap-ins)`, not a direction preselect).
+- Then karousel/Lazy: TBD (column model only, no preselect evidenced).
+- Then paneru: TBD (insertion-index model per `S(S-pan-ins)`, not a direction preselect).
+- Then Ours KDE: TBD (no preselection concept evidenced at `9241c94`; not claimed absent).
 - Then Ours Windows: TBD, same as Ours KDE.
 - Variant hook: V-INS-AXIS.
 
@@ -325,19 +217,10 @@ inventory here.
 - When: open C (same ordinary-open verbs as R-INS-03 per profile).
 - Observe: same-column vs new-column admission, position relative to
   focus, widths stable vs rescaled, newcomer focus and viewport.
-- Then niri: position leg - C opens as a new column right after the
-  active (B) column per `S(S-nir-ins)`; widths, focus, and viewport TBD
-  (links R-COL-01 for the viewport leg).
-- Then PaperWM: position leg - C inserts at selected+1 under the shipped
-  RIGHT default per `S(S-pap-ins)`; settled frames, focus remainder, and
-  viewport TBD (links R-COL-01).
-- Then karousel/Lazy: position leg - C opens a new column after the
-  last-focused (B) column with C appended at the bottom per
-  `S(S-kar-ins)`; KWin-side focus, widths, and viewport TBD (links
-  R-COL-01).
-- Then paneru: position-policy leg - C lands per the `window_managed`
-  insertion policy (rule index, overlap column, or end) per
-  `S(S-pan-ins)`; focus and viewport TBD (links R-COL-01).
+- Then niri: C opens as a new column right after the active column; existing widths TBD (stable vs rescaled); focus and viewport TBD. `S(S-nir-ins)`.
+- Then PaperWM: C inserts at selected+1 under the shipped RIGHT default, activated on show; existing widths TBD (stable vs rescaled); viewport TBD. `S(S-pap-ins)`.
+- Then karousel/Lazy: C opens a new column after the last-focused column, appended at the bottom; existing widths TBD (stable vs rescaled); focus and viewport TBD. `S(S-kar-ins)`.
+- Then paneru: C lands per the `window_managed` insertion policy (rule index, overlap column, or end); existing widths TBD (stable vs rescaled); focus and viewport TBD. `S(S-pan-ins)`.
 
 ### R-INS-02 backfill: stack admission (scrolling profiles)
 
@@ -350,16 +233,7 @@ inventory here.
 - When: open C (ordinary open per profile).
 - Observe: C joins the tabbed display as a tab vs ordinary column
   admission; membership, order, active tab, and focus.
-- Then niri: ordinary open wraps C in a new column (`add_tile` always
-  creates a column per `S(S-nir-ins)`), so C does not join the tabbed
-  display as a tab; active-tab and focus remainder TBD.
-- Then PaperWM: TBD. Accordion is not an exact tabbed-display fixture;
-  fixture applicability and admission require separate confirmation.
-- Then karousel/Lazy: ordinary open creates a new column after the
-  last-focused column per `S(S-kar-ins)`, so C does not join a stacked
-  column as a tab (stacked display itself exists behind `toggleStacked`,
-  off by default); active-tab and focus remainder TBD.
-- Then paneru: TBD. `Stack` is ordered top-to-bottom, while `Tabs` holds
-  app-native tabs (`S(S-pan-model)`); a visible stack is not this S fixture.
-  Applicability and admission for an app-native-tab variant require
-  confirmation; native-tab nesting stays separate under R-COL-10.
+- Then niri: C does not join as a tab - ordinary open always wraps a new column. `S(S-nir-ins)`; active-tab and focus TBD.
+- Then PaperWM: TBD (no tabbed-display column evidenced at pin; applicability unresolved).
+- Then karousel/Lazy: C does not join as a tab - ordinary open creates a new column (stacked display exists behind `toggleStacked`, off by default). `S(S-kar-ins)`; active-tab and focus TBD.
+- Then paneru: fixture-inapplicable - `Stack` is ordered visible stacking while `Tabs` holds app-native tabs, so the S fixture has no counterpart here; native-tab nesting stays under R-COL-10. `S(S-pan-model)`.
