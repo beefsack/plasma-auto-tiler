@@ -1,6 +1,6 @@
 # Reference matrix expansion
 
-- Status: active; restructure, insertion correction, focus, move, resize and layout commands accepted; batch decisions pending, workspaces next.
+- Status: active; restructure, insertion correction, focus, move, resize, layout commands and workspaces accepted; batch decisions pending, minimize next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
@@ -386,6 +386,25 @@ outcomes need no pixel confirmation.
 |---|---|---|
 | R-LAY-04, Hyprland/Dwindle (1) | WS1/WS2 two-window dwindle layouts; apply WS2-only master layout override; return to WS1 | Workspace-local algorithm ownership sourced; window order through the algorithm switch unresolved |
 
+### Workspace queue additions (piece B6)
+
+30 unresolved cells (P22 + T4 + M4), grouped in nine entries. Inventory
+and fixture checks precede live journeys. Sourced semantic transfer,
+float-state and follow outcomes need no physical confirmation to count
+as evidence. Qualified absent verbs never become live no-op tests.
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-WS-09, Hyprland/PaperWM/karousel/Ours KDE (4) | Focus A then B on WS1, select WS2 then WS1; record pointer under shipped Hyprland follow_mouse=1; saved viewport for karousel | Hyprland final identity depends on unspecified pointer; PaperWM/KDE native return-focus and karousel viewport restoration unresolved |
+| R-WS-10, Hyprland (1) | Send sole B from occupied middle WS2, then select WS3; no persistent rule | Stable IDs sourced, empty-object destruction unresolved |
+| R-WS-12, COSMIC/Hyprland/bspwm/i3/sway/qtile/awesome/PaperWM (8) | Hidden WS2 on L to R, WS3 shown on R; independent selected-active legs for COSMIC/sway; matched-workspace criteria for i3 | Destination/source displaced-view or focus remainders unresolved; PaperWM hidden-target applicability must be established first |
+| R-WS-14, awesome/PaperWM/karousel (3) | Fresh next-send and previous-send from occupied WS2 | awesome relative-send inventory, PaperWM completion and karousel follow unresolved |
+| R-WS-01 backfill, karousel/paneru (2) | A/B source columns; sole C target; declared native send and follow policy | karousel focus and paneru target position unresolved |
+| R-WS-02 backfill, four scrolling profiles (4) | Model-qualified C/A/B columns on WS1, WS2 empty; focus A then B, send, select/focus A, select/focus B, send back | A-relative return paths sourced; focus/viewport or paneru return-index remainder unresolved; exact recursive ancestry remains inapplicable |
+| R-WS-04 backfill, four scrolling profiles (4) | On WS2 focus D then C, float C, select WS1/focus B, send B to WS2 | Surviving anchor or float-removal/admission legs unresolved |
+| R-WS-05 backfill, PaperWM/karousel/paneru (3) | Send B to empty WS2, float, send back, select WS1; unmanaged float where native | Floating transfer untraced; tiled column transfer is not float evidence. niri float carry/follow is sourced and not queued |
+| R-WS-07 backfill, niri (1) | All-workspace MRU switcher, select hidden B | Listing sourced; activation switch/focus unresolved |
+
 ## Settled review and execution
 
 | User decision | Recommendation |
@@ -425,4 +444,8 @@ outcomes need no pixel confirmation.
 - Layout-command review: implementation Worker corrected split-preparation substitutes to i3/sway's native parent-layout toggle, traced runtime per-workspace alternatives instead of inferring absence from global defaults, and qualified impossible scrolling floating-workspace targets. Independent source review confirmed count classes and historical-row preservation. Lead removed incidental Hyprland master geometry TBD under the semantic evidence standard and found its immediate geometry recalculation overrides toggle/rotation bits at shipped defaults; repaired the outcome/citation and consensus without changing counts. Workers ran sequentially; no live tests.
 - Layout-command consensus: parent-axis toggle is strong 4/5 evidenced (C/B/I/S vs Hyprland geometry-reset no-op), three families under the settled all-but-one rule; workspace-local alternative layout is strong 6/8 (B/I/S/X/Q/A), three families, with i3/sway parent scope disclosed. Both Ours platforms lack these commands, evidenced by shared Engine plus separate adapter inventories, not agreeing rejection. Recommendations for batch review: add parent-axis toggle and workspace-local layout selection. Root rotation/mirror has only bspwm evidence; master promotion is layout-driven, while Hyprland's nearest verb is a tree operation. Table A grows 12 to 14; B17/U6/C15/W8 unchanged.
 - Layout-command verification: 4x14 Then entries, 2x4 scrolling assessments; source keys, local links, unchanged pins, ASCII and whitespace checked. Source/offline only. Queue adds one unresolved partial cell in one group (Hyprland alternative-layout order).
-- Exact next action: expand workspaces R-WS-08..14 and assess R-WS-01..07 for four scrolling profiles (R-WS-06 already qualified in piece B5), update consensus/queue, then commit/push that area. Continue later areas in the approved order; collect product differences for batch review.
+- Workspace outcome: R-WS-08..14 added as seven 14-profile GWT scenarios; R-WS-01..05/07 each assessed for all four scrolling profiles, R-WS-06 retained from piece B5. Historical wide rows and pins preserved. Matrix now 86 scenarios. Coverage over 122 cells: E58/P22/T4/Q34/M4. New 98: E55/P11/T1/Q27/M4 (original-eight E38/P7/T1/Q8/M2; scrolling E14/P4/Q9/M1; Ours E3/Q10/M1); backfill 24: E3/P11/T3/Q7. M denotes mixed qualified and applicable-TBD legs, not agreeing no-ops.
+- Workspace review: sequential implementation and independent source-review Workers corrected history-toggle labels, trailing/static workspace fixtures, hidden-vs-active transfer verbs, pointer-driven Hyprland return-focus, absent-WS9 static inventories, return-anchor history and C membership, and tiled-vs-floating transfer evidence. Lead checked pinned Hyprland/niri/COSMIC and Ours source, corrected native command wording and five partial-cell accounting errors, and reconciled actual consensus table rows. No live tests or product changes.
+- Workspace consensus: previous-view toggle is strong 5/8 (B/I/S/Q/A), native-edge wrap 6/8 (C/B/I/S/Q/A), whole-hidden-domain reassignment 5/8 (H/B/I/Q/A, destination/focus partial), relative send inventory 5/8 (C/H/B/I/S), all spanning at least three original families. Both Ours platforms lack these verbs. Recommendations for batch review: add previous toggle, wrapping relative switch, whole-workspace output transfer and relative send. Remembered return-focus is strong 7/8; Windows matches, KDE shell-driven return TBD. Hyprland pointer policy and named no-mouse variant differ. No strong cleanup or absent-workspace creation choice. Table A18/B18/U6 full rows plus one KDE leg/C17/W8; scrolling stays non-voting.
+- Workspace verification: 7x14 new Then entries, 6x4 new scrolling assessments, original R-WS-06 backfill and wide rows preserved; citation resolution, ASCII, local links, pinned source spot checks and whitespace checks. Source/offline only. Queue adds 30 unresolved cells in nine groups; current source-evidenced legs excluded.
+- Exact next action: expand minimize R-MNZ-01..03 in its area file, update index/consensus/live-test queue, verify, then commit/push. Continue maximize/fullscreen and later areas in the approved order; collect product differences for batch review. Stop this session at the workspace committed boundary because Lead context is crowded.

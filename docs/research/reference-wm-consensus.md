@@ -1,10 +1,10 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (79 rows:
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (86 rows:
 58-row historical audit preserved below, plus 6-row insertion expansion
 plus 4-row focus expansion plus 3-row move expansion plus 4-row resize
-expansion plus 4-row layout expansion).
+expansion plus 4-row layout expansion plus 7-row workspace expansion).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -117,10 +117,10 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
 Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts including insertion/focus/move/resize/layout are per-predicate: A 14, B 17, U 6, C 15, W 8;
+Summary counts including insertion/focus/move/resize/layout/workspace are per-predicate: A 18, B 18, U 6 full rows + one KDE leg, C 17, W 8;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
 
-## Table A: strong cross-family consensus where ours differs (14)
+## Table A: strong cross-family consensus where ours differs (18)
 
 Ours differs = established follow/refusal/etc on at least one platform,
 or an inventory-evidenced verb/state gap on both platforms (missing verbs
@@ -142,13 +142,17 @@ never vote as agreement).
 | R-DRAG-04 | Esc does not cancel (drop/persist) | D7/8 | yes | no / no (cancel verdict selected; i3 revert is the outlier) | Escape handling mixes normal drop and no cancellation path |
 | R-LAY-01 | parent split orientation flips, same children on the new axis | flip-4/5ev (C,B,I,S vs H geometry-reset no-op), 3/4 fam | yes (ToggleOrientation) | no / no (no orientation verb in any Engine/adapter layer) | Inventory gap, not a rejecting policy; X/Q/A have no counterpart either |
 | R-LAY-04 | alternative layout selected at per-workspace scope, order preserved | scope-6/8 (B,I,S,X,Q,A), 3/4 fam | n/a (global config only) | no / no (no select verb in any Engine/adapter layer) | Ownership differs per profile (desktop/parent/workspace/group/tag); H partial, C global-only |
+| R-WS-08 | previous-view toggle | toggle-5/8 (B,I,S,Q,A), 3/4 fam; H named variant only | no counterpart | no / no (missing history verb) | Inventory gap; PaperWM MRU traversal is non-voting |
+| R-WS-11 edge | relative workspace switch wraps at native inventory ends | wrap-6/8 (C,B,I,S,Q,A), 4/4 fam | yes (default on) | no / no (missing relative-switch verb) | Inventory gap; primary WS3 can be mid-inventory |
+| R-WS-12 hidden transfer | whole workspace/group/tag reassigned to another output | reassign-5/8 (H,B,I,Q,A), 3/4 fam; destination/focus partial | active-only variant | no / no (missing whole-workspace verb) | Inventory gap; counts semantic domain reassignment, not identical mechanisms |
+| R-WS-14 | relative workspace send exists | relative-5/8 (C,H,B,I,S), 3/4 fam; follow policies differ | yes | no / no (missing relative-send verb) | Inventory gap; H previous is MRU, not numeric decrement |
 
 WS-01 notes: H silent (no-follow) path exists alongside profiled follow;
 alternate Move-verb inventory is a 4/4 tie (C/H/B/Q follow vs I/X/S/A
 default-stay), reported as inventory, never read as Send consensus. COSMIC
 MoveToWorkspace follow is not a Send vote.
 
-## Table B: strong consensus ours matches (17; pending explicit)
+## Table B: strong consensus ours matches (18; pending explicit)
 
 | Row | Consensus | Count | COSMIC | Ours KDE / Windows |
 |---|---|---|---|---|
@@ -169,13 +173,14 @@ MoveToWorkspace follow is not a Send vote.
 | R-DRAG-03 | both producers share one tiled-drag topology | S4/4ev thin, 3 fam | yes | yes / yes-synthetic (exact row TBD) |
 | R-DRAG-05 | zero-move press/release does not mutate | N6/8, 4/4 fam | yes | yes / yes |
 | R-DRAG-06 | no off-area parking | N7/8 | yes | yes / yes |
+| R-WS-09 return | restores remembered workspace focus | remembered-7/8 (C,B,I,X,S,Q,A), 4/4 fam; H pointer-dependent | yes | TBD shell-driven / yes (`last_focus`) |
 
 FLT-01 qualifier: anchors differ (MRU vs Dwindle vs after-focus vs
 position/order); consensus covers fresh-vs-oldslot only. WS-02 after-order
 leg (after-4/5ev C,B,I,S vs X before) is U (ours exact order TBD); tall/wide
 axis stays a qualifier (X/Q inapplicable).
 
-## Table U: strong consensus, ours unresolved (6)
+## Table U: strong consensus, ours unresolved (6 full rows + one KDE leg)
 
 | Row | Consensus | Count | COSMIC | Ours |
 |---|---|---|---|---|
@@ -185,10 +190,11 @@ axis stays a qualifier (X/Q inapplicable).
 | R-WS-05 | floated B transfers retaining float | R7/8 | no | unknown / unknown (roundtrip untested) |
 | R-CLOSE-02 | reopen is fresh admission, no old-slot | F8/8 | yes | unknown / unknown (not checked) |
 | R-DRAG-08 | Meta/Win press focuses mover | F6/8, 4/4 fam | yes | unknown / unknown (KDE timing TBD; Win drop-activate only, press-focus unproven) |
+| R-WS-09 KDE leg | restores remembered workspace focus | remembered-7/8, 4/4 fam | yes | KDE shell-driven return TBD; Windows match recorded in B |
 
 DRAG-08: unknown is not mismatch; B/I have deliberate no-focus paths.
 
-## Table C: listed COSMIC differences without strong consensus (15)
+## Table C: listed COSMIC differences without strong consensus (17)
 
 | Row | COSMIC vs ours (recorded) | Reason |
 |---|---|---|
@@ -207,6 +213,8 @@ DRAG-08: unknown is not mismatch; B/I have deliberate no-focus paths.
 | R-DRAG-01 | differs (join vs refuse) | swap 4/8 (not majority) vs join 1 / centre 1 / float-out 2 |
 | R-DRAG-07 | partial (KDE follows; Win stationary) | exact 4-4 split |
 | R-CTL-04 | N/A (config leg only) | 0 full-predicate votes; 7 EU |
+| R-WS-10 | KDE owner-specific; Windows retained vs COSMIC removed | remove-3 vs retain-4, H destruction TBD |
+| R-WS-13 | KDE select owner-specific; Windows refuses like COSMIC | create-3 vs refuse/no-op-3, Q/A absent-WS9 fixture impossible |
 
 Resolved without contradicting consensus: DRAG-01 refusal and GRP-01
 deferral selected; START-02 long-edge chain provisional follows COSMIC;
@@ -592,3 +600,89 @@ workspace-local layout selection (R-LAY-04: B/I/S/X/Q/A select an
 alternative layout at per-workspace scope with order preserved, noting
 ownership differs per profile: desktop/parent/workspace/group/tag).
 No product behavior is changed by this assessment.
+
+## Workspace expansion (piece B6): R-WS-08..14 plus R-WS-01..05/07 scrolling backfill
+
+Scope: piece B6 adds seven GWT workspace scenarios (R-WS-08..14), each
+with 14 Then profiles, and additive scrolling backfill blocks for
+R-WS-01..05 and R-WS-07 (R-WS-06 backfill landed earlier; original wide
+tables preserved). Historical tables and the 58-row audit above are
+preserved unchanged. Denominator, families, and the strength rule are
+unchanged: consensus classification below counts the original eight
+profiles only. The four scrolling profiles form one correlated lineage
+reported as an explicit separate non-voting comparison. Cell classes
+are mutually exclusive per cell: E complete outcome evidenced; P one
+sub-leg evidenced with the remainder TBD; T TBD-only; Q all legs
+qualified (fixture-inapplicable / no-counterpart / owner-specific with
+pinned inventory evidence); M mixed qualified and applicable-TBD legs.
+E cells carry no TBD; every P/M cell names its explicit remainder.
+Counts measure documentation coverage, not votes.
+
+| Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
+|---|---|---|---|
+| R-WS-08 back-and-forth | single previous-view toggle at baseline | toggle: B (`last`), I/S (previous name), Q (previous group), A (previous set) = 5/8, 3 families; variant-gated toggle: H (`=1` toggles 3-2-3, shipped default off only re-activates and never votes as baseline); traversal: PaperWM MRU-stack walk (scrolling, non-voting); qualified: C/X (no verb) | B toggle 5/8 (Ours has no verb on either platform) |
+| R-WS-09 return focus | remembered-window focus on switch-back | remembered: C,B,I,X,S,Q,A = 7/8, 4/4 fam; pointer-dependent partial: H (`follow_mouse=1` pointer-hit wins, `=0` restores via `getFocusCandidate`) | B remembered 7/8 (Windows matches; KDE shell-driven leg unresolved) |
+| R-WS-10 empty middle | retained vs removed | removed: C,I,S; retained: B,X,Q,A; TBD: H (stable IDs, destruction untraced) | C audit-only (3-4 split) |
+| R-WS-11 relative switch | edge-leg wrap (primary mid-inventory legs never vote) | edge wrap: C (default on), B,I,S,Q,A = 6/8, 4/4 fam; primary mid-inventory: C/niri land on existing trailing-empty, Q/A on group/tag 4, B/I/S wrap direct; no-wrap: H (next-creates/prev-history), niri clamp, PaperWM stop, paneru South-creates/North-stops; qualified: X | B edge-wrap 6/8 (Ours has no verb on either platform) |
+| R-WS-12 whole-workspace move | semantic whole-domain reassignment | reassign: H,B,I (matched-window form), Q/A (view-ownership verbs) = 5/8, 3/4 fam; destination/focus remain partial; mixed active-only legs: C,S; no-counterpart: X; scrolling niri hidden ByRef sourced, PaperWM hidden applicability TBD (non-voting) | A reassignment 5/8 (Ours has no verb; mechanism differences disclosed) |
+| R-WS-13 absent select | create vs refuse | create: H,I,S; refuse: C,B; no-op: X; clamp: niri; fixture-inapplicable: Q/A (static 1-9 cannot construct absent WS9); Ours Win refuses, KDE has no select verb | C audit-only |
+| R-WS-14 relative send | relative-target verb exists; follow sub-leg | verb: C,H,B,I,S = 5/8, 3 families; follow splits (C/H/B follow-capable vs I/S no-follow); qualified: X/Q; TBD: A | B verb 5/8 (Ours has no verb on either platform) |
+
+Scrolling comparison (non-voting): R-WS-08 niri single-previous toggle
+is complete; PaperWM walks the MRU stack with wrap (traversal, not a
+two-state toggle); karousel/paneru have no counterpart. R-WS-09 niri
+and paneru restore remembered focus plus saved viewport/origin;
+PaperWM retains the selected window with native restore TBD; karousel
+is mixed (owner-specific focus plus viewport TBD); Hyprland is
+pointer-dependent (named `follow_mouse=0` variant restores B). R-WS-10
+niri removes, paneru retains at shipped defaults, PaperWM/karousel are
+owner-specific. R-WS-11 primary legs land mid-inventory (niri trailing
+existing; PaperWM adjacent-existing; paneru South steps-or-creates,
+default off) while edge legs stop (niri/PaperWM) or saturate-or-create
+(paneru North/South); karousel has no counterpart. R-WS-12 niri moves
+whole workspaces by reference incl hidden, PaperWM stays TBD on hidden
+applicability, paneru has no whole-workspace counterpart, karousel is
+single-screen inapplicable. R-WS-13 niri clamps, paneru creates,
+PaperWM/karousel are owner-specific, Q/A are fixture-inapplicable on
+static inventories. R-WS-14 niri/paneru resolve relatively with
+edge-stop/focus policies, PaperWM/karousel stay partial on
+completion/follow. Backfill: R-WS-01 niri/PaperWM complete with named
+`focus=true` default (niri) and no-steal (PaperWM), karousel/paneru
+stay partial on focus/position; R-WS-02 runs the full A-then-B
+C-inclusive sequence with A-anchored returns and viewport/focus
+remainders on all four; R-WS-03 has no trailing-shortcut counterpart
+on any of the four; R-WS-05 float retention is complete on niri
+(`focus=true` default follows, `false` stays) and TBD elsewhere;
+R-WS-07 listing is owner-specific except niri's cross-workspace MRU
+(partial).
+
+Counts (mutually exclusive E/P/T/Q/M). New rows (7x14=98): E 55, P 11,
+T 1, Q 27, M 4. Original-eight new cells (7x8=56): E 38 (R-WS-08: 6;
+R-WS-09: 7; R-WS-10: 7; R-WS-11: 7; R-WS-12: 0; R-WS-13: 6; R-WS-14: 5),
+P 7 (R-WS-09: 1 H; R-WS-10: 1 H; R-WS-12: 5), T 1 (R-WS-14: A), Q 8 (R-WS-08: 2 C/X;
+R-WS-11: 1 X; R-WS-12: 1 X; R-WS-13: 2 Q/A; R-WS-14: 2 X/Q), M 2
+(R-WS-12: C, S). Scrolling new cells (7x4=28): E 14, P 4, T 0, Q 9,
+M 1. Ours new cells (7x2=14): E 3 (R-WS-09 Windows; R-WS-10 Windows;
+R-WS-13 Windows), P 0, Q 10, M 1 (R-WS-09 KDE). Table A grows from 14
+to 18; Table B grows from 17 to 18; Table U keeps 6 full rows plus the
+R-WS-09 KDE return-focus leg; Table C grows from 15 to 17; Table W
+stays 8. The matrix total is now 86 rows (79 + 7 new; backfill reuses
+IDs). Backfill cells (6x4=24): E 3, P 11, T 3, Q 7.
+
+Ours-vs-consensus position (no behavior selected): four strong-consensus
+predicates stand against Ours inventory gaps on both platforms, plus one
+unresolved return-focus leg. Recommend for batch user review, no selection
+or code change: R-WS-08 add a previous-workspace toggle (B/I/S/Q/A toggle
+to the last-viewed workspace at baseline; H toggles only under its
+default-off variant; PaperWM traverses MRU instead); R-WS-11 add
+relative next/previous workspace switching scored on the edge leg
+(C default, B/I/S/Q/A wrap; H creates-or-history instead); R-WS-12
+add whole-workspace output reassignment (H/B/I/Q/A agree on the
+transfer sub-leg, with destination/focus remainders still queued); R-WS-14
+add relative next/previous send (C/H/B/I/S resolve relatively with
+split follow policies); R-WS-09 keep the Windows remembered-focus
+select path and decide the KDE shell-driven return (U leg: Engine
+keeps `last_active`, native focus unestablished). R-WS-10/13
+carry no strong consensus after the mechanism/inventory corrections,
+so no conflict is established there. No product behavior is changed
+by this assessment.

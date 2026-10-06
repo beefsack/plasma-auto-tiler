@@ -1731,6 +1731,186 @@ Legend:
   @a77dd341f311da080ba94347c82a34d1d1c57893
   (no layout/orient/rotate/mirror/master/layout-select verb in any of the three
   layers)
+- `S-cos-ws` cosmic-comp:src/input/actions.rs:186-211
+  (`Workspace(key)` index activate, `LastWorkspace` targets `len-1`) and
+  :212-290 (`NextWorkspace`/`PreviousWorkspace` with `workspace_wraparound`
+  plus output fallback) and :292-346 (`MoveTo`/`SendToWorkspace` index
+  mapping with follow vs stay, plus Last variants) and :348-530
+  (`MoveTo`/`SendToNextWorkspace` active+1 and `MoveTo`/
+  `SendToPreviousWorkspace` active-1, wraparound cycle else output
+  fallback) and :684-740 (`MigrateWorkspaceToOutput` migrates the active
+  workspace, activates it there, then switches output; Next/Previous
+  migrate actions are deprecated no-ops) and :1142-1200
+  (`to_next_workspace`/`to_previous_workspace` wrap-or-stay) +
+  src/shell/mod.rs:525-583 (`set.activate` refuses idx past the end,
+  `activate_previous` gesture-only) + src/shell/mod.rs:652-704
+  (`ensure_last_empty` adds only when the last is occupied/pinned) +
+  cosmic-comp-config/src/workspace.rs:14-20 (`workspace_wraparound`
+  defaults true) @3d55cba06c9cf6f27609cdefb520f7857dba20af for the
+  compositor paths (config path per `S(S-cos-wslay)` repo split)
+  (no history-toggle verb in the workspace action inventory)
+- `S-hyp-ws`
+  Hyprland:src/config/shared/actions/ConfigActions.cpp:170-198
+  (`back_and_forth` resolve: re-invoking switch-to-current goes to the
+  timeline previous, `=2` per-monitor) and :380-436 (`moveToWorkspace`
+  follow focuses the mover, silent refocuses the source) and :1016-1083
+  (`changeWorkspace`, cross-monitor focuses the focus candidate) and
+  :1107-1117 (`moveToMonitor` whole-workspace verb) +
+  src/output/Monitor.cpp:1398-1423 (workspace switch: remembered feeds
+  focus only when floating, else the fullscreen cover; `follow_mouse=1`
+  pointer-hit wins before the focus candidate; pointer fixture
+  unspecified) + src/state/workspace/Resolver.cpp:181-205 (`prev` is
+  MRU-history previous, `next` is numeric+1) +
+  src/desktop/history/WorkspaceHistoryTracker.cpp:40-110 (MRU timeline
+  track plus previous lookup) + src/workspace/HLWorkspace.cpp:122-135
+  (`getLastFocusedWindow`/`rememberFocusedWindow`) +
+  src/workspace/HLWorkspace.cpp:134-143 (`getFocusCandidate` prefers
+  last-focused, else top-left, else first; `follow_mouse=0` variant) +
+  src/config/values/ConfigValues.cpp:380 (`input:follow_mouse`
+  default 1) + src/config/values/ConfigValues.cpp:615 (`workspace_back_and_forth`
+  default 0 off) @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (numbered IDs are stable; empty-object destruction untraced)
+- `S-bsp-ws` bspwm:doc/bspwm.1.asciidoc:52 (`CYCLE_DIR` next|prev) and
+  :215 (DESKTOP_SEL grammar) and :233-234 (`last` is the previously
+  focused desktop) and :418-422 (`node -d/-m` desktop/monitor send with
+  `--follow`) and :486-512 (`desktop -f/-a/-m/-s/-l`, whole-desktop move
+  via `-m`) and :514 (explicit `desktop -r` removal) +
+  src/desktop.c:39-74 (`activate_desktop` show/hide) and :270-274
+  (circular desktop list, so next/prev wrap) and :182-235 (desktop
+  transfer with follow) and :336-360 (explicit removal only) +
+  src/messages.c:656-666 (`desktop -f` focus plus absent-selector
+  failure) and src/types.h:283-293 (`desktop_t.focus` memory) +
+  `S(S-bsp-close)` (focus_node history fallback)
+  @e11eff4 for the doc path,
+  @e11eff4cb3333216ad03c815609a4ed79e08929c for src
+- `S-i3-ws` i3:src/workspace.c:131-160 (`workspace_get` creates on
+  demand) and :438-505 (`workspace_show` records the previous name,
+  focuses the descended remembered focus, closes the empty old
+  workspace) and :581-660 + :666-880 (`workspace_next`/`prev` wrap via
+  first/last fallback) and :892-913 (single previous-name
+  back-and-forth) and :1059-1150 (`workspace_move_to_output` whole-
+  workspace detach/attach with source refill and displaced cleanup) +
+  src/commands.c:1068-1115 (`move workspace to output` dispatch) and
+  parser-specs/commands.spec:165-183 (next/prev/back_and_forth grammar)
+  and :293-296 (relative move-to-workspace) and :375-433 (relative and
+  whole-workspace move grammar)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+- `S-xmo-ws` xmonad:src/XMonad/StackSet.hs:182 (`Stack.focus` per
+  workspace) and :231-260 (`view` keeps each workspace's focus,
+  unknown tags return unchanged) and :262-275 (`greedyView` display
+  swap across screens) and :572-600 (`shift`/`shiftWin` explicit-tag
+  transfer only) + src/XMonad/Config.hs:50-57 (workspace list is static
+  configuration) + `S(S-xmo-ctl)` (no back-and-forth, relative-switch,
+  or relative-send verb in the profiled inventory)
+  @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+- `S-sway-ws` sway:sway/tree/workspace.c:177-200 (`workspace_create`)
+  and :299-334 (`workspace_consider_destroy` drops empty non-active)
+  and :548-660 (`workspace_prev`/`next` wrap via last/first fallback)
+  and :700-745 (`workspace_auto_back_and_forth` plus `workspace_switch`
+  focusing the seat focus-inactive node) and :1131-1161
+  (`workspace_move_to_output` detach/attach with source refill and
+  displaced consider-destroy) + sway/commands/workspace.c:180-230
+  (switch incl create plus back_and_forth) and sway/commands/move.c:419-480
+  (`move to workspace` next/prev/number/back_and_forth) and :630-665
+  (`move workspace to output` acts on the handler-context active
+  workspace) @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+- `S-qti-ws` qtile:libqtile/config.py:578-625 (`set_group` assigns or
+  cross-screen swaps, saving `previous_group`) and :626 (`_toggle_group`
+  falls back to the previous group) and :715-735 (`next_group`/
+  `prev_group` modulo wrap, `toggle_group` previous-or-named) +
+  libqtile/group.py:110-145 (`layout_all` focuses the remembered
+  `current_window` on the current screen) and :146-160 (`set_screen`
+  show/hide) and :363-395 (`toscreen` pull with toggle) and :429-434
+  (`get_next_group`/`get_previous_group` modulo) +
+  libqtile/backend/x11/window.py:1946-1960 (`togroup` takes explicit
+  group names only) + `S(S-qti-wsdef)` (static groups 1-9)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+- `S-awe-ws` awesome:lib/awful/tag.lua:489-532 (`tag.history.update`
+  per-screen MRU) and :534-566 (`history.restore` defaults to the
+  previous-set toggle) and :1569-1586 (`viewidx` cycles, so viewnext/
+  viewprev wrap) and :1637-1660 (`view_only` selects plus history
+  update) and :607-645 (`set_screen` moves the tag plus all member
+  clients, restoring old-screen history) and :409-485 (explicit
+  `tag.delete` only) + static tags 1-9 per `S(S-awe-default)` and
+  tag-switch refocus per `S(S-awe-hist)`
+  @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+- `S-nir-ws` niri:src/layout/monitor.rs:442-495 (activate stores the
+  previous id) and :650-679 (`clean_up_workspaces` drops empty
+  non-active non-trailing workspaces) and :721-745 (`insert_workspace`
+  clamps past the trailing empty, activates only when asked) and
+  :800-900 (`move_to_workspace` up/down clamp plus follow activation) and
+  :960-1010 (switch up/down clamp at the ends) and :1002-1030
+  (`previous_workspace_idx`, `switch_workspace_previous`,
+  `switch_workspace_auto_back_and_forth`, out-of-range switch clamps
+  to last) + src/layout/mod.rs:2145-2169 (relative-move dispatch,
+  `focus=true` Smart else No) and :2324-2344 (keyboard focus resolves
+  to the active workspace's active window) and :3452-3520
+  (`move_workspace_to_output_by_id` whole-workspace remove/insert,
+  activation only when moved-active) + src/input/mod.rs:1329-1366
+  (`MoveWindowToWorkspace` reference plus `focus` Smart/No) and
+  :1437-1460 (`MoveColumnToWorkspace` reference plus `focus`) and
+  :2134-2155 (`MoveWorkspaceToMonitorByRef` resolves hidden workspaces
+  by reference) + niri-config/src/binds.rs:227-243 (`focus` defaults
+  true) + src/layout/workspace.rs:49-55 (each workspace owns its scrolling
+  state, floating space, and active flag) +
+  src/input/mod.rs:1536 (`FocusWorkspacePrevious` binding) +
+  src/ui/mru.rs:584-592 (MRU UI lists every workspace's windows)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+- `S-pap-space` PaperWM:tiling.js:1096-1127 (`switchLinear` column loop)
+  and :2865-2925 (`selectSequenceSpace`: adjacent steps stop at the
+  ends, `move` takes the window first) and :3034-3070
+   (`selectStackSpace`: MRU-stack steps with wrap) and :3222-3230
+  (`removeSpace`) and :2477-2510 (`workspacesChanged` mirrors GNOME
+  add/remove) and :462-487 (`activate`/`activateWithFocus` call native
+  activate with or without a focus target) and :900-912
+  (`selectedWindow` retention) and :2576-2620 (`moveToMonitor` whole-
+  space choreography with swap fallback) and :3281-3300 (MRU ordering)
+  and :5361-5366 (`previous-workspace` / move-previous exports) +
+  keybindings.js:153-154 (`previous-workspace` registrations) and
+  :153-173 (workspace switch/move actions)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (workspace add/remove is GNOME-owned; loop variants are column-level)
+- `S-kar-ws` karousel:src/lib/keyBindings/Actions.ts:469-504
+  (`columnMoveToNextDesktop`/`columnMoveToPreviousDesktop` stop at the
+  desktop ends) + src/lib/layout/Column.ts:20-31 (`moveToGrid`
+  cross-desktop transfer) + src/lib/layout/Grid.ts:150-170
+  (`onColumnAdded` appends, `onColumnRemoved` refreshes
+  `lastFocusedColumn`) + src/lib/workspace.ts:27-29 (desktop switch
+  only re-arranges) + `S(S-kar-acts)` (no desktop-switch, history, or
+  select verb in the inventory)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (desktops and their switching are KWin-native)
+- `S-pan-ws` paneru:src/ecs/workspace.rs:882-1000 (switch: North stops,
+  South steps or auto-creates, `First`/`Last` jump, `VirtualNumber`
+  spawns the absent strip) and :1040-1120 (relative move with
+  `MoveFocus` Follow/Stay; South needs len>1, North stops at 0) and
+  :125-141 (`PreviousStripPosition` plus remembered-window restore
+  guard) and :1120-1145 (center-column fallback for never-focused
+  strips) and :1351-1390 (empty-row reaping, never index 0) +
+  src/config.rs:815-819 (`reap_empty_workspaces` defaults off) +
+  src/config.rs:868-872 (`create_virtual_workspace_automatically`
+  defaults off) + `S(S-pan-cmds)` (no history verb; `Virtual` is directional)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+- `S-ours-ws` workspace mechanics at this HEAD:
+  plasma-auto-tiler:crates/tiler-core/src/session/ops/workspace.rs:37-47
+  (explicit same-output send proposal only) and :92-101 (`Unchanged` /
+  `CrossDomainMismatch` / `UnknownDomain` refusals) and :121-192
+  (remembered-leaf / focus-MRU / root anchor plus follow-on-commit)
+  + crates/tiler-core/src/session/world.rs:574-640 (`remembered_leaf`,
+  `focus_stack_fallback`, `updated_last_active` per-domain memory) +
+  Windows: crates/tiler-windows/src/tiling_sys.rs:9815 (`workspace_do_select`
+  hide/reveal with `already-active` short-circuit) and
+  crates/tiler-windows/src/workspace.rs:194-232 (mode pruning leaves
+  workspace order intact; output seeding and workspace count) and
+  :297-315 (index resolvers incl
+  trailing) and :400-415 (`focus_target` prefers `last_focus`, else first
+  visible) and crates/tiler-windows/src/snapkey.rs:427-447 (`WorkspaceOp`
+  Select/Send, index only) + KDE:
+  plasma-auto-tiler:kwin/src/plan-adapter.ts:7699 (`resolveDesktop`) and
+  :7778 (`setDesktops` membership write; desktops themselves are
+  Plasma-owned) @60771bd
+  (Engine/KDE have no select verb; Windows has index-only Select;
+  no history/relative/whole-workspace verb in these inventories)
 
 ## Variant hooks (provisional, not commitments)
 
@@ -1762,7 +1942,7 @@ Scenario rows live in area files under `reference-outcomes/` (58 original
 rows, preserved; plus 6 insertion scenarios from piece B1, 4 focus
 scenarios from piece B2, 3 move scenarios from piece B3, 4 resize
 scenarios from piece B4, and 4 layout-command scenarios from piece B5,
-GWT only).
+plus 7 workspace scenarios, GWT only).
 This index retains purpose, row-addition rule, notation,
 profiles, evidence tags/legend, variant hooks, and deferred. Existing wide
 tables moved unchanged; all new scenarios use the GWT form below.
@@ -1776,7 +1956,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Move | [move.md](reference-outcomes/move.md) | R-MOV-01..08 (8) | none (R-MOV-06..08 landed in piece B3) |
 | Resize | [resize.md](reference-outcomes/resize.md) | R-RSZ-01..04 (4) | none (landed in piece B4) |
 | Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | R-LAY-01..04 (4) | none (landed in piece B5) |
-| Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..07 (7) | R-WS-08..14 |
+| Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..14 (14) | none (R-WS-08..14 landed with scrolling backfill) |
 | Minimize | [minimize.md](reference-outcomes/minimize.md) | none yet | R-MNZ-01..03 |
 | Maximise / fullscreen | [maximize-fullscreen.md](reference-outcomes/maximize-fullscreen.md) | R-MAX-01..07 (7) | R-MAX-08..09 |
 | Groups / stacks | [groups-stacks.md](reference-outcomes/groups-stacks.md) | R-GRP-01 (1) | R-GRP-02..03 |
