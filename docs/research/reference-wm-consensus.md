@@ -1,14 +1,14 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (106 rows:
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (111 rows:
 58-row historical audit preserved below, plus 6-row insertion expansion
 plus 4-row focus expansion plus 3-row move expansion plus 4-row resize
 expansion plus 4-row layout expansion plus 7-row workspace expansion
 plus 3-row minimize expansion plus 2-row maximize expansion
 plus 2-row groups expansion plus 3-row floating expansion
 plus 3-row close expansion plus 4-row multi-output expansion
-plus 3-row mouse expansion).
+plus 3-row mouse expansion plus 5-row special-windows expansion).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -121,10 +121,10 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
 Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups/floating/close/multi-output/mouse are per-predicate: A 21, B 20, U 13 full rows + two KDE legs, C 17, W 11;
+Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups/floating/close/multi-output/mouse/special-windows are per-predicate: A 22, B 20, U 15 full rows + two KDE legs, C 19, W 11;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
 
-## Table A: strong cross-family consensus where ours differs (21)
+## Table A: strong cross-family consensus where ours differs (22)
 
 Ours differs = established follow/refusal/etc on at least one platform,
 or an inventory-evidenced verb/state gap on both platforms (missing verbs
@@ -153,6 +153,7 @@ never vote as agreement).
 | R-MAX-09 full | fullscreen window carries its state to the target workspace (not restored first) | carry-5/8 (B,I,S,Q,A), 3/4 fam; H/C TBD; niri window-send strips (scrolling, non-voting) | TBD (transfer sourced, carry untraced) | KDE TBD / Windows refuses fullscreen, carries maximized | Windows refusal differs; KDE native-send outcome untraced; max leg has no consensus |
 | R-GRP-03 close | closed active tab leaves a retained 2-tab group focused on C | retained-4/4ev plus focus-C-4/4ev (C,H,I,S), 3/4 fam; B/X/Q/A qualified | yes (active tab C) | no / no (no tab carrier and no close-tab verb in any Engine layer) | Inventory gap under standing V-GROUP-STACK deferral; foreign direction recorded if tabs ever specified |
 | R-OUT-04 send | explicit output transfer carries; declared follow forms follow the mover | carry-8/8 and follow-7/8 (C/H/B/I/S/Q/A), 4/4 fam; X target-stack focus only, source refocus TBD | yes (MoveToOutput follows, SendToOutput stays) | no / no (no send verb in any Engine/adapter layer; directional CrossOutput move is the separate R-OUT-01 verb) | Verb-shape gap, not a rejecting policy; send vs directional-move verbs distinguished |
+| R-SPC-04 fixed | fixed-size window floats instead of tiling | float-8/8 (C,H,B,I,X,S,Q,A), 4/4 fam | yes (min==max is dialog) | tiles / tiles-with-hint-clamp (Normal kind observed; no fixed-size exception) | Type-exception gap; Ours KDE native clamp TBD |
 
 WS-01 notes: H silent (no-follow) path exists alongside profiled follow;
 alternate Move-verb inventory is a 4/4 tie (C/H/B/Q follow vs I/X/S/A
@@ -189,7 +190,7 @@ position/order); consensus covers fresh-vs-oldslot only. WS-02 after-order
 leg (after-4/5ev C,B,I,S vs X before) is U (ours exact order TBD); tall/wide
 axis stays a qualifier (X/Q inapplicable).
 
-## Table U: strong consensus, ours unresolved (13 full rows + two KDE legs)
+## Table U: strong consensus, ours unresolved (15 full rows + two KDE legs)
 
 | Row | Consensus | Count | COSMIC | Ours |
 |---|---|---|---|---|
@@ -208,10 +209,12 @@ axis stays a qualifier (X/Q inapplicable).
 | R-CLOSE-05 full | closed fullscreen needs no restore; survivor refills with focus | full-leg-5/8 (H/B/I/Q/A), 3 fam | TBD (removal sourced, overlay cleanup TBD) | TBD both (removal plus desired focus sourced; native cleanup TBD) |
 | R-OUT-05 open | ordinary admission lands on the focused output with newcomer focus | focused-7/8 (C,B,I,X,S,Q,A), 4/4 fam | yes (active-output default plus mapfocus) | routing TBD both (admission anchor sourced) |
 | R-MOU-01 click | plain click focuses B | click-8/8, 4/4 fam | yes (press focuses) | TBD both (host click/hover journeys; adapter verbs prove no producer path) |
+| R-SPC-01 transient | transient dialog floats instead of tiling | float-8/8 (C,H,B,I,X,S,Q,A), 4/4 fam | floats (is_dialog) | KDE TBD (`normalWindow` dialog mapping untraced); Windows excludes owned dialogs | Eligibility gap, not an established difference |
+| R-SPC-05 hints | app-owned resize/hint change leaves allocation authoritative | ignore-8/8 (C,H,B,I,X,S,Q,A), 4/4 fam; A later arrange hint-shaping qualifier | yes (no minimum enforcement) | authoritative both (KDE/host reaction and exact reflow TBD) | Direction matches; remainders queued |
 
 DRAG-08: unknown is not mismatch; B/I have deliberate no-focus paths.
 
-## Table C: listed COSMIC differences without strong consensus (17)
+## Table C: listed COSMIC differences without strong consensus (19)
 
 | Row | COSMIC vs ours (recorded) | Reason |
 |---|---|---|
@@ -232,6 +235,8 @@ DRAG-08: unknown is not mismatch; B/I have deliberate no-focus paths.
 | R-CTL-04 | N/A (config leg only) | 0 full-predicate votes; 7 EU |
 | R-WS-10 | KDE owner-specific; Windows retained vs COSMIC removed | remove-3 vs retain-4, H destruction TBD |
 | R-WS-13 | KDE select owner-specific; Windows refuses like COSMIC | create-3 vs refuse/no-op-3, Q/A absent-WS9 fixture impossible |
+| R-SPC-02 types | Ours KDE eligibility TBD; Windows utility excluded, splash TBD | Different splash/utility admission; focus/switcher remainders, no strong predicate |
+| R-SPC-03 PiP | Ours app-specific eligibility TBD | App/version/flags/rules required; no universal PiP type or original-eight outcome votes |
 
 Resolved without contradicting consensus: DRAG-01 refusal and GRP-01
 deferral selected; START-02 long-edge chain provisional follows COSMIC;
@@ -1266,3 +1271,96 @@ journeys on both Ours platforms before proposing any behavior change;
 establish the same three journeys for any future pointer-behavior
 specification. Missing verbs and TBD journeys never count as agreeing
 rejection. No product behavior is changed by this assessment.
+
+## Special-windows expansion: R-SPC-01..05 (no backfill)
+
+Scope: this piece adds five GWT special-windows scenarios (R-SPC-01
+transient/modal, R-SPC-02 splash/utility, R-SPC-03 PiP, R-SPC-04
+fixed-size, R-SPC-05 app-owned resize/hint change), each with 14 Then
+profiles. The special area had no existing rows, so there is no
+scrolling backfill to assess (0 existing rows, 0 cells). Fixed-size
+citations in R-MIN-01..03 rows are reused by reference only, never
+duplicated. PiP is app/flags-specific with no universal native type;
+no profile invents one. Historical tables and the 58-row audit above
+are preserved unchanged. Denominator, families, and the strength rule
+are unchanged: consensus classification below counts the original
+eight profiles only. The four scrolling profiles form one correlated
+lineage reported as an explicit separate non-voting comparison. Cell
+classes are mutually exclusive per cell: E complete outcome evidenced
+with no TBD; P one discriminator sub-leg evidenced with the remainder
+TBD and queued; T TBD-only; Q all legs qualified with pinned
+inventory evidence; M mixed backend-dependent legs. E cells carry no
+TBD; every P/M cell names its explicit remainder. Counts measure
+documentation coverage, not votes. Semantic outcomes lead each Then in
+one to three lines.
+
+| Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
+|---|---|---|---|
+| R-SPC-01 transient dialog | transient dialog floats vs ordinary tiles | float: C, H, B, I, X, S, Q, A = 8/8, 4/4 fam | U float 8/8 (Ours KDE TBD, Windows excluded with host fence TBD) |
+| R-SPC-02 splash/utility | excluded vs float vs tile; focus steal and switcher | float: H, I, Q, A plus C splash and S X11; tile: X, B (utility no-focus) plus C utility; backend-qualified: C, S | C audit-only (no agreed compound predicate) |
+| R-SPC-03 PiP | native PiP type or rule | 0/8 (app/flags-specific everywhere) | C audit-only (no votes; niri Firefox rule non-voting) |
+| R-SPC-04 fixed-size | float exception vs forced tile/clamp | float: C, H, B, I, X, S, Q, A = 8/8, 4/4 fam | A float 8/8 (Ours tiles both) |
+| R-SPC-05 app resize/hint | ignored/authoritative vs hint-shaped vs clamp | authoritative-ignore: C, H, B, I, X, S, Q, A = 8/8, 4/4 fam; A later arrange hint-shaping qualifier | U ignore 8/8 (Ours authoritative both, remainders TBD) |
+
+Scrolling comparison (non-voting): R-SPC-01 niri floats alongside
+the parent, PaperWM floats above, karousel floats as transient-excluded,
+paneru stays role-gated TBD. R-SPC-02 niri tiles both types, PaperWM
+floats both, karousel/paneru TBD. R-SPC-03 niri floats only the
+shipped Firefox PiP rule, others TBD. R-SPC-04 niri floats
+fixed-height while PaperWM tiles ordinary, karousel floats as
+untileable, paneru TBD.
+R-SPC-05 niri/karousel clamp, PaperWM/paneru TBD.
+
+Counts (mutually exclusive E/P/T/Q/M). New rows (5x14=70): E 24,
+P 23, T 21, Q 0, M 2. Original-eight new cells (5x8=40): E 20
+(R-SPC-01: B/X/Q/A; R-SPC-04: all eight; R-SPC-05: all eight),
+P 10 (R-SPC-01: C/H/I/S; R-SPC-02: H/B/I/X/Q/A), T 8
+(R-SPC-03: all eight), Q 0, M 2 (R-SPC-02: C/S Wayland/xdg typed
+legs fixture-inapplicable with applicable xwayland legs). Scrolling
+new cells (5x4=20): E 3 (R-SPC-01 niri; R-SPC-04 niri/PaperWM),
+P 8, T 9, Q 0, M 0. Ours new cells (5x2=10): E 1 (R-SPC-04
+Windows), P 5 (R-SPC-01 Windows; R-SPC-02 Windows
+utility-excluded plus splash-TBD; R-SPC-04 KDE; R-SPC-05 both),
+T 4 (R-SPC-01/02/03 KDE plus R-SPC-03 Windows), Q 0, M 0.
+Table A grows 21
+to 22 (R-SPC-04 fixed-float); Table B stays 20; Table U grows 13
+to 15 full rows (R-SPC-01 transient-float, R-SPC-05 ignore) plus
+the two KDE legs; Table C audit-only gains R-SPC-02/03; Table W
+unchanged. The matrix total is now 111 rows (106 + 5 new; no
+backfill reuses IDs).
+
+Ours-vs-consensus position (no behavior selected): one new strong
+predicate stands against Ours, two stand unresolved. R-SPC-04
+fixed-float 8/8 (all four families): reference WMs float min==max
+windows while Ours KDE admits the Normal kind as an ordinary tile
+and Ours Windows tiles with a declared-hint clamp. R-SPC-01
+transient-float 8/8: Ours KDE eligibility is TBD (`normalWindow`
+dialog mapping untraced) and Ours Windows excludes owned dialogs,
+so no difference is established either way. R-SPC-05 ignore-8/8:
+both Ours platforms keep allocation authoritative with TBD
+remainders, matching the direction. Recommend for batch user
+review, no selection or code change: decide whether Ours should
+float fixed-size windows like the unanimous foreign direction;
+trace KDE `normalWindow` dialog/splash/utility eligibility and the
+Windows standalone-splash case before any transient/type decision;
+no PiP or splash/utility choice is supported by consensus. Missing
+type branches and TBD journeys never count as agreeing rejection.
+No product behavior is changed by this assessment.
+
+Special-windows live-test queue (46 applicable unresolved cells in
+eight entries; source-evidenced semantic
+legs need no physical confirmation):
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-SPC-01, COSMIC/Hyprland/i3/sway/PaperWM/karousel (6) | Typed-dialog transient D for A; request focus A; fresh modal-D leg | Float admission sourced; parent-relative placement, newcomer focus (PaperWM/karousel) and modal fence untraced |
+| R-SPC-01, paneru/Ours KDE/Windows (3) | Same fixture under role-gated management / `normalWindow` gate / Windows owned-dialog exclusion | Role and KDE dialog eligibility untraced; Windows host placement/modal fence untraced |
+| R-SPC-02, Hyprland/bspwm/i3/xmonad/qtile/awesome/niri/PaperWM (8) | Typed splash U; fresh utility leg; both backends where split | Float/tile admission plus focus sourced; task-switcher presence untraced everywhere |
+| R-SPC-02, COSMIC/sway (2 M-legs) | Same fixture per backend | xwayland float sourced; xdg typed legs fixture-inapplicable; focus/switcher untraced |
+| R-SPC-02, karousel/paneru/Ours KDE/Ours Windows-splash (4) | Same fixture | KWin kind-flag mapping, role outcome, `normalWindow` eligibility and standalone-splash case untraced |
+| R-SPC-03, all 14 (13 T + 1 P-remainder) | Playing media app; enter PiP; record toolkit/app/version, flags, rules | No native PiP type in any profile source; niri Firefox rule only |
+| R-SPC-04, karousel/paneru/Ours KDE (3) | E with min=max 640x480 | Float/tile admission sourced; KWin resizeable mapping, paneru path and KDE native clamp untraced |
+| R-SPC-05, niri/karousel/PaperWM/paneru/Ours KDE/Windows (6) | B requests 900x700; fresh min-hint leg | Authoritative allocation or clamp sourced; reactive reflow and host hint/resize paths untraced |
+
+Queue cell math: 6 + 3 + 8 + 2 + 4 + 14 + 3 + 6 = 46, matching
+P23 + T21 + M2 applicable unresolved cells (E24 need no tests).

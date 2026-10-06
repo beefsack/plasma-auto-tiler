@@ -1,6 +1,6 @@
 # Reference matrix expansion
 
-- Status: active; restructure through mouse accepted; batch decisions pending, special windows next.
+- Status: active; restructure through special windows accepted; batch decisions pending, activation next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
@@ -524,6 +524,24 @@ remain applicable despite absent tiler commands. No agent live tests.
 | R-DRAG-07 backfill, all four (4) | Mod+Left B to A edge, pause mid-hold | Preview/final-placement or host frame journey unresolved where load-bearing |
 | R-DRAG-08 backfill, all four (4) | A focused, B unfocused; Mod+Left B to A edge | Press/drop focus or delivery unresolved; niri press activation and paneru hover activation are sourced |
 
+### Special-windows queue additions (piece B14)
+
+46 applicable unresolved cells (P23 + T21 + M2), grouped in eight
+entries. Excluded native windows are evidenced admission outcomes, not
+missing native-open actions; host placement/focus remains applicable.
+Typed X11 fixtures and native xdg fixtures are distinct. No agent live tests.
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-SPC-01, COSMIC/Hyprland/i3/sway/PaperWM/karousel (6) | Typed-dialog transient D for A; request parent focus; fresh modal-D leg keeps transient-for | Float admission sourced; parent-relative placement or modal focus fence untraced |
+| R-SPC-01, paneru/Ours KDE/Windows (3) | Same D; native role/kind recorded; owned Windows dialog | Paneru role and KDE normalWindow mapping untraced; Windows exclusion sourced but host placement/modal fence untraced |
+| R-SPC-02, Hyprland/bspwm/i3/xmonad/qtile/awesome/niri/PaperWM (8) | Typed splash; fresh utility; niri uses working xwayland-satellite | Admission sourced; switcher presence and some focus legs untraced |
+| R-SPC-02, COSMIC/sway (2) | Separate X11 and native Wayland fixtures | X11 admission sourced; focus/switcher untraced; native xdg typed legs fixture-inapplicable |
+| R-SPC-02, karousel/paneru/Ours KDE/Windows (4) | Kind/role recorded; Windows utility uses WS_EX_TOOLWINDOW, splash actual styles recorded | KWin kind, macOS role, KDE eligibility and standalone Windows splash untraced |
+| R-SPC-03, all 14 (14) | App PiP; record toolkit/app/version/flags/rules | niri shipped Firefox floating rule sourced; other app outcomes and topmost behavior unestablished |
+| R-SPC-04, karousel/paneru/Ours KDE (3) | min=max 640x480, otherwise Normal client | KWin resizeable mapping, paneru admission and KDE native clamp unresolved; incidental pixels/focus not required |
+| R-SPC-05, niri/PaperWM/karousel/paneru/Ours KDE/Windows (6) | 900x700 client request; fresh minimum-hint raise above allocation | Clamp or Engine authority sourced in part; runtime reflow/host hint-resize journey untraced |
+
 ## Settled review and execution
 
 | User decision | Recommendation |
@@ -596,4 +614,8 @@ remain applicable despite absent tiler commands. No agent live tests.
 - Mouse review: initial inventory-heavy draft corrected against actual pinned pointer handlers; independent review corrected unsupported PaperWM click evidence and misleading paneru test claims. Lead positively sourced niri opt-in hover/plain-click delivery and client titlebar/edge requests, corrected PaperWM temporary scratch vs final re-admission, and karousel untile-at-session-start vs zero-motion host initiation. Narrow final independent verification accepted the latest source paths, counts and fixtures. Workers ran sequentially; no live tests or product changes.
 - Mouse consensus: plain click focuses B in 8/8 across four original families; Ours host click/hover journeys remain TBD, not generic focus-actuator evidence. No evidenced Ours-vs-strong mismatch. Recommendation for batch review: establish native click/hover, shared-edge shares and cross-output/switcher drops on both platforms before proposing changes. Share-changing edge resize is 4/8 with xmonad no-share counter-vote; no strong choice. niri named hover variant activates without raising; PaperWM viewport modes are not pointer-focus modes; karousel drag untiles at shipped defaults. Table U grows 12 to 13 full rows plus two KDE legs; A21/B20/C17/W11 unchanged.
 - Mouse verification: 3x14 Then profiles, 8x4 scrolling assessments, historical rows/pins preserved; citation resolution, local links, ASCII, whitespace and pinned-source review passed. Source/offline only. Queue adds 56 applicable unresolved cells in 11 groups. Stop at the mouse committed boundary because Lead context is crowded after evidence reconciliation.
-- Exact next action: expand special windows R-SPC-01..05 as five 14-profile GWT scenarios (no existing rows to backfill); update consensus/live-test queue, verify, then commit/push after git pull --rebase. Continue activation, restart/persistence, then R-COL; collect product differences for batch review.
+- Special-windows outcome: R-SPC-01..05 added as five 14-profile GWT scenarios; no existing special rows to backfill. Matrix now 111 scenarios. Coverage over 70 cells: E24/P23/T21/Q0/M2. Original-eight E20/P10/T8/M2; scrolling E3/P8/T9; Ours E1/P5/T4. M cells retain applicable X11 and fixture-inapplicable native xdg typed legs, never no-op votes.
+- Special-windows review: sequential implementation and independent pinned-source review corrected typed-dialog vs normal-transient substitution, stale votes, wrong niri parent/fixed-height admission (both float), karousel transient exclusion, and Windows owned/toolwindow filters. Runtime handlers establish tiled request refusal in bspwm/Hyprland/qtile and awesome; awesome later-arrange hint shaping does not establish immediate hint reflow. Lead corrected two transcription-only citation paths, aligned actual summary tables, and retained Windows host placement/modal-fence TBD despite sourced exclusion. Initial admission-policy inferences failed; positive pinned handlers resolved them, with genuinely untraced host legs queued. No blocker, live test or product change remains.
+- Special-windows consensus: typed-dialog transient floats 8/8; fixed-size floats 8/8; app-owned request/hint change leaves allocation authoritative 8/8 (awesome later-arrange hint qualifier), each across all four original families. Ours tiles fixed-size windows on both platforms instead of floating. Recommendation for batch review: add fixed-size float admission. KDE dialog eligibility and both platforms' host hint journeys remain unresolved; Windows owned dialogs are excluded from tiler targets, not missing native windows. No PiP/type-policy choice selected. Table A22/B20/U15 full rows plus two KDE legs/C19/W11.
+- Special-windows verification: 5x14 Then entries; original rows/pins preserved; citation resolution, local links, ASCII, whitespace and independent pinned-source review checked. Source/offline only. Queue adds 46 applicable unresolved cells in eight groups. Stop at this area's committed boundary because Lead context is crowded after evidence reconciliation.
+- Exact next action: expand activation R-ACT-01..02 as two 14-profile GWT scenarios (no existing activation rows to backfill); update consensus/live-test queue, verify, then commit/push after git pull --rebase. Continue restart/persistence (including R-CTL scrolling assessment), then R-COL; collect product differences for batch review.

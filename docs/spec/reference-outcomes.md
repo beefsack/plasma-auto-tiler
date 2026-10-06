@@ -285,7 +285,12 @@ Legend:
 - `S-bsp-send` bspwm:doc/bspwm.1.asciidoc:418-422
   (`-d` send to desktop / `-m` send to monitor) @e11eff4
 - `S-bsp-hint` bspwm:doc/bspwm.1.asciidoc:819-820
-  (`honor_size_hints` defaults false) @e11eff4
+  (`honor_size_hints` defaults false) + src/events.c:98-218
+  (`configure_request`: tiled requests get a synthetic notify, allocation
+  retained) and :261-297 (hint refresh plus arrange ignored under the
+  default) @e11eff4 for the doc path,
+  @e11eff4cb3333216ad03c815609a4ed79e08929c for src
+  (tiled app-resize ignored under the shipped default)
 - `S-bsp-insert` bspwm:src/tree.c:291-380 (`insert_node` automatic
   split at the anchor: longest-side axis from the anchor rectangle,
   newcomer second child under `second_child`) and src/window.c:74-82,166
@@ -586,8 +591,12 @@ Legend:
   :860-889 (hint clamp only when requested) +
   libqtile/layout/columns.py:312-323 (tiled place without hints) +
   libqtile/layout/floating.py:240-249 (float place `respect_hints=true`) +
-  libqtile/backend/wayland/window.py:189-192 (`respect_hints` TODO)
+  libqtile/backend/wayland/window.py:189-192 (`respect_hints` TODO) +
+  libqtile/backend/x11/window.py:2017-2041 (own geometry with
+  `respect_hints` false) and :598-630 (only floating increments change
+  layout) and :2127-2136 (hints update with no tiled promotion)
   @83c697a5621306c3586efca31867efcfa0482e2d
+  (tiled app-resize and hint-change ignored; float-only hint path)
 - `S-qti-keys` qtile:libqtile/config.py:25 (`Key` static definition) +
   libqtile/core/manager.py:569-599 (grab/ungrab/regrab keys) +
   libqtile/resources/default_config.py:13-59 (static key list; reload/shutdown
@@ -655,6 +664,15 @@ Legend:
   :1031-1041 (toggle/delete) + :1957 (floating is a persistent property) +
   awesome:lib/awful/layout/suit/floating.lua:112-119 (floating arrange no-op)
   @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+- `S-awe-hint` awesome:lib/awful/permissions/init.lua:365-385 (tiled
+  geometry early-return refuses the client resize) +
+  awesome:property.c:166-177 (hints update emits
+  `property::size_hints`) + awesome:lib/awful/client.lua:1023 (only
+  implicit float updater) + awesome:lib/awful/layout/init.lua:343-360
+  (listens `size_hints_honor`, not `size_hints`, so no immediate reflow
+  while B stays resizable)
+  @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+  (tiled app-resize ignored; later arrange hint-shaping is the qualifier)
 - `S-awe-fs` awesome:lib/awful/permissions/init.lua:365-434
   (geometry handler refuses tiled geometry unless floating/floating-layout/
   fullscreen/maximized context; placement maximize/restore) +
@@ -1858,6 +1876,90 @@ Legend:
   resize for the focused window)
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
   (exact-ratio preparation; per-window ratios survive sibling removal)
+- `S-hyp-spc` Hyprland:src/desktop/view/window/X11Backend.cpp:53-96
+  (DIALOG/SPLASH/TOOLBAR/UTILITY float atoms; non-DIALOG floats suggest
+  no initial focus) and :84-96 (`suggestsFloat`: modal, transient,
+  role, override-redirect, parent, or min==max fixed size) +
+  src/desktop/view/window/WaylandBackend.cpp:25-42 (parent or either-dim
+  fixed size suggests float; modal flag)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (transient/modal/type/fixed-size float legs plus focus
+  remainders; placement and fence stay TBD)
+- `S-bsp-spc` bspwm:src/rule.c:230-253 (DIALOG floats centered;
+  TOOLBAR/UTILITY set no-focus; DOCK/DESKTOP/NOTIFICATION unmanaged) and
+  :276-289 (transient floats) and :291-299 (min==max fixed size floats)
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (type/transient/fixed-size admission legs; placement and switcher stay TBD)
+- `S-sway-spc` sway:sway/desktop/xdg_shell.c:229-235 (`wants_floating`:
+  either-dimension min==max or parent) and sway/desktop/xwayland.c:308-340
+  (modal, DIALOG/UTILITY/TOOLBAR/SPLASH, or fixed size floats)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (backend-split float legs; placement and modal fence stay TBD)
+- `S-qti-spc` qtile:libqtile/layout/floating.py:14-30 (shipped
+  `default_float_rules`: utility/notification/toolbar/splash/dialog
+  plus fixed-size/ratio; transient match is doc-only, not default) and
+  :169-204 (unplaced floats center; transients center on the parent at
+  :180-184) + libqtile/group.py:226-244 (`add` floats on rule match,
+  focuses when stealable) + libqtile/backend/x11/window.py:1232-1233
+  (`can_steal_focus`, notification excluded; no modal branch anywhere)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (type/fixed-size float legs with parent centering and stealable focus;
+  modal flag inert; switcher stays TBD)
+- `S-nir-spc` niri:src/window/mod.rs:377-396 (`compute_open_floating`:
+  explicit rule, parent, or fixed positive height min==max floats) +
+  src/handlers/compositor.rs:150-175,203-228 (passes the boolean to
+  `add_window`) + src/handlers/xdg_shell.rs:1134-1155 (parent dialog
+  placed next to the parent, following it across outputs) +
+  src/utils/xwayland/satellite.rs:34-77 (optional X11 bridge setup;
+  requires a working xwayland-satellite executable) +
+  niri-config/src/window_rule.rs:125-144 (`Match` has no window-type
+  field) + resources/default-config.kdl:322-328 (shipped Firefox PiP
+  app-id/title rule opens floating; the only PiP branch in defaults)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (float admission plus parent-placement and app-rule PiP legs; native
+  xdg splash/utility types do not exist; other PiP apps and focus stay TBD)
+- `S-pap-spc` PaperWM:tiling.js:3341-3374 (`isTransient`/`hasTransient`;
+  transients take focus, blocking the parent on Wayland) and :3927-3945
+  (`add_filter` admits Normal non-transient windows only) and :4125-4135
+  (rejected windows float with `make_above`)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (transient/type float legs; fence enforcement and focus stay TBD)
+- `S-kar-spc` karousel:src/lib/world/Clients.ts:7-16 (`canTileEver`:
+  moveable and resizeable, or fullscreen; popups and prohibited classes
+  excluded) and src/lib/rules/WindowRuleEnforcer.ts:13-24 (`shouldTile`
+  requires normalWindow plus non-transient, non-modal, managed, and no
+  prefer-floating rule) and src/lib/world/ClientManager.ts:72-82
+  (`findTransientFor` tracks the transient link without changing state)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (transient/modal exclusion plus shapeability gate; KWin kind-flag
+  mapping and focus stay TBD)
+- `S-hyp-cfg` Hyprland:src/desktop/view/window/Window.cpp:950-970
+  (`onConfigureRequest`: tiled X11 requests are refused via an
+  authoritative `sendWindowSize` resend; only floats take the request)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (tile-authoritative app-resize outcome)
+- `S-pan-spc` paneru:src/manager/windows.rs:230-262 (AXUnknown and
+  non-real role/subrole windows ignored; forced-manage rule override)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (role-gated management; transient/dialog/splash outcomes stay TBD)
+- `S-ours-spc-kde` KDE observer gate at this HEAD:
+  plasma-auto-tiler:kwin/src/plan-adapter-entry.ts:781 (non-`normalWindow`
+  snapshots skipped before observation) + kwin/src/kwin-globals.d.ts:131
+  (`normalWindow` is KWin `src/window.h` state)
+  @f0969090a810ce85937728630f9b69ed2601dbe9
+  (kind gate only; dialog/splash/utility type-eligibility mapping is
+  untraced with no pinned KWin source in-repo, so typed fixtures stay TBD)
+- `S-ours-spc-win` Windows candidate gates at this HEAD:
+  plasma-auto-tiler:crates/tiler-windows/src/tiling_sys.rs:163-166
+  (unowned `#32770` dialogs never tile targets; owned ones excluded as
+  owned) and :3656-3666 (shell/dialog-class plus owner plus
+  tool/no-activate exclusion) and :3785-3794
+  (`admission_clear_eligible` same gates) and :4216-4235 (declared
+  `WM_GETMINMAXINFO` hints carried per Engine row; no fixed-size
+  exclusion)
+  @f0969090a810ce85937728630f9b69ed2601dbe9
+  (owned/dialog/tool/no-activate exclusion plus hint carrying; PiP and
+  standalone-splash eligibility stay TBD)
 - `S-ours-resize`
   plasma-auto-tiler:crates/tiler-core/src/session/ops/resize.rs:9-48
   (nearest matching-edge-axis ancestor, adjacent shares only, Unchanged
@@ -2764,7 +2866,7 @@ scenarios from piece B2, 3 move scenarios from piece B3, 4 resize
 scenarios from piece B4, and 4 layout-command scenarios from piece B5,
 plus 7 workspace scenarios, 3 minimize scenarios, 2 maximize scenarios,
 2 groups scenarios, 3 floating scenarios, 3 close scenarios,
-4 multi-output scenarios and 3 mouse scenarios, GWT only).
+4 multi-output scenarios, 3 mouse scenarios and 5 special-windows scenarios, GWT only).
 This index retains purpose, row-addition rule, notation,
 profiles, evidence tags/legend, variant hooks, and deferred. Existing wide
 tables moved unchanged; all new scenarios use the GWT form below.
@@ -2786,7 +2888,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Close / reflow | [close.md](reference-outcomes/close.md) | R-CLOSE-01..05 (5) | none (R-CLOSE-03..05 landed with scrolling backfill) |
 | Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..06 (6) | none (R-OUT-03..06 landed with scrolling backfill) |
 | Mouse | [mouse.md](reference-outcomes/mouse.md) | R-DRAG-01..08 + R-MOU-01..03 (11) | none (R-MOU-01..03 landed with scrolling backfill) |
-| Special windows | [special-windows.md](reference-outcomes/special-windows.md) | none yet | R-SPC-01..05 |
+| Special windows | [special-windows.md](reference-outcomes/special-windows.md) | R-SPC-01..05 (5) | none (landed; no backfill: no prior rows) |
 | Activation | [activation.md](reference-outcomes/activation.md) | none yet | R-ACT-01..02 |
 | Restart / persistence | [restart-persistence.md](reference-outcomes/restart-persistence.md) | R-START-01..03 + R-CTL-01..07 (10) | R-RST-01..02 |
 | Column mechanics | [column-mechanics.md](reference-outcomes/column-mechanics.md) | none yet | R-COL-01..10 |
