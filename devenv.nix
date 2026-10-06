@@ -8,6 +8,7 @@
   packages = with pkgs; [
     clang-tools
     dbus
+    gh
     jq
     just
     python3
