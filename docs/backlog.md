@@ -255,7 +255,15 @@ decisions of 2026-09-24 are under
   37 mixed. All 58 historical rows migrated to GWT with separate Ours
   KDE/Windows outcomes (`c365fca`..`21f025d`; combined Ours text kept
   under both for R-MAX-01, R-CTL-02/05/06/07). Source filling makes no
-  product decision.
+  product decision. Provisional first spec draft `ac75b00`
+  ([functional spec](spec/functional-spec.md), single file, format
+  provisional): 49 normative (cited decisions only), 84 OPEN, 11
+  PROVISIONAL, 12 KDE/Windows gaps; covers all 125 scenarios; ends with a
+  grouped open-decisions index for one-sitting review. Flagged
+  contradictions: Q3 vs R-MAX-06 label and both adapters' admission
+  clear; B6 vs KDE skip-writes; float-origin nav vs Windows refusal; KDE
+  no-size-inference vs Windows containment fullscreen; B9 vs COSMIC
+  source; Q3/R-MAX-03 overlap.
   [Cross-WM consensus analysis](research/reference-wm-consensus.md) Table A
   now lists 24 Ours-vs-strong-consensus differences with recommendations
   (see Open user decisions), plus strong-consensus predicates where Ours is
