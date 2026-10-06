@@ -251,9 +251,18 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   truth feeding the cross-platform functional specification. Existing selections
   remain authoritative; reference outcomes become supported variants only when
   explicitly selected, with user-settable configuration where applicable.
-- Provisional, to discuss (2026-10-03, matrix format): one Markdown document,
-  tables by area, stable row IDs, precise starts/actions/observations, six outcome
-  columns (COSMIC, Hyprland, bspwm, i3, xmonad, KDE/Windows), and variant hooks.
+- User decision 2026-10-06 (matrix format): keep the matrix index at
+  `docs/spec/reference-outcomes.md`, with one file per area under
+  `docs/spec/reference-outcomes/`, stable scenario IDs and precise fixtures,
+  actions and observations. Every new scenario uses Given/When/Then blocks
+  with one Then bullet per profile: the eight existing references, niri,
+  PaperWM, karousel, paneru, and separate Ours KDE and Ours Windows entries.
+  Existing wide tables stay unchanged until a separate migration. Column and
+  viewport notation is model-qualified; unsupported fixtures/actions and
+  owner-specific journeys are explicitly qualified, applicable unknowns TBD.
+  Reference baselines use pinned shipped defaults and named discriminating
+  variants. PaperWM.spoon is corroboration only. Evidence expands the corpus,
+  not the selected product behavior or consensus denominator.
 - Provisional, to discuss (2026-10-03, matrix evidence): compact cell citation
   keys resolve to dated user tests, pinned source file/line ranges or linked
   documentation; missing outcomes remain TBD, and tested versions are never

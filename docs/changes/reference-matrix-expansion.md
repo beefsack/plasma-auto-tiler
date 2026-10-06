@@ -1,11 +1,11 @@
 # Reference matrix expansion
 
-- Status: active; step 1 candidate list complete, awaiting user review.
+- Status: active; step 1 approved; piece A restructure complete; area evidence expansion pending.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
-- Scope of this piece: candidates, coverage reuse, model/format proposals, and evidence planning only. No matrix rows or source outcomes filled; no product decisions.
-- Inputs: [matrix](../spec/reference-outcomes.md) (58 rows, 12 sections), [consensus](../research/reference-wm-consensus.md) (A/B/U/C/W), root `AGENTS.md`, local reference checkouts.
-- Acceptance: every approved area accounted for; minimal discriminating fixtures; existing coverage reused; scrolling models and narrow-table/GWT formats proposed; uncertain source routes collected for user tests; only this record committed and pushed.
+- Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
+- Inputs: [matrix](../spec/reference-outcomes.md) (58 original rows, now area files), [consensus](../research/reference-wm-consensus.md) (A/B/U/C/W), root `AGENTS.md`, local pinned reference checkouts.
+- Acceptance: content-preserving split and valid links; every new scenario uses GWT with 14 Then profiles; source-cited outcomes including separate Ours code evidence; applicable unknowns stay TBD; qualified cells do not vote as no-ops; one commit/push per piece; durable format decision promoted. Do not edit principles/backlog or repin the existing eight references.
 - Bounded units accepted: matrix/consensus coverage investigation; scrolling-source/model investigation. Workers loaded `processed-beef-work-unit`, ran sequentially, and made no edits. Lead reconciled overlaps, fixtures, and proposals.
 - Verification: independent Worker review passed all 67 candidates, area counts, ID reuse, required fields, fixture intent and source pins; Lead clarified focus annotations and one inherited column fixture. Final counts and ASCII/whitespace checks passed; Git review is scoped to this file. This is documentation planning; no application or live tests.
 - Lifecycle: keep this one record active through review and later expansion pieces; archive after the whole change is accepted.
@@ -310,11 +310,11 @@
 
 - SC candidates become live-test candidates whenever only policy, not the discriminator's requested outcome, is established. Source estimates do not promise all-WM coverage.
 
-## Review questions and next piece
+## Settled review and execution
 
 | User decision | Recommendation |
 |---|---|
-| Hybrid GWT/narrow tables, and column section in the current matrix? | Adopt the hybrid in the same file; preserve existing 58 rows until an explicit migration piece |
+| Format and split (user 2026-10-06) | All new scenarios use GWT, one Then bullet per 14 profiles; split by area with the current path as index; existing wide tables migrate separately |
 | Include paneru; omit PaperWM.spoon as a separate profile? | Yes: paneru adds virtual rows/native-tab nesting; spoon repeats PaperWM's algebra |
 | Assess all 58 rows for new scrolling profiles? | Yes, with qualified per-model Given and explicit inapplicable/no-counterpart/owner-specific vs applicable TBD; never force H/V ancestry into columns |
 | Freeze shipped baselines or chosen comparative configs? | Shipped baseline per pin; only named discriminator-specific variants (wrap, scroll policy, modal/request origin) and necessary fixture destination rules |
@@ -322,5 +322,7 @@
 
 - Merges/drops: workspace-return focus consolidated under R-WS-09; new-over-max/full under R-INS-06; max/full close under R-CLOSE-05; float drag/resize under R-FLT-14; workspace/output drag under R-MOU-03. Existing manual group roundtrip/new-tab, float/unfloat, ratio close/open and move-vs-swap reuse their original IDs. No approved area dropped.
 - Additions: column-mechanics section and ten candidates; paneru's distinct predicates only. Omit PaperWM.spoon profile and a separate sliver scenario with the reasons above. No crash-recovery, styling or VM-setup expansion.
-- Outcome of this piece: reviewable candidate inventory and proposals only; active record ready for review, matrix and consensus unchanged.
-- Exact next action: user reviews candidate scope, format/model notation and baseline/backfill proposals; then begin step 2 with insertion reuse/new candidates at pinned sources, recording difficult cells as TBD/live-test candidates, and commit/push that bounded piece.
+- Step 1 outcome (`2447bed`): approved candidate inventory; the earlier format examples above are historical proposals, superseded by the settled GWT-only choice.
+- Piece A outcome: 58 original rows moved to area files, unchanged except relative-link depth; approved priority-order index, separate focus/restart/column areas, retained minimum-size supplement. Four scrolling baselines read at the recorded pins, including PaperWM schema and paneru defaults; existing eight profile rows/pins preserved. Independent Worker migration review passed; Lead removed a leftover narrow-table instruction after review. Format promoted in `docs/decisions.md`.
+- Piece A verification: exact original row/ID comparison, all area targets and moved links checked, pinned baseline source review, ASCII and `git diff --check`. Documentation-only; no application/live tests. No new live-test cases in this piece.
+- Exact next action: insertion, R-INS-03..08 plus scrolling assessments of R-INS-01/02; read pinned sources, update consensus, collect difficult cells as TBD/live-test candidates, then commit/push that area.
