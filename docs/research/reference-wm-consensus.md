@@ -1,7 +1,7 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (113 rows:
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (115 rows:
 58-row historical audit preserved below, plus 6-row insertion expansion
 plus 4-row focus expansion plus 3-row move expansion plus 4-row resize
 expansion plus 4-row layout expansion plus 7-row workspace expansion
@@ -9,7 +9,7 @@ plus 3-row minimize expansion plus 2-row maximize expansion
 plus 2-row groups expansion plus 3-row floating expansion
 plus 3-row close expansion plus 4-row multi-output expansion
 plus 3-row mouse expansion plus 5-row special-windows expansion
-plus 2-row activation expansion).
+plus 2-row activation expansion plus 2-row restart expansion).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -122,10 +122,10 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
 Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups/floating/close/multi-output/mouse/special-windows/activation are per-predicate: A 22, B 20, U 16 full rows + two KDE legs, C 19, W 11;
+Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups/floating/close/multi-output/mouse/special-windows/activation/restart are per-predicate: A 23, B 20, U 19 full rows + two KDE legs, C 19, W 11;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
 
-## Table A: strong cross-family consensus where ours differs (22)
+## Table A: strong cross-family consensus where ours differs (23)
 
 Ours differs = established follow/refusal/etc on at least one platform,
 or an inventory-evidenced verb/state gap on both platforms (missing verbs
@@ -155,6 +155,7 @@ never vote as agreement).
 | R-GRP-03 close | closed active tab leaves a retained 2-tab group focused on C | retained-4/4ev plus focus-C-4/4ev (C,H,I,S), 3/4 fam; B/X/Q/A qualified | yes (active tab C) | no / no (no tab carrier and no close-tab verb in any Engine layer) | Inventory gap under standing V-GROUP-STACK deferral; foreign direction recorded if tabs ever specified |
 | R-OUT-04 send | explicit output transfer carries; declared follow forms follow the mover | carry-8/8 and follow-7/8 (C/H/B/I/S/Q/A), 4/4 fam; X target-stack focus only, source refocus TBD | yes (MoveToOutput follows, SendToOutput stays) | no / no (no send verb in any Engine/adapter layer; directional CrossOutput move is the separate R-OUT-01 verb) | Verb-shape gap, not a rejecting policy; send vs directional-move verbs distinguished |
 | R-SPC-04 fixed | fixed-size window floats instead of tiling | float-8/8 (C,H,B,I,X,S,Q,A), 4/4 fam | yes (min==max is dialog) | tiles / tiles-with-hint-clamp (Normal kind observed; no fixed-size exception) | Type-exception gap; Ours KDE native clamp TBD |
+| R-RST-01 float | ordinary float status survives the owner restart | recover-4/4ev (B/I/X/A), 3/4 fam; Q float outcome TBD | TBD (native restart journey) | no / no (intentional floats reset: session-local id set on KDE, session-local float store cleared on stop on Windows) | State persistence gap; preserve intentional-float identity across owner restart |
 
 WS-01 notes: H silent (no-follow) path exists alongside profiled follow;
 alternate Move-verb inventory is a 4/4 tie (C/H/B/Q follow vs I/X/S/A
@@ -191,7 +192,7 @@ position/order); consensus covers fresh-vs-oldslot only. WS-02 after-order
 leg (after-4/5ev C,B,I,S vs X before) is U (ours exact order TBD); tall/wide
 axis stays a qualifier (X/Q inapplicable).
 
-## Table U: strong consensus, ours unresolved (16 full rows + two KDE legs)
+## Table U: strong consensus, ours unresolved (19 full rows + two KDE legs)
 
 | Row | Consensus | Count | COSMIC | Ours |
 |---|---|---|---|---|
@@ -213,6 +214,9 @@ axis stays a qualifier (X/Q inapplicable).
 | R-SPC-01 transient | transient dialog floats instead of tiling | float-8/8 (C,H,B,I,X,S,Q,A), 4/4 fam | floats (is_dialog) | KDE TBD (`normalWindow` dialog mapping untraced); Windows excludes owned dialogs | Eligibility gap, not an established difference |
 | R-SPC-05 hints | app-owned resize/hint change leaves allocation authoritative | ignore-8/8 (C,H,B,I,X,S,Q,A), 4/4 fam; A later arrange hint-shaping qualifier | yes (no minimum enforcement) | authoritative both (KDE/host reaction and exact reflow TBD) | Direction matches; remainders queued |
 | R-ACT-02 urgency | urgency marker without steal, cleared on focus | mark-7/8 with evidence (5E + C/A partial), 4 fam; clear-5/8 (H/B/I/S/Q), 3 fam | sandboxed workspace marker, same-workspace clear TBD | TBD both (native mark/clear journeys; no attention signal in either adapter inventory) | Establish the host mark/clear journey before any change |
+| R-RST-01 set | workspace set recovered across the restart | recover-5/8 (B/I/X/Q plus A partial), 3/4 fam | n/a (host set persists independently) | unknown / unknown (set host-owned, never restored by the tiler) | Establish set handling before any persistence decision |
+| R-RST-01 membership | tiled windows land back in their workspaces | recover-3/3ev (B/I/X), 3/4 fam; Q/A placement TBD, never a differ vote | n/a | unknown / unknown (membership re-observed, never restored) | Establish Ours membership recovery before any persistence decision |
+| R-RST-01 focus | focused window recovered across the restart | recover-3/3ev (B/I/X), 3/4 fam; Q TBD, never a differ vote | n/a | unknown / unknown (native focus TBD on both) | Establish Ours post-restart focus before any persistence decision |
 
 DRAG-08: unknown is not mismatch; B/I have deliberate no-focus paths.
 
@@ -1445,3 +1449,99 @@ confirmation):
 
 Queue cell math: 2 + 5 + 2 + 6 = 15, matching P2 + T13 applicable
 unresolved cells (E13 need no tests; Q0).
+
+## Restart expansion: R-RST-01..02 plus R-START-01..03/R-CTL-01..07 scrolling backfill
+
+Scope: this piece adds two GWT restart scenarios (R-RST-01 orderly
+owner restart with apps kept alive, R-RST-02 end session plus restore),
+each with 14 Then profiles, and additive scrolling backfill blocks for
+R-START-01..03 and R-CTL-01..07 (original wide tables preserved).
+Historical tables and the 58-row audit above are preserved unchanged.
+Denominator, families, and the strength rule are unchanged: consensus
+classification below counts the original eight profiles only. The four
+scrolling profiles form one correlated lineage reported as an explicit
+separate non-voting comparison. Reload is never the restart journey:
+in-place config reload legs (Hyprland, sway, qtile, niri) are cited as
+the distinguished non-journey, never as recovery evidence. R-START
+backfill assesses the original enable action only with no substituted
+restart leg. R-RST-02 carries no focus predicate, and maximize-stateless
+profiles run a fresh full leg there. Votes below count semantic
+recovery legs (float, workspace, focus, ratio recovery) independently
+of mechanism; partial legs vote only their established sub-leg.
+Cell classes are mutually exclusive per cell: E complete outcome
+evidenced with no TBD; P one discriminator sub-leg evidenced with the
+remainder TBD and queued; T TBD-only with a specific stop-tracing
+reason; Q all legs qualified (no-counterpart / fixture-inapplicable /
+owner-specific with pinned inventory evidence); M mixed qualified plus
+applicable-TBD legs. E cells carry no TBD; every P/M cell names its
+explicit remainder. Counts measure documentation coverage, not votes.
+Semantic outcomes lead each Then in one to three lines.
+
+| Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
+|---|---|---|---|
+| R-RST-01 float recovery | ordinary float status survives the restart | recover: B (float rectangles round-trip, `S-bsp-restore`), I (floating geometry round-trips, `S-i3-restart`), X (floating map resumes, `S-xmo-restart`), A (floating persists, `S-awe-ctl`) = 4/4ev, 3/4 fam; Q float outcome TBD, not a dissent vote | A recover-4/4ev (Ours resets intentional floats on both: session-local stores) |
+| R-RST-01 workspace-set recovery | workspace set recovered | recover: B/I/X (desktops/tree/zipper restore), Q (group/screen names restore), A (shipped tags recreated from rc) = 5/5ev, 3/4 fam; membership is separate | U set-5/8 (Ours host-owned set handling TBD) |
+| R-RST-01 membership recovery | tiled windows land back in their workspaces | recover: B/I/X (same-session ids re-match the restored tree) = 3/3ev, 3/4 fam; Q/A placement TBD, never a differ vote | U membership-3/3ev (Ours membership unknown) |
+| R-RST-01 focus recovery | focused window recovered | recover: B (focused node plus history), I (focused flag with activation), X (StackSet focus resumes) = 3/3ev, 3/4 fam; Q TBD (nothing serialized, no evidence focus changes either) | U recover-3/3ev (Ours native focus TBD) |
+| R-RST-01 ratio recovery | 70/30 shares recovered | recover: B/I/X vs reset-to-config: Q/A = 3/5, no majority either way | C audit-only |
+| R-RST-02 session recovery | layout/workspace/native state recovered after apps acquire new ids | no established end-to-end original-eight outcome; same-session dumps and metadata do not establish replacement-id matching; max legs profile-specific with four qualified absent-max legs | C audit-only |
+
+Scrolling comparison (non-voting): R-RST-01 karousel re-admits
+fresh columns with no restore, PaperWM stages SaveState with existing
+adoption, and paneru matches SessionRestore from the durable file
+(`S-kar-rst`, `S-pap-rst`, `S-pan-rst`); niri has no layout-recovery
+counterpart. R-RST-02 paneru has a durable metadata file but cross-session
+matching is unresolved; the other scrolling session outcomes remain TBD.
+Backfill: R-START-01..03
+PaperWM/karousel assess the native enable journey with order and
+second-leg remainders; niri/paneru have no enable counterpart.
+R-CTL-01/02/05/06/07 are owner-specific qualified; R-CTL-03 is
+owner-specific by fixture; R-CTL-04 reuses the established
+no-workspace-float citations. Ours KDE freshly admits with classified
+exceptions and Ours Windows freshly observes with settings-only
+durability (`S-ours-kde-rst`, `S-ours-win-rst`).
+
+Counts (mutually exclusive E/P/T/Q/M). New rows (2x14=28): E 3
+(R-RST-01: B/I/X), P 11, T 7, Q 3, M 4. Original-eight new cells
+(2x8=16): E 3, P 3 (R-RST-01: Q/A; R-RST-02: C), T 4 (R-RST-01: C;
+R-RST-02: H/Q/A), Q 2 (R-RST-01: H/S), M 4 (R-RST-02: B/I/X/S
+absent-max plus applicable full). Scrolling new cells (2x4=8): P 4
+(R-RST-01: PaperWM/karousel/paneru; R-RST-02: paneru), T 3 (R-RST-02:
+niri/PaperWM/karousel), Q 1 (R-RST-01: niri). Ours new cells (2x2=4):
+P 4 (fresh admission with classified exceptions or settings-only
+durability; native focus and host-max restore TBD). Backfill (10x4=40):
+P 6 (R-START-01..03 PaperWM/karousel), Q 34 (R-START niri/paneru plus
+R-CTL-01..07 all four each). Total 68 cells: E3/P17/T7/Q37/M4. Table A
+grows 22 to 23 (R-RST-01 float recovery 4/4ev); Table U grows 16 to 19
+full rows (workspace-set 5/8, membership 3/3ev, focus 3/3ev); Tables
+B/C/W unchanged. The matrix total is now 115 rows (113 + 2 new;
+backfill reuses IDs).
+
+Ours-vs-consensus position (no behavior selected): one new strong
+predicate stands differed on both Ours platforms. R-RST-01
+float-4/4ev (B/I/X/A across binary, tree, and
+layout-driven families): float state survives the owner restart.
+Both Ours platforms reset intentional floats on restart (session-local
+id set on KDE, session-local float store cleared on stop on Windows),
+against the strong direction. R-RST-01 workspace-set-5/8, membership-3/3ev
+and focus-3/3ev stand unresolved on Ours (set host-owned, membership and
+native focus TBD). Recommend for batch user review, no selection or code change:
+preserve intentional-float identity across owner restart; establish Ours membership,
+native focus and host-max restore on both platforms first. Missing
+verbs and TBD journeys never count as agreeing rejection. No product
+behavior is changed by this assessment.
+
+Restart live-test queue (28 applicable unresolved cells in four
+entries; source-evidenced mechanism legs need no physical
+confirmation):
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-RST-01, qtile/awesome/karousel/PaperWM/paneru/Ours KDE/Windows (7) | WS1 70/30 with B focused, WS2, ordinary F; orderly restart with apps kept alive | Mechanisms sourced; exact ratios, frames, order and B focus TBD |
+| R-RST-01, COSMIC (1) | Same fixture through an orderly compositor restart | No re-exec contract found at pin; journey applicability first |
+| R-RST-02, all 14 (14) | Saved A/B plus F and native-max/full member across WS1/WS2; end session and restore | File/state mechanisms sourced where present; session-manager wiring plus exact layout and host-max restore TBD |
+| R-START-01..03, PaperWM/karousel (6) | Four/five unmanaged floats; native enable; disable/re-enable | Enable adoption sourced; exact 2x2/cascade/minimum order and second-enable stability TBD |
+
+Queue cell math: 7 + 1 + 14 + 6 = 28, matching P17 + T7 applicable-TBD
+legs plus M4 applicable full legs (E3 need no tests; Q37 need no
+live fixture: qualified legs never become live no-op tests).

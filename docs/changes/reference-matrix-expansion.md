@@ -1,6 +1,6 @@
 # Reference matrix expansion
 
-- Status: active; restructure through activation accepted; batch decisions pending, restart/persistence next.
+- Status: active; restructure through restart/persistence accepted; batch decisions pending, column mechanics next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
@@ -556,6 +556,20 @@ be recorded; missing tiler urgency verbs do not exclude host markers.
 | R-ACT-02, COSMIC/awesome (2) | Shown A/B; COSMIC B has non-panel sandbox security context and serial-less token; set attention then focus B | Workspace mark and awesome window mark sourced; focus-time clear untraced |
 | R-ACT-02, xmonad/PaperWM/karousel/paneru/Ours KDE/Windows (6) | Native attention mark then focus B, with host flags/request origin recorded | Native hint and host mark/clear journeys untraced |
 
+### Restart/persistence queue additions (piece B16)
+
+28 applicable unresolved cells (P17 + T7 + four applicable full M legs),
+grouped in four entries. Reload is not owner restart; original startup
+enable fixtures are not replaced by restart. Establish native journey
+applicability before arranging a client-preserving compositor test.
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-RST-01, qtile/awesome/PaperWM/karousel/paneru/Ours KDE/Windows (7) | WS1 A/B 70/30, B focused, ordinary intentional F; occupied WS2; named orderly owner restart | Partial recovery/fresh-adoption sourced; membership, width/frame or focus remainders untraced |
+| R-RST-01, COSMIC (1) | Same fixture; client-preserving compositor journey | Native re-exec contract unestablished; applicability first |
+| R-RST-02, all 14 (14) | End session; restore A/B/F and native max or independent full variant; record new app ids and session-manager config | Persisted metadata alone does not establish cross-session matching, resulting layout or host state |
+| R-START-01..03, PaperWM/karousel (6) | Original free 2x2/cascade/minimum fixtures; native extension/script enable; START-01 disable/re-enable | Existing-window adoption sourced; original topology/minimum and second-enable stability remainders unresolved |
+
 ## Settled review and execution
 
 | User decision | Recommendation |
@@ -636,4 +650,9 @@ be recorded; missing tiler urgency verbs do not exclude host markers.
 - Activation review: sequential implementation and independent pinned-source review corrected ordinary COSMIC privileged tokens vs the named sandboxed urgency-only variant, serial-less vs invalid-token denial, same-workspace vs switch-clear, xmonad's profiled ewmh default, missing Windows code evidence, and partial-leg voting. Initial request-policy and host-absence inferences failed; positive pinned handlers resolved the request routes, with genuinely untraced host attention legs queued. Lead checked actual token creation, client security context, activation focus and Ours observation paths, then reconciled latest fixtures/citations/counts. No blocker, live test or product change remains.
 - Activation consensus: ordinary hidden requests switch/focus in C/B/X vs urgency-only in H/I/S (3 vs 3; Q/A TBD), with COSMIC sandboxed urgency-only separately qualified. Mark-without-steal is strong 7/8 across four families (COSMIC sandboxed workspace marker and awesome partial mark included); clear-on-focus is strong 5/8 H/B/I/S/Q across three families. Ours host mark/clear remains TBD on both platforms, so no evidenced Ours-vs-strong mismatch. Recommendation for batch review: establish native attention mark/clear and unsolicited hidden-request routing before proposing changes. Table U grows 15 to 16 full rows plus two KDE legs; A22/B20/C19/W11 unchanged.
 - Activation verification: 2x14 Then profiles, no prior rows changed; source keys/pins, ASCII, local links, whitespace, per-predicate votes and pinned-source review checked. Source/offline only. Queue adds 15 applicable unresolved cells in four groups.
-- Exact next action: expand restart/persistence R-RST-01..02 as two 14-profile GWT scenarios, including scrolling assessment of R-START-01..03 and R-CTL-01..07; update consensus/live-test queue, verify, then commit/push after git pull --rebase. Continue R-COL; collect product differences for batch review.
+- Activation commit: `6da3d86` (`Expand activation reference scenarios`), pushed to `origin/main` after `git pull --rebase`.
+- Restart/persistence outcome: R-RST-01..02 added as two 14-profile GWT scenarios; R-START-01..03/R-CTL-01..07 each assessed for four scrolling profiles, preserving historical wide rows. Matrix now 115 scenarios. New 28 cells E3/P11/T7/Q3/M4; backfill 40 P6/Q34; total 68 E3/P17/T7/Q37/M4. Mixed cells qualify absent native max while retaining applicable fresh full journeys; host-owned zoom is still applicable.
+- Restart/persistence review: sequential implementation and independent pinned-source review corrected enable-vs-restart substitutions, ratio/float/focus serialization and readback citations, PaperWM module-memory reuse, karousel existing-window bootstrap, paneru disk state, and separate actual Ours runtime paths. Lead corrected the KDE send-observer citation to production observation, unsupported qtile float/focus dissent votes, workspace-set vs membership bundling, and session-metadata vs replacement-id claims. Initial inventory/absence inferences failed; positive runtime/readback evidence resolved them, with genuinely untraced source paths queued. No blocker, live test or product change remains.
+- Restart/persistence consensus: float retention is strong 4/4 evidenced B/I/X/A across three families; qtile float recovery is unknown, not a dissent. Ours intentional-float sets/stores reset on both platforms, so ordinary F freshly tiles. Recommendation for batch review: preserve intentional-float identity across owner restart. Workspace-set recovery is strong 5/8 B/I/X/Q/A; membership and focus recovery are each strong 3/3 evidenced B/I/X across three families. Ours host-set/membership/native-focus journeys remain unresolved; establish them before proposing changes. Ratio recovery 3/5 vs reset 2/5 is not strong; no end-to-end session recovery consensus. Table A grows 22 to 23, U grows 16 to 19 full rows plus two KDE legs; B20/C19/W11 unchanged.
+- Restart/persistence verification: 2x14 new Then profiles and 10x4 scrolling assessments, historical rows/pins preserved; source keys, local links, ASCII, whitespace, cell/queue counts, per-predicate votes and pinned-source review checked. Source/offline only. Queue adds 28 applicable unresolved cells in four groups. Stop at this area's committed boundary because Lead context is crowded after source reconciliation.
+- Exact next action: expand column mechanics R-COL-01..10 as ten 14-profile GWT scenarios; update consensus/live-test queue, verify, then commit/push after git pull --rebase. After that area, refresh the overall Ours-vs-strong-consensus summary, consolidate the live-test queue by WM/environment, finalize/archive this record with fixed links, and update the matrix index Deferred areas. Collect product differences for batch review; no new durable decision beyond the already-promoted format.

@@ -808,7 +808,9 @@ Legend:
   @e11eff4cb3333216ad03c815609a4ed79e08929c
   (modifier resize_side/corner grab moves the shared fence share)
 - `S-bsp-restore` bspwm:src/query.c:38-67 (`query_state` dump incl history/stack) and :116-183 (node/client dump incl sticky/state) and src/restore.c:111-162 (restart replaces monitors, restores history/stack) and :345-409 (node sticky restore) and :436-474 (client state restore) and src/bspwm.c:154-156 (startup `-s` restore) and :275-326 (restart dump + re-exec) and src/messages.c:1250-1263,1317-1320 (`-d`/`-l`/`-r` verbs) @e11eff4cb3333216ad03c815609a4ed79e08929c
-  (restart persists sticky/state/focus)
+  (restart persists sticky/state/focus; dump fields round-trip:
+  query.c:107 `focusedNodeId`, :124 `splitRatio`, :179 `floatingRectangle`,
+  :57 history; restore.c:320-322, :361, :364, :464-466, :178-179)
 - `S-bsp-fs` bspwm:src/messages.c:287-318 (`node -t --state` incl `~` alternate) and src/tree.c:1889-1943 (`set_state` last_state memory, vacant in place) and :1963-1987 (`set_fullscreen`) and src/events.c:474-490 (EWMH fullscreen ADD/REMOVE/TOGGLE with ignore gates) and src/settings.h:60 (default 0, honored both ways) @e11eff4cb3333216ad03c815609a4ed79e08929c
   (project toggle and EWMH converge; no refusal branch)
 - `S-bsp-ctl` bspwm:src/messages.c:287-358 (node `-t` state incl `~` alternate, `-g` flags hidden/sticky/private/locked/marked only) and :1250-1327 (wm `-d` dump/`-l` load/`-a` add-monitor/`-O` reorder/`-o` adopt-orphans/`-g` status/`-h` history/`-r` restart only) @e11eff4cb3333216ad03c815609a4ed79e08929c
@@ -871,6 +873,10 @@ Legend:
   (scoped proof)
 - `D-float` [windows-float.md](../changes/archive/windows-float.md)
   (gates pass, behavior rows user-owned)
+- `D-tray-task`
+  [windows-tray-first-run.md](../changes/archive/windows-tray-first-run.md#accepted-verification-and-outcome)
+  (posted TaskbarCreated re-adds the GUID icon; actual menu Stop
+  cleans up; owner-side proof, not reference-WM behavior)
 - `D-sticky`
   [windows-sticky-float.md](../changes/archive/windows-sticky-float.md)
   (scoped helper proof, remainder user-owned)
@@ -1226,7 +1232,10 @@ Legend:
   the whole `StackSet` including the floating map; `writeStateToFile`/
   `readStateFile`; `restart prog True` resumes with the current window state)
   @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
-  (owner restart preserves floats as ordinary floats; no sticky concept)
+  (owner restart preserves floats as ordinary floats; no sticky concept;
+  layout ratio round-trips: src/XMonad/Layout.hs:56-63 `Tall`
+  `tallNMaster`/`tallRatioIncrement`/`tallRatio` deriving `Show, Read`,
+  serialized with the windowset)
 - `S-xmo-nav` xmonad-contrib:XMonad/Actions/Navigation2D.hs:462-473
   (`withNavigation2DConfig` + `def`: tiled hybrid line/side, float center,
   screen line, no custom layout) and :493-512 (`windowGo` focus-target,
@@ -2930,6 +2939,91 @@ Legend:
   @29bc4d9
   (ordinary-activation sync and foreground observation exist;
   unsolicited-request routing plus native mark/clear are TBD)
+- `S-hyp-reload` Hyprland:src/config/shared/actions/ConfigActions.cpp:1223-1240
+  (`exit` stops the compositor; `reloadConfig` re-applies config on the
+  live tree, no re-exec) + src/ipc/s1/Commands.cpp:1237-1256 (`reload`
+  incl `full-reset`, config only; no layout dump or re-exec verb)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (in-place reload vs exit only; orderly re-exec recovery untraced)
+- `S-i3-restart` i3:src/commands.c:1695-1725 (`restart` carries the IPC
+  fd and calls `i3_restart`) + src/util.c:289-316 (`i3_restart` stores
+  the layout file and re-execs with `--restart`) + src/main.c:418-440
+  (`--restart` consumes the file on re-exec only) +
+  src/load_layout.c:594-595 (percent readback), :574-575,763-764
+  (focused flag and activation), :518-534 (floating geometry readback) +
+  src/ipc.c:413,431,508-519,628-630 (dumped percent/focus/rect fields)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (in-place layout-file restart; fresh-login session wiring untraced)
+- `S-nir-rst` niri:niri-ipc/src/lib.rs:196-204 (`Quit` exits) and
+  :936-947 (`LoadConfigFile` reloads the current/new config file only;
+  no layout dump or re-exec verb in the full `Action` enum)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (quit plus config reload only; restart recovery untraced)
+- `S-pap-rst` PaperWM:tiling.js:3829-3900 (`SaveState` update/prepare
+  for controlled restarts: monitors, spaces, targetX plus stacking) and
+  :2045-2060 (`addAll` restores the prevSpace layout where present on
+  shell restarts) and :3979-4021 (`insertWindow` re-adds with
+  `existing: true`) + extension.js:57-80 (disable/enable lifecycle)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (controlled-restart staging plus existing adoption; exact
+  order/widths/focus untraced; enable path reuses one module-level
+  `SaveState` (:93-102), disable saves via `prepare` (:207-228), and
+  enable re-adds through `spaces.init` plus `addAll(prevSpace)`
+  (:154-199, :389-395))
+- `S-kar-start` karousel:src/lib/world/World.ts:75 (construction
+  calls `addExistingClients`) and :92-96 (iterates `Workspace.windows`
+  into `addClient` each) + src/lib/world/ClientManager.ts:30-45
+  (live re-admission into the Grid, no persisted layout)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (script enable adopts existing clients in workspace order; resulting
+  column order/widths untraced)
+- `S-kar-rst` karousel:src/lib/keyBindings/Actions.ts:1-60 (Actions
+  inventory carries focus/move/width/scroll verbs; no restart/reload/
+  persist verb) + src/lib/world/ClientManager.ts:30-45 (`addClient`
+  re-admits live clients into the Grid, no persisted layout)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (live-only Grid state; disable+enable recovery untraced)
+- `S-pan-rst` paneru:src/ecs/restore.rs:28-60 (`SessionRestore` state
+  plus grace timer) and :371-400 (`matches_startup_restore_state`
+  gated on `restore_enabled`) + src/config.rs:690-712
+  (`restore_enabled` defaults true, grace default 2000ms) +
+  src/ecs/triggers.rs:1064-1152 (`spawn_window_trigger` startup
+  matching against the restore resource) + src/ecs/state.rs:26,301-323
+  (`state.json` atomic save, version-gated load and XDG state path) and
+  :799-826 (periodic and AppExit saves) + src/ecs.rs:175,792
+  (periodic save registration and startup load)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (grace-windowed startup matching; exact strips/widths/focus untraced)
+- `S-ours-kde-rst` Ours KDE restart position at this HEAD:
+  plasma-auto-tiler:crates/tiler-core/src/session/world.rs:677-700
+  (`converge_observation` converges each session from a fresh complete
+  observation; the session object holds no layout store) +
+  kwin/src/plan-adapter-entry.ts:3221-3222 (startup observes the live
+  workspace plus hidden domains, admitting existing windows) and
+  :1681-1684 (production observation reads fullscreen/maximized and
+  derives ordinary floating from the session-local ids; sticky is native) and
+  :2608 (intentional-float ids live in a fresh per-session `Set`) and
+  :2946-2949 (`setFloating` adds/deletes ids at runtime only)
+  @6da3d86
+  (fresh admission with classified exceptions on restart; intentional
+  floats reset because the id set is session-local; native focus and
+  host-max restore untraced)
+- `S-ours-win-rst` Ours Windows restart position at this HEAD:
+  plasma-auto-tiler:crates/tiler-windows/src/tiling_sys.rs:3 (product
+  loop runs a full `EnumWindows` observation) and :1202-1204 (saved
+  settings supply the startup base for gaps/preset only, never a
+  layout reseed) + crates/tiler-windows/src/main.rs:24 (`tile` stop
+  leaves geometry in place with the ledger left for explicit
+  standalone `restore`; first run persists the preset choice only) +
+  crates/tiler-windows/src/tiling_sys.rs:1444-1452 (intentional-float
+  `floated` lifetimes are session-local, cleared on unfloat/close/stop;
+  preimages session-local with stop restoring only raised bands) +
+  crates/tiler-core/src/session/world.rs:677-700 (shared stateless
+  converge; no layout store)
+  @6da3d86
+  (settings-only durability with fresh observation on restart;
+  intentional floats reset because the float store is session-local;
+  native focus and host-max restore untraced)
 
 ## Variant hooks (provisional, not commitments)
 
@@ -2963,8 +3057,8 @@ scenarios from piece B2, 3 move scenarios from piece B3, 4 resize
 scenarios from piece B4, and 4 layout-command scenarios from piece B5,
 plus 7 workspace scenarios, 3 minimize scenarios, 2 maximize scenarios,
 2 groups scenarios, 3 floating scenarios, 3 close scenarios,
-4 multi-output scenarios, 3 mouse scenarios, 5 special-windows scenarios and
-2 activation scenarios, GWT only).
+4 multi-output scenarios, 3 mouse scenarios, 5 special-windows scenarios,
+2 activation scenarios and 2 restart scenarios, GWT only).
 This index retains purpose, row-addition rule, notation,
 profiles, evidence tags/legend, variant hooks, and deferred. Existing wide
 tables moved unchanged; all new scenarios use the GWT form below.
@@ -2988,7 +3082,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Mouse | [mouse.md](reference-outcomes/mouse.md) | R-DRAG-01..08 + R-MOU-01..03 (11) | none (R-MOU-01..03 landed with scrolling backfill) |
 | Special windows | [special-windows.md](reference-outcomes/special-windows.md) | R-SPC-01..05 (5) | none (landed; no backfill: no prior rows) |
 | Activation | [activation.md](reference-outcomes/activation.md) | R-ACT-01..02 (2) | none (landed; no backfill: no prior rows) |
-| Restart / persistence | [restart-persistence.md](reference-outcomes/restart-persistence.md) | R-START-01..03 + R-CTL-01..07 (10) | R-RST-01..02 |
+| Restart / persistence | [restart-persistence.md](reference-outcomes/restart-persistence.md) | R-START-01..03 + R-CTL-01..07 + R-RST-01..02 (12) | none (R-RST-01..02 landed with scrolling backfill) |
 | Column mechanics | [column-mechanics.md](reference-outcomes/column-mechanics.md) | none yet | R-COL-01..10 |
 | Minimum-size (supplemental) | [minimum-size.md](reference-outcomes/minimum-size.md) | R-MIN-01..03 (3) plus 3x4 scrolling backfill (piece B4) | none (R-MNZ icon-minimize is separate) |
 

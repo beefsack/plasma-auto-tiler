@@ -21,3 +21,152 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 | R-CTL-05 | KDE focus-right kept; Lock Session on Meta+L | Stage Compatible; ordinary settings Save; Apply Shortcuts; reopen; restart session | Staging/Save leave shortcuts untouched; Disable survives; Lock Session unchanged | Closest COSMIC equivalent: shortcut state is system `defaults` plus user `custom`, `Disable` masks a default binding, and the compositor hot-reloads on config change; there is no staging/Compatible/Force model in the sourced components, so Save/Apply/restart semantics have no counterpart here; `S(S-cos-shortcut)`; owner-specific outcome TBD | Closest Hyprland equivalent: conflict lookup plus `unbind` exist, but no Compatible staging/Save/Apply/Force model in source, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-hyp-shortcut)` | Closest bspwm equivalent: node `-t` state (incl `~` alternate) and `-g` flags exist, but no Compatible staging/Save/Apply/Force model in source, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-bsp-ctl)` | Closest i3 equivalent: `bindsym`/`bindcode` defines bindings via `configure_binding`, applied on reload/restart; no Compatible staging/Save/Apply/Force model in the inspected command/config inventory, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-i3-bind)` | Closest xmonad equivalent: keys/mouseBindings define bindings applied on restart/recompile; no Compatible staging/Save/Apply/Force model in source, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-xmo-ctl)` | Closest sway equivalent: `bindsym`/`bindcode` defines bindings, applied on reload; no Compatible staging/Save/Apply/Force model in the inspected command inventory, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-sway-bind)` + `S(S-sway-reload)` | Closest qtile equivalent: static Key bindings grabbed at startup and re-grabbed on reload (ungrab/clear/regrab, no staging/Compatible/Apply/Force model); Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-qti-keys)` | Closest awesome equivalent: global/client keys defined via append keybindings applied on restart/reload; no Compatible staging/Save/Apply/Force model in source, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-awe-keys)` + `S(S-awe-ctl)` | KDE selected: explicit own-action clear, native storage authoritative, no Lock relocation while disabled; live restart/physical delivery TBD [record](../../changes/kde-shortcut-conflicts.md) | V-SHORTCUT-CONFLICT |
 | R-CTL-06 | KDE foreign action has a project chord plus an unrelated chord | Keep conflicting row; Apply; preview Force; edit row to Disable; try Force; Apply | Draft edit invalidates preview; disabled row causes no foreign clearing; unrelated chord survives | Closest COSMIC equivalent: writing `Disable` for one binding in `custom` masks only that default while unrelated chords keep resolving from `defaults`; there is no preview/Force step in the sourced components; `S(S-cos-shortcut)`; owner-specific outcome TBD | Closest Hyprland equivalent: conflict lookup plus `unbind` exist, but no preview/Force/draft step in source; owner-specific outcome TBD; `S(S-hyp-shortcut)` | Closest bspwm equivalent: node `-t`/`-g` exist, but no preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-bsp-ctl)` | Closest i3 equivalent: `bindsym`/`bindcode` defines bindings via `configure_binding`; no preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-i3-bind)` | Closest xmonad equivalent: `keys` defines bindings; no preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-xmo-ctl)` | Closest sway equivalent: `bindsym`/`bindcode` defines bindings, `unbindsym`/`unbindcode` removes; no preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-sway-bind)` | Closest qtile equivalent: Key definitions only, no preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-qti-keys)` | Closest awesome equivalent: key definitions only, no preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-awe-keys)` | KDE selected: exact draft/owner/presence/active-image revalidation, no disabled-key holder mutation; live outcome TBD [record](../../changes/kde-shortcut-conflicts.md) | V-SHORTCUT-CONFLICT |
 | R-CTL-07 | KDE Force previously cleared a noncompiled foreign default chord | Stage Compatible; Apply; Revert Shortcuts | Default conflict still disabled; no automatic restore; separate Revert restores foreign defaults and retains own Disable | Closest COSMIC equivalent: removing a `custom` entry re-exposes the system default (no separate restore action in the sourced components); there is no preimage/automatic-restore model here; `S(S-cos-shortcut)`; owner-specific outcome TBD | Closest Hyprland equivalent: `unbind`/conflict lookup exist, but no preimage/automatic-restore or separate Revert model in source; owner-specific outcome TBD; `S(S-hyp-shortcut)` | Closest bspwm equivalent: node `-t`/`-g` exist, but no preimage/automatic-restore or separate Revert model in the inspected inventory; default-conflict restore outcome TBD (owner-specific, no counterpart); `S(S-bsp-ctl)` | Closest i3 equivalent: `bindsym`/`bindcode` defines bindings via `configure_binding`; no preimage/automatic-restore or separate Revert model in the inspected inventory; default-conflict restore outcome TBD (owner-specific, no counterpart); `S(S-i3-bind)` | Closest xmonad equivalent: `keys` defines bindings; no preimage/automatic-restore or separate Revert model in the inspected inventory; default-conflict restore outcome TBD (owner-specific, no counterpart); `S(S-xmo-ctl)` | Closest sway equivalent: `bindsym`/`bindcode` plus `unbindsym`/`unbindcode`; no preimage/automatic-restore or separate Revert model in the inspected inventory; default-conflict restore outcome TBD (owner-specific, no counterpart); `S(S-sway-bind)` | Closest qtile equivalent: Key definitions only; no preimage/automatic-restore or separate Revert model in the inspected inventory; default-conflict restore outcome TBD (owner-specific, no counterpart); `S(S-qti-keys)` | Closest awesome equivalent: key definitions only; no preimage/automatic-restore or separate Revert model in the inspected inventory; default-conflict restore outcome TBD (owner-specific, no counterpart); `S(S-awe-keys)` | KDE selected: compiled plus discovered defaults/current holders; Revert remains default restoration, not preimage recovery; live outcome TBD [record](../../changes/kde-shortcut-conflicts.md) | V-SHORTCUT-CONFLICT |
+
+## Scrolling backfill (additive; wide rows above preserved)
+
+Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-01..03 assess the original enable-tiling action only; no restart leg is substituted. Where the exact enable toggle has no counterpart the cell is qualified with pinned model/inventory evidence and needs no live test. PaperWM extension enable and karousel script enable over unmanaged free fields count as native enable journeys and are assessed as such; mere owner restart or full session adoption is never substituted. R-CTL-01/02/05/06/07 settings journeys are owner-specific throughout: no first-run/preset/staging model exists in any scrolling inventory, so those cells are qualified owner-specific with pinned inventory evidence and outcome TBD. R-CTL-03 is owner-specific by fixture (Windows TaskbarCreated, owner GUID icon and menu Stop have no constructible counterpart on scrolling hosts). R-CTL-04 uses the established floating-workspace backfill citations: no workspace floating toggle or mode exists to hold a floating default.
+
+### R-START-01 scrolling assessment (enable over a 2x2 float field)
+
+- Given (scrolling): four unmanaged ordinary floats A(8,8,1268,678), B(1284,8,1268,678), C(8,694,1268,678), D(1284,694,1268,678) under the scrolling model at shipped defaults; focus A,B,C,D; viewport recorded. Action: the original enable (extension/script enable over these free fields), then disable/re-enable.
+- Then niri: no-counterpart (compositor is always scrolling; the full Action inventory lists no tiling enable/disable verb); 2x2 outcome TBD with no applicable journey. `S(S-nir-acts)`.
+- Then PaperWM: extension enable adopts the four free windows through the existing-window path at open position; exact 2x2 order TBD, and second-enable stability TBD (no substituted journey). `S(S-pap-ins)` + `S(S-pap-rst)`; queued.
+- Then karousel/Lazy: script enable constructs the World and re-admits the four free windows via addExistingClients as fresh columns; exact order/widths TBD, and second-enable stability TBD. `S(S-kar-ins)` + `S(S-kar-start)`; queued.
+- Then paneru: no-counterpart (the Operation inventory lists no tiling enable verb; startup matching is session restore, not enable, and is never substituted here). `S(S-pan-cmds)`.
+
+### R-START-02 scrolling assessment (enable over a cascade)
+
+- Given (scrolling): four overlapping unmanaged ordinary floats A(80,80,1000,700), B(120,120,1000,700), C(160,160,1000,700), D(200,200,1000,700) at shipped defaults; focus A,B,C,D; viewport recorded. Action: the original enable over these free fields.
+- Then niri: no-counterpart (no tiling enable/disable verb in the full Action inventory); cascade outcome TBD with no applicable journey. `S(S-nir-acts)`.
+- Then PaperWM: extension enable adopts the four free windows through the existing-window path; no centre-cut inference established; exact order TBD. `S(S-pap-ins)` + `S(S-pap-rst)`; queued.
+- Then karousel/Lazy: script enable re-admits the four free windows via addExistingClients as fresh columns; cascade-chain outcome TBD. `S(S-kar-ins)` + `S(S-kar-start)`; queued.
+- Then paneru: no-counterpart (no tiling enable verb; startup matching is session restore, never substituted). `S(S-pan-cmds)`.
+
+### R-START-03 scrolling assessment (enable with infeasible minima)
+
+- Given (scrolling): the R-START-02 cascade plus E(240,240,1000,700) with A/B/C minima 401x246, D(Paint) 864x617, E(Calc) 402x627 at shipped defaults; focus A,B,C,E,D; viewport recorded. Action: the original enable over these free fields.
+- Then niri: no-counterpart (no tiling enable/disable verb in the full Action inventory); minimum handling TBD with no applicable journey. `S(S-nir-acts)`.
+- Then PaperWM: extension enable adopts the five free windows through the existing-window path; minimum handling and exact origins TBD. `S(S-pap-ins)` + `S(S-pap-rst)`; queued.
+- Then karousel/Lazy: script enable re-admits the five free windows via addExistingClients; minimum handling and exact origins TBD. `S(S-kar-ins)` + `S(S-kar-start)`; queued.
+- Then paneru: no-counterpart (no tiling enable verb; startup matching is session restore, never substituted). `S(S-pan-cmds)`.
+
+### R-CTL-01 scrolling assessment (first-run preset choice)
+
+- Given (scrolling): owner settings absent; shipped profile defaults apply. The prompt/preset journey is the same owner-specific fixture as the wide row above.
+- Then niri: owner-specific (no first-run/preset/prompt writer in the full Action inventory); outcome TBD. `S(S-nir-acts)`.
+- Then PaperWM: owner-specific (no first-run/preset/prompt writer in the inspected keybinding inventory); outcome TBD. `S(S-pap-acts)`.
+- Then karousel/Lazy: owner-specific (no first-run/preset/prompt writer in the inspected Actions inventory); outcome TBD. `S(S-kar-acts)`.
+- Then paneru: owner-specific (no first-run/preset/prompt Operation in the command inventory); outcome TBD. `S(S-pan-cmds)`.
+
+### R-CTL-02 scrolling assessment (stale prompt choice)
+
+- Given (scrolling): owner first-run prompt open with settings published by another writer; shipped profile defaults apply. Same owner-specific fixture as the wide row above.
+- Then niri: owner-specific (no prompt/settings-race path in the full Action inventory); outcome TBD. `S(S-nir-acts)`.
+- Then PaperWM: owner-specific (no prompt/settings-race path in the inspected keybinding inventory); outcome TBD. `S(S-pap-acts)`.
+- Then karousel/Lazy: owner-specific (no prompt/settings-race path in the inspected Actions inventory); outcome TBD. `S(S-kar-acts)`.
+- Then paneru: owner-specific (no prompt/settings-race Operation in the command inventory); outcome TBD. `S(S-pan-cmds)`.
+
+### R-CTL-03 scrolling assessment (notification icon lifecycle)
+
+- Given (scrolling): running owner with notification icon under the scrolling host; shipped profile defaults apply. Same owner-specific fixture as the wide row above: Windows TaskbarCreated re-registration, one owner GUID icon, and menu Stop.
+- Then niri: owner-specific by fixture (TaskbarCreated, owner GUID icon and menu Stop are Windows-owner objects with no constructible counterpart on this host); outcome TBD. `D(D-tray-task)`.
+- Then PaperWM: owner-specific by fixture (same Windows-owner objects; no scrolling-host counterpart assessed); outcome TBD. `D(D-tray-task)`.
+- Then karousel/Lazy: owner-specific by fixture (same Windows-owner objects; no scrolling-host counterpart assessed); outcome TBD. `D(D-tray-task)`.
+- Then paneru: owner-specific by fixture (same Windows-owner objects; no scrolling-host counterpart assessed); outcome TBD. `D(D-tray-task)`.
+
+### R-CTL-04 scrolling assessment (workspace tiling default)
+
+- Given (scrolling): existing tiled columns plus a saved floating default for new workspaces; shipped profile defaults apply. Same owner-specific fixture as the wide row above.
+- Then niri: owner-specific (no workspace floating toggle or mode exists to hold the default; `ToggleWindowFloating` is per-window only); outcome TBD. `S(S-nir-float)`.
+- Then PaperWM: owner-specific (no floating workspace mode and no workspace toggle in the registered action inventory to hold the default); outcome TBD. `S(S-pap-acts)`.
+- Then karousel/Lazy: owner-specific (float is per-window only with no floating desktop mode to hold the default); outcome TBD. `S(S-kar-acts)`.
+- Then paneru: owner-specific (no floating workspace mode; `Manage` is per-window); outcome TBD. `S(S-pan-cmds)`.
+
+### R-CTL-05 scrolling assessment (shortcut staging and apply)
+
+- Given (scrolling): staged Compatible choice with native shortcut state present; shipped profile defaults apply. Same owner-specific fixture as the wide row above.
+- Then niri: owner-specific (no staging/Compatible/Apply model in the full Action inventory); outcome TBD. `S(S-nir-acts)`.
+- Then PaperWM: owner-specific (no staging/Compatible/Apply model in the inspected inventory); outcome TBD. `S(S-pap-acts)`.
+- Then karousel/Lazy: owner-specific (no staging/Compatible/Apply model in the inspected Actions inventory); outcome TBD. `S(S-kar-acts)`.
+- Then paneru: owner-specific (no staging/Compatible/Apply model in the command inventory); outcome TBD. `S(S-pan-cmds)`.
+
+### R-CTL-06 scrolling assessment (conflict preview and disable)
+
+- Given (scrolling): conflicting shortcut row with preview/Force semantics; shipped profile defaults apply. Same owner-specific fixture as the wide row above.
+- Then niri: owner-specific (no preview/Force/draft model in the full Action inventory); outcome TBD. `S(S-nir-acts)`.
+- Then PaperWM: owner-specific (no preview/Force/draft model in the inspected inventory); outcome TBD. `S(S-pap-acts)`.
+- Then karousel/Lazy: owner-specific (no preview/Force/draft model in the inspected Actions inventory); outcome TBD. `S(S-kar-acts)`.
+- Then paneru: owner-specific (no preview/Force/draft model in the command inventory); outcome TBD. `S(S-pan-cmds)`.
+
+### R-CTL-07 scrolling assessment (revert restores defaults)
+
+- Given (scrolling): previously cleared foreign default chord with staged Compatible choice; shipped profile defaults apply. Same owner-specific fixture as the wide row above.
+- Then niri: owner-specific (no preimage/restore model in the full Action inventory); outcome TBD. `S(S-nir-acts)`.
+- Then PaperWM: owner-specific (no preimage/restore model in the inspected inventory); outcome TBD. `S(S-pap-acts)`.
+- Then karousel/Lazy: owner-specific (no preimage/restore model in the inspected Actions inventory); outcome TBD. `S(S-kar-acts)`.
+- Then paneru: owner-specific (no preimage/restore model in the command inventory); outcome TBD. `S(S-pan-cmds)`.
+
+## New scenarios (GWT; fixtures/actions/discriminators per the approved expansion record)
+
+Notation, profiles, baselines, legend, and projection rules live in the index. Each scenario below has exactly one Then bullet per profile (14). `S()` tags attach only to the established sub-leg; anything else on that line stays TBD. Column Given bullets are separate fixtures, never H/V ancestry claims. Ours cells cite Engine + adapter source at `6da3d86` plus the new `S(S-ours-kde-rst)` / `S(S-ours-win-rst)` platform keys; selected intent and doc assertions are never evidence.
+
+Restart journeys (config reload is not owner restart):
+
+- COSMIC: client-preserving native journey unestablished; pinned workspace config alone is not restart evidence (`S(S-cos-persist)`).
+- Hyprland/sway/niri: reload and exit inventories provide no native client-preserving re-exec (`S(S-hyp-reload)` + `S(S-hyp-shortcut)` + `S(S-sway-reload)` + `S(S-nir-rst)`).
+- bspwm: `wm -r` dumps and re-execs with restore (`S(S-bsp-restore)`).
+- i3: `restart` saves the layout and re-execs with `--restart` (`S(S-i3-restart)`).
+- xmonad: `restart prog True` writes and resumes the windowset; `False` is a separate fresh-start variant (`S(S-xmo-restart)`).
+- qtile: `restart` saves metadata on X11; Wayland disables restart support (`S(S-qti-state)`).
+- awesome: `awesome.restart()` re-execs, saving order and floating state (`S(S-awe-ctl)`).
+- PaperWM/karousel: disable+enable the extension/script with the host session retained (`S(S-pap-rst)` + `S(S-kar-start)`).
+- paneru: orderly daemon exit/relaunch; AppExit saves the state and startup loads it for grace-windowed matching (`S(S-pan-rst)`).
+- Ours KDE: script stop/start, with a fresh observation and intentional-float id set (`S(S-ours-kde-rst)`).
+- Ours Windows: orderly `tile` stop/start; standalone `restore` is a separate journey (`S(S-ours-win-rst)`).
+
+### R-RST-01: orderly owner restart with apps kept alive
+
+- Given (tree profiles): `WS1=H[A,B*]` 70/30, `WS2=H[C]`, ordinary float F on WS1. Ordinary windows, no rules, scale 1.
+- Given (column profiles): `WS1=COL[C1[A],C2[B*]]` with 70/30 widths, `WS2=COL[C3[C]]`, ordinary float F on WS1; shipped defaults apply; viewport recorded.
+- Given (paneru): `Space1:{VW1=COL[C1[A],C2[B*]],VW2=COL[C3[C]]}` with 70/30 widths plus ordinary F on VW1; shipped defaults apply.
+- When: orderly owner restart with apps kept alive, using the profile's native journey from the inventory above (plain config reload is explicitly not this journey).
+- Observe: layout/ratios/workspaces/float/focus recovered vs fresh adoption.
+- Then COSMIC: no client-preserving re-exec contract found at pin (persist covers pinned workspaces only); whether an orderly restart keeps apps alive with layout is TBD. `S(S-cos-persist)`; queued.
+- Then Hyprland/Dwindle: no-counterpart for this owner restart with clients alive (no re-exec verb in the dispatcher inventory; reload keeps the live tree only and exit stops the compositor). `S(S-hyp-reload)` + `S(S-hyp-shortcut)`.
+- Then bspwm: 70/30 ratios, WS1/WS2 membership, F float frame, sticky flags and B focus all recovered (split ratios, focused node, history/stack and float rectangles round-trip the dump). `S(S-bsp-restore)`.
+- Then i3: 70/30 percents, WS1/WS2 membership, F floating frame and B focus all recovered (percents, focused flag with focus activation, and floating geometry round-trip the layout file). `S(S-i3-restart)`.
+- Then xmonad/Tall+Navigation2D: window order, floating map, layout ratio and stack focus all resumed from the file with Tall rendering recalculated. `S(S-xmo-restart)`.
+- Then sway: no-counterpart for this owner restart with clients alive (command inventory carries `reload` and `exit` with no restart verb; reload is in-place config only). `S(S-sway-reload)`.
+- Then qtile/Columns: group/layout names, screen assignment and current screen restored while widths reset to config and windows re-admit; exact window placement, F handling and focus TBD. `S(S-qti-state)` + `S(S-qti-reload)`; queued.
+- Then awesome/tile: client order and floating state restored with tags recreated from rc so tile shares recalculate at mwfact; exact frames and B focus TBD. `S(S-awe-ctl)`; queued.
+- Then niri: no-counterpart for this owner restart with layout recovery (Quit exits and LoadConfigFile reloads config only; no layout dump or re-exec verb). `S(S-nir-rst)`.
+- Then PaperWM: controlled disable+enable stages SaveState and re-adds existing windows with prevSpace layout restored where present; exact widths, F placement and B selection TBD. `S(S-pap-rst)`; queued.
+- Then karousel/Lazy: no layout restore exists (live-only Grid state); script disable+enable re-admits existing windows via addClient as fresh columns; exact order/widths/focus TBD. `S(S-kar-rst)` + `S(S-kar-start)`; queued.
+- Then paneru: startup windows match SessionRestore within grace from the durable state file; exact strips/widths, F handling and focus TBD. `S(S-pan-rst)`; queued.
+- Then Ours KDE: freshly re-observes/adopts windows; intentional F loses its ordinary-float status because its id set resets. Native sticky/overlay flags remain observed; restored memberships and native focus TBD. `S(S-ours-kde-rst)`; queued.
+- Then Ours Windows: freshly observes/adopts windows; intentional F loses its ordinary-float status because its runtime store resets. Settings persist but do not restore the layout; restored memberships and native focus TBD. `S(S-ours-win-rst)`; queued.
+- Variant hook: provisional/TBD (restart recovery hook, to discuss).
+
+### R-RST-02: end session, restore session and apps
+
+- Given (tree profiles): saved session with A/B tiled, ordinary F and `B:max` across WS1/WS2. Ordinary windows, no rules, scale 1.
+- Given (column profiles): saved session with A/B columns, ordinary F and a maximized column member across WS1/WS2; shipped defaults apply; viewport recorded.
+- Given (paneru): saved `Space1:{VW1,VW2}` session with A/B columns, ordinary F and a host-zoomed member; shipped defaults apply.
+- Max prep: B enters through the profile-native route named here (maximize where the model owns one, host zoom or width conversion where that is the native form, fullscreen where the profile is maximize-stateless); maximize-stateless profiles run the max leg as a fresh `B:full` journey. Prep citations establish the route only, never the post-session outcome: COSMIC `maximize_request` (`S(S-cos-maxpolicy)`); Hyprland `MAXIMIZED` (`S(S-hyp-fs)`); bspwm none, EWMH fullscreen ADD/REMOVE/TOGGLE (`S(S-bsp-fs)`); i3 none, client FULLSCREEN message (`S(S-i3-max)` + `S(S-i3-fs)`); xmonad none, `fullscreenEventHook` (`S(S-xmo-layout)` + `S(S-xmo-ewmh)`); sway none, workspace/global fullscreen (`S(S-sway-max)` + `S(S-sway-full)`); qtile maximized float state (`S(S-qti-fs)`); awesome maximized boolean (`S(S-awe-fs)`); niri maximized flag (`S(S-nir-maxfs)`); PaperWM width conversion plus fullscreen re-show (`S(S-pap-widthmax)`); karousel host-driven maximize observation (`S(S-kar-maxfs)`); paneru host zoom plus AX fullscreen marker (`S(S-pan-axfs)`); Ours host-owned maximize classification (KDE exceptions, Windows retained).
+- When: end session; restore session and apps (session manager plus apps participate; native IDs are replaced and startup order may differ).
+- Observe: layout/workspace/native state persisted vs apps freshly admitted.
+- Then COSMIC: pinned workspaces are recreated from config; app-window placement and overlay state after session restore TBD. `S(S-cos-persist)`; queued.
+- Then Hyprland/Dwindle: post-session app and layout recovery TBD (session manager plus app relaunch order untraced at pin); queued.
+- Then bspwm: no maximize state exists, so the max leg runs as a fresh `B:full` EWMH journey; the dump file persists but old-ID rematch across sessions is untraced, so session restore is TBD. `S(S-bsp-fs)` + `S(S-bsp-restore)`; queued (full leg).
+- Then i3: no maximize verb exists, so the max leg runs as a fresh `B:full` client-message journey; the layout file path covers in-place restart only and fresh-login consumption is untraced, so session restore is TBD. `S(S-i3-max)` + `S(S-i3-fs)` + `S(S-i3-restart)`; queued (full leg).
+- Then xmonad/Tall+Navigation2D: no maximize state exists, so the max leg runs as a fresh `B:full` event-hook journey; StateFile freshness past its resume-only read is untraced, so session restore is TBD. `S(S-xmo-layout)` + `S(S-xmo-ewmh)` + `S(S-xmo-restart)`; queued (full leg).
+- Then sway: no maximize verb exists, so the max leg runs as a fresh `B:full` journey; no restart or session-restore path is established, so session restore is TBD. `S(S-sway-max)` + `S(S-sway-full)` + `S(S-sway-reload)`; queued (full leg).
+- Then qtile/Columns: restart state covers in-place restart only; post-session group/window recovery TBD (session wiring untraced at pin). `S(S-qti-state)`; queued.
+- Then awesome/tile: atexit order covers hard restarts within the X session; post-session membership and layout recovery TBD (session wiring untraced at pin). `S(S-awe-ctl)`; queued.
+- Then niri: Quit plus config reload cover the running session only; post-session app and layout recovery TBD (session wiring untraced at pin). `S(S-nir-rst)`; queued.
+- Then PaperWM: SaveState covers controlled restarts only; ended-session topology recovery TBD (session wiring untraced at pin). `S(S-pap-rst)`; queued.
+- Then karousel/Lazy: Actions plus live Grid cover the running session only; post-session app and layout recovery TBD (session wiring untraced at pin). `S(S-kar-rst)`; queued.
+- Then paneru: strip/column metadata persists in the state file; cross-session window-identity rematch, host-zoom state and resulting layout are TBD. Host zoom remains an applicable host-owned state. `S(S-pan-rst)`; queued.
+- Then Ours KDE: host-maximized members classify as tile exceptions while settings/gaps restore at startup; windows freshly re-admit and host-max restore is TBD. `S(S-ours-kde-rst)`; queued.
+- Then Ours Windows: the settings file carries gaps/preset durably while the ledger is runtime with explicit standalone restore; restart freshly observes and host-max restore is TBD. `S(S-ours-win-rst)`; queued.
+- Variant hook: provisional/TBD (session restore hook, to discuss).
