@@ -1,6 +1,6 @@
 # Reference matrix expansion
 
-- Status: active; restructure, insertion correction and focus accepted; move next.
+- Status: active; restructure, insertion correction, focus and move accepted; vertical output decision pending, resize next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
@@ -346,6 +346,20 @@ physical confirmation merely to count as semantic evidence.
 | R-FOC-03, Hyprland/bspwm/xmonad/awesome/PaperWM (5) | Sequential next then previous, fresh edge legs, fresh ordinary-float leg | Hyprland previous invocation/traversal; bspwm binary embedding/internal-node matching; xmonad float position; awesome order; PaperWM cycle inventory unresolved |
 | R-FOC-04, Hyprland/bspwm/paneru (3) | B leaf focused, native parent then child commands where present | Container inventory/traversal or paneru Stack/Column scope unresolved |
 
+### Move queue additions (piece B3)
+
+27 unresolved cells (P3 + T24), grouped in five entries. Inventory checks
+precede live fixtures; source-evidenced semantic cells need no live test
+solely to confirm pixels. All pins/defaults remain those in the index.
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-MOV-06, COSMIC/Hyprland/PaperWM/paneru and i3/sway/qtile remainders (7) | A left of B/C group, group prior focus C; move right with a single declared native verb | C/H reinsert target, PaperWM native directional inventory, paneru peer and I/S/Q member/index unresolved |
+| R-MOV-07, COSMIC/Hyprland (2) | `V[H[A,B*],C]`; move B down | Orthogonal escape/reinsert result unresolved; absent exact column fixtures are qualified, not queued |
+| R-MOV-08, COSMIC/xmonad/PaperWM/paneru (4) | Output U above L; A at L's upper edge, X alone on U; move A up | Vertical fallback, same-layer swap target or native inventory unresolved; layout-driven native legs declared separately |
+| R-MOV-01/02/03/05 scrolling backfill, PaperWM (4) and paneru R-MOV-01/05 (2) | Ordered single-window columns, or C/B visible column for R-MOV-02; respective down/up/right/left actions | PaperWM native move inventory and paneru edge peers unresolved; R-MOV-04 ancestry is fixture-inapplicable, not a live case |
+| R-MOV-01/03 explicit swap, COSMIC/Hyprland/PaperWM/paneru (8) | Fresh original or explicitly model-qualified fixture; down/right swap with declared target resolution | Command inventory, binary fixture/target or peer resolution unresolved; targeted i3/sway exchanges evidenced without incidental focus TBD |
+
 ## Settled review and execution
 
 | User decision | Recommendation |
@@ -372,4 +386,9 @@ physical confirmation merely to count as semantic evidence.
 - Focus outcome: R-FOC-01..04 added, 14 Then profiles each; no existing focus-area rows to backfill (0 cells), R-FLT-07..09 reused in place. Matrix 68 scenarios. Coverage E27/P6/T8/Q15/M0 (56 cells); original-eight E18/P4/T4/Q6, scrolling E5/P2/T4/Q5, Ours E4/Q4. Single-output edge retain is strong 5/8 across three families and Ours matches. Tie-MRU (3/4ev), cycle-order (4/4ev), parent/child scope (3/3ev) meet the numerical rule but only two-family breadth: W, not strong. Ours stable tie choice matches COSMIC; Ours cycle/container verbs have no counterpart, not agreeing rejection. No strong consensus conflict or product behavior selected.
 - Focus review: resumed Worker to repair sequential next/previous outcomes, missing edge-wrap legs, fixture qualification, semantic Ours adapter evidence and missed stay-5/8 consensus. Independent source reviewer confirmed outcome evidence/counts and found one causal wording error: COSMIC equal-distance selects first minimum, not strictly nearer A; Lead corrected it. Lead reconciled per-predicate W classifications, kept scrolling outside the eight-profile voter table, and repaired table continuity. Verification: 4x14 Then, source keys/pins, ASCII/local links, whitespace; source/offline only. Queue adds 14 unresolved cells in four groups.
 - Review reconciliation: follow-up verified the latest focus edits and counts. Its proposed COSMIC empty-admission downgrade required native confirmation despite a sourced active-workspace focus target; rejected under the user's semantic evidence standard. Table B's COSMIC cell is sourced yes, while Ours admission/native activation remains partial. Stop at the focus committed boundary as Lead context is crowded; no blocking product decision.
-- Exact next action: move, R-MOV-06..08; assess R-MOV-01..05 for four scrolling profiles, qualify explicit swap legs in reused rows, add consensus/source evidence and queue difficult cells, then commit/push that area.
+- Move outcome: R-MOV-06..08 added as three 14-profile GWT scenarios; R-MOV-01..05 each assessed for four scrolling profiles; explicit-swap fresh legs reuse R-MOV-01/03. Matrix now 71 scenarios. Coverage over 90 cells: E41/P3/T24/Q22/M0. New 42: E21/P3/T10/Q8 (original-eight E12/P3/T6/Q3, scrolling E3/T4/Q5, Ours E6); backfill 20: E10/T6/Q4; swap 28: E10/T8/Q10. Qualifications never vote as no-ops.
+- Move review: implementation Worker resumed for semantic-only evidence, faithful fixture/action definitions and actual applied Ours topology; independent Worker found bspwm leaf-selection/cross-output errors, PaperWM viewport-vs-membership mismatch and qtile's unexposed internal swap helper. Lead resolved these against pinned source, removed incidental swap-focus TBD and the non-equivalent R-MOV-04 pseudo-escape, and reconciled counts. Reviewer's awesome tie objection was withdrawn: the actual metric uses top-left y, so B is strictly nearer, not a center-distance tie. No live tests or product changes.
+- Move consensus: R-MOV-06 has enter/leaf-swap/carry conflict, and R-MOV-07 escape-vs-swap conflict. Ours midpoint insert shares enter-V with i3/sway (their index TBD); Ours perpendicular wrap differs from both R-MOV-07 classes. R-MOV-08 crosses in H/B/I/S/A: strong 5/8 across binary/tree/layout-driven families; qtile stays, COSMIC/xmonad TBD. Ours KDE/Windows stay under the existing Up/Down-excluded R4. Consensus Table A grows 11 to 12; B remains 16, W remains 6.
+- User decision needed: retain V-R4-DIR's vertical exclusion or revise Up/Down to cross after local movement is exhausted? Recommendation: revise vertical fallback to match strong cross-family consensus; no product behavior or selected hook changed here. Stop after the move commit boundary for this decision and context handover.
+- Move verification: 3x14 new Then entries, 5x4 scrolling assessments, 2x14 swap legs; original wide rows preserved; source keys/pins, ASCII, local links and whitespace checked. Queue adds 27 unresolved cells in five groups; inventory/model checks first.
+- Exact next action: obtain the R-MOV-08 vertical output fallback decision; then expand resize R-RSZ-01..04, assess existing R-MIN-01..03 scrolling coverage in its supplemental area, update consensus/queue, and commit/push resize.

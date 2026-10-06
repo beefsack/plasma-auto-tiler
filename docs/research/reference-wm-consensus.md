@@ -1,9 +1,9 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (68 rows:
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (71 rows:
 58-row historical audit preserved below, plus 6-row insertion expansion
-plus 4-row focus expansion).
+plus 4-row focus expansion plus 3-row move expansion).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -116,15 +116,16 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
 Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts including insertion/focus are per-predicate: A 11, B 16, U 6, C 15, W 6;
+Summary counts including insertion/focus/move are per-predicate: A 12, B 16, U 6, C 15, W 6;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
 
-## Table A: strong cross-family consensus where ours differs (11)
+## Table A: strong cross-family consensus where ours differs (12)
 
 Ours differs = established follow/refusal/etc on at least one platform.
 
 | Row | Consensus | Count | COSMIC | Ours KDE / Windows | Deliberate vs feature absence |
 |---|---|---|---|---|---|
+| R-MOV-08 | exhausted vertical move crosses to the output above | cross-5/8 (H,B,I,S,A), 3/4 fam; Q stays, C/X TBD | TBD | no / no (Up/Down excluded from R4) | Deliberate directional output policy; existing V-R4-DIR exclusion, user reconsideration queued |
 | R-WS-01 send | declared-profile Send stays (leaves source focus) | N5/8, 3/4 fam (C,I,X,S,A) | yes (Send stays; Move is alternate) | follow / follow (recorded verified-transfer policy) | Deliberate command semantics; profile/binding-dependent |
 | R-MOV-03 | flat swap, not same-orientation nested wrap | F4/5ev, 3 fam | observed wrap ER, no source vote | no / no (Engine R2c wrap; fixture-qualified) | Deliberate swaps across models, not exact topology parity |
 | R-FLT-05 | restart retains sticky visibility | V3/3ev thin (B,I,A), 3 fam | unknown | yes / no (normal-float marker consumption); native journey TBD | Deliberate state restoration; missing sticky/restart fixtures excluded |
@@ -397,3 +398,59 @@ container-focus verbs while i3/sway/Q/COSMIC/K carry complete legs -
 an inventory gap the user must accept or fill; missing verbs were never
 counted as agreeing rejection. No product choice is selected by these
 source findings.
+
+## Move expansion (piece B3): R-MOV-06..08 plus R-MOV-01..05 scrolling backfill and explicit-swap legs
+
+Scope: piece B3 adds three GWT move scenarios (R-MOV-06..08), additive
+scrolling backfill blocks for R-MOV-01..05, and two explicit-swap fresh
+legs reusing R-MOV-01/03. Historical tables and the 58-row audit above
+are preserved unchanged. Denominator, families, and the strength rule
+are unchanged: consensus classification below counts the original eight
+profiles only. The four scrolling profiles form one correlated lineage
+reported as an explicit separate non-voting comparison. Cell classes
+are mutually exclusive per cell: E complete outcome evidenced; P one
+sub-leg evidenced with the remainder TBD; T TBD-only; Q all legs
+qualified (fixture-inapplicable / no-counterpart with pinned inventory
+evidence); M mixed. E cells carry no TBD; every P cell names its
+explicit remainder. Counts measure documentation coverage, not votes.
+
+| Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
+|---|---|---|---|
+| R-MOV-06 nested entry | enter V (index TBD) vs geometric leaf swap vs column carry | enter: I, S; leaf-swap: B (C by MRU), A (B in tile projection); carry: Q (column projection) | C audit-only (three-way conflict; leaf partners differ) |
+| R-MOV-07 orthogonal escape | escape H to outer V vs geometric down-swap | escape: I, S; down-swap: B, A (tile projection) | C audit-only (2-2 conflict) |
+| R-MOV-08 vertical cross-output | cross to U vs stay local | cross: H, B, I, S, A (5/8, 3 fam); stay: Q; TBD: C, X | A strong cross-family; Ours KDE/Windows stay |
+
+Scrolling comparison (non-voting): R-MOV-06 niri column reorder and
+karousel single-window join are complete, PaperWM directional inventory TBD, paneru
+peer TBD. R-MOV-07 has no faithful column Given; all four scrolling
+profiles are fixture-inapplicable. R-MOV-08 niri stays (in-column edge),
+karousel is single-screen inapplicable, PaperWM/paneru TBD. Backfill:
+R-MOV-01 edge stay (niri/karousel E); R-MOV-02 in-column swap (niri/
+karousel/paneru E); R-MOV-03 reorder/join/swap (niri/karousel/paneru
+E); R-MOV-04 all four fixture-inapplicable (no nested H ancestor);
+R-MOV-05 edge stay (niri/karousel E). Explicit-swap legs: bspwm no-swap
+(R-MOV-01) and east swap (R-MOV-03), i3/sway targeted exchange, and
+xmonad/awesome projection misses are complete per leg; qtile has an
+internal drag helper but no exposed swap command; niri/karousel/Ours
+also have no standalone swap counterpart; rest TBD.
+
+Counts (mutually exclusive E/P/T/Q/M). New rows (3x14=42): E 21, P 3,
+T 10, Q 8, M 0. Original-eight new cells (3x8=24): E 12 (R-MOV-06:
+B/A; R-MOV-07: B/I/S/A; R-MOV-08: H/B/I/S/Q/A), P 3 (R-MOV-06: I/S/Q),
+T 6, Q 3 (R-MOV-06/07: X; R-MOV-07: Q). Scrolling new cells (3x4=12):
+E 3 (R-MOV-06: niri/karousel; R-MOV-08: niri), P 0, T 4, Q 5.
+Ours new cells (3x2=6): E 6. Backfill (5x4=20): E 10, P 0, T 6,
+Q 4. Explicit-swap legs (2x14=28): E 10, P 0, T 8, Q 10.
+A grows from 11 to 12; B stays 16; W stays 6. The matrix
+total is now 71 rows (68 + 3 new; backfill and swap legs reuse IDs).
+
+Ours-vs-consensus position (no behavior selected): R-MOV-06 Ours midpoint
+insert (`V[B,A*,C]`) shares the enter-V leg with i3/sway, whose exact
+index remains TBD; it differs from leaf-swap/carry. R-MOV-07 Ours wrap
+(`V[V[A,B*],C]`) differs from escape and swap, with no strong consensus.
+R-MOV-08 Ours stays with qtile against strong cross-5 (H/B/I/S/A), under
+the already-selected V-R4-DIR Up/Down exclusion. The user must decide
+whether to retain that exclusion or revise vertical output fallback;
+recommend revising it to cross after local movement is exhausted.
+Ours has no standalone swap verb; exchange exists only as R2a inside
+directional moves. No product behavior is changed by this assessment.

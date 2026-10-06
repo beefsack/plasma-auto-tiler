@@ -1440,6 +1440,66 @@ Legend:
   @9241c94
   (leaf-only directional focus model plus both adapters' delivery;
   selected intent is never evidence)
+- `S-cos-move` cosmic-comp:src/shell/layout/tiling/mod.rs:1507-1560
+  (`move_current_node` entry, stack-internal move, R1 orientation
+  mapping) and :1598-1830 (R1/R2/R3 branches plus output fallback)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (directional move implementation; unresolved predicates are identified in cells)
+- `S-bsp-move-target` bspwm:src/tree.c:1124-1149 (directional candidates
+  are leaves on all monitors' shown desktops; distance then history rank)
+  and :1489-1620 (leaf exchange, same-desktop focus retention and
+  cross-monitor follow) and src/geometry.c:49-154 (directional range and
+  boundary distance) and src/history.c:311-323 (MRU rank) and
+  src/settings.c:108 (default HIGH directional tightness)
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+- `S-qti-swap-inventory` qtile:libqtile/layout/columns.py:173-191
+  (internal `swap` helper, not exposed) and :204-508 (exposed command
+  inventory: directional shuffles, no standalone swap) and
+  libqtile/backend/x11/window.py:2249 (interactive drag calls the helper)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+- `S-nir-move` niri:src/layout/scrolling.rs:1702-1800 (`move_left`/
+  `move_right` column reorder, `move_down`/`move_up` in-column step)
+  and :1795-2060 (`consume_or_expel`/`consume_into`/`expel_from`) and
+  src/layout/workspace.rs:1072-1125 (tiling/floating move dispatch) and
+  niri-ipc/src/lib.rs:389-442 (column/window move/consume verbs)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (column move inventory; tree-nesting legs have no counterpart)
+- `S-pap-move` PaperWM:tiling.js:4440-4500 (`move_to` viewport placement,
+  not membership reorder) and :5228-5260 (`slurp` join) and :3490 (`barf`
+  expel path) and :1129-1200 (`switch` directional focus, not a move)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (column/row model and viewport/join paths; native directional inventory TBD)
+- `S-kar-move` karousel:src/lib/keyBindings/Actions.ts:86-160
+  (`windowMoveLeft/Right` shared-vs-single column paths,
+  `windowMoveUp/Down` in-column step, `windowMoveNext/Previous`)
+  and :184-200 (`columnMoveLeft/Right/Start/End`) and
+  src/lib/layout/Column.ts:41-60 (`moveWindowUp/Down`) and
+  src/lib/layout/Grid.ts:27-51 (`moveColumn`)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (column/window move inventory; tree-nesting legs have no counterpart)
+- `S-pan-move` paneru:src/types/commands.rs:220-270 (`Swap`,
+  `VirtualMove`, `ToNextDisplay` verbs; directional `Focus` separate)
+  and src/ecs/layout_ops.rs:89-130 (`Swap` same-strip exchange,
+  `MoveToWorkspace` virtual-row marker)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (swap/virtual-move inventory; split-tree reparent legs TBD)
+- `S-i3-swap` i3:src/commands.c:1961-2011 (`cmd_swap`: target resolved by
+  explicit `id`/`con_id`/`mark` only, no directional form) and
+  src/con.c:2580-2659 (`con_swap` leaf exchange)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (targeted swap only; directional swap has no counterpart)
+- `S-ours-move` plasma-auto-tiler:crates/tiler-core/src/directional.rs:786-929
+  (`plan_local`: perpendicular R1 wrap, 2-child R2a leaf swap, R2b
+  group insert/split, N-ary R2c wrap, R3 escape with same-axis insert
+  vs R1 continuation) and :945-1021 (`plan_move_with_capabilities`:
+  only Left/Right cross outputs, Up/Down never cross)
+  and crates/tiler-core/src/session/ops/move.rs:529-601 (applied R1
+  perpendicular wrap with mover at the directional end) and :737-828
+  (applied R2b insertion and retained mover focus target)
+  @9241c94
+  (Engine move rules: every `MoveOperation` is directional; neighbor
+  exchange occurs only as R2a inside a directional move, never as a
+  standalone swap verb)
 
 ## Variant hooks (provisional, not commitments)
 
@@ -1468,8 +1528,8 @@ Legend:
 ## Area files
 
 Scenario rows live in area files under `reference-outcomes/` (58 original
-rows, preserved; plus 6 insertion scenarios from piece B1 and 4 focus
-scenarios from piece B2, GWT only).
+rows, preserved; plus 6 insertion scenarios from piece B1, 4 focus
+scenarios from piece B2, and 3 move scenarios from piece B3, GWT only).
 This index retains purpose, row-addition rule, notation,
 profiles, evidence tags/legend, variant hooks, and deferred. Existing wide
 tables moved unchanged; all new scenarios use the GWT form below.
@@ -1480,7 +1540,7 @@ minimum-size stays a supplemental file (not nested in resize).
 |---|---|---|---|
 | Insertion | [insertion.md](reference-outcomes/insertion.md) | R-INS-01..08 (8) | none (R-INS-03..08 landed in piece B1) |
 | Focus | [focus.md](reference-outcomes/focus.md) | R-FOC-01..04 (4) | none (landed in piece B2) |
-| Move | [move.md](reference-outcomes/move.md) | R-MOV-01..05 (5) | R-MOV-06..08 |
+| Move | [move.md](reference-outcomes/move.md) | R-MOV-01..08 (8) | none (R-MOV-06..08 landed in piece B3) |
 | Resize | [resize.md](reference-outcomes/resize.md) | none yet | R-RSZ-01..04 |
 | Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | none yet | R-LAY-01..04 |
 | Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..07 (7) | R-WS-08..14 |
