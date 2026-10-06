@@ -1,10 +1,10 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (75 rows:
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (79 rows:
 58-row historical audit preserved below, plus 6-row insertion expansion
 plus 4-row focus expansion plus 3-row move expansion plus 4-row resize
-expansion).
+expansion plus 4-row layout expansion).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -117,12 +117,14 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
 Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts including insertion/focus/move/resize are per-predicate: A 12, B 17, U 6, C 15, W 8;
+Summary counts including insertion/focus/move/resize/layout are per-predicate: A 14, B 17, U 6, C 15, W 8;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
 
-## Table A: strong cross-family consensus where ours differs (12)
+## Table A: strong cross-family consensus where ours differs (14)
 
-Ours differs = established follow/refusal/etc on at least one platform.
+Ours differs = established follow/refusal/etc on at least one platform,
+or an inventory-evidenced verb/state gap on both platforms (missing verbs
+never vote as agreement).
 
 | Row | Consensus | Count | COSMIC | Ours KDE / Windows | Deliberate vs feature absence |
 |---|---|---|---|---|---|
@@ -138,6 +140,8 @@ Ours differs = established follow/refusal/etc on at least one platform.
 | R-MIN-02 | same on shrink | U7/8 | yes | no / no (same B6 split) | Same default-clamp policy, not settled native frames |
 | R-MIN-03 | same, oversized sole tiles | U7/8 | yes | no / no (flag + skip/raise gap) | Same clamp policy; tile admission itself is unanimous |
 | R-DRAG-04 | Esc does not cancel (drop/persist) | D7/8 | yes | no / no (cancel verdict selected; i3 revert is the outlier) | Escape handling mixes normal drop and no cancellation path |
+| R-LAY-01 | parent split orientation flips, same children on the new axis | flip-4/5ev (C,B,I,S vs H geometry-reset no-op), 3/4 fam | yes (ToggleOrientation) | no / no (no orientation verb in any Engine/adapter layer) | Inventory gap, not a rejecting policy; X/Q/A have no counterpart either |
+| R-LAY-04 | alternative layout selected at per-workspace scope, order preserved | scope-6/8 (B,I,S,X,Q,A), 3/4 fam | n/a (global config only) | no / no (no select verb in any Engine/adapter layer) | Ownership differs per profile (desktop/parent/workspace/group/tag); H partial, C global-only |
 
 WS-01 notes: H silent (no-follow) path exists alongside profiled follow;
 alternate Move-verb inventory is a 4/4 tie (C/H/B/Q follow vs I/X/S/A
@@ -525,4 +529,66 @@ strong-leg inventory gap, not a rejecting-policy mismatch. Recommendation
 for batch user review: implement Windows keyboard-resize parity using the
 shared Engine pixel path; no equalize choice is supported by strong
 consensus yet. Missing triggers/verbs never count as agreeing rejection.
+No product behavior is changed by this assessment.
+
+## Layout expansion (piece B5): R-LAY-01..04 plus R-FLT-04/R-WS-06 scrolling backfill
+
+Scope: piece B5 adds four GWT layout-command scenarios (R-LAY-01..04),
+each with 14 Then profiles, and additive scrolling backfill blocks for
+R-FLT-04 (floating area) and R-WS-06 (workspaces area); the layout area
+had no existing rows, so there is no other scrolling backfill (0 other
+rows, 0 cells). R-FLT-04/R-WS-06 reuse keeps tile/float mode in the
+original files: proposed layout selection is not that toggle, and no
+historical row is rewritten. Historical tables and the 58-row audit
+above are preserved unchanged. Denominator, families, and the strength
+rule are unchanged: consensus classification below counts the original
+eight profiles only. The four scrolling profiles form one correlated
+lineage reported as an explicit separate non-voting comparison. Cell
+classes are mutually exclusive per cell: E complete outcome evidenced; P
+one sub-leg evidenced with the remainder TBD; T TBD-only; Q all legs
+qualified (fixture-inapplicable / no-counterpart with pinned inventory
+evidence); M mixed. E cells carry no TBD; every P cell names its
+explicit remainder. Counts measure documentation coverage, not votes.
+
+| Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
+|---|---|---|---|
+| R-LAY-01 orientation toggle | same children on the new axis vs geometry-reset no-op | flip: C (`ToggleOrientation`, `S-cos-orient`), B (`node -y`, `S-bsp-type`), I/S (`layout toggle split`, `S-i3-layout` / `S-sway-layout`); no-op: H (immediate geometry recalculation overrides the toggled bit at shipped defaults, `S-hyp-lay` + `S-hyp-defaults`); qualified: X (fixed Tall), Q (`toggle_split` is a different concept), A (fixed tile geometry) | A axis-flip 4/5ev, 3 families (all-but-one evidenced; Ours has no orientation verb on either platform) |
+| R-LAY-02 rotate/mirror | 90-degree rotate transform; left/right mirror transform | rotate: B (`-R 90` on the root, `S-bsp-rot`); mirror: B (`-F horizontal` on the root, `S-bsp-rot`); qualified: C/I/X/S (no rotate/mirror verb), H (verbs are parent-scoped only, no whole-fixture transform), Q/A (no nested counterpart) | C audit-only (1/8ev, binary family only) |
+| R-LAY-03 master promote | master identity change vs tree operation vs no master concept | promote: X (`swapMaster`, `S-xmo-master`), A (`setmaster`, `S-awe-master`); tree operation: H (`movetoroot`, `S-hyp-lay`); qualified: C/B/I/S/Q (no master concept) | C audit-only (2/8ev, layout-driven family only) |
+| R-LAY-04 layout select | per-workspace-scope selection with order preserved | per-workspace scope: B (per-desktop tiled/monocle, `S-bsp-desklay`), I/S (per-parent `layout tabbed`, single-parent fixture, `S-i3-layout` / `S-sway-layout`), X (per-workspace Tall/Mirror Tall, `S-xmo-wslay`), Q (per-group Columns/Max, `S-qti-wslay`), A (per-tag tile/tile.left, `S-awe-tileleft`); partial: H (L2 master rule override, order TBD, `S-hyp-layout`); qualified: C (global config only) | A per-workspace scope 6/8, 3 families (mechanisms differ: desktop/parent/workspace/group/tag ownership; Ours has no select verb on either platform) |
+
+Scrolling comparison (non-voting): R-LAY-01 all four no-counterpart
+(no split-axis/orientation verb: `S-nir-acts`, `S-pap-acts`,
+`S-kar-acts`, `S-pan-cmds`). R-LAY-02 all four fixture-inapplicable (no
+nested H/V counterpart: `S-nir-move`, `S-pap-move`, `S-kar-move`,
+`S-pan-model`). R-LAY-03 all four no-counterpart (no master verb, same
+four inventories). R-LAY-04 all four no-counterpart (no layout-select
+verb; paneru `Virtual*` switches strips, not layouts). R-FLT-04 backfill
+all four no-counterpart (no workspace toggle verb; niri/karousel floats
+are per-window only, PaperWM scratch is overlay-only, paneru `Manage` is
+per-window with a focus-only tier flip). R-WS-06 backfill all four
+fixture-inapplicable (no workspace floating mode exists to construct the
+`WS2 floating` target with; same four inventories as R-FLT-04, never an
+ordinary transfer or a live test on an impossible target).
+
+Counts (mutually exclusive E/P/T/Q/M). New rows (4x14=56): E 15, P 1,
+T 0, Q 40, M 0. Original-eight new cells (4x8=32): E 15 (R-LAY-01: 5
+C/H/B/I/S; R-LAY-02: 1 B; R-LAY-03: 3 H/X/A; R-LAY-04: 6 B/I/S/X/Q/A), P 1
+(R-LAY-04: H rule-override order), T 0,
+Q 16 (R-LAY-01: 3 X/Q/A; R-LAY-02: 7 C/H/I/X/S/Q/A; R-LAY-03: 5
+C/B/I/S/Q; R-LAY-04: 1 C). Scrolling new cells (4x4=16): Q 16. Ours new
+cells (4x2=8): Q 8 (no layout/orient/rotate/mirror/master/select verb in
+any Engine/adapter layer on either platform). Backfill (2x4=8): Q 8
+(R-FLT-04 and R-WS-06 all four each). Table A grows from 12 to 14;
+Table B stays 17; Table W stays 8. The matrix total is now 79 rows
+(75 + 4 new; backfill reuses IDs).
+
+Ours-vs-consensus position (no behavior selected): two strong-consensus
+gaps stand on both Ours platforms (inventory-evidenced missing verbs,
+never counted as agreeing rejection). Propose for batch user review, no
+selection or code change: add a parent-axis toggle (R-LAY-01: C/B/I/S
+flip the parent to the new axis with the same children) and a
+workspace-local layout selection (R-LAY-04: B/I/S/X/Q/A select an
+alternative layout at per-workspace scope with order preserved, noting
+ownership differs per profile: desktop/parent/workspace/group/tag).
 No product behavior is changed by this assessment.

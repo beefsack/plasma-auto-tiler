@@ -1,6 +1,6 @@
 # Reference matrix expansion
 
-- Status: active; restructure, insertion correction, focus, move and resize accepted; batch decisions pending, layout commands next.
+- Status: active; restructure, insertion correction, focus, move, resize and layout commands accepted; batch decisions pending, workspaces next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
@@ -376,6 +376,16 @@ needs physical confirmation solely to count as evidence.
 | R-RSZ-04, COSMIC/Hyprland/i3/xmonad/sway/awesome/niri/PaperWM (8) | Equalize/balance inventory first; 50/30/20 fixtures, explicit binary embedding and root target where applicable | Native verb inventory unestablished; bspwm root equalize/balance, qtile/karousel equal shares and paneru distinct height/width verbs are sourced |
 | R-MIN-01..03, four scrolling profiles (12) | Exact original dimensions/hints with column Given: 1080x300 admission, 1220->1080->1220 same-fixture recovery, empty 1080x600 oversized sole | niri/karousel minimum clamp only partially establishes admission/recovery/overflow; PaperWM/paneru minimum paths untraced. Strip scrolling is not tree infeasibility; record viewport, frames and applicable focus |
 
+### Layout-command queue additions (piece B5)
+
+One unresolved partial cell in one entry. Qualified absent commands and
+floating-workspace fixtures add no live cases; established semantic
+outcomes need no pixel confirmation.
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-LAY-04, Hyprland/Dwindle (1) | WS1/WS2 two-window dwindle layouts; apply WS2-only master layout override; return to WS1 | Workspace-local algorithm ownership sourced; window order through the algorithm switch unresolved |
+
 ## Settled review and execution
 
 | User decision | Recommendation |
@@ -411,4 +421,8 @@ needs physical confirmation solely to count as evidence.
 - Resize review: sequential implementation and independent source review corrected generic-width substitutes for edge actions, qtile reversal/weight units, niri reverse verb, PaperWM grid rounding, karousel contextual reversal, missing minimum geometry and same-fixture recovery, and bspwm root-targeted binary balance. Explicit root `-E` yields 50/25/25; `-B` yields thirds; paneru Equalize leaves single-column widths unchanged while Balance copies A's width. Ours Windows keyboard cells are qualified absent triggers, not shared-Engine delivery claims. Lead reconciled the final fixtures, citations, cell counts and per-predicate votes against actual source.
 - Resize consensus: explicit pixel path is strong 5/8 (C/H/B/I/S), three families; partial H/B cells vote only for their established pixel leg. i3/sway use declared 10px commands here, not their bare ppt defaults; qtile transfers weights, not pixels. KDE matches. Windows' missing keyboard trigger is a strong-leg inventory gap, not a rejecting policy; recommendation for batch review: implement keyboard-resize parity through the shared Engine. Outer-edge no-op is weak 3/4ev across two families; nearest-inner split weak 3/3ev across two. No strong equalize choice. Table B grows 16 to 17 and W 6 to 8; A remains 12, U 6, C 15.
 - Resize verification: 4x14 Then entries and 3x4 scrolling assessments; original R-MIN wide rows preserved; citation keys, local links, unchanged pins, ASCII and whitespace checked. Source/offline only, no live tests. Queue adds 29 unresolved cells in five groups. Pending move/resize recommendations stay collected for Orchestrator batch review and do not block later areas.
-- Exact next action: expand layout commands R-LAY-01..04, assess existing layout-area rows (none; reuse R-FLT-04/R-WS-06 in place), update consensus/queue, then commit/push that area. Continue workspaces and later areas in the approved order; collect product differences for batch review.
+- Layout-command outcome: R-LAY-01..04 added as four 14-profile GWT scenarios; R-FLT-04/R-WS-06 each assessed for all four scrolling profiles in place, preserving historical rows. Matrix now 79 scenarios. Coverage over 64 cells: E15/P1/T0/Q48/M0. New 56: E15/P1/Q40 (original-eight E15/P1/Q16, scrolling Q16, Ours Q8); backfill 8: Q8. No product behavior or pins changed.
+- Layout-command review: implementation Worker corrected split-preparation substitutes to i3/sway's native parent-layout toggle, traced runtime per-workspace alternatives instead of inferring absence from global defaults, and qualified impossible scrolling floating-workspace targets. Independent source review confirmed count classes and historical-row preservation. Lead removed incidental Hyprland master geometry TBD under the semantic evidence standard and found its immediate geometry recalculation overrides toggle/rotation bits at shipped defaults; repaired the outcome/citation and consensus without changing counts. Workers ran sequentially; no live tests.
+- Layout-command consensus: parent-axis toggle is strong 4/5 evidenced (C/B/I/S vs Hyprland geometry-reset no-op), three families under the settled all-but-one rule; workspace-local alternative layout is strong 6/8 (B/I/S/X/Q/A), three families, with i3/sway parent scope disclosed. Both Ours platforms lack these commands, evidenced by shared Engine plus separate adapter inventories, not agreeing rejection. Recommendations for batch review: add parent-axis toggle and workspace-local layout selection. Root rotation/mirror has only bspwm evidence; master promotion is layout-driven, while Hyprland's nearest verb is a tree operation. Table A grows 12 to 14; B17/U6/C15/W8 unchanged.
+- Layout-command verification: 4x14 Then entries, 2x4 scrolling assessments; source keys, local links, unchanged pins, ASCII and whitespace checked. Source/offline only. Queue adds one unresolved partial cell in one group (Hyprland alternative-layout order).
+- Exact next action: expand workspaces R-WS-08..14 and assess R-WS-01..07 for four scrolling profiles (R-WS-06 already qualified in piece B5), update consensus/queue, then commit/push that area. Continue later areas in the approved order; collect product differences for batch review.

@@ -321,10 +321,12 @@ Legend:
   nesting) and sway/tree/workspace.c:1058-1079 (`workspace_split`)
   @1652c54b73f67df17b7b4ab0b0f7048204aa8104
 - `S-sway-layout` sway:sway/commands/layout.c:11-22 (`layout tabbed`/
-  `stacked` parse) and :117-199 (operates on the parent split like i3;
-  single-child flatten, workspace wrap for new containers)
+  `stacked` parse) and :29-44 (`toggle_split_layout` flips HORIZ/VERT) and
+  :117-199 (operates on the parent split like i3; single-child flatten,
+  workspace wrap for new containers)
   @1652c54b73f67df17b7b4ab0b0f7048204aa8104
-  (tabbed/stacked are parent split layouts holding tabs)
+  (tabbed/stacked are parent split layouts holding tabs; the path writes
+  no focus, so focus stays on the previously focused child)
 - `S-sway-move` sway:sway/commands/move.c:112-166
   (`container_move_to_container_from_direction`: same-parent same-workspace
   sibling swap, cousin promotion, parallel/perpendicular reparent) and
@@ -957,8 +959,12 @@ Legend:
   (ordinary admission inserts after focus; no geometry-driven axis)
 - `S-i3-layout` i3:src/commands.c:1599-1624 (`layout tabbed`/`stacked`
   sets the parent split layout) and src/con.c:1620-1630 (tabbed behaves
-  HORIZ, stacked VERT) @903bcd518df32b0e055b17f5da3f988a0187fd3d
-  (tabbed/stacked are parent split layouts holding tabs)
+  HORIZ, stacked VERT) and src/con.c:1997-2013 (`con_set_layout` retargets
+  the focused window's parent, same children) and src/con.c:2109-2142
+  (`con_toggle_layout` retargets the parent; `split` flips
+  L_SPLITH/L_SPLITV) @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (tabbed/stacked are parent split layouts holding tabs; neither path
+  writes focus, so focus stays on the previously focused child)
 - `S-i3-move` i3:src/move.c:259-353 (`tree_move` same-orientation swap,
   force-orientation wrap, lone-workspace output-directed fallback) and
   :355-404 (move into the container above via `insert_con_into`) and
@@ -1613,6 +1619,118 @@ Legend:
   `getMaxWidth` clamp in `setWidth`)
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
   (admission frames TBD)
+- `S-cos-orient` cosmic-comp:data/keybindings.ron:83 (Super+o
+  `ToggleOrientation`) + :83-92 (layout-geometry bindings: orientation/
+  stacking/tiling/float/swap/maximize/fullscreen/resize; no rotate/mirror/
+  master verb) + src/input/actions.rs:962-976 (`ToggleOrientation`/
+  `Orientation` dispatch to `update_orientation`) +
+  src/shell/layout/tiling/mod.rs:2089-2130 (`update_orientation` flips the
+  focused parent group's axis with proportional size rescale, no focus write)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (parent-axis toggle only)
+- `S-cos-model` cosmic-comp:src/shell/layout/tiling/mod.rs:150-162
+  (`Data` holds Group/Mapped nodes only)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (no master concept in the tiling model)
+- `S-cos-wslay` cosmic-comp:cosmic-comp-config/src/workspace.rs:8-45
+  (`WorkspaceConfig.workspace_layout` is a single global Vertical/Horizontal
+  value) @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (no runtime per-workspace layout-select verb)
+- `S-hyp-lay`
+  Hyprland:src/layout/algorithm/tiled/dwindle/DwindleAlgorithm.cpp:676-702
+  (`layoutmsg` dispatch: togglesplit/swapsplit/rotatesplit/movetoroot) +
+  :774-868 (`toggleSplit` flips the parent `splitTop`; `swapSplit` exchanges
+  the parent's children; `rotateSplit(angle)` flips the axis with the
+  angle-conditional swap; `moveToRoot` swaps the node toward the root and
+  returns false at the root; none writes focus) + :28-61 (immediate
+  recalculation derives the axis from parent geometry at shipped
+  preserve_split/smart_split/precise_mouse_move=false defaults, overriding
+  the explicit toggle/rotation bit)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+- `S-hyp-layout` Hyprland:src/config/values/ConfigValues.cpp:179
+  (`general:layout` is the global default layout value) +
+  src/layout/supplementary/WorkspaceAlgoMatcher.cpp:30-35 (registered tiled
+  algorithms: dwindle/master/scrolling/monocle) and :106-142
+  (`tiledAlgoForWorkspace` prefers a workspace rule's layout override;
+  `updateWorkspaceLayouts` switches a workspace's tiled algorithm on mismatch)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (per-workspace ownership sourced; order preservation through the switch TBD)
+- `S-bsp-type` bspwm:doc/bspwm.1.asciidoc:442-443 (`node -y/--type` sets or
+  cycles the splitting type of the selected node) + src/tree.c:193-203
+  (`set_type` flips `split_type` with constraint rebuild, no focus write)
+  @e11eff4 for the doc path,
+  @e11eff4cb3333216ad03c815609a4ed79e08929c for src
+- `S-bsp-rot` bspwm:doc/bspwm.1.asciidoc:448-452 (`node -R/--rotate`
+  90|270|180, `-F/--flip` horizontal|vertical) + src/tree.c:1202-1256
+  (`rotate_tree_rec` flips the split type at every level with the
+  degree-conditional child swap; `flip_tree` swaps children where the split
+  matches; neither writes focus)
+  @e11eff4 for the doc path,
+  @e11eff4cb3333216ad03c815609a4ed79e08929c for src
+- `S-bsp-desklay` bspwm:doc/bspwm.1.asciidoc:505 (`desktop -l/--layout`
+  CYCLE_DIR|monocle|tiled) + src/messages.c:765-780 (`set_layout` applies
+  per desktop) @e11eff4 for the doc path,
+  @e11eff4cb3333216ad03c815609a4ed79e08929c for src
+- `S-i3-cmds` i3:parser-specs/commands.spec:23-34 (command dispatch inventory:
+  layout/split/focus/move and others; no rotate/mirror/master/promote verb)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+- `S-sway-cmds` sway:sway/commands.c:114-143 (alphabetized runtime command
+  table: layout/split/move/swap and others; no rotate/mirror/master verb)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+- `S-xmo-master` xmonad:src/XMonad/StackSet.hs:540-556 (`swapMaster`/
+  `shiftMaster` make the focused window the master; focus stays with the
+  moved item) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+- `S-xmo-wslay` xmonad:src/XMonad/StackSet.hs:157 (each `Workspace` carries
+  its own layout) + src/XMonad/Config.hs:137 (`Tall ||| Mirror Tall ||| Full`)
+  and :193 (mod-space sends `NextLayout` on the current workspace only)
+  @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+- `S-awe-master` awesome:lib/awful/client.lua:460-477 (`getmaster` reads the
+  first visible client; `setmaster` moves the client to the primary section
+  via repeated `swap`, which writes no focus)
+  @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+- `S-awe-tileleft` awesome:lib/awful/layout/suit/tile.lua:328-337
+  (`tile.left` runs the tile algorithm mirrored via `do_tile "left"`) and
+  :370-372 (plain `tile` aliases the right variant) +
+  awesomerc.lua:83-97 (shipped layout list includes floating, tile,
+  tile.left, and others) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+- `S-qti-wslay` qtile:libqtile/group.py:15-45 (each group keeps its own
+  `layouts` list plus `current_layout` index) and :77-90 (`layout`
+  property/setter over that index) +
+  libqtile/core/manager.py:1274-1302 (`next_layout`/`prev_layout` with an
+  optional group name target the named group's index)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+- `S-nir-float` niri:niri-ipc/src/lib.rs:811-819 (`ToggleWindowFloating`
+  moves one window; no workspace toggle verb) +
+  src/layout/workspace.rs:55,660-677 (`floating_is_active` derives from
+  admission/focus, not a command)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+- `S-nir-acts` niri:niri-ipc/src/lib.rs:194-946 (full `Action` enum:
+  column/window focus, moves, consume/expel, width presets, tabbed display,
+  float/floating-focus, workspace moves; no orientation/rotate/mirror/
+  master/layout-select verb)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+- `S-pap-acts` PaperWM:keybindings.js:191-238 (switch/move-as-swap verbs) +
+  :240-344 (scratch/slurp/barf/maximize-width/fullscreen/focus-mode/
+  open-position; no orientation/rotate/mirror/master/layout-select/
+  workspace-float verb) @8bf6dd264f60d6c0c402b63df7b424b888959a48
+- `S-kar-acts` karousel:src/lib/keyBindings/Actions.ts:6-60 (focus verbs) +
+  :86-175 (window/column move verbs) + :176-260 (`windowToggleFloating`
+  per-window only, column move/stacked/width/preset verbs; no
+  rotate/mirror/master/orientation/layout-select/workspace-toggle verb)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+- `S-ours-planops` shared Engine operation inventory:
+  plasma-auto-tiler:crates/tiler-core/src/session/ops/mod.rs:8-15 (families:
+  drag/float/focus/lifecycle/move/resize/workspace only) +
+  crates/tiler-core/src/directional.rs:236 (`MoveOperation` is
+  directional-only) and :517 (`FocusPlan` is directional leaf-or-Edge only);
+  KDE adapter dispatch: plasma-auto-tiler:kwin/src/plan-adapter.ts:90
+  (`PlanOp`: admit/remove/move/focus/resize/reconcile/update-gaps/
+  pointer-resize/toggle-float/drag-drop/release-domain);
+  Windows dispatch: plasma-auto-tiler:crates/tiler-windows/src/snapkey.rs:104-107
+  (`SnapOp`: Focus/Move only) and :427-430 (`WorkspaceOp`: Select/Send only)
+  @a77dd341f311da080ba94347c82a34d1d1c57893
+  (no layout/orient/rotate/mirror/master/layout-select verb in any of the three
+  layers)
 
 ## Variant hooks (provisional, not commitments)
 
@@ -1642,8 +1760,9 @@ Legend:
 
 Scenario rows live in area files under `reference-outcomes/` (58 original
 rows, preserved; plus 6 insertion scenarios from piece B1, 4 focus
-scenarios from piece B2, 3 move scenarios from piece B3, and 4 resize
-scenarios from piece B4, GWT only).
+scenarios from piece B2, 3 move scenarios from piece B3, 4 resize
+scenarios from piece B4, and 4 layout-command scenarios from piece B5,
+GWT only).
 This index retains purpose, row-addition rule, notation,
 profiles, evidence tags/legend, variant hooks, and deferred. Existing wide
 tables moved unchanged; all new scenarios use the GWT form below.
@@ -1656,7 +1775,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Focus | [focus.md](reference-outcomes/focus.md) | R-FOC-01..04 (4) | none (landed in piece B2) |
 | Move | [move.md](reference-outcomes/move.md) | R-MOV-01..08 (8) | none (R-MOV-06..08 landed in piece B3) |
 | Resize | [resize.md](reference-outcomes/resize.md) | R-RSZ-01..04 (4) | none (landed in piece B4) |
-| Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | none yet | R-LAY-01..04 |
+| Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | R-LAY-01..04 (4) | none (landed in piece B5) |
 | Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..07 (7) | R-WS-08..14 |
 | Minimize | [minimize.md](reference-outcomes/minimize.md) | none yet | R-MNZ-01..03 |
 | Maximise / fullscreen | [maximize-fullscreen.md](reference-outcomes/maximize-fullscreen.md) | R-MAX-01..07 (7) | R-MAX-08..09 |
