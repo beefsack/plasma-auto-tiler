@@ -1,8 +1,9 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (64 rows:
-58-row historical audit preserved below, plus 6-row insertion expansion).
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (68 rows:
+58-row historical audit preserved below, plus 6-row insertion expansion
+plus 4-row focus expansion).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -115,7 +116,7 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
 Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts including insertion are per-predicate: A 11, B 15, U 6, C 15, W 3;
+Summary counts including insertion/focus are per-predicate: A 11, B 16, U 6, C 15, W 6;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
 
 ## Table A: strong cross-family consensus where ours differs (11)
@@ -141,12 +142,12 @@ alternate Move-verb inventory is a 4/4 tie (C/H/B/Q follow vs I/X/S/A
 default-stay), reported as inventory, never read as Send consensus. COSMIC
 MoveToWorkspace follow is not a Send vote.
 
-## Table B: strong consensus ours matches (15; pending explicit)
+## Table B: strong consensus ours matches (16; pending explicit)
 
 | Row | Consensus | Count | COSMIC | Ours KDE / Windows |
 |---|---|---|---|---|
-| R-INS-03 empty admission | first open tiles at full work area, newcomer focused | 8/8, 4/4 fam | partial-offline (allocation + desired focus; native activation TBD) | partial-offline (allocation + desired focus; native activation TBD) |
-|---|---|---|---|---|
+| R-FOC-02 edge stay | single-output edge focus retains (no wrap, no fallback) | stay-5/8, 3/4 fam (C,H,B,X,A) | yes (no local target, no next output) | yes / yes (Edge refuse, no dispatch) |
+| R-INS-03 empty admission | first open tiles at full work area, newcomer focused | 8/8, 4/4 fam | yes | partial-offline (allocation + desired focus; native activation TBD) |
 | R-WS-02 anchor | return lands at A | A6/6ev (C,B,I,X,S,Q), 4/4 fam | yes (target MRU) | yes (remembered A) |
 | R-FLT-01 | unfloat is fresh admission (old-slot excluded only) | F6/8, 4/4 fam | yes | yes / yes |
 | R-FLT-07 | tile-origin focus lands on tile A | T8/8 | yes | yes / yes |
@@ -205,13 +206,16 @@ deferral selected; START-02 long-edge chain provisional follows COSMIC;
 FLT-10 KDE half-snap delivered matches COSMIC; WS-03 Windows reuse matches
 COSMIC.
 
-## Table W: numerical but not strong cross-family (3; weak, disclosed)
+## Table W: numerical but not strong cross-family (6; weak, disclosed)
 
 | Row | Numerical result | Breadth | Status |
 |---|---|---|---|---|
 | R-FLT-03 | ratio-preserve 2/2ev (I,S; COSMIC UT is ER) | 1 family (tree pair) | weak; ours unchecked |
 | R-MAX-06 | overlay/state 2/3ev (C,H vs A implicit-float) | 2 agreeing families | thin; Q3 selected matches overlay direction, recorded one-shot-clear differs; no strong contradiction either way |
 | R-START-02 sub-point | no-centre-cut 2/2ev (C,A) | 2 families | weak sub-point only; chain itself 1-1 |
+| R-FOC-01 tie | MRU-sensitive 3/4ev (B,I,S vs C stable) | 2 agreeing families (binary, tree) | weak; Ours stable A-both matches COSMIC |
+| R-FOC-03 order | next C, previous B 4/4ev (I,S,Q,X) | 2 families (tree, layout-driven) | weak sub-leg; Ours no cycle counterpart |
+| R-FOC-04 scope | parent group then remembered child 3/3ev (C,I,S) | 2 families (COSMIC, tree) | weak; Ours leaf-only, no counterpart |
 
 FLT-05 notes: A EWMH roundtrip (sticky reads on every selected tag) counts
 as source policy like B/I full-state restores (exact journeys TBD in all
@@ -317,3 +321,79 @@ branches are sourced; Hyprland preselect is completely sourced (E cell)
 while bspwm/i3/sway preselect stay verb-level (P cells); Ours preselect
 inventory and admission-over-overlay stay TBD on both platforms. No product choice is
 selected by these source findings.
+
+## Focus expansion (piece B2): R-FOC-01..04
+
+Scope: piece B2 adds four GWT focus scenarios (R-FOC-01..04), each with
+14 Then profiles. The focus area had no existing rows, so there is no
+scrolling backfill to assess (0 existing rows, 0 cells); R-FLT-07..09
+tile/float directional-layer coverage is cited by reuse from the
+floating area, never duplicated. Historical tables and the 58-row audit
+above are preserved unchanged. Denominator, families, and the strength
+rule are unchanged: consensus classification below counts the original
+eight profiles only. The four scrolling profiles (niri, PaperWM,
+karousel/Lazy, paneru) form one correlated lineage reported as an
+explicit separate non-voting comparison; they never silently redefine a
+denominator. Cell classes are mutually exclusive per cell: E complete
+outcome evidenced; P at least one predicate sub-leg evidenced with the
+remainder TBD; T TBD-only; Q all requested legs qualified
+(fixture-inapplicable / no-counterpart / owner-specific, each with
+pinned inventory evidence); M mixed qualified and applicable-TBD legs.
+E cells carry no TBD; every P cell names its explicit load-bearing
+remainder. These cell counts measure documentation coverage, not
+consensus votes.
+
+| Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
+|---|---|---|---|
+| R-FOC-01 directional tie | A in both runs vs MRU-sensitive choice | A-both: C (equidistant first-minimum tie, history unused: `S-cos-tilefocus`); MRU-sensitive: B (boundary tie, history rank: `S-bsp-flt-focus`), I (sibling plus focus-descend: `S-i3-flt-focus`), S (sibling plus inactive view: `S-sway-focus`); partial: H geometric identity TBD, Q column-current member TBD; qualified: X (flat Tall), A (nmaster-1 tile cannot host fixture) | W MRU 3/4ev, 2 families |
+| R-FOC-02 edge focus | wrap vs stay at a single-output edge | wrap to B: I, S, Q (wrapping policies `S-i3-flt-focus`/`S-sway-focus`/`S-qti-focus`); stay on A: C, H, B, X, A (`S-cos-tilefocus`+`S-cos-focus-fallback`, `S-hyp-focus`, `S-bsp-flt-focus`, `S-xmo-nav`, `S-awe-focus`) | B stay 5/8, 3 families |
+| R-FOC-03 next/previous cycle | sequential order plus reversibility, wrap (fresh edge leg), float inclusion | complete sequential legs with F excluded: I, S, Q (next C, previous B, edges wrap); partial: X (same stack cycle, float position TBD), A (index wrap, order TBD); qualified: C (no native cycle pair); TBD: H previous invocation/order/wrap/float, B embedding/traversal | W order 4/4ev, 2 families; other legs split |
+| R-FOC-04 parent/child scope | container focus vs leaf-only/no-counterpart | container scope: C (Out group / In remembered-child, `S-cos-tilefocus`), I (`S-i3-focuslvl`), S (`S-sway-focuslvl`); no-counterpart: X (`S-xmo-layout`), Q (`S-qti-focus`+`S-qti-split`), A (`S-awe-focus`); TBD (inventory checks queued): H, B | W scope 3/3ev, 2 families |
+
+Order sub-leg: next-C/previous-B is evidenced in I, S, Q (E) plus X
+(P main legs) = 4/4 with evidence across two families. It meets the
+all-but-one numerical rule, but not three-family breadth, so goes to W.
+Qualified/missing outcomes never vote. I/S/Q wrap; X also establishes
+wrapping, but its float leg stays TBD; scrolling karousel separately stays
+at the edge. These comparisons do not supply Ours with a cycle verb.
+
+Scrolling comparison (non-voting): R-FOC-01 PaperWM run-1-B/run-2-A via
+topmost-member pick (`S-pap-focus`) is the only complete scrolling cell;
+niri/karousel stay column-level partial (member TBD); paneru stays TBD.
+R-FOC-02 three scrolling profiles retain (edge no-op:
+`S-nir-focus`, `S-pap-focus`, `S-kar-focus`); paneru stays TBD. R-FOC-03
+karousel next-C/previous-B tiled-only is complete; niri and paneru have
+no-counterpart (no plain cycle pair: `S-nir-actions`, `S-pan-cmds`);
+PaperWM stays TBD. R-FOC-04 niri, PaperWM and karousel have
+no-counterpart (no parent verb: `S-nir-focus`, `S-pap-focus`,
+`S-kar-focus`); paneru stays TBD on the Stack/Column model per
+`S-pan-model`.
+
+Counts for this expansion (56 cells: 4x14; mutually exclusive
+E/P/T/Q/M). Original-eight cells (4x8=32): E 18 (R-FOC-01: 4 C/B/I/S;
+R-FOC-02: 8 C/H/B/I/X/S/Q/A; R-FOC-03: 3 I/S/Q; R-FOC-04: 3 C/I/S),
+P 4 (R-FOC-01: 2 H/Q; R-FOC-03: 2 X/A), T 4 (R-FOC-03: 2 H/B;
+R-FOC-04: 2 H/B), Q 6 (R-FOC-01: 2 X/A; R-FOC-03: 1 C; R-FOC-04: 3
+X/Q/A). Scrolling cells (4x4=16): E 5 (R-FOC-01: 1 PaperWM; R-FOC-02:
+3 niri/PaperWM/karousel; R-FOC-03: 1 karousel), P 2 (R-FOC-01
+niri/karousel), T 4 (R-FOC-01 paneru; R-FOC-02 paneru; R-FOC-03
+PaperWM; R-FOC-04 paneru), Q 5 (R-FOC-03 niri/paneru; R-FOC-04
+niri/PaperWM/karousel). Ours cells (4x2=8): E 4 (R-FOC-01 Engine
+desired-focus plus both adapters' delivery: 2; R-FOC-02 Edge retain:
+2), Q 4 (R-FOC-03/04 no-cycle/no-container-focus: 4). Grand
+totals: E 27, P 6, T 8, Q 15, M 0 (56 cells). B moves 15 to 16 for
+R-FOC-02 stay; W moves 3 to 6 for tie-MRU, cycle-order and container-scope
+sub-legs. Classifications are per predicate, not disjoint scenario counts.
+The matrix total is now 68 rows.
+
+Ours-vs-consensus position (no behavior selected): R-FOC-02 stay is
+strong consensus (B) with Ours matching on both platforms - aligned, no
+decision needed. One Ours mismatch stands: R-FOC-01 Ours selects A in
+both runs (deterministic first-child descent, fully sourced incl.
+delivery) while bspwm/i3/sway select B-then-A (MRU) and PaperWM follows
+the topmost member - a stable-vs-MRU choice the user must make if focus
+behavior is ever specified. R-FOC-03/04 Ours has no cycle or
+container-focus verbs while i3/sway/Q/COSMIC/K carry complete legs -
+an inventory gap the user must accept or fill; missing verbs were never
+counted as agreeing rejection. No product choice is selected by these
+source findings.

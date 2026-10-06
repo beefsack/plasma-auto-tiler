@@ -1,6 +1,6 @@
 # Reference matrix expansion
 
-- Status: active; restructure and insertion accepted; semantic insertion correction accepted; focus next.
+- Status: active; restructure, insertion correction and focus accepted; move next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
@@ -333,6 +333,19 @@ live fixture; source pins and shipped baselines stay those in the index.
 
 - Source routes retained: niri `scrolling.rs`/`workspace.rs`/`xdg_shell.rs`; PaperWM `tiling.js` insertion, actor-show and inactive-space paths; karousel `Tiled.ts`/`Grid.ts`/`Column.ts`; paneru `triggers.rs` plus `layout.rs` model. Ours shared `session.rs`, `lifecycle.rs`, `world.rs` with adapter boundary citations at `9241c94`. No source branch is promoted to physical delivery evidence.
 
+### Focus queue additions (piece B2)
+
+14 unresolved cells (P6 + T8), grouped in four entries. Inventory/model
+checks precede any live fixture; no source-confirmed outcome requires
+physical confirmation merely to count as semantic evidence.
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-FOC-01, Hyprland/qtile/niri/karousel/paneru (5) | Equal two-left-candidate rectangles, histories A,B,C and B,A,C; native column members for projections | Hyprland tie identity, qtile current-member mapping, niri/karousel member and paneru directional traversal unresolved |
+| R-FOC-02, paneru (1) | First-column A focused, one output, focus West | Edge behavior unresolved |
+| R-FOC-03, Hyprland/bspwm/xmonad/awesome/PaperWM (5) | Sequential next then previous, fresh edge legs, fresh ordinary-float leg | Hyprland previous invocation/traversal; bspwm binary embedding/internal-node matching; xmonad float position; awesome order; PaperWM cycle inventory unresolved |
+| R-FOC-04, Hyprland/bspwm/paneru (3) | B leaf focused, native parent then child commands where present | Container inventory/traversal or paneru Stack/Column scope unresolved |
+
 ## Settled review and execution
 
 | User decision | Recommendation |
@@ -355,4 +368,8 @@ live fixture; source pins and shipped baselines stay those in the index.
 - Insertion verification: six IDs with 14 Then entries each, two backfills with four each, original row preservation, all source keys resolved, unchanged original pins, pinned source spot review, ASCII and whitespace checks. No live tests.
 - Insertion semantic correction: six scenarios and two scrolling backfills tightened from 365 to 239 lines. Coverage now E12/P30/T44/Q2/M4 (92 cells; M = qualified maximize + applicable-TBD fullscreen). Original-eight E12/P12/T19/Q1/M4; scrolling new P6/T18; backfill P6/T1/Q1; Ours P6/T6. First-window tile/full-area/focus is unanimous 8/8 across four families; Ours allocation/desired focus match, native activation unknown. Float-focused admission differs: COSMIC/i3/sway use B, Ours wraps the whole root, Hyprland pointer-vs-active-tile is config-qualified; no strong anchor consensus or product decision. Hyprland preselect fully evidenced. Queue narrowed, no additions.
 - Correction review: initial Worker accounting still treated fully semantic outcomes as partial; resumed once to align E/P classes and consensus with Observe. Lead checked actual diff, Ours insertion/eligible-focus code, count consistency and cited routes; removed unsupported side-by-side claim when B's dimensions are unstated. Accepted verification: GWT profile counts, citation resolution, ASCII, original wide-row preservation, whitespace; no live tests.
-- Exact next action: focus, R-FOC-01..04; reuse directional floating-layer coverage without changing it, add pinned outcomes/qualifications and consensus entries, queue difficult ties, then commit/push that area.
+- Insertion correction commit: `b2ae405` (`Tighten insertion outcome evidence`), pushed to `origin/main`.
+- Focus outcome: R-FOC-01..04 added, 14 Then profiles each; no existing focus-area rows to backfill (0 cells), R-FLT-07..09 reused in place. Matrix 68 scenarios. Coverage E27/P6/T8/Q15/M0 (56 cells); original-eight E18/P4/T4/Q6, scrolling E5/P2/T4/Q5, Ours E4/Q4. Single-output edge retain is strong 5/8 across three families and Ours matches. Tie-MRU (3/4ev), cycle-order (4/4ev), parent/child scope (3/3ev) meet the numerical rule but only two-family breadth: W, not strong. Ours stable tie choice matches COSMIC; Ours cycle/container verbs have no counterpart, not agreeing rejection. No strong consensus conflict or product behavior selected.
+- Focus review: resumed Worker to repair sequential next/previous outcomes, missing edge-wrap legs, fixture qualification, semantic Ours adapter evidence and missed stay-5/8 consensus. Independent source reviewer confirmed outcome evidence/counts and found one causal wording error: COSMIC equal-distance selects first minimum, not strictly nearer A; Lead corrected it. Lead reconciled per-predicate W classifications, kept scrolling outside the eight-profile voter table, and repaired table continuity. Verification: 4x14 Then, source keys/pins, ASCII/local links, whitespace; source/offline only. Queue adds 14 unresolved cells in four groups.
+- Review reconciliation: follow-up verified the latest focus edits and counts. Its proposed COSMIC empty-admission downgrade required native confirmation despite a sourced active-workspace focus target; rejected under the user's semantic evidence standard. Table B's COSMIC cell is sourced yes, while Ours admission/native activation remains partial. Stop at the focus committed boundary as Lead context is crowded; no blocking product decision.
+- Exact next action: move, R-MOV-06..08; assess R-MOV-01..05 for four scrolling profiles, qualify explicit swap legs in reused rows, add consensus/source evidence and queue difficult cells, then commit/push that area.

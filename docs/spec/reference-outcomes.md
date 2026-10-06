@@ -1349,6 +1349,97 @@ Legend:
   @903bcd518df32b0e055b17f5da3f988a0187fd3d
   (verb and orientation-set legs; override interaction with automatic
   admission and persistence stay TBD)
+- `S-cos-tilefocus` cosmic-comp:src/shell/layout/tiling/mod.rs:1835-2087
+  (`next_focus`: `In` descends to the remembered else first child, `Out`
+  returns the parent group, directional orientation walk with geometric
+  descent, exhausted edges None)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (tiled directional/group focus; exact tie rectangles stay TBD)
+- `S-cos-focuskeys` cosmic-comp:data/keybindings.ron:9-18 (shipped
+  `Focus` verbs Left/Right/Up/Down/Out/In; no next/previous cycle verb;
+  the switcher is an external `System` command)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (focus-verb inventory; switcher listing policy is external)
+- `S-hyp-focus`
+  Hyprland:src/config/shared/actions/ConfigActions.cpp:440-530
+  (`moveFocus`: directional query, group-cycle, monitor fallback,
+  full-size stay) and :1736-1785 (`cycleNext` verb plus workspace
+  cycle) @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (focus verbs; tie metric and cycle order stay TBD)
+- `S-bsp-cycle` bspwm:doc/bspwm.1.asciidoc:52 (`CYCLE_DIR` next|prev)
+  and :82-116 (NODE_SEL incl `first_ancestor`) and :412-414 (`node -f`
+  focus verb) and src/tree.c:891-930 (in-order `next_node`/
+  `prev_node` walk) and :1729-1780 (`find_closest_node` desktop-wrap
+  loop) @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (cycle selector/walk inventory; binary embedding and internal-node
+  matching stay TBD)
+- `S-i3-focusnext` i3:parser-specs/commands.spec:185-201 (`focus`
+  direction/next|prev/sibling/parent|child grammar) and
+  src/commands.c:1292-1340 (`cmd_focus_direction` auto-direction via
+  parent orientation, `cmd_focus_sibling`)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (next/prev/sibling verbs; wrap config is `S(S-i3-flt-focus)`)
+- `S-i3-focuslvl` i3:src/commands.c:1403-1430 (`cmd_focus_level`
+  parent|child) and src/tree.c:386-409 (`level_up`/`level_down`)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (container focus scope)
+- `S-sway-focusnext` sway:sway/commands/focus.c:17-60
+  (`get_direction_from_next_prev` parent-layout mapping) and :440-450
+  (next/prev/sibling dispatch)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (next/prev verbs; walk and wrap are `S(S-sway-focus)`)
+- `S-sway-focuslvl` sway:sway/commands/focus.c:355-380
+  (`focus_parent`/`focus_child` via parent node and active tiling
+  child) and :432-438 (parent|child dispatch)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (container focus scope)
+- `S-awe-cycle` awesome:lib/awful/client.lua:256-290 (`client.next`
+  index cycle via `gmath.cycle` over visible clients with the focus
+  filter) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+  (cycle verb and wrap; exact order stays TBD)
+- `S-nir-focus` niri:src/layout/scrolling.rs:1581-1600
+  (`focus_left`/`focus_right` edge booleans) and
+  src/layout/workspace.rs:938-990 (tiling/floating dispatch,
+  first/last, `LeftOrLast`/`RightOrFirst` wrap variants)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (column focus verbs and edge policy; in-column member stays TBD)
+- `S-nir-actions` niri:niri-ipc/src/lib.rs:322-390 (`FocusWindow`,
+  `FocusWindowInColumn`, `FocusWindowPrevious`, `FocusColumnLeft/Right/
+  First/Last/LeftOrLast/RightOrFirst`, `FocusWindowUp/Down` variants;
+  no plain spatial next/previous cycle pair)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (focus-verb inventory)
+- `S-pap-focus` PaperWM:tiling.js:1129-1200 (`switch` with `loop`,
+  left/right column step, `sortWindows` topmost pick, up/down rows,
+  `ensureViewport`) and :5562-5570 (`sortWindows` stacking order)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (directional switch incl MRU-topmost member pick; cycle verbs TBD)
+- `S-kar-focus` karousel:src/lib/keyBindings/Actions.ts:6-60
+  (`focusLeft/Right/Up/Down/Next/Previous/Start/End`, tiled-only
+  dispatch via `doIfTiledFocused` in definition.ts:10-53)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (focus-verb inventory; in-column member stays TBD)
+- `S-pan-cmds` paneru:src/types/commands.rs:220-275 (`Operation`:
+  directional `Focus`, `FocusOrVirtual`, `FocusManaged/Unmanaged`,
+  `RaiseFloating`; no next/previous cycle pair, no parent verb)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (focus-verb inventory; traversal stays TBD)
+- `S-ours-focus` plasma-auto-tiler:crates/tiler-core/src/directional.rs:50-64
+  (axis/step for direction) and :1068-1135 (`descend_focus_target`
+  plus `plan_focus`: matching-axis climb, same-axis edge child else
+  perpendicular first child, exhausted edges `Edge`; targets are
+  leaves only, never containers) and
+  crates/tiler-core/src/session/ops/focus.rs:26-115 (`propose_focus`:
+  opaque match, `plan_focus` wrap, `Edge` refuses `Unchanged` with no
+  plan and no pending; single-output cross-output attempts refuse the
+  same way) and kwin/src/plan-adapter.ts:2351-2358 (tile-origin focus
+  dispatch body) and :8167-8220 (`writeGeometries` actuates
+  `planned.focus` via exactly one `setActive`, fail-closed) and
+  crates/tiler-windows/src/tiling_sys.rs:5402 (`actuate_focus`) and
+  :6111-6120 (`FocusDirectional` reply actuated, `focus-ok` outcome)
+  @9241c94
+  (leaf-only directional focus model plus both adapters' delivery;
+  selected intent is never evidence)
 
 ## Variant hooks (provisional, not commitments)
 
@@ -1377,7 +1468,8 @@ Legend:
 ## Area files
 
 Scenario rows live in area files under `reference-outcomes/` (58 original
-rows, preserved; plus 6 insertion scenarios from piece B1, GWT only).
+rows, preserved; plus 6 insertion scenarios from piece B1 and 4 focus
+scenarios from piece B2, GWT only).
 This index retains purpose, row-addition rule, notation,
 profiles, evidence tags/legend, variant hooks, and deferred. Existing wide
 tables moved unchanged; all new scenarios use the GWT form below.
@@ -1387,7 +1479,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Area | File | Existing rows | Candidates |
 |---|---|---|---|
 | Insertion | [insertion.md](reference-outcomes/insertion.md) | R-INS-01..08 (8) | none (R-INS-03..08 landed in piece B1) |
-| Focus | [focus.md](reference-outcomes/focus.md) | none yet | R-FOC-01..04 |
+| Focus | [focus.md](reference-outcomes/focus.md) | R-FOC-01..04 (4) | none (landed in piece B2) |
 | Move | [move.md](reference-outcomes/move.md) | R-MOV-01..05 (5) | R-MOV-06..08 |
 | Resize | [resize.md](reference-outcomes/resize.md) | none yet | R-RSZ-01..04 |
 | Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | none yet | R-LAY-01..04 |
