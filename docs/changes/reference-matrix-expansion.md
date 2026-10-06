@@ -1,6 +1,6 @@
 # Reference matrix expansion
 
-- Status: active; restructure, insertion correction, focus, move, resize, layout commands and workspaces accepted; batch decisions pending, minimize next.
+- Status: active; restructure, insertion correction, focus, move, resize, layout commands, workspaces and minimize accepted; batch decisions pending, maximize/fullscreen next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
@@ -405,6 +405,18 @@ as evidence. Qualified absent verbs never become live no-op tests.
 | R-WS-05 backfill, PaperWM/karousel/paneru (3) | Send B to empty WS2, float, send back, select WS1; unmanaged float where native | Floating transfer untraced; tiled column transfer is not float evidence. niri float carry/follow is sourced and not queued |
 | R-WS-07 backfill, niri (1) | All-workspace MRU switcher, select hidden B | Listing sourced; activation switch/focus unresolved |
 
+### Minimize queue additions (piece B7)
+
+31 unresolved cells (P16 + T15), grouped in three entries. Native
+icon-minimize is required; hidden/scratchpad substitutes and qualified
+absent paths do not become live no-op cases.
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-MNZ-01, Hyprland/xmonad/sway/qtile/PaperWM/karousel/paneru/Ours KDE/Windows (9) | Middle B, history A,C,B; native minimize; model-qualified tree/column fixtures | H/X/S native tree effects, qtile and scrolling reflow/refocus, KDE production frame/Engine journey, Windows focus unresolved |
+| R-MNZ-02, COSMIC/Hyprland/xmonad/sway/qtile/awesome/PaperWM/karousel/paneru/Ours KDE/Windows (11) | Restore B from actual R-MNZ-01 minimized state; leave remaining windows unchanged | COSMIC/awesome/Windows focus; qtile/scrolling slot and focus; H/X/S/KDE native restore journey unresolved |
+| R-MNZ-03, COSMIC/Hyprland/xmonad/sway/qtile/awesome/PaperWM/karousel/paneru/Ours KDE/Windows (11) | Sole A on shown WS1, occupied WS2; native minimize, paneru virtual-row leg | Workspace occupancy/cleanup and focus; KDE sole-minimize active-window/Engine journey; Windows retained occupancy sourced, focus unresolved |
+
 ## Settled review and execution
 
 | User decision | Recommendation |
@@ -448,4 +460,8 @@ as evidence. Qualified absent verbs never become live no-op tests.
 - Workspace review: sequential implementation and independent source-review Workers corrected history-toggle labels, trailing/static workspace fixtures, hidden-vs-active transfer verbs, pointer-driven Hyprland return-focus, absent-WS9 static inventories, return-anchor history and C membership, and tiled-vs-floating transfer evidence. Lead checked pinned Hyprland/niri/COSMIC and Ours source, corrected native command wording and five partial-cell accounting errors, and reconciled actual consensus table rows. No live tests or product changes.
 - Workspace consensus: previous-view toggle is strong 5/8 (B/I/S/Q/A), native-edge wrap 6/8 (C/B/I/S/Q/A), whole-hidden-domain reassignment 5/8 (H/B/I/Q/A, destination/focus partial), relative send inventory 5/8 (C/H/B/I/S), all spanning at least three original families. Both Ours platforms lack these verbs. Recommendations for batch review: add previous toggle, wrapping relative switch, whole-workspace output transfer and relative send. Remembered return-focus is strong 7/8; Windows matches, KDE shell-driven return TBD. Hyprland pointer policy and named no-mouse variant differ. No strong cleanup or absent-workspace creation choice. Table A18/B18/U6 full rows plus one KDE leg/C17/W8; scrolling stays non-voting.
 - Workspace verification: 7x14 new Then entries, 6x4 new scrolling assessments, original R-WS-06 backfill and wide rows preserved; citation resolution, ASCII, local links, pinned source spot checks and whitespace checks. Source/offline only. Queue adds 30 unresolved cells in nine groups; current source-evidenced legs excluded.
-- Exact next action: expand minimize R-MNZ-01..03 in its area file, update index/consensus/live-test queue, verify, then commit/push. Continue maximize/fullscreen and later areas in the approved order; collect product differences for batch review. Stop this session at the workspace committed boundary because Lead context is crowded.
+- Minimize outcome: R-MNZ-01..03 added as three 14-profile GWT scenarios; no existing minimize rows to backfill. Matrix now 89 scenarios. Coverage over 42 cells: E2/P16/T15/Q9/M0 (original-eight E2/P7/T9/Q6; scrolling P6/T3/Q3; Ours P3/T3). Native host minimize/restore remains applicable on both Ours platforms; missing tiler commands are not absence evidence.
+- Minimize review: implementation Worker corrected an initial command-inventory-only draft; independent source review found unsupported bspwm focus and citation ranges. Lead found KDE evidence came from the send observer, not the production observer, and bspwm HIDDEN was being substituted for icon-minimize. Final correction uses production KDE observation (no minimized filter; actual native/Engine journey TBD), Windows retained-slot evidence, and bspwm's absent iconic client-message path. i3 refusal and niri protocol no-op are qualified non-voters; generic null-observation guards do not establish sole-minimize outcomes. No live tests or product changes.
+- Minimize consensus: allocation release is weak 3/3ev (C/Q/A), and old-slot restore weak 2/2ev (C/A), both only two families. Windows retains its slot against the weak release direction; KDE is TBD. No Ours-vs-strong conflict or new behavior recommendation. Table A18/B18/U6 plus KDE leg/C17 unchanged; W grows 8 to 10.
+- Minimize verification: 3x14 Then profiles, all new citation keys resolve, local links/ASCII/unchanged pins and whitespace checked; source/offline only. Queue adds 31 unresolved cells in three groups. Workers ran sequentially; Lead reconciled counts and table entries.
+- Exact next action: expand maximize/fullscreen R-MAX-08..09 and scrolling assessment of R-MAX-01..07; update consensus/live-test queue, verify, then commit/push. Continue later areas in approved order; collect product differences for batch review. Stop this session at the minimize committed boundary because Lead context is crowded after evidence reconciliation.

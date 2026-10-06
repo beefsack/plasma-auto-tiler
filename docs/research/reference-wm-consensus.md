@@ -1,10 +1,11 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (86 rows:
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (89 rows:
 58-row historical audit preserved below, plus 6-row insertion expansion
 plus 4-row focus expansion plus 3-row move expansion plus 4-row resize
-expansion plus 4-row layout expansion plus 7-row workspace expansion).
+expansion plus 4-row layout expansion plus 7-row workspace expansion
+plus 3-row minimize expansion).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -117,7 +118,7 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
 Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts including insertion/focus/move/resize/layout/workspace are per-predicate: A 18, B 18, U 6 full rows + one KDE leg, C 17, W 8;
+Summary counts including insertion/focus/move/resize/layout/workspace/minimize are per-predicate: A 18, B 18, U 6 full rows + one KDE leg, C 17, W 10;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
 
 ## Table A: strong cross-family consensus where ours differs (18)
@@ -221,7 +222,7 @@ deferral selected; START-02 long-edge chain provisional follows COSMIC;
 FLT-10 KDE half-snap delivered matches COSMIC; WS-03 Windows reuse matches
 COSMIC.
 
-## Table W: numerical but not strong cross-family (8; weak, disclosed)
+## Table W: numerical but not strong cross-family (10; weak, disclosed)
 
 | Row | Numerical result | Breadth | Status |
 |---|---|---|---|---|
@@ -233,6 +234,8 @@ COSMIC.
 | R-FOC-01 tie | MRU-sensitive 3/4ev (B,I,S vs C stable) | 2 agreeing families (binary, tree) | weak; Ours stable A-both matches COSMIC |
 | R-FOC-03 order | next C, previous B 4/4ev (I,S,Q,X) | 2 families (tree, layout-driven) | weak sub-leg; Ours no cycle counterpart |
 | R-FOC-04 scope | parent group then remembered child 3/3ev (C,I,S) | 2 families (COSMIC, tree) | weak; Ours leaf-only, no counterpart |
+| R-MNZ-01 allocation | minimized window leaves tiling allocation with a restore path 3/3ev (C,Q,A) | 2 families (COSMIC, layout-driven) | weak; i3 refusal is non-voting, H/S/X TBD; Ours KDE TBD, Windows retains |
+| R-MNZ-02 restore slot | restore returns the old slot 2/2ev (C,A) | 2 families (COSMIC, layout-driven) | weak thin; Q path-only, H/S/X TBD; Ours Windows matches, KDE TBD |
 
 FLT-05 notes: A EWMH roundtrip (sticky reads on every selected tag) counts
 as source policy like B/I full-state restores (exact journeys TBD in all
@@ -686,3 +689,61 @@ keeps `last_active`, native focus unestablished). R-WS-10/13
 carry no strong consensus after the mechanism/inventory corrections,
 so no conflict is established there. No product behavior is changed
 by this assessment.
+
+## Minimize expansion: R-MNZ-01..03 (no scrolling backfill)
+
+Scope: piece B7 adds three GWT minimize scenarios (R-MNZ-01..03), each
+with 14 Then profiles. The minimize area had no existing rows, so there
+is no scrolling backfill to assess (0 existing rows, 0 cells).
+R-MIN-01..03 size-constraint rows are reused by citation only, never
+duplicated: clamp policy there proves no minimize path. Historical
+tables and the 58-row audit above are preserved unchanged. Denominator,
+families, and the strength rule are unchanged: consensus classification
+below counts the original eight profiles only. The four scrolling
+profiles form one correlated lineage reported as an explicit separate
+non-voting comparison. A hide verb alone never votes: only a sourced
+client/host iconify request path (or its evidenced refusal/absence)
+counts here; scratchpad, vacant flags, ordinary float state, and sticky
+never substitute. Cell classes are mutually exclusive per cell: E
+complete outcome evidenced; P one sub-leg evidenced with the remainder
+TBD; T TBD-only (request consumed or untraced with unknown tree effect);
+Q evidenced request refusal or protocol no-op with inventory evidence; M
+mixed. E cells carry no TBD; every P cell names its explicit remainder.
+Counts measure documentation coverage, not votes.
+
+| Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
+|---|---|---|---|
+| R-MNZ-01 middle minimize | minimized window leaves tiling allocation with a restore path | leaves: C (tiling unmap into restore state, `S-cos-minimize`), Q (hide as `MINIMIZED` float, `S-qti-minimize`), A (ban from arrangement, `S-awe-minimize`); non-voting: B/I (no counterpart/refusal), H/S/X (TBD tree effect) | W leaves-allocation 3/3ev, 2 families |
+| R-MNZ-02 restore | restore returns B to its old slot | old slot: C (stored tiling-state remap, `S-cos-minimize`), A (remap at retained client order, `S-awe-minimize`); path-only: Q (`S-qti-minimize`); non-voting: B/I, H/S/X | W old-slot 2/2ev thin, 2 families |
+| R-MNZ-03 sole minimize | minimized occupancy vs workspace cleanup; focus fallback | occupancy stored: C (`minimized_windows`, `S-cos-minimize`); hide paths: Q/A (`S-qti-minimize`/`S-awe-minimize`); non-voting: B/I, H/S/X; all cleanup/focus legs TBD | C audit-only |
+
+Scrolling comparison (non-voting): R-MNZ-01 PaperWM scratch-layer move,
+karousel `TiledMinimized` transition, and paneru `Minimized` mark are
+partial (reflow/focus TBD); niri is no-counterpart (protocol no-op plus
+no Action verb). R-MNZ-02 PaperWM `unmakeScratch`, karousel
+minimizedChanged retile, and paneru mark removal are partial
+(position/focus TBD); niri stays no-counterpart. R-MNZ-03 PaperWM,
+karousel, and paneru stay TBD on sole-occupancy/cleanup; niri stays
+no-counterpart. i3's rejection and niri's no-op are qualified
+no-counterparts with request-path evidence, never agreeing no-ops.
+
+Counts (mutually exclusive E/P/T/Q/M). New rows (3x14=42): E 2, P 16,
+T 15, Q 9, M 0. Original-eight new cells (3x8=24): E 2 (R-MNZ-01 C/A),
+P 7 (R-MNZ-01 Q; R-MNZ-02 C/Q/A; R-MNZ-03 C/Q/A), T 9 (H/S/X on all
+three rows), Q 6 (B/I on all three rows). Scrolling new cells (3x4=12):
+E 0, P 6, T 3, Q 3, M 0. Ours new cells (3x2=6): P 3 (Windows slot legs,
+focus TBD) and T 3 (KDE native/Engine journey). Table A stays 18;
+Table B stays 18; Table U stays 6 full
+rows plus the R-WS-09 KDE leg; Table C stays 17; Table W grows from 8
+to 10. The matrix total is now 89 rows (86 + 3 new; no backfill reuses
+IDs).
+
+Ours-vs-consensus position (no behavior selected): no strong consensus
+exists on any minimize predicate (two weak legs plus one audit-only
+row), so no strong Ours conflict is established. Weak differences are
+recorded accurately: R-MNZ-01 weak direction (C/Q/A) leaves Ours KDE
+fully TBD (frame-read branch) while Ours Windows retains its slot
+against the weak direction; R-MNZ-02 weak old-slot (C/A thin) matches
+Ours Windows (kept slot, focus TBD) with Ours KDE TBD. No selection,
+no code change, and no user decision is required by these findings.
+No product behavior is changed by this assessment.

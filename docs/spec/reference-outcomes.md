@@ -1911,6 +1911,117 @@ Legend:
   Plasma-owned) @60771bd
   (Engine/KDE have no select verb; Windows has index-only Select;
   no history/relative/whole-workspace verb in these inventories)
+- `S-cos-minimize` cosmic-comp:src/shell/mod.rs:4369-4410
+  (`minimize_request`: sticky vs workspace dispatch into
+  `minimized_windows`) and src/shell/workspace.rs:1045-1145 (`minimize`:
+  fullscreen branch plus tiling/floating unmap storing
+  `MinimizedWindow::Tiling/Floating` restore data) and :1148-1260
+  (`unminimize`: fullscreen refocus plus floating remap and tiling old-slot
+  `remap` with the stored state) and
+  src/shell/layout/tiling/mod.rs:1414-1445 (`unmap_window_internal` with the
+  minimizing flag removes the node and reflows siblings) and
+  src/shell/focus/mod.rs:108-137 (`is_minimized` filter plus last
+  unminimized MRU pick) @3d55cba0
+  (tiling unmap/reflow plus stored restore slot; focus leg via the MRU
+  skip-minimized filter)
+- `S-hyp-mininv` Hyprland:src/config/shared/actions/ConfigActions.cpp:200-1824
+  (dispatcher inventory at pin lists no minimize action) and
+  src/desktop/view/window/X11Backend.cpp:196-201 (`requestsMinimize`
+  consumed at commit) and :381-383 (`setMinimized` echoes to the surface)
+  and src/desktop/view/window/WaylandBackend.cpp:366 (`setMinimized`
+  no-op) @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (request consumed/echoed; layout/tree effect untraced)
+- `S-bsp-mininv` bspwm:src/events.c:40-80 (`handle_event` dispatch) and
+  :301-330 (`client_message` handles `_NET_WM_STATE`/`_NET_ACTIVE_WINDOW`/
+  `_NET_CURRENT_DESKTOP` only; no `WM_CHANGE_STATE`/iconic branch) and
+  src/window.c:899-909 (the WM itself sets `ICONIC` when it hides; no
+  client-iconify verb) and src/messages.c:344-345 (`hidden` is a
+  scriptable hide flag) @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (no native minimize request path or verb; `_NET_WM_STATE_HIDDEN`
+  handling is WM-owned hide and never votes here)
+- `S-i3-mininv` i3:src/handlers.c:847-857 (`WM_CHANGE_STATE` iconic
+  request rejected and reverted to normal; other states unhandled) and
+  src/commands.c:1921-1951 (`move scratchpad` plus `scratchpad show`
+  dispatch, a separate mechanism)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (native minimize request refused; window stays tiled)
+- `S-xmo-mininv` xmonad:src/XMonad/Config.hs:188-227 (key inventory:
+  spawn/kill/NextLayout/refresh/focus/swap/shrink/expand/sink/IncMasterN/
+  quit/restart only; no minimize verb) and src/XMonad/Main.hs:432-438
+  (startup scan notes `WM_STATE` iconified only) and
+  xmonad-contrib:XMonad/Hooks/EwmhDesktops.hs:765 (advertises
+  `_NET_WM_STATE_HIDDEN`, no runtime minimize handling traced) and
+  src/XMonad/Operations.hs:278-290 (`hide` internal unmap primitive)
+  @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+  (runtime request path untraced)
+  (contrib path @5097a457e7a409bc9a7584dc5aa82b34c69d6dda)
+- `S-sway-mininv` sway:sway/commands.c:114-143 (alphabetized runtime command
+  table: layout/split/move/swap/scratchpad and others; no minimize verb)
+  and sway/commands/scratchpad.c (separate scratchpad path) and
+  sway/desktop/xwayland.c:622-634 (`handle_request_minimize` echoes the
+  protocol flag only) @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (request echoed; tree effect untraced)
+- `S-qti-minimize` qtile:libqtile/backend/x11/window.py:1802-1816
+  (`minimized` setter via `toggle_minimize` into `MINIMIZED`) and
+  :1890-1926 (`_reconfigure_floating`: `MINIMIZED` sets `IconicState` plus
+  `hide()`, else-branch clears via `floating=false`) and :2110-2116
+  (`WM_CHANGE_STATE` iconic honored under `auto_minimize`) and
+  libqtile/resources/default_config.py:207 (`auto_minimize=true` shipped)
+  and libqtile/backend/base/float_states.py (`MINIMIZED` enum member)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (native request path plus hide path; slot/refocus stay TBD)
+- `S-awe-minimize` awesome:objects/client.c:2554-2614
+  (`client_set_minimized`: `ICONIC` unmap plus `NORMAL` remap, `banning`
+  update, `property::minimized` signal) and ewmh.c:402-409
+  (`_NET_WM_STATE_HIDDEN` ADD/REMOVE/TOGGLE drives the same setter) and
+  lib/awful/permissions/init.lua:809-814 (refocus hooks on
+  unmanage/tag/hide/minimize/sticky) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+  (native request path plus unmap/ban with retained client order)
+- `S-nir-mininv` niri:src/protocols/foreign_toplevel.rs:574-575
+  (`SetMinimized`/`UnsetMinimized` explicit no-ops) and
+  niri-ipc/src/lib.rs:194-946 (full `Action` enum at pin lists no minimize
+  verb) @ed22699d99462f61ab171472d3ea67e844ea580d
+- `S-pap-minimize` PaperWM:tiling.js:4720-4738 (`minimizeHandler`: tiled
+  mark plus move to the scratch layer; unminimize via `unmakeScratch`) and
+  :3487-3511 (`notify::minimized` wiring)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (scratch-layer path; reflow/position stay TBD)
+- `S-kar-minimize` karousel:src/lib/world/ClientManager.ts:84-96
+  (`minimizeClient`: `Tiled` to `TiledMinimized` with focus passing) and
+  src/lib/world/Clients.ts:16-28 (`canTileNow` excludes minimized;
+  `makeTileable` unminimizes) and
+  src/lib/world/clientState/TiledMinimized.ts (minimizedChanged retile)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (minimized state path; reflow/position stay TBD)
+- `S-pan-minimize` paneru:src/ecs/triggers.rs:544-559 (`WindowMinimized`
+  inserts `Unmanaged::Minimized`; `WindowDeminimized` removes it) and
+  src/types/state.rs:126 (on-screen check excludes minimized) and
+  src/types/commands.rs:220-275 (`Operation` inventory at pin lists no
+  minimize verb) @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (minimize-mark path; strip position stays TBD)
+- `S-ours-minkde` KDE production observer at this HEAD:
+  plasma-auto-tiler:kwin/src/entry.ts:19 (production uses
+  `startPlanAdapterEntry`; one bounded DescribePlan adapter owns
+  observation) and kwin/src/plan-adapter-entry.ts:1484-1750
+  (`observeNative`: `normalWindow`/output/desktop/frame gates only, no
+  minimized filter; unreadable frame quarantines the whole domain to
+  null, never a transient remove/re-admit; null/non-normal
+  `activeWindow`, or active missing from entries, returns null) and
+  kwin/src/kwin-globals.d.ts:185-189 (`minimized` Q_PROPERTY documented
+  with NOTIFY `minimizedChanged`) @13dcb76
+  (minimized frame readability and native active-window value decide
+  between stale-frame observation and fail-closed null; Engine effect
+  and focus stay TBD)
+- `S-ours-minwin` Windows adapter minimize path at this HEAD:
+  crates/tiler-windows/src/tiling_sys.rs:523-525 (doc: `IsIconic` read
+  before frames; iconic returns known identity as `Minimized`) and
+  :553-556 (code: iconic short-circuit with no frame read) plus
+  :1569-1588 (no-frame retained row: Engine membership survives
+  minimization) and :4424-4429 (retained row rides the last-known tile
+  rect, hintless, no writes) and :9236-9245 (close cleanup drops only
+  truly absent HWNDs) and crates/tiler-windows/src/tiling.rs:341-347
+  (`minimized` classifies as a state skip) @13dcb76
+  (slot retained without reflow; focus stays TBD)
 
 ## Variant hooks (provisional, not commitments)
 
@@ -1942,7 +2053,7 @@ Scenario rows live in area files under `reference-outcomes/` (58 original
 rows, preserved; plus 6 insertion scenarios from piece B1, 4 focus
 scenarios from piece B2, 3 move scenarios from piece B3, 4 resize
 scenarios from piece B4, and 4 layout-command scenarios from piece B5,
-plus 7 workspace scenarios, GWT only).
+plus 7 workspace scenarios and 3 minimize scenarios, GWT only).
 This index retains purpose, row-addition rule, notation,
 profiles, evidence tags/legend, variant hooks, and deferred. Existing wide
 tables moved unchanged; all new scenarios use the GWT form below.
@@ -1957,7 +2068,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Resize | [resize.md](reference-outcomes/resize.md) | R-RSZ-01..04 (4) | none (landed in piece B4) |
 | Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | R-LAY-01..04 (4) | none (landed in piece B5) |
 | Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..14 (14) | none (R-WS-08..14 landed with scrolling backfill) |
-| Minimize | [minimize.md](reference-outcomes/minimize.md) | none yet | R-MNZ-01..03 |
+| Minimize | [minimize.md](reference-outcomes/minimize.md) | R-MNZ-01..03 (3) | none (landed) |
 | Maximise / fullscreen | [maximize-fullscreen.md](reference-outcomes/maximize-fullscreen.md) | R-MAX-01..07 (7) | R-MAX-08..09 |
 | Groups / stacks | [groups-stacks.md](reference-outcomes/groups-stacks.md) | R-GRP-01 (1) | R-GRP-02..03 |
 | Floating | [floating.md](reference-outcomes/floating.md) | R-FLT-01..11 (11) | R-FLT-12..14 |
