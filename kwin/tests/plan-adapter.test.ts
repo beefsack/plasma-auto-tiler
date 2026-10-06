@@ -6461,15 +6461,362 @@ describe("plan adapter maximize isolation", () => {
         assert.ok(mocks.subscribes.some((entry) => entry.kind === "maximize"));
     });
 
-    it("clears maximize once at admission and tiles the restored window", () => {
+    class BornMaxEngineBridge {
+        private readonly proc: ChildProcess;
+        private readonly waiters: Array<{
+            resolve: (reply: string) => void;
+            reject: (error: Error) => void;
+        }> = [];
+        private dead: string | null = null;
+
+        private constructor(proc: ChildProcess) {
+            this.proc = proc;
+            const stdout = proc.stdout;
+            if (stdout === null || stdout === undefined) {
+                throw new Error("planner_eval stdout unavailable");
+            }
+            createInterface({ input: stdout }).on("line", (line: string) => {
+                this.waiters.shift()?.resolve(line);
+            });
+            proc.stderr?.resume();
+            proc.on("error", (error) => {
+                this.failAll(error instanceof Error ? error : new Error(String(error)));
+            });
+            proc.on("exit", (code) => {
+                this.failAll(new Error(`planner_eval exited with code ${String(code)}`));
+            });
+        }
+
+        private failAll(error: Error): void {
+            if (this.dead === null) {
+                this.dead = error.message;
+            }
+            while (this.waiters.length > 0) {
+                this.waiters.shift()?.reject(error);
+            }
+        }
+
+        private deathReason(): string | null {
+            if (this.dead !== null) {
+                return this.dead;
+            }
+            if (this.proc.exitCode !== null || this.proc.signalCode !== null) {
+                return "planner_eval process already exited";
+            }
+            return null;
+        }
+
+        static start(): BornMaxEngineBridge {
+            return new BornMaxEngineBridge(
+                spawn("cargo", ["run", "--offline", "-q", "-p", "tiler-protocol", "--example", "planner_eval"], {
+                    cwd: bornMaxEngineRoot(),
+                    stdio: ["pipe", "pipe", "pipe"],
+                }),
+            );
+        }
+
+        send(request: string): Promise<string> {
+            const dead = this.deathReason();
+            if (dead !== null) {
+                return Promise.reject(new Error(dead));
+            }
+            return new Promise<string>((resolve, reject) => {
+                this.waiters.push({ resolve, reject });
+                try {
+                    this.proc.stdin?.write(request + "\n");
+                } catch (error) {
+                    reject(error instanceof Error ? error : new Error(String(error)));
+                }
+            });
+        }
+
+        async close(): Promise<void> {
+            if (this.deathReason() !== null) {
+                try {
+                    this.proc.stdin?.destroy();
+                } catch (error) {
+                    void error;
+                }
+                return;
+            }
+            try {
+                this.proc.stdin?.end();
+            } catch (error) {
+                void error;
+            }
+            await new Promise<void>((resolve) => {
+                const timer = setTimeout(() => {
+                    try {
+                        this.proc.kill("SIGKILL");
+                    } catch (error) {
+                        void error;
+                    }
+                    resolve();
+                }, 3000);
+                this.proc.on("exit", () => {
+                    clearTimeout(timer);
+                    resolve();
+                });
+            });
+        }
+    }
+
+    function bornMaxEngineRoot(): string {
+        let dir = resolve(process.cwd());
+        for (let depth = 0; depth < 4; depth += 1) {
+            try {
+                if (existsSync(join(dir, "Cargo.toml"))) {
+                    return dir;
+                }
+            } catch (error) {
+                void error;
+            }
+            dir = dirname(dir);
+        }
+        throw new Error("fixture root not found");
+    }
+
+    async function flushBornMaxPlan(mocks: Mocks, engine: BornMaxEngineBridge, index: number): Promise<Record<string, unknown>> {
+        const call = mocks.dbusCalls[index];
+        assert.ok(call !== undefined, `dispatch ${index} exists before flushing to the real Engine`);
+        const replyText = await engine.send(call.payload);
+        mocks.callbacks[index]?.(replyText);
+        return JSON.parse(replyText) as Record<string, unknown>;
+    }
+
+    function bornMaxRect(reply: Record<string, unknown>, window: string): { x: number; y: number; w: number; h: number } {
+        const geometry = reply["desired_geometry"] as Array<Record<string, unknown>> | undefined;
+        const entry = geometry?.find((candidate) => candidate["window"] === window);
+        const rect = entry?.["rect"] as { x: number; y: number; w: number; h: number } | undefined;
+        assert.ok(rect !== undefined, `Engine retains a slot for ${window}, got ${JSON.stringify(reply)}`);
+        return rect;
+    }
+
+    it("born-maximized admission reserves a tile slot and restores into it", async () => {
+        // A window first seen maximized on a tiled domain keeps native
+        // maximize: admission issues no native clear or toggle. The member
+        // reserves a tile slot as a maximized overlay (fit_excluded, never
+        // actuated) while the sibling takes its allocated share; a later
+        // native restore lands in the reserved slot, and repeated maximize
+        // observations keep the slot with no further dispatch.
         const refs = makeRefs();
         const mocks = mockEnv(refs);
-        let maximized = true;
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 1200, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+                maximized: { "win-a": true },
+                resourceClasses: { "win-a": "firefox" },
+            });
+        mocks.maximizeClearImpl = (): MaximizeClearOutcome => "invoked";
+        const adapter = enableAdapter(mocks);
+        const engine = BornMaxEngineBridge.start();
+        try {
+            adapter.requestResync();
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, 1, "admission dispatches one reconcile to reserve the slot");
+            const admitPayload = plannerPayload(mocks, 0);
+            assert.equal((admitPayload["command"] as Record<string, unknown>)["op"], "reconcile");
+            const admitWindows = admitPayload["windows"] as Array<Record<string, unknown>>;
+            assert.equal(admitWindows.find((entry) => entry["window"] === "win-a")?.["fit_excluded"], true, "maximized overlay rides fit_excluded");
+            const admitReply = await flushBornMaxPlan(mocks, engine, 0);
+            assert.equal(admitReply["outcome"], "planned", `admission plans, Engine replied ${JSON.stringify(admitReply)}`);
+            const reserved = bornMaxRect(admitReply, "win-a");
+            const share = bornMaxRect(admitReply, "win-b");
+            assert.ok(!mocks.geometries.some((entry) => entry.target === refs.a), "maximized overlay never actuated");
+            assert.ok(
+                mocks.geometries.some(
+                    (entry) =>
+                        entry.target === refs.b &&
+                        entry.rect.x === share.x &&
+                        entry.rect.y === share.y &&
+                        entry.rect.w === share.w &&
+                        entry.rect.h === share.h,
+                ),
+                "sibling takes its allocated share",
+            );
+            assert.ok(
+                mocks.logs.some(
+                    (line) =>
+                        line ===
+                        `plasma-auto-tiler:plan:write window=win-a resource_class=firefox disposition=skip-maximized rect=${String(reserved.x)},${String(reserved.y)},${String(reserved.w)},${String(reserved.h)}`,
+                ),
+                "overlay carries skip-maximized with its reserved rect",
+            );
+            // Repeated admission observations while still maximized settle
+            // with no clear, no writes, and no dispatch before native restore.
+            // The sibling already reflects its allocated share after the
+            // admission write; the overlay still reports its maximized frame
+            // and carries the reserved slot.
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    focused: refs.a,
+                    rects: { "win-a": { x: 0, y: 0, w: 1200, h: 800 }, "win-b": share },
+                    maximized: { "win-a": true },
+                    resourceClasses: { "win-a": "firefox" },
+                });
+            const callsAfterAdmit = mocks.dbusCalls.length;
+            const writesAfterAdmit = mocks.geometries.length;
+            fire(mocks, "maximize");
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, callsAfterAdmit, "repeated maximized admission stays quiet");
+            assert.equal(mocks.geometries.length, writesAfterAdmit, "repeated maximized admission writes nothing");
+            assert.equal(mocks.maximizeClears.length, 0, "repeated maximized admission clears nothing");
+            assert.equal(mocks.maximizeToggles.length, 0, "repeated maximized admission toggles nothing");
+            // Native restore lands in the reserved slot: KWin reports a wrong
+            // plausible frame, the reconcile round-trips the real Engine, and
+            // the applied write carries the reserved slot while the sibling
+            // keeps its share.
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    focused: refs.a,
+                    rects: { "win-a": { x: 100, y: 100, w: 400, h: 400 }, "win-b": share },
+                    resourceClasses: { "win-a": "firefox" },
+                });
+            fire(mocks, "maximize");
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, 2, "restore dispatches one reconcile");
+            const restoreReply = await flushBornMaxPlan(mocks, engine, 1);
+            assert.equal(restoreReply["outcome"], "planned", `restore plans, Engine replied ${JSON.stringify(restoreReply)}`);
+            assert.deepEqual(bornMaxRect(restoreReply, "win-a"), reserved, "retained slot survives the restore round-trip");
+            assert.ok(
+                mocks.geometries.some(
+                    (entry) =>
+                        entry.target === refs.a &&
+                        entry.rect.x === reserved.x &&
+                        entry.rect.y === reserved.y &&
+                        entry.rect.w === reserved.w &&
+                        entry.rect.h === reserved.h,
+                ),
+                "restore lands in the reserved slot",
+            );
+            for (const entry of mocks.geometries.filter((candidate) => candidate.target === refs.b)) {
+                assert.deepEqual(entry.rect, share, "sibling keeps its share");
+            }
+            // Settled restore stays quiet.
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    focused: refs.a,
+                    rects: { "win-a": reserved, "win-b": share },
+                    resourceClasses: { "win-a": "firefox" },
+                });
+            const callsAfterRestore = mocks.dbusCalls.length;
+            const writesAfterRestore = mocks.geometries.length;
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, callsAfterRestore, "converged restore stays quiet");
+            assert.equal(mocks.geometries.length, writesAfterRestore, "converged restore writes nothing");
+            // Repeated maximize keeps the slot with no dispatch or writes.
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    focused: refs.a,
+                    rects: { "win-a": { x: 0, y: 0, w: 1200, h: 800 }, "win-b": share },
+                    maximized: { "win-a": true },
+                    resourceClasses: { "win-a": "firefox" },
+                });
+            fire(mocks, "maximize");
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, callsAfterRestore, "repeated maximize keeps its slot without dispatch");
+            assert.equal(mocks.geometries.length, writesAfterRestore, "repeated maximize writes nothing");
+            assert.equal(mocks.maximizeClears.length, 0, "admission issues no native maximize clear");
+            assert.equal(mocks.maximizeToggles.length, 0, "admission issues no native maximize toggle");
+            assert.equal(adapter.isEnabled, true);
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("born-maximized admission on a hidden domain reserves its slot", async () => {
+        // The reserved-slot overlay contract holds on hidden tiled domains:
+        // no admission clear, a fit_excluded dispatch the Engine retains,
+        // no actuation of the overlay, and a quiet settle once converged.
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const hiddenRef = {};
         mocks.observeImpl = () =>
             makeObserved(refs, {
                 focused: refs.a,
                 rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
-                maximized: { "win-a": maximized },
+            });
+        const hiddenSeen = (): PlanObserved => ({
+            domainOutput: "out-1",
+            domainWorkspace: "ws-2",
+            domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+            domainGap: DOMAIN_GAP,
+            domainOuterGap: OUTER_DOMAIN_GAP,
+            focusedId: "win-h",
+            windows: Object.freeze([
+                Object.freeze({
+                    id: "win-h",
+                    ref: hiddenRef,
+                    rect: { x: 0, y: 0, w: 1200, h: 800 },
+                    output: "out-1",
+                    workspace: "ws-2",
+                    fullscreen: false,
+                    maximized: true,
+                    resourceClass: "firefox",
+                }),
+            ]),
+            activeRef: hiddenRef,
+            fingerprint: "fp-hidden-max",
+            revalidate: () => true,
+        });
+        (mocks.env as unknown as { observeHidden: () => ReadonlyArray<PlanObserved> }).observeHidden = () => [hiddenSeen()];
+        mocks.maximizeClearImpl = (): MaximizeClearOutcome => "invoked";
+        const adapter = enableAdapter(mocks);
+        const engine = BornMaxEngineBridge.start();
+        try {
+            fire(mocks, "added");
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, 1, "foreground baseline dispatches");
+            const baseReply = await flushBornMaxPlan(mocks, engine, 0);
+            assert.equal(baseReply["outcome"], "planned", `baseline plans, Engine replied ${JSON.stringify(baseReply)}`);
+            assert.equal(mocks.dbusCalls.length, 2, "hidden admission follows the foreground apply");
+            const hiddenPayload = plannerPayload(mocks, 1);
+            assert.equal((hiddenPayload["domain"] as Record<string, unknown>)["workspace"], "ws-2", "hidden admission targets its domain");
+            const hiddenWindows = hiddenPayload["windows"] as Array<Record<string, unknown>>;
+            assert.equal(hiddenWindows.find((entry) => entry["window"] === "win-h")?.["fit_excluded"], true, "hidden overlay rides fit_excluded");
+            const hiddenReply = await flushBornMaxPlan(mocks, engine, 1);
+            assert.equal(hiddenReply["outcome"], "planned", `hidden admission plans, Engine replied ${JSON.stringify(hiddenReply)}`);
+            assert.ok(
+                (hiddenReply["desired_geometry"] as Array<Record<string, unknown>>).some((entry) => entry["window"] === "win-h"),
+                "Engine retains the hidden slot",
+            );
+            assert.ok(!mocks.geometries.some((entry) => entry.target === hiddenRef), "hidden overlay never actuated");
+            // Settle: converged observations on both domains stay quiet.
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    focused: refs.a,
+                    rects: { "win-a": bornMaxRect(baseReply, "win-a"), "win-b": bornMaxRect(baseReply, "win-b") },
+                });
+            const callsAfter = mocks.dbusCalls.length;
+            const writesAfter = mocks.geometries.length;
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, callsAfter, "converged hidden domain stays quiet");
+            assert.equal(mocks.geometries.length, writesAfter, "converged hidden domain writes nothing");
+            assert.equal(mocks.maximizeClears.length, 0, "hidden admission issues no native maximize clear");
+            assert.equal(adapter.isEnabled, true);
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("floating-domain first sight retiled clears maximize exactly once", () => {
+        // A window first seen on a floating domain is outside tiling until
+        // the domain retiles: the first tiled admission clears native
+        // maximize exactly once, and later maximize observations never
+        // re-clear.
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let tiled = false;
+        (mocks.env as unknown as { isDomainTiled?: (output: string, workspace: string) => boolean }).isDomainTiled = () => tiled;
+        let maximized = true;
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 1200, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+                maximized: maximized ? { "win-a": true } : {},
                 resourceClasses: { "win-a": "firefox" },
             });
         mocks.maximizeClearImpl = (target): MaximizeClearOutcome => {
@@ -6481,26 +6828,220 @@ describe("plan adapter maximize isolation", () => {
         const adapter = enableAdapter(mocks);
         adapter.requestResync();
         runDebounce(mocks);
-        assert.deepEqual(mocks.maximizeClears, [refs.a]);
+        assert.equal(mocks.dbusCalls.length, 0, "floating startup dispatches nothing");
+        assert.equal(mocks.maximizeClears.length, 0, "floating startup clears nothing");
+        assert.ok(mocks.logs.some((line) => line.includes("workspace-floating")), "floating workspace observed as floating");
+        tiled = true;
+        fire(mocks, "added");
+        runDebounce(mocks);
+        assert.deepEqual(mocks.maximizeClears, [refs.a], "retile clears exactly once");
         assert.equal((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "reconcile");
+        assert.ok(
+            mocks.logs.some(
+                (line) => line === "plasma-auto-tiler:plan:maximize-admission-clear window=win-a resource_class=firefox outcome=observed-cleared",
+            ),
+            "retile clear observed before admission",
+        );
         const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
         mocks.callbacks[0]?.(
             plannedReply(
                 correlation,
                 [
-                    { window: "win-a", rect: { x: 0, y: 0, w: 500, h: 800 } },
-                    { window: "win-b", rect: { x: 500, y: 0, w: 700, h: 800 } },
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
                 ],
                 "win-a-leaf",
             ),
         );
-        assert.ok(mocks.geometries.some((entry) => entry.target === refs.a), "restored admission receives its tile geometry");
-        assert.ok(
-            mocks.logs.some(
-                (line) => line === "plasma-auto-tiler:plan:maximize-admission-clear window=win-a resource_class=firefox outcome=observed-cleared",
+        const callsAfterAdmit = mocks.dbusCalls.length;
+        maximized = true;
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 1200, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+                maximized: { "win-a": true },
+                resourceClasses: { "win-a": "firefox" },
+            });
+        fire(mocks, "maximize");
+        runDebounce(mocks);
+        assert.deepEqual(mocks.maximizeClears, [refs.a], "later maximize never re-clears");
+        assert.equal(mocks.dbusCalls.length, callsAfterAdmit, "later maximize keeps its slot without dispatch");
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("tiled-first later visiting floating never becomes floating-first", () => {
+        // Exact-reference first-origin without a prior apply: a refused
+        // directional move captures tiled-first with no dispatch, so a later
+        // floating visit and the first admission retile issue no clear.
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let tiled = true;
+        (mocks.env as unknown as { isDomainTiled?: (output: string, workspace: string) => boolean }).isDomainTiled = () => tiled;
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 1200, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+                maximized: { "win-a": true },
+                resourceClasses: { "win-a": "firefox" },
+            });
+        const adapter = enableAdapter(mocks);
+        adapter.requestMove("left");
+        assert.equal(mocks.dbusCalls.length, 0, "refused move captures tiled-first with no dispatch");
+        assert.equal(mocks.maximizeClears.length, 0, "refused move clears nothing");
+        tiled = false;
+        fire(mocks, "added");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 0, "floating visit dispatches nothing");
+        assert.equal(mocks.maximizeClears.length, 0, "floating visit clears nothing");
+        tiled = true;
+        fire(mocks, "added");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 1, "first admission dispatches to reserve the slot");
+        assert.equal(mocks.maximizeClears.length, 0, "tiled-first retile issues no clear");
+        const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                "win-a-leaf",
             ),
         );
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:maximize-admission-echo-consumed"));
+        const callsAfterAdmit = mocks.dbusCalls.length;
+        tiled = false;
+        fire(mocks, "added");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsAfterAdmit, "post-apply floating visit dispatches nothing");
+        tiled = true;
+        fire(mocks, "maximize");
+        runDebounce(mocks);
+        assert.equal(mocks.maximizeClears.length, 0, "return to tile never clears a tiled-first origin");
+        assert.equal(mocks.dbusCalls.length, callsAfterAdmit, "return to tile stays quiet");
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("hidden floating-first retile clears once; reused id with a new ref never inherits", () => {
+        // Hidden discriminator in two isolated windows: win-r3 proves hidden
+        // floating-first retile clears once; win-h captures floating-first
+        // WITHOUT retile/clear/apply, then reuses the same id with a different
+        // exact ref first seen tiled (no removed signal, so replacement not
+        // eviction) and must dispatch its admission slot with zero clears.
+        // win-h has no applied slot and no attempts before replacement, so
+        // only exact-ref origin can suppress the clear.
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let hiddenTiled = false;
+        (mocks.env as unknown as { isDomainTiled?: (output: string, workspace: string) => boolean }).isDomainTiled = (_output, workspace) =>
+            workspace === "ws-2" ? hiddenTiled : true;
+        const refR3 = {};
+        const refOld = {};
+        const refNew = {};
+        let hiddenId = "win-r3";
+        let hiddenRefCurrent: object = refR3;
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+            });
+        const hiddenSeen = (): PlanObserved => ({
+            domainOutput: "out-1",
+            domainWorkspace: "ws-2",
+            domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+            domainGap: DOMAIN_GAP,
+            domainOuterGap: OUTER_DOMAIN_GAP,
+            focusedId: hiddenId,
+            windows: Object.freeze([
+                Object.freeze({
+                    id: hiddenId,
+                    ref: hiddenRefCurrent,
+                    rect: { x: 0, y: 0, w: 1200, h: 800 },
+                    output: "out-1",
+                    workspace: "ws-2",
+                    fullscreen: false,
+                    maximized: true,
+                    resourceClass: "firefox",
+                }),
+            ]),
+            activeRef: hiddenRefCurrent,
+            fingerprint: `fp-${hiddenId}`,
+            revalidate: () => true,
+        });
+        (mocks.env as unknown as { observeHidden: () => ReadonlyArray<PlanObserved> }).observeHidden = () => [hiddenSeen()];
+        mocks.maximizeClearImpl = (target): MaximizeClearOutcome => {
+            assert.ok(target === hiddenRefCurrent, "clear targets the exact current ref");
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        fire(mocks, "added");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 1, "foreground baseline dispatches");
+        const baseCorr = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                baseCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        // Stage 1: hidden R-MAX-03 proof with a dedicated window.
+        const callsAfterBase = mocks.dbusCalls.length;
+        fire(mocks, "added");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsAfterBase, "hidden floating startup dispatches nothing");
+        assert.equal(mocks.maximizeClears.length, 0, "hidden floating startup clears nothing");
+        hiddenTiled = true;
+        fire(mocks, "added");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsAfterBase + 1, "hidden retile dispatches one reconcile");
+        assert.deepEqual(mocks.maximizeClears, [refR3], "hidden floating-first retile clears once");
+        const hiddenCorr = plannerPayload(mocks, callsAfterBase)["correlation_id"] as string;
+        mocks.callbacks[callsAfterBase]?.(
+            plannedReply(hiddenCorr, [{ window: "win-r3", rect: { x: 0, y: 0, w: 1200, h: 800 } }], null),
+        );
+        assert.ok(
+            mocks.logs.some((line) => line.includes(`cmd=${hiddenCorr}`) && line.includes("outcome=planned-applied")),
+            "hidden retile applies its slot",
+        );
+        // Stage 2: capture floating-first for a fresh id WITHOUT retile, then
+        // reuse the id with a new ref first seen tiled. No removed signal, no
+        // apply, no attempts for win-h before replacement.
+        hiddenId = "win-h";
+        hiddenRefCurrent = refOld;
+        hiddenTiled = false;
+        fire(mocks, "added");
+        runDebounce(mocks);
+        const callsBeforeReuse = mocks.dbusCalls.length;
+        assert.equal(mocks.dbusCalls.length, callsBeforeReuse, "reuse-id floating capture dispatches nothing");
+        assert.equal(mocks.maximizeClears.length, 1, "reuse-id floating capture clears nothing new");
+        hiddenRefCurrent = refNew;
+        hiddenTiled = true;
+        fire(mocks, "added");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsBeforeReuse + 1, "reused tiled-first id dispatches its admission");
+        assert.equal(mocks.maximizeClears.length, 1, "reused id with a new tiled-first ref issues no clear");
+        const reuseIndex = callsBeforeReuse;
+        const reusePayload = plannerPayload(mocks, reuseIndex);
+        assert.equal((reusePayload["domain"] as Record<string, unknown>)["workspace"], "ws-2", "reuse admission targets its domain");
+        assert.equal(
+            (reusePayload["windows"] as Array<Record<string, unknown>>).find((entry) => entry["window"] === "win-h")?.["fit_excluded"],
+            true,
+            "reused overlay rides fit_excluded",
+        );
+        const reuseCorr = reusePayload["correlation_id"] as string;
+        mocks.callbacks[reuseIndex]?.(
+            plannedReply(reuseCorr, [{ window: "win-h", rect: { x: 0, y: 0, w: 1200, h: 800 } }], null),
+        );
+        assert.ok(
+            mocks.logs.some((line) => line.includes(`cmd=${reuseCorr}`) && line.includes("outcome=planned-applied")),
+            "reused admission applies its slot",
+        );
+        assert.ok(!mocks.geometries.some((entry) => entry.target === refNew), "reused overlay never actuated");
+        assert.equal(adapter.isEnabled, true);
     });
 
     it("leaves fullscreen admission isolated even when maximize is also set", () => {
@@ -6933,8 +7474,12 @@ describe("plan adapter maximize isolation", () => {
     });
 
     it("does not re-clear or loop when an admitted window immediately re-maximizes", () => {
+        // R-MAX-03 floating-first one-shot: first seen on a floating domain,
+        // then retiled clears once; an immediate re-maximize never re-clears.
         const refs = makeRefs();
         const mocks = mockEnv(refs);
+        let tiled = false;
+        (mocks.env as unknown as { isDomainTiled?: (output: string, workspace: string) => boolean }).isDomainTiled = () => tiled;
         let maximized = true;
         mocks.observeImpl = () =>
             makeObserved(refs, {
@@ -6952,6 +7497,11 @@ describe("plan adapter maximize isolation", () => {
         };
         const adapter = enableAdapter(mocks);
         adapter.requestResync();
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 0, "floating startup dispatches nothing");
+        assert.equal(mocks.maximizeClears.length, 0, "floating startup clears nothing");
+        tiled = true;
+        fire(mocks, "added");
         runDebounce(mocks);
         const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
         mocks.callbacks[0]?.(
@@ -6976,9 +7526,12 @@ describe("plan adapter maximize isolation", () => {
         // Race tolerance rides the clears list: the fresh reconcile carries
         // the same admissionMaximizeClears as the retired admit, so a
         // same-rect re-maximize between dispatch and reply still applies
-        // instead of failing stale-scope, with no second clear.
+        // instead of failing stale-scope, with no second clear. R-MAX-03
+        // floating-first retile preserves the one-shot clear path.
         const refs = makeRefs();
         const mocks = mockEnv(refs);
+        let tiled = false;
+        (mocks.env as unknown as { isDomainTiled?: (output: string, workspace: string) => boolean }).isDomainTiled = () => tiled;
         let maximized = true;
         let remaximized = false;
         mocks.observeImpl = () =>
@@ -6994,6 +7547,10 @@ describe("plan adapter maximize isolation", () => {
         };
         const adapter = enableAdapter(mocks);
         adapter.requestResync();
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 0, "floating startup dispatches nothing");
+        tiled = true;
+        fire(mocks, "added");
         runDebounce(mocks);
         assert.deepEqual(mocks.maximizeClears, [refs.a]);
         assert.equal((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "reconcile");

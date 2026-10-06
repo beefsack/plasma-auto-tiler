@@ -395,6 +395,10 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
     clear on both platforms. Open: whether it also replaces the R-MAX-03
     one-shot restore when a floating workspace is toggled to tiled
     (Orchestrator recommendation: yes, it is the same first tiled admission).
+    KDE R-MAX-06 delivered offline 2026-10-07: reserved-slot overlay with no
+    launch clear; R-MAX-03 remains one-shot pending that scope decision.
+    Native launch/restore and session-restore no-loop acceptance remain
+    user-owned. [Delivery record](changes/archive/kde-born-maximized-overlay.md).
   - B9: an explicit unfloat of an intentionally floating window that is
     natively maximized provisionally unfloats beneath the maximize and stays
     maximized (KDE already dispatches; settled result unverified). Windows

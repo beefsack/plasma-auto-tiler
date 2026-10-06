@@ -1995,6 +1995,10 @@ export class PlanAdapter {
     // evicts even marker-only ids with no applied slot.
     private seenNonFullscreen = new Map<string, object>();
     private heldInitialFullscreen = new Map<string, object>();
+    // First-domain origin for the maximize admission gate: per-id exact-ref
+    // first-seen floating flag. Tiled-first keeps its overlay; floating-first
+    // clears once on retile. First wins per ref; a new ref replaces.
+    private firstDomainOrigin = new Map<string, { ref: object; floating: boolean }>();
     private reconcileAttempts = 0;
     // One-shot forced complete reconciliation for send-settled domains,
     // keyed by domain output/workspace. A terminal send flight carries its
@@ -2178,6 +2182,7 @@ export class PlanAdapter {
         this.appliedScopeByDomain.clear();
         this.seenNonFullscreen.clear();
         this.heldInitialFullscreen.clear();
+        this.firstDomainOrigin.clear();
         this.settleDragRestoreUnavailable();
         this.reconcileAttempts = 0;
         this.sendForcedDomains.clear();
@@ -2218,6 +2223,7 @@ export class PlanAdapter {
         this.appliedScopeByDomain.clear();
         this.seenNonFullscreen.clear();
         this.heldInitialFullscreen.clear();
+        this.firstDomainOrigin.clear();
         this.settleDragRestoreUnavailable();
         this.reconcileAttempts = 0;
         this.sendForcedDomains.clear();
@@ -2336,6 +2342,10 @@ export class PlanAdapter {
         if (observed === null) {
             this.logToken(`${LOG_PREFIX}:focus-refused-observe`);
             return;
+        }
+        // Directional observations bypass freshObserved.
+        if (directional.kind === "ready") {
+            this.noteFirstDomainOrigin(observed);
         }
         if (observed.activeExcluded) {
             this.requestFloatFocus(observed, directional.kind === "ready", direction);
@@ -2560,6 +2570,18 @@ export class PlanAdapter {
             }
         }
         return false;
+    }
+
+    // First-domain origin: first-seen floating flag per id with exact ref.
+    // First wins; a new ref replaces.
+    private noteFirstDomainOrigin(observed: PlanObserved): void {
+        const floating = !this.isTiledDomain(observed.domainOutput, observed.domainWorkspace);
+        for (const entry of observed.windows) {
+            const existing = this.firstDomainOrigin.get(entry.id);
+            if (existing === undefined || existing.ref !== entry.ref) {
+                this.firstDomainOrigin.set(entry.id, { ref: entry.ref, floating });
+            }
+        }
     }
 
     // Carried snapshot for dispatch and reply-boundary comparison: a
@@ -2971,6 +2993,9 @@ export class PlanAdapter {
         if (observed === null) {
             this.logToken(`${LOG_PREFIX}:move-refused-observe`);
             return;
+        }
+        if (directional.kind === "ready") {
+            this.noteFirstDomainOrigin(observed);
         }
         if (observed.activeExcluded) {
             this.requestFloatMove(observed, direction);
@@ -5005,7 +5030,9 @@ export class PlanAdapter {
         if (!validateObserved(observed)) {
             return null;
         }
-        return observed as PlanObserved;
+        const valid = observed as PlanObserved;
+        this.noteFirstDomainOrigin(valid);
+        return valid;
     }
 
     private interactiveResizeActive(): boolean {
@@ -5085,6 +5112,11 @@ export class PlanAdapter {
             for (const [id, ref] of this.seenNonFullscreen) {
                 if (ref === target) {
                     this.seenNonFullscreen.delete(id);
+                }
+            }
+            for (const [id, origin] of this.firstDomainOrigin) {
+                if (origin.ref === target) {
+                    this.firstDomainOrigin.delete(id);
                 }
             }
         }
@@ -5525,6 +5557,7 @@ export class PlanAdapter {
     // omission stays unknown. No echo/interactive handling here. Floating
     // workspaces are unmanaged and never dispatch here.
     private hiddenIntentFor(observed: PlanObserved): HiddenDecision | null {
+        this.noteFirstDomainOrigin(observed);
         if (!this.isTiledDomain(observed.domainOutput, observed.domainWorkspace)) {
             return { intent: null, outcome: "equal", reason: "workspace-floating", terminal: "quiet" };
         }
@@ -5553,6 +5586,7 @@ export class PlanAdapter {
                 !observedIds.has(id)
             ) {
                 this.maximizeAdmissionAttempts.delete(id);
+                this.firstDomainOrigin.delete(id);
                 this.keepAbovePrevious.delete(id);
                 this.stickyPreviousFloating.delete(id);
                 this.adoptedSticky.delete(id);
@@ -5672,16 +5706,19 @@ export class PlanAdapter {
         const known = this.appliedById;
         const attempted: Array<{ id: string; ref: object; resourceClass: string }> = [];
         for (const entry of observed.windows) {
-            // Admission clear runs before the initial-fullscreen hold release
-            // in carriedSnapshot, so a held id exiting fullscreen is still
-            // marked here. Held ids bypass the known-id skip: their applied
-            // slot (if any) is exception evidence, never a tile, while
-            // already-tiled ids never enter the held set. Fullscreen never
-            // clears; one-shot via maximizeAdmissionAttempts with no retry.
+            // Held ids bypass the known-id skip; fullscreen never clears;
+            // one-shot via maximizeAdmissionAttempts. Tiled-first keeps its
+            // overlay: only floating-first or a held exit may clear.
             if (entry.fullscreen || !entry.maximized || this.maximizeAdmissionAttempts.has(entry.id)) {
                 continue;
             }
             if (known.has(entry.id) && this.heldInitialFullscreen.get(entry.id) !== entry.ref) {
+                continue;
+            }
+            const heldSameRef = this.heldInitialFullscreen.get(entry.id) === entry.ref;
+            const origin = this.firstDomainOrigin.get(entry.id);
+            const floatingFirst = origin !== undefined && origin.floating === true && origin.ref === entry.ref;
+            if (!heldSameRef && !floatingFirst) {
                 continue;
             }
             this.maximizeAdmissionAttempts.add(entry.id);
@@ -8305,6 +8342,7 @@ export class PlanAdapter {
                 }
                 if (flightState.removed !== null) {
                     this.maximizeAdmissionAttempts.delete(flightState.removed);
+                    this.firstDomainOrigin.delete(flightState.removed);
                     this.keepAbovePrevious.delete(flightState.removed);
                     this.stickyPreviousFloating.delete(flightState.removed);
                     this.adoptedSticky.delete(flightState.removed);

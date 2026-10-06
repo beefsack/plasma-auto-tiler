@@ -398,6 +398,47 @@
   mutation or seeding) and `cargo build` succeeds. No runtime
   claim is made.
 
+### Born-Maximized Admission (Q3) - DELIVERED OFFLINE, LIVE GATE PENDING
+
+- This replaces the old maximize-admission clear gate linked from the pending
+  live checks. The no-re-maximize-loop invariant remains: a session-restored
+  maximized app must not be repeatedly restored or have geometry fought by
+  the tiler. Q3 changes the expected first state from restored/tiled to
+  maximized over a reserved tile slot; native restore later reveals that slot.
+- `kwin/src/plan-adapter.ts`: `noteFirstDomainOrigin` pins the first domain
+  mode to the exact Window reference. `clearMaximizeAtAdmission` preserves
+  tiled-first maxima; floating-first R-MAX-03 retile and held-born-fullscreen
+  release keep their existing one-shot clear/echo fence, with no retry even
+  if the app immediately reasserts maximize.
+- Anti-loop: Q3 admission issues neither clear nor maximize. Existing retained
+  projection, `fit_excluded`, `skip-maximized` writes and overlay drift
+  exclusion avoid native geometry fighting. Repeated maximized observations
+  settle; ordinary native restore reconciles to the reserved slot.
+- Offline evidence: real Engine/adapter admission and restore fixtures prove
+  the slot and sibling allocation, actual restored-frame write, foreground
+  and hidden overlay isolation, quiet repeats and no native clear/toggle.
+  R-MAX-03, failed-clear one-shot and immediate re-maximize coverage remain.
+  See [delivery record](archive/kde-born-maximized-overlay.md).
+
+#### User-Owned Live Gate - Not Run
+
+1. Follow `docs/live-kwin-testing.md` and `docs/dev-loop.md` after user-owned
+   delivery of the checkout. On a tiled workspace with B, launch an eligible
+   normal resizable A already maximized, not fullscreen. Record native flags,
+   frames, focus, and trace `planned-applied` / `skip-maximized` with A's
+   reserved target rectangle. A remains maximized, B takes its tile share,
+   and no admission clear/toggle is issued for A.
+2. Natively restore A. Record that its actual frame lands in the reserved
+   target and B keeps its share. Repeat native maximize/restore and observe
+   settled idle with no unsolicited toggles, retries or geometry fighting.
+3. At a user-owned session boundary, restore a session with maximized A and B.
+   A remains maximized over its slot, restores into it when requested, and
+   never enters a re-maximize loop. Capture the same flags/frames/trace;
+   visual appearance or setter-return diagnostics alone are not acceptance.
+4. Separately retain R-MAX-03 as a control: first observe a maximized app on a
+   floating workspace, toggle that workspace tiled, and verify one clear
+   attempt, no retry. Do not interpret that deliberate clear as a Q3 failure.
+
 ## Proposed Slices
 
 - P0 | Fullscreen residual-cost live gate | Code isolation is complete in the

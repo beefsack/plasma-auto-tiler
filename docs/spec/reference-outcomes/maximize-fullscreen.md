@@ -260,9 +260,9 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   leg (no verb or model path); a host-zoomed first-seen window is
   owner-specific with admission/restore behavior TBD.
   `S(S-pan-cmds)` + `S(S-pan-axfs)`; journey queued.
-- Then Ours KDE: Current KDE/Windows make one admission-time clear attempt; retained slots/fullscreen/floating domains are exempt. Proposed preserve variants and later setting are unselected; exact native journey TBD, `D(D-min-games)`
-- Then Ours Windows: Current KDE/Windows make one admission-time clear attempt; retained slots/fullscreen/floating domains are exempt. Proposed preserve variants and later setting are unselected; exact native journey TBD, `D(D-min-games)`
-- Variant hook: V-MAX-MODEL.
+- Then Ours KDE: Selected Q3, delivered offline: first-seen maximized A on a tiled domain reserves a tile slot and retains native maximize as an overlay; no launch unmaximize. B receives its ordinary admission share; native restore of A lands in the reserved slot. Repeated maximized observations settle without native clear, toggle or geometry fighting. `PlanAdapter.noteFirstDomainOrigin` / `clearMaximizeAtAdmission` distinguish this from the unchanged R-MAX-03 floating-first one-shot restore; existing `fit_excluded` / `skip-maximized` preserve the overlay ([adapter](../../../kwin/src/plan-adapter.ts), real Engine admission/restore [fixtures](../../../kwin/tests/plan-adapter.test.ts), [change](../../changes/archive/kde-born-maximized-overlay.md)); [Q3 decision](../../decisions.md#cross-platform-behavior). Exact native launch/session-restore journey remains user-owned, TBD.
+- Then Ours Windows: Q3 reserved-slot overlay is selected, implementation gap: current Windows makes one admission-time clear attempt; retained slots/fullscreen/floating domains are exempt. Windows delivery and exact native journey pending; [Q3 decision](../../decisions.md#cross-platform-behavior).
+- Variant hook: V-MAX-MODEL - selected retained-slot overlay, including Q3 born-maximized admission; KDE delivered offline, live TBD; Windows delivery pending. R-MAX-03 scope remains open.
 
 <a id="r-max-07-backfill-captionless-full-monitor-cover-scrolling"></a>
 ### R-MAX-07: captionless full-monitor cover
