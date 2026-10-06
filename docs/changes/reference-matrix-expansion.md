@@ -1,6 +1,6 @@
 # Reference matrix expansion
 
-- Status: active; restructure, insertion correction, focus, move, resize, layout commands, workspaces, minimize, maximize/fullscreen, groups/stacks and floating accepted; batch decisions pending, close next.
+- Status: active; restructure through close accepted; batch decisions pending, multi-output next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
@@ -469,6 +469,24 @@ are distinct; host journeys remain applicable despite absent tiler verbs.
 | R-FLT-08/09 backfill, PaperWM/paneru (4) | Exact original F/G frames; float focus right; record PaperWM remembered tiled selection | PaperWM switches from remembered tile, not focused float; final target and paneru unmanaged search unresolved |
 | R-FLT-10/11 backfill, PaperWM/paneru (4) | Free F at (1000,500,300,200); semantic right, then up | Float-subject move result and snap-state journey untraced |
 
+### Close queue additions (piece B11)
+
+24 applicable unresolved cells (P21 plus three applicable-TBD M legs),
+grouped in seven entries. Two M cells (bspwm/i3 R-CLOSE-05) have an
+evidenced full leg and absent max leg, adding no live case. Native close
+of responsive clients is required; owner observation commands are not
+substituted for the host close action.
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-CLOSE-03, Hyprland/Ours KDE/Windows (3) | Close sole A on shown WS1; WS2 occupied | Hyprland shown-empty retention/focus and Ours native empty-focus journey unresolved; Engine collapse is sourced |
+| R-CLOSE-03, bspwm/xmonad/paneru (3) | Same fixture; paneru Space1 VW row 0, second native Space occupied | Desktop/workspace/row retention sourced; actual focus fallback untraced |
+| R-CLOSE-04, Hyprland/xmonad/PaperWM/karousel/paneru/Ours KDE/Windows (7) | Tiles A/B plus focused F at (500,300,400,300); history A,B,F; close F | Separation/removal sourced; spatial/positional/shell/KWin/geometry target or adapter focus delivery unresolved |
+| R-CLOSE-05, COSMIC/PaperWM/Ours KDE/Windows (4) | Fresh native max and full fixtures; close B, sole survivor A | Allocation/removal sourced in part; overlay cleanup or surviving focus/native journey unresolved |
+| R-CLOSE-05, xmonad/sway/paneru (3) | Fresh full fixture; paneru host-zoom leg separately | xmonad final focus, sway fullscreen-pointer teardown and paneru close-from-fullscreen/host-zoom journey untraced |
+| R-CLOSE-01 backfill, paneru (1) | Three columns; history A,C,B; close middle B; record rectangles | Nearest-center fallback sourced but identity geometry-dependent |
+| R-CLOSE-02 backfill, niri/karousel/paneru (3) | Manual 50/30/20 column widths; close B, focus C, reopen new B | Independent survivor widths and fresh admission sourced; reopened focus unresolved. PaperWM activate-on-show is sourced and not queued |
+
 ## Settled review and execution
 
 | User decision | Recommendation |
@@ -529,4 +547,8 @@ are distinct; host journeys remain applicable despite absent tiler verbs.
 - Floating review: first inventory-only draft corrected through pinned handlers, native pointer producers and actual production Engine/adapter paths. Independent review found qtile X11 lower and citation gaps. Lead checked the X11 same-layer lower path and PaperWM focus handler, corrected falsely inferred float-selected switch aborts, restored exact backfill fixtures and removed incidental viewport/focus unknowns from the widths-only discriminator. Follow-up source/count verification passed; two minor scope/variant wording findings corrected. Workers ran sequentially; no live tests or product changes.
 - Floating consensus: raise-7/8 (C/H/B/I/S/Q/A), ordinary-hidden-8/8 and free-pointer-frame-8/8 are strong across all four families. Windows hides/reveals ordinary floats; KDE native select remains TBD. Ours relative F/G activation order and host free-pointer journeys are unresolved; project float resize refuses as NotTiled. Recommendation for batch review: establish KDE native visibility/return, both platforms' relative raise order and host float gestures before proposing behavior changes. No evidenced Ours-vs-strong conflict is established. Explicit layer-bottom lower is weak Q/A 2/2 in one family. Table B grows 18 to 19; U grows 6 to 8 full rows plus two KDE legs; W grows 10 to 11; A20/C17 unchanged.
 - Floating verification: 3x14 Then profiles, 10x4 new scrolling assessments and preserved R-FLT-04; original wide rows/pins unchanged. Citation resolution, ASCII, local links, whitespace, pinned-source review and final count verification passed. Source/offline only. Queue adds 43 applicable unresolved cells in 12 groups.
-- Exact next action: expand close R-CLOSE-03..05 and scrolling assessment of R-CLOSE-01..02; update consensus/live-test queue, verify, then commit/push. Continue multi-output, mouse, special windows, activation, restart/persistence, then R-COL; collect product differences for batch review.
+- Close outcome: R-CLOSE-03..05 added as three 14-profile GWT scenarios; R-CLOSE-01/02 assessed for four scrolling profiles, historical rows/pins preserved. Matrix now 99 scenarios. Coverage over 50 cells: E24/P21/T0/Q0/M5. New 42: E20/P17/M5 (original-eight E14/P6/M4; scrolling E6/P5/M1; Ours P6); backfill 8: E4/P4. M includes absent max plus evidenced or unresolved full, not agreeing rejection.
+- Close review: sequential implementation and independent source review corrected missing native close verbs, paneru row-0 retention precondition, an imprecise bspwm citation and consensus table continuity. Lead removed incidental unmap/width unknowns, corrected COSMIC's already-detached fullscreen fixture and repaired unsupported manual-width absence claims against PaperWM grid resize, paneru SetWidth and karousel host interactive resize. These failed width-inventory inferences were resolved with positive pinned source; no blocker or product behavior change remains.
+- Close consensus: shown-empty retention is strong 7/8 across four families; float close leaves tiles untouched and focuses B in C/B/I/S/Q/A (6/8, four families); full close refills/refocuses A in H/B/I/Q/A (5/8, three families). Ours Engine collapse, exception removal and desired focus are sourced, native close journeys unresolved: no evidenced Ours-vs-strong mismatch. Recommendation for batch review: establish empty-focus, float-focus and overlay cleanup on both platforms before proposing behavior changes. Karousel's middle-column close selects left neighbor A vs niri/PaperWM C; scrolling comparisons remain non-voting. Table U grows 8 to 11 full rows plus two KDE legs; A20/B19/C17/W11 unchanged.
+- Close verification: 3x14 Then profiles, 2x4 scrolling assessments, historical rows/pins preserved; citation resolution, local links, ASCII, whitespace and pinned-source review passed. Source/offline only. Queue adds 24 unresolved cells in seven groups. Stop at the close committed boundary because Lead context is crowded after evidence reconciliation.
+- Exact next action: expand multi-output R-OUT-03..06 and scrolling assessment of R-OUT-01/02; update consensus/live-test queue, verify, then commit/push. Continue mouse, special windows, activation, restart/persistence, then R-COL; collect product differences for batch review.

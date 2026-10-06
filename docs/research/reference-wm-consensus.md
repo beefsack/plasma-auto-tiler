@@ -1,12 +1,13 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (96 rows:
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (99 rows:
 58-row historical audit preserved below, plus 6-row insertion expansion
 plus 4-row focus expansion plus 3-row move expansion plus 4-row resize
 expansion plus 4-row layout expansion plus 7-row workspace expansion
 plus 3-row minimize expansion plus 2-row maximize expansion
-plus 2-row groups expansion plus 3-row floating expansion).
+plus 2-row groups expansion plus 3-row floating expansion
+plus 3-row close expansion).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -119,7 +120,7 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
 Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups/floating are per-predicate: A 20, B 19, U 8 full rows + two KDE legs, C 17, W 11;
+Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups/floating/close are per-predicate: A 20, B 19, U 11 full rows + two KDE legs, C 17, W 11;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
 
 ## Table A: strong cross-family consensus where ours differs (20)
@@ -185,7 +186,7 @@ position/order); consensus covers fresh-vs-oldslot only. WS-02 after-order
 leg (after-4/5ev C,B,I,S vs X before) is U (ours exact order TBD); tall/wide
 axis stays a qualifier (X/Q inapplicable).
 
-## Table U: strong consensus, ours unresolved (8 full rows + two KDE legs)
+## Table U: strong consensus, ours unresolved (11 full rows + two KDE legs)
 
 | Row | Consensus | Count | COSMIC | Ours |
 |---|---|---|---|---|
@@ -199,6 +200,9 @@ axis stays a qualifier (X/Q inapplicable).
 | R-FLT-13 KDE leg | ordinary float hidden on workspace switch | hidden-8/8, 4 fam | yes (per-workspace floats) | KDE native select journey TBD; Windows match recorded in B |
 | R-FLT-12 raise path | an F-raising path exists (focus/activate/press/verb) | raise-7/8 (C,H,B,I,S,Q,A; X layer-only), 4 fam | yes (focus raise) | order TBD both (host stacking); lower has only weak agreement |
 | R-FLT-14 free frame | pointer drag/resize keeps the free frame | free-8/8, 4 fam | yes (floating move/resize grabs) | project resize refuses; host journey TBD on both platforms |
+| R-CLOSE-03 sole | shown workspace retained on sole close | retained-7/8 (C,B,I,X,S,Q,A), 4/4 fam | yes (active kept) | TBD both (Engine collapse sourced; native journey TBD) |
+| R-CLOSE-04 float | tiles untouched with MRU refocus | untouched-6/8 plus focus-B-6/8 (C,B,I,S,Q,A), 4/4 fam | yes (layer separation plus MRU fixup) | TBD both (exception-drop sourced; adapter journey TBD) |
+| R-CLOSE-05 full | closed fullscreen needs no restore; survivor refills with focus | full-leg-5/8 (H/B/I/Q/A), 3 fam | TBD (removal sourced, overlay cleanup TBD) | TBD both (removal plus desired focus sourced; native cleanup TBD) |
 
 DRAG-08: unknown is not mismatch; B/I have deliberate no-focus paths.
 
@@ -987,3 +991,89 @@ KDE native-select float journey, the F/G order effect of activation on
 both platforms, and the host move/size journeys before proposing any
 change. Missing verbs and TBD journeys never count as agreeing
 rejection. No product behavior is changed by this assessment.
+
+## Close expansion (piece B11): R-CLOSE-03..05 plus R-CLOSE-01/02 scrolling backfill
+
+Scope: piece B11 adds three GWT close scenarios (R-CLOSE-03 sole close,
+R-CLOSE-04 float close, R-CLOSE-05 maximized/fullscreen close), each with
+14 Then profiles, and additive scrolling backfill blocks for R-CLOSE-01/02
+(original wide tables preserved). Historical tables and the 58-row audit
+above are preserved unchanged. Denominator, families, and the strength
+rule are unchanged: consensus classification below counts the original
+eight profiles only. The four scrolling profiles form one correlated
+lineage reported as an explicit separate non-voting comparison. A missing
+maximize verb/state never votes: ordinary-manage reports from
+maximize-stateless profiles are feature absence, not deliberate overlay
+rejection. R-CLOSE-05 splits into a `B:max` leg (qualifies where no
+maximize state exists) and a fresh `B:full` leg (applicable wherever
+fullscreen exists); M cells carry one qualified leg plus one applicable
+leg, whether that applicable leg is TBD (paneru host-zoom, X/S full) or
+evidenced (B/I max-absent plus full-E), per the floating-piece
+precedent; no bare markers. All three scenarios use the shared
+`S(S-close-verbs)` inventory (one named verb per profile, no kill-only
+substitution). Cell classes are mutually exclusive per cell: E complete outcome
+evidenced with no TBD; P one sub-leg evidenced with the remainder TBD and
+queued; T TBD-only; Q all legs qualified with pinned inventory evidence;
+M mixed. E cells carry no TBD; every P cell and applicable-TBD M leg names
+its explicit remainder. Counts measure documentation coverage, not votes. Semantic
+outcomes lead each Then in one to three lines; source keys follow.
+
+| Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
+|---|---|---|---|
+| R-CLOSE-03 sole close | shown workspace retained with focus none | retained: C (active kept, `S-cos-rem`+`S-cos-send`), B (explicit-only removal, `S-bsp-wsretain`), I (visible kept, `S-i3-wsretain`), X (static zipper, `S-xmo-ws`), S (active kept, `S-sway-wsretain`), Q (static groups, `S-qti-wsdef`), A (static tags, `S-awe-hist`) = 7/8, 4/4 fam; focus none: C/I/S/Q/A complete, B/X partial; TBD: H (retention and focus) | U retained 7/8 (Ours Engine collapse sourced, native journey TBD) |
+| R-CLOSE-04 float close | tiles untouched; focus B | untouched: C (floats unmap outside the tiling tree, `S-cos-flttoggle`), B (no tiling space, `S-bsp-float`), I (wrapper detach), S (floating list), Q (outside Columns), A (excluded, `S-awe-tile`) = 6/8, 4/4 fam; focus B: same six via MRU/stack/history paths; partial: H/X (removal sourced, exact target TBD) | U untouched 6/8 plus focus-B 6/8 (Ours Engine exception-drop plus preserved focus sourced, adapter journey TBD) |
+| R-CLOSE-05 overlay close | no restore; survivor refills with focus A (full leg) | full leg: H (unmap refocus, `S-hyp-close`), Q/A (float-state removal, `S-qti-fs`/`S-awe-fs`), B (promotion plus history guess), I (detach plus focus-stack next) = 5/8, 3 fam; max leg: H/Q/A complete, C partial, B/I/X/S qualified absent; partial: C/PaperWM removal, X/S full-leg TBD | U full-leg 5/8 (Ours Engine removal plus desired focus sourced, overlay-native cleanup TBD) |
+
+Scrolling comparison (non-voting): R-CLOSE-01 niri/PaperWM/karousel
+complete (order plus next-column/topmost/left-neighbor focus:
+`S-nir-close`, `S-pap-close`, `S-kar-close`); paneru order with
+nearest-center focus TBD. R-CLOSE-02 niri complete on widths and
+admission (faithful 0.5/0.3/0.2W via `SetColumnWidth`, no tree-ratio
+rescale, fresh column after active; reopened focus TBD) and PaperWM
+complete (50/30/20 prepared via the `resizeW` 10% grid at zero
+gaps/margins, survivor frame-widths stable, fresh at selected+1 with
+activate-on-show); karousel preserves host-interactively resized widths
+and fresh-admits after last focus, with reopened focus TBD; paneru
+prepares exact ratios via `SetWidth` with reopened focus TBD.
+R-CLOSE-03 niri/PaperWM/karousel complete (active-spare retention,
+selection none, last-column destroy: `S-nir-close`, `S-pap-close`,
+`S-kar-close`); paneru partial (row-0 spare exact per the Space1 VW
+fixture, focus TBD). R-CLOSE-04 niri complete (float removal
+with scrolling untouched plus MRU return); PaperWM/karousel/
+paneru partial (separation sourced, shell/KWin/geometry focus TBD).
+R-CLOSE-05 niri/karousel complete (flag-agnostic removal with
+independent survivor widths, sole-survivor focus, no restore);
+PaperWM partial (allocation/focus TBD); paneru mixed (host-zoom
+owner-specific plus fullscreen-strip TBD).
+
+Counts (mutually exclusive E/P/T/Q/M). New rows (3x14=42): E 20, P 17,
+T 0, Q 0, M 5. Original-eight new cells (3x8=24): E 14 (R-CLOSE-03: 5
+C/I/S/Q/A; R-CLOSE-04: 6 C/B/I/S/Q/A; R-CLOSE-05: 3 H/Q/A), P 6
+(R-CLOSE-03: 3 H/B/X; R-CLOSE-04: 2 H/X; R-CLOSE-05: 1 C), T 0,
+Q 0, M 4 (R-CLOSE-05: B/I/X/S max-absent plus applicable full, full-E
+on B/I). Scrolling new cells (3x4=12): E 6 (R-CLOSE-03: niri/PaperWM/
+karousel; R-CLOSE-04: niri; R-CLOSE-05:
+niri/karousel), P 5, T 0, Q 0, M 1 (R-CLOSE-05 paneru). Ours new cells
+(3x2=6): P 6 (Engine collapse and desired focus sourced; adapter native
+journeys TBD). Backfill (2x4=8): E 4 (R-CLOSE-01 niri/PaperWM/karousel
+plus R-CLOSE-02 PaperWM), P 4 (R-CLOSE-01 paneru plus R-CLOSE-02
+niri/karousel/paneru), M 0. Total 50 cells: E24/P21/T0/Q0/M5. Table U grows from
+8 to 11 full rows plus the two KDE legs; Tables A/B/C/W unchanged. The
+matrix total is now 99 rows (96 + 3 new; backfill reuses IDs).
+
+Ours-vs-consensus position (no behavior selected): three new strong
+predicates stand with Ours unresolved, never differing. R-CLOSE-03
+retained-7/8 (C/B/I/X/S/Q/A across all four families): the shown
+workspace survives closing its sole window. R-CLOSE-04 untouched-6/8
+plus focus-B-6/8 (C/B/I/S/Q/A across all four families): floats close
+outside the tiling with MRU refocus. R-CLOSE-05
+full-leg-5/8 (H/B/I/Q/A across three families): a closed fullscreen
+window needs no restore; the survivor refills with focus. Ours Engine
+establishes collapse, exception-drop, and desired focus on both
+platforms (`S-ours-close`); adapter native journeys (empty-focus,
+float-focus, overlay cleanup) stay TBD. Recommend for batch user
+review, no selection or code change: establish the three Ours native
+close journeys before proposing any behavior change; the strong foreign
+direction is recorded for any future close-behavior specification.
+Missing triggers and TBD journeys never count as agreeing rejection. No
+product behavior is changed by this assessment.

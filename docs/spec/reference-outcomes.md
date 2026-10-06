@@ -735,6 +735,11 @@ Legend:
   (fullscreen state/fixed-size floating admission; maximum flags not admission state)
 - `S-bsp-close` bspwm:src/tree.c:1337-1405 (`unlink_node` sibling promotion) and :1407-1421 (`close_node` delete/kill) and :1441-1474 (`remove_node` + focus guess) and :538-578 (`focus_node` history fallback) and src/history.c:171-180 (`history_last_node` MRU) @e11eff4cb3333216ad03c815609a4ed79e08929c
   (close removal + MRU refocus, no spatial rule)
+- `S-bsp-wsretain` bspwm:src/messages.c:793-803 (desktop removal only via
+  explicit `desktop -r`, refused on the sole desktop) and
+  src/desktop.c:336 (`remove_desktop`)
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (empty desktops retained absent an explicit removal verb)
 - `S-bsp-drag` bspwm:src/window.c:487-545 (`move_client` tiled hover-swap vs float move, cross-monitor transfer) and src/pointer.c:58-68 (buttons grabbed with the modifier) and :248-307 (ACTION_MOVE grab/track, button-release end only) and src/events.c:40-89 (`handle_event` switch has no key-press cancel branch) @e11eff4cb3333216ad03c815609a4ed79e08929c
   (pointer drag swaps on hover; no zones/cancel/preview)
 - `S-bsp-restore` bspwm:src/query.c:38-67 (`query_state` dump incl history/stack) and :116-183 (node/client dump incl sticky/state) and src/restore.c:111-162 (restart replaces monitors, restores history/stack) and :345-409 (node sticky restore) and :436-474 (client state restore) and src/bspwm.c:154-156 (startup `-s` restore) and :275-326 (restart dump + re-exec) and src/messages.c:1250-1263,1317-1320 (`-d`/`-l`/`-r` verbs) @e11eff4cb3333216ad03c815609a4ed79e08929c
@@ -1040,6 +1045,11 @@ Legend:
   (`con_next_focused`: non-head keeps head, head takes next sibling else
   parent; floating maps to its wrapper)
   @903bcd518df32b0e055b17f5da3f988a0187fd3d
+- `S-i3-wsretain` i3:src/workspace.c:530-533 (old workspace closes only
+  when empty and invisible; shown workspaces are retained)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (visible-empty retention; hidden-empty cleanup is the disclosed
+  counterpart)
 - `S-i3-grp` i3:src/con.c:1997-2006 (`con_set_layout` retargets non-workspace
   cons to the parent split) and :2109-2196 (`con_toggle_layout`
   stacked/tabbed/split/all) and :1620-1630 (tabbed HORIZ, stacked VERT) and
@@ -1141,6 +1151,98 @@ Legend:
   `killWindow`/`kill`) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
   (close removes from the stack with positional down-else-up refocus, no
   MRU rule; Tall reflows unconditionally via recalc)
+- `S-xmo-ws` xmonad:src/XMonad/StackSet.hs:134-164 (workspace zipper:
+  current/visible/hidden lists; `Workspace` is tag/layout/`Maybe` stack,
+  so closing the last window empties the stack without removing the
+  workspace) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+  (static-workspace retention; empty-stack focus stays TBD)
+- `S-sway-wsretain` sway:sway/tree/workspace.c:314-331
+  (`workspace_consider_destroy` spares output-active and seat-focused
+  workspaces; other empties are destroyed)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+- `S-nir-close` niri:src/layout/scrolling.rs:1062-1074 (`remove_tile`
+  drops a sole-tile column whole) and :1074-1160
+  (`remove_tile_by_idx` active-index fixup to next else previous) and
+  :1192-1276 (`remove_column_by_idx` activates the clamped next column)
+  and src/layout/workspace.rs:783-797 (floating vs scrolling dispatch
+  plus focus-flag update) and src/layout/floating.rs:515-552 (float
+  removal, active falls to topmost) and src/layout/monitor.rs:650-670
+  (cleanup spares the active workspace)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+- `S-pap-close` PaperWM:tiling.js:981-1010 (`removeWindow` neighbor
+  selection plus empty-column splice) and :1046-1056
+  (`removeFloating` splice) and :3950-3966 (`remove_handler`
+  shell-focus note plus space removal) and :714-751
+  (layout reads each column's live or saved tiled width independently)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (selection and removal legs; settled widths and shell focus fallback
+  stay TBD where stated)
+- `S-kar-close` karousel:src/lib/layout/Column.ts:297-325
+  (`onWindowRemoved` above-else-below focus plus last-window destroy)
+  and src/lib/layout/Grid.ts:161-185 (`onColumnRemoved` left-else-right
+  focus, null on the last column)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+- `S-kar-manual-width` karousel:src/lib/world/clientState/Tiled.ts:88-101,144-152
+  (host interactive resize feeds width delta to the column) and
+  src/lib/layout/Column.ts:101-114,143-162 (arbitrary width clamped to
+  size hints, stored as preferred width; optional neighbor redistribution)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (manual widths are not restricted to keyboard presets)
+- `S-pan-close` paneru:src/ecs/triggers.rs:912-975
+  (`window_destroyed_trigger` focus give-away plus despawn) and
+  :1018-1062 (`give_away_focus` nearest-center plus tabbed branches) and
+  :1400-1418 (`window_removal_trigger` strip removal) and
+  src/ecs/workspace.rs:505-525 (row-0 orphan spare)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (removal and nearest-center policy; exact focus target stays TBD
+  where stated)
+- `S-ours-close` plasma-auto-tiler:crates/tiler-core/src/session.rs:2163-2230
+  (`remove_leaf_from_tree`/`remove_node` collapse with proportional
+  shares) and crates/tiler-core/src/session/ops/lifecycle.rs:450-485
+  (`propose_remove` focus-stack fallback, unfocused removal preserves
+  focus) and crates/tiler-core/src/session/world.rs:586-605
+  (`focus_stack_fallback` MRU) and crates/tiler-core/src/session/world.rs:750-766
+  (`converge_observation` drops host-closed windows via the same
+  collapse) and
+  crates/tiler-core/src/cosmic_v1.rs:175-190
+  (`proportional_removal_shares`) and kwin/src/plan-adapter.ts:8290-8315
+  (remove-empty scope retire) @9241c94
+  (Engine desired topology/focus plus KDE applied-scope delivery;
+  adapter native focus confirmation stays a TBD sub-leg)
+- `S-close-verbs` shared close-verb inventory for R-CLOSE-03/04/05:
+  COSMIC data/keybindings.ron:6-7 (`Close` Super+q/Alt+F4) +
+  src/input/actions.rs:180 @3d55cba06c9cf6f27609cdefb520f7857dba20af;
+  Hyprland src/config/shared/actions/ConfigActions.hpp:40 +
+  ConfigActions.cpp:213 (`killWindow`)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6;
+  bspwm doc/bspwm.1.asciidoc:475-476 (`node -c|--close`)
+  @e11eff4cb3333216ad03c815609a4ed79e08929c;
+  i3 src/commands.c:1213 + parser-specs/commands.spec:219-224 (`kill`)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d;
+  xmonad src/XMonad/Config.hs:191 (`kill`)
+  @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7;
+  sway sway/commands/kill.c:15 (`kill`)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104;
+  qtile libqtile/resources/default_config.py:48 (`lazy.window.kill()`)
+  @83c697a5621306c3586efca31867efcfa0482e2d;
+  awesome awesomerc.lua:424 (`c:kill()`)
+  @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f;
+  niri niri-ipc/src/lib.rs:290 (`CloseWindow`)
+  @ed22699d99462f61ab171472d3ea67e844ea580d;
+  PaperWM schemas/org.gnome.shell.extensions.paperwm.gschema.xml:448
+  (`close-window`) @8bf6dd264f60d6c0c402b63df7b424b888959a48;
+  karousel src/lib/keyBindings/Actions.ts (no close verb in the
+  inspected inventory; host KWin close drives `onWindowRemoved`)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b;
+  paneru src/types/commands.rs (no close `Operation` in the inspected
+  inventory; host macOS close observed via AX destroy)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269;
+  Ours crates/tiler-core/src/session/ops/lifecycle.rs:65
+  (`SessionCommand::Remove` dispatch) and :570 (shape gate)
+  @9241c94 (native close is the host action, KWin user close on KDE and
+  WM_CLOSE/app close on Windows, converged by the Engine via observation
+  per `S(S-ours-close)`; `Remove` is the observation-driven proposal,
+  never the native verb)
 - `S-xmo-mouse` xmonad:src/XMonad/Operations.hs:787-841
   (`mouseDragCursor` grab with release `done`; `mouseMoveWindow` writes the
   raw frame plus `float` on motion and `float` on release with no clamp/zone
@@ -1621,6 +1723,13 @@ Legend:
   src/ecs/layout.rs:258-266 (`Single` vs `Stack` columns)
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
   (neighbor mapping TBD; no edge counterpart)
+- `S-pan-setwidth` paneru:src/types/commands.rs:231-232
+  (`Operation::SetWidth(f64)` exact display-width ratio) and
+  src/ecs/layout_ops.rs:162-200 (`LayoutOp::SetWidth` stores `WidthRatio`
+  per window, shared with stacked siblings, routed through interactive
+  resize for the focused window)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (exact-ratio preparation; per-window ratios survive sibling removal)
 - `S-ours-resize`
   plasma-auto-tiler:crates/tiler-core/src/session/ops/resize.rs:9-48
   (nearest matching-edge-axis ancestor, adjacent shares only, Unchanged
@@ -2398,7 +2507,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Maximise / fullscreen | [maximize-fullscreen.md](reference-outcomes/maximize-fullscreen.md) | R-MAX-01..07 (7) | R-MAX-08..09 |
 | Groups / stacks | [groups-stacks.md](reference-outcomes/groups-stacks.md) | R-GRP-01..03 (3) | none (R-GRP-02..03 landed with scrolling backfill) |
 | Floating | [floating.md](reference-outcomes/floating.md) | R-FLT-01..14 (14) | none (R-FLT-12..14 landed with scrolling backfill) |
-| Close / reflow | [close.md](reference-outcomes/close.md) | R-CLOSE-01..02 (2) | R-CLOSE-03..05 |
+| Close / reflow | [close.md](reference-outcomes/close.md) | R-CLOSE-01..05 (5) | none (R-CLOSE-03..05 landed with scrolling backfill) |
 | Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..02 (2) | R-OUT-03..06 |
 | Mouse | [mouse.md](reference-outcomes/mouse.md) | R-DRAG-01..08 (8) | R-MOU-01..03 |
 | Special windows | [special-windows.md](reference-outcomes/special-windows.md) | none yet | R-SPC-01..05 |
