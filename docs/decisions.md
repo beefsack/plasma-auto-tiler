@@ -355,7 +355,8 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   the overlapping centre-fit default below on KDE and Windows together; no
   topology search or guaranteed balanced 2x2 is selected. Clean previously
   tiled 2x2/nested layouts retain their fit and identity order.
-- Provisional, to discuss (2026-10-03, Windows infeasible minimums): writable
+- Confirmed for both platforms by user decision B6 (2026-10-05, below);
+  originally provisional (2026-10-03, Windows infeasible minimums): writable
   admitted windows are placed at the proportional tile's origin with each
   native extent at least its declared minimum, rather than skipped while their
   tile space is reserved. Equality/readback/refusal use that effective target.
@@ -372,6 +373,27 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   A successful asynchronous Win+M restore dispatch arms a two-second bounded
   completion wake on the existing 100ms pump. It reconciles once restore is
   observed, preserving dispatch/gesture/suspend gates and single-attempt toggles.
+- User decisions 2026-10-05 (KDE session; recorded in the backlog, promoted
+  here 2026-10-06), implementation pending:
+  - B6: minimum-infeasible tiles use origin+minimum on both platforms. This
+    confirms the Windows provisional choice above; KDE replaces its skipped
+    writes. The cross-WM consensus (R-MIN-01..03: 7/8 references do not
+    enforce tiled minima by default) is a recorded counterpoint, not a
+    reversal.
+  - Q3: a first-seen (born) maximized window follows COSMIC: it tiles with a
+    reserved slot and keeps its maximize as an overlay; no launch unmaximize,
+    on KDE and Windows. This supersedes the one-shot admission maximize
+    clear on both platforms. Open: whether it also replaces the R-MAX-03
+    one-shot restore when a floating workspace is toggled to tiled
+    (Orchestrator recommendation: yes, it is the same first tiled admission).
+  - B9: an explicit unfloat of an intentionally floating window that is
+    natively maximized provisionally unfloats beneath the maximize and stays
+    maximized (KDE already dispatches; settled result unverified). Windows
+    changes from refusal after the user's COSMIC live check of R-FLT-06.
+    COSMIC source suggests unmaximize-then-admit instead (matrix R-FLT-06),
+    so the live check decides.
+  Analysis: [post-Windows audit](research/cross-platform-core/post-windows-audit.md),
+  [cross-WM consensus](research/reference-wm-consensus.md).
 
 ## Cross-Platform Core
 
@@ -394,7 +416,8 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
 - User decision 2026-10-05, KDE follow-up order: B1/B2 toggle repair, then
   B3-B5 shared-change fixture coverage, then B7 underlay A/B, then B8
   shortcut controls. B6 minimum fallback and the admission-maximize/game
-  question remain research, not selected behavior changes.
+  question were research at that point; the user later selected B6, Q3 and
+  B9 the same day (see [Cross-Platform Behavior](#cross-platform-behavior)).
 
 ## Architecture Direction
 

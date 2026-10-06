@@ -159,8 +159,10 @@ decisions of 2026-09-24 are under
   restore reconciles promptly. Send return rule verified unchanged; the
   original dogfood anchor is unknown. Provisional choices to review; user
   to dogfood startup (both platforms), Win+M and send returns. Risk:
-  minimum-sized windows can overlap or extend past the work area; the KDE
-  adapter still skips overconstrained writes.
+  minimum-sized windows can overlap or extend past the work area. User
+  decision B6 (2026-10-05) makes origin+minimum the policy on both
+  platforms (KDE implementation pending); sequential seeding stays
+  provisional (consensus: follows COSMIC).
   [record](changes/archive/windows-placement-correctness.md)
 - P1 | KDE follow-ups from the Windows port | Audit 2026-10-05
   ([note](research/cross-platform-core/post-windows-audit.md)); user order
@@ -202,6 +204,18 @@ decisions of 2026-09-24 are under
   Windows implementation pending next PC session. Quarter/maximize/repeated-outward transfer snap states
   deferred: require per-window state and transfer integration. Next: PC parity.
   [Delivery and live steps](changes/archive/kde-floating-directional-navigation.md).
+- P1 | Windows parity with the 2026-10-05 KDE session | Can run on this PC:
+  (a) float-origin directional focus and Meta+Shift+arrow half-snaps
+  (R-FLT-07..11; Windows today refuses float subjects); (b) Q3 born-maximized
+  reserved slot plus maximize overlay, replacing the one-shot admission
+  clear on Windows (and KDE, same decision); confirm whether it also covers
+  the R-MAX-03 floating-to-tiled case; (c) B9 overlaid unfloat: Windows stops
+  refusing once the user's COSMIC R-FLT-06 check settles retain vs
+  unmaximize; (d) audit finding: Windows keyboard resize and non-local
+  workspace modes are unimplemented despite catalog/settings text
+  (`settings.rs:769-777`, `workspace.rs:95-108`).
+  [decisions](decisions.md#cross-platform-behavior)
+  [audit](research/cross-platform-core/post-windows-audit.md)
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.
@@ -242,6 +256,16 @@ decisions of 2026-09-24 are under
   reference differences the functional spec adopts; source filling alone
   makes no product decision.
   [Cross-WM consensus analysis](research/reference-wm-consensus.md) covers all 58 rows, with cross-family candidates and evidence gaps.
+  Its Table A lists strong consensus where ours differs, for user choice
+  (keep ours, adopt, or make a variant): R-WS-01 send stays vs our follow;
+  R-MOV-03 flat swap vs our nested wrap; R-MIN-01..03 unclamped minima vs
+  B6; R-DRAG-04 Esc does not cancel vs our cancel; R-MAX-05 no refusal of
+  app-owned fullscreen exit vs Windows refusal; R-MAX-07 captionless
+  full-monitor window tiles vs Windows fullscreen inference; R-FLT-05
+  sticky survives restart vs Windows normal float; R-FLT-06/R-FLT-09
+  Windows refusals (covered by the Windows parity item). Unresolved splits
+  needing a choice: R-DRAG-07 Win-drag (KDE frame follows pointer, Windows
+  stationary preview) and R-DRAG-08 focus at press vs Windows on drop.
 - P2 | Prior-art catalogue upkeep | Completed 2026-10-03 (`e4c1d92`):
   [maintained index](research/prior-art.md), grouped by desktop and type
   (compositor-native vs host-integrated) with algorithm families,
@@ -542,12 +566,10 @@ All items below shipped offline with no live result claimed.
 - Startup adoption recursive-cut fit (user decision 2026-09-29, replaces the
   near-strip fit): user confirmed live (2026-09-29) it works really well
   restarting over a previously tiled workspace. Remaining: confirmed
-  Planner-loss fresh session; centre-split fallback for overlapping
-  free-floating windows (user option B, shipped offline): two overlapping
-  windows tile in position order with proportionate shares, `adoption-fit
-  outcome=fitted ... centre_splits=1`; restarting over the result logs
-  `centre_splits=0` with equal-rect skips. Red flags: fallback for distinct
-  centres, reversed order, centre splits on clean tiles.
+  Planner-loss fresh session. The centre-split fallback for overlapping
+  windows was superseded by `2c918d3` (2026-10-03): such fits now decline
+  to sequential long-edge seeding; check that overlapping windows seed a
+  long-edge chain and clean tiles keep their fit (KDE fixtures added in B5).
   [record](changes/placement-aware-startup-adoption.md)
 - KWin controller silent unload (diagnostic only): attribute only with
   before/after `isScriptLoaded`, exact `Script<ID>`, and KWin PID/start
@@ -624,6 +646,24 @@ All items below shipped offline with no live result claimed.
 - Navigation/movement while maximised: no suppression policy selected;
   semantics await the user's COSMIC comparison.
   [decision](decisions.md#cosmic-movement-and-groups)
+- Windows Win+F11/Win+G containment (parked): accept the gap, user turns
+  off Xbox mode in Windows Settings (recommended first), or authorise
+  registry/policy writes or a dedicated hook thread.
+  [record](changes/windows-gaming-coexistence.md)
+- Windows taskbar workspace indicator (parity 10): presentation design.
+- macOS Phase 0: host model and macOS floor, Intel support, stable signer,
+  Meta mapping. [plan](research/macos-port/plan.md)
+- B9 / R-FLT-06: COSMIC live check of overlaid unfloat (retain maximize vs
+  unmaximize then tile) before Windows drops its refusal.
+- Q3 scope: whether the reserved-slot maximize overlay also replaces the
+  R-MAX-03 one-shot restore on floating-to-tiled toggle (recommended yes).
+- Reference consensus differences (functional specification line above):
+  keep, adopt or make variants for each Table A row and the R-DRAG-07/08
+  splits.
+- Review of 2026-10-03/04 autonomous provisional choices (all marked
+  "Provisional, to discuss" in [decisions](decisions.md)): mise rolling
+  versions, matrix format, Windows settings/tray/presets, drag producers,
+  sequential startup seeding, KDE conflict controls.
 
 ## Known issues and risks
 
