@@ -1,6 +1,6 @@
 # Reference matrix expansion
 
-- Status: active; restructure through special windows accepted; batch decisions pending, activation next.
+- Status: active; restructure through activation accepted; batch decisions pending, restart/persistence next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
@@ -542,6 +542,20 @@ Typed X11 fixtures and native xdg fixtures are distinct. No agent live tests.
 | R-SPC-04, karousel/paneru/Ours KDE (3) | min=max 640x480, otherwise Normal client | KWin resizeable mapping, paneru admission and KDE native clamp unresolved; incidental pixels/focus not required |
 | R-SPC-05, niri/PaperWM/karousel/paneru/Ours KDE/Windows (6) | 900x700 client request; fresh minimum-hint raise above allocation | Clamp or Engine authority sourced in part; runtime reflow/host hint-resize journey untraced |
 
+### Activation queue additions (piece B15)
+
+15 applicable unresolved cells (P2 + T13), grouped in four entries.
+Native app requests are distinct from shell-selected activation. Token
+validity, requester security context and host attention ownership must
+be recorded; missing tiler urgency verbs do not exclude host markers.
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-ACT-01, qtile/awesome (2) | Hidden B, X11 native request; switch vs marker and focus | Request routing untraced at these pins |
+| R-ACT-01, PaperWM/karousel/paneru/Ours KDE/Windows (5) | Hidden B, native unsolicited request; host/Shell journey and Engine observation | Hidden-domain routing and actual request policy untraced |
+| R-ACT-02, COSMIC/awesome (2) | Shown A/B; COSMIC B has non-panel sandbox security context and serial-less token; set attention then focus B | Workspace mark and awesome window mark sourced; focus-time clear untraced |
+| R-ACT-02, xmonad/PaperWM/karousel/paneru/Ours KDE/Windows (6) | Native attention mark then focus B, with host flags/request origin recorded | Native hint and host mark/clear journeys untraced |
+
 ## Settled review and execution
 
 | User decision | Recommendation |
@@ -618,4 +632,8 @@ Typed X11 fixtures and native xdg fixtures are distinct. No agent live tests.
 - Special-windows review: sequential implementation and independent pinned-source review corrected typed-dialog vs normal-transient substitution, stale votes, wrong niri parent/fixed-height admission (both float), karousel transient exclusion, and Windows owned/toolwindow filters. Runtime handlers establish tiled request refusal in bspwm/Hyprland/qtile and awesome; awesome later-arrange hint shaping does not establish immediate hint reflow. Lead corrected two transcription-only citation paths, aligned actual summary tables, and retained Windows host placement/modal-fence TBD despite sourced exclusion. Initial admission-policy inferences failed; positive pinned handlers resolved them, with genuinely untraced host legs queued. No blocker, live test or product change remains.
 - Special-windows consensus: typed-dialog transient floats 8/8; fixed-size floats 8/8; app-owned request/hint change leaves allocation authoritative 8/8 (awesome later-arrange hint qualifier), each across all four original families. Ours tiles fixed-size windows on both platforms instead of floating. Recommendation for batch review: add fixed-size float admission. KDE dialog eligibility and both platforms' host hint journeys remain unresolved; Windows owned dialogs are excluded from tiler targets, not missing native windows. No PiP/type-policy choice selected. Table A22/B20/U15 full rows plus two KDE legs/C19/W11.
 - Special-windows verification: 5x14 Then entries; original rows/pins preserved; citation resolution, local links, ASCII, whitespace and independent pinned-source review checked. Source/offline only. Queue adds 46 applicable unresolved cells in eight groups. Stop at this area's committed boundary because Lead context is crowded after evidence reconciliation.
-- Exact next action: expand activation R-ACT-01..02 as two 14-profile GWT scenarios (no existing activation rows to backfill); update consensus/live-test queue, verify, then commit/push after git pull --rebase. Continue restart/persistence (including R-CTL scrolling assessment), then R-COL; collect product differences for batch review.
+- Activation outcome: R-ACT-01..02 added as two 14-profile GWT scenarios; no existing activation rows to backfill. Matrix now 113 scenarios. Coverage over 28 cells: E13/P2/T13/Q0/M0; original-eight E11/P2/T3, scrolling E2/T6, Ours T4. Native host attention remains applicable despite absent tiler urgency commands.
+- Activation review: sequential implementation and independent pinned-source review corrected ordinary COSMIC privileged tokens vs the named sandboxed urgency-only variant, serial-less vs invalid-token denial, same-workspace vs switch-clear, xmonad's profiled ewmh default, missing Windows code evidence, and partial-leg voting. Initial request-policy and host-absence inferences failed; positive pinned handlers resolved the request routes, with genuinely untraced host attention legs queued. Lead checked actual token creation, client security context, activation focus and Ours observation paths, then reconciled latest fixtures/citations/counts. No blocker, live test or product change remains.
+- Activation consensus: ordinary hidden requests switch/focus in C/B/X vs urgency-only in H/I/S (3 vs 3; Q/A TBD), with COSMIC sandboxed urgency-only separately qualified. Mark-without-steal is strong 7/8 across four families (COSMIC sandboxed workspace marker and awesome partial mark included); clear-on-focus is strong 5/8 H/B/I/S/Q across three families. Ours host mark/clear remains TBD on both platforms, so no evidenced Ours-vs-strong mismatch. Recommendation for batch review: establish native attention mark/clear and unsolicited hidden-request routing before proposing changes. Table U grows 15 to 16 full rows plus two KDE legs; A22/B20/C19/W11 unchanged.
+- Activation verification: 2x14 Then profiles, no prior rows changed; source keys/pins, ASCII, local links, whitespace, per-predicate votes and pinned-source review checked. Source/offline only. Queue adds 15 applicable unresolved cells in four groups.
+- Exact next action: expand restart/persistence R-RST-01..02 as two 14-profile GWT scenarios, including scrolling assessment of R-START-01..03 and R-CTL-01..07; update consensus/live-test queue, verify, then commit/push after git pull --rebase. Continue R-COL; collect product differences for batch review.

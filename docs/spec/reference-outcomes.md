@@ -2833,6 +2833,103 @@ Legend:
   empties) and :258-280 (`output_destroy` guards)
   @1652c54b73f67df17b7b4ab0b0f7048204aa8104
   (evacuation destination policy; focus and reconnect affinity stay TBD)
+- `S-cos-act` cosmic-comp:src/state.rs:167 (`not_sandboxed` is
+  true with no security context, panel excepted) +
+  src/wayland/handlers/xdg_activation.rs:33-70 (such clients get
+  Workspace tokens without/against serials) and :72-78
+  (serial-less tokens from other clients get `UrgentOnly`) and
+  :95-111 (stale serials are denied) and :119-172 (`UrgentOnly`
+  only adds workspace-level `WState::Urgent`; workspace tokens
+  follow the `ActivationPolicy`) + cosmic-comp-config/src/lib.rs:154,324-329
+  (shipped default `Focus`) +
+  src/wayland/handlers/xdg_activation.rs:186-217
+  (`activate_surface` switches to the element workspace) and
+  :255-262 (focuses the element) + src/shell/mod.rs:542-546
+  (workspace activation removes `Urgent` from both sides;
+  same-workspace focus clear untraced)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (ordinary requests switch and focus; sandboxed serial-less marks
+  only with stale-serial denial)
+- `S-hyp-act`
+  Hyprland:src/desktop/view/window/Window.cpp:813-825 (`activate`
+  always sets the urgent hint but focuses only under
+  `misc:focus_on_activate` or force) + src/config/values/ConfigValues.cpp:580
+  (shipped default false) + src/desktop/state/FocusState.cpp:214-215
+  (taking focus strips the urgent bit) +
+  src/desktop/view/window/Window.cpp:1828-1850 (X11
+  `onActivationRequest` funnels through `activate`) +
+  src/protocols/XDGActivation.cpp:87-102 (Wayland xdg-activation
+  dispatch calls the same `activate`)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (both request routes mark without focusing at default; focus clears)
+- `S-bsp-act` bspwm:src/events.c:327-332 (`_NET_ACTIVE_WINDOW`
+  focuses the located node) + src/settings.h:59 + src/settings.c:128
+  (shipped `ignore_ewmh_focus=false`) + src/tree.c:645-651 (focus on
+  another desktop shows it and sets `m->desk`) + src/tree.c:2230-2246
+  (`set_urgent` flag write) and :604-606 (focus path clears urgency)
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (hidden-desktop requests switch and focus; focus clears urgency)
+- `S-i3-act` i3:docs/userguide:1369-1382 (`smart` is the default:
+  visible requesters focus, hidden ones mark urgent) +
+  src/handlers.c:430-442 (configure-request branch) and :800-809
+  (`_NET_ACTIVE_WINDOW` branch) + src/handlers.c:696-704
+  (demand-attention add/remove/toggle) + src/con.c:264-273 (focus
+  resets leaf urgency with parent/workspace propagation)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (hidden requesters mark only at default; focus clears)
+- `S-sway-act` sway:sway/xdg_activation_v1.c:40-52 (internal-seat
+  requests activate; tokens from a focus-less client only mark
+  urgent) +
+  sway/tree/view.c:476-506 (`FOWA_SMART`/`URGENT`/`FOCUS`/`NONE`
+  dispatch) + sway/config.c:257 (shipped default `FOWA_URGENT`) and
+  :256 (`urgent_timeout` 500) + sway/input/seat.c:1093 (focus clears
+  urgency) and :1225-1239 (workspace-switch focus arms the clear
+  timer instead)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (shipped default marks without focusing; focus clears)
+- `S-qti-act` qtile:libqtile/backend/x11/window.py:615-621 (hint
+  urgency sets the flag off-focus) and :658-666 (`urgent` property
+  plus demands-attention setter) and :1305-1312 (focus path resets
+  the flag and strips the state atom)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (marker without steal; focus clears)
+- `S-awe-act` awesome:lib/awful/permissions/init.lua:167-178
+  (`request::activate` filter gate) + :333-340 (`request::urgent`
+  handler sets `c.urgent` off-focus)
+  @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+  (filter plus marker sourced; hidden-tag switch and focus-clear TBD)
+- `S-xmo-act` xmonad-contrib:XMonad/Hooks/EwmhDesktops.hs:226-259
+  (default `doFocus` activate hook focuses immediately, switching
+  workspace if necessary; `doAskUrgent` marking is opt-in via
+  `setEwmhActivateHook`)
+  @5097a457e7a409bc9a7584dc5aa82b34c69d6dda
+  (default request switches and focuses; urgency handling untraced
+  beyond the opt-in hook)
+- `S-nir-act` niri:src/handlers/mod.rs:766-804 (`token_created`:
+  serial-less tokens get the `UrgentOnlyMarker`; invalid serials
+  are denied unless the debug flag is set) and :806-835
+  (`request_activation`: `Ignore` drops, `SetUrgent`/urgent-only
+  marks, `Focus`/valid tokens call `activate_window`; the shipped
+  default-config carries no `on-xdg-activate` rule so the
+  urgent-only branch applies) + src/window/mapped.rs:601-609
+  (`set_urgent` refuses while focused) and :390-398 (taking focus
+  resets urgency)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (serial-less requests mark without focusing, invalid ones are
+  denied; focus clears)
+- `S-ours-act` Ours activation/urgency position at this HEAD:
+  plasma-auto-tiler:crates/tiler-core/src/session/world.rs:380-389
+  (`sync_focus_from_window` only resyncs focus for ordinary
+  activation of a known tiled window in an existing domain, failing
+  closed otherwise) + kwin/src/plan-adapter.ts:89 (observed
+  `PlanSignal` kinds carry no attention/urgency signal) and :630
+  (`setActive` is the sole focus actuator) +
+  crates/tiler-windows/src/workspace.rs:388-397 (`note_foreground`
+  records foreground observation as last-focus; no flash or marker
+  path exists in the adapter)
+  @29bc4d9
+  (ordinary-activation sync and foreground observation exist;
+  unsolicited-request routing plus native mark/clear are TBD)
 
 ## Variant hooks (provisional, not commitments)
 
@@ -2866,7 +2963,8 @@ scenarios from piece B2, 3 move scenarios from piece B3, 4 resize
 scenarios from piece B4, and 4 layout-command scenarios from piece B5,
 plus 7 workspace scenarios, 3 minimize scenarios, 2 maximize scenarios,
 2 groups scenarios, 3 floating scenarios, 3 close scenarios,
-4 multi-output scenarios, 3 mouse scenarios and 5 special-windows scenarios, GWT only).
+4 multi-output scenarios, 3 mouse scenarios, 5 special-windows scenarios and
+2 activation scenarios, GWT only).
 This index retains purpose, row-addition rule, notation,
 profiles, evidence tags/legend, variant hooks, and deferred. Existing wide
 tables moved unchanged; all new scenarios use the GWT form below.
@@ -2889,7 +2987,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..06 (6) | none (R-OUT-03..06 landed with scrolling backfill) |
 | Mouse | [mouse.md](reference-outcomes/mouse.md) | R-DRAG-01..08 + R-MOU-01..03 (11) | none (R-MOU-01..03 landed with scrolling backfill) |
 | Special windows | [special-windows.md](reference-outcomes/special-windows.md) | R-SPC-01..05 (5) | none (landed; no backfill: no prior rows) |
-| Activation | [activation.md](reference-outcomes/activation.md) | none yet | R-ACT-01..02 |
+| Activation | [activation.md](reference-outcomes/activation.md) | R-ACT-01..02 (2) | none (landed; no backfill: no prior rows) |
 | Restart / persistence | [restart-persistence.md](reference-outcomes/restart-persistence.md) | R-START-01..03 + R-CTL-01..07 (10) | R-RST-01..02 |
 | Column mechanics | [column-mechanics.md](reference-outcomes/column-mechanics.md) | none yet | R-COL-01..10 |
 | Minimum-size (supplemental) | [minimum-size.md](reference-outcomes/minimum-size.md) | R-MIN-01..03 (3) plus 3x4 scrolling backfill (piece B4) | none (R-MNZ icon-minimize is separate) |

@@ -1,14 +1,15 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (111 rows:
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (113 rows:
 58-row historical audit preserved below, plus 6-row insertion expansion
 plus 4-row focus expansion plus 3-row move expansion plus 4-row resize
 expansion plus 4-row layout expansion plus 7-row workspace expansion
 plus 3-row minimize expansion plus 2-row maximize expansion
 plus 2-row groups expansion plus 3-row floating expansion
 plus 3-row close expansion plus 4-row multi-output expansion
-plus 3-row mouse expansion plus 5-row special-windows expansion).
+plus 3-row mouse expansion plus 5-row special-windows expansion
+plus 2-row activation expansion).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -121,7 +122,7 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
 Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups/floating/close/multi-output/mouse/special-windows are per-predicate: A 22, B 20, U 15 full rows + two KDE legs, C 19, W 11;
+Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups/floating/close/multi-output/mouse/special-windows/activation are per-predicate: A 22, B 20, U 16 full rows + two KDE legs, C 19, W 11;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
 
 ## Table A: strong cross-family consensus where ours differs (22)
@@ -190,7 +191,7 @@ position/order); consensus covers fresh-vs-oldslot only. WS-02 after-order
 leg (after-4/5ev C,B,I,S vs X before) is U (ours exact order TBD); tall/wide
 axis stays a qualifier (X/Q inapplicable).
 
-## Table U: strong consensus, ours unresolved (15 full rows + two KDE legs)
+## Table U: strong consensus, ours unresolved (16 full rows + two KDE legs)
 
 | Row | Consensus | Count | COSMIC | Ours |
 |---|---|---|---|---|
@@ -211,6 +212,7 @@ axis stays a qualifier (X/Q inapplicable).
 | R-MOU-01 click | plain click focuses B | click-8/8, 4/4 fam | yes (press focuses) | TBD both (host click/hover journeys; adapter verbs prove no producer path) |
 | R-SPC-01 transient | transient dialog floats instead of tiling | float-8/8 (C,H,B,I,X,S,Q,A), 4/4 fam | floats (is_dialog) | KDE TBD (`normalWindow` dialog mapping untraced); Windows excludes owned dialogs | Eligibility gap, not an established difference |
 | R-SPC-05 hints | app-owned resize/hint change leaves allocation authoritative | ignore-8/8 (C,H,B,I,X,S,Q,A), 4/4 fam; A later arrange hint-shaping qualifier | yes (no minimum enforcement) | authoritative both (KDE/host reaction and exact reflow TBD) | Direction matches; remainders queued |
+| R-ACT-02 urgency | urgency marker without steal, cleared on focus | mark-7/8 with evidence (5E + C/A partial), 4 fam; clear-5/8 (H/B/I/S/Q), 3 fam | sandboxed workspace marker, same-workspace clear TBD | TBD both (native mark/clear journeys; no attention signal in either adapter inventory) | Establish the host mark/clear journey before any change |
 
 DRAG-08: unknown is not mismatch; B/I have deliberate no-focus paths.
 
@@ -1364,3 +1366,82 @@ legs need no physical confirmation):
 
 Queue cell math: 6 + 3 + 8 + 2 + 4 + 14 + 3 + 6 = 46, matching
 P23 + T21 + M2 applicable unresolved cells (E24 need no tests).
+
+## Activation expansion: R-ACT-01..02 (no backfill)
+
+Scope: this piece adds two GWT activation scenarios (R-ACT-01
+unsolicited activation request for a hidden window, R-ACT-02 urgency
+marker set plus focus-time clear), each with 14 Then profiles. The
+activation area had no existing rows, so there is no scrolling
+backfill to assess (0 existing rows, 0 cells). R-WS-07 shell-selected
+activation is reused by citation only, never duplicated: only the
+native unsolicited-request/urgency handler paths count here, never
+generic focus actuators or shell selection. Historical tables and the
+58-row audit above are preserved unchanged. Denominator, families, and
+the strength rule are unchanged: consensus classification below counts
+the original eight profiles only. The four scrolling profiles form one
+correlated lineage reported as an explicit separate non-voting
+comparison. Cell classes are mutually exclusive per cell: E complete
+outcome evidenced with no TBD; P one discriminator sub-leg evidenced
+with the remainder TBD and queued; T TBD-only with a specific
+stop-tracing reason; Q all legs qualified
+(fixture-inapplicable / no-counterpart / owner-specific with pinned
+inventory evidence). E cells carry no TBD; every P cell names its
+explicit remainder. Counts measure documentation coverage, not votes.
+Semantic outcomes lead each Then in one to three lines.
+
+| Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
+|---|---|---|---|
+| R-ACT-01 hidden request | urgency-only marker vs switch-and-focus | switch-and-focus on the primary route: C (privileged-branch Workspace token plus shipped `Focus`, `S-cos-act`), B (`_NET_ACTIVE_WINDOW` honored at shipped default, `S-bsp-act`), X (default `doFocus` hook switches if necessary, `S-xmo-act`) = 3/8; urgency-only: H (both routes funnel into default-off `activate`, `S-hyp-act`), I (default `smart` on a hidden workspace, `S-i3-act`), S (focus-less-client token plus default `FOWA_URGENT`, `S-sway-act`) = 3/8, 3 fam; non-primary sandboxed COSMIC variant (urgency-only plus stale denial); TBD: Q/A (request routing untraced) | C audit-only (switch 3 vs urgency 3; neither leg strong) |
+| R-ACT-02 urgency set/clear | marker without steal plus clear on focus | mark with evidence: H, B, I, S, Q (5/8, 3 fam) plus partial C (sandboxed workspace-level route) and A (marker only) = 7/8, 4 fam; clear: H (focus strips the bit), B (focus path clears), I (focus resets leaf/parents/workspace), S (focus clears or arms the clear timer), Q (focus resets plus strips the state atom) = 5/8, 3 fam; TBD: X (opt-in alternative only, no clear traced) | U mark-7/8 plus clear-5/8 (Ours native mark/clear TBD on both platforms) |
+
+Scrolling comparison (non-voting): R-ACT-01 niri marks urgent-only
+on the serial-less route at shipped default (no `on-xdg-activate`
+rule; invalid-serial denial separate); PaperWM/karousel/paneru stay
+TBD on the host activation journey. R-ACT-02 niri marks plus clears
+on focus; PaperWM/karousel/paneru stay TBD (no mark/clear path
+traced). No scrolling cell votes.
+
+Counts (mutually exclusive E/P/T/Q/M). New rows (2x14=28): E 13,
+P 2, T 13, Q 0, M 0. Original-eight new cells (2x8=16): E 11
+(R-ACT-01: C/H/B/I/S/X; R-ACT-02: H/B/I/S/Q), P 2 (R-ACT-02: C
+mark-only plus A marker-only), T 3 (R-ACT-01: Q/A; R-ACT-02: X),
+Q 0. Scrolling new cells (2x4=8): E 2 (both niri), P 0, T 6, Q 0.
+Ours new cells (2x2=4): T 4 (request routing plus native mark/clear
+TBD on both rows and platforms). Table U grows 15 to 16 full rows
+(R-ACT-02 mark/clear); Tables A/B/C/W unchanged. The matrix total
+is now 113 rows (111 + 2 new; no backfill reuses IDs).
+
+Ours-vs-consensus position (no behavior selected): one new strong
+predicate stands unresolved on both Ours platforms. R-ACT-02
+mark-7/8 with evidence (5E plus C/A partial, four families) plus
+clear-5/8 (H/B/I/S/Q across binary, tree, and
+layout-driven families): urgency marks without stealing focus and
+clears when the window is focused. Both Ours platforms leave the
+native mark and the focus-time clear TBD: the KDE observer exposes
+no attention signal with `setActive`-only actuation, and the
+Windows adapter records foreground observation with no flash or
+marker path. R-ACT-01 carries no strong consensus (primary switch 3
+C/B/X vs urgency-only 3 H/I/S; sandboxed COSMIC variant
+non-primary): Ours
+request routing stays applicable-TBD on both platforms. Recommend
+for batch user review, no selection or code change: establish the
+host attention mark/clear journey on both Ours platforms before
+proposing any urgency behavior; establish the unsolicited-request
+switch-vs-marker outcome before any activation-routing decision.
+Missing journeys never count as agreeing rejection. No product
+behavior is changed by this assessment.
+
+Activation live-test queue (15 applicable unresolved cells in four
+entries; source-evidenced semantic legs need no physical
+confirmation):
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-ACT-01, qtile/awesome (2) | Hidden B, serial-less/X11 request; record switch vs marker and focus | Request routing untraced at these pins |
+| R-ACT-01, PaperWM/karousel/paneru/Ours KDE/Windows (5) | Same fixture under host/Shell journeys and Engine observation | Shell/KWin/native activation journeys and Engine request routing untraced |
+| R-ACT-02, COSMIC/awesome (2) | `H[A*,B]` with sandboxed B (COSMIC security context required); native mark path; focus B; record clear | Mark sourced; same-workspace (COSMIC) and any (awesome) focus-time clear untraced |
+| R-ACT-02, xmonad/PaperWM/karousel/paneru/Ours KDE/Windows (6) | Same fixture; record marker and clear | Native hint/clear (xmonad) and host mark/clear paths untraced |
+
+Queue cell math: 2 + 5 + 2 + 6 = 15, matching P2 + T13 applicable
+unresolved cells (E13 need no tests; Q0).
