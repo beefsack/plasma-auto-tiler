@@ -1242,10 +1242,10 @@ describe("observation-convergence (complete observation, test-first)", () => {
         }
     });
 
-    it("min-infeasible clean fit declines with overconstrained skip while feasible retains fit", async () => {
+    it("min-infeasible clean fit declines with origin-plus-minimum writes while feasible retains fit", async () => {
         // Same side-by-side frames, distinguished only by native minSize:
-        // 700-wide minimums decline to the seed (flags, zero writes),
-        // 100-wide minimums retain the fit (identity, applied).
+        // 700-wide minimums decline to the seed but still write origin plus
+        // minimum (B6), 100-wide minimums retain the fit (identity, applied).
         for (const [tag, minW, expectFallback] of [["infeasible", 700, true], ["feasible", 100, false]] as const) {
             const h = await makeHarness();
             const plan = h.makePlan();
@@ -1294,14 +1294,28 @@ describe("observation-convergence (complete observation, test-first)", () => {
                     for (const entry of geometry) {
                         assert.equal(entry["overconstrained"], true, "declined seed flags both tiles overconstrained");
                     }
-                    assert.equal(
-                        h.geometries.filter((call) => call.target === left || call.target === right).length,
-                        0,
-                        "overconstrained members receive zero native writes",
+                    // B6: each flagged tile writes its planned origin with
+                    // the violated width raised to the declared minimum; the
+                    // satisfied height axis is untouched.
+                    const appliedTo = (target: object): Array<{ x: number; y: number; w: number; h: number }> =>
+                        h.geometries.filter((call) => call.target === target).map((call) => call.rect);
+                    assert.deepEqual(
+                        appliedTo(right),
+                        [{ x: 8, y: 8, w: 700, h: 784 }],
+                        "left tile writes origin plus minimum",
+                    );
+                    assert.deepEqual(
+                        appliedTo(left),
+                        [{ x: 604, y: 8, w: 700, h: 784 }],
+                        "anchor tile writes origin plus minimum",
                     );
                     assert.ok(
-                        h.logs.some((line) => line.includes("overconstrained-skipped")),
-                        "adapter logs the overconstrained skip",
+                        h.logs.some((line) => line.includes("minimum-placed")),
+                        "adapter logs the minimum placement",
+                    );
+                    assert.ok(
+                        !h.logs.some((line) => line.includes("overconstrained-skipped")),
+                        "no skip remains on the minimum path",
                     );
                 } else {
                     for (const entry of geometry) {
@@ -1372,6 +1386,526 @@ describe("observation-convergence (complete observation, test-first)", () => {
                 h.stop();
                 await h.bridge.close();
             }
+        }
+    });
+
+    it("R-MIN-01 newcomer minimum exceeds shares flags only the newcomer with origin-plus-minimum", async () => {
+        // Authentic R-MIN-01 journey (real observer + real Engine): ws-4
+        // holds two feasible 500-minimum tiles, then a 700-minimum newcomer
+        // arrives. The Engine keeps the proportional fit for the feasible
+        // siblings and flags only the newcomer overconstrained; B6 writes
+        // the newcomer at its planned origin raised to its minimum while
+        // the reflowed sibling writes its fitted share. Hidden domain stays
+        // background throughout (no send, no follow).
+        const h = await makeHarness();
+        const plan = h.makePlan();
+        try {
+            await backgroundWs1(h);
+            const m1 = makeWindow("n-win-n1", h.win.wa.output, h.desk.d4);
+            const m2 = makeWindow("n-win-n2", h.win.wa.output, h.desk.d4);
+            m1.frameGeometry = { x: 8, y: 8, width: 588, height: 784 };
+            m2.frameGeometry = { x: 604, y: 8, width: 588, height: 784 };
+            m1.minSize = { width: 500, height: 100 };
+            m2.minSize = { width: 500, height: 100 };
+            h.addWindow(m1);
+            h.addWindow(m2);
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "feasible baseline dispatch");
+            for (let index = 0; index < 10 && h.queued() > 0; index += 1) {
+                await h.flush();
+            }
+            const baseCalls = h.calls.filter((call) => wsOf(call.payload) === "ws-4");
+            assert.ok(baseCalls.length >= 1, "feasible baseline adopts");
+            const baseReply = tryParse(baseCalls[baseCalls.length - 1]?.reply ?? "");
+            assert.equal(baseReply?.["outcome"], "planned", "baseline plans");
+            for (const entry of (baseReply?.["desired_geometry"] as Array<Record<string, unknown>> | undefined) ?? []) {
+                assert.ok(!("overconstrained" in entry), "feasible baseline flags nothing");
+            }
+            const from = h.calls.length;
+            const m3 = makeWindow("n-win-n3", h.win.wa.output, h.desk.d4);
+            m3.frameGeometry = { x: 8, y: 8, width: 300, height: 300 };
+            m3.minSize = { width: 700, height: 100 };
+            h.addWindow(m3);
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "newcomer dispatch");
+            for (let index = 0; index < 10 && h.queued() > 0; index += 1) {
+                await h.flush();
+            }
+            const targetCalls = h.calls.slice(from).filter((call) => wsOf(call.payload) === "ws-4");
+            assert.ok(targetCalls.length >= 1, "newcomer domain reconciles");
+            const target = targetCalls[targetCalls.length - 1] as { payload: string; reply: string };
+            const body = tryParse(target.payload);
+            assert.equal(body?.["focused_window"], "n-win-n3", "newcomer is the hidden structural anchor");
+            const requestWindows = (body?.["windows"] as Array<Record<string, unknown>> | undefined) ?? [];
+            assert.equal(requestWindows.length, 3, "complete observation carries the populated tree plus newcomer");
+            assert.deepEqual(
+                requestWindows.find((entry) => entry["window"] === "n-win-n3")?.["min_size"],
+                { w: 700, h: 100 },
+                "newcomer minimum rides the wire",
+            );
+            const reply = tryParse(target.reply);
+            assert.equal(reply?.["outcome"], "planned", "newcomer infeasibility still plans");
+            const geometry = (reply?.["desired_geometry"] as Array<Record<string, unknown>> | undefined) ?? [];
+            assert.equal(geometry.length, 3, "projection covers the tree plus newcomer");
+            for (const entry of geometry) {
+                if (entry["window"] === "n-win-n3") {
+                    assert.equal(entry["overconstrained"], true, "only the newcomer is flagged");
+                } else {
+                    assert.ok(!("overconstrained" in entry), "feasible siblings keep their fit unflagged");
+                }
+                assert.ok(!("client_clamped" in entry), "minimum path carries no clamp");
+            }
+            const rectOf = (id: string): { x: number; y: number; w: number; h: number } => {
+                const entry = geometry.find((item) => item["window"] === id);
+                assert.ok(entry !== undefined, `geometry covers ${id}`);
+                return entry?.["rect"] as { x: number; y: number; w: number; h: number };
+            };
+            assert.deepEqual(rectOf("n-win-n1"), { x: 8, y: 8, w: 588, h: 388 }, "reflowed sibling keeps its fitted share");
+            assert.deepEqual(rectOf("n-win-n3"), { x: 8, y: 404, w: 588, h: 388 }, "newcomer planned share with gap 8");
+            const appliedTo = (ref: object): Array<{ x: number; y: number; w: number; h: number }> =>
+                h.geometries.filter((call) => call.target === ref).map((call) => call.rect);
+            assert.ok(
+                appliedTo(m3).some((rect) => rect.x === 8 && rect.y === 404 && rect.w === 700 && rect.h === 388),
+                "newcomer writes planned origin raised to its minimum",
+            );
+            assert.ok(
+                appliedTo(m1).some((rect) => rect.x === 8 && rect.y === 8 && rect.w === 588 && rect.h === 388),
+                "reflowed sibling writes its fitted share",
+            );
+            assert.ok(
+                h.logs.some((line) => line.includes("minimum-placed") && line.includes("window=n-win-n3")),
+                "adapter logs the newcomer minimum placement",
+            );
+            assert.ok(
+                !h.logs.some((line) => line.includes("minimum-placed") && line.includes("window=n-win-n1")),
+                "feasible siblings are never minimum-placed",
+            );
+            assert.ok(
+                !h.logs.some((line) => line.includes("overconstrained-skipped")),
+                "no skip remains on the minimum path",
+            );
+            assert.deepEqual(m1.desktops, [h.desk.d4], "hidden ownership keeps first sibling");
+            assert.deepEqual(m3.desktops, [h.desk.d4], "hidden ownership admits the newcomer");
+            assert.equal(h.surface["activeWindow"], h.win.wc, "foreground focus never moves");
+        } finally {
+            plan.disable();
+            h.stop();
+            await h.bridge.close();
+        }
+    });
+
+    it("R-MIN-02 shrink makes members infeasible then grow recovers to fit", async () => {
+        // Authentic R-MIN-02 wide-row journey (real observer + real Engine):
+        // two 600-minimum tiles fit the wide 1400 area, the shrink to 1080
+        // makes both infeasible (528 shares), and growing back to 1400
+        // recovers the fit. Bounds ride each payload; B6 writes origin plus
+        // minimum on the shrink and the fitted shares on recovery.
+        const h = await makeHarness();
+        const plan = h.makePlan();
+        try {
+            await backgroundWs1(h);
+            (h.surface as Record<string, unknown>)["clientArea"] = () => ({ x: 0, y: 0, width: 1400, height: 800 });
+            const m1 = makeWindow("n-win-s1", h.win.wa.output, h.desk.d4);
+            const m2 = makeWindow("n-win-s2", h.win.wa.output, h.desk.d4);
+            m1.frameGeometry = { x: 8, y: 8, width: 688, height: 784 };
+            m2.frameGeometry = { x: 704, y: 8, width: 688, height: 784 };
+            m1.minSize = { width: 600, height: 100 };
+            m2.minSize = { width: 600, height: 100 };
+            h.addWindow(m1);
+            h.addWindow(m2);
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "wide baseline dispatch");
+            for (let index = 0; index < 12 && h.queued() > 0; index += 1) {
+                await h.flush();
+            }
+            const wideCalls = h.calls.filter((call) => wsOf(call.payload) === "ws-4");
+            assert.ok(wideCalls.length >= 1, "wide domain adopts");
+            const wideReply = tryParse(wideCalls[wideCalls.length - 1]?.reply ?? "");
+            assert.equal(wideReply?.["outcome"], "planned", "wide baseline plans");
+            for (const entry of (wideReply?.["desired_geometry"] as Array<Record<string, unknown>> | undefined) ?? []) {
+                assert.ok(!("overconstrained" in entry), "wide shares fit, nothing flagged");
+            }
+            const narrowFrom = h.calls.length;
+            (h.surface as Record<string, unknown>)["clientArea"] = () => ({ x: 0, y: 0, width: 1080, height: 800 });
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "shrink dispatch");
+            for (let index = 0; index < 12 && h.queued() > 0; index += 1) {
+                await h.flush();
+            }
+            const narrowCalls = h.calls.slice(narrowFrom).filter((call) => wsOf(call.payload) === "ws-4");
+            assert.ok(narrowCalls.length >= 1, "shrunk domain reconciles");
+            const narrow = narrowCalls[narrowCalls.length - 1] as { payload: string; reply: string };
+            assert.deepEqual(
+                (tryParse(narrow.payload)?.["domain"] as Record<string, unknown>)?.["bounds"],
+                { x: 0, y: 0, w: 1080, h: 800 },
+                "shrink payload carries the narrowed bounds",
+            );
+            const narrowReply = tryParse(narrow.reply);
+            assert.equal(narrowReply?.["outcome"], "planned", "shrink infeasibility still plans");
+            const narrowGeometry = (narrowReply?.["desired_geometry"] as Array<Record<string, unknown>> | undefined) ?? [];
+            assert.equal(narrowGeometry.length, 2, "shrink projection keeps both members");
+            for (const entry of narrowGeometry) {
+                assert.equal(entry["overconstrained"], true, "shrunk shares flag both members");
+            }
+            const narrowRectOf = (id: string): { x: number; y: number; w: number; h: number } => {
+                const entry = narrowGeometry.find((item) => item["window"] === id);
+                assert.ok(entry !== undefined, `shrink geometry covers ${id}`);
+                return entry?.["rect"] as { x: number; y: number; w: number; h: number };
+            };
+            assert.deepEqual(narrowRectOf("n-win-s1"), { x: 8, y: 8, w: 528, h: 784 }, "shrunk left share");
+            assert.deepEqual(narrowRectOf("n-win-s2"), { x: 544, y: 8, w: 528, h: 784 }, "shrunk right share");
+            const appliedTo = (ref: object): Array<{ x: number; y: number; w: number; h: number }> =>
+                h.geometries.filter((call) => call.target === ref).map((call) => call.rect);
+            assert.ok(
+                appliedTo(m1).some((rect) => rect.x === 8 && rect.y === 8 && rect.w === 600 && rect.h === 784),
+                "shrunk left tile writes origin plus minimum",
+            );
+            assert.ok(
+                appliedTo(m2).some((rect) => rect.x === 544 && rect.y === 8 && rect.w === 600 && rect.h === 784),
+                "shrunk right tile writes origin plus minimum",
+            );
+            assert.ok(h.logs.some((line) => line.includes("minimum-placed")), "adapter logs the shrink placement");
+            assert.ok(
+                !h.logs.some((line) => line.includes("overconstrained-skipped")),
+                "no skip remains on the shrink path",
+            );
+            const growFrom = h.calls.length;
+            (h.surface as Record<string, unknown>)["clientArea"] = () => ({ x: 0, y: 0, width: 1400, height: 800 });
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "grow dispatch");
+            for (let index = 0; index < 12 && h.queued() > 0; index += 1) {
+                await h.flush();
+            }
+            const growCalls = h.calls.slice(growFrom).filter((call) => wsOf(call.payload) === "ws-4");
+            assert.ok(growCalls.length >= 1, "grown domain reconciles");
+            const growReply = tryParse(growCalls[growCalls.length - 1]?.reply ?? "");
+            assert.equal(growReply?.["outcome"], "planned", "grow recovery plans");
+            const growGeometry = (growReply?.["desired_geometry"] as Array<Record<string, unknown>> | undefined) ?? [];
+            for (const entry of growGeometry) {
+                assert.ok(!("overconstrained" in entry), "recovered shares flag nothing");
+            }
+            assert.ok(
+                appliedTo(m1).some((rect) => rect.x === 8 && rect.y === 8 && rect.w === 688 && rect.h === 784),
+                "recovered left tile writes its fitted share",
+            );
+            assert.ok(
+                appliedTo(m2).some((rect) => rect.x === 704 && rect.y === 8 && rect.w === 688 && rect.h === 784),
+                "recovered right tile writes its fitted share",
+            );
+            assert.deepEqual(
+                { ...m1.frameGeometry },
+                { x: 8, y: 8, width: 688, height: 784 },
+                "native readback recovers the fitted left tile",
+            );
+            for (const call of h.calls) {
+                assert.equal(tryParse(call.reply)?.["outcome"], "planned", "no rejection churn across shrink and recovery");
+            }
+        } finally {
+            plan.disable();
+            h.stop();
+            await h.bridge.close();
+        }
+    });
+
+    it("R-MIN-03 oversized sole writes origin plus minimum on an offset background domain", async () => {
+        // Authentic R-MIN-03 journey (real observer + real Engine): a single
+        // 1300-minimum tile is admitted on an empty hidden domain whose
+        // usable area starts at a nonzero output origin. The Engine projects
+        // the sole leaf and flags it; B6 writes the planned origin (offset +
+        // outer gap) raised to the minimum. A quiet repeat proves no
+        // write-fighting, and a 1px drift proves the next op reasserts the
+        // same effective target without rejection churn.
+        const h = await makeHarness();
+        const plan = h.makePlan();
+        try {
+            await backgroundWs1(h);
+            (h.surface as Record<string, unknown>)["clientArea"] = () => ({ x: 100, y: 50, width: 1200, height: 800 });
+            const sole = makeWindow("n-win-sole", h.win.wa.output, h.desk.d4);
+            sole.frameGeometry = { x: 108, y: 58, width: 1184, height: 784 };
+            sole.minSize = { width: 1300, height: 500 };
+            h.addWindow(sole);
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "sole dispatch");
+            for (let index = 0; index < 12 && h.queued() > 0; index += 1) {
+                await h.flush();
+            }
+            const targetCalls = h.calls.filter((call) => wsOf(call.payload) === "ws-4");
+            assert.ok(targetCalls.length >= 1, "sole domain adopts");
+            const target = targetCalls[targetCalls.length - 1] as { payload: string; reply: string };
+            assert.deepEqual(
+                (tryParse(target.payload)?.["domain"] as Record<string, unknown>)?.["bounds"],
+                { x: 100, y: 50, w: 1200, h: 800 },
+                "offset background bounds ride the wire",
+            );
+            const reply = tryParse(target.reply);
+            assert.equal(reply?.["outcome"], "planned", "oversized sole still plans");
+            const geometry = (reply?.["desired_geometry"] as Array<Record<string, unknown>> | undefined) ?? [];
+            assert.equal(geometry.length, 1, "sole projection covers the admitted tile");
+            assert.equal(geometry[0]?.["overconstrained"], true, "violated sole minimum is flagged");
+            assert.ok(!("client_clamped" in (geometry[0] ?? {})), "minimum path carries no clamp");
+            assert.deepEqual(
+                geometry[0]?.["rect"],
+                { x: 108, y: 58, w: 1184, h: 784 },
+                "sole leaf starts at the offset origin with gaps",
+            );
+            const appliedTo = (): Array<{ x: number; y: number; w: number; h: number }> =>
+                h.geometries.filter((call) => call.target === sole).map((call) => call.rect);
+            assert.deepEqual(appliedTo(), [{ x: 108, y: 58, w: 1300, h: 784 }], "sole writes offset origin plus minimum");
+            assert.deepEqual(
+                { ...sole.frameGeometry },
+                { x: 108, y: 58, width: 1300, height: 784 },
+                "native readback matches the effective target",
+            );
+            assert.ok(h.logs.some((line) => line.includes("minimum-placed") && line.includes("window=n-win-sole")), "adapter logs the sole placement");
+            assert.ok(
+                !h.logs.some((line) => line.includes("overconstrained-skipped")),
+                "no skip remains on the sole path",
+            );
+            // Quiet repeat at the effective target: no new native writes
+            // before the next reply is processed (no write-fighting).
+            const geomsBefore = h.geometries.length;
+            plan.requestResync();
+            firePlan(h);
+            await settle(50);
+            assert.equal(h.geometries.length, geomsBefore, "repeat observation at effective writes nothing");
+            for (let index = 0; index < 12 && h.queued() > 0; index += 1) {
+                await h.flush();
+            }
+            assert.ok(
+                appliedTo().every((rect) => rect.w === 1300 && rect.x === 108 && rect.y === 58),
+                "repeat never grows beyond the effective target",
+            );
+            // Explicit subsequent op: a 1px origin drift reconciles back to
+            // the same effective target with no rejection.
+            sole.frameGeometry = { x: 108, y: 59, width: 1300, height: 784 };
+            const driftFrom = h.calls.length;
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "drift dispatch");
+            for (let index = 0; index < 12 && h.queued() > 0; index += 1) {
+                await h.flush();
+            }
+            const driftCalls = h.calls.slice(driftFrom).filter((call) => wsOf(call.payload) === "ws-4");
+            assert.ok(driftCalls.length >= 1, "drifted sole reconciles");
+            const driftReply = tryParse(driftCalls[driftCalls.length - 1]?.reply ?? "");
+            assert.equal(driftReply?.["outcome"], "planned", "drift reconcile plans");
+            assert.equal(
+                (driftReply?.["desired_geometry"] as Array<Record<string, unknown>>)?.[0]?.["overconstrained"],
+                true,
+                "drift keeps the sole flag",
+            );
+            assert.deepEqual(appliedTo()[appliedTo().length - 1], { x: 108, y: 58, w: 1300, h: 784 }, "drift reasserts the effective origin");
+            for (const call of h.calls) {
+                assert.equal(tryParse(call.reply)?.["outcome"], "planned", "no rejection churn around the sole journey");
+            }
+            assert.ok(!h.logs.some((line) => line.includes("parked") || line.includes("rejected")), "no park or rejection is retained");
+            assert.deepEqual(sole.desktops, [h.desk.d4], "hidden ownership keeps the sole tile");
+        } finally {
+            plan.disable();
+            h.stop();
+            await h.bridge.close();
+        }
+    });
+
+    it("Ghostty-like max shortfall accepts the client clamp with no rewrite and bounded quiet", async () => {
+        // Real-Engine client-clamp journey (not the feasible-minimum path):
+        // two tiles adopt cleanly, then the right tile's client reports a
+        // real maximum of 700 high and renders exactly there. The Engine
+        // retains the full desired truth but flags client_clamped; the
+        // adapter honors the clamp (no rewrite, clamp-accepted) and a repeat
+        // of the same short frame stays bounded with no park or rejection.
+        const h = await makeHarness();
+        const plan = h.makePlan();
+        try {
+            await backgroundWs1(h);
+            const g1 = makeWindow("n-win-g1", h.win.wa.output, h.desk.d4);
+            const g2 = makeWindow("n-win-g2", h.win.wa.output, h.desk.d4);
+            g1.frameGeometry = { x: 8, y: 8, width: 588, height: 784 };
+            g2.frameGeometry = { x: 604, y: 8, width: 588, height: 784 };
+            h.addWindow(g1);
+            h.addWindow(g2);
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "baseline dispatch");
+            for (let index = 0; index < 10 && h.queued() > 0; index += 1) {
+                await h.flush();
+            }
+            g2.maxSize = { width: 2000, height: 700 };
+            g2.frameGeometry = { x: 604, y: 8, width: 588, height: 700 };
+            const driftFrom = h.calls.length;
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "short-frame dispatch");
+            for (let index = 0; index < 10 && h.queued() > 0; index += 1) {
+                await h.flush();
+            }
+            const driftCalls = h.calls.slice(driftFrom).filter((call) => wsOf(call.payload) === "ws-4");
+            assert.ok(driftCalls.length >= 1, "short frame reconciles");
+            const drift = driftCalls[driftCalls.length - 1] as { payload: string; reply: string };
+            const driftBody = tryParse(drift.payload);
+            const driftWindows = (driftBody?.["windows"] as Array<Record<string, unknown>> | undefined) ?? [];
+            assert.deepEqual(
+                driftWindows.find((entry) => entry["window"] === "n-win-g2")?.["max_size"],
+                { w: 2000, h: 700 },
+                "observed clamp bound rides the wire",
+            );
+            const driftReply = tryParse(drift.reply);
+            assert.equal(driftReply?.["outcome"], "planned", "clamped short frame still plans");
+            const driftGeometry = (driftReply?.["desired_geometry"] as Array<Record<string, unknown>> | undefined) ?? [];
+            const clamped = driftGeometry.find((entry) => entry["window"] === "n-win-g2");
+            assert.equal(clamped?.["client_clamped"], true, "short frame is accepted as client-clamped");
+            assert.ok(!("overconstrained" in (clamped ?? {})), "clamp needs no minimum flag");
+            assert.deepEqual(clamped?.["rect"], { x: 604, y: 8, w: 588, h: 784 }, "desired truth is retained");
+            assert.equal(
+                h.geometries.filter((call) => call.target === g2).length,
+                0,
+                "clamped member is never rewritten",
+            );
+            assert.ok(h.logs.some((line) => line.includes("clamp-accepted") && line.includes("window=n-win-g2")), "adapter logs clamp acceptance");
+            assert.ok(!h.logs.some((line) => line.includes("minimum-placed")), "clamp path never minimum-places");
+            // Bounded quiet: repeating the identical short frame writes
+            // nothing new and retains the clamp without parking.
+            const geomsBefore = h.geometries.length;
+            const repeatFrom = h.calls.length;
+            plan.requestResync();
+            firePlan(h);
+            await settle(50);
+            assert.equal(h.geometries.length, geomsBefore, "repeat short frame writes nothing");
+            for (let index = 0; index < 10 && h.queued() > 0; index += 1) {
+                await h.flush();
+            }
+            const repeatCalls = h.calls.slice(repeatFrom).filter((call) => wsOf(call.payload) === "ws-4");
+            assert.ok(repeatCalls.length <= 2, `repeat stays bounded, got ${String(repeatCalls.length)}`);
+            for (const call of repeatCalls) {
+                const repeatReply = tryParse(call.reply);
+                assert.equal(repeatReply?.["outcome"], "planned", "repeat still plans");
+                const repeatClamped = ((repeatReply?.["desired_geometry"] as Array<Record<string, unknown>> | undefined) ?? []).find(
+                    (entry) => entry["window"] === "n-win-g2",
+                );
+                assert.equal(repeatClamped?.["client_clamped"], true, "repeat retains the clamp");
+            }
+            assert.equal(
+                h.geometries.filter((call) => call.target === g2).length,
+                0,
+                "repeat never refights the clamped member",
+            );
+            for (const call of h.calls) {
+                assert.equal(tryParse(call.reply)?.["outcome"], "planned", "no rejection churn around the clamp");
+            }
+            assert.ok(!h.logs.some((line) => line.includes("parked") || line.includes("rejected")), "explained clamp never parks");
+        } finally {
+            plan.disable();
+            h.stop();
+            await h.bridge.close();
+        }
+    });
+
+    it("short minimum readback rewrites boundedly then accepts with no churn", async () => {
+        // Real-Engine minimum-shortfall journey (contained, never overflow):
+        // a 900-minimum tile is planned at 588 but the host holds every
+        // 900-wide write at 700. The adapter reasserts the effective target
+        // across repeated reconciles, then the existing bounded acceptance
+        // adopts the held rect and stays quiet: no rejection, no park, no
+        // ping-pong, and the feasible sibling is never rewritten.
+        const h = await makeHarness();
+        const plan = h.makePlan();
+        try {
+            await backgroundWs1(h);
+            const m1 = makeWindow("n-win-h1", h.win.wa.output, h.desk.d4);
+            const m2 = makeWindow("n-win-h2", h.win.wa.output, h.desk.d4);
+            m1.frameGeometry = { x: 8, y: 8, width: 588, height: 784 };
+            m2.frameGeometry = { x: 604, y: 8, width: 588, height: 784 };
+            m1.minSize = { width: 900, height: 100 };
+            h.addWindow(m1);
+            h.addWindow(m2);
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "shortfall baseline dispatch");
+            for (let index = 0; index < 10 && h.queued() > 0; index += 1) {
+                await h.flush();
+            }
+            const writesOf = (target: object, w: number): number =>
+                h.geometries.filter((call) => call.target === target && call.rect.w === w).length;
+            const writesFor = (target: object): Array<{ x: number; y: number; w: number; h: number }> =>
+                h.geometries.filter((call) => call.target === target).map((call) => call.rect);
+            const baseCalls = h.calls.filter((call) => wsOf(call.payload) === "ws-4");
+            assert.ok(baseCalls.length >= 1, "shortfall baseline adopts");
+            const baseReply = tryParse(baseCalls[baseCalls.length - 1]?.reply ?? "");
+            const baseGeometry = (baseReply?.["desired_geometry"] as Array<Record<string, unknown>> | undefined) ?? [];
+            const baseRectOf = (id: string): { x: number; y: number; w: number; h: number } => {
+                const entry = baseGeometry.find((item) => item["window"] === id);
+                assert.ok(entry !== undefined, `baseline geometry covers ${id}`);
+                return entry?.["rect"] as { x: number; y: number; w: number; h: number };
+            };
+            const plannedM1 = baseRectOf("n-win-h1");
+            const plannedM2 = baseRectOf("n-win-h2");
+            const effectiveM1 = { x: plannedM1.x, y: plannedM1.y, w: 900, h: plannedM1.h };
+            assert.deepEqual(writesFor(m1), [effectiveM1], "admission writes the effective minimum once");
+            const siblingBaselineWrites = writesFor(m2).length;
+            assert.ok(
+                writesFor(m2).every((rect) => rect.x === plannedM2.x && rect.y === plannedM2.y && rect.w === plannedM2.w && rect.h === plannedM2.h),
+                "sibling writes at most its baseline reflow share",
+            );
+            // Host holds the minimum short: every effective write reads back
+            // 700 wide at the planned origin. Cycle resync rounds until the
+            // domain stays quiet.
+            const short = { x: plannedM1.x, y: plannedM1.y, width: 700, height: plannedM1.h };
+            m1.frameGeometry = { ...short };
+            let rounds = 0;
+            for (; rounds < 6; rounds += 1) {
+                plan.requestResync();
+                firePlan(h);
+                await settle(50);
+                if (h.queued() === 0) {
+                    break;
+                }
+                for (let index = 0; index < 12 && h.queued() > 0; index += 1) {
+                    await h.flush();
+                }
+                const last = h.geometries.filter((call) => call.target === m1).map((call) => call.rect).pop();
+                assert.deepEqual(
+                    last,
+                    effectiveM1,
+                    `round ${String(rounds)} reasserts the effective target`,
+                );
+                assert.equal(
+                    writesFor(m2).length,
+                    siblingBaselineWrites,
+                    `round ${String(rounds)} never rewrites the feasible sibling`,
+                );
+                m1.frameGeometry = { ...short };
+            }
+            assert.equal(writesOf(m1, 900), 4, "one admission plus exactly three bounded reasserts");
+            assert.ok(
+                h.logs.some((line) => line.includes("reconcile-accepted") && line.includes("cause=stable-drift")),
+                "bounded acceptance adopts the held rect",
+            );
+            // Settled quiet: further resyncs dispatch nothing and write
+            // nothing, with no rejection, park, or ping-pong growth.
+            for (let quiet = 0; quiet < 2; quiet += 1) {
+                const geomsBefore = h.geometries.length;
+                plan.requestResync();
+                firePlan(h);
+                await settle(50);
+                assert.equal(h.queued(), 0, `quiet cycle ${String(quiet)} dispatches nothing`);
+                assert.equal(h.geometries.length, geomsBefore, `quiet cycle ${String(quiet)} writes nothing`);
+            }
+            assert.deepEqual({ ...m1.frameGeometry }, short, "held frame never grows beyond the short readback");
+            for (const call of h.calls) {
+                assert.equal(tryParse(call.reply)?.["outcome"], "planned", "no rejection churn around the shortfall");
+            }
+            assert.ok(!h.logs.some((line) => line.includes("parked") || line.includes("rejected")), "shortfall never parks");
+            assert.deepEqual(m1.desktops, [h.desk.d4], "hidden ownership keeps the held tile");
+        } finally {
+            plan.disable();
+            h.stop();
+            await h.bridge.close();
         }
     });
 

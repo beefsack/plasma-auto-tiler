@@ -1085,6 +1085,41 @@ function isTargetRect(value: unknown): value is PlanRect {
     return true;
 }
 
+// B6 minimum-origin placement: one meaningful native minimum extent,
+// mirroring core `meaningful` (1..=GEOMETRY_BOUND). Unknown, zero,
+// negative, or absurd values behave as absent, never as a floor.
+function meaningfulMinExtent(value: unknown): number | null {
+    if (!isFiniteInt(value)) {
+        return null;
+    }
+    const extent = value as number;
+    if (extent < 1 || extent > 16384) {
+        return null;
+    }
+    return extent;
+}
+
+// Effective native target for an overconstrained tile: planned origin with
+// each extent raised to the freshly observed declared minimum. Satisfied or
+// unknown/sentinel extents pass through byte-identical (mirrors Windows
+// `overconstrained_effective`: origin kept, only violated extents grow).
+function overconstrainedEffective(
+    planned: PlanRect,
+    minSize: { readonly w: number; readonly h: number } | null | undefined,
+): PlanRect {
+    if (minSize === null || minSize === undefined) {
+        return planned;
+    }
+    const minW = meaningfulMinExtent(minSize.w);
+    const minH = meaningfulMinExtent(minSize.h);
+    const w = minW === null ? planned.w : Math.max(planned.w, minW);
+    const h = minH === null ? planned.h : Math.max(planned.h, minH);
+    if (w === planned.w && h === planned.h) {
+        return planned;
+    }
+    return { x: planned.x, y: planned.y, w, h };
+}
+
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
     const actual = Object.keys(value);
     if (actual.length !== keys.length) {
@@ -1977,8 +2012,14 @@ export class PlanAdapter {
     // Per-id applied evidence (rect, output/workspace, floating/sticky/
     // fullscreen/maximized), written only on applied replies. Read-only hint
     // for overlays, first-admission maximize, and drag lookup; never authority
-    // for Plan membership.
-    private appliedById = new Map<string, { rect: PlanRect; output: string; workspace: string; floating: boolean; sticky: boolean; fullscreen: boolean; maximized: boolean }>();
+    // for Plan membership. The optional minimumPlaced marker records that the
+    // retained rect is minimum-guarded (raised, floor-touching, or
+    // host-undershot) still awaiting host confirmation; it keeps bounded
+    // reassertion accounting across the converged echo of our own write.
+    // Set from the effective placement every apply; cleared by feasible
+    // projections with slack, acceptance, and member lifecycle (entry
+    // deletion).
+    private appliedById = new Map<string, { rect: PlanRect; output: string; workspace: string; floating: boolean; sticky: boolean; fullscreen: boolean; maximized: boolean; minimumPlaced?: boolean }>();
     // Per-domain applied scope (bounds, gap, outerGap), keyed by domain
     // output/workspace. Written only on successful applied plan replies
     // alongside appliedById; never admission or membership authority.
@@ -2964,6 +3005,67 @@ export class PlanAdapter {
             };
         });
         return { ...snapshot, windows };
+    }
+
+    // Fresh declared minimum behind one live ref at actuation time.
+    // Best-effort and fail-closed: a missing reader, a throw, or an
+    // unreadable value keeps the planned rect (unknown means no hint, never
+    // a learned or persistent floor). Integer shape mirrors hintSizesFor;
+    // meaningfulness (1..16384) is judged in overconstrainedEffective.
+    private freshMinFor(ref: object): { readonly w: number; readonly h: number } | null {
+        try {
+            const reader = this.env.readWindowConstraints;
+            if (typeof reader !== "function") {
+                return null;
+            }
+            const constraints = reader(ref);
+            if (constraints === null || typeof constraints !== "object") {
+                return null;
+            }
+            const min = (constraints as PlanWindowConstraints).minSize;
+            if (min === null || min === undefined || !Number.isInteger(min.w) || !Number.isInteger(min.h)) {
+                return null;
+            }
+            return { w: min.w, h: min.h };
+        } catch (error) {
+            void error;
+            return null;
+        }
+    }
+
+    // Effective write target for one planned member: overconstrained members
+    // rise to the freshly observed declared minimum at the planned origin;
+    // all other members keep the planned rect. `minimumPlaced` marks a member
+    // whose minimum actually raised an extent (for the structured
+    // diagnostic); satisfied or unknown/sentinel minima pass through quiet.
+    // `minimumGuarded` marks minimum-driven accounting independently of the
+    // planner flag: the plan touches the declared floor, or the live
+    // observation undershoots it. This also covers planner-adapted
+    // projections that satisfy the minimum without flagging (the host may
+    // still hold them short). Ordinary feasible members (plan with slack
+    // above the floor, observation honoring it) stay unguarded.
+    private effectiveTargetFor(
+        entry: PlanGeometryEntry,
+        refById: ReadonlyMap<string, object>,
+        observed?: PlanRect,
+    ): { rect: PlanRect; minimumPlaced: boolean; minimumGuarded: boolean } {
+        const ref = refById.get(entry.window);
+        const minSize = ref === undefined ? null : this.freshMinFor(ref);
+        const minW = minSize === null ? null : meaningfulMinExtent(minSize.w);
+        const minH = minSize === null ? null : meaningfulMinExtent(minSize.h);
+        const guarded =
+            (minW !== null && entry.rect.w <= minW) ||
+            (minH !== null && entry.rect.h <= minH) ||
+            (observed !== undefined &&
+                ((minW !== null && observed.w < minW) || (minH !== null && observed.h < minH)));
+        if (!entry.overconstrained) {
+            return { rect: entry.rect, minimumPlaced: false, minimumGuarded: guarded };
+        }
+        const effective = overconstrainedEffective(entry.rect, minSize);
+        if (effective.w === entry.rect.w && effective.h === entry.rect.h) {
+            return { rect: entry.rect, minimumPlaced: false, minimumGuarded: guarded };
+        }
+        return { rect: effective, minimumPlaced: true, minimumGuarded: guarded };
     }
 
     requestMove(direction: unknown): void {
@@ -4998,7 +5100,7 @@ export class PlanAdapter {
             ) {
                 continue;
             }
-            this.appliedById.set(entry.id, { ...evidence, rect: { ...entry.rect } });
+            this.appliedById.set(entry.id, { ...evidence, rect: { ...entry.rect }, minimumPlaced: false });
             accepted += 1;
         }
         if (hidden) {
@@ -5007,6 +5109,27 @@ export class PlanAdapter {
             this.reconcileAttempts = 0;
         }
         this.logToken(`${LOG_PREFIX}:reconcile-accepted windows=${String(accepted)} cause=stable-drift recovery=accept-client-rect`);
+    }
+
+    // Whether the snapshot observes a B6 minimum-placed member homed on its
+    // domain: applied evidence behind a currently observed id carries the
+    // minimum-placement marker with matching output/workspace. Converged
+    // observations on such domains must not reset bounded reassertion
+    // accounting (the echo of our own effective write precedes the host
+    // verdict); ordinary feasible domains reset exactly as before.
+    private domainHasMinimumPlaced(snapshot: PlanSnapshot): boolean {
+        for (const entry of snapshot.windows) {
+            const evidence = this.appliedById.get(entry.id);
+            if (
+                evidence !== undefined &&
+                evidence.minimumPlaced === true &&
+                evidence.output === entry.output &&
+                evidence.workspace === entry.workspace
+            ) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private noteObservation(fingerprint: string): void {
@@ -5326,7 +5449,15 @@ export class PlanAdapter {
                 this.logToken(`${LOG_PREFIX}:echo-fence-cleared-equality`);
             }
             this.pointerEcho = null;
-            this.reconcileAttempts = 0;
+            // Ordinary feasible domains reset exactly as before. A domain
+            // observing a B6 minimum-placed member keeps its count: the
+            // converged observation may echo our own just-completed
+            // effective write before the host enforces its verdict, and
+            // resetting here would make bounded acceptance unreachable
+            // for hosts that do not retain the minimum.
+            if (!this.domainHasMinimumPlaced(freshSnapshot)) {
+                this.reconcileAttempts = 0;
+            }
             this.absorbDeferredDragIntent(this.deferredAuto, true);
             if (this.deferredAuto !== null && this.deferredAuto.op === "reconcile") {
                 this.deferredAuto = null;
@@ -5616,7 +5747,14 @@ export class PlanAdapter {
             };
         }
         if (classification.converged && classification.scopeEqual && !classification.rawRetainedOutOfBounds && !hiddenForced) {
-            this.clearBackgroundReconcile(freshSnapshot);
+            // Ordinary feasible domains reset exactly as before. A domain
+            // observing a B6 minimum-placed member keeps its count (see the
+            // foreground quiet branch): the converged observation may echo
+            // our own just-completed effective write before the host
+            // enforces its verdict.
+            if (!this.domainHasMinimumPlaced(freshSnapshot)) {
+                this.clearBackgroundReconcile(freshSnapshot);
+            }
             return { intent: null, outcome: "equal", reason: "applied-evidence-equal", terminal: "quiet" };
         }
         // Work-area transition: pureDrift holds here, so same window set is
@@ -7825,7 +7963,26 @@ export class PlanAdapter {
             for (const entry of current.windows) {
                 oldById.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
             }
-            const ordered = orderGeometryWrites(oldById, planned.geometry.filter((entry) => !entry.overconstrained));
+            // B6: overconstrained members write the effective target (planned
+            // origin with each violated extent raised to the freshly observed
+            // declared minimum), ordered with the same canonical
+            // grow-before-shrink order as every other member.
+            const effectivePlanned = planned.geometry.map((entry) => {
+                const effective = this.effectiveTargetFor(entry, byRef);
+                return { entry, rect: effective.rect, minimumPlaced: effective.minimumPlaced };
+            });
+            const ordered = orderGeometryWrites(
+                oldById,
+                effectivePlanned.map((item) => ({ window: item.entry.window, rect: item.rect })),
+            );
+            const rectByWindow = new Map<string, PlanRect>();
+            const placedByWindow = new Set<string>();
+            for (const item of effectivePlanned) {
+                rectByWindow.set(item.entry.window, item.rect);
+                if (item.minimumPlaced) {
+                    placedByWindow.add(item.entry.window);
+                }
+            }
             for (const entry of ordered) {
                 if (!this.r4FlightFencesHold(flightState, flight, session, r4)) {
                     const fenced = !isUniqueOwner(this.pinnedOwner) || !isGeneration(this.generation) ? "owner-loss" : "stale-scope";
@@ -7841,29 +7998,24 @@ export class PlanAdapter {
                     this.r4SettleTerminal(r4, "write-failed");
                     return;
                 }
+                const writeRect = rectByWindow.get(entry.window) ?? entry.rect;
                 let written = false;
                 try {
-                    written = this.env.setGeometry(ref, entry.rect) === true;
+                    written = this.env.setGeometry(ref, writeRect) === true;
                 } catch (error) {
                     void error;
                     written = false;
                 }
                 const resourceClass = this.r4ResourceClass(current, entry.window);
                 if (!written) {
-                    this.writeDiag(entry.window, resourceClass, "write-failed", entry.rect);
+                    this.writeDiag(entry.window, resourceClass, "write-failed", writeRect);
                     this.r4SettleTerminal(r4, "write-failed");
                     return;
                 }
-                this.writeDiag(entry.window, resourceClass, "written", entry.rect);
-            }
-            for (const entry of planned.geometry) {
-                if (entry.overconstrained) {
-                    const resourceClass = this.r4ResourceClass(current, entry.window);
-                    this.writeDiag(entry.window, resourceClass, "skip-overconstrained", entry.rect);
+                this.writeDiag(entry.window, resourceClass, "written", writeRect);
+                if (placedByWindow.has(entry.window)) {
+                    this.logToken(`${LOG_PREFIX}:minimum-placed correlation=${correlation} window=${entry.window} resource_class=${resourceClass} op=${flightState.op} rect=${String(writeRect.x)},${String(writeRect.y)},${String(writeRect.w)},${String(writeRect.h)}`);
                 }
-            }
-            if (planned.geometry.some((entry) => entry.overconstrained)) {
-                this.logToken(`${LOG_PREFIX}:overconstrained-skipped correlation=${correlation} op=${flightState.op}`);
             }
         } finally {
             this.r4WriteDepth = Math.max(0, this.r4WriteDepth - 1);
@@ -7961,34 +8113,58 @@ export class PlanAdapter {
             }
             resourceClassById.set(entry.id, isOpaqueId(entry.resourceClass) ? entry.resourceClass : "unknown");
         }
-        // AR12: planner-directed skips. Overconstrained members are never
-        // reasserted on any op; client-clamped members are honored only on
-        // reconcile/update-gaps (the only paths that set the flag). Honored
-        // members leave the observed rectangle alone and keep the retained
-        // desired rectangle as authoritative truth. Park accounting for a
-        // fully explained reconcile apply resets below; a mixed apply that
-        // also reasserts genuine drift keeps the bounded increment.
-        const overconstrainedById = new Set<string>();
+        // AR12: planner-directed skips and B6 minimum-origin placement.
+        // Overconstrained members write the effective target (planned origin
+        // with each violated extent raised to the freshly observed declared
+        // minimum) on every op; client-clamped members are honored only on
+        // reconcile/update-gaps (the only paths that set the flag) and leave
+        // the observed rectangle alone. Park accounting for a fully explained
+        // reconcile apply resets below; a mixed apply that also reasserts
+        // genuine drift keeps the bounded increment.
         const clampedById = new Set<string>();
         for (const entry of planned.geometry) {
-            if (entry.overconstrained) {
-                overconstrainedById.add(entry.window);
-            } else if (entry.clientClamped) {
+            // A both-flagged member keeps minimum precedence (core resolves
+            // contradictory pairs minimum-first): it is minimum-placed,
+            // never clamp-skipped.
+            if (entry.clientClamped && !entry.overconstrained) {
                 clampedById.add(entry.window);
             }
         }
         const honorClamp = flightState.op === "reconcile" || flightState.op === "update-gaps";
+        // Effective write targets, resolved once from the fresh observation
+        // so ordering, equality, writes, and applied bookkeeping agree. The
+        // minimum sets additionally exclude overlay-skipped and honored
+        // clamp-skipped members (native owns those frames or the clamp is
+        // honored instead; nothing minimum-driven is written for them), so
+        // the applied-evidence marker below only ever marks genuinely
+        // minimum-guarded write targets.
+        const effectiveById = new Map<string, PlanRect>();
+        const minimumPlacedById = new Set<string>();
+        const minimumGuardedById = new Set<string>();
+        for (const entry of planned.geometry) {
+            const effective = this.effectiveTargetFor(entry, byRef, oldById.get(entry.window));
+            effectiveById.set(entry.window, effective.rect);
+            const skipped =
+                fullscreenById.has(entry.window) ||
+                maximizedById.has(entry.window) ||
+                (floatingById.has(entry.window) && flightState.floatTarget?.window !== entry.window) ||
+                (honorClamp && clampedById.has(entry.window));
+            if (effective.minimumPlaced && !skipped) {
+                minimumPlacedById.add(entry.window);
+            }
+            if (effective.minimumGuarded && !skipped) {
+                minimumGuardedById.add(entry.window);
+            }
+        }
         let honoredAr12Skips = 0;
         for (const entry of planned.geometry) {
-            if (overconstrainedById.has(entry.window)) {
-                honoredAr12Skips += 1;
-            } else if (honorClamp && clampedById.has(entry.window)) {
+            if (honorClamp && clampedById.has(entry.window)) {
                 honoredAr12Skips += 1;
             }
         }
-        const writable = planned.geometry.filter(
-            (entry) => !overconstrainedById.has(entry.window) && !(honorClamp && clampedById.has(entry.window)),
-        );
+        const writable = planned.geometry
+            .filter((entry) => !(honorClamp && clampedById.has(entry.window)))
+            .map((entry) => ({ ...entry, rect: effectiveById.get(entry.window) ?? entry.rect }));
         const ordered = orderGeometryWrites(oldById, writable);
         const orderedById = new Set<string>();
         for (const entry of ordered) {
@@ -8021,26 +8197,25 @@ export class PlanAdapter {
             // skipped maximized, already equal, written, or write-failed) with
             // the stable opaque window id and target rect. Fullscreen takes
             // precedence over maximize, and either overlay state takes
-            // precedence over equality. AR12 planner-directed skips
-            // (overconstrained, honored client clamp) take precedence over
-            // equality and carry their own default-visible correlated line.
+            // precedence over equality. The honored client clamp takes
+            // precedence over equality and carries its own default-visible
+            // correlated line. B6 minimum-origin placement logs only per
+            // successfully written raised member (with the actual rect) at
+            // the write below, never for already-equal or failed members.
             for (const entry of planned.geometry) {
+                const effectiveRect = effectiveById.get(entry.window) ?? entry.rect;
                 if (fullscreenById.has(entry.window)) {
-                    this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-fullscreen", entry.rect);
+                    this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-fullscreen", effectiveRect);
                 } else if (maximizedById.has(entry.window)) {
-                    this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-maximized", entry.rect);
+                    this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-maximized", effectiveRect);
                 } else if (floatingById.has(entry.window) && flightState.floatTarget?.window !== entry.window) {
-                    this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-floating", entry.rect);
-                } else if (overconstrainedById.has(entry.window)) {
-                    const resourceClass = resourceClassById.get(entry.window) ?? "unknown";
-                    this.writeDiag(entry.window, resourceClass, "skip-overconstrained", entry.rect);
-                    this.logToken(`${LOG_PREFIX}:overconstrained-skipped correlation=${flightState.correlation} window=${entry.window} resource_class=${resourceClass} op=${flightState.op}`);
+                    this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-floating", effectiveRect);
                 } else if (honorClamp && clampedById.has(entry.window)) {
                     const resourceClass = resourceClassById.get(entry.window) ?? "unknown";
-                    this.writeDiag(entry.window, resourceClass, "skip-clamped", entry.rect);
+                    this.writeDiag(entry.window, resourceClass, "skip-clamped", effectiveRect);
                     this.logToken(`${LOG_PREFIX}:clamp-accepted correlation=${flightState.correlation} window=${entry.window} resource_class=${resourceClass} op=${flightState.op}`);
                 } else if (!orderedById.has(entry.window)) {
-                    this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-already-equal", entry.rect);
+                    this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-already-equal", effectiveRect);
                 }
             }
             for (const entry of ordered) {
@@ -8087,6 +8262,9 @@ export class PlanAdapter {
                     return;
                 }
                 this.writeDiag(entry.window, resourceClass, "written", entry.rect);
+                if (minimumPlacedById.has(entry.window)) {
+                    this.logToken(`${LOG_PREFIX}:minimum-placed correlation=${flightState.correlation} window=${entry.window} resource_class=${resourceClass} op=${flightState.op} rect=${String(entry.rect.x)},${String(entry.rect.y)},${String(entry.rect.w)},${String(entry.rect.h)}`);
+                }
                 if (traceNativeConstraints) {
                     this.constraintTracePending.set(entry.window, {
                         correlation: flightState.correlation,
@@ -8293,7 +8471,10 @@ export class PlanAdapter {
                 : base;
             const rectById = new Map<string, PlanRect>();
             for (const entry of planned.geometry) {
-                rectById.set(entry.window, entry.rect);
+                // Applied bookkeeping records the effective write target so
+                // equality, readback, and settlement agree with what native
+                // was asked for (B6 minimum-origin placement included).
+                rectById.set(entry.window, effectiveById.get(entry.window) ?? entry.rect);
             }
             // Auto-reconcile membership edge, read before applied evidence
             // advances below: a reconcile that changed tiled membership or
@@ -8374,6 +8555,11 @@ export class PlanAdapter {
                 for (const entry of windows) {
                     live.add(entry.id);
                     const source = retainedBase.windows.find((candidate) => candidate.id === entry.id);
+                    // Fresh every apply: marked exactly while the retained
+                    // target is minimum-guarded (raised, floor-touching, or
+                    // host-undershot). Cleared by feasible projections with
+                    // slack, acceptance, and (via deletion below) member
+                    // lifecycle.
                     this.appliedById.set(entry.id, {
                         rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
                         output: entry.output,
@@ -8382,6 +8568,7 @@ export class PlanAdapter {
                         sticky: source?.sticky === true,
                         fullscreen: entry.fullscreen,
                         maximized: entry.maximized,
+                        minimumPlaced: minimumGuardedById.has(entry.id),
                     });
                 }
                 for (const [id, evidence] of [...this.appliedById]) {
@@ -8398,12 +8585,18 @@ export class PlanAdapter {
                 }
             }
             if (flightState.op === "pointer-resize" && flightState.pointerSource !== null) {
+                // The echo fence compares what native will show: minimum-
+                // placed neighbours read back at the effective target, so
+                // store the effective rect (already the written one above).
                 const neighbours = planned.geometry
                     .filter((entry) => entry.window !== flightState.pointerSource)
-                    .map((entry) => ({
-                        window: entry.window,
-                        rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
-                    }));
+                    .map((entry) => {
+                        const effective = effectiveById.get(entry.window) ?? entry.rect;
+                        return {
+                            window: entry.window,
+                            rect: { x: effective.x, y: effective.y, w: effective.w, h: effective.h },
+                        };
+                    });
                 this.pointerEcho = {
                     correlation: flightState.correlation,
                     source: flightState.pointerSource,
@@ -8453,8 +8646,6 @@ export class PlanAdapter {
                     skips.add("skipped-maximized");
                 } else if (floatingById.has(entry.window) && flightState.floatTarget?.window !== entry.window) {
                     skips.add("skipped-floating");
-                } else if (overconstrainedById.has(entry.window)) {
-                    skips.add("skipped-overconstrained");
                 } else if (honorClamp && clampedById.has(entry.window)) {
                     skips.add("skipped-clamped");
                 } else if (!orderedById.has(entry.window)) {

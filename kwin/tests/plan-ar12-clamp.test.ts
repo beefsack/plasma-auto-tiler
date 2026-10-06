@@ -405,9 +405,10 @@ describe("plan adapter AR12 overconstrained minimum", () => {
     const bounds = { x: 0, y: 0, w: 1200, h: 800 };
     const allocA = { x: 0, y: 0, w: 600, h: 800 };
     const allocB = { x: 600, y: 0, w: 600, h: 800 };
+    const effectiveA = { x: 0, y: 0, w: 900, h: 800 };
     const driftA = { x: 0, y: 0, w: 616, h: 800 };
 
-    it("never reasserts an overconstrained window and never parks", () => {
+    it("writes the effective minimum at the planned origin and settles quiet", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         mocks.constraintsImpl = (target): PlanWindowConstraints | null => {
@@ -428,33 +429,59 @@ describe("plan adapter AR12 overconstrained minimum", () => {
             requestWindows(mocks, 0).find((entry) => entry["window"] === "win-a")?.["min_size"],
             { w: 900, h: 700 },
         );
-        for (let cycle = 0; cycle < 3; cycle += 1) {
-            const writesBefore = mocks.geometries.length;
-            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, bounds, rects: { "win-a": driftA, "win-b": allocB } });
-            fire(mocks, "geometry");
-            runDebounce(mocks);
-            const index = 1 + cycle;
-            assert.equal(mocks.dbusCalls.length, index + 1);
-            const correlation = plannerPayload(mocks, index)["correlation_id"] as string;
-            mocks.callbacks[index]?.(
-                plannedReplyWithFlags(correlation, [
-                    { window: "win-a", rect: allocA, overconstrained: true },
-                    { window: "win-b", rect: allocB },
-                ]),
-            );
-            assert.equal(mocks.geometries.length, writesBefore, "overconstrained drift is never rewritten");
-            assert.ok(
-                mocks.logs.some(
-                    (line) =>
-                        line ===
-                        `plasma-auto-tiler:plan:overconstrained-skipped correlation=${correlation} window=win-a resource_class=unknown op=reconcile`,
-                ),
-            );
-        }
+        // Admission at the planned size reads back at the effective minimum.
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, bounds, rects: { "win-a": effectiveA, "win-b": allocB } });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        const index = 1;
+        assert.equal(mocks.dbusCalls.length, index + 1);
+        const correlation = plannerPayload(mocks, index)["correlation_id"] as string;
+        const writesBefore = mocks.geometries.length;
+        mocks.callbacks[index]?.(
+            plannedReplyWithFlags(correlation, [
+                { window: "win-a", rect: allocA, overconstrained: true },
+                { window: "win-b", rect: allocB },
+            ]),
+        );
+        // B6: the flagged member is already at its effective target, so no
+        // rewrite lands; the feasible sibling is already equal too. No
+        // placement is logged without a successful write.
+        assert.equal(mocks.geometries.length, writesBefore, "effective equality is never rewritten");
+        assert.ok(
+            !mocks.logs.some((line) => line.includes("minimum-placed") && line.includes(`correlation=${correlation}`)),
+            "already-equal effective logs no placement",
+        );
+        assert.ok(!mocks.logs.some((line) => line.includes("overconstrained-skipped")));
+        // A later drift of the minimum member away from effective reasserts
+        // the effective target instead of the infeasible plan.
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, bounds, rects: { "win-a": driftA, "win-b": allocB } });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        const reassertIndex = 2;
+        assert.equal(mocks.dbusCalls.length, reassertIndex + 1);
+        const reassertCorr = plannerPayload(mocks, reassertIndex)["correlation_id"] as string;
+        mocks.callbacks[reassertIndex]?.(
+            plannedReplyWithFlags(reassertCorr, [
+                { window: "win-a", rect: allocA, overconstrained: true },
+                { window: "win-b", rect: allocB },
+            ]),
+        );
+        const writesFor = (target: object): Array<{ x: number; y: number; w: number; h: number }> =>
+            mocks.geometries.filter((entry) => entry.target === target).map((entry) => entry.rect);
+        assert.deepEqual(writesFor(refs.a).pop(), effectiveA, "drift reasserts the effective minimum at origin");
+        assert.deepEqual(writesFor(refs.b), [], "feasible sibling untouched");
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line ===
+                    `plasma-auto-tiler:plan:minimum-placed correlation=${reassertCorr} window=win-a resource_class=unknown op=reconcile rect=0,0,900,800`,
+            ),
+            "successful reassert logs the actual rect",
+        );
         assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"));
     });
 
-    it("honors overconstrained on a move reply too", () => {
+    it("places the minimum on a move reply while the feasible member writes its plan", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         mocks.constraintsImpl = (): PlanWindowConstraints | null => ({
@@ -473,17 +500,17 @@ describe("plan adapter AR12 overconstrained minimum", () => {
                 { window: "win-b", rect: movedB },
             ]),
         );
-        assert.deepEqual(
-            mocks.geometries,
-            [{ target: refs.b, rect: movedB }],
-            "only the unconstrained member is written",
-        );
+        const writesFor = (target: object): Array<{ x: number; y: number; w: number; h: number }> =>
+            mocks.geometries.filter((entry) => entry.target === target).map((entry) => entry.rect);
+        assert.deepEqual(writesFor(refs.a), [effectiveA], "flagged member writes origin plus minimum");
+        assert.deepEqual(writesFor(refs.b), [movedB], "feasible member writes its plan");
         assert.ok(
             mocks.logs.some(
                 (line) =>
                     line ===
-                    `plasma-auto-tiler:plan:overconstrained-skipped correlation=${correlation} window=win-a resource_class=unknown op=move`,
+                    `plasma-auto-tiler:plan:minimum-placed correlation=${correlation} window=win-a resource_class=unknown op=move rect=0,0,900,800`,
             ),
+            "successful placement logs the actual rect",
         );
     });
 });

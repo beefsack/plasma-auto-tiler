@@ -370,10 +370,11 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   native extent at least its declared minimum, rather than skipped while their
   tile space is reserved. Equality/readback/refusal use that effective target.
   This supersedes Windows' 2026-10-02 overconstrained skip decision; KDE's
-  current adapter still skips such writes. Oversized windows may overlap
-  siblings or extend beyond the work area when the sequential seed cannot fit;
+  origin+minimum actuation is delivered offline 2026-10-07. Oversized windows
+  may overlap siblings or extend beyond the work area when the sequential seed cannot fit;
   no alternative-axis search, floating fallback or global optimizer is selected.
-  Evidence: [placement correctness](changes/archive/windows-placement-correctness.md).
+  Evidence: [placement correctness](changes/archive/windows-placement-correctness.md),
+  [KDE B6 delivery](changes/archive/kde-minimum-origin-placement.md).
 - Provisional, to discuss (2026-10-03, retained Windows overlay minimums):
   tiled maximized/fullscreen members retain their last-known declared minimum
   hints, bound to the member's lifetime token and canonical slot, until normal
@@ -388,7 +389,10 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
     confirms the Windows provisional choice above; KDE replaces its skipped
     writes. The cross-WM consensus (R-MIN-01..03: 7/8 references do not
     enforce tiled minima by default) is a recorded counterpoint, not a
-    reversal.
+    reversal. KDE delivered offline 2026-10-07: origin+minimum writes with
+    effective-target equality and bounded host-shortfall acceptance; native
+    R-MIN-01..03 journeys remain user-owned.
+    [Delivery record](changes/archive/kde-minimum-origin-placement.md).
   - Q3: a first-seen (born) maximized window follows COSMIC: it tiles with a
     reserved slot and keeps its maximize as an overlay; no launch unmaximize,
     on KDE and Windows. This supersedes the one-shot admission maximize

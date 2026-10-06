@@ -85,7 +85,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then PaperWM: extension enable adopts the five free windows through the existing-window path; minimum handling and exact origins TBD. `S(S-pap-ins)` + `S(S-pap-rst)`; queued.
 - Then karousel/Lazy: script enable re-admits the five free windows via addExistingClients; minimum handling and exact origins TBD. `S(S-kar-ins)` + `S(S-kar-start)`; queued.
 - Then paneru: no-counterpart (no tiling enable verb; startup matching is session restore, never substituted). `S(S-pan-cmds)`.
-- Then Ours KDE: KDE still skips; `D(D-place)` provisional divergence; exact fixture TBD
+- Then Ours KDE: Minimum-infeasible startup fits still decline to sequential long-edge seeding; writable infeasible tiles then use origin+minimum (B6, overlap/overflow possible). Code: [adapter](../../../kwin/src/plan-adapter.ts) `overconstrainedEffective`, `writeGeometries`; [startup fixture](../../../kwin/tests/workspace-send-engine-fixture.test.ts). Exact native fixture TBD; `D(D-place)`
 - Then Ours Windows: tile origin, extent at least declared minimum (overlap/overflow possible); `D(D-place)` + `D(D-dec-win)` provisional divergence; exact fixture TBD
 - Variant hook: V-START-MIN.
 

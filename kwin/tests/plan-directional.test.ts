@@ -929,9 +929,15 @@ describe("plan adapter R4 immediate transfer (lean, no wire protocol)", () => {
         assertCorrelated(mocks, correlation, "arrived");
     });
 
-    it("skips plan-flagged overconstrained geometry without extra writes", () => {
+    it("writes plan-flagged overconstrained geometry at origin plus minimum on R4", () => {
         const r = refs();
         const { mocks, native } = r4Mocks(r);
+        (mocks.env as unknown as Record<string, unknown>)["readWindowConstraints"] = (target: object): unknown => {
+            if (target === r.a) {
+                return { resizeable: true, minSize: { w: 400, h: 600 }, maxSize: null };
+            }
+            return { resizeable: true, minSize: null, maxSize: null };
+        };
         mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
             status: "ready",
             observed: dynamicOccupiedObserved(r, native),
@@ -944,11 +950,25 @@ describe("plan adapter R4 immediate transfer (lean, no wire protocol)", () => {
         mocks.callbacks[0]?.(JSON.stringify(planned));
         assert.equal(native.sentTransfers.length, 1);
         assert.equal(native.sentMemberships.length, 1);
-        assert.equal(mocks.geometries.length, 1);
-        assert.equal(mocks.geometries[0]?.target, r.x);
+        // B6: the flagged mover writes its planned origin with violated
+        // extents raised to the declared minimum; the feasible member writes
+        // its plan untouched.
+        assert.equal(mocks.geometries.length, 2);
+        const forTarget = (target: object): Array<Record<string, unknown>> =>
+            mocks.geometries.filter((entry) => entry.target === target).map((entry) => entry.rect as Record<string, unknown>);
+        assert.deepEqual(forTarget(r.a), [{ x: 810, y: 10, w: 400, h: 600 }]);
+        assert.deepEqual(forTarget(r.x), [{ x: 1200, y: 10, w: 380, h: 580 }]);
         assert.equal(mocks.actives.length, 1);
         assert.equal(adapter.isR4InFlight, false);
-        assert.ok(mocks.logs.some((line) => line.includes(correlation) && line.includes("overconstrained-skipped")));
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line ===
+                    `plasma-auto-tiler:plan:minimum-placed correlation=${correlation} window=win-a resource_class=unknown op=move rect=810,10,400,600`,
+            ),
+            "successful R4 placement logs the actual rect",
+        );
+        assert.ok(!mocks.logs.some((line) => line.includes("overconstrained-skipped")));
         assertNoWireProtocol(mocks);
     });
 

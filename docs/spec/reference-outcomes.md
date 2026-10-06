@@ -3115,7 +3115,7 @@ Legend:
 | V-MAX-MODEL | Maximize: retained-slot overlay vs layout reflow vs no state | Selected: retained-slot overlay (`D-dec-ww` KDE + `D-dec-max`); [Q3](../decisions.md#cross-platform-behavior) includes born-maximized R-MAX-06, KDE [delivered offline](../changes/archive/kde-born-maximized-overlay.md) ([adapter](../../kwin/src/plan-adapter.ts)), live TBD; Windows delivery pending; R-MAX-03 scope open |
 | V-FS-SLOT | In-place fullscreen: retain slot vs remove/reflow | Retained slot selected (`D-dec-ww`); born-fullscreen is a separate future row |
 | V-START-SEED | Startup non-fitting topology: centre-cut inference vs long-edge seed | Provisional long-edge seed, to discuss (`D-place`) |
-| V-START-MIN | Minimum-infeasible writes: clamp-at-origin vs skip vs float | Provisional Windows clamp / KDE skip divergence (`D-place`) |
+| V-START-MIN | Minimum-infeasible writes: origin+minimum vs skip vs float | B6 selected on both platforms; KDE [delivered offline](../changes/archive/kde-minimum-origin-placement.md), native journey TBD (`D-place`; [adapter](../../kwin/src/plan-adapter.ts) `overconstrainedEffective`) |
 | V-CLOSE-FOCUS | Removal focus: source-MRU top vs spatial neighbor vs target history | `D-dec-cos` selects source-MRU top |
 | V-GROUP-STACK | Tabbed stacks: supported vs fail-closed refuse | Deferred; refuse closed (`D-dec-cos`) |
 | V-R4-DIR | Exhausted horizontal move: cross-output vs no-op vs workspace cycle | `D-dec-cos` selects cross-output R4; Up/Down excluded |
