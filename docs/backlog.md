@@ -185,7 +185,12 @@ decisions of 2026-09-24 are under
   minimums use origin+minimum on both platforms (Windows already does it;
   KDE replaces skip-writes). Q3 born-maximized admission follows COSMIC:
   tile with a reserved slot and keep the maximize as an overlay, no launch
-  unmaximize (KDE and Windows). B9 overlaid intentional unfloat:
+  unmaximize (KDE and Windows); KDE delivered offline `9b612be` (901 KWin
+  tests, CI green; R-MAX-03 floating-to-tiled one-shot clear unchanged
+  pending the scope question; live steps in
+  [record](changes/archive/kde-born-maximized-overlay.md): born-maximized
+  launch beside a sibling, native restore into the slot, session-restore
+  no loop). B9 overlaid intentional unfloat:
   provisionally unfloat and stay maximized (KDE dispatches already; settled
   result unverified); Windows changes from refusal after the user's COSMIC
   check of R-FLT-06. Pinned 11-WM source comparison added. B7
