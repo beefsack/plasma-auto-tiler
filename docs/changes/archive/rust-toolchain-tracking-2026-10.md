@@ -108,3 +108,19 @@ derivation. Record their separate version baselines and host-check limits.
   Validate host-native builds on the user's KDE machines with `resolve`,
   host-matched rebuild and fresh Plasma activation. The host state cannot be
   checked from this Windows session; patch-level KWin ABI matters too.
+
+## Recheck 2026-10-07 (Linux)
+
+- Upstream latest stable remains Rust 1.99.0 (released 2026-10-01); no newer
+  stable release appears in the GitHub releases API.
+- `nixos-unstable` snapshot `151fa4e8ddfdd8dd25d945ad94ed54a13de9f6e4`
+  (2026-10-06) still defaults to `rust_1_98`, with `rustcVersion = "1.98.1"`.
+  Checked the commits API and revision-specific `all-packages.nix` / `1_98.nix`.
+  KWin/Qt/KF remain 6.7.5 / 6.11.2 / 6.30.0.
+- Rust 1.99.0 remains on `staging` (`5b3f768efa582a4e0fc0eca696a6723238ee20ac`);
+  checked `staging-next` and `master` still select Rust 1.98.1.
+- No eligible unstable pin move reaches 1.99.0 for either consumer. Devenv
+  remains 1.98.1 and native CI remains 1.97.1 at the pins recorded above.
+  The bump stays parked; no new-toolchain gates or live desktop tests ran.
+  No session restart is needed. Next: recheck unstable, then follow the existing
+  pin-bump procedure and host-matched native validation when eligible.
