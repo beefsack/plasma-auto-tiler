@@ -1,13 +1,13 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (99 rows:
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (103 rows:
 58-row historical audit preserved below, plus 6-row insertion expansion
 plus 4-row focus expansion plus 3-row move expansion plus 4-row resize
 expansion plus 4-row layout expansion plus 7-row workspace expansion
 plus 3-row minimize expansion plus 2-row maximize expansion
 plus 2-row groups expansion plus 3-row floating expansion
-plus 3-row close expansion).
+plus 3-row close expansion plus 4-row multi-output expansion).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -120,10 +120,10 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
 Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups/floating/close are per-predicate: A 20, B 19, U 11 full rows + two KDE legs, C 17, W 11;
+Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups/floating/close/multi-output are per-predicate: A 21, B 20, U 12 full rows + two KDE legs, C 17, W 11;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
 
-## Table A: strong cross-family consensus where ours differs (20)
+## Table A: strong cross-family consensus where ours differs (21)
 
 Ours differs = established follow/refusal/etc on at least one platform,
 or an inventory-evidenced verb/state gap on both platforms (missing verbs
@@ -151,13 +151,14 @@ never vote as agreement).
 | R-WS-14 | relative workspace send exists | relative-5/8 (C,H,B,I,S), 3/4 fam; follow policies differ | yes | no / no (missing relative-send verb) | Inventory gap; H previous is MRU, not numeric decrement |
 | R-MAX-09 full | fullscreen window carries its state to the target workspace (not restored first) | carry-5/8 (B,I,S,Q,A), 3/4 fam; H/C TBD; niri window-send strips (scrolling, non-voting) | TBD (transfer sourced, carry untraced) | KDE TBD / Windows refuses fullscreen, carries maximized | Windows refusal differs; KDE native-send outcome untraced; max leg has no consensus |
 | R-GRP-03 close | closed active tab leaves a retained 2-tab group focused on C | retained-4/4ev plus focus-C-4/4ev (C,H,I,S), 3/4 fam; B/X/Q/A qualified | yes (active tab C) | no / no (no tab carrier and no close-tab verb in any Engine layer) | Inventory gap under standing V-GROUP-STACK deferral; foreign direction recorded if tabs ever specified |
+| R-OUT-04 send | explicit output transfer carries; declared follow forms follow the mover | carry-8/8 and follow-7/8 (C/H/B/I/S/Q/A), 4/4 fam; X target-stack focus only, source refocus TBD | yes (MoveToOutput follows, SendToOutput stays) | no / no (no send verb in any Engine/adapter layer; directional CrossOutput move is the separate R-OUT-01 verb) | Verb-shape gap, not a rejecting policy; send vs directional-move verbs distinguished |
 
 WS-01 notes: H silent (no-follow) path exists alongside profiled follow;
 alternate Move-verb inventory is a 4/4 tie (C/H/B/Q follow vs I/X/S/A
 default-stay), reported as inventory, never read as Send consensus. COSMIC
 MoveToWorkspace follow is not a Send vote.
 
-## Table B: strong consensus ours matches (19; pending explicit)
+## Table B: strong consensus ours matches (20; pending explicit)
 
 | Row | Consensus | Count | COSMIC | Ours KDE / Windows |
 |---|---|---|---|---|
@@ -174,6 +175,7 @@ MoveToWorkspace follow is not a Send vote.
 | R-MOV-02 | move-up swaps in place | W7/7 sourced | observed ER | yes / yes |
 | R-MOV-05 | single-output edge is noop | O7/7 sourced | observed ER | yes / yes (offline) |
 | R-OUT-01 | occupied-target move crosses outputs | C5/6ev, 3 fam | observed ER | yes-offline / yes-offline |
+| R-OUT-03 | exhausted left focus crosses; target X | cross-6/8 (B/I/X/S/A + H partial), target-X-5/8 (B/I/X/S/A), 3 fam; Q stays, C fall-through TBD | branch TBD (workspace step vs output switch under shipped layout) | yes / yes (Engine proposal selects X; adapter actuation) |
 | R-CLOSE-01 | close refocus follows MRU/stack/history rule | M5/8, 4/4 fam | yes | yes / yes |
 | R-DRAG-03 | both producers share one tiled-drag topology | S4/4ev thin, 3 fam | yes | yes / yes-synthetic (exact row TBD) |
 | R-DRAG-05 | zero-move press/release does not mutate | N6/8, 4/4 fam | yes | yes / yes |
@@ -186,7 +188,7 @@ position/order); consensus covers fresh-vs-oldslot only. WS-02 after-order
 leg (after-4/5ev C,B,I,S vs X before) is U (ours exact order TBD); tall/wide
 axis stays a qualifier (X/Q inapplicable).
 
-## Table U: strong consensus, ours unresolved (11 full rows + two KDE legs)
+## Table U: strong consensus, ours unresolved (12 full rows + two KDE legs)
 
 | Row | Consensus | Count | COSMIC | Ours |
 |---|---|---|---|---|
@@ -203,6 +205,7 @@ axis stays a qualifier (X/Q inapplicable).
 | R-CLOSE-03 sole | shown workspace retained on sole close | retained-7/8 (C,B,I,X,S,Q,A), 4/4 fam | yes (active kept) | TBD both (Engine collapse sourced; native journey TBD) |
 | R-CLOSE-04 float | tiles untouched with MRU refocus | untouched-6/8 plus focus-B-6/8 (C,B,I,S,Q,A), 4/4 fam | yes (layer separation plus MRU fixup) | TBD both (exception-drop sourced; adapter journey TBD) |
 | R-CLOSE-05 full | closed fullscreen needs no restore; survivor refills with focus | full-leg-5/8 (H/B/I/Q/A), 3 fam | TBD (removal sourced, overlay cleanup TBD) | TBD both (removal plus desired focus sourced; native cleanup TBD) |
+| R-OUT-05 open | ordinary admission lands on the focused output with newcomer focus | focused-7/8 (C,B,I,X,S,Q,A), 4/4 fam | yes (active-output default plus mapfocus) | routing TBD both (admission anchor sourced) |
 
 DRAG-08: unknown is not mismatch; B/I have deliberate no-focus paths.
 
@@ -1077,3 +1080,103 @@ close journeys before proposing any behavior change; the strong foreign
 direction is recorded for any future close-behavior specification.
 Missing triggers and TBD journeys never count as agreeing rejection. No
 product behavior is changed by this assessment.
+
+## Multi-output expansion: R-OUT-03..06 plus R-OUT-01/02 scrolling backfill
+
+Scope: this piece adds four GWT multi-output scenarios (R-OUT-03
+cross-output focus, R-OUT-04 explicit output send, R-OUT-05 open with
+two outputs, R-OUT-06 disconnect/reconnect), each with 14 Then
+profiles, and additive scrolling backfill blocks for R-OUT-01/02
+(original wide tables preserved). Historical tables and the 58-row
+audit above are preserved unchanged. Denominator, families, and the
+strength rule are unchanged: consensus classification below counts the
+original eight profiles only. The four scrolling profiles form one
+correlated lineage reported as an explicit separate non-voting
+comparison. karousel two-output fixtures are fixture-inapplicable per
+the sourced single-screen scope (`S-kar-single`), never no-op votes.
+paneru fixtures keep one strip per display (each display owns its
+strip and native Space). Ours cells cite production Engine plus
+separate adapter evidence (`S-ours-focus`, `S-ours-move`, `S-ours-ws`
+plus the new `S-ours-out`); the Engine workspace send refuses
+cross-output, so the R-OUT-04 Ours legs are qualified
+no-counterparts, not agreeing rejection. Cell classes are mutually
+exclusive per cell: E complete outcome evidenced with no TBD; P one
+sub-leg evidenced with the remainder TBD and queued; T TBD-only; Q all
+legs qualified with pinned inventory evidence; M mixed. Counts measure
+documentation coverage, not votes. Semantic outcomes lead each Then in
+one to three lines.
+
+| Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
+|---|---|---|---|
+| R-OUT-03 cross-output focus | crosses to L; target X vs stays | cross: B (west search spans monitors, `S-bsp-flt-focus`+`S-bsp-move-target`), I (workspace-level fallback returns L's visible workspace, `S-i3-outfocus`), X (all-visible-screen candidates, `S-xmo-scope`), S (output fallback after tree walk, `S-sway-focus`), A (global miss then screen cross, `S-awe-focus`), H partial (monitor fallback, target TBD, `S-hyp-focus`) = 6/8, 3 fam; target-X: B/I/X/S/A = 5/8, 3 fam; stay: Q (`left()` in-group only, `S-qti-focus`); fall-through branch TBD: C | B cross-6/8 plus target-X-5/8 (Ours matches) |
+| R-OUT-04 explicit send | carry to L; follow vs stay | carry: C (`MoveToOutput`/`SendToOutput`, `S-cos-out`), H (`movetoworkspace`, `S-hyp-movews`), B (`transfer_node`, `S-bsp-send`+`S-bsp-xfer`), I/S (TAIL attach, `S-i3-outmove`/`S-sway-outmove`), X (`W.shift`, `S-xmo-scope`), Q (`togroup`, `S-qti-group`), A (`move_to_tag`, `S-awe-tag`) = 8/8, 4/4 fam; visible follow: C Move/H follow/B `--follow`/I/S/Q follow/A activate = 7/8, 4/4 fam; X stays on source view, target-stack focus sourced, source refocus TBD | A carry-8/8 plus follow-7/8 (Ours has no send counterpart) |
+| R-OUT-05 open routing | lands on the focused output with newcomer focus | focused-L plus newcomer focus: C (`S-cos-out`+`S-cos-mapfocus`), B (`S-bsp-insert`), I (`S-i3-admit`), X (`S-xmo-admit`), S (`S-sway-ins`), Q (`S-qti-add`), A (`S-awe-manage`) = 7/8, 4/4 fam; TBD: H | U focused-output-7/8 (Ours routing TBD) |
+| R-OUT-06 disconnect | evacuation destination and return | retain monitor/desktops: B (shipped remove-unplugged=false; same-id return reuses monitor, `S-bsp-monrm`); evacuate: S (highest-available else fallback, `S-sway-evac`); TBD: C, H, I, X, Q, A | C audit-only (no agreed predicate) |
+
+Scrolling comparison (non-voting): R-OUT-01 niri/PaperWM/paneru stay
+under the semantic directional move (niri `move_left` edge-false,
+PaperWM same-space `swap` edge return, paneru `Swap(West)` with no
+western peer and no West display fall-through:
+`S-nir-move`+`S-nir-mon`, `S-pap-mon`, `S-pan-swap`); karousel
+fixture-inapplicable (`S-kar-single`). R-OUT-02 same three stay
+(single-column edge under the same verbs); karousel
+fixture-inapplicable. R-OUT-03 niri/PaperWM stay (per-workspace/
+per-space edge-false: `S-nir-focus`, `S-pap-focus`); paneru traversal
+TBD. R-OUT-04 niri carries with follow; PaperWM carries
+via `switchMonitor` window carry; paneru appends with Follow focus
+(`S-nir-mon`, `S-pap-mon`, `S-pan-display`). R-OUT-05 PaperWM lands on
+the selected space with activation (`S-pap-ins`); niri routing,
+paneru display routing and Hyprland cursor-vs-active routing TBD.
+R-OUT-06 all applicable scrolling profiles TBD (PaperWM GNOME mirror
+alone establishes no window outcome); karousel fixture-inapplicable.
+
+Counts (mutually exclusive E/P/T/Q/M). New rows (4x14=56): E 28,
+P 7, T 15, Q 6, M 0. Original-eight new cells (4x8=32): E 20
+(R-OUT-03: B/I/X/S/Q/A; R-OUT-04: C/H/B/I/S/Q/A; R-OUT-05:
+C/B/I/X/S/Q/A), P 5 (R-OUT-03: C/H; R-OUT-04: X; R-OUT-06: S/B),
+T 7 (R-OUT-05: H; R-OUT-06: C/H/I/X/Q/A), Q 0. Scrolling new cells
+(4x4=16): E 6 (R-OUT-03: niri/PaperWM; R-OUT-04: niri/PaperWM/paneru;
+R-OUT-05: PaperWM), P 0, T 6, Q 4 (karousel
+x4). Ours new cells (4x2=8): E 2 (R-OUT-03 cross to X), Q 2
+(R-OUT-04 same-output-only refusal), P 2 (R-OUT-05 admission
+anchor), T 2 (R-OUT-06 journeys). Backfill (2x4=8): E 6
+(R-OUT-01/02 niri/PaperWM/paneru stay), Q 2 (karousel x2). Total 64
+cells: E34/P7/T15/Q8. Table A grows 20 to 21 (R-OUT-04
+carry/follow); Table B grows 19 to 20 (R-OUT-03 cross); Table U
+grows 11 to 12 (R-OUT-05 focused-output); Table C/W unchanged. The
+matrix total is now 103 rows (99 + 4 new; backfill reuses IDs).
+
+Ours-vs-consensus position (no behavior selected): three new strong
+predicates stand matched or recorded, never silently differing.
+R-OUT-03 cross-6/8 (B/I/X/S/A plus H partial) and target-X-5/8
+(B/I/X/S/A), three families each: exhausted left focus crosses to L
+and selects X; Ours crosses to X on
+both platforms via the Engine proposal plus adapter actuation
+(`S-ours-focus` + `S-ours-out`), matching the strong direction.
+R-OUT-04 carry-8/8 plus follow-7/8 (all four families): explicit
+output transfer carries, with visible mover focus in the declared
+follow forms; xmonad retains the source view. Ours has no workspace-send
+counterpart under the standing same-output-only Engine rule
+(`S-ours-out` + `S-ours-ws`), while directional `CrossOutput` move
+stays the separate R-OUT-01 verb. R-OUT-05 focused-output-7/8
+(C/B/I/X/S/Q/A across all four families): ordinary admission lands on
+the focused output with newcomer focus; Ours admission anchor is
+sourced but output routing stays TBD. Recommend for batch user
+review, no selection or code change: add an explicit output-send verb
+through the shared Engine; establish the R-OUT-05/06 native journeys
+before proposing changes there. The strong foreign directions are
+recorded for any future output-transfer specification. Missing verbs
+and TBD journeys never count as agreeing rejection. No product behavior
+is changed by this assessment.
+
+Multi-output live-test queue (22 applicable unresolved cells, grouped;
+inventory/model checks precede fixtures; source-evidenced semantic legs
+need no physical confirmation):
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-OUT-03, COSMIC/Hyprland (2) | Focus left from A; shipped workspace layout (COSMIC), default fallback (Hyprland) | Fall-through/monitor-fallback sourced; exact branch/target TBD |
+| R-OUT-03, paneru (1) | Focus West from A on D2 with D1/D2 strips | Cross-display `Focus` traversal untraced |
+| R-OUT-04, xmonad (1) | Explicit send A to L; record source refocus | Carry plus target-stack focus sourced; `delete'` fallback untraced |
+| R-OUT-05, Hyprland/niri/paneru/Ours KDE/Windows (5) | Pointer on R, focused L; open C; record landing output | Cursor-vs-active routing (Hyprland/niri), display routing (paneru), Engine routing plus native activation (Ours) untraced |
+| R-OUT-06, all but karousel (13) | Occupied R focused; disconnect then reconnect; record evacuation and return | sway evacuation and bspwm default monitor retention/same-id reuse sourced; focus/visibility or affinity remainders and other migration journeys untraced |

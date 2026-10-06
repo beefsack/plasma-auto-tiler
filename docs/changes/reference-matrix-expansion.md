@@ -1,6 +1,6 @@
 # Reference matrix expansion
 
-- Status: active; restructure through close accepted; batch decisions pending, multi-output next.
+- Status: active; restructure through multi-output accepted; batch decisions pending, mouse next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
@@ -487,6 +487,22 @@ substituted for the host close action.
 | R-CLOSE-01 backfill, paneru (1) | Three columns; history A,C,B; close middle B; record rectangles | Nearest-center fallback sourced but identity geometry-dependent |
 | R-CLOSE-02 backfill, niri/karousel/paneru (3) | Manual 50/30/20 column widths; close B, focus C, reopen new B | Independent survivor widths and fresh admission sourced; reopened focus unresolved. PaperWM activate-on-show is sourced and not queued |
 
+### Multi-output queue additions (piece B12)
+
+22 applicable unresolved cells (P7 + T15), grouped in five entries.
+Directional edge movement and explicit monitor transfer are different
+actions. Qualified single-screen fixtures and absent project send verbs
+never become no-op votes. Source-evidenced carry/follow needs no exact
+column attachment or physical confirmation.
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-OUT-03, COSMIC/Hyprland (2) | Focus left from A with L sole X; shipped workspace layout/default monitor fallback | Fall-through/fallback sourced; COSMIC branch and Hyprland target unresolved |
+| R-OUT-03, paneru (1) | Focus West from A on D2, separate occupied D1/D2 strips | Cross-display focus traversal untraced |
+| R-OUT-04, xmonad (1) | Explicit windowToScreen A to L; record source refocus | Carry and target-stack focus sourced; source delete fallback unresolved |
+| R-OUT-05, Hyprland/niri/paneru/Ours KDE/Windows (5) | Focused L, pointer on R; ordinary C opens without rules | Cursor-vs-active/display routing and Ours routing/native activation unresolved |
+| R-OUT-06, all but karousel (13) | Occupied R focused; disconnect/reconnect same identity; user host only | sway evacuation and bspwm default retention/same-id reuse sourced; focus/visibility/affinity remainders and other migration journeys unresolved |
+
 ## Settled review and execution
 
 | User decision | Recommendation |
@@ -551,4 +567,8 @@ substituted for the host close action.
 - Close review: sequential implementation and independent source review corrected missing native close verbs, paneru row-0 retention precondition, an imprecise bspwm citation and consensus table continuity. Lead removed incidental unmap/width unknowns, corrected COSMIC's already-detached fullscreen fixture and repaired unsupported manual-width absence claims against PaperWM grid resize, paneru SetWidth and karousel host interactive resize. These failed width-inventory inferences were resolved with positive pinned source; no blocker or product behavior change remains.
 - Close consensus: shown-empty retention is strong 7/8 across four families; float close leaves tiles untouched and focuses B in C/B/I/S/Q/A (6/8, four families); full close refills/refocuses A in H/B/I/Q/A (5/8, three families). Ours Engine collapse, exception removal and desired focus are sourced, native close journeys unresolved: no evidenced Ours-vs-strong mismatch. Recommendation for batch review: establish empty-focus, float-focus and overlay cleanup on both platforms before proposing behavior changes. Karousel's middle-column close selects left neighbor A vs niri/PaperWM C; scrolling comparisons remain non-voting. Table U grows 8 to 11 full rows plus two KDE legs; A20/B19/C17/W11 unchanged.
 - Close verification: 3x14 Then profiles, 2x4 scrolling assessments, historical rows/pins preserved; citation resolution, local links, ASCII, whitespace and pinned-source review passed. Source/offline only. Queue adds 24 unresolved cells in seven groups. Stop at the close committed boundary because Lead context is crowded after evidence reconciliation.
-- Exact next action: expand multi-output R-OUT-03..06 and scrolling assessment of R-OUT-01/02; update consensus/live-test queue, verify, then commit/push. Continue mouse, special windows, activation, restart/persistence, then R-COL; collect product differences for batch review.
+- Multi-output outcome: R-OUT-03..06 added as four 14-profile GWT scenarios; R-OUT-01/02 assessed for four scrolling profiles, historical rows/pins preserved. Matrix now 103 scenarios. Coverage over 64 cells: E34/P7/T15/Q8/M0. New 56: E28/P7/T15/Q6 (original-eight E20/P5/T7; scrolling E6/T6/Q4; Ours E2/P2/T2/Q2); backfill 8: E6/Q2. Qualified single-screen fixtures and absent explicit send verbs never vote as rejection.
+- Multi-output review: implementation Worker resumed to replace inventory-only placeholders, whole-workspace substitutions and incidental geometry TBDs with pinned semantic evidence. Independent source review corrected over-lumped carry/follow votes. Lead found bspwm's direct monitor-destruction helper was not the shipped hotplug journey: remove-unplugged defaults false, same RandR id reuses the retained monitor, and the named true variant merges desktops before removal. Lead corrected that causal path, citation ranges, table/index summaries and niri's incidental attachment TBD; narrow follow-up review passed. Workers ran sequentially; no live tests or product changes.
+- Multi-output consensus: exhausted horizontal focus crosses in B/I/X/S/A plus H's sourced cross leg (6/8, three families); Ours crosses to sole X and matches. Explicit output transfer carries in 8/8, with visible follow in declared C/H/B/I/S/Q/A forms (7/8, four families); xmonad keeps the source view. Ours lacks an explicit output-send counterpart. Recommendation for batch review: add an explicit output-send verb through the shared Engine. Focused-output ordinary admission with newcomer focus is strong 7/8 (C/B/I/X/S/Q/A, four families); Ours routing/native activation unresolved. Recommendation: establish Ours admission/hotplug journeys before proposing changes there. niri/PaperWM/paneru directional edge moves stay local; explicit monitor transfers are separate verbs. Table A grows 20 to 21, B19 to 20, U11 to 12 full rows plus two KDE legs; C17/W11 unchanged.
+- Multi-output verification: 4x14 new Then profiles, 2x4 scrolling assessments, historical rows/pins preserved; citation resolution, local links, ASCII, whitespace and pinned-source review passed. Source/offline only. Queue adds 22 unresolved cells in five groups. Stop at this area's committed boundary because Lead context is crowded after evidence reconciliation.
+- Exact next action: expand mouse R-MOU-01..03 and scrolling assessment of R-DRAG-01..08; update consensus/live-test queue, verify, then commit/push after git pull --rebase. Continue special windows, activation, restart/persistence, then R-COL; collect product differences for batch review.

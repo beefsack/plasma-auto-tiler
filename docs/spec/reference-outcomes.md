@@ -2457,6 +2457,124 @@ Legend:
   (unfloat restores the preimage) @9241c94
   (stacking bands exist; relative F/G order and lower have no path)
 
+- `S-cos-out` COSMIC output verbs and admission output:
+  cosmic-comp:src/input/actions.rs:535-541 (`SwitchOutput` directional
+  output switch) and :613-664 (`MoveToOutput`/`SendToOutput`
+  window-level directional transfer via `move_current` to the target
+  output's active workspace; Move follows with mover focus, Send
+  retains source focus) and :684-740 (`MigrateWorkspaceToOutput`
+  whole-workspace migration, not a window verb) +
+  src/shell/mod.rs:2716 (pending admission falls back to the active
+  output) and :2914 (output defaults to the seat active output) and
+  :3164-3175 (`move_current` defaults an absent index to the target
+  output's active workspace)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (window vs whole-workspace verbs distinguished; target send anchor
+  is `S(S-cos-send)`)
+- `S-hyp-mon` Hyprland explicit monitor verbs:
+  Hyprland:src/config/shared/actions/ConfigActions.cpp:1107-1117
+  (`moveToMonitor` whole-workspace verb) and :1189-1196 (`focusMonitor`
+  via `tryMoveFocusToMonitor`) @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (directional `moveFocus` monitor fallback itself is `S(S-hyp-focus)`;
+  window-to-monitor carry vs whole-workspace move stays TBD here)
+- `S-nir-mon` niri monitor verbs and transfer implementation:
+  niri:niri-ipc/src/lib.rs:607-623 (`FocusMonitor*` directional/previous/
+  next/named verbs) and :624-652 (`MoveWindowToMonitor*` directional/
+  previous/next/named verbs) and :653-681 (`MoveColumnToMonitor*`
+  directional/previous/next/named verbs) + src/input/mod.rs:1773-1785
+  (`MoveWindowToMonitorLeft` carries the focused window via
+  `move_to_output` plus `focus_output`) and :972-990
+  (`MoveColumnLeftOrToMonitorLeft` edge-or-cross variant) +
+  src/layout/mod.rs:3298-3313 (`focus_output`) and :3314-3369
+  (`move_to_output` remove/insert across monitors into the target
+  active workspace with Smart activate)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (per-workspace `FocusColumnLeft`/`move_left` edge-false itself is
+  `S(S-nir-focus)`/`S(S-nir-move)`; monitor transfer carries with follow)
+- `S-pap-mon` PaperWM monitor and directional-move verbs:
+  PaperWM:tiling.js:2535-2575 (`switchMonitor` focus choreography with
+  optional window carry: removes from the source space, changes to the
+  target space, activates with focus) and :2576-2620 (`moveToMonitor`
+  whole-space choreography with swap fallback, not a window verb) and
+  :1063-1090 (`swap` same-space column reorder with edge return) and
+  :1125 (`switchLeft` per-space column step) + keybindings.js:230-231
+  (`move-left` binds same-space `swap`, not cross-monitor transfer)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (window carry vs whole-space move vs same-space swap distinguished;
+  exact column position stays TBD)
+- `S-kar-single` karousel single-screen scope:
+  karousel:README.md:20-23 (Limitations: no multiple screens) +
+  `S(S-kar-base)` shipped single-screen profile
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b for the profile,
+  README at the same checkout
+  (two-output fixtures have no counterpart; never a no-op vote)
+- `S-pan-display` paneru display verbs and transfer implementation:
+  paneru:src/types/commands.rs:235-236 (`ToNextDisplay(MoveFocus)`
+  moves the focused window to the next display) and :288-293
+  (pointer `ToNextDisplay`) and src/types/argv.rs:97-98
+  (`nextdisplay` is Follow, `nextdisplaysend` is Stay) +
+  src/commands.rs:1112-1230 (`to_next_display`: removes from the
+  source strip, appends to the target display's selected strip with
+  width-ratio preserved; Follow warps the mouse to the moved window,
+  Stay refocuses the source neighbour) and :647-665 (display
+  fall-through only when no swap peer; directional `Focus` itself is
+  `S(S-pan-cmds)`)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (Follow/Stay forms distinguished; each display owns its strip)
+- `S-ours-out` Ours cross-output production paths:
+  plasma-auto-tiler:crates/tiler-core/src/session/ops/focus.rs:233-245
+  (`propose_cross_output_focus`: exhausted horizontal directional focus
+  crosses to the adjacent output's selected domain workspace, then to
+  that domain's valid last-focused tiled leaf; a sole occupant is that
+  leaf, so the target is determined) and :425-458 (shared
+  adjacency/reciprocity/remembered-target implementation) and
+  crates/tiler-core/src/session/ops/move.rs:12-53 (cross-output snapshot
+  carries adjacent-output domains; ambiguous ids fail closed) and
+  crates/tiler-core/src/session/ops/workspace.rs:28-30 (send is
+  same-output only; cross-output targets refuse as
+  `CrossDomainMismatch`) @9241c94
+  (directional cross-output exists with a determined sole-occupant
+  target; workspace send has no cross-output counterpart)
+- `S-pan-swap` paneru directional swap scope:
+  paneru:src/commands.rs:592-646 (`command_swap_focus` resolves a
+  same-strip peer via `get_window_in_direction` and swaps slots) and
+  :647-665 (display fall-through only when no peer was swapped, and
+  only for North/South; West/East never cross displays)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (directional move-left stays within the strip/display)
+- `S-xmo-scope` xmonad cross-screen scope and shift focus:
+  xmonad-contrib:XMonad/Actions/Navigation2D.hs:587-612
+  (`navigableWindows` covers all visible screens via `sortedScreens`,
+  so `windowGo` directional candidates include other screens) +
+  xmonad:src/XMonad/StackSet.hs:566-584 (`shift`/`shiftWin` leave the
+  moved window as the focused element on the target stack with no view
+  change; source refocus after `delete'` untraced here)
+  @5097a457e7a409bc9a7584dc5aa82b34c69d6dda for Navigation2D,
+  @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7 for StackSet
+  (cross-screen focus and carry established; source refocus stays TBD)
+- `S-i3-outfocus` i3 directional focus output fallback:
+  i3:src/tree.c:469-502 (`get_tree_next_workspace` returns the visible
+  workspace on the directional output) and :593-634 (`tree_next` shows
+  that workspace and focuses the descended container)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (leftmost-child `focus left` climbs to the workspace level and
+  crosses; in-workspace walk itself is `S(S-i3-flt-focus)`)
+- `S-bsp-monrm` bspwm RandR disconnect/reconnect policy:
+  bspwm:src/settings.h:67-69 (remove-unplugged/disabled and
+  merge-overlapping defaults false) + src/monitor.c:459-493 (marks
+  wiring and reuses a monitor with the same RandR id), :527-538
+  (remove-unplugged=true merges before removing) and :286-298
+  (`merge_monitors` transfers all desktops to the target)
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (default retains disconnected monitor/desktops; same-id return
+  reuses them; named removal variant migrates, not destroys)
+- `S-sway-evac` sway output-removal evacuation:
+  sway:sway/tree/output.c:205-257 (`output_evacuate` migrates each
+  workspace to the highest-available else fallback output, destroying
+  empties) and :258-280 (`output_destroy` guards)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (evacuation destination policy; focus and reconnect affinity stay TBD)
+
 ## Variant hooks (provisional, not commitments)
 
 | Hook | Meaning | Status |
@@ -2488,7 +2606,8 @@ rows, preserved; plus 6 insertion scenarios from piece B1, 4 focus
 scenarios from piece B2, 3 move scenarios from piece B3, 4 resize
 scenarios from piece B4, and 4 layout-command scenarios from piece B5,
 plus 7 workspace scenarios, 3 minimize scenarios, 2 maximize scenarios,
-2 groups scenarios and 3 floating scenarios, GWT only).
+2 groups scenarios, 3 floating scenarios, 3 close scenarios and
+4 multi-output scenarios, GWT only).
 This index retains purpose, row-addition rule, notation,
 profiles, evidence tags/legend, variant hooks, and deferred. Existing wide
 tables moved unchanged; all new scenarios use the GWT form below.
@@ -2508,7 +2627,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Groups / stacks | [groups-stacks.md](reference-outcomes/groups-stacks.md) | R-GRP-01..03 (3) | none (R-GRP-02..03 landed with scrolling backfill) |
 | Floating | [floating.md](reference-outcomes/floating.md) | R-FLT-01..14 (14) | none (R-FLT-12..14 landed with scrolling backfill) |
 | Close / reflow | [close.md](reference-outcomes/close.md) | R-CLOSE-01..05 (5) | none (R-CLOSE-03..05 landed with scrolling backfill) |
-| Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..02 (2) | R-OUT-03..06 |
+| Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..06 (6) | none (R-OUT-03..06 landed with scrolling backfill) |
 | Mouse | [mouse.md](reference-outcomes/mouse.md) | R-DRAG-01..08 (8) | R-MOU-01..03 |
 | Special windows | [special-windows.md](reference-outcomes/special-windows.md) | none yet | R-SPC-01..05 |
 | Activation | [activation.md](reference-outcomes/activation.md) | none yet | R-ACT-01..02 |
