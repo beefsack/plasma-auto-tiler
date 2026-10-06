@@ -1,18 +1,301 @@
 # Maximise / fullscreen (reference outcomes)
 
-Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Wide tables moved here unchanged.
+Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Scenarios below are GWT with one Then bullet per profile (14).
 
 ## 5. Maximise / fullscreen
 
-| ID | Start | Action | Observe | COSMIC | Hyprland | bspwm | i3 | xmonad | sway | qtile | awesome | Ours (KDE/Windows) | Variant |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| R-MAX-01 | `H[A,B*,C,D]` equal shares, effective width 2544px, gap 8; min widths 401/864/627/582 constrain actual allocation | Maximize B, then restore B | Sibling desired/actual stability, retained hints, exact slot, convergence delay | Maximize records original geometry+layer and overlays the work area; B stays in the tiling tree so siblings keep allocation with no reflow; restore dispatches by layer and restores original geometry/layer, revealing the retained slot; Super+M distinct from F11; `S(S-cos-maxtoggle)` + `S(S-cos-maxpolicy)` + `S(S-cos-bornmax)` + `D(D-cosmic-kb)`; exact native frames/focus/timing TBD | Flat 4-child start has no ordinary binary form; exact N-ary frames TBD. Policy: internal `FSMODE_MAXIMIZED` covers the work area (siblings stay in tree but obscured/blocked); restore to `NONE` lets recalc reveal retained slots; exact frames/focus TBD; `S(S-hyp-fs)` | Unsupported action parameter here: no maximize command/state in source (monocle is a desktop layout, maximize flags are not tree state); maximize/restore outcomes TBD (no built-in equivalent); `S(S-bsp-layout)` + `S(S-bsp-admit)` | Unsupported action parameter here: no maximize command/state in source (maximize is a derived client hint only); maximize/restore outcomes TBD (no built-in equivalent); `S(S-i3-max)` | Unsupported action parameter here: no maximize command/state in source (`Full` is a workspace focused-fullscreen layout, not per-window maximize); maximize/restore outcomes TBD (no built-in equivalent); `S(S-xmo-layout)` | Unsupported action parameter here: no maximize command/state in source (inventory has no maximize verb; client maximize request only schedules a configure); maximize/restore outcomes TBD (no built-in equivalent); `S(S-sway-max)` | Maximized is a floating-layer state at work-area size: B leaves the tiling (survivors refill, no retained-slot overlay) and restore re-adds via fresh admission; exact frames/focus TBD; `S(S-qti-fs)` + `S(S-qti-float)` | Maximized leaves the tiling (excluded like floats; survivors refill, no retained-slot overlay since tile is stateless); restore rejoins tiled order (position TBD); exact frames/focus/timing TBD; `S(S-awe-fs)` + `S(S-awe-tile)` | KDE: slot/share kept, no writes, exact restore `D(D-dec-ww)`; Windows: same + retained hints + bounded async restore; synthetic proof `D(D-max)` + `D(D-place)`; physical feel pending | V-MAX-MODEL |
-| R-MAX-02 | `H[A,B*]` | Fullscreen B; focus A; focus B; exit fullscreen | Tree mutation; focus enter/leave; restore | Fullscreen removes B's node with no placeholder (A reflows to full width by proportional rescale) but saves sibling/idx/sizes; focus moves to a separate Fullscreen target. Focus A/B changes focus while the overlay remains until explicit exit. Exit re-inserts B beside A at the saved idx with saved sizes and returns the restored window as focus; separate focus surface; `S(S-cos-fsreq)` + `S(S-cos-fsrestore)` + `S(S-cos-restore)` + `S(S-cos-fsact)` + `S(S-cos-rem)` + `D(D-ref)`; intermediate visible-focus and native sequence TBD | `FSMODE_FULLSCREEN` covers the monitor box (tree kept, siblings blocked, no node removal); exit to `NONE` lets recalc restore tile boxes; focus enter/leave sequence TBD; `S(S-hyp-fs)` | Fills monitor, node stays in tree as vacant; `D(D-ref)` + `S(S-bsp-state)`; focus enter/leave sequence TBD | Fullscreen is a mode flag: tree retained, B overlays via render; enable focuses B; same-workspace directional focus outside B is fenced (drops to workspace level), exact A/B focus sequence TBD; exit clears the mode and recalc reveals tiles; `S(S-i3-fs)` | EWMH fullscreen in profile is float-based (`doFullFloat` fullscreen float via ClientMessage, `doSink` on exit; stack retained); core `Full` is workspace focused-fullscreen instead; exact A/B focus enter/leave/restore sequence TBD; `S(S-xmo-ewmh)` + `S(S-xmo-layout)` | Fullscreen is a mode flag: tree retained, `ws->fullscreen` set, enable focuses B on its workspace; directional focus from workspace-fullscreen drops to outputs (global returns no target); exit clears the mode and recalc reveals tiles; exact A/B sequence TBD; `S(S-sway-full)` + `S(S-sway-focus)` | Fullscreen is a floating-layer state: B leaves the tiling (A refills, no placeholder) and exit re-adds via fresh admission; focus enter/leave sequence TBD; `S(S-qti-fs)` + `S(S-qti-float)` | Fullscreen leaves the tiling (A refills; list order kept, no placeholder); exit rejoins at list position (TBD); focus enter/leave via activate/history, exact sequence TBD; `S(S-awe-fs)` + `S(S-awe-hist)` | Retained slot overlay; focus may enter/leave; `D(D-dec-ww)` KDE + `D(D-fs)` Windows scoped proof; physical focus sequence pending | V-FS-SLOT |
-| R-MAX-03 | Workspace floating, first-seen maximized A without a prior tile slot | Toggle tiled; restore A if still maximized | Preserve floating maximum, then one-shot native restore and actual fresh tiled plan/write/readback | Enable tiles every floater sequentially at focus-MRU long-edge anchors (A included, no slotless hold); maximized floaters re-overlay with original layer retargeted to Tiling; restore A reveals the retained fresh slot; `S(S-cos-wstile)` + `S(S-cos-last)` + `S(S-cos-axis)`; exact native frames/journey TBD | Unsupported action parameter here: no workspace floating/tiled toggle in source (per-window float dispatch); slotless-maximum hold/re-overlay outcomes TBD (no built-in equivalent for the workspace toggle); `S(S-hyp-float)` | Unsupported action parameter here: no workspace tiling toggle and no slotless-maximum hold in source; outcomes TBD; `S(S-bsp-layout)` + `S(S-bsp-admit)` | Unsupported action parameter here: no workspace tiling toggle and no maximize hold state in source (maximize derived-only); slotless-hold/re-overlay outcomes TBD; `S(S-i3-wsmode)` + `S(S-i3-max)` | Unsupported action parameter here: no workspace tiling toggle and no slotless-maximum hold in source; outcomes TBD; `S(S-xmo-layout)` | Unsupported action parameter here: no workspace tiling toggle and no maximize hold state in source (no maximize verb; maximize request only schedules a configure); slotless-hold/re-overlay outcomes TBD; `S(S-sway-wsmode)` + `S(S-sway-max)` | Unsupported action parameter here: no workspace floating/tiled toggle in source; slotless-hold outcomes TBD. Policy: admission applies pending fullscreen via auto_fullscreen; `S(S-qti-float)` + `S(S-qti-fs)` | Workspace floating reads as the shipped floating layout (per-tag); slotless maximized A stays maximized-and-implicitly-floating across the switch with geometry kept; restore-then-unmaximize rejoins tiled order (absent explicit floating, which would keep A excluded); exact frames/journey TBD; `S(S-awe-layout)` + `S(S-awe-fs)` + `S(S-awe-float)` | KDE source: floating gate skips admission clear; first tiled admission restores unslotted maximum once and refetches normal state (`kwin/src/plan-adapter.ts:4883-4888,5330-5397`); Windows: slotless membership preserves floating maximum and hide/reveal, then one clear and fresh tiled plan/native write/matched target readback proven with Notepad/Paint; slotted overlays skip re-clear [accepted correction](../../changes/archive/windows-workspace-tiling.md#r-max-03-accepted-correction); physical feel TBD | V-WS-TILING |
-| R-MAX-04 | `H[A,B*]`; B normal and remains the same native window | Shortcut-maximize B; native-restore B; press the same shortcut again | New maximize attempt vs persistent attempted-state refusal | Native client restore routes to compositor unmaximize_request on all three protocol paths (Wayland, X11, toplevel-management), taking and clearing maximized_state; the repress then sees un-maximized and issues a new maximize_request with re-recorded overlay; `S(S-cos-native-unmax)` + `S(S-cos-maxtoggle)`; native ack/focus visuals TBD | New maximize attempt: client native restore routes to `setFullscreenMode` `NONE` (taking/clearing maximized state), so the repress sees un-maximized and issues a new maximize with re-recorded overlay; native ack/focus visuals TBD; `S(S-hyp-fs)` | No state-change path: no maximize command/state for a shortcut press or native restore to act on, so tree state is a no-op; client ack TBD; `S(S-bsp-layout)` + `S(S-bsp-admit)` | No state change path: no maximize command to press and no maximize state for native restore to clear (maximize hints are output-only); outcome is a no-op, client ack TBD; `S(S-i3-max)` + `S(S-i3-fs)` | No state-change path: no maximize command/state for a shortcut press or native restore to act on, so tree state is a no-op; `S(S-xmo-layout)` | No state change path: no maximize command to press and no maximize state for native restore to clear (maximize request only schedules a configure); outcome is a no-op, client ack TBD; `S(S-sway-max)` | Toggles flip state with no attempted-state fence in source. Backend-qualified: on X11 the native restore is echoed only and never drives maximized, so MAXIMIZED is retained and the repress toggles off (unmaximize); on Wayland the native `handle_request_maximize` drives the state, so native restore clears and the repress re-applies maximize; native ack/focus visuals TBD; `S(S-qti-fs)` | New maximize attempt: toggles are plain boolean flips with raise and no attempted-state fence, so native restore clears and the repress re-applies; native ack/focus visuals TBD; `S(S-awe-fs)` | KDE repaired 2026-10-05: same-ref adapter regression issues a new native attempt after restore (and reverse ordering), `D(D-kde-follow)`; earlier refusal remains historical `S(S-ours-toggle)`. Windows dispatches one attempt per new discrete down, `D(D-dec-max)`; physical repeat/delivery outcome TBD | V-MAX-MODEL |
-| R-MAX-05 | B entered app-owned fullscreen without a tiler fullscreen preimage | Focus B; request project fullscreen toggle | Native exit attempt vs refusal of app-owned fullscreen; slot/geometry after exit | Project toggle dispatches on focus kind: Element enters fullscreen_request with restore captured from its layer, Fullscreen exits via unfullscreen_request with old-slot remap; client-initiated fullscreen (Wayland/X11) routes to the same shell request, so a mapped client fullscreen carries a restore entry; no refusal branch in pinned dispatch; `S(S-cos-fsact)` + `S(S-cos-fsreq)` + `S(S-cos-fsrestore)`; app-specific completion and settled slot/geometry TBD | No refusal branch: client fullscreen maps via the same `setFullscreenMode` path (mapped immediate, unmapped pending); project toggle exits via `NONE` when FS else enters, tree retained; app-specific completion/slot TBD; `S(S-hyp-fs)` | No refusal branch: app EWMH ADD maps via the same set_state with last_state remembered (honored both ways by default); project `node -t ~fullscreen` toggles FULLSCREEN back to last_state (same-state no-op only); EWMH REMOVE/TOGGLE converge on the same restore; slot retained vacant in place, tree kept; app-specific completion/settled geometry TBD; `S(S-bsp-fs)` + `S(S-bsp-admit)` | No refusal: client FULLSCREEN messages and the `fullscreen` command converge on the same mode toggle; tree retained, exit via mode clear plus recalc; app-specific completion/slot TBD; `S(S-i3-fs)` | No refusal branch on the event path: ClientMessage fullscreen add/remove/toggle maps via `fullscreenHooks` (`doFullFloat`/`doSink`), tree stack retained; app-specific completion/slot TBD; `S(S-xmo-ewmh)` | No refusal: client fullscreen requests (xdg/xwayland) and the `fullscreen` command converge on `container_set_fullscreen`; tree retained, exit via mode clear plus recalc; app-specific completion/slot TBD; `S(S-sway-full)` | No refusal branch: toggle_fullscreen flips the state regardless of origin; exit clears via the same path; settled slot/geometry TBD; `S(S-qti-fs)` | No refusal branch: fullscreen is a plain client property with no owner/preimage tracking, so the toggle flips regardless of origin; settled slot/geometry TBD; `S(S-awe-fs)` | KDE invokes public fullscreen setter toward normal; Windows refuses app-owned exit without its restoration preimage, never synthesizes app F11; `S(S-ours-fs-exit)` + `D(D-fs)`; app-specific native completion/slot outcome TBD | V-FS-SLOT |
-| R-MAX-06 | Tiled workspace with B; first-seen eligible maximized A has no retained tile slot and is not fullscreen | Admit A; later natively restore A | One-shot launch restore vs reserved-slot overlay vs slotless hold; B allocation, A admission and focus | Tiles A then applies requested maximum as overlay with tile slot retained; other existing maxima unmaximized first; A is the focus target on the active workspace; later native restore clears compositor maximized state and reveals the retained slot without touching focus; B allocation follows ordinary admission anchoring (fixture focus unspecified); `S(S-cos-bornmax)` + `S(S-cos-mapfocus)` + `S(S-cos-native-unmax)`; exact native ack/visuals TBD | Pending client maximum consumed/applied at map as `FSMODE_MAXIMIZED` at the work area (replaces existing workspace FS); B allocation follows the ordinary Dwindle anchor; exact siblings/focus TBD; `S(S-hyp-bornmax)` + `S(S-hyp-fs)` + `S(S-hyp-ins)` | Ordinary tile state; maximum flags not admission state, fullscreen handled separately; `S(S-bsp-admit)`; exact focus TBD | Ordinary tiling; maximum flags derive from layout; `S(S-i3-admit)`; exact focus TBD | Ordinary manage/tile (fixed/transient float only; no size/maximize/fullscreen inference); profile uses the `ewmhFullscreen` event hook (`fullscreenEventHook`) with default `doFullFloat`/`doSink` and no fullscreen manage hook, so admission itself tiles; exact siblings/focus TBD; `S(S-xmo-admit)` + `S(S-xmo-ewmh)` | Ordinary tiling: no maximize admission state (maximize request only schedules a configure; `wants_floating` is fixed-size/dialog/parent only); fullscreen flag alone maps fullscreen; exact siblings/focus TBD; `S(S-sway-max)` + `S(S-sway-ins)` | Fullscreen-flagged admits fullscreen via auto_fullscreen; fixed-size admits floating via float rules; otherwise ordinary tiling (no maximize-pending admission state); exact siblings/focus TBD; `S(S-qti-float)` + `S(S-qti-fs)` | Maximized-pending A admits implicitly floating (geometry kept, B keeps sole-tile allocation); later native restore rejoins tiled order (position TBD); exact siblings/focus TBD; `S(S-awe-float)` + `S(S-awe-fs)` + `S(S-awe-manage)` | Current KDE/Windows make one admission-time clear attempt; retained slots/fullscreen/floating domains are exempt. Proposed preserve variants and later setting are unselected; exact native journey TBD, `D(D-min-games)` | V-MAX-MODEL |
-| R-MAX-07 | Captionless window covers the full monitor; KDE native fullscreen and maximize flags are false | First observe/admit it | Fullscreen exemption vs ordinary tiling despite monitor coverage | Fullscreen requires the protocol flag (Wayland request or X11 state, consumed at admission); dialog checks (parent/window-type, min==max) admit floating, otherwise ordinary tiling; size plays no role in the cited admission path; `S(S-cos-admit)` + `S(S-cos-min)`; exact admitted frame and game presentation mode TBD | No size inference: fullscreen/maximize require a protocol flag/pending request or rule; captionless cover alone admits ordinary tiling (fixed-size min==max floats instead); exact frame/presentation TBD; `S(S-hyp-float)` + `S(S-hyp-fs)` | Ordinary manage absent fullscreen atom/rule; `S(S-bsp-admit)`; exact fixture TBD | Ordinary manage absent fullscreen atom/override-redirect; `S(S-i3-admit)`; exact fixture TBD | Ordinary tiling absent a protocol float cause (fixed/transient only; size plays no role); profile fullscreen handling is post-map ClientMessage only with no fullscreen manage hook; exact fixture TBD; `S(S-xmo-admit)` + `S(S-xmo-ewmh)` | Ordinary tiling absent a protocol fullscreen flag (admission maps fullscreen only from the request flag; `wants_floating` is fixed-size/dialog/parent only; size plays no role); exact fixture TBD; `S(S-sway-max)` | No size inference: fullscreen needs the protocol flag, fixed-size floats instead, otherwise ordinary tiling; exact frame/presentation TBD; `S(S-qti-float)` + `S(S-qti-fs)` | No size inference in the Lua admission path (float iff type/rules/fixed-size/fullscreen/max flags); captionless cover tiles ordinarily (fixed-size floats instead); exact frame/presentation TBD; `S(S-awe-manage)` + `S(S-awe-float)` | KDE does not infer fullscreen from size, so no maximize-clear but ordinary tiling is possible; Windows captionless monitor containment classifies fullscreen. Actual game presentation mode is not established by either shape; `D(D-min-games)` | V-FS-SLOT |
+### R-MAX-01: maximize then restore
+
+- Given (tree profiles): `H[A,B*,C,D]` equal shares, effective width 2544px, gap 8; min widths 401/864/627/582 constrain actual allocation
+
+- Given (column profiles): `COL[C1[A],C2[B*],C3[C],C4[D]]`, effective
+  viewport width 2544px, gap 8, minimum widths 401/864/627/582 as in the
+  original row. Column widths follow the shipped presets/rules, not
+  equal tree shares; record actual pre-action allocations and viewport.
+  Maximize B natively, then restore B. This is a lifecycle projection,
+  not an exact H-tree allocation or a width-preset substitute.
+
+- When: Maximize B, then restore B
+
+- Observe: Sibling desired/actual stability, retained hints, exact slot, convergence delay
+
+- Observe (column leg): sibling desired/actual stability, retained hints, exact slot
+  and convergence delay; distinguish sourced membership policy from the
+  original fixture's load-bearing settled geometry.
+
+- Then COSMIC: Maximize records original geometry+layer and overlays the work area; B stays in the tiling tree so siblings keep allocation with no reflow; restore dispatches by layer and restores original geometry/layer, revealing the retained slot; Super+M distinct from F11; `S(S-cos-maxtoggle)` + `S(S-cos-maxpolicy)` + `S(S-cos-bornmax)` + `D(D-cosmic-kb)`; exact native frames/focus/timing TBD
+- Then Hyprland/Dwindle: Flat 4-child start has no ordinary binary form; exact N-ary frames TBD. Policy: internal `FSMODE_MAXIMIZED` covers the work area (siblings stay in tree but obscured/blocked); restore to `NONE` lets recalc reveal retained slots; exact frames/focus TBD; `S(S-hyp-fs)`
+- Then bspwm: Unsupported action parameter here: no maximize command/state in source (monocle is a desktop layout, maximize flags are not tree state); maximize/restore outcomes TBD (no built-in equivalent); `S(S-bsp-layout)` + `S(S-bsp-admit)`
+- Then i3: Unsupported action parameter here: no maximize command/state in source (maximize is a derived client hint only); maximize/restore outcomes TBD (no built-in equivalent); `S(S-i3-max)`
+- Then xmonad/Tall+Navigation2D: Unsupported action parameter here: no maximize command/state in source (`Full` is a workspace focused-fullscreen layout, not per-window maximize); maximize/restore outcomes TBD (no built-in equivalent); `S(S-xmo-layout)`
+- Then sway: Unsupported action parameter here: no maximize command/state in source (inventory has no maximize verb; client maximize request only schedules a configure); maximize/restore outcomes TBD (no built-in equivalent); `S(S-sway-max)`
+- Then qtile/Columns: Maximized is a floating-layer state at work-area size: B leaves the tiling (survivors refill, no retained-slot overlay) and restore re-adds via fresh admission; exact frames/focus TBD; `S(S-qti-fs)` + `S(S-qti-float)`
+- Then awesome/tile: Maximized leaves the tiling (excluded like floats; survivors refill, no retained-slot overlay since tile is stateless); restore rejoins tiled order (position TBD); exact frames/focus/timing TBD; `S(S-awe-fs)` + `S(S-awe-tile)`
+- Then niri: client maximize routes into `set_maximized(true)`, setting
+  the column pending-maximized flag with the strip kept (no add/remove;
+  configure maps Maximized to working-area size); restore routes into
+  `set_maximized(false)`, an idempotent clear that floats only a
+  previously-floating window. Exact hinted frames/convergence TBD.
+  `S(S-nir-maxfs)`; geometry queued.
+- Then PaperWM: native maximize converts to full-width maximize at the
+  shipped default (unmaximize plus width-maximize with `unmaximizedRect`
+  memory); siblings reflow. Native restore has no maximized flag left to
+  clear; only the width toggle restores the saved width. Exact hinted
+  frames/convergence TBD. `S(S-pap-widthmax)`; geometry queued.
+- Then karousel/Lazy: native maximize keeps B's column membership with
+  `skipArrange` set (siblings keep their slots, B is never arranged);
+  restore clears the flag through the same change handler. Exact hinted
+  frames/convergence TBD. `S(S-kar-maxfs)`; geometry queued.
+- Then paneru: no-counterpart for a paneru-native `B:max` leg (no verb in
+  `Operation`, no zoom/maximize AX read); a host-zoomed window is an
+  owner-specific journey with sibling/restore behavior TBD.
+  `S(S-pan-cmds)` + `S(S-pan-model)` + `S(S-pan-axfs)`; journey queued.
+- Then Ours KDE: KDE: slot/share kept, no writes, exact restore `D(D-dec-ww)`; Windows: same + retained hints + bounded async restore; synthetic proof `D(D-max)` + `D(D-place)`; physical feel pending
+- Then Ours Windows: KDE: slot/share kept, no writes, exact restore `D(D-dec-ww)`; Windows: same + retained hints + bounded async restore; synthetic proof `D(D-max)` + `D(D-place)`; physical feel pending
+- Variant hook: V-MAX-MODEL.
+
+### R-MAX-02: fullscreen focus and exit
+
+- Given (tree profiles): `H[A,B*]`
+
+- Given (column profiles): `COL[C1[A],C2[B*]]` at shipped defaults. Fullscreen
+  B; focus A; focus B; exit fullscreen.
+
+- When: Fullscreen B; focus A; focus B; exit fullscreen
+
+- Observe: Tree mutation; focus enter/leave; restore
+
+- Observe (column leg): strip mutation; focus enter/leave; restore.
+
+- Then COSMIC: Fullscreen removes B's node with no placeholder (A reflows to full width by proportional rescale) but saves sibling/idx/sizes; focus moves to a separate Fullscreen target. Focus A/B changes focus while the overlay remains until explicit exit. Exit re-inserts B beside A at the saved idx with saved sizes and returns the restored window as focus; separate focus surface; `S(S-cos-fsreq)` + `S(S-cos-fsrestore)` + `S(S-cos-restore)` + `S(S-cos-fsact)` + `S(S-cos-rem)` + `D(D-ref)`; intermediate visible-focus and native sequence TBD
+- Then Hyprland/Dwindle: `FSMODE_FULLSCREEN` covers the monitor box (tree kept, siblings blocked, no node removal); exit to `NONE` lets recalc restore tile boxes; focus enter/leave sequence TBD; `S(S-hyp-fs)`
+- Then bspwm: Fills monitor, node stays in tree as vacant; `D(D-ref)` + `S(S-bsp-state)`; focus enter/leave sequence TBD
+- Then i3: Fullscreen is a mode flag: tree retained, B overlays via render; enable focuses B; same-workspace directional focus outside B is fenced (drops to workspace level), exact A/B focus sequence TBD; exit clears the mode and recalc reveals tiles; `S(S-i3-fs)`
+- Then xmonad/Tall+Navigation2D: EWMH fullscreen in profile is float-based (`doFullFloat` fullscreen float via ClientMessage, `doSink` on exit; stack retained); core `Full` is workspace focused-fullscreen instead; exact A/B focus enter/leave/restore sequence TBD; `S(S-xmo-ewmh)` + `S(S-xmo-layout)`
+- Then sway: Fullscreen is a mode flag: tree retained, `ws->fullscreen` set, enable focuses B on its workspace; directional focus from workspace-fullscreen drops to outputs (global returns no target); exit clears the mode and recalc reveals tiles; exact A/B sequence TBD; `S(S-sway-full)` + `S(S-sway-focus)`
+- Then qtile/Columns: Fullscreen is a floating-layer state: B leaves the tiling (A refills, no placeholder) and exit re-adds via fresh admission; focus enter/leave sequence TBD; `S(S-qti-fs)` + `S(S-qti-float)`
+- Then awesome/tile: Fullscreen leaves the tiling (A refills; list order kept, no placeholder); exit rejoins at list position (TBD); focus enter/leave via activate/history, exact sequence TBD; `S(S-awe-fs)` + `S(S-awe-hist)`
+- Then niri: fullscreen sets the column pending-fullscreen flag with the
+  strip kept; focus left/right are plain column-index activations either
+  way; exit clears the flag, floating only a previously-floating window.
+  `S(S-nir-maxfs)` + `S(S-nir-focus)`.
+- Then PaperWM: native fullscreen is honored with the tiled frame saved
+  (layout and position updates skip it); `switch` focus is model-based
+  so A and B are reachable both ways; exit restores the saved frame.
+  `S(S-pap-fsframe)` + `S(S-pap-unmov)` + `S(S-pap-focus)`.
+- Then karousel/Lazy: fullscreen keeps membership with `skipArrange`
+  set; focusing A restores B to tiled via `restoreToTiled`, so the
+  focus-B step finds a normal window and the explicit exit is moot.
+  `S(S-kar-maxfs)` + `S(S-kar-focus)`.
+- Then paneru: native fullscreen pins a `Fullscren` strip with a restore
+  marker; West focus on that space raises the last column top instead of
+  traversing; the exit journey TBD. `S(S-pan-model)` +
+  `S(S-pan-fsfocus)`; exit queued.
+- Then Ours KDE: Retained slot overlay; focus may enter/leave; `D(D-dec-ww)` KDE + `D(D-fs)` Windows scoped proof; physical focus sequence pending
+- Then Ours Windows: Retained slot overlay; focus may enter/leave; `D(D-dec-ww)` KDE + `D(D-fs)` Windows scoped proof; physical focus sequence pending
+- Variant hook: V-FS-SLOT.
+
+### R-MAX-03: workspace floating toggle over a slotless maximum
+
+- Given (tree profiles): Workspace floating, first-seen maximized A without a prior tile slot
+
+- Given (column profiles): attempted mapping needs a workspace-wide floating
+  mode plus a slotless maximized window. No scrolling profile has a
+  workspace-wide floating mode, so the target parameter has no faithful
+  start; the Thens below are applicability qualifications, never an
+  ordinary toggle with a substituted target.
+
+- When: Toggle tiled; restore A if still maximized
+
+- Observe: Preserve floating maximum, then one-shot native restore and actual fresh tiled plan/write/readback
+
+- Observe (column leg): whether the workspace floating target exists natively.
+
+- Then COSMIC: Enable tiles every floater sequentially at focus-MRU long-edge anchors (A included, no slotless hold); maximized floaters re-overlay with original layer retargeted to Tiling; restore A reveals the retained fresh slot; `S(S-cos-wstile)` + `S(S-cos-last)` + `S(S-cos-axis)`; exact native frames/journey TBD
+- Then Hyprland/Dwindle: Unsupported action parameter here: no workspace floating/tiled toggle in source (per-window float dispatch); slotless-maximum hold/re-overlay outcomes TBD (no built-in equivalent for the workspace toggle); `S(S-hyp-float)`
+- Then bspwm: Unsupported action parameter here: no workspace tiling toggle and no slotless-maximum hold in source; outcomes TBD; `S(S-bsp-layout)` + `S(S-bsp-admit)`
+- Then i3: Unsupported action parameter here: no workspace tiling toggle and no maximize hold state in source (maximize derived-only); slotless-hold/re-overlay outcomes TBD; `S(S-i3-wsmode)` + `S(S-i3-max)`
+- Then xmonad/Tall+Navigation2D: Unsupported action parameter here: no workspace tiling toggle and no slotless-maximum hold in source; outcomes TBD; `S(S-xmo-layout)`
+- Then sway: Unsupported action parameter here: no workspace tiling toggle and no maximize hold state in source (no maximize verb; maximize request only schedules a configure); slotless-hold/re-overlay outcomes TBD; `S(S-sway-wsmode)` + `S(S-sway-max)`
+- Then qtile/Columns: Unsupported action parameter here: no workspace floating/tiled toggle in source; slotless-hold outcomes TBD. Policy: admission applies pending fullscreen via auto_fullscreen; `S(S-qti-float)` + `S(S-qti-fs)`
+- Then awesome/tile: Workspace floating reads as the shipped floating layout (per-tag); slotless maximized A stays maximized-and-implicitly-floating across the switch with geometry kept; restore-then-unmaximize rejoins tiled order (absent explicit floating, which would keep A excluded); exact frames/journey TBD; `S(S-awe-layout)` + `S(S-awe-fs)` + `S(S-awe-float)`
+- Then niri: fixture-inapplicable (no workspace floating mode exists;
+  `ToggleWindowFloating` is per-window only and `floating_is_active`
+  derives from admission/focus, not a mode). `S(S-nir-float)`.
+- Then PaperWM: fixture-inapplicable (no floating workspace mode and no
+  workspace toggle in the registered action inventory).
+  `S(S-pap-acts)`.
+- Then karousel/Lazy: fixture-inapplicable (float is per-window only; no
+  floating desktop mode). `S(S-kar-acts)`.
+- Then paneru: fixture-inapplicable (no floating workspace mode; window
+  management is per-window). `S(S-pan-cmds)`.
+- Then Ours KDE: source floating gate skips admission clear; first tiled admission restores unslotted maximum once and refetches normal state (`kwin/src/plan-adapter.ts:4883-4888,5330-5397`); physical feel TBD
+- Then Ours Windows: slotless membership preserves floating maximum and hide/reveal, then one clear and fresh tiled plan/native write/matched target readback proven with Notepad/Paint; slotted overlays skip re-clear [accepted correction](../../changes/archive/windows-workspace-tiling.md#r-max-03-accepted-correction); physical feel TBD
+- Variant hook: V-WS-TILING.
+
+### R-MAX-04: shortcut maximize, native restore, repress
+
+- Given (tree profiles): `H[A,B*]`; B normal and remains the same native window
+
+- Given (column profiles): `COL[C1[A],C2[B*]]` at shipped defaults; B normal and
+  remains the same native window. Shortcut-maximize B; native-restore B;
+  press the same shortcut again. Use niri `MaximizeWindowToEdges`, KWin's
+  native maximize shortcut for karousel, and a GNOME native maximize
+  request for PaperWM (Meta `maximize(BOTH)`, then `unmaximize(BOTH)`).
+  PaperWM's width-only shortcut is not substituted for this host action.
+
+- When: Shortcut-maximize B; native-restore B; press the same shortcut again
+
+- Observe: New maximize attempt vs persistent attempted-state refusal
+
+- Observe (column leg): new maximize attempt vs persistent attempted-state refusal.
+
+- Then COSMIC: Native client restore routes to compositor unmaximize_request on all three protocol paths (Wayland, X11, toplevel-management), taking and clearing maximized_state; the repress then sees un-maximized and issues a new maximize_request with re-recorded overlay; `S(S-cos-native-unmax)` + `S(S-cos-maxtoggle)`; native ack/focus visuals TBD
+- Then Hyprland/Dwindle: New maximize attempt: client native restore routes to `setFullscreenMode` `NONE` (taking/clearing maximized state), so the repress sees un-maximized and issues a new maximize with re-recorded overlay; native ack/focus visuals TBD; `S(S-hyp-fs)`
+- Then bspwm: No state-change path: no maximize command/state for a shortcut press or native restore to act on, so tree state is a no-op; client ack TBD; `S(S-bsp-layout)` + `S(S-bsp-admit)`
+- Then i3: No state change path: no maximize command to press and no maximize state for native restore to clear (maximize hints are output-only); outcome is a no-op, client ack TBD; `S(S-i3-max)` + `S(S-i3-fs)`
+- Then xmonad/Tall+Navigation2D: No state-change path: no maximize command/state for a shortcut press or native restore to act on, so tree state is a no-op; `S(S-xmo-layout)`
+- Then sway: No state change path: no maximize command to press and no maximize state for native restore to clear (maximize request only schedules a configure); outcome is a no-op, client ack TBD; `S(S-sway-max)`
+- Then qtile/Columns: Toggles flip state with no attempted-state fence in source. Backend-qualified: on X11 the native restore is echoed only and never drives maximized, so MAXIMIZED is retained and the repress toggles off (unmaximize); on Wayland the native `handle_request_maximize` drives the state, so native restore clears and the repress re-applies maximize; native ack/focus visuals TBD; `S(S-qti-fs)`
+- Then awesome/tile: New maximize attempt: toggles are plain boolean flips with raise and no attempted-state fence, so native restore clears and the repress re-applies; native ack/focus visuals TBD; `S(S-awe-fs)`
+- Then niri: `MaximizeWindowToEdges` drives the native toggle (flips the
+  column pending flag, no fence); client native restore routes into
+  `set_maximized(false)`, an idempotent clear; the repress re-applies:
+  a new attempt every press. `S(S-nir-maxfs)`.
+- Then PaperWM: each native maximize request converts to a width toggle;
+  native restore has no maximized flag to clear. The repress is processed
+  again (and can toggle the saved width back), with no attempted-state
+  fence. `S(S-pap-widthmax)`.
+- Then karousel/Lazy: native KWin maximize on the tiled window is
+  observed with `skipArrange` set and no fence in the change handler;
+  native restore clears through the same handler; the repress
+  re-maximizes: a new attempt every press. `S(S-kar-maxfs)`.
+- Then paneru: no-counterpart for a paneru-native maximize leg (no verb in
+  `Operation`, no zoom/maximize AX read); a host-zoom journey is
+  owner-specific with attempt behavior TBD.
+  `S(S-pan-cmds)` + `S(S-pan-axfs)`; journey queued.
+- Then Ours KDE: repaired 2026-10-05: same-ref adapter regression issues a new native attempt after restore (and reverse ordering), `D(D-kde-follow)`; earlier refusal remains historical `S(S-ours-toggle)`; physical repeat/delivery outcome TBD
+- Then Ours Windows: dispatches one attempt per new discrete down, `D(D-dec-max)`; physical repeat/delivery outcome TBD
+- Variant hook: V-MAX-MODEL.
+
+### R-MAX-05: app-owned fullscreen without a preimage
+
+- Given (tree profiles): B entered app-owned fullscreen without a tiler fullscreen preimage
+
+- Given (column profiles): `COL[C1[A],C2[B*]]` at shipped defaults. B entered
+  app-owned fullscreen without a manager preimage; focus B; request the
+  project fullscreen toggle.
+
+- When: Focus B; request project fullscreen toggle
+
+- Observe: Native exit attempt vs refusal of app-owned fullscreen; slot/geometry after exit
+
+- Observe (column leg): native exit attempt vs refusal of app-owned fullscreen;
+  slot/geometry after exit.
+
+- Then COSMIC: Project toggle dispatches on focus kind: Element enters fullscreen_request with restore captured from its layer, Fullscreen exits via unfullscreen_request with old-slot remap; client-initiated fullscreen (Wayland/X11) routes to the same shell request, so a mapped client fullscreen carries a restore entry; no refusal branch in pinned dispatch; `S(S-cos-fsact)` + `S(S-cos-fsreq)` + `S(S-cos-fsrestore)`; app-specific completion and settled slot/geometry TBD
+- Then Hyprland/Dwindle: No refusal branch: client fullscreen maps via the same `setFullscreenMode` path (mapped immediate, unmapped pending); project toggle exits via `NONE` when FS else enters, tree retained; app-specific completion/slot TBD; `S(S-hyp-fs)`
+- Then bspwm: No refusal branch: app EWMH ADD maps via the same set_state with last_state remembered (honored both ways by default); project `node -t ~fullscreen` toggles FULLSCREEN back to last_state (same-state no-op only); EWMH REMOVE/TOGGLE converge on the same restore; slot retained vacant in place, tree kept; app-specific completion/settled geometry TBD; `S(S-bsp-fs)` + `S(S-bsp-admit)`
+- Then i3: No refusal: client FULLSCREEN messages and the `fullscreen` command converge on the same mode toggle; tree retained, exit via mode clear plus recalc; app-specific completion/slot TBD; `S(S-i3-fs)`
+- Then xmonad/Tall+Navigation2D: No refusal branch on the event path: ClientMessage fullscreen add/remove/toggle maps via `fullscreenHooks` (`doFullFloat`/`doSink`), tree stack retained; app-specific completion/slot TBD; `S(S-xmo-ewmh)`
+- Then sway: No refusal: client fullscreen requests (xdg/xwayland) and the `fullscreen` command converge on `container_set_fullscreen`; tree retained, exit via mode clear plus recalc; app-specific completion/slot TBD; `S(S-sway-full)`
+- Then qtile/Columns: No refusal branch: toggle_fullscreen flips the state regardless of origin; exit clears via the same path; settled slot/geometry TBD; `S(S-qti-fs)`
+- Then awesome/tile: No refusal branch: fullscreen is a plain client property with no owner/preimage tracking, so the toggle flips regardless of origin; settled slot/geometry TBD; `S(S-awe-fs)`
+- Then niri: the project toggle clears client-origin fullscreen with no
+  preimage gate; the tiled column remains and resumes normal sizing.
+  `S(S-nir-maxfs)`.
+- Then PaperWM: `paper-toggle-fullscreen` flips the native flag
+  regardless of origin with no refusal branch; exit restores the saved
+  frame. `S(S-pap-acts)` + `S(S-pap-fsframe)`.
+- Then karousel/Lazy: no-counterpart (no project fullscreen toggle verb
+  in the action inventory; the native KWin exit path is not this toggle).
+  `S(S-kar-acts)` + `S(S-kar-maxfs)`.
+- Then paneru: no-counterpart (no project fullscreen toggle verb in
+  `Operation`; the native exit journey is not this toggle).
+  `S(S-pan-cmds)` + `S(S-pan-axfs)`.
+- Then Ours KDE: invokes public fullscreen setter toward normal; `S(S-ours-fs-exit)` + `D(D-fs)`; app-specific native completion/slot outcome TBD
+- Then Ours Windows: refuses app-owned exit without its restoration preimage, never synthesizes app F11; `S(S-ours-fs-exit)` + `D(D-fs)`; app-specific native completion/slot outcome TBD
+- Variant hook: V-FS-SLOT.
+
+### R-MAX-06: admit a first-seen maximized window
+
+- Given (tree profiles): Tiled workspace with B; first-seen eligible maximized A has no retained tile slot and is not fullscreen
+
+- Given (column profiles): `COL[C1[B]]` occupied at shipped defaults.
+  First-seen eligible maximized A has no retained slot and is not
+  fullscreen; admit A; later natively restore A.
+
+- When: Admit A; later natively restore A
+
+- Observe: One-shot launch restore vs reserved-slot overlay vs slotless hold; B allocation, A admission and focus
+
+- Observe (column leg): overlay/slot admission; B allocation; A focus; restore.
+
+- Then COSMIC: Tiles A then applies requested maximum as overlay with tile slot retained; other existing maxima unmaximized first; A is the focus target on the active workspace; later native restore clears compositor maximized state and reveals the retained slot without touching focus; B allocation follows ordinary admission anchoring (fixture focus unspecified); `S(S-cos-bornmax)` + `S(S-cos-mapfocus)` + `S(S-cos-native-unmax)`; exact native ack/visuals TBD
+- Then Hyprland/Dwindle: Pending client maximum consumed/applied at map as `FSMODE_MAXIMIZED` at the work area (replaces existing workspace FS); B allocation follows the ordinary Dwindle anchor; exact siblings/focus TBD; `S(S-hyp-bornmax)` + `S(S-hyp-fs)` + `S(S-hyp-ins)`
+- Then bspwm: Ordinary tile state; maximum flags not admission state, fullscreen handled separately; `S(S-bsp-admit)`; exact focus TBD
+- Then i3: Ordinary tiling; maximum flags derive from layout; `S(S-i3-admit)`; exact focus TBD
+- Then xmonad/Tall+Navigation2D: Ordinary manage/tile (fixed/transient float only; no size/maximize/fullscreen inference); profile uses the `ewmhFullscreen` event hook (`fullscreenEventHook`) with default `doFullFloat`/`doSink` and no fullscreen manage hook, so admission itself tiles; exact siblings/focus TBD; `S(S-xmo-admit)` + `S(S-xmo-ewmh)`
+- Then sway: Ordinary tiling: no maximize admission state (maximize request only schedules a configure; `wants_floating` is fixed-size/dialog/parent only); fullscreen flag alone maps fullscreen; exact siblings/focus TBD; `S(S-sway-max)` + `S(S-sway-ins)`
+- Then qtile/Columns: Fullscreen-flagged admits fullscreen via auto_fullscreen; fixed-size admits floating via float rules; otherwise ordinary tiling (no maximize-pending admission state); exact siblings/focus TBD; `S(S-qti-float)` + `S(S-qti-fs)`
+- Then awesome/tile: Maximized-pending A admits implicitly floating (geometry kept, B keeps sole-tile allocation); later native restore rejoins tiled order (position TBD); exact siblings/focus TBD; `S(S-awe-float)` + `S(S-awe-fs)` + `S(S-awe-manage)`
+- Then niri: pending-maximized A opens as a new scrolling column and
+  takes focus (Smart activation with no active fullscreen to fence it);
+  B's column is retained; later native restore clears the flag.
+  `S(S-nir-maxfs)`.
+- Then PaperWM: admission converts native-maximized A to width-maximize
+  (unmaximize plus width toggle at the open position); later native
+  restore is moot. Admission focus TBD. `S(S-pap-widthmax)`; focus queued.
+- Then karousel/Lazy: tiling admission force-unmaximizes A into an
+  ordinary column (no overlay, no slotless hold); a later native
+  restore is moot; admission focus TBD. `S(S-kar-maxfs)`; focus queued.
+- Then paneru: no-counterpart for a paneru-native maximized-admission
+  leg (no verb or model path); a host-zoomed first-seen window is
+  owner-specific with admission/restore behavior TBD.
+  `S(S-pan-cmds)` + `S(S-pan-axfs)`; journey queued.
+- Then Ours KDE: Current KDE/Windows make one admission-time clear attempt; retained slots/fullscreen/floating domains are exempt. Proposed preserve variants and later setting are unselected; exact native journey TBD, `D(D-min-games)`
+- Then Ours Windows: Current KDE/Windows make one admission-time clear attempt; retained slots/fullscreen/floating domains are exempt. Proposed preserve variants and later setting are unselected; exact native journey TBD, `D(D-min-games)`
+- Variant hook: V-MAX-MODEL.
+
+### R-MAX-07: captionless full-monitor cover
+
+- Given (tree profiles): Captionless window covers the full monitor; KDE native fullscreen and maximize flags are false
+
+- Given (column profiles): a captionless window covers the full monitor; no
+  fullscreen or maximize flags set. First observe/admit it at shipped
+  defaults.
+
+- When: First observe/admit it
+
+- Observe: Fullscreen exemption vs ordinary tiling despite monitor coverage
+
+- Observe (column leg): fullscreen exemption vs ordinary admission despite monitor
+  coverage.
+
+- Then COSMIC: Fullscreen requires the protocol flag (Wayland request or X11 state, consumed at admission); dialog checks (parent/window-type, min==max) admit floating, otherwise ordinary tiling; size plays no role in the cited admission path; `S(S-cos-admit)` + `S(S-cos-min)`; exact admitted frame and game presentation mode TBD
+- Then Hyprland/Dwindle: No size inference: fullscreen/maximize require a protocol flag/pending request or rule; captionless cover alone admits ordinary tiling (fixed-size min==max floats instead); exact frame/presentation TBD; `S(S-hyp-float)` + `S(S-hyp-fs)`
+- Then bspwm: Ordinary manage absent fullscreen atom/rule; `S(S-bsp-admit)`; exact fixture TBD
+- Then i3: Ordinary manage absent fullscreen atom/override-redirect; `S(S-i3-admit)`; exact fixture TBD
+- Then xmonad/Tall+Navigation2D: Ordinary tiling absent a protocol float cause (fixed/transient only; size plays no role); profile fullscreen handling is post-map ClientMessage only with no fullscreen manage hook; exact fixture TBD; `S(S-xmo-admit)` + `S(S-xmo-ewmh)`
+- Then sway: Ordinary tiling absent a protocol fullscreen flag (admission maps fullscreen only from the request flag; `wants_floating` is fixed-size/dialog/parent only; size plays no role); exact fixture TBD; `S(S-sway-max)`
+- Then qtile/Columns: No size inference: fullscreen needs the protocol flag, fixed-size floats instead, otherwise ordinary tiling; exact frame/presentation TBD; `S(S-qti-float)` + `S(S-qti-fs)`
+- Then awesome/tile: No size inference in the Lua admission path (float iff type/rules/fixed-size/fullscreen/max flags); captionless cover tiles ordinarily (fixed-size floats instead); exact frame/presentation TBD; `S(S-awe-manage)` + `S(S-awe-float)`
+- Then niri: ordinary scrolling admission (configure sizes come from the
+  protocol Fullscreen/Maximized flags only; size alone follows
+  rules/min-max, never fullscreen). `S(S-nir-maxfs)`.
+- Then PaperWM: ordinary tiling admission (fullscreen/maximize enter
+  through the Meta API flags only; coverage alone changes nothing).
+  `S(S-pap-acts)` + `S(S-pap-widthmax)`.
+- Then karousel/Lazy: ordinary tiling admission (shapeability, i.e.
+  moveable and resizeable, decides tileability; coverage is tested only
+  to ignore external geometry while maximized/fullscreen).
+  `S(S-kar-tile)` + `S(S-kar-maxfs)`.
+- Then paneru: ordinary strip admission (`AXFullScreen` is the only
+  overlay entry; size plays no role in the traced admission/model
+  paths). `S(S-pan-axfs)` + `S(S-pan-model)`.
+- Then Ours KDE: does not infer fullscreen from size, so no maximize-clear but ordinary tiling is possible; Actual game presentation mode is not established by either shape; `D(D-min-games)`
+- Then Ours Windows: captionless monitor containment classifies fullscreen; Actual game presentation mode is not established by either shape; `D(D-min-games)`
+- Variant hook: V-FS-SLOT.
 
 ## New scenarios (GWT; fixtures/actions/discriminators per the approved expansion record)
 
@@ -208,165 +491,3 @@ rectangles where geometry is load-bearing.
   (`send-refused-fullscreen`). `S(S-ours-ws)` + `S(S-ours-winsend)`.
 - Variant hook: provisional/TBD (no suitable existing hook; send hooks
   cover ordinary/float transfer, not overlay-state carry).
-
-## Scrolling backfill (additive; existing wide tables above unchanged)
-
-### R-MAX-01 backfill: maximize then restore (scrolling)
-
-- Given (column projection): `COL[C1[A],C2[B*],C3[C],C4[D]]`, effective
-  viewport width 2544px, gap 8, minimum widths 401/864/627/582 as in the
-  original row. Column widths follow the shipped presets/rules, not
-  equal tree shares; record actual pre-action allocations and viewport.
-  Maximize B natively, then restore B. This is a lifecycle projection,
-  not an exact H-tree allocation or a width-preset substitute.
-- Observe: sibling desired/actual stability, retained hints, exact slot
-  and convergence delay; distinguish sourced membership policy from the
-  original fixture's load-bearing settled geometry.
-- Then niri: client maximize routes into `set_maximized(true)`, setting
-  the column pending-maximized flag with the strip kept (no add/remove;
-  configure maps Maximized to working-area size); restore routes into
-  `set_maximized(false)`, an idempotent clear that floats only a
-  previously-floating window. Exact hinted frames/convergence TBD.
-  `S(S-nir-maxfs)`; geometry queued.
-- Then PaperWM: native maximize converts to full-width maximize at the
-  shipped default (unmaximize plus width-maximize with `unmaximizedRect`
-  memory); siblings reflow. Native restore has no maximized flag left to
-  clear; only the width toggle restores the saved width. Exact hinted
-  frames/convergence TBD. `S(S-pap-widthmax)`; geometry queued.
-- Then karousel/Lazy: native maximize keeps B's column membership with
-  `skipArrange` set (siblings keep their slots, B is never arranged);
-  restore clears the flag through the same change handler. Exact hinted
-  frames/convergence TBD. `S(S-kar-maxfs)`; geometry queued.
-- Then paneru: no-counterpart for a paneru-native `B:max` leg (no verb in
-  `Operation`, no zoom/maximize AX read); a host-zoomed window is an
-  owner-specific journey with sibling/restore behavior TBD.
-  `S(S-pan-cmds)` + `S(S-pan-model)` + `S(S-pan-axfs)`; journey queued.
-
-### R-MAX-02 backfill: fullscreen focus and exit (scrolling)
-
-- Given (columns): `COL[C1[A],C2[B*]]` at shipped defaults. Fullscreen
-  B; focus A; focus B; exit fullscreen.
-- Observe: strip mutation; focus enter/leave; restore.
-- Then niri: fullscreen sets the column pending-fullscreen flag with the
-  strip kept; focus left/right are plain column-index activations either
-  way; exit clears the flag, floating only a previously-floating window.
-  `S(S-nir-maxfs)` + `S(S-nir-focus)`.
-- Then PaperWM: native fullscreen is honored with the tiled frame saved
-  (layout and position updates skip it); `switch` focus is model-based
-  so A and B are reachable both ways; exit restores the saved frame.
-  `S(S-pap-fsframe)` + `S(S-pap-unmov)` + `S(S-pap-focus)`.
-- Then karousel/Lazy: fullscreen keeps membership with `skipArrange`
-  set; focusing A restores B to tiled via `restoreToTiled`, so the
-  focus-B step finds a normal window and the explicit exit is moot.
-  `S(S-kar-maxfs)` + `S(S-kar-focus)`.
-- Then paneru: native fullscreen pins a `Fullscren` strip with a restore
-  marker; West focus on that space raises the last column top instead of
-  traversing; the exit journey TBD. `S(S-pan-model)` +
-  `S(S-pan-fsfocus)`; exit queued.
-
-### R-MAX-03 backfill: workspace floating toggle over a slotless maximum (scrolling)
-
-- Given (columns): attempted mapping needs a workspace-wide floating
-  mode plus a slotless maximized window. No scrolling profile has a
-  workspace-wide floating mode, so the target parameter has no faithful
-  start; the Thens below are applicability qualifications, never an
-  ordinary toggle with a substituted target.
-- Observe: whether the workspace floating target exists natively.
-- Then niri: fixture-inapplicable (no workspace floating mode exists;
-  `ToggleWindowFloating` is per-window only and `floating_is_active`
-  derives from admission/focus, not a mode). `S(S-nir-float)`.
-- Then PaperWM: fixture-inapplicable (no floating workspace mode and no
-  workspace toggle in the registered action inventory).
-  `S(S-pap-acts)`.
-- Then karousel/Lazy: fixture-inapplicable (float is per-window only; no
-  floating desktop mode). `S(S-kar-acts)`.
-- Then paneru: fixture-inapplicable (no floating workspace mode; window
-  management is per-window). `S(S-pan-cmds)`.
-
-### R-MAX-04 backfill: shortcut maximize, native restore, repress (scrolling)
-
-- Given (columns): `COL[C1[A],C2[B*]]` at shipped defaults; B normal and
-  remains the same native window. Shortcut-maximize B; native-restore B;
-  press the same shortcut again. Use niri `MaximizeWindowToEdges`, KWin's
-  native maximize shortcut for karousel, and a GNOME native maximize
-  request for PaperWM (Meta `maximize(BOTH)`, then `unmaximize(BOTH)`).
-  PaperWM's width-only shortcut is not substituted for this host action.
-- Observe: new maximize attempt vs persistent attempted-state refusal.
-- Then niri: `MaximizeWindowToEdges` drives the native toggle (flips the
-  column pending flag, no fence); client native restore routes into
-  `set_maximized(false)`, an idempotent clear; the repress re-applies:
-  a new attempt every press. `S(S-nir-maxfs)`.
-- Then PaperWM: each native maximize request converts to a width toggle;
-  native restore has no maximized flag to clear. The repress is processed
-  again (and can toggle the saved width back), with no attempted-state
-  fence. `S(S-pap-widthmax)`.
-- Then karousel/Lazy: native KWin maximize on the tiled window is
-  observed with `skipArrange` set and no fence in the change handler;
-  native restore clears through the same handler; the repress
-  re-maximizes: a new attempt every press. `S(S-kar-maxfs)`.
-- Then paneru: no-counterpart for a paneru-native maximize leg (no verb in
-  `Operation`, no zoom/maximize AX read); a host-zoom journey is
-  owner-specific with attempt behavior TBD.
-  `S(S-pan-cmds)` + `S(S-pan-axfs)`; journey queued.
-
-### R-MAX-05 backfill: app-owned fullscreen without a preimage (scrolling)
-
-- Given (columns): `COL[C1[A],C2[B*]]` at shipped defaults. B entered
-  app-owned fullscreen without a manager preimage; focus B; request the
-  project fullscreen toggle.
-- Observe: native exit attempt vs refusal of app-owned fullscreen;
-  slot/geometry after exit.
-- Then niri: the project toggle clears client-origin fullscreen with no
-  preimage gate; the tiled column remains and resumes normal sizing.
-  `S(S-nir-maxfs)`.
-- Then PaperWM: `paper-toggle-fullscreen` flips the native flag
-  regardless of origin with no refusal branch; exit restores the saved
-  frame. `S(S-pap-acts)` + `S(S-pap-fsframe)`.
-- Then karousel/Lazy: no-counterpart (no project fullscreen toggle verb
-  in the action inventory; the native KWin exit path is not this toggle).
-  `S(S-kar-acts)` + `S(S-kar-maxfs)`.
-- Then paneru: no-counterpart (no project fullscreen toggle verb in
-  `Operation`; the native exit journey is not this toggle).
-  `S(S-pan-cmds)` + `S(S-pan-axfs)`.
-
-### R-MAX-06 backfill: admit a first-seen maximized window (scrolling)
-
-- Given (columns): `COL[C1[B]]` occupied at shipped defaults.
-  First-seen eligible maximized A has no retained slot and is not
-  fullscreen; admit A; later natively restore A.
-- Observe: overlay/slot admission; B allocation; A focus; restore.
-- Then niri: pending-maximized A opens as a new scrolling column and
-  takes focus (Smart activation with no active fullscreen to fence it);
-  B's column is retained; later native restore clears the flag.
-  `S(S-nir-maxfs)`.
-- Then PaperWM: admission converts native-maximized A to width-maximize
-  (unmaximize plus width toggle at the open position); later native
-  restore is moot. Admission focus TBD. `S(S-pap-widthmax)`; focus queued.
-- Then karousel/Lazy: tiling admission force-unmaximizes A into an
-  ordinary column (no overlay, no slotless hold); a later native
-  restore is moot; admission focus TBD. `S(S-kar-maxfs)`; focus queued.
-- Then paneru: no-counterpart for a paneru-native maximized-admission
-  leg (no verb or model path); a host-zoomed first-seen window is
-  owner-specific with admission/restore behavior TBD.
-  `S(S-pan-cmds)` + `S(S-pan-axfs)`; journey queued.
-
-### R-MAX-07 backfill: captionless full-monitor cover (scrolling)
-
-- Given (columns): a captionless window covers the full monitor; no
-  fullscreen or maximize flags set. First observe/admit it at shipped
-  defaults.
-- Observe: fullscreen exemption vs ordinary admission despite monitor
-  coverage.
-- Then niri: ordinary scrolling admission (configure sizes come from the
-  protocol Fullscreen/Maximized flags only; size alone follows
-  rules/min-max, never fullscreen). `S(S-nir-maxfs)`.
-- Then PaperWM: ordinary tiling admission (fullscreen/maximize enter
-  through the Meta API flags only; coverage alone changes nothing).
-  `S(S-pap-acts)` + `S(S-pap-widthmax)`.
-- Then karousel/Lazy: ordinary tiling admission (shapeability, i.e.
-  moveable and resizeable, decides tileability; coverage is tested only
-  to ignore external geometry while maximized/fullscreen).
-  `S(S-kar-tile)` + `S(S-kar-maxfs)`.
-- Then paneru: ordinary strip admission (`AXFullScreen` is the only
-  overlay entry; size plays no role in the traced admission/model
-  paths). `S(S-pan-axfs)` + `S(S-pan-model)`.

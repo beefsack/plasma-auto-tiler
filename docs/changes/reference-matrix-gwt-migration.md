@@ -1,6 +1,6 @@
 # Reference matrix GWT migration
 
-- Status: active; 13 of 58 historical scenarios migrated and verified.
+- Status: active; 31 of 58 historical scenarios migrated and verified.
 - Baseline: `e160894`; date: 2026-10-07.
 - Goal: one GWT format across all 125 matrix scenarios, with 14 separate
   profile outcomes including Ours KDE and Ours Windows.
@@ -25,8 +25,8 @@
 | groups-stacks.md | 1 | Verified |
 | close.md | 2 | Verified |
 | minimum-size.md | 3 | Verified |
-| floating.md | 11 | Pending |
-| maximize-fullscreen.md | 7 | Pending |
+| floating.md | 11 | Verified |
+| maximize-fullscreen.md | 7 | Verified |
 | workspaces.md | 7 | Pending |
 | multi-output.md | 2 | Pending |
 | mouse.md | 8 | Pending |
@@ -37,8 +37,12 @@
 - R-MIN-01..03: explicit KDE write-skip vs Windows origin/minimum behavior
   split; shared qualifications and citations retained in both bullets.
 - Other first-group cells: shared text duplicated verbatim.
-- Unclear splits flagged: none so far. Any unclear original cell will be
-  retained under both platform bullets and listed here without inference.
+- Floating/overlay group: 12 clear platform splits; other cells shared and
+  duplicated, except the unclear cell below. Citations attached to an explicit
+  platform remain scoped; shared citations are duplicated.
+- Unclear split: R-MAX-01, Windows "same" could inherit slot/share only or the
+  full KDE no-writes/exact-restore clause. Original combined text retained
+  verbatim in both platform bullets, with all original citations.
 
 ## Accepted evidence
 
@@ -51,8 +55,14 @@
   every original bullet before acceptance and strengthened verification.
 - `git diff --check` passed. Full repository anchor/link audit and index
   format cleanup follow the remaining area migrations.
+- Floating/overlay group: 18 scenarios verified against the baseline;
+  tree/scrolling cells and framing retained, new scenarios unchanged,
+  per-scenario and whole-file citation multisets matched precise shared-key
+  duplication allowances; 14 Thens, ID counts, ASCII and whitespace passed.
+- Lead rejected narrowing R-MAX-01's "same" scope; original text restored in
+  both bullets before acceptance, with ambiguity retained above.
 
 ## Next action
 
-- Migrate floating/maximize, workspace/output, then mouse/startup/control
+- Migrate workspace/output, then mouse/startup/control
   groups; verify each group, update the index, audit links and archive.
