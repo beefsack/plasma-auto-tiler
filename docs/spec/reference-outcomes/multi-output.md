@@ -1,27 +1,35 @@
 # Multi-output (reference outcomes)
 
-Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Wide tables moved here unchanged.
+Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Scenarios below are GWT with one Then bullet per profile (14).
 
 ## 9. Multi-output
-
-| ID | Start | Action | Observe | COSMIC | Hyprland | bspwm | i3 | xmonad | sway | qtile | awesome | Ours (KDE/Windows) | Variant |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| R-OUT-01 | `L=X`, `R=H[A*,B]` | Move A left (occupied target) | Cross vs wrap; target split shape | `L=H[X,A]`, `R=B` R4; [S20-01](../../cosmic-move-conformance.md#sequence-s20---horizontal-output-crossing) authored observation | Off-monitor focal transfers via `assignToSpace` to the focal monitor's active workspace; exact L split shape TBD (L work area/X geometry, vertical alignment, and drop half unrecorded). Mechanism: 1px-beyond-edge focal, containing-else-nearest monitor query, fallback default true, then Dwindle re-admission anchor; `S(S-hyp-move)` | Crosses to L via configured `-s west --follow`: the west-neighbor search spans all monitors' focused desktops, so X qualifies; cross-monitor node swap puts A sole on L and X in A's R slot (`L=A`, `R=H[X,B]`), `--follow` focuses A on L; exact L split/frames TBD (monitor/X geometry unrecorded); `S(S-bsp-flt-focus)` + `S(S-bsp-flt-swap)` | Crosses to L: workspace-level H has no left swap, so `move_to_output_directed` attaches A to L's visible workspace at TAIL (nodes `[X,A]`, splith embedding `H[X,A]` under default `workspace_layout`); R collapses to sole B; mover-focused follow via `workspace_show` focuses A on L; `S(S-i3-move)` + `S(S-i3-outmove)`; exact L wrapper if L has non-default `workspace_layout` TBD (no custom rules here) | Exact occupied-target crossing TBD (Tall target geometry unrecorded); analogous policy only: profile move is same-layer `windowSwap` (geometric target via `navigableWindows`; `swap` exchanges stack positions retaining mover focus, miss is no-op with wrap False); cross-screen carry via the separate `windowToScreen` (`W.shift`) verb is not exercised here; exact L split/frames TBD; `S(S-xmo-out)` + `S(S-xmo-nav)` + `S(S-xmo-layout)` | Crosses to L: workspace-level H has no left swap, so the next-output attach moves A to L's active workspace at TAIL (nodes `[X,A]`, splith embedding `H[X,A]` under default `workspace_layout`); R collapses to sole B; focus stays on the mover A on L (no workspace-switch call in this path); `S(S-sway-move)` + `S(S-sway-outmove)`; exact L wrapper if L has non-default `workspace_layout` TBD (no custom rules here) | No-op: leftmost sole-column A has no adjacent column and no shared column to split, so shuffle_left returns with tree and focus unchanged; no directional cross-screen carry in Columns (screen placement is togroup/toscreen, not exercised here); `S(S-qti-shuffle)` + `S(S-qti-group)` | Profile directional move is `swap.global_bydirection` (local `swap.bydirection` miss then screen cross; single-output miss is no-op). From A west local misses (A leftmost), global crosses to L: A/X screen exchange with tile recalc on both screens (L becomes A sole full tile, R admits X into A's slot); mover focus retained (swap has no focus write; global re-activates mover); exact R order/frames and tag-visibility journey TBD; `S(S-awe-swap)` + `S(S-awe-focus)` + `S(S-awe-tile)` | Exhausted horizontal R4 into output's current workspace; same commit/fence protocol as send; `D(D-dec-cos)` offline only | V-R4-DIR |
-| R-OUT-02 | `L=X`, `R=V[A*,B]` | Move A left (perpendicular) | In-output wrap wins vs cross | No cross; `R=H[A,B]` R1; [S21-01](../../cosmic-move-conformance.md#sequence-s21---perpendicular-wrapno-cross-case) authored observation | Exact cross-vs-local TBD (monitor arrangement/edge adjacency and vertical alignment unrecorded, so the 1px focal may sit on L or R). Policy: focal off-monitor with fallback crosses via `assignToSpace`, else local remove+reinsert ordered by focal half; `S(S-hyp-move)` | Crosses rather than local-wrapping under `-s west --follow`: the west search spans monitors, so full-height X qualifies west of A (shared vertical range) while B sits south; A swaps with X (`L=A`, `R=V[X,B]`), `--follow` focuses A on L; no R1-style local wrap in source; exact frames TBD; `S(S-bsp-flt-focus)` + `S(S-bsp-flt-swap)` | No cross: perpendicular LEFT finds no HORIZ parent, so the workspace force-wraps to H and A inserts above its V parent (`H[A,V[B]]`, lone `V[B]` wrapper persists); focus stays A; `S(S-i3-move)` + `S(S-i3-outmove)` | Exact perpendicular `V` fixture has no active-Tall counterpart (no nested V; Tall is fixed master/stack side-by-side, `Mirror Tall` not assumed in this profile); analogous policy only: no local-wrap primitive exists (selection is purely geometric line/side/center, never tree-orientation), so a qualifying western X still swaps rather than wrapping locally; exact cross-vs-local TBD (output/monitor geometry unrecorded); `S(S-xmo-out)` + `S(S-xmo-nav)` | No cross: perpendicular LEFT finds no HORIZ parent, so the workspace force-wraps to H and A inserts above its V parent (`H[A,V[B]]`, lone `V[B]` wrapper persists); focus stays A; `S(S-sway-move)` + `S(S-sway-outmove)` | No cross: shuffle_left on the single column carrying A above B prepends a new column holding A (local split into two columns), never crossing screens; exact frames and drop-side focus TBD; `S(S-qti-shuffle)` | Exact `V[A,B]` fixture has no ordinary tile counterpart (tile with 2 clients is side-by-side master/stack, not top/bottom V); exact axes/frames TBD. Policy: no local-wrap primitive (move is geometric swap only); west local from A misses, so profile `swap.global_bydirection` crosses to L (A/X screen exchange, focus retained on A) rather than wrapping locally; `S(S-awe-swap)` + `S(S-awe-focus)` + `S(S-awe-tile)` | Local R1 wins first; `D(D-dec-cos)` | V-R4-DIR |
-
-## Scrolling backfill (additive; wide rows above preserved)
 
 Column Given bullets are separate fixtures, never H/V ancestry claims.
 karousel two-output fixtures are inapplicable per `S(S-kar-single)`;
 paneru legs distinguish the native Space from virtual rows.
 
-### R-OUT-01 scrolling assessment (move left onto an occupied output)
+### R-OUT-01: move left onto an occupied output
 
-- Given (scrolling): `L=COL[C0[X]]`, `R=COL[C1[A*],C2[B]]` at shipped
+- Given (tree profiles): `L=X`, `R=H[A*,B]`
+
+- Given (column profiles): `L=COL[C0[X]]`, `R=COL[C1[A*],C2[B]]` at shipped
   defaults; viewport recorded. Native verbs (same semantic
-  directional move-left as the wide row above, not explicit
+  directional move-left as the tree leg above, not explicit
   monitor transfer): niri `MoveColumnLeft`; PaperWM `move-left`;
   paneru `Swap(West)`.
+
+- When: Move A left (occupied target)
+
+- Observe: Cross vs wrap; target split shape
+
+- Then COSMIC: `L=H[X,A]`, `R=B` R4; [S20-01](../../cosmic-move-conformance.md#sequence-s20---horizontal-output-crossing) authored observation
+- Then Hyprland/Dwindle: Off-monitor focal transfers via `assignToSpace` to the focal monitor's active workspace; exact L split shape TBD (L work area/X geometry, vertical alignment, and drop half unrecorded). Mechanism: 1px-beyond-edge focal, containing-else-nearest monitor query, fallback default true, then Dwindle re-admission anchor; `S(S-hyp-move)`
+- Then bspwm: Crosses to L via configured `-s west --follow`: the west-neighbor search spans all monitors' focused desktops, so X qualifies; cross-monitor node swap puts A sole on L and X in A's R slot (`L=A`, `R=H[X,B]`), `--follow` focuses A on L; exact L split/frames TBD (monitor/X geometry unrecorded); `S(S-bsp-flt-focus)` + `S(S-bsp-flt-swap)`
+- Then i3: Crosses to L: workspace-level H has no left swap, so `move_to_output_directed` attaches A to L's visible workspace at TAIL (nodes `[X,A]`, splith embedding `H[X,A]` under default `workspace_layout`); R collapses to sole B; mover-focused follow via `workspace_show` focuses A on L; `S(S-i3-move)` + `S(S-i3-outmove)`; exact L wrapper if L has non-default `workspace_layout` TBD (no custom rules here)
+- Then xmonad/Tall+Navigation2D: Exact occupied-target crossing TBD (Tall target geometry unrecorded); analogous policy only: profile move is same-layer `windowSwap` (geometric target via `navigableWindows`; `swap` exchanges stack positions retaining mover focus, miss is no-op with wrap False); cross-screen carry via the separate `windowToScreen` (`W.shift`) verb is not exercised here; exact L split/frames TBD; `S(S-xmo-out)` + `S(S-xmo-nav)` + `S(S-xmo-layout)`
+- Then sway: Crosses to L: workspace-level H has no left swap, so the next-output attach moves A to L's active workspace at TAIL (nodes `[X,A]`, splith embedding `H[X,A]` under default `workspace_layout`); R collapses to sole B; focus stays on the mover A on L (no workspace-switch call in this path); `S(S-sway-move)` + `S(S-sway-outmove)`; exact L wrapper if L has non-default `workspace_layout` TBD (no custom rules here)
+- Then qtile/Columns: No-op: leftmost sole-column A has no adjacent column and no shared column to split, so shuffle_left returns with tree and focus unchanged; no directional cross-screen carry in Columns (screen placement is togroup/toscreen, not exercised here); `S(S-qti-shuffle)` + `S(S-qti-group)`
+- Then awesome/tile: Profile directional move is `swap.global_bydirection` (local `swap.bydirection` miss then screen cross; single-output miss is no-op). From A west local misses (A leftmost), global crosses to L: A/X screen exchange with tile recalc on both screens (L becomes A sole full tile, R admits X into A's slot); mover focus retained (swap has no focus write; global re-activates mover); exact R order/frames and tag-visibility journey TBD; `S(S-awe-swap)` + `S(S-awe-focus)` + `S(S-awe-tile)`
 - Then niri: stays (`move_left` reorders strip columns and returns
   false at index 0; A is already first, so no reorder and no cross;
   crossing needs the separate `MoveColumnToMonitor*` verb, an
@@ -36,12 +44,30 @@ paneru legs distinguish the native Space from virtual rows.
   has none; West/East never fall through to another display, only
   North/South do). `D1`/`D2` displays keep their strips.
   `S(S-pan-swap)`.
+- Then Ours KDE: Exhausted horizontal R4 into output's current workspace; same commit/fence protocol as send; `D(D-dec-cos)` offline only
+- Then Ours Windows: Exhausted horizontal R4 into output's current workspace; same commit/fence protocol as send; `D(D-dec-cos)` offline only
+- Variant hook: V-R4-DIR.
 
-### R-OUT-02 scrolling assessment (perpendicular move at an output edge)
+### R-OUT-02: perpendicular move at an output edge
 
-- Given (scrolling): `R=COL[C1[A*,B]]` with A above B both visible,
+- Given (tree profiles): `L=X`, `R=V[A*,B]`
+
+- Given (column profiles): `R=COL[C1[A*,B]]` with A above B both visible,
   `L=COL[C0[X]]`; shipped defaults; viewport recorded. Same
-  directional verbs as the R-OUT-01 backfill.
+  directional verbs as the R-OUT-01 column leg.
+
+- When: Move A left (perpendicular)
+
+- Observe: In-output wrap wins vs cross
+
+- Then COSMIC: No cross; `R=H[A,B]` R1; [S21-01](../../cosmic-move-conformance.md#sequence-s21---perpendicular-wrapno-cross-case) authored observation
+- Then Hyprland/Dwindle: Exact cross-vs-local TBD (monitor arrangement/edge adjacency and vertical alignment unrecorded, so the 1px focal may sit on L or R). Policy: focal off-monitor with fallback crosses via `assignToSpace`, else local remove+reinsert ordered by focal half; `S(S-hyp-move)`
+- Then bspwm: Crosses rather than local-wrapping under `-s west --follow`: the west search spans monitors, so full-height X qualifies west of A (shared vertical range) while B sits south; A swaps with X (`L=A`, `R=V[X,B]`), `--follow` focuses A on L; no R1-style local wrap in source; exact frames TBD; `S(S-bsp-flt-focus)` + `S(S-bsp-flt-swap)`
+- Then i3: No cross: perpendicular LEFT finds no HORIZ parent, so the workspace force-wraps to H and A inserts above its V parent (`H[A,V[B]]`, lone `V[B]` wrapper persists); focus stays A; `S(S-i3-move)` + `S(S-i3-outmove)`
+- Then xmonad/Tall+Navigation2D: Exact perpendicular `V` fixture has no active-Tall counterpart (no nested V; Tall is fixed master/stack side-by-side, `Mirror Tall` not assumed in this profile); analogous policy only: no local-wrap primitive exists (selection is purely geometric line/side/center, never tree-orientation), so a qualifying western X still swaps rather than wrapping locally; exact cross-vs-local TBD (output/monitor geometry unrecorded); `S(S-xmo-out)` + `S(S-xmo-nav)`
+- Then sway: No cross: perpendicular LEFT finds no HORIZ parent, so the workspace force-wraps to H and A inserts above its V parent (`H[A,V[B]]`, lone `V[B]` wrapper persists); focus stays A; `S(S-sway-move)` + `S(S-sway-outmove)`
+- Then qtile/Columns: No cross: shuffle_left on the single column carrying A above B prepends a new column holding A (local split into two columns), never crossing screens; exact frames and drop-side focus TBD; `S(S-qti-shuffle)`
+- Then awesome/tile: Exact `V[A,B]` fixture has no ordinary tile counterpart (tile with 2 clients is side-by-side master/stack, not top/bottom V); exact axes/frames TBD. Policy: no local-wrap primitive (move is geometric swap only); west local from A misses, so profile `swap.global_bydirection` crosses to L (A/X screen exchange, focus retained on A) rather than wrapping locally; `S(S-awe-swap)` + `S(S-awe-focus)` + `S(S-awe-tile)`
 - Then niri: stays (`move_left` is strip-local column reorder with
   edge-false; single-column fixture has no reorder and no monitor
   leg). `S(S-nir-move)` + `S(S-nir-mon)`.
@@ -52,6 +78,9 @@ paneru legs distinguish the native Space from virtual rows.
   counterpart). `S(S-kar-single)`.
 - Then paneru: stays (single-column strip has no western peer for
   `Swap(West)`; no display fall-through on West). `S(S-pan-swap)`.
+- Then Ours KDE: Local R1 wins first; `D(D-dec-cos)`
+- Then Ours Windows: Local R1 wins first; `D(D-dec-cos)`
+- Variant hook: V-R4-DIR.
 
 ## New scenarios (GWT; fixtures/actions/discriminators per the approved expansion record)
 

@@ -1,6 +1,6 @@
 # Reference matrix GWT migration
 
-- Status: active; 31 of 58 historical scenarios migrated and verified.
+- Status: active; 40 of 58 historical scenarios migrated and verified.
 - Baseline: `e160894`; date: 2026-10-07.
 - Goal: one GWT format across all 125 matrix scenarios, with 14 separate
   profile outcomes including Ours KDE and Ours Windows.
@@ -27,8 +27,8 @@
 | minimum-size.md | 3 | Verified |
 | floating.md | 11 | Verified |
 | maximize-fullscreen.md | 7 | Verified |
-| workspaces.md | 7 | Pending |
-| multi-output.md | 2 | Pending |
+| workspaces.md | 7 | Verified |
+| multi-output.md | 2 | Verified |
 | mouse.md | 8 | Pending |
 | restart-persistence.md | 10 | Pending |
 
@@ -43,6 +43,8 @@
 - Unclear split: R-MAX-01, Windows "same" could inherit slot/share only or the
   full KDE no-writes/exact-restore clause. Original combined text retained
   verbatim in both platform bullets, with all original citations.
+- Workspace/output group: R-WS-03/06/07 explicitly split by platform; other
+  cells shared and duplicated. No additional unclear splits.
 
 ## Accepted evidence
 
@@ -61,8 +63,13 @@
   duplication allowances; 14 Thens, ID counts, ASCII and whitespace passed.
 - Lead rejected narrowing R-MAX-01's "same" scope; original text restored in
   both bullets before acceptance, with ambiguity retained above.
+- Workspace/output group: nine historical scenarios verified, inventories
+  remain 14/6 scenarios. Full-file/scenario citation multisets, exact original
+  reference/scrolling cells and framing, unchanged new blocks, 14 profiles,
+  retained links, ASCII and whitespace passed. Locator-only references to
+  wide rows/backfills now name the tree/column leg.
 
 ## Next action
 
-- Migrate workspace/output, then mouse/startup/control
-  groups; verify each group, update the index, audit links and archive.
+- Migrate mouse/startup/control; verify the group, update the index, audit
+  links and archive.
