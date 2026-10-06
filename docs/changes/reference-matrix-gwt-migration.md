@@ -1,6 +1,7 @@
 # Reference matrix GWT migration
 
-- Status: active; 40 of 58 historical scenarios migrated and verified.
+- Status: active; all 58 historical scenarios migrated and verified;
+  index cleanup and final link audit remain.
 - Baseline: `e160894`; date: 2026-10-07.
 - Goal: one GWT format across all 125 matrix scenarios, with 14 separate
   profile outcomes including Ours KDE and Ours Windows.
@@ -29,8 +30,8 @@
 | maximize-fullscreen.md | 7 | Verified |
 | workspaces.md | 7 | Verified |
 | multi-output.md | 2 | Verified |
-| mouse.md | 8 | Pending |
-| restart-persistence.md | 10 | Pending |
+| mouse.md | 8 | Verified |
+| restart-persistence.md | 10 | Verified |
 
 ## Ours splits
 
@@ -45,6 +46,13 @@
   verbatim in both platform bullets, with all original citations.
 - Workspace/output group: R-WS-03/06/07 explicitly split by platform; other
   cells shared and duplicated. No additional unclear splits.
+- Mouse/startup/control group: R-DRAG-03..08, R-START-03 and R-CTL-01/03/04
+  explicitly split. R-DRAG-01/02 and R-START-01/02 shared and duplicated.
+- Unclear split: R-CTL-02, "other platforms TBD" does not explicitly identify
+  KDE's outcome. Original combined text retained under both platforms.
+- Unclear splits: R-CTL-05/06/07, KDE-specific fixtures/evidence without an
+  explicit Windows outcome. Original text retained under both platforms;
+  this supplies no new Windows applicability or outcome claim.
 
 ## Accepted evidence
 
@@ -68,8 +76,14 @@
   reference/scrolling cells and framing, unchanged new blocks, 14 profiles,
   retained links, ASCII and whitespace passed. Locator-only references to
   wide rows/backfills now name the tree/column leg.
+- Mouse/startup/control group: 18 historical scenarios verified; new mouse
+  and restart blocks/inventories unchanged. Reference/scrolling cells and
+  complete framing, scenario and file citation multisets, 14-profile counts,
+  ID counts, local links, ASCII and whitespace passed. R-START-03's shared
+  placement citation appears in both platform bullets; platform-only keys
+  remain scoped. Wide-row locators now name the scenario.
 
 ## Next action
 
-- Migrate mouse/startup/control; verify the group, update the index, audit
-  links and archive.
+- Update the index/current-format notes, audit repository links and full
+  matrix preservation, then archive.
