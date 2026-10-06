@@ -1255,6 +1255,100 @@ Legend:
   0.25-2.0) and :799-808 (focus-follows-mouse and mouse-follows-focus
   enabled) and :822-828 (native tabs enabled) and :856-862 (one workspace,
   append admission) @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+- `S-ours-ins` plasma-auto-tiler:crates/tiler-core/src/session.rs:2124-2161
+  (`insert_tiled`: empty tree returns the single new leaf; focused leaf
+  wraps old/new in an ordered binary group, no same-axis N-ary append) and
+  crates/tiler-core/src/cosmic_v1.rs:63-69 (`admission_axis`: wide selects
+  Horizontal, else Vertical) and
+  crates/tiler-core/src/session/ops/lifecycle.rs:237-261 (normal tiled
+  admission dispatches through `admission_axis_for_rect` plus eligible
+  focus into `insert_tiled`) and kwin/src/plan-adapter.ts:90 (`PlanOp`
+  `admit`) and crates/tiler-windows/src/product_hide.rs:825
+  (`admit_managed_claim` managed-claim gate) @9241c94
+  (shared Engine plus adapter integration; newcomer focus, order, and exact
+  frames are separate TBD sub-legs, never read from this tag)
+- `S-ours-admit` plasma-auto-tiler:crates/tiler-core/src/session/world.rs:529-545
+  (`eligible_focus_in`: anchor is the focused leaf only when the focused
+  domain is the target domain and the leaf is still a linked tile leaf) and
+  crates/tiler-core/src/session/ops/lifecycle.rs:249 (normal admission
+  resolves that eligible focus) and :331-349 (admitted newcomer becomes
+  the desired focus leaf with `last_active` updated, then dispatches) and
+  kwin/src/plan-adapter.ts:6962-6967 (complete-reply binding covers the
+  admit window set) and :8444-8467 (admit qualifies as a geometry-plan
+  boundary with `planned-applied`) and
+  crates/tiler-windows/src/tiling_sys.rs:4,21 (Windows retains the shared
+  `tiler_core::engine::Engine` as layout) @9241c94
+  (Engine desired-focus plus both adapters' admit application; adapter-side
+  physical focus confirmation and exact frames stay TBD sub-legs)
+- `S-nir-ins` niri:src/layout/scrolling.rs:903-923 (`add_tile` always wraps
+  the tile in a new column) and :999-1017 (`add_column`: index defaults to
+  active+1, 0 on an empty strip; the new column activates when told to) and
+  src/layout/workspace.rs:636-676 (Auto target: no focus steal from an
+  active pending fullscreen; pending maximized/fullscreen tiles open in
+  the scrolling layout; plain floats go to the floating layer) and
+  src/handlers/xdg_shell.rs:1107-1116 (`open_on_workspace` rule routes the
+  target monitor) @ed22699d99462f61ab171472d3ea67e844ea580d
+  (position and routing-mechanism legs; viewport, settled widths, and
+  smart-activation remainder stay TBD)
+- `S-pap-ins` PaperWM:tiling.js:3994-4008 (fresh windows redirect to the
+  selected space) and :4048-4055 + :4105-4120 (winprop `spaceIndex` moves
+  the window to that space and re-inserts it there) and :4155 (`addWindow`
+  at `getOpenWindowPositionIndex`) and :4262-4280 (index: selected+1 under
+  the shipped RIGHT default) and :4071-4086 (fullscreen newcomers insert
+  normally, then re-fullscreen after a timeout) and :4157-4161 (maximized
+  newcomers unmaximize, then maximize horizontally) and :4204-4224 (fresh
+  windows activate on actor show) and :4241-4247 (inserts landing on an
+  inactive space only ensure the viewport, never steal focus)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (position, routing, newcomer-state, and focus legs; settled frames and
+  overlay remainder stay TBD)
+- `S-kar-ins` karousel:src/lib/world/clientState/Tiled.ts:8-17 (ordinary
+  admission opens a new column after the last-focused column, else the
+  last column, appending the window at the bottom) and
+  src/lib/layout/Grid.ts:150-158 (new column inserts after its left
+  neighbor) and src/lib/layout/Column.ts:275-295 (`onWindowAdded`
+  end-inserts and focuses only a window that is already focused) and
+  src/lib/layout/Window.ts:8-24 (maximized/fullscreen newcomers skip
+  arrange instead of fighting the user) and
+  src/lib/layout/Column.ts:14,267-272 (stacked display exists behind
+  `toggleStacked`, off unless `stackColumnsByDefault`)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (new-column position leg; KWin-side focus, viewport, and settled widths
+  stay TBD)
+- `S-pan-ins` paneru:src/ecs/triggers.rs:1064-1145 (`spawn_window_trigger`
+  spawns the managed entity and emits the spawn event) and :771-879
+  (`window_managed_trigger`: re-inserts at the remembered previous strip
+  index when it still exists, else into the active strip at the config
+  `insertion()` index, else at the visually overlapped column, else at the
+  end, then reshuffles) @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (insertion-position policy; focus outcome stays TBD)
+- `S-pan-model` paneru:src/ecs/layout.rs:196-203 (`StackItem` distinguishes
+  single windows from app-native tabs) and :256-265 (`Column::Stack` is
+  ordered top-to-bottom, `Column::Tabs` holds native tabs, `Fullscren` is
+  a separate kind) @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+- `S-hyp-pre` Hyprland:src/layout/algorithm/tiled/dwindle/DwindleAlgorithm.cpp:715-748
+  (`layoutmsg preselect <direction>` writes `m_overrideDirection`) and
+  :153-182 (the override forces the admission axis and newcomer side, then
+  resets after one opening unless `permanent_direction_override` is set) and
+  src/config/values/ConfigValues.cpp:767 (`permanent_direction_override`
+  default false, also covered by `S(S-hyp-defaults)`)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (verb, override, and one-shot-vs-persistent legs; exact fixture frames
+  stay TBD)
+- `S-bsp-pre` bspwm:doc/bspwm.1.asciidoc:431-434 (`node -p DIR` preselects
+  the splitting area, `-o` its ratio: manual insertion mode) and
+  src/messages.c:359-382 (verb parsing plus `~` cancel) and
+  src/tree.c:215-223 (`presel_dir` stores the split direction)
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (verb and manual-mode legs; consumption and exact fixture geometry stay
+  TBD)
+- `S-i3-split` i3:parser-specs/commands.spec:254-257 (`split
+  v|h|t|vertical|horizontal|toggle` into `cmd_split`) and
+  src/commands.c:1174-1200 (`cmd_split` via `tree_split` VERT/HORIZ, `t`
+  toggles the current orientation)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (verb and orientation-set legs; override interaction with automatic
+  admission and persistence stay TBD)
 
 ## Variant hooks (provisional, not commitments)
 
@@ -1282,8 +1376,9 @@ Legend:
 
 ## Area files
 
-Scenario rows live in area files under `reference-outcomes/` (58 existing
-rows, preserved). This index retains purpose, row-addition rule, notation,
+Scenario rows live in area files under `reference-outcomes/` (58 original
+rows, preserved; plus 6 insertion scenarios from piece B1, GWT only).
+This index retains purpose, row-addition rule, notation,
 profiles, evidence tags/legend, variant hooks, and deferred. Existing wide
 tables moved unchanged; all new scenarios use the GWT form below.
 Areas follow the approved priority order; column mechanics follows, and
@@ -1291,7 +1386,7 @@ minimum-size stays a supplemental file (not nested in resize).
 
 | Area | File | Existing rows | Candidates |
 |---|---|---|---|
-| Insertion | [insertion.md](reference-outcomes/insertion.md) | R-INS-01..02 (2) | R-INS-03..08 |
+| Insertion | [insertion.md](reference-outcomes/insertion.md) | R-INS-01..08 (8) | none (R-INS-03..08 landed in piece B1) |
 | Focus | [focus.md](reference-outcomes/focus.md) | none yet | R-FOC-01..04 |
 | Move | [move.md](reference-outcomes/move.md) | R-MOV-01..05 (5) | R-MOV-06..08 |
 | Resize | [resize.md](reference-outcomes/resize.md) | none yet | R-RSZ-01..04 |

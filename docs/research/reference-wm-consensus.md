@@ -1,7 +1,8 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (58 rows).
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (64 rows:
+58-row historical audit preserved below, plus 6-row insertion expansion).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -248,3 +249,60 @@ contradiction of Q3 in either direction.
 - Recorded-ours vs target gaps: WS-04/WS-05/CLOSE-02/INS-01-order/WS-02-order/
   DRAG-08 scenarios TBD; FLT-11 Windows pending; MAX-02/04 and DRAG-03/06
   exact journeys TBD; Windows float-subject parity pending (FLT-08/09/10).
+
+## Insertion expansion (piece B1): R-INS-03..08 plus R-INS-01/02 scrolling backfill
+
+Scope: piece B1 adds six GWT insertion scenarios (R-INS-03..08) and
+additive scrolling backfill blocks for R-INS-01/02. Historical tables and
+the 58-row audit above are preserved unchanged. Denominator, families, and
+the strength rule are unchanged: consensus classification below counts the
+original eight profiles only. The four scrolling profiles (niri, PaperWM,
+karousel/Lazy, paneru) form one correlated lineage reported as an explicit
+separate non-voting comparison; they never silently redefine a denominator.
+Cell classes for the expansion are mutually exclusive per cell: E
+complete outcome evidenced; P at least one predicate sub-leg evidenced
+with the remainder TBD; T TBD-only (branch notes cited for non-coverage
+do not promote a cell to P); Q all requested legs qualified
+(fixture-inapplicable / no-counterpart / owner-specific, each with pinned
+inventory evidence); M mixed qualified and applicable-TBD legs. Branch
+evidence is not a full-fixture vote. Sub-leg discipline: topology, anchor,
+focus, exact-geometry,
+verb-inventory, and routing-mechanism sub-legs split with explicit voter
+lists. Partial geometry/focus branch tags are never counted as complete
+outcomes.
+
+| Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
+|---|---|---|---|
+| R-INS-03 empty admission | anchor fallback; complete topology; newcomer focus; exact frames | partial policy branches: C `S-cos-axis`, H `S-hyp-ins`, B `S-bsp-insert`, S `S-sway-ins`, Q `S-qti-add`, A `S-awe-tile`/`S-awe-manage`; I/X focused-branch tags do not cover no-focus; empty-fixture topology/frames unresolved, focus policies partial (H,B; S gate, Q current-position fallback unresolved) | C audit-only (no agreed single predicate; applicable unknowns TBD) |
+| R-INS-04 chained admission | leg 1 inherits R-INS-01 policy branches only (landscape work area does not prove B at 1200x600, so no dimension is re-voted); legs 2-3 topology/focus/geometry | leg-1 policy branches all 8 (P); legs 2-3: 0/8 evidenced (live-test route: pointer/focus updates plus repeated recalc) | C audit-only |
+| R-INS-05 float-focus anchor | anchor exclusion vs fallback; newcomer layer/focus | 0/8 complete (anchor-branch notes only: C `S-cos-last`, H `S-hyp-ins`, B `S-bsp-insert`, S `S-sway-ins`; none proves float exclusion) | C audit-only |
+| R-INS-06 over overlay | overlay retained/cleared/covering; newcomer focus/visibility; underlying layout; separate `B:max` vs fresh `B:full` legs | `B:max` leg no-counterpart: B (no maximize in the state inventory, `S-bsp-fs`), I (`S-i3-max`), X (`S-xmo-layout`), S (`S-sway-max`), all consistent with the R-FLT-06 no-native-max classification; `B:full` legs applicable but TBD in those four; C/H/Q/A legs applicable but TBD | C audit-only |
+| R-INS-07 inactive-workspace routing | target-local anchor vs global focus; no focus steal; no output switch | 0/8 complete (routing TBD at pin in all eight) | C audit-only |
+| R-INS-08 preselected direction | verb inventory; override vs unsupported; one-shot vs persistent | verb+override+consumption: H (`S-hyp-pre`: preselect verb, forced axis/side, one-shot reset under shipped default); verb+manual-mode: B (`S-bsp-pre`); verb only: I (`S-i3-split`), S (`S-sway-default`+`S-sway-split`); no-counterpart: X (`S-xmo-layout` fixed Tall); TBD: C,Q,A (a missing search term is not inventory proof) | C audit-only |
+| R-INS-01 scrolling supplement | column admission position/focus/viewport under the separate column Given (no exact H projection; same A/B/C identities) | position-policy branches: niri (`S-nir-ins`: new column after active), PaperWM (`S-pap-ins`: selected+1 RIGHT), karousel (`S-kar-ins`: new column after last-focused), paneru (`S-pan-ins`: rule-index/overlap/end); focus/viewport 0/4 | non-voting comparison only |
+| R-INS-02 scrolling supplement | tab join vs ordinary admission under `COL[C1[S[A*,B]]]` with open C (same identities/action as the tree fixture) | non-join position: niri (ordinary open wraps a new column, `S-nir-ins`), karousel (ordinary open a new column, `S-kar-ins`; stacked display exists but off default); TBD: PaperWM (accordion is not exact tabs), paneru (`Stack` is vertical, `Tabs` app-native, `S-pan-model`; exact fixture/admission TBD) | non-voting comparison only |
+
+Counts for this expansion (92 cells: 84 new + 8 backfill; mutually
+exclusive E/P/T/Q/M). Original-eight new-row cells (6x8=48): E 0, P 18
+(R-INS-03: 6; R-INS-04: 8 leg-1-policy; R-INS-08: 4), T 25 (R-INS-03: 2;
+R-INS-05: 8; R-INS-06: 4; R-INS-07: 8; R-INS-08: 3), Q 1
+(R-INS-08: X), M 4 (R-INS-06: B,I,X,S each has no-counterpart `B:max`
+and applicable-TBD `B:full`). Scrolling new-row cells (6x4=24): P 6
+(R-INS-03: 4; R-INS-07 niri routing and PaperWM routing+no-steal: 2),
+T 18, Q 0, M 0.
+Backfill cells (2x4=8): P 6 (R-INS-01: 4 position-policy; R-INS-02:
+niri+karousel non-join: 2), T 2 (R-INS-02: PaperWM, paneru), Q 0. Ours
+cells (6x2=12; backfill blocks carry no Ours cells): P 6 (R-INS-03
+topology+desired-focus: 2; R-INS-04 leg-1 topology: 2; R-INS-05
+anchor-predicate: 2), T 6 (R-INS-06/07/08: 6), Q 0. Grand totals: E 0,
+P 36, T 51, Q 1, M 4 (92 cells). All 36 P cells retain TBD remainders;
+all four M cells retain applicable fullscreen TBD legs. These cell counts
+measure documentation coverage, not consensus votes.
+
+Ours-vs-consensus position (no behavior selected): the six new rows carry
+no strong consensus (all C audit-only), so no new ours-vs-consensus
+conflict is established. Ours empty-tree single-leaf and desired-focus
+branches are sourced; reference empty-fixture comparisons remain partial.
+Hyprland/bspwm preselect verbs are evidenced; Ours preselect inventory and
+admission-over-overlay stay TBD on both platforms. No product choice is
+selected by these source findings.

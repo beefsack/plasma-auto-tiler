@@ -1,13 +1,13 @@
 # Reference matrix expansion
 
-- Status: active; step 1 approved; piece A restructure complete; area evidence expansion pending.
+- Status: active; step 1 approved; restructure and insertion complete; focus next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
 - Inputs: [matrix](../spec/reference-outcomes.md) (58 original rows, now area files), [consensus](../research/reference-wm-consensus.md) (A/B/U/C/W), root `AGENTS.md`, local pinned reference checkouts.
 - Acceptance: content-preserving split and valid links; every new scenario uses GWT with 14 Then profiles; source-cited outcomes including separate Ours code evidence; applicable unknowns stay TBD; qualified cells do not vote as no-ops; one commit/push per piece; durable format decision promoted. Do not edit principles/backlog or repin the existing eight references.
-- Bounded units accepted: matrix/consensus coverage investigation; scrolling-source/model investigation. Workers loaded `processed-beef-work-unit`, ran sequentially, and made no edits. Lead reconciled overlaps, fixtures, and proposals.
-- Verification: independent Worker review passed all 67 candidates, area counts, ID reuse, required fields, fixture intent and source pins; Lead clarified focus annotations and one inherited column fixture. Final counts and ASCII/whitespace checks passed; Git review is scoped to this file. This is documentation planning; no application or live tests.
+- Bounded units accepted: step 1 coverage/model investigation; piece A split and independent migration review; insertion implementation, source-assessment correction, and independent evidence review. Workers loaded `processed-beef-work-unit` and ran sequentially. Lead reviewed diffs, reconciled evidence/counts and maintained this record.
+- Verification: step 1 candidate review passed. Piece-specific checks and accepted evidence are below; documentation/source reading only, no application or live tests.
 - Lifecycle: keep this one record active through review and later expansion pieces; archive after the whole change is accepted.
 
 ## Candidate conventions
@@ -310,6 +310,27 @@
 
 - SC candidates become live-test candidates whenever only policy, not the discriminator's requested outcome, is established. Source estimates do not promise all-WM coverage.
 
+### Insertion queue additions (piece B1)
+
+These are applicable unknown legs or applicability/inventory checks, not
+established no-ops. Resolve inventory/model applicability before arranging a
+live fixture; source pins and shipped baselines stay those in the index.
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-INS-03, all 14 | Empty domain, ordinary first open; actual frame, focus and viewport | Admission/position policy is partial; physical focus and settled geometry unestablished. i3/xmonad empty fallback remains untraced |
+| R-INS-04, all 14 | Pointer outside eligible windows, no refocus, C/D/E chain; record B's dimensions | Landscape output alone does not establish R-INS-01's target rectangle; repeated focus/pointer/recalc legs 2-3 complex and TBD |
+| R-INS-05, all 14 | Ordinary float focused, B prior tiled focus; open C and observe anchor/layer/focus | Eligible-anchor branches do not establish the actual float-focused resolution, including Ours |
+| R-INS-06, COSMIC/Hyprland/qtile/awesome and four scrolling profiles plus Ours KDE/Windows | Fresh max and full fixtures; open C; native state acknowledgements, visibility and focus | Born-max/unfloat paths are not open-over-overlay evidence; render/focus interplay TBD. paneru native-zoom and fullscreen preparation require confirmation |
+| R-INS-06, bspwm/i3/xmonad/sway | Fresh fullscreen fixture only | Maximize has evidenced no-counterpart; fullscreen remains applicable and TBD, not excluded with maximize |
+| R-INS-07, all 14 | One-case destination rule into inactive WS2/R; source output focused, pointer on L | niri routing and PaperWM routing/no-steal branches sourced; target anchor and full journey unresolved. Verify karousel cross-output and paneru native Space/virtual-row applicability first |
+| R-INS-08, Hyprland/bspwm/i3/sway | Named preselect/split verb, open C then D; axis/order and persistence | Hyprland forced direction/one-shot reset sourced, exact geometry TBD; bspwm consumption and i3/sway admission/persistence not traced confidently |
+| R-INS-08, COSMIC/qtile/awesome/four scrolling profiles/Ours KDE/Windows | Native command inventory before any fixture | A missing search term is not absence evidence; applicability remains TBD. xmonad/Tall's fixed master/stack model has no-counterpart |
+| R-INS-01 scrolling backfill, all four | Separate two-column Given; open C; sizes/focus/viewport | Position-policy branches sourced, settled viewport/frames and focus remainder TBD |
+| R-INS-02 scrolling backfill, all four | Exact tabbed-display Given and open C; preserve app-native-tab distinction | niri/karousel new-column non-join branch sourced; active-member/focus remainder TBD. PaperWM accordion and paneru vertical Stack are not exact S; native-tab variant applicability unresolved |
+
+- Source routes retained: niri `scrolling.rs`/`workspace.rs`/`xdg_shell.rs`; PaperWM `tiling.js` insertion, actor-show and inactive-space paths; karousel `Tiled.ts`/`Grid.ts`/`Column.ts`; paneru `triggers.rs` plus `layout.rs` model. Ours shared `session.rs`, `lifecycle.rs`, `world.rs` with adapter boundary citations at `9241c94`. No source branch is promoted to physical delivery evidence.
+
 ## Settled review and execution
 
 | User decision | Recommendation |
@@ -325,4 +346,9 @@
 - Step 1 outcome (`2447bed`): approved candidate inventory; the earlier format examples above are historical proposals, superseded by the settled GWT-only choice.
 - Piece A outcome: 58 original rows moved to area files, unchanged except relative-link depth; approved priority-order index, separate focus/restart/column areas, retained minimum-size supplement. Four scrolling baselines read at the recorded pins, including PaperWM schema and paneru defaults; existing eight profile rows/pins preserved. Independent Worker migration review passed; Lead removed a leftover narrow-table instruction after review. Format promoted in `docs/decisions.md`.
 - Piece A verification: exact original row/ID comparison, all area targets and moved links checked, pinned baseline source review, ASCII and `git diff --check`. Documentation-only; no application/live tests. No new live-test cases in this piece.
-- Exact next action: insertion, R-INS-03..08 plus scrolling assessments of R-INS-01/02; read pinned sources, update consensus, collect difficult cells as TBD/live-test candidates, then commit/push that area.
+- Piece A commit: `9241c94` (`Split reference matrix into area files`), pushed to `origin/main`.
+- Insertion outcome: R-INS-03..08 added as six 14-profile GWT scenarios; R-INS-01/02 each has four scrolling backfill entries, original tables preserved. Matrix now 64 scenarios. New pinned admission/preselection/model and Ours code keys resolve in the index; consensus gains all six rows plus backfill comparison without changing the original-eight strength rule.
+- Insertion coverage (92 cells = 84 new + 8 backfill): 0 fully evidenced, 36 partial-source with TBD remainders, 51 TBD-only, 1 qualified (xmonad R-INS-08), 4 mixed qualified maximize/applicable-TBD fullscreen cells. Original-eight 48: P18/T25/Q1/M4; scrolling new 24: P6/T18; backfill 8: P6/T2; Ours 12: P6/T6. Counts measure coverage, not votes. No new strong consensus or product choice established.
+- Insertion review: initial branch-only draft rejected for insufficient pinned admission assessment; corrected with actual source routes and inventory evidence. Independent evidence review exposed mixed-leg count errors and unsupported COSMIC absence. Lead corrected these, the sway split binding and paneru Stack/native-Tabs distinction; no evidence is inferred from search absence. Geometry, actual focus and difficult source routes stay TBD and queued above.
+- Insertion verification: six IDs with 14 Then entries each, two backfills with four each, original row preservation, all source keys resolved, unchanged original pins, pinned source spot review, ASCII and whitespace checks. No live tests.
+- Exact next action: focus, R-FOC-01..04; reuse directional floating-layer coverage without changing it, add pinned outcomes/qualifications and consensus entries, queue difficult ties, then commit/push that area.
