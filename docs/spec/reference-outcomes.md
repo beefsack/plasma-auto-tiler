@@ -1842,7 +1842,8 @@ Legend:
   binds) @ed22699d99462f61ab171472d3ea67e844ea580d
   (columns independent; no edge-targeted counterpart)
 - `S-pap-resize` PaperWM:tiling.js:4873-4912 (`resizeWInc`/`resizeWDec`
-  10% step) and :4937-4960 (width cycle direction) +
+  10% step) and :4937-4960 (width cycle direction) + lib.js:11-40
+  (`findNext`/`findPrev` wrap at the preset ends) +
   keybindings.js:270-291 (registered action inventory: w/h inc/dec plus
   width/height cycling; no edge-targeted verb)
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
@@ -2543,6 +2544,77 @@ Legend:
   fail closed as unsupported stack with no plan)
   @9241c94
   (no tab carrier and no semantic join/leave verb in any Engine layer)
+- `S-nir-view` niri viewport, focus-scroll, center and manual scroll:
+  niri:src/layout/scrolling.rs:575-579 (center-focused policy: Always,
+  or single-column) and :655-715 (focus scroll: centered vs minimal fit,
+  OnOverflow neighbor rule) and :779-829 (every column activation
+  animates the view; same-column DnD exception) and :2228-2270
+  (`center_column`/`center_window` one-shot, active-column only) +
+  src/layout/workspace.rs:1182-1196 (center dispatch incl floating) +
+  src/input/mod.rs:1666-1680 (`CenterColumn` dispatch) and :3386-3406
+  (touchpad gesture scrolls the view) + niri-ipc/src/lib.rs:448-460
+  (`ToggleColumnTabbedDisplay`/`SetColumnDisplay`/`CenterColumn`/
+  `CenterWindow` actions)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (policy plus one-shot center plus gesture scroll; keyboard scroll-step
+  inventory and settled offsets stay TBD)
+- `S-pap-view` PaperWM viewport, center and gesture scroll:
+  PaperWM:tiling.js:4291-4355 (`ensuredX`: neighbor/minimal,
+  CENTER/EDGE/wide/edge-margin branches) and :5055-5081
+  (`centerWindow` one-shot work-area centering via `move_to`) and
+  :1956-1980 (background scroll only during grab/navigation switches
+  focus) + gestures.js:338-368 (swipe moves the view and reselects the
+  swipe target) and :369-420 (glide snaps via `ensuredX` with selection)
+  + keybindings.js:302-311 (center-horizontally/vertically/center
+  registrations)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (one-shot center plus minimal/mode scroll plus reselecting swipe;
+  keyboard scroll-step inventory remains TBD)
+- `S-kar-scroll` karousel viewport, focus-scroll and manual scroll:
+  karousel:src/lib/layout/Desktop.ts:61-80 (`scrollIntoView` minimal)
+  and :83-104 (`scrollCenterRange`/`scrollCenterVisible` Centered/Grouped
+  variants, `autoAdjustScroll`, `scrollToColumn`) +
+  src/lib/layout/Grid.ts:195-201 (column focus scrolls via
+  `scrollToColumn`) + src/lib/keyBindings/Actions.ts:327-400
+  (`gridScrollLeft/Right` by step, `gridScrollFocused` one-shot,
+  edge-column verbs) + src/lib/config/definition.ts:103-106
+  (`manualScrollStep` default 200) + src/lib/behavior/scroller/
+  LazyScroller.ts:1-5 (minimal), CenteredScroller.ts:1-3 and
+  GroupedScroller.ts:1-5 (centering variants)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (Lazy minimal focus-scroll plus focus-preserving manual step plus
+  one-shot recenter; Centered/Grouped are named variants only)
+- `S-kar-cycle` karousel preset-width cycling:
+  karousel:src/lib/behavior/PresetWidths.ts:8-18 (`next`/`prev` wrap to
+  the first width on exhaust) + src/lib/keyBindings/Actions.ts:220-229
+  (`cyclePresetWidths`/`cyclePresetWidthsReverse` via the resizer)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (forward and reverse wrap through the shipped 50%/100% presets)
+- `S-pan-colops` paneru column/viewport operations:
+  paneru:src/types/commands.rs:222-280 (`Center`/`Resize`/`SetWidth`/
+  `Stack`/`ToggleTabbedDisplay`/`Snap`/`VirtualMove` ops) +
+  src/commands.rs:690-742 (`command_center_window` one-shot strip
+  reposition with manual-offset record) and :744-829 (Grow/Shrink preset
+  stepping with cycle) and :1460-1511 (`toggle_tabbed_display_handler`:
+  Stack split/tabbed flip, no-op otherwise, tabs cycle with Focus
+  North/South) + src/ecs/layout.rs:702-800 (`stack` merges into the left
+  neighbor, `unstack` splits to an adjacent own column) +
+  src/ecs/focus.rs:310-345 (`autocenter_window_on_focus` plus
+  `reshuffle_around`) + src/config.rs:785-790 (`window_resize_cycle`
+  defaults true, `auto_center` defaults off)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (one-shot center, wrapping width cycle, left-merge/right-split,
+  tabbed flip and expose-on-focus; settled frames stay TBD)
+- `S-pan-tabs` paneru app-native tab nesting:
+  paneru:src/ecs/systems.rs:1447-1535 (`detect_tabbed_windows`: same-app
+  same-frame hidden-leader grouping via `convert_to_tabs` plus newcomer
+  focus) and :1351-1440 (`regroup_stray_native_tabs` folds stray
+  background tabs into the showing leader) +
+  src/ecs/layout.rs:515-547 (`convert_to_tabs` grouping) and :196-203
+  (`StackItem` single vs app-native tabs per `S(S-pan-model)`)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (detection/grouping plus newcomer focus; width stability and tab
+  selection remainders stay TBD)
 
 - `S-bsp-stack` bspwm:src/stack.c:135-187 (`limit_above`/`limit_below`
   plus `stack`: focused nodes take the above branch with `window_above`,
@@ -3058,7 +3130,8 @@ scenarios from piece B4, and 4 layout-command scenarios from piece B5,
 plus 7 workspace scenarios, 3 minimize scenarios, 2 maximize scenarios,
 2 groups scenarios, 3 floating scenarios, 3 close scenarios,
 4 multi-output scenarios, 3 mouse scenarios, 5 special-windows scenarios,
-2 activation scenarios and 2 restart scenarios, GWT only).
+2 activation scenarios, 2 restart scenarios and 10 column scenarios, GWT
+only: 125 scenarios total).
 This index retains purpose, row-addition rule, notation,
 profiles, evidence tags/legend, variant hooks, and deferred. Existing wide
 tables moved unchanged; all new scenarios use the GWT form below.
@@ -3083,7 +3156,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Special windows | [special-windows.md](reference-outcomes/special-windows.md) | R-SPC-01..05 (5) | none (landed; no backfill: no prior rows) |
 | Activation | [activation.md](reference-outcomes/activation.md) | R-ACT-01..02 (2) | none (landed; no backfill: no prior rows) |
 | Restart / persistence | [restart-persistence.md](reference-outcomes/restart-persistence.md) | R-START-01..03 + R-CTL-01..07 + R-RST-01..02 (12) | none (R-RST-01..02 landed with scrolling backfill) |
-| Column mechanics | [column-mechanics.md](reference-outcomes/column-mechanics.md) | none yet | R-COL-01..10 |
+| Column mechanics | [column-mechanics.md](reference-outcomes/column-mechanics.md) | R-COL-01..10 (10) | none (landed) |
 | Minimum-size (supplemental) | [minimum-size.md](reference-outcomes/minimum-size.md) | R-MIN-01..03 (3) plus 3x4 scrolling backfill (piece B4) | none (R-MNZ icon-minimize is separate) |
 
 ## Scrolling column notation
