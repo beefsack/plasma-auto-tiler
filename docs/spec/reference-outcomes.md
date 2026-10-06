@@ -1500,6 +1500,119 @@ Legend:
   (Engine move rules: every `MoveOperation` is directional; neighbor
   exchange occurs only as R2a inside a directional move, never as a
   standalone swap verb)
+- `S-cos-resize` cosmic-comp:src/shell/layout/tiling/mod.rs:2443-2475
+  (`possible_resizes` edge walk) and :2477-2512 (`resize_request` nearest
+  matching-edge-axis ancestor) and :2514-2600 (pixel `resize` with
+  pair/leaf minima) + data/keybindings.ron:91-92 (`Resizing`
+  Outwards/Inwards) @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (keyboard pixel resize; settled frames stay TBD)
+- `S-hyp-resize`
+  Hyprland:src/layout/algorithm/tiled/dwindle/DwindleAlgorithm.cpp:312-360
+  (`resizeTarget` pixel delta plus edge/smart-resizing path) +
+  src/config/shared/actions/ConfigActions.cpp:670-683 (pixel `resize`
+  dispatcher) @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (pixel-delta step; neighbor scope and reversal stay TBD)
+- `S-bsp-resize` bspwm:doc/bspwm.1.asciidoc:439-442 (`-z` pixel handle)
+  and :454-458 (`-E`/`-B`) + src/messages.c:432-447 (`-z` dispatch) and
+  :557-569 (`-E`/`-B` dispatch to `equalize_tree`/`balance_tree`) +
+  src/tree.c:1258-1283 (equalize/balance) + src/settings.h:44
+  (shipped `SPLIT_RATIO` 0.5)
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (pixel-handle neighbor/reversal TBD; root equalize/balance evidenced)
+- `S-i3-resize` i3:src/commands.c:451-467 (tiling-direction participants)
+  and :544-581 (`resize grow|shrink`, shrink negates) and
+  src/resize.c:72-144 (climb to the first matching orientation) and
+  parser-specs/commands.spec:280-311 (grammar, default 10px/ppt)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+- `S-sway-resize` sway:sway/commands/resize.c:45-64 (resize-parent climb)
+  and :237-280 (tiled adjust, default 10/ppt, unchanged error) and
+  :554-576 (grow/shrink dispatch)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+- `S-xmo-resize` xmonad:src/XMonad/Layout.hs:77-78 (`Shrink`/`Expand`
+  move `frac` by `delta` 3/100) and src/XMonad/Config.hs:211-212
+  (`mod-h`/`mod-l`) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+  (frac-only; no edge-targeted verb)
+- `S-qti-resize` qtile:libqtile/layout/columns.py:134 (`grow_amount` 10)
+  and :309-310 (width weights project proportionally to work-area pixels)
+  and :509-561 (directional grows move width/height from the neighbor) and
+  :563-570 (`normalize` equal widths)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+- `S-awe-resize` awesome:lib/awful/tag.lua:760-770 (`incmwfact`
+  master-factor step) + awesomerc.lua:311-313 (`mod-l` +0.05 / `mod-h`
+  -0.05) + lib/awful/layout/suit/tile.lua:232-310 (mwfact partition)
+  @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+  (no edge-targeted verb)
+- `S-nir-resize` niri:src/layout/scrolling.rs:4927-4973 (preset-cycle
+  index plus preset apply) and :4990-5022 (`set_column_width`
+  proportion/fixed/adjust) + src/layout/mod.rs:3020 (`toggle_width`) +
+  src/input/mod.rs:1620-1623 (`SwitchPresetColumnWidth(Back)` dispatch) +
+  niri-ipc/src/lib.rs:715-761 (width-action inventory: preset, maximize,
+  set/adjust; no edge-targeted verb) +
+  resources/default-config.kdl:556-558,589-590 (`Mod+R`/`Mod+Shift+R`
+  binds) @ed22699d99462f61ab171472d3ea67e844ea580d
+  (columns independent; no edge-targeted counterpart)
+- `S-pap-resize` PaperWM:tiling.js:4873-4912 (`resizeWInc`/`resizeWDec`
+  10% step) and :4937-4960 (width cycle direction) +
+  keybindings.js:270-291 (registered action inventory: w/h inc/dec plus
+  width/height cycling; no edge-targeted verb)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (grid-snapped step; neighbor reflow TBD; no edge counterpart)
+- `S-kar-resize` karousel:src/lib/keyBindings/Actions.ts:160-175
+  (height actions) and :203-247 (column width increase/decrease/cycle plus
+  `columnsWidthEqualize` via `fillSpace`; no edge-targeted verb) +
+  src/lib/world/World.ts:29 (shipped `scrollingCentered=false` selects
+  `ContextualResizer`) +
+  src/lib/behavior/columnResizer/ContextualResizer.ts:6-41
+  (increase: smallest strictly greater width, recenters viewport) and
+  :43-88 (decrease: separate contextual path) +
+  src/lib/behavior/columnResizer/RawResizer.ts:6-30 (preset-step
+  increase/decrease, centered-mode only)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (contextual step; reversal not established; no edge counterpart)
+- `S-pan-resize` paneru:src/types/commands.rs:152-180 (`ResizeDirection`
+  Grow/Shrink) and :226-242
+  (`Resize`/`SetWidth`/`Equalize`/`Balance`; no edge-targeted verb) +
+  src/commands.rs:744-829 (`resize_window` preset cycle) and :1291-1330
+  (`equalize_column`: `Stack`-only height evening) and :1331-1372
+  (`balance_strip`: every column to the focused width) +
+  src/ecs/layout.rs:258-266 (`Single` vs `Stack` columns)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (neighbor mapping TBD; no edge counterpart)
+- `S-ours-resize`
+  plasma-auto-tiler:crates/tiler-core/src/session/ops/resize.rs:9-48
+  (nearest matching-edge-axis ancestor, adjacent shares only, Unchanged
+  refusal) and :49 (`propose_resize`) and :160-183 (step derivation via
+  `derive_keyboard_pixel_shares` into `apply_resize_shares`; Unchanged and
+  PairBelowMinimum refusals) and :1397-1533 (`derive_keyboard_pixel_shares`) +
+  crates/tiler-core/src/cosmic_v1.rs:233 (`keyboard_step_px` 12 then +2)
+  and :273 (`pair_admits_resize`) and :313
+  (`clamp_keyboard_shrink_pair`) +
+  crates/tiler-core/src/directional.rs:1297 (`apply_resize_shares`) +
+  crates/tiler-core/src/session/ops/mod.rs:8-15 (operation families:
+  drag/float/focus/lifecycle/move/resize/workspace, no equalize family) +
+  kwin/src/plan-adapter.ts:90 (`PlanOp`: admit/remove/move/focus/resize/
+  reconcile/update-gaps/pointer-resize/toggle-float/drag-drop/
+  release-domain, no equalize op) and :3027-3090 (`requestResize`
+  dispatches `op: "resize"` with direction/mode/press_index)
+  @9241c94
+  (shared Engine plus KDE adapter dispatch; no equalize verb in either
+  inventory)
+- `S-ours-winbind` plasma-auto-tiler:crates/tiler-windows/src/settings.rs:773-775
+  (resize rows `implemented: false`) and :1892-1898 (resize rows are the
+  only unimplemented ones) and :1167,1216 (unimplemented guards) +
+  crates/tiler-windows/src/settings_ui.rs:284-287 (keyboard
+  resize not intercepted; pointer resizing exists) +
+  crates/tiler-windows/src/tiling_sys.rs:13026-13048 (pointer-resize
+  gesture maps to `CoreCommand::PointerResize`, the Windows resize path)
+  @9241c94
+  (no Windows keyboard-resize trigger; keyboard legs have no counterpart)
+- `S-nir-min` niri:src/layout/scrolling.rs:4589-4620 (tile width clamped
+  to min/max) @ed22699d99462f61ab171472d3ea67e844ea580d
+  (admission/focus remainder TBD)
+- `S-kar-min` karousel:src/lib/layout/Column.ts:79-102 (`getMinWidth`/
+  `getMaxWidth` clamp in `setWidth`)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (admission frames TBD)
 
 ## Variant hooks (provisional, not commitments)
 
@@ -1529,7 +1642,8 @@ Legend:
 
 Scenario rows live in area files under `reference-outcomes/` (58 original
 rows, preserved; plus 6 insertion scenarios from piece B1, 4 focus
-scenarios from piece B2, and 3 move scenarios from piece B3, GWT only).
+scenarios from piece B2, 3 move scenarios from piece B3, and 4 resize
+scenarios from piece B4, GWT only).
 This index retains purpose, row-addition rule, notation,
 profiles, evidence tags/legend, variant hooks, and deferred. Existing wide
 tables moved unchanged; all new scenarios use the GWT form below.
@@ -1541,7 +1655,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Insertion | [insertion.md](reference-outcomes/insertion.md) | R-INS-01..08 (8) | none (R-INS-03..08 landed in piece B1) |
 | Focus | [focus.md](reference-outcomes/focus.md) | R-FOC-01..04 (4) | none (landed in piece B2) |
 | Move | [move.md](reference-outcomes/move.md) | R-MOV-01..08 (8) | none (R-MOV-06..08 landed in piece B3) |
-| Resize | [resize.md](reference-outcomes/resize.md) | none yet | R-RSZ-01..04 |
+| Resize | [resize.md](reference-outcomes/resize.md) | R-RSZ-01..04 (4) | none (landed in piece B4) |
 | Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | none yet | R-LAY-01..04 |
 | Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..07 (7) | R-WS-08..14 |
 | Minimize | [minimize.md](reference-outcomes/minimize.md) | none yet | R-MNZ-01..03 |
@@ -1555,7 +1669,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Activation | [activation.md](reference-outcomes/activation.md) | none yet | R-ACT-01..02 |
 | Restart / persistence | [restart-persistence.md](reference-outcomes/restart-persistence.md) | R-START-01..03 + R-CTL-01..07 (10) | R-RST-01..02 |
 | Column mechanics | [column-mechanics.md](reference-outcomes/column-mechanics.md) | none yet | R-COL-01..10 |
-| Minimum-size (supplemental) | [minimum-size.md](reference-outcomes/minimum-size.md) | R-MIN-01..03 (3) | none (R-MNZ icon-minimize is separate) |
+| Minimum-size (supplemental) | [minimum-size.md](reference-outcomes/minimum-size.md) | R-MIN-01..03 (3) plus 3x4 scrolling backfill (piece B4) | none (R-MNZ icon-minimize is separate) |
 
 ## Scrolling column notation
 
@@ -1641,10 +1755,10 @@ commits; PaperWM.spoon stays corroboration only, never a separate profile.
 
 ## Deferred areas
 
-- Ratio equalize/balance command: bspwm `-E`/`-B` evidenced
-  (`S-bsp-bal`); Hyprland per-split deltas only; COSMIC none
-  documented. No product decision; add a row only if an equalize
-  affordance becomes decision-relevant.
+- Ratio equalize/balance command: landed as R-RSZ-04 in piece B4
+  (bspwm `-E`/`-B` evidenced `S-bsp-bal` + `S(S-bsp-resize)`; qtile
+  `normalize` and karousel `columnsWidthEqualize` evidenced; other
+  profiles TBD or no-counterpart). No product decision.
 - Gaps/borders/corners/active indication: metrics exist (`D-ref`
   section 9) but are styling, not behavior variants; out of scope.
 - Dynamic workspace create/remove/pin: covered by `D-ref` section 7;

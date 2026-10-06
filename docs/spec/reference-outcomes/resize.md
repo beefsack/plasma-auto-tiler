@@ -1,5 +1,229 @@
 # Resize (reference outcomes)
 
-Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index. No established rows yet; candidate proposals (not evidence) are listed in [reference-matrix-expansion.md](../../changes/reference-matrix-expansion.md).
+Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. No established wide rows in this area yet.
 
-Candidates: R-RSZ-01 through R-RSZ-04 (keyboard grow/shrink, outward edge resize, nested scope, equalize/balance). Reuse R-CLOSE-02 ratio persistence, R-FLT-03 removal ratios, R-MIN-01..03 hint limits first.
+Reuse: R-CLOSE-02 ratio persistence through close/open, R-FLT-03 removal ratios, R-MIN-01..03 hint limits (minimum-size supplement).
+
+## New scenarios (GWT, piece B4; fixtures/actions/discriminators per the approved expansion record)
+
+Notation, profiles, baselines, legend, and projection rules live in the
+index. Each scenario below has exactly one Then bullet per profile (14).
+`S()` tags attach only to the established sub-leg; anything else on that
+line stays TBD. Column Given bullets are separate fixtures, never H/V
+ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
+(`S(S-ours-resize)`); selected intent and doc assertions are never evidence.
+
+### R-RSZ-01: keyboard grow/shrink of a tiled pair
+
+- Given (tree profiles): `H[A*,B]` 50/50, no limiting hints. Ordinary
+  windows, no rules, scale 1, zero gaps for reference geometry.
+- Given (column profiles): `COL[C1[A*],C2[B]]`, each `0.5W`, shipped
+  defaults apply; viewport recorded.
+- When: keyboard grow A toward B one declared step; shrink one step.
+  Native verbs per profile: COSMIC `Resizing(Outwards)` / `Resizing(Inwards)`
+  (`Super+r` / `Super+Shift+r`, then Right); Hyprland relative `resize`
+  delta (+10,0) / (-10,0); bspwm `node A -z right 10 0` / `right -10 0`;
+  i3 `resize grow right 10 px` / `resize shrink right 10 px`;
+  xmonad `Expand` / `Shrink` (`mod-l` / `mod-h`);
+  sway `resize grow right 10 px` / `resize shrink right 10 px`; qtile Columns
+  `grow_right()` / `grow_left()` (`grow_amount` 10); awesome
+  `tag.incmwfact(+0.05)` / `(-0.05)` (`mod-l` / `mod-h`); niri
+  `switch-preset-column-width` / `switch-preset-column-width-back`
+  (`Mod+R` / `Mod+Shift+R`); PaperWM `resizeWInc` / `resizeWDec`; karousel
+  `columnWidthIncrease` / `columnWidthDecrease`; paneru `Resize(Grow)` /
+  `Resize(Shrink)`; Ours KDE `requestResize("right", "outwards")` /
+  `requestResize("right", "inwards")`, each at press_index 0; Windows has
+  no keyboard trigger. Explicit px legs are named command parameters,
+  not changes to shipped config; bare i3/sway defaults use ppt.
+- Observe: ratio vs pixel increment, neighbor allocation and reversibility.
+- Then COSMIC: pixel step moves the shared boundary (Outwards grows A,
+  Inwards shrinks A, symmetric); only the two adjacent shares change;
+  pair/leaf minima gate and clamp one-sided. `S(S-cos-resize)`.
+- Then Hyprland/Dwindle: declared 10px delta dispatched to the target;
+  neighbor selection and reversibility TBD.
+  `S(S-hyp-resize)`; queued.
+- Then bspwm: pixel `-z` resize handle exists; neighbor allocation and
+  reversibility TBD. `S(S-bsp-resize)`; queued.
+- Then i3: grows/shrinks by the explicit 10px against the
+  tiling participant found by climbing to the matching orientation;
+  shrink is the negated grow, so reversible. `S(S-i3-resize)`.
+- Then xmonad/Tall+Navigation2D: `Expand`/`Shrink` move master `frac` by
+  `delta` 3/100 (master grows, stack share shrinks); reversible pair.
+  `S(S-xmo-resize)`.
+- Then sway: grows/shrinks by the explicit 10px against the resize parent
+  found by climbing to the matching
+  layout; shrink is the negated grow. `S(S-sway-resize)`.
+- Then qtile/Columns: transfers 10 width-weight units from B to A:
+  100/100 becomes 110/90 (55/45 shares, not a pixel step); `grow_left()`
+  reverses this pair. `S(S-qti-resize)`.
+- Then awesome/tile: `incmwfact(+0.05)` grows the master share (A) against
+  the stack share (B); `-0.05` reverses it. `S(S-awe-resize)`.
+- Then niri: preset-cycle step changes the focused column width to the next
+  preset (from 0.5 toward 2/3 forward, back returns); columns are
+  independent, no neighbor share is taken. `S(S-nir-resize)`.
+- Then PaperWM: width snaps to a 10%-of-available-width grid and steps;
+  Inc/Dec reverse only on that grid (0.5W can be off-grid after margins).
+  Neighbor reflow TBD. `S(S-pap-resize)`; queued.
+- Then karousel/Lazy: contextual increase selects the next larger
+  preset/visible-space width and recenters; decrease uses separate
+  offscreen terms. Step, neighbor effect and reversal TBD. `S(S-kar-resize)`.
+- Then paneru: `Resize(Grow)`/`Resize(Shrink)` cycle the focused width
+  through presets; neighbor allocation TBD. `S(S-pan-resize)`; queued.
+- Then Ours KDE: Outwards moves the shared boundary by 12px (press 0, then
+  14/16/18/20 on repeat) from B's share into A's; only adjacent shares
+  change; Inwards reverses it; minima refuse or clamp. The KDE adapter
+  dispatches `op: "resize"` with direction/mode/press_index.
+  `S(S-ours-resize)`.
+- Then Ours Windows: no-counterpart (keyboard resize is not intercepted on
+  Windows and its rebinds refuse; pointer resizing exists instead, which is
+  R-MOU-02, not this leg). `S(S-ours-winbind)`.
+- Variant hook: provisional/TBD (no suitable existing hook; V-FLOAT-REFLOW
+  covers float-removal reflow, not keyboard resize).
+
+### R-RSZ-02: outward resize at the work-area edge
+
+- Given (tree/layout-driven profiles): `H[A*,B]`, A touches the left work-area edge.
+  Ordinary windows, no rules, scale 1, zero gaps for reference geometry.
+- Given (column profiles): `COL[C1[A*],C2[B]]` at shipped defaults; A
+  touches the left viewport edge; viewport recorded.
+- When: request outward resize at A's left edge. Native verbs per profile:
+  COSMIC resize with LEFT edge Outwards; Hyprland edge/corner resize delta
+  (smart-resizing path); bspwm `node -z left ...`; i3 `resize grow left`;
+  sway `resize grow left`; qtile `grow_left()`; Ours Engine
+  `propose_resize` Left Outwards (KDE only; Windows has no keyboard-resize
+  trigger). No generic width verb is substituted for the scrolling
+  profiles: each profile's edge-targeted inventory is established in its
+  Then (no-counterpart where the pinned inventory lists no edge verb).
+  Fixture must distinguish edge resize from generic width grow (R-RSZ-01).
+- Observe: clamp/no-op, opposite-edge redistribution or overflow.
+  Edge-targeted verb absence is not a no-op.
+- Then COSMIC: no-op (no matching-edge ancestor at the outer edge; tree and
+  focus unchanged). `S(S-cos-resize)`.
+- Then Hyprland/Dwindle: TBD (edge/smart-resizing distribution untraced).
+  `S(S-hyp-resize)`; queued.
+- Then bspwm: TBD (outer-edge `-z` outcome untraced). `S(S-bsp-resize)`;
+  queued.
+- Then i3: no-op (no second container in that direction; command errors,
+  tree and focus unchanged). `S(S-i3-resize)`.
+- Then xmonad/Tall+Navigation2D: no-counterpart (no edge-targeted verb;
+  `Shrink`/`Expand` are frac-only). `S(S-xmo-resize)` + `S(S-xmo-core-nav)`.
+- Then sway: no-op (resize parent search excludes the outer edge; unchanged
+  boundaries report `Cannot resize any further`). `S(S-sway-resize)`.
+- Then qtile/Columns: redistribution (`grow_left()` at the leftmost column
+  transfers `grow_amount` from A's share to B: A shrinks, B grows).
+  `S(S-qti-resize)`.
+- Then awesome/tile: no-counterpart (no edge-targeted verb; `incmwfact`
+  only). `S(S-awe-keys)` + `S(S-awe-resize)`.
+- Then niri: no-counterpart (the pinned Action inventory lists preset,
+  maximize, set/adjust and expand width verbs, none edge-targeted).
+  `S(S-nir-resize)`.
+- Then PaperWM: no-counterpart (the registered action inventory lists
+  w/h inc/dec plus width/height cycling only, none edge-targeted).
+  `S(S-pap-resize)`.
+- Then karousel/Lazy: no-counterpart (the action inventory lists width
+  increase/decrease/maximize/minimize/cycle/equalize/squeeze, none
+  edge-targeted). `S(S-kar-resize)`.
+- Then paneru: no-counterpart (the `Operation` inventory lists
+  preset-cycling `Resize`/`SetWidth`, none edge-targeted).
+  `S(S-pan-resize)`.
+- Then Ours KDE: no-op (exhausted/clamped-unchanged boundary refuses
+  `Unchanged` with no plan and no pending). `S(S-ours-resize)`.
+- Then Ours Windows: no-counterpart (same missing keyboard-resize trigger
+  as R-RSZ-01). `S(S-ours-winbind)`.
+- Variant hook: provisional/TBD.
+
+### R-RSZ-03: nested resize scope (nearest split vs ancestor)
+
+- Given (tree profiles): `H[H[A*,B],C]`, inner/outer halves. Ordinary
+  windows, no rules, scale 1, zero gaps for reference geometry.
+- Given (column profiles): none exists. Recursive same-axis ancestry has no
+  faithful column fixture, so there is no column Given; scrolling Thens
+  below are fixture-inapplicable qualifications. Consume/expel mechanics
+  belong to R-COL-03.
+- When: grow A right one step. Native verbs per profile: same keyboard-grow
+  verbs as R-RSZ-01 per profile.
+- Observe: nearest split vs ancestor redistribution; which ratio changes.
+- Then COSMIC: inner H split moves (nearest matching-edge-axis ancestor
+  wins); outer shares unchanged. `S(S-cos-resize)`.
+- Then Hyprland/Dwindle: TBD (inner/outer distribution untraced).
+  `S(S-hyp-resize)`; queued.
+- Then bspwm: TBD (which split ratio changes untraced). `S(S-bsp-resize)`;
+  queued.
+- Then i3: inner H participant pair moves (find climbs to the first
+  matching orientation); outer percent unchanged. `S(S-i3-resize)`.
+- Then xmonad/Tall+Navigation2D: fixture-inapplicable (flat Tall has no
+  nesting levels). `S(S-xmo-layout)`.
+- Then sway: inner H resize parent moves (climb stops at the first L_HORIZ
+  parent); outer fractions unchanged. `S(S-sway-resize)`.
+- Then qtile/Columns: fixture-inapplicable (flat Columns has no nested H
+  ancestor). `S(S-qti-shuffle)` + `S(S-qti-add)`.
+- Then awesome/tile: fixture-inapplicable (flat tiled-client list has no
+  nesting levels). `S(S-awe-swap)` + `S(S-awe-tile)`.
+- Then niri: fixture-inapplicable (ordered columns have no nested H
+  ancestor). `S(S-nir-move)`.
+- Then PaperWM: fixture-inapplicable (column/row membership has no nested
+  H ancestor). `S(S-pap-move)`.
+- Then karousel/Lazy: fixture-inapplicable (Grid/Column membership has no
+  nested H ancestor). `S(S-kar-move)`.
+- Then paneru: fixture-inapplicable (strip/column model has no nested H
+  ancestor). `S(S-pan-model)`.
+- Then Ours KDE: inner group shares move (nearest matching-edge-axis
+  ancestor wins); only the two adjacent shares change. `S(S-ours-resize)`.
+- Then Ours Windows: no-counterpart (same missing keyboard-resize trigger
+  as R-RSZ-01). `S(S-ours-winbind)`.
+- Variant hook: provisional/TBD.
+
+### R-RSZ-04: equalize/balance once
+
+- Given (N-ary tree profiles): `H[A*,B,C]` 50/30/20. Ordinary windows, no
+  rules, scale 1, zero gaps for reference geometry.
+- Given (binary profiles): `H[A*,H[B,C]]`, outer ratio 0.5 and inner
+  B/C ratio 0.6/0.4, yielding the same 50/30/20 rectangles; this is an
+  explicit embedding, not a flat N-ary tree. Layout-driven profiles use
+  the same rectangle projection; qtile uses the column Given below.
+- Given (scrolling profiles and qtile/Columns): `COL[C1[A*],C2[B],C3[C]]` with widths
+  0.5W/0.3W/0.2W; viewport shows all three columns; shipped defaults
+  apply; viewport recorded.
+- When: equalize/balance once, as two independent legs from fresh fixtures
+  with a reset between: leg `-E` (equalize) and leg `-B` (balance) where
+  the profile names both; otherwise the profile's single verb. Native
+  verbs per profile: bspwm `bspc node @/ -E` / `bspc node @/ -B`
+  (workspace root, not focused leaf A); qtile `normalize()`; karousel
+  `columnsWidthEqualize`; paneru `Equalize` / `Balance`. Other profiles
+  per inventory below. Binary embedding must distinguish equalize from
+  equal leaf area.
+- Observe: equal sibling shares vs recursive tree balance, preserved ratios
+  or missing command.
+- Then COSMIC: TBD (equalize-verb inventory untraced; a missing search term
+  is not absence evidence). `S(S-cos-resize)`; queued.
+- Then Hyprland/Dwindle: TBD (per-split deltas only; no equalize verb
+  evidenced). `S(S-hyp-resize)`; queued.
+- Then bspwm: leg `-E` resets every split ratio to the configured 0.5, so
+  A stays 0.5 and the inner pair splits evenly: 0.5/0.25/0.25. Fresh leg
+  `-B` rebalances by leaf count (outer 1/3, inner 1/2): exact thirds.
+  `S(S-bsp-resize)` + `S(S-bsp-bal)` + `S(S-bsp-ins)` (default ratio).
+- Then i3: TBD (no equalize verb evidenced). `S(S-i3-resize)`; queued.
+- Then xmonad/Tall+Navigation2D: TBD (no equalize verb evidenced).
+  `S(S-xmo-resize)`; queued.
+- Then sway: TBD (no equalize verb evidenced). `S(S-sway-resize)`; queued.
+- Then qtile/Columns: `normalize()` sets every column width (and in-column
+  heights) to 100: exact thirds on the column Given. `S(S-qti-resize)`.
+- Then awesome/tile: TBD (no equalize verb evidenced). `S(S-awe-resize)`;
+  queued.
+- Then niri: TBD (no equalize verb evidenced). `S(S-nir-resize)`; queued.
+- Then PaperWM: TBD (no equalize verb evidenced). `S(S-pap-resize)`;
+  queued.
+- Then karousel/Lazy: `columnsWidthEqualize` gives the visible columns
+  equal shares via `fillSpace` (min/max-clamped; no limiting hints here).
+  All three columns are visible in this Given, so the visible scope is the
+  full strip: exact thirds. `S(S-kar-resize)`.
+- Then paneru: `Equalize` is a no-op on these widths (it evens heights
+  inside `Stack` columns only; single-window `Single` columns are
+  skipped). `Balance` sets every column to the focused A width, so all
+  three columns become 0.5W. `S(S-pan-resize)`.
+- Then Ours KDE: no-counterpart (no equalize verb in the op inventory:
+  directional resize only). `S(S-ours-resize)`.
+- Then Ours Windows: no-counterpart (no equalize verb in the operation
+  inventory; keyboard resize also has no trigger).
+  `S(S-ours-resize)` + `S(S-ours-winbind)`.
+- Variant hook: provisional/TBD.

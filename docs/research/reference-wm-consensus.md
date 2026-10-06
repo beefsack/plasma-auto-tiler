@@ -1,9 +1,10 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (71 rows:
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (75 rows:
 58-row historical audit preserved below, plus 6-row insertion expansion
-plus 4-row focus expansion plus 3-row move expansion).
+plus 4-row focus expansion plus 3-row move expansion plus 4-row resize
+expansion).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -116,7 +117,7 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
 Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts including insertion/focus/move are per-predicate: A 12, B 16, U 6, C 15, W 6;
+Summary counts including insertion/focus/move/resize are per-predicate: A 12, B 17, U 6, C 15, W 8;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
 
 ## Table A: strong cross-family consensus where ours differs (12)
@@ -143,10 +144,11 @@ alternate Move-verb inventory is a 4/4 tie (C/H/B/Q follow vs I/X/S/A
 default-stay), reported as inventory, never read as Send consensus. COSMIC
 MoveToWorkspace follow is not a Send vote.
 
-## Table B: strong consensus ours matches (16; pending explicit)
+## Table B: strong consensus ours matches (17; pending explicit)
 
 | Row | Consensus | Count | COSMIC | Ours KDE / Windows |
 |---|---|---|---|---|
+| R-RSZ-01 pixel path | explicit pixel-step grow/shrink path | pixel-5/8 (C,H,B,I,S), 3/4 fam; H/B partial for neighbor/reversal | yes | yes KDE / no-counterpart Windows (missing keyboard trigger, not rejecting policy) |
 | R-FOC-02 edge stay | single-output edge focus retains (no wrap, no fallback) | stay-5/8, 3/4 fam (C,H,B,X,A) | yes (no local target, no next output) | yes / yes (Edge refuse, no dispatch) |
 | R-INS-03 empty admission | first open tiles at full work area, newcomer focused | 8/8, 4/4 fam | yes | partial-offline (allocation + desired focus; native activation TBD) |
 | R-WS-02 anchor | return lands at A | A6/6ev (C,B,I,X,S,Q), 4/4 fam | yes (target MRU) | yes (remembered A) |
@@ -207,10 +209,12 @@ deferral selected; START-02 long-edge chain provisional follows COSMIC;
 FLT-10 KDE half-snap delivered matches COSMIC; WS-03 Windows reuse matches
 COSMIC.
 
-## Table W: numerical but not strong cross-family (6; weak, disclosed)
+## Table W: numerical but not strong cross-family (8; weak, disclosed)
 
 | Row | Numerical result | Breadth | Status |
 |---|---|---|---|---|
+| R-RSZ-02 outer edge | no-op 3/4ev (C,I,S vs Q redistribution) | 2 agreeing families (COSMIC, tree) | weak; KDE matches, Windows no keyboard counterpart |
+| R-RSZ-03 nested scope | nearest inner split 3/3ev (C,I,S) | 2 families (COSMIC, tree) | weak; KDE matches, Windows no keyboard counterpart |
 | R-FLT-03 | ratio-preserve 2/2ev (I,S; COSMIC UT is ER) | 1 family (tree pair) | weak; ours unchecked |
 | R-MAX-06 | overlay/state 2/3ev (C,H vs A implicit-float) | 2 agreeing families | thin; Q3 selected matches overlay direction, recorded one-shot-clear differs; no strong contradiction either way |
 | R-START-02 sub-point | no-centre-cut 2/2ev (C,A) | 2 families | weak sub-point only; chain itself 1-1 |
@@ -454,3 +458,71 @@ whether to retain that exclusion or revise vertical output fallback;
 recommend revising it to cross after local movement is exhausted.
 Ours has no standalone swap verb; exchange exists only as R2a inside
 directional moves. No product behavior is changed by this assessment.
+
+## Resize expansion (piece B4): R-RSZ-01..04 plus R-MIN-01..03 scrolling backfill
+
+Scope: piece B4 adds four GWT resize scenarios (R-RSZ-01..04), each with
+14 Then profiles, and additive scrolling backfill blocks for R-MIN-01..03
+(original wide tables preserved). Historical tables and the 58-row audit
+above are preserved unchanged. Denominator, families, and the strength
+rule are unchanged: consensus classification below counts the original
+eight profiles only. The four scrolling profiles form one correlated
+lineage reported as an explicit separate non-voting comparison. Cell
+classes are mutually exclusive per cell: E complete outcome evidenced; P
+one sub-leg evidenced with the remainder TBD; T TBD-only; Q all legs
+qualified (fixture-inapplicable / no-counterpart with pinned inventory
+evidence); M mixed. E cells carry no TBD; every P cell names its explicit
+remainder. Counts measure documentation coverage, not votes.
+
+| Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
+|---|---|---|---|
+| R-RSZ-01 keyboard grow/shrink | explicit pixel path vs ratio/weight delta; neighbor allocation; reversibility | pixel: C,H,B,I,S (H/B partial on neighbor/reversal); ratio: X,A; weight: Q | B pixel-path 5/8, 3 families; neighbor/reversal remain audit-only; bare i3/sway defaults use ppt |
+| R-RSZ-02 outward edge | no-op vs redistribution | no-op: C, I, S; redistribution: Q; qualified edge-verb absence: X, A | W no-op 3/4ev, 2 families |
+| R-RSZ-03 nested scope | nearest split vs ancestor redistribution | nearest inner split: C, I, S | W nearest 3/3ev, 2 families |
+| R-RSZ-04 equalize/balance | equal shares vs balance vs missing verb | `-E` .5/.25/.25 plus `-B` thirds: B; normalize thirds: Q | C audit-only (mechanisms and resulting shares differ; no agreement) |
+
+Scrolling comparison (non-voting): R-RSZ-01 niri forward/back preset
+cycle is complete (independent columns, no neighbor share);
+PaperWM/karousel/paneru stay partial (grid-snap, contextual step plus
+viewport recenter, and preset-cycle neighbor mapping TBD). R-RSZ-02 all
+four scrolling profiles have no edge-targeted counterpart (pinned action
+inventories list no edge verb). R-RSZ-03 all four fixture-inapplicable
+(no nested H ancestor). R-RSZ-04 karousel equalize is complete on the
+all-visible Given (visible scope is the full strip); paneru is complete
+(`Equalize` no-ops on `Single`-column widths, `Balance` sets all columns
+to the focused A width 0.5W); niri/PaperWM TBD. Minimum backfill:
+karousel min-clamp partial on all three rows; niri partial on R-MIN-01
+only; PaperWM/paneru TBD on all three; column Givens now carry the exact
+wide-row geometry with full-rect prerequisites, and strip scrolling (not
+tree infeasibility) is the explicit context for every remainder.
+
+Counts (mutually exclusive E/P/T/Q/M). New rows (4x14=56): E 21, P 5,
+T 12, Q 18, M 0. Original-eight new cells (4x8=32): E 15 (R-RSZ-01: 6
+C/I/X/S/A/Q; R-RSZ-02: 4 C/I/S/Q; R-RSZ-03: 3 C/I/S; R-RSZ-04: 2 B/Q),
+P 2 (R-RSZ-01: H/B), T 10 (R-RSZ-02: 2 H/B; R-RSZ-03: 2 H/B; R-RSZ-04: 6
+C/H/I/X/S/A), Q 5 (R-RSZ-02: 2 X/A; R-RSZ-03: 3 X/Q/A). Scrolling new
+cells (4x4=16): E 3 (R-RSZ-01: niri; R-RSZ-04: karousel/paneru), P 3
+(R-RSZ-01: PaperWM/karousel/paneru), T 2 (R-RSZ-04: niri/PaperWM), Q 8
+(R-RSZ-02: 4 edge-verb absence; R-RSZ-03: 4 fixture-inapplicable). Ours
+new cells (4x2=8): E 3 (R-RSZ-01/02/03 KDE via Engine plus adapter
+dispatch), Q 5 (Windows keyboard legs have no trigger on 01/02/03;
+R-RSZ-04 no equalize counterpart on either platform). Backfill (3x4=12):
+P 4 (R-MIN-01: niri/karousel; R-MIN-02/03: karousel), T 8, Q 0. W stays
+at 8 (edge-no-op and nearest-split sub-legs). The matrix total is now 75
+rows (71 + 4 new; backfill reuses IDs).
+
+Ours-vs-consensus position (no behavior selected): R-RSZ-02 KDE no-op
+matches the weak no-op leg (C/I/S); R-RSZ-03 KDE nearest-split matches
+the weak nearest leg (C/I/S); R-RSZ-01 KDE matches the strong explicit
+pixel-path sub-leg (C/H/B/I/S), not a claim about shipped keybinding units.
+Table B grows to 17; the historical C table stays 15 (no historical row
+was removed). Two Ours inventory gaps stand:
+Windows keyboard resize has no trigger on any of R-RSZ-01/02/03 (rebinds
+refuse; pointer resizing is the separate R-MOU-02 path), and neither
+platform has an equalize verb for R-RSZ-04 while bspwm/qtile/karousel/
+paneru carry complete legs. Windows' absent keyboard trigger is a
+strong-leg inventory gap, not a rejecting-policy mismatch. Recommendation
+for batch user review: implement Windows keyboard-resize parity using the
+shared Engine pixel path; no equalize choice is supported by strong
+consensus yet. Missing triggers/verbs never count as agreeing rejection.
+No product behavior is changed by this assessment.

@@ -1,6 +1,6 @@
 # Reference matrix expansion
 
-- Status: active; restructure, insertion correction, focus and move accepted; vertical output decision pending, resize next.
+- Status: active; restructure, insertion correction, focus, move and resize accepted; batch decisions pending, layout commands next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
@@ -360,6 +360,22 @@ solely to confirm pixels. All pins/defaults remain those in the index.
 | R-MOV-01/02/03/05 scrolling backfill, PaperWM (4) and paneru R-MOV-01/05 (2) | Ordered single-window columns, or C/B visible column for R-MOV-02; respective down/up/right/left actions | PaperWM native move inventory and paneru edge peers unresolved; R-MOV-04 ancestry is fixture-inapplicable, not a live case |
 | R-MOV-01/03 explicit swap, COSMIC/Hyprland/PaperWM/paneru (8) | Fresh original or explicitly model-qualified fixture; down/right swap with declared target resolution | Command inventory, binary fixture/target or peer resolution unresolved; targeted i3/sway exchanges evidenced without incidental focus TBD |
 
+### Resize queue additions (piece B4)
+
+29 unresolved cells (P9 + T20), grouped in five entries: 17 new-scenario
+cells and all 12 scrolling minimum-size remainders. Inventory checks
+precede fixtures. Qualified missing edge verbs, nesting and Windows
+keyboard triggers are not live no-ops; no source-confirmed semantic leg
+needs physical confirmation solely to count as evidence.
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-RSZ-01, Hyprland/bspwm/PaperWM/karousel/paneru (5) | Declared grow/shrink pair; 50/50 tree or two 0.5W columns; pixel delta for H/B, shipped grid/context/presets for scrolling profiles | H/B neighbor/reversal, PaperWM neighbor reflow, karousel contextual step/neighbor/reversal, paneru neighbor allocation unresolved |
+| R-RSZ-02, Hyprland/bspwm (2) | A at left work-area edge; actual left-edge outward resize, not generic width grow | Edge/smart distribution or outer handle result unresolved; four scrolling profiles have no edge-targeted counterpart |
+| R-RSZ-03, Hyprland/bspwm (2) | `H[H[A*,B],C]`, inner/outer halves; grow right once | Inner-vs-ancestor ratio ownership unresolved; flat/column nesting qualifications excluded |
+| R-RSZ-04, COSMIC/Hyprland/i3/xmonad/sway/awesome/niri/PaperWM (8) | Equalize/balance inventory first; 50/30/20 fixtures, explicit binary embedding and root target where applicable | Native verb inventory unestablished; bspwm root equalize/balance, qtile/karousel equal shares and paneru distinct height/width verbs are sourced |
+| R-MIN-01..03, four scrolling profiles (12) | Exact original dimensions/hints with column Given: 1080x300 admission, 1220->1080->1220 same-fixture recovery, empty 1080x600 oversized sole | niri/karousel minimum clamp only partially establishes admission/recovery/overflow; PaperWM/paneru minimum paths untraced. Strip scrolling is not tree infeasibility; record viewport, frames and applicable focus |
+
 ## Settled review and execution
 
 | User decision | Recommendation |
@@ -391,4 +407,8 @@ solely to confirm pixels. All pins/defaults remain those in the index.
 - Move consensus: R-MOV-06 has enter/leaf-swap/carry conflict, and R-MOV-07 escape-vs-swap conflict. Ours midpoint insert shares enter-V with i3/sway (their index TBD); Ours perpendicular wrap differs from both R-MOV-07 classes. R-MOV-08 crosses in H/B/I/S/A: strong 5/8 across binary/tree/layout-driven families; qtile stays, COSMIC/xmonad TBD. Ours KDE/Windows stay under the existing Up/Down-excluded R4. Consensus Table A grows 11 to 12; B remains 16, W remains 6.
 - User decision needed: retain V-R4-DIR's vertical exclusion or revise Up/Down to cross after local movement is exhausted? Recommendation: revise vertical fallback to match strong cross-family consensus; no product behavior or selected hook changed here. Stop after the move commit boundary for this decision and context handover.
 - Move verification: 3x14 new Then entries, 5x4 scrolling assessments, 2x14 swap legs; original wide rows preserved; source keys/pins, ASCII, local links and whitespace checked. Queue adds 27 unresolved cells in five groups; inventory/model checks first.
-- Exact next action: obtain the R-MOV-08 vertical output fallback decision; then expand resize R-RSZ-01..04, assess existing R-MIN-01..03 scrolling coverage in its supplemental area, update consensus/queue, and commit/push resize.
+- Resize outcome: R-RSZ-01..04 added as four 14-profile GWT scenarios; R-MIN-01..03 each assessed for four scrolling profiles, preserving original wide rows. Matrix now 75 scenarios. Coverage over 68 cells: E21/P9/T20/Q18/M0. New 56: E21/P5/T12/Q18 (original-eight E15/P2/T10/Q5; scrolling E3/P3/T2/Q8; Ours E3/Q5); backfill 12: P4/T8. No product behavior or pins changed.
+- Resize review: sequential implementation and independent source review corrected generic-width substitutes for edge actions, qtile reversal/weight units, niri reverse verb, PaperWM grid rounding, karousel contextual reversal, missing minimum geometry and same-fixture recovery, and bspwm root-targeted binary balance. Explicit root `-E` yields 50/25/25; `-B` yields thirds; paneru Equalize leaves single-column widths unchanged while Balance copies A's width. Ours Windows keyboard cells are qualified absent triggers, not shared-Engine delivery claims. Lead reconciled the final fixtures, citations, cell counts and per-predicate votes against actual source.
+- Resize consensus: explicit pixel path is strong 5/8 (C/H/B/I/S), three families; partial H/B cells vote only for their established pixel leg. i3/sway use declared 10px commands here, not their bare ppt defaults; qtile transfers weights, not pixels. KDE matches. Windows' missing keyboard trigger is a strong-leg inventory gap, not a rejecting policy; recommendation for batch review: implement keyboard-resize parity through the shared Engine. Outer-edge no-op is weak 3/4ev across two families; nearest-inner split weak 3/3ev across two. No strong equalize choice. Table B grows 16 to 17 and W 6 to 8; A remains 12, U 6, C 15.
+- Resize verification: 4x14 Then entries and 3x4 scrolling assessments; original R-MIN wide rows preserved; citation keys, local links, unchanged pins, ASCII and whitespace checked. Source/offline only, no live tests. Queue adds 29 unresolved cells in five groups. Pending move/resize recommendations stay collected for Orchestrator batch review and do not block later areas.
+- Exact next action: expand layout commands R-LAY-01..04, assess existing layout-area rows (none; reuse R-FLT-04/R-WS-06 in place), update consensus/queue, then commit/push that area. Continue workspaces and later areas in the approved order; collect product differences for batch review.
