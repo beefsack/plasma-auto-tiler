@@ -1,11 +1,11 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (89 rows:
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (91 rows:
 58-row historical audit preserved below, plus 6-row insertion expansion
 plus 4-row focus expansion plus 3-row move expansion plus 4-row resize
 expansion plus 4-row layout expansion plus 7-row workspace expansion
-plus 3-row minimize expansion).
+plus 3-row minimize expansion plus 2-row maximize expansion).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -118,10 +118,10 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
 Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts including insertion/focus/move/resize/layout/workspace/minimize are per-predicate: A 18, B 18, U 6 full rows + one KDE leg, C 17, W 10;
+Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize are per-predicate: A 19, B 18, U 6 full rows + one KDE leg, C 17, W 10;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
 
-## Table A: strong cross-family consensus where ours differs (18)
+## Table A: strong cross-family consensus where ours differs (19)
 
 Ours differs = established follow/refusal/etc on at least one platform,
 or an inventory-evidenced verb/state gap on both platforms (missing verbs
@@ -147,6 +147,7 @@ never vote as agreement).
 | R-WS-11 edge | relative workspace switch wraps at native inventory ends | wrap-6/8 (C,B,I,S,Q,A), 4/4 fam | yes (default on) | no / no (missing relative-switch verb) | Inventory gap; primary WS3 can be mid-inventory |
 | R-WS-12 hidden transfer | whole workspace/group/tag reassigned to another output | reassign-5/8 (H,B,I,Q,A), 3/4 fam; destination/focus partial | active-only variant | no / no (missing whole-workspace verb) | Inventory gap; counts semantic domain reassignment, not identical mechanisms |
 | R-WS-14 | relative workspace send exists | relative-5/8 (C,H,B,I,S), 3/4 fam; follow policies differ | yes | no / no (missing relative-send verb) | Inventory gap; H previous is MRU, not numeric decrement |
+| R-MAX-09 full | fullscreen window carries its state to the target workspace (not restored first) | carry-5/8 (B,I,S,Q,A), 3/4 fam; H/C TBD; niri window-send strips (scrolling, non-voting) | TBD (transfer sourced, carry untraced) | KDE TBD / Windows refuses fullscreen, carries maximized | Windows refusal differs; KDE native-send outcome untraced; max leg has no consensus |
 
 WS-01 notes: H silent (no-follow) path exists alongside profiled follow;
 alternate Move-verb inventory is a 4/4 tie (C/H/B/Q follow vs I/X/S/A
@@ -747,3 +748,89 @@ against the weak direction; R-MNZ-02 weak old-slot (C/A thin) matches
 Ours Windows (kept slot, focus TBD) with Ours KDE TBD. No selection,
 no code change, and no user decision is required by these findings.
 No product behavior is changed by this assessment.
+
+## Maximize expansion (piece B8): R-MAX-08..09 plus R-MAX-01..07 scrolling backfill
+
+Scope: piece B8 adds two GWT maximize/fullscreen scenarios (R-MAX-08
+focus/move while maximized, R-MAX-09 send while maximized/fullscreen),
+each with 14 Then profiles, and additive scrolling backfill blocks for
+R-MAX-01..07 (original wide tables preserved). Historical tables and
+the 58-row audit above are preserved unchanged. Denominator, families,
+and the strength rule are unchanged: consensus classification below
+counts the original eight profiles only. The four scrolling profiles
+form one correlated lineage reported as an explicit separate non-voting
+comparison. A missing maximize verb/state never votes: ordinary-manage
+or fullscreen-only reports from maximize-stateless profiles are feature
+absence, not deliberate overlay rejection. R-MAX-09 splits into a
+`B:max` leg (qualifies where no maximize state exists) and a fresh
+`B:full` leg (applicable wherever fullscreen exists); M cells carry one
+qualified leg plus one applicable-TBD leg. Host-owned zoom is
+owner-specific: paneru has no maximize verb/state, and the host-zoom
+journey stays TBD (queued), never a no-counterpart. Cell classes are mutually
+exclusive per cell: E complete outcome evidenced; P one sub-leg
+evidenced with the remainder TBD; T TBD-only; Q all requested legs
+qualified (no-counterpart / fixture-inapplicable with pinned inventory
+evidence); M mixed (qualified plus applicable-TBD legs, including
+owner-specific host journeys). E cells carry no TBD; every P/M cell names its
+explicit remainder. Counts measure documentation coverage, not votes.
+
+| Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
+|---|---|---|---|
+| R-MAX-08 focus/move while maximized | overlay focus fence vs sibling access; hidden-tree move, refusal, overlay clearing, actual focused mover | fence by occlusion: A (maximized B at x=0 qualifies no directional target, focus retained; swap hits C with no tile change: `S-awe-focus`+`S-awe-geodir`+`S-awe-swap`); access: Q (column-index step, `S-qti-focus`); qualified max-absence: B, I, X, S; TBD: C, H | C audit-only |
+| R-MAX-09 send while maximized/fullscreen | state carried vs restored before transfer; source slot/reflow, target overlay, follow | full-leg carry: B (same vacant node, `S-bsp-xfer`), I (same container re-attached, `S-i3-movews`), S (same container re-added, `S-sway-full`), Q (window property travels, `S-qti-group`), A (boolean property travels, `S-awe-tag`) = 5/8, 3 families; max leg: Q/A carry, B/I/X/S absent, C/H TBD | A full-carry 5/8 (Ours Windows refuses fullscreen; KDE TBD) |
+
+Scrolling comparison (non-voting): R-MAX-08 PaperWM converts to
+width-maximize (no overlay; switch access plus model swap), niri steps
+and reorders with the maximized flag untouched, karousel clears the
+overlay through the focus change itself, paneru has no paneru-native
+maximize preparation (host zoom is an owner-specific journey, TBD).
+R-MAX-09 niri window-send strips to Normal (column-send would retain and
+is not this leg), PaperWM moves a width-maximized window or a fullscreen
+window with carry TBD, karousel transfers the column with native-state
+carry TBD, paneru max leg is owner-specific TBD with a TBD
+fullscreen-marker carry. Backfill: R-MAX-01 P3/M1 (niri native setter,
+PaperWM width conversion (native restore moot), karousel membership plus skip;
+paneru host-zoom journey and exact hinted frames/convergence TBD);
+R-MAX-02 E3/P1 (niri flag plus plain
+activations, PaperWM saved-frame restore, karousel focus-change restore;
+paneru exit TBD); R-MAX-03 all four fixture-inapplicable (no workspace
+floating mode); R-MAX-04 E3/M1 (native toggles/handlers without fences;
+paneru host-zoom journey TBD); R-MAX-05 E2/Q2 (niri/PaperWM no-refusal
+and retained-column/saved-frame restore sourced; karousel/paneru have no project
+toggle verb); R-MAX-06 E1/P2/M1 (niri scrolling-layout admission with
+focus; PaperWM conversion and karousel force-unmaximize with focus TBD;
+paneru host-zoom journey TBD); R-MAX-07 E4 (flag-only overlay entry
+everywhere; size never infers).
+
+Counts (mutually exclusive E/P/T/Q/M). New rows (2x14=28): E 12, P 6,
+T 3, Q 4, M 3. Original-eight new cells (2x8=16): E 6 (R-MAX-08: A;
+R-MAX-09: B/I/S/Q/A), P 3 (R-MAX-08: Q; R-MAX-09: C/H), T 2 (R-MAX-08:
+C/H), Q 4 (R-MAX-08: B/I/X/S), M 1 (R-MAX-09: X max-absent plus
+applicable full).
+Scrolling new cells (2x4=8): E 3 (both niri plus R-MAX-08 PaperWM),
+P 3 (R-MAX-08 karousel plus R-MAX-09 PaperWM/karousel), M 2 (both paneru
+host-zoom journeys).
+Ours new cells (2x2=4): E 3 (R-MAX-08 both; R-MAX-09 Windows), T 1
+(R-MAX-09 KDE same-output delivery plus carry TBD). Backfill (7x4=28):
+E 13, P 6, Q 6, M 3, T 0. Total 56 cells: E25/P12/T3/Q10/M6.
+Table A grows from 18
+to 19 (R-MAX-09 full-carry); Table B stays 18; Table U stays 6 full rows
+plus the R-WS-09 KDE leg; Table C stays 17; Table W stays 10. The matrix
+total is now 91 rows (89 + 2 new; backfill reuses IDs).
+
+Ours-vs-consensus position (no behavior selected): one new strong
+predicate stands against Ours. R-MAX-09 full-carry is strong 5/8
+(B/I/S/Q/A across binary, tree, and layout-driven families): a
+fullscreen window carries its state to the target workspace rather than
+restoring first. Ours Windows refuses the fullscreen send
+(`send-refused-fullscreen`, no writes) while carrying the maximized
+send; Ours KDE's same-output native-send outcome remains TBD (the
+cited project delivery path covers R4 cross-output sends; host moves
+reach the desktops observer). Recommend for batch user
+review, no selection or code change: carry fullscreen state across
+workspace send (B/I/S/Q/A move the same container/node/client with its
+mode flag; niri window-send strips instead and is the disclosed
+counter-model). Resolve KDE's native-send outcome before proposing a
+behavior change there.
+R-MAX-08 carries no strong consensus (fence-by-occlusion 1, access 1): Ours focus-exempt plus R2c wrap is recorded without a
+conflict. No product behavior is changed by this assessment.

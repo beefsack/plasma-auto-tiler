@@ -599,6 +599,11 @@ Legend:
   awesome:lib/gears/geometry.lua:149-169 (nearest in-direction rect, nil when
   none) + awesome:lib/awful/screen.lua:164-171 (no next screen is no-op) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
   (no float exclusion in the walk; shipped keys bind index focus only, see S-awe-keys)
+- `S-awe-geodir` awesome:lib/gears/geometry.lua:95-106 (a direction means
+  strictly greater/lesser x/y origin) and :149-168 (nearest in-direction
+  rect wins, nil when none qualifies)
+  @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+  (occlusion geometry is load-bearing here)
 - `S-awe-swap` awesome:lib/awful/client.lua:308-323
   (swap.bydirection same-screen geometric swap; miss no-op) + :342-369
   (global cross-screen move/swap) + :385-391 (swap.byidx index primitive) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
@@ -812,6 +817,27 @@ Legend:
 - `S-ours-fs-exit` plasma-auto-tiler:kwin/src/plan-adapter.ts:2926-2938
   and crates/tiler-windows/src/tiling.rs:635-677 @ad6d69c
   (public KDE fullscreen setter vs Windows project-preimage exit gate)
+- `S-ours-ovref` overlay isolation parity: plasma-auto-tiler:
+  crates/tiler-windows/src/tiling.rs:377-394 (`overlay_refusal` for
+  directional/pointer routes; focus carries no write and stays allowed) +
+  crates/tiler-windows/src/tiling_sys.rs:5983-5998 (maximized focused
+  mover refuses before Engine mutation) + kwin/src/plan-adapter.ts:
+  2538-2563 (KDE focus-exempt fullscreen/maximize isolation with carried
+  applied rects)
+  @9241c94
+- `S-ours-winsend` plasma-auto-tiler:crates/tiler-windows/src/
+  tiling_sys.rs:10532-10548 (tiled-to-tiled Engine send with source reflow
+  and follow) and :10720-10731 (tiled maximized member sends; fullscreen
+  mover refuses with no writes) and :10883-10910 (retained maximized
+  mover proceeds with flag recheck; target allocation kept, overlay
+  geometry never writes)
+  @9241c94
+- `S-ours-send-boundary` plasma-auto-tiler:kwin/src/plan-adapter.ts:661-666
+  (retired `isSendActive` coordination hook only; R4 cross-output still
+  writes `setDesktops` per :7778) + kwin/src/workspace-send-adapter.ts:1-9
+  (standalone same-output prototype is dev-only, not a production route;
+  the host-native desktop-send journey remains untraced)
+  @9241c94
 - `S-ours-sticky-restart` plasma-auto-tiler:kwin/src/plan-adapter.ts:3007-3036
   and crates/tiler-windows/src/tiling_sys.rs:8867-8898,8981-8999 @ad6d69c
   (native-sticky unknown-float adoption vs marker consumption into normal float)
@@ -1430,6 +1456,17 @@ Legend:
   `RaiseFloating`; no next/previous cycle pair, no parent verb)
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
   (focus-verb inventory; traversal stays TBD)
+- `S-pan-axfs` paneru:src/util.rs:193-197 (AX `AXFullScreen`
+  observation; no zoom/maximize AX attribute read in the inspected
+  surface)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (native fullscreen is observable; host zoom is not)
+- `S-pan-fsfocus` paneru:src/commands.rs:292-318 (West focus on a native-
+  fullscreen space raises the last column top instead of traversing) +
+  src/ecs/workspace.rs:267-287 (native fullscreen pins a `Fullscren`
+  strip with a restore marker)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (fullscreen focus branch; exit journey untraced)
 - `S-ours-focus` plasma-auto-tiler:crates/tiler-core/src/directional.rs:50-64
   (axis/step for direction) and :1068-1135 (`descend_focus_target`
   plus `plan_focus`: matching-axis climb, same-axis edge child else
@@ -1709,15 +1746,83 @@ Legend:
   float/floating-focus, workspace moves; no orientation/rotate/mirror/
   master/layout-select verb)
   @ed22699d99462f61ab171472d3ea67e844ea580d
+- `S-nir-maxfs` niri:src/layout/workspace.rs:1288-1351
+  (`set_fullscreen`/`toggle_fullscreen` with floating-restore memory) and
+  :1353-1416 (`set_maximized`/`toggle_maximized` from the column pending
+  flag, idempotent clear, unmaximize-into-floating) and :649-669
+  (pending-maximized/fullscreen tiles open in the scrolling layout; new
+  focus is fenced only against active fullscreen) and :896-905
+  (configure maps Fullscreen to view size, Maximized to working-area
+  size) + src/handlers/xdg_shell.rs:466-477,550-559,696,770 and
+  src/handlers/mod.rs:551-591 (client maximize/fullscreen requests route
+  into the same setters, mapped and unmapped) + src/input/mod.rs:1690-1700
+  (`MaximizeColumn` is full-width, `MaximizeWindowToEdges` drives the
+  native toggle) + src/layout/mod.rs:625-632 (Smart activation evaluates
+  the supplied fullscreen fence rather than always declining focus)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (native maximized/fullscreen state; width actions are distinct)
+- `S-nir-wscarry` niri:src/layout/tests.rs:3708-3725
+  (`MoveColumnToWorkspace` keeps the column Maximized after transfer and
+  unfullscreen) and :3728-3750 (`MoveWindowToWorkspace` drops the
+  column-held flags so the window arrives Normal; FIXME documents the loss)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (window-send strips overlay state, column-send retains it)
 - `S-pap-acts` PaperWM:keybindings.js:191-238 (switch/move-as-swap verbs) +
   :240-344 (scratch/slurp/barf/maximize-width/fullscreen/focus-mode/
   open-position; no orientation/rotate/mirror/master/layout-select/
   workspace-float verb) @8bf6dd264f60d6c0c402b63df7b424b888959a48
+- `S-pap-unmov` PaperWM:tiling.js:1391-1398 (layout skips placement while
+  easing and for fullscreen/maximized windows: `unMovable` returns early,
+  leaving the frame alone)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (overlay-frame stability leg; focus/switch verbs stay TBD)
+- `S-pap-widthmax` PaperWM:tiling.js:3514-3526 (maximize events convert
+  to width-maximize when `maximize-within-tiling` holds: unmaximize,
+  restore last layout frame, `toggleMaximizeHorizontally`) and :4155-4162
+  (admission converts native-maximized newcomers the same way) and
+  :4794-4830 (width toggle with `unmaximizedRect` memory; full work-area
+  width at the shipped 100 percent) + schemas/org.gnome.shell.extensions.
+  paperwm.gschema.xml:630-633 (width percent default 1.00) and :635-638
+  (`maximize-within-tiling` default true)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (native maximize never overlays at shipped defaults)
+- `S-pap-fsframe` PaperWM:tiling.js:3678-3685 (position updates skipped
+  while fullscreen or fullscreen-locked) and :3793-3825 (fullscreen exit
+  restores the saved frame and clears it; `saveFullscreenFrame` records
+  frame plus tiled width)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (native fullscreen frame memory; entry itself is the Meta API flag)
+- `S-pap-swap` PaperWM:tiling.js:1063-1094 (`swap` exchanges model
+  positions with the directional neighbor, then layouts with no
+  unmaximize branch; selection unchanged)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (move-left/right verb path; registration is `space.swap`)
+- `S-pap-take` PaperWM:tiling.js:5407-5420 (`takeWindow` removes the
+  window from its space for navigator cross-space moves)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (cross-space transfer verb; overlay-state carry untraced)
 - `S-kar-acts` karousel:src/lib/keyBindings/Actions.ts:6-60 (focus verbs) +
   :86-175 (window/column move verbs) + :176-260 (`windowToggleFloating`
   per-window only, column move/stacked/width/preset verbs; no
   rotate/mirror/master/orientation/layout-select/workspace-toggle verb)
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+- `S-kar-maxfs` karousel:src/lib/world/clientState/Tiled.ts:66-70
+  (`maximizedAboutToChange` observed) and :174-184 (`fullScreenChanged`
+  observed; untileable-after-exit floats) and :222-242 (tiling admission
+  force-unmaximizes; fullscreen kept with keepAbove) + src/lib/layout/
+  Window.ts:91-126 (`restoreToTiled` clears both when unfocused;
+  maximize/fullscreen handlers set `skipArrange` with layering) +
+  src/lib/layout/Grid.ts:195-201 and Column.ts:335-341 (focusing another
+  window restores the old one to tiled) + src/lib/config/definition.ts:
+  141-147 (`reMaximize` default false) and :175-195 (`tiledKeepBelow`
+  default true)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (overlay membership kept with arrange skipped; focus change restores)
+- `S-kar-tile` karousel:src/lib/world/Clients.ts:7-16 (`canTileEver`:
+  moveable and resizeable, or fullscreen; popups and prohibited classes
+  excluded) and :48-53 (`isFullScreenGeometry` coverage test)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (shapeability decides tileability, not monitor coverage)
 - `S-ours-planops` shared Engine operation inventory:
   plasma-auto-tiler:crates/tiler-core/src/session/ops/mod.rs:8-15 (families:
   drag/float/focus/lifecycle/move/resize/workspace only) +

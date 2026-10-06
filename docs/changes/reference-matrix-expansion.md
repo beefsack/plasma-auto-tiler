@@ -1,6 +1,6 @@
 # Reference matrix expansion
 
-- Status: active; restructure, insertion correction, focus, move, resize, layout commands, workspaces and minimize accepted; batch decisions pending, maximize/fullscreen next.
+- Status: active; restructure, insertion correction, focus, move, resize, layout commands, workspaces, minimize and maximize/fullscreen accepted; batch decisions pending, groups/stacks next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
@@ -417,6 +417,23 @@ absent paths do not become live no-op cases.
 | R-MNZ-02, COSMIC/Hyprland/xmonad/sway/qtile/awesome/PaperWM/karousel/paneru/Ours KDE/Windows (11) | Restore B from actual R-MNZ-01 minimized state; leave remaining windows unchanged | COSMIC/awesome/Windows focus; qtile/scrolling slot and focus; H/X/S/KDE native restore journey unresolved |
 | R-MNZ-03, COSMIC/Hyprland/xmonad/sway/qtile/awesome/PaperWM/karousel/paneru/Ours KDE/Windows (11) | Sole A on shown WS1, occupied WS2; native minimize, paneru virtual-row leg | Workspace occupancy/cleanup and focus; KDE sole-minimize active-window/Engine journey; Windows retained occupancy sourced, focus unresolved |
 
+### Maximize/fullscreen queue additions (piece B8)
+
+21 unresolved cells (P12 + T3 + M6), grouped in six entries. Native
+maximize is distinct from a width preset. Paneru host zoom is an
+owner-specific journey, not an impossible fixture proved by missing AX
+observation. Only R-MAX-01 makes hinted frames/convergence load-bearing;
+semantic fullscreen exit evidence needs no incidental native confirmation.
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-MAX-08, COSMIC/Hyprland/qtile/karousel/paneru (5) | Maximize middle B; focus left then move actual focused window right; paneru uses a declared host-zoom fixture | C/H overlay traversal and move complex; qtile post-removal current index, karousel final order and paneru host-zoom focus/swap unresolved |
+| R-MAX-09, COSMIC/Hyprland/xmonad/PaperWM/karousel/paneru/Ours KDE (7) | Fresh max/full fixtures, send B to occupied WS2; native send and follow policy named; paneru native Space vs virtual row recorded | Overlay carry/target/source remainders unresolved; xmonad full leg only; PaperWM width/full carry; paneru host zoom and fullscreen marker; KDE native same-output send outcome (dev-only project prototype is not production) |
+| R-MAX-01 backfill, four scrolling profiles (4) | 2544px viewport, gap 8, min widths 401/864/627/582; native maximize then restore; model-qualified columns | niri/PaperWM/karousel membership policy sourced but exact hinted frames and convergence unresolved; paneru host-zoom sibling/restore journey unresolved |
+| R-MAX-02 backfill, paneru (1) | Native fullscreen, focus A/B, exit; distinguish native fullscreen Space and virtual row | Fullscreen strip/focus branch sourced, exit journey unresolved |
+| R-MAX-04 backfill, paneru (1) | Declared host-zoom shortcut, native restore, repress on same window | No paneru maximize command or AX zoom observation; host attempt-state journey unresolved |
+| R-MAX-06 backfill, PaperWM/karousel/paneru (3) | First-seen maximized/host-zoomed A, B already present; admit then natively restore | PaperWM conversion and karousel force-unmaximize sourced, admission focus unresolved; paneru host-owned admission/restore unresolved |
+
 ## Settled review and execution
 
 | User decision | Recommendation |
@@ -464,4 +481,8 @@ absent paths do not become live no-op cases.
 - Minimize review: implementation Worker corrected an initial command-inventory-only draft; independent source review found unsupported bspwm focus and citation ranges. Lead found KDE evidence came from the send observer, not the production observer, and bspwm HIDDEN was being substituted for icon-minimize. Final correction uses production KDE observation (no minimized filter; actual native/Engine journey TBD), Windows retained-slot evidence, and bspwm's absent iconic client-message path. i3 refusal and niri protocol no-op are qualified non-voters; generic null-observation guards do not establish sole-minimize outcomes. No live tests or product changes.
 - Minimize consensus: allocation release is weak 3/3ev (C/Q/A), and old-slot restore weak 2/2ev (C/A), both only two families. Windows retains its slot against the weak release direction; KDE is TBD. No Ours-vs-strong conflict or new behavior recommendation. Table A18/B18/U6 plus KDE leg/C17 unchanged; W grows 8 to 10.
 - Minimize verification: 3x14 Then profiles, all new citation keys resolve, local links/ASCII/unchanged pins and whitespace checked; source/offline only. Queue adds 31 unresolved cells in three groups. Workers ran sequentially; Lead reconciled counts and table entries.
-- Exact next action: expand maximize/fullscreen R-MAX-08..09 and scrolling assessment of R-MAX-01..07; update consensus/live-test queue, verify, then commit/push. Continue later areas in approved order; collect product differences for batch review. Stop this session at the minimize committed boundary because Lead context is crowded after evidence reconciliation.
+- Maximize/fullscreen outcome: R-MAX-08..09 added as two 14-profile GWT scenarios; R-MAX-01..07 each assessed for four scrolling profiles, historical wide rows preserved. Matrix now 91 scenarios. Coverage over 56 cells: E25/P12/T3/Q10/M6. New 28: E12/P6/T3/Q4/M3 (original-eight E6/P3/T2/Q4/M1; scrolling E3/P3/M2; Ours E3/T1); backfill 28: E13/P6/Q6/M3. Host-owned and missing-command qualifications never vote as agreement.
+- Maximize/fullscreen review: implementation Worker resumed to replace inventory-only placeholders with pinned native-state evidence; independent source reviewer corrected paneru host-zoom qualification, absent project fullscreen toggles, and the false KDE no-send claim. Lead preserved R-MAX-01's load-bearing minimums/geometry, removed incidental fullscreen-exit TBDs, corrected PaperWM native-restore vs width-toggle semantics, and checked the dev-only KDE send prototype. Workers ran sequentially; no live tests or product changes.
+- Maximize/fullscreen consensus: full-state carry is strong 5/8 (B/I/S/Q/A), three original families; Ours Windows refuses fullscreen sends but carries maximized sends. Recommendation for batch review: carry fullscreen state across workspace send. KDE host-native same-output send remains TBD; establish that outcome before proposing its change. niri window-send strips the state while column-send preserves it; PaperWM converts native maximize into width changes and karousel clears overlays on focus change. R-MAX-08 has no strong consensus; Ours accesses A and wraps its retained tree slot. Table A grows 18 to 19; B18/U6 plus KDE leg/C17/W10 unchanged.
+- Maximize/fullscreen verification: 2x14 new Then entries, 7x4 scrolling assessments, unchanged historical rows/pins; citation resolution, local links, ASCII, whitespace and pinned-source spot checks. Documentation/source reading only. Queue adds 21 unresolved cells in six groups. Stop at this area's committed boundary because Lead context is crowded after source reconciliation.
+- Exact next action: expand groups/stacks R-GRP-02..03 and scrolling assessment of existing R-GRP rows; update consensus/live-test queue, verify, then commit/push. Continue floating, close, multi-output, mouse, special windows, activation, restart/persistence, then R-COL; collect product differences for batch review.
