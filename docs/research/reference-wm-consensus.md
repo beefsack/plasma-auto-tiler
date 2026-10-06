@@ -1,12 +1,12 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (93 rows:
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (96 rows:
 58-row historical audit preserved below, plus 6-row insertion expansion
 plus 4-row focus expansion plus 3-row move expansion plus 4-row resize
 expansion plus 4-row layout expansion plus 7-row workspace expansion
 plus 3-row minimize expansion plus 2-row maximize expansion
-plus 2-row groups expansion).
+plus 2-row groups expansion plus 3-row floating expansion).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -119,7 +119,7 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
 Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups are per-predicate: A 20, B 18, U 6 full rows + one KDE leg, C 17, W 10;
+Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups/floating are per-predicate: A 20, B 19, U 8 full rows + two KDE legs, C 17, W 11;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
 
 ## Table A: strong cross-family consensus where ours differs (20)
@@ -156,7 +156,7 @@ alternate Move-verb inventory is a 4/4 tie (C/H/B/Q follow vs I/X/S/A
 default-stay), reported as inventory, never read as Send consensus. COSMIC
 MoveToWorkspace follow is not a Send vote.
 
-## Table B: strong consensus ours matches (18; pending explicit)
+## Table B: strong consensus ours matches (19; pending explicit)
 
 | Row | Consensus | Count | COSMIC | Ours KDE / Windows |
 |---|---|---|---|---|
@@ -178,13 +178,14 @@ MoveToWorkspace follow is not a Send vote.
 | R-DRAG-05 | zero-move press/release does not mutate | N6/8, 4/4 fam | yes | yes / yes |
 | R-DRAG-06 | no off-area parking | N7/8 | yes | yes / yes |
 | R-WS-09 return | restores remembered workspace focus | remembered-7/8 (C,B,I,X,S,Q,A), 4/4 fam; H pointer-dependent | yes | TBD shell-driven / yes (`last_focus`) |
+| R-FLT-13 ordinary-hidden | ordinary float stays on its workspace (hidden while away) | hidden-8/8, 4 fam | yes (per-workspace floats) | TBD native journey / yes-offline (hide/reveal) |
 
 FLT-01 qualifier: anchors differ (MRU vs Dwindle vs after-focus vs
 position/order); consensus covers fresh-vs-oldslot only. WS-02 after-order
 leg (after-4/5ev C,B,I,S vs X before) is U (ours exact order TBD); tall/wide
 axis stays a qualifier (X/Q inapplicable).
 
-## Table U: strong consensus, ours unresolved (6 full rows + one KDE leg)
+## Table U: strong consensus, ours unresolved (8 full rows + two KDE legs)
 
 | Row | Consensus | Count | COSMIC | Ours |
 |---|---|---|---|---|
@@ -195,6 +196,9 @@ axis stays a qualifier (X/Q inapplicable).
 | R-CLOSE-02 | reopen is fresh admission, no old-slot | F8/8 | yes | unknown / unknown (not checked) |
 | R-DRAG-08 | Meta/Win press focuses mover | F6/8, 4/4 fam | yes | unknown / unknown (KDE timing TBD; Win drop-activate only, press-focus unproven) |
 | R-WS-09 KDE leg | restores remembered workspace focus | remembered-7/8, 4/4 fam | yes | KDE shell-driven return TBD; Windows match recorded in B |
+| R-FLT-13 KDE leg | ordinary float hidden on workspace switch | hidden-8/8, 4 fam | yes (per-workspace floats) | KDE native select journey TBD; Windows match recorded in B |
+| R-FLT-12 raise path | an F-raising path exists (focus/activate/press/verb) | raise-7/8 (C,H,B,I,S,Q,A; X layer-only), 4 fam | yes (focus raise) | order TBD both (host stacking); lower has only weak agreement |
+| R-FLT-14 free frame | pointer drag/resize keeps the free frame | free-8/8, 4 fam | yes (floating move/resize grabs) | project resize refuses; host journey TBD on both platforms |
 
 DRAG-08: unknown is not mismatch; B/I have deliberate no-focus paths.
 
@@ -225,7 +229,7 @@ deferral selected; START-02 long-edge chain provisional follows COSMIC;
 FLT-10 KDE half-snap delivered matches COSMIC; WS-03 Windows reuse matches
 COSMIC.
 
-## Table W: numerical but not strong cross-family (10; weak, disclosed)
+## Table W: numerical but not strong cross-family (11; weak, disclosed)
 
 | Row | Numerical result | Breadth | Status |
 |---|---|---|---|---|
@@ -239,6 +243,7 @@ COSMIC.
 | R-FOC-04 scope | parent group then remembered child 3/3ev (C,I,S) | 2 families (COSMIC, tree) | weak; Ours leaf-only, no counterpart |
 | R-MNZ-01 allocation | minimized window leaves tiling allocation with a restore path 3/3ev (C,Q,A) | 2 families (COSMIC, layout-driven) | weak; i3 refusal is non-voting, H/S/X TBD; Ours KDE TBD, Windows retains |
 | R-MNZ-02 restore slot | restore returns the old slot 2/2ev (C,A) | 2 families (COSMIC, layout-driven) | weak thin; Q path-only, H/S/X TBD; Ours Windows matches, KDE TBD |
+| R-FLT-12 lower | explicit lower moves F to its layer bottom 2/2ev (Q,A) | 1 family (layout-driven) | weak; absent lower verbs non-voting, Ours no project lower path |
 
 FLT-05 notes: A EWMH roundtrip (sticky reads on every selected tag) counts
 as source policy like B/I full-state restores (exact journeys TBD in all
@@ -902,3 +907,83 @@ retained-plus-C direction if tabs are ever specified. Missing verbs were
 never counted as agreeing rejection. R-GRP-02 carries no strong
 consensus (join 1/8ev, leave 1/8ev plus a conditional C leg). No product
 behavior is changed by this assessment.
+
+## Floating expansion (piece B10): R-FLT-12..14 plus R-FLT-01..03/05..11 scrolling backfill
+
+Scope: piece B10 adds three GWT floating scenarios (R-FLT-12 raise/lower,
+R-FLT-13 ordinary-float workspace switch, R-FLT-14 pointer drag/resize),
+each with 14 Then profiles, and additive scrolling backfill blocks for
+R-FLT-01..03 and R-FLT-05..11 (R-FLT-04 backfill landed earlier; original
+wide tables preserved). Historical tables and the 58-row audit above are
+preserved unchanged. Denominator, families, and the strength rule are
+unchanged: consensus classification below counts the original eight
+profiles only. The four scrolling profiles form one correlated lineage
+reported as an explicit separate non-voting comparison. An absent tiler
+verb never denies a host pointer journey: free drag/resize stays TBD
+(queued), never no-counterpart. Cell classes are mutually exclusive per
+cell: E complete outcome evidenced with no TBD; P one sub-leg evidenced
+with the remainder TBD and queued; T TBD-only; Q all legs qualified
+(no-counterpart / fixture-inapplicable with pinned inventory evidence);
+M mixed. E cells carry no TBD; every P cell names its explicit remainder.
+Counts measure documentation coverage, not votes. Semantic outcomes lead
+each Then in one to three lines; source keys follow.
+
+| Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
+|---|---|---|---|
+| R-FLT-12 raise/lower | an F-raising path exists vs explicit lower | raise: C (focus raise, `S-cos-raise`), H (float-toggle/activate/click raise, `S-hyp-raise`), B (focus restack above, `S-bsp-stack`), I (activate/click to floating-list tail, `S-i3-raise`), S (press/map/move/resize raise, `S-sway-fltraise`), Q (activation bring-to-front, `S-qti-raise`), A (`c:raise`, `S-awe-raise`) = 7/8, 4 fam; layer-only: X (`S-xmo-restack`); lower to layer bottom: Q/A 2/2ev, one family | U raise 7/8 (Ours relative order TBD both); W lower 2/2ev (one-family weak) |
+| R-FLT-13 ordinary visibility | ordinary float hidden on switch vs sticky-like visibility | hidden: 8/8, 4 fam (C per-workspace layer, H workspace spaces, B desktop show/hide, I per-workspace list, X refresh member filter, S per-workspace list, Q group hide, A tag membership); frame/focus per profile in the matrix | B hidden 8/8 (Windows matches hide/reveal with last-focus; KDE native journey TBD, listed as a U leg) |
+| R-FLT-14 pointer drag/resize | free frame retention vs snap/clamp/tiling | free frames: 8/8, 4 fam (C floating drop/resize grabs, H snap-off writes, B rectangle writes, I drag/resize with raise, X raw writes, S pending writes with raise, Q tweak/resize, A frame writes) | U free 8/8 (both Ours platforms refuse the project route with `NotTiled`; host journeys TBD) |
+
+Scrolling comparison (non-voting): R-FLT-12 niri raises on focus with
+no lower verb (`S-nir-fltact`); PaperWM ordinary non-sticky floats
+inapplicable and dialog-float relative stacking TBD (`S-pap-float`);
+karousel/paneru TBD on the
+host journey (`S-kar-float`, `S-pan-flt` semantics). R-FLT-13 niri/paperwm/
+karousel/paneru hide per workspace/strip/space/desktop with frame/focus
+remainders queued. R-FLT-14 niri is free with Mod producers; PaperWM/
+karousel/paneru are host-journey TBD. Backfill: R-FLT-01 niri/karousel/
+paneru toggle with position/focus TBD, PaperWM no ordinary subject;
+R-FLT-02 niri no sticky subject, PaperWM scratch-stuck, karousel/paneru
+host TBD; R-FLT-03 niri/karousel widths stable, PaperWM ordinary float-out
+has no counterpart, paneru TBD; R-FLT-05 niri no subject, others TBD;
+R-FLT-06 niri/karousel state with interplay TBD, PaperWM ordinary float
+toggle has no counterpart, paneru
+owner-specific host TBD; R-FLT-07 niri/PaperWM/karousel tile-A with
+float-exclusion established, paneru TBD; R-FLT-08/09 niri float search or
+retain, karousel retain, PaperWM remembered tiled selection and paneru
+traversal TBD; R-FLT-10/11 niri 50px steps,
+karousel retained, PaperWM/paneru TBD.
+
+Counts (mutually exclusive E/P/T/Q/M). New rows (3x14=42): E 18, P 10,
+T 6, Q 0, M 8. Original-eight new cells (3x8=24): E 17 (R-FLT-12: Q/A;
+R-FLT-13: C/B/I/X/S/Q/A; R-FLT-14: C/H/B/I/X/S/Q/A), P 5 (R-FLT-12:
+C/H/B/X; R-FLT-13: H), T 0, Q 0, M 2 (R-FLT-12: I/S). Scrolling new
+cells (3x4=12): E 1 (R-FLT-14: niri), P 4 (R-FLT-13: all four), T 5
+(R-FLT-12: karousel/paneru; R-FLT-14: PaperWM/karousel/paneru), Q 0,
+M 2 (R-FLT-12: niri/PaperWM). Ours new cells (3x2=6): P 1 (R-FLT-13
+Windows), T 1 (R-FLT-13 KDE), Q 0, M 4 (R-FLT-12 both; R-FLT-14 both).
+Backfill (10x4=40): E 13, P 7, T 14, Q 5, M 1. Total 82 cells:
+E31/P17/T20/Q5/M9. M includes evidenced raise plus absent lower (I/S/niri),
+not only qualified plus TBD; those three cells add no live case.
+Table B grows 18 to 19 (R-FLT-13 hidden 8/8);
+Table U grows from 6 full rows to 8 (R-FLT-12 raise, R-FLT-14 free)
+plus the two KDE legs; Table W grows 10 to 11 (layer-bottom lower);
+Tables A/C unchanged. The matrix total is now
+96 rows (93 + 3 new; backfill reuses IDs).
+
+Ours-vs-consensus position (no behavior selected): two new strong
+predicates stand with Ours delivery-only or refused. R-FLT-12 raise-7/8
+(C/H/B/I/S/Q/A across all four original families): every profile can
+raise F. Both Ours platforms dispatch focus (`setActive` /
+`actuate_focus`) with keepAbove/topmost bands, but relative F/G order is
+host stacking and TBD on both; explicit lower has only Q/A one-family
+weak agreement. R-FLT-14 free-8/8 (all four families): pointer drag/resize
+keeps the free frame. Both Ours platforms refuse the project route
+(shared-Engine `NotTiled`); only host KWin/Win32 journeys could match,
+both TBD. R-FLT-13 hidden-8/8: Ours Windows matches via hide/reveal with
+last-focus return; Ours KDE's native select journey stays TBD.
+Recommend for batch user review, no selection or code change: trace the
+KDE native-select float journey, the F/G order effect of activation on
+both platforms, and the host move/size journeys before proposing any
+change. Missing verbs and TBD journeys never count as agreeing
+rejection. No product behavior is changed by this assessment.

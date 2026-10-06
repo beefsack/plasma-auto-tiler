@@ -1,6 +1,6 @@
 # Reference matrix expansion
 
-- Status: active; restructure, insertion correction, focus, move, resize, layout commands, workspaces, minimize, maximize/fullscreen and groups/stacks accepted; batch decisions pending, floating next.
+- Status: active; restructure, insertion correction, focus, move, resize, layout commands, workspaces, minimize, maximize/fullscreen, groups/stacks and floating accepted; batch decisions pending, close next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
@@ -447,6 +447,28 @@ qualified absent carriers and commands never become live no-op tests.
 | R-GRP-02, PaperWM/paneru (2) | PaperWM explicit A-focused slurp variant then barf B; paneru declared native join/leave inventory and column fixture | PaperWM selection unresolved (default slurp from B has no right neighbor); paneru peer/membership untraced |
 | R-GRP-03, four scrolling profiles (4) | Close middle active B with history A,C,B; niri tabbed, karousel explicit stacked display, PaperWM/paneru visible column fixtures | Member-removal selection/focus and retained-vs-dissolved column untraced |
 
+### Floating queue additions (piece B10)
+
+43 applicable unresolved cells, grouped in 12 entries. Piece coverage has
+P17/T20/M9, but three M cells (R-FLT-12 i3/sway/niri) have evidenced raise
+plus absent lower and add no live case. Ordinary and scratch-stuck floats
+are distinct; host journeys remain applicable despite absent tiler verbs.
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-FLT-12, COSMIC/Hyprland/bspwm (3) | Overlapping F/G, G above F; raise F then explicit lower with declared native verb | Raise sourced; lower inventory/outcome unresolved (Hyprland Lua and bspwm client-layer paths need a declared action) |
+| R-FLT-12, xmonad/PaperWM/karousel/paneru/Ours KDE/Windows (6) | F/G relative order after raise; PaperWM dialog-float variant; paneru arbitrary F rather than last-floating | xmonad relative order, dialog/host stacking and Ours activation order unresolved; absent project lower paths never become no-op tests |
+| R-FLT-13, Hyprland/niri/PaperWM/karousel/paneru/Ours KDE/Windows (7) | Switch WS2 then WS1 with F initially focused; paneru virtual rows, PaperWM dialog; record Hyprland pointer | Reference return-focus/frame remainders, Windows reveal-frame retention and KDE native visibility/frame/focus journey unresolved |
+| R-FLT-14, PaperWM/karousel/paneru/Ours KDE/Windows (5) | Host pointer drag (+100,+50), then bottom-right resize (+100,+50), releases away from boundaries | Host free-frame/layer/focus journeys untraced; Ours project float resize refuses as NotTiled, not evidence that native gestures fail |
+| R-FLT-01 backfill, niri/karousel/paneru (3) | A/B/C columns, float B then unfloat | Unfloat position/focus (niri viewport, paneru survivor allocation) unresolved |
+| R-FLT-02 backfill, PaperWM/karousel/paneru (3) | PaperWM scratch-stuck on/off; KWin onAllDesktops or macOS host assignment journey | PaperWM re-tile placement and host sticky visibility/off placement unresolved |
+| R-FLT-03 backfill, paneru (1) | Three independent column widths 960/576/384 in 1920px viewport; float A | Survivor width path untraced; niri/karousel stable widths are sourced and not queued |
+| R-FLT-05 backfill, PaperWM/karousel/paneru (3) | Scratch-stuck or host-sticky B; declared owner restart then WS2 | Sticky/float carry, visibility and origin restoration untraced |
+| R-FLT-06 backfill, niri/karousel/paneru (3) | Float B then native maximize/host zoom, toggle float | niri/karousel state-toggle interplay and paneru host-zoom journey unresolved; PaperWM ordinary toggle has no counterpart |
+| R-FLT-07 backfill, paneru (1) | Exact original tile/float rectangles; tiled B focus left | Tiled-origin traversal with unmanaged float untraced |
+| R-FLT-08/09 backfill, PaperWM/paneru (4) | Exact original F/G frames; float focus right; record PaperWM remembered tiled selection | PaperWM switches from remembered tile, not focused float; final target and paneru unmanaged search unresolved |
+| R-FLT-10/11 backfill, PaperWM/paneru (4) | Free F at (1000,500,300,200); semantic right, then up | Float-subject move result and snap-state journey untraced |
+
 ## Settled review and execution
 
 | User decision | Recommendation |
@@ -502,4 +524,9 @@ qualified absent carriers and commands never become live no-op tests.
 - Groups/stacks review: implementation Worker corrected fresh-fixture substitution for the sequential join/leave, PaperWM's focused-column slurp target, inventory-only partial counts, and native/pixel confirmation overreach. Independent pinned-source review passed the corrected fixtures, membership/focus paths and consensus math. Lead spot-checked niri consume/expel and karousel move handlers and reconciled accepted counts. Workers ran sequentially; no live tests or product changes.
 - Groups/stacks consensus: R-GRP-03 retains two tabs and selects C in C/H/I/S, strong 4/4 evidenced across n-ary/binary/tree families (neighbor and MRU coincide in this history). Ours KDE/Windows have no tab carrier, an inventory gap under standing V-GROUP-STACK deferral. Recommendation for batch review: retain the current refuse-closed deferral while recording the strong foreign close behavior for any future tab implementation. R-GRP-02 has no strong consensus. Table A grows 19 to 20; B18/U6 plus KDE leg/C17/W10 unchanged.
 - Groups/stacks verification: 2x14 Then profiles, 1x4 scrolling assessment, original row/pins unchanged; citation resolution, ASCII, local links, whitespace and pinned-source review passed. Source/offline only. Queue adds 9 unresolved cells in four groups.
-- Exact next action: expand floating R-FLT-12..14 and scrolling assessment of existing R-FLT rows (retain R-FLT-04 assessment from layout commands); update consensus/live-test queue, verify, then commit/push. Continue close, multi-output, mouse, special windows, activation, restart/persistence, then R-COL; collect product differences for batch review.
+- Groups/stacks commit: `00f970f` (`Expand groups reference scenarios`), pushed to `origin/main` after `git pull --rebase`.
+- Floating outcome: R-FLT-12..14 added as three 14-profile GWT scenarios; R-FLT-01..03/05..11 assessed for four scrolling profiles, preserving R-FLT-04 and historical wide rows. Matrix now 96 scenarios. Coverage over 82 cells: E31/P17/T20/Q5/M9. New 42: E18/P10/T6/M8 (original-eight E17/P5/M2, scrolling E1/P4/T5/M2, Ours P1/T1/M4); backfill 40: E13/P7/T14/Q5/M1. Mixed cells include known raise plus qualified absent lower, not necessarily unknowns.
+- Floating review: first inventory-only draft corrected through pinned handlers, native pointer producers and actual production Engine/adapter paths. Independent review found qtile X11 lower and citation gaps. Lead checked the X11 same-layer lower path and PaperWM focus handler, corrected falsely inferred float-selected switch aborts, restored exact backfill fixtures and removed incidental viewport/focus unknowns from the widths-only discriminator. Follow-up source/count verification passed; two minor scope/variant wording findings corrected. Workers ran sequentially; no live tests or product changes.
+- Floating consensus: raise-7/8 (C/H/B/I/S/Q/A), ordinary-hidden-8/8 and free-pointer-frame-8/8 are strong across all four families. Windows hides/reveals ordinary floats; KDE native select remains TBD. Ours relative F/G activation order and host free-pointer journeys are unresolved; project float resize refuses as NotTiled. Recommendation for batch review: establish KDE native visibility/return, both platforms' relative raise order and host float gestures before proposing behavior changes. No evidenced Ours-vs-strong conflict is established. Explicit layer-bottom lower is weak Q/A 2/2 in one family. Table B grows 18 to 19; U grows 6 to 8 full rows plus two KDE legs; W grows 10 to 11; A20/C17 unchanged.
+- Floating verification: 3x14 Then profiles, 10x4 new scrolling assessments and preserved R-FLT-04; original wide rows/pins unchanged. Citation resolution, ASCII, local links, whitespace, pinned-source review and final count verification passed. Source/offline only. Queue adds 43 applicable unresolved cells in 12 groups.
+- Exact next action: expand close R-CLOSE-03..05 and scrolling assessment of R-CLOSE-01..02; update consensus/live-test queue, verify, then commit/push. Continue multi-output, mouse, special windows, activation, restart/persistence, then R-COL; collect product differences for batch review.

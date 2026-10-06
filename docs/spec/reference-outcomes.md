@@ -2189,6 +2189,165 @@ Legend:
   @9241c94
   (no tab carrier and no semantic join/leave verb in any Engine layer)
 
+- `S-bsp-stack` bspwm:src/stack.c:135-187 (`limit_above`/`limit_below`
+  plus `stack`: focused nodes take the above branch with `window_above`,
+  unfocused the below branch; floats participate unless `auto_raise` is
+  held false) and src/events.c:455,471 (pointer-motion hold-false, restore
+  true) @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (raise-on-focus stacking; no project lower verb in the inspected inventory)
+- `S-bsp-fltptr` bspwm:src/window.c:487-545 (`move_client` float branch
+  writes `floating_rectangle` x/y) and :547-630 (`resize_client` float
+  branch grows w/h with hints applied and writes the rectangle) and
+  src/pointer.c:58-68,248-307 (modifier+button pointer grab with
+  `ACTION_MOVE`/`ACTION_RESIZE_CORNER`, bottom-right default handle)
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (free float pointer move/resize; tiled branch swaps instead)
+- `S-i3-raise` i3:src/con.c:281-294 (`con_raise` moves the float to the
+  tail of the workspace floating list; `con_activate` focuses plus raises)
+  and src/floating.c:478-484 (`floating_raise_con` tail insert) and
+  src/click.c:279-284 (raise on click) @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (raise only; no lower verb in `con.h`/`floating.h`)
+- `S-i3-fltdrag` i3:src/click.c:284-290 (floating-modifier+left and
+  titlebar-left drag producers) and :305-330 (floating-modifier+right and
+  border/decoration-right resize producers) and src/floating.c:597,701
+  (raise before drag/resize) @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (free float drag/resize with raise)
+- `S-sway-fltraise` sway:sway/tree/container.c:1682-1693
+  (`container_raise_floating`: scene top plus floating-list end) and
+  sway/tree/root.c:203 (raise on focus path) and
+  sway/input/seatop_down.c:231 (raise on press) and
+  sway/input/seatop_move_floating.c:75 +
+  sway/input/seatop_resize_floating.c:188 (raise on float move/resize begin)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (raise paths; no lower verb in the inspected inventory)
+- `S-sway-fltptr` sway:sway/input/seatop_default.c:458-488 (float move via
+  mod+left/titlebar-left; float resize via border-left or mod+resize with
+  quadrant-resolved edges) and sway/input/seatop_move_floating.c:39-45
+  (free pending-x/y write) @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (free float pointer move/resize; hint clamp is `S(S-sway-min)`)
+- `S-hyp-raise`
+  Hyprland:src/config/shared/actions/ConfigActions.cpp:755-769
+  (`alterZOrder` top/bottom) + src/desktop/view/window/Window.cpp:833,
+  1001,1462,1908 (raise on float-toggle/activate) +
+  src/managers/input/InputManager.cpp:924 (raise on float click) +
+  src/config/lua/bindings/LuaBindingsDispatchers.cpp:608-613 (Lua-only
+  `bringToTop`/`alter_zorder`; no keybind dispatcher)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (raise on focus/press; lower is Lua-only)
+- `S-hyp-fltdrag`
+  Hyprland:src/layout/supplementary/DragController.cpp:135-157 (tiled
+  pick-up branch skipped for floats) and :401-430 (float position/size
+  writes) + src/config/shared/actions/ConfigActions.cpp:1687-1715
+  (`movewindow` mouse producer) + src/config/values/ConfigValues.cpp:188
+  (`general:snap:enabled` defaults false)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (free float pointer move/resize, snap off default)
+- `S-nir-fltact` niri:src/layout/floating.rs:583-593 (`activate_window`
+  raises to index 0) and :865-930 (directional float focus runs nearest
+  center-distance search, miss returns false) + src/layout/mod.rs:1553
+  (`activate_window` layout entry) + src/layout/workspace.rs:1868-1872
+  (tiling/floating activation dispatch)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (focus raises floats; no lower verb in `S(S-nir-acts)`)
+- `S-nir-fltfocus` niri:src/layout/floating.rs:855-930
+  (`focus_directional` nearest-center search plus `focus_left/right/up/
+  down`; miss returns false with no focus change)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (float-to-float search and miss behavior)
+- `S-nir-ptr` niri:src/input/mod.rs:2929 (Mod+Left activates plus move
+  grab) and :2964-3020 (Mod+Right edge resize grab; floats skip the
+  double-click gesture) + src/input/move_grab.rs:173-260 (motion delta;
+  floating skips tiled viewport adjustment) + src/layout/mod.rs:3824-3900
+  (interactive move update) + src/layout/floating.rs:1106-1168
+  (interactive resize writes fixed sizes from deltas) and :948-962
+  (directional 50px steps) @ed22699d99462f61ab171472d3ea67e844ea580d
+  (float pointer move/resize with activation raise)
+- `S-xmo-restack` xmonad:src/XMonad/Operations.hs:197-204 (`restackWindows`
+  with floats-first `flt ++ rs` order) and :212-218 (`W.peek` border plus
+  `setTopFocus`) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+  (floats always above tiles; F-vs-G order effect of focus untraced)
+- `S-xmo-switch` xmonad:src/XMonad/StackSet.hs:231-243 (`view` swaps the
+  current workspace, hidden moves) + `S(S-xmo-restack)` (refresh draws
+  only member floats; `W.peek` plus `setTopFocus` restores focus)
+  @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+  (workspace switch hides, keeps frames, restores peek focus)
+- `S-awe-raise` awesome:objects/client.c:3395-3430 (`c:raise()` top of
+  layer, `c:lower()` bottom of layer) and :4507-4508 (method registration)
+  @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+- `S-qti-raise` qtile:libqtile/backend/base/window.py:600-610 (normal
+  activation focuses the group and calls `bring_to_front`) +
+  libqtile/backend/x11/window.py:1487-1492 (`StackMode.Above` plus
+  raise-children), :1435-1440 (`move_to_bottom`, masked stacking write)
+  and :973-1081 (same-layer bottom placement) +
+  libqtile/backend/wayland/window.py:115-122
+  (`bring_to_front` plus `move_to_bottom`) +
+  libqtile/backend/x11/core.py:905-915 (bring-front-click incl
+  floating-only) @83c697a5621306c3586efca31867efcfa0482e2d
+  (raise on activation; explicit lower exists on both backends)
+- `S-qti-flt13` qtile:libqtile/group.py:110-145 (`layout_all` lays out
+  the floating layer then focuses `current_window`) and :146-165
+  (`set_screen` shows with float offset plus `layout_all`, hides all on
+  `None`) and :168-197 (`focus` records `current_window`) +
+  libqtile/layout/floating.py:90-115 (`to_screen`) and :206-252
+  (`configure` keeps placed geometry plus `unhide`)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (switch hides, keeps frames, restores current-window focus)
+- `S-cos-fltptr` cosmic-comp:src/shell/mod.rs:4325,4589
+  (`floating_layer.resize_request` edge grabs) +
+  src/shell/grabs/moving.rs:967-1012 (floating `drop_window` retains in
+  the floating layer; `move_element`) @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (free float pointer move/resize; producers are `S(S-cos-dragstart)`)
+- `S-pap-float` PaperWM:tiling.js:1031-1055 (per-space `_floating` list
+  with `addFloating`/`removeFloating`) and :1129-1160 (`switch` walks
+  tiled columns only) and :2136-2142 (`selectedIndex` -1 for floats) and
+  :4400 (select raises) and :4125-4135 (non-tileable admission floats plus
+  `make_above`) and :4355-4373 (ensureViewport rejects floats before
+  changing selectedWindow) and :4597-4610 (scratch/transient focus returns
+  without changing tiled selection) +
+  scratch.js:62-83 (`makeScratch`: above plus stick plus
+  float flag) and :137-145 (`unmakeScratch` restores)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (dialog-float and scratch-stuck paths; ordinary windows tile)
+- `S-kar-float` karousel:src/lib/world/clientState/Floating.ts:1-20
+  (keepAbove only when configured) +
+  src/lib/config/definition.ts:188-191 (`floatingKeepAbove` defaults
+  false) + src/lib/world/ClientManager.ts:105-110,158-175
+  (float/toggle transitions) + src/lib/layout/Grid.ts:161-176 (removal
+  focus fixup) + src/lib/world/World.ts:124-131 (`doIfTiledFocused` gate)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (float state, tiled-only verbs, no raise/lower/sticky verb)
+- `S-pan-flt` paneru:src/ecs.rs:350 (`Unmanaged::Floating`, not part of
+  tiling) + src/commands.rs:203-230 (visible floats filtered by workspace
+  membership) and :458-500 (`RaiseFloating` focuses last-floating and
+  raises others in-tier; AX raise needs app-frontmost) +
+  src/types/commands.rs:220-280 (`Manage` toggle plus `FocusUnmanaged`/
+  `FocusManaged`/`RaiseFloating`/`FloatingLayer`) + src/ecs/triggers.rs:359-360
+  (per-workspace focus-history record)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (float model and raise semantics; arbitrary-F raise untraced)
+- `S-ours-fltrefuse` shared Engine float refusal:
+  plasma-auto-tiler:crates/tiler-core/src/session/ops/resize.rs:102-104
+  (keyboard resize refuses exceptions as `NotTiled`) and :454-456
+  (pointer resize refuses exceptions as `NotTiled`) +
+  kwin/src/plan-adapter.ts:3669-3676 (adapter gates fullscreen/maximize
+  only, so float intents reach the Engine refusal) @9241c94
+  (project float resize has no path on either platform; host journeys stay TBD)
+- `S-ours-fltsel` Windows float workspace select:
+  plasma-auto-tiler:crates/tiler-windows/src/tiling_sys.rs:9840-9900
+  (leaving members hide through identity or recovery read, reveal on
+  return) + crates/tiler-windows/src/workspace.rs:400-412
+  (`focus_target` prefers `last_focus` when still a member and visible)
+  @9241c94
+  (float hide/reveal with last-focus return; frames TBD)
+- `S-ours-fltstack` float stacking on both Ours platforms:
+  plasma-auto-tiler:kwin/src/plan-adapter.ts:3459 (sticky keepAbove) and
+  :8083-8115 (float apply sets keepAbove plus geometry; unfloat restores)
+  + crates/tiler-windows/src/tiling_sys.rs:7263-7280 (admission places
+  non-topmost floats with `HWND_TOPMOST`) and :3993-4014
+  (`set_topmost_band` without move/size/activate) and :7450-7521
+  (unfloat restores the preimage) @9241c94
+  (stacking bands exist; relative F/G order and lower have no path)
+
 ## Variant hooks (provisional, not commitments)
 
 | Hook | Meaning | Status |
@@ -2219,7 +2378,8 @@ Scenario rows live in area files under `reference-outcomes/` (58 original
 rows, preserved; plus 6 insertion scenarios from piece B1, 4 focus
 scenarios from piece B2, 3 move scenarios from piece B3, 4 resize
 scenarios from piece B4, and 4 layout-command scenarios from piece B5,
-plus 7 workspace scenarios and 3 minimize scenarios, GWT only).
+plus 7 workspace scenarios, 3 minimize scenarios, 2 maximize scenarios,
+2 groups scenarios and 3 floating scenarios, GWT only).
 This index retains purpose, row-addition rule, notation,
 profiles, evidence tags/legend, variant hooks, and deferred. Existing wide
 tables moved unchanged; all new scenarios use the GWT form below.
@@ -2237,7 +2397,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Minimize | [minimize.md](reference-outcomes/minimize.md) | R-MNZ-01..03 (3) | none (landed) |
 | Maximise / fullscreen | [maximize-fullscreen.md](reference-outcomes/maximize-fullscreen.md) | R-MAX-01..07 (7) | R-MAX-08..09 |
 | Groups / stacks | [groups-stacks.md](reference-outcomes/groups-stacks.md) | R-GRP-01..03 (3) | none (R-GRP-02..03 landed with scrolling backfill) |
-| Floating | [floating.md](reference-outcomes/floating.md) | R-FLT-01..11 (11) | R-FLT-12..14 |
+| Floating | [floating.md](reference-outcomes/floating.md) | R-FLT-01..14 (14) | none (R-FLT-12..14 landed with scrolling backfill) |
 | Close / reflow | [close.md](reference-outcomes/close.md) | R-CLOSE-01..02 (2) | R-CLOSE-03..05 |
 | Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..02 (2) | R-OUT-03..06 |
 | Mouse | [mouse.md](reference-outcomes/mouse.md) | R-DRAG-01..08 (8) | R-MOU-01..03 |

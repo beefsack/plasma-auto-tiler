@@ -62,3 +62,467 @@ delivers stateless halves only; R-FLT-11 discriminates the deferred snap state.
 - Then paneru: no-counterpart (no workspace-wide float conversion verb;
   `Manage` is per-window and the tier flip is focus-only).
   `S(S-pan-cmds)`.
+
+## New scenarios (GWT; fixtures/actions/discriminators per the approved expansion record)
+
+Notation, profiles, baselines, legend, and projection rules live in the
+index. Each scenario below has exactly one Then bullet per profile (14).
+`S()` tags attach only to the established sub-leg; anything else on that
+line stays TBD. Column Given bullets are separate fixtures, never H/V
+ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
+unless stated; selected intent and doc assertions are never evidence.
+Raise/lower cells name the native verb or handler per profile; an absent
+tiler verb never denies a host pointer journey, so free drag/resize stays
+TBD (queued) rather than no-counterpart. Where a raise path is
+established but explicit lower is not, the cell is partial or mixed;
+applicable unknowns are queued, evidenced absent verbs are not.
+
+### R-FLT-12: raise and lower overlapping floats
+
+- Given (tree profiles): `H[A,B]` plus overlapping ordinary floats F,G
+  at shipped defaults; G currently above F. Record actual focus and
+  stacking order per profile before acting; no fullscreen, maximized or
+  input-blocked windows.
+- Given (column profiles): one strip/workspace with tiled columns plus
+  two overlapping ordinary floats F,G (G above F) at shipped defaults;
+  viewport recorded. Same raise-then-lower journey. PaperWM uses
+  dialog/transient floats (the only overlapping-float counterpart; see
+  its Then); paneru uses `Unmanaged::Floating` windows.
+- When: step 1 raise F (native verb per profile below); step 2 lower F
+  (native verb per profile). No reset between the steps. Pointer
+  centre-join stays R-DRAG-01 and never substitutes.
+- Observe: z-order change vs focus-only; tile/float layer boundary;
+  settled stacking order after each step.
+- Then COSMIC: focusing F raises it (focused sticky and ordinary
+  floaters are raised via the focus path); explicit lower TBD (no lower
+  verb traced; a missing search term is not absence proof).
+  `S(S-cos-raise)`; lower queued.
+- Then Hyprland/Dwindle: focusing or pressing F raises it (float-toggle,
+  desktop-state activate, click and drag paths all raise floating
+  windows); lower runs only through the Lua `alter_zorder bottom` path,
+  not a shipped keybind verb, so the lower leg stays TBD.
+  `S(S-hyp-raise)`; lower queued.
+- Then bspwm: focusing F restacks it above (focused nodes take the
+  above-limit branch; floats participate unless `auto_raise` is held
+  false during pointer motion); explicit lower TBD (BELOW is an EWMH
+  client-message layer, not a profiled project verb).
+  `S(S-bsp-stack)`; lower queued.
+- Then i3: activating or clicking F raises it to the tail of the
+  workspace floating list; no lower verb exists in the float inventory
+  (`con.h`/`floating.h` expose raise only). `S(S-i3-raise)`; lower is a
+  qualified no-counterpart leg.
+- Then xmonad/Tall+Navigation2D: floats always restack above tiles
+  (`flt ++ rs` order); the F-vs-G order effect of focusing F is untraced
+  (no reorder verb; `focusWindow` rotation vs restack order unresolved).
+  `S(S-xmo-restack)`; order queued.
+- Then sway: pressing, mapping, moving or resizing F raises it to the
+  top of the scene and the end of the floating list; no lower verb
+  traced in the container/input inventory. `S(S-sway-fltraise)`; lower
+  is a qualified no-counterpart leg; the declared raise uses a press.
+- Then qtile/Columns: activating F brings it to front; X11
+  `move_to_bottom()` lowers it beneath its same-layer peers without
+  changing focus (masked stacking write). Wayland also exposes bottom
+  movement. `S(S-qti-raise)`.
+- Then awesome/tile: `c:raise()` moves F to the top of its layer and
+  `c:lower()` moves it to the bottom (both registered client methods).
+  `S(S-awe-raise)`.
+- Then niri: focusing F raises it to index 0 of the floating list
+  (`FocusWindow` runs the layout activation, which raises); no lower
+  verb exists in the full `Action` inventory (the without-raising
+  activation is internal focus-follow code, not a verb).
+  `S(S-nir-fltact)` + `S(S-nir-acts)`; lower is a qualified
+  no-counterpart leg.
+- Then PaperWM: ordinary non-sticky app floats have no counterpart;
+  scratch is a separate sticky float variant. Dialog-float variant:
+  admission marks above, but raising F relative to G and explicit lower
+  are TBD; tiled selection's `raise()` is not a dialog raise path.
+  `S(S-pap-float)`; dialog stacking queued.
+- Then karousel/Lazy: TBD (script inventory has no raise/lower verb;
+  host KWin activation stacking journey untraced). `S(S-kar-acts)` +
+  `S(S-kar-float)`; queued.
+- Then paneru: TBD (`RaiseFloating` focuses the last-floating window and
+  raises the other visible floats within the tier, so it does not settle
+  raising an arbitrary F; AX raise couples with app-frontmost per the
+  deliberate comment; no lower verb). `S(S-pan-flt)`; queued.
+- Then Ours KDE: activating F dispatches exactly one `setActive` and the
+  adapter keeps project floats keep-above; relative F/G order is host
+  stacking and TBD. Lower has no path (unfloat only restores the prior
+  state). `S(S-ours-focus)` + `S(S-ours-fltstack)`; order queued, lower is
+  a qualified no-counterpart leg.
+- Then Ours Windows: focusing F actuates focus (`actuate_focus` /
+  `SetForegroundWindow` path) while admitted floats sit in the topmost
+  band with order by placement/activation; relative order TBD. Lower has
+  no path (unfloat only restores the preimage). `S(S-ours-focus)` +
+  `S(S-ours-fltstack)`; order queued, lower is a qualified
+  no-counterpart leg.
+- Variant hook: provisional/TBD (no suitable existing hook; V-FLOAT-SNAP
+  covers moves, not stacking).
+
+### R-FLT-13: ordinary float across a workspace switch
+
+- Given (tree profiles): `WS1=H[A,B]` plus ordinary `F* (500,300,400,300)`;
+  WS2 occupied by one ordinary tile. Same identities throughout; no
+  sticky flag (sticky on/off stays R-FLT-02).
+- Given (column profiles): `WS1=COL[C1[A],C2[B]]` plus ordinary
+  `F* (500,300,400,300)`; WS2 with one occupied column at shipped
+  defaults; viewport recorded. niri uses per-workspace strip columns;
+  PaperWM uses a dialog/transient float (the only per-space float
+  counterpart); paneru uses an `Unmanaged::Floating` window on one
+  virtual strip with a second populated strip as WS2 (native macOS Space
+  switches are host-owned, not this leg).
+- When: select WS2; select WS1. Native verbs per profile: COSMIC workspace
+  switch; Hyprland `workspace`; bspwm `desktop -f`; i3 `workspace`;
+  xmonad `view`; sway `workspace`; qtile `Group.toscreen()` (screen
+  switch; `togroup` is the window-send verb and never substitutes);
+  awesome `view_only`; niri workspace switch; PaperWM space select;
+  karousel desktop switch (KWin-native); paneru `VirtualNumber` to the
+  populated strip (no auto-create); Ours Windows `WorkspaceOp` Select;
+  Ours KDE native desktop select.
+- Observe: ordinary float hidden vs sticky-like visibility; retained
+  frame/z-order/focus on return.
+- Then COSMIC: F hidden while away (ordinary floats live in the
+  per-workspace floating layer; only the sticky layer is output-wide);
+  frame retained (last-geometry reuse, no switch write); focus returns to
+  F (workspace focus-stack top); z-order follows the retained mapped
+  order. `S(S-cos-sticky)` + `S(S-cos-flttoggle)` + `S(S-cos-raise)`.
+- Then Hyprland/Dwindle: F hidden while away (windows belong to
+  workspace spaces; switch shows the target space). Frame and return
+  focus TBD: focus depends on the unspecified pointer under shipped
+  `follow_mouse=1` (`getFocusCandidate` restores only under
+  `follow_mouse=0`). `S(S-hyp-ws)` + `S(S-hyp-float)`; frame/focus queued.
+- Then bspwm: F hidden while away (`show_desktop`/`hide_desktop` per
+  desktop; floats stay in the desktop tree); frame retained (client
+  rectangle kept; vacant in place); focus returns to F (remembered
+  desktop focus `d->focus` with history fallback).
+  `S(S-bsp-ws)` + `S(S-bsp-float)` + `S(S-bsp-close)`.
+- Then i3: F hidden while away (per-workspace floating list; switch shows
+  the target workspace); frame retained (stored wrapper geometry, no
+  switch write); focus returns to F (`workspace_show` focuses the
+  descended remembered focus). `S(S-i3-flt-toggle)` + `S(S-i3-ws)`.
+- Then xmonad/Tall+Navigation2D: F hidden while away (refresh draws only
+  floats that are members of the visible workspace index); frame retained (global map untouched by
+  `view`); focus returns to F (`W.peek` of the restored stack plus
+  `setTopFocus`). `S(S-xmo-switch)`.
+- Then sway: F hidden while away (per-workspace floating list; switch
+  shows the target workspace); frame retained (stored frame, no switch
+  write); focus returns to F (switch focuses the seat focus-inactive
+  node, i.e. MRU F). `S(S-sway-float)` + `S(S-sway-switch)`.
+- Then qtile/Columns: F hidden while away (`set_screen(None)` hides every
+  group window); frame retained (placed floats keep x/y/w/h through
+  `configure` plus `unhide`); focus returns to F (`layout_all` focuses
+  `current_window`, set when F was focused). `S(S-qti-flt13)`.
+- Then awesome/tile: F hidden while away (tag membership; only sticky
+  reads on every selected tag); frame retained (floating arrange is a
+  no-op); focus returns to F (MRU history top with visible fallback on
+  tag switch). `S(S-awe-sticky)` + `S(S-awe-float)` + `S(S-awe-hist)`.
+- Then niri: F hidden while away (each workspace owns its floating
+  space); frame retained (float position kept in the space; switch never
+  writes it); return focus TBD (per-space active restoration untraced).
+  `S(S-nir-ws)`; focus queued.
+- Then PaperWM: F hidden while away (per-space `_floating` list; spaces
+  show/hide with selection); frame retained (float frames are never
+  placed by the layout); return focus TBD (per-space selection restore
+  vs `activateWithFocus` policy untraced). `S(S-pap-float)`; focus queued.
+- Then karousel/Lazy: F hidden while away (KWin desktops own windows;
+  karousel manages tiled columns only and never moves floats across
+  desktops); frame retained (no float-frame write path on desktop
+  switch; `Floating` writes keepAbove only at toggle time, off by
+  default); return focus TBD (KWin-native). `S(S-kar-ws)` +
+  `S(S-kar-float)`; focus queued.
+- Then paneru: F hidden while away (floats filtered by workspace
+  membership); frame TBD (native, untraced); focus returns via the
+  per-workspace focus history plus remembered-position restore guard.
+  `S(S-pan-flt)` + `S(S-pan-ws)`; frame queued.
+- Then Ours KDE: visibility, frame/order and return focus TBD (adapter
+  writes desktop membership, but the native select journey is untraced).
+  `S(S-ours-ws)`; native journey queued.
+- Then Ours Windows: F hidden while away (leaving members hide,
+  including retained floats; return reveals); focus returns to F
+  (`focus_target` prefers `last_focus` when still a member and visible);
+  frame TBD (reveal path untraced). `S(S-ours-fltsel)`; frame queued.
+- Variant hook: provisional/TBD (R-FLT-02 covers sticky switch, not
+  ordinary visibility).
+
+### R-FLT-14: drag and resize a float by pointer
+
+- Given (tree profiles): `H[A,B]` plus ordinary `F* (500,300,400,300)`.
+  Ordinary resizable float with no constraining hints, no rules, scale 1,
+  zero gaps for reference geometry. Record actual frame and work area
+  before acting; both legs run away from work-area edges and sibling
+  frames.
+- Given (column profiles): one strip/workspace with tiled columns plus
+  ordinary `F* (500,300,400,300)` at shipped defaults; viewport recorded.
+  niri floats live in the per-workspace floating space; PaperWM uses a
+  dialog float; karousel uses a `Floating`-state client; paneru uses an
+  `Unmanaged::Floating` window.
+- When: leg 1 drag F by (+100,+50) via the profile pointer move producer
+  below; release. Leg 2 resize F bottom-right by (+100,+50) via the
+  profile pointer resize producer; release. Semantic snap stays
+  R-FLT-10/11 and never substitutes; a missing tiler verb never denies
+  the host journey.
+- Observe: free frame retention vs snap/clamp/tiling; layer, sibling
+  stability and focus.
+- Then COSMIC: leg 1 Super+Left or titlebar press opens a move grab and
+  the floating drop retains F in the floating layer at the translated
+  frame; leg 2 edge press opens a floating resize grab growing the frame.
+  Focus follows the press. Siblings untouched (floating layer).
+  `S(S-cos-dragstart)` + `S(S-cos-fltptr)`.
+- Then Hyprland/Dwindle: producer `movewindow` (mouse bind) for leg 1 and
+  the resize mouse bind for leg 2. Drag writes the translated position;
+  bottom-right resize grows size clamped only by min/max hints (none
+  constraining here); shipped snap defaults off, so no snap engages.
+  Press raises and focuses F. Tiling untouched.
+  `S(S-hyp-fltdrag)`.
+- Then bspwm: producer modifier+button pointer grab (`ACTION_MOVE` /
+  `ACTION_RESIZE_CORNER`, bottom-right the default handle). Drag writes
+  `floating_rectangle` x/y (+100/+50); resize grows w/h (+100/+50) with
+  hints applied (non-constraining here) and writes the rectangle. Focus
+  retained (no defocus path); tiling untouched (float branch never
+  swaps). `S(S-bsp-drag)` + `S(S-bsp-fltptr)`.
+- Then i3: producers floating-modifier+left (or titlebar left) for leg 1
+  and floating-modifier+right (or border/decoration right, bottom-right
+  corner for leg 2) for leg 2. Drag translates the frame; resize grows
+  it; both raise F (already top with a single float). Click focuses F.
+  Tiling untouched. `S(S-i3-tdrag)` + `S(S-i3-fltdrag)`.
+- Then xmonad/Tall+Navigation2D: drag writes the raw frame plus `float`
+  on motion and release with no clamp/zone check; resize resizes via
+  size hints plus `float` on motion/release. `S(S-xmo-mouse)`.
+- Then sway: producers mod+left (or titlebar left) for leg 1 and border
+  left (or mod+resize, bottom-right quadrant resolves RIGHT|BOTTOM) for
+  leg 2. Move writes pending x/y; resize writes size (client hints
+  enforced on floating resize only, non-constraining here); both raise F
+  and the press focuses it. Tiling untouched. `S(S-sway-fltptr)`.
+- Then qtile/Columns: producers `Mod+Button1` (`set_position_floating`
+  frame tweak) and `Mod+Button3` resize. Drag translates the frame;
+  resize grows it (ordinary resizable, no constraining hints); placed
+  floats keep geometry through configure. Focus retained (shipped
+  `bring_front_click` false; no defocus path). Tiling untouched.
+  `S(S-qti-drag)` + `S(S-qti-tweak)`.
+- Then awesome/tile: producers modkey+Button1 (or titlebar) move and
+  modkey+Button3 (or border) resize. Floating frame write path (vs tiled
+  layout-resize dispatch); press focuses with raise. Frames retained
+  free; tiling untouched. `S(S-awe-drag)`.
+- Then niri: producers Mod+Left (activates, raising F, plus move grab)
+  and Mod+Right on the edge (activates plus resize grab; floats skip the
+  double-click gesture). Drag translates freely; resize grows freely
+  (no snap for floats). Focus and front raised via activation. Columns
+  untouched. `S(S-nir-ptr)`.
+- Then PaperWM: TBD (no float pointer-move/resize path in PaperWM;
+  dialog frames are Meta-owned; host GNOME grab journey untraced).
+  `S(S-pap-float)`; host journey queued.
+- Then karousel/Lazy: TBD (no float pointer path in the script; KWin
+  native move/resize is the host journey, untraced). `S(S-kar-float)`;
+  host journey queued.
+- Then paneru: TBD (no pointer path in `Operation`; macOS host drag is
+  the applicable journey, untraced). `S(S-pan-flt)`; host journey queued.
+- Then Ours KDE: project route refused (`NotTiled` for float resize
+  proposals, keyboard and pointer alike; adapter only gates
+  fullscreen/maximize); host KWin interactive move/resize is the
+  applicable journey, untraced. `S(S-ours-fltrefuse)`; host journey queued.
+- Then Ours Windows: project route refused (shared-Engine `NotTiled`;
+  gesture maps to `CoreCommand::PointerResize` but the float proposal
+  refuses); host Win32 move/size is the applicable journey, untraced.
+  `S(S-ours-winbind)` + `S(S-ours-fltrefuse)`; host journey queued.
+- Variant hook: provisional/TBD (semantic snap stays R-FLT-10/11).
+
+## Scrolling backfill (additive; existing wide tables above unchanged)
+
+R-FLT-04 scrolling assessment above is preserved unchanged. Each block
+below uses a separately stated column Given with the same identities
+and action as the original row; projections are marked explicitly.
+
+### R-FLT-01 backfill: toggle float then unfloat (scrolling)
+
+- Given (columns): three single-window columns `COL[C1[A],C2[B*],C3[C]]`
+  at shipped defaults (admit A, then B, then C; focus B; record actual
+  order, widths and viewport). Toggle float on B, then unfloat. This is
+  a lifecycle projection, not an exact H-tree reflow claim.
+- Observe: sibling reflow on float; unfloat placement plus focus.
+- Then niri: B leaves its column (survivors A,C keep their independent
+  column widths); float frame lands near B's tile position plus the
+  (50,50) offset clamped to the work area. Unfloat position, focus and
+  viewport TBD. `S(S-nir-float)`; position queued.
+- Then PaperWM: no-counterpart (ordinary B tiles on admission; only
+  non-tileable windows enter the floating list, so the toggle has no
+  faithful subject). `S(S-pap-float)`.
+- Then karousel/Lazy: B flips to `Floating` state (no keepAbove at the
+  shipped default; height capped by the toggle-time limit); survivors
+  keep their column widths. Unfloat re-tiles via grid admission;
+  position and focus TBD. `S(S-kar-float)`; position queued.
+- Then paneru: `Manage` toggles B to `Unmanaged::Floating` (native
+  frame; survivors TBD); unfloat re-inserts at the remembered strip
+  index (`PreviousManagedStrip`); focus TBD. `S(S-pan-flt)` +
+  `S(S-pan-ins)`; focus queued.
+
+### R-FLT-02 backfill: sticky across a workspace switch (scrolling)
+
+- Given (columns): two-column strip with B focused at shipped defaults.
+  Sticky-on B, switch workspace, sticky-off. Same visibility predicate
+  as the original row. karousel/paneru have no script/tiler sticky verb;
+  their legs assess the host journey, never an inferred absence.
+- Observe: visibility across the switch; off placement.
+- Then niri: no-counterpart (no sticky verb in the full `Action`
+  inventory and no sticky state in the layout model).
+  `S(S-nir-acts)`.
+- Then PaperWM: scratch makes B stuck (visible on all spaces) plus above
+  plus floating; unmake restores unstick/un-above with the scratch frame
+  kept. Re-tile placement after off TBD. `S(S-pap-float)`; placement
+  queued.
+- Then karousel/Lazy: TBD (no sticky verb in the script actions; host
+  KWin `onAllDesktops` is the applicable journey, untraced).
+  `S(S-kar-acts)`; host journey queued.
+- Then paneru: TBD (no sticky verb in `Operation`; host macOS
+  all-desktops assignment is the applicable journey, untraced).
+  `S(S-pan-cmds)`; host journey queued.
+
+### R-FLT-03 backfill: float-out survivor widths (scrolling)
+
+- Given (columns): three single-window columns with widths 960/576/384
+  in a 1920px viewport, set explicitly through native width controls
+  (not assumed to be shipped presets). Float A; do not unfloat. Widths
+  are independent column state, not an exact H-tree share fixture.
+- Observe: survivor widths (stable vs rescaled).
+- Then niri: B/C keep their independent widths 576/384 (removal drops
+  A's column without rewriting survivor widths). `S(S-nir-float)` +
+  `S(S-nir-resize)`.
+- Then PaperWM: no-counterpart for ordinary non-sticky float-out;
+  scratch removes a tile by making it sticky as well, a different
+  state/action variant assessed in R-FLT-02. `S(S-pap-float)`.
+- Then karousel/Lazy: B/C keep independent column widths 576/384
+  (removal shifts positions, not survivor widths). `S(S-kar-float)`.
+- Then paneru: TBD (column-removal width path untraced).
+  `S(S-pan-model)`; queued.
+
+### R-FLT-05 backfill: restart with a sticky float (scrolling)
+
+- Given (columns): sticky-style float B on WS1 where the model supports
+  one (PaperWM scratch-stuck; host journeys for karousel/paneru); WS2
+  exists. Owner restart; select WS2. Where sticky has no counterpart
+  (niri), the restart leg has no faithful start.
+- Observe: B sticky-visible vs ordinary float; remembered origin.
+- Then niri: no-counterpart (no sticky verb, so no sticky restart
+  subject). `S(S-nir-acts)`.
+- Then PaperWM: TBD (scratch-stuck B exists, but disable/enable state
+  carry for the stuck flag is untraced). `S(S-pap-float)`; queued.
+- Then karousel/Lazy: TBD (host sticky journey plus restart carry both
+  untraced). `S(S-kar-acts)`; queued.
+- Then paneru: TBD (host sticky journey plus restart carry both
+  untraced). `S(S-pan-cmds)`; queued.
+
+### R-FLT-06 backfill: float toggle over a maximized window (scrolling)
+
+- Given (columns): `COL[C1[A],C2[B*]]` at shipped defaults; B is an
+  intentional ordinary float, then natively maximized via the profile
+  path. With B focused, toggle ordinary float once. Width-only maximize
+  is a qualified leg, never native maximize.
+- Observe: overlay refusal vs toggle beneath retained maximize; settled
+  slot/frame/focus.
+- Then niri: native maximize flag sourced (`set_maximized` column flag);
+  toggle interplay TBD. `S(S-nir-maxfs)`; interplay queued.
+- Then PaperWM: no-counterpart for an ordinary non-sticky float toggle;
+  scratch unmake also unsticks, not this action. Tiled native maximize's
+  width conversion does not establish a maximized-dialog toggle.
+  `S(S-pap-acts)` + `S(S-pap-float)`.
+- Then karousel/Lazy: native maximize membership with `skipArrange`
+  sourced; toggle interplay TBD. `S(S-kar-maxfs)`; interplay queued.
+- Then paneru: a host-zoomed window is the applicable owner-specific
+  journey (still TBD); no paneru-native maximized leg exists (`Operation`
+  has no maximize verb and no zoom AX read, so the toggle has no native
+  subject). `S(S-pan-cmds)` + `S(S-pan-axfs)`; journey queued.
+
+### R-FLT-07 backfill: tile-origin focus over floats (scrolling)
+
+- Given (columns): two single-window tiled columns `COL[C1[A],C2[B*]]`
+  plus ordinary float F at `(1000,500,300,200)` (dialog/transient where
+  the model tiles ordinary windows); matching tile rectangles A
+  `(0,0,1280,1440)`, B `(1280,0,1280,1440)` in a 2560x1440 viewport.
+  Repeat with PaperWM scratch-stuck F; niri has no sticky counterpart,
+  and karousel/paneru host-sticky legs remain TBD (R-FLT-02).
+- When: focus left (same native verbs as R-FOC-01 per profile).
+- Observe: whether tile-origin focus can enter F.
+- Then niri: A. `focus_left` steps the column index and activates C1;
+  the floating list is never consulted on the tiled path. `S(S-nir-focus)`.
+- Then PaperWM: A for both dialog and scratch-stuck F. `switchLeft`
+  walks the tiled columns only (the
+  `_floating` list is never a switch candidate); single-window C1
+  resolves to A. `S(S-pap-focus)`.
+- Then karousel/Lazy: A. Focus verbs dispatch tiled-only
+  (`doIfTiledFocused`); the left column's single window takes focus.
+  `S(S-kar-focus)`.
+- Then paneru: TBD (directional `Focus` traversal from a tiled subject
+  with a floating present untraced). `S(S-pan-cmds)`; queued.
+
+### R-FLT-08 backfill: float-origin focus miss (scrolling)
+
+- Given (columns): two single-window tiled columns `COL[C1[A],C2[B]]`
+  plus focused ordinary float `F* (500,500,300,200)` (dialog/transient
+  where applicable); no other floats; tile rectangles A/B and viewport
+  as in R-FLT-07. Record the remembered tiled selection for PaperWM.
+- When: focus right (same native verbs as R-FLT-08 per profile).
+- Observe: float-origin focus enters tiles vs miss/refusal.
+- Then niri: F retained. Floating `focus_right` searches floats by
+  center distance and returns false with no other float (no wrap, no
+  tile fallback). `S(S-nir-fltfocus)`.
+- Then PaperWM: TBD. Dialog/scratch focus leaves the remembered tiled
+  `selectedWindow` unchanged; `switchRight` uses that selection, not F.
+  It may focus a tile or hit the strip edge depending on the unrecorded
+  tiled selection. `S(S-pap-float)`; selection queued.
+- Then karousel/Lazy: F retained. Focus verbs dispatch tiled-only, so a
+  float-origin step is a no-op. `S(S-kar-focus)`.
+- Then paneru: TBD (directional `Focus` from an unmanaged subject
+  untraced). `S(S-pan-cmds)`; queued.
+
+### R-FLT-09 backfill: float-origin focus toward a farther float (scrolling)
+
+- Given (columns): tiled columns plus focused ordinary float
+  `F* (500,500,300,200)` and a second ordinary float G at
+  `(1800,500,300,200)` (dialog/transient where applicable); tile
+  rectangles A/B and viewport as in R-FLT-07. Repeat with PaperWM
+  scratch-stuck F; karousel/paneru host-sticky legs remain TBD.
+  Record PaperWM's remembered tiled selection.
+- When: focus right (same native verbs as R-FLT-09 per profile).
+- Observe: farther float G vs nearer tile; focus target.
+- Then niri: G, raised to the floating front. Floating `focus_right`
+  picks the nearest positive-delta float center (F 650 vs G 1950) and
+  activates it. `S(S-nir-fltfocus)`.
+- Then PaperWM: G is not a tiled-switch candidate; final focus TBD.
+  Dialog/scratch focus preserves the remembered tiled selection, which
+  `switchRight` uses instead of F. `S(S-pap-float)`; selection queued.
+- Then karousel/Lazy: F retained. Float-origin focus is a tiled-only
+  no-op, so neither the nearer tile nor G is targeted.
+  `S(S-kar-focus)`.
+- Then paneru: TBD (directional `Focus` float-to-float search untraced).
+  `S(S-pan-cmds)`; queued.
+
+### R-FLT-10 backfill: semantic float move (scrolling)
+
+- Given (columns): tiled columns plus free unsnapped ordinary float
+  `F* (1000,500,300,200)` (dialog/transient where applicable) at shipped
+  defaults; viewport recorded.
+- When: move right once via the profile semantic move verb.
+- Observe: move/resize geometry vs reorder vs refusal; float state.
+- Then niri: F.x 1000->1050, stays floating. Active-float
+  `move_right` steps the float position by 50px; no snap state.
+  `S(S-nir-ptr)` + `S(S-nir-move)`.
+- Then PaperWM: TBD (`swap` exchanges tiled model positions; the float
+  position leg is untraced). `S(S-pap-swap)`; queued.
+- Then karousel/Lazy: F retained floating. Semantic moves dispatch
+  tiled-only (`doIfTiledFocused`); no snap state exists.
+  `S(S-kar-move)` + `S(S-kar-focus)`.
+- Then paneru: TBD (`Swap` same-strip exchange inventoried; float-subject
+  result untraced). `S(S-pan-move)`; queued.
+
+### R-FLT-11 backfill: second float move and snap state (scrolling)
+
+- Given (columns): same float fixture as R-FLT-10 backfill
+  (`F* (1000,500,300,200)`) at shipped defaults. Move right, then move
+  up, with no reset between the steps.
+- Observe: stateful snap vs stateless second move.
+- Then niri: (1050,500) then (1050,450), stays floating. Both legs step
+  50px with no snap state. `S(S-nir-ptr)`.
+- Then PaperWM: TBD (same model-position inventory as R-FLT-10; snap
+  state untraced). `S(S-pap-swap)`; queued.
+- Then karousel/Lazy: both legs no-op, stays floating. Tiled-only move
+  verbs never engage; no snap state exists. `S(S-kar-move)`.
+- Then paneru: TBD (same swap inventory as R-FLT-10; snap state
+  untraced). `S(S-pan-move)`; queued.
