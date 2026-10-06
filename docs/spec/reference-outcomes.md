@@ -2127,6 +2127,67 @@ Legend:
   truly absent HWNDs) and crates/tiler-windows/src/tiling.rs:341-347
   (`minimized` classifies as a state skip) @13dcb76
   (slot retained without reflow; focus stays TBD)
+- `S-cos-grpmove` cosmic-comp:src/shell/element/stack.rs:431-483
+  (`handle_move`: in-stack Left/Right reorder when a neighbor exists,
+  else `MoveOut` with the active index clamped to the survivor) and
+  src/shell/layout/tiling/mod.rs:1507-1560 (`move_current_node`
+  stack-internal branch plus `MoveOut` reinsert as a new tile beside
+  the group) @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (leave/reorder legs; semantic join from outside into a stack untraced)
+- `S-cos-grpclose` cosmic-comp:src/shell/element/stack.rs:241-271
+  (`remove_window`: active index clamped with `fetch_min`, single-member
+  dissolve path) and :273-305 (`remove_idx` same index fixup)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (membership plus active-tab leg; semantic tab-bar membership suffices)
+- `S-hyp-grpmove` Hyprland:src/config/shared/actions/ConfigActions.cpp:1338-1375
+  (`moveWindowIntoGroupHelper` add plus `setCurrent` mover plus mover
+  focus, `moveWindowOutOfGroupHelper` remove with direction focal plus
+  `focus_removed_window` mover/group-current branch) and :1377-1416
+  (`moveIntoGroup` needs a directional neighbor already in a group,
+  `moveOutOfGroup` needs group membership) +
+  src/desktop/view/Group.cpp:97-173 (`add` inserts after current by
+  default and makes the newcomer current) and :233-298 (`remove`
+  index fixup with single-member dissolve via target switch)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+- `S-nir-consume` niri:src/layout/scrolling.rs:925-951
+  (`add_tile_to_column`: `None` appends last with `activate_idx` plus
+  column activation) and :1795-1901
+  (`consume_or_expel_window_left`: single-tile joins the left column,
+  multi-tile expels to a new left column) and :1903-1993 (right-side
+  mirror) and :1995-2060 (`consume_into_column`/`expel_from_column`
+  explicit verbs) and :2189-2226 (`toggle_column_tabbed_display`
+  Normal/Tabbed flip) and :1626-1640 (`focus_down`/`focus_up` column
+  member step) and :4865-4871 (`activate_idx` saturating step)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (membership/order/active legs; semantic tab-bar membership suffices)
+- `S-pap-slurp` PaperWM:tiling.js:5228-5310 (`slurp` on the focused column
+  consumes the directional neighbor per `open_window_position` at the
+  ABOVE/BELOW/TOP/BOTTOM position, emptied columns removed; shipped
+  RIGHT `slurp(B)` from the right column has no right neighbor) and
+  :5317-5359 (`barf` expels the named or bottom window to a new column
+  at the directional open position) @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (membership legs; selection TBD where stated)
+- `S-kar-grpmove` karousel:src/lib/keyBindings/Actions.ts:22-36
+  (`focusUp`/`focusDown` member step via above/below window) and :90-120
+  (`windowMoveLeft` single-window joins the left column, shared-column
+  expels to a new left column; `windowMoveRight` mirror) and
+  src/lib/layout/Window.ts:26-33 (`moveToColumn` remove plus add) and
+  src/lib/layout/Column.ts:275-295 (`onWindowAdded` appends last or first
+  with `isFocused` focus-taker update) and :297-325 (`onWindowRemoved`
+  above/below focus-taker fixup plus column destroy) and :267-273
+  (`toggleStacked` needs 2+ windows) and :225-250 (stacked overlapping
+  arrange vs visible heights)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (membership/order/focus-taker legs)
+- `S-ours-grp` plasma-auto-tiler:crates/tiler-core/src/directional.rs:107-123
+  (`Node` is Leaf or split-axis Group only, no tab/stack variant) +
+  crates/tiler-core/src/session/ops/mod.rs:8-15 (families:
+  drag/float/focus/lifecycle/move/resize/workspace only) +
+  crates/tiler-core/src/session.rs:1810-1817 (Center never plans,
+  unsupported stack behavior) and :3674-3699 (center preview/release
+  fail closed as unsupported stack with no plan)
+  @9241c94
+  (no tab carrier and no semantic join/leave verb in any Engine layer)
 
 ## Variant hooks (provisional, not commitments)
 
@@ -2175,7 +2236,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..14 (14) | none (R-WS-08..14 landed with scrolling backfill) |
 | Minimize | [minimize.md](reference-outcomes/minimize.md) | R-MNZ-01..03 (3) | none (landed) |
 | Maximise / fullscreen | [maximize-fullscreen.md](reference-outcomes/maximize-fullscreen.md) | R-MAX-01..07 (7) | R-MAX-08..09 |
-| Groups / stacks | [groups-stacks.md](reference-outcomes/groups-stacks.md) | R-GRP-01 (1) | R-GRP-02..03 |
+| Groups / stacks | [groups-stacks.md](reference-outcomes/groups-stacks.md) | R-GRP-01..03 (3) | none (R-GRP-02..03 landed with scrolling backfill) |
 | Floating | [floating.md](reference-outcomes/floating.md) | R-FLT-01..11 (11) | R-FLT-12..14 |
 | Close / reflow | [close.md](reference-outcomes/close.md) | R-CLOSE-01..02 (2) | R-CLOSE-03..05 |
 | Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..02 (2) | R-OUT-03..06 |

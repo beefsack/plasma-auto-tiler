@@ -1,11 +1,12 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (91 rows:
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (93 rows:
 58-row historical audit preserved below, plus 6-row insertion expansion
 plus 4-row focus expansion plus 3-row move expansion plus 4-row resize
 expansion plus 4-row layout expansion plus 7-row workspace expansion
-plus 3-row minimize expansion plus 2-row maximize expansion).
+plus 3-row minimize expansion plus 2-row maximize expansion
+plus 2-row groups expansion).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -118,10 +119,10 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
 Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize are per-predicate: A 19, B 18, U 6 full rows + one KDE leg, C 17, W 10;
+Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups are per-predicate: A 20, B 18, U 6 full rows + one KDE leg, C 17, W 10;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
 
-## Table A: strong cross-family consensus where ours differs (19)
+## Table A: strong cross-family consensus where ours differs (20)
 
 Ours differs = established follow/refusal/etc on at least one platform,
 or an inventory-evidenced verb/state gap on both platforms (missing verbs
@@ -148,6 +149,7 @@ never vote as agreement).
 | R-WS-12 hidden transfer | whole workspace/group/tag reassigned to another output | reassign-5/8 (H,B,I,Q,A), 3/4 fam; destination/focus partial | active-only variant | no / no (missing whole-workspace verb) | Inventory gap; counts semantic domain reassignment, not identical mechanisms |
 | R-WS-14 | relative workspace send exists | relative-5/8 (C,H,B,I,S), 3/4 fam; follow policies differ | yes | no / no (missing relative-send verb) | Inventory gap; H previous is MRU, not numeric decrement |
 | R-MAX-09 full | fullscreen window carries its state to the target workspace (not restored first) | carry-5/8 (B,I,S,Q,A), 3/4 fam; H/C TBD; niri window-send strips (scrolling, non-voting) | TBD (transfer sourced, carry untraced) | KDE TBD / Windows refuses fullscreen, carries maximized | Windows refusal differs; KDE native-send outcome untraced; max leg has no consensus |
+| R-GRP-03 close | closed active tab leaves a retained 2-tab group focused on C | retained-4/4ev plus focus-C-4/4ev (C,H,I,S), 3/4 fam; B/X/Q/A qualified | yes (active tab C) | no / no (no tab carrier and no close-tab verb in any Engine layer) | Inventory gap under standing V-GROUP-STACK deferral; foreign direction recorded if tabs ever specified |
 
 WS-01 notes: H silent (no-follow) path exists alongside profiled follow;
 alternate Move-verb inventory is a 4/4 tie (C/H/B/Q follow vs I/X/S/A
@@ -834,3 +836,69 @@ counter-model). Resolve KDE's native-send outcome before proposing a
 behavior change there.
 R-MAX-08 carries no strong consensus (fence-by-occlusion 1, access 1): Ours focus-exempt plus R2c wrap is recorded without a
 conflict. No product behavior is changed by this assessment.
+
+## Groups expansion (piece B9): R-GRP-02..03 plus R-GRP-01 scrolling backfill
+
+Scope: piece B9 adds two GWT groups scenarios (R-GRP-02 sequential join
+then leave, R-GRP-03 close active tab), each with 14 Then profiles, and
+an additive scrolling backfill block for R-GRP-01 (original wide table
+preserved). Historical tables and the 58-row audit above are preserved
+unchanged. Denominator, families, and the strength rule are unchanged:
+consensus classification below counts the original eight profiles only.
+The four scrolling profiles form one correlated lineage reported as an
+explicit separate non-voting comparison. Cell classes are mutually
+exclusive per cell: E complete outcome evidenced with no TBD; P one
+sub-leg evidenced with the remainder TBD and queued; T TBD-only
+(verb inventory alone never promotes to P); Q all legs qualified
+(fixture-inapplicable / no-counterpart with pinned inventory evidence);
+M mixed. Counts measure documentation coverage, not votes. Semantic
+tab-bar membership suffices; pixel render never gates a semantic vote.
+
+| Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
+|---|---|---|---|
+| R-GRP-02 sequential join then leave | join B left into `S[A,C]` vs swap; one right operation from the actual post-join B as a new tile vs reorder vs dissolve | join: H (`moveIntoGroup` after-current plus newcomer current/focus, `S-hyp-grpmove`); leave: H (`moveOutOfGroup` with shipped focus_removed_window, `S-hyp-grpmove`); conditional: C (in-stack Right reorder vs edge `MoveOut` on the actual post-join index, join TBD, `S-cos-grpmove`) | C audit-only (1/8ev join, 1/8ev leave; no agreement) |
+| R-GRP-03 close the active tab | group retained vs flattening; focus C (neighbor and MRU coincide) | retained: C (2-tab stack via active-index clamp, `S-cos-grpclose`), H (group retained via remove path, `S-hyp-close` + `S-hyp-grpmove`), I (parent retained, `S-i3-grp` + `S-i3-close`), S (parent retained, `S-sway-close` + `S-sway-layout`); focus C: C (active tab C), H (grouped next), I (`con_next_focused` focus-stack next C), S (focus-inactive MRU C) | A retained 4/4ev plus focus-C 4/4ev, 3 families (COSMIC n-ary, Hyprland binary, i3/sway tree) |
+
+Scrolling comparison (non-voting): R-GRP-02 niri joins appended last as
+`[A,C,B*]` with B activated then expels to a new sole column
+(`S-nir-consume`); karousel joins appended last with focus-taker B then
+leaves to a new own column (`S-kar-grpmove`); PaperWM `slurp(A)` from the
+A-focused variant joins B last with selection TBD, then `barf` expels B
+(shipped RIGHT `slurp(B)` is a no-op with no right neighbor,
+`S-pap-slurp`); paneru `Swap` peer untraced. R-GRP-03 all four scrolling
+profiles TBD on member-removal fixup. Backfill: R-GRP-01 niri toggles
+Normal/Tabbed plus `focus_up`/`focus_down` member step
+(`S-nir-consume`); karousel toggles stacked plus `focusUp`/`focusDown`
+member step (`S-kar-grpmove`); PaperWM has no tabbed/stacked toggle
+counterpart; paneru exact `S` fixture is inapplicable per
+`S-pan-model` (native-tab variant under R-COL-10).
+
+Counts (mutually exclusive E/P/T/Q/M). New rows (2x14=28): E 7
+(R-GRP-02: H/niri/karousel; R-GRP-03: C/H/I/S), P 2 (R-GRP-02:
+C/PaperWM), T 7 (R-GRP-02: I/S/paneru; R-GRP-03:
+niri/PaperWM/karousel/paneru), Q 12 (B/X/Q/A plus both Ours each row),
+M 0. Original-eight new cells (2x8=16): E 5 (R-GRP-02: H; R-GRP-03:
+C/H/I/S), P 1 (R-GRP-02: C conditional), Q 8 (B/X/Q/A each row), T 2
+(R-GRP-02: I/S), M 0. Scrolling new cells (2x4=8): E 2 (R-GRP-02
+niri/karousel), P 1 (R-GRP-02 PaperWM), T 5 (R-GRP-02 paneru plus all
+four R-GRP-03). Ours new cells (2x2=4): Q 4 (no tab carrier and no
+join/leave verb, `S-ours-grp`). Backfill (1x4=4): E 2 (niri/karousel
+toggle plus step), Q 2 (PaperWM no-toggle counterpart, paneru
+fixture-inapplicable). Total 32 cells: E9/P2/T7/Q14/M0. Table A grows 19
+to 20 (R-GRP-03 retained plus focus-C); Table B stays 18; Table U stays 6
+full rows plus the R-WS-09 KDE leg; Table C stays 17; Table W stays 10.
+The matrix total is now 93 rows (91 + 2 new; backfill reuses R-GRP-01).
+
+Ours-vs-consensus position (no behavior selected): one new strong
+predicate stands against Ours. R-GRP-03 retained 4/4ev plus focus-C 4/4ev
+(C/H/I/S across n-ary, binary, and tree families): a closed active tab
+leaves a retained 2-tab group focused on C. Both Ours platforms lack a
+tab carrier and any semantic join/leave/close-tab verb (`S-ours-grp`:
+split-only `Node` plus operation-family inventory plus fail-closed
+center-stack), so the `S` fixture itself is inapplicable. Propose for
+batch user review, no selection or code change: retain the standing
+V-GROUP-STACK deferral (refuse closed) while recording the strong foreign
+retained-plus-C direction if tabs are ever specified. Missing verbs were
+never counted as agreeing rejection. R-GRP-02 carries no strong
+consensus (join 1/8ev, leave 1/8ev plus a conditional C leg). No product
+behavior is changed by this assessment.

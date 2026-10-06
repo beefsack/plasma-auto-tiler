@@ -1,6 +1,6 @@
 # Reference matrix expansion
 
-- Status: active; restructure, insertion correction, focus, move, resize, layout commands, workspaces, minimize and maximize/fullscreen accepted; batch decisions pending, groups/stacks next.
+- Status: active; restructure, insertion correction, focus, move, resize, layout commands, workspaces, minimize, maximize/fullscreen and groups/stacks accepted; batch decisions pending, floating next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
@@ -434,6 +434,19 @@ semantic fullscreen exit evidence needs no incidental native confirmation.
 | R-MAX-04 backfill, paneru (1) | Declared host-zoom shortcut, native restore, repress on same window | No paneru maximize command or AX zoom observation; host attempt-state journey unresolved |
 | R-MAX-06 backfill, PaperWM/karousel/paneru (3) | First-seen maximized/host-zoomed A, B already present; admit then natively restore | PaperWM conversion and karousel force-unmaximize sourced, admission focus unresolved; paneru host-owned admission/restore unresolved |
 
+### Groups/stacks queue additions (piece B9)
+
+9 unresolved cells (P2 + T7), grouped in four entries. Semantic
+membership and active-tab evidence needs no pixel/native confirmation;
+qualified absent carriers and commands never become live no-op tests.
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-GRP-02, COSMIC (1) | B focused beside stack A/C with A active; semantic join left, then move actual joined B right once | Semantic join inventory/outcome unresolved; sourced leave is conditional on actual post-join index, not an invented middle-tab fixture |
+| R-GRP-02, i3/sway (2) | Same sequential join then leave with actual post-join order and active tab recorded | Directional move inventory alone does not establish membership/order or sequential leave |
+| R-GRP-02, PaperWM/paneru (2) | PaperWM explicit A-focused slurp variant then barf B; paneru declared native join/leave inventory and column fixture | PaperWM selection unresolved (default slurp from B has no right neighbor); paneru peer/membership untraced |
+| R-GRP-03, four scrolling profiles (4) | Close middle active B with history A,C,B; niri tabbed, karousel explicit stacked display, PaperWM/paneru visible column fixtures | Member-removal selection/focus and retained-vs-dissolved column untraced |
+
 ## Settled review and execution
 
 | User decision | Recommendation |
@@ -485,4 +498,8 @@ semantic fullscreen exit evidence needs no incidental native confirmation.
 - Maximize/fullscreen review: implementation Worker resumed to replace inventory-only placeholders with pinned native-state evidence; independent source reviewer corrected paneru host-zoom qualification, absent project fullscreen toggles, and the false KDE no-send claim. Lead preserved R-MAX-01's load-bearing minimums/geometry, removed incidental fullscreen-exit TBDs, corrected PaperWM native-restore vs width-toggle semantics, and checked the dev-only KDE send prototype. Workers ran sequentially; no live tests or product changes.
 - Maximize/fullscreen consensus: full-state carry is strong 5/8 (B/I/S/Q/A), three original families; Ours Windows refuses fullscreen sends but carries maximized sends. Recommendation for batch review: carry fullscreen state across workspace send. KDE host-native same-output send remains TBD; establish that outcome before proposing its change. niri window-send strips the state while column-send preserves it; PaperWM converts native maximize into width changes and karousel clears overlays on focus change. R-MAX-08 has no strong consensus; Ours accesses A and wraps its retained tree slot. Table A grows 18 to 19; B18/U6 plus KDE leg/C17/W10 unchanged.
 - Maximize/fullscreen verification: 2x14 new Then entries, 7x4 scrolling assessments, unchanged historical rows/pins; citation resolution, local links, ASCII, whitespace and pinned-source spot checks. Documentation/source reading only. Queue adds 21 unresolved cells in six groups. Stop at this area's committed boundary because Lead context is crowded after source reconciliation.
-- Exact next action: expand groups/stacks R-GRP-02..03 and scrolling assessment of existing R-GRP rows; update consensus/live-test queue, verify, then commit/push. Continue floating, close, multi-output, mouse, special windows, activation, restart/persistence, then R-COL; collect product differences for batch review.
+- Groups/stacks outcome: R-GRP-02..03 added as two 14-profile GWT scenarios; R-GRP-01 assessed for four scrolling profiles, historical wide row preserved. Matrix now 93 scenarios. Coverage over 32 cells: E9/P2/T7/Q14/M0. New 28: E7/P2/T7/Q12 (original-eight E5/P1/T2/Q8, scrolling E2/P1/T5, Ours Q4); backfill 4: E2/Q2. Missing carriers/verbs are qualified non-voters.
+- Groups/stacks review: implementation Worker corrected fresh-fixture substitution for the sequential join/leave, PaperWM's focused-column slurp target, inventory-only partial counts, and native/pixel confirmation overreach. Independent pinned-source review passed the corrected fixtures, membership/focus paths and consensus math. Lead spot-checked niri consume/expel and karousel move handlers and reconciled accepted counts. Workers ran sequentially; no live tests or product changes.
+- Groups/stacks consensus: R-GRP-03 retains two tabs and selects C in C/H/I/S, strong 4/4 evidenced across n-ary/binary/tree families (neighbor and MRU coincide in this history). Ours KDE/Windows have no tab carrier, an inventory gap under standing V-GROUP-STACK deferral. Recommendation for batch review: retain the current refuse-closed deferral while recording the strong foreign close behavior for any future tab implementation. R-GRP-02 has no strong consensus. Table A grows 19 to 20; B18/U6 plus KDE leg/C17/W10 unchanged.
+- Groups/stacks verification: 2x14 Then profiles, 1x4 scrolling assessment, original row/pins unchanged; citation resolution, ASCII, local links, whitespace and pinned-source review passed. Source/offline only. Queue adds 9 unresolved cells in four groups.
+- Exact next action: expand floating R-FLT-12..14 and scrolling assessment of existing R-FLT rows (retain R-FLT-04 assessment from layout commands); update consensus/live-test queue, verify, then commit/push. Continue close, multi-output, mouse, special windows, activation, restart/persistence, then R-COL; collect product differences for batch review.
