@@ -27,6 +27,8 @@ delivers stateless halves only; R-FLT-11 discriminates the deferred snap state.
 
 Column legs below use separately stated column Givens with the same identities and action as the original rows; projections are marked explicitly.
 
+<a id="scrolling-backfill-additive-existing-wide-tables-above-unchanged-1"></a>
+<a id="r-flt-01-backfill-toggle-float-then-unfloat-scrolling"></a>
 ### R-FLT-01: toggle float then unfloat
 
 - Given (tree profiles): `H[A,B*,C]`
@@ -69,6 +71,7 @@ Column legs below use separately stated column Givens with the same identities a
 - Then Ours Windows: same leaves-tree/reflow/frame/admission/focus leg as KDE (`D(D-dec-ww)` shared), plus keep-above preimages; behavior rows user-owned `D(D-float)`
 - Variant hook: V-FLOAT-GEO.
 
+<a id="r-flt-02-backfill-sticky-across-a-workspace-switch-scrolling"></a>
 ### R-FLT-02: sticky across a workspace switch
 
 - Given (tree profiles): `H[A,B*]` + WS2
@@ -109,6 +112,7 @@ Column legs below use separately stated column Givens with the same identities a
 - Then Ours Windows: All managed workspaces of output, float-only; Win+Shift+G; origin-honoring off (tiled fresh-admits, float stays float); `D(D-dec-ww)` KDE + `D(D-sticky)` Windows scoped proof
 - Variant hook: V-STICKY-SCOPE.
 
+<a id="r-flt-03-backfill-float-out-survivor-widths-scrolling"></a>
 ### R-FLT-03: float-out survivor widths
 
 - Given (tree profiles): 1920px effective parent width; `H[A,B,C]` 50/30/20 (960/576/384)
@@ -146,6 +150,8 @@ Column legs below use separately stated column Givens with the same identities a
 - Then Ours Windows: TBD (Engine removal reflow not checked here)
 - Variant hook: V-FLOAT-REFLOW.
 
+<a id="scrolling-backfill-additive-existing-wide-tables-above-unchanged"></a>
+<a id="r-flt-04-backfill-workspace-floating-toggle-scrolling"></a>
 ### R-FLT-04: workspace floating toggle
 
 - Given (tree profiles): Workspace tiled with A/B, optionally intentional per-window float C
@@ -188,6 +194,7 @@ Column legs below use separately stated column Givens with the same identities a
 - Then Ours Windows: native move/new-window/frame preservation, release/fresh fit, independent border and floating drag underlay/preview suppression proven synthetically; C exception preserved by actual Engine regression, physical row TBD [record](../../changes/archive/windows-workspace-tiling.md)
 - Variant hook: V-WS-TILING.
 
+<a id="r-flt-05-backfill-restart-with-a-sticky-float-scrolling"></a>
 ### R-FLT-05: restart with a sticky float
 
 - Given (tree profiles): B sticky floating on WS1; WS2 exists
@@ -223,6 +230,7 @@ Column legs below use separately stated column Givens with the same identities a
 - Then Ours Windows: consumes surviving project marker into normal float on current managed workspace, discarding origin; `S(S-ours-sticky-restart)` + `D(D-sticky)`; exact restart/visibility journey TBD
 - Variant hook: V-STICKY-SCOPE.
 
+<a id="r-flt-06-backfill-float-toggle-over-a-maximized-window-scrolling"></a>
 ### R-FLT-06: float toggle over a maximized window
 
 - Given (tree profiles): Workspace tiled; B is intentional ordinary float, then natively maximized
@@ -263,6 +271,7 @@ Column legs below use separately stated column Givens with the same identities a
 - Then Ours Windows: refuses `float-refused-maximize`; `S(S-ours-overlay-unfloat)`; physical outcome TBD
 - Variant hook: V-FLOAT-GEO / V-MAX-MODEL.
 
+<a id="r-flt-07-backfill-tile-origin-focus-over-floats-scrolling"></a>
 ### R-FLT-07: tile-origin focus over floats
 
 - Given (tree profiles): `H[A,B*]` + F floating `(1000,500,300,200)`
@@ -305,6 +314,7 @@ Column legs below use separately stated column Givens with the same identities a
 - Then Ours Windows: KDE/Windows: A; ordinary/sticky F has no tile leaf, hence never a target; unchanged, KDE regression `D(D-float-nav)` + `S(S-ours-flt-target)`
 - Variant hook: V-FLOAT-FOCUS.
 
+<a id="r-flt-08-backfill-float-origin-focus-miss-scrolling"></a>
 ### R-FLT-08: float-origin focus miss
 
 - Given (tree profiles): `H[A,B]` + F* floating `(500,500,300,200)`; no other floats
@@ -345,6 +355,7 @@ Column legs below use separately stated column Givens with the same identities a
 - Then Ours Windows: existing `focus-refused-floating` / `focus-refused-sticky`; parity pending; `S(S-ours-flt-subject)`
 - Variant hook: V-FLOAT-FOCUS.
 
+<a id="r-flt-09-backfill-float-origin-focus-toward-a-farther-float-scrolling"></a>
 ### R-FLT-09: float-origin focus toward a farther float
 
 - Given (tree profiles): `H[A,B]` + F* floating `(500,500,300,200)` + ordinary float G `(1800,500,300,200)`
@@ -387,6 +398,7 @@ Column legs below use separately stated column Givens with the same identities a
 - Then Ours Windows: F retained, existing subject refusal; parity pending; `S(S-ours-flt-subject)`
 - Variant hook: V-FLOAT-FOCUS.
 
+<a id="r-flt-10-backfill-semantic-float-move-scrolling"></a>
 ### R-FLT-10: semantic float move
 
 - Given (tree profiles): `H[A,B]` + free, unsnapped F* floating `(1000,500,300,200)`
@@ -425,6 +437,7 @@ Column legs below use separately stated column Givens with the same identities a
 - Then Ours Windows: existing `move-refused-floating` / `move-refused-sticky`; parity pending; `S(S-ours-flt-subject)`
 - Variant hook: V-FLOAT-SNAP.
 
+<a id="r-flt-11-backfill-second-float-move-and-snap-state-scrolling"></a>
 ### R-FLT-11: second float move and snap state
 
 - Given (tree profiles): Same free F* and zero-gap fixture as R-FLT-10

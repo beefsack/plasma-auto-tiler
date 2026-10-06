@@ -1,6 +1,6 @@
 # Resize (reference outcomes)
 
-Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. No established wide rows in this area yet.
+Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Scenarios below are GWT with one Then bullet per profile (14).
 
 Reuse: R-CLOSE-02 ratio persistence through close/open, R-FLT-03 removal ratios, R-MIN-01..03 hint limits (minimum-size supplement).
 

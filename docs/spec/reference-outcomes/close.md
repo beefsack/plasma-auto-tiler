@@ -4,6 +4,8 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 ## 7. Close / reflow
 
+<a id="scrolling-backfill-additive-existing-wide-tables-above-unchanged"></a>
+<a id="r-close-01-backfill-close-the-middle-tile-scrolling"></a>
 ### R-CLOSE-01: close the middle tile
 
 - Given (tree profiles): `H[A,B,C]`; focus A,C,B so B is active and C is next MRU
@@ -40,6 +42,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: Leaf removed, C selected as source-MRU top; `D(D-dec-cos)`
 - Variant hook: V-CLOSE-FOCUS.
 
+<a id="r-close-02-backfill-close-refocus-fresh-reopen-scrolling"></a>
 ### R-CLOSE-02: close, refocus, fresh reopen
 
 - Given (tree profiles): `H[A,B,C]` manual 50/30/20; focus A,C,B

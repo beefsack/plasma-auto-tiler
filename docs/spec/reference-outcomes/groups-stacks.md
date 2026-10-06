@@ -4,6 +4,8 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 ## 8. Groups / stacks
 
+<a id="scrolling-backfill-additive-existing-wide-tables-above-unchanged"></a>
+<a id="r-grp-01-backfill-toggle-stack-and-switch-tabs-scrolling"></a>
 ### R-GRP-01: toggle stack and switch tabs
 
 - Given (tree profiles): `H[A,B*]`

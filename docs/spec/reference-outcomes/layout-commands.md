@@ -1,8 +1,8 @@
 # Layout commands (reference outcomes)
 
-Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Existing wide tables moved here unchanged (none in this area yet).
+Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Scenarios below are GWT with one Then bullet per profile (14).
 
-Tile/float workspace-mode coverage stays in R-FLT-04 (floating area) and R-WS-06 (workspaces area) and is reused here, not duplicated: proposed layout selection is not that toggle. R-FLT-04 and R-WS-06 each carry an additive four-profile scrolling backfill in their own files.
+Tile/float workspace-mode coverage stays in R-FLT-04 (floating area) and R-WS-06 (workspaces area) and is reused here, not duplicated: proposed layout selection is not that toggle. R-FLT-04 and R-WS-06 each carry scrolling assessments within GWT scenarios in their own files.
 
 ## New scenarios (GWT; fixtures/actions/discriminators per the approved expansion record)
 

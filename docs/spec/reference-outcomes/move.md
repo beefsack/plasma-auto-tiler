@@ -4,6 +4,8 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 ## 2. Move
 
+<a id="scrolling-backfill-additive-existing-wide-tables-above-unchanged"></a>
+<a id="r-mov-01-backfill-perpendicular-move-of-a-flat-triple-scrolling"></a>
 ### R-MOV-01: perpendicular move of a flat triple
 
 - Given (tree profiles): `H[A,C,B*]`
@@ -40,6 +42,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: `V[H[A,C],B]` R1 via shared Engine; selected `D(D-dec-cos)`
 - Variant hook: V-MOVE-PERP.
 
+<a id="r-mov-02-backfill-in-group-vertical-swap-scrolling"></a>
 ### R-MOV-02: in-group vertical swap
 
 - Given (tree profiles): `H[A,V[C,B*]]`
@@ -75,6 +78,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: `H[A,V[B,C]]`; `D(D-dec-cos)`
 - Variant hook: V-MOVE-NARY.
 
+<a id="r-mov-03-backfill-same-row-carry-to-the-right-scrolling"></a>
 ### R-MOV-03: same-row carry to the right
 
 - Given (tree profiles): `H[A,B*,C,D]`
@@ -111,6 +115,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: Same-orientation wrap per Engine; nested `H[H..]` distinct from flat; `D(D-dec-cos)`
 - Variant hook: V-MOVE-NARY.
 
+<a id="r-mov-04-backfill-same-axis-ancestor-escape-scrolling"></a>
 ### R-MOV-04: same-axis ancestor escape
 
 - Given (tree profiles): `H[H[A,B*],C]`
@@ -146,6 +151,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: R3 ascend; `D(D-dec-cos)`
 - Variant hook: V-MOVE-NARY.
 
+<a id="r-mov-05-backfill-edge-move-with-no-left-neighbor-scrolling"></a>
 ### R-MOV-05: edge move with no left neighbor
 
 - Given (tree profiles): `H[A*,B]` single output, no neighbor

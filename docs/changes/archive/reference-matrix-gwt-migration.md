@@ -1,7 +1,7 @@
 # Reference matrix GWT migration
 
-- Status: active; all 58 historical scenarios migrated and verified;
-  index cleanup and final link audit remain.
+- Status: complete and archived; all 58 historical scenarios migrated,
+  index updated and final preservation/link audit passed.
 - Baseline: `e160894`; date: 2026-10-07.
 - Goal: one GWT format across all 125 matrix scenarios, with 14 separate
   profile outcomes including Ours KDE and Ours Windows.
@@ -10,8 +10,8 @@
   actions, observations, outcomes, evidence tags/citations and variant hooks.
 - Non-goals: outcome research, behavior changes, historical status recensus,
   live tests, principles/decisions/backlog edits or dependency changes.
-- Approach: sequential bounded Workers; commit/push each small area group,
-  pulling with rebase before every push; archive this record at completion.
+- Approach: sequential bounded Workers; Lead reviewed and integrated each
+  group, committed/pushed after rebase, and archived this record at completion.
 - Acceptance: unchanged per-file scenario inventory; 14 Then bullets per
   scenario; exact outcome/fixture retention and citation-key multisets with
   explicit accounting for shared Ours citations duplicated into two bullets;
@@ -63,8 +63,7 @@
   and all minimum-size platform splits: no lost-content finding.
 - Initial implementation omitted column Given/When/Observe framing; restored
   every original bullet before acceptance and strengthened verification.
-- `git diff --check` passed. Full repository anchor/link audit and index
-  format cleanup follow the remaining area migrations.
+- `git diff --check` passed for every area group and closeout.
 - Floating/overlay group: 18 scenarios verified against the baseline;
   tree/scrolling cells and framing retained, new scenarios unchanged,
   per-scenario and whole-file citation multisets matched precise shared-key
@@ -83,7 +82,35 @@
   placement citation appears in both platform bullets; platform-only keys
   remain scoped. Wide-row locators now name the scenario.
 
+## Final outcome
+
+- 58 historical scenarios migrated in 11 area files; zero wide-table rows
+  remain. All 125 scenario IDs and per-file counts unchanged, each with
+  exactly 14 canonical Then bullets: 1750 total, plus 28 explicit-swap Thens.
+- All 67 expansion scenarios and two explicit-swap legs preserved verbatim
+  after ignoring legacy-anchor alias lines. Index notation, profiles,
+  legend, hooks and citation multisets unchanged; current-format notes updated.
+- 70 HTML aliases preserve every removed heading anchor, including the
+  duplicate scrolling-section suffix. All baseline area heading slugs resolve.
+  Incoming links from docs/ and AGENTS.md and matrix/index outbound Markdown
+  targets/fragments resolve; no consensus link repair was needed.
+- Full-file and per-scenario citation-key multisets matched baseline plus
+  precisely 40 shared Ours citation occurrences duplicated into the separate
+  platform bullets: 3 source and 37 documentation occurrences, zero UT extras.
+  No citation keys were added or removed.
+- Integrated offline verifier passed: `python3
+  /tmp/opencode/verify_matrix_gwt.py --quiet`; checks include every scenario's
+  actual 14-profile count, exact reference/scrolling cells and fixtures,
+  unchanged new blocks, citation multisets, anchors, links, ASCII and whitespace.
+- Independent Worker reviewed first-group and final cross-area diff samples:
+  no lost-content finding. The framing omission and narrowed "same" wording
+  described above were corrected before acceptance; no unresolved preservation
+  issue remains. The five unclear Ours IDs retain their original wording.
+- Area commits pushed: `c365fca` (13), `404015f` (18), `7aabecc` (9),
+  `070eb95` (18). All area CI runs passed; closeout CI checked after push.
+- No live testing, outcome research, product behavior or dependency changes.
+
 ## Next action
 
-- Update the index/current-format notes, audit repository links and full
-  matrix preservation, then archive.
+- None for the migration. The flagged Ours platform scopes remain available
+  for later clarification without blocking this content-preserving format.

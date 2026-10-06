@@ -4,6 +4,8 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 ## 5. Maximise / fullscreen
 
+<a id="scrolling-backfill-additive-existing-wide-tables-above-unchanged"></a>
+<a id="r-max-01-backfill-maximize-then-restore-scrolling"></a>
 ### R-MAX-01: maximize then restore
 
 - Given (tree profiles): `H[A,B*,C,D]` equal shares, effective width 2544px, gap 8; min widths 401/864/627/582 constrain actual allocation
@@ -54,6 +56,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: KDE: slot/share kept, no writes, exact restore `D(D-dec-ww)`; Windows: same + retained hints + bounded async restore; synthetic proof `D(D-max)` + `D(D-place)`; physical feel pending
 - Variant hook: V-MAX-MODEL.
 
+<a id="r-max-02-backfill-fullscreen-focus-and-exit-scrolling"></a>
 ### R-MAX-02: fullscreen focus and exit
 
 - Given (tree profiles): `H[A,B*]`
@@ -95,6 +98,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: Retained slot overlay; focus may enter/leave; `D(D-dec-ww)` KDE + `D(D-fs)` Windows scoped proof; physical focus sequence pending
 - Variant hook: V-FS-SLOT.
 
+<a id="r-max-03-backfill-workspace-floating-toggle-over-a-slotless-maximum-scrolling"></a>
 ### R-MAX-03: workspace floating toggle over a slotless maximum
 
 - Given (tree profiles): Workspace floating, first-seen maximized A without a prior tile slot
@@ -133,6 +137,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: slotless membership preserves floating maximum and hide/reveal, then one clear and fresh tiled plan/native write/matched target readback proven with Notepad/Paint; slotted overlays skip re-clear [accepted correction](../../changes/archive/windows-workspace-tiling.md#r-max-03-accepted-correction); physical feel TBD
 - Variant hook: V-WS-TILING.
 
+<a id="r-max-04-backfill-shortcut-maximize-native-restore-repress-scrolling"></a>
 ### R-MAX-04: shortcut maximize, native restore, repress
 
 - Given (tree profiles): `H[A,B*]`; B normal and remains the same native window
@@ -178,6 +183,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: dispatches one attempt per new discrete down, `D(D-dec-max)`; physical repeat/delivery outcome TBD
 - Variant hook: V-MAX-MODEL.
 
+<a id="r-max-05-backfill-app-owned-fullscreen-without-a-preimage-scrolling"></a>
 ### R-MAX-05: app-owned fullscreen without a preimage
 
 - Given (tree profiles): B entered app-owned fullscreen without a tiler fullscreen preimage
@@ -217,6 +223,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: refuses app-owned exit without its restoration preimage, never synthesizes app F11; `S(S-ours-fs-exit)` + `D(D-fs)`; app-specific native completion/slot outcome TBD
 - Variant hook: V-FS-SLOT.
 
+<a id="r-max-06-backfill-admit-a-first-seen-maximized-window-scrolling"></a>
 ### R-MAX-06: admit a first-seen maximized window
 
 - Given (tree profiles): Tiled workspace with B; first-seen eligible maximized A has no retained tile slot and is not fullscreen
@@ -257,6 +264,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: Current KDE/Windows make one admission-time clear attempt; retained slots/fullscreen/floating domains are exempt. Proposed preserve variants and later setting are unselected; exact native journey TBD, `D(D-min-games)`
 - Variant hook: V-MAX-MODEL.
 
+<a id="r-max-07-backfill-captionless-full-monitor-cover-scrolling"></a>
 ### R-MAX-07: captionless full-monitor cover
 
 - Given (tree profiles): Captionless window covers the full monitor; KDE native fullscreen and maximize flags are false

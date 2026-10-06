@@ -4,6 +4,8 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 ## 10. Mouse drag
 
+<a id="scrolling-backfill-additive-existing-wide-tables-above-unchanged"></a>
+<a id="r-drag-01-backfill-drag-onto-a-column-centre-scrolling"></a>
 ### R-DRAG-01: drag onto centre (stack join)
 
 - Given (tree profiles): `H[A,B*,C]`, B tiled
@@ -43,6 +45,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: Centre stack request refused (snap-back); `D(D-dec-cos)` + `D(D-dec-nest)`; physical check pending
 - Variant hook: V-DRAG-ZONE.
 
+<a id="r-drag-02-backfill-drag-to-a-between-column-bar-scrolling"></a>
 ### R-DRAG-02: drag to a between-child bar
 
 - Given (tree profiles): `H[A,B,C]` equal (640 each at 1920); existing N outside that group
@@ -80,6 +83,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: TBD (between-child drop not checked here)
 - Variant hook: V-DRAG-ZONE.
 
+<a id="r-drag-03-backfill-two-drag-producers-same-drop-scrolling"></a>
 ### R-DRAG-03: two drag producers, same drop
 
 - Given (tree profiles): `H[A,B*]`, both tiled
@@ -117,6 +121,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: both producers delivered with three-window synthetic preview/drop agreement and mid-hold sibling stability; exact row TBD `D(D-win-drag)`
 - Variant hook: V-DRAG-ZONE.
 
+<a id="r-drag-04-backfill-esc-during-a-column-drag-scrolling"></a>
 ### R-DRAG-04: Esc during a drag
 
 - Given (tree profiles): `H[A,B*]`, both tiled
@@ -153,6 +158,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: synthetic title/Win Esc restores all frames without mutation, Win preview hidden before Up; physical edge/exact row TBD `D(D-win-drag)`
 - Variant hook: V-DRAG-ZONE.
 
+<a id="r-drag-05-backfill-zero-move-pressrelease-scrolling"></a>
 ### R-DRAG-05: zero-move press/release
 
 - Given (tree profiles): `H[A,B*]`, both tiled
@@ -188,6 +194,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: synthetic title/Win zero-move preserves all frames without mutation or preview residue on a three-window fixture; exact row TBD `D(D-win-drag)`
 - Variant hook: V-DRAG-ZONE.
 
+<a id="r-drag-06-backfill-release-outside-the-work-area-scrolling"></a>
 ### R-DRAG-06: release outside the work area
 
 - Given (tree profiles): `H[A,B*]`, one output with a panel/taskbar outside the work area
@@ -224,6 +231,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: title/Win taskbar-outside refusal restores all frames without mutation or preview residue on a three-window fixture; exact row TBD `D(D-win-drag)`
 - Variant hook: V-DRAG-ZONE.
 
+<a id="r-drag-07-backfill-dragged-frame-vs-retained-allocation-scrolling"></a>
 ### R-DRAG-07: dragged frame vs retained allocation
 
 - Given (tree profiles): `H[A,B*]`, both tiled
@@ -259,6 +267,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: provisional stationary source with visible target-slot preview, three-window synthetic freeze/preview/drop proof; exact row TBD `D(D-win-drag)`
 - Variant hook: V-DRAG-ZONE.
 
+<a id="r-drag-08-backfill-press-focus-on-an-unfocused-column-scrolling"></a>
 ### R-DRAG-08: press focus on an unfocused tile
 
 - Given (tree profiles): `H[A*,B]`, B unfocused tiled

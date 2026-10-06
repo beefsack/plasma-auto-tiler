@@ -4,6 +4,8 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 ## 1. Insertion / splits
 
+<a id="scrolling-backfill-additive-existing-wide-tables-above-unchanged"></a>
+<a id="r-ins-01-backfill-ordinary-third-window-admission-scrolling-profiles"></a>
 ### R-INS-01: ordinary third-window admission
 
 - Given (tree profiles): `H[A,B*]`, B projected 1200x600
@@ -38,6 +40,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: Long-edge split at focused leaf; `D(D-dec-x)` (user statement); order TBD
 - Variant hook: V-INS-AXIS.
 
+<a id="r-ins-02-backfill-stack-admission-scrolling-profiles"></a>
 ### R-INS-02: stack admission
 
 - Given (tree profiles): Stack `S[A*,B]` (COSMIC)

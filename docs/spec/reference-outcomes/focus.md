@@ -1,6 +1,6 @@
 # Focus (reference outcomes)
 
-Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Existing wide tables moved here unchanged (none in this area yet).
+Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Scenarios below are GWT with one Then bullet per profile (14).
 
 Tile/float directional-layer coverage stays in R-FLT-07..09 (floating area) and is reused here, not duplicated: tile-origin search excludes floats (R-FLT-07), float-origin search is layer/policy-dependent (R-FLT-08/09). Workspace-return focus belongs to R-WS-09.
 

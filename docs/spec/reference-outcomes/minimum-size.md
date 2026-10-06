@@ -4,6 +4,8 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 ## 12. Minimum-size transitions
 
+<a id="scrolling-assessment-additive-existing-wide-tables-above-unchanged"></a>
+<a id="r-min-01-backfill-newcomer-minimum-exceeds-shares-scrolling"></a>
 ### R-MIN-01: newcomer minimum exceeds shares
 
 - Given (tree profiles): Tiled `H[A*,B]`, inner area 1080x300, gap 8; A/B minima 500x100
@@ -43,6 +45,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: Shared projection reallocates within the selected tree, without alternative-arrangement search; overconstrained members keep slots; Windows uses origin+minimum. Exact fixture/result TBD; automatic victim/return policy unselected, `D(D-min-games)`.
 - Variant hook: V-START-MIN.
 
+<a id="r-min-02-backfill-shrink-makes-members-infeasible-scrolling"></a>
 ### R-MIN-02: shrink makes members infeasible
 
 - Given (tree profiles): Tiled `H[A,B]`, inner width 1220, gap 8; both minimum widths 600
@@ -79,6 +82,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: Same shared minimum projection; current Windows origin+minimum, neither auto-floats. Exact shrink/grow journey TBD, `D(D-min-games)`.
 - Variant hook: V-START-MIN.
 
+<a id="r-min-03-backfill-oversized-sole-minimum-scrolling"></a>
 ### R-MIN-03: oversized sole minimum
 
 - Given (tree profiles): Empty tiled domain, inner area 1080x600

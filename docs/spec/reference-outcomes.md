@@ -3128,17 +3128,19 @@ Legend:
   and 2x14 explicit-swap legs. Mutually exclusive semantic status totals:
   evidenced 372, partial 237, TBD-only 224, qualified-only 328, mixed 37.
   Mixed includes separate qualified/applicable legs; it does not mean a no-op.
-- 522 historical wide-table cells remain in their original nine-outcome
-  form (eight references plus combined Ours); they are preserved separately,
-  without retrospectively assigning the new status classes. Total recorded
-  coverage cells: 1720; cells are not a uniform 125x14 grid.
+- 522 historical wide-table cells at baseline `e160894` (eight references
+  plus combined Ours per row) are migrated to GWT without retrospectively
+  assigning the new status classes. Present form: 58 historical scenarios
+  x 14 profiles = 812 Then bullets; 125 scenarios x 14 = 1750 Then bullets
+  (+28 explicit-swap-leg bullets). Expansion record's total coverage count
+  remains 1720 as baseline provenance; cells are not a uniform 125x14 grid.
 - [Archived expansion record](../changes/archive/reference-matrix-expansion.md)
   holds final accounting, source/inventory/native-test queue and residual work.
 
 ## Area files
 
-Scenario rows live in area files under `reference-outcomes/` (58 original
-rows, preserved; plus 6 insertion scenarios from piece B1, 4 focus
+Scenario rows live in area files under `reference-outcomes/` (58 historical
+scenarios, migrated to GWT; plus 6 insertion scenarios from piece B1, 4 focus
 scenarios from piece B2, 3 move scenarios from piece B3, 4 resize
 scenarios from piece B4, and 4 layout-command scenarios from piece B5,
 plus 7 workspace scenarios, 3 minimize scenarios, 2 maximize scenarios,
@@ -3147,12 +3149,12 @@ plus 7 workspace scenarios, 3 minimize scenarios, 2 maximize scenarios,
 2 activation scenarios, 2 restart scenarios and 10 column scenarios, GWT
 only: 125 scenarios total).
 This index retains purpose, row-addition rule, notation,
-profiles, evidence tags/legend, variant hooks, and deferred. Existing wide
-tables moved unchanged; all new scenarios use the GWT form below.
+profiles, evidence tags/legend, variant hooks, and deferred. All 125
+scenarios use the GWT form below; no wide-table rows remain.
 Areas follow the approved priority order; column mechanics follows, and
 minimum-size stays a supplemental file (not nested in resize).
 
-| Area | File | Existing rows | Candidates |
+| Area | File | Scenarios | Candidates |
 |---|---|---|---|
 | Insertion | [insertion.md](reference-outcomes/insertion.md) | R-INS-01..08 (8) | none (R-INS-03..08 landed in piece B1) |
 | Focus | [focus.md](reference-outcomes/focus.md) | R-FOC-01..04 (4) | none (landed in piece B2) |
@@ -3171,7 +3173,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Activation | [activation.md](reference-outcomes/activation.md) | R-ACT-01..02 (2) | none (landed; no backfill: no prior rows) |
 | Restart / persistence | [restart-persistence.md](reference-outcomes/restart-persistence.md) | R-START-01..03 + R-CTL-01..07 + R-RST-01..02 (12) | none (R-RST-01..02 landed with scrolling backfill) |
 | Column mechanics | [column-mechanics.md](reference-outcomes/column-mechanics.md) | R-COL-01..10 (10) | none (landed) |
-| Minimum-size (supplemental) | [minimum-size.md](reference-outcomes/minimum-size.md) | R-MIN-01..03 (3) plus 3x4 scrolling backfill (piece B4) | none (R-MNZ icon-minimize is separate) |
+| Minimum-size (supplemental) | [minimum-size.md](reference-outcomes/minimum-size.md) | R-MIN-01..03 (3) | none (piece B4; R-MNZ icon-minimize is separate) |
 
 ## Scrolling column notation
 
@@ -3218,15 +3220,16 @@ Additive; the existing H/V/S notation is unchanged.
 
 ## New-scenario format (GWT)
 
-- New scenarios use Given/When/Then with one Then bullet per profile (14):
+- Scenarios use Given/When/Then with one Then bullet per profile (14):
   COSMIC, Hyprland/Dwindle, bspwm, i3, xmonad/Tall+Navigation2D, sway,
   qtile/Columns, awesome/tile, niri, PaperWM, karousel/Lazy, paneru,
   Ours KDE, Ours Windows. Ours KDE and Ours Windows always have separate
   Then entries, never a combined verdict.
 - Model-specific Given bullets and independently reset variant legs; never
   pretend every WM can instantiate one H/V fixture.
-- This convention applies to every new scenario, including single-step
-  predicates. Existing wide tables remain unchanged until a separate migration.
+- This convention applies to every scenario, including single-step
+  predicates. All 58 historical scenarios are migrated to this form;
+  no wide-table rows remain.
 - Attach `S(real-key)`, `D(real-key)`, `UT(actual-date)` only to
   established predicates. Partial evidence qualifies its leg; TBD stays on
   the unsupported part. Never invent citation keys.
@@ -3266,8 +3269,9 @@ commits; PaperWM.spoon stays corroboration only, never a separate profile.
   qualified absent fixtures/verbs are not live no-op cases.
 - Product choices remain pending batch review of the consolidated
   [consensus Table A](../research/reference-wm-consensus.md#table-a-strong-cross-family-consensus-where-ours-differs-24-consolidated).
-- Existing wide-table migration and historical-cell status recensus remain
-  separate work; the expansion preserved those cells.
+- Historical-cell status recensus remains separate work; no retrospective
+  status classes are assigned to migrated historical cells. Wide-table
+  migration itself is complete.
 - Gaps/borders/corners/active indication: metrics exist (`D-ref`
   section 9) but are styling, not behavior variants; out of scope.
 - Fullscreen games bypass: all three agree cover-and-restore

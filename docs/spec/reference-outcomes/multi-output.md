@@ -8,6 +8,8 @@ Column Given bullets are separate fixtures, never H/V ancestry claims.
 karousel two-output fixtures are inapplicable per `S(S-kar-single)`;
 paneru legs distinguish the native Space from virtual rows.
 
+<a id="scrolling-backfill-additive-wide-rows-above-preserved"></a>
+<a id="r-out-01-scrolling-assessment-move-left-onto-an-occupied-output"></a>
 ### R-OUT-01: move left onto an occupied output
 
 - Given (tree profiles): `L=X`, `R=H[A*,B]`
@@ -48,6 +50,7 @@ paneru legs distinguish the native Space from virtual rows.
 - Then Ours Windows: Exhausted horizontal R4 into output's current workspace; same commit/fence protocol as send; `D(D-dec-cos)` offline only
 - Variant hook: V-R4-DIR.
 
+<a id="r-out-02-scrolling-assessment-perpendicular-move-at-an-output-edge"></a>
 ### R-OUT-02: perpendicular move at an output edge
 
 - Given (tree profiles): `L=X`, `R=V[A*,B]`

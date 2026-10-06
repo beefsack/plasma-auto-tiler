@@ -4,6 +4,8 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 ## 3. Workspace send / follow / return
 
+<a id="scrolling-backfill-additive-existing-wide-tables-above-unchanged"></a>
+<a id="r-ws-01-backfill-send-to-another-workspace-scrolling"></a>
 ### R-WS-01: send to another workspace
 
 - Given (tree profiles): WS1 `H[A,B*]`, WS2 `H[C]`
@@ -46,6 +48,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: Source collapses; target admits at remembered-leaf/focus-history/root; follow on verified transfer; `D(D-dec-cos)` + step-3 `D(D-dec-ww)`
 - Variant hook: V-WS-FOLLOW.
 
+<a id="r-ws-02-backfill-send-back-and-return-anchor-scrolling"></a>
 ### R-WS-02: send back and return anchor
 
 - Given (tree profiles): WS1 tall case `H[C,V[A,B*]]` or wide case `V[C,H[A,B*]]`; WS2 empty; inner area 2544x1364, gap 8: A becomes 1268x1364 (tall) or 2544x678 (wide) after B leaves
@@ -91,6 +94,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: Remembered A: tall stacked, wide side-by-side; `D(D-place)` synthetic proof, physical feel pending; exact order TBD
 - Variant hook: V-WS-ANCHOR.
 
+<a id="r-ws-03-backfill-trailing-empty-shortcut-scrolling"></a>
 ### R-WS-03: trailing-empty shortcut
 
 - Given (tree profiles): WS1 `H[A,B*]`, trailing empty WS exists
@@ -128,6 +132,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: Reuse trailing empty; per-output-local mapping; `D(D-dec-win)` (2026-10-02)
 - Variant hook: V-WS-FOLLOW.
 
+<a id="r-ws-04-backfill-memory-invalidation-scrolling"></a>
 ### R-WS-04: memory invalidation
 
 - Given (tree profiles): WS1 `H[A,B*]`; WS2 `H[C,D]`
@@ -171,6 +176,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: Valid focus-history after invalid remembered leaf, then genuine no-focus root; selected `D(D-dec-x)`; scenario result TBD
 - Variant hook: V-WS-ANCHOR.
 
+<a id="r-ws-05-backfill-floating-transfer-scrolling"></a>
 ### R-WS-05: floating transfer
 
 - Given (tree profiles): WS1 `H[A,B*]`, WS2 empty
@@ -209,6 +215,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: TBD (explicit send applies to focused tiled windows `D(D-dec-cos)`; floated roundtrip untested)
 - Variant hook: V-FLOAT-GEO.
 
+<a id="r-ws-06-backfill-send-to-a-floating-workspace-scrolling"></a>
 ### R-WS-06: send to a floating workspace
 
 - Given (tree profiles): WS1 tiled `H[A,B*]`; WS2 floating
@@ -248,6 +255,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours Windows: Synthetic/native Paint roundtrip preserves floating frame, reflows source before hide and freshly admits on return; [workspace mode record](../../changes/archive/windows-workspace-tiling.md); physical feel TBD
 - Variant hook: V-WS-FOLLOW.
 
+<a id="r-ws-07-backfill-shell-switcher-listing-scrolling"></a>
 ### R-WS-07: shell switcher listing
 
 - Given (tree profiles): WS1 `H[A,B*]`, WS2 `H[C*]` currently shown; KDE switcher includes all desktops

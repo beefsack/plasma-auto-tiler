@@ -7,6 +7,8 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-01..03 assess the original enable-tiling action only; no restart leg is substituted. Where the exact enable toggle has no counterpart the cell is qualified with pinned model/inventory evidence and needs no live test. PaperWM extension enable and karousel script enable over unmanaged free fields count as native enable journeys and are assessed as such; mere owner restart or full session adoption is never substituted. R-CTL-01/02/05/06/07 settings journeys are owner-specific throughout: no first-run/preset/staging model exists in any scrolling inventory, so those cells are qualified owner-specific with pinned inventory evidence and outcome TBD. R-CTL-03 is owner-specific by fixture (Windows TaskbarCreated, owner GUID icon and menu Stop have no constructible counterpart on scrolling hosts). R-CTL-04 uses the established floating-workspace backfill citations: no workspace floating toggle or mode exists to hold a floating default.
 
 
+<a id="scrolling-backfill-additive-wide-rows-above-preserved"></a>
+<a id="r-start-01-scrolling-assessment-enable-over-a-2x2-float-field"></a>
 ### R-START-01: enable over a 2x2 float field
 
 - Given (tree profiles): Tiling off; 2560x1380 work area, gaps 8; A(8,8,1268,678), B(1284,8,1268,678), C(8,694,1268,678), D(1284,694,1268,678); focus A,B,C,D; minima fit
@@ -33,6 +35,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then Ours Windows: Clean/tolerance-valid recursive-cut adoption preserved; `D(D-dec-x)` provisional; exact fixture TBD
 - Variant hook: V-START-SEED.
 
+<a id="r-start-02-scrolling-assessment-enable-over-a-cascade"></a>
 ### R-START-02: enable over a cascade
 
 - Given (tree profiles): Tiling off; 2560x1380 work area, gaps 8; A(80,80,1000,700), B(120,120,1000,700), C(160,160,1000,700), D(200,200,1000,700); focus A,B,C,D; minima 400x200 each
@@ -59,6 +62,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then Ours Windows: Decline centre splits to deterministic long-edge bisection chain, not guaranteed 2x2; `D(D-place)` provisional, shared KDE+Windows; exact fixture TBD
 - Variant hook: V-START-SEED.
 
+<a id="r-start-03-scrolling-assessment-enable-with-infeasible-minima"></a>
 ### R-START-03: enable with infeasible minima
 
 - Given (tree profiles): As START-02 plus E(240,240,1000,700); A/B/C minima 401x246, D(Paint) 864x617, E(Calc) 402x627; focus A,B,C,E,D; usable inner 2544x1364, gap 8
@@ -87,6 +91,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 
 ## 11. Owner controls and startup settings
 
+<a id="r-ctl-01-scrolling-assessment-first-run-preset-choice"></a>
 ### R-CTL-01: first-run preset choice
 
 - Given: Windows settings absent
@@ -113,6 +118,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then Ours Windows: authentic default offered, compatible saves 35 disabled rows; existing-file startup skips prompt; synthetic/native proof [tray record](../../changes/archive/windows-tray-first-run.md)
 - Variant hook: V-FIRST-RUN.
 
+<a id="r-ctl-02-scrolling-assessment-stale-prompt-choice"></a>
 ### R-CTL-02: stale prompt choice
 
 - Given: Owner's first-run prompt open, settings absent
@@ -139,6 +145,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then Ours Windows: Windows: discard stale choice, load authoritative file, bytes unchanged; same record; other platforms TBD
 - Variant hook: V-FIRST-RUN.
 
+<a id="r-ctl-03-scrolling-assessment-notification-icon-lifecycle"></a>
 ### R-CTL-03: notification icon lifecycle
 
 - Given: Running owner with notification icon
@@ -165,6 +172,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then Ours Windows: GUID-delete fixture then posted message re-adds one icon; actual menu Stop cleans up; same record. Real Explorer restart TBD
 - Variant hook: V-TRAY-LIFECYCLE.
 
+<a id="r-ctl-04-scrolling-assessment-workspace-tiling-default"></a>
 ### R-CTL-04: workspace tiling default
 
 - Given: Existing tiled workspace, new-workspace default Tiled
@@ -191,6 +199,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then Ours Windows: tray/UI file readbacks, owner adoption, existing tiled/new floating checks and saved-default startup native proof [record](../../changes/archive/windows-workspace-tiling.md); physical restart journey TBD
 - Variant hook: V-WS-TILING.
 
+<a id="r-ctl-05-scrolling-assessment-shortcut-staging-and-apply"></a>
 ### R-CTL-05: shortcut staging and apply
 
 - Given: KDE focus-right kept; Lock Session on Meta+L
@@ -217,6 +226,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then Ours Windows: KDE selected: explicit own-action clear, native storage authoritative, no Lock relocation while disabled; live restart/physical delivery TBD [record](../../changes/kde-shortcut-conflicts.md)
 - Variant hook: V-SHORTCUT-CONFLICT.
 
+<a id="r-ctl-06-scrolling-assessment-conflict-preview-and-disable"></a>
 ### R-CTL-06: conflict preview and disable
 
 - Given: KDE foreign action has a project chord plus an unrelated chord
@@ -243,6 +253,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then Ours Windows: KDE selected: exact draft/owner/presence/active-image revalidation, no disabled-key holder mutation; live outcome TBD [record](../../changes/kde-shortcut-conflicts.md)
 - Variant hook: V-SHORTCUT-CONFLICT.
 
+<a id="r-ctl-07-scrolling-assessment-revert-restores-defaults"></a>
 ### R-CTL-07: revert restores defaults
 
 - Given: KDE Force previously cleared a noncompiled foreign default chord
