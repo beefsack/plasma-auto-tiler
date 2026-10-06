@@ -1,16 +1,187 @@
 # Move (reference outcomes)
 
-Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Wide tables moved here unchanged.
+Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Scenarios below are GWT with one Then bullet per profile (14).
 
 ## 2. Move
 
-| ID | Start | Action | Observe | COSMIC | Hyprland | bspwm | i3 | xmonad | sway | qtile | awesome | Ours (KDE/Windows) | Variant |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| R-MOV-01 | `H[A,C,B*]` | Move B down | Restructure vs no-op | `V[H[A,C],B]` via R1; `UT(2026-08-20)` ver-unknown + [S1-07](../../cosmic-move-conformance.md#sequence-s1---three-terminals) | Semantic remove+reinsert move, not swap (swap is a separate action erroring with no target); flat 3-child start has no ordinary binary form (default ratio 1 yields halves, not thirds); exact outcome TBD (ratios, focal anchor, geometry recalc); `S(S-hyp-move)` + `S(S-hyp-moveswap)` | Configured `-s south --follow` is node swap, not R1; no south target in a single row, so no swap occurs and tree/focus stay unchanged; `S(S-bsp-swap)` + `S(S-bsp-flt-focus)` | `V[H[A,C],B*]`: no same-orientation parent, so the workspace force-wraps to V, then B inserts after the H at workspace level; focus stays B; `S(S-i3-move)` | Exact flat 3-child H has no ordinary Tall binary form (Tall `frac=1/2` partitions master/stack with the stack split equally, no thirds); analogous policy only: core swap is stack-order (`swapUp`/`swapDown`), directional move/swap is Navigation2D `windowGo`/`windowSwap` same-layer with miss no-op; exact outcome TBD (focal, ratios, geometry recalc); `S(S-xmo-layout)` + `S(S-xmo-nav)` + `S(S-xmo-core-nav)` | `V[H[A,C],B*]`: no parallel V parent, so the workspace force-wraps to V, then B inserts after the H at workspace level; focus stays B; `S(S-sway-move)` | Flat 3-child start has no ordinary Columns form (default num_columns=2, third window stacks in-column); exact outcome TBD. Policy: shuffle_down reorders within the column only (edge is no-op), no R1 restructure; `S(S-qti-shuffle)` + `S(S-qti-add)` | Flat 3-child start has no ordinary tile form (master plus one vertical stack column, not flat thirds); exact outcome TBD. Policy: semantic move is geometric swap.bydirection with no R1 restructure (miss is no-op); `S(S-awe-swap)` + `S(S-awe-tile)` | `V[H[A,C],B]` R1 via shared Engine; selected `D(D-dec-cos)` | V-MOVE-PERP |
-| R-MOV-02 | `H[A,V[C,B*]]` | Move B up | Swap vs wrap | `H[A,V[B,C]]` via R2a leaf swap; `UT(2026-08-20)` + [S1-11](../../cosmic-move-conformance.md#sequence-s1---three-terminals) | Binary-compatible start; yields `H[A,V[B,C]]`: focal 1px above B sits inside C's expanded full-V box (distance 0; ideal-BB reserved expansion at work-area edges stays within C's span, strictly closest either way), direct-partner override orders B first with top/bottom split at default ratio 1 (halves); focus stays B (non-silent); V persists through recalc under the same portrait condition the starting `V[C,B]` exhibits; `S(S-hyp-move)` | Configured `-s north --follow` swaps B/C (same-desktop swap retains focus on B; `--follow` inert here); `S(S-bsp-swap)` + `S(S-bsp-flt-focus)` | `H[A,V[B*,C]]`: in-parent leaf swap with C; focus stays B; `S(S-i3-move)` | `H[A,V[C,B]]` is Tall's projected geometry for StackSet `[A,C,B*]` (`nmaster=1`, `frac=1/2`: master A takes the left half via `splitHorizontallyBy`, stack C/B takes the right half split equally via `splitVertically`), not a structural tree; `windowSwap` U `False` from B selects C by tiled line/side geometry (C sits above sharing the x-range while A spans full height and fails the above test), and `swap` exchanges stack positions retaining mover focus (StackSet `[A,B*,C]`, projected `H[A,V[B*,C]]`); exact pixel frames TBD; `S(S-xmo-layout)` + `S(S-xmo-nav)` + `S(S-xmo-out)` | `H[A,V[B*,C]]`: in-parent leaf swap with C; focus stays B; `S(S-sway-move)` | Column-embedding analogue: B below C in one column, shuffle_up swaps B above C with focus retained; exact frames TBD; `S(S-qti-shuffle)` | Tile-projected start for order [A,C,B] (master A, stack C/B); geometric swap up selects C, yielding order [A,B,C] projected `H[A,V[B*,C]]` with mover focus retained (no focus write); exact pixel frames TBD; `S(S-awe-swap)` + `S(S-awe-tile)` | `H[A,V[B,C]]`; `D(D-dec-cos)` | V-MOVE-NARY |
-| R-MOV-03 | `H[A,B*,C,D]` | Move B right | Wrap pair vs flat insert | `H[A,H[B,C],D]` R2c; [S18-01](../../cosmic-move-conformance.md#sequence-s18---r2c-container-neighbour) authored observation, widths unrecorded | Flat 4-child start has no ordinary binary form (default ratio 1 yields halves, not quarters); wrap-vs-insert anchor TBD (focal, ratios, geometry recalc); `S(S-hyp-move)` | East-neighbor node swap with C (not a nested wrap); focus stays B; exact partner/frames TBD without the binary embedding; `S(S-bsp-swap)` + `S(S-bsp-flt-focus)` | `H[A,C,B*,D]`: flat sibling swap with C, not a nested wrap; focus stays B; `S(S-i3-move)` | Exact flat 4-child H has no ordinary Tall binary form; wrap-vs-insert anchor TBD; analogous policy only: stack-order swap vs same-layer directional `windowSwap`; exact outcome TBD; `S(S-xmo-layout)` + `S(S-xmo-nav)` | `H[A,C,B*,D]`: flat sibling swap with C, not a nested wrap (separate `swap` verb unused); focus stays B; `S(S-sway-move)` | Flat 4-child start has no ordinary Columns form; exact outcome TBD. Policy: shuffle_right carries B into the adjacent column (new column at a shared-column edge, no-op only for a sole-column sole window); focus stays B; `S(S-qti-shuffle)` | Flat 4-child start has no ordinary tile form (1 master plus 3 in one column); exact outcome TBD. Policy: geometric swap-or-miss with no nested wrap/insert; focus retained; `S(S-awe-swap)` + `S(S-awe-tile)` | Same-orientation wrap per Engine; nested `H[H..]` distinct from flat; `D(D-dec-cos)` | V-MOVE-NARY |
-| R-MOV-04 | `H[H[A,B*],C]` | Move B right | Escape vs stay nested | `H[A,B,C]` via R3 ascend + same-axis flatten; `UT(2026-08-20)` ver-unknown + [S1-03](../../cosmic-move-conformance.md#sequence-s1---three-terminals) | No flat escape: removes B then splits C, retaining binary nesting and focus B. Equal halves make C the same shape as the original inner H: if wider than tall, yields `H[A,H[B,C]]`; exact order TBD at the square tie (admission orders by the focal y half, but recalc uses H because only height greater than width selects V). No live-cursor dependence; `S(S-hyp-move)` + `S(S-hyp-ins)` | Swaps B east with C to `H[H[A,C],B]`; same-desktop swap retains focus on B; exact frames TBD; `S(S-bsp-swap)` + `S(S-bsp-flt-focus)` | `H[H[A],B*,C]`: B extracted after the inner H at the outer level; single-child `H[A]` wrapper persists (empty-only close, narrow flatten); focus stays B; `S(S-i3-move)` | Exact nested `H[H[A,B],C]` escape has no Tall counterpart (no nesting levels; flat master/stack only); analogous policy only: Navigation2D geometric target selection via `navigableWindows` with stack-position `windowSwap` retaining mover focus (miss no-op), no flat escape via Tall; exact order TBD; `S(S-xmo-layout)` + `S(S-xmo-nav)` + `S(S-xmo-out)` | `H[H[A],B*,C]`: B promoted out of the inner H into C's outer sibling list immediately before C; single-child `H[A]` wrapper persists (empty-only reap, redundant-pair squash only); focus stays B; `S(S-sway-move)` + `S(S-sway-cleanup)` | No nesting in Columns: shuffle_right carries B into C's column (a shared-column edge creates a new column instead); focus stays B; exact order/frames TBD; `S(S-qti-shuffle)` | Nested `H[H[A,B],C]` has no tile counterpart (flat tiled-client list, no nesting levels); exact outcome TBD. Policy: geometric swap-or-miss with no flat escape; focus retained; `S(S-awe-swap)` + `S(S-awe-tile)` | R3 ascend; `D(D-dec-cos)` | V-MOVE-NARY |
-| R-MOV-05 | `H[A*,B]` single output, no neighbor | Move left past edge | No-op vs cross-ws/output | Single-output no-op; [S5-01](../../cosmic-move-conformance.md#sequence-s5---output-edge-no-op) + [S17](../../cosmic-move-conformance.md#sequence-s17---single-output-directional-no-ops) authored observations; R4 never reached in UT | No observable change: the off-edge focal still resolves to the same single monitor (nearest fallback), so A is removed (B fills the workspace) then reinserted ahead of B at the beyond-left focal half, not the live cursor, rebuilding equal `H[A,B]` with focus on A (nodes rebuilt, tree and focus identical); `S(S-hyp-move)` | No-op: no west target, so the swap refuses with tree and focus unchanged; `S(S-bsp-swap)` + `S(S-bsp-flt-focus)` | No-op: workspace-level H with A first (no left swap) and the parent is the workspace, so the output-directed attempt finds no output on a single output; tree and focus unchanged; `S(S-i3-move)` | Analogous flat 2-window Tall embedding (A master, B stack side-by-side): west `windowGo`/`windowSwap` from A has no directional target with wrap False, so miss is no-op with tree/focus unchanged; core stack verbs are not directional; `S(S-xmo-layout)` + `S(S-xmo-nav)` + `S(S-xmo-core-nav)` | No-op: workspace-level H with A first (no left swap), and the next-output lookup finds no adjacent output on a single output; tree and focus unchanged; `S(S-sway-move)` + `S(S-sway-outmove)` | No-op: leftmost sole-column A has no adjacent column and no shared column to split, so shuffle_left returns with tree and focus unchanged; `S(S-qti-shuffle)` | No-op: bydirection miss leaves tree and focus unchanged, and global_bydirection finds no next screen on a single output; `S(S-awe-focus)` | Local R1/R2/R3 first; exhausted horizontal R4 crosses output, never workspace; Up/Down excluded; `D(D-dec-cos)` (offline only) | V-R4-DIR |
+### R-MOV-01: perpendicular move of a flat triple
+
+- Given (tree profiles): `H[A,C,B*]`
+
+- Given (column profiles): `COL[C1[A],C2[C],C3[B*]]`, three single-window columns
+  in strip order; shipped defaults apply. This is a native model leg,
+  not an equal-third rectangle projection; there is no shared column.
+
+- When: Move B down.
+
+- When (column leg): move B down. Native verbs: niri `MoveWindowDown`, karousel
+  `windowMoveDown`, paneru `Swap(South)`; PaperWM down-move inventory
+  unresolved.
+
+- Observe: Restructure vs no-op
+
+- Observe (column leg): perpendicular restructure vs in-column reorder vs stay.
+
+- Then COSMIC: `V[H[A,C],B]` via R1; `UT(2026-08-20)` ver-unknown + [S1-07](../../cosmic-move-conformance.md#sequence-s1---three-terminals)
+- Then Hyprland/Dwindle: Semantic remove+reinsert move, not swap (swap is a separate action erroring with no target); flat 3-child start has no ordinary binary form (default ratio 1 yields halves, not thirds); exact outcome TBD (ratios, focal anchor, geometry recalc); `S(S-hyp-move)` + `S(S-hyp-moveswap)`
+- Then bspwm: Configured `-s south --follow` is node swap, not R1; no south target in a single row, so no swap occurs and tree/focus stay unchanged; `S(S-bsp-swap)` + `S(S-bsp-flt-focus)`
+- Then i3: `V[H[A,C],B*]`: no same-orientation parent, so the workspace force-wraps to V, then B inserts after the H at workspace level; focus stays B; `S(S-i3-move)`
+- Then xmonad/Tall+Navigation2D: Exact flat 3-child H has no ordinary Tall binary form (Tall `frac=1/2` partitions master/stack with the stack split equally, no thirds); analogous policy only: core swap is stack-order (`swapUp`/`swapDown`), directional move/swap is Navigation2D `windowGo`/`windowSwap` same-layer with miss no-op; exact outcome TBD (focal, ratios, geometry recalc); `S(S-xmo-layout)` + `S(S-xmo-nav)` + `S(S-xmo-core-nav)`
+- Then sway: `V[H[A,C],B*]`: no parallel V parent, so the workspace force-wraps to V, then B inserts after the H at workspace level; focus stays B; `S(S-sway-move)`
+- Then qtile/Columns: Flat 3-child start has no ordinary Columns form (default num_columns=2, third window stacks in-column); exact outcome TBD. Policy: shuffle_down reorders within the column only (edge is no-op), no R1 restructure; `S(S-qti-shuffle)` + `S(S-qti-add)`
+- Then awesome/tile: Flat 3-child start has no ordinary tile form (master plus one vertical stack column, not flat thirds); exact outcome TBD. Policy: semantic move is geometric swap.bydirection with no R1 restructure (miss is no-op); `S(S-awe-swap)` + `S(S-awe-tile)`
+- Then niri: B is the sole tile, so `move_down` returns false and B stays.
+  `S(S-nir-move)`.
+- Then PaperWM: TBD; down-move verb inventory unresolved. `S(S-pap-move)`.
+- Then karousel/Lazy: B is the sole window, so `windowMoveDown` is a
+  no-op and B stays. `S(S-kar-move)`.
+- Then paneru: TBD; south peer resolution untraced. `S(S-pan-move)`.
+- Then Ours KDE: `V[H[A,C],B]` R1 via shared Engine; selected `D(D-dec-cos)`
+- Then Ours Windows: `V[H[A,C],B]` R1 via shared Engine; selected `D(D-dec-cos)`
+- Variant hook: V-MOVE-PERP.
+
+### R-MOV-02: in-group vertical swap
+
+- Given (tree profiles): `H[A,V[C,B*]]`
+
+- Given (column profiles): `COL[C1[A],C2[C,B*]]` with C above B, both visible
+  where supported; shipped defaults apply.
+
+- When: Move B up.
+
+- When (column leg): move B up. Native verbs: niri `MoveWindowUp`, karousel
+  `windowMoveUp`, paneru `Swap(North)`; PaperWM up-move inventory
+  unresolved.
+
+- Observe: Swap vs wrap
+
+- Observe (column leg): B swaps above C in place.
+
+- Then COSMIC: `H[A,V[B,C]]` via R2a leaf swap; `UT(2026-08-20)` + [S1-11](../../cosmic-move-conformance.md#sequence-s1---three-terminals)
+- Then Hyprland/Dwindle: Binary-compatible start; yields `H[A,V[B,C]]`: focal 1px above B sits inside C's expanded full-V box (distance 0; ideal-BB reserved expansion at work-area edges stays within C's span, strictly closest either way), direct-partner override orders B first with top/bottom split at default ratio 1 (halves); focus stays B (non-silent); V persists through recalc under the same portrait condition the starting `V[C,B]` exhibits; `S(S-hyp-move)`
+- Then bspwm: Configured `-s north --follow` swaps B/C (same-desktop swap retains focus on B; `--follow` inert here); `S(S-bsp-swap)` + `S(S-bsp-flt-focus)`
+- Then i3: `H[A,V[B*,C]]`: in-parent leaf swap with C; focus stays B; `S(S-i3-move)`
+- Then xmonad/Tall+Navigation2D: `H[A,V[C,B]]` is Tall's projected geometry for StackSet `[A,C,B*]` (`nmaster=1`, `frac=1/2`: master A takes the left half via `splitHorizontallyBy`, stack C/B takes the right half split equally via `splitVertically`), not a structural tree; `windowSwap` U `False` from B selects C by tiled line/side geometry (C sits above sharing the x-range while A spans full height and fails the above test), and `swap` exchanges stack positions retaining mover focus (StackSet `[A,B*,C]`, projected `H[A,V[B*,C]]`); exact pixel frames TBD; `S(S-xmo-layout)` + `S(S-xmo-nav)` + `S(S-xmo-out)`
+- Then sway: `H[A,V[B*,C]]`: in-parent leaf swap with C; focus stays B; `S(S-sway-move)`
+- Then qtile/Columns: Column-embedding analogue: B below C in one column, shuffle_up swaps B above C with focus retained; exact frames TBD; `S(S-qti-shuffle)`
+- Then awesome/tile: Tile-projected start for order [A,C,B] (master A, stack C/B); geometric swap up selects C, yielding order [A,B,C] projected `H[A,V[B*,C]]` with mover focus retained (no focus write); exact pixel frames TBD; `S(S-awe-swap)` + `S(S-awe-tile)`
+- Then niri: B swaps with C and the active index follows B, so B stays
+  focused. `S(S-nir-move)`.
+- Then PaperWM: TBD; up-move verb inventory unresolved. `S(S-pap-move)`.
+- Then karousel/Lazy: B swaps above C with no focus write, so focus stays
+  B. `S(S-kar-move)`.
+- Then paneru: B swaps with C above in the same strip. `S(S-pan-move)`.
+- Then Ours KDE: `H[A,V[B,C]]`; `D(D-dec-cos)`
+- Then Ours Windows: `H[A,V[B,C]]`; `D(D-dec-cos)`
+- Variant hook: V-MOVE-NARY.
+
+### R-MOV-03: same-row carry to the right
+
+- Given (tree profiles): `H[A,B*,C,D]`
+
+- Given (column profiles): `COL[C1[A],C2[B*],C3[C],C4[D]]`, four single-window
+  columns in strip order; shipped defaults apply. This is a native model
+  leg, not an equal-quarter rectangle projection.
+
+- When: Move B right.
+
+- When (column leg): move B right. Native verbs: niri `MoveColumnRight`, karousel
+  `windowMoveRight`, paneru `Swap(East)`; PaperWM right-move inventory
+  unresolved.
+
+- Observe: Wrap pair vs flat insert
+
+- Observe (column leg): pair wrap vs flat reorder, column join, or stay.
+
+- Then COSMIC: `H[A,H[B,C],D]` R2c; [S18-01](../../cosmic-move-conformance.md#sequence-s18---r2c-container-neighbour) authored observation, widths unrecorded
+- Then Hyprland/Dwindle: Flat 4-child start has no ordinary binary form (default ratio 1 yields halves, not quarters); wrap-vs-insert anchor TBD (focal, ratios, geometry recalc); `S(S-hyp-move)`
+- Then bspwm: East-neighbor node swap with C (not a nested wrap); focus stays B; exact partner/frames TBD without the binary embedding; `S(S-bsp-swap)` + `S(S-bsp-flt-focus)`
+- Then i3: `H[A,C,B*,D]`: flat sibling swap with C, not a nested wrap; focus stays B; `S(S-i3-move)`
+- Then xmonad/Tall+Navigation2D: Exact flat 4-child H has no ordinary Tall binary form; wrap-vs-insert anchor TBD; analogous policy only: stack-order swap vs same-layer directional `windowSwap`; exact outcome TBD; `S(S-xmo-layout)` + `S(S-xmo-nav)`
+- Then sway: `H[A,C,B*,D]`: flat sibling swap with C, not a nested wrap (separate `swap` verb unused); focus stays B; `S(S-sway-move)`
+- Then qtile/Columns: Flat 4-child start has no ordinary Columns form; exact outcome TBD. Policy: shuffle_right carries B into the adjacent column (new column at a shared-column edge, no-op only for a sole-column sole window); focus stays B; `S(S-qti-shuffle)`
+- Then awesome/tile: Flat 4-child start has no ordinary tile form (1 master plus 3 in one column); exact outcome TBD. Policy: geometric swap-or-miss with no nested wrap/insert; focus retained; `S(S-awe-swap)` + `S(S-awe-tile)`
+- Then niri: C2 moves after C3, B stays focused. `S(S-nir-move)`.
+- Then PaperWM: TBD; right-move verb inventory unresolved.
+  `S(S-pap-move)`.
+- Then karousel/Lazy: single-window B joins C3 at the bottom via the
+  single-window path. `S(S-kar-move)`.
+- Then paneru: B swaps east with C in the same strip. `S(S-pan-move)`.
+- Then Ours KDE: Same-orientation wrap per Engine; nested `H[H..]` distinct from flat; `D(D-dec-cos)`
+- Then Ours Windows: Same-orientation wrap per Engine; nested `H[H..]` distinct from flat; `D(D-dec-cos)`
+- Variant hook: V-MOVE-NARY.
+
+### R-MOV-04: same-axis ancestor escape
+
+- Given (tree profiles): `H[H[A,B*],C]`
+
+- Given (column profiles): `H[H[A,B*],C]`; recursive same-axis ancestry has no faithful
+  column fixture. Column consume/expel mechanics belong to R-COL-03.
+
+- When: Move B right.
+
+- When (column leg): move B right.
+
+- Observe: Escape vs stay nested
+
+- Observe (column leg): escape vs stay nested, as in the original row.
+
+- Then COSMIC: `H[A,B,C]` via R3 ascend + same-axis flatten; `UT(2026-08-20)` ver-unknown + [S1-03](../../cosmic-move-conformance.md#sequence-s1---three-terminals)
+- Then Hyprland/Dwindle: No flat escape: removes B then splits C, retaining binary nesting and focus B. Equal halves make C the same shape as the original inner H: if wider than tall, yields `H[A,H[B,C]]`; exact order TBD at the square tie (admission orders by the focal y half, but recalc uses H because only height greater than width selects V). No live-cursor dependence; `S(S-hyp-move)` + `S(S-hyp-ins)`
+- Then bspwm: Swaps B east with C to `H[H[A,C],B]`; same-desktop swap retains focus on B; exact frames TBD; `S(S-bsp-swap)` + `S(S-bsp-flt-focus)`
+- Then i3: `H[H[A],B*,C]`: B extracted after the inner H at the outer level; single-child `H[A]` wrapper persists (empty-only close, narrow flatten); focus stays B; `S(S-i3-move)`
+- Then xmonad/Tall+Navigation2D: Exact nested `H[H[A,B],C]` escape has no Tall counterpart (no nesting levels; flat master/stack only); analogous policy only: Navigation2D geometric target selection via `navigableWindows` with stack-position `windowSwap` retaining mover focus (miss no-op), no flat escape via Tall; exact order TBD; `S(S-xmo-layout)` + `S(S-xmo-nav)` + `S(S-xmo-out)`
+- Then sway: `H[H[A],B*,C]`: B promoted out of the inner H into C's outer sibling list immediately before C; single-child `H[A]` wrapper persists (empty-only reap, redundant-pair squash only); focus stays B; `S(S-sway-move)` + `S(S-sway-cleanup)`
+- Then qtile/Columns: No nesting in Columns: shuffle_right carries B into C's column (a shared-column edge creates a new column instead); focus stays B; exact order/frames TBD; `S(S-qti-shuffle)`
+- Then awesome/tile: Nested `H[H[A,B],C]` has no tile counterpart (flat tiled-client list, no nesting levels); exact outcome TBD. Policy: geometric swap-or-miss with no flat escape; focus retained; `S(S-awe-swap)` + `S(S-awe-tile)`
+- Then niri: fixture-inapplicable; ordered columns have no nested H
+  ancestor to escape. `S(S-nir-move)`.
+- Then PaperWM: fixture-inapplicable; column/row membership has no nested
+  H ancestor. `S(S-pap-move)`.
+- Then karousel/Lazy: fixture-inapplicable; Grid/Column membership has no
+  nested H ancestor. `S(S-kar-move)`.
+- Then paneru: fixture-inapplicable; the strip/column model has no nested
+  H ancestor. `S(S-pan-model)`.
+- Then Ours KDE: R3 ascend; `D(D-dec-cos)`
+- Then Ours Windows: R3 ascend; `D(D-dec-cos)`
+- Variant hook: V-MOVE-NARY.
+
+### R-MOV-05: edge move with no left neighbor
+
+- Given (tree profiles): `H[A*,B]` single output, no neighbor
+
+- Given (column profiles): `COL[C1[A*],C2[B]]`, each one window; shipped
+  defaults apply; single output.
+
+- When: Move left past edge.
+
+- When (column leg): move A left. Native verbs: niri `MoveColumnLeft`, karousel
+  `windowMoveLeft`, paneru `Swap(West)`; PaperWM left-move inventory
+  unresolved.
+
+- Observe: No-op vs cross-ws/output
+
+- Observe (column leg): stay vs cross-output/workspace.
+
+- Then COSMIC: Single-output no-op; [S5-01](../../cosmic-move-conformance.md#sequence-s5---output-edge-no-op) + [S17](../../cosmic-move-conformance.md#sequence-s17---single-output-directional-no-ops) authored observations; R4 never reached in UT
+- Then Hyprland/Dwindle: No observable change: the off-edge focal still resolves to the same single monitor (nearest fallback), so A is removed (B fills the workspace) then reinserted ahead of B at the beyond-left focal half, not the live cursor, rebuilding equal `H[A,B]` with focus on A (nodes rebuilt, tree and focus identical); `S(S-hyp-move)`
+- Then bspwm: No-op: no west target, so the swap refuses with tree and focus unchanged; `S(S-bsp-swap)` + `S(S-bsp-flt-focus)`
+- Then i3: No-op: workspace-level H with A first (no left swap) and the parent is the workspace, so the output-directed attempt finds no output on a single output; tree and focus unchanged; `S(S-i3-move)`
+- Then xmonad/Tall+Navigation2D: Analogous flat 2-window Tall embedding (A master, B stack side-by-side): west `windowGo`/`windowSwap` from A has no directional target with wrap False, so miss is no-op with tree/focus unchanged; core stack verbs are not directional; `S(S-xmo-layout)` + `S(S-xmo-nav)` + `S(S-xmo-core-nav)`
+- Then sway: No-op: workspace-level H with A first (no left swap), and the next-output lookup finds no adjacent output on a single output; tree and focus unchanged; `S(S-sway-move)` + `S(S-sway-outmove)`
+- Then qtile/Columns: No-op: leftmost sole-column A has no adjacent column and no shared column to split, so shuffle_left returns with tree and focus unchanged; `S(S-qti-shuffle)`
+- Then awesome/tile: No-op: bydirection miss leaves tree and focus unchanged, and global_bydirection finds no next screen on a single output; `S(S-awe-focus)`
+- Then niri: index 0 `move_left` returns false, so A stays.
+  `S(S-nir-move)`.
+- Then PaperWM: TBD; left-move verb inventory unresolved.
+  `S(S-pap-move)`.
+- Then karousel/Lazy: no left column on the single-window path, so the
+  move returns without acting and A stays. `S(S-kar-move)`.
+- Then paneru: TBD; west peer resolution untraced. `S(S-pan-move)`.
+- Then Ours KDE: Local R1/R2/R3 first; exhausted horizontal R4 crosses output, never workspace; Up/Down excluded; `D(D-dec-cos)` (offline only)
+- Then Ours Windows: Local R1/R2/R3 first; exhausted horizontal R4 crosses output, never workspace; Up/Down excluded; `D(D-dec-cos)` (offline only)
+- Variant hook: V-R4-DIR.
+
 
 ## New scenarios (GWT; fixtures/actions/discriminators per the approved expansion record)
 
@@ -154,90 +325,6 @@ ancestry claims. Ours cells cite the Engine move rules at `9241c94`
 - Then Ours Windows: same local no-op as Ours KDE (Up/Down excluded from
   R4). `S(S-ours-move)`.
 - Variant hook: V-R4-DIR.
-
-## Scrolling backfill (additive; existing wide tables above unchanged)
-
-Each block states a separate column Given reusing the same identities
-and action; projections are rectangle-level links only, never split-tree
-proof. Recursive H/V ancestry has no column counterpart.
-
-### R-MOV-01 backfill: perpendicular move of a flat triple (scrolling)
-
-- Given (columns): `COL[C1[A],C2[C],C3[B*]]`, three single-window columns
-  in strip order; shipped defaults apply. This is a native model leg,
-  not an equal-third rectangle projection; there is no shared column.
-- When: move B down. Native verbs: niri `MoveWindowDown`, karousel
-  `windowMoveDown`, paneru `Swap(South)`; PaperWM down-move inventory
-  unresolved.
-- Observe: perpendicular restructure vs in-column reorder vs stay.
-- Then niri: B is the sole tile, so `move_down` returns false and B stays.
-  `S(S-nir-move)`.
-- Then PaperWM: TBD; down-move verb inventory unresolved. `S(S-pap-move)`.
-- Then karousel/Lazy: B is the sole window, so `windowMoveDown` is a
-  no-op and B stays. `S(S-kar-move)`.
-- Then paneru: TBD; south peer resolution untraced. `S(S-pan-move)`.
-
-### R-MOV-02 backfill: in-group vertical swap (scrolling)
-
-- Given (columns): `COL[C1[A],C2[C,B*]]` with C above B, both visible
-  where supported; shipped defaults apply.
-- When: move B up. Native verbs: niri `MoveWindowUp`, karousel
-  `windowMoveUp`, paneru `Swap(North)`; PaperWM up-move inventory
-  unresolved.
-- Observe: B swaps above C in place.
-- Then niri: B swaps with C and the active index follows B, so B stays
-  focused. `S(S-nir-move)`.
-- Then PaperWM: TBD; up-move verb inventory unresolved. `S(S-pap-move)`.
-- Then karousel/Lazy: B swaps above C with no focus write, so focus stays
-  B. `S(S-kar-move)`.
-- Then paneru: B swaps with C above in the same strip. `S(S-pan-move)`.
-
-### R-MOV-03 backfill: same-row carry to the right (scrolling)
-
-- Given (columns): `COL[C1[A],C2[B*],C3[C],C4[D]]`, four single-window
-  columns in strip order; shipped defaults apply. This is a native model
-  leg, not an equal-quarter rectangle projection.
-- When: move B right. Native verbs: niri `MoveColumnRight`, karousel
-  `windowMoveRight`, paneru `Swap(East)`; PaperWM right-move inventory
-  unresolved.
-- Observe: pair wrap vs flat reorder, column join, or stay.
-- Then niri: C2 moves after C3, B stays focused. `S(S-nir-move)`.
-- Then PaperWM: TBD; right-move verb inventory unresolved.
-  `S(S-pap-move)`.
-- Then karousel/Lazy: single-window B joins C3 at the bottom via the
-  single-window path. `S(S-kar-move)`.
-- Then paneru: B swaps east with C in the same strip. `S(S-pan-move)`.
-
-### R-MOV-04 backfill: same-axis ancestor escape (scrolling)
-
-- Given: `H[H[A,B*],C]`; recursive same-axis ancestry has no faithful
-  column fixture. Column consume/expel mechanics belong to R-COL-03.
-- When: move B right.
-- Observe: escape vs stay nested, as in the original row.
-- Then niri: fixture-inapplicable; ordered columns have no nested H
-  ancestor to escape. `S(S-nir-move)`.
-- Then PaperWM: fixture-inapplicable; column/row membership has no nested
-  H ancestor. `S(S-pap-move)`.
-- Then karousel/Lazy: fixture-inapplicable; Grid/Column membership has no
-  nested H ancestor. `S(S-kar-move)`.
-- Then paneru: fixture-inapplicable; the strip/column model has no nested
-  H ancestor. `S(S-pan-model)`.
-
-### R-MOV-05 backfill: edge move with no left neighbor (scrolling)
-
-- Given (columns): `COL[C1[A*],C2[B]]`, each one window; shipped
-  defaults apply; single output.
-- When: move A left. Native verbs: niri `MoveColumnLeft`, karousel
-  `windowMoveLeft`, paneru `Swap(West)`; PaperWM left-move inventory
-  unresolved.
-- Observe: stay vs cross-output/workspace.
-- Then niri: index 0 `move_left` returns false, so A stays.
-  `S(S-nir-move)`.
-- Then PaperWM: TBD; left-move verb inventory unresolved.
-  `S(S-pap-move)`.
-- Then karousel/Lazy: no left column on the single-window path, so the
-  move returns without acting and A stays. `S(S-kar-move)`.
-- Then paneru: TBD; west peer resolution untraced. `S(S-pan-move)`.
 
 ## Explicit-swap fresh legs (additive reuse; no duplicated start/action row)
 

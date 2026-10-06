@@ -1,13 +1,93 @@
 # Close / reflow (reference outcomes)
 
-Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Wide tables moved here unchanged.
+Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Scenarios below are GWT with one Then bullet per profile (14).
 
 ## 7. Close / reflow
 
-| ID | Start | Action | Observe | COSMIC | Hyprland | bspwm | i3 | xmonad | sway | qtile | awesome | Ours (KDE/Windows) | Variant |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| R-CLOSE-01 | `H[A,B,C]`; focus A,C,B so B is active and C is next MRU | Close B | Collapse + focus selection (MRU vs spatial) | Survivors `[A,C]` keep order, proportional rescale; focus C (MRU top via fixup); `S(S-cos-rem)` + `S(S-cos-focusfix)` | Flat 3-child start has no ordinary binary form (default ratio 1 yields halves, not thirds); exact N-ary collapse TBD. Policy: live-tree removal promotes the sibling and recalcs; closed-focused refocus defaults to spatial `next` (closest node by old middle, else first/back fallback), not MRU C; cursor/MRU modes only via explicit `focus_on_close=1/2`; `S(S-hyp-close)` | Survivors `[A,C]` keep order with sibling promotion + arrange; focus C (history MRU via the focus guess, coinciding with MRU here, not a spatial rule); close asks the client (delete/kill), removal unlinks + drops history; exact frames TBD; `S(S-bsp-close)` | Survivors `[A,C]` keep nodes order with percent rescale; focus C (second in the focus stack via `con_next_focused`, coinciding with MRU here, not a spatial rule); `S(S-i3-close)` | Exact flat 3-child H has no Tall counterpart (flat N-ary H vs master/stack two-pane); analogous policy only: close removes B via `delete` (`sink` + `delete'`/`filter`, focus down else up, so C; positional, not MRU); survivors `[A,C]` keep stack order and refill via Tall recalc; exact frames TBD; `S(S-xmo-close)` + `S(S-xmo-layout)` | Survivors `[A,C]` keep order with fraction renormalize; focus C (focus-inactive view of the parent in MRU order, coinciding with MRU here, not a spatial rule); unmap detaches + reaps + rearranges; `S(S-sway-close)` | Flat 3-child start has no ordinary Columns form (default num_columns=2, third window stacks in-column); exact collapse/focus TBD. Policy: tiled close unlinks with sibling promotion, drops emptied columns with width-share redistribute, and refocuses positionally via the layout return (shipped focus_previous_on_window_remove=false, so no MRU previous_win); `S(S-qti-close)` | Flat 3-child start has no ordinary tile form (master plus one vertical stack column, not flat thirds); exact frames TBD. Policy: survivors `[A,C]` keep order and refill via stateless tile recalc (no old-slot store); focus C via history MRU (unmanage deletes B, delayed refocus takes top visible non-sticky history, else sticky fallback, else first visible); `S(S-awe-hist)` + `S(S-awe-tile)` | Leaf removed, C selected as source-MRU top; `D(D-dec-cos)` | V-CLOSE-FOCUS |
-| R-CLOSE-02 | `H[A,B,C]` manual 50/30/20; focus A,C,B | Close B; focus C; open a new B with same app/rules | Survivor rescale; fresh admission vs old ratio/slot; reopened focus | Survivors rescale proportionally (ratio preserved); reopened B is fresh admission at C (after C, old slot not restored); focus newcomer; `S(S-cos-rem)` + `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-mapfocus)` | Flat 3-child start has no ordinary binary form; exact survivor widths and reopened frames TBD. Policy: close promotes sibling + recalc (ratios live on ancestors, no old-slot store); reopened B fresh-admits via the Dwindle anchor with newcomer focus, before/after by pointer half; `S(S-hyp-close)` + `S(S-hyp-ins)` + `S(S-hyp-newfocus)` | Survivors refill via sibling promotion + arrange (ratios live on ancestors, no old-slot store; exact 50/30/20 widths TBD without the binary embedding); reopened B fresh-inserts at the desktop focus after C with newcomer focus; `S(S-bsp-close)` + `S(S-bsp-insert)` | Survivors rescale proportionally via percent fix; reopened B fresh-admits after focused C with newcomer focus, no old-slot store; `S(S-i3-close)` + `S(S-i3-ins)` | Exact 50/30/20 flat-H fixture has no Tall counterpart (Tall splits master/stack at `frac`, stack splits equally); analogous policy only: survivors refill via removal + Tall recalc (no old-slot store; ratios live in `frac`/`nmaster`, not per-slot); reopened B fresh-admits via `insertUp` above focused C with newcomer focus; exact widths/frames TBD; `S(S-xmo-close)` + `S(S-xmo-ins)` + `S(S-xmo-layout)` | Survivors rescale proportionally via fraction renormalize; reopened B fresh-admits after focused C via the focus-inactive anchor with newcomer focus, no old-slot store; `S(S-sway-close)` + `S(S-sway-ins)` | Same non-ordinary start; exact survivor widths and reopened frames TBD. Policy: close redistributes the removed height/width share across survivors (no old-slot store); reopened B fresh-admits at the focused position with newcomer focus; `S(S-qti-close)` + `S(S-qti-add)` | Same non-ordinary start; survivors refill via tile recalc with no old-slot/ratio store (shares live in master/stack plus windowfact, not per-slot); reopened B is fresh manage admission appending last with newcomer focus; exact survivor widths/reopened frames TBD; `S(S-awe-tile)` + `S(S-awe-manage)` + `S(S-awe-hist)` | TBD (close/reopen ratio memory and focus not checked here) | V-CLOSE-FOCUS |
+### R-CLOSE-01: close the middle tile
+
+- Given (tree profiles): `H[A,B,C]`; focus A,C,B so B is active and C is next MRU
+
+- Given (column profiles): `COL[C1[A],C2[B*],C3[C]]`, each 0.5W; VP recorded;
+  history A,C,B. Same identities and action as the original row.
+
+- When: Close B.
+
+- When (column leg): close B with the profile's verb from the inventory below.
+
+- Observe: Collapse + focus selection (MRU vs spatial)
+
+- Observe (column leg): survivor order and focus selection (the original discriminator).
+
+- Then COSMIC: Survivors `[A,C]` keep order, proportional rescale; focus C (MRU top via fixup); `S(S-cos-rem)` + `S(S-cos-focusfix)`
+- Then Hyprland/Dwindle: Flat 3-child start has no ordinary binary form (default ratio 1 yields halves, not thirds); exact N-ary collapse TBD. Policy: live-tree removal promotes the sibling and recalcs; closed-focused refocus defaults to spatial `next` (closest node by old middle, else first/back fallback), not MRU C; cursor/MRU modes only via explicit `focus_on_close=1/2`; `S(S-hyp-close)`
+- Then bspwm: Survivors `[A,C]` keep order with sibling promotion + arrange; focus C (history MRU via the focus guess, coinciding with MRU here, not a spatial rule); close asks the client (delete/kill), removal unlinks + drops history; exact frames TBD; `S(S-bsp-close)`
+- Then i3: Survivors `[A,C]` keep nodes order with percent rescale; focus C (second in the focus stack via `con_next_focused`, coinciding with MRU here, not a spatial rule); `S(S-i3-close)`
+- Then xmonad/Tall+Navigation2D: Exact flat 3-child H has no Tall counterpart (flat N-ary H vs master/stack two-pane); analogous policy only: close removes B via `delete` (`sink` + `delete'`/`filter`, focus down else up, so C; positional, not MRU); survivors `[A,C]` keep stack order and refill via Tall recalc; exact frames TBD; `S(S-xmo-close)` + `S(S-xmo-layout)`
+- Then sway: Survivors `[A,C]` keep order with fraction renormalize; focus C (focus-inactive view of the parent in MRU order, coinciding with MRU here, not a spatial rule); unmap detaches + reaps + rearranges; `S(S-sway-close)`
+- Then qtile/Columns: Flat 3-child start has no ordinary Columns form (default num_columns=2, third window stacks in-column); exact collapse/focus TBD. Policy: tiled close unlinks with sibling promotion, drops emptied columns with width-share redistribute, and refocuses positionally via the layout return (shipped focus_previous_on_window_remove=false, so no MRU previous_win); `S(S-qti-close)`
+- Then awesome/tile: Flat 3-child start has no ordinary tile form (master plus one vertical stack column, not flat thirds); exact frames TBD. Policy: survivors `[A,C]` keep order and refill via stateless tile recalc (no old-slot store); focus C via history MRU (unmanage deletes B, delayed refocus takes top visible non-sticky history, else sticky fallback, else first visible); `S(S-awe-hist)` + `S(S-awe-tile)`
+- Then niri: columns A,C keep order and widths; B's column removed;
+  C's column activates (clamped next), focus C. `S(S-nir-close)`.
+- Then PaperWM: columns A,C keep order; selection C (topmost
+  neighbor: last-activated of A,C). `S(S-pap-close)`.
+- Then karousel/Lazy: B's column destroyed; A,C keep order and widths;
+  focus A (left neighbor). `S(S-kar-close)`.
+- Then paneru: entity despawned and stripped with order preserved;
+  focus via nearest-center (exact target TBD without geometry).
+  `S(S-pan-close)`; queued.
+- Then Ours KDE: Leaf removed, C selected as source-MRU top; `D(D-dec-cos)`
+- Then Ours Windows: Leaf removed, C selected as source-MRU top; `D(D-dec-cos)`
+- Variant hook: V-CLOSE-FOCUS.
+
+### R-CLOSE-02: close, refocus, fresh reopen
+
+- Given (tree profiles): `H[A,B,C]` manual 50/30/20; focus A,C,B
+
+- Given (column profiles): three single-window columns with manual widths
+  0.5/0.3/0.2W, prepared per model (niri `SetColumnWidth`, PaperWM
+  `resizeW` 10% grid at zero gaps/margins, karousel host interactive
+  resize, paneru `SetWidth` exact ratios); history A,C,B. Column models have
+  no tree-ratio rescale: survivor columns keep independent widths.
+  Same identities and action as the original row: close B; focus C;
+  open a new B with same app/rules.
+
+- When: Close B; focus C; open a new B with same app/rules (verbs per the inventory below).
+
+- When (column leg): close B with the profile's verb; focus C; open a new B.
+
+- Observe: Survivor rescale; fresh admission vs old ratio/slot; reopened focus
+
+- Observe (column leg): survivor widths; fresh admission vs old slot; reopened
+  focus.
+
+- Then COSMIC: Survivors rescale proportionally (ratio preserved); reopened B is fresh admission at C (after C, old slot not restored); focus newcomer; `S(S-cos-rem)` + `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-mapfocus)`
+- Then Hyprland/Dwindle: Flat 3-child start has no ordinary binary form; exact survivor widths and reopened frames TBD. Policy: close promotes sibling + recalc (ratios live on ancestors, no old-slot store); reopened B fresh-admits via the Dwindle anchor with newcomer focus, before/after by pointer half; `S(S-hyp-close)` + `S(S-hyp-ins)` + `S(S-hyp-newfocus)`
+- Then bspwm: Survivors refill via sibling promotion + arrange (ratios live on ancestors, no old-slot store; exact 50/30/20 widths TBD without the binary embedding); reopened B fresh-inserts at the desktop focus after C with newcomer focus; `S(S-bsp-close)` + `S(S-bsp-insert)`
+- Then i3: Survivors rescale proportionally via percent fix; reopened B fresh-admits after focused C with newcomer focus, no old-slot store; `S(S-i3-close)` + `S(S-i3-ins)`
+- Then xmonad/Tall+Navigation2D: Exact 50/30/20 flat-H fixture has no Tall counterpart (Tall splits master/stack at `frac`, stack splits equally); analogous policy only: survivors refill via removal + Tall recalc (no old-slot store; ratios live in `frac`/`nmaster`, not per-slot); reopened B fresh-admits via `insertUp` above focused C with newcomer focus; exact widths/frames TBD; `S(S-xmo-close)` + `S(S-xmo-ins)` + `S(S-xmo-layout)`
+- Then sway: Survivors rescale proportionally via fraction renormalize; reopened B fresh-admits after focused C via the focus-inactive anchor with newcomer focus, no old-slot store; `S(S-sway-close)` + `S(S-sway-ins)`
+- Then qtile/Columns: Same non-ordinary start; exact survivor widths and reopened frames TBD. Policy: close redistributes the removed height/width share across survivors (no old-slot store); reopened B fresh-admits at the focused position with newcomer focus; `S(S-qti-close)` + `S(S-qti-add)`
+- Then awesome/tile: Same non-ordinary start; survivors refill via tile recalc with no old-slot/ratio store (shares live in master/stack plus windowfact, not per-slot); reopened B is fresh manage admission appending last with newcomer focus; exact survivor widths/reopened frames TBD; `S(S-awe-tile)` + `S(S-awe-manage)` + `S(S-awe-hist)`
+- Then niri: survivors keep 0.5/0.2W with no rescale; reopened B is a
+  fresh column after active (no old-slot store); reopened focus TBD.
+  `S(S-nir-close)` + `S(S-nir-ins)`; queued.
+- Then PaperWM: 50/30/20 prepared via the `resizeW` grid; survivors
+  keep frame-widths (layout reads live frames); reopened B is fresh
+  at selected+1 RIGHT with activate-on-show (no old-slot store).
+  `S(S-pap-close)` + `S(S-pap-ins)` + `S(S-pap-resize)`.
+- Then karousel/Lazy: survivors keep their manually resized widths;
+  reopened B is a new column after last-focused (no old-slot store);
+  KWin-side focus TBD. `S(S-kar-manual-width)` + `S(S-kar-close)` +
+  `S(S-kar-ins)`; queued.
+- Then paneru: exact ratios prepared via `SetWidth`; survivors keep
+  per-window ratios; reopened B is fresh at rule-index/overlap/end;
+  focus TBD. `S(S-pan-close)` + `S(S-pan-ins)` +
+  `S(S-pan-setwidth)`; queued.
+- Then Ours KDE: TBD (close/reopen ratio memory and focus not checked here)
+- Then Ours Windows: TBD (close/reopen ratio memory and focus not checked here)
+- Variant hook: V-CLOSE-FOCUS.
+
 
 ## New scenarios (GWT; fixtures/actions/discriminators per the approved expansion record)
 
@@ -187,49 +267,3 @@ is the observation-driven proposal, never the native verb.
 - Then Ours Windows: same Engine removal and desired focus A; native
   cleanup TBD. `S(S-ours-close)`; queued.
 - Variant hook: provisional/TBD (overlay-close hook, to discuss).
-
-## Scrolling backfill (additive; existing wide tables above unchanged)
-
-### R-CLOSE-01 backfill: close the middle tile (scrolling)
-
-- Given (columns): `COL[C1[A],C2[B*],C3[C]]`, each 0.5W; VP recorded;
-  history A,C,B. Same identities and action as the original row.
-- When: close B with the profile's verb from the inventory above.
-- Observe: survivor order and focus selection (the original discriminator).
-- Then niri: columns A,C keep order and widths; B's column removed;
-  C's column activates (clamped next), focus C. `S(S-nir-close)`.
-- Then PaperWM: columns A,C keep order; selection C (topmost
-  neighbor: last-activated of A,C). `S(S-pap-close)`.
-- Then karousel/Lazy: B's column destroyed; A,C keep order and widths;
-  focus A (left neighbor). `S(S-kar-close)`.
-- Then paneru: entity despawned and stripped with order preserved;
-  focus via nearest-center (exact target TBD without geometry).
-  `S(S-pan-close)`; queued.
-
-### R-CLOSE-02 backfill: close, refocus, fresh reopen (scrolling)
-
-- Given (columns): three single-window columns with manual widths
-  0.5/0.3/0.2W, prepared per model (niri `SetColumnWidth`, PaperWM
-  `resizeW` 10% grid at zero gaps/margins, karousel host interactive
-  resize, paneru `SetWidth` exact ratios); history A,C,B. Column models have
-  no tree-ratio rescale: survivor columns keep independent widths.
-  Same identities and action as the original row: close B; focus C;
-  open a new B with same app/rules.
-- When: close B with the profile's verb; focus C; open a new B.
-- Observe: survivor widths; fresh admission vs old slot; reopened
-  focus.
-- Then niri: survivors keep 0.5/0.2W with no rescale; reopened B is a
-  fresh column after active (no old-slot store); reopened focus TBD.
-  `S(S-nir-close)` + `S(S-nir-ins)`; queued.
-- Then PaperWM: 50/30/20 prepared via the `resizeW` grid; survivors
-  keep frame-widths (layout reads live frames); reopened B is fresh
-  at selected+1 RIGHT with activate-on-show (no old-slot store).
-  `S(S-pap-close)` + `S(S-pap-ins)` + `S(S-pap-resize)`.
-- Then karousel/Lazy: survivors keep their manually resized widths;
-  reopened B is a new column after last-focused (no old-slot store);
-  KWin-side focus TBD. `S(S-kar-manual-width)` + `S(S-kar-close)` +
-  `S(S-kar-ins)`; queued.
-- Then paneru: exact ratios prepared via `SetWidth`; survivors keep
-  per-window ratios; reopened B is fresh at rule-index/overlap/end;
-  focus TBD. `S(S-pan-close)` + `S(S-pan-ins)` +
-  `S(S-pan-setwidth)`; queued.

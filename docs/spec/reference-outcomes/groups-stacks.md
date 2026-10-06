@@ -1,12 +1,50 @@
 # Groups / stacks (reference outcomes)
 
-Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Wide tables moved here unchanged.
+Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Scenarios below are GWT with one Then bullet per profile (14).
 
 ## 8. Groups / stacks
 
-| ID | Start | Action | Observe | COSMIC | Hyprland | bspwm | i3 | xmonad | sway | qtile | awesome | Ours (KDE/Windows) | Variant |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| R-GRP-01 | `H[A,B*]` | Toggle stack on the group, switch tabs | Split-to-stack conversion; tab switch | Super+S toggles the focused node: fixture B is window-focused, so B alone becomes a single-tab stack (`H[A,S[B]]`, B active); group-focused converts the whole group to `S[A,B]` (A initially active). Stack splits back to tiles; tabs step with Focus Left/Right (Up/Down enters/leaves the group); `S(S-cos-stack)` + `D(D-ref)`; tab-bar visuals/native timing TBD | `toggleGroup` on focused B creates a one-window group at B's slot (`H[A,G[B]]`), no whole-group conversion counterpart; tab step on the single-member group errors/leaves current unchanged; multi-tab stepping wraps current and refocuses only if the group was focused; `S(S-hyp-groupop)`; bar visuals/native timing TBD | Unsupported action parameter here: no stack/tab group in source (monocle is a desktop layout, not tabs); toggle/tab-step outcomes TBD (no built-in equivalent); `S(S-bsp-layout)` | `layout tabbed` (or `stacked`) retargets the H parent, so `H[A,B*]` becomes a 2-tab tabbed (or stacked) parent with B active; `toggle` cycles stacked/tabbed/split; tabs step via directional focus (tabbed HORIZ left/right, stacked VERT up/down) or decoration tab click/scroll; `S(S-i3-layout)` + `S(S-i3-grp)`; exact toggle verb (tabbed vs stacked vs toggle split/all) and bar visuals/native timing TBD (gesture unspecified) | Unsupported action parameter here: no stack/tab group in source (core layouts Tall, Mirror Tall, Full only; `NextLayout` rotates layouts, no tab-toggle/tab-step verb in this profile); toggle/tab-step outcomes TBD (no built-in equivalent); `S(S-xmo-layout)` + `S(S-xmo-core-nav)` | `layout tabbed` (or `stacked`) retargets the H parent, so `H[A,B*]` becomes a 2-tab tabbed (or stacked) parent with B active (single-child flatten/workspace wrap like i3); tabs step via directional focus (tabbed left/right, stacked up/down, wrap per config); `S(S-sway-layout)` + `S(S-sway-focus)`; exact toggle verb (tabbed vs stacked vs toggle split/all) and bar visuals/native timing TBD (gesture unspecified) | Unsupported action parameter here: no tab-stack group in this profile (layouts are Columns plus Max only); the counterpart toggle_split flips the current column split/unsplit (unsplit shows one window, not tabs) with no tab-step verb; toggle/tab-step outcomes TBD (no built-in equivalent); `S(S-qti-split)` + `S(S-qti-default)` | Unsupported action parameter here: no stack/tab group primitive in source (shipped layouts floating plus tile variants/fair/spiral/max/magnifier/corner; per-tag layout via set/inc, no tab-toggle/tab-step verb); toggle/tab-step outcomes TBD (no built-in equivalent); `S(S-awe-default)` + `S(S-awe-layout)` + `S(S-awe-keys)` | Deferred: centre-stack drops refused fail-closed; no tab carrier/bindings; `D(D-dec-cos)` | V-GROUP-STACK |
+### R-GRP-01: toggle stack and switch tabs
+
+- Given (tree profiles): `H[A,B*]`
+
+- Given (column profiles): `COL[C1[A,B*]]` with A above B in one column at shipped
+  defaults; viewport recorded. Toggle the profile tabbed/stacked display
+  where present, then step tabs/members. This is a display-mode
+  projection, not an exact H-tree conversion. Paneru exact `S` fixture is
+  inapplicable per its Stack/Tabs model; its native-tab journey belongs
+  to R-COL-10.
+
+- When: Toggle stack on the group, switch tabs.
+
+- Observe: Split-to-stack conversion; tab switch
+
+- Observe (column leg): display conversion; member step.
+
+- Then COSMIC: Super+S toggles the focused node: fixture B is window-focused, so B alone becomes a single-tab stack (`H[A,S[B]]`, B active); group-focused converts the whole group to `S[A,B]` (A initially active). Stack splits back to tiles; tabs step with Focus Left/Right (Up/Down enters/leaves the group); `S(S-cos-stack)` + `D(D-ref)`; tab-bar visuals/native timing TBD
+- Then Hyprland/Dwindle: `toggleGroup` on focused B creates a one-window group at B's slot (`H[A,G[B]]`), no whole-group conversion counterpart; tab step on the single-member group errors/leaves current unchanged; multi-tab stepping wraps current and refocuses only if the group was focused; `S(S-hyp-groupop)`; bar visuals/native timing TBD
+- Then bspwm: Unsupported action parameter here: no stack/tab group in source (monocle is a desktop layout, not tabs); toggle/tab-step outcomes TBD (no built-in equivalent); `S(S-bsp-layout)`
+- Then i3: `layout tabbed` (or `stacked`) retargets the H parent, so `H[A,B*]` becomes a 2-tab tabbed (or stacked) parent with B active; `toggle` cycles stacked/tabbed/split; tabs step via directional focus (tabbed HORIZ left/right, stacked VERT up/down) or decoration tab click/scroll; `S(S-i3-layout)` + `S(S-i3-grp)`; exact toggle verb (tabbed vs stacked vs toggle split/all) and bar visuals/native timing TBD (gesture unspecified)
+- Then xmonad/Tall+Navigation2D: Unsupported action parameter here: no stack/tab group in source (core layouts Tall, Mirror Tall, Full only; `NextLayout` rotates layouts, no tab-toggle/tab-step verb in this profile); toggle/tab-step outcomes TBD (no built-in equivalent); `S(S-xmo-layout)` + `S(S-xmo-core-nav)`
+- Then sway: `layout tabbed` (or `stacked`) retargets the H parent, so `H[A,B*]` becomes a 2-tab tabbed (or stacked) parent with B active (single-child flatten/workspace wrap like i3); tabs step via directional focus (tabbed left/right, stacked up/down, wrap per config); `S(S-sway-layout)` + `S(S-sway-focus)`; exact toggle verb (tabbed vs stacked vs toggle split/all) and bar visuals/native timing TBD (gesture unspecified)
+- Then qtile/Columns: Unsupported action parameter here: no tab-stack group in this profile (layouts are Columns plus Max only); the counterpart toggle_split flips the current column split/unsplit (unsplit shows one window, not tabs) with no tab-step verb; toggle/tab-step outcomes TBD (no built-in equivalent); `S(S-qti-split)` + `S(S-qti-default)`
+- Then awesome/tile: Unsupported action parameter here: no stack/tab group primitive in source (shipped layouts floating plus tile variants/fair/spiral/max/magnifier/corner; per-tag layout via set/inc, no tab-toggle/tab-step verb); toggle/tab-step outcomes TBD (no built-in equivalent); `S(S-awe-default)` + `S(S-awe-layout)` + `S(S-awe-keys)`
+- Then niri: toggles Normal/Tabbed via `toggle_column_tabbed_display` and
+  steps members via `focus_down`/`focus_up` (`activate_idx` saturating
+  step). `S(S-nir-consume)`.
+- Then PaperWM: no-counterpart (no tabbed/stacked display toggle in the
+  registered action inventory; slurp/barf are visible-height consume,
+  not tabs). `S(S-pap-acts)`.
+- Then karousel/Lazy: toggles stacked via `column-toggle-stacked` (needs
+  2+ windows; overlapping arrange, not tabs) and steps members via
+  `focusDown`/`focusUp` (above/below window). `S(S-kar-grpmove)`.
+- Then paneru: fixture-inapplicable (`Stack` is visible stacking, `Tabs`
+  holds app-native tabs per `S(S-pan-model)`; exact `S` toggle has no
+  counterpart, native-tab variant under R-COL-10). `S(S-pan-model)`.
+- Then Ours KDE: Deferred: centre-stack drops refused fail-closed; no tab carrier/bindings; `D(D-dec-cos)`
+- Then Ours Windows: Deferred: centre-stack drops refused fail-closed; no tab carrier/bindings; `D(D-dec-cos)`
+- Variant hook: V-GROUP-STACK.
+
 
 ## New scenarios (GWT; fixtures/actions/discriminators per the approved expansion record)
 
@@ -140,27 +178,3 @@ evidence.
 - Then Ours Windows: same fixture-inapplicable leg as Ours KDE via the
   shared Engine. `S(S-ours-grp)`.
 - Variant hook: V-GROUP-STACK (deferred; centre-stack refuse closed).
-
-## Scrolling backfill (additive; existing wide tables above unchanged)
-
-### R-GRP-01 backfill: toggle stack and switch tabs (scrolling)
-
-- Given (columns): `COL[C1[A,B*]]` with A above B in one column at shipped
-  defaults; viewport recorded. Toggle the profile tabbed/stacked display
-  where present, then step tabs/members. This is a display-mode
-  projection, not an exact H-tree conversion. Paneru exact `S` fixture is
-  inapplicable per its Stack/Tabs model; its native-tab journey belongs
-  to R-COL-10.
-- Observe: display conversion; member step.
-- Then niri: toggles Normal/Tabbed via `toggle_column_tabbed_display` and
-  steps members via `focus_down`/`focus_up` (`activate_idx` saturating
-  step). `S(S-nir-consume)`.
-- Then PaperWM: no-counterpart (no tabbed/stacked display toggle in the
-  registered action inventory; slurp/barf are visible-height consume,
-  not tabs). `S(S-pap-acts)`.
-- Then karousel/Lazy: toggles stacked via `column-toggle-stacked` (needs
-  2+ windows; overlapping arrange, not tabs) and steps members via
-  `focusDown`/`focusUp` (above/below window). `S(S-kar-grpmove)`.
-- Then paneru: fixture-inapplicable (`Stack` is visible stacking, `Tabs`
-  holds app-native tabs per `S(S-pan-model)`; exact `S` toggle has no
-  counterpart, native-tab variant under R-COL-10). `S(S-pan-model)`.

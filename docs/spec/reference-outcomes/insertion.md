@@ -1,13 +1,79 @@
 # Insertion (reference outcomes)
 
-Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Wide tables moved here unchanged.
+Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. Scenarios below are GWT with one Then bullet per profile (14).
 
 ## 1. Insertion / splits
 
-| ID | Start | Action | Observe | COSMIC | Hyprland | bspwm | i3 | xmonad | sway | qtile | awesome | Ours (KDE/Windows) | Variant |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| R-INS-01 | `H[A,B*]`, B projected 1200x600 | Open C with B still focused | Split axis + position of C | Splits B's long edge (side-by-side), C appended after B, focus C; `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-mapfocus)` | Parent-geometry side-by-side split of B's long edge; C before/after B TBD (pointer half under follow_mouse); ordinary newcomer focused; `S(S-hyp-ins)` + `S(S-hyp-newfocus)` | Splits B's long edge side-by-side (1200x600 landscape), C second child after B, newcomer focused; `S(S-bsp-ins)` + `S(S-bsp-insert)`; exact pixels TBD | `H[A,B,C*]`: retains H (no geometry-driven axis under the splith embedding); C inserted after focused B, newcomer focused; `S(S-i3-ins)` | Start `H[A,B*]` is exactly two-window Tall (master A left, B stack right side-by-side); `insertUp` C above focused B yields StackSet order `[A,C*,B]` with newcomer focus, projected `H[A,V[C*,B]]` (master left half, C/B stacked right) via `tile`/`splitHorizontallyBy`+`splitVertically`, not a long-edge H split; exact pixel frames TBD; `S(S-xmo-ins)` + `S(S-xmo-layout)` + `S(S-xmo-admit)` | `H[A,B,C*]`: retains H (no geometry-driven axis; shipped landscape default H); C inserted after focused B via the focus-inactive anchor, ordinary newcomer focused; `S(S-sway-ins)` + `S(S-sway-wsdefault)` | Columns admits C into the focused column at the current position (insert_position=0 inserts at current, pushing B after) with newcomer focus; under the two-column default (num_columns=2, align right, split) C stacks with B vertically: projected `H[A,V[C*,B]]`; exact pixel frames TBD; `S(S-qti-default)` + `S(S-qti-add)` | Tile appends C last in tiled-client order (manage push) with newcomer focus (global rule); order [A,B,C] puts A master with B/C in the stack column (nmaster=1, mwfact 0.5), no geometry-driven axis; exact pixel frames TBD; `S(S-awe-tile)` + `S(S-awe-manage)` | Long-edge split at focused leaf; `D(D-dec-x)` (user statement); order TBD | V-INS-AXIS |
-| R-INS-02 | Stack `S[A*,B]` (COSMIC) | Open C | Does C join the active stack | Joins active stack as appended tab, newcomer active, focus stays stack; `D(D-ref)` + `S(S-cos-mapfocus)` | No auto-created tab stack here: read as a Hyprland group analogue, C auto-joins the focused group as the tab after current (`insert_after_current`), newcomer current and focused; fresh groups still need a directional create/join; `S(S-hyp-group)` + `S(S-hyp-newfocus)` | No groups: one window per leaf, so C ordinary-tiles at the focused leaf instead of joining; `D(D-ref)` + `S(S-bsp-insert)` | `S[A,C*,B]` (tabbed embedding of the fixture stack): C joins the focused tabbed parent as the tab after focused A, newcomer active; `S(S-i3-ins)` + `S(S-i3-layout)` | TBD (no tabbed-stack group in the Tall/core/contrib profile; no join primitive here); `S(S-xmo-layout)` | `S[A,C*,B]` (tabbed embedding of the fixture stack): C joins the focused tabbed parent as the tab after focused A, newcomer active; stacked embedding analogous; `S(S-sway-ins)` + `S(S-sway-layout)` | No tab-stack join in this profile (split/unsplit columns only): C ordinary-admits at the focused position with newcomer focus, not as a tab; exact order/frames TBD; `S(S-qti-add)` | No tab-stack join in this profile: C ordinary-admits appending last in tiled order with newcomer focus, not as a tab; exact frames TBD; `S(S-awe-tile)` + `S(S-awe-manage)` | TBD (stacks unselected) | V-GROUP-STACK |
+### R-INS-01: ordinary third-window admission
+
+- Given (tree profiles): `H[A,B*]`, B projected 1200x600
+
+- Given (column profiles): `COL[C1[A],C2[B*]]`, each 0.5W, viewport showing both;
+  shipped defaults per profile. The tree fixture `H[A,B*]` has no stated
+  widths/viewport, so there is no exact projection - this is a separate
+  column Given reusing the same A/B/C identities and open-C action.
+
+- When: Open C with B still focused.
+
+- When (column leg): open C (same ordinary-open verbs as R-INS-03 per profile).
+
+- Observe: Split axis + position of C
+
+- Observe (column leg): same-column vs new-column admission, position relative to
+  focus, widths stable vs rescaled, newcomer focus and viewport.
+
+- Then COSMIC: Splits B's long edge (side-by-side), C appended after B, focus C; `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-mapfocus)`
+- Then Hyprland/Dwindle: Parent-geometry side-by-side split of B's long edge; C before/after B TBD (pointer half under follow_mouse); ordinary newcomer focused; `S(S-hyp-ins)` + `S(S-hyp-newfocus)`
+- Then bspwm: Splits B's long edge side-by-side (1200x600 landscape), C second child after B, newcomer focused; `S(S-bsp-ins)` + `S(S-bsp-insert)`; exact pixels TBD
+- Then i3: `H[A,B,C*]`: retains H (no geometry-driven axis under the splith embedding); C inserted after focused B, newcomer focused; `S(S-i3-ins)`
+- Then xmonad/Tall+Navigation2D: Start `H[A,B*]` is exactly two-window Tall (master A left, B stack right side-by-side); `insertUp` C above focused B yields StackSet order `[A,C*,B]` with newcomer focus, projected `H[A,V[C*,B]]` (master left half, C/B stacked right) via `tile`/`splitHorizontallyBy`+`splitVertically`, not a long-edge H split; exact pixel frames TBD; `S(S-xmo-ins)` + `S(S-xmo-layout)` + `S(S-xmo-admit)`
+- Then sway: `H[A,B,C*]`: retains H (no geometry-driven axis; shipped landscape default H); C inserted after focused B via the focus-inactive anchor, ordinary newcomer focused; `S(S-sway-ins)` + `S(S-sway-wsdefault)`
+- Then qtile/Columns: Columns admits C into the focused column at the current position (insert_position=0 inserts at current, pushing B after) with newcomer focus; under the two-column default (num_columns=2, align right, split) C stacks with B vertically: projected `H[A,V[C*,B]]`; exact pixel frames TBD; `S(S-qti-default)` + `S(S-qti-add)`
+- Then awesome/tile: Tile appends C last in tiled-client order (manage push) with newcomer focus (global rule); order [A,B,C] puts A master with B/C in the stack column (nmaster=1, mwfact 0.5), no geometry-driven axis; exact pixel frames TBD; `S(S-awe-tile)` + `S(S-awe-manage)`
+- Then niri: C opens as a new column right after the active column; existing widths TBD (stable vs rescaled); focus and viewport TBD. `S(S-nir-ins)`.
+- Then PaperWM: C inserts at selected+1 under the shipped RIGHT default, activated on show; existing widths TBD (stable vs rescaled); viewport TBD. `S(S-pap-ins)`.
+- Then karousel/Lazy: C opens a new column after the last-focused column, appended at the bottom; existing widths TBD (stable vs rescaled); focus and viewport TBD. `S(S-kar-ins)`.
+- Then paneru: C lands per the `window_managed` insertion policy (rule index, overlap column, or end); existing widths TBD (stable vs rescaled); focus and viewport TBD. `S(S-pan-ins)`.
+- Then Ours KDE: Long-edge split at focused leaf; `D(D-dec-x)` (user statement); order TBD
+- Then Ours Windows: Long-edge split at focused leaf; `D(D-dec-x)` (user statement); order TBD
+- Variant hook: V-INS-AXIS.
+
+### R-INS-02: stack admission
+
+- Given (tree profiles): Stack `S[A*,B]` (COSMIC)
+
+- Given (column profiles): the same A/B identities and open-C action as the tree
+  fixture `S[A*,B]`, column-qualified to `COL[C1[S[A*,B]]]` only where the
+  profile supports a tabbed-display column with stated membership and
+  active tab. PaperWM accordion and visible vertical stacking are not
+  exact S equivalents; paneru native tabs are a distinct nesting
+  predicate (see R-COL-10).
+
+- When: Open C.
+
+- When (column leg): open C (ordinary open per profile).
+
+- Observe: Does C join the active stack
+
+- Observe (column leg): C joins the tabbed display as a tab vs ordinary column
+  admission; membership, order, active tab, and focus.
+
+- Then COSMIC: Joins active stack as appended tab, newcomer active, focus stays stack; `D(D-ref)` + `S(S-cos-mapfocus)`
+- Then Hyprland/Dwindle: No auto-created tab stack here: read as a Hyprland group analogue, C auto-joins the focused group as the tab after current (`insert_after_current`), newcomer current and focused; fresh groups still need a directional create/join; `S(S-hyp-group)` + `S(S-hyp-newfocus)`
+- Then bspwm: No groups: one window per leaf, so C ordinary-tiles at the focused leaf instead of joining; `D(D-ref)` + `S(S-bsp-insert)`
+- Then i3: `S[A,C*,B]` (tabbed embedding of the fixture stack): C joins the focused tabbed parent as the tab after focused A, newcomer active; `S(S-i3-ins)` + `S(S-i3-layout)`
+- Then xmonad/Tall+Navigation2D: TBD (no tabbed-stack group in the Tall/core/contrib profile; no join primitive here); `S(S-xmo-layout)`
+- Then sway: `S[A,C*,B]` (tabbed embedding of the fixture stack): C joins the focused tabbed parent as the tab after focused A, newcomer active; stacked embedding analogous; `S(S-sway-ins)` + `S(S-sway-layout)`
+- Then qtile/Columns: No tab-stack join in this profile (split/unsplit columns only): C ordinary-admits at the focused position with newcomer focus, not as a tab; exact order/frames TBD; `S(S-qti-add)`
+- Then awesome/tile: No tab-stack join in this profile: C ordinary-admits appending last in tiled order with newcomer focus, not as a tab; exact frames TBD; `S(S-awe-tile)` + `S(S-awe-manage)`
+- Then niri: C does not join as a tab - ordinary open always wraps a new column. `S(S-nir-ins)`; active-tab and focus TBD.
+- Then PaperWM: TBD (no tabbed-display column evidenced at pin; applicability unresolved).
+- Then karousel/Lazy: C does not join as a tab - ordinary open creates a new column (stacked display exists behind `toggleStacked`, off by default). `S(S-kar-ins)`; active-tab and focus TBD.
+- Then paneru: fixture-inapplicable - `Stack` is ordered visible stacking while `Tabs` holds app-native tabs, so the S fixture has no counterpart here; native-tab nesting stays under R-COL-10. `S(S-pan-model)`.
+- Then Ours KDE: TBD (stacks unselected)
+- Then Ours Windows: TBD (stacks unselected)
+- Variant hook: V-GROUP-STACK.
+
 
 ## New scenarios (GWT, piece B1; fixtures/actions/discriminators per the approved expansion record)
 
@@ -201,39 +267,3 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
 - Then Ours KDE: TBD (no preselection concept evidenced at `9241c94`; not claimed absent).
 - Then Ours Windows: TBD, same as Ours KDE.
 - Variant hook: V-INS-AXIS.
-
-## Scrolling backfill (additive; existing wide tables above unchanged)
-
-Projections are explicit rectangle-level links only, never split-tree
-proof. Distinct column behavior links R-COL-01; no second lifecycle
-inventory here.
-
-### R-INS-01 backfill: ordinary third-window admission (scrolling profiles)
-
-- Given (columns): `COL[C1[A],C2[B*]]`, each 0.5W, viewport showing both;
-  shipped defaults per profile. The tree fixture `H[A,B*]` has no stated
-  widths/viewport, so there is no exact projection - this is a separate
-  column Given reusing the same A/B/C identities and open-C action.
-- When: open C (same ordinary-open verbs as R-INS-03 per profile).
-- Observe: same-column vs new-column admission, position relative to
-  focus, widths stable vs rescaled, newcomer focus and viewport.
-- Then niri: C opens as a new column right after the active column; existing widths TBD (stable vs rescaled); focus and viewport TBD. `S(S-nir-ins)`.
-- Then PaperWM: C inserts at selected+1 under the shipped RIGHT default, activated on show; existing widths TBD (stable vs rescaled); viewport TBD. `S(S-pap-ins)`.
-- Then karousel/Lazy: C opens a new column after the last-focused column, appended at the bottom; existing widths TBD (stable vs rescaled); focus and viewport TBD. `S(S-kar-ins)`.
-- Then paneru: C lands per the `window_managed` insertion policy (rule index, overlap column, or end); existing widths TBD (stable vs rescaled); focus and viewport TBD. `S(S-pan-ins)`.
-
-### R-INS-02 backfill: stack admission (scrolling profiles)
-
-- Given (columns): the same A/B identities and open-C action as the tree
-  fixture `S[A*,B]`, column-qualified to `COL[C1[S[A*,B]]]` only where the
-  profile supports a tabbed-display column with stated membership and
-  active tab. PaperWM accordion and visible vertical stacking are not
-  exact S equivalents; paneru native tabs are a distinct nesting
-  predicate (see R-COL-10).
-- When: open C (ordinary open per profile).
-- Observe: C joins the tabbed display as a tab vs ordinary column
-  admission; membership, order, active tab, and focus.
-- Then niri: C does not join as a tab - ordinary open always wraps a new column. `S(S-nir-ins)`; active-tab and focus TBD.
-- Then PaperWM: TBD (no tabbed-display column evidenced at pin; applicability unresolved).
-- Then karousel/Lazy: C does not join as a tab - ordinary open creates a new column (stacked display exists behind `toggleStacked`, off by default). `S(S-kar-ins)`; active-tab and focus TBD.
-- Then paneru: fixture-inapplicable - `Stack` is ordered visible stacking while `Tabs` holds app-native tabs, so the S fixture has no counterpart here; native-tab nesting stays under R-COL-10. `S(S-pan-model)`.
