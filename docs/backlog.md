@@ -161,7 +161,7 @@ decisions of 2026-09-24 are under
   to dogfood startup (both platforms), Win+M and send returns. Risk:
   minimum-sized windows can overlap or extend past the work area. User
   decision B6 (2026-10-05) makes origin+minimum the policy on both
-  platforms (KDE implementation pending); sequential seeding stays
+  platforms (KDE delivered offline `cf6ab31`); sequential seeding stays
   provisional (consensus: follows COSMIC).
   [record](changes/archive/windows-placement-correctness.md)
 - P1 | KDE follow-ups from the Windows port | Audit 2026-10-05
@@ -181,9 +181,11 @@ decisions of 2026-09-24 are under
   laptop re-check (2026-10-05): normal and sticky float focus correct
   ([evidence](changes/archive/kde-post-windows-followups.md#laptop-re-check-user-owned)).
   Still pending: native-change repeats and held-key autorepeat.
-  User decisions 2026-10-05, implementation pending: B6 infeasible
-  minimums use origin+minimum on both platforms (Windows already does it;
-  KDE replaces skip-writes). Q3 born-maximized admission follows COSMIC:
+  User decisions 2026-10-05: B6 infeasible minimums use origin+minimum on
+  both platforms (Windows already does it); KDE delivered offline
+  `cf6ab31` (920 KWin / 1107 Rust tests, CI green; client shortfalls get
+  three reassertions then quiet acceptance; live steps in
+  [record](changes/archive/kde-minimum-origin-placement.md)). Q3 born-maximized admission follows COSMIC:
   tile with a reserved slot and keep the maximize as an overlay, no launch
   unmaximize (KDE and Windows); KDE delivered offline `9b612be` (901 KWin
   tests, CI green; R-MAX-03 floating-to-tiled one-shot clear unchanged
