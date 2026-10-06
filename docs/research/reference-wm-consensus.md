@@ -1,13 +1,14 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (103 rows:
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (106 rows:
 58-row historical audit preserved below, plus 6-row insertion expansion
 plus 4-row focus expansion plus 3-row move expansion plus 4-row resize
 expansion plus 4-row layout expansion plus 7-row workspace expansion
 plus 3-row minimize expansion plus 2-row maximize expansion
 plus 2-row groups expansion plus 3-row floating expansion
-plus 3-row close expansion plus 4-row multi-output expansion).
+plus 3-row close expansion plus 4-row multi-output expansion
+plus 3-row mouse expansion).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -120,7 +121,7 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
 Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups/floating/close/multi-output are per-predicate: A 21, B 20, U 12 full rows + two KDE legs, C 17, W 11;
+Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups/floating/close/multi-output/mouse are per-predicate: A 21, B 20, U 13 full rows + two KDE legs, C 17, W 11;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
 
 ## Table A: strong cross-family consensus where ours differs (21)
@@ -188,7 +189,7 @@ position/order); consensus covers fresh-vs-oldslot only. WS-02 after-order
 leg (after-4/5ev C,B,I,S vs X before) is U (ours exact order TBD); tall/wide
 axis stays a qualifier (X/Q inapplicable).
 
-## Table U: strong consensus, ours unresolved (12 full rows + two KDE legs)
+## Table U: strong consensus, ours unresolved (13 full rows + two KDE legs)
 
 | Row | Consensus | Count | COSMIC | Ours |
 |---|---|---|---|---|
@@ -206,6 +207,7 @@ axis stays a qualifier (X/Q inapplicable).
 | R-CLOSE-04 float | tiles untouched with MRU refocus | untouched-6/8 plus focus-B-6/8 (C,B,I,S,Q,A), 4/4 fam | yes (layer separation plus MRU fixup) | TBD both (exception-drop sourced; adapter journey TBD) |
 | R-CLOSE-05 full | closed fullscreen needs no restore; survivor refills with focus | full-leg-5/8 (H/B/I/Q/A), 3 fam | TBD (removal sourced, overlay cleanup TBD) | TBD both (removal plus desired focus sourced; native cleanup TBD) |
 | R-OUT-05 open | ordinary admission lands on the focused output with newcomer focus | focused-7/8 (C,B,I,X,S,Q,A), 4/4 fam | yes (active-output default plus mapfocus) | routing TBD both (admission anchor sourced) |
+| R-MOU-01 click | plain click focuses B | click-8/8, 4/4 fam | yes (press focuses) | TBD both (host click/hover journeys; adapter verbs prove no producer path) |
 
 DRAG-08: unknown is not mismatch; B/I have deliberate no-focus paths.
 
@@ -1180,3 +1182,87 @@ need no physical confirmation):
 | R-OUT-04, xmonad (1) | Explicit send A to L; record source refocus | Carry plus target-stack focus sourced; `delete'` fallback untraced |
 | R-OUT-05, Hyprland/niri/paneru/Ours KDE/Windows (5) | Pointer on R, focused L; open C; record landing output | Cursor-vs-active routing (Hyprland/niri), display routing (paneru), Engine routing plus native activation (Ours) untraced |
 | R-OUT-06, all but karousel (13) | Occupied R focused; disconnect then reconnect; record evacuation and return | sway evacuation and bspwm default monitor retention/same-id reuse sourced; focus/visibility or affinity remainders and other migration journeys untraced |
+
+## Mouse expansion: R-MOU-01..03 plus R-DRAG-01..08 scrolling backfill
+
+Scope: this piece adds three GWT mouse scenarios (R-MOU-01 hover/click
+focus, R-MOU-02 shared-edge resize, R-MOU-03 cross-output/workspace
+drag), each with 14 Then profiles, and additive scrolling backfill
+blocks for R-DRAG-01..08 (original wide tables preserved, with the
+original A/B/C 640px widths, N-outside start, B focus, and A-edge
+targets kept in the backfill Givens). Historical
+tables and the 58-row audit above are preserved unchanged. Denominator,
+families, and the strength rule are unchanged: consensus classification
+below counts the original eight profiles only. The four scrolling
+profiles form one correlated lineage reported as an explicit separate
+non-voting comparison. A missing pointer verb never votes: absent edge
+grabs, drag producers, and switcher targets are qualified or TBD, never
+agreeing rejection. R-MOU-03 splits into a cross-output leg and a fresh
+WS3-switcher leg: i3 and PaperWM carry E cross-output plus Q switcher,
+and karousel carries Q
+cross-output plus applicable-TBD switcher (all M). Keyboard carry/grid
+verbs never count as pointer partial evidence, and verb inventories
+(`S-ours-mou`, command enums) never count as behavior. Cell classes are
+mutually exclusive per cell: E complete outcome evidenced with no TBD;
+P one discriminator sub-leg evidenced with the remainder TBD and
+queued; T TBD-only with a specific stop-tracing reason, never a bare
+"untraced"; Q all legs qualified with pinned inventory evidence; M
+mixed. E cells carry no TBD; every P/M cell names its explicit
+remainder. Counts measure documentation coverage, not
+votes. Semantic outcomes lead each Then in one to three lines.
+
+| Row | Predicate sub-legs (original eight) | Voters per sub-leg | Result |
+|---|---|---|---|
+| R-MOU-01 hover/click focus | plain click focuses B vs hover under the named ffm variant | click: C (press+deliver, `S-cos-dragpress`), H (CLICK refocus, `S-hyp-follow`), B (button1 ACTION_FOCUS, `S-bsp-ptrfocus`), I (`con_activate`, `S-i3-click`), X (`clickJustFocuses`, `S-xmo-ffm`), S (click focus, `S-sway-ffm`), Q (`focus_by_click` no-raise, `S-qti-click`), A (button1 activate, `S-awe-sloppy`) = 8/8, 4/4 fam; hover leg mode-dependent, no agreed predicate | U click-8/8 (Ours host journeys TBD both); hover C audit-only |
+| R-MOU-02 shared-edge resize | dragged share change with clamp vs frame-only/no-resize | share change: B (fence split_ratio, `S-bsp-ptrresize`), I (pair percents, `S-i3-border`), S (pair fractions, `S-sway-rszedge`), A (mwfact, `S-awe-tresize`) = 4/8, 3 fam; no-share: X (bare nothing, mod floats, `S-xmo-mouse`); variant-gated: C (fork plus pixel path, `S-cos-resize`), H (default no-resize plus MBIND_RESIZE, `S-hyp-edgeresize`); no-counterpart: Q | C audit-only (no agreed predicate) |
+| R-MOU-03 cross-output/workspace drag | cross-output insertion/follow; switcher drop | cross-output insert: I (same DT mechanics plus show+focus, `S-i3-tdrop`); partial insert/follow: C, H, B, S, A; TBD: X, Q; switcher Q: I, PaperWM | C audit-only (no agreed predicate) |
+
+Scrolling comparison (non-voting): R-MOU-01 niri's shipped hover-off,
+named enabled hover variant and plain-click activation/delivery are
+evidenced; paneru FFM is partial (host click-focus TBD), while PaperWM
+and karousel stay host-journey TBD. R-MOU-02
+karousel dragged-width/stable-neighbor is complete at shipped
+defaults; niri Mod+Right grab plus paneru modifier resize are partial
+(shares TBD); PaperWM ResizeGrab is a native-Mutter journey marker
+(TBD). R-MOU-03 niri output-tracking drop is partial (index TBD);
+PaperWM zone insert is evidenced with a qualified switcher leg;
+karousel is mixed; paneru is host-journey TBD. Backfill: niri carries
+remove/reinsert/commit/activate legs across D01/02/04/05/06/07/08
+with D03 partial (client titlebar and Mod+Left grabs differ in allowed
+viewport scrolling); PaperWM carries zone/scratch/activate legs with
+D05 complete and D06 final re-admission TBD; karousel carries
+untile legs with D01 complete and D04/D05 host cancel/initiation TBD;
+paneru is host-journey
+TBD except D08 FFM-entry partial.
+
+Counts (mutually exclusive E/P/T/Q/M). New rows (3x14=42): E 13, P 13,
+T 12, Q 1, M 3. Original-eight new cells (3x8=24): E 11 (R-MOU-01: 6
+H/I/X/S/Q/A; R-MOU-02: 5 B/I/X/S/A; R-MOU-03: 0), P 9 (R-MOU-01: 2 C/B;
+R-MOU-02: 2 C/H; R-MOU-03: 5 C/H/B/S/A), T 2 (R-MOU-03: X/Q),
+Q 1 (R-MOU-02: Q), M 1 (R-MOU-03: I).
+Scrolling new cells (3x4=12): E 2 (R-MOU-01 niri, R-MOU-02 karousel), P 4
+(R-MOU-01: paneru; R-MOU-02: niri/paneru; R-MOU-03:
+niri), T 4 (R-MOU-01 PaperWM/karousel; R-MOU-02 PaperWM; R-MOU-03 paneru),
+Q 0, M 2 (R-MOU-03 PaperWM/karousel). Ours new cells (3x2=6): T 6
+(verb inventory only; every host producer journey TBD).
+Backfill (8x4=32): E 2 (R-DRAG-01 karousel, R-DRAG-05 PaperWM),
+P 20 (niri 8 plus PaperWM 7 plus karousel 4 plus paneru D08),
+T 10, Q 0, M 0. Total 74 cells: E15/P33/T22/Q1/M3. Table U grows 12 to 13
+(R-MOU-01 click-8/8); Tables A/B/C/W unchanged. The matrix total is
+now 106 rows (103 + 3 new; backfill reuses IDs).
+
+Ours-vs-consensus position (no behavior selected): one new strong
+predicate stands unresolved on both Ours platforms. R-MOU-01 click-8/8
+(C/H/B/I/X/S/Q/A across all four original families): a plain click
+focuses B. Ours adapter verbs (`S-ours-mou`, `S-ours-focus`) prove
+requested-focus actions only, never the host click/hover producer
+path, so both Ours cells stay applicable-TBD and the row sits in U,
+never B. No other mouse predicate carries strong consensus (shares
+split 4/8 with an xmonad no-share counter-vote; cross-output has no
+agreed predicate). Recommend for batch user review, no selection or
+code change: trace the host click-focus delivery plus hover policy,
+the shared-edge share allocation, and the cross-output/switcher drop
+journeys on both Ours platforms before proposing any behavior change;
+establish the same three journeys for any future pointer-behavior
+specification. Missing verbs and TBD journeys never count as agreeing
+rejection. No product behavior is changed by this assessment.

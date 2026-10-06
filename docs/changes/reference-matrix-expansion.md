@@ -1,6 +1,6 @@
 # Reference matrix expansion
 
-- Status: active; restructure through multi-output accepted; batch decisions pending, mouse next.
+- Status: active; restructure through mouse accepted; batch decisions pending, special windows next.
 - Date: 2026-10-06. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
@@ -503,6 +503,27 @@ column attachment or physical confirmation.
 | R-OUT-05, Hyprland/niri/paneru/Ours KDE/Windows (5) | Focused L, pointer on R; ordinary C opens without rules | Cursor-vs-active/display routing and Ours routing/native activation unresolved |
 | R-OUT-06, all but karousel (13) | Occupied R focused; disconnect/reconnect same identity; user host only | sway evacuation and bspwm default retention/same-id reuse sourced; focus/visibility/affinity remainders and other migration journeys unresolved |
 
+### Mouse queue additions (piece B13)
+
+56 applicable unresolved cells (P33 + T22 + one applicable-TBD M leg),
+grouped in 11 entries. i3/PaperWM R-MOU-03 have evidenced cross-output
+legs and qualified switcher legs, adding no live case. Host producers
+remain applicable despite absent tiler commands. No agent live tests.
+
+| IDs / profiles | Required discriminator / state | Why source evidence stops |
+|---|---|---|
+| R-MOU-01, COSMIC/bspwm/PaperWM/karousel/paneru/Ours KDE/Windows (7) | Named enabled hover variant, fresh click-focus leg; ordinary A/B; click delivery | COSMIC/bspwm hover, PaperWM/KWin/Windows host producers and paneru host click-focus remain unresolved; niri opt-in hover and plain-click activation/delivery are sourced |
+| R-MOU-02, COSMIC/Hyprland/niri/PaperWM/paneru/Ours KDE/Windows (7) | Shared edge right 100px; native client request vs named modifier or border-enabled variants | Actual dragged width/share or native-host journey unresolved; command/adapter inventories alone do not establish pointer outcomes |
+| R-MOU-03, all except i3/PaperWM (12) | B to C's edge on R; fresh WS3 switcher drop; karousel single-screen switcher-only leg | Cross-output or switcher remainders unresolved; resolve host target/producer applicability first. Exact index is not needed merely to establish insertion/follow |
+| R-DRAG-01 backfill, niri/PaperWM/paneru (3) | B onto C centre in three-column fixture | Actual insertion target/row or host journey unresolved; karousel untile/no-join/no-restore is sourced |
+| R-DRAG-02 backfill, all four (4) | A/B/C 640px columns at 1920, existing N outside; between-A/B bar drop | Index/share or N initial-layer remainder unresolved |
+| R-DRAG-03 backfill, all four (4) | Fresh titlebar and Mod+Left drags to A's top edge | Producer parity/click delivery/host initiation unresolved; niri client titlebar supports viewport scrolling unlike Mod+Left |
+| R-DRAG-04 backfill, all four (4) | Start B drag, Esc, release; record hover/drop point | Commit vs restoration or host cancellation remainders unresolved; pointer-grab inventory alone does not establish native host cancellation |
+| R-DRAG-05 backfill, niri/karousel/paneru (3) | Zero-move press/release using declared producer | Preview, host session-start or host reshuffle effects unresolved; PaperWM unchanged topology/activation is sourced |
+| R-DRAG-06 backfill, all four (4) | B focused, panel/taskbar outside work area; release over panel | Final placement/restoration unresolved; PaperWM temporary scratch is explicitly undone after animation, not a proved final float |
+| R-DRAG-07 backfill, all four (4) | Mod+Left B to A edge, pause mid-hold | Preview/final-placement or host frame journey unresolved where load-bearing |
+| R-DRAG-08 backfill, all four (4) | A focused, B unfocused; Mod+Left B to A edge | Press/drop focus or delivery unresolved; niri press activation and paneru hover activation are sourced |
+
 ## Settled review and execution
 
 | User decision | Recommendation |
@@ -571,4 +592,8 @@ column attachment or physical confirmation.
 - Multi-output review: implementation Worker resumed to replace inventory-only placeholders, whole-workspace substitutions and incidental geometry TBDs with pinned semantic evidence. Independent source review corrected over-lumped carry/follow votes. Lead found bspwm's direct monitor-destruction helper was not the shipped hotplug journey: remove-unplugged defaults false, same RandR id reuses the retained monitor, and the named true variant merges desktops before removal. Lead corrected that causal path, citation ranges, table/index summaries and niri's incidental attachment TBD; narrow follow-up review passed. Workers ran sequentially; no live tests or product changes.
 - Multi-output consensus: exhausted horizontal focus crosses in B/I/X/S/A plus H's sourced cross leg (6/8, three families); Ours crosses to sole X and matches. Explicit output transfer carries in 8/8, with visible follow in declared C/H/B/I/S/Q/A forms (7/8, four families); xmonad keeps the source view. Ours lacks an explicit output-send counterpart. Recommendation for batch review: add an explicit output-send verb through the shared Engine. Focused-output ordinary admission with newcomer focus is strong 7/8 (C/B/I/X/S/Q/A, four families); Ours routing/native activation unresolved. Recommendation: establish Ours admission/hotplug journeys before proposing changes there. niri/PaperWM/paneru directional edge moves stay local; explicit monitor transfers are separate verbs. Table A grows 20 to 21, B19 to 20, U11 to 12 full rows plus two KDE legs; C17/W11 unchanged.
 - Multi-output verification: 4x14 new Then profiles, 2x4 scrolling assessments, historical rows/pins preserved; citation resolution, local links, ASCII, whitespace and pinned-source review passed. Source/offline only. Queue adds 22 unresolved cells in five groups. Stop at this area's committed boundary because Lead context is crowded after evidence reconciliation.
-- Exact next action: expand mouse R-MOU-01..03 and scrolling assessment of R-DRAG-01..08; update consensus/live-test queue, verify, then commit/push after git pull --rebase. Continue special windows, activation, restart/persistence, then R-COL; collect product differences for batch review.
+- Mouse outcome: R-MOU-01..03 added as three 14-profile GWT scenarios; R-DRAG-01..08 assessed for four scrolling profiles, historical rows/pins preserved. Matrix now 106 scenarios. Coverage over 74 cells: E15/P33/T22/Q1/M3. New 42: E13/P13/T12/Q1/M3 (original-eight E11/P9/T2/Q1/M1; scrolling E2/P4/T4/M2; Ours T6); backfill 32: E2/P20/T10. Mixed cells include evidenced cross-output plus absent switcher targets, not necessarily applicable unknowns.
+- Mouse review: initial inventory-heavy draft corrected against actual pinned pointer handlers; independent review corrected unsupported PaperWM click evidence and misleading paneru test claims. Lead positively sourced niri opt-in hover/plain-click delivery and client titlebar/edge requests, corrected PaperWM temporary scratch vs final re-admission, and karousel untile-at-session-start vs zero-motion host initiation. Narrow final independent verification accepted the latest source paths, counts and fixtures. Workers ran sequentially; no live tests or product changes.
+- Mouse consensus: plain click focuses B in 8/8 across four original families; Ours host click/hover journeys remain TBD, not generic focus-actuator evidence. No evidenced Ours-vs-strong mismatch. Recommendation for batch review: establish native click/hover, shared-edge shares and cross-output/switcher drops on both platforms before proposing changes. Share-changing edge resize is 4/8 with xmonad no-share counter-vote; no strong choice. niri named hover variant activates without raising; PaperWM viewport modes are not pointer-focus modes; karousel drag untiles at shipped defaults. Table U grows 12 to 13 full rows plus two KDE legs; A21/B20/C17/W11 unchanged.
+- Mouse verification: 3x14 Then profiles, 8x4 scrolling assessments, historical rows/pins preserved; citation resolution, local links, ASCII, whitespace and pinned-source review passed. Source/offline only. Queue adds 56 applicable unresolved cells in 11 groups. Stop at the mouse committed boundary because Lead context is crowded after evidence reconciliation.
+- Exact next action: expand special windows R-SPC-01..05 as five 14-profile GWT scenarios (no existing rows to backfill); update consensus/live-test queue, verify, then commit/push after git pull --rebase. Continue activation, restart/persistence, then R-COL; collect product differences for batch review.

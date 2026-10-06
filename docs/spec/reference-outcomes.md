@@ -472,6 +472,19 @@ Legend:
   sway/input/seatop_move_tiling.c:459-465 (impl is button/pointer-motion/
   tablet-tip/unref/end only)
   @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+- `S-sway-ffm` sway:sway/config.c:272 (`focus_follows_mouse` defaults
+  `FOLLOWS_YES`) and sway/commands/focus_follows_mouse.c (policy verb) +
+  sway/input/seatop_default.c:438-454 (plain click focuses the clicked
+  container via `seat_set_focus`)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (shipped hover-focus policy plus plain-click focus)
+- `S-sway-rszedge` sway:sway/input/seatop_default.c:396-409 (border
+  BTN_LEFT press begins the tiling edge resize) +
+  sway/input/seatop_resize_tiling.c:22-37 (`wlr_edges` edge state plus
+  offset direction) + sway/commands/resize.c:66-110 (pair width
+  fractions with sane-minimum clamp)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (border drag moves the pair shares with clamp)
 - `S-qti-default` qtile:libqtile/resources/default_config.py:101-103
   (shipped `layouts = [Columns(...), Max()]`, initial active Columns)
   @83c697a5621306c3586efca31867efcfa0482e2d
@@ -526,6 +539,16 @@ Legend:
   + libqtile/resources/default_config.py:172-176 (shipped `Mod+Button1` move
   binds `set_position_floating`, `Mod+Button3` resize)
   @83c697a5621306c3586efca31867efcfa0482e2d
+- `S-qti-click` qtile:libqtile/backend/x11/window.py:2003-2011
+  (`handle_EnterNotify` focuses via group when shipped
+  `follow_mouse_focus=True`) and :1532-1535 (`handle_ButtonPress`
+  focuses via `focus_by_click`) +
+  libqtile/backend/x11/core.py:892-915 (`focus_by_click` focuses the
+  group window, raises only when `bring_front_click` allows) +
+  libqtile/resources/default_config.py:180-182 (shipped
+  `follow_mouse_focus=True`, `bring_front_click=False`)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (hover focuses; click focuses without raising)
 - `S-qti-layout` qtile:libqtile/layout/max.py:31-51 (only the focused window shown)
   + libqtile/core/manager.py:1274-1303 (`next_layout`/`prev_layout` rotation)
   + libqtile/resources/default_config.py:47,101-103 (`Mod+Tab` rotates; `Max` available)
@@ -675,6 +698,17 @@ Legend:
   awesome:lib/awful/permissions/init.lua:167-219 (activate focus plus raise)
   @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
   (tiled drag swaps on hover with no focus write; no stack/bar/preview/cancel model)
+- `S-awe-sloppy` awesome:awesomerc.lua:581-585 (shipped sloppy focus:
+  `mouse::enter` activates with `raise = false`) and :400-405
+  (shipped button1 binds plain `mouse_click` activate)
+  @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+  (hover focuses without raising; click activates focus plus raise)
+- `S-awe-tresize` awesome:lib/awful/mouse/resize.lua:213-225 (tiled
+  clients delegate to the layout `resize_handler`) +
+  lib/awful/layout/suit/tile.lua:49-69 (`mouse_resize_handler` moves
+  `master_width_factor` to the pointer x)
+  @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+  (edge drag moves mwfact with master/stack reflow)
 - `S-awe-ctl` awesome:awesome.c:111-141 (atexit saves client order to the root
   property) + :539-544 (awesome_restart re-execs) + awesome:awesomerc.lua:64,234
   (restart menu plus key) + :206 (wibox.widget.systray hosts client icons) +
@@ -742,6 +776,19 @@ Legend:
   (empty desktops retained absent an explicit removal verb)
 - `S-bsp-drag` bspwm:src/window.c:487-545 (`move_client` tiled hover-swap vs float move, cross-monitor transfer) and src/pointer.c:58-68 (buttons grabbed with the modifier) and :248-307 (ACTION_MOVE grab/track, button-release end only) and src/events.c:40-89 (`handle_event` switch has no key-press cancel branch) @e11eff4cb3333216ad03c815609a4ed79e08929c
   (pointer drag swaps on hover; no zones/cancel/preview)
+- `S-bsp-ptrfocus` bspwm:src/settings.h:54 (`FOCUS_FOLLOWS_POINTER`
+  defaults false) and :57 (`CLICK_TO_FOCUS` defaults button1) and
+  doc/bspwm.1.asciidoc:759-772 (`click_to_focus`, `focus_follows_pointer`,
+  `pointer_follows_focus` settings)
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (shipped hover stays unfocused while button1 click focuses)
+- `S-bsp-ptrresize` bspwm:src/pointer.c:259-307 (`track_pointer`
+  motion drives `resize_client` with pointer deltas) and
+  src/settings.h:30 (`pointer_modifier` defaults Mod4) and
+  src/window.c:547-590 (tiled resize adjusts the fence split_ratio
+  by dx/fence-width clamped to [0,1] with reflow)
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (modifier resize_side/corner grab moves the shared fence share)
 - `S-bsp-restore` bspwm:src/query.c:38-67 (`query_state` dump incl history/stack) and :116-183 (node/client dump incl sticky/state) and src/restore.c:111-162 (restart replaces monitors, restores history/stack) and :345-409 (node sticky restore) and :436-474 (client state restore) and src/bspwm.c:154-156 (startup `-s` restore) and :275-326 (restart dump + re-exec) and src/messages.c:1250-1263,1317-1320 (`-d`/`-l`/`-r` verbs) @e11eff4cb3333216ad03c815609a4ed79e08929c
   (restart persists sticky/state/focus)
 - `S-bsp-fs` bspwm:src/messages.c:287-318 (`node -t --state` incl `~` alternate) and src/tree.c:1889-1943 (`set_state` last_state memory, vacant in place) and :1963-1987 (`set_fullscreen`) and src/events.c:474-490 (EWMH fullscreen ADD/REMOVE/TOGGLE with ignore gates) and src/settings.h:60 (default 0, honored both ways) @e11eff4cb3333216ad03c815609a4ed79e08929c
@@ -949,6 +996,25 @@ Legend:
   hit-tests with reserved/input/floating extents and begins a drag;
   decoration `DRAG_START` hit skips compositor drag)
   @19fb395d45314960e6f79f17994a84094f1cd4f6
+- `S-hyp-follow`
+  Hyprland:src/config/values/ConfigValues.cpp:380-385
+  (`input:follow_mouse` defaults 1, threshold 0, `mouse_refocus` true) +
+  src/managers/input/InputManager.cpp:237-273 (`mouseMoveUnified`
+  FFM vs CLICK focus reasons) and :900-918 (press refocuses with
+  raise unless `follow_mouse=3`)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (shipped hover-focus policy plus plain-click focus; drag press is
+  `S(S-hyp-drag)`)
+- `S-hyp-edgeresize`
+  Hyprland:src/config/values/ConfigValues.cpp:181-184
+  (`general:resize_on_border` defaults false, grab extend 15) +
+  src/managers/input/InputManager.cpp:880-895 (border click begins
+  an MBIND_RESIZE drag only when enabled) +
+  src/layout/supplementary/DragController.cpp:27-29,432-446
+  (resize modes with min/max clamp)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (bare edge starts no resize at shipped default; enabled-variant
+  share outcome TBD)
 - `S-hyp-wsrule`
   Hyprland:src/config/shared/workspace/WorkspaceRule.hpp:11-45
   (workspace rule fields: monitor/persistent/gaps/border/layout, no
@@ -1090,6 +1156,23 @@ Legend:
   and src/con.c:1498-1532 (`con_move_to_target` split-target descends to focus)
   and src/con.c:2580-2659 (`con_swap` leaf swap)
   @903bcd518df32b0e055b17f5da3f988a0187fd3d
+- `S-i3-ffm` i3:src/config_directives.c:447-448 (`focus_follows_mouse`
+  sets `disable_focus_follows_mouse`) and src/handlers.c:95,175,219
+  (enter-notify focus gated on that flag)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (enter-notify focus gated on that flag, enabled at shipped
+  zero-init default; plain click is `S(S-i3-click)`)
+- `S-i3-click` i3:src/click.c:205-277 (any workspace click resolves
+  the workspace plus floating con, then `con_activate` focuses the
+  clicked con or its focused descendant)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (plain click focuses B)
+- `S-i3-border` i3:src/click.c:24-71 (`tiling_resize_for_border` pair
+  search plus directional dispatch) and :85-105 (border button paths) +
+  src/resize.c:127-169 (`percent_for_1px` minimum plus pair percent
+  share moves)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (border drag moves percent shares with a 1px clamp)
 - `S-i3-wiz` i3:i3-config-wizard/main.c:827-832 (existing-config exits,
   no overwrite) @903bcd518df32b0e055b17f5da3f988a0187fd3d
   (first-run writer guard; no Compatible preset/stale-choice model in the
@@ -1252,6 +1335,12 @@ Legend:
   resize + `shiftMaster`) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
   (any release floats, even zero-move; raw frames retained off-workarea;
   hints can shape extents; no zones, preview, or restore)
+- `S-xmo-ffm` xmonad:src/XMonad/Config.hs:173-174
+  (`focusFollowsMouse = True` default) and :177-178
+  (`clickJustFocuses = True` default) and src/XMonad/Core.hs:133
+  (entry events may change focus)
+  @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+  (shipped hover-focus plus click-focuses policies)
 - `S-xmo-out` xmonad-contrib:XMonad/Actions/Navigation2D.hs:511-534
   (`windowSwap` same-layer stack-position swap via `swap` :856-898
   retaining mover focus; `windowToScreen` moves via `W.shift`; `screenGo`
@@ -1548,6 +1637,22 @@ Legend:
   `ensureViewport`) and :5562-5570 (`sortWindows` stacking order)
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
   (directional switch incl MRU-topmost member pick; cycle verbs TBD)
+- `S-pap-focusmode` PaperWM:tiling.js:36-37 (`FocusModes` DEFAULT 0,
+  CENTER 1, EDGE 2) and :266 (`focusMode` DEFAULT) and :4577-4594
+  (`getDefaultFocusMode` falls back to DEFAULT)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (viewport-mode inventory, not evidence of host hover/click producers)
+- `S-pap-grab` PaperWM:grab.js:55-145 (`MoveGrab.begin` plus 300px
+  vertical / Ctrl / monitor-change DnD trigger with minimaps hidden)
+  and :437-556 (`end` inserts at the DnD zone with activation,
+  temporarily makes scratch off-zone then unmakes on animation
+  completion, or stays with activation when DnD never began) +
+  scratch.js:137-143 (unmake clears float/above/sticky) +
+  tiling.js:4520-4535 (MOVING grab begins the PaperWM move) and
+  :4536-4560 (RESIZING_* builds a no-op marker `ResizeGrab`)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (pointer DnD zone model with minimaps hidden; resize grabs are
+  native-Mutter journeys)
 - `S-kar-focus` karousel:src/lib/keyBindings/Actions.ts:6-60
   (`focusLeft/Right/Up/Down/Next/Previous/Start/End`, tiled-only
   dispatch via `doIfTiledFocused` in definition.ts:10-53)
@@ -1569,6 +1674,17 @@ Legend:
   strip with a restore marker)
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
   (fullscreen focus branch; exit journey untraced)
+- `S-pan-mouse` paneru:src/ecs/mouse.rs:100-180 (`mouse_moved_trigger`
+  focuses the window under the cursor when FFM is enabled, 50ms
+  throttle; interaction-tested) and :207-253 (`mouse_down_trigger`
+  marks held plus `mouse_up_trigger` reshuffles around the clicked
+  window) and :294-360 (`mouse_resize_trigger` resizes width by 5x
+  pointer delta while the resize modifier holds) +
+  src/lua/convert.rs:174-175 (`MouseDragged` forwards to Lua only, no
+  layout drag model)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (hover focus plus click reshuffle plus modifier resize; host
+  click-focus and pointer-drag journeys stay TBD)
 - `S-ours-focus` plasma-auto-tiler:crates/tiler-core/src/directional.rs:50-64
   (axis/step for direction) and :1068-1135 (`descend_focus_target`
   plus `plan_focus`: matching-axis climb, same-axis edge child else
@@ -1649,8 +1765,10 @@ Legend:
   (`possible_resizes` edge walk) and :2477-2512 (`resize_request` nearest
   matching-edge-axis ancestor) and :2514-2600 (pixel `resize` with
   pair/leaf minima) + data/keybindings.ron:91-92 (`Resizing`
-  Outwards/Inwards) @3d55cba06c9cf6f27609cdefb520f7857dba20af
-  (keyboard pixel resize; settled frames stay TBD)
+  Outwards/Inwards) + src/input/mod.rs:895-900 (tiling resize-fork
+  handle between tiles keeps keyboard focus on grab)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (keyboard pixel resize plus fork handle; dragged share TBD)
 - `S-hyp-resize`
   Hyprland:src/layout/algorithm/tiled/dwindle/DwindleAlgorithm.cpp:312-360
   (`resizeTarget` pixel delta plus edge/smart-resizing path) +
@@ -1714,6 +1832,16 @@ Legend:
   increase/decrease, centered-mode only)
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
   (contextual step; reversal not established; no edge counterpart)
+- `S-kar-ptr` karousel:src/lib/world/clientState/Tiled.ts:71-115
+  (interactive move/resize session hooks: move untiles under
+  `untileOnDrag` else marks moving with retile-back on finish; resize
+  records start width plus neighbor) and :144-153 (width-change
+  handler calls `onUserResizeWidth`) +
+  src/lib/config/definition.ts:122-126 (`untileOnDrag` defaults true)
+  and :137-141 (`resizeNeighborColumn` defaults false)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (pointer move untiles at shipped default; edge resize writes the
+  dragged column width with a stable neighbor)
 - `S-pan-resize` paneru:src/types/commands.rs:152-180 (`ResizeDirection`
   Grow/Shrink) and :226-242
   (`Resize`/`SetWidth`/`Equalize`/`Balance`; no edge-targeted verb) +
@@ -1758,6 +1886,13 @@ Legend:
   gesture maps to `CoreCommand::PointerResize`, the Windows resize path)
   @9241c94
   (no Windows keyboard-resize trigger; keyboard legs have no counterpart)
+- `S-ours-mou` plasma-auto-tiler:crates/tiler-windows/src/tiling_sys.rs:13017-13045
+  (pointer gestures map to `CoreCommand::DragDrop`/`PointerResize`) +
+  kwin/src/plan-adapter.ts:90 (`PlanOp` incl `pointer-resize`/`drag-drop`)
+  and :1784-1789 (drop-intent correlation for both families)
+  @9241c94
+  (verb inventory only, never behavior: gesture verbs exist on both
+  platforms while every host click/hover/share/drop outcome stays TBD)
 - `S-nir-min` niri:src/layout/scrolling.rs:4589-4620 (tile width clamped
   to min/max) @ed22699d99462f61ab171472d3ea67e844ea580d
   (admission/focus remainder TBD)
@@ -2363,6 +2498,28 @@ Legend:
   down`; miss returns false with no focus change)
   @ed22699d99462f61ab171472d3ea67e844ea580d
   (float-to-float search and miss behavior)
+- `S-nir-ffm` niri:src/niri.rs:6790-6840 (opt-in pointer-entry
+  activation without raising, optional scroll threshold) and
+  resources/default-config.kdl:68-70 (shipped option commented out) +
+  src/input/mod.rs:2626,2727 (pointer-motion focus dispatch) and
+  :3031-3033,3097-3106 (plain press activates and forwards the event)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (shipped hover off; named enabled variant and ordinary click focus)
+- `S-nir-clientgrab` niri:src/handlers/xdg_shell.rs:71-182
+  (valid same-client move request starts MoveGrab with viewport
+  scrolling enabled) and :184-309 (client edge-resize request)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (client titlebar/edge producers exist, separate from modifier grabs)
+- `S-nir-drag` niri:src/input/move_grab.rs:82-117 (release runs
+  `activate_window` when still recognizing else `interactive_move_end`;
+  no key path in the pointer-grab impl) and :183-219 (8px gesture
+  threshold before the move begins) and :221-260 (moving tile tracks
+  the output with focus) + src/layout/mod.rs:3824-3884
+  (`interactive_move_begin`) and :3885-4060 (update removes the tile
+  and reinserts at the pointer insert position) and :4112-4210
+  (end re-inserts or re-activates)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (pointer move/remove/reinsert path; drop zones and exact index TBD)
 - `S-nir-ptr` niri:src/input/mod.rs:2929 (Mod+Left activates plus move
   grab) and :2964-3020 (Mod+Right edge resize grab; floats skip the
   double-click gesture) + src/input/move_grab.rs:173-260 (motion delta;
@@ -2606,8 +2763,8 @@ rows, preserved; plus 6 insertion scenarios from piece B1, 4 focus
 scenarios from piece B2, 3 move scenarios from piece B3, 4 resize
 scenarios from piece B4, and 4 layout-command scenarios from piece B5,
 plus 7 workspace scenarios, 3 minimize scenarios, 2 maximize scenarios,
-2 groups scenarios, 3 floating scenarios, 3 close scenarios and
-4 multi-output scenarios, GWT only).
+2 groups scenarios, 3 floating scenarios, 3 close scenarios,
+4 multi-output scenarios and 3 mouse scenarios, GWT only).
 This index retains purpose, row-addition rule, notation,
 profiles, evidence tags/legend, variant hooks, and deferred. Existing wide
 tables moved unchanged; all new scenarios use the GWT form below.
@@ -2628,7 +2785,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Floating | [floating.md](reference-outcomes/floating.md) | R-FLT-01..14 (14) | none (R-FLT-12..14 landed with scrolling backfill) |
 | Close / reflow | [close.md](reference-outcomes/close.md) | R-CLOSE-01..05 (5) | none (R-CLOSE-03..05 landed with scrolling backfill) |
 | Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..06 (6) | none (R-OUT-03..06 landed with scrolling backfill) |
-| Mouse | [mouse.md](reference-outcomes/mouse.md) | R-DRAG-01..08 (8) | R-MOU-01..03 |
+| Mouse | [mouse.md](reference-outcomes/mouse.md) | R-DRAG-01..08 + R-MOU-01..03 (11) | none (R-MOU-01..03 landed with scrolling backfill) |
 | Special windows | [special-windows.md](reference-outcomes/special-windows.md) | none yet | R-SPC-01..05 |
 | Activation | [activation.md](reference-outcomes/activation.md) | none yet | R-ACT-01..02 |
 | Restart / persistence | [restart-persistence.md](reference-outcomes/restart-persistence.md) | R-START-01..03 + R-CTL-01..07 (10) | R-RST-01..02 |
