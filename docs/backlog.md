@@ -252,7 +252,10 @@ decisions of 2026-09-24 are under
   scrolling profiles niri/PaperWM/karousel/paneru added, 125 scenarios
   (67 new incl. 10 column mechanics), all 14 profiles per new scenario;
   1198 assessed cells: 372 evidenced, 237 partial, 224 TBD, 328 qualified,
-  37 mixed. Source filling makes no product decision.
+  37 mixed. All 58 historical rows migrated to GWT with separate Ours
+  KDE/Windows outcomes (`c365fca`..`21f025d`; combined Ours text kept
+  under both for R-MAX-01, R-CTL-02/05/06/07). Source filling makes no
+  product decision.
   [Cross-WM consensus analysis](research/reference-wm-consensus.md) Table A
   now lists 24 Ours-vs-strong-consensus differences with recommendations
   (see Open user decisions), plus strong-consensus predicates where Ours is
@@ -662,8 +665,14 @@ All items below shipped offline with no live result claimed.
   R-OUT-04 output send, R-MAX-09 fullscreen send, R-SPC-04 fixed-size
   float, R-RST-01 float identity across restart, R-RSZ-01 Windows keyboard
   resize, R-GRP-03) and the R-DRAG-07/08 splits.
-- Live-test environment plan for the 508-cell matrix queue (user idea:
-  preconfigured per-WM VMs, possibly a nix config each).
+- Live-test VMs for the 508-cell matrix queue: proposal `c17af1e`
+  ([proposal](research/live-test-vms/proposal.md)) recommends one flake
+  with a NixOS `build-vm` config per WM at the pinned source commits,
+  shared fixture clients and an observation helper; first slice
+  i3/sway/bspwm (50 cells; niri instead of bspwm if scrolling evidence is
+  the priority), 8-14 authoring days, one guest at a time (4 GiB guest RAM,
+  80-120 GiB disk). Needs: approve route, slice and budget, then authorise
+  implementation.
 - Review of 2026-10-03/04 autonomous provisional choices (all marked
   "Provisional, to discuss" in [decisions](decisions.md)): mise rolling
   versions, Windows settings/tray/presets, drag producers,
