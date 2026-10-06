@@ -1,6 +1,6 @@
 # Scrollable-column mechanics (reference outcomes)
 
-Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. No existing column rows to backfill (0 existing rows, 0 cells). Shared lifecycle actions reuse model-qualified existing/new IDs; no second column lifecycle inventory. Candidate proposals (not evidence) are listed in [reference-matrix-expansion.md](../../changes/reference-matrix-expansion.md).
+Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles, evidence legend, and variant hooks live in the index; `S()`/`D()` keys below resolve there. No existing column rows to backfill (0 existing rows, 0 cells). Shared lifecycle actions reuse model-qualified existing/new IDs; no second column lifecycle inventory. Approved candidates and final queue are recorded in [reference-matrix-expansion.md](../../changes/archive/reference-matrix-expansion.md).
 
 ## New scenarios (GWT; fixtures/actions/discriminators per the approved expansion record)
 

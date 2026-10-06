@@ -3121,6 +3121,20 @@ Legend:
 | V-R4-DIR | Exhausted horizontal move: cross-output vs no-op vs workspace cycle | `D-dec-cos` selects cross-output R4; Up/Down excluded |
 | V-DRAG-ZONE | Drop zones: edge/interior/stack mapping; centre-stack refused | `D-dec-cos` + `D-dec-nest` select split-only |
 
+## Coverage accounting
+
+- 125 scenarios: 58 historical plus all 67 approved additions.
+- 1198 expansion coverage cells: 67x14 new, 58x4 scrolling assessments,
+  and 2x14 explicit-swap legs. Mutually exclusive semantic status totals:
+  evidenced 372, partial 237, TBD-only 224, qualified-only 328, mixed 37.
+  Mixed includes separate qualified/applicable legs; it does not mean a no-op.
+- 522 historical wide-table cells remain in their original nine-outcome
+  form (eight references plus combined Ours); they are preserved separately,
+  without retrospectively assigning the new status classes. Total recorded
+  coverage cells: 1720; cells are not a uniform 125x14 grid.
+- [Archived expansion record](../changes/archive/reference-matrix-expansion.md)
+  holds final accounting, source/inventory/native-test queue and residual work.
+
 ## Area files
 
 Scenario rows live in area files under `reference-outcomes/` (58 original
@@ -3147,7 +3161,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | R-LAY-01..04 (4) | none (landed in piece B5) |
 | Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..14 (14) | none (R-WS-08..14 landed with scrolling backfill) |
 | Minimize | [minimize.md](reference-outcomes/minimize.md) | R-MNZ-01..03 (3) | none (landed) |
-| Maximise / fullscreen | [maximize-fullscreen.md](reference-outcomes/maximize-fullscreen.md) | R-MAX-01..07 (7) | R-MAX-08..09 |
+| Maximise / fullscreen | [maximize-fullscreen.md](reference-outcomes/maximize-fullscreen.md) | R-MAX-01..09 (9) | none (landed with scrolling backfill) |
 | Groups / stacks | [groups-stacks.md](reference-outcomes/groups-stacks.md) | R-GRP-01..03 (3) | none (R-GRP-02..03 landed with scrolling backfill) |
 | Floating | [floating.md](reference-outcomes/floating.md) | R-FLT-01..14 (14) | none (R-FLT-12..14 landed with scrolling backfill) |
 | Close / reflow | [close.md](reference-outcomes/close.md) | R-CLOSE-01..05 (5) | none (R-CLOSE-03..05 landed with scrolling backfill) |
@@ -3243,18 +3257,18 @@ commits; PaperWM.spoon stays corroboration only, never a separate profile.
 
 ## Deferred areas
 
-- Ratio equalize/balance command: landed as R-RSZ-04 in piece B4
-  (bspwm `-E`/`-B` evidenced `S-bsp-bal` + `S(S-bsp-resize)`; qtile
-  `normalize` and karousel `columnsWidthEqualize` evidenced; other
-  profiles TBD or no-counterpart). No product decision.
+- All approved behavioral areas are assessed, including ratio balance
+  (R-RSZ-04), workspace lifecycle (R-WS-03/10/13), and column mechanics
+  (R-COL-01..10). Scrolling uses its own model, never assumed H/V equivalence;
+  PaperWM.spoon remains corroboration, not a separate profile.
+- Applicable unknown outcomes remain TBD. Source/inventory checks and native
+  journeys are grouped by environment in the archived expansion record;
+  qualified absent fixtures/verbs are not live no-op cases.
+- Product choices remain pending batch review of the consolidated
+  [consensus Table A](../research/reference-wm-consensus.md#table-a-strong-cross-family-consensus-where-ours-differs-24-consolidated).
+- Existing wide-table migration and historical-cell status recensus remain
+  separate work; the expansion preserved those cells.
 - Gaps/borders/corners/active indication: metrics exist (`D-ref`
   section 9) but are styling, not behavior variants; out of scope.
-- Dynamic workspace create/remove/pin: covered by `D-ref` section 7;
-  add rows only when trailing-empty/persist semantics are disputed.
 - Fullscreen games bypass: all three agree cover-and-restore
   (`D-ref` section 10); no discriminating row needed now.
-- Scrollable-column WMs (niri/PaperWM/karousel/paneru): column/viewport
-  semantics live in [column-mechanics.md](reference-outcomes/column-mechanics.md)
-  under the column model above, never as assumed H/V split-tree
-  equivalence. PaperWM.spoon stays corroboration only, never a separate
-  profile.

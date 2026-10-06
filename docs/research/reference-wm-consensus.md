@@ -1,15 +1,9 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
-Date: 2026-10-06. Base: main HEAD `9de7274`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (115 rows:
-58-row historical audit preserved below, plus 6-row insertion expansion
-plus 4-row focus expansion plus 3-row move expansion plus 4-row resize
-expansion plus 4-row layout expansion plus 7-row workspace expansion
-plus 3-row minimize expansion plus 2-row maximize expansion
-plus 2-row groups expansion plus 3-row floating expansion
-plus 3-row close expansion plus 4-row multi-output expansion
-plus 3-row mouse expansion plus 5-row special-windows expansion
-plus 2-row activation expansion plus 2-row restart expansion).
+Date: 2026-10-07. Base: main HEAD `b942020`.
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (125 rows:
+115-row audit preserved below, plus 10-row column-mechanics expansion
+[R-COL-01..10](../spec/reference-outcomes/column-mechanics.md)).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -21,7 +15,8 @@ workspace behavior, COSMIC movement and groups), [post-Windows audit](cross-plat
 [workspace tiling](../changes/archive/windows-workspace-tiling.md),
 [alt-tab](windows-port/alt-tab-hidden-workspaces.md).
 
-Scope: classify all 58 rows from matrix cells only; no product code, matrix,
+Scope: classify all 125 rows from matrix cells only (58-row historical
+audit plus expansion sections, each preserved); no product code, matrix,
 decision, or record edits; no live testing.
 
 ## Evidence rule
@@ -121,41 +116,47 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MIN-02 | same | U U U U U U U S | 8/0 | U7 | A (same) |
 | R-MIN-03 | same; all 8 tile the oversized sole (no auto-float) | U U U U U U U S | 8/0 | U7 | A (same; bspwm opt-in origin clamp off default) |
 
-Coverage: 58/58 rows audited, eight reference classifications per row.
-Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups/floating/close/multi-output/mouse/special-windows/activation/restart are per-predicate: A 23, B 20, U 19 full rows + two KDE legs, C 19, W 11;
+Coverage: 125/125 rows audited (115 below plus 10 column rows in the
+column section), eight reference classifications per row.
+Summary counts including insertion/focus/move/resize/layout/workspace/minimize/maximize/groups/floating/close/multi-output/mouse/special-windows/activation/restart/column are per-predicate: A 24, B 20, U 19 full rows + two KDE legs, C 19, W 11;
 multi-leg rows overlap, and the full audit also covers unrelated rows.
+Table A is the single consolidated differences list (24 rows: A23 plus
+the R-RSZ-01 Windows keyboard-trigger gap, whose KDE match stays in B).
 
-## Table A: strong cross-family consensus where ours differs (23)
+## Table A: strong cross-family consensus where ours differs (24, consolidated)
 
 Ours differs = established follow/refusal/etc on at least one platform,
 or an inventory-evidenced verb/state gap on both platforms (missing verbs
-never vote as agreement).
+never vote as agreement). Recommendations queue batch user review; the
+selected deliberate divergences retain selected policy; consensus never
+overrides standing decisions; nothing is selected here.
 
-| Row | Consensus | Count | COSMIC | Ours KDE / Windows | Deliberate vs feature absence |
-|---|---|---|---|---|---|
-| R-MOV-08 | exhausted vertical move crosses to the output above | cross-5/8 (H,B,I,S,A), 3/4 fam; Q stays, C/X TBD | TBD | no / no (Up/Down excluded from R4) | Deliberate directional output policy; existing V-R4-DIR exclusion, user reconsideration queued |
-| R-WS-01 send | declared-profile Send stays (leaves source focus) | N5/8, 3/4 fam (C,I,X,S,A) | yes (Send stays; Move is alternate) | follow / follow (recorded verified-transfer policy) | Deliberate command semantics; profile/binding-dependent |
-| R-MOV-03 | flat swap, not same-orientation nested wrap | F4/5ev, 3 fam | observed wrap ER, no source vote | no / no (Engine R2c wrap; fixture-qualified) | Deliberate swaps across models, not exact topology parity |
-| R-FLT-05 | restart retains sticky visibility | V3/3ev thin (B,I,A), 3 fam | unknown | yes / no (normal-float marker consumption); native journey TBD | Deliberate state restoration; missing sticky/restart fixtures excluded |
-| R-FLT-06 refusal | no refusal of overlaid-unfloat toggle | NO4/4ev (C,H,Q,A), 3 fam | yes (unmax-then-admits) | yes-allows / no-refuses (selected B9 is no-refusal) | Deliberate toggle paths; absent native-max fixtures excluded |
-| R-FLT-09 | float-origin right focuses far float G | G5/8, 4/4 fam | yes | yes live-accepted / no (subject refusal; parity pending) | Deliberate focus policies; dissent mixes cross-layer search and absent float-only search |
-| R-MAX-05 | no refusal of app-owned fullscreen toggle | N8/8 | yes | yes (public setter) / no (preimage-gate refusal, standing decision) | Deliberate fullscreen paths, distinct from missing maximize |
-| R-MAX-07 | no size inference; caption cover tiles | T8/8 | yes | yes / no (Windows containment classifies fullscreen) | Deliberate state-based classification |
-| R-MIN-01 | profile-default tiled alloc does not enforce minima | U7/8 | yes | no / no (B6 min-enforced both; KDE skip is the gap) | Default/absent tiled clamps; H/B opt-in clamps disabled |
-| R-MIN-02 | same on shrink | U7/8 | yes | no / no (same B6 split) | Same default-clamp policy, not settled native frames |
-| R-MIN-03 | same, oversized sole tiles | U7/8 | yes | no / no (flag + skip/raise gap) | Same clamp policy; tile admission itself is unanimous |
-| R-DRAG-04 | Esc does not cancel (drop/persist) | D7/8 | yes | no / no (cancel verdict selected; i3 revert is the outlier) | Escape handling mixes normal drop and no cancellation path |
-| R-LAY-01 | parent split orientation flips, same children on the new axis | flip-4/5ev (C,B,I,S vs H geometry-reset no-op), 3/4 fam | yes (ToggleOrientation) | no / no (no orientation verb in any Engine/adapter layer) | Inventory gap, not a rejecting policy; X/Q/A have no counterpart either |
-| R-LAY-04 | alternative layout selected at per-workspace scope, order preserved | scope-6/8 (B,I,S,X,Q,A), 3/4 fam | n/a (global config only) | no / no (no select verb in any Engine/adapter layer) | Ownership differs per profile (desktop/parent/workspace/group/tag); H partial, C global-only |
-| R-WS-08 | previous-view toggle | toggle-5/8 (B,I,S,Q,A), 3/4 fam; H named variant only | no counterpart | no / no (missing history verb) | Inventory gap; PaperWM MRU traversal is non-voting |
-| R-WS-11 edge | relative workspace switch wraps at native inventory ends | wrap-6/8 (C,B,I,S,Q,A), 4/4 fam | yes (default on) | no / no (missing relative-switch verb) | Inventory gap; primary WS3 can be mid-inventory |
-| R-WS-12 hidden transfer | whole workspace/group/tag reassigned to another output | reassign-5/8 (H,B,I,Q,A), 3/4 fam; destination/focus partial | active-only variant | no / no (missing whole-workspace verb) | Inventory gap; counts semantic domain reassignment, not identical mechanisms |
-| R-WS-14 | relative workspace send exists | relative-5/8 (C,H,B,I,S), 3/4 fam; follow policies differ | yes | no / no (missing relative-send verb) | Inventory gap; H previous is MRU, not numeric decrement |
-| R-MAX-09 full | fullscreen window carries its state to the target workspace (not restored first) | carry-5/8 (B,I,S,Q,A), 3/4 fam; H/C TBD; niri window-send strips (scrolling, non-voting) | TBD (transfer sourced, carry untraced) | KDE TBD / Windows refuses fullscreen, carries maximized | Windows refusal differs; KDE native-send outcome untraced; max leg has no consensus |
-| R-GRP-03 close | closed active tab leaves a retained 2-tab group focused on C | retained-4/4ev plus focus-C-4/4ev (C,H,I,S), 3/4 fam; B/X/Q/A qualified | yes (active tab C) | no / no (no tab carrier and no close-tab verb in any Engine layer) | Inventory gap under standing V-GROUP-STACK deferral; foreign direction recorded if tabs ever specified |
-| R-OUT-04 send | explicit output transfer carries; declared follow forms follow the mover | carry-8/8 and follow-7/8 (C/H/B/I/S/Q/A), 4/4 fam; X target-stack focus only, source refocus TBD | yes (MoveToOutput follows, SendToOutput stays) | no / no (no send verb in any Engine/adapter layer; directional CrossOutput move is the separate R-OUT-01 verb) | Verb-shape gap, not a rejecting policy; send vs directional-move verbs distinguished |
-| R-SPC-04 fixed | fixed-size window floats instead of tiling | float-8/8 (C,H,B,I,X,S,Q,A), 4/4 fam | yes (min==max is dialog) | tiles / tiles-with-hint-clamp (Normal kind observed; no fixed-size exception) | Type-exception gap; Ours KDE native clamp TBD |
-| R-RST-01 float | ordinary float status survives the owner restart | recover-4/4ev (B/I/X/A), 3/4 fam; Q float outcome TBD | TBD (native restart journey) | no / no (intentional floats reset: session-local id set on KDE, session-local float store cleared on stop on Windows) | State persistence gap; preserve intentional-float identity across owner restart |
+| Row | Consensus | Count | COSMIC | Ours KDE / Windows | Deliberate vs feature absence | Recommendation |
+|---|---|---|---|---|---|---|
+| R-MOV-08 | exhausted vertical move crosses to the output above | cross-5/8 (H,B,I,S,A), 3/4 fam; Q stays, C/X TBD | TBD | no / no (Up/Down excluded from R4) | Deliberate directional output policy; existing V-R4-DIR exclusion, user reconsideration queued | Revise to cross after local movement is exhausted |
+| R-WS-01 send | declared-profile Send stays (leaves source focus) | N5/8, 3/4 fam (C,I,X,S,A) | yes (Send stays; Move is alternate) | follow / follow (recorded verified-transfer policy) | Deliberate command semantics; profile/binding-dependent | Retain selected follow semantics |
+| R-MOV-03 | flat swap, not same-orientation nested wrap | F4/5ev, 3 fam | observed wrap ER, no source vote | no / no (Engine R2c wrap; fixture-qualified) | Deliberate swaps across models, not exact topology parity | Retain selected R2c wrap |
+| R-FLT-05 | restart retains sticky visibility | V3/3ev thin (B,I,A), 3 fam | unknown | yes / no (normal-float marker consumption); native journey TBD | Deliberate state restoration; missing sticky/restart fixtures excluded | Establish native sticky/restart journey first |
+| R-FLT-06 refusal | no refusal of overlaid-unfloat toggle | NO4/4ev (C,H,Q,A), 3 fam | yes (unmax-then-admits) | yes-allows / no-refuses (selected B9 is no-refusal) | Deliberate toggle paths; absent native-max fixtures excluded | Resolve Windows refusal against selected B9 direction |
+| R-FLT-09 | float-origin right focuses far float G | G5/8, 4/4 fam | yes | yes live-accepted / no (subject refusal; parity pending) | Deliberate focus policies; dissent mixes cross-layer search and absent float-only search | Establish Windows float-subject parity |
+| R-MAX-05 | no refusal of app-owned fullscreen toggle | N8/8 | yes | yes (public setter) / no (preimage-gate refusal, standing decision) | Deliberate fullscreen paths, distinct from missing maximize | Retain standing preimage-gate refusal |
+| R-MAX-07 | no size inference; caption cover tiles | T8/8 | yes | yes / no (Windows containment classifies fullscreen) | Deliberate state-based classification | Classify by window state, not inferred containment |
+| R-MIN-01 | profile-default tiled alloc does not enforce minima | U7/8 | yes | no / no (B6 min-enforced both; KDE skip is the gap) | Default/absent tiled clamps; H/B opt-in clamps disabled | Retain selected B6 |
+| R-MIN-02 | same on shrink | U7/8 | yes | no / no (same B6 split) | Same default-clamp policy, not settled native frames | Retain selected B6 |
+| R-MIN-03 | same, oversized sole tiles | U7/8 | yes | no / no (flag + skip/raise gap) | Same clamp policy; tile admission itself is unanimous | Retain selected B6 |
+| R-DRAG-04 | Esc does not cancel (drop/persist) | D7/8 | yes | no / no (cancel verdict selected; i3 revert is the outlier) | Escape handling mixes normal drop and no cancellation path | Retain selected cancel verdict |
+| R-LAY-01 | parent split orientation flips, same children on the new axis | flip-4/5ev (C,B,I,S vs H geometry-reset no-op), 3/4 fam | yes (ToggleOrientation) | no / no (no orientation verb in any Engine/adapter layer) | Inventory gap, not a rejecting policy; X/Q/A have no counterpart either | Add parent-axis toggle |
+| R-LAY-04 | alternative layout selected at per-workspace scope, order preserved | scope-6/8 (B,I,S,X,Q,A), 3/4 fam | n/a (global config only) | no / no (no select verb in any Engine/adapter layer) | Ownership differs per profile (desktop/parent/workspace/group/tag); H partial, C global-only | Add workspace-local layout selection |
+| R-WS-08 | previous-view toggle | toggle-5/8 (B,I,S,Q,A), 3/4 fam; H named variant only | no counterpart | no / no (missing history verb) | Inventory gap; PaperWM MRU traversal is non-voting | Add previous-workspace toggle |
+| R-WS-11 edge | relative workspace switch wraps at native inventory ends | wrap-6/8 (C,B,I,S,Q,A), 4/4 fam | yes (default on) | no / no (missing relative-switch verb) | Inventory gap; primary WS3 can be mid-inventory | Add relative switch on the edge leg |
+| R-WS-12 hidden transfer | whole workspace/group/tag reassigned to another output | reassign-5/8 (H,B,I,Q,A), 3/4 fam; destination/focus partial | active-only variant | no / no (missing whole-workspace verb) | Inventory gap; counts semantic domain reassignment, not identical mechanisms | Add whole-workspace reassignment |
+| R-WS-14 | relative workspace send exists | relative-5/8 (C,H,B,I,S), 3/4 fam; follow policies differ | yes | no / no (missing relative-send verb) | Inventory gap; H previous is MRU, not numeric decrement | Add relative send |
+| R-MAX-09 full | fullscreen window carries its state to the target workspace (not restored first) | carry-5/8 (B,I,S,Q,A), 3/4 fam; H/C TBD; niri window-send strips (scrolling, non-voting) | TBD (transfer sourced, carry untraced) | KDE TBD / Windows refuses fullscreen, carries maximized | Windows refusal differs; KDE native-send outcome untraced; max leg has no consensus | Carry fullscreen state on Windows send; KDE native-send outcome first |
+| R-GRP-03 close | closed active tab leaves a retained 2-tab group focused on C | retained-4/4ev plus focus-C-4/4ev (C,H,I,S), 3/4 fam; B/X/Q/A qualified | yes (active tab C) | no / no (no tab carrier and no close-tab verb in any Engine layer) | Inventory gap under standing V-GROUP-STACK deferral; foreign direction recorded if tabs ever specified | Retain V-GROUP-STACK deferral |
+| R-OUT-04 send | explicit output transfer carries; declared follow forms follow the mover | carry-8/8 and follow-7/8 (C/H/B/I/S/Q/A), 4/4 fam; X target-stack focus only, source refocus TBD | yes (MoveToOutput follows, SendToOutput stays) | no / no (no send verb in any Engine/adapter layer; directional CrossOutput move is the separate R-OUT-01 verb) | Verb-shape gap, not a rejecting policy; send vs directional-move verbs distinguished | Add explicit output-send verb via shared Engine |
+| R-SPC-04 fixed | fixed-size window floats instead of tiling | float-8/8 (C,H,B,I,X,S,Q,A), 4/4 fam | yes (min==max is dialog) | tiles / tiles-with-hint-clamp (Normal kind observed; no fixed-size exception) | Type-exception gap; Ours KDE native clamp TBD | Add fixed-size float admission |
+| R-RST-01 float | ordinary float status survives the owner restart | recover-4/4ev (B/I/X/A), 3/4 fam; Q float outcome TBD | TBD (native restart journey) | no / no (intentional floats reset: session-local id set on KDE, session-local float store cleared on stop on Windows) | State persistence gap; preserve intentional-float identity across owner restart | Preserve intentional-float identity across restart |
+| R-RSZ-01 Windows | explicit pixel-step grow/shrink path | pixel-5/8 (C,H,B,I,S), 3/4 fam; H/B partial for neighbor/reversal | yes | KDE matches (stays B) / Windows no keyboard trigger (`S-ours-winbind`) | Inventory gap, not a rejecting policy | Add Windows keyboard-resize trigger via shared Engine pixel path |
 
 WS-01 notes: H silent (no-follow) path exists alongside profiled follow;
 alternate Move-verb inventory is a 4/4 tie (C/H/B/Q follow vs I/X/S/A
@@ -166,7 +167,7 @@ MoveToWorkspace follow is not a Send vote.
 
 | Row | Consensus | Count | COSMIC | Ours KDE / Windows |
 |---|---|---|---|---|
-| R-RSZ-01 pixel path | explicit pixel-step grow/shrink path | pixel-5/8 (C,H,B,I,S), 3/4 fam; H/B partial for neighbor/reversal | yes | yes KDE / no-counterpart Windows (missing keyboard trigger, not rejecting policy) |
+| R-RSZ-01 pixel path | explicit pixel-step grow/shrink path | pixel-5/8 (C,H,B,I,S), 3/4 fam; H/B partial for neighbor/reversal | yes | yes KDE (Engine pixel path, `S-ours-resize`) / no-counterpart Windows (missing keyboard trigger, `S-ours-winbind`, not rejecting policy; Windows leg consolidated as Table A R-RSZ-01) |
 | R-FOC-02 edge stay | single-output edge focus retains (no wrap, no fallback) | stay-5/8, 3/4 fam (C,H,B,X,A) | yes (no local target, no next output) | yes / yes (Edge refuse, no dispatch) |
 | R-INS-03 empty admission | first open tiles at full work area, newcomer focused | 8/8, 4/4 fam | yes | partial-offline (allocation + desired focus; native activation TBD) |
 | R-WS-02 anchor | return lands at A | A6/6ev (C,B,I,X,S,Q), 4/4 fam | yes (target MRU) | yes (remembered A) |
@@ -1545,3 +1546,65 @@ confirmation):
 Queue cell math: 7 + 1 + 14 + 6 = 28, matching P17 + T7 applicable-TBD
 legs plus M4 applicable full legs (E3 need no tests; Q37 need no
 live fixture: qualified legs never become live no-op tests).
+
+## Column-mechanics closeout: R-COL-01..10 (compact)
+
+Scope: ten GWT scrolling-column scenarios, each with 14 Then profiles
+(140 cells). Tree-only fixtures have no strip counterpart, so most
+original-eight cells are qualified (fixture-inapplicable or
+no-counterpart with pinned inventory evidence); qtile's shipped
+two-column limit qualifies the three-column R-COL-01 fixture. Two
+original-eight partials: qtile R-COL-03 (directional shuffle carries
+across columns, allocation and width recovery TBD) and R-COL-06
+(`toggle_split` flips split/stacked, stacked selection TBD). No new
+original-eight strong votes: denominator, families, and the strength
+rule are unchanged, and scrolling profiles stay a supplemental
+non-voting comparison. Citation keys resolve in the matrix index
+(`S-nir-*`, `S-pap-*`, `S-kar-*`, `S-pan-*`, `S-ours-*`).
+
+Counts (mutually exclusive E/P/T/Q/M): E 18, P 16, T 1, Q 105, M 0
+(140 cells). Tables A/B/C/W/U unchanged. The matrix total is now 125
+rows (115 + 10 new; no backfill reuses IDs).
+
+Supplemental divergences (scrolling-lineage only, never consensus
+votes): preset width cycles with wrap (niri, PaperWM, karousel,
+paneru) vs no preset verb (Ours); consume/expel or slurp/barf column
+join/leave (niri, PaperWM, karousel, paneru) with qtile's directional
+shuffle as the only original-eight partial; minimal-fit vs named
+centering viewport policies; whole-column workspace carry (niri,
+karousel) vs single-window sends; paneru virtual-row moves and
+app-native tab nesting (paneru-only predicates). Ours has no
+column/strip admission, preset, consume/expel, viewport, center,
+display-toggle, column-send, manual-scroll, row, or native-tab
+counterpart on either platform (`S-ours-planops`, `S-ours-grp`,
+`S-ours-resize`, `S-ours-move`, `S-ours-ws`); no column product model
+is selected.
+
+Column live-test queue: 17 applicable unresolved cells (qtile
+R-COL-03/06; niri R-COL-01/07/08; PaperWM
+R-COL-01/02/03/07/08; karousel R-COL-01; paneru
+R-COL-01/03/07/08/09/10). The [archived change record](../changes/archive/reference-matrix-expansion.md)
+consolidates the environment queue and fixtures. No product behavior is changed by this assessment.
+
+## Strong-consensus rows with Ours TBD: native-observation list
+
+Establish the host/adapter journey before any change; none is an
+established difference.
+
+- Insertion/anchor: R-INS-01 position, R-WS-02 after order, R-WS-04
+landing, R-WS-05 float retention, R-CLOSE-02 fresh admission.
+- Focus/raise: R-DRAG-08 press focus, R-MOU-01 click focus, R-FLT-12
+raise path, R-FLT-14 free frame.
+- Close: R-CLOSE-03 sole retention, R-CLOSE-04 float untouched + focus,
+R-CLOSE-05 fullscreen close.
+- Routing/urgency/persistence: R-OUT-05 focused-output routing, R-SPC-01
+transient float, R-SPC-05 hint authority, R-ACT-02 urgency mark/clear,
+R-RST-01 workspace set, R-RST-01 membership, R-RST-01 focus.
+- KDE legs (Windows matches): R-WS-09 remembered-focus return, R-FLT-13
+ordinary-float hidden.
+- Additional semantic legs: R-INS-03 native activation, R-MAX-02 focus
+enter/leave/restore sequence; R-FLT-05 sticky/restart visibility and origin
+is a Table A native prerequisite. R-FLT-11 Windows remains implementation-pending,
+so observation follows implementation. R-FLT-08 live confirmation,
+R-MAX-04 acknowledgements/visuals and R-DRAG-03 exact pixels do not add
+standalone tests: their semantic predicates are already established.

@@ -1,14 +1,124 @@
 # Reference matrix expansion
 
-- Status: active; all 67 candidates landed; final consensus/queue consolidation and archive next.
-- Date: 2026-10-06. Planning baseline: `6848054`.
+- Status: complete and archived; all 67 candidates landed; source assessment closed, product batch review and user native observation remain.
+- Date: 2026-10-06; closed 2026-10-07. Planning baseline: `6848054`.
 - Goal: broaden reference-WM evidence end to end for the cross-platform functional spec, including scrollable columns.
 - Scope: restructure the matrix, then expand all 67 approved candidates in priority order; assess all 58 existing rows for four scrolling profiles; update consensus and the live-test queue. Source/docs evidence only; no product behavior changes, live tests or VM design.
-- Inputs: [matrix](../spec/reference-outcomes.md) (58 original rows, now area files), [consensus](../research/reference-wm-consensus.md) (A/B/U/C/W), root `AGENTS.md`, local pinned reference checkouts.
+- Inputs: [matrix](../../spec/reference-outcomes.md) (58 original rows, now area files), [consensus](../../research/reference-wm-consensus.md) (A/B/U/C/W), root `AGENTS.md`, local pinned reference checkouts.
 - Acceptance: content-preserving split and valid links; every new scenario uses GWT with 14 Then profiles; source-cited outcomes including separate Ours code evidence; applicable unknowns stay TBD; qualified cells do not vote as no-ops; one commit/push per piece; durable format decision promoted. Do not edit principles/backlog or repin the existing eight references.
 - Bounded units accepted: step 1 coverage/model investigation; piece A split and independent migration review; insertion implementation, source-assessment correction, and independent evidence review. Workers loaded `processed-beef-work-unit` and ran sequentially. Lead reviewed diffs, reconciled evidence/counts and maintained this record.
 - Verification: step 1 candidate review passed. Piece-specific checks and accepted evidence are below; documentation/source reading only, no application or live tests.
-- Lifecycle: keep this one record active through review and later expansion pieces; archive after the whole change is accepted.
+- Lifecycle: archived after expansion and final consensus/queue review; proposals and per-piece evidence below are retained as history.
+
+## Final outcome and accounting
+
+- Completed: content-preserving area split, 67 new 14-profile GWT scenarios,
+  all 58 historical rows assessed for four scrolling profiles, two explicit-swap
+  action legs, consolidated consensus recommendations and environment queue.
+  R-COL commit `b942020` pushed after `git pull --rebase`.
+- 125 unique scenarios = 58 historical + 67 new. Expansion coverage is 1198
+  cells = 938 new + 232 scrolling assessments + 28 explicit-swap legs.
+  These are coverage/action cells, not 125x14 interchangeable fixtures.
+- Mutually exclusive expansion statuses: E372 evidenced, P237 partial,
+  T224 TBD-only, Q328 qualified-only, M37 mixed qualified/applicable legs.
+  Semantic predicates govern these accepted per-piece counts, not a lexical
+  search for incidental `TBD`, frame acknowledgements or qualifier words.
+- Historical baseline: 522 preserved wide-table cells = 58x9 (eight references
+  plus combined Ours KDE/Windows). No retrospective E/P/T/Q/M census of those
+  cells was performed. Total recorded coverage cells = 1720 (1198 + 522).
+- R-COL: 140 cells E18/P16/T1/Q105/M0; 17 applicable unknowns. Width cycles
+  wrap in all four scrolling profiles; focus-scroll policy, manual scroll,
+  column-transfer atomicity, paneru virtual rows/native tabs differ by model.
+- Consensus: one consolidated Table A, 24 differences (previous A23 plus
+  Windows keyboard-resize trigger); B20, U19 full predicates plus two KDE legs,
+  C19, W11. Overlapping predicates/platform legs are not a scenario partition.
+  Recommendations do not select behavior or change the original-eight strength
+  denominator; scrolling evidence is supplemental.
+- Durable format decision already promoted in `docs/decisions.md`; no new
+  product behavior or decision selected. No live tests, dependency installs,
+  VM setup, principles/backlog edits or reference repins.
+
+## Consolidated source/inventory/native-test queue
+
+- Expansion queue: 491 applicable unresolved cells = P237 + T224 + 30
+  applicable-TBD M cells. Seven M cells need no test: R-FLT-12 i3/sway/niri
+  (raise established, lower absent), R-CLOSE-05 bspwm/i3 (full established,
+  max absent), R-MOU-03 i3/PaperWM (cross-output established, switcher absent).
+  E and Q alone add no live cases.
+- Supplemental historical Ours prerequisites: 17 platform cells: both platforms
+  R-INS-01, R-WS-02/04/05, R-CLOSE-02, R-DRAG-08, R-FLT-05 and R-MAX-02;
+  Windows-only R-FLT-11 is implementation-pending, not yet runnable.
+  Queue total: 508 cells, 507 potentially testable after inventory/fixture checks,
+  one awaiting implementation. This queue covers expansion unknowns plus
+  strong-consensus Ours/native prerequisites, not every old reference-cell TBD.
+- IDs below omit the `R-` prefix; slash lists share the family prefix and
+  `..` denotes an inclusive range. Counts are cells: PaperWM MOV-01 and MOV-03
+  each have backfill and explicit-swap legs; paneru MOV-01 likewise. Other
+  max/full, modal, next/previous and drag/switcher variants need fresh fixtures
+  within the same counted cell. Per-area queue tables below retain exact
+  requested predicates, preparation and reasons source tracing stopped.
+
+| Environment / profile | Expansion cells | Historical Ours supplements | Total | Queued IDs / action legs |
+|---|---:|---:|---:|---|
+| COSMIC | 29 | 0 | 29 | ACT-02; CLOSE-05; FLT-12; GRP-02; INS-04/06/07/08; MAX-08/09; MNZ-02/03; MOU-01..03; MOV-01/03 explicit swap, MOV-06..08; OUT-03/06; RST-01/02; RSZ-04; SPC-01..03; WS-12 |
+| Hyprland/Dwindle | 37 | 0 | 37 | CLOSE-03/04; FLT-12/13; FOC-01/03/04; INS-04..07; LAY-04; MAX-08/09; MNZ-01..03; MOU-02/03; MOV-01/03 explicit swap, MOV-06/07; OUT-03/05/06; RST-02; RSZ-01..04; SPC-01..03; WS-09/10/12 |
+| bspwm | 19 | 0 | 19 | CLOSE-03; FLT-12; FOC-03/04; INS-04..08 (06 full only); MOU-01/03; OUT-06; RST-02; RSZ-01..03; SPC-02/03; WS-12 |
+| i3 | 13 | 0 | 13 | GRP-02; INS-04/06/07/08 (06 full only); MOV-06; OUT-06; RST-02; RSZ-04; SPC-01..03; WS-12 |
+| xmonad/Tall+Navigation2D | 22 | 0 | 22 | ACT-02; CLOSE-03..05 (05 full only); FLT-12; FOC-03; INS-04..07 (06 full only); MAX-09 full; MNZ-01..03; MOU-03; MOV-08; OUT-04/06; RST-02; RSZ-04; SPC-02/03 |
+| sway | 18 | 0 | 18 | CLOSE-05 full; GRP-02; INS-04/06/07/08 (06 full only); MNZ-01..03; MOU-03; MOV-06; OUT-06; RST-02; RSZ-04; SPC-01..03; WS-12 |
+| qtile/Columns | 21 | 0 | 21 | ACT-01; COL-03/06; FOC-01; INS-04..08; MAX-08; MNZ-01..03; MOU-03; MOV-06; OUT-06; RST-01/02; SPC-02/03; WS-12 |
+| awesome/tile | 19 | 0 | 19 | ACT-01/02; FOC-03; INS-04..08; MNZ-02/03; MOU-03; OUT-06; RST-01/02; RSZ-04; SPC-02/03; WS-12/14 |
+| niri | 41 | 0 | 41 | CLOSE-02; COL-01/07/08; DRAG-01..08; FLT-01/06/13; FOC-01; GRP-03; INS-01..08; MAX-01; MIN-01..03; MOU-02/03; OUT-05/06; RST-02; RSZ-04; SPC-02/03/05; WS-02/04/07 |
+| PaperWM / GNOME Shell | 73 | 0 | 73 | ACT-01/02; CLOSE-04/05; COL-01/02/03/07/08; DRAG-01..04/06/07/08; FLT-02/05/08..14; FOC-03; GRP-02/03; INS-01..08; MAX-01/06/09; MIN-01..03; MNZ-01..03; MOU-01/02; MOV-01/02/03/05/06/08 plus MOV-01/03 explicit swap; OUT-06; RST-01/02; RSZ-01/04; SPC-01/02/03/05; START-01..03; WS-02/04/05/09/12/14 |
+| karousel / KWin, Lazy | 58 | 0 | 58 | ACT-01/02; CLOSE-02/04; COL-01; DRAG-02..08; FLT-01/02/05/06/12/13/14; FOC-01; GRP-03; INS-01..08; MAX-01/06/08/09; MIN-01..03; MNZ-01..03; MOU-01/03 (03 switcher only); RST-01/02; RSZ-01; SPC-01..05; START-01..03; WS-01/02/04/05/09/14 |
+| macOS / paneru | 82 | 0 | 82 | ACT-01/02; CLOSE-01..05; COL-01/03/07..10; DRAG-01..08; FLT-01/02/03/05..14; FOC-01/02/04; GRP-02/03; INS-01/03..08; MAX-01/02/04/06/08/09; MIN-01..03; MNZ-01..03; MOU-01..03; MOV-01/05/06/08 plus MOV-01/03 explicit swap; OUT-03/05/06; RST-01/02; RSZ-01; SPC-01..05; WS-01/02/04/05 |
+| Ours KDE / KWin-Plasma | 31 | 8 | 39 | ACT-01/02; CLOSE-03..05; FLT-12..14; INS-03..08; MAX-09; MNZ-01..03; MOU-01..03; OUT-05/06; RST-01/02; SPC-01..05; WS-09; supplements INS-01, WS-02/04/05, CLOSE-02, DRAG-08, FLT-05, MAX-02 |
+| Ours Windows | 28 | 9 | 37 | ACT-01/02; CLOSE-03..05; FLT-12..14; INS-03..08; MNZ-01..03; MOU-01..03; OUT-05/06; RST-01/02; SPC-01/02/03/05; supplements INS-01, WS-02/04/05, CLOSE-02, DRAG-08, FLT-05, MAX-02, FLT-11 (implementation first) |
+| Total | 491 | 17 | 508 | Counted coverage cells, not test-run count |
+
+### Environment requirements and residual work
+
+- Per-reference pin and shipped config in the index; retain named policy
+  variants, exact geometry/history and fixture-only routing rules. Inventory
+  checks first for unestablished split/preselect, balance, parent/child,
+  join/leave, atomic-send, relative-send and manual-scroll verbs. A missing
+  native command or faithful fixture cannot become an agreeing live no-op.
+- Linux environments: separate reference-WM sessions; PaperWM needs GNOME
+  Shell, karousel needs KWin and its single-screen fixture. COSMIC restart
+  must first establish a client-preserving journey. X11 typed-window fixtures
+  and native xdg fixtures remain distinct; niri X11 cases need its working
+  satellite route. Hyprland return-focus cases record shipped pointer policy.
+- Ours KDE: production KWin/Plasma activation, return-focus, visibility,
+  native minimize/max/full close/send, hint reactions, float stacking/gestures,
+  routing, attention and restart. The send prototype is dev-only evidence,
+  not production-native delivery. Follow `docs/live-kwin-testing.md` before
+  any future live work and obtain separate mutation authorization.
+- Ours Windows: native activation, minimize/restore focus, owned/toolwindow
+  placement/modal fence, retained free frames, drag producers, output routing,
+  attention and restart, using the declared 2560x1440/125% profile. Follow
+  `docs/live-windows-testing.md` before live work with separate authorization.
+- macOS/paneru: native Space vs virtual row, AX roles/host zoom/fullscreen,
+  virtual-row send/follow, native tabs inside stacks, app/toolkit/version
+  and visibility. A macOS user environment is required.
+- VM suitability remains a user planning step: hotplug identity (OUT-06),
+  gestures, fractional scale/client-frame convergence, modal toolkit input,
+  PiP flags and native app tabs may require suitable host/device support.
+  Restart/session tests must declare re-exec vs script/extension enable vs
+  compositor/session replacement; reload is not restart, replacement app IDs
+  and session-manager restore must be recorded.
+- R-FLT-08 miss retention, R-MAX-04 new-attempt semantics and R-DRAG-03
+  producer topology are already established; incidental native/pixel
+  confirmation is not a new queue cell. Windows FLT-11 awaits implementation.
+- Residual work: user batch review of Table A recommendations; user native
+  outcomes and inventory checks above; optional historical wide-table/status
+  migration. No expansion area or accepted source-assessment finding remains
+  open. Historical per-piece proposals/queue counts below are superseded by
+  this final consolidation where they overlap.
+- Closeout verification: sequential Workers; Lead checked final diffs,
+  125 unique IDs, 67x14 new profiles, 58x4 scrolling assessments, 2x14 swaps,
+  status/queue arithmetic, 24 consolidated differences, pins, historical
+  row preservation, citation resolution, local links, ASCII and whitespace.
+  Source/offline only; live outcomes intentionally stay TBD.
 
 ## Candidate conventions
 
@@ -659,4 +769,4 @@ applicability before arranging a client-preserving compositor test.
 - Column review: sequential implementation and independent pinned-source review corrected qtile fixture applicability, niri and PaperWM width-cycle wrap, inactive-B consume activation, and unsupported PaperWM focus-independent-scroll absence. Width/viewport, atomic transfer and macOS native-tab remainders stay queued. Lead checked actual diff, pinned niri preset wrapping and citation coverage. Initial inventory/absence inferences were corrected against positive pinned paths; no blocker remains.
 - Column verification: 10x14 Then entries, citation resolution, unchanged pins, ASCII, whitespace and independent source review passed. Source/offline only; no live tests or product changes. Notable model differences: lazy minimal-fit vs named centering policies; PaperWM traced gestures reselect, karousel manual 200px scroll preserves focus; paneru nests app-native tabs inside stacks and owns internal virtual rows.
 - Column live-test queue: 17 applicable unresolved cells: qtile R-COL-03/06 (allocation/width recovery, stacked selection); niri R-COL-01/07/08 (width/focus/viewport, transfer target, keyboard scroll inventory); PaperWM R-COL-01/02/03/07/08 (width/viewport, neighbor reflow, slurp selection, atomic-send inventory, keyboard scroll inventory); karousel R-COL-01 (KWin focus/width/viewport); paneru R-COL-01/03/07/08/09/10 (focus, visible allocation, atomic stack transfer/follow, manual-scroll inventory, virtual-row follow, native-tab width/select-B). Inventory/model checks precede live fixtures.
-- Exact next action: refresh the overall Ours-vs-strong-consensus summary, consolidate the live-test queue by WM/environment, finalize/archive this record with fixed links, and update the matrix index Deferred areas. Collect product differences for batch review; no new durable decision beyond the already-promoted format.
+- Closure outcome: final consensus summary, environment queue, matrix accounting/deferred wording and archive links complete. No new durable decision beyond the already-promoted format. Exact next action: user batch review of consensus Table A's 24 recommendations, then schedule the grouped inventory/native-observation queue; Windows R-FLT-11 requires implementation before observation.
