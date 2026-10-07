@@ -251,7 +251,7 @@ decisions of 2026-09-24 are under
   swap alternative (user 2026-10-07); R-DRAG-08 Windows Win+drag activates
   the mover at press instead of on drop (user 2026-10-07).
   Detailed selections 2026-10-07 (items 1-5 and D1 in
-  [decisions](decisions.md#cross-platform-behavior)); KDE item 1 delivered
+  [decisions](decisions.md#cross-platform-behavior)); KDE items 1-3 delivered
   offline, remaining implementation pending:
   KDE-side session owns shared Rust core + KDE adapter; separate Windows
   agent wires later. Correctness over non-breakage: Windows build/behavior
@@ -286,7 +286,9 @@ decisions of 2026-09-24 are under
      Explicit follow/stay now also reaches KDE's membership-only
      floating-boundary path, repairing its existing-default gap: default
      follows; stay preserves the source view/native boundary focus.
-  3. R-MOV-03: global KDE `sameAxisMove` / Windows `core.same_axis_move`,
+  3. R-MOV-03 (shared core + KDE delivered offline; native journey pending;
+     [record](changes/archive/same-axis-move-setting.md)):
+     global KDE `sameAxisMove` / Windows `core.same_axis_move`,
      `cosmic-wrap` default or `flat-swap`; Windows additive version-1 field,
      missing defaults to wrap. Apply to subsequent moves without tree
      rebuilding; KDE settings UI control. Flat-swap replaces R2c only for
@@ -399,8 +401,42 @@ decisions of 2026-09-24 are under
       full-workspace `cargo test`/`clippy` gates; stay/relative adapter wiring
       remains pending. Port follow/stay MRU/null, admission equality, visibility
       fences, relative wrap/spare and floating-boundary regression coverage.
-  - Item 3, after core piece lands: `core.same_axis_move` serde default and
-    validation, Settings control; pass enum into every `CoreCommand::Move`.
+  - Item 3: shared Rust core/protocol + KDE delivered offline. Windows
+     compile-only defaults preserve current behavior (decision 2.3); actual
+     wiring remains pending. Sites below under `crates/tiler-windows/`:
+     - Applied compile fixes: `src/tiling_sys.rs:6102`, `SnapOp::Move` arm
+       constructing `CoreCommand::Move`, sets
+       `same_axis_move: tiler_core::directional::SameAxisMove::CosmicWrap`;
+       `tests/snapkey.rs:915`, `engine_focus_moves_through_nested_topology`,
+       uses the same constant. No Windows behavior change.
+     - `src/settings.rs:99` / `CoreSettings`, `Default` :124 and
+       `validate_settings` :1268: add `core.same_axis_move` within schema
+       version 1, serde missing default `cosmic-wrap`, exact values
+       `cosmic-wrap`/`flat-swap`; reject unknown values through existing
+       invalid-file/last-good behavior, retain atomic saves.
+     - `src/settings_ui.rs` / `cmd_settings` :939, controls :1054,
+       `refresh_all` :292 and `collect_draft` :345: add the global
+       setting control, display/persist the selected token, validate Apply,
+       preserve existing Revert behavior.
+     - `src/tiling_sys.rs` / `TileLoop.settings_live` :1210,
+       `apply_live_settings` :13432, `poll_live_settings` :13547 and
+       `src/settings.rs` / `LiveSettings` :1689, `poll_for_change` :1722:
+       adopt valid changes for subsequent moves only, without tree rebuild
+       or reconciliation. In `SnapOp::Move` :6102 replace the constant with
+       the last-good setting mapped to shared `SameAxisMove`. Other
+       input/focus/resize/float move paths retain existing rules.
+     - Changed shared constructors searched: the above production and test
+       `CoreCommand::Move` sites are the only Windows sites; no Windows
+       `MoveIntent`/`SyncCommand::Move` constructors or exhaustive move-field
+       destructures require repair. The reply shape is unchanged: existing
+       `CoreReply::MoveDirectional` branch at `src/tiling_sys.rs:6173` continues
+       applying returned geometry for R2c as well as R2a.
+     - Extend portable settings decode/default/validation/round-trip and
+       live last-good tests; native settings Apply/Revert tests; move tests
+       for N-ary flat-swap both directions with traveling unequal shares,
+       default wrap, group-neighbor/boundary parity and live changes without
+       tree rebuild. Linux workspace tests/clippy compile portable Windows
+       modules; native Windows UI/owner checks remain Windows-owned.
   - Item 4, after core piece lands: Win+O catalog/action, orientation-lock
     conflict text, Compatible disable entry; apply returned geometry.
   - Item 5, after core piece lands: four-direction reciprocal adjacency on
@@ -698,6 +734,15 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   Revert restores cleared defaults. Multi-output relative-ring scope remains
   user-owned. [Record](changes/archive/kde-workspace-send-follow-stay.md),
   [live guide](live-kwin-testing.md). No item-2 live result claimed.
+- KDE R-MOV-03 item 3 (offline delivered): toggle Same-axis move in KCM
+  between Cosmic wrap and Flat swap. In an N-ary group, move an interior
+  leaf toward a direct leaf sibling: wrap creates the nested pair, flat-swap
+  exchanges windows with unequal shares traveling and focus on the mover.
+  Verify Save live reread without controller/session restart, including
+  switching back on an existing tree; no tree rebuild on setting change.
+  Check a group neighbor and group-end move retain existing rules.
+  [Record](changes/archive/same-axis-move-setting.md),
+  [live guide](live-kwin-testing.md). User-owned; no item-3 live result claimed.
 - R-DRAG-08 on KDE: with A focused, Meta+left press on unfocused tiled B,
   move, release at A's edge; record whether B is focused at press, during
   the hold, or only after drop (decision: focus at press).

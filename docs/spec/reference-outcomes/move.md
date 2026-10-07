@@ -111,7 +111,11 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then karousel/Lazy: single-window B joins C3 at the bottom via the
   single-window path. `S(S-kar-move)`.
 - Then paneru: B swaps east with C in the same strip. `S(S-pan-move)`.
-- Then Ours KDE: Same-orientation wrap per Engine; nested `H[H..]` distinct from flat; `D(D-dec-cos)`
+- Then Ours KDE: `cosmic-wrap` default gives `H[A,H[B,C],D]`; global
+  `sameAxisMove=flat-swap` gives `H[A,C,B*,D]`, shares travel with windows.
+  Shared Engine/protocol and KDE KCM/live reread delivered offline;
+  [record](../../changes/archive/same-axis-move-setting.md). Native journey pending;
+  `D(D-dec-cos)` + USER 2026-10-07 item 3.
 - Then Ours Windows: Same-orientation wrap per Engine; nested `H[H..]` distinct from flat; `D(D-dec-cos)`
 - Variant hook: V-MOVE-NARY.
 
@@ -414,7 +418,7 @@ expansion record; outcomes are qualified legs, not second scenarios.
   directional operation inventory.
   `S(S-ours-move)`.
 
-## Selected additions (USER 2026-10-07; implementation pending)
+## Selected additions (USER 2026-10-07; delivery status per profile)
 
 [Items 3/5](../../decisions.md#cross-platform-behavior) select R-MOV-03's
 global `sameAxisMove` / `core.same_axis_move` setting (`cosmic-wrap` default,
@@ -423,8 +427,9 @@ windows); leaf/group rules unchanged. R-MOV-08 selects local restructure/
 swap/escape first, then all-four-direction crossing including sole root
 leaf. Adjacency uses unique reciprocal edge-touch + positive overlap on FULL
 output rectangles, horizontal too; no candidate no-op, ambiguous/unreadable
-refuse, no wrap. These are KDE/Windows targets, implementation pending,
-not new source/live evidence; pinned current cells above remain evidence.
+refuse, no wrap. Item 3 shared core/KDE is delivered offline; Windows wiring
+and item 5 remain pending. Delivery evidence below is offline, not a live
+observation or new reference vote.
 
 ### R-MOV-09: flat-swap right with unequal sibling shares
 
@@ -447,8 +452,10 @@ not new source/live evidence; pinned current cells above remain evidence.
 - Then PaperWM: TBD.
 - Then karousel/Lazy: TBD.
 - Then paneru: TBD.
-- Then Ours KDE: selected `H[A,C,B*,D]` with shares 1/10, 3/10, 2/10,
-  4/10; focus B, no wrap. Implementation pending; item 3.2.
+- Then Ours KDE: `H[A,C,B*,D]` with shares 1/10, 3/10, 2/10,
+  4/10; focus B, no wrap. Delivered offline, item 3.2; core strict-apply
+  and session tests exercise unequal-share right and left swaps;
+  [record](../../changes/archive/same-axis-move-setting.md). Native journey pending.
 - Then Ours Windows: same selected flat-swap/share target;
   implementation pending; item 3.2.
 - Variant hook: V-MOVE-NARY.
@@ -475,8 +482,11 @@ not new source/live evidence; pinned current cells above remain evidence.
 - Then PaperWM: TBD.
 - Then karousel/Lazy: TBD.
 - Then paneru: TBD.
-- Then Ours KDE: selected existing leaf/group rule unchanged, no flat-swap
-  broadening; setting implementation pending. Exact topology/index/shares TBD.
+- Then Ours KDE: existing R2c group-neighbor wrap unchanged under both modes:
+  `H[A,H[B,V[C,D]],E]`, focus B. With root shares `[1,2,3,4]` and V shares
+  `[1,1]`, root becomes `[1,5,4]`, new H gets `[1,1]`, V stays `[1,1]`.
+  No whole-group flat swap. Planner parity and strict apply verified offline;
+  [record](../../changes/archive/same-axis-move-setting.md). Native journey pending.
 - Then Ours Windows: same selected restricted setting scope;
   implementation pending. Exact topology/index/shares TBD.
 - Variant hook: V-MOVE-NARY.

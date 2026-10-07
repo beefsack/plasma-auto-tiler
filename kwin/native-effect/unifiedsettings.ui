@@ -309,21 +309,34 @@
         </property>
        </widget>
       </item>
-       <item row="0" column="1">
-       <widget class="QComboBox" name="workspaceModeCombo"/>
-      </item>
-       <item row="1" column="0">
-        <widget class="QLabel" name="label_innerGap">
-         <property name="buddy">
-          <cstring>innerGapSpinBox</cstring>
+        <item row="0" column="1">
+        <widget class="QComboBox" name="workspaceModeCombo"/>
+       </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="label_sameAxisMove">
+          <property name="buddy">
+           <cstring>sameAxisMoveCombo</cstring>
+          </property>
+         <property name="text">
+          <string>Same-axis move behavior:</string>
          </property>
-        <property name="text">
-         <string>Gap between tiled windows:</string>
-        </property>
-       </widget>
-      </item>
-       <item row="1" column="1">
-       <widget class="QSpinBox" name="innerGapSpinBox">
+        </widget>
+       </item>
+        <item row="1" column="1">
+        <widget class="QComboBox" name="sameAxisMoveCombo"/>
+       </item>
+        <item row="2" column="0">
+         <widget class="QLabel" name="label_innerGap">
+          <property name="buddy">
+           <cstring>innerGapSpinBox</cstring>
+          </property>
+         <property name="text">
+          <string>Gap between tiled windows:</string>
+         </property>
+        </widget>
+       </item>
+        <item row="2" column="1">
+        <widget class="QSpinBox" name="innerGapSpinBox">
         <property name="minimum">
          <number>0</number>
         </property>
@@ -338,18 +351,18 @@
         </property>
        </widget>
       </item>
-       <item row="2" column="0">
-        <widget class="QLabel" name="label_outerGap">
-         <property name="buddy">
-          <cstring>outerGapSpinBox</cstring>
+        <item row="3" column="0">
+         <widget class="QLabel" name="label_outerGap">
+          <property name="buddy">
+           <cstring>outerGapSpinBox</cstring>
+          </property>
+         <property name="text">
+          <string>Gap between tiled windows and the work area edge:</string>
          </property>
-        <property name="text">
-         <string>Gap between tiled windows and the work area edge:</string>
-        </property>
-       </widget>
-      </item>
-       <item row="2" column="1">
-       <widget class="QSpinBox" name="outerGapSpinBox">
+        </widget>
+       </item>
+        <item row="3" column="1">
+        <widget class="QSpinBox" name="outerGapSpinBox">
         <property name="minimum">
          <number>0</number>
         </property>

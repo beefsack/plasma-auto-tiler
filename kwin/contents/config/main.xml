@@ -27,6 +27,14 @@
                 <choice name="bspwm" value="bspwm"/>
             </choices>
         </entry>
+        <entry name="sameAxisMove" type="Enum">
+            <label>The same-axis move behavior</label>
+            <default>cosmic-wrap</default>
+            <choices>
+                <choice name="cosmic-wrap" value="cosmic-wrap"/>
+                <choice name="flat-swap" value="flat-swap"/>
+            </choices>
+        </entry>
         <entry name="innerGap" type="Int">
             <label>Gap between tiled windows</label>
             <default>8</default>

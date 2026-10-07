@@ -171,10 +171,11 @@ describe("interim tiler reload contract", () => {
         assert.doesNotMatch(reconfigureBody, /\.call\(/);
     });
 
-    it("sends nothing on an unchanged save and requests reconfigure only for changed gaps", () => {
+    it("sends nothing on an unchanged save and requests reconfigure only for changed live settings", () => {
         const saveBody = functionBody(module, "void UnifiedSettingsModule::save()");
         assert.match(saveBody, /scriptRetryArmed = m_gapReconfigurePending/);
-        assert.match(saveBody, /if \(gapChanged \|\| scriptRetryArmed\)/);
+        assert.match(saveBody, /const bool liveChanged = gapChanged \|\| sameAxisMoveChanged/);
+        assert.match(saveBody, /if \(liveChanged \|\| scriptRetryArmed\)/);
         assert.match(saveBody, /requestScriptReconfigure\(\)/);
         assert.doesNotMatch(module, /setEnabled\(m_tilerReloadRequired\)/);
         assert.doesNotMatch(module, /tilerReloadButton/);
@@ -192,7 +193,7 @@ describe("interim tiler reload contract", () => {
         assert.match(module, /startup gap values/);
         const saveBody = functionBody(module, "void UnifiedSettingsModule::save()");
         assert.match(saveBody, /scriptRetryArmed = m_gapReconfigurePending/);
-        assert.match(saveBody, /if \(gapChanged \|\| scriptRetryArmed\)/);
+        assert.match(saveBody, /if \(liveChanged \|\| scriptRetryArmed\)/);
         assert.match(saveBody, /m_scriptRestartRequired = true/);
         assert.match(saveBody, /requestScriptReconfigure\(\)/);
         assert.match(gaps, /re-resolve/);
@@ -220,6 +221,14 @@ describe("interim tiler reload contract", () => {
         for (const line of statusLines) {
             assert.doesNotMatch(line, /applied/i);
         }
+    });
+
+    it("names both live keys in combined save status and keeps retry wording generic", () => {
+        assert.match(module, /gaps and same-axis move/);
+        assert.match(module, /Tiling gaps and same-axis move saved to kwinrc/);
+        assert.match(module, /gaps and same-axis move is unconfirmed/);
+        assert.match(module, /pending live settings/);
+        assert.match(module, /pickup of pending live settings is unconfirmed/);
     });
 
     it("keeps shortcut mutation out of ordinary save", () => {

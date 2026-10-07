@@ -25,6 +25,7 @@
 // shortcut-failed line and one bounded plan-ready startup line.
 
 import { DomainGaps, readDomainGaps } from "./domain-gap";
+import { SameAxisMove, readSameAxisMoveValue } from "./same-axis-move";
 import { identifyGrabbedEdges, identifyPressGrabbed, resolveOracleResizeTargets, startDragOraclePullEntry, DragOracleFinishContext, DragOracleVerdict, OracleGrabbed, OracleGrabSource } from "./drag-oracle-pull";
 import { decodeList } from "./qml-list";
 import {
@@ -107,6 +108,7 @@ export interface PlanEntryOverrides {
     readonly readTilingDefaultFn?: () => unknown;
     readonly readInnerGapFn?: () => unknown;
     readonly readOuterGapFn?: () => unknown;
+    readonly readSameAxisMoveFn?: () => unknown;
     readonly options?: unknown;
     // Workspace tiling menu state: invoked whenever the tray snapshot
     // (scope, tiled, default) changes so entry.ts can bump the publisher
@@ -2633,6 +2635,10 @@ function startPlanAdapterEntryOnce(
         readInnerGapFn: overrides.readInnerGapFn,
         readOuterGapFn: overrides.readOuterGapFn,
     });
+    // R-MOV-03 same-axis move mode: resolved at startup, then re-read only
+    // on the KWin Options `configChanged` signal for subsequent moves. No
+    // tree rebuild, no resync, no topology work on change.
+    let sameAxisMove: SameAxisMove = readSameAxisMoveValue(overrides.readSameAxisMoveFn);
     // Startup-consumed settings snapshot: workspaceMode and shortcutProfile
     // are never re-read for behavior. A configChanged drift against this
     // snapshot is logged restart-required, never adopted here.
@@ -2794,6 +2800,7 @@ function startPlanAdapterEntryOnce(
                 void error;
             }
         },
+        readSameAxisMove: () => sameAxisMove,
         observe: () => {
             const seen = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners);
             if (seen === null) {
@@ -6122,6 +6129,23 @@ function startPlanAdapterEntryOnce(
                             emitWorkspaceTiling();
                             try {
                                 log(`plasma-auto-tiler:plan:config-reloaded stage=default-tiled tiled=${parsed ? "true" : "false"}`);
+                            } catch (error) {
+                                void error;
+                            }
+                        }
+                    } catch (error) {
+                        void error;
+                    }
+                    // R-MOV-03 live mode: re-read the same-axis move setting
+                    // for subsequent moves only. No tree rebuild, no resync,
+                    // no topology work; the adapter reads the entry-owned
+                    // value live per move request.
+                    try {
+                        const reread = readSameAxisMoveValue(overrides.readSameAxisMoveFn);
+                        if (reread !== sameAxisMove) {
+                            sameAxisMove = reread;
+                            try {
+                                log(`plasma-auto-tiler:plan:config-reloaded stage=same-axis-move mode=${reread}`);
                             } catch (error) {
                                 void error;
                             }

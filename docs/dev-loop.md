@@ -328,6 +328,11 @@ existing owner/generation provenance plus the compiled-in source revision;
 
 - `plasma-auto-tiler:plan:ready owner=<owner> generation=<generation> source=<source-rev>`
 
+Same-axis setting reload (ordinary output, only when the validated value changes
+on `Options.configChanged`; affects subsequent move requests, no tree rebuild):
+
+- `plasma-auto-tiler:plan:config-reloaded stage=same-axis-move mode=<cosmic-wrap|flat-swap>`
+
 When a complete startup signal attachment fails, the entry remains inert and
 retries on a later `windowAdded` or `Options.configChanged` event (one attempt
 per event, no timer or attempt cap). Only transitions are logged:

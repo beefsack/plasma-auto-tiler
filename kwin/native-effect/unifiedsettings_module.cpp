@@ -54,6 +54,15 @@ bool isBoundedGapRawValid(const KConfigGroup &group, const QString &key)
     return ok && parsed >= kGapMinimum && parsed <= kGapMaximum;
 }
 
+QString readSameAxisMove(const KConfigGroup &group)
+{
+    const QString value = group.readEntry(QStringLiteral("sameAxisMove"), QStringLiteral("cosmic-wrap"));
+    if (value == QStringLiteral("cosmic-wrap") || value == QStringLiteral("flat-swap")) {
+        return value;
+    }
+    return QStringLiteral("cosmic-wrap");
+}
+
 void logScriptConfig(const char *operation, const char *stage, const char *outcome, const QString &detail)
 {
     QString bounded = detail;
@@ -103,7 +112,12 @@ UnifiedSettingsModule::UnifiedSettingsModule(QObject *parent, const KPluginMetaD
     m_ui.workspaceModeCombo->addItem(i18n("Global, unique"), QStringLiteral("global-unique"));
     m_ui.workspaceModeCombo->addItem(i18n("Shared"), QStringLiteral("shared"));
 
+    m_ui.sameAxisMoveCombo->addItem(i18n("Cosmic wrap"), QStringLiteral("cosmic-wrap"));
+    m_ui.sameAxisMoveCombo->addItem(i18n("Flat swap"), QStringLiteral("flat-swap"));
+
     connect(m_ui.workspaceModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &UnifiedSettingsModule::updateScriptState);
+    connect(m_ui.sameAxisMoveCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             &UnifiedSettingsModule::updateScriptState);
     connect(m_ui.innerGapSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this,
             &UnifiedSettingsModule::updateScriptState);
@@ -973,6 +987,7 @@ QVariantMap UnifiedSettingsModule::currentScriptValues() const
 {
     return {
         {QStringLiteral("workspaceMode"), m_ui.workspaceModeCombo->currentData()},
+        {QStringLiteral("sameAxisMove"), m_ui.sameAxisMoveCombo->currentData()},
         {QStringLiteral("innerGap"), m_ui.innerGapSpinBox->value()},
         {QStringLiteral("outerGap"), m_ui.outerGapSpinBox->value()},
     };
@@ -983,6 +998,7 @@ void UnifiedSettingsModule::updateScriptState()
     const QVariantMap current = currentScriptValues();
     const QVariantMap defaults = {
         {QStringLiteral("workspaceMode"), QStringLiteral("per-output-local")},
+        {QStringLiteral("sameAxisMove"), QStringLiteral("cosmic-wrap")},
         {QStringLiteral("innerGap"), kGapDefault},
         {QStringLiteral("outerGap"), kGapDefault},
     };
@@ -1032,15 +1048,18 @@ void UnifiedSettingsModule::load()
         combo->setCurrentIndex(index >= 0 ? index : fallbackIndex);
     };
     const QString workspaceMode = group.readEntry(QStringLiteral("workspaceMode"), QStringLiteral("per-output-local"));
+    const QString sameAxisMove = readSameAxisMove(group);
     const int innerGap = readBoundedGap(group, QStringLiteral("innerGap"));
     const int outerGap = readBoundedGap(group, QStringLiteral("outerGap"));
     m_loadedInnerGapRawValid = isBoundedGapRawValid(group, QStringLiteral("innerGap"));
     m_loadedOuterGapRawValid = isBoundedGapRawValid(group, QStringLiteral("outerGap"));
     select(m_ui.workspaceModeCombo, workspaceMode, QStringLiteral("per-output-local"));
+    select(m_ui.sameAxisMoveCombo, sameAxisMove, QStringLiteral("cosmic-wrap"));
     m_ui.innerGapSpinBox->setValue(innerGap);
     m_ui.outerGapSpinBox->setValue(outerGap);
     m_loadedScriptValues = {
         {QStringLiteral("workspaceMode"), workspaceMode},
+        {QStringLiteral("sameAxisMove"), sameAxisMove},
         {QStringLiteral("innerGap"), innerGap},
         {QStringLiteral("outerGap"), outerGap},
     };
@@ -1069,6 +1088,8 @@ void UnifiedSettingsModule::save()
     // restart-required log must enumerate only the keys that changed.
     const bool workspaceModeChanged = current.value(QStringLiteral("workspaceMode"))
         != m_loadedScriptValues.value(QStringLiteral("workspaceMode"));
+    const bool sameAxisMoveChanged = current.value(QStringLiteral("sameAxisMove"))
+        != m_loadedScriptValues.value(QStringLiteral("sameAxisMove"));
     const bool startupConsumedChanged = workspaceModeChanged;
     const bool scriptRetryArmed = m_gapReconfigurePending;
 
@@ -1081,10 +1102,10 @@ void UnifiedSettingsModule::save()
     if (!widgetsChanged && !scriptRetryArmed) {
         updateScriptState();
     } else {
-    // This module owns exactly workspaceMode, innerGap, and outerGap. Any
-    // other key in this group (including the hidden shortcutProfile) is never
-    // read here beyond the group open and is never written; there is no
-    // migration. A pure retry
+    // This module owns exactly workspaceMode, sameAxisMove, innerGap, and
+    // outerGap. Any other key in this group (including the hidden
+    // shortcutProfile) is never read here beyond the group open and is never
+    // written; there is no migration. A pure retry
     // save (pending request, unchanged widgets) skips persistence: the loaded
     // values already match the widgets.
     KConfigGroup group(KSharedConfig::openConfig(QStringLiteral("kwinrc")),
@@ -1094,6 +1115,10 @@ void UnifiedSettingsModule::save()
         if (workspaceModeChanged) {
             group.writeEntry(QStringLiteral("workspaceMode"), current.value(QStringLiteral("workspaceMode")).toString());
             written.append(QStringLiteral("workspaceMode"));
+        }
+        if (sameAxisMoveChanged) {
+            group.writeEntry(QStringLiteral("sameAxisMove"), current.value(QStringLiteral("sameAxisMove")).toString());
+            written.append(QStringLiteral("sameAxisMove"));
         }
         if (!m_loadedInnerGapRawValid
             || current.value(QStringLiteral("innerGap")) != m_loadedScriptValues.value(QStringLiteral("innerGap"))) {
@@ -1120,8 +1145,10 @@ void UnifiedSettingsModule::save()
         logScriptConfig("save", "startup", "restart-required",
                         QStringLiteral("keys=%1").arg(startupWritten.join(QStringLiteral(","))));
     }
-    // Changed gaps request one typed KWin reconfigure after persistence whose
-    // pickup is the running controller's Options configChanged gap re-read.
+    // Changed gaps and same-axis moves request one typed KWin reconfigure
+    // after persistence whose pickup is the running controller's Options
+    // configChanged live re-read (gaps re-resolve, same-axis applies to
+    // subsequent moves with no tree rebuild).
     // KWin's reconfigure is Q_NOREPLY, so a queued send never proves the
     // running script reread kwinrc. Success reports sent-but-unconfirmed and
     // clears any pending retry; failure arms a retry on the next save (an
@@ -1131,14 +1158,17 @@ void UnifiedSettingsModule::save()
     // was saved by the retry. A queued send never clears a pending
     // session-restart requirement for the startup-consumed setting
     // (workspaceMode) and never claims the running tiler applied saved values.
-    if (gapChanged || scriptRetryArmed) {
+    // Same-axis move changes never set the restart requirement: they apply
+    // to subsequent moves after the live re-read.
+    const bool liveChanged = gapChanged || sameAxisMoveChanged;
+    if (liveChanged || scriptRetryArmed) {
         if (requestScriptReconfigure()) {
             m_gapReconfigurePending = false;
             logScriptConfig("save", "reconfigure", "sent-unconfirmed", QStringLiteral("method=reconfigure"));
             if (!widgetsChanged) {
                 if (m_scriptRestartRequired) {
                     m_scriptStatus = QStringLiteral(
-                        "Reconfigure request sent for gaps; application unconfirmed. This retry saved nothing; "
+                        "Reconfigure request sent for the pending live settings; application unconfirmed. This retry saved nothing; "
                         "persisted settings are unchanged. Session restart remains required for workspace mode. "
                         "Restart the session to guarantee pickup.");
                 } else {
@@ -1147,9 +1177,29 @@ void UnifiedSettingsModule::save()
                         "settings are unchanged. Restart the session to guarantee pickup.");
                 }
             } else if (m_scriptRestartRequired) {
+                if (sameAxisMoveChanged && gapChanged) {
+                    m_scriptStatus = QStringLiteral(
+                        "Settings saved to kwinrc. Reconfigure request sent for gaps and same-axis move; "
+                        "application unconfirmed. Session restart remains required for workspace mode. Restart the "
+                        "session to guarantee pickup.");
+                } else if (sameAxisMoveChanged) {
+                    m_scriptStatus = QStringLiteral(
+                        "Settings saved to kwinrc. Reconfigure request sent for same-axis move; "
+                        "application unconfirmed. Session restart remains required for workspace mode. Restart the "
+                        "session to guarantee pickup.");
+                } else {
+                    m_scriptStatus = QStringLiteral(
+                        "Settings saved to kwinrc. Reconfigure request sent for gaps; "
+                        "application unconfirmed. Session restart remains required for workspace mode. Restart the "
+                        "session to guarantee pickup.");
+                }
+            } else if (sameAxisMoveChanged && gapChanged) {
                 m_scriptStatus = QStringLiteral(
-                    "Settings saved to kwinrc. Reconfigure request sent for gaps; "
-                    "application unconfirmed. Session restart remains required for workspace mode. Restart the "
+                    "Tiling gaps and same-axis move saved to kwinrc. Reconfigure request sent; application unconfirmed. Restart the "
+                    "session to guarantee pickup.");
+            } else if (sameAxisMoveChanged && !gapChanged) {
+                m_scriptStatus = QStringLiteral(
+                    "Same-axis move saved to kwinrc. Reconfigure request sent; application unconfirmed. Restart the "
                     "session to guarantee pickup.");
             } else {
                 m_scriptStatus = QStringLiteral(
@@ -1163,19 +1213,39 @@ void UnifiedSettingsModule::save()
             if (!widgetsChanged) {
                 if (m_scriptRestartRequired) {
                     m_scriptStatus = QStringLiteral(
-                        "Reconfigure request failed; the running tiler still uses startup gap values. This retry saved "
+                        "Reconfigure request failed; pickup of pending live settings is unconfirmed. This retry saved "
                         "nothing; the request will retry on the next save. Session restart remains required for workspace "
                         "mode.");
                 } else {
                     m_scriptStatus = QStringLiteral(
-                        "Reconfigure request failed; the running tiler still uses startup gap values. This retry saved "
+                        "Reconfigure request failed; pickup of pending live settings is unconfirmed. This retry saved "
                         "nothing; the request will retry on the next save. Restart the session to guarantee pickup.");
                 }
             } else if (m_scriptRestartRequired) {
+                if (sameAxisMoveChanged && gapChanged) {
+                    m_scriptStatus = QStringLiteral(
+                        "Settings saved to kwinrc. Reconfigure request failed; pickup of "
+                        "gaps and same-axis move is unconfirmed. The request will retry on the next save. Session restart remains required for "
+                        "workspace mode.");
+                } else if (sameAxisMoveChanged) {
+                    m_scriptStatus = QStringLiteral(
+                        "Settings saved to kwinrc. Reconfigure request failed; pickup of "
+                        "same-axis move is unconfirmed. The request will retry on the next save. Session restart remains required for "
+                        "workspace mode.");
+                } else {
+                    m_scriptStatus = QStringLiteral(
+                        "Settings saved to kwinrc. Reconfigure request failed; the running tiler still uses "
+                        "startup gap values. The request will retry on the next save. Session restart remains required for "
+                        "workspace mode.");
+                }
+            } else if (sameAxisMoveChanged && gapChanged) {
                 m_scriptStatus = QStringLiteral(
-                    "Settings saved to kwinrc. Reconfigure request failed; the running tiler still uses "
-                    "startup gap values. The request will retry on the next save. Session restart remains required for "
-                    "workspace mode.");
+                    "Tiling gaps and same-axis move saved to kwinrc. Reconfigure request failed; pickup of gaps and same-axis "
+                    "move is unconfirmed. The request will retry on the next save; restart the session to guarantee pickup.");
+            } else if (sameAxisMoveChanged && !gapChanged) {
+                m_scriptStatus = QStringLiteral(
+                    "Same-axis move saved to kwinrc. Reconfigure request failed; pickup of same-axis "
+                    "move is unconfirmed. The request will retry on the next save; restart the session to guarantee pickup.");
             } else {
                 m_scriptStatus = QStringLiteral(
                     "Tiling gaps saved to kwinrc. Reconfigure request failed; the running tiler still uses startup gap values. "
@@ -1210,6 +1280,7 @@ void UnifiedSettingsModule::defaults()
     KCModule::defaults();
 
     m_ui.workspaceModeCombo->setCurrentIndex(m_ui.workspaceModeCombo->findData(QStringLiteral("per-output-local")));
+    m_ui.sameAxisMoveCombo->setCurrentIndex(m_ui.sameAxisMoveCombo->findData(QStringLiteral("cosmic-wrap")));
     m_ui.innerGapSpinBox->setValue(kGapDefault);
     m_ui.outerGapSpinBox->setValue(kGapDefault);
     // Defaults restage Authentic for the shortcut draft with no preview;

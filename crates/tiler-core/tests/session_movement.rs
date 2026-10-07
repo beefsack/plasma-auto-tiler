@@ -13,7 +13,7 @@ use tiler_core::contract::{
     LifecycleCapabilities, Observation, PostObservation,
 };
 use tiler_core::directional::{
-    Capabilities, Direction, Node, NodeId, OutputId, WindowId, WorkspaceId,
+    Capabilities, Direction, Node, NodeId, OutputId, SameAxisMove, WindowId, WorkspaceId,
 };
 use tiler_core::geometry::Rect;
 use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
@@ -254,6 +254,83 @@ fn move_commit_focused(
 ) -> SessionMovePlan {
     let w = focused_window(session, domain);
     move_commit(session, domain, &w, direction, corr, caps)
+}
+fn move_commit_with_mode(
+    session: &mut Session,
+    domain: &DomainKey,
+    window: &WindowId,
+    direction: Direction,
+    corr: &str,
+    caps: &Capabilities,
+    mode: SameAxisMove,
+) -> SessionMovePlan {
+    let obs = complete_obs(session, vec![]);
+    let base = session.accepted_revision();
+    let plan = session
+        .propose_move_with_same_axis(
+            domain,
+            window,
+            direction,
+            &obs,
+            &correlation(corr),
+            caps,
+            mode,
+        )
+        .unwrap_or_else(|e| panic!("move {direction:?} {mode:?}: {e:?}"));
+    assert_eq!(plan.dispatch.base_revision, base);
+    session
+        .acknowledge(&AdapterAck::new(
+            correlation(corr),
+            owner(),
+            generation(),
+            base,
+            AckOutcome::Accepted,
+        ))
+        .expect("ack");
+    let post = PostObservation::new(
+        Observation::new(owner(), generation(), base, 900 + base),
+        correlation(corr),
+        true,
+        plan.dispatch.preconditions.clone(),
+        plan.dispatch.operation.clone(),
+    );
+    let commit = session.verify_move(&post).expect("verify");
+    assert_eq!(commit.revision, base + 1);
+    plan
+}
+fn move_commit_focused_with_mode(
+    session: &mut Session,
+    domain: &DomainKey,
+    direction: Direction,
+    corr: &str,
+    caps: &Capabilities,
+    mode: SameAxisMove,
+) -> SessionMovePlan {
+    let w = focused_window(session, domain);
+    move_commit_with_mode(session, domain, &w, direction, corr, caps, mode)
+}
+/// Direct children plus shares of the group parenting `leaf` in `tree`.
+fn parent_children_shares(tree: &Node, leaf: &str) -> (Vec<String>, Vec<u64>) {
+    fn find(node: &Node, leaf: &str) -> Option<(Vec<String>, Vec<u64>)> {
+        match node {
+            Node::Leaf { .. } => None,
+            Node::Group {
+                children, shares, ..
+            } => {
+                if children
+                    .iter()
+                    .any(|c| matches!(c, Node::Leaf { id } if id.0 == leaf))
+                {
+                    return Some((
+                        children.iter().map(|c| c.id().0.clone()).collect(),
+                        shares.clone(),
+                    ));
+                }
+                children.iter().find_map(|c| find(c, leaf))
+            }
+        }
+    }
+    find(tree, leaf).unwrap_or_else(|| panic!("leaf {leaf} has no direct parent group"))
 }
 fn focus_commit(
     session: &mut Session,
@@ -676,6 +753,147 @@ fn r2c_wrap_neighbor_nary() {
         }
         other => panic!("expected root group, got {other:?}"),
     }
+}
+
+#[test]
+fn flat_swap_nary_end_to_end_with_traveling_shares() {
+    // Same R2c fixture as `r2c_wrap_neighbor_nary`, but the final move runs
+    // under FlatSwap: adjacent direct leaf siblings swap in place, shares
+    // travel with their windows, focus stays, and no wrapper group appears.
+    let mut s = single_session();
+    for (i, c) in ["c-1", "c-2", "c-3", "c-4"].iter().enumerate() {
+        admit_commit(&mut s, &format!("win-{}", i + 1), "out-1", "ws-1", true, c);
+    }
+    let k = key("out-1", "ws-1");
+    for corr in ["f-1", "f-2", "f-3"] {
+        let _ = focus_commit_focused(
+            &mut s,
+            &k,
+            Direction::Left,
+            corr,
+            &FocusCapabilities::full(),
+        );
+    }
+    assert_eq!(focused_window(&s, &k).0, "win-1");
+    let _ = move_commit_focused(&mut s, &k, Direction::Right, "m-pre", &Capabilities::full());
+    assert_eq!(focused_window(&s, &k).0, "win-1");
+    let focus_leaf = "leaf-win-1";
+    let pre_tree = s.snapshot().domains[0].tree.clone().expect("tree");
+    let (pre_children, pre_shares) = parent_children_shares(&pre_tree, focus_leaf);
+    let pos = pre_children
+        .iter()
+        .position(|c| c == focus_leaf)
+        .expect("focused child");
+    assert!(
+        pos + 1 < pre_children.len(),
+        "fixture must offer a right sibling"
+    );
+    let right_sibling = pre_children[pos + 1].clone();
+    let plan = move_commit_focused_with_mode(
+        &mut s,
+        &k,
+        Direction::Right,
+        "m-flat",
+        &Capabilities::full(),
+        SameAxisMove::FlatSwap,
+    );
+    assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R2c);
+    match &plan.dispatch.operation {
+        tiler_core::directional::MoveOperation::SwapNeighbor { neighbor, .. } => {
+            assert_eq!(neighbor.0, right_sibling);
+        }
+        other => panic!("expected flat swap, got {other:?}"),
+    }
+    assert_eq!(plan.desired_focus_leaf.0, focus_leaf);
+    let post_tree = s.snapshot().domains[0].tree.clone().expect("tree");
+    let (post_children, post_shares) = parent_children_shares(&post_tree, focus_leaf);
+    assert_eq!(
+        post_children.len(),
+        pre_children.len(),
+        "no wrapper group appears"
+    );
+    let mut expected_children = pre_children.clone();
+    expected_children.swap(pos, pos + 1);
+    assert_eq!(post_children, expected_children);
+    let mut expected_shares = pre_shares.clone();
+    expected_shares.swap(pos, pos + 1);
+    assert_eq!(
+        post_shares, expected_shares,
+        "shares travel with their windows"
+    );
+    assert_geometry_complete(&plan, &s);
+    // Swap back left through the public API: the same adjacent pair restores
+    // the pre-move order and shares exactly, covering the left direction.
+    let back = move_commit_focused_with_mode(
+        &mut s,
+        &k,
+        Direction::Left,
+        "m-flat-back",
+        &Capabilities::full(),
+        SameAxisMove::FlatSwap,
+    );
+    assert_eq!(back.dispatch.rule, tiler_core::directional::Rule::R2c);
+    match &back.dispatch.operation {
+        tiler_core::directional::MoveOperation::SwapNeighbor { neighbor, .. } => {
+            assert_eq!(neighbor.0, right_sibling);
+        }
+        other => panic!("expected flat swap back, got {other:?}"),
+    }
+    assert_eq!(back.desired_focus_leaf.0, focus_leaf);
+    let restored_tree = s.snapshot().domains[0].tree.clone().expect("tree");
+    let (restored_children, restored_shares) = parent_children_shares(&restored_tree, focus_leaf);
+    assert_eq!(restored_children, pre_children);
+    assert_eq!(restored_shares, pre_shares);
+    assert_geometry_complete(&back, &s);
+}
+
+#[test]
+fn flat_swap_group_end_escape_unchanged() {
+    // Same flow as `r3_escape_same_axis` through the R2c wrap, but the final
+    // Left escape runs under FlatSwap: ancestor/boundary behavior is
+    // identical (R3, same-axis insertion, no continuation).
+    let mut s = single_session();
+    for (i, c) in ["c-1", "c-2", "c-3", "c-4"].iter().enumerate() {
+        admit_commit(&mut s, &format!("win-{}", i + 1), "out-1", "ws-1", true, c);
+    }
+    let k = key("out-1", "ws-1");
+    for corr in ["f-1", "f-2", "f-3"] {
+        let _ = focus_commit_focused(
+            &mut s,
+            &k,
+            Direction::Left,
+            corr,
+            &FocusCapabilities::full(),
+        );
+    }
+    let r2b = move_commit_focused(&mut s, &k, Direction::Right, "m-pre", &Capabilities::full());
+    assert_eq!(r2b.dispatch.rule, tiler_core::directional::Rule::R2b);
+    let r2c = move_commit_focused(&mut s, &k, Direction::Right, "m-1", &Capabilities::full());
+    assert_eq!(r2c.dispatch.rule, tiler_core::directional::Rule::R2c);
+    let r3 = move_commit_focused_with_mode(
+        &mut s,
+        &k,
+        Direction::Left,
+        "m-2",
+        &Capabilities::full(),
+        SameAxisMove::FlatSwap,
+    );
+    assert_eq!(r3.dispatch.rule, tiler_core::directional::Rule::R3);
+    match &r3.dispatch.operation {
+        tiler_core::directional::MoveOperation::EscapeParent {
+            continuation,
+            parent_insertion_index,
+            ..
+        } => {
+            assert_eq!(
+                *continuation,
+                tiler_core::directional::EscapeContinuation::None
+            );
+            assert!(parent_insertion_index.is_some());
+        }
+        other => panic!("expected escape, got {other:?}"),
+    }
+    assert_geometry_complete(&r3, &s);
 }
 
 #[test]

@@ -88,6 +88,22 @@ fn intent(source: &str, focused_leaf: &str, direction: Direction) -> MoveIntent 
         focused_leaf: NodeId::from(focused_leaf),
         focused_window: WindowId(format!("w-{focused_leaf}")),
         direction,
+        same_axis_move: SameAxisMove::CosmicWrap,
+    }
+}
+
+fn intent_with_mode(
+    source: &str,
+    focused_leaf: &str,
+    direction: Direction,
+    same_axis_move: SameAxisMove,
+) -> MoveIntent {
+    MoveIntent {
+        source_output: OutputId::from(source),
+        focused_leaf: NodeId::from(focused_leaf),
+        focused_window: WindowId(format!("w-{focused_leaf}")),
+        direction,
+        same_axis_move,
     }
 }
 
@@ -264,6 +280,302 @@ fn r2c_wrap_neighbor_n_ary_s1_01_s4_01_s14_01_s18_01_m2_u1() {
         }
     );
     assert_eq!(plan.required_capability, Capability::WrapSiblings);
+}
+
+#[test]
+fn same_axis_move_wire_tokens_round_trip_with_wrap_default() {
+    assert_eq!(SameAxisMove::default(), SameAxisMove::CosmicWrap);
+    assert_eq!(SameAxisMove::CosmicWrap.as_wire_str(), "cosmic-wrap");
+    assert_eq!(SameAxisMove::FlatSwap.as_wire_str(), "flat-swap");
+    assert_eq!(
+        SameAxisMove::parse_wire("cosmic-wrap"),
+        Some(SameAxisMove::CosmicWrap)
+    );
+    assert_eq!(
+        SameAxisMove::parse_wire("flat-swap"),
+        Some(SameAxisMove::FlatSwap)
+    );
+    for invalid in ["", "Cosmic-Wrap", "flat_swap", "swap", "wrap", "null"] {
+        assert_eq!(SameAxisMove::parse_wire(invalid), None, "{invalid:?}");
+    }
+}
+
+#[test]
+fn flat_swap_nary_right_swaps_adjacent_leaf_sibling() {
+    // R-MOV-03 item 3.2: N-ary same-group adjacent direct leaf neighbor swaps
+    // in place instead of wrapping. Unequal shares ride along to the session
+    // apply assertion (planner only names ids).
+    let tree = group_with_shares(
+        "root",
+        Axis::Horizontal,
+        vec![leaf("A"), leaf("W"), leaf("S"), leaf("D")],
+        vec![1, 2, 3, 4],
+    );
+    let snap = single_output(tree);
+    let outcome = plan_move(
+        &snap,
+        &intent_with_mode("source", "W", Direction::Right, SameAxisMove::FlatSwap),
+    );
+    let plan = planned(&outcome);
+    assert_eq!(
+        plan.operation,
+        MoveOperation::SwapNeighbor {
+            rule: Rule::R2c,
+            container: NodeId::from("root"),
+            neighbor: NodeId::from("S"),
+        }
+    );
+    assert_eq!(plan.required_capability, Capability::SwapNeighbor);
+}
+
+#[test]
+fn flat_swap_nary_left_and_vertical_swap_adjacent_leaf_sibling() {
+    let tree = group(
+        "root",
+        Axis::Horizontal,
+        vec![leaf("A"), leaf("W"), leaf("S"), leaf("D")],
+    );
+    let snap = single_output(tree);
+    let outcome = plan_move(
+        &snap,
+        &intent_with_mode("source", "S", Direction::Left, SameAxisMove::FlatSwap),
+    );
+    let plan = planned(&outcome);
+    assert_eq!(
+        plan.operation,
+        MoveOperation::SwapNeighbor {
+            rule: Rule::R2c,
+            container: NodeId::from("root"),
+            neighbor: NodeId::from("W"),
+        }
+    );
+    let vertical = group(
+        "root",
+        Axis::Vertical,
+        vec![leaf("A"), leaf("W"), leaf("S")],
+    );
+    let snap = single_output(vertical);
+    let outcome = plan_move(
+        &snap,
+        &intent_with_mode("source", "W", Direction::Down, SameAxisMove::FlatSwap),
+    );
+    let plan = planned(&outcome);
+    assert_eq!(
+        plan.operation,
+        MoveOperation::SwapNeighbor {
+            rule: Rule::R2c,
+            container: NodeId::from("root"),
+            neighbor: NodeId::from("S"),
+        }
+    );
+    let outcome = plan_move(
+        &snap,
+        &intent_with_mode("source", "S", Direction::Up, SameAxisMove::FlatSwap),
+    );
+    let plan = planned(&outcome);
+    assert_eq!(
+        plan.operation,
+        MoveOperation::SwapNeighbor {
+            rule: Rule::R2c,
+            container: NodeId::from("root"),
+            neighbor: NodeId::from("W"),
+        }
+    );
+}
+
+#[test]
+fn flat_swap_group_neighbor_keeps_wrap_rule() {
+    // R-MOV-10 scope guard: a group neighbor is not an adjacent direct leaf
+    // sibling, so flat-swap must not broaden to it. Both modes agree.
+    let tree = || {
+        group(
+            "root",
+            Axis::Horizontal,
+            vec![
+                leaf("A"),
+                leaf("B"),
+                group("V", Axis::Vertical, vec![leaf("C"), leaf("D")]),
+                leaf("E"),
+            ],
+        )
+    };
+    let wrap = planned(&plan_move(
+        &single_output(tree()),
+        &intent("source", "B", Direction::Right),
+    ))
+    .operation
+    .clone();
+    let flat = planned(&plan_move(
+        &single_output(tree()),
+        &intent_with_mode("source", "B", Direction::Right, SameAxisMove::FlatSwap),
+    ))
+    .operation
+    .clone();
+    assert_eq!(wrap, flat);
+    assert_eq!(
+        flat,
+        MoveOperation::WrapNeighbor {
+            rule: Rule::R2c,
+            container: NodeId::from("root"),
+            neighbor: NodeId::from("V"),
+            focused_before_neighbor: true,
+            axis: Axis::Horizontal,
+        }
+    );
+}
+
+#[test]
+fn flat_swap_leaves_binary_group_and_escape_rules_unchanged() {
+    // R2a binary swaps are identical under both modes.
+    let binary = || group("root", Axis::Horizontal, vec![leaf("W"), leaf("S")]);
+    let wrap = planned(&plan_move(
+        &single_output(binary()),
+        &intent("source", "W", Direction::Right),
+    ))
+    .operation
+    .clone();
+    let flat = planned(&plan_move(
+        &single_output(binary()),
+        &intent_with_mode("source", "W", Direction::Right, SameAxisMove::FlatSwap),
+    ))
+    .operation
+    .clone();
+    assert_eq!(wrap, flat);
+    assert_eq!(
+        flat,
+        MoveOperation::SwapNeighbor {
+            rule: Rule::R2a,
+            container: NodeId::from("root"),
+            neighbor: NodeId::from("S"),
+        }
+    );
+    // R3 ancestor/boundary escapes are identical under both modes.
+    let nested = || {
+        group(
+            "root",
+            Axis::Horizontal,
+            vec![
+                leaf("A"),
+                group("inner", Axis::Horizontal, vec![leaf("W"), leaf("B")]),
+                leaf("D"),
+            ],
+        )
+    };
+    let wrap = planned(&plan_move(
+        &single_output(nested()),
+        &intent("source", "B", Direction::Right),
+    ))
+    .operation
+    .clone();
+    let flat = planned(&plan_move(
+        &single_output(nested()),
+        &intent_with_mode("source", "B", Direction::Right, SameAxisMove::FlatSwap),
+    ))
+    .operation
+    .clone();
+    assert_eq!(wrap, flat);
+    assert!(matches!(
+        flat,
+        MoveOperation::EscapeParent { rule: Rule::R3, .. }
+    ));
+}
+
+#[test]
+fn same_axis_modes_agree_on_root_ends_and_nested_group_ends() {
+    // Boundary parity (item 3.2 scope guard): N-ary root ends and nested
+    // group-end escapes are mode-independent. Focused first child moves left
+    // and focused last child moves right:
+    // - without adjacent outputs: identical noops in both modes;
+    // - with adjacent outputs: identical R4 crossings in both modes.
+    // A nested left group-end escape is an identical EscapeParent plan.
+    let nary = || {
+        group(
+            "root",
+            Axis::Horizontal,
+            vec![leaf("A"), leaf("B"), leaf("C")],
+        )
+    };
+    for (focused, direction) in [("A", Direction::Left), ("C", Direction::Right)] {
+        let wrap = plan_move(
+            &single_output(nary()),
+            &intent("source", focused, direction),
+        );
+        let flat = plan_move(
+            &single_output(nary()),
+            &intent_with_mode("source", focused, direction, SameAxisMove::FlatSwap),
+        );
+        assert_eq!(wrap, flat, "{focused:?} {direction:?}");
+        assert!(
+            matches!(wrap, MoveOutcome::Noop { .. }),
+            "{focused:?} {direction:?}"
+        );
+    }
+    let pair = || {
+        snapshot(vec![
+            output("left", Some(leaf("X")), vec![(Direction::Right, "source")]),
+            output(
+                "source",
+                Some(nary()),
+                vec![(Direction::Left, "left"), (Direction::Right, "right")],
+            ),
+            output("right", Some(leaf("Y")), vec![(Direction::Left, "source")]),
+        ])
+    };
+    for (focused, direction, target) in [
+        ("A", Direction::Left, "left"),
+        ("C", Direction::Right, "right"),
+    ] {
+        let wrap_outcome = plan_move(&pair(), &intent("source", focused, direction));
+        let flat_outcome = plan_move(
+            &pair(),
+            &intent_with_mode("source", focused, direction, SameAxisMove::FlatSwap),
+        );
+        let wrap = planned(&wrap_outcome);
+        let flat = planned(&flat_outcome);
+        assert_eq!(wrap.operation, flat.operation, "{focused:?} {direction:?}");
+        assert_eq!(wrap.rule, Rule::R4, "{focused:?} {direction:?}");
+        match &flat.operation {
+            MoveOperation::CrossOutput { target_output, .. } => {
+                assert_eq!(target_output, &OutputId::from(target));
+            }
+            other => panic!("expected cross-output, got {other:?}"),
+        }
+    }
+    // Nested left group-end escape: W sits at the left edge of inner, so Left
+    // escapes same-axis into the root in both modes.
+    let nested = || {
+        group(
+            "root",
+            Axis::Horizontal,
+            vec![
+                leaf("A"),
+                group("inner", Axis::Horizontal, vec![leaf("W"), leaf("B")]),
+                leaf("D"),
+            ],
+        )
+    };
+    let wrap_outcome = plan_move(
+        &single_output(nested()),
+        &intent("source", "W", Direction::Left),
+    );
+    let flat_outcome = plan_move(
+        &single_output(nested()),
+        &intent_with_mode("source", "W", Direction::Left, SameAxisMove::FlatSwap),
+    );
+    let wrap = planned(&wrap_outcome);
+    let flat = planned(&flat_outcome);
+    assert_eq!(wrap.operation, flat.operation);
+    assert_eq!(
+        flat.operation,
+        MoveOperation::EscapeParent {
+            rule: Rule::R3,
+            container: NodeId::from("inner"),
+            parent: NodeId::from("root"),
+            container_child_index: 1,
+            parent_insertion_index: Some(1),
+            continuation: EscapeContinuation::None,
+        }
+    );
 }
 
 #[test]
@@ -522,6 +834,7 @@ fn rejects_shared_topology_and_malformed_output_sets() {
                 focused_leaf: NodeId::from("A"),
                 focused_window: WindowId::from("w-A"),
                 direction: Direction::Right,
+                same_axis_move: SameAxisMove::CosmicWrap,
             },
         ),
         MoveOutcome::Rejected { .. }

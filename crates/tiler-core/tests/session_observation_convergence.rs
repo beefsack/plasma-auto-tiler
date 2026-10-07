@@ -157,6 +157,7 @@ fn move_command(window: &str, direction: &str) -> CoreCommand {
         window: window.to_owned(),
         direction: direction.to_owned(),
         cross_output_transfer: false,
+        same_axis_move: tiler_core::directional::SameAxisMove::CosmicWrap,
     }
 }
 

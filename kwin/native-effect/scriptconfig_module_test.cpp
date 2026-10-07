@@ -50,6 +50,11 @@ QComboBox *workspaceModeCombo(KWin::ScriptConfigModule &module)
     return module.widget()->findChild<QComboBox *>(QStringLiteral("workspaceModeCombo"));
 }
 
+QComboBox *sameAxisMoveCombo(KWin::ScriptConfigModule &module)
+{
+    return module.widget()->findChild<QComboBox *>(QStringLiteral("sameAxisMoveCombo"));
+}
+
 QComboBox *shortcutProfileCombo(KWin::ScriptConfigModule &module)
 {
     return module.widget()->findChild<QComboBox *>(QStringLiteral("shortcutProfileCombo"));
@@ -78,6 +83,19 @@ QLabel *scriptStatusLabel(KWin::ScriptConfigModule &module)
 QString storedWorkspaceMode()
 {
     return scriptGroup().readEntry(QStringLiteral("workspaceMode"), QStringLiteral("per-output-local"));
+}
+
+QString storedSameAxisMove()
+{
+    return scriptGroup().readEntry(QStringLiteral("sameAxisMove"), QStringLiteral("cosmic-wrap"));
+}
+
+QString otherSameAxisMove(const QString &current)
+{
+    if (current == QStringLiteral("flat-swap")) {
+        return QStringLiteral("cosmic-wrap");
+    }
+    return QStringLiteral("flat-swap");
 }
 
 QString storedShortcutProfile()
@@ -549,6 +567,77 @@ void gapContractNormalizesBoundsAndPersists()
     }
 }
 
+void sameAxisMoveContractDefaultsValidatesAndPersists()
+{
+    // Invalid stored values normalize to the cosmic-wrap default.
+    {
+        KConfigGroup group = scriptGroup();
+        group.writeEntry(QStringLiteral("sameAxisMove"), QStringLiteral("bogus"));
+        group.sync();
+    }
+    {
+        KWin::ScriptConfigModule module(nullptr, KPluginMetaData());
+        QComboBox *combo = sameAxisMoveCombo(module);
+        CHECK(combo != nullptr);
+        module.load();
+        if (combo) {
+            CHECK(combo->currentData().toString() == QStringLiteral("cosmic-wrap"));
+        }
+    }
+    // Missing keys stay missing through load and default back to cosmic-wrap.
+    {
+        KConfigGroup group = scriptGroup();
+        group.deleteEntry(QStringLiteral("sameAxisMove"));
+        group.sync();
+    }
+    {
+        CountingScriptModule module(nullptr, KPluginMetaData());
+        QComboBox *combo = sameAxisMoveCombo(module);
+        CHECK(combo != nullptr);
+        module.load();
+        if (combo) {
+            CHECK(combo->currentData().toString() == QStringLiteral("cosmic-wrap"));
+        }
+        module.scriptSucceed = true;
+        module.save();
+        CHECK(!scriptGroup().hasKey(QStringLiteral("sameAxisMove")));
+        CHECK(module.scriptCalls == 0);
+        CHECK(!module.isScriptRestartRequired());
+    }
+    // A same-axis change persists, sends one live reconfigure, and never
+    // requires a session restart.
+    {
+        CountingScriptModule module(nullptr, KPluginMetaData());
+        module.load();
+        QComboBox *combo = sameAxisMoveCombo(module);
+        CHECK(combo != nullptr);
+        if (!combo) {
+            return;
+        }
+        const QString target = otherSameAxisMove(storedSameAxisMove());
+        const int index = combo->findData(target);
+        CHECK(index >= 0);
+        combo->setCurrentIndex(index);
+        CHECK(module.needsSave());
+        module.scriptSucceed = true;
+        module.save();
+        CHECK(storedSameAxisMove() == target);
+        CHECK(module.scriptCalls == 1);
+        CHECK(!module.isScriptRestartRequired());
+        CHECK(module.scriptStatusText().contains(QStringLiteral("unconfirmed")));
+        CHECK(!containsAppliedClaim(module.scriptStatusText()));
+        CHECK(!module.needsSave());
+        // A follow-up unchanged save must not send again.
+        module.save();
+        CHECK(module.scriptCalls == 1);
+        // Defaults restore cosmic-wrap.
+        module.defaults();
+        CHECK(combo->currentData().toString() == QStringLiteral("cosmic-wrap"));
+        module.save();
+        CHECK(storedSameAxisMove() == QStringLiteral("cosmic-wrap"));
+    }
+}
+
 void unsupportedControlsAreAbsentAndLegacyValuesUntouched()
 {
     KConfigGroup group = scriptGroup();
@@ -657,6 +746,140 @@ void gapSaveSendFailureArmsRetryOnNextSave()
     CHECK(module.scriptStatusText().contains(QStringLiteral("saved nothing")));
     CHECK(!module.scriptStatusText().contains(QStringLiteral("saved to kwinrc")));
     CHECK(!containsAppliedClaim(module.scriptStatusText()));
+    CHECK(!module.needsSave());
+}
+
+void sameAxisMoveSaveFailureArmsRetryOnNextSave()
+{
+    // Mirror of gapSaveSendFailureArmsRetryOnNextSave for a same-axis-only
+    // change: one queued reconfigure call per save, the saved mode retained,
+    // and no session restart required at any point.
+    CountingScriptModule module(nullptr, KPluginMetaData());
+    module.load();
+    QComboBox *combo = sameAxisMoveCombo(module);
+    CHECK(combo != nullptr);
+    if (!combo) {
+        return;
+    }
+    const QString target = otherSameAxisMove(storedSameAxisMove());
+    const int index = combo->findData(target);
+    CHECK(index >= 0);
+    combo->setCurrentIndex(index);
+    CHECK(module.needsSave());
+    module.scriptSucceed = false;
+    module.save();
+    CHECK(storedSameAxisMove() == target);
+    CHECK(module.scriptCalls == 1);
+    CHECK(module.isGapReconfigurePending());
+    CHECK(!module.isScriptRestartRequired());
+    CHECK(module.scriptStatusText().contains(QStringLiteral("failed")));
+    CHECK(module.scriptStatusText().contains(QStringLiteral("retry on the next save")));
+    CHECK(module.scriptStatusText().contains(QStringLiteral("saved to kwinrc")));
+    CHECK(!containsAppliedClaim(module.scriptStatusText()));
+    // Apply stays enabled for the retry even though widgets match storage.
+    CHECK(module.needsSave());
+    // A still-failing retry persists nothing further and must not claim the
+    // retry saved anything.
+    module.save();
+    CHECK(module.scriptCalls == 2);
+    CHECK(module.isGapReconfigurePending());
+    CHECK(!module.isScriptRestartRequired());
+    CHECK(module.scriptStatusText().contains(QStringLiteral("failed")));
+    CHECK(module.scriptStatusText().contains(QStringLiteral("saved nothing")));
+    CHECK(!module.scriptStatusText().contains(QStringLiteral("saved to kwinrc")));
+    CHECK(!containsAppliedClaim(module.scriptStatusText()));
+    CHECK(module.needsSave());
+    // An unchanged follow-up save retries the request and clears the flag.
+    module.scriptSucceed = true;
+    module.save();
+    CHECK(module.scriptCalls == 3);
+    CHECK(!module.isGapReconfigurePending());
+    CHECK(!module.isScriptRestartRequired());
+    CHECK(storedSameAxisMove() == target);
+    CHECK(module.scriptStatusText().contains(QStringLiteral("unconfirmed")));
+    CHECK(module.scriptStatusText().contains(QStringLiteral("saved nothing")));
+    CHECK(!module.scriptStatusText().contains(QStringLiteral("saved to kwinrc")));
+    CHECK(!containsAppliedClaim(module.scriptStatusText()));
+    CHECK(!module.needsSave());
+}
+
+void combinedGapAndSameAxisMoveSaveSendsOnce()
+{
+    // One save carrying both a gap and a same-axis change persists both keys
+    // with a single live reconfigure and no restart requirement.
+    CountingScriptModule module(nullptr, KPluginMetaData());
+    module.load();
+    QComboBox *combo = sameAxisMoveCombo(module);
+    QSpinBox *inner = innerGapSpinBox(module);
+    CHECK(combo != nullptr);
+    CHECK(inner != nullptr);
+    if (!combo || !inner) {
+        return;
+    }
+    const QString axisTarget = otherSameAxisMove(storedSameAxisMove());
+    const int axisIndex = combo->findData(axisTarget);
+    CHECK(axisIndex >= 0);
+    const int gapTarget = (inner->value() == 12) ? 20 : 12;
+    combo->setCurrentIndex(axisIndex);
+    inner->setValue(gapTarget);
+    CHECK(module.needsSave());
+    module.scriptSucceed = true;
+    module.save();
+    CHECK(storedSameAxisMove() == axisTarget);
+    CHECK(scriptGroup().readEntry(QStringLiteral("innerGap"), -1) == gapTarget);
+    CHECK(module.scriptCalls == 1);
+    CHECK(!module.isGapReconfigurePending());
+    CHECK(!module.isScriptRestartRequired());
+    CHECK(module.scriptStatusText().contains(QStringLiteral("unconfirmed")));
+    CHECK(module.scriptStatusText().contains(QStringLiteral("same-axis")));
+    CHECK(module.scriptStatusText().contains(QStringLiteral("gap")));
+    CHECK(!containsAppliedClaim(module.scriptStatusText()));
+    CHECK(!module.needsSave());
+    // A follow-up unchanged save must not send again.
+    module.save();
+    CHECK(module.scriptCalls == 1);
+}
+
+void combinedGapAndSameAxisMoveSaveFailureMentionsBothKeys()
+{
+    // A failing combined save persists both keys, arms the retry with one
+    // queued call, and names both keys in the failure status.
+    CountingScriptModule module(nullptr, KPluginMetaData());
+    module.load();
+    QComboBox *combo = sameAxisMoveCombo(module);
+    QSpinBox *inner = innerGapSpinBox(module);
+    CHECK(combo != nullptr);
+    CHECK(inner != nullptr);
+    if (!combo || !inner) {
+        return;
+    }
+    const QString axisTarget = otherSameAxisMove(storedSameAxisMove());
+    const int axisIndex = combo->findData(axisTarget);
+    CHECK(axisIndex >= 0);
+    const int gapTarget = (inner->value() == 12) ? 20 : 12;
+    combo->setCurrentIndex(axisIndex);
+    inner->setValue(gapTarget);
+    CHECK(module.needsSave());
+    module.scriptSucceed = false;
+    module.save();
+    CHECK(storedSameAxisMove() == axisTarget);
+    CHECK(scriptGroup().readEntry(QStringLiteral("innerGap"), -1) == gapTarget);
+    CHECK(module.scriptCalls == 1);
+    CHECK(module.isGapReconfigurePending());
+    CHECK(!module.isScriptRestartRequired());
+    CHECK(module.scriptStatusText().contains(QStringLiteral("failed")));
+    CHECK(module.scriptStatusText().contains(QStringLiteral("retry on the next save")));
+    CHECK(module.scriptStatusText().contains(QStringLiteral("saved to kwinrc")));
+    CHECK(module.scriptStatusText().contains(QStringLiteral("same-axis")));
+    CHECK(module.scriptStatusText().contains(QStringLiteral("gap")));
+    CHECK(!containsAppliedClaim(module.scriptStatusText()));
+    CHECK(module.needsSave());
+    // Recovery sends once more and clears the retry.
+    module.scriptSucceed = true;
+    module.save();
+    CHECK(module.scriptCalls == 2);
+    CHECK(!module.isGapReconfigurePending());
+    CHECK(!module.isScriptRestartRequired());
     CHECK(!module.needsSave());
 }
 
@@ -1042,6 +1265,10 @@ int main(int argc, char **argv)
         unchangedSaveSendsNothing();
         gapSavePersistsThenSendsUnconfirmed();
         gapSaveSendFailureArmsRetryOnNextSave();
+        sameAxisMoveSaveFailureArmsRetryOnNextSave();
+        combinedGapAndSameAxisMoveSaveSendsOnce();
+        combinedGapAndSameAxisMoveSaveFailureMentionsBothKeys();
+        sameAxisMoveContractDefaultsValidatesAndPersists();
         startupRestartLogEnumeratesOnlyChangedKeys();
         startupOnlySaveDisablesSendWithRestartMessage();
         hiddenShortcutProfileIsAbsentAndPreservedUntouched();

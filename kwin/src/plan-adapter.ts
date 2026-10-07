@@ -17,6 +17,7 @@
 // window id.
 
 import { orderGeometryWrites } from "./geometry-order";
+import { normalizeSameAxisMove } from "./same-axis-move";
 import { KWIN_TRACE_ENABLED } from "./trace";
 
 export const PLAN_SERVICE = "org.plasmaautotiler.Planner";
@@ -674,6 +675,11 @@ export interface PlanAdapterEnv {
     // foreground logical commands. Never invoked on stale/rejected/error
     // or unfinished boundaries.
     readonly onPlannedApplied?: (op: PlanOp) => void;
+    // R-MOV-03 same-axis move mode for the move wire command. Read live per
+    // move request so an entry-owned Options configChanged re-read applies
+    // to subsequent moves with no tree rebuild. Absent/invalid resolves to
+    // `cosmic-wrap` (wire-omitted, the historical default).
+    readonly readSameAxisMove?: () => unknown;
 }
 
 export interface PlanEnableAuth {
@@ -3121,9 +3127,26 @@ export class PlanAdapter {
                 ...(snapshot.domains?.length === 2
                     ? { cross_output_transfer: crossOutputTransferSupported(this.env) }
                     : {}),
+                // R-MOV-03 same-axis mode. The default cosmic-wrap stays
+                // wire-omitted so historical requests are byte-identical;
+                // flat-swap carries explicitly. Invalid resolves to default.
+                ...(this.readSameAxisMove() === "flat-swap" ? { same_axis_move: "flat-swap" } : {}),
             },
             direction,
         });
+    }
+
+    private readSameAxisMove(): string {
+        try {
+            const reader = this.env.readSameAxisMove;
+            if (typeof reader !== "function") {
+                return "cosmic-wrap";
+            }
+            return normalizeSameAxisMove(reader());
+        } catch (error) {
+            void error;
+            return "cosmic-wrap";
+        }
     }
 
     requestResize(direction: unknown, mode: unknown): void {

@@ -48,6 +48,7 @@ impl FakeCompositor {
             focused_leaf: NodeId::from("A"),
             focused_window: WindowId::from("w-A"),
             direction: Direction::Right,
+            same_axis_move: tiler_core::directional::SameAxisMove::CosmicWrap,
         };
         Self {
             reconciler: Reconciler::new(owner(), generation(), 0, 11).expect("valid seed"),

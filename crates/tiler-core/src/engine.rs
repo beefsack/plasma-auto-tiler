@@ -2442,6 +2442,7 @@ impl Engine {
             window,
             direction,
             cross_output_transfer,
+            same_axis_move,
         } = &event.command
         else {
             return CoreReply::Rejected {
@@ -2454,7 +2455,7 @@ impl Engine {
             .as_ref()
             .is_none_or(|pair| pair.len() != 2)
         {
-            return self.local_move_request(event, window, direction);
+            return self.local_move_request(event, window, direction, *same_axis_move);
         }
         if !is_opaque_id(window) {
             return CoreReply::SnapshotInvalid {
@@ -2503,13 +2504,14 @@ impl Engine {
         let _ = session.sync_focus_from_window(source_key, &event.focused_window.clone());
         let mut capabilities = Capabilities::full();
         capabilities.cross_output_transfer = *cross_output_transfer;
-        match session.propose_move(
+        match session.propose_move_with_same_axis(
             source_key,
             &window,
             direction,
             &observation,
             &event.correlation,
             &capabilities,
+            *same_axis_move,
         ) {
             Ok(plan) => {
                 if matches!(plan.dispatch.operation, MoveOperation::CrossOutput { .. }) {
@@ -2846,6 +2848,7 @@ impl Engine {
         event: &CoreEvent,
         window: &str,
         direction: &str,
+        same_axis_move: crate::directional::SameAxisMove,
     ) -> CoreReply {
         use crate::boundary::MovePlanReply;
         if !is_opaque_id(window) {
@@ -2872,13 +2875,14 @@ impl Engine {
             true,
             |session, observation| {
                 let _ = session.sync_focus_from_window(&event.domain_key, &event.focused_window);
-                session.propose_move(
+                session.propose_move_with_same_axis(
                     &event.domain_key,
                     &window,
                     direction,
                     observation,
                     &event.correlation,
                     &Capabilities::full(),
+                    same_axis_move,
                 )
             },
             |plan| CoreReply::MoveDirectional(MovePlanReply::from_local(direction, plan)),
@@ -3908,6 +3912,7 @@ mod tests {
                 window: "win-1".to_owned(),
                 direction: "left".to_owned(),
                 cross_output_transfer: false,
+                same_axis_move: crate::directional::SameAxisMove::CosmicWrap,
             },
         };
         match engine.handle(&event) {

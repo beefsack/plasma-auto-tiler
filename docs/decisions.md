@@ -316,7 +316,9 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
 - User decision 2026-10-07 (R-MOV-03): keep the COSMIC same-orientation
   wrap (R2c, `H[A,B*,C,D]` move right gives `H[A,H[B,C],D]`) as default and
   make it configurable, with flat sibling swap (i3/sway) as the alternative
-  (implementation pending).
+  (shared core/KDE delivered offline;
+  [record](changes/archive/same-axis-move-setting.md); Windows wiring and
+  native journey pending).
 - User decisions 2026-10-07 (reference-consensus additions, implementation
   pending; [implementation order and Windows handoff](backlog.md)):
   - D1 coordination: the KDE-side session implements the shared Rust core

@@ -68,6 +68,11 @@ impl super::super::Session {
     /// Propose directional movement for the selected exact opaque
     /// `(domain, window)` pair.
     ///
+    /// R-MOV-03 default entry: plans under [`SameAxisMove::CosmicWrap`](crate::directional::SameAxisMove::CosmicWrap).
+    /// Adapters carrying an explicit same-axis setting use
+    /// [`Session::propose_move_with_same_axis`]; this wrapper preserves the
+    /// historical wrap behavior for legacy callers byte-for-byte.
+    ///
     /// The supplied opaque [`WindowId`] must equal the authoritative logical
     /// focused tiled window in exactly `domain`; mismatch, unknown windows,
     /// or exception windows refuse without pending. The held
@@ -92,6 +97,34 @@ impl super::super::Session {
         session_observation: &SessionObservation,
         correlation_id: &CorrelationId,
         capabilities: &Capabilities,
+    ) -> Result<SessionMovePlan, ProposeError> {
+        self.propose_move_with_same_axis(
+            domain,
+            window,
+            direction,
+            session_observation,
+            correlation_id,
+            capabilities,
+            crate::directional::SameAxisMove::CosmicWrap,
+        )
+    }
+
+    /// Propose directional movement under an explicit R-MOV-03 same-axis mode.
+    ///
+    /// Identical to [`Session::propose_move`] except the carried
+    /// [`SameAxisMove`](crate::directional::SameAxisMove) selects the R2c
+    /// leaf-neighbor behavior for this subsequent move only; retained trees
+    /// are never rebuilt. `CosmicWrap` is exactly [`Session::propose_move`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn propose_move_with_same_axis(
+        &mut self,
+        domain: &DomainKey,
+        window: &WindowId,
+        direction: Direction,
+        session_observation: &SessionObservation,
+        correlation_id: &CorrelationId,
+        capabilities: &Capabilities,
+        same_axis_move: crate::directional::SameAxisMove,
     ) -> Result<SessionMovePlan, ProposeError> {
         if let Some(reason) = self.reconciler.divergence() {
             return Err(ProposeError::Diverged(reason));
@@ -166,6 +199,7 @@ impl super::super::Session {
             focused_leaf: focused_leaf.clone(),
             focused_window: focused_window.clone(),
             direction,
+            same_axis_move,
         };
         let outcome = self.policy().plan_move(&snapshot, &intent, capabilities);
         let plan = match outcome {
@@ -481,17 +515,20 @@ pub(in crate::session) fn apply_move_operation(
     {
         return None;
     }
-    // Canonical rule per operation variant.
-    let canonical = match operation {
-        MoveOperation::WrapPerpendicular { .. } => Rule::R1,
-        MoveOperation::SwapNeighbor { .. } => Rule::R2a,
-        MoveOperation::InsertIntoGroup { .. } => Rule::R2b,
-        MoveOperation::SplitGroupChild { .. } => Rule::R2b,
-        MoveOperation::WrapNeighbor { .. } => Rule::R2c,
-        MoveOperation::EscapeParent { .. } => Rule::R3,
-        MoveOperation::CrossOutput { .. } => Rule::R4,
+    // Canonical rule per operation variant. SwapNeighbor admits two rules:
+    // R2a (binary swap) and R2c (N-ary flat-swap under FlatSwap); every other
+    // variant admits exactly one. The per-arm checks below keep each rule's
+    // structural bindings disjoint, so neither rule weakens the other.
+    let canonical_ok = match operation {
+        MoveOperation::WrapPerpendicular { .. } => plan.rule == Rule::R1,
+        MoveOperation::SwapNeighbor { .. } => plan.rule == Rule::R2a || plan.rule == Rule::R2c,
+        MoveOperation::InsertIntoGroup { .. } => plan.rule == Rule::R2b,
+        MoveOperation::SplitGroupChild { .. } => plan.rule == Rule::R2b,
+        MoveOperation::WrapNeighbor { .. } => plan.rule == Rule::R2c,
+        MoveOperation::EscapeParent { .. } => plan.rule == Rule::R3,
+        MoveOperation::CrossOutput { .. } => plan.rule == Rule::R4,
     };
-    if plan.rule != canonical || operation.rule() != canonical {
+    if !canonical_ok || operation.rule() != plan.rule {
         return None;
     }
     // Intentional bindings.
@@ -605,11 +642,66 @@ pub(in crate::session) fn apply_move_operation(
             neighbor,
             ..
         } => {
+            use crate::directional::SameAxisMove;
             let tree = desired_trees.get(source).cloned().flatten()?;
             // R2a: exactly 2 direct children, parallel container, directional
             // leaf neighbor. Uneven shares travel with their windows (no
             // resize): `swap_direct_children` swaps children and shares
-            // together so each window retains its absolute share.
+            // together so each window retains its absolute share. Unchanged
+            // under both same-axis modes.
+            //
+            // R2c flat-swap (item 3.2): the same adjacent-leaf swap in an N-ary
+            // (3+) parallel container, admitted only under FlatSwap with
+            // adjacent direct leaf siblings. The forged combinations refuse:
+            // R2c swap under CosmicWrap, and R2a-shape plans mislabeled R2c.
+            if plan.rule == Rule::R2c
+                && operation.rule() == Rule::R2c
+                && plan.intent.same_axis_move == SameAxisMove::FlatSwap
+            {
+                let (children, shares, caxis) = match find_group(&tree, container) {
+                    Some((children, axis, _)) => {
+                        let s = find_group_shares(&tree, container)?;
+                        (children, s, axis)
+                    }
+                    None => return None,
+                };
+                if children.len() < 3 {
+                    return None;
+                }
+                if caxis != direction_axis {
+                    return None;
+                }
+                if direct_parent_of_leaf(&tree, focused_leaf)? != *container {
+                    return None;
+                }
+                let iw = children.iter().position(|c| c.id() == focused_leaf)?;
+                let ineighbor = children.iter().position(|c| c.id() == neighbor)?;
+                if (iw as i32 - ineighbor as i32).abs() != 1 {
+                    return None;
+                }
+                if ineighbor as i32 != iw as i32 + step {
+                    return None;
+                }
+                if !matches!(children[iw], Node::Leaf { .. })
+                    || !matches!(children[ineighbor], Node::Leaf { .. })
+                {
+                    return None;
+                }
+                if shares.len() != children.len() {
+                    return None;
+                }
+                let updated = swap_direct_children(tree, container, focused_leaf, neighbor)?;
+                desired_trees.insert(source.clone(), Some(updated));
+                return Some((
+                    desired_trees,
+                    desired_windows,
+                    source.clone(),
+                    focused_leaf.clone(),
+                ));
+            }
+            if plan.rule != Rule::R2a || operation.rule() != Rule::R2a {
+                return None;
+            }
             let (children, shares, caxis) = match find_group(&tree, container) {
                 Some((children, axis, _)) => {
                     let s = find_group_shares(&tree, container)?;
@@ -684,6 +776,15 @@ pub(in crate::session) fn apply_move_operation(
                 return None;
             }
             if *focused_before_neighbor != (iw < ineighbor) {
+                return None;
+            }
+            // Strict mode binding (item 3.2): under FlatSwap the planner emits
+            // SwapNeighbor for adjacent direct leaf siblings, so a WrapNeighbor
+            // naming a direct leaf sibling under FlatSwap is forged and
+            // refuses. Group neighbors keep the wrap rule under both modes.
+            if plan.intent.same_axis_move == crate::directional::SameAxisMove::FlatSwap
+                && matches!(children.get(ineighbor), Some(Node::Leaf { .. }))
+            {
                 return None;
             }
             if &caxis != axis {
@@ -1240,5 +1341,488 @@ pub(in crate::session) fn move_touches_only_allowed(
             changed.len() == 2 && changed.contains(source) && changed.contains(&target)
         }
         _ => changed.len() == 1 && changed.contains(source),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use crate::directional::{
+        Axis, Capabilities, Direction, MoveIntent, MoveOperation, MoveOutcome, Node, NodeId,
+        OutputId, Rule, SameAxisMove, Snapshot, WindowId, WindowLink, WorkspaceId,
+    };
+    use crate::geometry::Rect;
+    use crate::policy::default_policy;
+    use crate::session::{DomainKey, OutputDomain};
+
+    use super::apply_move_operation;
+
+    /// Session-side world for one N-ary group test: trees, windows, domains,
+    /// plus the matching planner snapshot.
+    type NaryWorld = (
+        BTreeMap<DomainKey, Option<Node>>,
+        BTreeMap<WindowId, WindowLink>,
+        Vec<OutputDomain>,
+        Snapshot,
+    );
+
+    fn domain_key() -> DomainKey {
+        DomainKey {
+            output: OutputId::from("source"),
+            workspace: WorkspaceId::from("workspace-1"),
+        }
+    }
+
+    fn output_domain() -> OutputDomain {
+        OutputDomain {
+            id: OutputId::from("source"),
+            workspace: WorkspaceId::from("workspace-1"),
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 1200,
+                h: 800,
+            },
+            gap: 0,
+            adjacent: BTreeMap::new(),
+        }
+    }
+
+    fn leaf(id: &str) -> Node {
+        Node::Leaf {
+            id: NodeId::from(id),
+        }
+    }
+
+    /// Session-side world for one N-ary group: trees/windows/domains plus the
+    /// matching planner snapshot. Window ids derive from leaf ids (`w-<leaf>`).
+    fn nary_world(children: Vec<Node>, shares: Vec<u64>) -> NaryWorld {
+        let key = domain_key();
+        let tree = Node::Group {
+            id: NodeId::from("root"),
+            axis: Axis::Horizontal,
+            children,
+            shares,
+        };
+        let mut leaves = Vec::new();
+        let mut stack = vec![&tree];
+        while let Some(node) = stack.pop() {
+            match node {
+                Node::Leaf { id } => leaves.push(id.clone()),
+                Node::Group { children, .. } => stack.extend(children),
+            }
+        }
+        let mut windows = BTreeMap::new();
+        let mut links = Vec::new();
+        for leaf_id in &leaves {
+            let link = WindowLink {
+                window: WindowId(format!("w-{}", leaf_id.0)),
+                leaf: leaf_id.clone(),
+                output: key.output.clone(),
+                workspace: key.workspace.clone(),
+            };
+            windows.insert(link.window.clone(), link.clone());
+            links.push(link);
+        }
+        let snapshot = Snapshot {
+            outputs: vec![crate::directional::Output {
+                id: key.output.clone(),
+                workspace: key.workspace.clone(),
+                tree: Some(tree.clone()),
+                adjacent: BTreeMap::new(),
+            }],
+            windows: links,
+        };
+        let mut trees = BTreeMap::new();
+        trees.insert(key, Some(tree));
+        (trees, windows, vec![output_domain()], snapshot)
+    }
+
+    fn intent(leaf: &str, direction: Direction, mode: SameAxisMove) -> MoveIntent {
+        MoveIntent {
+            source_output: OutputId::from("source"),
+            focused_leaf: NodeId::from(leaf),
+            focused_window: WindowId(format!("w-{leaf}")),
+            direction,
+            same_axis_move: mode,
+        }
+    }
+
+    fn plan_for(snapshot: &Snapshot, intent: &MoveIntent) -> crate::directional::MovePlan {
+        match crate::directional::plan_move_with_capabilities(
+            snapshot,
+            intent,
+            &Capabilities::full(),
+        ) {
+            MoveOutcome::Planned(plan) => plan,
+            other => panic!("expected planned, got {other:?}"),
+        }
+    }
+
+    fn child_ids(tree: &Node) -> Vec<String> {
+        match tree {
+            Node::Leaf { id } => vec![id.0.clone()],
+            Node::Group { children, .. } => children.iter().map(|c| c.id().0.clone()).collect(),
+        }
+    }
+
+    fn root_shares(tree: &Node) -> Vec<u64> {
+        match tree {
+            Node::Group { shares, .. } => shares.clone(),
+            Node::Leaf { .. } => panic!("expected root group"),
+        }
+    }
+
+    #[test]
+    fn flat_swap_apply_swaps_adjacent_leaves_with_traveling_shares() {
+        // R-MOV-09 selected shape, both directions: H[A,B*,C,D] shares
+        // [1,2,3,4], move B right gives H[A,C,B,D] shares [1,3,2,4]; move C
+        // left from a fresh world gives the same order/shares. Focus stays on
+        // the mover, no wrapper appears, shares travel with their windows.
+        for (focused, direction) in [("B", Direction::Right), ("C", Direction::Left)] {
+            let (trees, windows, domains, snapshot) = nary_world(
+                vec![leaf("A"), leaf("B"), leaf("C"), leaf("D")],
+                vec![1, 2, 3, 4],
+            );
+            let key = domain_key();
+            let plan = plan_for(
+                &snapshot,
+                &intent(focused, direction, SameAxisMove::FlatSwap),
+            );
+            assert_eq!(plan.rule, Rule::R2c, "{focused:?} {direction:?}");
+            assert!(
+                matches!(
+                    plan.operation,
+                    MoveOperation::SwapNeighbor {
+                        rule: Rule::R2c,
+                        ..
+                    }
+                ),
+                "{focused:?} {direction:?}"
+            );
+            let policy = default_policy();
+            let (desired_trees, _, focus_domain, focus_leaf) = apply_move_operation(
+                &*policy,
+                &trees,
+                &windows,
+                &domains,
+                &key,
+                &NodeId::from(focused),
+                direction,
+                &plan,
+                7,
+                None,
+            )
+            .unwrap_or_else(|| panic!("flat swap applies {focused:?} {direction:?}"));
+            assert_eq!(focus_domain, key);
+            assert_eq!(focus_leaf, NodeId::from(focused));
+            let updated = desired_trees.get(&key).cloned().flatten().expect("tree");
+            assert_eq!(child_ids(&updated), vec!["A", "C", "B", "D"]);
+            assert_eq!(root_shares(&updated), vec![1, 3, 2, 4]);
+        }
+    }
+
+    #[test]
+    fn wrap_apply_keeps_nesting_under_default_mode() {
+        // Same world under the CosmicWrap default still nests: the wrapper
+        // carries the summed pair share and the flat order is untouched.
+        let (trees, windows, domains, snapshot) = nary_world(
+            vec![leaf("A"), leaf("B"), leaf("C"), leaf("D")],
+            vec![1, 1, 1, 1],
+        );
+        let key = domain_key();
+        let plan = plan_for(
+            &snapshot,
+            &intent("B", Direction::Right, SameAxisMove::CosmicWrap),
+        );
+        assert!(matches!(plan.operation, MoveOperation::WrapNeighbor { .. }));
+        let policy = default_policy();
+        let (desired_trees, _, _, _) = apply_move_operation(
+            &*policy,
+            &trees,
+            &windows,
+            &domains,
+            &key,
+            &NodeId::from("B"),
+            Direction::Right,
+            &plan,
+            7,
+            None,
+        )
+        .expect("wrap applies");
+        let updated = desired_trees.get(&key).cloned().flatten().expect("tree");
+        assert_eq!(child_ids(&updated).len(), 3);
+        assert_eq!(root_shares(&updated), vec![1, 2, 1]);
+    }
+
+    #[test]
+    fn forged_mode_mismatches_refuse_without_weakening_either_rule() {
+        let (trees, windows, domains, snapshot) = nary_world(
+            vec![leaf("A"), leaf("B"), leaf("C"), leaf("D")],
+            vec![1, 1, 1, 1],
+        );
+        let key = domain_key();
+        let policy = default_policy();
+        // A genuine flat-swap plan relabeled to the wrap mode refuses: the
+        // R2c swap is admitted only under FlatSwap.
+        let swap = plan_for(
+            &snapshot,
+            &intent("B", Direction::Right, SameAxisMove::FlatSwap),
+        );
+        let mut forged_wrap_mode = swap.clone();
+        forged_wrap_mode.intent.same_axis_move = SameAxisMove::CosmicWrap;
+        assert!(
+            apply_move_operation(
+                &*policy,
+                &trees,
+                &windows,
+                &domains,
+                &key,
+                &NodeId::from("B"),
+                Direction::Right,
+                &forged_wrap_mode,
+                7,
+                None,
+            )
+            .is_none(),
+            "R2c swap under CosmicWrap must refuse"
+        );
+        // A genuine wrap plan relabeled to flat-swap refuses when the neighbor
+        // is a direct leaf (the planner would have emitted a swap there).
+        let wrap = plan_for(
+            &snapshot,
+            &intent("B", Direction::Right, SameAxisMove::CosmicWrap),
+        );
+        let mut forged_flat_mode = wrap.clone();
+        forged_flat_mode.intent.same_axis_move = SameAxisMove::FlatSwap;
+        assert!(
+            apply_move_operation(
+                &*policy,
+                &trees,
+                &windows,
+                &domains,
+                &key,
+                &NodeId::from("B"),
+                Direction::Right,
+                &forged_flat_mode,
+                7,
+                None,
+            )
+            .is_none(),
+            "leaf-neighbor wrap under FlatSwap must refuse"
+        );
+        // A non-adjacent R2c swap forgery (B names D) refuses.
+        let mut forged_neighbor = swap.clone();
+        forged_neighbor.operation = MoveOperation::SwapNeighbor {
+            rule: Rule::R2c,
+            container: NodeId::from("root"),
+            neighbor: NodeId::from("D"),
+        };
+        assert!(
+            apply_move_operation(
+                &*policy,
+                &trees,
+                &windows,
+                &domains,
+                &key,
+                &NodeId::from("B"),
+                Direction::Right,
+                &forged_neighbor,
+                7,
+                None,
+            )
+            .is_none(),
+            "non-adjacent R2c swap must refuse"
+        );
+        // The unmodified plans still apply, so the strict checks weaken
+        // neither the wrap rule nor the flat-swap rule.
+        assert!(
+            apply_move_operation(
+                &*policy,
+                &trees,
+                &windows,
+                &domains,
+                &key,
+                &NodeId::from("B"),
+                Direction::Right,
+                &swap,
+                7,
+                None,
+            )
+            .is_some()
+        );
+        assert!(
+            apply_move_operation(
+                &*policy,
+                &trees,
+                &windows,
+                &domains,
+                &key,
+                &NodeId::from("B"),
+                Direction::Right,
+                &wrap,
+                7,
+                None,
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn rmov10_group_neighbor_wrap_output_shares_for_record() {
+        // R-MOV-10 reference shape: H[A,B*,V[C,D],E] with sibling shares
+        // [1,2,3,4] and V shares [1,1], move B right under the wrap default.
+        // The existing leaf/group rule wraps B+V: root H[A,W,E] shares
+        // [1,5,4] with W = H[B,V] shares [1,1]; V keeps [1,1]; focus stays B.
+        let (trees, windows, domains, snapshot) = nary_world(
+            vec![
+                leaf("A"),
+                leaf("B"),
+                Node::Group {
+                    id: NodeId::from("V"),
+                    axis: Axis::Vertical,
+                    children: vec![leaf("C"), leaf("D")],
+                    shares: vec![1, 1],
+                },
+                leaf("E"),
+            ],
+            vec![1, 2, 3, 4],
+        );
+        let key = domain_key();
+        let plan = plan_for(
+            &snapshot,
+            &intent("B", Direction::Right, SameAxisMove::CosmicWrap),
+        );
+        assert!(matches!(plan.operation, MoveOperation::WrapNeighbor { .. }));
+        let policy = default_policy();
+        let (desired_trees, _, focus_domain, focus_leaf) = apply_move_operation(
+            &*policy,
+            &trees,
+            &windows,
+            &domains,
+            &key,
+            &NodeId::from("B"),
+            Direction::Right,
+            &plan,
+            7,
+            None,
+        )
+        .expect("group-neighbor wrap applies");
+        assert_eq!(focus_domain, key);
+        assert_eq!(focus_leaf, NodeId::from("B"));
+        let updated = desired_trees.get(&key).cloned().flatten().expect("tree");
+        match &updated {
+            Node::Group {
+                children, shares, ..
+            } => {
+                assert_eq!(shares, &vec![1, 5, 4]);
+                assert_eq!(children.len(), 3);
+                assert_eq!(children[0].id().0, "A");
+                assert_eq!(children[2].id().0, "E");
+                match &children[1] {
+                    Node::Group {
+                        children, shares, ..
+                    } => {
+                        assert_eq!(shares, &vec![1, 1]);
+                        assert_eq!(child_ids(&children[0]), vec!["B"]);
+                        match &children[1] {
+                            Node::Group {
+                                id,
+                                children,
+                                shares,
+                                ..
+                            } => {
+                                assert_eq!(id.0, "V");
+                                assert_eq!(shares, &vec![1, 1]);
+                                let v_children: Vec<String> =
+                                    children.iter().map(|c| c.id().0.clone()).collect();
+                                assert_eq!(v_children, vec!["C", "D"]);
+                            }
+                            other => panic!("expected V group, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected wrapper group, got {other:?}"),
+                }
+            }
+            other => panic!("expected root group, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn flat_swap_forgeries_against_binary_and_group_neighbors_refuse() {
+        // R2c-labeled swap in a binary container refuses (flat-swap is N-ary
+        // only; the binary shape stays R2a).
+        let (trees, windows, domains, snapshot) =
+            nary_world(vec![leaf("A"), leaf("B")], vec![1, 1]);
+        let key = domain_key();
+        let policy = default_policy();
+        let r2a = plan_for(
+            &snapshot,
+            &intent("A", Direction::Right, SameAxisMove::FlatSwap),
+        );
+        assert_eq!(r2a.rule, Rule::R2a);
+        let mut forged = r2a.clone();
+        forged.rule = Rule::R2c;
+        forged.operation = MoveOperation::SwapNeighbor {
+            rule: Rule::R2c,
+            container: NodeId::from("root"),
+            neighbor: NodeId::from("B"),
+        };
+        assert!(
+            apply_move_operation(
+                &*policy,
+                &trees,
+                &windows,
+                &domains,
+                &key,
+                &NodeId::from("A"),
+                Direction::Right,
+                &forged,
+                7,
+                None,
+            )
+            .is_none(),
+            "binary R2c swap must refuse"
+        );
+        // R-MOV-10: a wrap plan against a group neighbor stays valid under
+        // FlatSwap (restricted scope, no broadening to groups).
+        let (trees, windows, domains, snapshot) = nary_world(
+            vec![
+                leaf("A"),
+                leaf("B"),
+                Node::Group {
+                    id: NodeId::from("V"),
+                    axis: Axis::Vertical,
+                    children: vec![leaf("C"), leaf("D")],
+                    shares: vec![1, 1],
+                },
+                leaf("E"),
+            ],
+            vec![1, 1, 1, 1],
+        );
+        let wrap = plan_for(
+            &snapshot,
+            &intent("B", Direction::Right, SameAxisMove::CosmicWrap),
+        );
+        assert!(matches!(wrap.operation, MoveOperation::WrapNeighbor { .. }));
+        let mut flat_group_wrap = wrap.clone();
+        flat_group_wrap.intent.same_axis_move = SameAxisMove::FlatSwap;
+        assert!(
+            apply_move_operation(
+                &*policy,
+                &trees,
+                &windows,
+                &domains,
+                &key,
+                &NodeId::from("B"),
+                Direction::Right,
+                &flat_group_wrap,
+                7,
+                None,
+            )
+            .is_some(),
+            "group-neighbor wrap stays valid under FlatSwap"
+        );
     }
 }

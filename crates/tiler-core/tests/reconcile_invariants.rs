@@ -27,6 +27,7 @@ fn intent() -> MoveIntent {
         focused_leaf: NodeId("leaf-1".to_owned()),
         focused_window: WindowId("win-1".to_owned()),
         direction: Direction::Right,
+        same_axis_move: tiler_core::directional::SameAxisMove::CosmicWrap,
     }
 }
 

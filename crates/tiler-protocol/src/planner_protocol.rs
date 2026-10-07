@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use tiler_core::bounds::{is_opaque_id, valid_carried_rect};
 use tiler_core::contract::{LifecycleOperation, LifecyclePrecondition};
-use tiler_core::directional::{Direction, NodeId, OutputId, WindowId, WorkspaceId};
+use tiler_core::directional::{Direction, NodeId, OutputId, SameAxisMove, WindowId, WorkspaceId};
 use tiler_core::engine::Engine;
 use tiler_core::geometry::Rect;
 use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
@@ -2307,12 +2307,23 @@ impl Planner {
                     window,
                     direction,
                     cross_output_transfer,
-                }) => DirectedCommand {
-                    window,
-                    direction,
-                    cross_output_transfer,
-                    float_subject: false,
-                },
+                    same_axis_move,
+                }) => {
+                    let Some(same_axis_move) = SameAxisMove::parse_wire(&same_axis_move) else {
+                        return snapshot_invalid(
+                            ctx.request.correlation_id.clone(),
+                            MSG_UNKNOWN_VALUE,
+                            "move-op-invalid",
+                        );
+                    };
+                    DirectedCommand {
+                        window,
+                        direction,
+                        cross_output_transfer,
+                        same_axis_move,
+                        float_subject: false,
+                    }
+                }
                 Ok(_) => {
                     return snapshot_invalid(
                         ctx.request.correlation_id.clone(),
@@ -2360,6 +2371,7 @@ impl Planner {
             window: command.window.clone(),
             direction: command.direction.clone(),
             cross_output_transfer: command.cross_output_transfer,
+            same_axis_move: command.same_axis_move,
         };
         let event = core_event(ctx, &core_command);
         self.handle_and_serialize(ctx, &event)
@@ -2380,6 +2392,9 @@ impl Planner {
                     window,
                     direction,
                     cross_output_transfer,
+                    // Focus never reads the move-only mode; the default keeps
+                    // the value total without touching the focus wire shape.
+                    same_axis_move: SameAxisMove::CosmicWrap,
                     float_subject,
                 },
                 Ok(_) => {
@@ -2469,6 +2484,7 @@ impl Planner {
             window: command.window.clone(),
             direction: command.direction.clone(),
             cross_output_transfer: command.cross_output_transfer,
+            same_axis_move: command.same_axis_move.as_wire_str().to_owned(),
         })
         .expect("move sync op converts");
         let event = core_event(ctx, &core_command);
@@ -3172,6 +3188,8 @@ fn evaluate_toggle_float_with(
 /// [`SyncCommand`] variant (never parsed directly anymore); the
 /// `cross_output_transfer` default-true is mirrored on the enum variants so
 /// omitted legacy requests keep their historical full-capability behavior.
+/// The `same_axis_move` default mirrors the R-MOV-03 missing-field rule so
+/// omitted legacy requests keep the historical cosmic-wrap behavior.
 #[derive(Debug, Clone)]
 struct DirectedCommand {
     window: String,
@@ -3181,6 +3199,10 @@ struct DirectedCommand {
     /// while rejecting R4 before the planner stages any state. Omitted legacy
     /// requests retain their historical full-capability behavior.
     cross_output_transfer: bool,
+    /// Validated R-MOV-03 same-axis mode (missing wire field decodes to
+    /// [`SameAxisMove::CosmicWrap`]; anything else refuses as
+    /// `move-op-invalid` before this value exists).
+    same_axis_move: SameAxisMove,
     /// Float-origin subject marker for focus only (ignored on move): true
     /// means the subject is a floating/sticky exception and the Engine must
     /// use the shared cross-output remembered-target fallback without the
@@ -3190,6 +3212,12 @@ struct DirectedCommand {
 
 const fn default_cross_output_transfer() -> bool {
     true
+}
+
+/// R-MOV-03 missing-field default: omitted `same_axis_move` decodes to
+/// `cosmic-wrap`, preserving the historical wrap behavior byte-for-byte.
+fn default_same_axis_move() -> String {
+    SameAxisMove::CosmicWrap.as_wire_str().to_owned()
 }
 
 /// Omitted `follow` on `send-to-workspace` preserves the historical follow
@@ -3394,6 +3422,11 @@ enum SyncCommand {
         direction: String,
         #[serde(default = "default_cross_output_transfer")]
         cross_output_transfer: bool,
+        /// R-MOV-03 same-axis mode (`cosmic-wrap` / `flat-swap`). Absent
+        /// preserves the historical wrap behavior; unknown values refuse as
+        /// `move-op-invalid` at the handler (never silently coerced).
+        #[serde(default = "default_same_axis_move")]
+        same_axis_move: String,
     },
     #[serde(rename = "focus")]
     Focus {
@@ -3483,10 +3516,14 @@ fn core_command_from_sync(command: &SyncCommand) -> Option<tiler_core::boundary:
             window,
             direction,
             cross_output_transfer,
+            same_axis_move,
         } => Some(CoreCommand::Move {
             window: window.clone(),
             direction: direction.clone(),
             cross_output_transfer: *cross_output_transfer,
+            // Validated at the move handlers before conversion; `None` here
+            // is unreachable and fails closed at the callers' `expect`.
+            same_axis_move: SameAxisMove::parse_wire(same_axis_move)?,
         }),
         SyncCommand::Focus {
             window,
@@ -6331,6 +6368,360 @@ mod tests {
             fresh.evaluate(&floating_value.to_string()),
             "{\"v\":1,\"correlation_id\":\"gold-float-3\",\"outcome\":\"rejected\",\"kind\":\"not-tiled\",\"message\":\"focused window is not a tiled window\"}",
         );
+    }
+
+    #[test]
+    fn typed_sync_codec_same_axis_move_default_variants_and_invalid() {
+        // R-MOV-03 wire contract: a missing `same_axis_move` field decodes to
+        // cosmic-wrap (the explicit form replies identically); `flat-swap`
+        // decodes and leaves the binary R2a rule unchanged on this pair;
+        // unknown values refuse as snapshot-invalid `move-op-invalid`;
+        // non-string values refuse via the malformed path; the KDE
+        // `sameAxisMove` camelCase spelling refuses as an unknown field.
+        // Each planned case runs on a freshly seeded planner so committed
+        // plans cannot bleed across cases.
+        let seed = || {
+            let mut planner = Planner::new();
+            for (cid, focused, windows, command) in [
+                (
+                    "axis-s1",
+                    "win-1",
+                    vec![("win-1", 0, 0, 100, 80)],
+                    serde_json::json!({"op": "reconcile"}),
+                ),
+                (
+                    "axis-s2",
+                    "win-1",
+                    vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                    serde_json::json!({"op": "reconcile"}),
+                ),
+            ] {
+                let reply = parse_reply(&planner.evaluate(&retained_request(
+                    cid, "owner-1", "gen-1", focused, &windows, command,
+                )));
+                assert_eq!(reply["outcome"], "planned", "{reply}");
+            }
+            planner
+        };
+        let two = vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)];
+        let move_command = |mode: Option<serde_json::Value>| {
+            let mut command =
+                serde_json::json!({"op": "move", "window": "win-1", "direction": "right"});
+            if let Some(mode) = mode {
+                command["same_axis_move"] = mode;
+            }
+            command
+        };
+        let planned_rule = |reply: &str| {
+            let value = parse_reply(reply);
+            assert_eq!(value["outcome"], "planned", "{value}");
+            assert_eq!(value["detail"]["kind"], "move", "{value}");
+            value["detail"]["rule"].as_str().expect("rule").to_owned()
+        };
+        // Missing field plans the historical wrap behavior (R2a here).
+        let missing = retained_request(
+            "axis-missing-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            move_command(None),
+        );
+        assert_eq!(planned_rule(&seed().evaluate(&missing)), "R2a");
+        // Explicit cosmic-wrap replies identically (modulo correlation).
+        let explicit = retained_request(
+            "axis-explicit-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            move_command(Some(serde_json::json!("cosmic-wrap"))),
+        );
+        let missing_reply = parse_reply(&seed().evaluate(&missing));
+        let explicit_reply = parse_reply(&seed().evaluate(&explicit));
+        assert_eq!(missing_reply["outcome"], "planned", "{missing_reply}");
+        assert_eq!(explicit_reply["outcome"], "planned", "{explicit_reply}");
+        for key in ["detail", "desired_geometry", "desired_focus"] {
+            assert_eq!(explicit_reply[key], missing_reply[key], "{key}");
+        }
+        // Flat-swap decodes and leaves the binary R2a rule unchanged.
+        let flat = retained_request(
+            "axis-flat-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            move_command(Some(serde_json::json!("flat-swap"))),
+        );
+        assert_eq!(planned_rule(&seed().evaluate(&flat)), "R2a");
+        // Unknown values refuse as snapshot-invalid move-op-invalid.
+        let invalid = retained_request(
+            "axis-invalid-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            move_command(Some(serde_json::json!("diagonal-wrap"))),
+        );
+        assert_eq!(
+            seed().evaluate(&invalid),
+            "{\"v\":1,\"correlation_id\":\"axis-invalid-1\",\"outcome\":\"rejected\",\"kind\":\"snapshot-invalid\",\"message\":\"request contains an unknown value\",\"detail\":\"move-op-invalid\"}",
+        );
+        // Non-string values refuse via the malformed path.
+        let mistyped = retained_request(
+            "axis-mistyped-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            move_command(Some(serde_json::json!(1))),
+        );
+        assert_eq!(
+            seed().evaluate(&mistyped),
+            "{\"v\":1,\"correlation_id\":\"axis-mistyped-1\",\"outcome\":\"rejected\",\"kind\":\"request-malformed\",\"message\":\"request is malformed\"}",
+        );
+        // The camelCase spelling is not the wire field.
+        let camel = retained_request(
+            "axis-camel-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "move", "window": "win-1", "direction": "right", "sameAxisMove": "flat-swap"}),
+        );
+        assert_eq!(
+            seed().evaluate(&camel),
+            "{\"v\":1,\"correlation_id\":\"axis-camel-1\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
+        );
+    }
+
+    #[test]
+    fn typed_sync_codec_same_axis_nary_wrap_vs_swap() {
+        // R-MOV-03 N-ary discrimination at the wire: incremental admission of
+        // four side-by-side windows nests binary (session-fixture shape), a
+        // focus-left walk reaches win-1, and one right move grows the inner
+        // group (R2b). Focusing up then moving down hits R2c. Missing and explicit
+        // `cosmic-wrap` wrap (`WrapSiblings`); `flat-swap` swaps
+        // (`SwapNeighbor`); both keep the mover focused.
+        let four = vec![
+            ("win-1", 0, 0, 300, 800),
+            ("win-2", 300, 0, 300, 800),
+            ("win-3", 600, 0, 300, 800),
+            ("win-4", 900, 0, 300, 800),
+        ];
+        let focus_cmd = |window: &str, direction: &str| serde_json::json!({"op": "focus", "window": window, "direction": direction});
+        let move_cmd = |window: &str, direction: &str, mode: Option<&str>| {
+            let mut command = serde_json::json!({
+                "op": "move",
+                "window": window,
+                "direction": direction,
+            });
+            if let Some(mode) = mode {
+                command["same_axis_move"] = serde_json::json!(mode);
+            }
+            command
+        };
+        // Full fixture replay on a fresh planner; only the final move
+        // carries the variant under test.
+        let replay = |correlation: &str, mode: Option<&str>| {
+            let mut planner = Planner::new();
+            for n in 1..=4usize {
+                let focused = format!("win-{n}");
+                let reply = parse_reply(&planner.evaluate(&retained_request(
+                    &format!("{correlation}-seed-{n}"),
+                    "owner-1",
+                    "gen-1",
+                    &focused,
+                    &four[..n],
+                    serde_json::json!({"op": "reconcile"}),
+                )));
+                assert_eq!(reply["outcome"], "planned", "{reply}");
+            }
+            let mut focused = "win-4".to_owned();
+            for step in 0..4 {
+                let reply = parse_reply(&planner.evaluate(&retained_request(
+                    &format!("{correlation}-focus-{step}"),
+                    "owner-1",
+                    "gen-1",
+                    &focused,
+                    &four,
+                    focus_cmd(&focused, "left"),
+                )));
+                assert_eq!(reply["outcome"], "planned", "{reply}");
+                focused = reply["desired_focus"]["leaf"]
+                    .as_str()
+                    .expect("focus leaf")
+                    .strip_prefix("leaf-")
+                    .expect("leaf prefix")
+                    .to_owned();
+                if focused == "win-1" {
+                    break;
+                }
+            }
+            assert_eq!(focused, "win-1", "fixture must reach win-1");
+            let setup = parse_reply(&planner.evaluate(&retained_request(
+                &format!("{correlation}-setup"),
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &four,
+                move_cmd("win-1", "right", None),
+            )));
+            assert_eq!(setup["outcome"], "planned", "{setup}");
+            assert_eq!(setup["detail"]["rule"], "R2b", "{setup}");
+            // The R2b insertion leaves V[win-2, win-1, H[win-3, win-4]], so
+            // focus up to win-2 and move it down onto its leaf neighbor: the
+            // R2c case discriminating wrap from flat-swap.
+            let focused_up = parse_reply(&planner.evaluate(&retained_request(
+                &format!("{correlation}-focus-up"),
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &four,
+                focus_cmd("win-1", "up"),
+            )));
+            assert_eq!(focused_up["outcome"], "planned", "{focused_up}");
+            assert_eq!(
+                focused_up["desired_focus"]["leaf"], "leaf-win-2",
+                "{focused_up}"
+            );
+            parse_reply(&planner.evaluate(&retained_request(
+                &format!("{correlation}-final"),
+                "owner-1",
+                "gen-1",
+                "win-2",
+                &four,
+                move_cmd("win-2", "down", mode),
+            )))
+        };
+        let missing = replay("nary-missing", None);
+        assert_eq!(missing["outcome"], "planned", "{missing}");
+        assert_eq!(missing["detail"]["rule"], "R2c", "{missing}");
+        assert_eq!(missing["detail"]["direction"], "down", "{missing}");
+        assert_eq!(missing["detail"]["capability"], "WrapSiblings", "{missing}");
+        assert_eq!(missing["desired_focus"]["leaf"], "leaf-win-2", "{missing}");
+        let explicit = replay("nary-explicit", Some("cosmic-wrap"));
+        assert_eq!(explicit["outcome"], "planned", "{explicit}");
+        for key in ["detail", "desired_geometry", "desired_focus"] {
+            assert_eq!(explicit[key], missing[key], "{key}");
+        }
+        let flat = replay("nary-flat", Some("flat-swap"));
+        assert_eq!(flat["outcome"], "planned", "{flat}");
+        assert_eq!(flat["detail"]["rule"], "R2c", "{flat}");
+        assert_eq!(flat["detail"]["capability"], "SwapNeighbor", "{flat}");
+        assert_eq!(flat["desired_focus"]["leaf"], "leaf-win-2", "{flat}");
+        // The swap exchanges the leaf slots while the wrap nests the pair,
+        // so the mover rect differs between the two.
+        let mover_rect = |reply: &serde_json::Value| {
+            reply["desired_geometry"]
+                .as_array()
+                .expect("geometry")
+                .iter()
+                .find(|g| g["window"] == "win-2")
+                .expect("mover geometry")
+                .get("rect")
+                .expect("rect")
+                .clone()
+        };
+        assert_ne!(
+            mover_rect(&flat),
+            mover_rect(&missing),
+            "{flat} vs {missing}"
+        );
+    }
+
+    #[test]
+    fn same_axis_move_codec_decodes_default_and_converts_typed() {
+        // Codec unit pins: missing `same_axis_move` deserializes to the
+        // `cosmic-wrap` default; both wire tokens decode; an unknown string
+        // still decodes as a string (the handler refuses it, never the
+        // codec); `core_command_from_sync` maps valid tokens to the typed
+        // enum and returns `None` (never panics) for anything else.
+        let decode = |command: serde_json::Value| {
+            let decoded: SyncCommand = serde_json::from_value(command).expect("move shape decodes");
+            match decoded {
+                SyncCommand::Move { same_axis_move, .. } => same_axis_move,
+                other => panic!("expected move, got {other:?}"),
+            }
+        };
+        assert_eq!(
+            decode(serde_json::json!({"op": "move", "window": "w", "direction": "right"})),
+            "cosmic-wrap"
+        );
+        assert_eq!(
+            decode(
+                serde_json::json!({"op": "move", "window": "w", "direction": "right", "same_axis_move": "cosmic-wrap"})
+            ),
+            "cosmic-wrap"
+        );
+        assert_eq!(
+            decode(
+                serde_json::json!({"op": "move", "window": "w", "direction": "right", "same_axis_move": "flat-swap"})
+            ),
+            "flat-swap"
+        );
+        assert_eq!(
+            decode(
+                serde_json::json!({"op": "move", "window": "w", "direction": "right", "same_axis_move": "diagonal-wrap"})
+            ),
+            "diagonal-wrap"
+        );
+        let convert = |mode: &str| {
+            core_command_from_sync(&SyncCommand::Move {
+                window: "w".to_owned(),
+                direction: "right".to_owned(),
+                cross_output_transfer: true,
+                same_axis_move: mode.to_owned(),
+            })
+        };
+        assert!(matches!(
+            convert("cosmic-wrap"),
+            Some(tiler_core::boundary::CoreCommand::Move {
+                same_axis_move: SameAxisMove::CosmicWrap,
+                ..
+            })
+        ));
+        assert!(matches!(
+            convert("flat-swap"),
+            Some(tiler_core::boundary::CoreCommand::Move {
+                same_axis_move: SameAxisMove::FlatSwap,
+                ..
+            })
+        ));
+        assert_eq!(convert("diagonal-wrap"), None);
+        assert_eq!(convert(""), None);
+        for input in [
+            serde_json::json!({"op": "move", "window": "w", "direction": "right"}),
+            serde_json::json!({"op": "move", "window": "w", "direction": "right", "same_axis_move": "cosmic-wrap"}),
+            serde_json::json!({"op": "move", "window": "w", "direction": "right", "same_axis_move": "flat-swap"}),
+        ] {
+            let decoded: SyncCommand = serde_json::from_value(input.clone()).expect("move decodes");
+            let Some(tiler_core::boundary::CoreCommand::Move { same_axis_move, .. }) =
+                core_command_from_sync(&decoded)
+            else {
+                panic!("typed move expected");
+            };
+            let encoded = serde_json::json!({
+                "op": "move", "window": "w", "direction": "right",
+                "same_axis_move": same_axis_move.as_wire_str(),
+            });
+            assert_eq!(
+                encoded["same_axis_move"],
+                input
+                    .get("same_axis_move")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!("cosmic-wrap"))
+            );
+            let round_trip: SyncCommand = serde_json::from_value(encoded).expect("move round trip");
+            assert_eq!(
+                core_command_from_sync(&round_trip),
+                core_command_from_sync(&decoded)
+            );
+        }
+        // Wire encoding is the validated enum token in both directions.
+        assert_eq!(SameAxisMove::CosmicWrap.as_wire_str(), "cosmic-wrap");
+        assert_eq!(SameAxisMove::FlatSwap.as_wire_str(), "flat-swap");
+        assert_eq!(SameAxisMove::default(), SameAxisMove::CosmicWrap);
     }
 
     #[test]

@@ -36,6 +36,7 @@ const logic = read("native-effect/activeborderlogic.h");
 const SCRIPT_SETTINGS = {
     workspaceMode: { type: "Enum", defaultValue: "per-output-local" },
     shortcutProfile: { type: "Enum", defaultValue: "cosmic" },
+    sameAxisMove: { type: "Enum", defaultValue: "cosmic-wrap" },
     innerGap: { type: "Int", defaultValue: "8" },
     outerGap: { type: "Int", defaultValue: "8" },
 } as const;
@@ -118,7 +119,7 @@ describe("native KCM static contract", () => {
         assert.match(unifiedHeader, /::Ui::UnifiedSettings m_ui/);
         // Thin factories carry no widget or reconfigure internals.
         for (const factory of [effectFactory, scriptFactory]) {
-            assert.doesNotMatch(factory, /workspaceModeCombo|innerGapSpinBox|outerGapSpinBox/);
+            assert.doesNotMatch(factory, /workspaceModeCombo|sameAxisMoveCombo|innerGapSpinBox|outerGapSpinBox/);
             assert.doesNotMatch(factory, /requestEffectReconfigure|requestScriptReconfigure/);
             assert.doesNotMatch(factory, /Script-plasma-auto-tiler-kwin/);
         }
@@ -138,6 +139,7 @@ describe("native KCM static contract", () => {
             "kcfg_GroupUnderlayColor",
             "kcfg_GroupUnderlayExtension",
             "workspaceModeCombo",
+            "sameAxisMoveCombo",
             "innerGapSpinBox",
             "outerGapSpinBox",
             "shortcutApplyButton",
@@ -184,7 +186,7 @@ describe("native KCM static contract", () => {
         }
     });
 
-    it("keeps the four supported script keys and defaults identical between schema and the unified script KCM", () => {
+    it("keeps the five supported script keys and defaults identical between schema and the unified script KCM", () => {
         // defaultTiled is schema-only (tray persist + script readConfig for
         // newly discovered workspaces); the unified KCM intentionally owns
         // only workspaceMode/innerGap/outerGap, so it is asserted separately.
@@ -216,6 +218,7 @@ describe("native KCM static contract", () => {
         }
 
         assert.match(unified, /workspaceModeCombo->findData\(QStringLiteral\("per-output-local"\)\)/);
+        assert.match(unified, /sameAxisMoveCombo->findData\(QStringLiteral\("cosmic-wrap"\)\)/);
         assert.doesNotMatch(unified, /shortcutProfileCombo/);
         assert.doesNotMatch(unified, /readEntry\(QStringLiteral\("shortcutProfile"\)/);
         assert.doesNotMatch(unified, /writeEntry\(QStringLiteral\("shortcutProfile"\)/);
@@ -224,7 +227,7 @@ describe("native KCM static contract", () => {
         assert.match(unified, /innerGapSpinBox->setValue\((8|kGapDefault)\)/);
         assert.match(unified, /outerGapSpinBox->setValue\((8|kGapDefault)\)/);
         for (const factory of [effectFactory, scriptFactory]) {
-            assert.doesNotMatch(factory, /workspaceModeCombo|shortcutProfileCombo|innerGapSpinBox|outerGapSpinBox/);
+            assert.doesNotMatch(factory, /workspaceModeCombo|shortcutProfileCombo|sameAxisMoveCombo|innerGapSpinBox|outerGapSpinBox/);
             assert.doesNotMatch(factory, /Script-plasma-auto-tiler-kwin/);
         }
     });
@@ -234,6 +237,9 @@ describe("native KCM static contract", () => {
         assert.doesNotMatch(unified, /Effect-plasma-auto-tiler-kwin/);
         assert.match(unified, /const QString workspaceMode = group\.readEntry\(QStringLiteral\("workspaceMode"\), QStringLiteral\("per-output-local"\)\)/);
         assert.match(unified, /select\(m_ui\.workspaceModeCombo, workspaceMode, QStringLiteral\("per-output-local"\)\)/);
+        assert.match(unified, /readSameAxisMove\(group\)/);
+        assert.match(unified, /select\(m_ui\.sameAxisMoveCombo, sameAxisMove, QStringLiteral\("cosmic-wrap"\)\)/);
+        assert.match(unified, /writeEntry\(QStringLiteral\("sameAxisMove"\)/);
         assert.doesNotMatch(unified, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview/);
     });
 
@@ -305,6 +311,7 @@ describe("native KCM static contract", () => {
     it("associates every labeled unified control with its buddy", () => {
         for (const [label, control] of [
             ["label_workspaceMode", "workspaceModeCombo"],
+            ["label_sameAxisMove", "sameAxisMoveCombo"],
             ["label_innerGap", "innerGapSpinBox"],
             ["label_outerGap", "outerGapSpinBox"],
         ]) {
@@ -352,7 +359,8 @@ describe("native KCM static contract", () => {
         assert.match(unifiedHeader, /isScriptRestartRequired/);
         assert.match(unifiedHeader, /isGapReconfigurePending/);
         assert.match(unified, /m_gapReconfigurePending/);
-        assert.match(unified, /if \(gapChanged \|\| scriptRetryArmed\)/);
+        assert.match(unified, /const bool liveChanged = gapChanged \|\| sameAxisMoveChanged/);
+        assert.match(unified, /if \(liveChanged \|\| scriptRetryArmed\)/);
         assert.match(unified, /if \(!widgetsChanged\)/);
         assert.match(unified, /This retry saved nothing/);
         assert.match(unified, /Session restart remains required for workspace mode/);

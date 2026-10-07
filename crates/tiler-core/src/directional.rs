@@ -181,12 +181,58 @@ pub struct Snapshot {
 }
 
 /// Directional move intent against a [`Snapshot`].
+///
+/// `same_axis_move` selects the R-MOV-03 same-orientation behavior for the
+/// R2c neighbor case only: [`SameAxisMove::CosmicWrap`] (default) keeps the
+/// COSMIC nested wrap, [`SameAxisMove::FlatSwap`] swaps an adjacent direct
+/// leaf sibling in place. R1, R2a, R2b, R3, and R4 are identical under both
+/// values. The mode travels in the intent so strict application can refuse
+/// forged operation/mode combinations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MoveIntent {
     pub source_output: OutputId,
     pub focused_leaf: NodeId,
     pub focused_window: WindowId,
     pub direction: Direction,
+    pub same_axis_move: SameAxisMove,
+}
+
+/// R-MOV-03 same-axis move setting (decisions 2026-10-07 item 3.1/3.2).
+///
+/// One global setting with two validated values: `cosmic-wrap` (default,
+/// `H[A,B*,C,D]` move right gives `H[A,H[B,C],D]`) and `flat-swap` (i3/sway
+/// alternative, `H[A,C,B*,D]` with shares traveling with windows). The wire
+/// tokens are `cosmic-wrap` and `flat-swap`; a missing protocol field decodes
+/// to the default. Anything else refuses at the protocol boundary, never here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum SameAxisMove {
+    /// COSMIC nested wrap (default).
+    #[default]
+    CosmicWrap,
+    /// Flat adjacent-leaf sibling swap (R2c leaf neighbors only).
+    FlatSwap,
+}
+
+impl SameAxisMove {
+    /// Wire token for this value (`cosmic-wrap` / `flat-swap`).
+    #[must_use]
+    pub const fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::CosmicWrap => "cosmic-wrap",
+            Self::FlatSwap => "flat-swap",
+        }
+    }
+
+    /// Validated parse of a wire token. `None` for anything else, including
+    /// empty strings: callers refuse fail-closed.
+    #[must_use]
+    pub fn parse_wire(value: &str) -> Option<Self> {
+        match value {
+            "cosmic-wrap" => Some(Self::CosmicWrap),
+            "flat-swap" => Some(Self::FlatSwap),
+            _ => None,
+        }
+    }
 }
 
 /// Structural rule. Analogue of `CosmicMoveRule`.
@@ -882,6 +928,29 @@ fn plan_local(intent: &MoveIntent, source: &Output, path: &[PathLevel<'_>]) -> M
                     ));
                 }
             }
+        }
+        // R-MOV-03 flat-swap (item 3.2): replaces only this R2c case, and
+        // only when the directional neighbor is an adjacent direct leaf
+        // sibling in the same group. Group neighbors, R2a binary swaps, R2b
+        // inserts/splits, and R3 escapes keep the wrap-branch rules below.
+        // The emitted swap reuses SwapNeighbor (shares travel with windows at
+        // application, like R2a); the rule stays R2c so strict application
+        // can tell the N-ary flat swap from the binary R2a swap.
+        if intent.same_axis_move == SameAxisMove::FlatSwap
+            && matches!(neighbor, Node::Leaf { .. })
+            && matches!(
+                ancestor.children.get(ancestor.child_index),
+                Some(Node::Leaf { .. })
+            )
+        {
+            return MoveOutcome::Planned(MovePlan::for_operation(
+                intent,
+                MoveOperation::SwapNeighbor {
+                    rule: Rule::R2c,
+                    container: ancestor.group_id.clone(),
+                    neighbor: neighbor.id().clone(),
+                },
+            ));
         }
         return MoveOutcome::Planned(MovePlan::for_operation(
             intent,
