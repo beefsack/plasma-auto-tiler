@@ -1210,6 +1210,8 @@ mod tests {
                     fullscreen: false,
                     maximized: false,
                     sticky: false,
+                    fixed_auto: false,
+                    fixed_suppress: false,
                     hints: crate::size_hints::WindowSizeHints::none(),
                 })
                 .collect(),

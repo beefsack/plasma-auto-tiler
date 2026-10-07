@@ -200,6 +200,12 @@ export interface PlanSnapshotWindow {
     // ride the request wire as `min_size`/`max_size`.
     readonly minSize?: { readonly w: number; readonly h: number };
     readonly maxSize?: { readonly w: number; readonly h: number };
+    // Q2 fixed-size origin signals (D3/D6): adapter-asserted provenance for
+    // the core classifier. `fixedAuto` marks classifier-created automatic
+    // floats; `fixedSuppress` pins a live-tile win across hide, release,
+    // and re-adoption. Absent unless true so older payloads stay identical.
+    readonly fixedAuto?: boolean;
+    readonly fixedSuppress?: boolean;
 }
 
 export interface PlanSnapshot {
@@ -1122,6 +1128,41 @@ function meaningfulMinExtent(value: unknown): number | null {
     return extent;
 }
 
+// Q2 fixed-size float admission predicate (D1), mirroring core
+// `is_fixed_size`: fixed iff min and max are BOTH present with usable
+// nonnegative vector sizes (0..=16384) on BOTH axes and equal on BOTH
+// axes. The entire (0,0) vector does not count; equal partial-zero
+// vectors such as (640,0) or (0,480) do count. Unset bounds, negative
+// values, unbounded sentinels, and out-of-contract values never count.
+// The resizeable flag alone never counts and no either-axis setting
+// exists. Total over all inputs.
+export function isFixedSize(
+    minSize: { readonly w: unknown; readonly h: unknown } | null | undefined,
+    maxSize: { readonly w: unknown; readonly h: unknown } | null | undefined,
+): boolean {
+    if (minSize === null || minSize === undefined || maxSize === null || maxSize === undefined) {
+        return false;
+    }
+    const bounds = [minSize.w, minSize.h, maxSize.w, maxSize.h];
+    for (const bound of bounds) {
+        if (!isFiniteInt(bound)) {
+            return false;
+        }
+        const extent = bound as number;
+        if (extent < 0 || extent > 16384) {
+            return false;
+        }
+    }
+    const minW = minSize.w as number;
+    const minH = minSize.h as number;
+    const maxW = maxSize.w as number;
+    const maxH = maxSize.h as number;
+    if (minW === 0 && minH === 0 && maxW === 0 && maxH === 0) {
+        return false;
+    }
+    return minW === maxW && minH === maxH;
+}
+
 // Effective native target for an overconstrained tile: planned origin with
 // each extent raised to the freshly observed declared minimum. Satisfied or
 // unknown/sentinel extents pass through byte-identical (mirrors Windows
@@ -1882,6 +1923,12 @@ interface PendingFlight {
     readonly admissionMaximizeClears: ReadonlyArray<string>;
     readonly floatTarget: { readonly window: string; readonly floating: boolean } | null;
     readonly stickyTarget: { readonly window: string; readonly previousFloating: boolean } | null;
+    // Staged Q2 fixed-size lifecycle change for an explicit user command
+    // (D3): applied only when the flight's plan is applied, dropped on
+    // every failure terminal without ever touching the authoritative
+    // record. `kind` null deletes the record (intentional float);
+    // otherwise it pins a suppress tile win. Exact-ref guarded at commit.
+    readonly fixedStage: { readonly id: string; readonly ref: object; readonly kind: string | null } | null;
     // True for a hidden-domain (background) flight: geometry only, never
     // focus or interactive commands. Serialized through the same
     // single-flight and send-blocking as foreground.
@@ -1950,6 +1997,12 @@ interface AutoIntent {
     readonly admissionMaximizeClears?: ReadonlyArray<string>;
     readonly floatTarget?: { readonly window: string; readonly floating: boolean } | null;
     readonly stickyTarget?: { readonly window: string; readonly previousFloating: boolean } | null;
+    // Staged Q2 fixed-size lifecycle change for an explicit user command
+    // (D3): applied only when the flight's plan is applied, dropped on
+    // every failure terminal without ever touching the authoritative
+    // record. `kind` null deletes the record (intentional float);
+    // otherwise it pins a suppress tile win. Exact-ref guarded at commit.
+    readonly fixedStage?: { readonly id: string; readonly ref: object; readonly kind: string | null } | null;
     readonly background?: boolean;
     readonly direction?: PlanDirection | null;
     readonly replanned?: boolean;
@@ -2127,6 +2180,20 @@ export class PlanAdapter {
     // sticky float with prior-float semantics only. No tiled slot is guessed,
     // no history is persisted, and unstick never claims planner admission.
     private adoptedSticky = new Set<string>();
+    // Q2 fixed-size lifecycle (D1-D8): one record per live client, keyed by
+    // stable id and fenced by the exact native ref observed with it. `auto`
+    // marks classifier-created automatic floats (membership only, D8);
+    // `suppress` pins a live-tile win: explicit user tile (unfloat,
+    // sticky-off-to-tile, held fullscreen release, workspace retile) or a
+    // pinned normal first admission that blocks later core reclassification
+    // when hints turn fixed (D2/D3). Intentional floats (toggle-float,
+    // sticky) carry no record (D6). A reused id with a different ref never
+    // inherits (checked at classification); removal evicts; restart clears
+    // (D7). Records are never evicted for absence from one scoped snapshot
+    // or minimize: hide/show and cross-domain/background snapshots keep
+    // them, and the stored domain refreshes from each sighting so retile
+    // targets the current homing.
+    private fixedClients = new Map<string, { ref: object; kind: string; domain: string; reported: boolean }>();
     // The native setters own mutual exclusivity. Retain only the prior pair so
     // a project float can restore an initial keep-below choice exactly.
     private keepAbovePrevious = new Map<string, { ref: object; above: boolean; below: boolean }>();
@@ -2266,6 +2333,7 @@ export class PlanAdapter {
         this.appliedScopeByDomain.clear();
         this.seenNonFullscreen.clear();
         this.heldInitialFullscreen.clear();
+        this.fixedClients.clear();
         this.settleDragRestoreUnavailable();
         this.reconcileAttempts = 0;
         this.sendForcedDomains.clear();
@@ -2306,6 +2374,7 @@ export class PlanAdapter {
         this.appliedScopeByDomain.clear();
         this.seenNonFullscreen.clear();
         this.heldInitialFullscreen.clear();
+        this.fixedClients.clear();
         this.settleDragRestoreUnavailable();
         this.reconcileAttempts = 0;
         this.sendForcedDomains.clear();
@@ -2678,6 +2747,13 @@ export class PlanAdapter {
                     this.heldInitialFullscreen.delete(entry.id);
                     if (heldRef === entry.ref) {
                         this.logToken(`${LOG_PREFIX}:initial-fullscreen-released window=${entry.id}`);
+                        // Born-fullscreen fixed bypass (D5): the first
+                        // normal observation tiles, so record an explicit
+                        // tile win and never auto-float this live client.
+                        const hints = this.hintSizesFor(entry.ref);
+                        if (isFixedSize(hints.minSize, hints.maxSize)) {
+                            this.noteFixedTileOverride(entry.id, entry.ref);
+                        }
                     }
                     changed = true;
                 }
@@ -2737,7 +2813,8 @@ export class PlanAdapter {
                     : clampCarriedRect(entry.rect, bounds);
             return { ...entry, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h } };
         });
-        return this.attachHintSizes({ ...snapshot, windows: Object.freeze(windows) }, observed);
+        const hinted = this.attachHintSizes({ ...snapshot, windows: Object.freeze(windows) }, observed);
+        return this.withFixedSizeFloats(hinted, held);
     }
 
     // Per-domain applied scope: bounds, gap, outerGap keyed by
@@ -2968,7 +3045,8 @@ export class PlanAdapter {
             const rect = clampCarriedRect(carried, snapshot.domainBounds);
             return { ...entry, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h } };
         });
-        return this.attachHintSizes({ ...snapshot, windows: Object.freeze(windows) }, observed);
+        const hinted = this.attachHintSizes({ ...snapshot, windows: Object.freeze(windows) }, observed);
+        return this.withFixedSizeFloats(hinted, held);
     }
 
     // AR12: capture client size hints freshly from the live refs behind one
@@ -3000,6 +3078,240 @@ export class PlanAdapter {
             void error;
             return {};
         }
+    }
+
+    // Record an explicit user tile win for the same live client (D3):
+    // any automatic mark is replaced by a suppress pin on the exact
+    // native ref. A reused id with a different ref never inherits it
+    // (checked at classification), and verified removal evicts it.
+    private noteFixedTileOverride(id: string, ref: object): void {
+        const prior = this.fixedClients.get(id);
+        const domain = prior !== undefined && prior.ref === ref ? prior.domain : "";
+        this.fixedClients.set(id, { ref, kind: "suppress", domain, reported: true });
+    }
+
+    // Drop fixed-size identity when a window becomes an intentional float
+    // (explicit float, sticky-on): intentional floats never share
+    // automatic identity (D6). No override is recorded.
+    private dropAutomaticFixed(id: string): void {
+        this.fixedClients.delete(id);
+    }
+
+    // Commit a staged explicit-command lifecycle change once the flight's
+    // plan is applied (D3): the authoritative record moves only on proof.
+    // Every failure terminal drops the staged change without ever having
+    // touched it, so a refused/failed unfloat keeps automatic membership
+    // and a failed float keeps its tile pin. Exact-ref guarded: a replaced
+    // native reference reclassifies fresh and the stale stage is dropped.
+    private commitFixedStage(stage: PendingFlight["fixedStage"]): void {
+        if (stage === null) {
+            return;
+        }
+        const current = this.fixedClients.get(stage.id);
+        if (current !== undefined && current.ref !== stage.ref) {
+            return;
+        }
+        if (stage.kind === null) {
+            if (current !== undefined) {
+                this.fixedClients.delete(stage.id);
+            }
+            return;
+        }
+        const domain = current !== undefined ? current.domain : "";
+        this.fixedClients.set(stage.id, { ref: stage.ref, kind: stage.kind, domain, reported: true });
+    }
+
+    // Logical floating for operation validation: native floating plus
+    // classifier-automatic floats (which observe natively tiled, since the
+    // entry never calls intentional setters for them). Keeps Meta+G and
+    // sticky commands consistent with the outgoing wire (D3/D6).
+    private isEffectivelyFloating(observed: PlanObserved, id: string): boolean {
+        for (const entry of observed.windows) {
+            if (entry.id === id) {
+                if (entry.floating === true || entry.sticky === true) {
+                    return true;
+                }
+                const record = this.fixedClients.get(id);
+                return record !== undefined && record.kind === "auto" && record.ref === entry.ref;
+            }
+        }
+        return false;
+    }
+
+    // Bounded fixed-size classification diagnostic for one dispatch
+    // (D1-D8): correlation plus evaluated/classified counts and the fixed
+    // decision token only, never window ids, geometry, domains, or
+    // content. Phase word is classification: core summarizes actual
+    // committed admission separately. Emits only when this dispatch newly
+    // classifies automatic floats, so ordinary frames stay silent.
+    private noteFixedSizeDispatch(snapshot: PlanSnapshot, op: string, correlation: string): void {
+        let evaluated = 0;
+        let classified = 0;
+        for (const entry of snapshot.windows) {
+            if (entry.minSize !== undefined || entry.maxSize !== undefined) {
+                evaluated += 1;
+            }
+            if (entry.fixedAuto === true) {
+                const record = this.fixedClients.get(entry.id);
+                if (record !== undefined && record.kind === "auto" && !record.reported) {
+                    classified += 1;
+                }
+            }
+        }
+        if (classified === 0) {
+            return;
+        }
+        for (const entry of snapshot.windows) {
+            if (entry.fixedAuto === true) {
+                const record = this.fixedClients.get(entry.id);
+                if (record !== undefined && record.kind === "auto") {
+                    record.reported = true;
+                }
+            }
+        }
+        this.logToken(
+            `${LOG_PREFIX}:fixed-size-classification op=${op} correlation=${correlation} evaluated=${String(evaluated)} classified=${String(classified)} reason=fixed-equal phase=classify`,
+        );
+    }
+
+    // Evict fixed-size bookkeeping for one verified native removal by
+    // stable id (D3 lifetime fence). Same-runtime hide/show and minimize
+    // omission never route here, so they retain identity.
+    noteNativeRemovedId(id: string): void {
+        this.fixedClients.delete(id);
+    }
+
+    // Evict fixed-size bookkeeping for one verified native removal by
+    // exact object (D3): relocation survivors carry a different live ref
+    // and keep their records; truly removed refs drop.
+    private evictFixedByRef(ref: object): void {
+        for (const [id, record] of [...this.fixedClients]) {
+            if (record.ref === ref) {
+                this.fixedClients.delete(id);
+            }
+        }
+    }
+
+    // Retile automatic fixed floats homed on one domain when workspace
+    // tiling is enabled (D6): their marks convert to suppress pins (D3)
+    // so the next observation tiles them and later classification cannot
+    // re-float them, while intentional/sticky floats keep their
+    // membership. No geometry, focus, or stacking write happens here
+    // (D8): the following resync observation carries the retile.
+    retileAutomaticFixed(output: string, workspace: string): void {
+        const key = `${output}\u0000${workspace}`;
+        for (const [id, record] of [...this.fixedClients]) {
+            if (record.kind === "auto" && record.domain === key) {
+                this.fixedClients.set(id, { ref: record.ref, kind: "suppress", domain: key, reported: true });
+            }
+        }
+    }
+
+    // Q2 fixed-size membership-only classification (D1-D8) over one hinted
+    // snapshot with live refs from its observation. Automatic floats gain
+    // floating membership plus fixed_auto provenance only: no geometry,
+    // focus, keep-above, or input interference happens here or because of
+    // this flag (D8). Admission-only in both directions (D2): a pinned
+    // normal live client that later reports fixed hints stays tiled via
+    // fixed_suppress, and a retained automatic float stays floating across
+    // hint loss. Brand-new fixed windows float (D1); explicit user tile
+    // wins (D3); born fullscreen bypasses (D5); born maximized floats
+    // beneath its native overlay with no reserved tile (D4); sticky and
+    // intentional floats stay intentional (D6). No record is ever evicted
+    // for absence from one scoped snapshot: cross-domain, background, and
+    // minimized-omission snapshots keep foreign records, and each sighting
+    // refreshes the stored domain so retile targets current homing.
+    private withFixedSizeFloats(snapshot: PlanSnapshot, observed: PlanObserved): PlanSnapshot {
+        const refById = new Map<string, object>();
+        for (const entry of observed.windows) {
+            if (!refById.has(entry.id)) {
+                refById.set(entry.id, entry.ref);
+            }
+        }
+        const windows = snapshot.windows.map((entry) => {
+            const ref = refById.get(entry.id);
+            if (ref === undefined) {
+                return entry;
+            }
+            // Exact-ref lifetime fence: a replaced native reference under
+            // a reused id starts over and classifies again (D3).
+            const prior = this.fixedClients.get(entry.id);
+            if (prior !== undefined && prior.ref !== ref) {
+                this.fixedClients.delete(entry.id);
+            }
+            // Verified native sticky adopts as intentional (D6, mirroring
+            // core): a sticky observation drops any automatic or suppress
+            // record for the same ref, rides without provenance, and is
+            // therefore kept by workspace enable. Sticky-off follows the
+            // existing previous-float rules from here on.
+            if (entry.sticky === true) {
+                const live = this.fixedClients.get(entry.id);
+                if (live !== undefined && live.ref === ref) {
+                    this.fixedClients.delete(entry.id);
+                }
+                const { fixedAuto: _dropped, fixedSuppress: _drop2, ...rest } = entry;
+                void _dropped;
+                void _drop2;
+                return { ...rest };
+            }
+            const record = this.fixedClients.get(entry.id);
+            const liveDomain = `${entry.output}\u0000${entry.workspace}`;
+            // Retained automatic floats keep identity across hint changes
+            // (D2): still floating with origin, still no writes. Refresh
+            // the homing domain from this sighting.
+            if (record !== undefined && record.kind === "auto" && record.ref === ref) {
+                record.domain = liveDomain;
+                return entry.floating === true
+                    ? { ...entry, fixedAuto: true as const }
+                    : { ...entry, floating: true, fixedAuto: true as const };
+            }
+            // Suppress pins (explicit tile wins and pinned normals) stay
+            // tiled across hint changes (D2/D3). Refresh homing; never
+            // float from here. The wire suppression rides only on fixed
+            // hints (the only shape core could reclassify), so hintless
+            // and non-fixed rows stay byte-identical.
+            if (record !== undefined && record.kind === "suppress" && record.ref === ref) {
+                record.domain = liveDomain;
+                if (!isFixedSize(entry.minSize, entry.maxSize)) {
+                    const { fixedAuto: _dropped, fixedSuppress: _drop2, ...rest } = entry;
+                    void _dropped;
+                    void _drop2;
+                    return { ...rest };
+                }
+                const { fixedAuto: _dropped, ...rest } = entry;
+                void _dropped;
+                return { ...rest, fixedSuppress: true as const };
+            }
+            // Held born-fullscreen bypasses the classifier (D5): synthetic
+            // floating only, never automatic. Later fullscreen retains its
+            // slot and is never actuated.
+            if (this.heldInitialFullscreen.get(entry.id) === ref) {
+                return entry;
+            }
+            if (entry.fullscreen) {
+                return entry;
+            }
+            // Intentional floats are never automatic (D6): they ride
+            // without provenance and pin nothing. (Sticky observations
+            // adopt above.)
+            if (entry.floating === true) {
+                return entry;
+            }
+            if (!isFixedSize(entry.minSize, entry.maxSize)) {
+                // Pin normal first admission (D2/D3): a tiled live client
+                // seen normal records suppression for later, when hints
+                // turn fixed or a recreated session re-observes it. The
+                // wire stays byte-identical until hints are fixed.
+                this.fixedClients.set(entry.id, { ref, kind: "suppress", domain: liveDomain, reported: true });
+                const { fixedAuto: _dropped, fixedSuppress: _drop2, ...rest } = entry;
+                void _dropped;
+                void _drop2;
+                return { ...rest };
+            }
+            this.fixedClients.set(entry.id, { ref, kind: "auto", domain: liveDomain, reported: false });
+            return { ...entry, floating: true, fixedAuto: true as const };
+        });
+        return { ...snapshot, windows: Object.freeze(windows) };
     }
 
     // Attach freshly read hint sizes to every snapshot member backed by the
@@ -3373,7 +3685,7 @@ export class PlanAdapter {
             this.issueSticky(target, false, false);
             return;
         }
-        const floating = target.floating === true;
+        const floating = this.isEffectivelyFloating(observed, target.id);
         if (!floating && observed.activeExcluded) {
             this.logToken(`${LOG_PREFIX}:float-refused-not-tiled`);
             return;
@@ -3394,12 +3706,18 @@ export class PlanAdapter {
         const rect = floating
             ? { x: target.rect.x, y: target.rect.y, w: target.rect.w, h: target.rect.h }
             : null;
+        // Q2 explicit user tile (D3): the unfloat stages a suppress pin
+        // for the same live client, committed only when the plan is
+        // applied; an intentional float stages a drop of any automatic
+        // mark (D6). A refused or failed flight leaves the authoritative
+        // record untouched, so classification keeps the proven identity.
         this.dispatch({
             op: "toggle-float",
             snapshot,
             removed: floating ? null : target.id,
             body: rect === null ? { op: "toggle-float", window: target.id } : { op: "toggle-float", window: target.id, float_rect: rect },
             floatTarget: { window: target.id, floating: !floating },
+            fixedStage: { id: target.id, ref: target.ref, kind: floating ? "suppress" : null },
         });
     }
 
@@ -3541,12 +3859,20 @@ export class PlanAdapter {
             this.issueSticky(target, false, previousFloating);
             return;
         }
-        const previousFloating = target.floating === true;
+        const previousFloating = this.isEffectivelyFloating(observed, target.id);
         this.stickyPreviousFloating.set(target.id, previousFloating);
         if (previousFloating) {
+            // Sticky-on of an automatic float adopts it as intentional
+            // (D6) with a floating prior so sticky-off restores floating.
+            // The mark drops only inside issueSticky on a verified native
+            // write; a refused or failed setter keeps the automatic
+            // identity for the next classification.
             this.issueSticky(target, true, previousFloating);
             return;
         }
+        // Q2 intentional float (D6): sticky-on of a tiled window stages a
+        // drop of any automatic mark, committed only when the plan is
+        // applied; the sticky float stays intentional either way.
         const snapshot = this.carriedSnapshot(observed);
         this.dispatch({
             op: "toggle-float",
@@ -3555,6 +3881,7 @@ export class PlanAdapter {
             body: { op: "toggle-float", window: target.id },
             floatTarget: { window: target.id, floating: true },
             stickyTarget: { window: target.id, previousFloating },
+            fixedStage: { id: target.id, ref: target.ref, kind: null },
         });
     }
 
@@ -3713,6 +4040,14 @@ export class PlanAdapter {
             // A failed write owns no focus change: retain the toggled window
             // only when the native assignment actually landed.
             this.retainStickyFocus(target);
+            // Q2 sticky intent (D3/D6): sticky-on adopts any automatic
+            // float as intentional; sticky-off-to-tile records an
+            // explicit tile win for the same live client. Sticky-off
+            // with a floating prior stays floating without an override.
+            this.dropAutomaticFixed(target.id);
+            if (!allDesktops && !previousFloating) {
+                this.noteFixedTileOverride(target.id, target.ref);
+            }
         }
         if (this.stickyEcho !== null) {
             this.stickyEcho = null;
@@ -5339,6 +5674,7 @@ export class PlanAdapter {
                     this.seenNonFullscreen.delete(id);
                 }
             }
+            this.evictFixedByRef(target);
         }
         // Bounded native-write exclusion only: signals delivered
         // synchronously from our own R4 setters must not advance epoch or
@@ -6068,6 +6404,10 @@ export class PlanAdapter {
             workspace: entry.workspace,
             rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
             ...(entry.floating === true ? { floating: true } : {}),
+            ...(entry.fullscreen === true ? { fullscreen: true } : {}),
+            ...(entry.sticky === true ? { sticky: true } : {}),
+            ...(entry.fixedAuto === true ? { fixed_auto: true } : {}),
+            ...(entry.fixedSuppress === true ? { fixed_suppress: true } : {}),
             ...(entry.floating === true || entry.sticky === true || entry.fullscreen || entry.maximized ? { fit_excluded: true } : {}),
             ...(entry.minSize === undefined ? {} : { min_size: { w: entry.minSize.w, h: entry.minSize.h } }),
             ...(entry.maxSize === undefined ? {} : { max_size: { w: entry.maxSize.w, h: entry.maxSize.h } }),
@@ -6234,6 +6574,7 @@ export class PlanAdapter {
             admissionMaximizeClears: intent.admissionMaximizeClears ?? Object.freeze([]),
             floatTarget: intent.floatTarget ?? null,
             stickyTarget: intent.stickyTarget ?? null,
+            fixedStage: intent.fixedStage ?? null,
             background: intent.background === true,
             direction:
                 intent.direction === "left" ||
@@ -6248,6 +6589,7 @@ export class PlanAdapter {
             body: intent.body,
             replanned: intent.replanned === true,
         };
+        this.noteFixedSizeDispatch(snapshot, intent.op, correlation);
         this.r4WriteDepth = 0;
         this.lifecycleDiag(this.pending as PendingFlight, "request", "dispatch", "started", "-");
         this.callbackSeen = false;
@@ -6726,6 +7068,7 @@ export class PlanAdapter {
         this.appliedScopeByDomain.clear();
         this.seenNonFullscreen.clear();
         this.heldInitialFullscreen.clear();
+        this.fixedClients.clear();
         this.reconcileAttempts = 0;
         this.backgroundAttempts.clear();
         this.pointerEcho = null;
@@ -7373,6 +7716,10 @@ export class PlanAdapter {
             admissionMaximizeClears: flightState.admissionMaximizeClears,
             floatTarget: flightState.floatTarget,
             stickyTarget: flightState.stickyTarget,
+            // A replanned retry carries the same explicit user intent,
+            // including its staged lifecycle change; only application
+            // commits it.
+            fixedStage: flightState.fixedStage,
             background: flightState.background,
             direction: flightState.direction,
             replanned: true,
@@ -8789,6 +9136,13 @@ export class PlanAdapter {
         this.pending = null;
         this.pinnedOwner = null;
         this.activationStep = 0;
+        // Explicit user tile/float intent lands only on proof: a staged Q2
+        // fixed-size lifecycle change commits here, after every setter
+        // succeeded. Refused, stale, timed-out, or write-failed flights
+        // return through failFlight or earlier exits with the stage
+        // untouched, so the authoritative record never moves without
+        // application.
+        this.commitFixedStage(flightState.fixedStage);
         this.diag(flightState.op, flightState.correlation, flightState.windowCount, "planned-applied");
         this.noteCrossDragApplied(flightState);
         // Marker satisfaction through actual application only: the first

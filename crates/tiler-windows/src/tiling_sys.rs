@@ -16715,6 +16715,10 @@ mod preview_tests {
             rect: bounds,
             floating: false,
             fit_excluded: false,
+            fullscreen: false,
+            sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: tiler_core::size_hints::WindowSizeHints {
                 min_w,
                 min_h: None,
@@ -16918,6 +16922,10 @@ mod preview_tests {
             rect: bounds,
             floating: false,
             fit_excluded: false,
+            fullscreen: false,
+            sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: tiler_core::size_hints::WindowSizeHints::none(),
         };
         let event = |command: CoreCommand,

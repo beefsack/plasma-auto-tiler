@@ -426,6 +426,46 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
       ([record](changes/archive/four-direction-output-transfer.md)); Windows
       wiring and user-owned two-output native journey pending. Full rectangles
       select adjacency only; placement retains per-desktop work areas.
+- Provisional, to discuss (2026-10-08, fixed-size admission D1 hints):
+  autonomous Orchestrator selection, not a user decision. Fixed iff both
+  min/max vectors are present, usable, nonnegative, not full-zero or
+  unbounded sentinels, and equal on both axes; equal partial-zero vectors
+  count (COSMIC). No inference from `resizeable`. No either-axis setting now;
+  Hyprland-Wayland/sway's either-axis alternative remains reviewable.
+- Provisional, to discuss (2026-10-08, fixed-size admission D2 hint changes):
+  classification is admission-only in both directions. Later hint changes
+  keep existing projection/clamp semantics without changing float identity.
+- Provisional, to discuss (2026-10-08, fixed-size admission D3 user override):
+  user tile/sticky-off-to-tile commands win for the same live client across
+  hide/show, cross-domain observation and workspace re-adoption. A genuinely
+  new client classifies again. Existing sticky origin/toggle rules stand.
+- Provisional, to discuss (2026-10-08, fixed-size admission D4 maximize):
+  fixed-size admission uses a floating base under native maximize (COSMIC
+  floats fixed clients before maximizing). Q3 and R-SPC-04 both say follow
+  COSMIC; this interpretation touches Q3 only at the fixed-size intersection.
+  Non-fixed born-maximized Q3 and R-MAX-03 stay unchanged. An automatic fixed
+  float later retiled while maximized follows Q3's reserved-slot overlay.
+- Provisional, to discuss (2026-10-08, fixed-size admission D5 fullscreen):
+  born-fullscreen fixed clients exit tiled on a tiled workspace (COSMIC);
+  previously fixed-floating clients restore floating. No automatic writes
+  while fullscreen. Windows borderless-game inference remains unchanged.
+- Provisional, to discuss (2026-10-08, fixed-size admission D6 workspace enable):
+  enabling workspace tiling retiles automatic fixed floats (COSMIC);
+  intentional/sticky floats keep existing rules. Automatic origin is distinct
+  from explicit float intent, without changing the workspace mode model.
+- Provisional, to discuss (2026-10-08, fixed-size admission D7 startup):
+  startup adoption classifies as admission, foreground and hidden. Restart
+  recomputes absent authoritative override identity; Q2 adds no tile-override
+  persistence. Accepted R-RST-01 float identity work remains separate.
+- Provisional, to discuss (2026-10-08, fixed-size admission D8 no-touch):
+  automatic classification is membership-only: no geometry, focus, stacking
+  or keep-above writes to the admitted client. Explicit user commands keep
+  existing behavior. Gaming Compatibility wins over reference placement.
+  D1-D8 shared core/Linux planner and KDE delivered offline;
+  [record](changes/archive/fixed-size-admission.md). Windows changes are
+  compile-only false-field plumbing, not behavior delivery; native checks
+  and review of every autonomous provisional choice remain pending in
+  [backlog](backlog.md#open-user-decisions).
 - User decision 2026-10-07 (functional spec format): keep
   [the functional spec](spec/functional-spec.md) as a single file; revisit
   splitting if it grows much larger. Requirements are normative only where a

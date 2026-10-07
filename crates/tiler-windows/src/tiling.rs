@@ -1259,6 +1259,10 @@ pub fn build_reconcile_event_for_floating(
                 rect: *rect,
                 floating: *floating,
                 fit_excluded: false,
+                fullscreen: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: *hints,
             })
             .collect(),
@@ -1306,6 +1310,10 @@ pub fn build_reconcile_event(input: &ReconcileInput<'_>) -> CoreEvent {
                 rect: *rect,
                 floating: false,
                 fit_excluded: false,
+                fullscreen: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: *hints,
             })
             .collect(),

@@ -323,6 +323,8 @@ impl super::super::Session {
             ),
             exceptions: self.exceptions.clone(),
             retained_float_geometry: self.retained_float_geometry.clone(),
+            automatic_fixed: self.automatic_fixed.clone(),
+            fixed_tile_override: self.fixed_tile_override.clone(),
         });
         Ok(SessionMovePlan {
             dispatch,
@@ -354,6 +356,9 @@ impl super::super::Session {
                     self.last_active = desired.last_active;
                     self.exceptions = desired.exceptions;
                     self.retained_float_geometry = desired.retained_float_geometry;
+                    self.automatic_fixed = desired.automatic_fixed;
+                    self.fixed_tile_override = desired.fixed_tile_override;
+                    self.prune_fixed_size_state();
                     self.accepted_fingerprint = commit.fingerprint;
                 }
                 Ok(commit)

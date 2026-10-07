@@ -58,6 +58,8 @@ fn tiled_observed(window: &str) -> ObservedWindow {
         fullscreen: false,
         maximized: false,
         sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints: WindowSizeHints::none(),
     }
 }
@@ -75,6 +77,8 @@ fn complete_observation(session: &Session, extra: Vec<ObservedWindow>) -> Sessio
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: WindowSizeHints::none(),
         })
         .collect();
@@ -139,6 +143,7 @@ fn admit_and_commit(session: &mut Session, window: &str, placement: Rect, corr: 
             exceptions: ExceptionFlags::none(),
             exception_behavior: None,
             placement_bounds: placement,
+            suppress_fixed_float: false,
         },
         &obs,
         corr,
@@ -314,6 +319,8 @@ fn nested_toggle_flips_only_the_immediate_parent() {
                 fullscreen: false,
                 maximized: false,
                 sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: WindowSizeHints::none(),
             })
             .collect(),
@@ -440,6 +447,8 @@ fn unequal_shares_order_and_focus_survive_the_flip() {
                 fullscreen: false,
                 maximized: false,
                 sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: WindowSizeHints::none(),
             })
             .collect(),

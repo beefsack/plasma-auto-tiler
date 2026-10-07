@@ -118,6 +118,12 @@ pub enum SessionCommand {
         exceptions: ExceptionFlags,
         exception_behavior: Option<ExceptionBehavior>,
         placement_bounds: Rect,
+        /// Explicit user-tile origin for this admission (unfloat path):
+        /// the fixed-size classifier must not float this window, and the
+        /// override stages transactionally with the plan. False for every
+        /// other admission (fresh seeds consult the retained override
+        /// set instead). Never affects topology, geometry, or focus.
+        suppress_fixed_float: bool,
     },
     Remove {
         window: WindowId,
@@ -545,6 +551,12 @@ struct PendingDesired {
     last_active: BTreeMap<DomainKey, NodeId>,
     exceptions: BTreeMap<WindowId, ExceptionRecord>,
     retained_float_geometry: BTreeMap<WindowId, Rect>,
+    /// Desired fixed-size bookkeeping staged transactionally with the
+    /// topology above: applied atomically at verify, discarded on any
+    /// refusal, acknowledgement failure, cancellation, or divergence, so
+    /// failed proposals never leak markers into future classifications.
+    automatic_fixed: BTreeSet<WindowId>,
+    fixed_tile_override: BTreeSet<WindowId>,
 }
 
 /// Transient drag capture: source identity plus the accepted
@@ -604,6 +616,18 @@ pub struct Session {
     last_active: BTreeMap<DomainKey, NodeId>,
     exceptions: BTreeMap<WindowId, ExceptionRecord>,
     retained_float_geometry: BTreeMap<WindowId, Rect>,
+    /// Opt-in Q2 fixed-size float admission (D1-D8). Off by default so
+    /// Windows behavior is unchanged; the Linux planner route enables it.
+    /// Cloned verbatim; owner/generation rebinding clears the world map
+    /// (Engine) so no tile-override persists across restart (D7).
+    fixed_admission: bool,
+    /// Classifier-created automatic fixed floats (membership only, D8).
+    /// Intentional floats (toggle-float, sticky) never land here (D6).
+    automatic_fixed: BTreeSet<WindowId>,
+    /// Explicit user tile wins (unfloat, sticky-off-to-tile) for the same
+    /// live client (D3). Cleared when the window leaves membership, so a
+    /// removed/replaced native reference with a reused id classifies again.
+    fixed_tile_override: BTreeSet<WindowId>,
     // Only a transient canonical pair uses this. It restores target-local node
     // identities after pair-wide planning, whose snapshot requires uniqueness.
     canonical_pair_target_restore: BTreeMap<NodeId, NodeId>,
@@ -689,6 +713,9 @@ impl Session {
             last_active: BTreeMap::new(),
             exceptions: BTreeMap::new(),
             retained_float_geometry: BTreeMap::new(),
+            fixed_admission: false,
+            automatic_fixed: BTreeSet::new(),
+            fixed_tile_override: BTreeSet::new(),
             canonical_pair_target_restore: BTreeMap::new(),
             reconciler,
             pending_desired: None,
@@ -1012,6 +1039,19 @@ impl Session {
         pair.last_active = last_active;
         pair.exceptions = exceptions;
         pair.retained_float_geometry = retained;
+        // Fixed-size admission rides the pair verbatim: the source opt-in
+        // wins (components always agree on the Linux route), and the
+        // per-window automatic/override sets union so cross-domain
+        // re-adoption never loses an explicit user tile win (D3).
+        pair.fixed_admission = source.fixed_admission;
+        pair.automatic_fixed = source.automatic_fixed.clone();
+        pair.fixed_tile_override = source.fixed_tile_override.clone();
+        if let Some(target) = target {
+            pair.automatic_fixed
+                .extend(target.automatic_fixed.iter().cloned());
+            pair.fixed_tile_override
+                .extend(target.fixed_tile_override.iter().cloned());
+        }
         pair.canonical_pair_target_restore = target_restore;
         if !pair.validate_current_topology() {
             return Err(CanonicalPairError::DomainMismatch);
@@ -1170,6 +1210,29 @@ impl Session {
         target.windows = target_windows;
         target.exceptions = target_exceptions;
         target.retained_float_geometry = target_retained;
+        // Fixed-size admission partitions with membership: homed windows
+        // keep their automatic/override marks, orphans stay with the
+        // source so the union round-trips. The opt-in rides both outputs.
+        source.fixed_admission = self.fixed_admission;
+        target.fixed_admission = self.fixed_admission;
+        for id in &self.automatic_fixed {
+            if source.windows.contains_key(id) || source.exceptions.contains_key(id) {
+                source.automatic_fixed.insert(id.clone());
+            } else if target.windows.contains_key(id) || target.exceptions.contains_key(id) {
+                target.automatic_fixed.insert(id.clone());
+            } else {
+                source.automatic_fixed.insert(id.clone());
+            }
+        }
+        for id in &self.fixed_tile_override {
+            if source.windows.contains_key(id) || source.exceptions.contains_key(id) {
+                source.fixed_tile_override.insert(id.clone());
+            } else if target.windows.contains_key(id) || target.exceptions.contains_key(id) {
+                target.fixed_tile_override.insert(id.clone());
+            } else {
+                source.fixed_tile_override.insert(id.clone());
+            }
+        }
         remap_optional_tree(
             target.trees.get_mut(&target_key).expect("target tree"),
             &moved_target_remap,
@@ -1272,6 +1335,12 @@ impl Session {
     ) -> bool {
         let by_id: BTreeMap<&WindowId, &ObservedWindow> =
             observed.iter().map(|w| (&w.window, w)).collect();
+        // Membership matching binds homing plus exception flags exactly
+        // (original semantics, always used when the fixed-size opt-in is
+        // off). With the opt-in on, fullscreen/maximized/sticky ride as
+        // advisory overlays for the Q2 classifier: only the portable
+        // `floating` flag binds, so overlay observations never fail an
+        // opted-in binding that the legacy path refuses.
         for (id, link) in &self.windows {
             let Some(entry) = by_id.get(id) else {
                 return false;
@@ -1279,7 +1348,11 @@ impl Session {
             if entry.output != link.output || entry.workspace != link.workspace {
                 return false;
             }
-            if entry.flags().any() {
+            if self.fixed_admission {
+                if entry.floating {
+                    return false;
+                }
+            } else if entry.flags().any() {
                 return false;
             }
         }
@@ -1290,10 +1363,14 @@ impl Session {
             let Some(entry) = by_id.get(id) else {
                 return false;
             };
-            if entry.output != record.output
-                || entry.workspace != record.workspace
-                || entry.flags() != record.flags
-            {
+            if entry.output != record.output || entry.workspace != record.workspace {
+                return false;
+            }
+            if self.fixed_admission {
+                if entry.floating != record.flags.floating {
+                    return false;
+                }
+            } else if entry.flags() != record.flags {
                 return false;
             }
         }
@@ -1376,6 +1453,11 @@ impl Session {
                     self.last_active = desired.last_active;
                     self.exceptions = desired.exceptions;
                     self.retained_float_geometry = desired.retained_float_geometry;
+                    self.automatic_fixed = desired.automatic_fixed;
+                    self.fixed_tile_override = desired.fixed_tile_override;
+                    // A removed window drops its fixed-size bookkeeping so
+                    // a reused id classifies again (D3).
+                    self.prune_fixed_size_state();
                     self.accepted_fingerprint = commit.fingerprint;
                 }
                 Ok(commit)
@@ -2678,6 +2760,8 @@ mod tests {
                 fullscreen: false,
                 maximized: false,
                 sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             })
             .collect();
@@ -2713,6 +2797,8 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         });
         let bounds = if horizontal {
@@ -2737,6 +2823,7 @@ mod tests {
             exceptions: ExceptionFlags::none(),
             exception_behavior: None,
             placement_bounds: bounds,
+            suppress_fixed_float: false,
         };
         let observation = SessionObservation {
             observation: Observation::new(owner(), generation(), rev, 100 + rev),
@@ -2783,6 +2870,8 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         });
         let command = SessionCommand::Admit {
@@ -2802,6 +2891,7 @@ mod tests {
                 w: 100,
                 h: 50,
             },
+            suppress_fixed_float: false,
         };
         let observation = SessionObservation {
             observation: Observation::new(owner(), generation(), rev, 100 + rev),
@@ -2921,6 +3011,8 @@ mod tests {
                 fullscreen: false,
                 maximized: false,
                 sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             });
         }
@@ -3008,6 +3100,8 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         });
         let domain_state = session.domains()[0].clone();
@@ -3018,6 +3112,7 @@ mod tests {
             exceptions: ExceptionFlags::none(),
             exception_behavior: None,
             placement_bounds: crate::seed::seed_target_bounds(session, &domain_state),
+            suppress_fixed_float: false,
         };
         let observation = SessionObservation {
             observation: Observation::new(owner(), generation(), rev, 100 + rev),
@@ -3186,6 +3281,8 @@ mod tests {
                 fullscreen: false,
                 maximized: false,
                 sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             }],
         };
@@ -3668,6 +3765,8 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         });
         session
@@ -3684,6 +3783,7 @@ mod tests {
                         w: 100,
                         h: 50,
                     },
+                    suppress_fixed_float: false,
                 },
                 &SessionObservation {
                     observation: Observation::new(owner(), generation(), rev, 1),
@@ -3915,6 +4015,8 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         });
         assert_eq!(
@@ -3931,6 +4033,7 @@ mod tests {
                         w: 100,
                         h: 50,
                     },
+                    suppress_fixed_float: false,
                 },
                 &SessionObservation {
                     observation: Observation::new(owner(), generation(), rev, 1),
@@ -4168,6 +4271,8 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         });
         assert_eq!(
@@ -4184,6 +4289,7 @@ mod tests {
                         w: 100,
                         h: 50
                     },
+                    suppress_fixed_float: false,
                 },
                 &SessionObservation {
                     observation: Observation::new(
@@ -5286,6 +5392,8 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         });
         let bounds = if horizontal {
@@ -5310,6 +5418,7 @@ mod tests {
             exceptions: ExceptionFlags::none(),
             exception_behavior: None,
             placement_bounds: bounds,
+            suppress_fixed_float: false,
         };
         let observation = SessionObservation {
             observation: Observation::new(owner(), generation(), rev, 100 + rev),
@@ -5356,6 +5465,8 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         });
         let command = SessionCommand::Admit {
@@ -5375,6 +5486,7 @@ mod tests {
                 w: 100,
                 h: 50,
             },
+            suppress_fixed_float: false,
         };
         let observation = SessionObservation {
             observation: Observation::new(owner(), generation(), rev, 100 + rev),
@@ -5883,6 +5995,8 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         });
         pending
@@ -5899,6 +6013,7 @@ mod tests {
                         w: 100,
                         h: 50,
                     },
+                    suppress_fixed_float: false,
                 },
                 &SessionObservation {
                     observation: Observation::new(owner(), generation(), rev, 1),
@@ -5926,6 +6041,8 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         });
         pair.propose(
@@ -5941,6 +6058,7 @@ mod tests {
                     w: 100,
                     h: 50,
                 },
+                suppress_fixed_float: false,
             },
             &SessionObservation {
                 observation: Observation::new(owner(), generation(), rev, 1),

@@ -242,6 +242,26 @@ struct ObservedDto {
     rect: RectDto,
     #[serde(default)]
     floating: bool,
+    /// Native fullscreen overlay for the Q2 fixed-size classifier (D5):
+    /// born fullscreen bypasses fixed admission. Defaults false so
+    /// existing fixtures parse unchanged.
+    #[serde(default)]
+    fullscreen: bool,
+    /// Native sticky state for the Q2 fixed-size classifier (D3/D6):
+    /// sticky floats are intentional, never automatic. Defaults false.
+    #[serde(default)]
+    sticky: bool,
+    /// Adapter-asserted automatic fixed-float origin (Q2, D6): the
+    /// adapter classified this window automatic. Core never infers
+    /// automatic origin from hints alone. Defaults false so existing
+    /// fixtures parse unchanged.
+    #[serde(default)]
+    fixed_auto: bool,
+    /// Adapter-asserted user tile win (Q2, D3): the adapter retains an
+    /// explicit tile override for this live client across hide, domain
+    /// release, and workspace re-adoption. Defaults false.
+    #[serde(default)]
+    fixed_suppress: bool,
     /// Internal fit opt-out carried by the adapter for any floating, sticky,
     /// fullscreen, or maximized snapshot entry. Defaults false so existing
     /// fixtures parse unchanged; any set entry declines fitting while the
@@ -634,6 +654,54 @@ pub fn summarize_adoption_fit(
         centre_splits,
         summary_correlation(Some(correlation)),
     )
+}
+
+/// Bounded fixed-size admission prefix (normal-level, log-only, D1-D8).
+pub const FIXED_ADMISSION_PREFIX: &str = "plasma-auto-tiler:fixed-size-admission";
+
+/// Normal-level fixed-size admission summary: exactly one per op that
+/// admitted automatic fixed floats with the opt-in enabled, owned by the
+/// Engine decision and emitted at `handle_and_serialize`. Correlated,
+/// with the evaluated/admitted counts and the fixed decision token.
+/// No raw ids, geometry, domains, or payloads. Pure and total:
+/// malformed sides degrade to bounded placeholders. Only admission ops
+/// record, so ordinary frames stay silent (no per-frame logs).
+#[must_use]
+pub fn summarize_fixed_admission(
+    correlation: &str,
+    op: &str,
+    evaluated: usize,
+    admitted: usize,
+    reason: &str,
+) -> String {
+    format!(
+        "{FIXED_ADMISSION_PREFIX} op={} correlation={} evaluated={} admitted={} reason={}",
+        adoption_token(Some(op)),
+        summary_correlation(Some(correlation)),
+        evaluated,
+        admitted,
+        adoption_token(Some(reason)),
+    )
+}
+
+/// Emit the bounded correlated fixed-size admission summary for the
+/// just-completed [`Engine::handle`] call, if it admitted automatic
+/// fixed floats. Log-only.
+fn emit_engine_fixed_admission(engine: &Engine) {
+    if let Some(report) = engine.last_fixed_admission() {
+        use std::io::Write;
+        let _ = writeln!(
+            std::io::stderr(),
+            "{}",
+            summarize_fixed_admission(
+                report.correlation.as_str(),
+                report.op,
+                report.evaluated,
+                report.admitted,
+                report.reason,
+            )
+        );
+    }
 }
 
 /// Emit the bounded correlated adoption-fit summary for the just-completed
@@ -2139,6 +2207,10 @@ fn engine_window_from_dto(entry: &ObservedDto) -> tiler_core::seed::EngineWindow
         },
         floating: entry.floating,
         fit_excluded: entry.fit_excluded,
+        fullscreen: entry.fullscreen,
+        sticky: entry.sticky,
+        fixed_auto: entry.fixed_auto,
+        fixed_suppress: entry.fixed_suppress,
         hints: tiler_core::size_hints::WindowSizeHints {
             min_w: entry.min_size.as_ref().map(|size| size.w),
             min_h: entry.min_size.as_ref().map(|size| size.h),
@@ -2217,10 +2289,20 @@ pub struct Planner {
 }
 
 impl Planner {
-    /// Empty retained planner.
+    /// Empty retained planner with opt-in Q2 fixed-size float admission
+    /// enabled on the Linux route (D1-D8). Windows carriers use
+    /// `Engine::new` directly and keep the opt-in off.
+    ///
+    /// Contract: `Default` is the inert baseline (opt-in off, pre-Q2
+    /// behavior) while `new()` is the Linux route (opt-in on). No
+    /// production caller uses `Default`; it exists only for the derive
+    /// and must stay inert so default-constructed planners never
+    /// classify.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        let mut planner = Self::default();
+        planner.engine.set_fixed_size_admission(true);
+        planner
     }
 
     /// Number of retained domains.
@@ -2340,6 +2422,7 @@ impl Planner {
         let reply = self.engine.handle(event);
         emit_engine_convergence(&self.engine);
         emit_engine_adoption_fit(&self.engine);
+        emit_engine_fixed_admission(&self.engine);
         emit_engine_placement_trace(&self.engine);
         serialize_core_reply(ctx, &reply)
     }

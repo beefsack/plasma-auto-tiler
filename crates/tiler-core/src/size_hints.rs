@@ -157,6 +157,77 @@ fn meaningful(value: Option<i32>) -> Option<i32> {
     }
 }
 
+/// Keep only usable fixed-size hint values: nonnegative and in-bound.
+///
+/// Unlike [`meaningful`], zero is usable here: an equal partial-zero vector
+/// such as min=max=(640,0) still pins its nonzero axis. Negative,
+/// unbounded-sentinel (`i32::MAX`), and out-of-bound values behave as
+/// absent. Uses the raw optional per-bound input, never the
+/// `meaningful_*` helpers, so partial-zero vectors are not lost.
+fn usable_fixed_bound(value: Option<i32>) -> Option<i32> {
+    match value {
+        Some(v) if (0..=GEOMETRY_BOUND).contains(&v) => Some(v),
+        _ => None,
+    }
+}
+
+/// Whether `hints` pin a fixed size (Q2 fixed-size float admission, D1).
+///
+/// Fixed iff min and max are BOTH present with usable nonnegative vector
+/// sizes on BOTH axes and equal on BOTH axes: `min_w == max_w` and
+/// `min_h == max_h`. The entire (0,0) vector does not count; equal
+/// partial-zero vectors such as (640,0) or (0,480) do count. Unset bounds,
+/// negative values, unbounded sentinels, and out-of-contract (out of
+/// [`GEOMETRY_BOUND`]) values never count. The `resizeable` flag alone
+/// never counts and no either-axis setting exists.
+#[must_use]
+pub fn is_fixed_size(hints: WindowSizeHints) -> bool {
+    fixed_size_reason(hints) == "fixed-equal"
+}
+
+/// Bounded fixed-size decision token for diagnostics (D1).
+///
+/// Fixed vocabulary only, never native identifiers or geometry:
+/// `fixed-equal` when [`is_fixed_size`] holds, else the first applicable
+/// `not-fixed-*` reason (`negative`, `missing`, `sentinel`,
+/// `out-of-range`, `zero`, `unequal`). Total over all inputs.
+#[must_use]
+pub fn fixed_size_reason(hints: WindowSizeHints) -> &'static str {
+    let raw = [hints.min_w, hints.min_h, hints.max_w, hints.max_h];
+    // A present negative bound reports before missing so negative input
+    // is never misread as merely unset; a fully unset vector still
+    // reports missing below.
+    if raw.iter().any(|bound| matches!(bound, Some(v) if *v < 0)) {
+        return "not-fixed-negative";
+    }
+    if raw.iter().any(|bound| bound.is_none()) {
+        return "not-fixed-missing";
+    }
+    // The KWin i32::MAX unbounded sentinel is not a real bound.
+    if raw.iter().any(|bound| matches!(bound, Some(i32::MAX))) {
+        return "not-fixed-sentinel";
+    }
+    // Every other out-of-contract value behaves as absent, never as a
+    // real bound.
+    if raw.iter().any(|bound| usable_fixed_bound(*bound).is_none()) {
+        return "not-fixed-out-of-range";
+    }
+    // Entire (0,0) vector does not count.
+    if hints.min_w == Some(0)
+        && hints.min_h == Some(0)
+        && hints.max_w == Some(0)
+        && hints.max_h == Some(0)
+    {
+        return "not-fixed-zero";
+    }
+    // Equal on BOTH axes counts, including equal partial-zero vectors
+    // such as (640,0) or (0,480). Unequal vectors tile.
+    if hints.min_w == hints.max_w && hints.min_h == hints.max_h {
+        return "fixed-equal";
+    }
+    "not-fixed-unequal"
+}
+
 /// Clamp `desired` into the meaningful `[min, max]` window.
 ///
 /// Absent bounds are open. On a contradictory `max < min` pair the minimum
@@ -573,6 +644,131 @@ mod tests {
         assert_eq!(meaningful(Some(GEOMETRY_BOUND + 1)), None);
         // KWin reports no cap as i32::MAX: unbounded, never a real maximum.
         assert_eq!(meaningful(Some(i32::MAX)), None);
+    }
+
+    fn fixed(
+        min_w: Option<i32>,
+        min_h: Option<i32>,
+        max_w: Option<i32>,
+        max_h: Option<i32>,
+    ) -> WindowSizeHints {
+        WindowSizeHints {
+            min_w,
+            min_h,
+            max_w,
+            max_h,
+        }
+    }
+
+    #[test]
+    fn fixed_size_truth_table() {
+        // Positive both axes, equal: floats.
+        assert!(is_fixed_size(fixed(
+            Some(640),
+            Some(480),
+            Some(640),
+            Some(480)
+        )));
+        assert_eq!(
+            fixed_size_reason(fixed(Some(640), Some(480), Some(640), Some(480))),
+            "fixed-equal"
+        );
+        // Equal partial-zero vectors count (each zero axis retained raw,
+        // never stripped by the meaningful helpers).
+        assert!(is_fixed_size(fixed(Some(640), Some(0), Some(640), Some(0))));
+        assert!(is_fixed_size(fixed(Some(0), Some(480), Some(0), Some(480))));
+        // Only one bound set: tiles.
+        assert!(!is_fixed_size(fixed(Some(640), Some(480), None, None)));
+        assert_eq!(
+            fixed_size_reason(fixed(Some(640), Some(480), None, None)),
+            "not-fixed-missing"
+        );
+        assert!(!is_fixed_size(fixed(None, None, Some(640), Some(480))));
+        // Only one axis pinned (min==max on one axis only): tiles.
+        assert!(!is_fixed_size(fixed(
+            Some(640),
+            Some(100),
+            Some(640),
+            Some(480)
+        )));
+        assert_eq!(
+            fixed_size_reason(fixed(Some(640), Some(100), Some(640), Some(480))),
+            "not-fixed-unequal"
+        );
+        // Entire (0,0) vector: tiles.
+        assert!(!is_fixed_size(fixed(Some(0), Some(0), Some(0), Some(0))));
+        assert_eq!(
+            fixed_size_reason(fixed(Some(0), Some(0), Some(0), Some(0))),
+            "not-fixed-zero"
+        );
+        // Fully unset: tiles.
+        assert!(!is_fixed_size(WindowSizeHints::none()));
+        // Negative values never count.
+        assert!(!is_fixed_size(fixed(
+            Some(-1),
+            Some(480),
+            Some(-1),
+            Some(480)
+        )));
+        assert_eq!(
+            fixed_size_reason(fixed(Some(-1), Some(480), Some(-1), Some(480))),
+            "not-fixed-negative"
+        );
+        // Unbounded sentinel (KWin i32::MAX) never counts.
+        assert!(!is_fixed_size(fixed(
+            Some(640),
+            Some(480),
+            Some(i32::MAX),
+            Some(i32::MAX)
+        )));
+        assert_eq!(
+            fixed_size_reason(fixed(Some(640), Some(480), Some(i32::MAX), Some(i32::MAX))),
+            "not-fixed-sentinel"
+        );
+        assert_eq!(
+            fixed_size_reason(fixed(
+                Some(GEOMETRY_BOUND + 1),
+                Some(GEOMETRY_BOUND + 1),
+                Some(GEOMETRY_BOUND + 1),
+                Some(GEOMETRY_BOUND + 1)
+            )),
+            "not-fixed-out-of-range"
+        );
+        // A present negative bound reports negative even when another
+        // bound is unset (never misread as merely missing); fully unset
+        // still reports missing.
+        assert_eq!(
+            fixed_size_reason(fixed(Some(-1), None, Some(-1), None)),
+            "not-fixed-negative"
+        );
+        // Out-of-contract values beyond the shared carried-geometry bound
+        // never count, even when equal.
+        assert!(!is_fixed_size(fixed(
+            Some(GEOMETRY_BOUND + 1),
+            Some(GEOMETRY_BOUND + 1),
+            Some(GEOMETRY_BOUND + 1),
+            Some(GEOMETRY_BOUND + 1)
+        )));
+        // Boundary value itself is usable.
+        assert!(is_fixed_size(fixed(
+            Some(GEOMETRY_BOUND),
+            Some(GEOMETRY_BOUND),
+            Some(GEOMETRY_BOUND),
+            Some(GEOMETRY_BOUND)
+        )));
+        // Unequal vectors tile, including min>max contradictions.
+        assert!(!is_fixed_size(fixed(
+            Some(640),
+            Some(480),
+            Some(800),
+            Some(600)
+        )));
+        assert!(!is_fixed_size(fixed(
+            Some(800),
+            Some(600),
+            Some(640),
+            Some(480)
+        )));
     }
 
     #[test]

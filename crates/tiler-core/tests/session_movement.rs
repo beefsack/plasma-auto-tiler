@@ -123,6 +123,8 @@ fn complete_obs(session: &Session, extra: Vec<ObservedWindow>) -> SessionObserva
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: tiler_core::size_hints::WindowSizeHints::none(),
         })
         .collect();
@@ -148,6 +150,8 @@ fn tiled(window: &str, output: &str, workspace: &str) -> ObservedWindow {
         fullscreen: false,
         maximized: false,
         sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints: tiler_core::size_hints::WindowSizeHints::none(),
     }
 }
@@ -166,6 +170,7 @@ fn admit_commit(
         exceptions: ExceptionFlags::none(),
         exception_behavior: None,
         placement_bounds: placement(horiz),
+        suppress_fixed_float: false,
     };
     let obs = complete_obs(session, vec![tiled(window, output, workspace)]);
     let base = session.accepted_revision();
@@ -2024,6 +2029,7 @@ fn invalid_geometry_refuses() {
         exceptions: ExceptionFlags::none(),
         exception_behavior: None,
         placement_bounds: placement(true),
+        suppress_fixed_float: false,
     };
     assert_eq!(
         tiny.propose(

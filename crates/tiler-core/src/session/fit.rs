@@ -166,6 +166,8 @@ impl super::Session {
             ),
             exceptions: self.exceptions.clone(),
             retained_float_geometry: self.retained_float_geometry.clone(),
+            automatic_fixed: self.automatic_fixed.clone(),
+            fixed_tile_override: self.fixed_tile_override.clone(),
         });
         Ok(SessionPlan {
             dispatch,

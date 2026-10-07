@@ -82,6 +82,8 @@ fn complete_obs(session: &Session) -> SessionObservation {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: tiler_core::size_hints::WindowSizeHints::none(),
         })
         .collect();
@@ -134,6 +136,8 @@ fn admit_with_placement(
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: tiler_core::size_hints::WindowSizeHints::none(),
         })
         .collect();
@@ -146,6 +150,8 @@ fn admit_with_placement(
         fullscreen: false,
         maximized: false,
         sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints: tiler_core::size_hints::WindowSizeHints::none(),
     });
     observed.sort_by(|a, b| a.window.0.cmp(&b.window.0));
@@ -163,6 +169,7 @@ fn admit_with_placement(
                 exceptions: ExceptionFlags::none(),
                 exception_behavior: None,
                 placement_bounds,
+                suppress_fixed_float: false,
             },
             &observation,
             &correlation,

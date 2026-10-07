@@ -76,6 +76,8 @@ fn tiled_observed(window: &str, output: &str, workspace: &str) -> ObservedWindow
         fullscreen: false,
         maximized: false,
         sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints: WindowSizeHints::none(),
     }
 }
@@ -89,6 +91,8 @@ fn exception_observed(window: &str, output: &str, workspace: &str) -> ObservedWi
         fullscreen: false,
         maximized: false,
         sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints: WindowSizeHints::none(),
     }
 }
@@ -108,6 +112,8 @@ fn complete_observation(session: &Session, extra: Vec<ObservedWindow>) -> Sessio
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: WindowSizeHints::none(),
         })
         .collect();
@@ -134,6 +140,7 @@ fn admit_command(window: &str, output: &str, workspace: &str, placement: Rect) -
         exceptions: ExceptionFlags::none(),
         exception_behavior: None,
         placement_bounds: placement,
+        suppress_fixed_float: false,
     }
 }
 
@@ -1023,6 +1030,7 @@ fn exception_flags_fail_closed_until_behavior_selected() {
         },
         exception_behavior: None,
         placement_bounds: placement(120, 80),
+        suppress_fixed_float: false,
     };
     assert_eq!(
         session
@@ -1048,6 +1056,7 @@ fn exception_flags_fail_closed_until_behavior_selected() {
         },
         exception_behavior: Some(ExceptionBehavior::Defer),
         placement_bounds: placement(120, 80),
+        suppress_fixed_float: false,
     };
     let base = session.accepted_revision();
     let plan = session
@@ -1849,6 +1858,7 @@ fn deferred_removal_commits_without_topology_effect() {
         },
         exception_behavior: Some(ExceptionBehavior::Defer),
         placement_bounds: placement(120, 80),
+        suppress_fixed_float: false,
     };
     let base = session.accepted_revision();
     let plan = session
@@ -1927,6 +1937,7 @@ fn inconsistent_exception_behavior_is_malformed() {
         exceptions: ExceptionFlags::none(),
         exception_behavior: Some(ExceptionBehavior::Defer),
         placement_bounds: placement(120, 80),
+        suppress_fixed_float: false,
     };
     assert_eq!(
         session

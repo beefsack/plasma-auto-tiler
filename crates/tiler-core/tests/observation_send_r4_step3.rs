@@ -69,6 +69,10 @@ fn carried(window: &str, output: &str, workspace: &str, x: i32) -> EngineWindow 
         },
         floating: false,
         fit_excluded: false,
+        fullscreen: false,
+        sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints: tiler_core::size_hints::WindowSizeHints::none(),
     }
 }
@@ -85,6 +89,8 @@ fn admit_to(s: &mut Session, window: &str, output: &str, workspace: &str, c: &st
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: tiler_core::size_hints::WindowSizeHints::none(),
         })
         .collect();
@@ -97,6 +103,8 @@ fn admit_to(s: &mut Session, window: &str, output: &str, workspace: &str, c: &st
         fullscreen: false,
         maximized: false,
         sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints: tiler_core::size_hints::WindowSizeHints::none(),
     });
     windows.sort_by(|a, b| a.window.0.cmp(&b.window.0));
@@ -114,6 +122,7 @@ fn admit_to(s: &mut Session, window: &str, output: &str, workspace: &str, c: &st
                 exceptions: ExceptionFlags::none(),
                 exception_behavior: None,
                 placement_bounds: bounds(),
+                suppress_fixed_float: false,
             },
             &obs,
             &corr(c),
@@ -736,6 +745,10 @@ fn live_carried(window: &str, workspace: &str) -> EngineWindow {
         rect: live_bounds(),
         floating: false,
         fit_excluded: false,
+        fullscreen: false,
+        sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints: live_hints(window),
     }
 }

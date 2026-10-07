@@ -61,6 +61,8 @@ fn tiled(w: &str, o: &str, ws: &str) -> ObservedWindow {
         fullscreen: false,
         maximized: false,
         sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints: tiler_core::size_hints::WindowSizeHints::none(),
     }
 }
@@ -111,6 +113,7 @@ fn admit(s: &mut Session, w: &str, o: &str, ws: &str, pw: i32, ph: i32, c: &str)
             w: pw,
             h: ph,
         },
+        suppress_fixed_float: false,
     };
     let plan = s.propose(&cmd, &o0, &corr(c), &full()).expect("admit");
     ack_verify(s, &plan, c, 200);
@@ -188,6 +191,7 @@ fn defer_float(s: &mut Session, w: &str, o: &str, ws: &str, c: &str) {
             w: 120,
             h: 80,
         },
+        suppress_fixed_float: false,
     };
     let dp = s.propose(&cmd, &o0, &corr(c), &full()).expect("defer");
     ack_verify(s, &dp, c, 210);
@@ -931,6 +935,7 @@ fn output_send_refuses_sticky_and_intentional_floats() {
                 w: 120,
                 h: 80,
             },
+            suppress_fixed_float: false,
         };
         let dp = s
             .propose(&cmd, &o0, &corr(admit_c), &full())

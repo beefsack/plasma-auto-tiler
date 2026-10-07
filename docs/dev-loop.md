@@ -355,6 +355,19 @@ on `Options.configChanged`; affects subsequent move requests, no tree rebuild):
 
 - `plasma-auto-tiler:plan:config-reloaded stage=same-axis-move mode=<cosmic-wrap|flat-swap>`
 
+Fixed-size automatic admission (normal output, only new classifications or
+committed automatic membership, not per-frame polling):
+
+- `[kwin] plasma-auto-tiler:plan:fixed-size-classification op=<op> correlation=<correlation> evaluated=<N> classified=<N> reason=fixed-equal phase=classify`
+- `[planner] plasma-auto-tiler:fixed-size-admission op=<op> correlation=<correlation> evaluated=<N> admitted=<N> reason=fixed-equal`
+
+The KDE line identifies classification before dispatch, not application.
+The Planner line reports committed automatic membership; it does not prove
+native placement or focus. Correlate the existing `planned-applied`/failure
+terminal separately. These summaries carry no window/native IDs, geometry,
+resource classes, captions or payloads. Admission adds no geometry, focus,
+stacking or keep-above writes to the automatically floating client.
+
 When a complete startup signal attachment fails, the entry remains inert and
 retries on a later `windowAdded` or `Options.configChanged` event (one attempt
 per event, no timer or attempt cap). Only transitions are logged:

@@ -60,6 +60,8 @@ fn plain_obs(window: WindowId, output: OutputId, workspace: WorkspaceId) -> Obse
         fullscreen: false,
         maximized: false,
         sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints: tiler_core::size_hints::WindowSizeHints::none(),
     }
 }
@@ -71,6 +73,10 @@ fn carried(window: &str, rect: Rect, floating: bool) -> EngineWindow {
         rect,
         floating,
         fit_excluded: false,
+        fullscreen: false,
+        sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints: tiler_core::size_hints::WindowSizeHints::none(),
     }
 }
@@ -484,6 +490,10 @@ fn engine_converge_error_returns_typed_rejection_without_reset() {
         },
         floating: false,
         fit_excluded: false,
+        fullscreen: false,
+        sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints: tiler_core::size_hints::WindowSizeHints::none(),
     };
     let event = core_event(
@@ -676,6 +686,7 @@ fn admit_to(session: &mut Session, window: &str, output: &str, workspace: &str, 
                 exceptions: ExceptionFlags::none(),
                 exception_behavior: None,
                 placement_bounds: placement(),
+                suppress_fixed_float: false,
             },
             &obs,
             &correlation(corr),
@@ -715,6 +726,10 @@ fn carried_in(window: &str, output: &str, workspace: &str, x: i32, floating: boo
         },
         floating,
         fit_excluded: false,
+        fullscreen: false,
+        sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints: tiler_core::size_hints::WindowSizeHints::none(),
     }
 }

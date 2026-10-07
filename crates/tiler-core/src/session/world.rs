@@ -131,7 +131,11 @@ pub enum ExceptionBehavior {
 /// One adapter-observed window with explicit exception flags plus the
 /// ephemeral client size hints (AR12). Hints are advisory per-observation
 /// inputs: they shape projection and clamp acceptance but never participate
-/// in identity, membership, or pre/post-image matching.
+/// in identity, membership, or pre/post-image matching. The two fixed-size
+/// signals are explicit adapter assertions, never inferred: `fixed_auto`
+/// carries classifier-created automatic origin, `fixed_suppress` carries an
+/// explicit user tile win. Both default false so existing carriers behave
+/// exactly as before.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedWindow {
     pub window: WindowId,
@@ -141,6 +145,8 @@ pub struct ObservedWindow {
     pub fullscreen: bool,
     pub maximized: bool,
     pub sticky: bool,
+    pub fixed_auto: bool,
+    pub fixed_suppress: bool,
     pub hints: crate::size_hints::WindowSizeHints,
 }
 
@@ -434,6 +440,51 @@ impl super::Session {
         self.exceptions.contains_key(window)
     }
 
+    /// Whether opt-in Q2 fixed-size float admission is enabled (D1-D8).
+    /// Off by default; the Linux planner route enables it while Windows
+    /// keeps exact current behavior.
+    #[must_use]
+    pub fn fixed_size_admission(&self) -> bool {
+        self.fixed_admission
+    }
+
+    /// Enable or disable opt-in Q2 fixed-size float admission. Never
+    /// touches topology, shares, membership, focus, or revision.
+    pub fn set_fixed_size_admission(&mut self, enabled: bool) {
+        self.fixed_admission = enabled;
+    }
+
+    /// Whether a window floats by automatic fixed-size classification
+    /// (membership only, D8), as opposed to an intentional float (D6).
+    #[must_use]
+    pub fn is_automatic_fixed_float(&self, window: &WindowId) -> bool {
+        self.automatic_fixed.contains(window)
+    }
+
+    /// Number of classifier-created automatic fixed floats (bounded
+    /// diagnostic count only, never identifiers).
+    #[must_use]
+    pub fn automatic_fixed_count(&self) -> usize {
+        self.automatic_fixed.len()
+    }
+
+    /// Whether an explicit user tile wins for this live client (D3).
+    #[must_use]
+    pub fn has_fixed_tile_override(&self, window: &WindowId) -> bool {
+        self.fixed_tile_override.contains(window)
+    }
+
+    /// Drop fixed-size bookkeeping for windows no longer in membership.
+    /// A removed/replaced native reference with a reused id classifies
+    /// again on next admission (D3); overrides never cross restart
+    /// because rebinding clears the world map (D7).
+    pub(super) fn prune_fixed_size_state(&mut self) {
+        self.automatic_fixed
+            .retain(|id| self.windows.contains_key(id) || self.exceptions.contains_key(id));
+        self.fixed_tile_override
+            .retain(|id| self.windows.contains_key(id) || self.exceptions.contains_key(id));
+    }
+
     /// Retained intentional-float geometry, if this session owns that state.
     #[must_use]
     pub fn floating_geometry(&self, window: &WindowId) -> Option<Rect> {
@@ -474,6 +525,10 @@ impl super::Session {
                 fullscreen: record.flags.fullscreen,
                 maximized: record.flags.maximized,
                 sticky: record.flags.sticky,
+                // Exceptions carry no fixed-size origin: the classifier
+                // recreates it from live signals, never from retained echo.
+                fixed_auto: false,
+                fixed_suppress: false,
                 // Exceptions are never projected: hints stay empty.
                 hints: crate::size_hints::WindowSizeHints::none(),
             })
@@ -741,9 +796,25 @@ impl super::Session {
         let mut new_windows = self.windows.clone();
         let mut new_exceptions = self.exceptions.clone();
         let new_retained = self.retained_float_geometry.clone();
+        let mut new_automatic = self.automatic_fixed.clone();
+        let mut new_override = self.fixed_tile_override.clone();
         let mut removed: usize = 0;
         let mut admitted: usize = 0;
         let mut flags_adopted: usize = 0;
+        // Q2 fixed-size admission helper: brand-new fixed windows float
+        // (membership only, D8) unless an explicit user tile wins (D3) or
+        // the window is born fullscreen (D5 bypass). Admission-only in
+        // both directions (D2): hint changes on known windows never
+        // reclassify here.
+        let fixed_floats_at_admit = |entry: &ObservedWindow| -> bool {
+            self.fixed_admission
+                && !entry.floating
+                && !entry.fullscreen
+                && !entry.sticky
+                && !entry.fixed_suppress
+                && !self.fixed_tile_override.contains(&entry.window)
+                && crate::size_hints::is_fixed_size(entry.hints)
+        };
         // Missing known windows are removed first so survivor collapse
         // preserves order/shares before any admission. BTreeMap iteration is
         // already window-id ordered, so no extra sorting is needed.
@@ -795,7 +866,10 @@ impl super::Session {
             flags_adopted += 1;
         }
         // Known floating observed tiled: drop the exception and re-admit
-        // through normal placement below.
+        // through normal placement below. An automatic fixed float
+        // re-tiled this way (workspace retile, D6) records an explicit
+        // tile win so later re-observation keeps it tiled (D3); hint
+        // changes alone never reach this flag-driven branch (D2).
         let mut to_tile: Vec<WindowId> = Vec::new();
         for id in self.exceptions.keys() {
             if observed.get(id).is_some_and(|entry| !entry.floating)
@@ -806,9 +880,32 @@ impl super::Session {
         }
         for id in &to_tile {
             new_exceptions.remove(id);
+            // An automatic fixed float re-tiled here (workspace retile,
+            // D6) records an explicit tile win so later re-observation
+            // keeps it tiled (D3). An observed suppress signal records
+            // the same win for the adapter-retained live client.
+            // Intentional floats without either keep existing behavior:
+            // plain re-admit with nothing inferred from hints alone (D2).
+            let suppressed = observed.get(id).is_some_and(|entry| entry.fixed_suppress);
+            let was_automatic = new_automatic.remove(id);
+            if was_automatic || (self.fixed_admission && suppressed) {
+                new_override.insert(id.clone());
+            }
             flags_adopted += 1;
         }
-        // Brand-new floating windows become exceptions directly.
+        // A sticky observation on a known automatic float adopts it as
+        // intentional (sticky origin semantics unchanged): workspace
+        // retile (D6) preserves it from here on.
+        for (id, entry) in &observed {
+            if entry.sticky && new_automatic.contains(*id) {
+                new_automatic.remove(*id);
+            }
+        }
+        // Brand-new floating windows become exceptions directly. Known
+        // floating intent stays intentional: the automatic marker is set
+        // only from the adapter's explicit fixed_auto origin signal, never
+        // inferred from fixed hints alone; born fullscreen bypasses the
+        // marker and stays a plain synthetic exception (D5).
         for (id, entry) in &observed {
             if entry.floating
                 && !self.windows.contains_key(*id)
@@ -818,8 +915,40 @@ impl super::Session {
                     (*id).clone(),
                     floating_record(id, &entry.output, &entry.workspace, None),
                 );
+                if self.fixed_admission
+                    && entry.fixed_auto
+                    && !entry.fullscreen
+                    && !entry.sticky
+                    && !entry.fixed_suppress
+                    && !self.fixed_tile_override.contains(*id)
+                {
+                    new_automatic.insert((*id).clone());
+                }
                 flags_adopted += 1;
             }
+        }
+        // Brand-new fixed-size windows float at admission (D1): a floating
+        // exception with an automatic marker, never a tiled slot and never
+        // geometry/focus writes (D8). Born fullscreen bypasses (D5) and
+        // admits tiled below; born maximized floats under its native
+        // maximize overlay with no reserved tile (D4). Explicit user tile
+        // wins (D3) admit tiled below.
+        for (id, entry) in &observed {
+            if self.windows.contains_key(*id)
+                || self.exceptions.contains_key(*id)
+                || new_exceptions.contains_key(*id)
+            {
+                continue;
+            }
+            if !fixed_floats_at_admit(entry) {
+                continue;
+            }
+            new_exceptions.insert(
+                (*id).clone(),
+                floating_record(id, &entry.output, &entry.workspace, None),
+            );
+            new_automatic.insert((*id).clone());
+            flags_adopted += 1;
         }
         // Normal admissions: brand-new tiled windows plus unfloats, in
         // window-id order through the existing normal-placement helper.
@@ -832,7 +961,7 @@ impl super::Session {
         }
         let (mut adomain, mut aleaf) = (self.focused_domain.clone(), self.focused_leaf.clone());
         for (id, entry) in &observed {
-            if entry.floating || new_windows.contains_key(*id) {
+            if entry.floating || new_windows.contains_key(*id) || new_exceptions.contains_key(*id) {
                 continue;
             }
             let key = DomainKey {
@@ -880,6 +1009,13 @@ impl super::Session {
             );
             adomain = Some(key);
             aleaf = Some(leaf_id);
+            // An observed suppress signal mirrors into the retained
+            // override set so the win survives cross-domain transfer
+            // (the paired transplant carries it); removals still prune.
+            if self.fixed_admission && entry.fixed_suppress {
+                new_automatic.remove(*id);
+                new_override.insert((*id).clone());
+            }
             // Unfloat re-admits were already counted as flag adoptions.
             if !to_tile.contains(*id) {
                 admitted += 1;
@@ -921,10 +1057,16 @@ impl super::Session {
         ) {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }
+        // Removed windows drop fixed-size bookkeeping so a reused id
+        // classifies again (D3); overrides never cross restart (D7).
+        new_automatic.retain(|id| new_windows.contains_key(id) || new_exceptions.contains_key(id));
+        new_override.retain(|id| new_windows.contains_key(id) || new_exceptions.contains_key(id));
         let changed = new_trees != self.trees
             || new_windows != self.windows
             || new_exceptions != self.exceptions
-            || new_retained != self.retained_float_geometry;
+            || new_retained != self.retained_float_geometry
+            || new_automatic != self.automatic_fixed
+            || new_override != self.fixed_tile_override;
         let fingerprint = observation.observation.fingerprint;
         if changed {
             // Exhaustion guard before the advance: refuse without recording a
@@ -947,6 +1089,8 @@ impl super::Session {
             self.windows = new_windows;
             self.exceptions = new_exceptions;
             self.retained_float_geometry = new_retained;
+            self.automatic_fixed = new_automatic;
+            self.fixed_tile_override = new_override;
             self.accepted_fingerprint = fingerprint;
         }
         self.focused_domain = next_focus_domain;

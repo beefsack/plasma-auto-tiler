@@ -56,6 +56,8 @@ fn observed_window(window: &str, hints: WindowSizeHints) -> ObservedWindow {
         fullscreen: false,
         maximized: false,
         sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints,
     }
 }
@@ -68,6 +70,10 @@ fn engine_window(window: &str, rect: Rect, hints: WindowSizeHints) -> EngineWind
         rect,
         floating: false,
         fit_excluded: false,
+        fullscreen: false,
+        sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints,
     }
 }

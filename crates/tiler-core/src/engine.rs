@@ -98,6 +98,17 @@ pub struct Engine {
     /// Internal reseed guard only, never logged: once converged, partial or
     /// diverged follow-ups fail closed without reset/reseed.
     converged_this_op: bool,
+    /// Opt-in Q2 fixed-size float admission (D1-D8). Off by default so
+    /// Windows carriers (`Engine::new`) keep exact current behavior; the
+    /// Linux planner route enables it.
+    fixed_size_admission: bool,
+    /// Last fixed-size admission report for protocol logging.
+    ///
+    /// Set when [`Engine::handle`] admitted fixed-size windows with the
+    /// opt-in enabled; cleared at the start of every [`Engine::handle`].
+    /// Bounded counts plus correlation/op/reason only, never native
+    /// identifiers.
+    last_fixed_admission: Option<EngineFixedAdmissionReport>,
 }
 
 /// Bounded correlated observation-convergence report for the protocol logging
@@ -114,6 +125,24 @@ pub struct EngineConvergenceReport {
     pub admitted: usize,
     /// Floating adoptions by convergence.
     pub flags_adopted: usize,
+}
+
+/// Bounded correlated fixed-size admission report for the protocol logging
+/// boundary (D1-D8). Counts plus the fixed decision token only, never
+/// native identifiers, geometry, or content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineFixedAdmissionReport {
+    /// Validated correlation for this op (cross-service lookup key).
+    pub correlation: CorrelationId,
+    /// Single-domain op token (`reconcile`, `admit`, ...).
+    pub op: &'static str,
+    /// Carried windows evaluated for fixed-size admission.
+    pub evaluated: usize,
+    /// Windows admitted as automatic fixed floats by this op.
+    pub admitted: usize,
+    /// Fixed decision token (`fixed-equal` when admitted, else the
+    /// first applicable `not-fixed-*` reason).
+    pub reason: &'static str,
 }
 
 /// Bounded correlated fresh adoption-fit report for the protocol logging
@@ -315,6 +344,8 @@ impl Default for Engine {
             last_startup_fit_trace: None,
             last_send_placement: None,
             converged_this_op: false,
+            fixed_size_admission: false,
+            last_fixed_admission: None,
         }
     }
 }
@@ -463,12 +494,89 @@ impl Engine {
         self.last_send_placement.as_ref()
     }
 
+    /// Whether opt-in Q2 fixed-size float admission is enabled.
+    #[must_use]
+    pub fn fixed_size_admission(&self) -> bool {
+        self.fixed_size_admission
+    }
+
+    /// Enable or disable opt-in Q2 fixed-size float admission (D1-D8).
+    /// Propagates to every retained session on store; fresh sessions
+    /// adopt it at creation. Never touches topology or revision.
+    pub fn set_fixed_size_admission(&mut self, enabled: bool) {
+        self.fixed_size_admission = enabled;
+        for session in self.sessions.values_mut() {
+            session.set_fixed_size_admission(enabled);
+        }
+    }
+
+    /// Last fixed-size admission report for protocol logging, if the
+    /// current [`Engine::handle`] admitted automatic fixed floats.
+    /// Bounded counts plus correlation/op/reason only.
+    #[must_use]
+    pub fn last_fixed_admission(&self) -> Option<&EngineFixedAdmissionReport> {
+        self.last_fixed_admission.as_ref()
+    }
+
+    /// Carry the Engine opt-in into a session without touching owner,
+    /// generation, revision, divergence, pending, or drag state.
+    fn adopt_fixed_admission(&self, session: &mut Session) {
+        session.set_fixed_size_admission(self.fixed_size_admission);
+    }
+
+    /// Whether a carried window is a fixed-size admission candidate on
+    /// this op: fixed hints, not born fullscreen (D5 bypass), not
+    /// already floating, and no adapter-asserted tile win (D3 suppress
+    /// signal). Sticky stays intentional (D6).
+    fn is_fixed_candidate(window: &crate::seed::EngineWindow) -> bool {
+        !window.floating
+            && !window.fullscreen
+            && !window.sticky
+            && !window.fixed_suppress
+            && crate::size_hints::is_fixed_size(window.hints)
+    }
+
+    /// Record the bounded fixed-size admission diagnostic for this op
+    /// when the opt-in admitted automatic floats. Correlation plus
+    /// counts and the fixed decision token only, never identifiers.
+    /// Committed outcomes only: callers invoke this after the store
+    /// commits, so exact-match (nothing admitted) and failed stores stay
+    /// silent instead of logging success. A later ordinary-op refusal
+    /// does not retract the report because the convergence itself
+    /// committed and persists by design.
+    fn note_fixed_admission(
+        &mut self,
+        correlation: &CorrelationId,
+        op: &'static str,
+        evaluated: usize,
+        admitted_before: usize,
+        session: &Session,
+    ) {
+        if !self.fixed_size_admission {
+            return;
+        }
+        let admitted = session
+            .automatic_fixed_count()
+            .saturating_sub(admitted_before);
+        if admitted == 0 {
+            return;
+        }
+        self.last_fixed_admission = Some(EngineFixedAdmissionReport {
+            correlation: correlation.clone(),
+            op,
+            evaluated,
+            admitted,
+            reason: "fixed-equal",
+        });
+    }
+
     /// Converge one retained single-domain session to the complete current
     /// observation before its ordinary operation.
     ///
     /// Uses the existing [`Session::converge_observation`] primitive with the
     /// complete carried window set (`floating` plus advisory `fit_excluded`
-    /// as carried; no new native flags) and the carried focus. Preserves
+    /// as carried, with native `fullscreen`/`sticky` overlays for the
+    /// fixed-size classifier) and the carried focus. Preserves
     /// survivor topology, exact-match revision semantics (no bump on zeros),
     /// and first-time fit/seed ([`ConvergeOutcome::NoSession`] runs the
     /// existing seed route). Owner/generation mismatches return terminal
@@ -506,6 +614,16 @@ impl Engine {
         } else {
             Some(&event.focused_window)
         };
+        let admitted_before = self
+            .sessions
+            .get(&event.domain_key)
+            .map(|session| session.automatic_fixed_count())
+            .unwrap_or(0);
+        let evaluated = event
+            .windows
+            .iter()
+            .filter(|window| Self::is_fixed_candidate(window))
+            .count();
         let Some(session_mut) = self.sessions.get_mut(&event.domain_key) else {
             return ConvergeOutcome::NoSession;
         };
@@ -519,6 +637,22 @@ impl Engine {
                         removed: counts.removed,
                         admitted: counts.admitted,
                         flags_adopted: counts.flags_adopted,
+                    });
+                }
+                let admitted_after = self
+                    .sessions
+                    .get(&event.domain_key)
+                    .map(|session| session.automatic_fixed_count())
+                    .unwrap_or(admitted_before);
+                // Inlined fixed-admission note (borrows the count, not the
+                // session) so the mutable report write needs no alias.
+                if self.fixed_size_admission && admitted_after.saturating_sub(admitted_before) > 0 {
+                    self.last_fixed_admission = Some(EngineFixedAdmissionReport {
+                        correlation: event.correlation.clone(),
+                        op,
+                        evaluated,
+                        admitted: admitted_after.saturating_sub(admitted_before),
+                        reason: "fixed-equal",
                     });
                 }
                 ConvergeOutcome::Converged
@@ -574,6 +708,12 @@ impl Engine {
         } else {
             Some(&event.focused_window)
         };
+        let admitted_before = session.automatic_fixed_count();
+        let evaluated = event
+            .windows
+            .iter()
+            .filter(|window| Self::is_fixed_candidate(window))
+            .count();
         match session.converge_observation(&observation, focus) {
             Ok(counts) => {
                 self.converged_this_op = true;
@@ -597,6 +737,15 @@ impl Engine {
                         detail: "commit-rejected",
                     }));
                 }
+                // Reported only after the store commits: a failed store
+                // must not log a successful admission.
+                self.note_fixed_admission(
+                    &event.correlation,
+                    op,
+                    evaluated,
+                    admitted_before,
+                    session,
+                );
                 let base = session.accepted_revision();
                 let observation = crate::seed::session_observation_for(
                     &event.owner,
@@ -629,9 +778,10 @@ impl Engine {
     /// on a clone and manage capacity explicitly. Normal commits must use
     /// [`Engine::store_committed`].
     pub fn insert_raw(&mut self, key: DomainKey, mut session: Session, outer_gap: i32) {
-        // Retaining carries the selected policy; no revision, divergence,
-        // pending, gap, or topology state is touched.
+        // Retaining carries the selected policy and the fixed-size opt-in;
+        // no revision, divergence, pending, gap, or topology state is touched.
         session.set_policy(self.policy.clone());
+        self.adopt_fixed_admission(&mut session);
         self.outer_gaps.insert(key.clone(), outer_gap);
         self.sessions.insert(key, session);
     }
@@ -640,6 +790,7 @@ impl Engine {
     /// when the source had no gap recorded).
     pub fn insert_session_only(&mut self, key: DomainKey, mut session: Session) {
         session.set_policy(self.policy.clone());
+        self.adopt_fixed_admission(&mut session);
         self.sessions.insert(key, session);
     }
 
@@ -686,6 +837,7 @@ impl Engine {
             return;
         }
         session.set_policy(self.policy.clone());
+        self.adopt_fixed_admission(&mut session);
         self.outer_gaps.insert(domain_key.clone(), outer_gap);
         self.sessions.insert(domain_key, session);
     }
@@ -818,6 +970,7 @@ impl Engine {
         self.last_adoption_fit = None;
         self.last_startup_fit_trace = None;
         self.last_send_placement = None;
+        self.last_fixed_admission = None;
         self.converged_this_op = false;
         match &event.command {
             CoreCommand::Reconcile => {
@@ -984,6 +1137,7 @@ impl Engine {
             return Err(None);
         };
         fresh.set_policy(self.policy.clone());
+        self.adopt_fixed_admission(&mut fresh);
         let observation = crate::seed::session_observation_for(
             &event.owner,
             &event.generation,
@@ -1017,6 +1171,12 @@ impl Engine {
                         flags_adopted: counts.flags_adopted,
                     });
                 }
+                let evaluated = event
+                    .windows
+                    .iter()
+                    .filter(|window| Self::is_fixed_candidate(window))
+                    .count();
+                self.note_fixed_admission(&event.correlation, report_op, evaluated, 0, &fresh);
                 let base = fresh.accepted_revision();
                 self.store_committed(event.domain_key.clone(), fresh, event.outer_gap);
                 Ok(base)
@@ -1052,7 +1212,41 @@ impl Engine {
         let fresh_attempt = placement_bounds.is_none()
             && window.0 == event.focused_window.0
             && self.session(&event.domain_key).is_none();
-        if fresh_attempt {
+        let fixed_present =
+            self.fixed_size_admission && event.windows.iter().any(Self::is_fixed_candidate);
+        if fresh_attempt && fixed_present {
+            // Fixed-size members never join the fitted topology: they
+            // float at admission (D1), so the fit declines to the
+            // floating-aware convergence build below with the existing
+            // fit-excluded token.
+            self.last_adoption_fit = Some(EngineAdoptionFitReport {
+                correlation: event.correlation.clone(),
+                outcome: "fallback",
+                windows: event.windows.len(),
+                reason: crate::seed::FitDeclineReason::FitExcluded.as_str(),
+                centre_splits: 0,
+            });
+            self.last_startup_fit_trace = Some(EngineStartupFitTrace {
+                correlation: event.correlation.clone(),
+                windows: event.windows.len(),
+                domain_bounds: event.domain.bounds,
+                inputs: event
+                    .windows
+                    .iter()
+                    .take(STARTUP_TRACE_MAX_RECTS)
+                    .map(|w| StartupInput {
+                        window: w.window.clone(),
+                        rect: w.rect,
+                    })
+                    .collect(),
+                outcome: "fallback",
+                reason: crate::seed::FitDeclineReason::FitExcluded.as_str(),
+                centre_splits: 0,
+                leaves: 0,
+                topology: "-".to_owned(),
+            });
+        }
+        if fresh_attempt && !fixed_present {
             match crate::seed::try_recursive_cut_fit_with_centre_count(
                 &event.domain,
                 &event.windows,
@@ -1132,6 +1326,7 @@ impl Engine {
                             ),
                         ) {
                             fitted.set_policy(self.policy.clone());
+                            self.adopt_fixed_admission(&mut fitted);
                             let base = fitted.accepted_revision();
                             let observation = crate::seed::session_observation_for(
                                 &event.owner,
@@ -1240,10 +1435,13 @@ impl Engine {
         // and floating members present, so the tiled-only seed cannot run. One
         // empty session plus the same single convergence primitive admits
         // normal members and retains floating exceptions atomically; no staged
-        // or fabricated observations. Relocation candidates always keep the
-        // legacy route byte-for-byte, as do all-normal fresh observations.
+        // or fabricated observations. Fixed-size candidates (D1) ride this
+        // same build: they converge to automatic floating exceptions instead
+        // of joining the fitted/seed topology. Relocation candidates always
+        // keep the legacy route byte-for-byte, as do all-normal fresh
+        // observations.
         if self.session(&event.domain_key).is_none()
-            && event.windows.iter().any(|w| w.floating)
+            && (event.windows.iter().any(|w| w.floating) || fixed_present)
             && self
                 .find_unique_source_for_target(&event.domain_key)
                 .is_none()
@@ -1267,6 +1465,60 @@ impl Engine {
             {
                 let mut focused = session;
                 let _ = focused.sync_focus_from_window(&event.domain_key, window);
+                if committed_session_is_empty(&focused) {
+                    return CoreReply::Tiled(TiledPlan {
+                        base_revision: focused.accepted_revision(),
+                        policy_version: LIFECYCLE_POLICY_VERSION,
+                        kind: TiledKind::Admit,
+                        geometry: Vec::new(),
+                        focus_domain: None,
+                        focus_leaf: None,
+                        float_window: None,
+                        float_rect: None,
+                    });
+                }
+                let (focus_domain, focus_leaf) = focused.focus();
+                if let (Some(focus_domain), Some(focus_leaf)) = (focus_domain, focus_leaf) {
+                    let hints = event
+                        .windows
+                        .iter()
+                        .map(|entry| (entry.window.clone(), entry.hints))
+                        .collect::<BTreeMap<_, _>>();
+                    if let Some(plan) = project_retained_tiled_geometry(
+                        &focused,
+                        &event.domain_key,
+                        event.domain.bounds,
+                        event.domain.gap,
+                        Some((focus_domain, focus_leaf)),
+                        ProjectionKind::Reconcile,
+                        &hints,
+                        &event.windows,
+                    ) {
+                        if let Some(stored) = self.session_mut(&event.domain_key) {
+                            *stored = focused;
+                        }
+                        refresh_startup_seed_tree(self, event);
+                        return CoreReply::Tiled(TiledPlan {
+                            base_revision: plan.base_revision,
+                            policy_version: LIFECYCLE_POLICY_VERSION,
+                            kind: TiledKind::Admit,
+                            geometry: plan.geometry,
+                            focus_domain: plan.focus_domain,
+                            focus_leaf: plan.focus_leaf,
+                            float_window: None,
+                            float_rect: None,
+                        });
+                    }
+                }
+            }
+            // Fixed-size anchor admitted as an automatic float (D1): no
+            // tiled slot exists for it, so project the converged tiled
+            // remainder (or nothing) instead of falling into the seed
+            // below, which would refuse as a duplicate.
+            if let Some(session) = self.session(&event.domain_key).cloned()
+                && session.is_exception(window)
+            {
+                let focused = session;
                 if committed_session_is_empty(&focused) {
                     return CoreReply::Tiled(TiledPlan {
                         base_revision: focused.accepted_revision(),
@@ -1344,6 +1596,7 @@ impl Engine {
                         exceptions: ExceptionFlags::none(),
                         exception_behavior: None,
                         placement_bounds: placement,
+                        suppress_fixed_float: false,
                     },
                     observation,
                     &event.correlation,
@@ -3839,6 +4092,8 @@ mod tests {
                 fullscreen: false,
                 maximized: false,
                 sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             }],
         };
@@ -3855,6 +4110,7 @@ mod tests {
                 w: 100,
                 h: 50,
             },
+            suppress_fixed_float: false,
         };
         let plan = session
             .propose(
@@ -3953,6 +4209,10 @@ mod tests {
                 },
                 floating: false,
                 fit_excluded: false,
+                fullscreen: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             })
             .collect::<Vec<_>>();
@@ -3982,6 +4242,10 @@ mod tests {
                 },
                 floating: false,
                 fit_excluded: false,
+                fullscreen: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             })
             .collect::<Vec<_>>();
@@ -4123,6 +4387,10 @@ mod tests {
             },
             floating: false,
             fit_excluded: false,
+            fullscreen: false,
+            sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         }];
         let seeded = seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
@@ -4184,6 +4452,10 @@ mod tests {
                 },
                 floating: false,
                 fit_excluded: false,
+                fullscreen: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             })
             .collect::<Vec<_>>();
@@ -4215,6 +4487,10 @@ mod tests {
                 },
                 floating: false,
                 fit_excluded: false,
+                fullscreen: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             }],
             directional: None,
@@ -4269,6 +4545,10 @@ mod tests {
                 },
                 floating: true,
                 fit_excluded: true,
+                fullscreen: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             },
             EngineWindow {
@@ -4283,6 +4563,10 @@ mod tests {
                 },
                 floating: false,
                 fit_excluded: false,
+                fullscreen: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             },
             EngineWindow {
@@ -4297,6 +4581,10 @@ mod tests {
                 },
                 floating: false,
                 fit_excluded: false,
+                fullscreen: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             },
         ];
@@ -4364,6 +4652,10 @@ mod tests {
             },
             floating: false,
             fit_excluded: false,
+            fullscreen: false,
+            sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         }];
         let seeded =
@@ -4393,6 +4685,10 @@ mod tests {
                 },
                 floating: false,
                 fit_excluded: false,
+                fullscreen: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             }],
             directional: None,
@@ -4436,6 +4732,10 @@ mod tests {
             },
             floating: false,
             fit_excluded: false,
+            fullscreen: false,
+            sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         }];
         let seeded =
@@ -4466,6 +4766,10 @@ mod tests {
                 },
                 floating: false,
                 fit_excluded: false,
+                fullscreen: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             }],
             directional: None,
@@ -4509,6 +4813,10 @@ mod tests {
                 },
                 floating: false,
                 fit_excluded: false,
+                fullscreen: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             })
             .collect::<Vec<_>>();
@@ -4570,6 +4878,10 @@ mod tests {
             },
             floating: false,
             fit_excluded: false,
+            fullscreen: false,
+            sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         }];
         let seeded = crate::seed::seed_session(&owner, &gen_id, 7, &d, &order).expect("seeds");
@@ -4622,6 +4934,10 @@ mod tests {
             },
             floating: false,
             fit_excluded: false,
+            fullscreen: false,
+            sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         }];
         let seeded = crate::seed::seed_session(&owner, &gen_id, 7, &d, &order).expect("seeds");
@@ -4686,6 +5002,10 @@ mod tests {
                 },
                 floating: false,
                 fit_excluded: false,
+                fullscreen: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             }],
             directional: None,
@@ -4728,6 +5048,10 @@ mod tests {
                 },
                 floating: false,
                 fit_excluded: false,
+                fullscreen: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             }];
             let seeded = crate::seed::seed_session(&owner, &gen_id, 7, &d, &order).expect("seeds");
@@ -4758,6 +5082,10 @@ mod tests {
                 },
                 floating: false,
                 fit_excluded: false,
+                fullscreen: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
                 hints: crate::size_hints::WindowSizeHints::none(),
             }],
             directional: None,
@@ -4830,6 +5158,10 @@ mod tests {
             },
             floating: false,
             fit_excluded: false,
+            fullscreen: false,
+            sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         }
     }

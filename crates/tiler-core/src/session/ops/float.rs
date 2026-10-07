@@ -31,7 +31,16 @@ impl super::super::Session {
                 .iter()
                 .find(|entry| &entry.window == window)
                 .ok_or(ProposeError::Refused(RefusalKind::PartialObservation))?;
-            if target.flags() != record.flags
+            // Membership binds flags plus homing exactly (original
+            // semantics, always used when the fixed-size opt-in is off).
+            // With the opt-in on, overlays ride advisory-style and only
+            // the portable floating flag binds an unfloat.
+            let bindings_match = if self.fixed_admission {
+                target.floating == record.flags.floating
+            } else {
+                target.flags() == record.flags
+            };
+            if !bindings_match
                 || target.output != record.output
                 || target.workspace != record.workspace
             {
@@ -69,6 +78,11 @@ impl super::super::Session {
                 .domain_for(&target.output, &target.workspace)
                 .ok_or(ProposeError::Refused(RefusalKind::UnknownDomain))?;
             let placement = crate::seed::seed_target_bounds(&candidate, domain);
+            // Explicit user-tile origin rides the admission command: the
+            // fixed-size classifier cannot re-float this window, and the
+            // override stages transactionally with the plan below. A
+            // refusal here stages nothing, so failed proposals leave no
+            // markers behind.
             let plan = candidate.propose_admit(
                 window,
                 &target.output,
@@ -76,6 +90,7 @@ impl super::super::Session {
                 ExceptionFlags::none(),
                 None,
                 placement,
+                true,
                 &observation,
                 correlation_id,
                 capabilities,
@@ -110,6 +125,12 @@ impl super::super::Session {
         let Some(desired) = self.pending_desired.as_mut() else {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         };
+        // An intentional float never shares automatic identity (D6): the
+        // user chose float, so any automatic mark or tile win withdraws
+        // transactionally with this plan. The later unfloat records a
+        // fresh override through its own admission (D3).
+        desired.automatic_fixed.remove(window);
+        desired.fixed_tile_override.remove(window);
         desired.exceptions.insert(
             window.clone(),
             ExceptionRecord {

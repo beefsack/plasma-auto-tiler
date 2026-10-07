@@ -38,13 +38,15 @@ Table A predicate rows carry literal status `OPEN (Table A R-xxx)`, unless a
 recorded user selection for that predicate is normative (then Status is
 NORMATIVE and Source cites the selection).
 
-Draft totals: 74 NORMATIVE, 61 OPEN, 9 PROVISIONAL requirement rows;
+Draft totals: 74 NORMATIVE, 61 OPEN, 17 PROVISIONAL requirement rows;
 Selected additions carry remaining KDE/Windows implementation gaps; KDE
 REQ-WS-08/11 have a user-confirmed single-output native journey; multi-output
 and unspecified presets remain pending. Shared core/KDE REQ-WS-01/01b/06/14
 and REQ-MOV-03/08/08b, REQ-LAY-01 and REQ-OUT-01/04 are implemented offline;
+REQ-SPC-04 KDE admission is implemented offline with eight PROVISIONAL
+autonomous Q2 clauses (REQ-SPC-04a..h), not additional user decisions;
 Windows wiring and item-2/3/4/5 native journeys pending. The macOS
-adapter gap counts once platform-wide. Coverage: 139 scenarios, 24 Table A predicates.
+adapter gap counts once platform-wide. Coverage: 147 scenarios, 24 Table A predicates.
 
 <a id="insertion"></a>
 ## 1. Insertion ([R-INS](reference-outcomes/insertion.md#insertion-reference-outcomes))
@@ -178,6 +180,8 @@ Hooks: V-MAX-MODEL selects retained-slot overlay, including Q3 born-maximized
 admission and R-MAX-03 floating-to-tiled admission (KDE delivered offline,
 Windows parity pending; native journeys TBD). V-FS-SLOT
 retains the in-place fullscreen slot; born-fullscreen is a separate scenario.
+The fixed-size born-maximized intersection is PROVISIONAL REQ-SPC-04d,
+not a new normative Q3 selection. R-MAX-03 retile still reserves the slot.
 
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
@@ -316,7 +320,15 @@ Hooks: V-FIRST-RUN, V-TRAY-LIFECYCLE, V-SHORTCUT-CONFLICT. PROVISIONAL indexing,
 | REQ-SPC-01 | [R-SPC-01](reference-outcomes/special-windows.md#r-spc-01-open-a-transient-dialog-then-request-parent-focus-fresh-modal-variant) transient dialog, parent focus | current: KDE `normalWindow` mapping untraced; Windows excludes owned dialogs | current: TBD | current: excluded (observed divergence, eligibility unselected) | behavior OPEN; implementation absent | OPEN | Table U; eligibility gap |
 | REQ-SPC-02 | [R-SPC-02](reference-outcomes/special-windows.md#r-spc-02-open-a-typed-splash-window-fresh-utility-variant) splash; utility variant | current: type eligibility TBD both; Windows toolwindow-excluded utility | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table C; no selection |
 | REQ-SPC-03 | [R-SPC-03](reference-outcomes/special-windows.md#r-spc-03-enter-app-picture-in-picture-mode) picture-in-picture | current: app-specific eligibility TBD; no universal PiP type | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table C; no selection |
-| REQ-SPC-04 | [R-SPC-04](reference-outcomes/special-windows.md#r-spc-04-open-a-fixed-size-window-minmax-640x480) fixed-size window | Admit fixed-size (min==max) windows as floats instead of tiles; implementation pending | gap: tiles | gap: tiles with hint clamp | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-SPC-04 accepted 2026-10-07 |
+| REQ-SPC-04 | [R-SPC-04](reference-outcomes/special-windows.md#r-spc-04-open-a-fixed-size-window-minmax-640x480) fixed-size window | Admit fixed-size (min==max) windows as floats instead of tiles; exact Q2 edge clauses below are PROVISIONAL | implemented offline: shared predicate/planner + KDE no-touch float admission; native TBD ([record](../changes/archive/fixed-size-admission.md)) | gap: tiles with hint clamp; behavior frozen, handoff item 13 | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-SPC-04 accepted 2026-10-07 |
+| REQ-SPC-04a | [R-SPC-06](reference-outcomes/special-windows.md#r-spc-06-admit-a-client-fixed-on-only-one-axis), [R-SPC-07](reference-outcomes/special-windows.md#r-spc-07-admit-with-unset-zero-or-equal-partial-zero-hints) hint predicate | D1: both raw vectors present, usable nonnegative, equal on both axes, not full-zero/sentinel; equal partial-zero counts; resizeable alone ignored; either-axis setting deferred for review | implemented offline; native TBD | gap: max-track hint extraction + opt-in pending | applicability OPEN; adapter absent | PROVISIONAL | [decisions](../decisions.md#cross-platform-behavior) fixed-size admission D1, autonomous 2026-10-08 |
+| REQ-SPC-04b | [R-SPC-08](reference-outcomes/special-windows.md#r-spc-08-gain-or-lose-fixed-hints-after-admission) hint changes | D2: admission-only in both directions; existing projection/clamp continues | implemented offline; native TBD | gap: Q2 classifier not wired | applicability OPEN; adapter absent | PROVISIONAL | [decisions](../decisions.md#cross-platform-behavior) fixed-size admission D2, autonomous 2026-10-08 |
+| REQ-SPC-04c | [R-SPC-09](reference-outcomes/special-windows.md#r-spc-09-explicitly-tile-an-automatically-admitted-fixed-float) override lifetime | D3: explicit tile/sticky commands win for same live client through hide/show, cross-domain observation and re-adoption; new client classifies; sticky origin rules unchanged | implemented offline: exact-ref pins and success-staged command transitions; native TBD | gap: origin/lifetime wiring pending | applicability OPEN; adapter absent | PROVISIONAL | [decisions](../decisions.md#cross-platform-behavior) fixed-size admission D3, autonomous 2026-10-08 |
+| REQ-SPC-04d | [R-SPC-10](reference-outcomes/special-windows.md#r-spc-10-admit-fixed-and-maximized-then-unmaximize) maximize intersection | D4: fixed born-maximized floats beneath native overlay; Q3 non-fixed admission unchanged; fixed later retiled while maximized uses Q3 reserved slot (R-MAX-03) | implemented offline: floating admission plus release/retile/unmaximize fixture; native TBD | gap: fixed classifier + item 11 overlay pending | applicability OPEN; adapter absent | PROVISIONAL | [decisions](../decisions.md#cross-platform-behavior) fixed-size admission D4, autonomous 2026-10-08; Q3 boundary review pending |
+| REQ-SPC-04e | [R-SPC-11](reference-outcomes/special-windows.md#r-spc-11-fixed-client-exits-fullscreen-born-or-previously-floating) fullscreen lifecycle | D5: born-fullscreen fixed exits tiled on tiled workspace; prior fixed-floating restores floating; no automatic writes while fullscreen | implemented offline: held-origin bypass/restore; native TBD | gap: Q2 wiring pending; borderless-game inference unchanged | applicability OPEN; adapter absent | PROVISIONAL | [decisions](../decisions.md#cross-platform-behavior) fixed-size admission D5, autonomous 2026-10-08 |
+| REQ-SPC-04f | [R-SPC-12](reference-outcomes/special-windows.md#r-spc-12-enable-workspace-tiling-with-an-automatic-fixed-float) workspace enable | D6: enabling tiling retiles automatic fixed floats, preserving intentional/sticky exceptions | implemented offline: confirmed-release entry route; native TBD | gap: origin + workspace-toggle wiring pending | applicability OPEN; adapter absent | PROVISIONAL | [decisions](../decisions.md#cross-platform-behavior) fixed-size admission D6, autonomous 2026-10-08 |
+| REQ-SPC-04g | [R-SPC-13](reference-outcomes/special-windows.md#r-spc-13-adopt-an-already-mapped-fixed-client-on-owner-startup) startup/restart | D7: foreground/hidden startup adoption classifies; restart recomputes absent authoritative override; no Q2 tile-override persistence | implemented offline: production-entry startup and restart fixtures; native TBD | gap: Q2 startup wiring pending; R-RST-01 separate | applicability OPEN; adapter absent | PROVISIONAL | [decisions](../decisions.md#cross-platform-behavior) fixed-size admission D7, autonomous 2026-10-08 |
+| REQ-SPC-04h | [R-SPC-04](reference-outcomes/special-windows.md#r-spc-04-open-a-fixed-size-window-minmax-640x480) no-touch classification | D8: automatic membership-only float, no admitted-client geometry/focus/stacking/keep-above writes; explicit commands retain existing behavior | implemented offline: real Planner and instrumented setters; native/game journey TBD | gap: Q2 no-touch route pending | applicability OPEN; adapter absent | PROVISIONAL | [decisions](../decisions.md#cross-platform-behavior) fixed-size admission D8, autonomous 2026-10-08; Gaming Compatibility |
 | REQ-SPC-05a | [R-SPC-05](reference-outcomes/special-windows.md#r-spc-05-app-owned-resize-and-minimum-hint-change-on-a-tile) app resize/hint change | Observed frame never gates admission; Engine allocation stays authoritative | current: authoritative | current: authoritative | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) permissive admission auth 2026-09-14 |
 | REQ-SPC-05b | [R-SPC-05](reference-outcomes/special-windows.md#r-spc-05-app-owned-resize-and-minimum-hint-change-on-a-tile) hint reflow journey | Pending: host reaction and exact reflow TBD | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U remainders |
 
@@ -468,11 +480,14 @@ marked with literal status in-row):
 - [Activation](#activation): REQ-ACT-01, REQ-ACT-02.
 - [Restart/control](#startup): REQ-RST-01c, REQ-RST-02.
 - [Special](#special): REQ-SPC-01, REQ-SPC-02, REQ-SPC-03, REQ-SPC-05b.
+  Q2 edge clauses are in the PROVISIONAL discussion group below, not OPEN rows.
 - [Columns](#columns): REQ-COL-01, REQ-COL-02, REQ-COL-03, REQ-COL-04, REQ-COL-05, REQ-COL-06, REQ-COL-07, REQ-COL-08, REQ-COL-09, REQ-COL-10.
 
 PROVISIONAL discussion group (not final selections; awaiting discussion):
 REQ-START-01, REQ-START-02, REQ-CTL-01, REQ-CTL-02, REQ-CTL-03b, REQ-CTL-05,
-REQ-CTL-06, REQ-FLT-06 (B9 pending COSMIC check), REQ-MIN-01b.
+REQ-CTL-06, REQ-FLT-06 (B9 pending COSMIC check), REQ-MIN-01b,
+REQ-SPC-04a..h (autonomous Q2 D1-D8 2026-10-08, including either-axis
+alternative review and the Q3 boundary; [record](../changes/archive/fixed-size-admission.md)).
 Single-file spec format selected 2026-10-07.
 
 Platform mapping and known decisions waiting native acceptance (separated

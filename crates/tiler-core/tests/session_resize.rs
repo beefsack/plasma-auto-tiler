@@ -90,6 +90,8 @@ fn complete_obs(
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: tiler_core::size_hints::WindowSizeHints::none(),
         })
         .collect();
@@ -115,6 +117,8 @@ fn tiled(window: &str, output: &str, workspace: &str) -> ObservedWindow {
         fullscreen: false,
         maximized: false,
         sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints: tiler_core::size_hints::WindowSizeHints::none(),
     }
 }
@@ -126,6 +130,7 @@ fn admit_commit(session: &mut Session, window: &str, horiz: bool, corr: &str) {
         exceptions: ExceptionFlags::none(),
         exception_behavior: None,
         placement_bounds: placement(horiz),
+        suppress_fixed_float: false,
     };
     let obs = complete_obs(session, vec![tiled(window, "out-1", "ws-1")]);
     let base = session.accepted_revision();
@@ -1379,6 +1384,7 @@ fn flagged_observation_refuses_fail_closed() {
         },
         exception_behavior: Some(ExceptionBehavior::Defer),
         placement_bounds: placement(true),
+        suppress_fixed_float: false,
     };
     let tobs = complete_obs(
         &t,
@@ -1390,6 +1396,8 @@ fn flagged_observation_refuses_fail_closed() {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: tiler_core::size_hints::WindowSizeHints::none(),
         }],
     );

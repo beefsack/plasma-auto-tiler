@@ -350,6 +350,8 @@ impl super::super::Session {
             ),
             exceptions: self.exceptions.clone(),
             retained_float_geometry: self.retained_float_geometry.clone(),
+            automatic_fixed: self.automatic_fixed.clone(),
+            fixed_tile_override: self.fixed_tile_override.clone(),
         });
         self.last_send_placement = Some(crate::session::SendPlacementTrace {
             anchor_kind,

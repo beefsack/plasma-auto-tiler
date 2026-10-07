@@ -94,6 +94,10 @@ pub fn build_send_event(
             rect: row.rect,
             floating: row.floating,
             fit_excluded: false,
+            fullscreen: false,
+            sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: row.hints,
         })
         .collect();
@@ -106,6 +110,10 @@ pub fn build_send_event(
             rect: row.rect,
             floating: row.floating,
             fit_excluded: false,
+            fullscreen: false,
+            sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: row.hints,
         })
         .collect();

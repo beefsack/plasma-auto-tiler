@@ -254,6 +254,10 @@ decisions of 2026-09-24 are under
   Detailed selections 2026-10-07 (items 1-5 and D1 in
   [decisions](decisions.md#cross-platform-behavior)); KDE items 1-5 delivered
   offline, remaining implementation pending:
+  Q2 R-SPC-04 shared core/Linux planner + KDE delivered offline under
+  autonomous PROVISIONAL D1-D8 (2026-10-08), pending user review and native
+  checks; [record](changes/archive/fixed-size-admission.md). Windows Q2
+  behavior remains unchanged; handoff item 13 supplies its exact wiring.
   KDE-side session owns shared Rust core + KDE adapter; separate Windows
   agent wires later. Correctness over non-breakage: Windows build/behavior
   may break provided the handoff below lists the specific changes needed.
@@ -372,8 +376,10 @@ decisions of 2026-09-24 are under
   | 10 | Float/half-snap parity (a) R-FLT-07..11 | Independent of items 1-5; reuses existing focus/move catalog rows, no new chords. |
   | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; keep first-fullscreen-exit and B9 refusal intact. Independent of items 1-5. |
   | 12 | Non-local workspace modes parity (d) | Depends on handoff items 1/2 (ring + follow/stay) and the parked parity-queue multi-output foundation; last. |
+  | 13 | Q2 fixed-size float admission R-SPC-04 | KDE/shared offline delivery under autonomous PROVISIONAL D1-D8; max-track observation and lifetime/origin wiring before enabling the Engine opt-in. Fixed/maximize intersection coordinates with item 11. |
 
-  Q2-Q5 reservation: R-SPC-04, R-RST-01 KDE delivery, R-WS-12 and R-LAY-04
+  Q2 R-SPC-04 occupies handoff item 13 below. Remaining Q2-Q5 reservation:
+  R-RST-01 KDE delivery, R-WS-12 and R-LAY-04
   own their KDE pieces; when each lands, its owning session appends a Windows
   handoff entry here in the same numbered format. Do not pre-write their
   adapter wiring.
@@ -1732,6 +1738,105 @@ decisions of 2026-09-24 are under
       outcomes as TBD rows; matrix `R-WS-15..17` Ours Windows cells updated
       with dated offline evidence, native TBD.
 
+  - Item 13: Q2 fixed-size float admission R-SPC-04. User accepted the
+    ordinary fixed-size admission addition 2026-10-07; exact D1-D8 edges
+    are autonomous PROVISIONAL choices 2026-10-08, not user decisions.
+    KDE/shared delivered offline; Windows behavior is frozen in this delivery.
+    [Record](changes/archive/fixed-size-admission.md),
+    [provisional clauses](decisions.md#cross-platform-behavior),
+    [matrix](spec/reference-outcomes/special-windows.md#q2-fixed-size-admission-discriminators-2026-10-08).
+
+    #### Item 13 behavior and reference seams
+
+    - Normative addition: REQ-SPC-04 floats ordinary fixed-size clients.
+      PROVISIONAL edges REQ-SPC-04a..h: equal usable whole vectors including
+      partial-zero; missing/full-zero/sentinel excluded; admission-only hint
+      status; same-live-client user tile overrides; fixed-floating base under
+      native maximize; born-fullscreen exit tiled vs prior-float restore;
+      workspace enable retiles automatic only; startup/restart recomputes;
+      membership-only automatic admission with zero native target writes.
+      Either-axis alternative remains reviewable, no setting now. Q3 boundary
+      explicitly touched only for fixed-size birth; later fixed/maximized
+      retile still uses R-MAX-03's reserved slot. Windows borderless-game
+      inference and B9 refusal remain authoritative.
+    - References: COSMIC @3d55cba0 `src/shell/layout/mod.rs:46-52`,
+      `src/shell/element/surface.rs:565-595`, `src/shell/mod.rs:2957-3022`,
+      `src/shell/workspace.rs:1440-1454,1491-1519`. Fullscreen birth/restore
+      are distinct (`src/shell/mod.rs:2754-2807,2960-2968`). COSMIC admission
+      placement/focus is not permission to touch games; our D8 is no-touch.
+    - Shared exact sites in this staged Q2 delivery: `core/size_hints.rs`
+      `is_fixed_size` / `fixed_size_reason`; `core/session/world.rs`
+      `converge_observation`, automatic/override sets; transactional
+      `PendingDesired` in `core/session.rs` and `ops/lifecycle.rs` /
+      `ops/float.rs`; `core/engine.rs` `set_fixed_size_admission` default OFF;
+      `core/seed.rs` `EngineWindow` origin/overlay fields. Existing Linux
+      Planner in `protocol/planner_protocol.rs` `Planner::new` enables it;
+      Windows uses `Engine::new` directly and stays OFF. This is no new
+      adapter-logic extraction. Fixtures: `crates/tiler-core/tests/fixed_size_admission.rs`,
+      `crates/tiler-protocol/tests/planner_fixed_size.rs`.
+    - KDE exact sites: `kwin/src/plan-adapter.ts` `withFixedSizeFloats`,
+      `fixedClients` exact-reference records, `commitFixedStage` after applied
+      command success, `retileAutomaticFixed`; optional `fixed_auto` and
+      `fixed_suppress` wire assertions carry origin/override through domain
+      release/adoption. `kwin/src/plan-adapter-entry.ts` `markTiledAndResync`
+      retiles automatic records only after confirmed release; native removal
+      evicts identity, scoped/minimized absence does not. Real Planner and
+      production-entry fixtures: `kwin/tests/fixed-size-admission.test.ts`,
+      `kwin/tests/fixed-size-workspace-entry.test.ts`.
+
+    #### Item 13 Windows adapter checklist
+
+    - Max-side data is missing today: `src/tiling_sys.rs:733-817`
+      `seed_minmaxinfo`, `query_outer_min_track`, `min_hint_for` extract only
+      minimum track; maximum track is seeded at :743-747 but never extracted.
+      Extend the same one bounded WM_GETMINMAXINFO query, preserving timeout,
+      aggregate budget and failure-as-unknown rules. Normalize both sides
+      with the same fresh DPI/frame-inset conversion at
+      `src/tiling.rs:99-154` `normalize_min_track` / `min_hints_from_outer`;
+      no geometry/style/resizeable inference of fixedness.
+    - Wire visible/verified-hidden/retained rows through
+      `src/tiling_sys.rs:804` `min_hint_for`, :827 `hidden_hint_for`, :4243
+      `assemble_domain_rows`; unknown max hints never classify. Keep overlay
+      hint retention lifetime-bound; do not reuse an automatic float's stale
+      minimum as evidence for fresh fixed-size admission.
+    - Select classification before native slot/restore/write side effects:
+      `src/tiling_sys.rs:3656-3668` eligibility, :3785
+      `admission_clear_eligible`, :3810 `clear_maximize_at_admission`, :8726
+      `admit_slotless_maximized`, :8622 `admit_born_fullscreen`, and
+      `src/product_hide.rs:825` `admit_managed_claim`. Fixed/maximized birth
+      floats without clear/slot; later workspace retile uses item 11's
+      reserved-overlay route. Never change the captionless full-monitor
+      inference or app-owned fullscreen/preimage rules as part of Q2.
+    - Carry live lifetime-bound origin and override through
+      `src/tiling.rs:1226` `build_reconcile_event_for_floating`, :1281
+      `build_reconcile_event`, `src/workspace_owner.rs:70` `build_send_event`
+      and domain row assembly. This delivery's only Windows edits initialize
+      `fullscreen`, `sticky`, `fixed_auto`, `fixed_suppress` to false in
+      those constructors and two native preview-test literals. Enable
+      `Engine::set_fixed_size_admission(true)` only after complete observation,
+      origin and no-touch wiring; never infer automatic origin from an
+      intentional floating flag or fixed hints alone.
+    - Same live client keeps explicit tile/sticky intent through hide/show,
+      scope changes and domain release; native lifetime replacement clears
+      it. Workspace enable retiles automatic only, intentional/sticky stay.
+      Restart recomputes absent authoritative identity; do not add tile
+      override persistence or fold R-RST-01 into this piece.
+    - No new shortcut, setting, preset or hook. Automatic membership must
+      emit bounded correlated decision evidence and cause no game geometry,
+      focus, stacking/keep-above or effects/input interference. Do not call
+      the explicit-float placement/focus path for automatic admission.
+    - [ ] Portable: full hint table, opt-out unchanged behavior, fresh
+      foreground/hidden startup, both hint transitions, explicit unfloat /
+      sticky overrides through hide/domain adoption, ID reuse, fixed/max
+      birth and retile/native restore, born/prior-float fullscreen, automatic
+      vs intentional workspace enable, failure paths and no-write accounting.
+    - [ ] Windows-only: fresh max-track/DPI/inset observations, timeout/hung
+      clients, native overlay/restore and fixed borderless/exclusive games;
+      user owns live checks on the Windows PC. Linux tests prove none of these.
+    - DoD: selected provisional clauses implemented with current Windows
+      rules preserved; dated Ours Windows matrix/spec evidence, no native
+      claim without user testing; user review of D1-D8 remains tracked.
+
   ### Source discrepancies to preserve and report
 
   | Existing assertion | Current source / implementation gap | Handoff treatment |
@@ -2008,6 +2113,22 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 
 ### Single-output laptop
 
+- KDE Q2 R-SPC-04/06..13 (offline delivered, D1-D8 PROVISIONAL): open a
+  fixed-size ordinary client beside a tile; record unchanged incoming frame,
+  focus and stacking, including a fixed borderless game. Check single-axis
+  clients tile, equal partial-zero clients float, unset/full-zero/sentinel
+  hints do not auto-float. Gain/lose fixed hints after admission without
+  changing float identity. Meta+G tiles an automatic float and stays tiled
+  through minimize/restore, workspace/output observation and domain re-adoption;
+  new client/ref and owner restart recompute. Sticky origin commands retain
+  their prior semantics. Fixed born-maximized stays floating beneath native
+  maximize; float workspace -> tiled while still maximized reserves a Q3
+  slot, native unmaximize lands there. Born-fullscreen exits tiled, prior
+  fixed-floating fullscreen restores floating; no writes while fullscreen.
+  Workspace enable retiles automatic only; intentional/sticky controls stay.
+  Foreground/hidden startup and correlated classification/admission/terminal
+  logs need native verification. [Record](changes/archive/fixed-size-admission.md),
+  [live guide](live-kwin-testing.md). No Q2 live result claimed.
 - KDE R-WS-08/11 item 1: user reported "worked perfectly" on a SINGLE output
   (2026-10-07); single-output native journey confirmed. The report did not
   specify individual edge/>9 cases or which presets were exercised.
@@ -2308,6 +2429,18 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   "Provisional, to discuss" in [decisions](decisions.md)): mise rolling
   versions, Windows settings/tray/presets, drag producers,
   sequential startup seeding, KDE conflict controls.
+- Review of 2026-10-08 autonomous provisional choices (all marked
+  "Provisional, to discuss" in [decisions](decisions.md), not user decisions):
+  Q2 D1 whole-vector equality incl. partial-zero and sentinel exclusions,
+  no resizeable inference; either-axis Hyprland-Wayland/sway alternative
+  reviewable, setting deferred. D2 admission-only hints; D3 same-live-client
+  tile/sticky overrides; D4 fixed-floating base under maximize explicitly
+  touches the Q3 boundary, non-fixed Q3 and R-MAX-03 retile unchanged;
+  D5 born-fullscreen tiled exit vs prior-float restore; D6 workspace enable
+  retiles automatic only; D7 startup/restart recompute without tile-override
+  persistence; D8 membership-only no geometry/focus/stacking/keep-above writes.
+  Shared/KDE delivered offline, native checks/Windows item 13 pending;
+  [record](changes/archive/fixed-size-admission.md).
 
 ## Known issues and risks
 

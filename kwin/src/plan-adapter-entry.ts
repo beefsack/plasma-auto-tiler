@@ -3985,6 +3985,11 @@ function startPlanAdapterEntryOnce(
             } catch (error) {
                 void error;
             }
+            try {
+                adapter.noteNativeRemovedId(id);
+            } catch (error) {
+                void error;
+            }
         },
         noteNativeRemoved: (ref) => {
             try {
@@ -4248,6 +4253,17 @@ function startPlanAdapterEntryOnce(
         }
         workspaceNative.handleTopologySignal();
         emitWorkspaceTiling();
+        // Q2 workspace retile (D6): see adapter retileAutomaticFixed.
+        // The following resync observation carries the retile itself.
+        try {
+            for (const id of ids) {
+                for (const snapshot of collectReleaseSnapshots(id)) {
+                    adapter.retileAutomaticFixed(snapshot.domainOutput, snapshot.domainWorkspace);
+                }
+            }
+        } catch (error) {
+            void error;
+        }
         log(`plasma-auto-tiler:plan:workspace-floating tiled=true awaiting-release=0 confirmed=true`);
         adapter.requestResync();
         highlightRefresh?.();

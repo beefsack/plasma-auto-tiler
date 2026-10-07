@@ -77,6 +77,8 @@ fn complete_obs(session: &Session) -> SessionObservation {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: WindowSizeHints::none(),
         })
         .collect();
@@ -106,6 +108,8 @@ fn admit(session: &mut Session, window: &str, output: &str, workspace: &str, cor
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: WindowSizeHints::none(),
         })
         .collect();
@@ -118,6 +122,8 @@ fn admit(session: &mut Session, window: &str, output: &str, workspace: &str, cor
         fullscreen: false,
         maximized: false,
         sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints: WindowSizeHints::none(),
     });
     observed.sort_by(|a, b| a.window.0.cmp(&b.window.0));
@@ -140,6 +146,7 @@ fn admit(session: &mut Session, window: &str, output: &str, workspace: &str, cor
                     w: 120,
                     h: 80,
                 },
+                suppress_fixed_float: false,
             },
             &observation,
             &correlation,

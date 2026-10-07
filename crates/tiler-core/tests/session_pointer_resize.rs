@@ -67,6 +67,8 @@ fn complete_obs(session: &Session) -> tiler_core::session::SessionObservation {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: tiler_core::size_hints::WindowSizeHints::none(),
         })
         .collect();
@@ -91,6 +93,8 @@ fn tiled(window: &str) -> ObservedWindow {
         fullscreen: false,
         maximized: false,
         sticky: false,
+        fixed_auto: false,
+        fixed_suppress: false,
         hints: tiler_core::size_hints::WindowSizeHints::none(),
     }
 }
@@ -122,6 +126,7 @@ fn admit_commit(session: &mut Session, window: &str, horiz: bool, corr: &str) {
         exceptions: ExceptionFlags::none(),
         exception_behavior: None,
         placement_bounds: placement(horiz),
+        suppress_fixed_float: false,
     };
     let mut obs = complete_obs(session);
     obs.windows.push(tiled(window));

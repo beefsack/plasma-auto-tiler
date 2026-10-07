@@ -82,6 +82,32 @@ Per-cell tags, kept terse via citation keys (legend below):
 
 Legend:
 
+- `S-cos-fixed-hints` cosmic-comp:src/shell/layout/mod.rs:17-55 +
+  src/shell/element/surface.rs:565-595 (whole-size equality; Wayland drops
+  only full-zero, X11 delegates optional hints) @3d55cba0
+- `S-cos-fixed-admission` cosmic-comp:src/shell/mod.rs:2957-3041
+  (fullscreen first; float/tile before sticky/maximize; native focus target)
+  @3d55cba0
+- `S-cos-fixed-toggle` cosmic-comp:src/shell/workspace.rs:1491-1519
+  (explicit floating toggle maps directly without hint reclassification)
+  @3d55cba0
+- `S-cos-fixed-workspace` cosmic-comp:src/shell/workspace.rs:1440-1454
+  (workspace enable retiles all ordinary floats without a hint check)
+  @3d55cba0
+- `S-cos-fixed-maximize` cosmic-comp:src/shell/mod.rs:4470-4544 +
+  src/shell/workspace.rs:1002-1036 (maximize retains original layer and
+  unmaximize restores it) @3d55cba0
+- `S-cos-fixed-fullscreen` cosmic-comp:src/shell/mod.rs:2754-2807
+  (no restore state exits to workspace-mode default; floating restore
+  retains layer/geometry) @3d55cba0
+- `S-hyp-fixed-hints` Hyprland:src/desktop/view/window/Window.cpp:1026-1038 +
+  src/desktop/view/window/X11Backend.cpp:83-95 (Wayland either-axis with
+  minima >1; X11 both positive axes) @19fb395d
+- `S-sway-fixed-hints` sway:sway/desktop/xdg_shell.c:229-235
+  (xdg either-axis equality with both minima nonzero) @1652c54b
+- `S-awe-fixed-dynamic` awesome:lib/awful/client.lua:895-906,973-1024
+  (both positive axes; hint signals recompute implicit floating unless
+  an explicit floating state overrides it) @0a5e50cf
 - `S-cos-add` cosmic-comp:src/shell/layout/tiling/mod.rs:219-244
   (`add_window`) @3d55cba0
 - `S-cos-rem` cosmic-comp:src/shell/layout/tiling/mod.rs:255-282
@@ -3168,11 +3194,14 @@ Legend:
 
 ## Coverage accounting
 
-- 139 scenarios: 58 historical plus 67 expansion additions and 14
+- 147 scenarios: 58 historical plus 67 expansion additions and 14
   discriminators for USER selections 2026-10-07 (items 1-5, including 1.5).
   New IDs: R-WS-15..20, R-MOV-09..13, R-LAY-05/06, R-OUT-07.
   Their 196 Then bullets distinguish selected targets (with delivery evidence where available)
   from TBD reference outcomes; they do not add reference-consensus votes.
+  Eight Q2 discriminators R-SPC-06..13 added 2026-10-08 contribute 112 Then
+  bullets; autonomous D1-D8 are PROVISIONAL, KDE is implemented offline,
+  unsupported reference/native outcomes stay TBD and no consensus is recomputed.
 - Baseline expansion accounting: 1198 coverage cells: 67x14 new, 58x4 scrolling assessments,
   and 2x14 explicit-swap legs. Mutually exclusive semantic status totals:
   evidenced 372, partial 237, TBD-only 224, qualified-only 328, mixed 37.
@@ -3180,10 +3209,10 @@ Legend:
 - 522 historical wide-table cells at baseline `e160894` (eight references
   plus combined Ours per row) are migrated to GWT without retrospectively
   assigning the new status classes. Present form: 58 historical scenarios
-  x 14 profiles = 812 Then bullets; 139 scenarios x 14 = 1946 Then bullets
+  x 14 profiles = 812 Then bullets; 147 scenarios x 14 = 2058 Then bullets
   (+28 explicit-swap-leg bullets). Expansion record's total coverage count
   remains 1720 as baseline provenance; baseline assessed cells were not a
-  uniform 125x14 grid. Baseline semantic-status totals above exclude the 14
+  uniform 125x14 grid. Baseline semantic-status totals above exclude the 22
   decision discriminators.
 - [Archived expansion record](../changes/archive/reference-matrix-expansion.md)
   holds final accounting, source/inventory/native-test queue and residual work.
@@ -3199,9 +3228,9 @@ plus 7 workspace scenarios, 3 minimize scenarios, 2 maximize scenarios,
 4 multi-output scenarios, 3 mouse scenarios, 5 special-windows scenarios,
 2 activation scenarios, 2 restart scenarios and 10 column scenarios, GWT
 only: 125 expansion-baseline scenarios, plus 14 decision discriminators
-2026-10-07: 139 scenarios total).
+2026-10-07 and 8 Q2 fixed-size discriminators 2026-10-08: 147 scenarios total).
 This index retains purpose, row-addition rule, notation,
-profiles, evidence tags/legend, variant hooks, and deferred. All 139
+profiles, evidence tags/legend, variant hooks, and deferred. All 147
 scenarios use the GWT form below; no wide-table rows remain.
 Areas follow the approved priority order; column mechanics follows, and
 minimum-size stays a supplemental file (not nested in resize).
@@ -3221,7 +3250,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Close / reflow | [close.md](reference-outcomes/close.md) | R-CLOSE-01..05 (5) | none (R-CLOSE-03..05 landed with scrolling backfill) |
 | Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..07 (7) | R-OUT-07 added 2026-10-07; reference outcomes TBD; KDE item 5 R-OUT-01/04/07 delivered offline; native journey/Windows wiring pending |
 | Mouse | [mouse.md](reference-outcomes/mouse.md) | R-DRAG-01..08 + R-MOU-01..03 (11) | none (R-MOU-01..03 landed with scrolling backfill) |
-| Special windows | [special-windows.md](reference-outcomes/special-windows.md) | R-SPC-01..05 (5) | none (landed; no backfill: no prior rows) |
+| Special windows | [special-windows.md](reference-outcomes/special-windows.md) | R-SPC-01..13 (13) | R-SPC-04/06..13 KDE implemented offline under autonomous PROVISIONAL D1-D8; native, Windows wiring and unsupported reference outcomes TBD |
 | Activation | [activation.md](reference-outcomes/activation.md) | R-ACT-01..02 (2) | none (landed; no backfill: no prior rows) |
 | Restart / persistence | [restart-persistence.md](reference-outcomes/restart-persistence.md) | R-START-01..03 + R-CTL-01..07 + R-RST-01..02 (12) | none (R-RST-01..02 landed with scrolling backfill) |
 | Column mechanics | [column-mechanics.md](reference-outcomes/column-mechanics.md) | R-COL-01..10 (10) | none (landed) |

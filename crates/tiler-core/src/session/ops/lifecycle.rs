@@ -51,6 +51,7 @@ impl super::super::Session {
                 exceptions,
                 exception_behavior,
                 placement_bounds,
+                suppress_fixed_float,
             } => self.propose_admit(
                 window,
                 output,
@@ -58,6 +59,7 @@ impl super::super::Session {
                 *exceptions,
                 *exception_behavior,
                 *placement_bounds,
+                *suppress_fixed_float,
                 session_observation,
                 correlation_id,
                 capabilities,
@@ -154,6 +156,7 @@ impl super::super::Session {
         exceptions: ExceptionFlags,
         exception_behavior: Option<ExceptionBehavior>,
         placement_bounds: Rect,
+        suppress_fixed_float: bool,
         session_observation: &SessionObservation,
         correlation_id: &CorrelationId,
         capabilities: &LifecycleCapabilities,
@@ -251,6 +254,8 @@ impl super::super::Session {
                 last_active: self.last_active.clone(),
                 exceptions: desired_exceptions,
                 retained_float_geometry: self.retained_float_geometry.clone(),
+                automatic_fixed: self.automatic_fixed.clone(),
+                fixed_tile_override: self.fixed_tile_override.clone(),
             });
             return Ok(SessionPlan {
                 dispatch,
@@ -259,6 +264,100 @@ impl super::super::Session {
                 desired_focus_leaf: self.focused_leaf.clone(),
                 desired_geometry: Vec::new(),
             });
+        }
+        // Q2 fixed-size admission (D1): a normal tiled admission carrying
+        // fixed hints floats as an automatic membership-only exception (D8)
+        // instead of taking a tiled slot. Born fullscreen bypasses (D5);
+        // an explicit user tile wins, from the retained set or this
+        // command's suppress origin (D3); born maximized floats under its
+        // native maximize overlay with no reserved tile (D4). The observed
+        // suppress signal bypasses like a retained override. Later hint
+        // changes never reclassify (D2): only this admission branch and
+        // observation convergence classify.
+        let override_wins = self.fixed_tile_override.contains(window) || suppress_fixed_float;
+        if self.fixed_admission
+            && !override_wins
+            && !entry.floating
+            && !entry.fullscreen
+            && !entry.sticky
+            && !entry.fixed_suppress
+            && crate::size_hints::is_fixed_size(entry.hints)
+        {
+            let mut desired_exceptions = self.exceptions.clone();
+            desired_exceptions.insert(
+                window.clone(),
+                ExceptionRecord {
+                    window: window.clone(),
+                    output: output.clone(),
+                    workspace: workspace.clone(),
+                    flags: ExceptionFlags {
+                        floating: true,
+                        fullscreen: false,
+                        maximized: false,
+                        sticky: false,
+                    },
+                    floating_geometry: None,
+                },
+            );
+            let desired_snapshot = self.snapshot_for(&self.trees, &self.windows);
+            let intent = LifecycleIntent::Admit {
+                window: window.clone(),
+                output: output.clone(),
+                workspace: workspace.clone(),
+            };
+            let operation = LifecycleOperation::AdmitDeferred {
+                window: window.clone(),
+                output: output.clone(),
+                workspace: workspace.clone(),
+            };
+            let plan = LifecyclePlan::for_operation(intent, operation);
+            let dispatch = match self.reconciler.propose_lifecycle(
+                &plan,
+                &session_observation.observation,
+                correlation_id,
+                capabilities,
+            ) {
+                Ok(dispatch) => dispatch,
+                Err(crate::reconcile::ProposeError::PendingExists) => {
+                    return Err(ProposeError::PendingExists);
+                }
+                Err(crate::reconcile::ProposeError::Diverged(reason)) => {
+                    self.pending_desired = None;
+                    self.drag = None;
+                    return Err(ProposeError::Diverged(reason));
+                }
+            };
+            // Membership only: no tile, no geometry, no focus change (D8).
+            // The automatic marker stages transactionally in the pending
+            // desired state: refusals never stage it, and acknowledgement
+            // or verification failure discards it with the plan.
+            let mut desired_automatic = self.automatic_fixed.clone();
+            desired_automatic.insert(window.clone());
+            self.pending_desired = Some(PendingDesired {
+                trees: self.trees.clone(),
+                windows: self.windows.clone(),
+                focused_domain: self.focused_domain.clone(),
+                focused_leaf: self.focused_leaf.clone(),
+                last_active: self.last_active.clone(),
+                exceptions: desired_exceptions,
+                retained_float_geometry: self.retained_float_geometry.clone(),
+                automatic_fixed: desired_automatic,
+                fixed_tile_override: self.fixed_tile_override.clone(),
+            });
+            return Ok(SessionPlan {
+                dispatch,
+                desired_snapshot,
+                desired_focus_domain: self.focused_domain.clone(),
+                desired_focus_leaf: self.focused_leaf.clone(),
+                desired_geometry: Vec::new(),
+            });
+        }
+        // Normal tiled admission stays fail-closed on overlays: an
+        // observed floating/fullscreen/maximized/sticky window without an
+        // explicit exception selection is refused exactly as before (the
+        // relaxed membership binding above never admits overlays here).
+        if entry.floating || entry.fullscreen || entry.maximized || entry.sticky {
+            return Err(ProposeError::Refused(RefusalKind::PartialObservation));
         }
         // Normal tiled admission.
         let orientation = self.policy().admission_axis_for_rect(&placement_bounds);
@@ -352,6 +451,16 @@ impl super::super::Session {
                 return Err(ProposeError::Diverged(reason));
             }
         };
+        // An explicit suppress origin (unfloat command or observed
+        // adapter signal) stages its tile win transactionally with the
+        // tiled admission: the override commits at verify and vanishes
+        // on any refusal or divergence.
+        let mut desired_override = self.fixed_tile_override.clone();
+        let mut desired_automatic = self.automatic_fixed.clone();
+        if suppress_fixed_float || (self.fixed_admission && entry.fixed_suppress) {
+            desired_override.insert(window.clone());
+            desired_automatic.remove(window);
+        }
         self.pending_desired = Some(PendingDesired {
             trees: desired_trees.clone(),
             windows: desired_windows.clone(),
@@ -365,6 +474,8 @@ impl super::super::Session {
             ),
             exceptions: self.exceptions.clone(),
             retained_float_geometry: self.retained_float_geometry.clone(),
+            automatic_fixed: desired_automatic,
+            fixed_tile_override: desired_override,
         });
         Ok(SessionPlan {
             dispatch,
@@ -456,6 +567,8 @@ impl super::super::Session {
                 ),
                 exceptions: desired_exceptions,
                 retained_float_geometry: self.retained_float_geometry.clone(),
+                automatic_fixed: self.automatic_fixed.clone(),
+                fixed_tile_override: self.fixed_tile_override.clone(),
             });
             return Ok(SessionPlan {
                 dispatch,
@@ -568,6 +681,8 @@ impl super::super::Session {
             ),
             exceptions: self.exceptions.clone(),
             retained_float_geometry: self.retained_float_geometry.clone(),
+            automatic_fixed: self.automatic_fixed.clone(),
+            fixed_tile_override: self.fixed_tile_override.clone(),
         });
         Ok(SessionPlan {
             dispatch,

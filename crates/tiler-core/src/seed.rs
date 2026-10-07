@@ -35,6 +35,21 @@ pub struct EngineWindow {
     pub rect: Rect,
     pub floating: bool,
     pub fit_excluded: bool,
+    /// Native fullscreen overlay (Q2 fixed-size admission, D5): born
+    /// fullscreen bypasses the fixed classifier. Defaults false so
+    /// existing carriers behave exactly as before.
+    pub fullscreen: bool,
+    /// Native sticky state (Q2 fixed-size admission, D3/D6): sticky
+    /// floats are intentional, never automatic. Defaults false.
+    pub sticky: bool,
+    /// Adapter-asserted automatic fixed-float origin (Q2, D6): the
+    /// adapter classified this window automatic. Never inferred in core
+    /// from hints alone. Defaults false.
+    pub fixed_auto: bool,
+    /// Adapter-asserted user tile win (Q2, D3): the adapter retains an
+    /// explicit tile override for this live client across hide, domain
+    /// release, and workspace re-adoption. Defaults false.
+    pub fixed_suppress: bool,
     pub hints: crate::size_hints::WindowSizeHints,
 }
 
@@ -411,8 +426,9 @@ pub fn seed_target_bounds(session: &Session, domain: &OutputDomain) -> Rect {
 }
 
 /// Portable observed-window mapping: tiled seed observations carry no
-/// exception flags beyond the carried floating bit. Hints propagate
-/// unchanged (advisory only; never identity).
+/// exception flags beyond the carried floating/fullscreen/sticky bits
+/// (maximized stays a native-only overlay). Hints propagate unchanged
+/// (advisory only; never identity).
 #[must_use]
 pub fn observed_window_from_engine(entry: &EngineWindow) -> ObservedWindow {
     ObservedWindow {
@@ -420,9 +436,11 @@ pub fn observed_window_from_engine(entry: &EngineWindow) -> ObservedWindow {
         output: entry.output.clone(),
         workspace: entry.workspace.clone(),
         floating: entry.floating,
-        fullscreen: false,
+        fullscreen: entry.fullscreen,
         maximized: false,
-        sticky: false,
+        sticky: entry.sticky,
+        fixed_auto: entry.fixed_auto,
+        fixed_suppress: entry.fixed_suppress,
         hints: entry.hints,
     }
 }
@@ -529,6 +547,8 @@ fn seed_admit_step(
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             // Seed rebuilds synthesize observations from retained links;
             // hints are unknown here, so none (advisory only).
             hints: crate::size_hints::WindowSizeHints::none(),
@@ -542,6 +562,7 @@ fn seed_admit_step(
         exceptions: ExceptionFlags::none(),
         exception_behavior: None,
         placement_bounds: seed_target_bounds(session, domain),
+        suppress_fixed_float: false,
     };
     observed.push(admitted);
     let correlation = CorrelationId::parse(&format!("seed-{index:04}"))?;
@@ -612,6 +633,8 @@ pub fn seed_session(
             fullscreen: false,
             maximized: false,
             sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         };
         // Post fingerprint is the pre-step base, not the event fingerprint.
@@ -714,6 +737,10 @@ mod tests {
             rect: Rect { x, y, w, h },
             floating: false,
             fit_excluded: false,
+            fullscreen: false,
+            sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
             hints: crate::size_hints::WindowSizeHints::none(),
         }
     }
