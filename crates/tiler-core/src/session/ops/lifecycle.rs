@@ -89,6 +89,12 @@ impl super::super::Session {
                 correlation_id,
                 capabilities,
             ),
+            SessionCommand::ToggleOrientation { window } => self.propose_toggle_orientation(
+                window,
+                session_observation,
+                correlation_id,
+                capabilities,
+            ),
         }
     }
 
@@ -112,6 +118,7 @@ impl super::super::Session {
             // entries are checked here.
             SessionCommand::MoveToWorkspace { .. } => {}
             SessionCommand::ToggleFloat { .. } => {}
+            SessionCommand::ToggleOrientation { .. } => {}
         }
         for entry in observed {
             if self.domain_for(&entry.output, &entry.workspace).is_none() {
@@ -580,6 +587,7 @@ pub(in crate::session) fn valid_command_shapes(command: &SessionCommand) -> bool
             window,
             float_geometry,
         } => !window.0.is_empty() && float_geometry.as_ref().is_none_or(valid_rect_shape),
+        SessionCommand::ToggleOrientation { window } => !window.0.is_empty(),
     }
 }
 

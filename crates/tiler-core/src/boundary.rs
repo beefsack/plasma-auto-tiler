@@ -32,9 +32,10 @@ use crate::session::{
     SessionDragPlan, SessionFocusPlan, SessionMovePlan, SessionPlan, SessionResizePlan,
 };
 
-/// Typed command for all 12 wire ops: reconcile, update-gaps, active-group,
+/// Typed command for all 13 wire ops: reconcile, update-gaps, active-group,
 /// release-domain, move, focus, resize, pointer-resize, toggle-float,
-/// `send-to-workspace`, `drag-drop`, and read-only `drag-preview`.
+/// toggle-orientation, `send-to-workspace`, `drag-drop`, and read-only
+/// `drag-preview`.
 /// Payloads are already-decoded clones; fallible wire vocabularies
 /// (direction/mode) cross opaquely so this conversion stays total
 /// and handler precedence is untouched.
@@ -86,6 +87,9 @@ pub enum CoreCommand {
         window: String,
         float_rect: Option<Rect>,
     },
+    ToggleOrientation {
+        window: String,
+    },
     SendToWorkspace {
         window: String,
         target_output: String,
@@ -135,6 +139,7 @@ impl CoreCommand {
             Self::Resize { .. } => "resize",
             Self::PointerResize { .. } => "pointer-resize",
             Self::ToggleFloat { .. } => "toggle-float",
+            Self::ToggleOrientation { .. } => "toggle-orientation",
             Self::SendToWorkspace { .. } => "send-to-workspace",
             Self::DragDrop { .. } => "drag-drop",
             Self::DragPreview { .. } => "drag-preview",
@@ -179,6 +184,7 @@ pub enum TiledKind {
     Resize,
     PointerResize,
     ToggleFloat,
+    ToggleOrientation,
     SendToWorkspace,
     DirectionalMove,
     DragDrop,
@@ -197,6 +203,7 @@ impl TiledKind {
             Self::Resize => "resize",
             Self::PointerResize => "pointer-resize",
             Self::ToggleFloat => "toggle-float",
+            Self::ToggleOrientation => "toggle-orientation",
             Self::SendToWorkspace => "send-to-workspace",
             Self::DirectionalMove => "directional-move",
             Self::DragDrop => "drag-drop",
@@ -216,6 +223,7 @@ impl TiledKind {
             Self::Resize => Some("keyboard-resize"),
             Self::PointerResize => Some("pointer-resize"),
             Self::ToggleFloat => Some("intentional-float"),
+            Self::ToggleOrientation => Some("toggle-orientation"),
             Self::SendToWorkspace => Some("move-tiled"),
             Self::DragDrop => Some("place-tiled"),
             Self::Reconcile | Self::UpdateGaps | Self::Move | Self::DirectionalMove => None,
@@ -630,7 +638,7 @@ pub struct DragPreviewPlan {
     pub preview: DragPreview,
 }
 
-/// Typed reply across all 12 ops plus every rejection shape. Success variants
+/// Typed reply across all 13 ops plus every rejection shape. Success variants
 /// carry core plans; rejection variants carry the closed
 /// `&'static str` kind/message/detail vocabulary (single sources live in
 /// [`crate::session`]/[`crate::contract`] and the protocol `MSG_*`
@@ -982,7 +990,7 @@ mod tests {
     }
 
     #[test]
-    fn all_twelve_ops_have_distinct_wire_tokens() {
+    fn all_thirteen_ops_have_distinct_wire_tokens() {
         use std::collections::HashSet;
         let commands = vec![
             CoreCommand::Reconcile,
@@ -1018,6 +1026,9 @@ mod tests {
                 window: "w".to_owned(),
                 float_rect: None,
             },
+            CoreCommand::ToggleOrientation {
+                window: "w".to_owned(),
+            },
             CoreCommand::SendToWorkspace {
                 window: "w".to_owned(),
                 target_output: "o".to_owned(),
@@ -1039,9 +1050,9 @@ mod tests {
                 source: None,
             },
         ];
-        assert_eq!(commands.len(), 12);
+        assert_eq!(commands.len(), 13);
         let tokens: HashSet<&'static str> = commands.iter().map(|c| c.op()).collect();
-        assert_eq!(tokens.len(), 12);
+        assert_eq!(tokens.len(), 13);
         assert!(tokens.contains("reconcile"));
         assert!(tokens.contains("release-domain"));
         assert!(tokens.contains("send-to-workspace"));
@@ -1310,6 +1321,10 @@ mod tests {
         assert_eq!(
             TiledKind::SendToWorkspace.capability_str(),
             Some("move-tiled")
+        );
+        assert_eq!(
+            TiledKind::ToggleOrientation.capability_str(),
+            Some("toggle-orientation")
         );
         assert_eq!(TiledKind::Move.capability_str(), None);
         assert_eq!(TiledKind::DirectionalMove.capability_str(), None);

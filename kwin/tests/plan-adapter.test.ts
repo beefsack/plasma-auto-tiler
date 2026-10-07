@@ -3689,9 +3689,9 @@ describe("plan entry live observation and shortcuts", () => {
         const world = fakeWorld();
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
-        assert.equal(mocks.shortcuts.length, 112);
+        assert.equal(mocks.shortcuts.length, 113);
         const actions = mocks.shortcuts.map((row) => row.action);
-        assert.equal(new Set(actions).size, 112);
+        assert.equal(new Set(actions).size, 113);
         assert.ok(actions.includes("plasma-auto-tiler-focus-left"));
         assert.ok(actions.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(actions.includes("plasma-auto-tiler-move-up"));
@@ -3896,7 +3896,7 @@ describe("plan entry live observation and shortcuts", () => {
     it("maps catalog rows to parameterized focus, move, and resize commands", () => {
         for (const profile of ["cosmic", "hyprland", "bspwm", "unknown"]) {
             const catalog = planShortcutCatalog(profile);
-            assert.equal(catalog.length, 36);
+            assert.equal(catalog.length, 37);
             const byAction = new Map(catalog.map((row) => [row.action, row]));
             assert.equal(byAction.get("plasma-auto-tiler-focus-up")?.direction, "up");
             assert.equal(byAction.get("plasma-auto-tiler-focus-up")?.op, "focus");
@@ -3918,6 +3918,9 @@ describe("plan entry live observation and shortcuts", () => {
             assert.equal(byAction.get("plasma-auto-tiler-toggle-maximize")?.sequence, "Meta+M");
             assert.deepEqual(byAction.get("plasma-auto-tiler-toggle-fullscreen"), {
                 action: "plasma-auto-tiler-toggle-fullscreen", text: "Toggle fullscreen window", sequence: "Meta+F11", op: "fullscreen", direction: null, mode: null,
+            });
+            assert.deepEqual(byAction.get("plasma-auto-tiler-toggle-orientation"), {
+                action: "plasma-auto-tiler-toggle-orientation", text: "Toggle split orientation", sequence: "Meta+O", op: "toggle-orientation", direction: null, mode: null,
             });
         }
     });
@@ -3993,6 +3996,27 @@ describe("plan entry live observation and shortcuts", () => {
         }
     });
 
+    it("routes the Meta+O toggle-orientation shortcut and handle facade through the orientation adapter", () => {
+        const first = startEntry(fakeWorld());
+        assert.ok(first.handle !== null);
+        const shortcut = first.mocks.shortcuts.find(
+            (row) => row.action === "plasma-auto-tiler-toggle-orientation",
+        ) as { sequence: string; callback: () => void };
+        assert.equal(shortcut.sequence, "Meta+O");
+        shortcut.callback();
+        assert.equal(first.mocks.dbusCalls[0]?.method, "DescribePlan");
+        const shortcutPayload = JSON.parse(first.mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
+        assert.deepEqual(shortcutPayload["command"], { op: "toggle-orientation", window: "win-a" });
+        first.handle?.stop();
+        const second = startEntry(fakeWorld());
+        assert.ok(second.handle !== null);
+        second.handle?.requestToggleOrientation();
+        assert.equal(second.mocks.dbusCalls[0]?.method, "DescribePlan");
+        const facadePayload = JSON.parse(second.mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
+        assert.deepEqual(facadePayload["command"], { op: "toggle-orientation", window: "win-a" });
+        second.handle?.stop();
+    });
+
     it("registers distinct Meta+Shift move sequences delivering op=move", () => {
         const first = startEntry(fakeWorld());
         assert.ok(first.handle !== null);
@@ -4038,7 +4062,7 @@ describe("plan entry live observation and shortcuts", () => {
         const live = startEntry(fakeWorld());
         assert.ok(live.handle !== null);
         const byAction = new Map(live.mocks.shortcuts.map((row) => [row.action, row]));
-        assert.equal(live.mocks.shortcuts.length, 112);
+        assert.equal(live.mocks.shortcuts.length, 113);
         for (let index = 1; index <= 9; index += 1) {
             assert.equal(byAction.get(`plasma-auto-tiler-workspace-${String(index)}`)?.sequence, `Meta+${String(index)}`);
             assert.equal(byAction.get(`plasma-auto-tiler-move-workspace-${String(index)}`)?.sequence, `Meta+Shift+${String(index)}`);
@@ -4186,7 +4210,7 @@ describe("plan entry live observation and shortcuts", () => {
             },
         });
         assert.ok(handle !== null);
-        assert.equal(attempts.length, 112);
+        assert.equal(attempts.length, 113);
         assert.ok(attempts.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(attempts.includes("plasma-auto-tiler-resize-inwards-right-arrow"));
         const line = mocks.logs.find((entry) => entry.includes("shortcut-failed"));
@@ -4915,13 +4939,13 @@ describe("plan entry startup attach recovery", () => {
         fireAdded(world);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "one bounded recovery line");
         assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "ready line after recovery");
-        assert.equal(mocks.shortcuts.length, 112, "shortcuts register exactly once on recovery");
+        assert.equal(mocks.shortcuts.length, 113, "shortcuts register exactly once on recovery");
         handle?.requestFocus("left");
         assert.equal(mocks.dbusCalls.length, 1, "actuation resumes after recovery");
         assert.equal(mocks.dbusCalls[0]?.method, "DescribePlan");
         fireAdded(world);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "no duplicate recovery line");
-        assert.equal(mocks.shortcuts.length, 112, "no duplicate shortcut registration");
+        assert.equal(mocks.shortcuts.length, 113, "no duplicate shortcut registration");
         assert.equal(mocks.logs.filter((line) => line.startsWith(FAILED_PREFIX)).length, 1, "no duplicate failed line");
         handle?.stop();
     });
@@ -4947,10 +4971,10 @@ describe("plan entry startup attach recovery", () => {
         fireScreens(screens);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "screensChanged alone recovers");
         assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "ready line after screens recovery");
-        assert.equal(mocks.shortcuts.length, 112, "shortcuts register exactly once on screens recovery");
+        assert.equal(mocks.shortcuts.length, 113, "shortcuts register exactly once on screens recovery");
         fireScreens(screens);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "no duplicate recovery on later screen change");
-        assert.equal(mocks.shortcuts.length, 112, "no duplicate shortcut registration on later screen change");
+        assert.equal(mocks.shortcuts.length, 113, "no duplicate shortcut registration on later screen change");
         assert.equal(mocks.logs.filter((line) => line.startsWith(FAILED_PREFIX)).length, 1, "no duplicate failed line");
         handle?.stop();
         const pendingWorld = fakeWorld();
@@ -5060,12 +5084,12 @@ describe("plan entry startup attach recovery", () => {
         fireAdded(world);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "one bounded recovery line");
         assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "ready line after recovery");
-        assert.equal(mocks.shortcuts.length, 112, "shortcuts register exactly once on recovery");
+        assert.equal(mocks.shortcuts.length, 113, "shortcuts register exactly once on recovery");
         handle?.requestFocus("left");
         assert.equal(mocks.dbusCalls.length, 1, "actuation resumes after recovery");
         fireAdded(world);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "no duplicate recovery line");
-        assert.equal(mocks.shortcuts.length, 112, "no duplicate shortcut registration");
+        assert.equal(mocks.shortcuts.length, 113, "no duplicate shortcut registration");
         handle?.stop();
     });
 

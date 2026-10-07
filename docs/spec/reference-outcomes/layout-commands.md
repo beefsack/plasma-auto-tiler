@@ -11,8 +11,9 @@ index. Each scenario below has exactly one Then bullet per profile (14).
 `S()` tags attach only to the established sub-leg; anything else on that
 line stays TBD. Column Given bullets are separate fixtures, never H/V
 ancestry claims. Never manufacture nested tree equivalents for columns.
-Ours cells cite the Engine + adapter op inventory at `a77dd34`
-(`S(S-ours-planops)`); selected intent and doc assertions are never evidence.
+Unchanged Ours cells cite the Engine + adapter op inventory at `a77dd34`
+(`S(S-ours-planops)`); R-LAY-01/05/06 KDE cells cite the later offline
+implementation record. Selected intent and doc assertions alone are never evidence.
 
 ### R-LAY-01: toggle parent split orientation
 
@@ -28,7 +29,8 @@ Ours cells cite the Engine + adapter op inventory at `a77dd34`
 - When: toggle parent split orientation. Native verbs/config per profile:
   COSMIC `ToggleOrientation`; Hyprland `layoutmsg togglesplit`; bspwm
   `node @parent -y` (cycle or explicit type); i3 `layout toggle split`;
-  sway `layout toggle split`; Ours none (inventory below). Other profiles
+  sway `layout toggle split`; Ours KDE `toggle-orientation` (Meta+O),
+  Ours Windows adapter pending (inventory below). Other profiles
   per inventory below.
 - Observe: same children on the new axis vs wrapping a leaf/new group;
   scope of the layout command. Focus retention is recorded where the
@@ -61,10 +63,12 @@ Ours cells cite the Engine + adapter op inventory at `a77dd34`
   inventory lists no orientation verb). `S(S-kar-acts)`.
 - Then paneru: no-counterpart (the `Operation` inventory lists no
   orientation verb). `S(S-pan-cmds)`.
-- Then Ours KDE: no-counterpart (no orientation verb in the Engine +
-  adapter op inventory). `S(S-ours-planops)`.
-- Then Ours Windows: same missing-verb leg as Ours KDE.
-  `S(S-ours-planops)`.
+- Then Ours KDE: `V[A,B*]`, immediate root parent flipped, order/shares/B
+  focus preserved; second invocation restores H. Shared Session/Engine/protocol
+  and KDE Meta+O/native catalog/presets implemented offline, native journey
+  pending; [tests and record](../../changes/archive/parent-orientation-toggle.md).
+- Then Ours Windows: no adapter orientation verb in the pinned inventory
+  (`S(S-ours-planops)`); shared core now supports it, Windows wiring pending.
 - Variant hook: provisional/TBD (orientation-scope hook, to discuss).
 
 ### R-LAY-02: rotate 90 degrees; mirror left/right (separate fresh legs)
@@ -228,12 +232,13 @@ Ours cells cite the Engine + adapter op inventory at `a77dd34`
   `S(S-ours-planops)`.
 - Variant hook: provisional/TBD (layout-scope hook, to discuss).
 
-## Selected addition (USER 2026-10-07; implementation pending)
+## Selected addition (USER 2026-10-07; shared core/KDE implemented offline)
 
 [Item 4](../../decisions.md#cross-platform-behavior) selects R-LAY-01:
 Meta+O / Win+O immediate-parent toggle including root, order/shares/focus
-preserved; sole root leaf no-op and no saved admission hint. This target is
-implementation pending on KDE/Windows, not new evidence for pinned cells above.
+preserved; sole root leaf no-op and no saved admission hint. KDE offline
+evidence is linked below; Windows adapter and KDE native journey remain pending.
+Reference WM pins and outcomes are unchanged.
 
 ### R-LAY-05: immediate parent toggled twice in a nested tree
 
@@ -256,8 +261,10 @@ implementation pending on KDE/Windows, not new evidence for pinned cells above.
 - Then PaperWM: TBD.
 - Then karousel/Lazy: TBD.
 - Then paneru: TBD.
-- Then Ours KDE: selected `H[A,H[B*,C]]` then `H[A,V[B*,C]]`, order,
-  shares and B focus preserved; implementation pending; item 4.2.
+- Then Ours KDE: offline tested `H[A,H[B*,C]]` then exact original
+  `H[A,V[B*,C]]`, including unequal child shares, order and B focus;
+  root axis unchanged. Meta+O immediate-parent route implemented, native
+  journey pending; [record](../../changes/archive/parent-orientation-toggle.md), item 4.2.
 - Then Ours Windows: same selected scope/roundtrip target;
   implementation pending; item 4.2.
 - Variant hook: provisional/TBD (R-LAY-01 orientation scope).
@@ -281,9 +288,11 @@ implementation pending on KDE/Windows, not new evidence for pinned cells above.
 - Then PaperWM: TBD.
 - Then karousel/Lazy: TBD.
 - Then paneru: TBD.
-- Then Ours KDE: selected toggle no-op, no saved hint; admission uses
-  unchanged long-edge rule (horizontal here). Implementation pending;
-  exact newcomer order/native focus TBD; item 4.2.
+- Then Ours KDE: offline tested toggle no-op, no pending plan or saved hint;
+  subsequent wide-area admission uses unchanged horizontal long-edge rule.
+  Core wide fixture gives `H[A,B*]` (newcomer desired focus); exact native
+  admission order/focus on the 1920x1080 journey remains TBD.
+  [record](../../changes/archive/parent-orientation-toggle.md), item 4.2.
 - Then Ours Windows: same selected no-hint/long-edge target;
   implementation pending; exact newcomer order/native focus TBD; item 4.2.
 - Variant hook: provisional/TBD (R-LAY-01 sole-leaf admission hint).

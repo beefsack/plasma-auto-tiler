@@ -348,7 +348,7 @@ verdict line. Trace also records its route entry:
 
 The `outcome=dispatch` form is trace-only; the terminal form is ordinary.
 
-where `<op>` is one of `admit|remove|move|focus|resize|reconcile|pointer-resize|toggle-float|drag-drop`,
+where `<op>` is one of `admit|remove|move|focus|resize|reconcile|pointer-resize|toggle-float|toggle-orientation|drag-drop`,
 `<correlation>` is `<generation>-p<seq>` (production: `plan-1-p<seq>`), `<N>`
 is the observed window count, and terminal outcomes are `planned-applied`,
 `rejected`, or the local fail-closed values `timer-failed`, `dbus-failed`,
@@ -447,6 +447,12 @@ shortcut and pointer-route refusal carries its own fixed token):
 - `plasma-auto-tiler:plan:resize-refused-floating` (directional resize on an intentionally floating active window)
 - `plasma-auto-tiler:plan:resize-refused-fullscreen` (directional resize refused on a fullscreen focused window)
 - `plasma-auto-tiler:plan:resize-refused-maximize` (directional resize refused on a maximized focused window; fullscreen wins when both)
+- `plasma-auto-tiler:plan:toggle-orient-refused-disabled`
+- `plasma-auto-tiler:plan:toggle-orient-refused-observe` (no valid observation or tiled focused target)
+- `plasma-auto-tiler:plan:toggle-orient-refused-floating` (floating or excluded active subject)
+- `plasma-auto-tiler:plan:toggle-orient-refused-workspace-floating`
+- `plasma-auto-tiler:plan:toggle-orient-refused-fullscreen` (focused overlay only, like resize)
+- `plasma-auto-tiler:plan:toggle-orient-refused-maximize` (focused overlay only; fullscreen wins when both)
 - `plasma-auto-tiler:plan:pointer-refused-disabled`
 - `plasma-auto-tiler:plan:pointer-refused-identity`
 - `plasma-auto-tiler:plan:pointer-refused-direction`
@@ -467,7 +473,7 @@ shortcut and pointer-route refusal carries its own fixed token):
 - `plasma-auto-tiler:plan:maximize-refused-disabled|observe`
 - `plasma-auto-tiler:plan:maximize-refused-fullscreen|attempted window=<id> resource_class=<class>`
 - `plasma-auto-tiler:plan:drag-drop-refused-disabled|identity|coords|observe|absent|fullscreen|maximize|floating|cross-domain` (one per tiled move-drop refusal cause; `coords` covers a missing or out-of-range finish pointer capture)
-- `plasma-auto-tiler:plan:busy-refused kind=<focus|move|resize|toggle-float|toggle-sticky|toggle-maximize|drag-drop|drag-preview>` (shortcuts refuse busy; a move drop refuses during an R4 flight, otherwise defers behind an ordinary flight; preview backs off without queuing)
+- `plasma-auto-tiler:plan:busy-refused kind=<focus|move|resize|toggle-float|toggle-orientation|toggle-sticky|toggle-maximize|drag-drop|drag-preview>` (shortcuts refuse busy; a move drop refuses during an R4 flight, otherwise defers behind an ordinary flight; preview backs off without queuing)
 - `plasma-auto-tiler:plan:reconcile-accepted windows=<count> cause=stable-drift recovery=accept-client-rect` (bounded reassertions exhausted; exact per-window geometry accepted)
  - `plasma-auto-tiler:plan:stale-replan` (pre-write stale reply replanned once against fresh complete observation)
 - `plasma-auto-tiler:plan:shortcut-failed action=<action> sequence=<sequence>` (per failed shortcut registration)
@@ -491,6 +497,16 @@ Intentional-float Planner snapshot-invalid details:
 - `toggle-float-op-invalid`
 - `toggle-float-window-invalid`
 - `float-rect-invalid`
+
+Parent-orientation Planner snapshot-invalid details:
+
+- `toggle-orient-op-invalid`
+- `toggle-orient-window-invalid`
+
+`kind=toggle-orientation` uses ordinary plan diagnostics and terminal handling.
+A lone root leaf returns Rust `unchanged` without setters; floating subjects
+return `not-tiled`. Sibling fullscreen/maximized members retain native state
+and report existing `skip-fullscreen`/`skip-maximized` write dispositions.
 
 Trace only: per window excluded before admission (one line per unchanged exclusion state for
 an identified window; `<id>` is the normalized window id, or `unknown` when

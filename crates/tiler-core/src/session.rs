@@ -137,6 +137,15 @@ pub enum SessionCommand {
         window: WindowId,
         float_geometry: Option<Rect>,
     },
+    /// Toggle the focused tiled window's immediate parent group split axis
+    /// (R-LAY-01, COSMIC `update_orientation` with no explicit orientation).
+    /// The supplied window must equal the authoritative focused tiled window;
+    /// child order, shares, and focus are preserved and geometry reprojects
+    /// through the existing hints-aware projector. A lone root leaf (no
+    /// parent group) refuses as [`RefusalKind::Unchanged`].
+    ToggleOrientation {
+        window: WindowId,
+    },
 }
 
 /// Non-divergent session refusal reasons. Fixed redacted messages only.

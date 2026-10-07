@@ -49,6 +49,7 @@ constexpr int META_ALT_RIGHT = 419430420;
 constexpr int META_ALT_DOWN = 419430421;
 constexpr int META_G = 268435527;
 constexpr int META_M = 268435533;
+constexpr int META_O = 268435535;
 constexpr int META_LEFT = 285212690;
 constexpr int META_DOWN = 285212693;
 constexpr int META_UP = 285212691;
@@ -4180,13 +4181,13 @@ void seedFullQuiet(FakeShortcutStore &store)
 
 void selectionCatalogCounts()
 {
-    // Research catalog: 36 directional/toggle plus 39 item-1 workspace rows
+    // Research catalog: 37 directional/toggle plus 39 item-1 workspace rows
     // (select, move with symbol aliases, previous toggle plus relative
     // steps) plus 36 item-2 workspace rows (8 bound relative send-follow,
     // 20 unbound numbered stay with aliases plus append rows, 8 unbound
     // relative stay).
     const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
-    CHECK(catalog.size() == 111);
+    CHECK(catalog.size() == 112);
     int focus = 0;
     int move = 0;
     int resize = 0;
@@ -4237,7 +4238,7 @@ void selectionCatalogCounts()
     CHECK(focus == 8);
     CHECK(move == 8);
     CHECK(resize == 16);
-    CHECK(toggle == 4);
+    CHECK(toggle == 5);
     CHECK(select == 10);
     CHECK(workspaceMove == 20);
     CHECK(workspacePrevious == 1);
@@ -4245,7 +4246,7 @@ void selectionCatalogCounts()
     CHECK(workspaceSendRelative == 8);
     CHECK(workspaceMoveStay == 20);
     CHECK(workspaceSendRelativeStay == 8);
-    CHECK(keys.size() == 84);
+    CHECK(keys.size() == 85);
     CHECK(keys.contains(0));
     CHECK(!shortcutCatalogContains(QStringLiteral("kwin"), QStringLiteral("other-action")));
     bool found = true;
@@ -4257,7 +4258,7 @@ void selectionCatalogCounts()
         shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"))));
     CHECK(!shortcutKnownConflictIds().contains(
         shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"))));
-    CHECK(shortcutMaxProjectWrites() == 112);
+    CHECK(shortcutMaxProjectWrites() == 113);
     // Displays resolve through the catalog first, table targets preserved.
     CHECK(ShortcutReconciler::keyDisplayName(SHORTCUT_META_1) == QStringLiteral("Meta+1"));
     CHECK(ShortcutReconciler::keyDisplayName(SHORTCUT_META_EXCLAM) == QStringLiteral("Meta+!"));
@@ -4408,7 +4409,7 @@ void selectionForceBindsDraftAndDrift()
         ShortcutReconciler(&store, &cleared).previewForceApplySelected(QSet<QString>());
     CHECK(preview.forceable);
     CHECK(preview.disabledIds.isEmpty());
-    CHECK(preview.liveImages.size() == 112);
+    CHECK(preview.liveImages.size() == 113);
     const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"));
     const ShortcutForceApplyResult staleDraft =
         ShortcutReconciler(&store, &cleared).applyForcedSelected(preview, QSet<QString>{ws1});
@@ -4871,7 +4872,7 @@ void workspaceSendFollowStayRows()
     // numbered stay plus 8 unbound relative stay, in exact TS order.
     CHECK(shortcutConflictTable().size() == 23);
     CHECK(ShortcutReconciler::relevantConflictKeys().size() == 24);
-    CHECK(shortcutProjectCatalog().size() == 111);
+    CHECK(shortcutProjectCatalog().size() == 112);
     const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
     const QList<std::pair<QString, int>> follow = {
         {QStringLiteral("plasma-auto-tiler-send-prev-h"), META_CTRL_SHIFT_H},
@@ -4890,7 +4891,7 @@ void workspaceSendFollowStayRows()
         QStringLiteral("Meta+Ctrl+Shift+Down"), QStringLiteral("Meta+Ctrl+Shift+Right"),
     };
     for (int i = 0; i < follow.size(); ++i) {
-        const ShortcutCatalogEntry &entry = catalog.at(75 + i);
+        const ShortcutCatalogEntry &entry = catalog.at(76 + i);
         CHECK(entry.component == QStringLiteral("kwin"));
         CHECK(entry.action == follow.at(i).first);
         CHECK(entry.canonicalKey == follow.at(i).second);
@@ -4937,7 +4938,7 @@ void workspaceSendFollowStayRows()
         QStringLiteral("plasma-auto-tiler-stay-workspace-append-symbol"),
     };
     for (int i = 0; i < stayActions.size(); ++i) {
-        const ShortcutCatalogEntry &entry = catalog.at(83 + i);
+        const ShortcutCatalogEntry &entry = catalog.at(84 + i);
         CHECK(entry.component == QStringLiteral("kwin"));
         CHECK(entry.action == stayActions.at(i));
         CHECK(entry.canonicalKey == 0);
@@ -4959,7 +4960,7 @@ void workspaceSendFollowStayRows()
         QStringLiteral("plasma-auto-tiler-send-stay-next-right-arrow"),
     };
     for (int i = 0; i < stayRelativeActions.size(); ++i) {
-        const ShortcutCatalogEntry &entry = catalog.at(103 + i);
+        const ShortcutCatalogEntry &entry = catalog.at(104 + i);
         CHECK(entry.component == QStringLiteral("kwin"));
         CHECK(entry.action == stayRelativeActions.at(i));
         CHECK(entry.canonicalKey == 0);
@@ -5155,6 +5156,83 @@ void workspaceSendFollowStayRows()
     }
 }
 
+void toggleOrientationCatalogPresetRows()
+{
+    // R-LAY-01 Meta+O: no stock KDE holder, so both presets Keep.
+    // Catalog carries the bound toggle row with empty known foreign state;
+    // selection scoping and Apply clear only the project assignment.
+    CHECK(SHORTCUT_META_O == META_O);
+    const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
+    const ShortcutCatalogEntry *found = nullptr;
+    for (const ShortcutCatalogEntry &entry : catalog) {
+        if (entry.component == QStringLiteral("kwin")
+            && entry.action == QStringLiteral("plasma-auto-tiler-toggle-orientation")) {
+            found = &entry;
+            break;
+        }
+    }
+    CHECK(found != nullptr);
+    CHECK(found->canonicalKey == META_O);
+    CHECK(found->canonicalDisplay == QStringLiteral("Meta+O"));
+    CHECK(found->kind == QStringLiteral("toggle"));
+    CHECK(found->knownForeignComponent.isEmpty());
+    CHECK(found->knownForeignAction.isEmpty());
+    CHECK(found->knownForeignKey == 0);
+    CHECK(ShortcutReconciler::keyDisplayName(META_O) == QStringLiteral("Meta+O"));
+    CHECK(ShortcutReconciler::isProjectAction(QStringLiteral("kwin"),
+                                             QStringLiteral("plasma-auto-tiler-toggle-orientation")));
+    CHECK(ShortcutReconciler::isProjectOwned(QStringLiteral("kwin"),
+                                             QStringLiteral("plasma-auto-tiler-toggle-orientation")));
+    CHECK(ShortcutReconciler::isAllowlisted(QStringLiteral("kwin"),
+                                           QStringLiteral("plasma-auto-tiler-toggle-orientation")));
+    CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
+        QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-orientation"))));
+    // No known holder: neither preset disables the row.
+    const QString orientId = shortcutCatalogId(QStringLiteral("kwin"),
+                                               QStringLiteral("plasma-auto-tiler-toggle-orientation"));
+    const QStringList authentic = presetCompatibleDisabledIds(catalog, shortcutKnownConflictIds(),
+                                                              QSet<QString>());
+    CHECK(!authentic.contains(orientId));
+    const QStringList compatible = presetCompatibleDisabledIds(
+        catalog, shortcutKnownConflictIds(), QSet<QString>{orientId});
+    CHECK(compatible.contains(orientId));
+    // Selection scoping: enabled requires the chord, disabled drops it.
+    CHECK(ShortcutReconciler::conflictingKeysFor(QList<int>{META_O, 999}, QSet<QString>())
+          == QList<int>{META_O});
+    CHECK(ShortcutReconciler::remainderAfterClearFor(QList<int>{META_O, 999}, QSet<QString>())
+          == QList<int>{999});
+    CHECK(ShortcutReconciler::conflictingKeysFor(QList<int>{META_O, 999}, QSet<QString>{orientId})
+          .isEmpty());
+    CHECK(ShortcutReconciler::enabledRequiredKeys(QSet<QString>()).contains(META_O));
+    CHECK(!ShortcutReconciler::enabledRequiredKeys(QSet<QString>{orientId}).contains(META_O));
+    // Quiet Apply assigns the chord; disabling clears only the own row.
+    {
+        FakeShortcutStore store;
+        seedFullQuiet(store);
+        FakeClearedActions cleared;
+        CHECK(ShortcutReconciler(&store, &cleared).apply().ok);
+        for (const ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-orientation")) {
+                CHECK(tuple.active == (QList<int>{META_O}));
+            }
+        }
+    }
+    {
+        FakeShortcutStore store;
+        seedFullQuiet(store);
+        FakeClearedActions cleared;
+        const ShortcutApplyResult result =
+            ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>{orientId});
+        CHECK(result.ok);
+        CHECK(store.foreignWriteLog.isEmpty());
+        for (const ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-orientation")) {
+                CHECK(tuple.active.isEmpty());
+            }
+        }
+    }
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -5261,6 +5339,7 @@ int main(int argc, char **argv)
         selectionDisabledTableRowAbsentAllowed();
         selectionFocusDisabledLockAbsentAllowed();
         selectionPresenceBindsForceSnapshot();
+        toggleOrientationCatalogPresetRows();
     }
     if (scenario != QStringLiteral("all") && scenario != QStringLiteral("success") && scenario != QStringLiteral("conflict")
         && scenario != QStringLiteral("malformed") && scenario != QStringLiteral("owner") && scenario != QStringLiteral("recovery")

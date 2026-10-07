@@ -130,6 +130,7 @@ export interface PlanEntryHandle {
     readonly requestFocus: (direction: unknown) => void;
     readonly requestMove: (direction: unknown) => void;
     readonly requestResize: (direction: unknown, mode: unknown) => void;
+    readonly requestToggleOrientation: () => void;
     readonly requestFloat: () => void;
     readonly requestSticky: () => void;
     readonly requestMaximize: () => void;
@@ -147,7 +148,7 @@ export interface PlanShortcutRow {
     readonly action: string;
     readonly text: string;
     readonly sequence: string;
-    readonly op: "focus" | "move" | "resize" | "float" | "sticky" | "maximize" | "fullscreen";
+    readonly op: "focus" | "move" | "resize" | "float" | "sticky" | "maximize" | "fullscreen" | "toggle-orientation";
     readonly direction: PlanDirection | null;
     readonly mode: PlanResizeMode | null;
 }
@@ -395,6 +396,14 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
             text: "Toggle fullscreen window",
             sequence: "Meta+F11",
             op: "fullscreen",
+            direction: null,
+            mode: null,
+        },
+        {
+            action: "plasma-auto-tiler-toggle-orientation",
+            text: "Toggle split orientation",
+            sequence: "Meta+O",
+            op: "toggle-orientation",
             direction: null,
             mode: null,
         },
@@ -3340,7 +3349,9 @@ function startPlanAdapterEntryOnce(
                                 ? registerFn(action, text, sequence, () => adapter.requestMaximize())
                                 : op === "fullscreen"
                                   ? registerFn(action, text, sequence, () => adapter.requestFullscreen())
-                                  : registerFn(action, text, sequence, () => adapter.requestFocus(direction));
+                                  : op === "toggle-orientation"
+                                    ? registerFn(action, text, sequence, () => adapter.requestToggleOrientation())
+                                    : registerFn(action, text, sequence, () => adapter.requestFocus(direction));
                 if (ok !== true) {
                     try {
                         log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
@@ -6265,6 +6276,13 @@ function startPlanAdapterEntryOnce(
                 void error;
             }
         },
+        requestToggleOrientation: () => {
+            try {
+                adapter.requestToggleOrientation();
+            } catch (error) {
+                void error;
+            }
+        },
         requestFloat: () => {
             try {
                 adapter.requestFloat();
@@ -6554,6 +6572,9 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         },
         requestResize: (direction, mode) => {
             delegate((target) => target.requestResize(direction, mode));
+        },
+        requestToggleOrientation: () => {
+            delegate((target) => target.requestToggleOrientation());
         },
         requestFloat: () => {
             delegate((target) => target.requestFloat());

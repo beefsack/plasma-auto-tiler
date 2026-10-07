@@ -42,7 +42,8 @@ Draft totals: 74 NORMATIVE, 61 OPEN, 9 PROVISIONAL requirement rows;
 Selected additions carry remaining KDE/Windows implementation gaps; KDE
 REQ-WS-08/11 have a user-confirmed single-output native journey; multi-output
 and unspecified presets remain pending. Shared core/KDE REQ-WS-01/01b/06/14
-and REQ-MOV-03 are implemented offline; Windows wiring and item-2/3 native journeys pending. The macOS
+and REQ-MOV-03/REQ-LAY-01 are implemented offline; Windows wiring and
+item-2/3/4 native journeys pending. The macOS
 adapter gap counts once platform-wide. Coverage: 139 scenarios, 24 Table A predicates.
 
 <a id="insertion"></a>
@@ -110,7 +111,7 @@ pending). V-MOVE-PERP retains the selected COSMIC behavior.
 
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
-| REQ-LAY-01 | [R-LAY-01](reference-outcomes/layout-commands.md#r-lay-01-toggle-parent-split-orientation), R-LAY-05/06 toggle parent orientation | Meta+O / Win+O toggles immediate parent including root, preserving child order/shares/focus; lone root leaf no-op, no saved future-admission hint (long-edge unchanged). No KDE stock holder found; Windows orientation-lock conflict: Authentic takes over, Compatible disables | gap: no orientation verb; implementation pending | gap: no orientation verb; implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 4 USER 2026-10-07 |
+| REQ-LAY-01 | [R-LAY-01](reference-outcomes/layout-commands.md#r-lay-01-toggle-parent-split-orientation), R-LAY-05/06 toggle parent orientation | Meta+O / Win+O toggles immediate parent including root, preserving child order/shares/focus; lone root leaf no-op, no saved future-admission hint (long-edge unchanged). No KDE stock holder found; Windows orientation-lock conflict: Authentic takes over, Compatible disables | implemented offline: core/protocol/Meta+O, strict reply validation, native catalog/presets; lone leaf/float/no tiled focus/floating workspace no-op; focused overlays refuse like move/resize, sibling overlays keep native state and skip writes; native journey pending ([record](../changes/archive/parent-orientation-toggle.md)) | gap: shared core supports toggle; Windows action/input/catalog/presets wiring pending, no compile fixes needed | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 4 USER 2026-10-07 |
 | REQ-LAY-02 | [R-LAY-02](reference-outcomes/layout-commands.md#r-lay-02-rotate-90-degrees-mirror-leftright-separate-fresh-legs) rotate/mirror | No rotate/mirror verb | n/a | n/a | applicability OPEN | OPEN | no selection |
 | REQ-LAY-03 | [R-LAY-03](reference-outcomes/layout-commands.md#r-lay-03-promote-b-to-master) promote B to master | No master verb or state | n/a | n/a | applicability OPEN | OPEN | no selection |
 | REQ-LAY-04 | [R-LAY-04](reference-outcomes/layout-commands.md#r-lay-04-select-a-native-alternative-layout-on-ws2-return-to-ws1) select native layout | Layout selection is workspace-local, preserving order; implementation pending (layout choices unselected) | gap: no layout-select verb | gap: no layout-select verb | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-LAY-04 accepted 2026-10-07 |
@@ -384,7 +385,7 @@ Rotate/master and cycle verbs remain unselected.
 | Whole-workspace output move | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
 | Output send-and-follow | Meta+Ctrl+Alt+H/J/K/L, Meta+Ctrl+Alt+Left/Down/Up/Right (implementation pending) | Win+Ctrl+Alt+H/J/K/L, Win+Ctrl+Alt+Left/Down/Up/Right (implementation pending) | mapping OPEN | [#13 Multi-output](#output) |
 | Output send-and-stay | unbound, bindable (implementation pending) | unbound, bindable (implementation pending) | mapping OPEN | [#13 Multi-output](#output) |
-| Parent orientation toggle | Meta+O (implementation pending) | Win+O (implementation pending) | mapping OPEN | [#5 Layout](#layout) |
+| Parent orientation toggle | Meta+O (implemented offline; native journey pending) | Win+O (implementation pending; orientation-lock conflict) | mapping OPEN | [#5 Layout](#layout) |
 | Workspace layout selection | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#5 Layout](#layout) |
 | Rotate/master | unbound (no verb selected) | unbound (no verb selected) | mapping OPEN | [#5 Layout](#layout) |
 | Cycle next/previous | unbound (no verb) | unbound (no verb) | mapping OPEN | [#2 Focus](#focus) |

@@ -11,4 +11,5 @@ pub mod lifecycle;
 #[path = "move.rs"]
 pub mod r#move;
 pub mod resize;
+pub mod toggle_orientation;
 pub mod workspace;

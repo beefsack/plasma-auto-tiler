@@ -602,7 +602,7 @@ void selectionPresetsAndDraft()
     QListWidget *list = conflictListByModule(module);
     CHECK(list != nullptr);
     if (list != nullptr) {
-        CHECK(list->count() == 111);
+        CHECK(list->count() == 112);
     }
     QPushButton *compatible = presetButtonByModule(module, "shortcutCompatibleButton");
     QPushButton *authentic = presetButtonByModule(module, "shortcutAuthenticButton");
@@ -826,7 +826,7 @@ void selectionMissingEnabledStatus()
         module.load();
         CHECK(module.shortcutStatusText().contains(QStringLiteral("unavailable"))
               || module.shortcutStatusText().contains(QStringLiteral("missing")));
-        CHECK(!module.shortcutStatusText().contains(QStringLiteral("applied (111 rows")));
+        CHECK(!module.shortcutStatusText().contains(QStringLiteral("applied (112 rows")));
     }
     {
         FakeShortcutStore store;
@@ -873,7 +873,7 @@ void selectionDisabledLockAbsentShowsRows()
     QListWidget *list = conflictListByModule(module);
     CHECK(list != nullptr);
     if (list != nullptr) {
-        CHECK(list->count() == 111);
+        CHECK(list->count() == 112);
     }
 }
 
@@ -1004,7 +1004,7 @@ void stateAndErrorPresentation()
         module.setShortcutStores(&store, &cleared);
         module.load();
         CHECK(module.shortcutStatusText().contains(QStringLiteral("Ready")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("111 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("112 rows")));
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(buttonByName(module, "shortcutFinishApplyButton") == nullptr);
         CHECK(buttonByName(module, "shortcutRestoreButton") == nullptr);
@@ -1035,7 +1035,7 @@ void stateAndErrorPresentation()
         module.requestShortcutApply();
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(module.shortcutStatusText().contains(QStringLiteral("applied")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("111 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("112 rows")));
     }
     // Conflict with an unknown foreign holder.
     {

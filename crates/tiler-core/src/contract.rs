@@ -296,13 +296,15 @@ impl DivergenceKind {
 
 /// Adapter-facing lifecycle capability required to realize one lifecycle
 /// operation. Separate from [`Capability`] movement capabilities so the frozen
-/// R1-R4 movement surface stays unchanged; lifecycle admission, removal, and
-/// same-output workspace transfer each gate on their own explicit capability.
+/// R1-R4 movement surface stays unchanged; lifecycle admission, removal,
+/// same-output workspace transfer, and parent split-axis toggle each gate on
+/// their own explicit capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LifecycleCapability {
     AdmitTiled,
     RemoveTiled,
     MoveTiled,
+    ToggleOrientation,
 }
 
 impl LifecycleCapability {
@@ -313,6 +315,7 @@ impl LifecycleCapability {
             Self::AdmitTiled => "admit-tiled",
             Self::RemoveTiled => "remove-tiled",
             Self::MoveTiled => "move-tiled",
+            Self::ToggleOrientation => "toggle-orientation",
         }
     }
 }
@@ -323,6 +326,7 @@ pub struct LifecycleCapabilities {
     pub admit_tiled: bool,
     pub remove_tiled: bool,
     pub move_tiled: bool,
+    pub toggle_orientation: bool,
 }
 
 impl LifecycleCapabilities {
@@ -333,6 +337,7 @@ impl LifecycleCapabilities {
             admit_tiled: true,
             remove_tiled: true,
             move_tiled: true,
+            toggle_orientation: true,
         }
     }
 
@@ -343,6 +348,7 @@ impl LifecycleCapabilities {
             admit_tiled: false,
             remove_tiled: false,
             move_tiled: false,
+            toggle_orientation: false,
         }
     }
 
@@ -353,6 +359,7 @@ impl LifecycleCapabilities {
             LifecycleCapability::AdmitTiled => self.admit_tiled,
             LifecycleCapability::RemoveTiled => self.remove_tiled,
             LifecycleCapability::MoveTiled => self.move_tiled,
+            LifecycleCapability::ToggleOrientation => self.toggle_orientation,
         }
     }
 }
@@ -368,9 +375,10 @@ pub enum LifecyclePrecondition {
 }
 
 /// Semantic lifecycle intent: admit a window into an output/workspace domain,
-/// remove a window from the session, or move the focused tiled window to an
-/// explicit same-output target workspace domain. Structural resolution (leaf
-/// identity, deferred exception handling) lives in [`LifecycleOperation`];
+/// remove a window from the session, move the focused tiled window to an
+/// explicit same-output target workspace domain, or toggle the focused tiled
+/// window's immediate parent split axis. Structural resolution (leaf identity,
+/// deferred exception handling) lives in [`LifecycleOperation`];
 /// the intent records the originating request so a plan can be interpreted
 /// without retaining caller-side state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -392,6 +400,11 @@ pub enum LifecycleIntent {
         /// source-MRU focus (COSMIC `SendToWorkspace`). Structural transfer
         /// is identical; only the desired focus differs.
         follow: bool,
+    },
+    ToggleOrientation {
+        window: WindowId,
+        output: OutputId,
+        workspace: WorkspaceId,
     },
 }
 
@@ -430,6 +443,13 @@ pub enum LifecycleOperation {
         target_output: OutputId,
         target_workspace: WorkspaceId,
     },
+    ToggleOrientation {
+        window: WindowId,
+        leaf: NodeId,
+        group: NodeId,
+        output: OutputId,
+        workspace: WorkspaceId,
+    },
 }
 
 impl LifecycleOperation {
@@ -440,6 +460,7 @@ impl LifecycleOperation {
             Self::Admit { .. } | Self::AdmitDeferred { .. } => LifecycleCapability::AdmitTiled,
             Self::Remove { .. } | Self::RemoveDeferred { .. } => LifecycleCapability::RemoveTiled,
             Self::MoveTiled { .. } => LifecycleCapability::MoveTiled,
+            Self::ToggleOrientation { .. } => LifecycleCapability::ToggleOrientation,
         }
     }
 

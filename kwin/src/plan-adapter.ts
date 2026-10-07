@@ -88,7 +88,7 @@ const LOG_PREFIX = "plasma-auto-tiler:plan";
 export type PlanDirection = "left" | "right" | "up" | "down";
 export type PlanResizeMode = "inwards" | "outwards";
 export type PlanSignal = "added" | "removed" | "activated" | "geometry" | "scope" | "fullscreen" | "maximize" | "desktops";
-export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "update-gaps" | "pointer-resize" | "toggle-float" | "drag-drop" | "release-domain";
+export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "update-gaps" | "pointer-resize" | "toggle-float" | "toggle-orientation" | "drag-drop" | "release-domain";
 
 // Read-only drag preview result for the overlay sender: the proposed source
 // rectangle plus the verbatim carried hover state for the next preview or the
@@ -1630,6 +1630,23 @@ function validateFloatGeometry(value: unknown): { readonly window: string; reado
     if (!isRecord(value) || !hasExactKeys(value, ["window", "rect"]) || !isOpaqueId(value["window"]) || !isTargetRect(value["rect"])) return undefined;
     const rect = value["rect"] as unknown as Record<string, unknown>;
     return { window: value["window"] as string, rect: { x: rect["x"] as number, y: rect["y"] as number, w: rect["w"] as number, h: rect["h"] as number } };
+}
+
+// R-LAY-01 planned tiled reply detail: exact keys with the fixed
+// kind/capability tokens and policy_version 1. True only for the standard
+// toggle-orientation shape; any other shape is malformed.
+function isToggleOrientationDetail(value: unknown): boolean {
+    if (!isRecord(value)) {
+        return false;
+    }
+    if (!hasExactKeys(value, ["kind", "policy_version", "capability"])) {
+        return false;
+    }
+    return (
+        value["kind"] === "toggle-orientation" &&
+        value["capability"] === "toggle-orientation" &&
+        value["policy_version"] === 1
+    );
 }
 
 function validateObserved(observed: PlanObserved | null): observed is PlanObserved {
@@ -3210,6 +3227,67 @@ export class PlanAdapter {
             snapshot,
             removed: null,
             body: { op: "resize", window: snapshot.focusedId, direction, mode, press_index: pressIndex },
+        });
+    }
+
+    // R-LAY-01 toggle-orientation: flip the focused leaf's immediate parent
+    // axis (including root), preserving order/shares/focus. Lone root leaf
+    // is a Rust no-op (`unchanged`); floating subjects refuse as `not-tiled`.
+    // Pre-dispatch fences mirror requestResize exactly (floating focus,
+    // floating workspace, focused fullscreen/maximized overlay) plus the
+    // focused target must be tiled. Sibling overlays stay dispatchable: the
+    // carried snapshot preserves their slots and apply skips their native
+    // writes, so the retained overlay slot is never disturbed.
+    requestToggleOrientation(): void {
+        if (!this.enabled) {
+            this.logToken(`${LOG_PREFIX}:toggle-orient-refused-disabled`);
+            return;
+        }
+        if (this.r4Flight !== null) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-orientation`);
+            return;
+        }
+        if (this.inFlight) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-orientation`);
+            return;
+        }
+        const observed = this.freshObserved();
+        if (observed === null) {
+            this.logToken(`${LOG_PREFIX}:toggle-orient-refused-observe`);
+            return;
+        }
+        if (observed.activeExcluded) {
+            this.logToken(`${LOG_PREFIX}:toggle-orient-refused-floating`);
+            return;
+        }
+        if (!this.isTiledDomain(observed.domainOutput, observed.domainWorkspace)) {
+            this.logToken(`${LOG_PREFIX}:toggle-orient-refused-workspace-floating`);
+            return;
+        }
+        const target = observed.windows.find((entry) => entry.id === observed.focusedId);
+        if (target === undefined) {
+            this.logToken(`${LOG_PREFIX}:toggle-orient-refused-observe`);
+            return;
+        }
+        if (target.floating === true) {
+            this.logToken(`${LOG_PREFIX}:toggle-orient-refused-floating`);
+            return;
+        }
+        if (this.windowIsFullscreen(observed, observed.focusedId)) {
+            this.logToken(`${LOG_PREFIX}:toggle-orient-refused-fullscreen`);
+            return;
+        }
+        if (this.windowIsMaximized(observed, observed.focusedId)) {
+            this.logToken(`${LOG_PREFIX}:toggle-orient-refused-maximize`);
+            return;
+        }
+        const snapshot = this.carriedSnapshot(observed);
+        this.noteObservation(snapshot.fingerprint);
+        this.dispatch({
+            op: "toggle-orientation",
+            snapshot,
+            removed: null,
+            body: { op: "toggle-orientation", window: snapshot.focusedId },
         });
     }
 
@@ -6898,6 +6976,36 @@ export class PlanAdapter {
             this.logCoverSkew(flightState, planned, "cover-mismatch");
             this.failFlight(flightState, "precondition-mismatch");
             return;
+        }
+        // Toggle-orientation strict reply fence: the standard planned tiled
+        // detail only (kind/capability toggle-orientation, policy_version 1),
+        // full geometry with focus retained on the dispatched window, no
+        // operation/preconditions and no float geometry. Wrong
+        // kind/capability, malformed detail, a cross/float envelope, or
+        // focus resolving to another tile never actuates.
+        if (flightState.op === "toggle-orientation") {
+            let focusWindow: string | null = null;
+            if (planned.focus !== null) {
+                for (const entry of planned.geometry) {
+                    if (entry.leaf === planned.focus.leaf) {
+                        focusWindow = entry.window;
+                        break;
+                    }
+                }
+            }
+            if (
+                !isToggleOrientationDetail(parsed["detail"]) ||
+                planned.operation !== null ||
+                planned.preconditions !== null ||
+                planned.floatGeometry !== null ||
+                focusWindow !== flightState.snapshot.focusedId
+            ) {
+                this.lifecycleDiag(flightState, "reply", "validate", "malformed", "precondition-mismatch", this.ordinaryRevision(planned, flightState));
+                this.ordinaryTerminal(flightState, planned, "uncertain", "validate");
+                this.logCoverSkew(flightState, planned, "cover-mismatch");
+                this.failFlight(flightState, "precondition-mismatch");
+                return;
+            }
         }
         this.lifecycleDiag(flightState, "reply", "validate", "validated", "-", this.ordinaryRevision(planned, flightState));
         this.applyPlanned(planned, flightState);

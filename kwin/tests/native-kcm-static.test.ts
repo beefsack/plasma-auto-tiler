@@ -458,8 +458,9 @@ describe("native KCM static contract", () => {
             tsByAction.set(row.action, row.sequence);
         }
         // Item 2 adds 36 workspace rows (8 relative follow, 20 absolute
-        // stay with symbol aliases, 8 relative stay) to the 75 legacy rows.
-        assert.equal(tsByAction.size, 111);
+        // stay with symbol aliases, 8 relative stay) to the 76 legacy rows
+        // (37 plan rows including toggle-orientation plus 39 item-1).
+        assert.equal(tsByAction.size, 112);
         const nativeByAction = new Map<string, string>();
         const nativeOrder: string[] = [];
         const entryPattern =
@@ -475,24 +476,25 @@ describe("native KCM static contract", () => {
                 nativeOrder.push(action);
             }
         }
-        // Item 2 parity: all 111 bindings now, including the 28 unbound
+        // Item 2 parity: all 112 bindings now, including the 28 unbound
         // stay rows with empty default sequences.
-        assert.equal(nativeByAction.size, 111);
+        assert.equal(nativeByAction.size, 112);
         for (const [action, sequence] of nativeByAction) {
             assert.equal(tsByAction.get(action), sequence);
         }
         const tsOrder = [...plan.map((row) => row.action), ...workspace.map((row) => row.action)];
         assert.deepEqual(new Set(nativeOrder), new Set(tsOrder));
         assert.equal(nativeOrder.length, tsOrder.length);
-        // Item 2 order: the 36 new rows follow the 75 legacy rows in exact
+        // Item 2 order: the 36 new rows follow the 76 legacy rows in exact
         // TS catalog order.
-        assert.deepEqual(nativeOrder.slice(75), workspace.slice(-36).map((row) => row.action));
+        assert.deepEqual(nativeOrder.slice(76), workspace.slice(-36).map((row) => row.action));
         for (const row of workspace) {
             if (row.sequence === "") {
                 assert.equal(nativeByAction.get(row.action), "");
             }
         }
         // Spot-check the 8 bound follow chords and the unbound stay defaults.
+        assert.equal(nativeByAction.get("plasma-auto-tiler-toggle-orientation"), "Meta+O");
         for (const [action, sequence] of [
             ["plasma-auto-tiler-send-prev-h", "Meta+Ctrl+Shift+H"],
             ["plasma-auto-tiler-send-prev-k", "Meta+Ctrl+Shift+K"],

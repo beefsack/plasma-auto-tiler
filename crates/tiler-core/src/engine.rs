@@ -858,6 +858,12 @@ impl Engine {
                     _ => self.toggle_float_request(event),
                 }
             }
+            CoreCommand::ToggleOrientation { .. } => {
+                match self.converge_for_single_domain(event, "toggle-orientation") {
+                    ConvergeOutcome::Rejected(reply) => *reply,
+                    _ => self.toggle_orientation_request(event),
+                }
+            }
             CoreCommand::Move { .. } => {
                 if event
                     .directional
@@ -2411,6 +2417,59 @@ impl Engine {
             },
             |result| CoreReply::Tiled(TiledPlan::for_toggle_float(&result.0, result.1)),
             |session, result, e, base| Self::commit_lifecycle(session, &result.0, e, base),
+        )
+    }
+
+    /// Toggle-orientation request phase through the shared retained lifecycle.
+    ///
+    /// Same ownership contract as [`Engine::local_move_request`]: protocol
+    /// keeps tagged command decoding and window authorization; this owns seed
+    /// ordering, focus sync, propose (focused leaf's immediate parent axis
+    /// flip), commit, and store. Ordinary single-domain handling only: no
+    /// directional pair route. The typed [`TiledKind::ToggleOrientation`]
+    /// reply funnels through the exact planned wire shape.
+    fn toggle_orientation_request(&mut self, event: &CoreEvent) -> CoreReply {
+        use crate::boundary::{TiledKind, TiledPlan};
+        let CoreCommand::ToggleOrientation { window } = &event.command else {
+            return CoreReply::Rejected {
+                kind: "unknown-value",
+                message: "request contains an unknown value",
+            };
+        };
+        if !is_opaque_id(window) {
+            return CoreReply::SnapshotInvalid {
+                message: OPAQUE_ID_MESSAGE,
+                detail: "toggle-orient-window-invalid",
+            };
+        }
+        let seed_order = crate::seed::order_spatial_with_focus_last(
+            event.windows.clone(),
+            &event.focused_window,
+            false,
+        );
+        let window = WindowId(window.clone());
+        self.run_retained(
+            event,
+            seed_order,
+            true,
+            |session, observation| {
+                let _ = session.sync_focus_from_window(&event.domain_key, &event.focused_window);
+                session.propose(
+                    &SessionCommand::ToggleOrientation {
+                        window: window.clone(),
+                    },
+                    observation,
+                    &event.correlation,
+                    &LifecycleCapabilities::full(),
+                )
+            },
+            |plan| {
+                CoreReply::Tiled(TiledPlan::from_lifecycle(
+                    TiledKind::ToggleOrientation,
+                    plan,
+                ))
+            },
+            Self::commit_lifecycle,
         )
     }
 

@@ -123,6 +123,7 @@ inline constexpr int SHORTCUT_META_ALT_SHIFT_UP = 452984851; // Meta+Alt+Shift+U
 inline constexpr int SHORTCUT_META_ALT_SHIFT_RIGHT = 452984852; // Meta+Alt+Shift+Right resize-inwards-right-arrow
 inline constexpr int SHORTCUT_META_SHIFT_G = 301989959; // Meta+Shift+G toggle-sticky
 inline constexpr int SHORTCUT_META_F11 = 285212730; // Meta+F11 toggle-fullscreen
+inline constexpr int SHORTCUT_META_O = 268435535; // Meta+O catalog toggle-orientation
 inline constexpr int SHORTCUT_META_0 = 268435504; // Meta+0 workspace select trailing
 inline constexpr int SHORTCUT_META_1 = 268435505; // Meta+1 workspace select 1
 inline constexpr int SHORTCUT_META_2 = 268435506;
@@ -387,9 +388,9 @@ struct ShortcutConflictRow
 };
 
 const QList<ShortcutConflictRow> &shortcutConflictTable();
-// Full project catalog: 36 directional/toggle rows from planShortcutCatalog
+// Full project catalog: 37 directional/toggle rows from planShortcutCatalog
 // (focus/move letters plus arrows, outwards/inwards resize letters plus
-// arrows, four toggles) followed by 39 item-1 workspace rows from
+// arrows, five toggles) followed by 39 item-1 workspace rows from
 // workspaceShortcutCatalog (Meta+0..9 select, Meta+Shift+0..9 move,
 // shifted-symbol move aliases, Meta+Ctrl+Tab previous toggle plus
 // Meta+Ctrl+H/J/K/L and Meta+Ctrl+arrows relative steps), followed by 36

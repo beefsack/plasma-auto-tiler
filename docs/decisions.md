@@ -397,6 +397,9 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
     - 4.2: toggle the immediate parent group, including root, preserving
       child order, shares and focus. Lone root leaf is a no-op. No saved
       orientation hint for future admissions; long-edge rule unchanged.
+    - Status: shared core/protocol + KDE Meta+O/catalog/presets delivered
+      offline ([record](changes/archive/parent-orientation-toggle.md));
+      Windows wiring and user-owned native journey pending.
   - Item 5, R-MOV-08 / R-OUT-04:
     - 5.1: local restructure/swap/escape wins first; when none applies the
       window crosses. A sole root leaf also crosses with an adjacent output

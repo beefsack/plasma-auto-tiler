@@ -524,7 +524,7 @@ const QList<ShortcutConflictRow> &shortcutConflictTable()
 
 const QList<ShortcutCatalogEntry> &shortcutProjectCatalog()
 {
-    // 36 plan rows then 39 item-1 workspace rows then 36 item-2 workspace
+    // 37 plan rows then 39 item-1 workspace rows then 36 item-2 workspace
     // rows (8 bound relative send-and-follow, 20 unbound numbered
     // send-and-stay with symbol aliases plus append rows, 8 unbound
     // relative send-and-stay). Bound canonical keys stay unique across the
@@ -619,6 +619,8 @@ const QList<ShortcutCatalogEntry> &shortcutProjectCatalog()
          QStringLiteral("toggle")},
         {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-fullscreen"), SHORTCUT_META_F11,
          QStringLiteral("Meta+F11"), {}, {}, 0, QStringLiteral("toggle")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-orientation"), SHORTCUT_META_O,
+         QStringLiteral("Meta+O"), {}, {}, 0, QStringLiteral("toggle")},
         {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"), SHORTCUT_META_1,
          QStringLiteral("Meta+1"), {}, {}, 0, QStringLiteral("workspace-select")},
         {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-2"), SHORTCUT_META_2,

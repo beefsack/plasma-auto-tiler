@@ -251,7 +251,7 @@ decisions of 2026-09-24 are under
   swap alternative (user 2026-10-07); R-DRAG-08 Windows Win+drag activates
   the mover at press instead of on drop (user 2026-10-07).
   Detailed selections 2026-10-07 (items 1-5 and D1 in
-  [decisions](decisions.md#cross-platform-behavior)); KDE items 1-3 delivered
+  [decisions](decisions.md#cross-platform-behavior)); KDE items 1-4 delivered
   offline, remaining implementation pending:
   KDE-side session owns shared Rust core + KDE adapter; separate Windows
   agent wires later. Correctness over non-breakage: Windows build/behavior
@@ -294,10 +294,14 @@ decisions of 2026-09-24 are under
      rebuilding; KDE settings UI control. Flat-swap replaces R2c only for
      adjacent direct leaf siblings; shares travel with windows. Leaf/group
      rules unchanged; discriminating TBD rows before broadening.
-  4. R-LAY-01: Meta+O / Win+O immediate-parent axis toggle including root,
+  4. R-LAY-01 (shared core + KDE delivered offline; native journey pending;
+     [record](changes/archive/parent-orientation-toggle.md)):
+     Meta+O / Win+O immediate-parent axis toggle including root,
      preserving order/shares/focus; sole root leaf no-op, no saved admission
      hint, long-edge rule unchanged. No KDE stock holder found; Windows
      orientation lock conflict: Authentic takes over, Compatible disables.
+     Pending live check for user: Meta+O toggles root and nested immediate
+     parent, twice restores order/shares/focus, lone window is a no-op.
   5. R-MOV-08 + R-OUT-04: local restructure/swap/escape first, then cross
      all four directions, including sole root leaf (horizontal too).
      Unique reciprocal edge-touch + positive-overlap adjacency on FULL
@@ -437,8 +441,40 @@ decisions of 2026-09-24 are under
        default wrap, group-neighbor/boundary parity and live changes without
        tree rebuild. Linux workspace tests/clippy compile portable Windows
        modules; native Windows UI/owner checks remain Windows-owned.
-  - Item 4, after core piece lands: Win+O catalog/action, orientation-lock
-    conflict text, Compatible disable entry; apply returned geometry.
+  - Item 4: shared Rust core/protocol + KDE delivered offline; zero Windows
+     compile fixes required, existing Windows behavior preserved. Exact
+     wiring handoff (paths under `crates/tiler-windows/`):
+     - `src/settings.rs:523` / `ToggleKind` and token/Shift methods :530-548:
+       add orientation; `binding_catalog` :757-827 adds `toggle-orientation`
+       default Win+O. Reuse `chord_conflict` :983 orientation-lock text;
+       `compatible_disabled_ids` :1528 adds the new id/count, Authentic
+       `apply_preset` :1490 keeps it. Dynamic settings UI consumes the catalog;
+       test Keep/Disable/rebind and effective conflict text, without claiming
+       physical OS suppression before Windows evidence.
+     - `src/snapkey.rs:43-58` key inventory: add O (0x4F); `Classified` :503,
+       `MaskTrigger` :545, `SnapClassify::push` :1012 / `push_owned` :1146,
+       `QueuedSnapEvent` :2116 and `classify_and_queue` :2217: extend the
+       toggle family with exact unshifted Win+O, paired downs/repeats/ups,
+       origin identity, live suppression/remap, saturation and E8 mask.
+       Shift/Ctrl/Alt variants pass through; Compatible disables our binding,
+       Authentic takes over the orientation-lock chord. Extend portable
+       `tests/snapkey.rs` and `tests/settings.rs` coverage.
+     - `src/tiling_sys.rs:6095-6205` directional retained Engine/apply route
+       and :6224 toggle queue arm are integration examples, not new SnapOp
+       movement semantics: add a dedicated queued orientation arm with fresh
+       origin/suspension/lifetime/tiled-workspace/focused-overlay guards.
+       Build an ordinary single-domain event with
+       `CoreCommand::ToggleOrientation { window }`; accept
+       `CoreReply::Tiled` only with `TiledKind::ToggleOrientation`, then use
+       `apply_geometry` :4866 with existing writable/hidden/overlay/minimum
+       fences and readback. Focus stays on the same window; no view switch.
+       `unchanged` / `not-tiled` / no tiled focus are no-write outcomes;
+       sibling overlays keep their native state and skip native writes.
+     - Port root H/V, nested parent-only, double-toggle unequal-share/order/
+       focus, minimum allocation, lone-leaf no-op plus long-edge admission,
+       floating-workspace/focus and overlay fixtures. Linux workspace tests
+       compile/test portable Windows modules (394 tests); Windows native
+       owner/input/UI and physical Win+O takeover remain Windows-owned.
   - Item 5, after core piece lands: four-direction reciprocal adjacency on
     full monitor rectangles; `CrossOutput` replies (two-domain geometry,
     membership transfer, visibility, follow/stay focus); output-send event;
@@ -446,7 +482,7 @@ decisions of 2026-09-24 are under
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.
-  KDE Keep/Disable list (now 111 bindings after item 2, including 28 unbound
+  KDE Keep/Disable list (now 112 bindings after item 4, including 28 unbound
   stay rows) and presets delivered
   offline
   (`e1bb52a`, `cdd4ef4`, `96d04ab`; CI green); provisional choices in

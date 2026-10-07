@@ -3212,7 +3212,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Focus | [focus.md](reference-outcomes/focus.md) | R-FOC-01..04 (4) | none (landed in piece B2) |
 | Move | [move.md](reference-outcomes/move.md) | R-MOV-01..13 (13) | R-MOV-09..13 added 2026-10-07; reference outcomes TBD; KDE item 3 R-MOV-03/09/10 delivered offline; item 5 pending |
 | Resize | [resize.md](reference-outcomes/resize.md) | R-RSZ-01..04 (4) | none (landed in piece B4) |
-| Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | R-LAY-01..06 (6) | R-LAY-05/06 added 2026-10-07; reference outcomes TBD |
+| Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | R-LAY-01..06 (6) | R-LAY-01/05/06 KDE implemented offline; native journey/Windows wiring pending; R-LAY-05/06 reference outcomes TBD |
 | Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..20 (20) | R-WS-15..20 added 2026-10-07; reference outcomes TBD; KDE items 1/2 delivered, item 1 single-output user-confirmed, item 2 offline only |
 | Minimize | [minimize.md](reference-outcomes/minimize.md) | R-MNZ-01..03 (3) | none (landed) |
 | Maximise / fullscreen | [maximize-fullscreen.md](reference-outcomes/maximize-fullscreen.md) | R-MAX-01..09 (9) | none (landed with scrolling backfill) |

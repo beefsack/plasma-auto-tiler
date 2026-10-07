@@ -848,6 +848,8 @@ const PLANNER_SNAPSHOT_DETAILS: &[&str] = &[
     "active-group-op-invalid",
     "toggle-float-op-invalid",
     "toggle-float-window-invalid",
+    "toggle-orient-op-invalid",
+    "toggle-orient-window-invalid",
     "drag-drop-op-invalid",
     "drag-drop-window-invalid",
     "drag-preview-op-invalid",
@@ -2211,6 +2213,7 @@ impl Planner {
             "resize" => self.evaluate_resize_retained(&ctx),
             "pointer-resize" => self.evaluate_pointer_resize_retained(&ctx),
             "toggle-float" => self.evaluate_toggle_float_retained(&ctx),
+            "toggle-orientation" => self.evaluate_toggle_orientation_retained(&ctx),
             "drag-drop" => self.evaluate_drag_retained(&ctx, false),
             "drag-preview" => self.evaluate_drag_retained(&ctx, true),
             _ => rejected(
@@ -2295,6 +2298,53 @@ impl Planner {
             let event = core_event(ctx, &core_command);
             self.handle_and_serialize(ctx, &event)
         })
+    }
+
+    fn evaluate_toggle_orientation_retained(&mut self, ctx: &Validated) -> String {
+        // Strict tagged decode in place (see `SyncCommand`): a present-but-
+        // wrong op surfaces as `toggle-orient-op-invalid`, mirroring
+        // the move/focus/resize handlers. No floating probe: the Engine
+        // converges fresh floating observations into exceptions and the
+        // session refuses them as `not-tiled`, exactly like the move route.
+        // `domains` payloads never reach here: validation already refused
+        // them on every non-focus/move op, so this stays single-domain.
+        let window = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+            Ok(SyncCommand::ToggleOrientation { window }) => window,
+            Ok(_) => {
+                return snapshot_invalid(
+                    ctx.request.correlation_id.clone(),
+                    MSG_OBSERVATION,
+                    "toggle-orient-op-invalid",
+                );
+            }
+            Err(error) => {
+                if is_unknown_variant(&error) {
+                    return snapshot_invalid(
+                        ctx.request.correlation_id.clone(),
+                        MSG_OBSERVATION,
+                        "toggle-orient-op-invalid",
+                    );
+                }
+                let (kind, message) = classify_parse_error(&error);
+                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+            }
+        };
+        if !is_opaque_id(&window) {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OPAQUE_ID,
+                "toggle-orient-window-invalid",
+            );
+        }
+        // Engine-owned orchestration: the validated window crosses in the
+        // typed command; seed ordering, focus sync, relocation,
+        // propose/commit, and store run in `Engine::handle`. Serialization
+        // funnels through the typed choke point.
+        let core_command = tiler_core::boundary::CoreCommand::ToggleOrientation {
+            window: window.clone(),
+        };
+        let event = core_event(ctx, &core_command);
+        self.handle_and_serialize(ctx, &event)
     }
 
     fn evaluate_move_retained(&mut self, ctx: &Validated) -> String {
@@ -3386,10 +3436,11 @@ struct DragPayload {
 
 /// Typed synchronous command codec (narrow).
 ///
-/// Internally tagged on `op` with `deny_unknown_fields` for all twelve
+/// Internally tagged on `op` with `deny_unknown_fields` for all thirteen
 /// synchronous command ops: reconcile, update-gaps, active-group,
 /// release-domain, move, focus, resize, pointer-resize, toggle-float,
-/// `send-to-workspace`, `drag-drop`, and read-only `drag-preview`.
+/// toggle-orientation, `send-to-workspace`, `drag-drop`, and read-only
+/// `drag-preview`.
 /// Sync handlers parse
 /// [`SyncCommand`] once in place after the existing dispatch boundaries
 /// (validation, send dispatch, binding sync): the production `evaluate`
@@ -3468,6 +3519,8 @@ enum SyncCommand {
         #[serde(default)]
         float_rect: Option<RectDto>,
     },
+    #[serde(rename = "toggle-orientation")]
+    ToggleOrientation { window: String },
     #[serde(rename = "send-to-workspace")]
     SendToWorkspace {
         window: String,
@@ -3568,6 +3621,9 @@ fn core_command_from_sync(command: &SyncCommand) -> Option<tiler_core::boundary:
                 w: rect.w,
                 h: rect.h,
             }),
+        }),
+        SyncCommand::ToggleOrientation { window } => Some(CoreCommand::ToggleOrientation {
+            window: window.clone(),
         }),
         SyncCommand::SendToWorkspace {
             window,
@@ -3898,6 +3954,179 @@ mod tests {
         assert_eq!(
             refloated["float_geometry"]["rect"],
             serde_json::json!({"x": 300, "y": 200, "w": 500, "h": 400})
+        );
+    }
+
+    #[test]
+    fn toggle_orientation_flips_once_and_restores_on_second() {
+        let mut planner = Planner::new();
+        let seed = plan_request(
+            "orient-0",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let seeded = parse_reply(&planner.evaluate(&seed));
+        assert_eq!(seeded["outcome"], "planned");
+
+        let first = plan_request(
+            "orient-1",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "toggle-orientation", "window": "win-1"}),
+        );
+        let flipped = parse_reply(&planner.evaluate(&first));
+        assert_eq!(flipped["outcome"], "planned");
+        assert_eq!(flipped["detail"]["kind"], "toggle-orientation");
+        assert_eq!(flipped["detail"]["capability"], "toggle-orientation");
+        assert_eq!(flipped["detail"]["policy_version"], 1);
+        assert_eq!(
+            flipped["desired_geometry"].as_array().map(Vec::len),
+            Some(2)
+        );
+        assert_ne!(
+            flipped["desired_geometry"], seeded["desired_geometry"],
+            "one toggle restacks the allocation"
+        );
+
+        let second = plan_request(
+            "orient-2",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "toggle-orientation", "window": "win-1"}),
+        );
+        let restored = parse_reply(&planner.evaluate(&second));
+        assert_eq!(restored["outcome"], "planned");
+        assert_eq!(
+            restored["desired_geometry"], seeded["desired_geometry"],
+            "twice restores the seeded allocation"
+        );
+    }
+
+    #[test]
+    fn toggle_orientation_decode_is_strict() {
+        let mut planner = Planner::new();
+        // Missing window: malformed, never a plan.
+        let missing = plan_request(
+            "orient-bad-1",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "toggle-orientation"}),
+        );
+        let reply = parse_reply(&planner.evaluate(&missing));
+        assert_eq!(reply["outcome"], "rejected");
+        assert_eq!(reply["kind"], "request-malformed");
+        // Unknown fields refuse fail-closed.
+        let extra = plan_request(
+            "orient-bad-2",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "toggle-orientation", "window": "win-1", "bogus": 1}),
+        );
+        let reply = parse_reply(&planner.evaluate(&extra));
+        assert_eq!(reply["outcome"], "rejected");
+        assert_eq!(reply["kind"], "unknown-field");
+        // Empty window id is never admitted to the Engine.
+        let empty = plan_request(
+            "orient-bad-3",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "toggle-orientation", "window": ""}),
+        );
+        let reply = parse_reply(&planner.evaluate(&empty));
+        assert_eq!(reply["outcome"], "rejected");
+        assert_eq!(reply["kind"], "snapshot-invalid");
+        assert_eq!(reply["detail"], "toggle-orient-window-invalid");
+    }
+
+    #[test]
+    fn toggle_orientation_lone_leaf_and_floating_refuse() {
+        // Lone root leaf: no parent group, so the toggle is a no-op.
+        let mut lone = Planner::new();
+        let seed = plan_request(
+            "orient-lone-0",
+            "win-1",
+            &["win-1"],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        assert_eq!(parse_reply(&lone.evaluate(&seed))["outcome"], "planned");
+        let toggle = plan_request(
+            "orient-lone-1",
+            "win-1",
+            &["win-1"],
+            serde_json::json!({"op": "toggle-orientation", "window": "win-1"}),
+        );
+        let reply = parse_reply(&lone.evaluate(&toggle));
+        assert_eq!(reply["outcome"], "rejected");
+        assert_eq!(reply["kind"], "unchanged");
+
+        // Floating subject: the floated window is an exception, not tiled.
+        let mut floated = Planner::new();
+        let float = plan_request(
+            "orient-float-0",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "toggle-float", "window": "win-1"}),
+        );
+        assert_eq!(parse_reply(&floated.evaluate(&float))["outcome"], "planned");
+        let mut request: serde_json::Value = serde_json::from_str(&plan_request(
+            "orient-float-1",
+            "win-2",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "toggle-orientation", "window": "win-1"}),
+        ))
+        .expect("request JSON");
+        request["windows"][0]["floating"] = serde_json::Value::Bool(true);
+        let reply = parse_reply(&floated.evaluate(&request.to_string()));
+        assert_eq!(reply["outcome"], "rejected");
+        assert_eq!(reply["kind"], "not-tiled");
+    }
+
+    #[test]
+    fn toggle_orientation_wire_token_roundtrips_through_sync_command() {
+        // The op token comes from the actual typed command, never a string
+        // literal: encode op + window as JSON, decode via SyncCommand, and
+        // assert the typed conversion equals the original command. No
+        // production Serialize API exists for commands; this stays test-only.
+        use tiler_core::boundary::CoreCommand;
+        let typed = CoreCommand::ToggleOrientation {
+            window: "win-1".to_owned(),
+        };
+        assert_eq!(typed.op(), "toggle-orientation");
+        let wire = serde_json::json!({"op": typed.op(), "window": "win-1"});
+        let decoded: SyncCommand = serde_json::from_value(wire).expect("decodes");
+        assert_eq!(core_command_from_sync(&decoded), Some(typed));
+    }
+
+    #[test]
+    fn toggle_orientation_plans_with_sibling_overlay_present() {
+        // Sibling fullscreen/maximized overlays ride the wire as ordinary
+        // tiles with fit_excluded (plan-adapter carriedSnapshot); only the
+        // focused overlay refuses, in the adapter before dispatch. A
+        // retained session therefore plans the toggle over the full set.
+        let mut planner = Planner::new();
+        let seed = plan_request(
+            "orient-sib-0",
+            "win-1",
+            &["win-1", "win-2", "win-3"],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        assert_eq!(parse_reply(&planner.evaluate(&seed))["outcome"], "planned");
+        let mut request: serde_json::Value = serde_json::from_str(&plan_request(
+            "orient-sib-1",
+            "win-1",
+            &["win-1", "win-2", "win-3"],
+            serde_json::json!({"op": "toggle-orientation", "window": "win-1"}),
+        ))
+        .expect("request JSON");
+        request["windows"][2]["fit_excluded"] = serde_json::Value::Bool(true);
+        let reply = parse_reply(&planner.evaluate(&request.to_string()));
+        assert_eq!(reply["outcome"], "planned");
+        assert_eq!(reply["detail"]["kind"], "toggle-orientation");
+        assert_eq!(
+            reply["desired_geometry"].as_array().map(Vec::len),
+            Some(3),
+            "sibling overlay keeps its planned geometry"
         );
     }
 
@@ -7400,7 +7629,7 @@ mod tests {
             );
             assert!(seen.insert(*token), "duplicate token: {token}");
         }
-        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 51, "closed registry size");
+        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 53, "closed registry size");
     }
 
     fn geometry_by_window(

@@ -382,6 +382,7 @@ fn refusals_fail_closed_then_lifecycle_diverges() {
         admit_tiled: true,
         remove_tiled: true,
         move_tiled: false,
+        toggle_orientation: true,
     };
     {
         let mut s_cap = session();
