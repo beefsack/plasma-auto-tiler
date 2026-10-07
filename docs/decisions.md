@@ -466,6 +466,46 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   compile-only false-field plumbing, not behavior delivery; native checks
   and review of every autonomous provisional choice remain pending in
   [backlog](backlog.md#open-user-decisions).
+- Provisional, to discuss (2026-10-08, intentional-float restart D1 storage):
+  autonomous Orchestrator selection, not a user decision. KDE stores settled
+  intentional membership in a Rust-owned private runtime file under
+  `$XDG_RUNTIME_DIR`, with a 0700 directory, 0600 file, atomic replacement,
+  version and bounds checks, and no symlink following. Namespace is session
+  bus ID plus the current KWin unique owner; keys are live client internalId.
+  A new KWin/login never adopts an old namespace. Review flag: architecture
+  boundary: planner gains a session-scoped runtime store. This narrowly relaxes
+  the existing service's no-persistence boundary for float intent only; the
+  effect stays optional and no core extraction is selected.
+- Provisional, to discuss (2026-10-08, intentional-float restart D2 geometry):
+  restore membership only, preserving the current live frame, including
+  native movement while the owner was stopped. Store no geometry, focus,
+  stacking or pre-sticky history; hydration writes none of those states to
+  recovered floats. KDE native sticky adoption and un-stick semantics stay
+  unchanged. Automatic fixed floats recompute under Q2 D7; neither automatic
+  origin nor tile overrides gain persistence.
+- Provisional, to discuss (2026-10-08, intentional-float restart D3 settlement):
+  persist explicit float/unfloat intent only after successful native
+  application, reusing Q2's commit-after-success point without new command
+  staging. Confirmed adopted-sticky-off ordinary intent also persists. Clear
+  on settled unfloat and verified close; prune only a complete live inventory,
+  never scoped, hidden or minimized absence. Send the full settled membership
+  through methods on the existing service; log storage acknowledgement
+  separately from planned-applied. No atomic native/store commit is claimed.
+- Provisional, to discuss (2026-10-08, intentional-float restart D4 availability):
+  diagnosed availability fallback, not hold/retry. A missing store is empty;
+  unreadable, corrupt or namespace-mismatched state emits a normal-level
+  bounded degraded reason/count summary, then proceeds with no markers as
+  before this change. The next successful full membership write replaces it.
+  Write failure retains local intent and native state; the next settled
+  membership update rewrites the full set. No recovery scheduler, retry ledger
+  or unresolved-client hold is selected. Intent can be lost on restart when
+  storage is degraded; this tradeoff remains for user review.
+  D1-D4 Linux planner/KDE delivered offline;
+  [record](changes/archive/kde-intentional-float-restart.md). Windows behavior
+  remains unchanged; handoff item 8 retains sticky/ordinary marker work and
+  undecided post-restart un-stick outcomes. Native checks and all four choices,
+  including the architecture boundary, remain pending in
+  [backlog](backlog.md#open-user-decisions).
 - User decision 2026-10-07 (functional spec format): keep
   [the functional spec](spec/functional-spec.md) as a single file; revisit
   splitting if it grows much larger. Requirements are normative only where a

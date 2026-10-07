@@ -38,15 +38,18 @@ Table A predicate rows carry literal status `OPEN (Table A R-xxx)`, unless a
 recorded user selection for that predicate is normative (then Status is
 NORMATIVE and Source cites the selection).
 
-Draft totals: 74 NORMATIVE, 61 OPEN, 17 PROVISIONAL requirement rows;
+Draft totals: 74 NORMATIVE, 61 OPEN, 21 PROVISIONAL requirement rows;
 Selected additions carry remaining KDE/Windows implementation gaps; KDE
 REQ-WS-08/11 have a user-confirmed single-output native journey; multi-output
 and unspecified presets remain pending. Shared core/KDE REQ-WS-01/01b/06/14
 and REQ-MOV-03/08/08b, REQ-LAY-01 and REQ-OUT-01/04 are implemented offline;
 REQ-SPC-04 KDE admission is implemented offline with eight PROVISIONAL
 autonomous Q2 clauses (REQ-SPC-04a..h), not additional user decisions;
-Windows wiring and item-2/3/4/5 native journeys pending. The macOS
-adapter gap counts once platform-wide. Coverage: 147 scenarios, 24 Table A predicates.
+KDE intentional-float restart is implemented offline under four PROVISIONAL
+Q3 clauses (REQ-RST-01d..f and REQ-RST-03), including a reviewed session-store
+architecture boundary and diagnosed degraded fallback. Windows wiring and
+item-2/3/4/5 native journeys pending. The macOS
+adapter gap counts once platform-wide. Coverage: 149 scenarios, 24 Table A predicates.
 
 <a id="insertion"></a>
 ## 1. Insertion ([R-INS](reference-outcomes/insertion.md#insertion-reference-outcomes))
@@ -307,10 +310,14 @@ Hooks: V-FIRST-RUN, V-TRAY-LIFECYCLE, V-SHORTCUT-CONFLICT. PROVISIONAL indexing,
 | REQ-CTL-05a | [R-CTL-05](reference-outcomes/restart-persistence.md#r-ctl-05-shortcut-staging-and-apply) basic conflict model | Settings per-binding keep/disable/rebind with authentic/compatible presets, all platforms | gap: integrated rebind deferred; external KDE Shortcuts editor available ([decisions](../decisions.md#cross-platform-behavior) deferred controls; [backlog](../backlog.md) P1 shortcut conflict model) | current: implemented actions offer rebind; modifier limits PROVISIONAL ([decisions](../decisions.md#windows-settings)) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) 2026-10-03 conflict model |
 | REQ-CTL-06 | [R-CTL-06](reference-outcomes/restart-persistence.md#r-ctl-06-conflict-preview-and-disable) conflict preview and disable | Provisional compatible details: KDE resets Keep then disables compiled/discovered conflicts; Windows resets catalog then disables 35 OS-conflicting physical chords; neither invents replacements | current: compiled/discovered conflicts | current: 35 disabled chords | applicability OPEN | PROVISIONAL | [decisions](../decisions.md#cross-platform-behavior) KDE compatible; [decisions](../decisions.md#windows-settings) Windows compatible |
 | REQ-CTL-07 | [R-CTL-07](reference-outcomes/restart-persistence.md#r-ctl-07-revert-restores-defaults) revert restores defaults | Force clears any holder after listing+confirmation with durable cleared-ID list; Revert restores defaults (KDE-only) | current: contract | n/a (KDE-only) | applicability OPEN | NORMATIVE | [decisions](../decisions.md#shortcuts) Force/Revert contract 2026-09-26 |
-| REQ-RST-01 | [R-RST-01](reference-outcomes/restart-persistence.md#r-rst-01-orderly-owner-restart-with-apps-kept-alive) owner restart, apps kept | Keep intentional floats floating across owner restart; Windows sticky floats stay sticky (REQ-FLT-05). Supersedes session-local reset; no layout restoration selected | gap: intentional floats reset; implementation pending | gap: intentional floats reset; implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-RST-01 accepted 2026-10-07; [decisions](../decisions.md#cross-platform-behavior) R-FLT-05 2026-10-07 |
-| REQ-RST-01b | [R-RST-01](reference-outcomes/restart-persistence.md#r-rst-01-orderly-owner-restart-with-apps-kept-alive) float identity | Preserve intentional-float identity across owner restart, including Windows sticky state; implementation pending | gap: resets | gap: resets | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-RST-01 accepted 2026-10-07; [decisions](../decisions.md#cross-platform-behavior) R-FLT-05 |
+| REQ-RST-01 | [R-RST-01](reference-outcomes/restart-persistence.md#r-rst-01-orderly-owner-restart-with-apps-kept-alive) owner restart, apps kept | Keep intentional floats floating across owner restart; Windows sticky floats stay sticky (REQ-FLT-05). Supersedes session-local reset; no layout restoration selected | implemented offline with a healthy intent store; PROVISIONAL D4 degraded restart can lose intent; native TBD ([record](../changes/archive/kde-intentional-float-restart.md)) | gap: intentional floats reset; implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-RST-01 accepted 2026-10-07; [decisions](../decisions.md#cross-platform-behavior) R-FLT-05 2026-10-07 |
+| REQ-RST-01b | [R-RST-01](reference-outcomes/restart-persistence.md#r-rst-01-orderly-owner-restart-with-apps-kept-alive) float identity | Preserve intentional-float identity across owner restart, including Windows sticky state | implemented offline: intentional identity hydrates before planning; automatic origin and tile overrides are not persisted; native TBD | gap: resets | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-RST-01 accepted 2026-10-07; [decisions](../decisions.md#cross-platform-behavior) R-FLT-05 |
 | REQ-RST-01c | [R-RST-01](reference-outcomes/restart-persistence.md#r-rst-01-orderly-owner-restart-with-apps-kept-alive) set/membership/focus | Pending: workspace set (host-owned), membership re-observation, post-restart focus | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U R-RST-01 legs |
+| REQ-RST-01d | [R-RST-01](reference-outcomes/restart-persistence.md#r-rst-01-orderly-owner-restart-with-apps-kept-alive), [R-RST-02](reference-outcomes/restart-persistence.md#r-rst-02-end-session-restore-session-and-apps) intent-store lifetime | KDE D1: private, atomic, bounded, versioned runtime membership store; no symlink following; bus ID + KWin owner namespace; no new-login/KWin adoption; architecture boundary: planner gains a session-scoped runtime store | implemented offline: file gates and private-bus fixtures; native/logout TBD | mechanism unselected; handoff item 8 | applicability OPEN; adapter absent | PROVISIONAL | [decisions](../decisions.md#cross-platform-behavior) intentional-float restart D1, autonomous 2026-10-08 |
+| REQ-RST-01e | [R-RST-01](reference-outcomes/restart-persistence.md#r-rst-01-orderly-owner-restart-with-apps-kept-alive), [R-RST-04](reference-outcomes/restart-persistence.md#r-rst-04-distinguish-intentional-and-automatic-fixed-floats-on-restart) settlement/origin | KDE D3: persist settled explicit intent after native success; clear on settled unfloat/verified close; prune only complete live inventory; separate storage ACK; automatic fixed origin/tile overrides excluded | implemented offline: real Planner commands, close/bootstrap races, scoped relocation and full-snapshot ordering; native TBD | wiring pending item 8; automatic fixed wiring pending item 13 | applicability OPEN; adapter absent | PROVISIONAL | [decisions](../decisions.md#cross-platform-behavior) intentional-float restart D3, autonomous 2026-10-08 |
+| REQ-RST-01f | [R-RST-01](reference-outcomes/restart-persistence.md#r-rst-01-orderly-owner-restart-with-apps-kept-alive) store availability | KDE D4: missing empty; unreadable/corrupt/mismatch diagnosed degraded empty; write failure keeps local intent/native state and next settled membership update rewrites full set; no hold/retry machinery | implemented offline: degraded reads, transport deadlines, failed write then full rewrite; native corruption journey TBD | mechanism unselected; handoff item 8 | applicability OPEN; adapter absent | PROVISIONAL | [decisions](../decisions.md#cross-platform-behavior) intentional-float restart D4, autonomous 2026-10-08 |
 | REQ-RST-02 | [R-RST-02](reference-outcomes/restart-persistence.md#r-rst-02-end-session-restore-session-and-apps) session restore | current: gaps/settings restore; host-max restore TBD | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U; no selection |
+| REQ-RST-03 | [R-RST-03](reference-outcomes/restart-persistence.md#r-rst-03-native-float-geometry-changes-while-the-owner-is-stopped) float-frame drift | KDE D2: recover membership only with current live frame; no saved geometry/focus/stacking/pre-sticky history and no hydration writes to recovered floats; sticky semantics unchanged | implemented offline: counted production-entry setters and real Planner; native stopped-owner journey TBD | drift outcome TBD; handoff item 8 design seam | applicability OPEN; adapter absent | PROVISIONAL | [decisions](../decisions.md#cross-platform-behavior) intentional-float restart D2, autonomous 2026-10-08 |
 
 <a id="special"></a>
 ## 17. Special windows ([R-SPC](reference-outcomes/special-windows.md#special-windows-reference-outcomes))
@@ -487,7 +494,10 @@ PROVISIONAL discussion group (not final selections; awaiting discussion):
 REQ-START-01, REQ-START-02, REQ-CTL-01, REQ-CTL-02, REQ-CTL-03b, REQ-CTL-05,
 REQ-CTL-06, REQ-FLT-06 (B9 pending COSMIC check), REQ-MIN-01b,
 REQ-SPC-04a..h (autonomous Q2 D1-D8 2026-10-08, including either-axis
-alternative review and the Q3 boundary; [record](../changes/archive/fixed-size-admission.md)).
+alternative review and the Q3 boundary; [record](../changes/archive/fixed-size-admission.md));
+REQ-RST-01d..f and REQ-RST-03 (autonomous Q3 D1-D4 2026-10-08, including
+architecture boundary: planner gains a session-scoped runtime store, and
+diagnosed availability fallback; [record](../changes/archive/kde-intentional-float-restart.md)).
 Single-file spec format selected 2026-10-07.
 
 Platform mapping and known decisions waiting native acceptance (separated

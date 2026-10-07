@@ -7,7 +7,7 @@ edition = "2024"
 tiler-protocol = { path = "../tiler-protocol" }
 async-io = "2"
 async-lock = "3"
-rustix = { version = "1", features = ["process"] }
+rustix = { version = "1", features = ["process", "fs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 zbus = { version = "5.19", default-features = false, features = ["async-io", "blocking-api"] }

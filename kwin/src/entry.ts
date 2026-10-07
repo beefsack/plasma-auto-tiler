@@ -19,6 +19,9 @@ const trayHolder: { current: TrayPublisher | null } = { current: null };
 const planHandle = startPlanAdapterEntry({
     owner: "kwin-plan-adapter",
     generation: "plan-1",
+    // Q3 settled intentional-float persistence across script and planner
+    // restarts (Rust-owned runtime membership store, Planner1 interface).
+    floatIntent: true,
     onWorkspaceTilingChanged: () => {
         try {
             trayHolder.current?.notifyWorkspaceChanged();

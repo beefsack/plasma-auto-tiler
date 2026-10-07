@@ -258,6 +258,12 @@ decisions of 2026-09-24 are under
   autonomous PROVISIONAL D1-D8 (2026-10-08), pending user review and native
   checks; [record](changes/archive/fixed-size-admission.md). Windows Q2
   behavior remains unchanged; handoff item 13 supplies its exact wiring.
+  Q3 R-RST-01 Linux planner/KDE intentional-float restart delivered offline
+  under autonomous PROVISIONAL D1-D4 (2026-10-08): private session-scoped
+  membership store, current-frame adoption, native-success settlement and
+  diagnosed-empty availability fallback. Native acceptance and user review
+  remain pending; [record](changes/archive/kde-intentional-float-restart.md).
+  Windows behavior remains unchanged; handoff item 8 carries its design seams.
   KDE-side session owns shared Rust core + KDE adapter; separate Windows
   agent wires later. Correctness over non-breakage: Windows build/behavior
   may break provided the handoff below lists the specific changes needed.
@@ -371,15 +377,16 @@ decisions of 2026-09-24 are under
   | 5 | Parked parity-queue multi-output foundation, then handoff item 5 | Per-monitor current-view observation, membership/geometry/visibility/recovery fences first; user live checks need the other Windows PC. Offline topology/Engine tests can precede that. |
   | 6 | Keyboard resize R-RSZ-01 (parity d) | Independent; needs fresh Alt-capable trigger plus dedicated resize intent. No dependency on items 1-5 except shared modifier routing. |
   | 7 | Press-focus R-DRAG-08 | Independent of items 1-5; touches Win-drag arm only. Keep R-DRAG-07 stationary-source/moving-preview split intact. |
-  | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; durable float intent must remain distinct from recovery authority. Persistence mechanism unselected; REQ-RST-01c stays OPEN. |
+  | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; KDE Q3 delivered offline under PROVISIONAL D1-D4. Ordinary/sticky intent must remain distinct from automatic fixed origin and recovery authority; Windows mechanism unselected, REQ-RST-01c stays OPEN. |
   | 9 | Fullscreen send R-MAX-09 (Windows carry; NOT the parked parity-queue multi-output foundation) | Depends on handoff item 2 follow/stay wiring only; same-output workspace carry, no cross-output claim. |
   | 10 | Float/half-snap parity (a) R-FLT-07..11 | Independent of items 1-5; reuses existing focus/move catalog rows, no new chords. |
   | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; keep first-fullscreen-exit and B9 refusal intact. Independent of items 1-5. |
   | 12 | Non-local workspace modes parity (d) | Depends on handoff items 1/2 (ring + follow/stay) and the parked parity-queue multi-output foundation; last. |
   | 13 | Q2 fixed-size float admission R-SPC-04 | KDE/shared offline delivery under autonomous PROVISIONAL D1-D8; max-track observation and lifetime/origin wiring before enabling the Engine opt-in. Fixed/maximize intersection coordinates with item 11. |
 
-  Q2 R-SPC-04 occupies handoff item 13 below. Remaining Q2-Q5 reservation:
-  R-RST-01 KDE delivery, R-WS-12 and R-LAY-04
+  Q2 R-SPC-04 occupies handoff item 13 below; Q3 R-RST-01 KDE delivery is
+  complete offline and updates existing item 8. Remaining Q2-Q5 reservation:
+  R-WS-12 and R-LAY-04
   own their KDE pieces; when each lands, its owning session appends a Windows
   handoff entry here in the same numbered format. Do not pre-write their
   adapter wiring.
@@ -1311,30 +1318,45 @@ decisions of 2026-09-24 are under
     decisions 2026-10-07 (R-FLT-05, R-RST-01 float identity;
     [decisions](decisions.md#cross-platform-behavior)): sticky floats stay
     sticky across owner restart including Windows, delivered with the
-    R-RST-01 work. KDE delivery rides the Q2-Q5 reservation above.
+    R-RST-01 work. KDE Q3 delivered offline 2026-10-08 under autonomous
+    PROVISIONAL D1-D4; [record](changes/archive/kde-intentional-float-restart.md).
+    Windows code/behavior unchanged in that delivery.
 
     #### Item 8 behavior and reference seams
 
     - Normative: [spec](spec/functional-spec.md#startup) REQ-RST-01/01b plus
       REQ-FLT-05; [matrix](spec/reference-outcomes/restart-persistence.md)
-      R-RST-01 (Ours KDE: intentional F loses ordinary-float status because
-      its id set resets; Ours Windows: runtime store resets while settings
-      persist without layout restore) and
+      R-RST-01 (Ours KDE: healthy runtime store hydrates intentional F before
+      first planning, degraded store diagnoses then adopts empty; Ours Windows:
+      runtime store resets while settings persist without layout restore) and
       [matrix](spec/reference-outcomes/floating.md) R-FLT-05. Sticky stays
       sticky and intentional floats survive owner restart. REQ-RST-01c
-      membership/set/focus remains OPEN; no invented persistence identity
-      or storage scheme.
+      membership/set/focus remains OPEN. KDE's selected provisional store
+      is not a selected Windows storage scheme.
     - Core seams (verified 2026-10-08 at `db31234`): `core/session.rs:546`
       `exceptions` map, `core/session/world.rs:433` `is_exception` (Engine
       float/settle reads at `core/engine.rs:835/:1467`), `core/session.rs:148`
       intentional-float transition. Exceptions ride the session, never the
       settings file.
-    - KDE runtime (verified 2026-10-08 at `db31234`): observed
-      float/sticky classification `kwin/src/plan-adapter.ts:7043-7051`
-      `floatSourceOf` (float-set vs all-desktops), per-observation
-      `floatingById` :8229, env `setFloating` :635. The id set resets on
-      restart per the matrix cell; re-persisting it is the reserved KDE
-      delivery, not this handoff.
+    - KDE Q3 runtime (2026-10-08 offline delivery): `kwin/src/plan-adapter.ts`
+      `startIntentBootstrap` hydrates before planning; the existing Q2
+      successful-application point calls `updateSettledIntentFromFlight`.
+      `crates/plasma-auto-tiler/src/float_intent_store.rs` owns the private
+      runtime membership file; existing Planner1 gains `ReadFloatIntent` /
+      `WriteFloatIntent`, with same-UID + current-KWin-owner authorization.
+      Bus ID + KWin unique owner fence the namespace. Membership only; no
+      geometry/focus/stacking/pre-sticky history or automatic fixed origin.
+      No effect dependency or new shared adapter extraction. These are KDE
+      implementation seams, not instructions to port D-Bus/file storage to Win.
+    - KDE design handoff (PROVISIONAL D1-D4, user review pending): recovered
+      ordinary floats retain the live frame with no hydration writes. Only
+      settled explicit intent is durable; scoped/hidden/minimized absence
+      does not clear it. Missing state is empty; corrupt/unreadable/mismatched
+      reads diagnose then proceed empty. Write failure preserves native/local
+      truth and the next settled membership update rewrites the full set.
+      Storage ACK is distinct from native application; no atomicity claim.
+      Ordinary intent and automatic fixed origin remain separate (R-RST-04,
+      Windows item 13). Recovery ownership must never derive from marker alone.
     - Windows exact (verified 2026-10-08 at `db31234`): runtime intent
       `state.floated: BTreeSet<WindowKey>` (`src/tiling_sys.rs:1452`,
       init empty :13813); float toggle inserts :7361/:8103, unfloat
@@ -2113,6 +2135,20 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 
 ### Single-output laptop
 
+- KDE Q3 R-RST-01/03/04 (offline delivered, D1-D4 PROVISIONAL): intentional
+  ordinary float plus automatic fixed float and a tile; script stop/start
+  preserves ordinary intent/current frame, automatic fixed identity recomputes.
+  Move/resize the intentional float while stopped; restart must not write its
+  geometry, focus or stacking. Check hidden/minimized and excluded live clients,
+  native hidden-to-hidden relocation, verified close during startup and settled
+  unfloat. Restart the planner alone; current float observation still recovers
+  without rehydration. Corrupt the private store only in a user-owned isolated
+  journey: normal degraded reason/count logs, empty adoption, then next settled
+  full write replaces state. Store write failure keeps local/native state.
+  User logout/login/new KWin must not adopt older intent; no settings/layout
+  persistence claim. Physical startup-time sends and separate storage ACK
+  tokens also need verification. [Record](changes/archive/kde-intentional-float-restart.md),
+  [live guide](live-kwin-testing.md). No Q3 live result claimed.
 - KDE Q2 R-SPC-04/06..13 (offline delivered, D1-D8 PROVISIONAL): open a
   fixed-size ordinary client beside a tile; record unchanged incoming frame,
   focus and stacking, including a fixed borderless game. Check single-axis
@@ -2441,6 +2477,18 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   persistence; D8 membership-only no geometry/focus/stacking/keep-above writes.
   Shared/KDE delivered offline, native checks/Windows item 13 pending;
   [record](changes/archive/fixed-size-admission.md).
+  Q3 D1 private versioned/atomic/nofollow runtime membership store, bus ID +
+  KWin owner namespace; architecture boundary: planner gains a session-scoped runtime store.
+  This narrowly relaxes the service's no-persistence rule for intent only;
+  effect stays optional. D2 membership-only current-frame adoption, no stored
+  geometry/focus/stacking/pre-sticky history, unchanged sticky semantics.
+  D3 explicit intent persists after native success, verified-close/complete
+  inventory cleanup and separate storage ACK; no atomicity claim. D4 diagnosed
+  availability fallback: missing empty, corrupt/unreadable/mismatched state
+  degrades empty and can lose intent on restart; failed writes keep local/native
+  state until the next settled full update, no hold/retry scheduler or ledger.
+  KDE delivered offline; native checks and Windows item 8 pending;
+  [record](changes/archive/kde-intentional-float-restart.md).
 
 ## Known issues and risks
 

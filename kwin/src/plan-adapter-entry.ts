@@ -93,6 +93,13 @@ export interface PlanEntryOverrides {
     readonly log?: (message: string) => void;
     readonly owner?: unknown;
     readonly generation?: unknown;
+    // Q3 settled intentional-float persistence: when true, the entry feeds
+    // the adapter a complete live inventory plus a hydration sink and runs
+    // one bounded ReadFloatIntent before first plan admission; settled
+    // float/unfloat/close then persist via WriteFloatIntent. Omitted by
+    // tests without intent traffic (zero adapter behavior change);
+    // production sets it.
+    readonly floatIntent?: boolean;
     // Optional deterministic per-script-instance group effect stream
     // generation. Test seam only: production omits it so the entry mints one
     // fresh token from the shared tray source. Planner identity stays fixed.
@@ -1727,6 +1734,100 @@ function readNativeId(ref: object): string | null {
 function readResourceClass(ref: object): string {
     const value = readProp(ref, "resourceClass");
     return isOpaqueId(value) ? value : "unknown";
+}
+
+// Q3 complete live inventory for float-intent pruning: every window in the
+// Q3 complete live inventory for float-intent pruning: every window in the
+// single workspace.windowList decode, unscoped (all outputs and desktops,
+// including minimized and hidden). Complete only when every item carries a
+// readable, normalizable id; any structural failure (unreadable list,
+// non-object item, unreadable/mistyped/un-normalizable id) reports
+// complete=false: the read then omits live and nothing is pruned on
+// partial evidence. Scoped absence never evicts.
+//
+// The optional owners map records id to exact live ref for every id read,
+// including on the partial path: ordinary observers skip ineligible
+// windows (non-normal, unassigned output, tainted pairs), so without this
+// a hydrated survivor excluded from observation would never gain an owner
+// and its verified close could not clear markers. Recording refs never
+// prunes: only a complete inventory attests liveness, and removal never
+// reads the dead object.
+export function readCompleteIntentInventory(
+    liveWorkspace: unknown,
+    owners?: Map<string, object>,
+): {
+    complete: boolean;
+    ids: ReadonlyArray<string>;
+} {
+    const incomplete: { complete: boolean; ids: ReadonlyArray<string> } = {
+        complete: false,
+        ids: Object.freeze([]),
+    };
+    try {
+        if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
+            return incomplete;
+        }
+        const surface = liveWorkspace as Record<string, unknown>;
+        const lister = readProp(surface, "windowList");
+        if (typeof lister !== "function") {
+            return incomplete;
+        }
+        let rawList: unknown = undefined;
+        try {
+            rawList = Reflect.apply(lister as (...args: ReadonlyArray<never>) => unknown, surface, []);
+        } catch (error) {
+            void error;
+            return incomplete;
+        }
+        const windows = decodeList(rawList, MAX_LIST);
+        if (windows === null) {
+            return incomplete;
+        }
+        const seen = new Set<string>();
+        const ids: string[] = [];
+        for (const item of windows) {
+            if (typeof item !== "object" || item === null) {
+                return incomplete;
+            }
+            const ref = item as object;
+            // Strict complete proof: any unreadable, mistyped, or
+            // un-normalizable id fails the whole inventory closed, so the
+            // read omits live and nothing prunes on partial evidence. No
+            // per-type assumptions: normalWindow readability is never
+            // consulted, and non-normal windows with usable ids simply join
+            // the attested set (extra live ids never affect pruning).
+            let raw: unknown = undefined;
+            let readable = true;
+            try {
+                raw = Reflect.get(ref, "internalId");
+            } catch (error) {
+                void error;
+                readable = false;
+            }
+            if (!readable || (typeof raw !== "string" && typeof raw !== "number")) {
+                return incomplete;
+            }
+            const id = normalizeNativeId(raw);
+            if (id === null) {
+                return incomplete;
+            }
+            if (owners !== undefined) {
+                try {
+                    owners.set(id, ref);
+                } catch (error) {
+                    void error;
+                }
+            }
+            if (!seen.has(id)) {
+                seen.add(id);
+                ids.push(id);
+            }
+        }
+        return { complete: true, ids: Object.freeze(ids) };
+    } catch (error) {
+        void error;
+        return incomplete;
+    }
 }
 
 type EligibilityReporter = (ref: object, reason: string | null) => void;
@@ -3384,6 +3485,11 @@ function startPlanAdapterEntryOnce(
         sendNativeIds.delete(id);
         nativeOwners.delete(id);
         eligibilityReasons.delete(id);
+        // Verified removal also drops the in-progress float mark: a closed
+        // window must not keep observing floating on id reuse before the
+        // next live sighting re-marks it. The durable settled set is
+        // evicted separately through the adapter below.
+        floatingIds.delete(id);
     };
     // Entry-owned highlight refresh edge: set once the highlight bridge
     // starts, invoked exactly once per successful geometry-plan boundary.
@@ -3415,6 +3521,25 @@ function startPlanAdapterEntryOnce(
         callDbus,
         scheduleOnce,
         log,
+        // Q3 settled intent bridge, opt-in only: the complete unscoped
+        // inventory plus the hydration sink. The adapter runs one bounded
+        // read before first plan admission and persists settled snapshots
+        // afterwards. Without the flag the adapter sees neither hook and
+        // behaves exactly as before.
+        ...(overrides.floatIntent === true
+            ? {
+                  observeCompleteInventory: () => readCompleteIntentInventory(liveWorkspace, nativeOwners),
+                  onIntentHydrated: (members) => {
+                      try {
+                          for (const id of members) {
+                              floatingIds.add(id);
+                          }
+                      } catch (error) {
+                          void error;
+                      }
+                  },
+              }
+            : {}),
         isInteractiveResizeActive: () => {
             try {
                 // Observed-state gate: a tiled move hold survives while KWin
@@ -3996,6 +4121,15 @@ function startPlanAdapterEntryOnce(
                 for (const [id, owner] of nativeOwners) {
                     if (owner === ref) {
                         forgetNativeId(id);
+                        // Verified exact-ref close: propagate the live-time
+                        // id to the adapter so fixed bookkeeping and settled
+                        // intent membership evict without ever reading the
+                        // dead object.
+                        try {
+                            adapter.noteNativeRemovedId(id);
+                        } catch (error) {
+                            void error;
+                        }
                     }
                 }
             } catch (error) {
@@ -4011,6 +4145,17 @@ function startPlanAdapterEntryOnce(
             void error;
         }
         return null;
+    }
+    // Q3: one bounded intent read before first plan admission. Hydration
+    // populates floatingIds above, so the initial planning observes
+    // recovered floats as floating (intentional, never automatic) with
+    // their live frames preserved and no actuation of their own.
+    if (overrides.floatIntent === true) {
+        try {
+            adapter.startIntentBootstrap();
+        } catch (error) {
+            void error;
+        }
     }
     const initial = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners);
     const initialHidden = observeHiddenDomains(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners);
@@ -4977,6 +5122,31 @@ function startPlanAdapterEntryOnce(
     // exact false stays on the source; anything else (including absent)
     // follows the mover into the target.
     const parseFollowFlag = (value: unknown): boolean => value !== false;
+    // Q3 bootstrap fence shared by every send trigger (workspace absolute
+    // and relative moves, output sends, and the shared resolved transfer):
+    // while the single intent read is outstanding a hydration candidate
+    // still observes tiled, so no send may actuate membership, geometry,
+    // or focus meanwhile. Same bounded deferred shape as plan dispatch; no
+    // queue, no replay. Returns true when the caller must refuse.
+    const refuseSendWhileBootstrapPending = (event: string, kind: string, reqOrd: number): boolean => {
+        let pending = false;
+        try {
+            pending = adapter.isIntentBootstrapPending();
+        } catch (error) {
+            void error;
+            pending = false;
+        }
+        if (!pending) {
+            return false;
+        }
+        try {
+            log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=${event} outcome=intent-bootstrap-deferred follow=not-reached gate=pre-commit phase=entry reason=intent-bootstrap-pending req_ord=${String(reqOrd)} inflight_stage=idle`);
+            log(`plasma-auto-tiler:plan:intent-bootstrap-deferred kind=${kind}`);
+        } catch (error) {
+            void error;
+        }
+        return true;
+    };
     const requestWorkspaceMove = (index: unknown, followRaw?: unknown): void => {
         try {
             const follow = parseFollowFlag(followRaw);
@@ -4986,6 +5156,9 @@ function startPlanAdapterEntryOnce(
                 } catch (error) {
                     void error;
                 }
+                return;
+            }
+            if (refuseSendWhileBootstrapPending("workspace-move", "workspace-move", index)) {
                 return;
             }
             if (!workspaceSend.isEnabled || workspaceSend.isInFlight || adapter.isInFlight) {
@@ -5128,6 +5301,9 @@ function startPlanAdapterEntryOnce(
                 }
                 return;
             }
+            if (refuseSendWhileBootstrapPending("workspace-move", "workspace-move", -1)) {
+                return;
+            }
             if (!workspaceSend.isEnabled || workspaceSend.isInFlight || adapter.isInFlight) {
                 const outcome = !workspaceSend.isEnabled
                     ? "disabled"
@@ -5171,6 +5347,11 @@ function startPlanAdapterEntryOnce(
     // follow/stay, else the Rust-planned tiled send with the same selection.
     const transferResolvedWorkspace = (target: string, reqOrd: number, follow: boolean): void => {
         try {
+            // Shared send fence: every workspace route refuses here while
+            // the intent bootstrap is outstanding (see the helper).
+            if (refuseSendWhileBootstrapPending("workspace-move", "workspace-move", reqOrd)) {
+                return;
+            }
             if (!workspaceSend.isEnabled || workspaceSend.isInFlight || adapter.isInFlight) {
                 const outcome = !workspaceSend.isEnabled
                     ? "disabled"
@@ -5327,6 +5508,12 @@ function startPlanAdapterEntryOnce(
                 } catch (error) {
                     void error;
                 }
+                return;
+            }
+            // Q3 bootstrap fence: same deferred shape as workspace send (see
+            // the shared helper); no output transfer may observe a
+            // hydration candidate as tiled mid-bootstrap.
+            if (refuseSendWhileBootstrapPending("output-send", "output-send", -1)) {
                 return;
             }
             if (!workspaceSend.isEnabled || workspaceSend.isInFlight || adapter.isInFlight) {

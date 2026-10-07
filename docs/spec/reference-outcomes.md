@@ -3228,9 +3228,10 @@ plus 7 workspace scenarios, 3 minimize scenarios, 2 maximize scenarios,
 4 multi-output scenarios, 3 mouse scenarios, 5 special-windows scenarios,
 2 activation scenarios, 2 restart scenarios and 10 column scenarios, GWT
 only: 125 expansion-baseline scenarios, plus 14 decision discriminators
-2026-10-07 and 8 Q2 fixed-size discriminators 2026-10-08: 147 scenarios total).
+2026-10-07, 8 Q2 fixed-size discriminators and 2 Q3 restart research
+discriminators 2026-10-08: 149 scenarios total).
 This index retains purpose, row-addition rule, notation,
-profiles, evidence tags/legend, variant hooks, and deferred. All 147
+profiles, evidence tags/legend, variant hooks, and deferred. All 149
 scenarios use the GWT form below; no wide-table rows remain.
 Areas follow the approved priority order; column mechanics follows, and
 minimum-size stays a supplemental file (not nested in resize).
@@ -3252,7 +3253,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Mouse | [mouse.md](reference-outcomes/mouse.md) | R-DRAG-01..08 + R-MOU-01..03 (11) | none (R-MOU-01..03 landed with scrolling backfill) |
 | Special windows | [special-windows.md](reference-outcomes/special-windows.md) | R-SPC-01..13 (13) | R-SPC-04/06..13 KDE implemented offline under autonomous PROVISIONAL D1-D8; native, Windows wiring and unsupported reference outcomes TBD |
 | Activation | [activation.md](reference-outcomes/activation.md) | R-ACT-01..02 (2) | none (landed; no backfill: no prior rows) |
-| Restart / persistence | [restart-persistence.md](reference-outcomes/restart-persistence.md) | R-START-01..03 + R-CTL-01..07 + R-RST-01..02 (12) | none (R-RST-01..02 landed with scrolling backfill) |
+| Restart / persistence | [restart-persistence.md](reference-outcomes/restart-persistence.md) | R-START-01..03 + R-CTL-01..07 + R-RST-01..04 (14) | Q3 KDE intentional membership implemented offline under PROVISIONAL D1-D4; R-RST-03/04 cover frame drift and automatic-vs-intent origin; native, Windows and unsupported reference legs TBD |
 | Column mechanics | [column-mechanics.md](reference-outcomes/column-mechanics.md) | R-COL-01..10 (10) | none (landed) |
 | Minimum-size (supplemental) | [minimum-size.md](reference-outcomes/minimum-size.md) | R-MIN-01..03 (3) | none (piece B4; R-MNZ icon-minimize is separate) |
 

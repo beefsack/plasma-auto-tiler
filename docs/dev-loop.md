@@ -368,6 +368,27 @@ terminal separately. These summaries carry no window/native IDs, geometry,
 resource classes, captions or payloads. Admission adds no geometry, focus,
 stacking or keep-above writes to the automatically floating client.
 
+Intentional-float owner restart (ordinary output; one startup read and settled
+membership writes, not per-frame snapshots):
+
+- `[kwin] plasma-auto-tiler:plan:intent-read correlation=<generation>-i<seq> outcome=<ok|degraded|rejected> stored=<N> returned=<N> reason=<fixed-token|->`
+- `[kwin] plasma-auto-tiler:plan:intent-write correlation=<generation>-i<seq> outcome=<stored|rejected|unavailable> stored=<N|-> reason=<fixed-token|->`
+- `[planner] plasma-auto-tiler:intent-summary direction=egress op=<read|write> correlation=<correlation|-> outcome=<outcome> stored=<N|-> returned=<N|-> reason=<fixed-token|->`
+- `[kwin] plasma-auto-tiler:plan:intent-bootstrap-deferred kind=<operation>`
+
+`stored` on the write terminal is a separate storage acknowledgement, not
+`planned-applied` and not an atomic native/store commit. Read hydration occurs
+before planning; membership only leaves recovered float frames untouched.
+Missing state is empty. Degraded reasons include `unreadable`, `corrupt`,
+`namespace-mismatch` and `namespace-unavailable`; transport terminals include
+`timeout`, `transport`, `malformed` and `oversize`. Reads settle empty on those
+failures; failed writes retain local intent and the next settled membership
+update sends the full set. There is no hold/retry scheduler. The brief startup
+bootstrap defers plan/send requests until the read settles or its deadline,
+without queuing/replaying user commands. Summaries contain no native IDs,
+application content, bus owners, geometry, paths or raw payloads. See the
+[Q3 record](changes/archive/kde-intentional-float-restart.md).
+
 When a complete startup signal attachment fails, the entry remains inert and
 retries on a later `windowAdded` or `Options.configChanged` event (one attempt
 per event, no timer or attempt cap). Only transitions are logged:

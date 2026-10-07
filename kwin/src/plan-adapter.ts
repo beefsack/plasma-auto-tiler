@@ -42,6 +42,25 @@ export const PLAN_START_FLAGS = 0;
 export const PLAN_START_PRIMARY = 1;
 export const PLAN_START_ALREADY = 2;
 
+// Settled intentional-float persistence (Q3): Rust-owned private runtime
+// membership store over the existing Planner1 interface (same service,
+// object, and interface as DescribePlan; well-known name so D-Bus
+// activation can start a stopped planner). Membership only: normalized
+// native ids, never geometry, focus, stacking, or sticky history.
+// ReadFloatIntent {"v":1,"correlation_id","live"?[]} prunes the stored set
+// to the caller-attested complete inventory when live is present; the file
+// is never mutated by a read. WriteFloatIntent {"v":1,"correlation_id",
+// "members":[full settled set]} replaces the snapshot (empty clears).
+// Both methods share the planner's own intent lock (separate from plan),
+// so concurrent intent calls fail as busy; KWin callDBus errors may never
+// callback, so every intent call carries its own bounded deadline.
+export const INTENT_READ_METHOD = "ReadFloatIntent";
+export const INTENT_WRITE_METHOD = "WriteFloatIntent";
+// Full 1024-member snapshot with margin, mirroring the Rust wire caps.
+export const INTENT_MAX_BYTES = 256 * 1024;
+export const INTENT_MAX_MEMBERS = 1024;
+export const INTENT_TIMEOUT_MS = 2000;
+
 export const PLAN_CONTRACT_VERSION = 1;
 // Planner request byte cap (mirrors the Rust codec `PLAN_MAX_REQUEST_BYTES`).
 // `.length` is an exact byte count here: every string reaching request JSON
@@ -689,6 +708,21 @@ export interface PlanAdapterEnv {
     // foreground logical commands. Never invoked on stale/rejected/error
     // or unfinished boundaries.
     readonly onPlannedApplied?: (op: PlanOp) => void;
+    // Q3 settled float-intent bridge (opt-in, capability-gated): the entry
+    // supplies both hooks or neither, and only then does the adapter run
+    // one bounded ReadFloatIntent before first plan admission plus settled
+    // WriteFloatIntent snapshots afterwards. observeCompleteInventory
+    // decodes the full live window list (all outputs/desktops including
+    // minimized/hidden); complete=false (or null/throw) means the
+    // inventory is unproven and the read omits live (no pruning).
+    // onIntentHydrated receives the adopted settled membership once per
+    // bootstrap so the entry can populate its in-progress floating set
+    // before initial planning; never invoked after shutdown.
+    readonly observeCompleteInventory?: () => {
+        readonly complete: boolean;
+        readonly ids: ReadonlyArray<string>;
+    } | null;
+    readonly onIntentHydrated?: (members: ReadonlyArray<string>) => void;
     // R-MOV-03 same-axis move mode for the move wire command. Read live per
     // move request so an entry-owned Options configChanged re-read applies
     // to subsequent moves with no tree rebuild. Absent/invalid resolves to
@@ -887,6 +921,27 @@ function isCorrelationId(value: unknown): value is string {
 // only (drag-<digits>), never titles, ids, or payload bytes.
 function isDragCorrelation(value: unknown): value is string {
     return typeof value === "string" && value.length > 0 && value.length <= PLAN_MAX_CORRELATION_LEN && /^drag-[0-9]+$/.test(value);
+}
+
+// Log-safe fixed reason token for the float-intent bridge: Rust reasons are
+// a closed vocabulary (namespace-unavailable, unreadable, corrupt,
+// namespace-mismatch, unauthorized, not-kwin-owner, invalid-request,
+// invalid-members, store-unavailable) plus local causes (transport,
+// timeout, malformed, oversize). Anything outside the token alphabet logs
+// as "-" so logs carry correlation, counts, and closed reasons only.
+function sanitizeIntentReason(value: unknown): string {
+    if (typeof value !== "string" || value.length === 0 || value.length > 64) {
+        return "-";
+    }
+    for (let index = 0; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        const alnum =
+            (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+        if (!(alnum || code === 45 || code === 95)) {
+            return "-";
+        }
+    }
+    return value;
 }
 
 // Rust `hover_prior` wire shape (read-only drag preview carry): exact drag
@@ -2211,6 +2266,31 @@ export class PlanAdapter {
     private probeToken = 0;
     private activeProbe = 0;
     private probeCancel: (() => void) | null = null;
+    // Q3 settled float-intent bridge: canonical durable membership (explicit
+    // ordinary float only; never automatic fixed floats, suppress pins, or
+    // onAllDesktops history). intentActive gates every intent path so
+    // harnesses without the entry hooks see zero behavior change;
+    // intentReady opens first plan admission once the single bootstrap read
+    // settles. One shared in-flight flag serializes the read and all
+    // writes (mirroring the planner's own intent lock); at most ONE latest
+    // full snapshot coalesces behind it, never a retry ledger. A failed
+    // write retains local intent; the next settled event re-sends the full
+    // set. The set survives planner recovery untouched (no rehydration).
+    private intentActive = false;
+    private intentReady = false;
+    private intentBusy = false;
+    private intentCallToken = 0;
+    private intentSeq = 0;
+    private intentMembers = new Set<string>();
+    private intentPendingWrite: ReadonlyArray<string> | null = null;
+    private intentDeadlineCancel: (() => void) | null = null;
+    // Bootstrap close-race fence: verified closes that land while the
+    // single read is in flight, when the local set cannot prove membership
+    // yet. Subtracted at every read settle so the callback never revives a
+    // close into hydration or the next snapshot. Ephemeral: cleared at
+    // every settle and on disable; never a retry ledger, never recovery.
+    // Bounded by the live inventory like every member id.
+    private intentBootstrapClosed = new Set<string>();
     // Live production R4 flight (immediate commit, native plus bounded
     // delayed arrival). While non-null the shared single-flight stays held
     // and every other PlanAdapter operation refuses busy; completion or
@@ -2357,6 +2437,17 @@ export class PlanAdapter {
         this.r4WriteDepth = 0;
         this.dragPreview.clear();
         this.clearRepeat();
+        // Fresh intent session: the entry re-runs the single bootstrap read
+        // after every enable. Late intent callbacks from a previous life are
+        // already fenced by the disable token bump below.
+        this.intentActive = false;
+        this.intentReady = false;
+        this.intentBusy = false;
+        this.intentSeq = 0;
+        this.intentMembers.clear();
+        this.intentPendingWrite = null;
+        this.intentDeadlineCancel = null;
+        this.intentBootstrapClosed.clear();
         return true;
     }
 
@@ -2400,6 +2491,18 @@ export class PlanAdapter {
         this.clearTimer();
         this.clearR4ArrivalTimer();
         this.clearDebounce();
+        // Shutdown fence: bump the intent token so in-flight read/write
+        // callbacks and deadline timers land discarded, then drop the
+        // session. No retry, no flush of the coalesced snapshot.
+        this.intentCallToken += 1;
+        this.clearIntentDeadline();
+        this.intentActive = false;
+        this.intentReady = false;
+        this.intentBusy = false;
+        this.intentSeq = 0;
+        this.intentMembers.clear();
+        this.intentPendingWrite = null;
+        this.intentBootstrapClosed.clear();
         for (const detach of this.detaches) {
             try {
                 detach();
@@ -3176,9 +3279,488 @@ export class PlanAdapter {
 
     // Evict fixed-size bookkeeping for one verified native removal by
     // stable id (D3 lifetime fence). Same-runtime hide/show and minimize
-    // omission never route here, so they retain identity.
+    // omission never route here, so they retain identity. A verified close
+    // also evicts settled intent membership (exact id resolved while live
+    // by the entry, never read from the dead object) and persists the full
+    // set; anything else keeps it.
     noteNativeRemovedId(id: string): void {
         this.fixedClients.delete(id);
+        if (!this.intentActive) {
+            return;
+        }
+        if (!this.intentReady) {
+            // Read still in flight: the local set is empty-or-partial, so a
+            // delete may prove nothing. Fence the verified close for the
+            // settle merge and queue the full snapshot regardless, so the
+            // post-settle pump persists the corrected set.
+            if (this.intentBootstrapClosed.size < INTENT_MAX_MEMBERS) {
+                this.intentBootstrapClosed.add(id);
+            }
+            this.scheduleIntentWrite();
+            return;
+        }
+        if (this.intentMembers.delete(id)) {
+            this.scheduleIntentWrite();
+        }
+    }
+
+    // Test seam: current settled intent membership (durable set only).
+    getIntentMembers(): ReadonlyArray<string> {
+        return Object.freeze([...this.intentMembers]);
+    }
+
+    // Test seam: true once the single bootstrap read settles (first plan
+    // admission is gated on it while the bridge is active).
+    isIntentReady(): boolean {
+        return this.intentReady;
+    }
+
+    // Entry seam for the send routes: true while the single bootstrap read
+    // is outstanding. Workspace/output sends refuse on it (same bounded
+    // deferred log as plan dispatch) so a hydration candidate never
+    // actuates as tiled mid-bootstrap. No queue, no replay.
+    isIntentBootstrapPending(): boolean {
+        return this.intentActive && !this.intentReady;
+    }
+
+    // Q3 bootstrap: one bounded ReadFloatIntent before first plan admission.
+    // Capability-gated (both entry hooks required) and idempotent; returns
+    // false with zero behavior change when inactive, unenabled, or already
+    // started. Targets the well-known planner name so a stopped planner
+    // activates; the reply is fenced by call token plus correlation, and
+    // shutdown plus late callbacks are discarded. Any terminal (ok,
+    // degraded, rejected, malformed, transport, timeout) opens the gate
+    // and runs one catch-up resync; only an ok reply adopts membership.
+    startIntentBootstrap(): boolean {
+        if (!this.enabled || this.intentActive) {
+            return false;
+        }
+        if (
+            typeof this.env.observeCompleteInventory !== "function" ||
+            typeof this.env.onIntentHydrated !== "function" ||
+            typeof this.env.callDbus !== "function" ||
+            typeof this.env.scheduleOnce !== "function"
+        ) {
+            return false;
+        }
+        this.intentActive = true;
+        this.intentReady = false;
+        this.intentBusy = true;
+        this.intentCallToken += 1;
+        const token = this.intentCallToken;
+        const correlation = this.intentCorrelation();
+        if (correlation === null) {
+            this.settleIntentRead(token, "-", "degraded", "malformed", [], 0, 0);
+            return true;
+        }
+        // Complete inventory only: an unproven list omits live so the read
+        // never prunes on partial evidence. Scoped absence never evicts.
+        let live: ReadonlyArray<string> | null = null;
+        try {
+            const inventory = this.env.observeCompleteInventory();
+            if (
+                inventory !== null &&
+                inventory !== undefined &&
+                inventory.complete === true &&
+                Array.isArray(inventory.ids) &&
+                inventory.ids.length <= INTENT_MAX_MEMBERS
+            ) {
+                const seen = new Set<string>();
+                const ids: string[] = [];
+                let valid = true;
+                for (const id of inventory.ids) {
+                    if (!isOpaqueId(id) || seen.has(id)) {
+                        valid = false;
+                        break;
+                    }
+                    seen.add(id);
+                    ids.push(id);
+                }
+                if (valid) {
+                    live = ids;
+                }
+            }
+        } catch (error) {
+            void error;
+            live = null;
+        }
+        const body: Record<string, unknown> = { v: 1, correlation_id: correlation };
+        if (live !== null) {
+            body["live"] = live;
+        }
+        let payload = "";
+        try {
+            payload = JSON.stringify(body);
+        } catch (error) {
+            void error;
+            payload = "";
+        }
+        if (payload === "" || payload.length > INTENT_MAX_BYTES) {
+            this.settleIntentRead(token, correlation, "degraded", "oversize", [], 0, 0);
+            return true;
+        }
+        try {
+            this.intentDeadlineCancel = this.env.scheduleOnce(INTENT_TIMEOUT_MS, () =>
+                this.onIntentReadTimeout(token, correlation),
+            );
+        } catch (error) {
+            void error;
+            this.intentDeadlineCancel = null;
+            this.settleIntentRead(token, correlation, "degraded", "transport", [], 0, 0);
+            return true;
+        }
+        try {
+            this.env.callDbus(
+                PLAN_SERVICE,
+                PLAN_OBJECT,
+                PLAN_INTERFACE,
+                INTENT_READ_METHOD,
+                payload,
+                (reply) => this.onIntentReadReply(reply, token, correlation),
+            );
+        } catch (error) {
+            void error;
+            this.clearIntentDeadline();
+            this.settleIntentRead(token, correlation, "degraded", "transport", [], 0, 0);
+        }
+        return true;
+    }
+
+    private intentCorrelation(): string | null {
+        const candidate = `${this.generation}-i${String(this.intentSeq)}`;
+        if (!isCorrelationId(candidate)) {
+            return null;
+        }
+        this.intentSeq += 1;
+        return candidate;
+    }
+
+    private clearIntentDeadline(): void {
+        const cancel = this.intentDeadlineCancel;
+        this.intentDeadlineCancel = null;
+        if (cancel !== null) {
+            try {
+                cancel();
+            } catch (error) {
+                void error;
+            }
+        }
+    }
+
+    private intentReadLog(
+        correlation: string,
+        outcome: string,
+        stored: number,
+        returned: number,
+        reason: string,
+    ): void {
+        try {
+            this.env.log(
+                `${LOG_PREFIX}:intent-read correlation=${correlation} outcome=${outcome} stored=${String(stored)} returned=${String(returned)} reason=${reason}`,
+            );
+        } catch (error) {
+            void error;
+        }
+    }
+
+    private intentWriteLog(
+        correlation: string,
+        outcome: string,
+        stored: number | null,
+        reason: string,
+    ): void {
+        try {
+            this.env.log(
+                `${LOG_PREFIX}:intent-write correlation=${correlation} outcome=${outcome} stored=${stored === null ? "-" : String(stored)} reason=${reason}`,
+            );
+        } catch (error) {
+            void error;
+        }
+    }
+
+    private onIntentReadReply(reply: unknown, token: number, correlation: string): void {
+        if (!this.intentActive || token !== this.intentCallToken || !this.intentBusy) {
+            return;
+        }
+        if (typeof reply !== "string" || reply.length > INTENT_MAX_BYTES) {
+            this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0);
+            return;
+        }
+        let parsed: unknown = null;
+        try {
+            parsed = JSON.parse(reply);
+        } catch (error) {
+            void error;
+            this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0);
+            return;
+        }
+        if (!isRecord(parsed) || parsed["v"] !== 1 || parsed["correlation_id"] !== correlation) {
+            this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0);
+            return;
+        }
+        const outcome = parsed["outcome"];
+        if (outcome === "ok") {
+            const raw = parsed["members"];
+            if (!Array.isArray(raw) || raw.length > INTENT_MAX_MEMBERS) {
+                this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0);
+                return;
+            }
+            const seen = new Set<string>();
+            const members: string[] = [];
+            for (const entry of raw) {
+                if (!isOpaqueId(entry) || seen.has(entry)) {
+                    this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0);
+                    return;
+                }
+                seen.add(entry);
+                members.push(entry);
+            }
+            const stored = parsed["stored"];
+            const returned = parsed["returned"];
+            // Counts are validated, never trusted: safe non-negative
+            // integers within the member bound, with returned exactly the
+            // adopted membership length. Anything else is malformed.
+            if (
+                typeof stored !== "number" ||
+                !Number.isInteger(stored) ||
+                stored < 0 ||
+                stored > INTENT_MAX_MEMBERS ||
+                returned !== members.length
+            ) {
+                this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0);
+                return;
+            }
+            this.settleIntentRead(token, correlation, "ok", "-", members, stored, returned);
+            return;
+        }
+        if (outcome === "degraded" || outcome === "rejected") {
+            this.settleIntentRead(token, correlation, outcome, sanitizeIntentReason(parsed["reason"]), [], 0, 0);
+            return;
+        }
+        this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0);
+    }
+
+    private onIntentReadTimeout(token: number, correlation: string): void {
+        if (!this.intentActive || token !== this.intentCallToken || !this.intentBusy) {
+            return;
+        }
+        // Transport silence (missing callback, busy planner, dead service)
+        // is diagnosed exactly like any other degraded read: proceed
+        // empty with fixed reason and counts, never block admission.
+        this.settleIntentRead(token, correlation, "degraded", "timeout", [], 0, 0);
+    }
+
+    // Single read terminal: adopts ok membership (unioned with any settled
+    // events that landed mid-bootstrap, whose coalesced snapshot then
+    // refreshes to the merged truth), keeps local mutations on every other
+    // terminal, then opens the gate, hydrates the entry, and runs one
+    // catch-up resync so the first plan admission observes hydrated floats.
+    // Verified closes fenced during the read subtract from every terminal
+    // so the callback never revives them; the fence clears here, once the
+    // bootstrap lifecycle ends.
+    private settleIntentRead(
+        token: number,
+        correlation: string,
+        outcome: "ok" | "degraded" | "rejected",
+        reason: string,
+        members: ReadonlyArray<string>,
+        stored: number,
+        returned: number,
+    ): void {
+        if (!this.intentActive || token !== this.intentCallToken) {
+            return;
+        }
+        this.intentCallToken += 1;
+        this.clearIntentDeadline();
+        this.intentBusy = false;
+        if (outcome === "ok") {
+            const merged = new Set<string>(members);
+            if (this.intentPendingWrite !== null) {
+                for (const id of this.intentPendingWrite) {
+                    merged.add(id);
+                }
+            }
+            for (const id of this.intentBootstrapClosed) {
+                merged.delete(id);
+            }
+            this.intentMembers = merged;
+            if (this.intentPendingWrite !== null) {
+                this.intentPendingWrite = [...merged];
+            }
+        } else {
+            for (const id of this.intentBootstrapClosed) {
+                this.intentMembers.delete(id);
+            }
+            if (this.intentPendingWrite !== null) {
+                this.intentPendingWrite = [...this.intentMembers];
+            }
+        }
+        this.intentBootstrapClosed.clear();
+        this.intentReady = true;
+        this.intentReadLog(correlation, outcome, stored, returned, reason);
+        try {
+            this.env.onIntentHydrated?.([...this.intentMembers]);
+        } catch (error) {
+            void error;
+        }
+        if (this.enabled) {
+            try {
+                this.requestResync();
+            } catch (error) {
+                void error;
+            }
+        }
+        this.pumpIntent();
+    }
+
+    // Settled membership checkpoint (D3): called only on the applied
+    // boundary that already committed the Q2 stage, so the durable record
+    // moves exactly when native application is proven. No staging
+    // machinery beyond the full snapshot below.
+    private updateSettledIntentFromFlight(flightState: PendingFlight): void {
+        if (!this.intentActive) {
+            return;
+        }
+        const target = flightState.floatTarget;
+        if (target === null) {
+            return;
+        }
+        if (target.floating) {
+            this.intentMembers.add(target.window);
+        } else {
+            this.intentMembers.delete(target.window);
+        }
+        this.scheduleIntentWrite();
+    }
+
+    // Queue the full settled snapshot behind the single in-flight intent
+    // call (one latest coalescing, never a retry ledger). A failed send
+    // keeps this exact snapshot dropped but retains local intent: the next
+    // settled update re-sends the full set.
+    private scheduleIntentWrite(): void {
+        if (!this.intentActive) {
+            return;
+        }
+        this.intentPendingWrite = [...this.intentMembers];
+        this.pumpIntent();
+    }
+
+    private pumpIntent(): void {
+        if (!this.intentActive || !this.intentReady || this.intentBusy) {
+            return;
+        }
+        const snapshot = this.intentPendingWrite;
+        if (snapshot === null) {
+            return;
+        }
+        if (snapshot.length > INTENT_MAX_MEMBERS) {
+            this.intentWriteLog("-", "unavailable", snapshot.length, "oversize");
+            return;
+        }
+        const correlation = this.intentCorrelation();
+        if (correlation === null) {
+            this.intentWriteLog("-", "unavailable", snapshot.length, "malformed");
+            return;
+        }
+        let payload = "";
+        try {
+            payload = JSON.stringify({ v: 1, correlation_id: correlation, members: snapshot });
+        } catch (error) {
+            void error;
+            this.intentWriteLog(correlation, "unavailable", snapshot.length, "oversize");
+            return;
+        }
+        if (payload === "" || payload.length > INTENT_MAX_BYTES) {
+            this.intentWriteLog(correlation, "unavailable", snapshot.length, "oversize");
+            return;
+        }
+        this.intentCallToken += 1;
+        const token = this.intentCallToken;
+        const sentCount = snapshot.length;
+        try {
+            this.intentDeadlineCancel = this.env.scheduleOnce(INTENT_TIMEOUT_MS, () =>
+                this.onIntentWriteTimeout(token, correlation, sentCount),
+            );
+        } catch (error) {
+            void error;
+            this.intentDeadlineCancel = null;
+            // Diagnosed transport terminal without sending: the pending
+            // snapshot is preserved for the next settled update (no
+            // autonomous retry), matching the read path.
+            this.intentWriteLog(correlation, "unavailable", sentCount, "transport");
+            return;
+        }
+        this.intentPendingWrite = null;
+        this.intentBusy = true;
+        try {
+            this.env.callDbus(
+                PLAN_SERVICE,
+                PLAN_OBJECT,
+                PLAN_INTERFACE,
+                INTENT_WRITE_METHOD,
+                payload,
+                (reply) => this.onIntentWriteReply(reply, token, correlation, sentCount),
+            );
+        } catch (error) {
+            void error;
+            this.clearIntentDeadline();
+            this.intentBusy = false;
+            this.intentWriteLog(correlation, "unavailable", null, "transport");
+            // Deliver only already-queued settled updates (a synchronous
+            // setter may have coalesced a newer snapshot mid-call); never
+            // an autonomous retry of this failed snapshot.
+            this.pumpIntent();
+        }
+    }
+
+    // Store ACK terminal, logged distinctly from planned-applied: stored
+    // carries the count; rejected/unavailable carry the fixed reason and
+    // keep local intent for the next settled update. A newer coalesced
+    // snapshot always pumps next, so full snapshots never reorder.
+    private onIntentWriteReply(reply: unknown, token: number, correlation: string, sentCount: number): void {
+        if (!this.intentActive || token !== this.intentCallToken || !this.intentBusy) {
+            return;
+        }
+        this.clearIntentDeadline();
+        this.intentBusy = false;
+        if (typeof reply === "string" && reply.length <= INTENT_MAX_BYTES) {
+            try {
+                const parsed: unknown = JSON.parse(reply);
+                if (isRecord(parsed) && parsed["v"] === 1 && parsed["correlation_id"] === correlation) {
+                    const outcome = parsed["outcome"];
+                    if (outcome === "stored") {
+                        // The store ACK must echo the sent full snapshot
+                        // count exactly; anything else is malformed.
+                        if (parsed["stored"] !== sentCount) {
+                            this.intentWriteLog(correlation, "unavailable", null, "malformed");
+                            this.pumpIntent();
+                            return;
+                        }
+                        this.intentWriteLog(correlation, "stored", sentCount, "-");
+                        this.pumpIntent();
+                        return;
+                    }
+                    if (outcome === "rejected" || outcome === "unavailable") {
+                        this.intentWriteLog(correlation, outcome, null, sanitizeIntentReason(parsed["reason"]));
+                        this.pumpIntent();
+                        return;
+                    }
+                }
+            } catch (error) {
+                void error;
+            }
+        }
+        this.intentWriteLog(correlation, "unavailable", null, "malformed");
+        this.pumpIntent();
+    }
+
+    private onIntentWriteTimeout(token: number, correlation: string, _sentCount: number): void {
+        if (!this.intentActive || token !== this.intentCallToken || !this.intentBusy) {
+            return;
+        }
+        this.intentBusy = false;
+        this.intentWriteLog(correlation, "unavailable", null, "timeout");
+        this.pumpIntent();
     }
 
     // Evict fixed-size bookkeeping for one verified native removal by
@@ -5715,10 +6297,20 @@ export class PlanAdapter {
                         // then-current desktop: native assignment already
                         // homed it, so only mark canonical float tracking
                         // with no geometry, workspace, or planner admission.
+                        // Q3: the confirmed ordinary float is also settled
+                        // intent (no fixed record exists for it), recorded
+                        // only when the canonical setter actually landed so a
+                        // later restart keeps it. Sticky controls unchanged.
+                        let floated = typeof this.env.setFloating === "function";
                         try {
                             this.env.setFloating?.(echo.id, true);
                         } catch (error) {
                             void error;
+                            floated = false;
+                        }
+                        if (floated && this.intentActive) {
+                            this.intentMembers.add(echo.id);
+                            this.scheduleIntentWrite();
                         }
                     }
                     if (!echo.previousFloating) {
@@ -6140,23 +6732,22 @@ export class PlanAdapter {
                 return { intent: null, outcome: "uncertain", reason: "no-applied-evidence", terminal: "quiet" };
             }
         }
-        // Proven-departure cleanup: retires sticky/keep-above state for
-        // applied ids omitted from the complete observation.
+        // Scoped-omission retirement: drop per-domain applied evidence for
+        // applied ids omitted from this hidden observation, exactly like
+        // the applied-boundary per-domain prune below. Never a global
+        // removal: a hidden-to-hidden relocation (or minimize) omits here
+        // before the new domain homes the survivor, so only the
+        // ref-confirmed native close path may globally evict fixed
+        // provenance, intent membership, or float marks. Sticky, keep-above,
+        // and maximize maps are preserved for the moving survivor, matching
+        // the foreground omission path (which never cleans here).
         for (const [id, evidence] of [...this.appliedById]) {
             if (
                 evidence.output === freshSnapshot.domainOutput &&
                 evidence.workspace === freshSnapshot.domainWorkspace &&
                 !observedIds.has(id)
             ) {
-                this.maximizeAdmissionAttempts.delete(id);
-                this.keepAbovePrevious.delete(id);
-                this.stickyPreviousFloating.delete(id);
-                this.adoptedSticky.delete(id);
-                try {
-                    this.env.noteRemoved?.(id);
-                } catch (error) {
-                    void error;
-                }
+                this.appliedById.delete(id);
             }
         }
         const hiddenKey = this.domainKey(freshSnapshot);
@@ -6479,6 +7070,15 @@ export class PlanAdapter {
 
     private dispatch(intent: AutoIntent): void {
         if (!this.enabled || this.inFlight) {
+            return;
+        }
+        // Q3 bootstrap fence: no plan admission (and therefore no later
+        // retile-then-undo) before the single intent read settles. Dropped
+        // intents are lossless: the bootstrap terminal runs one catch-up
+        // resync over fresh observation. Explicit commands in the bounded
+        // window land here with their kind attributed.
+        if (this.intentActive && !this.intentReady) {
+            this.logToken(`${LOG_PREFIX}:intent-bootstrap-deferred kind=${intent.op}`);
             return;
         }
         // Floating workspaces skip geometry-producing dispatch. Releases bypass.
@@ -7068,6 +7668,11 @@ export class PlanAdapter {
         this.appliedScopeByDomain.clear();
         this.seenNonFullscreen.clear();
         this.heldInitialFullscreen.clear();
+        // Q3: settled intent membership is deliberately NOT cleared or
+        // re-read here. The store outlives planner restarts; recovery
+        // replays current eligible windows through the fresh session and
+        // hydrated floats keep observing floating, so no rehydration may
+        // wipe local intent.
         this.fixedClients.clear();
         this.reconcileAttempts = 0;
         this.backgroundAttempts.clear();
@@ -9004,11 +9609,14 @@ export class PlanAdapter {
                     this.adoptedSticky.delete(flightState.removed);
                     this.heldInitialFullscreen.delete(flightState.removed);
                     this.seenNonFullscreen.delete(flightState.removed);
-                    try {
-                        this.env.noteRemoved?.(flightState.removed);
-                    } catch (error) {
-                        void error;
-                    }
+                    // No global removal here: this boundary is currently
+                    // unreachable (no op:"remove" dispatch exists; removed
+                    // only rides toggle-float which never takes this
+                    // branch), and scoped absence must never globally evict
+                    // fixed provenance, intent membership, or float marks.
+                    // Genuine closes always arrive ref-confirmed through the
+                    // native windowRemoved signal path, which owns every
+                    // global clear.
                 }
             } else {
                 const scopeKey = this.domainKey(retainedBase);
@@ -9141,8 +9749,10 @@ export class PlanAdapter {
         // succeeded. Refused, stale, timed-out, or write-failed flights
         // return through failFlight or earlier exits with the stage
         // untouched, so the authoritative record never moves without
-        // application.
+        // application. Q3 reuses this exact boundary for the durable
+        // settled membership (explicit ordinary float/unfloat only).
         this.commitFixedStage(flightState.fixedStage);
+        this.updateSettledIntentFromFlight(flightState);
         this.diag(flightState.op, flightState.correlation, flightState.windowCount, "planned-applied");
         this.noteCrossDragApplied(flightState);
         // Marker satisfaction through actual application only: the first
