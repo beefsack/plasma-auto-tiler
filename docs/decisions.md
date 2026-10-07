@@ -271,6 +271,52 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   Hyprland, qtile, niri and PaperWM); a separate send-and-stay command is
   added (COSMIC Send/Move pair), binding chosen at implementation. The
   original eight split 3 follow / 5 stay by shipped default; all offer both.
+- User decision 2026-10-07 (reference default rule): where the reference
+  WMs do not show extremely strong agreement against COSMIC, COSMIC's
+  behavior stays our default. Where references meaningfully differ, the
+  alternative is offered as a setting; configurability may be deferred or
+  skipped when only one outlier differs or only the scrolling-column
+  (PaperWM-style) WMs differ.
+- User decision 2026-10-07 (R-FLT-05): sticky floats stay sticky across
+  owner restart on Windows too (KDE already does), delivered with the
+  R-RST-01 float-identity restart work; supersedes the 2026-10-03 "normal
+  float after restart is acceptable for now" note.
+- User decision 2026-10-07 (R-MAX-05): Windows keeps refusing the project
+  toggle on app-owned fullscreen without a preimage for now, despite 8/8
+  references exiting; a later spike explores retaining window state early
+  so exit needs no fullscreen-time guess (backlog Future).
+- User decision 2026-10-07 (R-MAX-07): Windows keeps classifying a
+  captionless full-monitor window as fullscreen (8/8 references tile it, but
+  Win32 has no fullscreen state and borderless games rely on this); KDE
+  stays flag-based. Deliberate platform difference, for now. Gaming
+  compatibility must be flawless.
+- User decision 2026-10-07 (R-MIN-01..03): keep minimum-aware allocation
+  plus B6 origin+minimum, no setting, despite 7/8 references ignoring
+  minima (they can crop clients; our hosts and apps hold minimum sizes).
+  Overlapping windows are an absolute last resort in an auto tiler.
+- User decision 2026-10-07 (R-DRAG-04): Esc keeps cancelling a drag on both
+  platforms (host KWin/Windows move convention; i3 also cancels) despite
+  7/8 references dropping at the pointer; a setting may be explored later.
+- User decision 2026-10-07 (R-GRP-03, V-GROUP-STACK): tabbed stacks leave
+  deferral and become the first item after the 0.1 release; closing the
+  active tab keeps the group and activates the next tab (COSMIC, Hyprland,
+  i3, sway). Until then, stacks stay refused.
+- User direction 2026-10-07 (R-DRAG-07): drag presentation follows the host
+  platform's native behavior where one exists, avoiding low-value,
+  high-maintenance custom rendering when there is no functional difference.
+  KDE Meta+drag keeps KWin's pointer-following frame; Windows title-bar drag
+  stays native. Windows Win+drag has no native counterpart, so its existing
+  stationary source plus moving preview stays (cheapest working form);
+  revisit only if delegating to the native move loop is nearly free. macOS
+  follows the same rule when it starts.
+- User decision 2026-10-07 (R-DRAG-08): a Meta/Win client drag focuses the
+  dragged window at press on both platforms (COSMIC and 6/8 references,
+  matching ordinary click focus). Windows changes from activate-on-drop;
+  KDE timing needs a live check.
+- User decision 2026-10-07 (R-MOV-03): keep the COSMIC same-orientation
+  wrap (R2c, `H[A,B*,C,D]` move right gives `H[A,H[B,C],D]`) as default and
+  make it configurable, with flat sibling swap (i3/sway) as the alternative
+  (implementation pending).
 - User decision 2026-10-07 (functional spec format): keep
   [the functional spec](spec/functional-spec.md) as a single file; revisit
   splitting if it grows much larger. Requirements are normative only where a

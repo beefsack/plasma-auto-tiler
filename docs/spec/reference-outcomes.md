@@ -3142,28 +3142,28 @@ Legend:
   intentional floats reset because the float store is session-local;
   native focus and host-max restore untraced)
 
-## Variant hooks (provisional, not commitments)
+## Variant hooks (selected status where decided; otherwise provisional)
 
 | Hook | Meaning | Status |
 |---|---|---|
 | V-INS-AXIS | New-window split axis: long-edge vs orientation-toggle vs alternate | Selected as user statement `D-dec-x` |
 | V-MOVE-PERP | Perpendicular move: COSMIC restructure vs no-op/swap | COSMIC R1 selected; foreign swap/no-op unselected (`D-dec-cos`) |
-| V-MOVE-NARY | 3+-child wrap vs flat insert; same-orientation nesting allowed | Ordered N-ary + R2b/R2c/R3 selected (`D-dec-cos`) |
-| V-WS-FOLLOW | Send follows focus vs leaves focus in source | `D-dec-cos` selects follow-on-verified-transfer; step-3 |
+| V-MOVE-NARY | 3+-child wrap vs flat insert; same-orientation nesting allowed | Ordered N-ary + R2b/R2c/R3 selected (`D-dec-cos`); user 2026-10-07: COSMIC wrap default, configurable flat sibling swap alternative (implementation pending) |
+| V-WS-FOLLOW | Send follows focus vs leaves focus in source | `D-dec-cos` selects follow-on-verified-transfer; step-3; user 2026-10-07: keep follow default, add separate send-and-stay (implementation pending; COSMIC Send/Move pair, binding at implementation) |
 | V-WS-SHELL-ACTIVATE | Shell selection of another workspace's window: switch workspace vs pull window | KDE native configured policy (default switch); Windows option unselected (`D-alt-tab`) |
 | V-WS-ANCHOR | Target anchor: remembered-leaf vs focus-history vs root; axis by long edge | Selected rule (`D-dec-x` + `D-place` synthetic proof) |
 | V-FLOAT-GEO | First-float geometry: centered 60% vs app frame vs tile share | `D-dec-ww` selects centered-60% first, retained after |
 | V-FLOAT-FOCUS | Separate tile/float directional layers vs cross-layer targets vs refusal | User 2026-10-05 selects COSMIC float/sticky top-left-axis search, existing project edge behavior; KDE offline delivered, Windows pending `D-float-nav` |
 | V-FLOAT-SNAP | Float directional move: half/quarter/maximize/transfer vs pixel move vs refusal | User 2026-10-05 selects COSMIC; KDE first half-snap delivered, later stateful transitions and Windows pending `D-float-nav` |
 | V-FLOAT-REFLOW | Float-removal survivor reflow: equalize vs ratio-preserve | Provisional, to discuss |
-| V-STICKY-SCOPE | Sticky scope: all-workspaces floating-only vs monitor-desktop | `D-ref` recommends Hyprland/COSMIC; ours selects all-ws float-only |
-| V-MAX-MODEL | Maximize: retained-slot overlay vs layout reflow vs no state | Selected: retained-slot overlay (`D-dec-ww` KDE + `D-dec-max`); [Q3](../decisions.md#cross-platform-behavior) includes born-maximized R-MAX-06, KDE [delivered offline](../changes/archive/kde-born-maximized-overlay.md) ([adapter](../../kwin/src/plan-adapter.ts)), live TBD; Windows delivery pending; R-MAX-03 scope open |
+| V-STICKY-SCOPE | Sticky scope: all-workspaces floating-only vs monitor-desktop | `D-ref` recommends Hyprland/COSMIC; ours selects all-ws float-only; user 2026-10-07: Windows sticky survives restart with R-RST-01 (implementation pending; KDE already retains sticky) |
+| V-MAX-MODEL | Maximize: retained-slot overlay vs layout reflow vs no state | Selected: retained-slot overlay (`D-dec-ww` KDE + `D-dec-max`); [Q3](../decisions.md#cross-platform-behavior) includes born-maximized R-MAX-06, KDE [delivered offline](../changes/archive/kde-born-maximized-overlay.md) ([adapter](../../kwin/src/plan-adapter.ts)), live TBD; Windows delivery pending; user 2026-10-07: Q3 also covers R-MAX-03 (stays maximized over reserved slot), both implementation pending |
 | V-FS-SLOT | In-place fullscreen: retain slot vs remove/reflow | Retained slot selected (`D-dec-ww`); born-fullscreen is a separate future row |
 | V-START-SEED | Startup non-fitting topology: centre-cut inference vs long-edge seed | Provisional long-edge seed, to discuss (`D-place`) |
-| V-START-MIN | Minimum-infeasible writes: origin+minimum vs skip vs float | B6 selected on both platforms; KDE [delivered offline](../changes/archive/kde-minimum-origin-placement.md), native journey TBD (`D-place`; [adapter](../../kwin/src/plan-adapter.ts) `overconstrainedEffective`) |
+| V-START-MIN | Minimum-infeasible writes: origin+minimum vs skip vs float | B6 selected on both platforms, no setting (user 2026-10-07); KDE [delivered offline](../changes/archive/kde-minimum-origin-placement.md), native journey TBD (`D-place`; [adapter](../../kwin/src/plan-adapter.ts) `overconstrainedEffective`) |
 | V-CLOSE-FOCUS | Removal focus: source-MRU top vs spatial neighbor vs target history | `D-dec-cos` selects source-MRU top |
-| V-GROUP-STACK | Tabbed stacks: supported vs fail-closed refuse | Deferred; refuse closed (`D-dec-cos`) |
-| V-R4-DIR | Exhausted horizontal move: cross-output vs no-op vs workspace cycle | `D-dec-cos` selects cross-output R4; Up/Down excluded |
+| V-GROUP-STACK | Tabbed stacks: supported vs fail-closed refuse | User 2026-10-07: tabs first after 0.1; close active tab keeps group, activates next (COSMIC/Hyprland/i3/sway); until then refuse closed (`D-dec-cos`) |
+| V-R4-DIR | Exhausted directional move: cross-output vs no-op vs workspace cycle | `D-dec-cos` selects horizontal cross-output R4; user 2026-10-07: also accept vertical cross-output once local movement exhausted (R-MOV-08; implementation pending, supersedes Up/Down exclusion) |
 | V-DRAG-ZONE | Drop zones: edge/interior/stack mapping; centre-stack refused | `D-dec-cos` + `D-dec-nest` select split-only |
 
 ## Coverage accounting

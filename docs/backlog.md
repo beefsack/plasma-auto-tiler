@@ -237,10 +237,13 @@ decisions of 2026-09-24 are under
   window to output; R-MAX-09 carry fullscreen across workspace send on
   Windows (observe KDE first); R-SPC-04 float fixed-size windows on
   admission; R-RST-01 keep intentional floats floating across owner
-  restart; R-RSZ-01 Windows keyboard resize (overlaps Windows parity (d));
+  restart, including Windows sticky floats staying sticky (R-FLT-05, user
+  2026-10-07); R-RSZ-01 Windows keyboard resize (overlaps Windows parity (d));
   R-WS-01 separate send-and-stay command beside the existing follow send
   (user 2026-10-07; COSMIC Send/Move pair; binding chosen at
-  implementation).
+  implementation); R-MOV-03 setting: COSMIC wrap default, flat sibling
+  swap alternative (user 2026-10-07); R-DRAG-08 Windows Win+drag activates
+  the mover at press instead of on drop (user 2026-10-07).
   Shortcuts for new verbs need choosing when each starts.
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
@@ -458,6 +461,15 @@ decisions of 2026-09-24 are under
 - P3 | Post-MVP tiling profiles | Re-expose `shortcutProfile` with distinct
   catalogs and live switching when adding new tiling types.
   [change](changes/shortcuts.md)
+- P3 | Tabbed stacks (next after the 0.1 release) | User 2026-10-07: tabs are
+  a feature of the most important reference tilers (COSMIC, Hyprland, i3,
+  sway), so V-GROUP-STACK leaves deferral and is scheduled as the first
+  item after 0.1. User sketch: size stacked windows slightly shorter and
+  draw the tab strip with machinery like the group underlay. Matrix
+  inputs: R-INS-02, R-GRP-01..03 (closing the active tab keeps the group
+  and activates the next tab, 4/4 references), R-DRAG-01, R-COL-06. Risk:
+  mouse interaction with tabs across Linux, Windows and macOS may be
+  complex; scope keyboard-first if so.
 
 ## Future
 
@@ -465,12 +477,14 @@ Unprioritised ideas; not scheduled.
 
 - Windows app-owned fullscreen UX spike: options for exiting/toggling
   fullscreen an application entered itself (user 2026-10-03, later).
+  User 2026-10-07 (R-MAX-05, references 8/8 exit without refusal): keep
+  the refusal until the spike; explore capturing/retaining window style
+  and frame state early (at admission or before fullscreen) so an exit
+  can restore without guessing at fullscreen time.
 - Windows alternate Game Bar shortcut experiment: keyboard and mouse players
   need a shortcut that opens Game Bar over a fullscreen game (for example
   Xbox voice chat); Start menu and controller access are not enough (user
   2026-10-03, after parity and correctness work).
-- Windows sticky restart analogue improvement: current restart turns sticky
-  windows into normal floats (user 2026-10-03, acceptable for now).
 
 - Uninstall revert of host settings: reset our overridden KDE settings to
   defaults on uninstall. Parked by the user (2026-09-29) pending research,
@@ -494,6 +508,9 @@ reference-WM checks, which test other compositors.
 
 ### Single-output laptop
 
+- R-DRAG-08 on KDE: with A focused, Meta+left press on unfocused tiled B,
+  move, release at A's edge; record whether B is focused at press, during
+  the hold, or only after drop (decision: focus at press).
 - KDE Q3 born-maximized overlay (`9b612be`) and B6 origin+minimum
   (`cf6ab31`): steps in
   [Q3 record](changes/archive/kde-born-maximized-overlay.md) and
@@ -706,9 +723,17 @@ reference-WM checks, which test other compositors.
 - Reference consensus differences (functional specification line above):
   the 12 new 2026-10-07 recommendations were accepted (see "Adopt
   reference-consensus additions"); R-WS-01 decided 2026-10-07 (keep
-  follow default, add send-and-stay); the remaining Table A rows (R-MOV-03, R-FLT-05/06/09, R-MAX-05/07, R-MIN-01..03, R-DRAG-04, R-GRP-03)
-  and the R-DRAG-07/08 splits are being decided one by one in
-  conversation.
+  follow default, add send-and-stay) and R-MOV-03 (COSMIC wrap default,
+  configurable); rule: COSMIC stays default unless references agree
+  extremely strongly against it, with the alternative configurable unless
+  only one outlier or only scrolling WMs differ; R-FLT-05 folded into
+  R-RST-01; R-MAX-05 kept for a Future spike; R-MAX-07 Windows inference
+  kept (gaming); R-MIN-01..03 B6 kept (overlap is a last resort); the
+  R-DRAG-04 Esc cancel kept (setting maybe later); R-GRP-03 tabs scheduled
+  after 0.1; R-DRAG-07 host-native drag presentation (Windows Win+drag
+  stays stationary); R-DRAG-08 focus at press. All Table A rows decided
+  (R-FLT-06 waits on the user's COSMIC B9 check; R-FLT-09 is already
+  planned Windows parity).
 - Live-test environments for the 508-cell matrix queue
   ([proposal](research/live-test-vms/proposal.md), revised 2026-10-07 at
   the user's request): one shared per-WM definition (packages with
@@ -720,9 +745,12 @@ reference-WM checks, which test other compositors.
   prefers A, switching to B when needed. Reasoned estimates, unmeasured:
   A first slice 1.5-3 GiB store growth (all WMs ~6-15 GiB); B adds ~1-3
   GiB plus sparse 4-8 GiB disks. Nested launches unverified at runtime.
-  Recommended first slice i3/sway/bspwm. Needs: confirm slice and budget,
-  then authorise implementation (not started; user 2026-10-07: document
-  only).
+  First slice (user 2026-10-07): i3, sway, bspwm plus COSMIC and Hyprland
+  (very important to the project), nested mode A first, VM mode B for
+  multi-output/hotplug rows. Queue: i3 13, sway 18, bspwm 19, COSMIC 29,
+  Hyprland 37 cells. COSMIC/Hyprland nested runs are GPU-heavier and their
+  nested multi-output is unestablished. Not started (document only);
+  implementation needs a go-ahead.
 - Review of 2026-10-03/04 autonomous provisional choices (all marked
   "Provisional, to discuss" in [decisions](decisions.md)): mise rolling
   versions, Windows settings/tray/presets, drag producers,

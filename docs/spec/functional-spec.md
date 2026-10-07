@@ -1,6 +1,7 @@
 # Cross-Platform Functional Specification
 
-Status: Provisional, to discuss. First concise cut; single file by design.
+Status: Mixed NORMATIVE / OPEN / PROVISIONAL requirements. Single file by
+user decision 2026-10-07; revisit splitting only if it grows much larger.
 
 Scope: NORMATIVE only for user-selected recorded decisions in
 [decisions.md](../decisions.md) (row-level Source anchor) or explicit dated
@@ -11,9 +12,19 @@ describes observed behavior without asserting it as required, plus the TBD
 decision. Reference outcomes in [reference-outcomes.md](reference-outcomes.md)
 and [reference-outcomes/](reference-outcomes/) are evidence only. Consensus
 analysis in [reference-wm-consensus.md](../research/reference-wm-consensus.md)
-selects nothing (the R-WS-01 row reflects the recorded 2026-10-07 user
-decision). Table A predicates each get an explicit OPEN row
-(`Table A R-xxx`), even where current selected behavior stays normative.
+selects nothing. Dated user acceptance in [backlog.md](../backlog.md)
+("Adopt reference-consensus additions", 2026-10-07) also selects requirements.
+Table A predicate rows cite the selection where resolved; R-FLT-06 stays OPEN
+pending the user's COSMIC check.
+
+General rules ([decisions](../decisions.md#cross-platform-behavior), user
+2026-10-07):
+- Reference default: COSMIC stays the default unless reference WMs show
+  extremely strong agreement against it; explicit recorded exceptions stand.
+- Configurability: where references meaningfully differ, offer the alternative
+  as a setting. Configurability may be deferred or skipped for a single outlier
+  or differences confined to scrolling-column (PaperWM-style) WMs. These rules
+  do not turn unselected outcomes into normative requirements.
 
 Counting: each `REQ-*` row counts once under Status. `gap` marks a selected
 requirement currently unmet (cited); OPEN possibility is never a gap. macOS:
@@ -40,7 +51,7 @@ Hooks (real matrix names; PROVISIONAL indexing, not chosen configuration): V-INS
 |---|---|---|---|---|---|---|---|
 | REQ-INS-01 | [R-INS-01](reference-outcomes/insertion.md#r-ins-01-ordinary-third-window-admission) ordinary third-window admission | Long-edge split at focused leaf (tall splits vertically, wide horizontally), incl. send arrivals | current: long-edge | current: long-edge | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) user statement 2026-10-03 |
 | REQ-INS-01b | [R-INS-01](reference-outcomes/insertion.md#r-ins-01-ordinary-third-window-admission) newcomer position | current: order after/before focus TBD both | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U R-INS-01 position |
-| REQ-INS-02 | [R-INS-02](reference-outcomes/insertion.md#r-ins-02-stack-admission) stack admission | No tab/stack carrier; ordinary admission only | current: ordinary admission | current: ordinary admission | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) tabs/stacks unselected |
+| REQ-INS-02 | [R-INS-02](reference-outcomes/insertion.md#r-ins-02-stack-admission) stack admission | Until tabbed stacks ship (first item after 0.1), ordinary admission only; stack admission detail remains unselected | current: ordinary admission | current: ordinary admission | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-GRP-03 / V-GROUP-STACK 2026-10-07 |
 | REQ-INS-03 | [R-INS-03](reference-outcomes/insertion.md#r-ins-03-first-admission-on-an-empty-workspace) first admission on empty workspace | current: single leaf full work area, newcomer desired focus; native activation TBD | current: TBD activation | current: TBD activation | behavior OPEN; implementation absent | OPEN | Table B pending explicit; native TBD |
 | REQ-INS-04 | [R-INS-04](reference-outcomes/insertion.md#r-ins-04-chained-admission-with-a-fixed-pointer) chained admission | current: legs 2-3 topology/focus/geometry TBD | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | no selection |
 | REQ-INS-05 | [R-INS-05](reference-outcomes/insertion.md#r-ins-05-admission-while-an-ordinary-float-has-focus) admission with float focused | current: float holds no tile leaf; fallback TBD | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | no selection |
@@ -64,19 +75,20 @@ Hooks: none recorded; focus wrap remains OPEN.
 <a id="move"></a>
 ## 3. Move ([R-MOV](reference-outcomes/move.md#move-reference-outcomes))
 
-Hooks: V-MOVE-NARY, V-MOVE-PERP, V-R4-DIR. PROVISIONAL indexing, not chosen configuration.
+Hooks: V-MOVE-NARY selects configurable wrap; V-R4-DIR adds vertical fallback
+(implementation pending). V-MOVE-PERP retains the selected COSMIC behavior.
 
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
 | REQ-MOV-01 | [R-MOV-01](reference-outcomes/move.md#r-mov-01-perpendicular-move-of-a-flat-triple) perpendicular move of flat triple | current: behavior TBD against implementations | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | no selection |
 | REQ-MOV-02 | [R-MOV-02](reference-outcomes/move.md#r-mov-02-in-group-vertical-swap) in-group vertical swap | current: in-place swap, focus follows mover | current: swap | current: swap | behavior OPEN; implementation absent | OPEN | Table B pending explicit |
-| REQ-MOV-03 | [R-MOV-03](reference-outcomes/move.md#r-mov-03-same-row-carry-to-the-right) same-row carry right | current: Engine wrap; flat-swap consensus unresolved | current: wrap | current: wrap | behavior OPEN; implementation absent | OPEN (Table A R-MOV-03) | Table A R-MOV-03 |
+| REQ-MOV-03 | [R-MOV-03](reference-outcomes/move.md#r-mov-03-same-row-carry-to-the-right) same-row carry right | COSMIC same-orientation wrap is default: `H[A,B*,C,D]` right gives `H[A,H[B,C],D]`; offer flat sibling swap (i3/sway) as a setting | gap: wrap works; setting implementation pending | gap: wrap works; setting implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-MOV-03 2026-10-07 |
 | REQ-MOV-04 | [R-MOV-04](reference-outcomes/move.md#r-mov-04-same-axis-ancestor-escape) same-axis ancestor escape | current: escape/retain TBD | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | no selection |
 | REQ-MOV-05 | [R-MOV-05](reference-outcomes/move.md#r-mov-05-edge-move-with-no-left-neighbor) edge move, no left neighbor | current: edge no-op | current: no-op | current: no-op | behavior OPEN; implementation absent | OPEN | Table B pending explicit |
 | REQ-MOV-06 | [R-MOV-06](reference-outcomes/move.md#r-mov-06-move-into-a-nested-perpendicular-neighbor-with-remembered-child) move into nested neighbor | current: midpoint insert, exact index TBD | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | no selection |
 | REQ-MOV-07 | [R-MOV-07](reference-outcomes/move.md#r-mov-07-orthogonal-escape-across-a-perpendicular-parent) orthogonal escape | current: wrap outcome, no strong consensus | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | no selection |
-| REQ-MOV-08 | [R-MOV-08](reference-outcomes/move.md#r-mov-08-exhausted-vertical-move-across-stacked-outputs) exhausted vertical move | Up/Down excluded from cross-output; stays local | current: stays local | current: stays local | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) USER step-3 2026-09-25; R4 horizontal-only |
-| REQ-MOV-08b | [R-MOV-08](reference-outcomes/move.md#r-mov-08-exhausted-vertical-move-across-stacked-outputs) cross-after-exhaustion | Pending: cross to output above after local exhaustion | current: stays local | current: stays local | behavior OPEN; implementation absent | OPEN (Table A R-MOV-08) | Table A R-MOV-08 |
+| REQ-MOV-08 | [R-MOV-08](reference-outcomes/move.md#r-mov-08-exhausted-vertical-move-across-stacked-outputs) exhausted vertical move | Vertical move crosses to the adjacent output once local movement is exhausted; supersedes Up/Down exclusion from R4 | gap: stays local; implementation pending | gap: stays local; implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Adopt reference-consensus additions, USER 2026-10-07 |
+| REQ-MOV-08b | [R-MOV-08](reference-outcomes/move.md#r-mov-08-exhausted-vertical-move-across-stacked-outputs) cross-after-exhaustion | Cross to output above after local exhaustion (REQ-MOV-08) | gap: stays local; implementation pending | gap: stays local; implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-MOV-08 accepted 2026-10-07 |
 
 <a id="resize"></a>
 ## 4. Resize ([R-RSZ](reference-outcomes/resize.md#resize-reference-outcomes))
@@ -84,7 +96,7 @@ Hooks: V-MOVE-NARY, V-MOVE-PERP, V-R4-DIR. PROVISIONAL indexing, not chosen conf
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
 | REQ-RSZ-01 | [R-RSZ-01](reference-outcomes/resize.md#r-rsz-01-keyboard-growshrink-of-a-tiled-pair) keyboard grow/shrink | Explicit pixel-step grow/shrink path exists | current: pixel path | gap: no keyboard trigger ([settings.rs](../../crates/tiler-windows/src/settings.rs):769-777 `implemented:false`; [backlog](../backlog.md) P1 parity) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) `cosmic_v1` physical-pixel resize, auth 2026-09-09 |
-| REQ-RSZ-01b | [R-RSZ-01](reference-outcomes/resize.md#r-rsz-01-keyboard-growshrink-of-a-tiled-pair) Windows trigger | Pending Table A review of Windows keyboard-resize trigger; existing selected resize target remains REQ-RSZ-01 | n/a | current: no trigger | behavior OPEN; implementation absent | OPEN (Table A R-RSZ-01) | Table A R-RSZ-01 |
+| REQ-RSZ-01b | [R-RSZ-01](reference-outcomes/resize.md#r-rsz-01-keyboard-growshrink-of-a-tiled-pair) Windows trigger | Windows provides keyboard grow/shrink through the shared Engine pixel-step path; implementation pending | n/a (pixel path available) | gap: no keyboard trigger (REQ-RSZ-01) | applicability OPEN | NORMATIVE | [backlog](../backlog.md) Table A R-RSZ-01 Windows accepted 2026-10-07 |
 | REQ-RSZ-02 | [R-RSZ-02](reference-outcomes/resize.md#r-rsz-02-outward-resize-at-the-work-area-edge) outward edge | current: outward no-op TBD | current: TBD | current: no trigger | behavior OPEN; implementation absent | OPEN | Table W no-op; no selection |
 | REQ-RSZ-03 | [R-RSZ-03](reference-outcomes/resize.md#r-rsz-03-nested-resize-scope-nearest-split-vs-ancestor) nested scope | current: nearest-split scope TBD | current: TBD | current: no trigger | behavior OPEN; implementation absent | OPEN | Table W nearest; no selection |
 | REQ-RSZ-04 | [R-RSZ-04](reference-outcomes/resize.md#r-rsz-04-equalizebalance-once) equalize/balance | No equalize verb in any Engine/adapter layer | n/a | n/a | applicability OPEN | OPEN | Table C; no selection |
@@ -94,20 +106,22 @@ Hooks: V-MOVE-NARY, V-MOVE-PERP, V-R4-DIR. PROVISIONAL indexing, not chosen conf
 
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
-| REQ-LAY-01 | [R-LAY-01](reference-outcomes/layout-commands.md#r-lay-01-toggle-parent-split-orientation) toggle parent orientation | No orientation verb (pending: add parent-axis toggle) | n/a | n/a | applicability OPEN | OPEN (Table A R-LAY-01) | Table A R-LAY-01 |
+| REQ-LAY-01 | [R-LAY-01](reference-outcomes/layout-commands.md#r-lay-01-toggle-parent-split-orientation) toggle parent orientation | Toggle the parent split axis, preserving children; implementation pending | gap: no orientation verb | gap: no orientation verb | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-LAY-01 accepted 2026-10-07 |
 | REQ-LAY-02 | [R-LAY-02](reference-outcomes/layout-commands.md#r-lay-02-rotate-90-degrees-mirror-leftright-separate-fresh-legs) rotate/mirror | No rotate/mirror verb | n/a | n/a | applicability OPEN | OPEN | no selection |
 | REQ-LAY-03 | [R-LAY-03](reference-outcomes/layout-commands.md#r-lay-03-promote-b-to-master) promote B to master | No master verb or state | n/a | n/a | applicability OPEN | OPEN | no selection |
-| REQ-LAY-04 | [R-LAY-04](reference-outcomes/layout-commands.md#r-lay-04-select-a-native-alternative-layout-on-ws2-return-to-ws1) select native layout | No layout-select verb (pending: workspace-local selection) | n/a | n/a | applicability OPEN | OPEN (Table A R-LAY-04) | Table A R-LAY-04 |
+| REQ-LAY-04 | [R-LAY-04](reference-outcomes/layout-commands.md#r-lay-04-select-a-native-alternative-layout-on-ws2-return-to-ws1) select native layout | Layout selection is workspace-local, preserving order; implementation pending (layout choices unselected) | gap: no layout-select verb | gap: no layout-select verb | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-LAY-04 accepted 2026-10-07 |
 
 <a id="workspaces"></a>
 ## 6. Workspaces ([R-WS](reference-outcomes/workspaces.md#workspace-send--follow--return-reference-outcomes))
 
-Hooks: V-WS-FOLLOW, V-WS-ANCHOR, V-WS-TILING, V-WS-SHELL-ACTIVATE. PROVISIONAL indexing, not chosen configuration.
+Hooks: V-WS-FOLLOW selects follow by default plus separate send-and-stay
+(implementation pending); V-WS-ANCHOR and V-WS-TILING retain selected rules.
+V-WS-SHELL-ACTIVATE remains OPEN on Windows.
 
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
 | REQ-WS-01 | [R-WS-01](reference-outcomes/workspaces.md#r-ws-01-send-to-another-workspace) send to another workspace | Send moves focused tiled window, source collapses, follow on verified transfer | current: follow | current: follow | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) approved 2026-09-20 + USER step-3 2026-09-25 |
-| REQ-WS-01b | [R-WS-01](reference-outcomes/workspaces.md#r-ws-01-send-to-another-workspace) send-and-stay command | Separate send-and-stay command alongside follow-by-default send; binding chosen at implementation | current: follow only (send-and-stay gap) | current: follow only (send-and-stay gap) | same target; implementation gap (adapter absent) | NORMATIVE | USER decision 2026-10-07 |
+| REQ-WS-01b | [R-WS-01](reference-outcomes/workspaces.md#r-ws-01-send-to-another-workspace) send-and-stay command | Separate send-and-stay command alongside follow-by-default send; binding chosen at implementation | gap: follow only; implementation pending | gap: follow only; implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-WS-01 USER 2026-10-07 |
 | REQ-WS-02 | [R-WS-02](reference-outcomes/workspaces.md#r-ws-02-send-back-and-return-anchor) send back, return anchor | Return lands at remembered A via validated last-active leaf | current: remembered A | current: remembered A | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) approved 2026-09-20 |
 | REQ-WS-02b | [R-WS-02](reference-outcomes/workspaces.md#r-ws-02-send-back-and-return-anchor) after-order | Pending: exact after-order of B | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U R-WS-02 after |
 | REQ-WS-03 | [R-WS-03](reference-outcomes/workspaces.md#r-ws-03-trailing-empty-shortcut) trailing-empty shortcut | Reuse trailing empty before creating (`Meta+0`/`Meta+Shift+0`) | current: reuse | current: reuse ([decisions](../decisions.md#windows-port) 2026-10-02) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) USER step-3 2026-09-25 |
@@ -115,13 +129,13 @@ Hooks: V-WS-FOLLOW, V-WS-ANCHOR, V-WS-TILING, V-WS-SHELL-ACTIVATE. PROVISIONAL i
 | REQ-WS-05 | [R-WS-05](reference-outcomes/workspaces.md#r-ws-05-floating-transfer) floating transfer | current: floated roundtrip untested | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U R-WS-05 |
 | REQ-WS-06 | [R-WS-06](reference-outcomes/workspaces.md#r-ws-06-send-to-a-floating-workspace) send to a floating workspace | Membership-only boundary send, only tiled side reflows; sticky movers refuse; intentional floats ineligible | current: boundary send | current: boundary send (synthetic Paint proof) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#windows-workspace-tiling-mode) 2026-10-04 |
 | REQ-WS-07 | [R-WS-07](reference-outcomes/workspaces.md#r-ws-07-shell-switcher-listing) shell switcher listing | Windows SW_HIDE omission observed; listing/activation policy undecided | current: shell-driven (KDE TabBox policy) | current: SW_HIDE omission observed | behavior OPEN; implementation absent | OPEN | Table U R-WS-07; no design selected (research: [alt-tab note](../research/windows-port/alt-tab-hidden-workspaces.md)) |
-| REQ-WS-08 | [R-WS-08](reference-outcomes/workspaces.md#r-ws-08-back-and-forth-workspace-twice) previous-view toggle | No history verb (pending: add toggle) | n/a | n/a | applicability OPEN | OPEN (Table A R-WS-08) | Table A R-WS-08 |
+| REQ-WS-08 | [R-WS-08](reference-outcomes/workspaces.md#r-ws-08-back-and-forth-workspace-twice) previous-view toggle | Toggle to the previously viewed workspace; implementation pending | gap: no history verb | gap: no history verb | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-WS-08 accepted 2026-10-07 |
 | REQ-WS-09 | [R-WS-09](reference-outcomes/workspaces.md#r-ws-09-select-ws2-select-ws1-return-focus-and-viewport) select WS2 / select WS1 | current: select WS2 then select WS1 with no sends; return-focus detail TBD (current KDE shell-driven TBD; current Windows remembered last_focus) | current: shell-driven TBD | current: remembered last_focus | behavior OPEN; implementation absent | OPEN | Table U R-WS-09; source matrix only (verified-follow stays normative under REQ-WS-01/02) |
 | REQ-WS-10 | [R-WS-10](reference-outcomes/workspaces.md#r-ws-10-send-b-away-empty-middle-retained-vs-removed) empty middle retained/removed | current: KDE owner-specific (Plasma owns add/remove); Windows retained (no removal path) | current: owner-specific | current: retained | behavior OPEN; implementation absent | OPEN | Table C; no selection |
-| REQ-WS-11 | [R-WS-11](reference-outcomes/workspaces.md#r-ws-11-next-workspace-previous-workspace) next/previous workspace | No relative-switch verb (pending: add, edge-wrap leg) | n/a | n/a | applicability OPEN | OPEN (Table A R-WS-11) | Table A R-WS-11 |
-| REQ-WS-12 | [R-WS-12](reference-outcomes/workspaces.md#r-ws-12-move-whole-ws2-to-r) move whole WS2 | No whole-workspace reassignment verb (pending: add) | n/a | n/a | applicability OPEN | OPEN (Table A R-WS-12) | Table A R-WS-12 |
+| REQ-WS-11 | [R-WS-11](reference-outcomes/workspaces.md#r-ws-11-next-workspace-previous-workspace) next/previous workspace | Next/previous workspace switch wraps at inventory ends; implementation pending | gap: no relative-switch verb | gap: no relative-switch verb | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-WS-11 accepted 2026-10-07 |
+| REQ-WS-12 | [R-WS-12](reference-outcomes/workspaces.md#r-ws-12-move-whole-ws2-to-r) move whole WS2 | Move a whole workspace to another output; implementation pending (destination/focus detail TBD) | gap: no whole-workspace verb | gap: no whole-workspace verb | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-WS-12 accepted 2026-10-07 |
 | REQ-WS-13 | [R-WS-13](reference-outcomes/workspaces.md#r-ws-13-select-absent-ws9) select absent WS9 | Select existing only, no creation; KDE shell-driven, Windows refuses unknown target | current: shell-driven | current: refuses | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#windows-port) existing-only 2026-10-02 |
-| REQ-WS-14 | [R-WS-14](reference-outcomes/workspaces.md#r-ws-14-send-b-to-next-fresh-run-send-b-to-previous) relative send | No relative-send verb (pending: add) | n/a | n/a | applicability OPEN | OPEN (Table A R-WS-14) | Table A R-WS-14 |
+| REQ-WS-14 | [R-WS-14](reference-outcomes/workspaces.md#r-ws-14-send-b-to-next-fresh-run-send-b-to-previous) relative send | Send a window to the next/previous workspace; implementation pending | gap: no relative-send verb | gap: no relative-send verb | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-WS-14 accepted 2026-10-07 |
 
 Note: Windows global-unique/shared mappings await runtime implementation
 ([decisions](../decisions.md#windows-port) provision 2026-10-04;
@@ -135,16 +149,16 @@ Hooks: V-FLOAT-FOCUS, V-FLOAT-SNAP, V-FLOAT-GEO, V-FLOAT-REFLOW, V-STICKY-SCOPE.
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
 | REQ-FLT-01 | [R-FLT-01](reference-outcomes/floating.md#r-flt-01-toggle-float-then-unfloat) toggle float then unfloat | Unfloat is fresh admission (new-window rule, no old slot); first float centered 60% only as fallback, previously floated retains placement, exact live-frame carried on unfloat | current: fresh admission | current: fresh admission (parity 2026-10-03) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) option A 2026-09-28 + retained placement [decisions](../decisions.md#window-and-workspace-behavior) lines 1197-1204; [decisions](../decisions.md#windows-port) parity 5 |
-| REQ-FLT-02 | [R-FLT-02](reference-outcomes/floating.md#r-flt-02-sticky-across-a-workspace-switch) sticky across switch | Intentional float session-local outside tree; sticky via all-desktops; exact-toggle focus retention | current: sticky float | current: sticky float (parity 2026-10-03) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) 2026-09-21 adoption, option A 2026-09-25, focus retention |
+| REQ-FLT-02 | [R-FLT-02](reference-outcomes/floating.md#r-flt-02-sticky-across-a-workspace-switch) sticky across switch | Intentional float outside tree; sticky via all-desktops; exact-toggle focus retention; restart identity under REQ-RST-01b / REQ-FLT-05 | current: sticky float | current: sticky float (parity 2026-10-03) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) 2026-09-21 adoption, option A 2026-09-25, focus retention; [restart decision](../decisions.md#cross-platform-behavior) 2026-10-07 |
 | REQ-FLT-03 | [R-FLT-03](reference-outcomes/floating.md#r-flt-03-float-out-survivor-widths) float-out survivor widths | current: removal reflow TBD | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table W; no selection |
 | REQ-FLT-04 | [R-FLT-04](reference-outcomes/floating.md#r-flt-04-workspace-floating-toggle) workspace floating toggle | Per-workspace tiled/floating flag; floating stops domain tiling; retile releases domain without writes then fresh-adopts | current: toggle | current: toggle (2026-10-04) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#windows-workspace-tiling-mode) KDE parity 2026-10-04 |
-| REQ-FLT-05 | [R-FLT-05](reference-outcomes/floating.md#r-flt-05-restart-with-a-sticky-float) restart with sticky float | Pending: restart retains sticky visibility (thin 3/3ev); native journey TBD | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN (Table A R-FLT-05) | Table A R-FLT-05 |
+| REQ-FLT-05 | [R-FLT-05](reference-outcomes/floating.md#r-flt-05-restart-with-a-sticky-float) restart with sticky float | Sticky floats stay sticky across owner restart, including Windows; deliver with R-RST-01 | current: sticky survives; native journey TBD | gap: becomes ordinary float; implementation pending with R-RST-01 | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-FLT-05 2026-10-07 |
 | REQ-FLT-06 | [R-FLT-06](reference-outcomes/floating.md#r-flt-06-float-toggle-over-a-maximized-window) float toggle over maximized | Provisionally unfloats beneath maximize and stays maximized; KDE dispatches (settled result unverified); Windows keeps refusal | current: dispatched, unverified | current: refuses `float-refused-maximize` | behavior OPEN; implementation absent | PROVISIONAL | [decisions](../decisions.md#cross-platform-behavior) B9 2026-10-05 |
 | REQ-FLT-06b | [R-FLT-06](reference-outcomes/floating.md#r-flt-06-float-toggle-over-a-maximized-window) no-refusal direction | Pending: Windows drops refusal after user COSMIC live check (retain vs unmaximize) | n/a | current: refuses | behavior OPEN; implementation absent | OPEN (Table A R-FLT-06) | Table A R-FLT-06 refusal |
 | REQ-FLT-07 | [R-FLT-07](reference-outcomes/floating.md#r-flt-07-tile-origin-focus-over-floats) tile-origin focus over floats | Tile-origin focus lands on tile A; floats never targets | current: tile A | current: tile A | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) float-nav 2026-10-05 |
 | REQ-FLT-08 | [R-FLT-08](reference-outcomes/floating.md#r-flt-08-float-origin-focus-miss) float-origin miss | Float-origin miss retains F (KDE delivered offline, live TBD); cross-platform consistency selected, Windows pending | current: retains | gap: subject refusal ([backlog](../backlog.md) P1 parity (a) lines 197-209; [decisions](../decisions.md#window-and-workspace-behavior) 2026-10-05 lines 1242-1245) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) float-nav 2026-10-05 |
 | REQ-FLT-09 | [R-FLT-09](reference-outcomes/floating.md#r-flt-09-float-origin-focus-toward-a-farther-float) focus toward farther float | Float-origin focus selects far float G by top-left axis, sticky first (KDE offline, live TBD); cross-platform consistency selected, Windows pending | current: selects G | gap: subject refusal ([backlog](../backlog.md) P1 parity (a) lines 197-209) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) float-nav 2026-10-05 |
-| REQ-FLT-09b | [R-FLT-09](reference-outcomes/floating.md#r-flt-09-float-origin-focus-toward-a-farther-float) consensus review | Pending Table A review of float-origin focus; selected parity target remains REQ-FLT-09 | current: selects G | current: refuses | behavior OPEN; implementation absent | OPEN (Table A R-FLT-09) | Table A R-FLT-09 |
+| REQ-FLT-09b | [R-FLT-09](reference-outcomes/floating.md#r-flt-09-float-origin-focus-toward-a-farther-float) consensus review | Retain selected COSMIC float-origin focus and Windows parity target (REQ-FLT-09) | current: selects G | gap: subject refusal; Windows parity pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) float-nav 2026-10-05; [reference default rule](../decisions.md#cross-platform-behavior) 2026-10-07 |
 | REQ-FLT-10 | [R-FLT-10](reference-outcomes/floating.md#r-flt-10-semantic-float-move) semantic float move | Meta+Shift+arrow snaps float to work-area half (inner-gap formula), stays floating/focused (KDE offline, live TBD); cross-platform consistency selected, Windows pending | current: half-snap | gap: `move-refused-floating` ([backlog](../backlog.md) P1 parity (a) lines 197-209) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) float-nav 2026-10-05 |
 | REQ-FLT-11 | [R-FLT-11](reference-outcomes/floating.md#r-flt-11-second-float-move-and-snap-state) second move, snap state | Stateless halves only; quarter/maximize/outward-transfer deferred (same deferred-transitions decision as backlog P1 parity) | current: stateless | gap: Windows deferred ([backlog](../backlog.md) P1 parity (a) lines 197-209) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) float-nav 2026-10-05 deferral |
 | REQ-FLT-12 | [R-FLT-12](reference-outcomes/floating.md#r-flt-12-raise-and-lower-overlapping-floats) raise/lower floats | current: raise path and order TBD both; no lower path | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U; no selection |
@@ -154,22 +168,25 @@ Hooks: V-FLOAT-FOCUS, V-FLOAT-SNAP, V-FLOAT-GEO, V-FLOAT-REFLOW, V-STICKY-SCOPE.
 <a id="maximize"></a>
 ## 8. Maximize and fullscreen ([R-MAX](reference-outcomes/maximize-fullscreen.md#maximise--fullscreen-reference-outcomes))
 
-Hooks: V-MAX-MODEL selects retained-slot overlay, including Q3 born-maximized admission (KDE delivered offline, live TBD). V-FS-SLOT retains the in-place fullscreen slot; born-fullscreen is a separate scenario.
+Hooks: V-MAX-MODEL selects retained-slot overlay, including Q3 born-maximized
+admission and R-MAX-03 floating-to-tiled admission (implementation pending on
+both). KDE born-maximized admission delivered offline, live TBD. V-FS-SLOT
+retains the in-place fullscreen slot; born-fullscreen is a separate scenario.
 
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
 | REQ-MAX-01 | [R-MAX-01](reference-outcomes/maximize-fullscreen.md#r-max-01-maximize-then-restore) maximize then restore | Maximize is recorded overlay over retained slot/share; no geometry writes; unmaximize restores allocation | current: overlay | current: overlay (parity 2026-10-03) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) isolation auth 2026-09-14 |
 | REQ-MAX-02 | [R-MAX-02](reference-outcomes/maximize-fullscreen.md#r-max-02-fullscreen-focus-and-exit) fullscreen focus and exit | Fullscreen keeps tree allocation, no writes, restores on exit | current: keeps tree | current: keeps tree (parity 2026-10-03) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) fullscreen rule; [decisions](../decisions.md#windows-port) parity 4 |
-| REQ-MAX-03 | [R-MAX-03](reference-outcomes/maximize-fullscreen.md#r-max-03-workspace-floating-toggle-over-a-slotless-maximum) floating toggle over slotless maximum | Floating-workspace slotless hold selected; floating skips clear/slot seeding | current: slotless hold | current: slotless hold (2026-10-04) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#windows-workspace-tiling-mode) R-MAX-03 resolved 2026-10-04 |
-| REQ-MAX-03b | [R-MAX-03](reference-outcomes/maximize-fullscreen.md#r-max-03-workspace-floating-toggle-over-a-slotless-maximum) Q3 scope | Pending: whether Q3 reserved-slot overlay replaces the one-shot restore on floating-to-tiled retile; one-shot first tiled restore remains pending Q3 scope | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | [decisions](../decisions.md#cross-platform-behavior) Q3 open scope; [backlog](../backlog.md) P1 parity (b) |
+| REQ-MAX-03 | [R-MAX-03](reference-outcomes/maximize-fullscreen.md#r-max-03-workspace-floating-toggle-over-a-slotless-maximum) floating toggle over slotless maximum | Floating skips clear/slot seeding; on retile reserve a slot and keep maximize as an overlay, without one-shot restore | gap: floating hold works; retile still one-shot restore | gap: floating hold works; retile still one-shot restore | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) Q3 scope 2026-10-07 supersedes [2026-10-04 restore](../decisions.md#windows-workspace-tiling-mode); implementation pending |
+| REQ-MAX-03b | [R-MAX-03](reference-outcomes/maximize-fullscreen.md#r-max-03-workspace-floating-toggle-over-a-slotless-maximum) Q3 scope | Q3 includes floating-to-tiled admission: keep maximize over a reserved slot (REQ-MAX-03) | gap: one-shot retile restore; implementation pending | gap: one-shot retile restore; implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) Q3 scope USER 2026-10-07 |
 | REQ-MAX-04 | [R-MAX-04](reference-outcomes/maximize-fullscreen.md#r-max-04-shortcut-maximize-native-restore-repress) repress after restore | One native attempt per discrete activation, no persistent attempted-state map | current: new attempt (repaired 2026-10-05) | current: one attempt per down (2026-10-03) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) toggle activation 2026-10-05; [decisions](../decisions.md#windows-port) maximize rule |
-| REQ-MAX-05 | [R-MAX-05](reference-outcomes/maximize-fullscreen.md#r-max-05-app-owned-fullscreen-without-a-preimage) app-owned fullscreen | Windows refuses project toggle without its restoration preimage; never synthesizes app F11 | intentional difference: public native setter | current: refuses (selected) | applicability OPEN | NORMATIVE | [decisions](../decisions.md#windows-fullscreen) accepted for now 2026-10-03; [KDE setter](../decisions.md#window-and-workspace-behavior) |
-| REQ-MAX-05b | [R-MAX-05](reference-outcomes/maximize-fullscreen.md#r-max-05-app-owned-fullscreen-without-a-preimage) no-refusal direction | Pending: unanimous no-refusal consensus vs standing refusal; KDE outcome TBD | current: TBD | current: refuses | behavior OPEN; implementation absent | OPEN (Table A R-MAX-05) | Table A R-MAX-05 |
-| REQ-MAX-06 | [R-MAX-06](reference-outcomes/maximize-fullscreen.md#r-max-06-admit-a-first-seen-maximized-window) admit first-seen maximized | Born-maximized tiles with reserved slot, maximize kept as overlay; no launch unmaximize (Q3); ordinary tiled born-max Q3 scope, floating-to-tiled scope stays REQ-MAX-03b | delivered offline: gap closed; first-origin admission gate plus retained overlay, native restore to reserved slot ([adapter](../../kwin/src/plan-adapter.ts), [fixtures](../../kwin/tests/plan-adapter.test.ts), [record](../changes/archive/kde-born-maximized-overlay.md)); live TBD | gap: one-shot clear still in code ([backlog](../backlog.md) P1 parity b) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) Q3 2026-10-05 |
-| REQ-MAX-07 | [R-MAX-07](reference-outcomes/maximize-fullscreen.md#r-max-07-captionless-full-monitor-cover) captionless cover | Borderless output-sized windows are not inferred fullscreen | current: no inference | gap: containment classifies fullscreen ([tiling_sys.rs](../../crates/tiler-windows/src/tiling_sys.rs):528,596-606 and [tiling.rs](../../crates/tiler-windows/src/tiling.rs):335,365; observed gap pending Table A choice) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) lines 1290-1291 (KDE-scoped no-inference; cross-platform consistency extends portable behavior) |
-| REQ-MAX-07b | [R-MAX-07](reference-outcomes/maximize-fullscreen.md#r-max-07-captionless-full-monitor-cover) Windows state basis | Pending: classify by window state, not inferred containment | n/a | current: containment | behavior OPEN; implementation absent | OPEN (Table A R-MAX-07) | Table A R-MAX-07 |
+| REQ-MAX-05 | [R-MAX-05](reference-outcomes/maximize-fullscreen.md#r-max-05-app-owned-fullscreen-without-a-preimage) app-owned fullscreen | Windows keeps refusing project toggle without a restoration preimage; never synthesizes app F11; later spike explores capturing state early | intentional difference: public native setter | current: refuses (selected for now) | applicability OPEN | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-MAX-05 2026-10-07; [KDE setter](../decisions.md#window-and-workspace-behavior) |
+| REQ-MAX-05b | [R-MAX-05](reference-outcomes/maximize-fullscreen.md#r-max-05-app-owned-fullscreen-without-a-preimage) no-refusal direction | Retain Windows preimage-gate refusal despite unanimous exit consensus; revisit only after the later state-retention spike | current: public setter; native journey TBD | current: refuses | applicability OPEN | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-MAX-05 USER 2026-10-07 |
+| REQ-MAX-06 | [R-MAX-06](reference-outcomes/maximize-fullscreen.md#r-max-06-admit-a-first-seen-maximized-window) admit first-seen maximized | Born-maximized tiles with reserved slot, maximize kept as overlay; no launch unmaximize (Q3); floating-to-tiled admission also covered under REQ-MAX-03b | delivered offline: first-origin admission gate plus retained overlay, native restore to reserved slot ([adapter](../../kwin/src/plan-adapter.ts), [fixtures](../../kwin/tests/plan-adapter.test.ts), [record](../changes/archive/kde-born-maximized-overlay.md)); live TBD | gap: one-shot clear still in code ([backlog](../backlog.md) P1 parity b) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) Q3 2026-10-05, scope confirmed 2026-10-07 |
+| REQ-MAX-07 | [R-MAX-07](reference-outcomes/maximize-fullscreen.md#r-max-07-captionless-full-monitor-cover) captionless cover | KDE uses native fullscreen flags; Windows keeps inferring fullscreen for captionless full-monitor windows for borderless-game compatibility; intentional platform difference for now | current: flag-based, no inference | intentional difference: containment classifies fullscreen | applicability OPEN | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-MAX-07 USER 2026-10-07 |
+| REQ-MAX-07b | [R-MAX-07](reference-outcomes/maximize-fullscreen.md#r-max-07-captionless-full-monitor-cover) Windows state basis | Retain Windows captionless full-monitor inference, despite 8/8 references tiling the cover; gaming compatibility must be flawless | n/a | current: containment | applicability OPEN | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-MAX-07 USER 2026-10-07; [principle](../principles.md#gaming-compatibility) |
 | REQ-MAX-08 | [R-MAX-08](reference-outcomes/maximize-fullscreen.md#r-max-08-focus-and-move-while-maximized) focus/move while maximized | current: focus may enter/leave, move wraps (R2c); no suppression policy selected | current: unselected | current: matches KDE code (unselected) | behavior OPEN; implementation absent | OPEN | [backlog](../backlog.md) navigation-while-maximised undecided |
-| REQ-MAX-09 | [R-MAX-09](reference-outcomes/maximize-fullscreen.md#r-max-09-send-a-maximizedfullscreen-window-to-another-workspace) send maximized/fullscreen | Pending: fullscreen carries state to target; Windows refuses fullscreen sends; KDE native-send untraced | current: TBD | current: refuses fullscreen | behavior OPEN; implementation absent | OPEN (Table A R-MAX-09) | Table A R-MAX-09 |
+| REQ-MAX-09 | [R-MAX-09](reference-outcomes/maximize-fullscreen.md#r-max-09-send-a-maximizedfullscreen-window-to-another-workspace) send maximized/fullscreen | Windows workspace send carries fullscreen state without restoring first; implementation pending. Observe KDE native send before selecting its carry policy; maximize leg unresolved | behavior OPEN; observe first | gap: refuses fullscreen sends | applicability OPEN | NORMATIVE | [backlog](../backlog.md) Table A R-MAX-09 Windows accepted 2026-10-07 |
 
 <a id="minimize"></a>
 ## 9. Minimize ([R-MNZ](reference-outcomes/minimize.md#minimize-native-icon-minimize-reference-outcomes))
@@ -183,15 +200,15 @@ Hooks: V-MAX-MODEL selects retained-slot overlay, including Q3 born-maximized ad
 <a id="minimum"></a>
 ## 10. Minimum size ([R-MIN](reference-outcomes/minimum-size.md#minimum-size-transitions-reference-outcomes))
 
-Hooks: V-START-MIN, V-START-SEED. PROVISIONAL indexing, not chosen configuration.
+Hooks: V-START-MIN selects B6, no setting. V-START-SEED remains PROVISIONAL.
 
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
-| REQ-MIN-01 | [R-MIN-01](reference-outcomes/minimum-size.md#r-min-01-newcomer-minimum-exceeds-shares) newcomer minimum exceeds shares | Minimum-infeasible tiles use origin+minimum (B6) | delivered offline: writable members keep origin, raise only violated extents; effective equality and bounded host-shortfall acceptance ([adapter](../../kwin/src/plan-adapter.ts) `overconstrainedEffective`, `writeGeometries`; [record](../changes/archive/kde-minimum-origin-placement.md)); live TBD | current: origin+minimum (accepted hints) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) B6 2026-10-05 |
-| REQ-MIN-02 | [R-MIN-02](reference-outcomes/minimum-size.md#r-min-02-shrink-makes-members-infeasible) shrink makes members infeasible | Same B6 policy applies to shrink-infeasible members | delivered offline: shrink uses origin+minimum, grow recovers feasible allocation ([adapter](../../kwin/src/plan-adapter.ts) `effectiveTargetFor`, `writeGeometries`; [fixtures](../../kwin/tests/workspace-send-engine-fixture.test.ts)); live TBD | current: journey TBD | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) B6 2026-10-05 |
-| REQ-MIN-03 | [R-MIN-03](reference-outcomes/minimum-size.md#r-min-03-oversized-sole-minimum) oversized sole minimum | Same B6 origin+minimum policy; no automatic floating fallback | delivered offline: sole tile writes origin+minimum, overflow settles quietly ([adapter](../../kwin/src/plan-adapter.ts) `overconstrainedEffective`, `writeGeometries`; [fixtures](../../kwin/tests/workspace-send-engine-fixture.test.ts)); live TBD | current: journey TBD | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) B6 2026-10-05 |
+| REQ-MIN-01 | [R-MIN-01](reference-outcomes/minimum-size.md#r-min-01-newcomer-minimum-exceeds-shares) newcomer minimum exceeds shares | Keep minimum-aware allocation plus origin+minimum (B6), no setting; overlap is an absolute last resort | delivered offline: writable members keep origin, raise only violated extents; effective equality and bounded host-shortfall acceptance ([adapter](../../kwin/src/plan-adapter.ts) `overconstrainedEffective`, `writeGeometries`; [record](../changes/archive/kde-minimum-origin-placement.md)); live TBD | current: origin+minimum (accepted hints) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) B6 2026-10-05, R-MIN-01..03 confirmed 2026-10-07 |
+| REQ-MIN-02 | [R-MIN-02](reference-outcomes/minimum-size.md#r-min-02-shrink-makes-members-infeasible) shrink makes members infeasible | Same minimum-aware B6 policy applies to shrink-infeasible members, no setting | delivered offline: shrink uses origin+minimum, grow recovers feasible allocation ([adapter](../../kwin/src/plan-adapter.ts) `effectiveTargetFor`, `writeGeometries`; [fixtures](../../kwin/tests/workspace-send-engine-fixture.test.ts)); live TBD | current: journey TBD | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) B6 2026-10-05, confirmed 2026-10-07 |
+| REQ-MIN-03 | [R-MIN-03](reference-outcomes/minimum-size.md#r-min-03-oversized-sole-minimum) oversized sole minimum | Same minimum-aware B6 origin+minimum policy, no setting; no automatic floating fallback | delivered offline: sole tile writes origin+minimum, overflow settles quietly ([adapter](../../kwin/src/plan-adapter.ts) `overconstrainedEffective`, `writeGeometries`; [fixtures](../../kwin/tests/workspace-send-engine-fixture.test.ts)); live TBD | current: journey TBD | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) B6 2026-10-05, confirmed 2026-10-07 |
 | REQ-MIN-01b | [R-MIN-01](reference-outcomes/minimum-size.md#r-min-01-newcomer-minimum-exceeds-shares) overlay min-hint retention | Provisional Windows policy: tiled maximized/fullscreen members retain last-known declared minimum hints bound to lifetime token and canonical slot until fresh queries resume; floating/born-slotless/minimized/cloaked rows do not reuse hints; exact native fixture TBD | applicability OPEN | current: provisional retention | applicability OPEN | PROVISIONAL | [decisions](../decisions.md#cross-platform-behavior) retained Windows overlay minimums 2026-10-03 |
-| REQ-MIN-V | [R-MIN-01](reference-outcomes/minimum-size.md#r-min-01-newcomer-minimum-exceeds-shares) + [R-MIN-02](reference-outcomes/minimum-size.md#r-min-02-shrink-makes-members-infeasible) + [R-MIN-03](reference-outcomes/minimum-size.md#r-min-03-oversized-sole-minimum) no-enforce variant | Pending: 7/8 no-enforce-by-default consensus vs selected B6 (recorded counterpoint) | current: B6 selected | current: B6 selected | behavior OPEN; implementation absent | OPEN (Table A R-MIN-01..03) | Table A R-MIN-01..03 |
+| REQ-MIN-V | [R-MIN-01](reference-outcomes/minimum-size.md#r-min-01-newcomer-minimum-exceeds-shares) + [R-MIN-02](reference-outcomes/minimum-size.md#r-min-02-shrink-makes-members-infeasible) + [R-MIN-03](reference-outcomes/minimum-size.md#r-min-03-oversized-sole-minimum) no-enforce variant | Keep minimum-aware allocation plus B6; do not offer a no-enforce setting despite 7/8 references ignoring minima | current: B6, no setting | current: B6, no setting | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-MIN-01..03 USER 2026-10-07 |
 
 <a id="close"></a>
 ## 11. Close ([R-CLOSE](reference-outcomes/close.md#close--reflow-reference-outcomes))
@@ -209,25 +226,26 @@ Hooks: V-CLOSE-FOCUS. PROVISIONAL indexing, not chosen configuration.
 <a id="groups"></a>
 ## 12. Groups and stacks ([R-GRP](reference-outcomes/groups-stacks.md#groups--stacks-reference-outcomes))
 
-Hooks: V-GROUP-STACK (deferred; centre-stack refuse closed). PROVISIONAL indexing, not chosen configuration.
+Hooks: V-GROUP-STACK is scheduled first after 0.1; until then stacks refuse closed.
 
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
-| REQ-GRP-01 | [R-GRP-01](reference-outcomes/groups-stacks.md#r-grp-01-toggle-stack-and-switch-tabs) toggle stack, switch tabs | Grouping means nested split-tree only; no tab/stack carrier, controls or bindings | current: deferred | current: deferred | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) grouped/tabbed deferred |
-| REQ-GRP-02 | [R-GRP-02](reference-outcomes/groups-stacks.md#r-grp-02-join-a-tile-into-a-stack-move-a-tab-out) join tile into stack | COSMIC middle-third center refused fail-closed, no plan | current: refused | current: refused | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#nested-placement-affordance) center-refuse |
-| REQ-GRP-03 | [R-GRP-03](reference-outcomes/groups-stacks.md#r-grp-03-close-the-active-tab) close active tab | No close-tab verb (pending under standing deferral) | n/a | n/a | applicability OPEN | OPEN (Table A R-GRP-03) | Table A R-GRP-03 |
+| REQ-GRP-01 | [R-GRP-01](reference-outcomes/groups-stacks.md#r-grp-01-toggle-stack-and-switch-tabs) toggle stack, switch tabs | Tabbed stacks are the first item after 0.1; until then grouping is nested split-tree only, stacks refused | gap: no tab carrier; scheduled after 0.1 | gap: no tab carrier; scheduled after 0.1 | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-GRP-03 / V-GROUP-STACK USER 2026-10-07 |
+| REQ-GRP-02 | [R-GRP-02](reference-outcomes/groups-stacks.md#r-grp-02-join-a-tile-into-a-stack-move-a-tab-out) join tile into stack | Until tabbed stacks ship after 0.1, COSMIC middle-third center is refused fail-closed, no plan; exact join/move-out semantics unselected | current: refused | current: refused | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#nested-placement-affordance) center-refuse; [schedule](../decisions.md#cross-platform-behavior) 2026-10-07 |
+| REQ-GRP-03 | [R-GRP-03](reference-outcomes/groups-stacks.md#r-grp-03-close-the-active-tab) close active tab | After 0.1, closing the active tab keeps the group and activates the next tab (fixture: B closes, C becomes active) | gap: no tab carrier; scheduled after 0.1 | gap: no tab carrier; scheduled after 0.1 | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-GRP-03 / V-GROUP-STACK USER 2026-10-07 |
 
 <a id="output"></a>
 ## 13. Multi-output ([R-OUT](reference-outcomes/multi-output.md#multi-output-reference-outcomes))
 
-Hooks: V-R4-DIR. PROVISIONAL indexing, not chosen configuration.
+Hooks: V-R4-DIR retains horizontal crossing and adds vertical move fallback
+after local exhaustion (implementation pending).
 
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
 | REQ-OUT-01 | [R-OUT-01](reference-outcomes/multi-output.md#r-out-01-move-left-onto-an-occupied-output) move left onto occupied output | Exhausted horizontal move crosses into adjacent output's current workspace | current: crosses | current: TBD (multi-output parked) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) R4 USER step-3 2026-09-25 |
 | REQ-OUT-02 | [R-OUT-02](reference-outcomes/multi-output.md#r-out-02-perpendicular-move-at-an-output-edge) perpendicular move at edge | current: local vs cross TBD | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table C; no selection |
 | REQ-OUT-03 | [R-OUT-03](reference-outcomes/multi-output.md#r-out-03-focus-left-across-outputs) focus left across outputs | Exhausted horizontal focus transfers with no layout/membership writes | current: transfers | current: transfers (proposal) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) R4 focus-transfer route |
-| REQ-OUT-04 | [R-OUT-04](reference-outcomes/multi-output.md#r-out-04-explicitly-send-a-window-to-the-other-output) explicit output send | No output-send verb (pending: add via shared Engine; distinct from directional move) | n/a | n/a | applicability OPEN | OPEN (Table A R-OUT-04) | Table A R-OUT-04 |
+| REQ-OUT-04 | [R-OUT-04](reference-outcomes/multi-output.md#r-out-04-explicitly-send-a-window-to-the-other-output) explicit output send | Provide explicit window-to-output send through the shared Engine where possible, distinct from directional move; implementation pending | gap: no output-send verb | gap: no output-send verb | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-OUT-04 accepted 2026-10-07 |
 | REQ-OUT-05 | [R-OUT-05](reference-outcomes/multi-output.md#r-out-05-open-a-window-with-two-occupied-outputs) open with two outputs | current: admission routing TBD both | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U; no selection |
 | REQ-OUT-06 | [R-OUT-06](reference-outcomes/multi-output.md#r-out-06-disconnect-and-reconnect-an-occupied-output) disconnect/reconnect output | Displaced workspaces return to original monitor with current contents; explicit moves stay | current: returns | current: TBD (parked PC) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) displacement policy |
 
@@ -240,13 +258,13 @@ Hooks: V-DRAG-ZONE (32px edges, 80px sticky prior). PROVISIONAL indexing, not ch
 |---|---|---|---|---|---|---|---|
 | REQ-DRAG-01 | [R-DRAG-01](reference-outcomes/mouse.md#r-drag-01-drag-onto-centre-stack-join) drag onto centre | Drop resolver: window-edge split, group-edge first/last or wrap, interior insert; center snaps back | current: resolver | current: resolver (same-output) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#production-interactive-edge-drag) option A 2026-09-27 |
 | REQ-DRAG-02 | [R-DRAG-02](reference-outcomes/mouse.md#r-drag-02-drag-to-a-between-child-bar) drag to between-child bar | Same resolver at drop point; filled target-slot preview independent of outline, cleared at drop/cancel/refusal | current: preview | current: preview (same-output) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#production-interactive-edge-drag) preview 2026-09-27 |
-| REQ-DRAG-03 | [R-DRAG-03](reference-outcomes/mouse.md#r-drag-03-two-drag-producers-same-drop) two producers, same drop | Provisional Windows producer policy: title-bar first; project Win+left keeps source frame and moves preview; native title-bar follows pointer; unfocused project subject activates only on valid drop | current: native producers | current: provisional producer policy | applicability OPEN | PROVISIONAL | [decisions](../decisions.md#windows-mouse-movement) 2026-10-04 |
-| REQ-DRAG-04 | [R-DRAG-04](reference-outcomes/mouse.md#r-drag-04-esc-during-a-drag) Esc during drag | Esc cancels: cancelled verdict makes no plan | current: cancel | current: cancel | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#production-interactive-edge-drag) drop-intent 2026-09-24 + verdict routing |
-| REQ-DRAG-04b | [R-DRAG-04](reference-outcomes/mouse.md#r-drag-04-esc-during-a-drag) drop/persist variant | Pending: D7 drop/persist consensus vs selected cancel | current: cancel | current: cancel | behavior OPEN; implementation absent | OPEN (Table A R-DRAG-04) | Table A R-DRAG-04 |
+| REQ-DRAG-03 | [R-DRAG-03](reference-outcomes/mouse.md#r-drag-03-two-drag-producers-same-drop) two producers, same drop | Host-native presentation where available: KDE Meta+drag and Windows title-bar follow pointer; Windows Win+drag keeps source frame and moves preview. Meta/Win client drag focuses at press (REQ-DRAG-08) | current: native producers; focus timing needs live check | gap: presentation matches; Win+drag still activates on drop | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-DRAG-07/08 USER 2026-10-07 |
+| REQ-DRAG-04 | [R-DRAG-04](reference-outcomes/mouse.md#r-drag-04-esc-during-a-drag) Esc during drag | Keep Esc cancel on both platforms: cancelled verdict makes no plan (host convention, despite 7/8 reference drop/persist) | current: cancel | current: cancel | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-DRAG-04 USER 2026-10-07 |
+| REQ-DRAG-04b | [R-DRAG-04](reference-outcomes/mouse.md#r-drag-04-esc-during-a-drag) drop/persist variant | Retain cancel; no drop/persist setting selected now, possible later exploration | current: cancel | current: cancel | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-DRAG-04 USER 2026-10-07 |
 | REQ-DRAG-05 | [R-DRAG-05](reference-outcomes/mouse.md#r-drag-05-zero-move-pressrelease) zero-move press/release | Zero-move makes no plan | current: no plan | current: no plan | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#production-interactive-edge-drag) no-change verdict |
 | REQ-DRAG-06 | [R-DRAG-06](reference-outcomes/mouse.md#r-drag-06-release-outside-the-work-area) release outside work area | No off-area parking | current: no parking | current: no parking | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#production-interactive-edge-drag) verdict routing |
-| REQ-DRAG-07 | [R-DRAG-07](reference-outcomes/mouse.md#r-drag-07-dragged-frame-vs-retained-allocation) dragged frame vs allocation | Provisional Windows project Win+left preview-only movement; native title-bar movement still follows pointer. Cross-platform producer parity remains OPEN | current: follows | current: project preview-only; native title-bar follows | applicability OPEN | PROVISIONAL | [decisions](../decisions.md#windows-mouse-movement) stationary source policy; reference consensus exact split |
-| REQ-DRAG-08 | [R-DRAG-08](reference-outcomes/mouse.md#r-drag-08-press-focus-on-an-unfocused-tile) press focus on unfocused tile | current: KDE timing TBD; Windows drop-activate only, press-focus unproven | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U; no selection |
+| REQ-DRAG-07 | [R-DRAG-07](reference-outcomes/mouse.md#r-drag-07-dragged-frame-vs-retained-allocation) dragged frame vs allocation | Follow host-native presentation where available, avoiding custom rendering without functional benefit. Keep KDE pointer-following Meta+drag and native Windows title-bar drag; Win+drag has no native counterpart, so keep stationary source plus moving preview unless native-loop delegation is nearly free | current: follows pointer | intentional difference: project preview-only; native title-bar follows | same host-native rule; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-DRAG-07 USER 2026-10-07 |
+| REQ-DRAG-08 | [R-DRAG-08](reference-outcomes/mouse.md#r-drag-08-press-focus-on-an-unfocused-tile) press focus on unfocused tile | Meta/Win client drag focuses the dragged window at press on both platforms | current: timing needs live check | gap: activates on drop; press-focus implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-DRAG-08 USER 2026-10-07 |
 | REQ-MOU-01 | [R-MOU-01](reference-outcomes/mouse.md#r-mou-01-pointer-hover-vs-click-focus) hover vs click focus | current: host click/hover journeys TBD both | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U; no selection |
 | REQ-MOU-02 | [R-MOU-02](reference-outcomes/mouse.md#r-mou-02-drag-the-shared-edge-to-resize) drag shared edge to resize | Pointer resize adjusts shared split boundaries/ratios, reflows neighbors | current: adjusts shares | current: TBD journey | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) pointer-resize bullet |
 | REQ-MOU-03 | [R-MOU-03](reference-outcomes/mouse.md#r-mou-03-drag-across-outputs-and-onto-a-workspace-target) drag across outputs | Tiled move joins destination output tiling at drop point, source membership removed | current: joins | current: TBD (multi-output parked) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#production-interactive-edge-drag) cross-output 2026-09-27 |
@@ -278,8 +296,8 @@ Hooks: V-FIRST-RUN, V-TRAY-LIFECYCLE, V-SHORTCUT-CONFLICT. PROVISIONAL indexing,
 | REQ-CTL-05a | [R-CTL-05](reference-outcomes/restart-persistence.md#r-ctl-05-shortcut-staging-and-apply) basic conflict model | Settings per-binding keep/disable/rebind with authentic/compatible presets, all platforms | gap: integrated rebind deferred; external KDE Shortcuts editor available ([decisions](../decisions.md#cross-platform-behavior) deferred controls; [backlog](../backlog.md) P1 shortcut conflict model) | current: implemented actions offer rebind; modifier limits PROVISIONAL ([decisions](../decisions.md#windows-settings)) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) 2026-10-03 conflict model |
 | REQ-CTL-06 | [R-CTL-06](reference-outcomes/restart-persistence.md#r-ctl-06-conflict-preview-and-disable) conflict preview and disable | Provisional compatible details: KDE resets Keep then disables compiled/discovered conflicts; Windows resets catalog then disables 35 OS-conflicting physical chords; neither invents replacements | current: compiled/discovered conflicts | current: 35 disabled chords | applicability OPEN | PROVISIONAL | [decisions](../decisions.md#cross-platform-behavior) KDE compatible; [decisions](../decisions.md#windows-settings) Windows compatible |
 | REQ-CTL-07 | [R-CTL-07](reference-outcomes/restart-persistence.md#r-ctl-07-revert-restores-defaults) revert restores defaults | Force clears any holder after listing+confirmation with durable cleared-ID list; Revert restores defaults (KDE-only) | current: contract | n/a (KDE-only) | applicability OPEN | NORMATIVE | [decisions](../decisions.md#shortcuts) Force/Revert contract 2026-09-26 |
-| REQ-RST-01 | [R-RST-01](reference-outcomes/restart-persistence.md#r-rst-01-orderly-owner-restart-with-apps-kept-alive) owner restart, apps kept | Intentional floats reset across restart (session-local id set / runtime store cleared); layout never restored by tiler | current: resets | current: resets (user-accepted 2026-10-03) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) session-local float; [decisions](../decisions.md#windows-port) float/sticky restart |
-| REQ-RST-01b | [R-RST-01](reference-outcomes/restart-persistence.md#r-rst-01-orderly-owner-restart-with-apps-kept-alive) float identity | Pending: preserve intentional-float identity across restart | current: resets | current: resets | behavior OPEN; implementation absent | OPEN (Table A R-RST-01) | Table A R-RST-01 float |
+| REQ-RST-01 | [R-RST-01](reference-outcomes/restart-persistence.md#r-rst-01-orderly-owner-restart-with-apps-kept-alive) owner restart, apps kept | Keep intentional floats floating across owner restart; Windows sticky floats stay sticky (REQ-FLT-05). Supersedes session-local reset; no layout restoration selected | gap: intentional floats reset; implementation pending | gap: intentional floats reset; implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-RST-01 accepted 2026-10-07; [decisions](../decisions.md#cross-platform-behavior) R-FLT-05 2026-10-07 |
+| REQ-RST-01b | [R-RST-01](reference-outcomes/restart-persistence.md#r-rst-01-orderly-owner-restart-with-apps-kept-alive) float identity | Preserve intentional-float identity across owner restart, including Windows sticky state; implementation pending | gap: resets | gap: resets | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-RST-01 accepted 2026-10-07; [decisions](../decisions.md#cross-platform-behavior) R-FLT-05 |
 | REQ-RST-01c | [R-RST-01](reference-outcomes/restart-persistence.md#r-rst-01-orderly-owner-restart-with-apps-kept-alive) set/membership/focus | Pending: workspace set (host-owned), membership re-observation, post-restart focus | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U R-RST-01 legs |
 | REQ-RST-02 | [R-RST-02](reference-outcomes/restart-persistence.md#r-rst-02-end-session-restore-session-and-apps) session restore | current: gaps/settings restore; host-max restore TBD | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U; no selection |
 
@@ -291,7 +309,7 @@ Hooks: V-FIRST-RUN, V-TRAY-LIFECYCLE, V-SHORTCUT-CONFLICT. PROVISIONAL indexing,
 | REQ-SPC-01 | [R-SPC-01](reference-outcomes/special-windows.md#r-spc-01-open-a-transient-dialog-then-request-parent-focus-fresh-modal-variant) transient dialog, parent focus | current: KDE `normalWindow` mapping untraced; Windows excludes owned dialogs | current: TBD | current: excluded (observed divergence, eligibility unselected) | behavior OPEN; implementation absent | OPEN | Table U; eligibility gap |
 | REQ-SPC-02 | [R-SPC-02](reference-outcomes/special-windows.md#r-spc-02-open-a-typed-splash-window-fresh-utility-variant) splash; utility variant | current: type eligibility TBD both; Windows toolwindow-excluded utility | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table C; no selection |
 | REQ-SPC-03 | [R-SPC-03](reference-outcomes/special-windows.md#r-spc-03-enter-app-picture-in-picture-mode) picture-in-picture | current: app-specific eligibility TBD; no universal PiP type | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table C; no selection |
-| REQ-SPC-04 | [R-SPC-04](reference-outcomes/special-windows.md#r-spc-04-open-a-fixed-size-window-minmax-640x480) fixed-size window | Pending: fixed-size floats instead of tiling (8/8 consensus; type-exception gap, unselected) | current: tiles | current: tiles with hint clamp | behavior OPEN; implementation absent | OPEN (Table A R-SPC-04) | Table A R-SPC-04 |
+| REQ-SPC-04 | [R-SPC-04](reference-outcomes/special-windows.md#r-spc-04-open-a-fixed-size-window-minmax-640x480) fixed-size window | Admit fixed-size (min==max) windows as floats instead of tiles; implementation pending | gap: tiles | gap: tiles with hint clamp | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-SPC-04 accepted 2026-10-07 |
 | REQ-SPC-05a | [R-SPC-05](reference-outcomes/special-windows.md#r-spc-05-app-owned-resize-and-minimum-hint-change-on-a-tile) app resize/hint change | Observed frame never gates admission; Engine allocation stays authoritative | current: authoritative | current: authoritative | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) permissive admission auth 2026-09-14 |
 | REQ-SPC-05b | [R-SPC-05](reference-outcomes/special-windows.md#r-spc-05-app-owned-resize-and-minimum-hint-change-on-a-tile) hint reflow journey | Pending: host reaction and exact reflow TBD | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U remainders |
 
@@ -327,8 +345,10 @@ direction plus inwards/outwards mode),
 per-output-local (default), global-unique and shared use the same chord
 catalog; Windows global-unique/shared mappings await runtime implementation),
 [Windows](../../crates/tiler-windows/src/settings.rs) `binding_catalog`.
-Spec links below point at behavior sections inside this file. No new verbs:
-currently-unbound rows are unselected (no verb), not a pending feature.
+Spec links below point at behavior sections inside this file. Accepted new
+verbs remain unbound until implementation; choose their bindings then
+([backlog](../backlog.md) Adopt reference-consensus additions, 2026-10-07).
+Rotate/master and cycle verbs remain unselected.
 
 | Action | KDE default | Windows default | macOS | Spec |
 |---|---|---|---|---|
@@ -350,12 +370,15 @@ currently-unbound rows are unselected (no verb), not a pending feature.
 | Trailing empty select | Meta+0 | Win+0 | mapping OPEN | [#6 Workspaces](#workspaces) |
 | Send to workspace 1..9 | Meta+Shift+1..9; Meta+!, Meta+@, Meta+#, Meta+$, Meta+%, Meta+^, Meta+&, Meta+*, Meta+( aliases | Win+Shift+1..9 (symbols share digit key, no separate row) | mapping OPEN | [#6 Workspaces](#workspaces) |
 | Send to trailing/append | Meta+Shift+0, Meta+) alias | Win+Shift+0 | mapping OPEN | [#6 Workspaces](#workspaces) |
+| Send-and-stay | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
 | Workspace tiling toggle | unbound (tray action, empty key sequence) | unbound (tray checkbox only) | mapping OPEN | [#7 Floating](#floating) |
-| Previous-workspace toggle | unbound (no verb) | unbound (no verb) | mapping OPEN | [#6 Workspaces](#workspaces) |
-| Relative switch | unbound (no verb) | unbound (no verb) | mapping OPEN | [#6 Workspaces](#workspaces) |
-| Relative send | unbound (no verb) | unbound (no verb) | mapping OPEN | [#6 Workspaces](#workspaces) |
-| Output send | unbound (no verb) | unbound (no verb) | mapping OPEN | [#13 Multi-output](#output) |
-| Orientation/rotate/master/layout | unbound (no verb) | unbound (no verb) | mapping OPEN | [#5 Layout](#layout) |
+| Previous-workspace toggle | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
+| Relative switch | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
+| Relative send | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
+| Whole-workspace output move | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
+| Output send | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#13 Multi-output](#output) |
+| Orientation/layout | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#5 Layout](#layout) |
+| Rotate/master | unbound (no verb selected) | unbound (no verb selected) | mapping OPEN | [#5 Layout](#layout) |
 | Cycle next/previous | unbound (no verb) | unbound (no verb) | mapping OPEN | [#2 Focus](#focus) |
 
 Authentic vs compatible: authentic is the default catalog (user-preferred,
@@ -376,29 +399,27 @@ clear (auth 2026-09-14,
 on both platforms
 ([decisions](../decisions.md#cross-platform-behavior);
 [backlog](../backlog.md) P1 parity (b)); Windows 2026-10-02
-skip-infeasible decision superseded by B6 (same anchor). Consensus
-differences are not contradictions (consensus selects nothing).
+skip-infeasible decision superseded by B6 (same anchor). User 2026-10-07 also
+supersedes R-MAX-03 one-shot retile restore with Q3, horizontal-only move
+fallback with R-MOV-08 vertical crossing, intentional-float restart reset
+with R-RST-01, and indefinite stack deferral with first-after-0.1 scheduling.
+Consensus differences are not contradictions (consensus selects nothing).
 
-- T-01: explicitly open ambiguity (not two contradictory normative rules):
-  R-MAX-03 slotless hold is normative only for the floating-workspace toggle
-  scope (resolved 2026-10-04,
-  [decisions](../decisions.md#windows-workspace-tiling-mode)); Q3
-  reserved-slot overlay (2026-10-05,
-  [decisions](../decisions.md#cross-platform-behavior)) covers born-maximized
-  scope. Open scope REQ-MAX-03b decides the floating-to-tiled admission; do
-  not state an overlapping first-tiled restore as normative.
+- T-01 resolved: [Q3 scope 2026-10-07](../decisions.md#cross-platform-behavior)
+  includes R-MAX-03 floating-to-tiled admission. Its one-shot restore still
+  describes current code on both platforms, not the selected requirement.
 - T-02: B9 provisional unfloat-stays-maximized vs COSMIC R-FLT-06 source
   unmaximize-then-admit (matrix `S-cos` + consensus Table C). User COSMIC
   live check decides before Windows drops refusal
   ([decisions](../decisions.md#cross-platform-behavior) B9).
-- T-03: Windows captionless-containment classification (matrix Ours R-MAX-07
-  cell) vs selected no-inference requirement REQ-MAX-07
-  ([decisions](../decisions.md#window-and-workspace-behavior) lines
-  1290-1291). Gap, pending REQ-MAX-07b.
+- T-03 resolved: [R-MAX-07 decision 2026-10-07](../decisions.md#cross-platform-behavior)
+  keeps Windows inference and KDE flag-based classification as an intentional
+  platform difference, not a gap.
 - T-04: [R-MAX-06 Ours cells](reference-outcomes/maximize-fullscreen.md#r-max-06-admit-a-first-seen-maximized-window)
   call preserve variants unselected, but [Q3](../decisions.md#cross-platform-behavior)
   selects reserved-slot overlay. Their current one-shot-clear description still
-  matches lagging implementation; their selection label is stale.
+  matches lagging Windows implementation but not delivered KDE code; their
+  selection label is stale. Matrix cells are preserved as evidence.
 
 <a id="open-index"></a>
 ## 21. Open-decisions index
@@ -408,27 +429,25 @@ marked with literal status in-row):
 
 - [Insertion](#insertion): REQ-INS-01b, REQ-INS-03, REQ-INS-04, REQ-INS-05, REQ-INS-06, REQ-INS-07b, REQ-INS-08.
 - [Focus](#focus): REQ-FOC-01, REQ-FOC-02, REQ-FOC-03, REQ-FOC-04.
-- [Move](#move): REQ-MOV-01, REQ-MOV-02, REQ-MOV-03 (Table A), REQ-MOV-04, REQ-MOV-05, REQ-MOV-06, REQ-MOV-07, REQ-MOV-08b (Table A).
-- [Resize](#resize): REQ-RSZ-01b (Table A), REQ-RSZ-02, REQ-RSZ-03, REQ-RSZ-04.
-- [Layout](#layout): REQ-LAY-01 (Table A), REQ-LAY-02, REQ-LAY-03, REQ-LAY-04 (Table A).
-- [Workspaces](#workspaces): REQ-WS-01b (Table A), REQ-WS-02b, REQ-WS-05, REQ-WS-07, REQ-WS-08 (Table A), REQ-WS-09, REQ-WS-10, REQ-WS-11 (Table A), REQ-WS-12 (Table A), REQ-WS-14 (Table A).
-- [Floating](#floating): REQ-FLT-03, REQ-FLT-05 (Table A), REQ-FLT-06b (Table A), REQ-FLT-09b (Table A), REQ-FLT-12, REQ-FLT-13, REQ-FLT-14.
-- [Maximize](#maximize): REQ-MAX-03b, REQ-MAX-05b (Table A), REQ-MAX-07b (Table A), REQ-MAX-08, REQ-MAX-09 (Table A).
+- [Move](#move): REQ-MOV-01, REQ-MOV-02, REQ-MOV-04, REQ-MOV-05, REQ-MOV-06, REQ-MOV-07.
+- [Resize](#resize): REQ-RSZ-02, REQ-RSZ-03, REQ-RSZ-04.
+- [Layout](#layout): REQ-LAY-02, REQ-LAY-03.
+- [Workspaces](#workspaces): REQ-WS-02b, REQ-WS-05, REQ-WS-07, REQ-WS-09, REQ-WS-10.
+- [Floating](#floating): REQ-FLT-03, REQ-FLT-06b (Table A; B9 pending COSMIC check), REQ-FLT-12, REQ-FLT-13, REQ-FLT-14.
+- [Maximize](#maximize): REQ-MAX-08; REQ-MAX-09 KDE carry / maximize leg remains OPEN within the Windows-selected row.
 - [Minimize](#minimize): REQ-MNZ-01, REQ-MNZ-02, REQ-MNZ-03.
-- [Minimum](#minimum): REQ-MIN-V (Table A R-MIN-01..03).
 - [Close](#close): REQ-CLOSE-02, REQ-CLOSE-03, REQ-CLOSE-04, REQ-CLOSE-05.
-- [Groups](#groups): REQ-GRP-03 (Table A).
-- [Output](#output): REQ-OUT-02, REQ-OUT-04 (Table A), REQ-OUT-05.
-- [Drag](#drag): REQ-DRAG-04b (Table A), REQ-DRAG-08, REQ-MOU-01.
+- [Output](#output): REQ-OUT-02, REQ-OUT-05.
+- [Drag](#drag): REQ-MOU-01.
 - [Activation](#activation): REQ-ACT-01, REQ-ACT-02.
-- [Restart/control](#startup): REQ-RST-01b (Table A), REQ-RST-01c, REQ-RST-02.
-- [Special](#special): REQ-SPC-01, REQ-SPC-02, REQ-SPC-03, REQ-SPC-04 (Table A), REQ-SPC-05b.
+- [Restart/control](#startup): REQ-RST-01c, REQ-RST-02.
+- [Special](#special): REQ-SPC-01, REQ-SPC-02, REQ-SPC-03, REQ-SPC-05b.
 - [Columns](#columns): REQ-COL-01, REQ-COL-02, REQ-COL-03, REQ-COL-04, REQ-COL-05, REQ-COL-06, REQ-COL-07, REQ-COL-08, REQ-COL-09, REQ-COL-10.
 
 PROVISIONAL discussion group (not final selections; awaiting discussion):
 REQ-START-01, REQ-START-02, REQ-CTL-01, REQ-CTL-02, REQ-CTL-03b, REQ-CTL-05,
-REQ-CTL-06, REQ-DRAG-03, REQ-DRAG-07, REQ-FLT-06,
-REQ-MIN-01b. Spec format itself provisional to discuss.
+REQ-CTL-06, REQ-FLT-06 (B9 pending COSMIC check), REQ-MIN-01b.
+Single-file spec format selected 2026-10-07.
 
 Platform mapping and known decisions waiting native acceptance (separated
 from product choices, for user review):
@@ -437,7 +456,7 @@ from product choices, for user review):
   implied).
 - O-01 macOS mapping (mapping OPEN until macOS starts); O-02 Win+L opt-in
   vs gap acceptance; O-03 Win+G/F11 containment (compatible preset interim);
-  O-04 Windows keyboard-resize trigger (REQ-RSZ-01b); O-05 Windows
+  O-04 Windows keyboard-resize implementation pending (REQ-RSZ-01b); O-05 Windows
   global-unique/shared mappings; O-06 KDE first-run prompt and rebind editor
-  (deferred); O-07 R-DRAG-07 producer parity (PROVISIONAL); O-08 live-test
+  (deferred); O-07 KDE R-DRAG-08 press-focus timing check; O-08 live-test
   acceptance queue (user-owned throughout).

@@ -47,6 +47,15 @@ Development process principles, approved by the user. Product goals live in
   log the cause, and keep functioning, reconciling differences as they are
   observed.
 
+## Gaming Compatibility
+
+- Gaming compatibility must be flawless. Games, including borderless and
+  exclusive fullscreen titles, must run exactly as they would without the
+  tiler: no unwanted tiling, resizing, focus changes, overlays, input
+  interference or performance cost.
+- When a behavior choice trades consistency or reference-WM parity against
+  game safety, game safety wins.
+
 ## Observability
 
 - Observability is a core requirement across every component of the project.
