@@ -486,16 +486,33 @@ const QList<ShortcutConflictRow> &shortcutConflictTable()
           shortcutToNextScreenComponent(), shortcutToNextScreenAction(), {SHORTCUT_META_SHIFT_RIGHT},
           shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+Shift+Right"), {},
           QStringLiteral("move-right-arrow")},
+        {shortcutWorkspacePrevLeftArrowComponent(), shortcutWorkspacePrevLeftArrowAction(),
+          {SHORTCUT_META_CTRL_LEFT}, shortcutSwitchOneDesktopLeftComponent(), shortcutSwitchOneDesktopLeftAction(),
+          {SHORTCUT_META_CTRL_LEFT}, shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+Ctrl+Left"), {},
+          QStringLiteral("workspace-prev-left-arrow")},
+        {shortcutWorkspacePrevUpArrowComponent(), shortcutWorkspacePrevUpArrowAction(), {SHORTCUT_META_CTRL_UP},
+          shortcutSwitchOneDesktopUpComponent(), shortcutSwitchOneDesktopUpAction(), {SHORTCUT_META_CTRL_UP},
+          shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+Ctrl+Up"), {},
+          QStringLiteral("workspace-prev-up-arrow")},
+        {shortcutWorkspaceNextDownArrowComponent(), shortcutWorkspaceNextDownArrowAction(),
+          {SHORTCUT_META_CTRL_DOWN}, shortcutSwitchOneDesktopDownComponent(), shortcutSwitchOneDesktopDownAction(),
+          {SHORTCUT_META_CTRL_DOWN}, shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+Ctrl+Down"), {},
+          QStringLiteral("workspace-next-down-arrow")},
+        {shortcutWorkspaceNextRightArrowComponent(), shortcutWorkspaceNextRightArrowAction(),
+          {SHORTCUT_META_CTRL_RIGHT}, shortcutSwitchOneDesktopRightComponent(),
+          shortcutSwitchOneDesktopRightAction(), {SHORTCUT_META_CTRL_RIGHT}, shortcutResolutionClear(), {}, {}, {},
+          QStringLiteral("Meta+Ctrl+Right"), {}, QStringLiteral("workspace-next-right-arrow")},
     };
     return table;
 }
 
 const QList<ShortcutCatalogEntry> &shortcutProjectCatalog()
 {
-    // 36 plan rows then 30 workspace rows. Canonical keys are unique across
-    // the catalog (letters vs digits/symbols vs arrows/F11 across distinct
-    // modifier arms). knownForeign* mirrors the conflict table for its 15
-    // project actions; every other row carries empty known foreign state.
+    // 36 plan rows then 39 workspace rows. Canonical keys are unique across
+    // the catalog (letters vs digits/symbols vs arrows/F11/Ctrl-arrows across
+    // distinct modifier arms). knownForeign* mirrors the conflict table for
+    // its 19 project actions; every other row carries empty known foreign
+    // state.
     static const QList<ShortcutCatalogEntry> catalog = {
         {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-left"), SHORTCUT_META_H,
          QStringLiteral("Meta+H"), {}, {}, 0, QStringLiteral("focus")},
@@ -643,7 +660,29 @@ const QList<ShortcutCatalogEntry> &shortcutProjectCatalog()
         {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-append"), SHORTCUT_META_SHIFT_0,
          QStringLiteral("Meta+Shift+0"), {}, {}, 0, QStringLiteral("workspace-move")},
         {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-workspace-append-symbol"),
-         SHORTCUT_META_PARENRIGHT, QStringLiteral("Meta+)"), {}, {}, 0, QStringLiteral("workspace-move")},
+          SHORTCUT_META_PARENRIGHT, QStringLiteral("Meta+)"), {}, {}, 0, QStringLiteral("workspace-move")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-previous"), SHORTCUT_META_CTRL_TAB,
+          QStringLiteral("Meta+Ctrl+Tab"), {}, {}, 0, QStringLiteral("workspace-previous")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-prev-h"), SHORTCUT_META_CTRL_H,
+          QStringLiteral("Meta+Ctrl+H"), {}, {}, 0, QStringLiteral("workspace-relative")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-prev-k"), SHORTCUT_META_CTRL_K,
+          QStringLiteral("Meta+Ctrl+K"), {}, {}, 0, QStringLiteral("workspace-relative")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-prev-left-arrow"),
+          SHORTCUT_META_CTRL_LEFT, QStringLiteral("Meta+Ctrl+Left"), shortcutSwitchOneDesktopLeftComponent(),
+          shortcutSwitchOneDesktopLeftAction(), SHORTCUT_META_CTRL_LEFT, QStringLiteral("workspace-relative")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-prev-up-arrow"), SHORTCUT_META_CTRL_UP,
+          QStringLiteral("Meta+Ctrl+Up"), shortcutSwitchOneDesktopUpComponent(), shortcutSwitchOneDesktopUpAction(),
+          SHORTCUT_META_CTRL_UP, QStringLiteral("workspace-relative")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-next-j"), SHORTCUT_META_CTRL_J,
+          QStringLiteral("Meta+Ctrl+J"), {}, {}, 0, QStringLiteral("workspace-relative")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-next-l"), SHORTCUT_META_CTRL_L,
+          QStringLiteral("Meta+Ctrl+L"), {}, {}, 0, QStringLiteral("workspace-relative")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-next-down-arrow"),
+          SHORTCUT_META_CTRL_DOWN, QStringLiteral("Meta+Ctrl+Down"), shortcutSwitchOneDesktopDownComponent(),
+          shortcutSwitchOneDesktopDownAction(), SHORTCUT_META_CTRL_DOWN, QStringLiteral("workspace-relative")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-next-right-arrow"),
+          SHORTCUT_META_CTRL_RIGHT, QStringLiteral("Meta+Ctrl+Right"), shortcutSwitchOneDesktopRightComponent(),
+          shortcutSwitchOneDesktopRightAction(), SHORTCUT_META_CTRL_RIGHT, QStringLiteral("workspace-relative")},
     };
     return catalog;
 }

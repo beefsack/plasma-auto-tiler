@@ -134,6 +134,8 @@ export interface PlanEntryHandle {
     readonly requestFullscreen: () => void;
     readonly requestWorkspaceSelect: (index: unknown) => void;
     readonly requestWorkspaceMove: (index: unknown) => void;
+    readonly requestWorkspacePrevious: () => void;
+    readonly requestWorkspaceRelative: (delta: unknown) => void;
     readonly getWorkspaceTilingSnapshot: () => WorkspaceTilingSnapshot;
     readonly requestWorkspaceTilingToggle: () => void;
 }
@@ -3875,6 +3877,23 @@ function startPlanAdapterEntryOnce(
             void error;
         }
     };
+    const requestWorkspacePrevious = (): void => {
+        try {
+            workspaceNative.selectPrevious();
+        } catch (error) {
+            void error;
+        }
+    };
+    const requestWorkspaceRelative = (delta: unknown): void => {
+        try {
+            if (delta !== -1 && delta !== 1) {
+                return;
+            }
+            workspaceNative.selectRelative(delta);
+        } catch (error) {
+            void error;
+        }
+    };
     const readActiveMover = (): object | null => {
         try {
             const surface = liveWorkspace as Record<string, unknown>;
@@ -4113,11 +4132,16 @@ function startPlanAdapterEntryOnce(
             const sequence = row.sequence;
             const kind = row.kind;
             const index = row.index;
+            const delta = row.delta;
             try {
                 const ok =
                     kind === "move"
                         ? registerFn(action, text, sequence, () => requestWorkspaceMove(index))
-                        : registerFn(action, text, sequence, () => requestWorkspaceSelect(index));
+                        : kind === "previous"
+                          ? registerFn(action, text, sequence, () => requestWorkspacePrevious())
+                          : kind === "relative"
+                            ? registerFn(action, text, sequence, () => requestWorkspaceRelative(delta))
+                            : registerFn(action, text, sequence, () => requestWorkspaceSelect(index));
                 if (ok !== true) {
                     try {
                         log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
@@ -6038,6 +6062,20 @@ function startPlanAdapterEntryOnce(
                 void error;
             }
         },
+        requestWorkspacePrevious: () => {
+            try {
+                requestWorkspacePrevious();
+            } catch (error) {
+                void error;
+            }
+        },
+        requestWorkspaceRelative: (delta) => {
+            try {
+                requestWorkspaceRelative(delta);
+            } catch (error) {
+                void error;
+            }
+        },
         getWorkspaceTilingSnapshot: () => {
             try {
                 return getWorkspaceTilingSnapshot();
@@ -6282,6 +6320,12 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         },
         requestWorkspaceMove: (index) => {
             delegate((target) => target.requestWorkspaceMove(index));
+        },
+        requestWorkspacePrevious: () => {
+            delegate((target) => target.requestWorkspacePrevious());
+        },
+        requestWorkspaceRelative: (delta) => {
+            delegate((target) => target.requestWorkspaceRelative(delta));
         },
         getWorkspaceTilingSnapshot: () => {
             if (current !== null) {

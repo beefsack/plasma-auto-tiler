@@ -261,6 +261,24 @@ prove live callbacks.
 
 ## Journal Line Forms
 
+Workspace previous/relative diagnostics (opaque stable workspace IDs and
+session-local output keys; native selection attempt completion is not visual
+acceptance):
+
+- `plasma-auto-tiler:workspace:workspace-previous-recorded:<id>`: a changed
+  current view was observed; `<id>` is the new current view, previous is the
+  preceding observed ID. Native/send-follow/hotplug use the same observation.
+- `plasma-auto-tiler:workspace:workspace-previous-discarded:<key>`: disconnected
+  output history and its observation baseline discarded.
+- `plasma-auto-tiler:workspace:workspace-previous-invalidated:<removed|out-of-scope>`.
+- `plasma-auto-tiler:workspace:workspace-previous-completed:<id>` and
+  `plasma-auto-tiler:workspace:workspace-relative-completed:<id>`: native
+  selection seam invoked; recording follows observation, not setter return.
+- `plasma-auto-tiler:workspace:workspace-previous-absent:<no-active-output|unknown-output|no-history>`.
+- `plasma-auto-tiler:workspace:workspace-relative-absent:<no-active-output|unknown-output|empty-ring|current-unknown|current-out-of-ring|target-removed>`.
+- `plasma-auto-tiler:workspace:workspace-previous-no-op:already-there` and
+  `plasma-auto-tiler:workspace:workspace-relative-no-op:already-there`.
+
 Filter by the recorded KWin PID only: `journalctl --user --no-pager _PID=<kwin-pid>`
 (never `journalctl --system`). All emitted production diagnostics carry the
 fixed `plasma-auto-tiler:` prefix. `just dev` and `just dev verbose` retain

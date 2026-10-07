@@ -367,8 +367,11 @@ verb inventory); selected intent and doc assertions are never evidence.
 - Then paneru: no-counterpart (no history verb in the `Operation`
   inventory; `Virtual` is directional North/South only).
   `S(S-pan-cmds)`.
-- Then Ours KDE: no-counterpart (no select or history verb in the
-  Engine + adapter op inventory). `S(S-ours-planops)`.
+- Then Ours KDE: WS2 then WS3, stable-ID two-view toggle via Meta+Ctrl+Tab;
+  implemented offline, native journey TBD. Scoped observed-change history in
+  [adapter](../../../kwin/src/workspace-native.ts),
+  [fixtures](../../../kwin/tests/workspace-previous-relative.test.ts),
+  [record](../../changes/archive/kde-workspace-history-ring.md).
 - Then Ours Windows: no-counterpart (index-only `Select`; no
   previous/history verb). `S(S-ours-planops)`.
 - Variant hook: provisional/TBD (history-toggle hook, to discuss).
@@ -542,8 +545,16 @@ verb inventory); selected intent and doc assertions are never evidence.
   is on, shipped default off, else stays; North from a created VW4 returns
   to VW3) while North saturates at the first row; never a cyclic wrap.
   `S(S-pan-ws)`.
-- Then Ours KDE: no-counterpart (no select/next/previous verb in the
-  Engine + adapter op inventory). `S(S-ours-planops)`.
+- Then Ours KDE: next from WS3 selects existing trailing empty, previous
+  returns to WS3; last next wraps to first, first previous to last. Scoped
+  existing order includes ordinals beyond 9; selection creates nothing.
+  H/K/Left/Up previous, J/L/Down/Right next, all Meta+Ctrl. Authentic clears
+  stock KWin desktop-switch arrows through confirmed shortcut application;
+  Compatible disables our arrows, letters remain. Implemented offline, native
+  journey TBD. [Adapter](../../../kwin/src/workspace-native.ts),
+  [fixtures](../../../kwin/tests/workspace-previous-relative.test.ts),
+  [reconciler](../../../kwin/native-effect/shortcutreconciler.cpp),
+  [record](../../changes/archive/kde-workspace-history-ring.md).
 - Then Ours Windows: no-counterpart (index-only `Select`; no
   next/previous verb). `S(S-ours-planops)`.
 - Variant hook: provisional/TBD (relative-switch hook, to discuss).
@@ -725,10 +736,11 @@ verb inventory); selected intent and doc assertions are never evidence.
   verb). `S(S-ours-planops)`.
 - Variant hook: V-WS-FOLLOW (follow policy for relative sends).
 
-## Selected additions (USER 2026-10-07; implementation pending)
+## Selected additions (USER 2026-10-07; KDE item 1 implemented offline)
 
-These targets are decisions, not new source/live evidence; existing source
-cells above retain their pinned-current meaning. [Items 1/2 and decision 1.5](../../decisions.md#cross-platform-behavior):
+Targets follow [items 1/2 and decision 1.5](../../decisions.md#cross-platform-behavior).
+KDE R-WS-08/11 and R-WS-15..17 now carry offline adapter/fixture evidence;
+native journeys remain TBD. Other source cells retain their pinned-current meaning.
 R-WS-08 selects two-view previous-ID toggle, per-output local/global-unique
 history or one shared history; record all successful observed changes, not
 same-workspace activation/output focus alone. Removed/unassigned/out-of-scope
@@ -738,8 +750,8 @@ ring, wrapping including trailing empty and ordinals beyond 9, selection
 creates nothing. R-WS-01/14 select numbered/relative follow defaults plus
 bindable unbound stay, same ring resolved once before transfer, normal spare
 maintenance; item 2 repairs KDE's source-view-preserving floating-boundary
-path to the already-decided follow default. All additions are implementation
-pending on KDE/Windows.
+path to the already-decided follow default. Item 2 remains implementation
+pending on KDE; both items remain pending on Windows.
 
 ### R-WS-15: previous on L after a workspace change on R
 
@@ -765,8 +777,9 @@ pending on KDE/Windows.
 - Then PaperWM: TBD.
 - Then karousel/Lazy: TBD.
 - Then paneru: TBD.
-- Then Ours KDE: selected local/global-unique L WS1 then WS2, R unchanged;
-  shared WS2 then WS3. Implementation pending; item 1.2.
+- Then Ours KDE: local/global-unique L WS1 then WS2, R unchanged;
+  shared WS2 then WS3. Implemented offline, native journey TBD; item 1.2.
+  [Fixtures](../../../kwin/tests/workspace-previous-relative.test.ts).
 - Then Ours Windows: same selected scope/toggle target; implementation
   pending, including non-local modes; item 1.2.
 - Variant hook: provisional/TBD (R-WS-08 history scope).
@@ -791,9 +804,10 @@ pending on KDE/Windows.
 - Then PaperWM: TBD.
 - Then karousel/Lazy: TBD.
 - Then paneru: TBD.
-- Then Ours KDE: selected removal clears previous E; no-op until next
+- Then Ours KDE: removal clears previous E; no-op until next
   recorded change, no recreation/reinterpretation. Surviving empty E stays
-  valid. Implementation pending; item 1.3; exact lifecycle journey TBD.
+  valid. Implemented offline, native journey TBD; item 1.3.
+  [Fixtures](../../../kwin/tests/workspace-previous-relative.test.ts).
 - Then Ours Windows: same selected stable-ID rule; implementation pending;
   exact removal journey TBD (current model has no removal path).
 - Variant hook: provisional/TBD (R-WS-08 previous-ID validity).
@@ -819,12 +833,13 @@ pending on KDE/Windows.
 - Then PaperWM: TBD.
 - Then karousel/Lazy: TBD.
 - Then paneru: TBD.
-- Then Ours KDE: selected disconnect WS2 -> D records previous WS2;
+- Then Ours KDE: disconnect WS2 -> D records previous WS2;
   first toggle selects WS2, previous D. D's return to R clears L's previous
   D; if reconnect preserves L WS2 with no further recorded change, second
   toggle is a no-op. Reconnect never consults/restores history; any observed
   workspace change records normally; R's disconnected history is discarded.
-  Implementation pending (1.5); exact native selection/focus journey TBD.
+  Implemented offline, native journey TBD (1.5).
+  [Fixtures](../../../kwin/tests/workspace-previous-relative.test.ts).
 - Then Ours Windows: same selected 1.5 history/scope rule and conditional
   second toggle; implementation pending, multi-output parked; native journey TBD.
 - Variant hook: provisional/TBD (R-WS-08 hotplug history).
@@ -852,7 +867,8 @@ pending on KDE/Windows.
 - Then paneru: TBD.
 - Then Ours KDE: selected B fills existing E; normal lifecycle supplies
   next empty; source A survives. Follow goes with B, stay preserves source
-  view. Implementation pending; items 1.4/2.2.
+  view. Item 1.4 selection ring implemented offline, native journey TBD;
+  relative send/follow/stay remains implementation pending (item 2.2).
 - Then Ours Windows: same selected ring/spare/follow/stay target;
   implementation pending; items 1.4/2.2.
 - Variant hook: V-WS-FOLLOW.

@@ -251,12 +251,15 @@ decisions of 2026-09-24 are under
   swap alternative (user 2026-10-07); R-DRAG-08 Windows Win+drag activates
   the mover at press instead of on drop (user 2026-10-07).
   Detailed selections 2026-10-07 (items 1-5 and D1 in
-  [decisions](decisions.md#cross-platform-behavior)), implementation pending:
+  [decisions](decisions.md#cross-platform-behavior)); KDE item 1 delivered
+  offline, remaining implementation pending:
   KDE-side session owns shared Rust core + KDE adapter; separate Windows
   agent wires later. Correctness over non-breakage: Windows build/behavior
   may break provided the handoff below lists the specific changes needed.
   Implementation order:
-  1. R-WS-08 + R-WS-11: Meta/Win+Ctrl+Tab previous-view two-state toggle;
+  1. R-WS-08 + R-WS-11 (KDE delivered offline, native journey TBD;
+     [record](changes/archive/kde-workspace-history-ring.md)):
+     Meta/Win+Ctrl+Tab previous-view two-state toggle;
      Meta/Win+Ctrl+arrows and +H/J/K/L relative switch (left/up previous,
      right/down next). Local/global-unique per-output history/ring, shared
      one history/ring; every successful observed workspace change records,
@@ -279,7 +282,7 @@ decisions of 2026-09-24 are under
      disables our arrows, letters remain; Windows ownership unknown.
      Existing-decision application: route explicit follow/stay through KDE
      floating-boundary send, currently source-view-preserving
-     (`kwin/src/plan-adapter-entry.ts:4018-4022,4067-4085`), so default follows.
+      (`kwin/src/plan-adapter-entry.ts:4037-4041,4086-4104`), so default follows.
   3. R-MOV-03: global KDE `sameAxisMove` / Windows `core.same_axis_move`,
      `cosmic-wrap` default or `flat-swap`; Windows additive version-1 field,
      missing defaults to wrap. Apply to subsequent moves without tree
@@ -304,15 +307,42 @@ decisions of 2026-09-24 are under
      reflow. Ordinary float transfer stays open.
   Bindings for other accepted additions remain to be chosen.
 - P1 | Windows handoff: reference-consensus additions | D1, user 2026-10-07:
-  Windows agent wires the adapter after KDE-side shared-core pieces land.
+  Windows agent wires each adapter piece after its KDE-side delivery.
   Initial sketches below are extended/refined by each implementation piece,
   including specific Windows repairs needed after core build/behavior breaks:
-  - Item 1, after core piece lands: `ManagedWorkspaces` previous-ID state
-    and relative resolution; record history after successful native selection;
-    dispatch via `workspace_do_select`; `settings.rs` / `snapkey.rs` Tab and
-    Ctrl-exact chord support (current routing rejects Ctrl/Alt and Tab);
-    presets. Apply 1.5 hotplug recording, scope invalidation and disconnected-
-    output history discard; reconnect selection does not use history.
+  - Item 1: KDE adapter delivered offline, no shared Rust core/API changes or
+    resulting Windows build repairs. Windows changes still needed:
+    - `workspace.rs` / `ManagedWorkspaces`: stable-ID previous plus observed
+      current baseline per output for local/global-unique, one shared scope
+      when non-local modes land. Resolve previous and ordinal relative targets
+      without activating, appending or invoking trailing creation; use every
+      existing scoped ID, trailing empty and >9 positions, wrap both ends.
+    - `tiling_sys.rs` / `workspace_do_select`: dispatch toggle/relative targets
+      through existing verified hide/reveal/focus selection. Record actual
+      successful view changes from numbered/relative/toggle, native/foreground
+      activation, verified send-follow and hotplug, not attempted setters,
+      same-view activation or output focus. `ManagedWorkspaces::activate`,
+      cleanup, displacement and return must converge on that observation rule.
+    - Invalidate removed/unassigned/out-of-scope previous IDs (including global
+      swap and returning workspace); never reinterpret an ordinal or recreate.
+      Discard BOTH previous and observed baseline on disconnected outputs;
+      keep displacement associations separate. Prime a reconnect baseline,
+      record any subsequently observed return change, never consult history
+      for reconnect selection. Observe before/after hotplug actuation so two
+      changes in one handler leave the actual immediately preceding view.
+    - `settings.rs`, `snapkey.rs` and settings UI: add one Win+Ctrl+Tab toggle
+      and eight separate Win+Ctrl+H/K/Left/Up previous, J/L/Down/Right next
+      rows. Add Tab VK recognition and exact Ctrl modifier routing without
+      conflating focus/move/digit arms; extend intents, queues, hold/repeat,
+      suppression, remap and duplicate validation to include Ctrl (current
+      rebind/suppression keys carry VK+Shift only; Ctrl arms are rejected).
+      Authentic owns the new chords; Compatible disables Left/Right for the
+      native-desktop conflict, keeps letters/Tab/Up/Down enabled with no
+      invented holder claims. Physical native suppression needs Windows evidence.
+    - Port KDE offline acceptance cases (toggle, producer/scope isolation,
+      empty survival/removal, relocation/disconnect/reconnect, >9/trailing wrap,
+      no creation, exact modifiers and presets); non-local modes/multi-output
+      runtime remain the separately parked Windows work.
   - Item 2, after core piece lands: new follow/stay intent in
     `CoreCommand::SendToWorkspace` constructors (`workspace_owner.rs`
     `build_send_event`); split send tail follow vs stay; relative target
@@ -328,7 +358,8 @@ decisions of 2026-09-24 are under
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.
-  KDE Keep/Disable list (66 bindings) and presets delivered offline
+  KDE Keep/Disable list (now 75 bindings after item 1) and presets delivered
+  offline
   (`e1bb52a`, `cdd4ef4`, `96d04ab`; CI green); provisional choices in
   decisions; integrated rebind and KDE first-run prompt deferred. KDE live
   acceptance pending: [checks](live-shortcut-override-verification.md),
@@ -590,6 +621,18 @@ reference-WM checks, which test other compositors.
 
 ### Single-output laptop
 
+- KDE R-WS-08/11 item 1: physical Meta+Ctrl+H/K/Left/Up previous and
+  J/L/Down/Right next wrap first/last, including the trailing empty and >9
+  workspaces, with no selection-created desktops. Meta+Ctrl+Tab toggles the
+  last two observed views; same-workspace activation leaves history intact.
+  Verify Authentic's confirmed Apply/Force clears stock KWin "Switch One
+  Desktop to the Left", "Switch One Desktop to the Right", "Switch One
+  Desktop Up", and "Switch One Desktop Down" holders; Compatible disables our
+  four arrows while letters/Tab work, stock holders remain unchanged on a
+  fresh baseline, and Revert restores defaults after earlier clearing.
+  [Offline record](changes/archive/kde-workspace-history-ring.md),
+  [live guide](live-kwin-testing.md). Multi-output history/return journeys
+  remain user-owned under R-WS-15..17.
 - R-DRAG-08 on KDE: with A focused, Meta+left press on unfocused tiled B,
   move, release at A's edge; record whether B is focused at press, during
   the hold, or only after drop (decision: focus at press).

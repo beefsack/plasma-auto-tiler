@@ -449,7 +449,7 @@ describe("native KCM static contract", () => {
         for (const row of workspace) {
             tsByAction.set(row.action, row.sequence);
         }
-        assert.equal(tsByAction.size, 66);
+        assert.equal(tsByAction.size, 75);
         const nativeByAction = new Map<string, string>();
         const entryPattern =
             /QStringLiteral\("(plasma-auto-tiler-[^"]+)"\),\s*(SHORTCUT_[A-Z0-9_]+),\s*QStringLiteral\("([^"]+)"\)/g;
@@ -463,10 +463,12 @@ describe("native KCM static contract", () => {
                 nativeByAction.set(action, display);
             }
         }
-        assert.equal(nativeByAction.size, 66);
-        assert.deepEqual(new Set(nativeByAction.keys()), new Set(tsByAction.keys()));
-        for (const [action, sequence] of tsByAction) {
-            assert.equal(nativeByAction.get(action), sequence);
+        // Full catalog parity: TS plan plus workspace catalogs match the
+        // native reconciler catalog exactly (75 actions with sequences).
+        assert.equal(nativeByAction.size, 75);
+        assert.deepEqual([...nativeByAction.keys()].sort(), [...tsByAction.keys()].sort());
+        for (const [action, sequence] of nativeByAction) {
+            assert.equal(tsByAction.get(action), sequence);
         }
         // UI rows use readable chords and distinguish own from foreign holders.
         assert.match(unified, /keysDisplayNames/);

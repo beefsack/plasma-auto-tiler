@@ -51,6 +51,10 @@ constexpr int META_UP = 285212691;
 constexpr int META_RIGHT = 285212692;
 constexpr int META_SHIFT_LEFT = 318767122;
 constexpr int META_SHIFT_RIGHT = 318767124;
+constexpr int META_CTRL_LEFT = 352321554;
+constexpr int META_CTRL_UP = 352321555;
+constexpr int META_CTRL_DOWN = 352321557;
+constexpr int META_CTRL_RIGHT = 352321556;
 
 ShortcutTuple makeTuple(const QString &component, const QString &action, const QList<int> &active)
 {
@@ -409,7 +413,7 @@ void seedFullCatalogQuietExtras(FakeShortcutStore &store)
 {
     // Full-catalog canonical quiet extras: every catalog row missing live is
     // appended at its canonical chord with no foreign holders, so legacy
-    // 16-row seeds stay strict under full-catalog missing-enabled rules
+    // 20-row seeds stay strict under full-catalog missing-enabled rules
     // while old oracles keep their intended outcomes.
     for (const ShortcutCatalogEntry &entry : shortcutProjectCatalog()) {
         bool found = false;
@@ -427,8 +431,8 @@ void seedFullCatalogQuietExtras(FakeShortcutStore &store)
 
 void seedReady(FakeShortcutStore &store)
 {
-    // Sixteen project rows at non-post values with zero foreign holders of
-    // the sixteen required chords, so Apply succeeds.
+    // Twenty project rows at non-post values with zero foreign holders of
+    // the twenty required chords, so Apply succeeds.
     store.tuples = {
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420}),
         makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
@@ -450,6 +454,14 @@ void seedReady(FakeShortcutStore &store)
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right-arrow"), QList<int>{24}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-left-arrow"), QList<int>{25}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-right-arrow"), QList<int>{26}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-prev-left-arrow"),
+                  QList<int>{27}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-prev-up-arrow"),
+                  QList<int>{28}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-next-down-arrow"),
+                  QList<int>{29}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-next-right-arrow"),
+                  QList<int>{30}),
     };
     seedFullCatalogQuietExtras(store);
 }
@@ -542,7 +554,7 @@ void setRowDisabled(ActiveBorderConfigModule &module, const QString &id, bool di
 
 void selectionPresetsAndDraft()
 {
-    // Compatible disables the 15 known-conflict rows plus live-colliding
+    // Compatible disables the 19 known-conflict rows plus live-colliding
     // rows in catalog order; Authentic resets to Keep. Staging only: zero
     // daemon or cleared-store writes either way.
     FakeShortcutStore store;
@@ -558,7 +570,7 @@ void selectionPresetsAndDraft()
     QListWidget *list = conflictListByModule(module);
     CHECK(list != nullptr);
     if (list != nullptr) {
-        CHECK(list->count() == 66);
+        CHECK(list->count() == 75);
     }
     QPushButton *compatible = presetButtonByModule(module, "shortcutCompatibleButton");
     QPushButton *authentic = presetButtonByModule(module, "shortcutAuthenticButton");
@@ -570,10 +582,21 @@ void selectionPresetsAndDraft()
     const QString focusId = QStringLiteral("kwin/plasma-auto-tiler-focus-right");
     const QString ws1 = QStringLiteral("kwin/plasma-auto-tiler-workspace-1");
     const QStringList draft = module.shortcutDisabledIds();
-    CHECK(draft.size() == 16);
+    CHECK(draft.size() == 20);
     CHECK(draft.contains(focusId));
     CHECK(draft.contains(ws1));
     CHECK(draft.indexOf(focusId) < draft.indexOf(ws1));
+    // Item 1 Compatible: the four workspace arrow rows disable, letters and
+    // the previous toggle stay Keep.
+    CHECK(draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-prev-left-arrow")));
+    CHECK(draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-prev-up-arrow")));
+    CHECK(draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-next-down-arrow")));
+    CHECK(draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-next-right-arrow")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-previous")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-prev-h")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-prev-k")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-next-j")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-next-l")));
     CHECK(store.totalWrites() == 0);
     CHECK(cleared.saves == 0);
     CHECK(!module.isShortcutForceApplyVisible());
@@ -771,7 +794,7 @@ void selectionMissingEnabledStatus()
         module.load();
         CHECK(module.shortcutStatusText().contains(QStringLiteral("unavailable"))
               || module.shortcutStatusText().contains(QStringLiteral("missing")));
-        CHECK(!module.shortcutStatusText().contains(QStringLiteral("applied (66 rows")));
+        CHECK(!module.shortcutStatusText().contains(QStringLiteral("applied (75 rows")));
     }
     {
         FakeShortcutStore store;
@@ -818,7 +841,7 @@ void selectionDisabledLockAbsentShowsRows()
     QListWidget *list = conflictListByModule(module);
     CHECK(list != nullptr);
     if (list != nullptr) {
-        CHECK(list->count() == 66);
+        CHECK(list->count() == 75);
     }
 }
 
@@ -949,7 +972,7 @@ void stateAndErrorPresentation()
         module.setShortcutStores(&store, &cleared);
         module.load();
         CHECK(module.shortcutStatusText().contains(QStringLiteral("Ready")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("66 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("75 rows")));
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(buttonByName(module, "shortcutFinishApplyButton") == nullptr);
         CHECK(buttonByName(module, "shortcutRestoreButton") == nullptr);
@@ -980,7 +1003,7 @@ void stateAndErrorPresentation()
         module.requestShortcutApply();
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(module.shortcutStatusText().contains(QStringLiteral("applied")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("66 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("75 rows")));
     }
     // Conflict with an unknown foreign holder.
     {

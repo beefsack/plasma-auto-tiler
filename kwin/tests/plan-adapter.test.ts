@@ -3689,9 +3689,9 @@ describe("plan entry live observation and shortcuts", () => {
         const world = fakeWorld();
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
-        assert.equal(mocks.shortcuts.length, 67);
+        assert.equal(mocks.shortcuts.length, 76);
         const actions = mocks.shortcuts.map((row) => row.action);
-        assert.equal(new Set(actions).size, 67);
+        assert.equal(new Set(actions).size, 76);
         assert.ok(actions.includes("plasma-auto-tiler-focus-left"));
         assert.ok(actions.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(actions.includes("plasma-auto-tiler-move-up"));
@@ -4038,7 +4038,7 @@ describe("plan entry live observation and shortcuts", () => {
         const live = startEntry(fakeWorld());
         assert.ok(live.handle !== null);
         const byAction = new Map(live.mocks.shortcuts.map((row) => [row.action, row]));
-        assert.equal(live.mocks.shortcuts.length, 67);
+        assert.equal(live.mocks.shortcuts.length, 76);
         for (let index = 1; index <= 9; index += 1) {
             assert.equal(byAction.get(`plasma-auto-tiler-workspace-${String(index)}`)?.sequence, `Meta+${String(index)}`);
             assert.equal(byAction.get(`plasma-auto-tiler-move-workspace-${String(index)}`)?.sequence, `Meta+Shift+${String(index)}`);
@@ -4186,7 +4186,7 @@ describe("plan entry live observation and shortcuts", () => {
             },
         });
         assert.ok(handle !== null);
-        assert.equal(attempts.length, 67);
+        assert.equal(attempts.length, 76);
         assert.ok(attempts.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(attempts.includes("plasma-auto-tiler-resize-inwards-right-arrow"));
         const line = mocks.logs.find((entry) => entry.includes("shortcut-failed"));
@@ -4915,13 +4915,13 @@ describe("plan entry startup attach recovery", () => {
         fireAdded(world);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "one bounded recovery line");
         assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "ready line after recovery");
-        assert.equal(mocks.shortcuts.length, 67, "shortcuts register exactly once on recovery");
+        assert.equal(mocks.shortcuts.length, 76, "shortcuts register exactly once on recovery");
         handle?.requestFocus("left");
         assert.equal(mocks.dbusCalls.length, 1, "actuation resumes after recovery");
         assert.equal(mocks.dbusCalls[0]?.method, "DescribePlan");
         fireAdded(world);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "no duplicate recovery line");
-        assert.equal(mocks.shortcuts.length, 67, "no duplicate shortcut registration");
+        assert.equal(mocks.shortcuts.length, 76, "no duplicate shortcut registration");
         assert.equal(mocks.logs.filter((line) => line.startsWith(FAILED_PREFIX)).length, 1, "no duplicate failed line");
         handle?.stop();
     });
@@ -4947,10 +4947,10 @@ describe("plan entry startup attach recovery", () => {
         fireScreens(screens);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "screensChanged alone recovers");
         assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "ready line after screens recovery");
-        assert.equal(mocks.shortcuts.length, 67, "shortcuts register exactly once on screens recovery");
+        assert.equal(mocks.shortcuts.length, 76, "shortcuts register exactly once on screens recovery");
         fireScreens(screens);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "no duplicate recovery on later screen change");
-        assert.equal(mocks.shortcuts.length, 67, "no duplicate shortcut registration on later screen change");
+        assert.equal(mocks.shortcuts.length, 76, "no duplicate shortcut registration on later screen change");
         assert.equal(mocks.logs.filter((line) => line.startsWith(FAILED_PREFIX)).length, 1, "no duplicate failed line");
         handle?.stop();
         const pendingWorld = fakeWorld();
@@ -5060,12 +5060,12 @@ describe("plan entry startup attach recovery", () => {
         fireAdded(world);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "one bounded recovery line");
         assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "ready line after recovery");
-        assert.equal(mocks.shortcuts.length, 67, "shortcuts register exactly once on recovery");
+        assert.equal(mocks.shortcuts.length, 76, "shortcuts register exactly once on recovery");
         handle?.requestFocus("left");
         assert.equal(mocks.dbusCalls.length, 1, "actuation resumes after recovery");
         fireAdded(world);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "no duplicate recovery line");
-        assert.equal(mocks.shortcuts.length, 67, "no duplicate shortcut registration");
+        assert.equal(mocks.shortcuts.length, 76, "no duplicate shortcut registration");
         handle?.stop();
     });
 

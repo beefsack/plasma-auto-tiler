@@ -87,8 +87,9 @@ export interface WorkspaceShortcutRow {
     readonly action: string;
     readonly text: string;
     readonly sequence: string;
-    readonly kind: "select" | "move";
+    readonly kind: "select" | "move" | "previous" | "relative";
     readonly index: number;
+    readonly delta?: -1 | 1;
 }
 
 export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> {
@@ -145,6 +146,77 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
             index: 0,
         });
     }
+    rows.push({
+        action: "plasma-auto-tiler-workspace-previous",
+        text: "Toggle to the previous workspace",
+        sequence: "Meta+Ctrl+Tab",
+        kind: "previous",
+        index: 0,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-workspace-prev-h",
+        text: "Previous workspace",
+        sequence: "Meta+Ctrl+H",
+        kind: "relative",
+        index: 0,
+        delta: -1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-workspace-prev-k",
+        text: "Previous workspace",
+        sequence: "Meta+Ctrl+K",
+        kind: "relative",
+        index: 0,
+        delta: -1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-workspace-prev-left-arrow",
+        text: "Previous workspace",
+        sequence: "Meta+Ctrl+Left",
+        kind: "relative",
+        index: 0,
+        delta: -1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-workspace-prev-up-arrow",
+        text: "Previous workspace",
+        sequence: "Meta+Ctrl+Up",
+        kind: "relative",
+        index: 0,
+        delta: -1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-workspace-next-j",
+        text: "Next workspace",
+        sequence: "Meta+Ctrl+J",
+        kind: "relative",
+        index: 0,
+        delta: 1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-workspace-next-l",
+        text: "Next workspace",
+        sequence: "Meta+Ctrl+L",
+        kind: "relative",
+        index: 0,
+        delta: 1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-workspace-next-down-arrow",
+        text: "Next workspace",
+        sequence: "Meta+Ctrl+Down",
+        kind: "relative",
+        index: 0,
+        delta: 1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-workspace-next-right-arrow",
+        text: "Next workspace",
+        sequence: "Meta+Ctrl+Right",
+        kind: "relative",
+        index: 0,
+        delta: 1,
+    });
     return Object.freeze(rows);
 }
 
@@ -443,6 +515,15 @@ export class WorkspaceNativeAdapter {
     // mapping list missed them. Primed at enable, refreshed after each
     // displacement pass; never records historical geometry.
     private readonly lastKnownByKey = new Map<string, string[]>();
+    // R-WS-08 two-view previous history: per-output for local/global-unique,
+    // one shared entry. Reconnect selection never consults this history.
+    private readonly previousByOutput = new Map<string, string>();
+    // History observation baseline, separate from the displacement
+    // lastVisibleByKey which intentionally retains removed origins.
+    // Deleted with the previous entry on disconnect; primed on return.
+    private readonly historyBaselineByKey = new Map<string, string>();
+    private lastSharedVisible: string | null = null;
+    private previousShared: string | null = null;
     // Bounded transaction-lifetime retention for an in-flight planned
     // workspace-send: while the send adapter holds a bound plan awaiting
     // ack/verify, its pending source/target ids must not be pruned even when
@@ -570,6 +651,10 @@ export class WorkspaceNativeAdapter {
         this.displacedByOrigin.clear();
         this.lastVisibleByKey.clear();
         this.lastKnownByKey.clear();
+        this.previousByOutput.clear();
+        this.historyBaselineByKey.clear();
+        this.lastSharedVisible = null;
+        this.previousShared = null;
         this.managed.clear();
         this.tiledById.clear();
     }
@@ -642,6 +727,18 @@ export class WorkspaceNativeAdapter {
         return Object.freeze(out);
     }
 
+    previousSnapshot(): Readonly<Record<string, string>> {
+        const out: Record<string, string> = {};
+        for (const [key, id] of this.previousByOutput) {
+            out[key] = id;
+        }
+        return Object.freeze(out);
+    }
+
+    previousSharedSnapshot(): string | null {
+        return this.previousShared;
+    }
+
     // One synchronous cleanup per workspace or window signal. Creates or
     // retires backing desktops so every relevant domain keeps one trailing
     // empty. Never removes populated, current, visible, transaction-retained,
@@ -668,7 +765,11 @@ export class WorkspaceNativeAdapter {
             prevGlobal.set(key, [...ids]);
         }
         this.reconcileOutputDisplacement(prevLocal, prevGlobal);
+        if (this.mode === "shared") {
+            this.observeSharedHistory();
+        }
         this.cleanupDesktops();
+        this.validatePreviousEntries();
         this.syncTilingWithLive();
     }
 
@@ -708,6 +809,134 @@ export class WorkspaceNativeAdapter {
             return this.selectGlobalTrailing(output);
         }
         return this.selectLocalTrailing(output);
+    }
+
+    // Meta+Ctrl+Tab: two-view previous-id toggle, not MRU traversal.
+    // No-op until a recorded change exists; cleared entries never recreate
+    // or reinterpret ordinals. Selection itself creates nothing.
+    selectPrevious(): boolean {
+        if (!this.enabled) {
+            return false;
+        }
+        if (this.mode === "shared") {
+            return this.selectPreviousShared();
+        }
+        const output = this.activeOutput();
+        if (output === null) {
+            this.logToken("workspace-previous-absent:no-active-output");
+            return false;
+        }
+        const key = this.outputKeys.keyFor(output);
+        if (key === undefined) {
+            this.logToken("workspace-previous-absent:unknown-output");
+            return false;
+        }
+        const previousId = this.previousByOutput.get(key);
+        if (previousId === undefined) {
+            this.logToken("workspace-previous-absent:no-history");
+            return false;
+        }
+        const live = this.liveOrdered();
+        if (live === null) {
+            return false;
+        }
+        const liveIds = new Set(live.map((entry) => entry.id));
+        if (!liveIds.has(previousId)) {
+            this.previousByOutput.delete(key);
+            this.logToken("workspace-previous-invalidated:removed");
+            return false;
+        }
+        if (!this.previousInScope(key, previousId, live)) {
+            this.previousByOutput.delete(key);
+            this.logToken("workspace-previous-invalidated:out-of-scope");
+            return false;
+        }
+        const target = this.findLive(previousId);
+        if (target === null) {
+            this.previousByOutput.delete(key);
+            this.logToken("workspace-previous-invalidated:removed");
+            return false;
+        }
+        const current = this.currentOnOutput(output);
+        if (current !== null && current.id === previousId) {
+            this.logToken("workspace-previous-no-op:already-there");
+            return true;
+        }
+        if (this.mode === "global-unique") {
+            this.swapGlobalIfVisibleElsewhere(target, output);
+        }
+        if (!this.writeCurrent(target.ref, output)) {
+            return false;
+        }
+        this.logToken(`workspace-previous-completed:${previousId}`);
+        return true;
+    }
+
+    // Meta+Ctrl+arrows and +H/J/K/L: scoped existing-order ring step with
+    // first/last wrap, including the trailing empty and ordinals beyond 9.
+    // Selection creates nothing; absent ring or current fails closed.
+    selectRelative(delta: number): boolean {
+        if (!this.enabled) {
+            return false;
+        }
+        if (delta !== -1 && delta !== 1) {
+            return false;
+        }
+        if (this.mode === "shared") {
+            return this.selectRelativeShared(delta);
+        }
+        const output = this.activeOutput();
+        if (output === null) {
+            this.logToken("workspace-relative-absent:no-active-output");
+            return false;
+        }
+        const live = this.liveOrdered();
+        if (live === null) {
+            return false;
+        }
+        if (this.mode === "global-unique") {
+            this.rebuildGlobalMapping(live);
+        } else {
+            this.rebuildLocalMapping(live);
+        }
+        const key = this.outputKeys.keyFor(output);
+        if (key === undefined) {
+            this.logToken("workspace-relative-absent:unknown-output");
+            return false;
+        }
+        const ring = this.scopedRingIds(key, live);
+        if (ring.length === 0) {
+            this.logToken("workspace-relative-absent:empty-ring");
+            return false;
+        }
+        const current = this.currentOnOutput(output);
+        if (current === null) {
+            this.logToken("workspace-relative-absent:current-unknown");
+            return false;
+        }
+        const at = ring.indexOf(current.id);
+        if (at < 0) {
+            this.logToken("workspace-relative-absent:current-out-of-ring");
+            return false;
+        }
+        const nextId = ring[(at + delta + ring.length) % ring.length];
+        if (nextId === undefined || nextId === current.id) {
+            this.logToken("workspace-relative-no-op:already-there");
+            return true;
+        }
+        const target = this.findLive(nextId);
+        if (target === null) {
+            this.logToken("workspace-relative-absent:target-removed");
+            return false;
+        }
+        if (this.mode === "global-unique") {
+            this.swapGlobalIfVisibleElsewhere(target, output);
+        }
+        if (!this.writeCurrent(target.ref, output)) {
+            return false;
+        }
+        this.logToken(`workspace-relative-completed:${nextId}`);
+        return true;
     }
 
     // Meta+Shift+1..9: resolve an existing same-output logical position to a
@@ -1308,6 +1537,7 @@ export class WorkspaceNativeAdapter {
             knownKeys.add(key);
         }
         const removed = [...knownKeys].filter((key) => !currentKeys.includes(key));
+        this.recordHistoryObservations(screens);
         this.reconciling = true;
         try {
             for (const origin of removed) {
@@ -1429,6 +1659,7 @@ export class WorkspaceNativeAdapter {
             }
             this.refreshLastVisible(screens);
             this.refreshLastKnown(screens);
+            this.recordHistoryObservations(screens);
         } finally {
             this.reconciling = false;
         }
@@ -1517,6 +1748,22 @@ export class WorkspaceNativeAdapter {
         }
         this.refreshLastVisible(screens);
         this.refreshLastKnown(screens);
+        this.primeHistoryBaselines(screens);
+        this.previousByOutput.clear();
+        this.primeSharedHistory();
+    }
+
+    private primeHistoryBaselines(screens: ReadonlyArray<object>): void {
+        for (const output of screens) {
+            const key = this.outputKeys.keyFor(output);
+            if (key === undefined) {
+                continue;
+            }
+            const current = this.currentOnOutput(output);
+            if (current !== null) {
+                this.historyBaselineByKey.set(key, current.id);
+            }
+        }
     }
 
     // Group desktop memberships by observed window output key from
@@ -1625,7 +1872,6 @@ export class WorkspaceNativeAdapter {
                 this.lastVisibleByKey.set(key, current.id);
             }
         }
-        // Drop stale origins that are neither live nor displaced.
         for (const key of [...this.lastVisibleByKey.keys()]) {
             let live = false;
             for (const output of screens) {
@@ -1638,6 +1884,183 @@ export class WorkspaceNativeAdapter {
                 this.lastVisibleByKey.delete(key);
             }
         }
+    }
+
+    private recordHistoryObservations(screens: ReadonlyArray<object>): void {
+        const liveKeys = new Set<string>();
+        for (const output of screens) {
+            const key = this.outputKeys.keyFor(output);
+            if (key !== undefined) {
+                liveKeys.add(key);
+            }
+        }
+        for (const output of screens) {
+            const key = this.outputKeys.keyFor(output);
+            if (key === undefined) {
+                continue;
+            }
+            const current = this.currentOnOutput(output);
+            if (current === null) {
+                continue;
+            }
+            const base = this.historyBaselineByKey.get(key);
+            if (base === undefined) {
+                this.historyBaselineByKey.set(key, current.id);
+                continue;
+            }
+            if (base !== current.id) {
+                this.previousByOutput.set(key, base);
+                this.logToken(`workspace-previous-recorded:${current.id}`);
+                this.historyBaselineByKey.set(key, current.id);
+            }
+        }
+        for (const key of [...this.historyBaselineByKey.keys()]) {
+            if (!liveKeys.has(key)) {
+                this.historyBaselineByKey.delete(key);
+                if (this.previousByOutput.delete(key)) {
+                    this.logToken(`workspace-previous-discarded:${key}`);
+                }
+            }
+        }
+        for (const key of [...this.previousByOutput.keys()]) {
+            if (!liveKeys.has(key)) {
+                this.previousByOutput.delete(key);
+                this.logToken(`workspace-previous-discarded:${key}`);
+            }
+        }
+    }
+
+    private observeSharedHistory(): void {
+        const current = this.currentShared();
+        if (current === null) {
+            return;
+        }
+        if (this.lastSharedVisible !== null && this.lastSharedVisible !== current.id) {
+            this.previousShared = this.lastSharedVisible;
+            this.logToken(`workspace-previous-recorded:${current.id}`);
+        }
+        this.lastSharedVisible = current.id;
+    }
+
+    private primeSharedHistory(): void {
+        const current = this.currentShared();
+        this.lastSharedVisible = current === null ? null : current.id;
+        this.previousShared = null;
+    }
+
+    private scopedRingIds(key: string, live: ReadonlyArray<DesktopEntry>): ReadonlyArray<string> {
+        const liveIds = new Set(live.map((entry) => entry.id));
+        if (this.mode === "global-unique") {
+            return Object.freeze(this.globalOrdered(live, key).map((entry) => entry.id));
+        }
+        const list = this.localWorkspaces.get(key) ?? [];
+        return Object.freeze(list.filter((id) => liveIds.has(id)));
+    }
+
+    private previousInScope(key: string, id: string, live: ReadonlyArray<DesktopEntry>): boolean {
+        if (this.mode === "global-unique") {
+            const ordered = this.globalOrdered(live, key).map((entry) => entry.id);
+            return ordered.includes(id);
+        }
+        const list = this.localWorkspaces.get(key);
+        if (list === undefined) {
+            return false;
+        }
+        return list.includes(id);
+    }
+
+    private validatePreviousEntries(): void {
+        const live = this.liveOrdered();
+        if (live === null) {
+            return;
+        }
+        const liveIds = new Set(live.map((entry) => entry.id));
+        if (this.mode === "shared") {
+            if (this.previousShared !== null && !liveIds.has(this.previousShared)) {
+                this.previousShared = null;
+                this.logToken("workspace-previous-invalidated:removed");
+            }
+            return;
+        }
+        for (const [key, id] of [...this.previousByOutput]) {
+            if (!liveIds.has(id)) {
+                this.previousByOutput.delete(key);
+                this.logToken("workspace-previous-invalidated:removed");
+                continue;
+            }
+            if (!this.previousInScope(key, id, live)) {
+                this.previousByOutput.delete(key);
+                this.logToken("workspace-previous-invalidated:out-of-scope");
+            }
+        }
+    }
+
+    private selectPreviousShared(): boolean {
+        const previousId = this.previousShared;
+        if (previousId === null) {
+            this.logToken("workspace-previous-absent:no-history");
+            return false;
+        }
+        const live = this.liveOrdered();
+        if (live === null) {
+            return false;
+        }
+        if (!live.some((entry) => entry.id === previousId)) {
+            this.previousShared = null;
+            this.logToken("workspace-previous-invalidated:removed");
+            return false;
+        }
+        const target = this.findLive(previousId);
+        if (target === null) {
+            this.previousShared = null;
+            this.logToken("workspace-previous-invalidated:removed");
+            return false;
+        }
+        const current = this.currentShared();
+        if (current !== null && current.id === previousId) {
+            this.logToken("workspace-previous-no-op:already-there");
+            return true;
+        }
+        this.synchronizeShared(target.ref);
+        this.logToken(`workspace-previous-completed:${previousId}`);
+        return true;
+    }
+
+    private selectRelativeShared(delta: -1 | 1): boolean {
+        const live = this.liveOrdered();
+        if (live === null) {
+            return false;
+        }
+        this.rebuildSharedMapping(live);
+        const fresh = this.liveOrdered();
+        const ring = (fresh ?? live).map((entry) => entry.id);
+        if (ring.length === 0) {
+            this.logToken("workspace-relative-absent:empty-ring");
+            return false;
+        }
+        const current = this.currentShared();
+        if (current === null) {
+            this.logToken("workspace-relative-absent:current-unknown");
+            return false;
+        }
+        const at = ring.indexOf(current.id);
+        if (at < 0) {
+            this.logToken("workspace-relative-absent:current-out-of-ring");
+            return false;
+        }
+        const nextId = ring[(at + delta + ring.length) % ring.length];
+        if (nextId === undefined || nextId === current.id) {
+            this.logToken("workspace-relative-no-op:already-there");
+            return true;
+        }
+        const target = this.findLive(nextId);
+        if (target === null) {
+            this.logToken("workspace-relative-absent:target-removed");
+            return false;
+        }
+        this.synchronizeShared(target.ref);
+        this.logToken(`workspace-relative-completed:${nextId}`);
+        return true;
     }
 
     // Survivor destination without removed-output geometry: the current

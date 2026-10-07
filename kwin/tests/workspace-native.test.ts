@@ -265,7 +265,7 @@ describe("workspace mode parsing and chord catalog", () => {
 
     it("publishes exact number chords with shifted-symbol aliases and no foreign records", () => {
         const catalog = workspaceShortcutCatalog();
-        assert.equal(catalog.length, 30);
+        assert.equal(catalog.length, 39);
         const byAction = new Map(catalog.map((row) => [row.action, row]));
         for (let index = 1; index <= 9; index += 1) {
             assert.equal(byAction.get(`plasma-auto-tiler-workspace-${String(index)}`)?.sequence, `Meta+${String(index)}`);
@@ -772,6 +772,11 @@ describe("workspace production entry routing and handoff", () => {
             false,
             "late echoes add no ack",
         );
+        // R-WS-08: the verified send-follow recorded previous; toggle returns.
+        const sourceDesktop = world.desktops[0];
+        assert.ok(sourceDesktop !== undefined);
+        handle?.requestWorkspacePrevious();
+        assert.equal(world.currentByOutput.get(world.outputs[0] as never), sourceDesktop);
         handle?.stop();
     });
 
