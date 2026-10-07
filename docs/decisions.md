@@ -243,6 +243,9 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   establish actual tiled plan/write/matched readback, not inventory presence.
   Earlier rejected hold/release approaches remain historical evidence in the
   archived record. Physical feel and other DPI/output setups remain user-owned.
+  Superseded in direction by Q3 scope (user 2026-10-07, see
+  [Cross-Platform Behavior](#cross-platform-behavior)): the one-shot restore
+  is replaced by keeping the maximize over a reserved slot.
 
 ## Cross-Platform Behavior
 
@@ -263,6 +266,10 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   Reference baselines use pinned shipped defaults and named discriminating
   variants. PaperWM.spoon is corroboration only. Evidence expands the corpus,
   not the selected product behavior or consensus denominator.
+- User decision 2026-10-07 (functional spec format): keep
+  [the functional spec](spec/functional-spec.md) as a single file; revisit
+  splitting if it grows much larger. Requirements are normative only where a
+  recorded decision selects them; everything else stays OPEN or PROVISIONAL.
 - Provisional, to discuss (2026-10-03, matrix evidence): compact cell citation
   keys resolve to dated user tests, pinned source file/line ranges or linked
   documentation; missing outcomes remain TBD, and tested versions are never
@@ -396,11 +403,12 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   - Q3: a first-seen (born) maximized window follows COSMIC: it tiles with a
     reserved slot and keeps its maximize as an overlay; no launch unmaximize,
     on KDE and Windows. This supersedes the one-shot admission maximize
-    clear on both platforms. Open: whether it also replaces the R-MAX-03
-    one-shot restore when a floating workspace is toggled to tiled
-    (Orchestrator recommendation: yes, it is the same first tiled admission).
+    clear on both platforms. User decision 2026-10-07: Q3 also covers
+    R-MAX-03; a maximized window stays maximized (reserved-slot overlay) when
+    its floating workspace is toggled to tiled, replacing the one-shot
+    restore on both platforms (implementation pending).
     KDE R-MAX-06 delivered offline 2026-10-07: reserved-slot overlay with no
-    launch clear; R-MAX-03 remains one-shot pending that scope decision.
+    launch clear; R-MAX-03 still one-shot until implemented.
     Native launch/restore and session-restore no-loop acceptance remain
     user-owned. [Delivery record](changes/archive/kde-born-maximized-overlay.md).
   - B9: an explicit unfloat of an intentionally floating window that is

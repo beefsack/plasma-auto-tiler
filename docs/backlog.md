@@ -215,14 +215,30 @@ decisions of 2026-09-24 are under
   (a) float-origin directional focus and Meta+Shift+arrow half-snaps
   (R-FLT-07..11; Windows today refuses float subjects); (b) Q3 born-maximized
   reserved slot plus maximize overlay, replacing the one-shot admission
-  clear on Windows (and KDE, same decision); confirm whether it also covers
-  the R-MAX-03 floating-to-tiled case; (c) B9 overlaid unfloat: Windows stops
+  clear on Windows (and KDE, same decision); user 2026-10-07: Q3 also
+  covers the R-MAX-03 floating-to-tiled case (stays maximized over a
+  reserved slot) - implement on both platforms (KDE `9b612be` left
+  R-MAX-03 one-shot); (c) B9 overlaid unfloat: Windows stops
   refusing once the user's COSMIC R-FLT-06 check settles retain vs
   unmaximize; (d) audit finding: Windows keyboard resize and non-local
   workspace modes are unimplemented despite catalog/settings text
   (`settings.rs:769-777`, `workspace.rs:95-108`).
   [decisions](decisions.md#cross-platform-behavior)
   [audit](research/cross-platform-core/post-windows-audit.md)
+- P1 | Adopt reference-consensus additions | User 2026-10-07 accepted the
+  Orchestrator recommendations from the consensus Table A; not started,
+  each through the shared Engine where possible, KDE and Windows unless
+  noted ([consensus](research/reference-wm-consensus.md)):
+  R-MOV-08 allow vertical move onto another output once local movement is
+  exhausted; R-LAY-01 parent split-axis toggle; R-LAY-04 workspace-local
+  layout selection; R-WS-08 previous-workspace toggle; R-WS-11 wrapping
+  next/previous workspace switch; R-WS-12 move whole workspace to another
+  output; R-WS-14 send window to next/previous workspace; R-OUT-04 send
+  window to output; R-MAX-09 carry fullscreen across workspace send on
+  Windows (observe KDE first); R-SPC-04 float fixed-size windows on
+  admission; R-RST-01 keep intentional floats floating across owner
+  restart; R-RSZ-01 Windows keyboard resize (overlaps Windows parity (d)).
+  Shortcuts for new verbs need choosing when each starts.
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.
@@ -462,9 +478,23 @@ Unprioritised ideas; not scheduled.
 
 ## Pending live checks
 
-All items below shipped offline with no live result claimed.
+All items below shipped offline with no live result claimed, except the
+reference-WM checks, which test other compositors.
+
+### Reference WMs (user)
+
+- B9 / R-FLT-06 on COSMIC: tiled workspace, intentionally float B, natively
+  maximize it, then toggle float off once. Record whether B stays
+  maximized over its new tile or is unmaximized then tiled. Decides B9
+  before Windows drops its refusal.
+  [row](spec/reference-outcomes/floating.md)
 
 ### Single-output laptop
+
+- KDE Q3 born-maximized overlay (`9b612be`) and B6 origin+minimum
+  (`cf6ab31`): steps in
+  [Q3 record](changes/archive/kde-born-maximized-overlay.md) and
+  [B6 record](changes/archive/kde-minimum-origin-placement.md).
 
 - Tray workspace toggle: floating/tiled toggling confirmed live by the user
   (2026-09-29). Remaining: default change logs `stage=persist
@@ -670,17 +700,12 @@ All items below shipped offline with no live result claimed.
 - Windows taskbar workspace indicator (parity 10): presentation design.
 - macOS Phase 0: host model and macOS floor, Intel support, stable signer,
   Meta mapping. [plan](research/macos-port/plan.md)
-- B9 / R-FLT-06: COSMIC live check of overlaid unfloat (retain maximize vs
-  unmaximize then tile) before Windows drops its refusal.
-- Q3 scope: whether the reserved-slot maximize overlay also replaces the
-  R-MAX-03 one-shot restore on floating-to-tiled toggle (recommended yes).
 - Reference consensus differences (functional specification line above):
-  keep, adopt or make variants for each of the 24 Table A rows (new since
-  2026-10-07: R-MOV-08 vertical output crossing, R-LAY-01 axis toggle,
-  R-LAY-04 per-workspace layout, R-WS-08/11/12/14 workspace verbs,
-  R-OUT-04 output send, R-MAX-09 fullscreen send, R-SPC-04 fixed-size
-  float, R-RST-01 float identity across restart, R-RSZ-01 Windows keyboard
-  resize, R-GRP-03) and the R-DRAG-07/08 splits.
+  the 12 new 2026-10-07 recommendations were accepted (see "Adopt
+  reference-consensus additions"); the remaining Table A rows (R-WS-01,
+  R-MOV-03, R-FLT-05/06/09, R-MAX-05/07, R-MIN-01..03, R-DRAG-04, R-GRP-03)
+  and the R-DRAG-07/08 splits are being decided one by one in
+  conversation.
 - Live-test VMs for the 508-cell matrix queue: proposal `c17af1e`
   ([proposal](research/live-test-vms/proposal.md)) recommends one flake
   with a NixOS `build-vm` config per WM at the pinned source commits,
