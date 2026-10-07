@@ -87,6 +87,7 @@ function worldObserved(world: World, refs: { a: object; b: object; t: object; de
         desktopCount: world.desktopCount,
         sourceFingerprint: "sfp-1",
         targetFingerprint: "tfp-1",
+        currentWorkspace: "ws-1",
     };
 }
 

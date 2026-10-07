@@ -1852,6 +1852,7 @@ impl Engine {
             window,
             target_output,
             target_workspace,
+            follow,
         } = &event.command
         else {
             return CoreReply::Rejected {
@@ -2075,6 +2076,7 @@ impl Engine {
             window: crate::directional::WindowId(window.clone()),
             target_output: target_key.output.clone(),
             target_workspace: target_key.workspace.clone(),
+            follow: *follow,
         };
         match session.propose(
             &session_command,

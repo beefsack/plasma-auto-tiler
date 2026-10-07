@@ -526,53 +526,85 @@ describe("workspace toggle end to end", () => {
         handle?.stop();
     });
 
-    it("cross-boundary sends move natively and preserve focus and visibility", () => {
-        const world = richWorld(["ws-1", "ws-2"], 1);
-        const { handle, mocks } = startTilingEntry(world, true);
-        assert.ok(handle !== null);
-        const activeBefore = world.workspace["activeWindow"];
-        const currentBefore = world.workspace["currentDesktop"];
-        // Float the target workspace, then send across the boundary.
-        world.workspace["currentDesktopForScreen"] = (): unknown => world.desktops[1];
-        world.workspace["currentDesktop"] = world.desktops[1];
-        handle?.requestWorkspaceTilingToggle();
-        assert.equal(handle?.getWorkspaceTilingSnapshot().tiled, false);
-        world.workspace["currentDesktopForScreen"] = (): unknown => world.desktops[0];
-        world.workspace["currentDesktop"] = world.desktops[0];
-        const mover = world.wins[0] as Record<string, unknown>;
-        mover["desktops"] = [world.desktops[0]];
-        world.workspace["activeWindow"] = mover;
-        handle?.requestWorkspaceMove(2);
-        assert.equal(world.workspace["activeWindow"], mover, "native focus preserved");
-        assert.equal(world.workspace["currentDesktop"], world.desktops[0], "native visibility preserved");
-        const membership = mover["desktops"] as unknown[];
-        assert.equal(membership.length, 1);
-        assert.equal((membership[0] as Record<string, unknown>)["id"], "ws-2");
-        assert.ok(
-            !mocks.dbusCalls.some((call) => {
-                try {
-                    const command = (JSON.parse(call.payload) as Record<string, unknown>)["command"] as Record<string, unknown>;
-                    return command["op"] === "send-to-workspace";
-                } catch (error) {
-                    void error;
-                    return false;
-                }
-            }),
-            "no Rust two-domain tiling plan crosses a floating boundary",
-        );
-        // Behavior, not call shape: the outcome reports the actual native
-        // write (moved), never a generic native-only before the write.
-        assert.ok(
-            mocks.logs.some((line) => line.includes("event=workspace-move") && line.includes("outcome=native-moved")),
-            "successful native write reports native-moved",
-        );
-        assert.ok(
-            !mocks.logs.some((line) => line.includes("event=workspace-move") && line.includes("outcome=native-only")),
-            "no generic native-only outcome is logged",
-        );
-        void activeBefore;
-        void currentBefore;
-        handle?.stop();
+    it("cross-boundary sends follow by default and preserve on explicit stay", () => {
+        for (const follow of [true, false] as const) {
+            const world = richWorld(["ws-1", "ws-2"], 1);
+            const { handle, mocks } = startTilingEntry(world, true);
+            assert.ok(handle !== null);
+            // Switching setter with an id readback so the native follow can
+            // confirm; the default richWorld setter is a no-op.
+            let current: Record<string, unknown> = world.desktops[0] as Record<string, unknown>;
+            world.workspace["currentDesktopForScreen"] = (): unknown => current;
+            world.workspace["setCurrentDesktopForScreen"] = (desktop: unknown): void => {
+                current = desktop as Record<string, unknown>;
+                world.workspace["currentDesktop"] = desktop;
+            };
+            // Float the target workspace, then send across the boundary.
+            world.workspace["currentDesktopForScreen"] = (): unknown => world.desktops[1];
+            current = world.desktops[1] as Record<string, unknown>;
+            world.workspace["currentDesktop"] = world.desktops[1];
+            handle?.requestWorkspaceTilingToggle();
+            assert.equal(handle?.getWorkspaceTilingSnapshot().tiled, false);
+            world.workspace["currentDesktopForScreen"] = (): unknown => current;
+            current = world.desktops[0] as Record<string, unknown>;
+            world.workspace["currentDesktop"] = world.desktops[0];
+            const mover = world.wins[0] as Record<string, unknown>;
+            mover["desktops"] = [world.desktops[0]];
+            world.workspace["activeWindow"] = mover;
+            // Restore the switching reader after the toggle setup above.
+            world.workspace["currentDesktopForScreen"] = (): unknown => current;
+            handle?.requestWorkspaceMove(2, follow);
+            const membership = mover["desktops"] as unknown[];
+            assert.equal(membership.length, 1);
+            assert.equal((membership[0] as Record<string, unknown>)["id"], "ws-2");
+            assert.ok(
+                !mocks.dbusCalls.some((call) => {
+                    try {
+                        const command = (JSON.parse(call.payload) as Record<string, unknown>)["command"] as Record<string, unknown>;
+                        return command["op"] === "send-to-workspace";
+                    } catch (error) {
+                        void error;
+                        return false;
+                    }
+                }),
+                "no Rust two-domain tiling plan crosses a floating boundary",
+            );
+            if (follow) {
+                assert.equal(world.workspace["activeWindow"], mover, "follow focuses the mover");
+                assert.equal(
+                    (world.workspace["currentDesktop"] as Record<string, unknown>)["id"],
+                    "ws-2",
+                    "follow switches to the target",
+                );
+            } else {
+                assert.equal(world.workspace["activeWindow"], mover, "stay keeps native focus");
+                assert.equal(
+                    (world.workspace["currentDesktop"] as Record<string, unknown>)["id"],
+                    "ws-1",
+                    "stay preserves the source view",
+                );
+            }
+            // Behavior, not call shape: the outcome reports the actual native
+            // write (moved), never a generic native-only before the write.
+            assert.ok(
+                mocks.logs.some((line) => line.includes("event=workspace-move") && line.includes("outcome=native-moved")),
+                "successful native write reports native-moved",
+            );
+            assert.ok(
+                mocks.logs.some(
+                    (line) =>
+                        line.includes("event=workspace-move") &&
+                        line.includes("outcome=native-moved") &&
+                        line.includes(follow ? "follow=followed" : "follow=stayed"),
+                ),
+                `floating ${follow ? "follow" : "stay"} reports its token`,
+            );
+            assert.ok(
+                !mocks.logs.some((line) => line.includes("event=workspace-move") && line.includes("outcome=native-only")),
+                "no generic native-only outcome is logged",
+            );
+            handle?.stop();
+        }
     });
 
     it("failed native writes report native-failed and preserve focus and visibility", () => {

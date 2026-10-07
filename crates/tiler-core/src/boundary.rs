@@ -85,6 +85,9 @@ pub enum CoreCommand {
         window: String,
         target_output: String,
         target_workspace: String,
+        /// True follows the mover into the target (default, preserves the
+        /// historical follow behavior); false stays on the source domain.
+        follow: bool,
     },
     DragDrop {
         window: String,
@@ -286,10 +289,11 @@ impl TiledPlan {
 }
 
 /// Typed workspace-send success plan: base revision, policy version, full
-/// desired geometry, retained focus, and the exact `MoveTiled` operation plus
-/// lifecycle preconditions for native assignment. Construction is fallible
-/// (`None` unless the operation
-/// is actually `MoveTiled`); the caller maps that to its existing
+/// desired geometry, retained focus, follow/stay selection, and the exact
+/// `MoveTiled` operation plus lifecycle preconditions for native assignment.
+/// Construction is fallible (`None` unless the dispatch carries both the
+/// `MoveTiled` operation and the explicit `MoveToWorkspace` intent with its
+/// follow/stay selection); the caller maps that to its existing
 /// `move-op-invalid` rejection at the exact legacy position. Never validates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendWorkspacePlan {
@@ -298,14 +302,24 @@ pub struct SendWorkspacePlan {
     pub geometry: Vec<DesiredGeometry>,
     pub focus_domain: Option<DomainKey>,
     pub focus_leaf: Option<NodeId>,
+    pub follow: bool,
     pub operation: LifecycleOperation,
     pub preconditions: Vec<LifecyclePrecondition>,
 }
 
 impl SendWorkspacePlan {
-    /// Typed construction from an authoritative workspace [`SessionPlan`].
+    /// Typed construction from an authoritative workspace [`SessionPlan`]:
+    /// requires the explicit `MoveToWorkspace` intent (which carries the
+    /// follow/stay selection) alongside the `MoveTiled` operation. A
+    /// `MoveTiled` operation under any other intent is not a workspace send
+    /// and refuses.
     #[must_use]
     pub fn from_session(plan: &SessionPlan) -> Option<Self> {
+        let crate::contract::LifecycleIntent::MoveToWorkspace { follow, .. } =
+            &plan.dispatch.intent
+        else {
+            return None;
+        };
         match &plan.dispatch.operation {
             LifecycleOperation::MoveTiled { .. } => Some(Self {
                 base_revision: plan.dispatch.base_revision,
@@ -313,6 +327,7 @@ impl SendWorkspacePlan {
                 geometry: plan.desired_geometry.clone(),
                 focus_domain: plan.desired_focus_domain.clone(),
                 focus_leaf: plan.desired_focus_leaf.clone(),
+                follow: *follow,
                 operation: plan.dispatch.operation.clone(),
                 preconditions: plan.dispatch.preconditions.clone(),
             }),
@@ -909,6 +924,7 @@ pub fn resolve_active_group(session: Option<&Session>, event: &CoreEvent) -> Act
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contract::LifecycleIntent;
     use crate::directional::Node;
     use crate::ids::{CorrelationId, GenerationId, OwnerId};
     use crate::session::OutputDomain;
@@ -1000,6 +1016,7 @@ mod tests {
                 window: "w".to_owned(),
                 target_output: "o".to_owned(),
                 target_workspace: "s".to_owned(),
+                follow: true,
             },
             CoreCommand::DragDrop {
                 window: "w".to_owned(),
@@ -1587,7 +1604,7 @@ mod tests {
     }
 
     #[test]
-    fn send_workspace_plan_requires_move_tiled_operation() {
+    fn send_workspace_plan_requires_move_intent_with_explicit_follow() {
         let (_, _, _, plan) = committed_pair_session();
         // The admit fixture never proposes a workspace move.
         assert!(SendWorkspacePlan::from_session(&plan).is_none());
@@ -1601,14 +1618,29 @@ mod tests {
             target_output: key.output.clone(),
             target_workspace: crate::directional::WorkspaceId("ws-2".to_owned()),
         };
-        let typed = SendWorkspacePlan::from_session(&moved).expect("move-tiled builds");
-        assert_eq!(typed.base_revision, moved.dispatch.base_revision);
-        assert_eq!(typed.policy_version, moved.dispatch.policy_version);
-        assert_eq!(typed.geometry, moved.desired_geometry);
-        assert_eq!(typed.preconditions, moved.dispatch.preconditions);
-        assert!(matches!(
-            typed.operation,
-            LifecycleOperation::MoveTiled { .. }
-        ));
+        // The operation alone is not enough: a MoveTiled operation under a
+        // non-workspace intent is not a workspace send and refuses.
+        assert!(SendWorkspacePlan::from_session(&moved).is_none());
+        // The explicit workspace-move intent constructs, carrying its
+        // follow/stay selection verbatim.
+        for follow in [true, false] {
+            let mut intentful = moved.clone();
+            intentful.dispatch.intent = LifecycleIntent::MoveToWorkspace {
+                window: WindowId("win-a".to_owned()),
+                target_output: key.output.clone(),
+                target_workspace: crate::directional::WorkspaceId("ws-2".to_owned()),
+                follow,
+            };
+            let typed = SendWorkspacePlan::from_session(&intentful).expect("intent builds");
+            assert_eq!(typed.follow, follow);
+            assert_eq!(typed.base_revision, intentful.dispatch.base_revision);
+            assert_eq!(typed.policy_version, intentful.dispatch.policy_version);
+            assert_eq!(typed.geometry, intentful.desired_geometry);
+            assert_eq!(typed.preconditions, intentful.dispatch.preconditions);
+            assert!(matches!(
+                typed.operation,
+                LifecycleOperation::MoveTiled { .. }
+            ));
+        }
     }
 }

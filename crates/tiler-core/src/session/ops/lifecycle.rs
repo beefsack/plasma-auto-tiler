@@ -69,10 +69,12 @@ impl super::super::Session {
                 window,
                 target_output,
                 target_workspace,
+                follow,
             } => self.propose_move_to_workspace(
                 window,
                 target_output,
                 target_workspace,
+                *follow,
                 session_observation,
                 correlation_id,
                 capabilities,
@@ -572,6 +574,7 @@ pub(in crate::session) fn valid_command_shapes(command: &SessionCommand) -> bool
             window,
             target_output,
             target_workspace,
+            ..
         } => !window.0.is_empty() && !target_output.0.is_empty() && !target_workspace.0.is_empty(),
         SessionCommand::ToggleFloat {
             window,

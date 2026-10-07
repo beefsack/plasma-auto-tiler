@@ -1840,10 +1840,11 @@ fn serialize_resize_reply(
     )
 }
 
-/// Byte-exact workspace-send serializer driven by a
+/// Workspace-send serializer driven by a
 /// [`tiler_core::boundary::SendWorkspacePlan`] (single source). Detail key
 /// order (`kind`, `policy_version`, `capability`), the `move-tiled` operation
-/// echo, and precondition tokens match the legacy shape exactly. The plan
+/// echo (plus the explicit `follow` selection), and precondition tokens match
+/// the legacy shape plus the follow extension. The plan
 /// constructor guarantees the `MoveTiled` operation, so the legacy
 /// `move-op-invalid` fallback stays with the caller at its exact position.
 fn serialize_send_workspace_reply(
@@ -1873,6 +1874,7 @@ fn serialize_send_workspace_reply(
         "source_workspace": source_workspace.0,
         "target_output": target_output.0,
         "target_workspace": target_workspace.0,
+        "follow": plan.follow,
     });
     // Keep the legacy wire token for exact reply binding, not as a native
     // verification or committed-native-success assertion. KWin reconciles
@@ -2053,6 +2055,7 @@ struct WorkspaceInput {
     target_domain: OutputDomain,
     target_key: DomainKey,
     window: WindowId,
+    follow: bool,
 }
 
 /// Stable lifecycle precondition token (mirrors the KWin wire tokens).
@@ -3015,14 +3018,17 @@ impl Planner {
             ));
         }
         // Strict tagged decode after the target scope and focus checks above
-        // (see `SyncCommand`): scope-before-parse order is unchanged.
-        let (window, target_output, target_workspace) =
+        // (see `SyncCommand`): scope-before-parse order is unchanged. A
+        // missing `follow` defaults true, preserving the historical follow
+        // behavior for legacy requests.
+        let (window, target_output, target_workspace, follow) =
             match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
                 Ok(SyncCommand::SendToWorkspace {
                     window,
                     target_output,
                     target_workspace,
-                }) => (window, target_output, target_workspace),
+                    follow,
+                }) => (window, target_output, target_workspace, follow),
                 Ok(_) => {
                     return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "move-op-invalid"));
                 }
@@ -3065,6 +3071,7 @@ impl Planner {
             target_domain,
             target_key,
             window: WindowId(window),
+            follow,
         })
     }
 
@@ -3085,6 +3092,7 @@ impl Planner {
             window: input.window.0.clone(),
             target_output: input.target_key.output.0.clone(),
             target_workspace: input.target_key.workspace.0.clone(),
+            follow: input.follow,
         };
         let mut event = core_event(ctx, &core_command);
         event.target_domain = Some((input.target_domain, input.target_key));
@@ -3181,6 +3189,12 @@ struct DirectedCommand {
 }
 
 const fn default_cross_output_transfer() -> bool {
+    true
+}
+
+/// Omitted `follow` on `send-to-workspace` preserves the historical follow
+/// behavior (mirrors [`default_cross_output_transfer`]).
+const fn default_follow() -> bool {
     true
 }
 
@@ -3426,6 +3440,11 @@ enum SyncCommand {
         window: String,
         target_output: String,
         target_workspace: String,
+        /// Follow/stay selection: true follows the mover into the target,
+        /// false stays on the source. Absent preserves the historical
+        /// follow behavior.
+        #[serde(default = "default_follow")]
+        follow: bool,
     },
     #[serde(rename = "drag-drop")]
     DragDrop(DragPayload),
@@ -3517,10 +3536,12 @@ fn core_command_from_sync(command: &SyncCommand) -> Option<tiler_core::boundary:
             window,
             target_output,
             target_workspace,
+            follow,
         } => Some(CoreCommand::SendToWorkspace {
             window: window.clone(),
             target_output: target_output.clone(),
             target_workspace: target_workspace.clone(),
+            follow: *follow,
         }),
         SyncCommand::DragDrop(payload) => Some(drag_core_command(payload, false)),
         SyncCommand::DragPreview(payload) => Some(drag_core_command(payload, true)),
@@ -8453,6 +8474,167 @@ mod tests {
             "target_output": "out-1",
             "target_workspace": "ws-2",
         })
+    }
+
+    fn workspace_follow_body(window: &str) -> serde_json::Value {
+        serde_json::json!({
+            "op": "send-to-workspace",
+            "window": window,
+            "target_output": "out-1",
+            "target_workspace": "ws-2",
+            "follow": true,
+        })
+    }
+
+    fn workspace_stay_body(window: &str) -> serde_json::Value {
+        serde_json::json!({
+            "op": "send-to-workspace",
+            "window": window,
+            "target_output": "out-1",
+            "target_workspace": "ws-2",
+            "follow": false,
+        })
+    }
+
+    #[test]
+    fn workspace_send_defaults_to_follow_without_field() {
+        // Legacy requests omit `follow`: the default stays follow, focusing
+        // the mover in the target with an explicit follow=true echo.
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-follow-default-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_send_body(),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["kind"], "send-to-workspace", "{reply}");
+        assert_eq!(reply["operation"]["follow"], true, "{reply}");
+        assert_eq!(
+            reply["desired_focus"]["domain_workspace"], "ws-2",
+            "{reply}"
+        );
+        // Explicit follow=true plans identically to the omitted default.
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-follow-explicit-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_follow_body("win-1"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["operation"]["follow"], true, "{reply}");
+        assert_eq!(
+            reply["desired_focus"]["domain_workspace"], "ws-2",
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn workspace_stay_keeps_source_focus_without_selecting_target() {
+        // Stay moves the focused window but leaves the source selected: the
+        // source MRU survivor keeps focus and the operation echoes
+        // follow=false. Destination admission matches the follow path. Two
+        // reconciles establish the source MRU (win-1, then win-2) so the
+        // stay fallback has existing removal-equivalent history.
+        let mut planner = Planner::new();
+        let both = &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)];
+        for (index, focused) in ["win-1", "win-2"].iter().enumerate() {
+            let rec = parse_reply(&planner.evaluate(&retained_request_for_domain(
+                &format!("ws-stay-focus-{index}"),
+                "owner-1",
+                "gen-1",
+                "out-1",
+                "ws-1",
+                focused,
+                both,
+                serde_json::json!({"op": "reconcile"}),
+            )));
+            assert_eq!(rec["outcome"], "planned", "{rec}");
+        }
+        let reply = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-stay-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-2",
+            vec![
+                workspace_entry("win-1", "ws-1", 0),
+                workspace_entry("win-2", "ws-1", 10),
+            ],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_stay_body("win-2"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["kind"], "send-to-workspace", "{reply}");
+        assert_eq!(reply["operation"]["follow"], false, "{reply}");
+        assert_eq!(reply["operation"]["window"], "win-2", "{reply}");
+        assert_eq!(
+            reply["desired_focus"]["domain_workspace"], "ws-1",
+            "{reply}"
+        );
+        // The focused leaf is the MRU survivor, never the mover: resolve it
+        // through the source geometry entry.
+        let focus_leaf = reply["desired_focus"]["leaf"].as_str().expect("focus leaf");
+        let geometry = reply["desired_geometry"].as_array().expect("geometry");
+        let focus_window = geometry
+            .iter()
+            .find(|g| g["leaf"] == focus_leaf && g["workspace"] == "ws-1")
+            .and_then(|g| g["window"].as_str())
+            .expect("source focus resolves");
+        assert_eq!(focus_window, "win-1", "{reply}");
+        let mut members: Vec<(String, String)> = geometry
+            .iter()
+            .map(|g| {
+                (
+                    g["window"].as_str().expect("window").to_owned(),
+                    g["workspace"].as_str().expect("workspace").to_owned(),
+                )
+            })
+            .collect();
+        members.sort();
+        assert_eq!(
+            members,
+            vec![
+                ("win-1".to_owned(), "ws-1".to_owned()),
+                ("win-2".to_owned(), "ws-2".to_owned()),
+                ("win-t1".to_owned(), "ws-2".to_owned()),
+            ],
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn workspace_stay_of_sole_source_window_leaves_no_focus() {
+        // Stay sending the only source window empties the source slot: no
+        // focus remains, the mover lands on the trailing-empty target, and
+        // the source carries no geometry.
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-stay-empty-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![],
+            workspace_stay_body("win-1"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["operation"]["follow"], false, "{reply}");
+        assert_eq!(reply["desired_focus"], serde_json::Value::Null, "{reply}");
+        let geometry = reply["desired_geometry"].as_array().expect("geometry");
+        assert_eq!(geometry.len(), 1, "{reply}");
+        assert_eq!(geometry[0]["window"], "win-1", "{reply}");
+        assert_eq!(geometry[0]["workspace"], "ws-2", "{reply}");
     }
 
     #[test]

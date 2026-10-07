@@ -72,3 +72,11 @@
   or pushes. No outstanding product ambiguity. Pending user live checks cover
   physical wrap/trailing/>9, toggle, stock-holder Authentic/Compatible/Revert,
   and multi-output history/return journeys.
+
+## User live report (2026-10-07)
+
+- User reported item 1 "worked perfectly" on a SINGLE output: single-output
+  native journey confirmed. The report did not specify individual edge/>9
+  cases or which presets were exercised; no preset-specific claim added.
+- Multi-output per-output/shared scope, hotplug/return (R-WS-15..17) and
+  Compatible/Authentic/Revert checks remain pending in the backlog.

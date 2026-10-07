@@ -257,7 +257,8 @@ decisions of 2026-09-24 are under
   agent wires later. Correctness over non-breakage: Windows build/behavior
   may break provided the handoff below lists the specific changes needed.
   Implementation order:
-  1. R-WS-08 + R-WS-11 (KDE delivered offline, native journey TBD;
+  1. R-WS-08 + R-WS-11 (KDE delivered; single-output native journey
+     confirmed by user 2026-10-07, multi-output/presets pending;
      [record](changes/archive/kde-workspace-history-ring.md)):
      Meta/Win+Ctrl+Tab previous-view two-state toggle;
      Meta/Win+Ctrl+arrows and +H/J/K/L relative switch (left/up previous,
@@ -273,16 +274,18 @@ decisions of 2026-09-24 are under
      clears conflicting holders; Compatible disables conflicting arrows,
      letters remain (KDE KWin desktop-switch arrows; Windows native Left/Right
      ownership general knowledge, unverified in repo).
-  2. R-WS-01 + R-WS-14: keep numbered follow Meta/Win+Shift+digits; relative
+  2. R-WS-01 + R-WS-14 (shared core + KDE delivered offline; native journey
+     pending; [record](changes/archive/kde-workspace-send-follow-stay.md)):
+     keep numbered follow Meta/Win+Shift+digits; relative
      follow Meta/Win+Ctrl+Shift+arrows and +H/J/K/L. Numbered/relative stay
      bindable, unbound. Relative targets ordinal step in item 1 ring, not
      MRU, resolved once before transfer; fills trailing empty, normal
      lifecycle supplies next spare. Follow/stay both absolute/relative.
      Authentic clears KDE KWin window-desktop arrow holders; Compatible
      disables our arrows, letters remain; Windows ownership unknown.
-     Existing-decision application: route explicit follow/stay through KDE
-     floating-boundary send, currently source-view-preserving
-      (`kwin/src/plan-adapter-entry.ts:4037-4041,4086-4104`), so default follows.
+     Explicit follow/stay now also reaches KDE's membership-only
+     floating-boundary path, repairing its existing-default gap: default
+     follows; stay preserves the source view/native boundary focus.
   3. R-MOV-03: global KDE `sameAxisMove` / Windows `core.same_axis_move`,
      `cosmic-wrap` default or `flat-swap`; Windows additive version-1 field,
      missing defaults to wrap. Apply to subsequent moves without tree
@@ -343,10 +346,59 @@ decisions of 2026-09-24 are under
       empty survival/removal, relocation/disconnect/reconnect, >9/trailing wrap,
       no creation, exact modifiers and presets); non-local modes/multi-output
       runtime remain the separately parked Windows work.
-  - Item 2, after core piece lands: new follow/stay intent in
-    `CoreCommand::SendToWorkspace` constructors (`workspace_owner.rs`
-    `build_send_event`); split send tail follow vs stay; relative target
-    resolution; Ctrl+Shift routing; unbound stay catalog.
+  - Item 2: shared Rust core + KDE delivered offline. Windows compile-only
+    fix applied (decision 2.3), preserving current always-follow behavior;
+    exact handoff (all paths below under `crates/tiler-windows/`):
+    - Compile fix applied: `src/workspace_owner.rs:127` constructor now sets
+      `follow: true`; the exhaustive command match in
+      `send_event_binds_target_and_focused_mover` at :1286 requires
+      `follow: true`. Both preserve current Windows always-follow behavior.
+      Real wiring remains: `build_send_event` :70 must accept explicit
+      `follow: bool` instead of the constant. `stamp_send_target` :138/:139
+      already uses `..`; preserve intent while replacing target IDs.
+    - Thread that parameter through every `build_send_event` caller:
+      `src/tiling_sys.rs:10844` (`workspace_do_send`) and test calls in
+      `src/workspace_owner.rs:1270,1726,1915,2070,2282,2588` and
+      `tests/tiling.rs:2217`. Existing follow tests pass true; add false cases.
+    - `src/tiling_sys.rs` / `workspace_do_send` :10548, reply match :10872
+      and verified transfer/tail :10945 onward: retain the `SendWorkspace`
+      payload, branch on `plan.follow`. Follow selects/reveals target and
+      focuses mover; stay hides the transferred mover without selecting or
+      revealing target, keeps source selected/visible, applies source-bound
+      `plan.focus_domain/focus_leaf` through exact-lifetime leaf/window
+      resolution (no setter for null), and reflows only writable source rows.
+      Destination admission/structural geometry remain identical; target
+      writes obey existing hidden-row fences. Do not infer intent from focus.
+    - `src/tiling_sys.rs` / `workspace_do_send_native` :10310 and call :10688:
+      thread the same explicit intent through floating boundaries. Membership
+      transfer remains native-only, tiled sides reconcile, floating frames
+      stay untouched; follow uses verified target selection/mover focus;
+      stay keeps source view and existing native boundary focus, no target
+      selection. Sticky/intentional-float eligibility remains unchanged.
+    - Changed core types searched across the entire Windows crate:
+      `SessionCommand::MoveToWorkspace` and `LifecycleIntent::MoveToWorkspace`
+      have no Windows sites; no direct `SendWorkspacePlan` constructors or
+      destructures. Its added `follow` field reaches `CoreReply::SendWorkspace`.
+      Besides production :10872 above, existing payload reads in
+      `src/workspace_owner.rs:1210,1513,1602,1946,2099,2163,2215,2311,3016,3225`
+      only consume geometry/operation and need no shape repair; extend relevant
+      send tests to assert intent/focus. Wildcard reply arms
+      :1093,1167,1188,2003,2611,2993,3135,3206,3288 likewise need no shape repair.
+    - `src/workspace.rs` / `ManagedWorkspaces`: reuse item 1's scoped existing
+      ordinal ring for relative targets, resolve once before mutation, wrap
+      both ends including trailing empty and >9; ordinary lifecycle supplies
+      next spare. Keep source-empty selection distinct from target admission.
+    - `src/snapkey.rs` / `WorkspaceOp` :427, classifier/dispatch/queues and
+      `src/settings.rs` catalog/rebind/presets: split explicit follow/stay,
+      add Ctrl+Shift H/K/Left/Up previous and J/L/Down/Right next follow;
+      numbered 1..9/0 and relative stay register unbound. Carry exact modifiers
+      through suppression/repeat/remap (item 1 Ctrl work reused). Windows
+      arrow ownership is unknown: do not invent a holder claim.
+    - Despite cfg(windows) native actuation, portable `workspace_owner.rs`
+      participates in Linux workspace builds. The compile-only fix restores
+      full-workspace `cargo test`/`clippy` gates; stay/relative adapter wiring
+      remains pending. Port follow/stay MRU/null, admission equality, visibility
+      fences, relative wrap/spare and floating-boundary regression coverage.
   - Item 3, after core piece lands: `core.same_axis_move` serde default and
     validation, Settings control; pass enum into every `CoreCommand::Move`.
   - Item 4, after core piece lands: Win+O catalog/action, orientation-lock
@@ -358,7 +410,8 @@ decisions of 2026-09-24 are under
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.
-  KDE Keep/Disable list (now 75 bindings after item 1) and presets delivered
+  KDE Keep/Disable list (now 111 bindings after item 2, including 28 unbound
+  stay rows) and presets delivered
   offline
   (`e1bb52a`, `cdd4ef4`, `96d04ab`; CI green); provisional choices in
   decisions; integrated rebind and KDE first-run prompt deferred. KDE live
@@ -608,8 +661,8 @@ Unprioritised ideas; not scheduled.
 
 ## Pending live checks
 
-All items below shipped offline with no live result claimed, except the
-reference-WM checks, which test other compositors.
+Items below retain their stated pending scope; dated user confirmations are
+recorded separately from unexercised legs. Reference-WM checks test other compositors.
 
 ### Reference WMs (user)
 
@@ -621,18 +674,30 @@ reference-WM checks, which test other compositors.
 
 ### Single-output laptop
 
-- KDE R-WS-08/11 item 1: physical Meta+Ctrl+H/K/Left/Up previous and
-  J/L/Down/Right next wrap first/last, including the trailing empty and >9
-  workspaces, with no selection-created desktops. Meta+Ctrl+Tab toggles the
-  last two observed views; same-workspace activation leaves history intact.
-  Verify Authentic's confirmed Apply/Force clears stock KWin "Switch One
+- KDE R-WS-08/11 item 1: user reported "worked perfectly" on a SINGLE output
+  (2026-10-07); single-output native journey confirmed. The report did not
+  specify individual edge/>9 cases or which presets were exercised.
+  Remaining: multi-output per-output/shared scope, hotplug/return (R-WS-15..17),
+  and preset-specific checks. Verify Authentic's confirmed Apply/Force clears stock KWin "Switch One
   Desktop to the Left", "Switch One Desktop to the Right", "Switch One
   Desktop Up", and "Switch One Desktop Down" holders; Compatible disables our
   four arrows while letters/Tab work, stock holders remain unchanged on a
   fresh baseline, and Revert restores defaults after earlier clearing.
   [Offline record](changes/archive/kde-workspace-history-ring.md),
-  [live guide](live-kwin-testing.md). Multi-output history/return journeys
-  remain user-owned under R-WS-15..17.
+  [live guide](live-kwin-testing.md).
+- KDE R-WS-01/14 item 2 (offline delivered): physical relative send-follow
+  Meta+Ctrl+Shift+H/K/Left/Up previous and J/L/Down/Right next. Check both-end
+  wrap, >9 and trailing-empty fill/new spare, including a sole mover emptying
+  the source. Rebind numbered/append and relative send-and-stay from their
+  empty defaults: source remains selected, source tiled MRU gets focus,
+  destination not selected; check empty-source native focus separately.
+  Floating-boundary default send now follows; explicit stay keeps source,
+  floating frames unchanged and only tiled sides reflow. Verify Authentic
+  Apply/Force clears stock "Window One Desktop to the Left/to the Right/Up/Down"
+  holders; Compatible disables our four arrows, keeps letters/stay rebindings;
+  Revert restores cleared defaults. Multi-output relative-ring scope remains
+  user-owned. [Record](changes/archive/kde-workspace-send-follow-stay.md),
+  [live guide](live-kwin-testing.md). No item-2 live result claimed.
 - R-DRAG-08 on KDE: with A focused, Meta+left press on unfocused tiled B,
   move, release at A's edge; record whether B is focused at press, during
   the hold, or only after drop (decision: focus at press).

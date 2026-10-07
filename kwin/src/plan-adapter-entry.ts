@@ -133,9 +133,10 @@ export interface PlanEntryHandle {
     readonly requestMaximize: () => void;
     readonly requestFullscreen: () => void;
     readonly requestWorkspaceSelect: (index: unknown) => void;
-    readonly requestWorkspaceMove: (index: unknown) => void;
+    readonly requestWorkspaceMove: (index: unknown, follow?: unknown) => void;
     readonly requestWorkspacePrevious: () => void;
     readonly requestWorkspaceRelative: (delta: unknown) => void;
+    readonly requestWorkspaceRelativeMove: (delta: unknown, follow?: unknown) => void;
     readonly getWorkspaceTilingSnapshot: () => WorkspaceTilingSnapshot;
     readonly requestWorkspaceTilingToggle: () => void;
 }
@@ -641,6 +642,13 @@ export function observeSendTarget(
         let currentNumber = -1;
         let currentIdEq = -1;
         let currentRefEq = -1;
+        // Behavior-fenced actual current workspace on the recording output.
+        // Unlike the pinned source identity above (which survives view
+        // switches) and the diagnostic-only equality beside it (which
+        // compares only the target and never gates behavior), this names the
+        // live view for the stay source-visibility fence. Null when
+        // unreadable; null never counts as selected downstream.
+        let currentWorkspace: string | null = null;
         try {
             const resolveCurrent = (curRef: object | null): void => {
                 if (curRef === null) {
@@ -658,6 +666,7 @@ export function observeSendTarget(
                     return;
                 }
                 const curId = curIdRaw as string;
+                currentWorkspace = curId;
                 for (let index = 0; index < desktops.length; index += 1) {
                     const item = desktops[index];
                     if (typeof item !== "object" || item === null) {
@@ -950,6 +959,7 @@ export function observeSendTarget(
             currentNumber,
             currentIdEq,
             currentRefEq,
+            currentWorkspace,
         };
     } catch (error) {
         void error;
@@ -3697,43 +3707,17 @@ function startPlanAdapterEntryOnce(
         switchToTarget: (desktopRef, diagnostic) => {
             try {
                 const surface = liveWorkspace as Record<string, unknown>;
-                const screens = decodeList(readProp(surface, "screens"), MAX_LIST);
-                if (screens === null || screens.length === 0) {
+                const followSelection = selectFollowOutput();
+                const screens = followSelection.screens;
+                if (screens.length === 0) {
                     emitNativeFollow(diagnostic, "native-switch-before", "unavailable", nativeDetail("unknown", "void", -1, -1, "unknown", "unknown", -1, -1, -1, -1, "none"));
                     return false;
                 }
-                let activeOutput: object | null = null;
-                let selection = "active-window";
-                try {
-                    const active = Reflect.get(surface, "activeWindow");
-                    if (typeof active === "object" && active !== null) {
-                        const output = readProp(active as object, "output");
-                        if (typeof output === "object" && output !== null) {
-                            activeOutput = output as object;
-                        }
-                    }
-                } catch (error) {
-                    void error;
-                }
+                const selection = followSelection.selection;
+                const activeOutput = followSelection.output;
                 if (activeOutput === null) {
-                    selection = "active-screen";
-                    try {
-                        const screen = Reflect.get(surface, "activeScreen");
-                        if (typeof screen === "object" && screen !== null) {
-                            activeOutput = screen as object;
-                        }
-                    } catch (error) {
-                        void error;
-                    }
-                }
-                if (activeOutput === null) {
-                    selection = "first-screen";
-                    const first = screens[0];
-                    if (typeof first !== "object" || first === null) {
-                        emitNativeFollow(diagnostic, "native-switch-before", "unavailable", nativeDetail("unknown", "void", -1, -1, selection, "unknown", screens.length, -1, -1, -1, "none"));
-                        return false;
-                    }
-                    activeOutput = first as object;
+                    emitNativeFollow(diagnostic, "native-switch-before", "unavailable", nativeDetail("unknown", "void", -1, -1, selection, "unknown", screens.length, -1, -1, -1, "none"));
+                    return false;
                 }
                 const setter = readProp(surface, "setCurrentDesktopForScreen");
                 if (typeof setter !== "function") {
@@ -3937,38 +3921,94 @@ function startPlanAdapterEntryOnce(
                 return false;
             }
             // Immediate readback: never claim native-moved when the desktop
-            // write did not take. Compare by wrapper identity first, then by
-            // stable desktop id since KWin may return fresh wrappers per read.
-            try {
-                const targetId = readProp(targetRef, "id");
-                const members = decodeList(readProp(mover, "desktops"), MAX_DESKTOPS);
-                if (members === null) {
-                    return false;
-                }
-                for (const member of members) {
-                    if (member === targetRef) {
-                        return true;
-                    }
-                }
-                if (isOpaqueId(targetId)) {
-                    for (const member of members) {
-                        if (typeof member === "object" && member !== null && readProp(member as object, "id") === targetId) {
-                            return true;
-                        }
-                    }
-                }
-                return false;
-            } catch (error) {
-                void error;
-                return false;
-            }
+            // write did not take (shared moverOnDesktop proof below).
+            return moverOnDesktop(mover, targetRef);
         } catch (error) {
             void error;
             return false;
         }
     };
-    const requestWorkspaceMove = (index: unknown): void => {
+    // Shared active-output selection for desktop follow: the active
+    // window's output, else the active screen, else the first live screen.
+    // The selection source rides along for follow diagnostics. Screens ride
+    // along so shared-mode fan-out and the snapshot use one reading.
+    const selectFollowOutput = (): { output: object | null; selection: string; screens: ReadonlyArray<unknown> } => {
         try {
+            const surface = liveWorkspace as Record<string, unknown>;
+            let screens: ReadonlyArray<unknown> = [];
+            try {
+                const decoded = decodeList(readProp(surface, "screens"), MAX_LIST);
+                if (decoded !== null) {
+                    screens = decoded;
+                }
+            } catch (error) {
+                void error;
+            }
+            try {
+                const active = Reflect.get(surface, "activeWindow");
+                if (typeof active === "object" && active !== null) {
+                    const output = readProp(active as object, "output");
+                    if (typeof output === "object" && output !== null) {
+                        return { output: output as object, selection: "active-window", screens };
+                    }
+                }
+            } catch (error) {
+                void error;
+            }
+            try {
+                const screen = Reflect.get(surface, "activeScreen");
+                if (typeof screen === "object" && screen !== null) {
+                    return { output: screen as object, selection: "active-screen", screens };
+                }
+            } catch (error) {
+                void error;
+            }
+            const first = screens[0];
+            if (typeof first === "object" && first !== null) {
+                return { output: first as object, selection: "first-screen", screens };
+            }
+            return { output: null, selection: "first-screen", screens };
+        } catch (error) {
+            void error;
+            return { output: null, selection: "active-window", screens: [] };
+        }
+    };
+    // Exact single-target membership proof by wrapper identity, falling
+    // back to stable desktop id since KWin may return fresh wrappers per
+    // read. Shared by the post-write readback and the pre-switch arrival
+    // proof; both treat anything else as unproven.
+    const moverOnDesktop = (mover: object, targetRef: object): boolean => {
+        try {
+            const targetId = readProp(targetRef, "id");
+            const members = decodeList(readProp(mover, "desktops"), MAX_DESKTOPS);
+            if (members === null) {
+                return false;
+            }
+            for (const member of members) {
+                if (member === targetRef) {
+                    return true;
+                }
+            }
+            if (isOpaqueId(targetId)) {
+                for (const member of members) {
+                    if (typeof member === "object" && member !== null && readProp(member as object, "id") === targetId) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        } catch (error) {
+            void error;
+            return false;
+        }
+    };
+    // Follow/stay selection shared by absolute and relative sends: only an
+    // exact false stays on the source; anything else (including absent)
+    // follows the mover into the target.
+    const parseFollowFlag = (value: unknown): boolean => value !== false;
+    const requestWorkspaceMove = (index: unknown, followRaw?: unknown): void => {
+        try {
+            const follow = parseFollowFlag(followRaw);
             if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 9) {
                 try {
                     log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=invalid-logical-target follow=not-reached gate=pre-commit phase=entry reason=invalid-logical-target req_ord=-1 inflight_stage=idle`);
@@ -4009,6 +4049,114 @@ function startPlanAdapterEntryOnce(
                 }
                 return;
             }
+            transferResolvedWorkspace(target, index, follow);
+        } catch (error) {
+            void error;
+        }
+    };
+    // Native-only follow for floating-boundary sends: switch to the target
+    // desktop then focus the mover, each with an immediate readback and no
+    // retry. The follow output is snapshotted before the membership write
+    // (KWin may refocus a survivor on another output, or null, as a result
+    // of the write) and the mover arrival is re-proved before any switch.
+    // Returns the bounded follow token for the entry outcome line.
+    const followNativeToTarget = (
+        targetRef: object,
+        mover: object,
+        preWrite: { output: object | null; screens: ReadonlyArray<unknown> },
+    ): string => {
+        try {
+            const surface = liveWorkspace as Record<string, unknown>;
+            const screens = preWrite.screens;
+            if (screens.length === 0) {
+                return "native-unavailable";
+            }
+            const targetId = readProp(targetRef, "id");
+            if (!isOpaqueId(targetId)) {
+                return "native-unavailable";
+            }
+            // Exact mover arrival proof before any switch: the membership
+            // write must still name the target (same proof as the post-write
+            // readback). A stale membership refuses without setters.
+            if (!moverOnDesktop(mover, targetRef)) {
+                return "arrival-unconfirmed";
+            }
+            const setter = readProp(surface, "setCurrentDesktopForScreen");
+            const getter = readProp(surface, "currentDesktopForScreen");
+            if (typeof setter !== "function" || typeof getter !== "function") {
+                return "native-unavailable";
+            }
+            const shared = workspaceNative.getMode() === "shared";
+            const selected: object[] = [];
+            if (shared) {
+                for (const output of screens) {
+                    if (typeof output === "object" && output !== null) {
+                        selected.push(output as object);
+                    }
+                }
+            } else if (preWrite.output !== null) {
+                selected.push(preWrite.output);
+            } else {
+                return "native-unavailable";
+            }
+            if (selected.length === 0) {
+                return "native-unavailable";
+            }
+            for (const output of selected) {
+                try {
+                    Reflect.apply(setter as (...args: ReadonlyArray<unknown>) => unknown, surface, [targetRef, output]);
+                } catch (error) {
+                    void error;
+                    return "switch-unconfirmed";
+                }
+                let current: unknown = undefined;
+                try {
+                    current = Reflect.apply(getter as (...args: ReadonlyArray<unknown>) => unknown, surface, [output]);
+                } catch (error) {
+                    void error;
+                    return "switch-unconfirmed";
+                }
+                if (typeof current !== "object" || current === null || readProp(current as object, "id") !== targetId) {
+                    return "switch-unconfirmed";
+                }
+            }
+            // Fresh arrival proof immediately before focus: the switch
+            // setters run synchronously through KWin signals that may move
+            // or close the mover between the pre-switch proof and now. A
+            // stale membership refuses focus without a setter; the verified
+            // switch above still stands.
+            if (!moverOnDesktop(mover, targetRef)) {
+                return "arrival-unconfirmed";
+            }
+            const moverId = readNativeId(mover);
+            if (moverId === null) {
+                return "focus-unconfirmed";
+            }
+            try {
+                (liveWorkspace as { activeWindow: unknown }).activeWindow = mover;
+            } catch (error) {
+                void error;
+                return "focus-unconfirmed";
+            }
+            const active = Reflect.get(surface, "activeWindow");
+            const activeId = typeof active === "object" && active !== null ? readNativeId(active as object) : null;
+            return activeId === moverId ? "followed" : "focus-unconfirmed";
+        } catch (error) {
+            void error;
+            return "native-unavailable";
+        }
+    };
+    const requestWorkspaceRelativeMove = (delta: unknown, followRaw?: unknown): void => {
+        try {
+            const follow = parseFollowFlag(followRaw);
+            if (delta !== -1 && delta !== 1) {
+                try {
+                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=invalid-logical-target follow=not-reached gate=pre-commit phase=entry reason=invalid-logical-target req_ord=-1 inflight_stage=idle`);
+                } catch (error) {
+                    void error;
+                }
+                return;
+            }
             if (!workspaceSend.isEnabled || workspaceSend.isInFlight || adapter.isInFlight) {
                 const outcome = !workspaceSend.isEnabled
                     ? "disabled"
@@ -4024,7 +4172,50 @@ function startPlanAdapterEntryOnce(
                     } catch (error) {
                         void error;
                     }
-                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation=${correlation} generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=${String(index)} inflight_stage=${inflightStage}`);
+                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation=${correlation} generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=-1 inflight_stage=${inflightStage}`);
+                    log("plasma-auto-tiler:plan:busy-refused kind=workspace-move");
+                } catch (error) {
+                    void error;
+                }
+                return;
+            }
+            // Resolve the relative target once before transfer over the item
+            // 1 scoped ring; the transfer below never re-resolves.
+            const target = workspaceNative.resolveRelativeMoveTarget(delta);
+            if (target === null) {
+                try {
+                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=target-unresolved follow=not-reached gate=pre-commit phase=entry reason=target-unresolved req_ord=-1 inflight_stage=idle`);
+                } catch (error) {
+                    void error;
+                }
+                return;
+            }
+            transferResolvedWorkspace(target, -1, follow);
+        } catch (error) {
+            void error;
+        }
+    };
+    // Shared absolute/relative transfer for one resolved target id: the
+    // second busy gate, the floating-boundary native path with explicit
+    // follow/stay, else the Rust-planned tiled send with the same selection.
+    const transferResolvedWorkspace = (target: string, reqOrd: number, follow: boolean): void => {
+        try {
+            if (!workspaceSend.isEnabled || workspaceSend.isInFlight || adapter.isInFlight) {
+                const outcome = !workspaceSend.isEnabled
+                    ? "disabled"
+                    : workspaceSend.isInFlight
+                      ? "busy-send"
+                      : "busy-plan";
+                try {
+                    let correlation = "";
+                    let inflightStage = "idle";
+                    try {
+                        correlation = workspaceSend.activeCorrelation;
+                        inflightStage = workspaceSend.activeStage;
+                    } catch (error) {
+                        void error;
+                    }
+                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation=${correlation} generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=${String(reqOrd)} inflight_stage=${inflightStage}`);
                     log("plasma-auto-tiler:plan:busy-refused kind=workspace-move");
                 } catch (error) {
                     void error;
@@ -4032,13 +4223,17 @@ function startPlanAdapterEntryOnce(
                 return;
             }
             // Diagnostic-only handoff: the validated logical ordinal (0
-            // permitted for the trailing target) travels into the send flight
-            // for follow logs and never gates request behavior.
+            // permitted for the trailing target, -1 for a relative send)
+            // travels into the send flight for follow logs and never gates
+            // request behavior.
             // Floating-boundary sends stay native-only: when either side is
             // an unmanaged workspace, move membership natively with no Rust
-            // two-domain geometry, preserve native focus/visibility (no
-            // desktop switch, no focus write), then reflow the tiled side
-            // through the ordinary complete-observation resync.
+            // two-domain geometry. Stay preserves native focus/visibility
+            // (no desktop switch, no focus write); follow (the default)
+            // switches the active output to the target and focuses the mover
+            // with an immediate readback and no retry. Either way only the
+            // tiled side reflows through the ordinary complete-observation
+            // resync, preserving floating geometry.
             try {
                 const probed = observeSendTarget(liveWorkspace, sendNativeIds, target, floatingIds, undefined, nativeOwners);
                 const sourceId = probed === null ? workspaceNative.currentScopeId() : probed.sourceWorkspace;
@@ -4049,7 +4244,7 @@ function startPlanAdapterEntryOnce(
                     const targetRef = resolveDesktopRef(target);
                     if (mover === null || targetRef === null) {
                         try {
-                            log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=native-unavailable follow=not-reached gate=pre-commit phase=entry reason=native-unavailable req_ord=${String(index)} inflight_stage=idle`);
+                            log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=native-unavailable follow=not-reached gate=pre-commit phase=entry reason=native-unavailable req_ord=${String(reqOrd)} inflight_stage=idle`);
                         } catch (error) {
                             void error;
                         }
@@ -4077,16 +4272,36 @@ function startPlanAdapterEntryOnce(
                     }
                     if (refusal !== null) {
                         try {
-                            log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=native-refused follow=preserved gate=floating-boundary phase=entry reason=${refusal} req_ord=${String(index)} inflight_stage=idle`);
+                            log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=native-refused follow=not-reached gate=floating-boundary phase=entry reason=${refusal} req_ord=${String(reqOrd)} inflight_stage=idle`);
                         } catch (error) {
                             void error;
                         }
                         return;
                     }
+                    // Snapshot the follow output before the membership write:
+                    // KWin may refocus a survivor on another output (or null)
+                    // as a result of the write; follow must address the
+                    // pre-write output.
+                    const preWriteSelection = selectFollowOutput();
                     const moved = writeMoverDesktops(mover, targetRef);
-                    // Native focus/visibility stay untouched: no desktop
-                    // switch, no focus write. The tiled side reflows through
-                    // the ordinary complete-observation resync below.
+                    // Explicit follow/stay on the floating-boundary path:
+                    // stay keeps the preservation above (no desktop switch,
+                    // no focus write); follow re-proves arrival, switches to
+                    // the target and focuses the mover with an immediate
+                    // readback, no retry.
+                    // The commit stands either way; a failed follow only
+                    // degrades the follow token below.
+                    let followToken = "not-reached";
+                    if (!moved) {
+                        followToken = "not-reached";
+                    } else if (!follow) {
+                        followToken = "stayed";
+                    } else {
+                        followToken = followNativeToTarget(targetRef, mover, preWriteSelection);
+                    }
+                    // The tiled side reflows through the ordinary
+                    // complete-observation resync below, preserving floating
+                    // geometry; the floating side receives no geometry.
                     try {
                         workspaceNative.handleTopologySignal();
                     } catch (error) {
@@ -4100,11 +4315,11 @@ function startPlanAdapterEntryOnce(
                     emitWorkspaceTiling();
                     // Report the actual native write outcome: moved means the
                     // membership write applied, failed means it did not. The
-                    // follow stays preserved in both cases because no desktop
-                    // switch or focus write ever runs on this path.
+                    // follow token above reports stay/follow truthfully: stay
+                    // never switches or focuses, follow reports its readback.
                     const nativeOutcome = moved ? "native-moved" : "native-failed";
                     try {
-                        log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=${nativeOutcome} follow=preserved gate=floating-boundary phase=entry reason=floating-boundary req_ord=${String(index)} inflight_stage=idle`);
+                        log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=${nativeOutcome} follow=${followToken} gate=floating-boundary phase=entry reason=floating-boundary req_ord=${String(reqOrd)} inflight_stage=idle`);
                     } catch (error) {
                         void error;
                     }
@@ -4120,7 +4335,7 @@ function startPlanAdapterEntryOnce(
             } catch (error) {
                 void error;
             }
-            workspaceSend.requestSend(target, index);
+            workspaceSend.requestSend(target, reqOrd, follow);
         } catch (error) {
             void error;
         }
@@ -4136,12 +4351,18 @@ function startPlanAdapterEntryOnce(
             try {
                 const ok =
                     kind === "move"
-                        ? registerFn(action, text, sequence, () => requestWorkspaceMove(index))
-                        : kind === "previous"
-                          ? registerFn(action, text, sequence, () => requestWorkspacePrevious())
-                          : kind === "relative"
-                            ? registerFn(action, text, sequence, () => requestWorkspaceRelative(delta))
-                            : registerFn(action, text, sequence, () => requestWorkspaceSelect(index));
+                        ? registerFn(action, text, sequence, () => requestWorkspaceMove(index, true))
+                        : kind === "move-stay"
+                          ? registerFn(action, text, sequence, () => requestWorkspaceMove(index, false))
+                          : kind === "previous"
+                            ? registerFn(action, text, sequence, () => requestWorkspacePrevious())
+                            : kind === "relative"
+                              ? registerFn(action, text, sequence, () => requestWorkspaceRelative(delta))
+                              : kind === "send-relative"
+                                ? registerFn(action, text, sequence, () => requestWorkspaceRelativeMove(delta, true))
+                                : kind === "send-relative-stay"
+                                  ? registerFn(action, text, sequence, () => requestWorkspaceRelativeMove(delta, false))
+                                  : registerFn(action, text, sequence, () => requestWorkspaceSelect(index));
                 if (ok !== true) {
                     try {
                         log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
@@ -6055,9 +6276,9 @@ function startPlanAdapterEntryOnce(
                 void error;
             }
         },
-        requestWorkspaceMove: (index) => {
+        requestWorkspaceMove: (index, follow) => {
             try {
-                requestWorkspaceMove(index);
+                requestWorkspaceMove(index, follow);
             } catch (error) {
                 void error;
             }
@@ -6072,6 +6293,13 @@ function startPlanAdapterEntryOnce(
         requestWorkspaceRelative: (delta) => {
             try {
                 requestWorkspaceRelative(delta);
+            } catch (error) {
+                void error;
+            }
+        },
+        requestWorkspaceRelativeMove: (delta, follow) => {
+            try {
+                requestWorkspaceRelativeMove(delta, follow);
             } catch (error) {
                 void error;
             }
@@ -6318,14 +6546,17 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         requestWorkspaceSelect: (index) => {
             delegate((target) => target.requestWorkspaceSelect(index));
         },
-        requestWorkspaceMove: (index) => {
-            delegate((target) => target.requestWorkspaceMove(index));
+        requestWorkspaceMove: (index, follow) => {
+            delegate((target) => target.requestWorkspaceMove(index, follow));
         },
         requestWorkspacePrevious: () => {
             delegate((target) => target.requestWorkspacePrevious());
         },
         requestWorkspaceRelative: (delta) => {
             delegate((target) => target.requestWorkspaceRelative(delta));
+        },
+        requestWorkspaceRelativeMove: (delta, follow) => {
+            delegate((target) => target.requestWorkspaceRelativeMove(delta, follow));
         },
         getWorkspaceTilingSnapshot: () => {
             if (current !== null) {

@@ -214,6 +214,7 @@ fn send_event(source: &OutputDomain, target: &OutputDomain, c: &str) -> CoreEven
             window: "win-m".to_owned(),
             target_output: "out-1".to_owned(),
             target_workspace: "ws-b".to_owned(),
+            follow: true,
         },
     }
 }
@@ -307,6 +308,57 @@ fn send_commits_immediately_with_retained_topology_and_stays() {
     assert_eq!(
         leaves_of(tgt, "out-1", "ws-b"),
         vec!["leaf-win-t1", "leaf-win-t2", "leaf-win-m"]
+    );
+}
+
+#[test]
+fn send_stay_keeps_source_selected_with_mru_focus() {
+    let (mut engine, source_domain, target_domain) = seed_send_engine();
+    let mut event = send_event(&source_domain, &target_domain, "send-stay-1");
+    if let CoreCommand::SendToWorkspace { follow, .. } = &mut event.command {
+        *follow = false;
+    }
+    let plan = match engine.handle(&event) {
+        CoreReply::SendWorkspace(plan) => plan,
+        other => panic!("stay must commit SendWorkspace, got {other:?}"),
+    };
+    assert!(!plan.follow);
+    // Source stays selected: the MRU survivor keeps focus, never the target.
+    assert_eq!(plan.focus_domain, Some(key("out-1", "ws-a")));
+    assert_eq!(
+        plan.focus_leaf.as_ref().map(|leaf| leaf.0.as_str()),
+        Some("leaf-win-s2")
+    );
+    // Destination admission is unchanged from the follow path.
+    let src = engine.session(&key("out-1", "ws-a")).expect("src retained");
+    let tgt = engine.session(&key("out-1", "ws-b")).expect("tgt retained");
+    assert_eq!(
+        leaves_of(src, "out-1", "ws-a"),
+        vec!["leaf-win-s1", "leaf-win-s2"]
+    );
+    assert_eq!(
+        leaves_of(tgt, "out-1", "ws-b"),
+        vec!["leaf-win-t1", "leaf-win-t2", "leaf-win-m"]
+    );
+    assert_eq!(
+        homed(tgt, "win-m"),
+        Some(("out-1".to_owned(), "ws-b".to_owned()))
+    );
+    assert_eq!(
+        src.focus(),
+        (
+            Some(key("out-1", "ws-a")),
+            Some(tiler_core::directional::NodeId("leaf-win-s2".to_owned()))
+        )
+    );
+    // Both-domain geometry with the native assignment on the target.
+    let mut ids: Vec<String> = plan.geometry.iter().map(|g| g.window.0.clone()).collect();
+    ids.sort();
+    assert_eq!(ids, vec!["win-m", "win-s1", "win-s2", "win-t1", "win-t2"]);
+    assert!(
+        plan.geometry
+            .iter()
+            .any(|g| g.window.0 == "win-m" && g.output.0 == "out-1" && g.workspace.0 == "ws-b")
     );
 }
 
@@ -471,6 +523,7 @@ fn rapid_second_send_with_arrival_commits_without_reconcile() {
             window: "win-m".to_owned(),
             target_output: "out-1".to_owned(),
             target_workspace: "ws-c".to_owned(),
+            follow: true,
         },
     };
     match engine.handle(&second) {
@@ -535,6 +588,7 @@ fn stale_rapid_second_send_drops_mover_until_domain_reconcile() {
             window: "win-m".to_owned(),
             target_output: "out-1".to_owned(),
             target_workspace: "ws-c".to_owned(),
+            follow: true,
         },
     };
     match engine.handle(&second) {
@@ -610,6 +664,7 @@ fn stale_rapid_second_send_drops_mover_until_domain_reconcile() {
             window: "win-m".to_owned(),
             target_output: "out-1".to_owned(),
             target_workspace: "ws-c".to_owned(),
+            follow: true,
         },
     };
     match engine.handle(&retry) {
@@ -734,6 +789,7 @@ fn live_send(
             window: window.to_owned(),
             target_output: "mon-a".to_owned(),
             target_workspace: target.workspace.0.clone(),
+            follow: true,
         },
     }
 }

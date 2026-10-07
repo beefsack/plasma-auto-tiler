@@ -261,6 +261,26 @@ prove live callbacks.
 
 ## Journal Line Forms
 
+Workspace send follow/stay (item 2, offline verified; native journey pending):
+
+- `plasma-auto-tiler:route-diag component=cosmic-send stage=follow ... event=follow outcome=stay-confirmed`:
+  fresh transfer arrived, source still selected; core-bound source MRU focus
+  applied, or null desired focus required no setter. No desktop switch.
+- The same stage emits `event=stay-pre|stay-focused` with existing redacted
+  equality/count fields; `focus-unconfirmed`, `hooks-unavailable` and
+  `arrival-unconfirmed` remain truthful terminal focus/arrival failures.
+- `stage=entry ... outcome=native-moved follow=followed|stayed|arrival-unconfirmed|switch-unconfirmed|focus-unconfirmed|native-unavailable gate=floating-boundary`:
+  membership-only boundary write succeeded; follow token reports the separate
+  switch/focus result. `native-failed` or `native-refused` reports
+  `follow=not-reached`, never a preservation/success claim.
+- Relative target is frozen once from the scoped ring; `req_ord=-1` means
+  relative/no numbered ordinal, `0` is append/trailing. Stay source-view drift
+  before a reply produces `stale-revision` with zero writes; drift after the
+  membership write produces `arrival-unconfirmed`, no hidden-source focus.
+- `plasma-auto-tiler:workspace:workspace-send-relative-absent:<reason>`:
+  target resolution refused (`empty-ring`, `current-unknown`,
+  `current-out-of-ring`, `no-active-output`, `unknown-output`, `target-removed`).
+
 Workspace previous/relative diagnostics (opaque stable workspace IDs and
 session-local output keys; native selection attempt completion is not visual
 acceptance):

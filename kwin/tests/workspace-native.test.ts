@@ -265,7 +265,7 @@ describe("workspace mode parsing and chord catalog", () => {
 
     it("publishes exact number chords with shifted-symbol aliases and no foreign records", () => {
         const catalog = workspaceShortcutCatalog();
-        assert.equal(catalog.length, 39);
+        assert.equal(catalog.length, 75);
         const byAction = new Map(catalog.map((row) => [row.action, row]));
         for (let index = 1; index <= 9; index += 1) {
             assert.equal(byAction.get(`plasma-auto-tiler-workspace-${String(index)}`)?.sequence, `Meta+${String(index)}`);

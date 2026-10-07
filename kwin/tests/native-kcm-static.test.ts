@@ -449,26 +449,66 @@ describe("native KCM static contract", () => {
         for (const row of workspace) {
             tsByAction.set(row.action, row.sequence);
         }
-        assert.equal(tsByAction.size, 75);
+        // Item 2 adds 36 workspace rows (8 relative follow, 20 absolute
+        // stay with symbol aliases, 8 relative stay) to the 75 legacy rows.
+        assert.equal(tsByAction.size, 111);
         const nativeByAction = new Map<string, string>();
+        const nativeOrder: string[] = [];
         const entryPattern =
-            /QStringLiteral\("(plasma-auto-tiler-[^"]+)"\),\s*(SHORTCUT_[A-Z0-9_]+),\s*QStringLiteral\("([^"]+)"\)/g;
+            /QStringLiteral\("(plasma-auto-tiler-[^"]+)"\),\s*(?:SHORTCUT_[A-Z0-9_]+|0),\s*QStringLiteral\("([^"]*)"\)/g;
         for (const match of reconciler.matchAll(entryPattern)) {
             const action = match[1];
-            const display = match[3];
+            const display = match[2];
             if (action === undefined || display === undefined) {
                 assert.fail("native catalog entry must declare action and display");
             }
             if (!nativeByAction.has(action)) {
                 nativeByAction.set(action, display);
+                nativeOrder.push(action);
             }
         }
-        // Full catalog parity: TS plan plus workspace catalogs match the
-        // native reconciler catalog exactly (75 actions with sequences).
-        assert.equal(nativeByAction.size, 75);
-        assert.deepEqual([...nativeByAction.keys()].sort(), [...tsByAction.keys()].sort());
+        // Item 2 parity: all 111 bindings now, including the 28 unbound
+        // stay rows with empty default sequences.
+        assert.equal(nativeByAction.size, 111);
         for (const [action, sequence] of nativeByAction) {
             assert.equal(tsByAction.get(action), sequence);
+        }
+        const tsOrder = [...plan.map((row) => row.action), ...workspace.map((row) => row.action)];
+        assert.deepEqual(new Set(nativeOrder), new Set(tsOrder));
+        assert.equal(nativeOrder.length, tsOrder.length);
+        // Item 2 order: the 36 new rows follow the 75 legacy rows in exact
+        // TS catalog order.
+        assert.deepEqual(nativeOrder.slice(75), workspace.slice(-36).map((row) => row.action));
+        for (const row of workspace) {
+            if (row.sequence === "") {
+                assert.equal(nativeByAction.get(row.action), "");
+            }
+        }
+        // Spot-check the 8 bound follow chords and the unbound stay defaults.
+        for (const [action, sequence] of [
+            ["plasma-auto-tiler-send-prev-h", "Meta+Ctrl+Shift+H"],
+            ["plasma-auto-tiler-send-prev-k", "Meta+Ctrl+Shift+K"],
+            ["plasma-auto-tiler-send-prev-left-arrow", "Meta+Ctrl+Shift+Left"],
+            ["plasma-auto-tiler-send-prev-up-arrow", "Meta+Ctrl+Shift+Up"],
+            ["plasma-auto-tiler-send-next-j", "Meta+Ctrl+Shift+J"],
+            ["plasma-auto-tiler-send-next-l", "Meta+Ctrl+Shift+L"],
+            ["plasma-auto-tiler-send-next-down-arrow", "Meta+Ctrl+Shift+Down"],
+            ["plasma-auto-tiler-send-next-right-arrow", "Meta+Ctrl+Shift+Right"],
+        ] as const) {
+            assert.equal(nativeByAction.get(action), sequence);
+        }
+        // New stock conflicts for the send-arrow follow rows.
+        for (const token of [
+            "Window One Desktop to the Left",
+            "Window One Desktop Up",
+            "Window One Desktop Down",
+            "Window One Desktop to the Right",
+            "SHORTCUT_META_CTRL_SHIFT_LEFT = 385875986",
+            "SHORTCUT_META_CTRL_SHIFT_UP = 385875987",
+            "SHORTCUT_META_CTRL_SHIFT_DOWN = 385875989",
+            "SHORTCUT_META_CTRL_SHIFT_RIGHT = 385875988",
+        ]) {
+            assert.match(reconcilerHeader, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
         }
         // UI rows use readable chords and distinguish own from foreign holders.
         assert.match(unified, /keysDisplayNames/);

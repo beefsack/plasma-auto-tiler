@@ -9,7 +9,10 @@
 // logical positions; zero reuses or appends the trailing empty. Numbered moves
 // resolve to an existing same-output backing id (or reuse/append for zero)
 // and hand the id to the WorkspaceSendAdapter transport; desktop follow and
-// mover focus happen there only after the Rust-planned commit.
+// mover focus happen there only after the Rust-planned commit. Relative sends
+// resolve once through resolveRelativeMoveTarget over the same scoped ring.
+// Numbered and relative send-and-stay rows are bindable but unbound; the
+// entry routes explicit follow/stay and the adapter defaults to follow.
 //
 // Signals are attached by the production entry and routed here as one
 // synchronous cleanup per event. No timers, no second topology authority.
@@ -87,7 +90,7 @@ export interface WorkspaceShortcutRow {
     readonly action: string;
     readonly text: string;
     readonly sequence: string;
-    readonly kind: "select" | "move" | "previous" | "relative";
+    readonly kind: "select" | "move" | "move-stay" | "previous" | "relative" | "send-relative" | "send-relative-stay";
     readonly index: number;
     readonly delta?: -1 | 1;
 }
@@ -214,6 +217,176 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         text: "Next workspace",
         sequence: "Meta+Ctrl+Right",
         kind: "relative",
+        index: 0,
+        delta: 1,
+    });
+    // R-WS-01/14 relative send-and-follow: same scoped ring as selection,
+    // resolved once before transfer at the entry. Bound chords.
+    rows.push({
+        action: "plasma-auto-tiler-send-prev-h",
+        text: "Send window to the previous workspace",
+        sequence: "Meta+Ctrl+Shift+H",
+        kind: "send-relative",
+        index: 0,
+        delta: -1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-send-prev-k",
+        text: "Send window to the previous workspace",
+        sequence: "Meta+Ctrl+Shift+K",
+        kind: "send-relative",
+        index: 0,
+        delta: -1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-send-prev-left-arrow",
+        text: "Send window to the previous workspace",
+        sequence: "Meta+Ctrl+Shift+Left",
+        kind: "send-relative",
+        index: 0,
+        delta: -1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-send-prev-up-arrow",
+        text: "Send window to the previous workspace",
+        sequence: "Meta+Ctrl+Shift+Up",
+        kind: "send-relative",
+        index: 0,
+        delta: -1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-send-next-j",
+        text: "Send window to the next workspace",
+        sequence: "Meta+Ctrl+Shift+J",
+        kind: "send-relative",
+        index: 0,
+        delta: 1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-send-next-l",
+        text: "Send window to the next workspace",
+        sequence: "Meta+Ctrl+Shift+L",
+        kind: "send-relative",
+        index: 0,
+        delta: 1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-send-next-down-arrow",
+        text: "Send window to the next workspace",
+        sequence: "Meta+Ctrl+Shift+Down",
+        kind: "send-relative",
+        index: 0,
+        delta: 1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-send-next-right-arrow",
+        text: "Send window to the next workspace",
+        sequence: "Meta+Ctrl+Shift+Right",
+        kind: "send-relative",
+        index: 0,
+        delta: 1,
+    });
+    // R-WS-01 absolute send-and-stay: numbered plus append, bindable but
+    // unbound by default (empty sequence). Mirrors the follow move rows
+    // including shifted-symbol aliases.
+    for (let index = 1; index <= 9; index += 1) {
+        rows.push({
+            action: `plasma-auto-tiler-stay-workspace-${String(index)}`,
+            text: `Send window to workspace ${String(index)} without following`,
+            sequence: "",
+            kind: "move-stay",
+            index,
+        });
+        const symbol = symbolForDigit(index);
+        if (symbol !== null) {
+            rows.push({
+                action: `plasma-auto-tiler-stay-workspace-${String(index)}-symbol`,
+                text: `Send window to workspace ${String(index)} without following (shifted-symbol alias)`,
+                sequence: "",
+                kind: "move-stay",
+                index,
+            });
+        }
+    }
+    rows.push({
+        action: "plasma-auto-tiler-stay-workspace-append",
+        text: "Send window to a newly appended workspace without following",
+        sequence: "",
+        kind: "move-stay",
+        index: 0,
+    });
+    const stayZeroSymbol = symbolForDigit(0);
+    if (stayZeroSymbol !== null) {
+        rows.push({
+            action: "plasma-auto-tiler-stay-workspace-append-symbol",
+            text: "Send window to a newly appended workspace without following (shifted-symbol alias)",
+            sequence: "",
+            kind: "move-stay",
+            index: 0,
+        });
+    }
+    // R-WS-14 relative send-and-stay: bindable but unbound by default.
+    rows.push({
+        action: "plasma-auto-tiler-send-stay-prev-h",
+        text: "Send window to the previous workspace without following",
+        sequence: "",
+        kind: "send-relative-stay",
+        index: 0,
+        delta: -1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-send-stay-prev-k",
+        text: "Send window to the previous workspace without following",
+        sequence: "",
+        kind: "send-relative-stay",
+        index: 0,
+        delta: -1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-send-stay-prev-left-arrow",
+        text: "Send window to the previous workspace without following",
+        sequence: "",
+        kind: "send-relative-stay",
+        index: 0,
+        delta: -1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-send-stay-prev-up-arrow",
+        text: "Send window to the previous workspace without following",
+        sequence: "",
+        kind: "send-relative-stay",
+        index: 0,
+        delta: -1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-send-stay-next-j",
+        text: "Send window to the next workspace without following",
+        sequence: "",
+        kind: "send-relative-stay",
+        index: 0,
+        delta: 1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-send-stay-next-l",
+        text: "Send window to the next workspace without following",
+        sequence: "",
+        kind: "send-relative-stay",
+        index: 0,
+        delta: 1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-send-stay-next-down-arrow",
+        text: "Send window to the next workspace without following",
+        sequence: "",
+        kind: "send-relative-stay",
+        index: 0,
+        delta: 1,
+    });
+    rows.push({
+        action: "plasma-auto-tiler-send-stay-next-right-arrow",
+        text: "Send window to the next workspace without following",
+        sequence: "",
+        kind: "send-relative-stay",
         index: 0,
         delta: 1,
     });
@@ -978,6 +1151,85 @@ export class WorkspaceNativeAdapter {
             return null;
         }
         return target.id;
+    }
+
+    // Meta+Ctrl+Shift+arrows and +H/J/K/L: resolve the relative send target
+    // once before transfer using the same scoped ring as selection (1.4):
+    // every existing scoped id including the trailing empty and ordinals
+    // beyond 9, first/last wrap. Never creates: sending into the trailing
+    // empty fills it and normal lifecycle maintenance supplies the next
+    // spare. Null means absent or unreadable.
+    resolveRelativeMoveTarget(delta: number): string | null {
+        if (!this.enabled) {
+            return null;
+        }
+        if (delta !== -1 && delta !== 1) {
+            return null;
+        }
+        if (this.mode === "shared") {
+            const live = this.liveOrdered();
+            if (live === null || live.length === 0) {
+                this.logToken("workspace-send-relative-absent:empty-ring");
+                return null;
+            }
+            const ring = live.map((entry) => entry.id);
+            const current = this.currentShared();
+            if (current === null) {
+                this.logToken("workspace-send-relative-absent:current-unknown");
+                return null;
+            }
+            const at = ring.indexOf(current.id);
+            if (at < 0) {
+                this.logToken("workspace-send-relative-absent:current-out-of-ring");
+                return null;
+            }
+            const nextId = ring[(at + delta + ring.length) % ring.length];
+            if (nextId === undefined) {
+                this.logToken("workspace-send-relative-absent:target-removed");
+                return null;
+            }
+            return nextId;
+        }
+        const output = this.activeOutput();
+        if (output === null) {
+            this.logToken("workspace-send-relative-absent:no-active-output");
+            return null;
+        }
+        const live = this.liveOrdered();
+        if (live === null) {
+            return null;
+        }
+        if (this.mode === "global-unique") {
+            this.rebuildGlobalMapping(live);
+        } else {
+            this.rebuildLocalMapping(live);
+        }
+        const key = this.outputKeys.keyFor(output);
+        if (key === undefined) {
+            this.logToken("workspace-send-relative-absent:unknown-output");
+            return null;
+        }
+        const ring = this.scopedRingIds(key, live);
+        if (ring.length === 0) {
+            this.logToken("workspace-send-relative-absent:empty-ring");
+            return null;
+        }
+        const current = this.currentOnOutput(output);
+        if (current === null) {
+            this.logToken("workspace-send-relative-absent:current-unknown");
+            return null;
+        }
+        const at = ring.indexOf(current.id);
+        if (at < 0) {
+            this.logToken("workspace-send-relative-absent:current-out-of-ring");
+            return null;
+        }
+        const nextId = ring[(at + delta + ring.length) % ring.length];
+        if (nextId === undefined) {
+            this.logToken("workspace-send-relative-absent:target-removed");
+            return null;
+        }
+        return nextId;
     }
 
     // Meta+Shift+0: reuse the trailing empty or append one, then return its

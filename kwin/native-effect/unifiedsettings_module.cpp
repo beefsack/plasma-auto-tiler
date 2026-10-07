@@ -251,14 +251,19 @@ void UnifiedSettingsModule::setShortcutStores(ShortcutStore *store, ClearedActio
     m_shortcutStore = store;
     m_clearedStore = cleared;
     // Reopening stages live-disabled rows: present own assignments that are
-    // empty restage Disable. Missing rows are not Disable; absence and read
-    // failure stage Authentic. Refresh never clobbers the staged draft.
+    // empty restage Disable. Default-unbound rows (canonical key 0) are at
+    // their canonical empty binding, not a disablement, so they never
+    // auto-stage. Missing rows are not Disable; absence and read failure
+    // stage Authentic. Refresh never clobbers the staged draft.
     m_shortcutDisabledDraft.clear();
     if (m_shortcutStore != nullptr) {
         QList<ShortcutTuple> tuples;
         QString readError;
         if (m_shortcutStore->readAll(&tuples, &readError)) {
             for (const ShortcutCatalogEntry &entry : shortcutProjectCatalog()) {
+                if (entry.canonicalKey == 0) {
+                    continue;
+                }
                 for (const ShortcutTuple &tuple : tuples) {
                     if (tuple.component == entry.component && tuple.action == entry.action && tuple.active.isEmpty()) {
                         m_shortcutDisabledDraft.insert(shortcutCatalogId(entry.component, entry.action));
@@ -751,6 +756,10 @@ void UnifiedSettingsModule::refreshShortcutState()
                 return;
             }
         }
+        if (entry.canonicalKey == 0) {
+            *post = QList<int>();
+            return;
+        }
         *post = QList<int>{entry.canonicalKey};
     };
     QList<const ShortcutTuple *> projectCurrents;
@@ -987,15 +996,20 @@ void UnifiedSettingsModule::load()
     KCModule::load();
 
     // Reopening stages live-disabled rows (present own assignments that
-    // are empty); missing rows are not Disable and read failure stages
-    // Authentic. Authentic/defaults explicitly restage Keep; Compatible
-    // explicitly resets and recomputes. Refresh never clobbers the draft.
+    // are empty); default-unbound rows (canonical key 0) are at canonical
+    // empty, not a disablement. Missing rows are not Disable and read
+    // failure stages Authentic. Authentic/defaults explicitly restage Keep;
+    // Compatible explicitly resets and recomputes. Refresh never clobbers
+    // the draft.
     m_shortcutDisabledDraft.clear();
     if (m_shortcutStore != nullptr) {
         QList<ShortcutTuple> liveTuples;
         QString liveError;
         if (m_shortcutStore->readAll(&liveTuples, &liveError)) {
             for (const ShortcutCatalogEntry &entry : shortcutProjectCatalog()) {
+                if (entry.canonicalKey == 0) {
+                    continue;
+                }
                 for (const ShortcutTuple &tuple : liveTuples) {
                     if (tuple.component == entry.component && tuple.action == entry.action && tuple.active.isEmpty()) {
                         m_shortcutDisabledDraft.insert(shortcutCatalogId(entry.component, entry.action));

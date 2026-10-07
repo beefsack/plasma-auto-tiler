@@ -387,6 +387,11 @@ pub enum LifecycleIntent {
         window: WindowId,
         target_output: OutputId,
         target_workspace: WorkspaceId,
+        /// Follow/stay selection: true follows the mover into the target
+        /// (COSMIC `MoveToWorkspace`), false leaves the source selected with
+        /// source-MRU focus (COSMIC `SendToWorkspace`). Structural transfer
+        /// is identical; only the desired focus differs.
+        follow: bool,
     },
 }
 

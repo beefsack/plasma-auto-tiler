@@ -502,17 +502,35 @@ const QList<ShortcutConflictRow> &shortcutConflictTable()
           {SHORTCUT_META_CTRL_RIGHT}, shortcutSwitchOneDesktopRightComponent(),
           shortcutSwitchOneDesktopRightAction(), {SHORTCUT_META_CTRL_RIGHT}, shortcutResolutionClear(), {}, {}, {},
           QStringLiteral("Meta+Ctrl+Right"), {}, QStringLiteral("workspace-next-right-arrow")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-prev-left-arrow"),
+          {SHORTCUT_META_CTRL_SHIFT_LEFT}, shortcutWindowOneDesktopLeftComponent(),
+          shortcutWindowOneDesktopLeftAction(), {SHORTCUT_META_CTRL_SHIFT_LEFT}, shortcutResolutionClear(), {}, {},
+          {}, QStringLiteral("Meta+Ctrl+Shift+Left"), {}, QStringLiteral("send-prev-left-arrow")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-prev-up-arrow"),
+          {SHORTCUT_META_CTRL_SHIFT_UP}, shortcutWindowOneDesktopUpComponent(),
+          shortcutWindowOneDesktopUpAction(), {SHORTCUT_META_CTRL_SHIFT_UP}, shortcutResolutionClear(), {}, {}, {},
+          QStringLiteral("Meta+Ctrl+Shift+Up"), {}, QStringLiteral("send-prev-up-arrow")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-next-down-arrow"),
+          {SHORTCUT_META_CTRL_SHIFT_DOWN}, shortcutWindowOneDesktopDownComponent(),
+          shortcutWindowOneDesktopDownAction(), {SHORTCUT_META_CTRL_SHIFT_DOWN}, shortcutResolutionClear(), {}, {},
+          {}, QStringLiteral("Meta+Ctrl+Shift+Down"), {}, QStringLiteral("send-next-down-arrow")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-next-right-arrow"),
+          {SHORTCUT_META_CTRL_SHIFT_RIGHT}, shortcutWindowOneDesktopRightComponent(),
+          shortcutWindowOneDesktopRightAction(), {SHORTCUT_META_CTRL_SHIFT_RIGHT}, shortcutResolutionClear(), {},
+          {}, {}, QStringLiteral("Meta+Ctrl+Shift+Right"), {}, QStringLiteral("send-next-right-arrow")},
     };
     return table;
 }
 
 const QList<ShortcutCatalogEntry> &shortcutProjectCatalog()
 {
-    // 36 plan rows then 39 workspace rows. Canonical keys are unique across
-    // the catalog (letters vs digits/symbols vs arrows/F11/Ctrl-arrows across
-    // distinct modifier arms). knownForeign* mirrors the conflict table for
-    // its 19 project actions; every other row carries empty known foreign
-    // state.
+    // 36 plan rows then 39 item-1 workspace rows then 36 item-2 workspace
+    // rows (8 bound relative send-and-follow, 20 unbound numbered
+    // send-and-stay with symbol aliases plus append rows, 8 unbound
+    // relative send-and-stay). Bound canonical keys stay unique across the
+    // catalog; unbound rows share key 0 with empty display. knownForeign*
+    // mirrors the conflict table for its 23 project actions; every other
+    // row carries empty known foreign state.
     static const QList<ShortcutCatalogEntry> catalog = {
         {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-left"), SHORTCUT_META_H,
          QStringLiteral("Meta+H"), {}, {}, 0, QStringLiteral("focus")},
@@ -683,6 +701,86 @@ const QList<ShortcutCatalogEntry> &shortcutProjectCatalog()
         {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-next-right-arrow"),
           SHORTCUT_META_CTRL_RIGHT, QStringLiteral("Meta+Ctrl+Right"), shortcutSwitchOneDesktopRightComponent(),
           shortcutSwitchOneDesktopRightAction(), SHORTCUT_META_CTRL_RIGHT, QStringLiteral("workspace-relative")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-prev-h"), SHORTCUT_META_CTRL_SHIFT_H,
+          QStringLiteral("Meta+Ctrl+Shift+H"), {}, {}, 0, QStringLiteral("workspace-send-relative")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-prev-k"), SHORTCUT_META_CTRL_SHIFT_K,
+          QStringLiteral("Meta+Ctrl+Shift+K"), {}, {}, 0, QStringLiteral("workspace-send-relative")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-prev-left-arrow"),
+          SHORTCUT_META_CTRL_SHIFT_LEFT, QStringLiteral("Meta+Ctrl+Shift+Left"),
+          shortcutWindowOneDesktopLeftComponent(), shortcutWindowOneDesktopLeftAction(),
+          SHORTCUT_META_CTRL_SHIFT_LEFT, QStringLiteral("workspace-send-relative")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-prev-up-arrow"), SHORTCUT_META_CTRL_SHIFT_UP,
+          QStringLiteral("Meta+Ctrl+Shift+Up"), shortcutWindowOneDesktopUpComponent(),
+          shortcutWindowOneDesktopUpAction(), SHORTCUT_META_CTRL_SHIFT_UP,
+          QStringLiteral("workspace-send-relative")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-next-j"), SHORTCUT_META_CTRL_SHIFT_J,
+          QStringLiteral("Meta+Ctrl+Shift+J"), {}, {}, 0, QStringLiteral("workspace-send-relative")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-next-l"), SHORTCUT_META_CTRL_SHIFT_L,
+          QStringLiteral("Meta+Ctrl+Shift+L"), {}, {}, 0, QStringLiteral("workspace-send-relative")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-next-down-arrow"),
+          SHORTCUT_META_CTRL_SHIFT_DOWN, QStringLiteral("Meta+Ctrl+Shift+Down"),
+          shortcutWindowOneDesktopDownComponent(), shortcutWindowOneDesktopDownAction(),
+          SHORTCUT_META_CTRL_SHIFT_DOWN, QStringLiteral("workspace-send-relative")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-next-right-arrow"),
+          SHORTCUT_META_CTRL_SHIFT_RIGHT, QStringLiteral("Meta+Ctrl+Shift+Right"),
+          shortcutWindowOneDesktopRightComponent(), shortcutWindowOneDesktopRightAction(),
+          SHORTCUT_META_CTRL_SHIFT_RIGHT, QStringLiteral("workspace-send-relative")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-1"), 0, QStringLiteral(""), {}, {},
+          0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-1-symbol"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-2"), 0, QStringLiteral(""), {}, {},
+          0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-2-symbol"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-3"), 0, QStringLiteral(""), {}, {},
+          0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-3-symbol"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-4"), 0, QStringLiteral(""), {}, {},
+          0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-4-symbol"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-5"), 0, QStringLiteral(""), {}, {},
+          0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-5-symbol"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-6"), 0, QStringLiteral(""), {}, {},
+          0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-6-symbol"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-7"), 0, QStringLiteral(""), {}, {},
+          0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-7-symbol"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-8"), 0, QStringLiteral(""), {}, {},
+          0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-8-symbol"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-9"), 0, QStringLiteral(""), {}, {},
+          0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-9-symbol"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-append"), 0, QStringLiteral(""), {},
+          {}, 0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-append-symbol"), 0,
+          QStringLiteral(""), {}, {}, 0, QStringLiteral("workspace-move-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-stay-prev-h"), 0, QStringLiteral(""), {}, {},
+          0, QStringLiteral("workspace-send-relative-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-stay-prev-k"), 0, QStringLiteral(""), {}, {},
+          0, QStringLiteral("workspace-send-relative-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-stay-prev-left-arrow"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("workspace-send-relative-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-stay-prev-up-arrow"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("workspace-send-relative-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-stay-next-j"), 0, QStringLiteral(""), {}, {},
+          0, QStringLiteral("workspace-send-relative-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-stay-next-l"), 0, QStringLiteral(""), {}, {},
+          0, QStringLiteral("workspace-send-relative-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-stay-next-down-arrow"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("workspace-send-relative-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-stay-next-right-arrow"), 0,
+          QStringLiteral(""), {}, {}, 0, QStringLiteral("workspace-send-relative-stay")},
     };
     return catalog;
 }
@@ -1405,6 +1503,9 @@ QList<int> ShortcutReconciler::enabledRequiredKeys(const QSet<QString> &disabled
         if (disabledIds.contains(shortcutCatalogId(entry.component, entry.action))) {
             continue;
         }
+        if (entry.canonicalKey == 0) {
+            continue;
+        }
         if (!out.contains(entry.canonicalKey)) {
             out.append(entry.canonicalKey);
         }
@@ -1429,6 +1530,9 @@ QList<int> ShortcutReconciler::enabledRequiredKeys(const QSet<QString> &disabled
 
 QString ShortcutReconciler::keyDisplayName(int key)
 {
+    if (key == 0) {
+        return QStringLiteral("none");
+    }
     for (const ShortcutCatalogEntry &entry : shortcutProjectCatalog()) {
         if (entry.canonicalKey == key && !entry.canonicalDisplay.isEmpty()) {
             return entry.canonicalDisplay;
@@ -1875,10 +1979,15 @@ bool ShortcutReconciler::collectRowDisplays(ShortcutStore *store, QList<Shortcut
             }
         }
         // Current holders via the authoritative keyed query. A failed query
-        // marks this row unknown; other rows still report.
+        // marks this row unknown; other rows still report. Unbound rows
+        // (key 0) never query: they report empty holders as known so the
+        // existing KCM rebinding route stays usable with an empty default.
         QList<ShortcutKeyHolder> holders;
         QString holderError;
-        if (!store->shortcutsByKey(entry.canonicalKey, &holders, &holderError)) {
+        if (entry.canonicalKey == 0) {
+            row.holdersKnown = true;
+            row.holders = holders;
+        } else if (!store->shortcutsByKey(entry.canonicalKey, &holders, &holderError)) {
             row.holdersKnown = false;
         } else {
             row.holdersKnown = true;
@@ -3361,6 +3470,10 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeysFor(const char *operatio
                 *post = row.projectPost;
                 return;
             }
+        }
+        if (entry.canonicalKey == 0) {
+            *post = QList<int>();
+            return;
         }
         *post = QList<int>{entry.canonicalKey};
     };

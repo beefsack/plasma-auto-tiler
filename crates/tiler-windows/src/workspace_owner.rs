@@ -128,6 +128,7 @@ pub fn build_send_event(
             window: mover_token.to_owned(),
             target_output: String::new(),
             target_workspace: String::new(),
+            follow: true,
         },
     })
 }
@@ -1286,6 +1287,7 @@ mod tests {
                 window,
                 target_output,
                 target_workspace,
+                follow: true,
             } => {
                 assert_eq!(window, "w1");
                 assert_eq!(target_output, "mon-a");

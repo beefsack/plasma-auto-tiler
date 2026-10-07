@@ -240,6 +240,7 @@ describe("production entries carry configured gaps", () => {
             desktopCount: 2,
             sourceFingerprint: "sfp-1",
             targetFingerprint: "tfp-1",
+            currentWorkspace: "ws-1",
         };
         const dbusCalls: Array<{ method: string; payload: string }> = [];
         const callbacks: Array<(reply: unknown) => void> = [];
@@ -303,6 +304,7 @@ describe("production entries carry configured gaps", () => {
             desktopCount: 2,
             sourceFingerprint: "sfp-1",
             targetFingerprint: "tfp-1",
+            currentWorkspace: "ws-1",
         };
         const runOnce = (gaps: { innerGap?: unknown; outerGap?: unknown } | undefined): Record<string, unknown> => {
             const dbusCalls: Array<{ method: string; payload: string }> = [];

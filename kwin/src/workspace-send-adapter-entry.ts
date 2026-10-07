@@ -316,6 +316,33 @@ function observeNative(
         if (targetBounds === null) {
             targetBounds = { x: 0, y: 0, w: 1, h: 1 };
         }
+        // Behavior-fenced actual current workspace on the recording output
+        // (mirrors plan-adapter-entry observeSendTarget): unlike the pinned
+        // source identity, which survives view switches, this names the live
+        // view for the stay source-visibility fence. Null when unreadable;
+        // null never counts as selected downstream.
+        let currentWorkspace: string | null = null;
+        try {
+            const getter = readProp(surface, "currentDesktopForScreen");
+            if (typeof getter === "function") {
+                let curRaw: unknown = undefined;
+                try {
+                    curRaw = Reflect.apply(getter as (...args: ReadonlyArray<never>) => unknown, surface, [outputRef]);
+                } catch (error) {
+                    void error;
+                    curRaw = undefined;
+                }
+                if (typeof curRaw === "object" && curRaw !== null) {
+                    const curIdRaw = readDesktopId(curRaw as object);
+                    if (curIdRaw !== null) {
+                        currentWorkspace = curIdRaw;
+                    }
+                }
+            }
+        } catch (error) {
+            void error;
+            currentWorkspace = null;
+        }
         const lister = readProp(surface, "windowList");
         if (typeof lister !== "function") {
             return null;
@@ -497,6 +524,7 @@ function observeNative(
             desktopCount: desktops.length,
             sourceFingerprint,
             targetFingerprint,
+            currentWorkspace,
         };
     } catch (error) {
         void error;

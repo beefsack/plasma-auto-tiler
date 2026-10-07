@@ -141,6 +141,14 @@ export interface WorkspaceSendObserved {
     readonly desktopCount: number;
     readonly sourceFingerprint: string;
     readonly targetFingerprint: string;
+    // Actual current desktop stable id on the recording output at
+    // observation time, or null when unreadable. Behavior input for the
+    // stay source-visibility fence only: unlike the pinned source identity
+    // (which survives view switches) and the diagnostic-only cur_* equality
+    // flags above (which compare only the target and never gate behavior),
+    // this names the live view. Null never counts as selected: visibility
+    // unreadable fails the stay fence closed, never assumes selected.
+    readonly currentWorkspace: string | null;
     // Session-local redacted follow diagnostics only. tgt_* is the flight
     // target native mapping (targetOrdinal: index in the live `desktops` list
     // order, targetNumber: KWin native `x11DesktopNumber`, -1 when unreadable).
@@ -520,7 +528,19 @@ interface WorkspacePlanned {
     readonly geometry: ReadonlyArray<WorkspaceGeometryEntry>;
     readonly preconditions: readonly string[];
     readonly operation: Record<string, unknown>;
-    readonly followFocus: WorkspaceFollowFocus;
+    // Explicit follow/stay selection echoed by the Rust move-tiled
+    // operation. Legacy replies omit it and default to follow.
+    readonly follow: boolean;
+    // Planned desired focus: the mover leaf in the target domain for
+    // follow; the source-MRU survivor (or null when the source is left
+    // empty or MRU-less) for stay. Never the mover for stay.
+    readonly followFocus: WorkspaceFollowFocus | null;
+    // Stay-only source-MRU focus target as a stable window id, bound from
+    // the reply geometry before any native write (leaf plus source domain
+    // match, never the mover). Null for follow flights and for null-focus
+    // stays, which run zero focus setters per the focused-removal
+    // null-focus rule. Unbindable stay focus rejects the reply outright.
+    readonly stayFocusWindow: string | null;
 }
 
 function validateGeometryEntry(value: unknown): WorkspaceGeometryEntry | null {
@@ -557,7 +577,7 @@ function validateGeometryEntry(value: unknown): WorkspaceGeometryEntry | null {
     };
 }
 
-function validateMoveTiledOperation(value: unknown): Record<string, unknown> | null {
+function validateMoveTiledOperation(value: unknown): { record: Record<string, unknown>; follow: boolean } | null {
     if (!isRecord(value)) {
         return null;
     }
@@ -570,7 +590,23 @@ function validateMoveTiledOperation(value: unknown): Record<string, unknown> | n
         "target_output",
         "target_workspace",
     ];
-    if (!hasExactKeys(value, fields)) {
+    // The Rust echo carries the explicit follow selection; legacy replies
+    // omit it and default to follow, preserving historical behavior.
+    let follow = true;
+    if (
+        Object.keys(value).length === fields.length + 1 &&
+        Object.prototype.hasOwnProperty.call(value, "follow")
+    ) {
+        if (typeof value["follow"] !== "boolean") {
+            return null;
+        }
+        follow = value["follow"] as boolean;
+        for (const field of fields) {
+            if (!Object.prototype.hasOwnProperty.call(value, field)) {
+                return null;
+            }
+        }
+    } else if (!hasExactKeys(value, fields)) {
         return null;
     }
     if (value["op"] !== "move-tiled") {
@@ -581,7 +617,7 @@ function validateMoveTiledOperation(value: unknown): Record<string, unknown> | n
             return null;
         }
     }
-    return value;
+    return { record: value, follow };
 }
 
 function validatePlanned(reply: unknown, correlationId: string): WorkspacePlanned | null {
@@ -608,30 +644,70 @@ function validatePlanned(reply: unknown, correlationId: string): WorkspacePlanne
     if (!isExactPreconditions(preconditions)) {
         return null;
     }
-    const operation = validateMoveTiledOperation(reply["operation"]);
-    if (operation === null) {
+    const operationValidated = validateMoveTiledOperation(reply["operation"]);
+    if (operationValidated === null) {
         return null;
     }
+    const operation = operationValidated.record;
+    const opFollow = operationValidated.follow;
     // Follow is target-bound: the planned desired focus must name the moved
-    // leaf in the operation target domain. Any other focus is a mismatched
-    // reply and never follows.
+    // leaf in the operation target domain. Stay is source-bound: the
+    // planned desired focus is null when the source is left empty, else it
+    // must name the source domain with a non-mover survivor leaf (the
+    // source-MRU fallback, never the target). Any other focus is a
+    // mismatched (stale or malicious) reply and never actuates or follows.
     const focusRaw = reply["desired_focus"];
-    if (!isRecord(focusRaw) || !hasExactKeys(focusRaw, ["domain_output", "domain_workspace", "leaf"])) {
-        return null;
-    }
-    if (
-        !isOpaqueId(focusRaw["domain_output"]) ||
-        !isOpaqueId(focusRaw["domain_workspace"]) ||
-        !isOpaqueId(focusRaw["leaf"])
-    ) {
-        return null;
-    }
-    if (
-        (focusRaw["domain_output"] as string) !== (operation["target_output"] as string) ||
-        (focusRaw["domain_workspace"] as string) !== (operation["target_workspace"] as string) ||
-        (focusRaw["leaf"] as string) !== (operation["leaf"] as string)
-    ) {
-        return null;
+    let followFocus: WorkspaceFollowFocus | null = null;
+    if (opFollow) {
+        if (!isRecord(focusRaw) || !hasExactKeys(focusRaw, ["domain_output", "domain_workspace", "leaf"])) {
+            return null;
+        }
+        if (
+            !isOpaqueId(focusRaw["domain_output"]) ||
+            !isOpaqueId(focusRaw["domain_workspace"]) ||
+            !isOpaqueId(focusRaw["leaf"])
+        ) {
+            return null;
+        }
+        if (
+            (focusRaw["domain_output"] as string) !== (operation["target_output"] as string) ||
+            (focusRaw["domain_workspace"] as string) !== (operation["target_workspace"] as string) ||
+            (focusRaw["leaf"] as string) !== (operation["leaf"] as string)
+        ) {
+            return null;
+        }
+        followFocus = Object.freeze({
+            output: focusRaw["domain_output"] as string,
+            workspace: focusRaw["domain_workspace"] as string,
+            leaf: focusRaw["leaf"] as string,
+        });
+    } else {
+        if (focusRaw === null) {
+            followFocus = null;
+        } else {
+            if (!isRecord(focusRaw) || !hasExactKeys(focusRaw, ["domain_output", "domain_workspace", "leaf"])) {
+                return null;
+            }
+            if (
+                !isOpaqueId(focusRaw["domain_output"]) ||
+                !isOpaqueId(focusRaw["domain_workspace"]) ||
+                !isOpaqueId(focusRaw["leaf"])
+            ) {
+                return null;
+            }
+            if (
+                (focusRaw["domain_output"] as string) !== (operation["source_output"] as string) ||
+                (focusRaw["domain_workspace"] as string) !== (operation["source_workspace"] as string) ||
+                (focusRaw["leaf"] as string) === (operation["leaf"] as string)
+            ) {
+                return null;
+            }
+            followFocus = Object.freeze({
+                output: focusRaw["domain_output"] as string,
+                workspace: focusRaw["domain_workspace"] as string,
+                leaf: focusRaw["leaf"] as string,
+            });
+        }
     }
     const geometryRaw = reply["desired_geometry"];
     if (!Array.isArray(geometryRaw) || geometryRaw.length === 0) {
@@ -647,18 +723,51 @@ function validatePlanned(reply: unknown, correlationId: string): WorkspacePlanne
         seen.add(valid.window);
         geometry.push(valid);
     }
+    let stayFocusWindow: string | null = null;
+    if (!opFollow && followFocus !== null) {
+        stayFocusWindow = resolveStayFocusWindow(operation, followFocus, geometry);
+        if (stayFocusWindow === null) {
+            // Unbindable stay focus (no source-domain geometry carries the
+            // desired leaf for a non-mover window): mismatched reply, never
+            // actuates or writes. Null focus stays accepted: core owns MRU
+            // and null covers both emptied and MRU-less sources.
+            return null;
+        }
+    }
     return {
         correlationId,
         baseRevision: baseRevision as number,
         geometry: Object.freeze(geometry),
         preconditions: Object.freeze([...(preconditions as string[])]),
         operation,
-        followFocus: Object.freeze({
-            output: focusRaw["domain_output"] as string,
-            workspace: focusRaw["domain_workspace"] as string,
-            leaf: focusRaw["leaf"] as string,
-        }),
+        follow: opFollow,
+        followFocus,
+        stayFocusWindow,
     };
+}
+
+// Stay-only focus binding resolved before any native write: the desired
+// source-MRU leaf maps through the reply geometry (same leaf binding the
+// Plan adapter uses: first geometry entry with the focus leaf, here also
+// pinned to the source domain) to a stable window id, never the mover.
+// Null means the desired leaf carries no actuable source survivor.
+function resolveStayFocusWindow(
+    operation: Record<string, unknown>,
+    followFocus: WorkspaceFollowFocus,
+    geometry: ReadonlyArray<WorkspaceGeometryEntry>,
+): string | null {
+    const moverWindow = operation["window"] as string;
+    for (const entry of geometry) {
+        if (
+            entry.leaf === followFocus.leaf &&
+            entry.output === followFocus.output &&
+            entry.workspace === followFocus.workspace &&
+            entry.window !== moverWindow
+        ) {
+            return entry.window;
+        }
+    }
+    return null;
 }
 
 function validateObserved(observed: WorkspaceSendObserved | null): observed is WorkspaceSendObserved {
@@ -745,6 +854,13 @@ function validateObserved(observed: WorkspaceSendObserved | null): observed is W
         return false;
     }
     if (typeof observed.targetFingerprint !== "string" || observed.targetFingerprint.length === 0) {
+        return false;
+    }
+    // Behavior-fenced visibility input: present as a stable id or null
+    // when unreadable. Absent or malformed fails closed like any other
+    // shape violation; null itself validates (the stay fence, not
+    // validation, treats it as not-selected).
+    if (observed.currentWorkspace !== null && !isOpaqueId(observed.currentWorkspace)) {
         return false;
     }
     return true;
@@ -876,6 +992,22 @@ function scopeMatchesSnapshot(observed: WorkspaceSendObserved, snapshot: Workspa
     );
 }
 
+// Source-visibility fence for stay flights: the dispatch source workspace
+// must still be the actual current workspace on the recording output.
+// Pinned identity proves membership, never the live view: an external view
+// switch elsewhere keeps every membership but revokes visibility, so a
+// stay must not focus a hidden source survivor (nor confirm a null stay
+// while viewing elsewhere). Unreadable (null) never counts as selected:
+// fail closed, never assume.
+function sourceStillSelected(observed: WorkspaceSendObserved, snapshot: WorkspaceSendSnapshot): boolean {
+    try {
+        return observed.currentWorkspace !== null && observed.currentWorkspace === snapshot.sourceWorkspace;
+    } catch (error) {
+        void error;
+        return false;
+    }
+}
+
 interface WorkspacePendingFlight {
     readonly correlation: string;
     readonly snapshot: WorkspaceSendSnapshot;
@@ -897,6 +1029,10 @@ interface WorkspacePendingFlight {
     // from the dispatch snapshot and never rederived. Diagnostic only.
     readonly srcInSource: number;
     readonly srcInTarget: number;
+    // Explicit follow/stay selection for this flight: true follows the mover
+    // into the target (desktop switch then mover focus), false stays on the
+    // source (no switch, no focus write). Bound to the echoed operation.
+    readonly follow: boolean;
     baseRevision: number;
     planned: WorkspacePlanned | null;
     // Arrival follow runs at most once per flight. It never advances any
@@ -1072,7 +1208,7 @@ export class WorkspaceSendAdapter {
         this.enabled = false;
     }
 
-    requestSend(targetWorkspace: unknown, requestedOrdinal?: unknown): boolean {
+    requestSend(targetWorkspace: unknown, requestedOrdinal?: unknown, follow?: unknown): boolean {
         if (!this.enabled) {
             this.refuse("disabled");
             return false;
@@ -1146,7 +1282,11 @@ export class WorkspaceSendAdapter {
         const snapshot = snapshotOf(observed);
         const flightInnerGap = this.innerGap;
         const flightOuterGap = this.outerGap;
-        const payload = this.buildRequestPayload(observed, correlation, flightInnerGap, flightOuterGap);
+        // Explicit follow/stay selection: only an exact false stays on the
+        // source; anything else (including absent) follows the mover into
+        // the target, preserving the historical follow behavior.
+        const wantsFollow = follow !== false;
+        const payload = this.buildRequestPayload(observed, correlation, flightInnerGap, flightOuterGap, wantsFollow);
         if (payload === null) {
             this.refuse("payload-invalid", correlation);
             return false;
@@ -1168,6 +1308,7 @@ export class WorkspaceSendAdapter {
             toDiagOrdinal(requestedOrdinal),
             flightInnerGap,
             flightOuterGap,
+            wantsFollow,
         );
         return this.inFlight;
     }
@@ -1191,6 +1332,7 @@ export class WorkspaceSendAdapter {
         correlation: string,
         innerGap: number,
         outerGap: number,
+        follow: boolean,
     ): string | null {
         // Portable wire fields only: `floating` and `fit_excluded` (the
         // observer-carried fit opt-out, already ORed over floating, sticky,
@@ -1258,6 +1400,7 @@ export class WorkspaceSendAdapter {
                     window: observed.focusedId,
                     target_output: observed.targetOutput,
                     target_workspace: observed.targetWorkspace,
+                    follow,
                 },
             });
         } catch (error) {
@@ -1286,6 +1429,7 @@ export class WorkspaceSendAdapter {
         requestedOrdinal: number,
         innerGap: number,
         outerGap: number,
+        follow: boolean,
     ): void {
         this.inFlight = true;
         this.detachArrival();
@@ -1304,6 +1448,7 @@ export class WorkspaceSendAdapter {
             outerGap,
             srcInSource: flags.srcInSource,
             srcInTarget: flags.srcInTarget,
+            follow,
             baseRevision: 0,
             planned: null,
             followed: false,
@@ -1620,8 +1765,12 @@ export class WorkspaceSendAdapter {
     }
 
     // Operation-to-snapshot binding: the move-tiled operation must name the
-    // flight mover plus the exact captured source/target domains. Any other
-    // target/object is a mismatched reply and never actuates.
+    // flight mover plus the exact captured source/target domains, and its
+    // echoed follow selection must equal the flight's requested selection.
+    // Any other target/object/selection is a mismatched reply and never
+    // actuates. Focus binding is selection-aware: follow names the mover in
+    // the target; stay is null (emptied source) or names the source domain
+    // with a non-mover survivor leaf.
     private operationMatchesSnapshot(planned: WorkspacePlanned, flightState: WorkspacePendingFlight): boolean {
         const operation = planned.operation;
         const snapshot = flightState.snapshot;
@@ -1634,10 +1783,30 @@ export class WorkspaceSendAdapter {
         ) {
             return false;
         }
+        if (planned.follow !== flightState.follow) {
+            return false;
+        }
+        const focus = planned.followFocus;
+        if (planned.follow) {
+            if (focus === null) {
+                return false;
+            }
+            if (
+                focus.output !== snapshot.targetOutput ||
+                focus.workspace !== snapshot.targetWorkspace ||
+                focus.leaf !== (operation["leaf"] as string)
+            ) {
+                return false;
+            }
+            return true;
+        }
+        if (focus === null) {
+            return true;
+        }
         if (
-            planned.followFocus.output !== snapshot.targetOutput ||
-            planned.followFocus.workspace !== snapshot.targetWorkspace ||
-            planned.followFocus.leaf !== (operation["leaf"] as string)
+            focus.output !== snapshot.sourceOutput ||
+            focus.workspace !== snapshot.sourceWorkspace ||
+            focus.leaf === (operation["leaf"] as string)
         ) {
             return false;
         }
@@ -1680,6 +1849,14 @@ export class WorkspaceSendAdapter {
             return;
         }
         if (!snapshotsEqual(snapshotOf(fresh), pending.snapshot)) {
+            this.settleTerminal(flight, correlation, "stale-revision", "release");
+            return;
+        }
+        // Stay-only source-visibility fence before ANY native setter: an
+        // external view switch during the request keeps every pinned
+        // membership but revokes visibility, so a stay must run zero
+        // writes. Follow re-selects the view itself and is unaffected.
+        if (!pending.follow && !sourceStillSelected(fresh, pending.snapshot)) {
             this.settleTerminal(flight, correlation, "stale-revision", "release");
             return;
         }
@@ -1880,7 +2057,10 @@ export class WorkspaceSendAdapter {
     // refuses the follow without setters. A failed or ambiguous switch
     // never focuses; switch/focus failures are logged without retry or
     // setter replay. Token, owner, and scope fences are rechecked before
-    // each setter.
+    // each setter. Stay flights confirm instead: the same fresh arrival
+    // proof is required, then the bound source-MRU survivor is focused (or
+    // zero setters for null focus) with no desktop switch ever running, so
+    // the source stays selected and history observes no spurious switch.
     private followOnce(
         flight: number,
         correlation: string,
@@ -1890,6 +2070,10 @@ export class WorkspaceSendAdapter {
         const pending = this.pending;
         const planned = pending?.planned ?? null;
         if (pending === null || planned === null || pending.followed || !this.fencesHold(flight, correlation)) {
+            return;
+        }
+        if (!pending.follow) {
+            this.confirmStayOnce(flight, correlation);
             return;
         }
         const switchToTarget = this.env.switchToTarget;
@@ -2042,6 +2226,133 @@ export class WorkspaceSendAdapter {
             focused ? 1 : 0,
         );
         pending.followOutcome = focused ? "state-confirmed" : "focus-unconfirmed";
+        this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
+        this.nativeFollowDepth -= 1;
+    }
+
+    // Stay focus for a verified transfer: re-prove the exact arrival
+    // membership (mover absent from source, present on target, dispatch
+    // scope unchanged) on a fresh observation, then focus the exact
+    // source-MRU survivor bound from the reply geometry at validation time.
+    // No desktop switch ever runs on this path, so the source stays
+    // selected and history observes no switch. Null desired focus (emptied
+    // or MRU-less source) applies the focused-removal null-focus rule: zero
+    // setters, native removal focus stands. Ambiguous or stale proof, a
+    // missing survivor, or a failed focus write refuses without further
+    // setters. A stay needing focus without a focus hook reports
+    // hooks-unavailable like follow; null-focus stays never need hooks.
+    private confirmStayOnce(flight: number, correlation: string): void {
+        const pending = this.pending;
+        const planned = pending?.planned ?? null;
+        if (pending === null || planned === null || pending.followed || !this.fencesHold(flight, correlation)) {
+            return;
+        }
+        const proof = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        if (proof === null || !this.fencesHold(flight, correlation) || this.pending !== pending) {
+            pending.followed = true;
+            pending.followOutcome = "arrival-unconfirmed";
+            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
+            return;
+        }
+        let proofMoverRef: object | null = null;
+        let proofInSource = false;
+        for (const entry of proof.sourceWindows) {
+            if (entry.id === pending.moverId) {
+                proofInSource = true;
+                break;
+            }
+        }
+        for (const entry of proof.targetWindows) {
+            if (entry.id === pending.moverId) {
+                proofMoverRef = entry.ref;
+                break;
+            }
+        }
+        if (proofInSource || proofMoverRef === null || !scopeMatchesSnapshot(proof, pending.snapshot)) {
+            pending.followed = true;
+            pending.followOutcome = "arrival-unconfirmed";
+            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
+            return;
+        }
+        // Stay-only source-visibility fence on the same fresh proof: an
+        // external view switch after the membership write keeps membership
+        // and pinned scope but revokes visibility. Zero focus setters on a
+        // stale source - including the null-focus path, which must also see
+        // the source still selected before stay-confirmed. A source-empty
+        // stay therefore never selects the target.
+        if (!sourceStillSelected(proof, pending.snapshot)) {
+            pending.followed = true;
+            pending.followOutcome = "arrival-unconfirmed";
+            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
+            return;
+        }
+        if (planned.stayFocusWindow === null) {
+            pending.followed = true;
+            pending.followOutcome = "stay-confirmed";
+            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
+            return;
+        }
+        const focusWindow = this.env.focusWindow;
+        if (typeof focusWindow !== "function") {
+            pending.followed = true;
+            pending.followOutcome = "hooks-unavailable";
+            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
+            return;
+        }
+        // The survivor resolves from the same fresh proof by the
+        // validation-bound stable id: a survivor that left the source under
+        // us is stale scope, never a guessed fallback.
+        let survivorRef: object | null = null;
+        for (const entry of proof.sourceWindows) {
+            if (entry.id === planned.stayFocusWindow) {
+                survivorRef = entry.ref;
+                break;
+            }
+        }
+        if (survivorRef === null) {
+            pending.followed = true;
+            pending.followOutcome = "arrival-unconfirmed";
+            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
+            return;
+        }
+        const basis: WorkspaceFollowDiagBasis = this.diagBasisOf(pending);
+        pending.followed = true;
+        this.emitFollowDiag(correlation, planned.baseRevision, "stay-pre", proof, basis, -1, -1);
+        let focused = false;
+        this.nativeFollowDepth += 1;
+        try {
+            if (!this.fencesHold(flight, correlation) || this.pending !== pending) {
+                this.nativeFollowDepth -= 1;
+                return;
+            }
+            focused = focusWindow(survivorRef, {
+                correlation,
+                revision: planned.baseRevision,
+                nextSequence: () => this.nextDiagSeq(),
+            }) === true;
+        } catch (error) {
+            void error;
+            focused = false;
+        }
+        // After-focus observation: one best-effort synchronous public
+        // re-read. Diagnostic only; the focus result below is unaffected.
+        let postFocus: WorkspaceSendObserved | null = null;
+        try {
+            postFocus = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        } catch (error) {
+            void error;
+            postFocus = null;
+        }
+        this.emitFollowDiag(
+            correlation,
+            planned.baseRevision,
+            "stay-focused",
+            postFocus,
+            basis,
+            -1,
+            focused ? 1 : 0,
+        );
+        pending.followOutcome = focused ? "stay-confirmed" : "focus-unconfirmed";
         this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
         this.nativeFollowDepth -= 1;
     }

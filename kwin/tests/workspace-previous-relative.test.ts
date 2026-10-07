@@ -218,7 +218,7 @@ function focusOutput(world: FakeWorld, output: FakeOutput): void {
 describe("R-WS-08 previous toggle catalog", () => {
     it("publishes toggle plus separate letter and arrow alias relative rows", () => {
         const catalog = workspaceShortcutCatalog();
-        assert.equal(catalog.length, 39);
+        assert.equal(catalog.length, 75);
         const byAction = new Map(catalog.map((row) => [row.action, row]));
         const toggle = byAction.get("plasma-auto-tiler-workspace-previous");
         assert.ok(toggle !== undefined);

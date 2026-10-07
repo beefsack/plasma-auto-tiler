@@ -29,16 +29,21 @@ impl super::super::Session {
     /// refuse as [`RefusalKind::Unchanged`], cross-output targets as
     /// [`RefusalKind::CrossDomainMismatch`], unknown targets as
     /// [`RefusalKind::UnknownDomain`]. The mover keeps its leaf identity with
-    /// a retargeted link; legacy numbered sends follow the moved window, so
-    /// focus moves to the mover leaf in the target domain on commit.
-    /// Plans commit only via acknowledge-then-[`Session::verify_lifecycle`]
-    /// with complete source-plus-target geometry.
-    #[allow(clippy::too_many_lines)]
+    /// a retargeted link. Follow (`follow=true`, the default) moves focus to
+    /// the mover leaf in the target domain on commit. Stay (`follow=false`)
+    /// leaves the source selected and visible: focus falls back through the
+    /// source domain's MRU tiled focus stack exactly like a focused removal
+    /// (none when the source is left empty), never selecting the target.
+    /// Destination admission is identical for both. Plans commit only via
+    /// acknowledge-then-[`Session::verify_lifecycle`] with complete
+    /// source-plus-target geometry.
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     pub(in crate::session) fn propose_move_to_workspace(
         &mut self,
         window: &WindowId,
         target_output: &OutputId,
         target_workspace: &WorkspaceId,
+        follow: bool,
         session_observation: &SessionObservation,
         correlation_id: &CorrelationId,
         capabilities: &LifecycleCapabilities,
@@ -184,12 +189,19 @@ impl super::super::Session {
                 workspace: target_key.workspace.clone(),
             },
         );
-        // Legacy numbered-send follow: the moved window becomes focused in
-        // the target domain on commit. Rust remains the structural authority;
-        // the adapter follows only this desired focus after an exact accepted
-        // ack plus a matching verified post-observation.
-        let (desired_focus_domain, desired_focus_leaf) =
-            (Some(target_key.clone()), Some(link.leaf.clone()));
+        // Follow selects the mover in the target; stay keeps the source
+        // selected with the focused-removal MRU fallback, never the target.
+        // Rust remains the structural authority; the adapter follows only
+        // this desired focus after an exact accepted ack plus a matching
+        // verified post-observation.
+        let (desired_focus_domain, desired_focus_leaf) = if follow {
+            (Some(target_key.clone()), Some(link.leaf.clone()))
+        } else {
+            match self.focus_stack_fallback(&source_key, &desired_trees, &desired_windows) {
+                Some(next) => (Some(source_key.clone()), Some(next)),
+                None => (None, None),
+            }
+        };
         if !validate_topology(
             &self.domains,
             &desired_trees,
@@ -217,6 +229,7 @@ impl super::super::Session {
             window: window.clone(),
             target_output: target_key.output.clone(),
             target_workspace: target_key.workspace.clone(),
+            follow,
         };
         let operation = LifecycleOperation::MoveTiled {
             window: window.clone(),

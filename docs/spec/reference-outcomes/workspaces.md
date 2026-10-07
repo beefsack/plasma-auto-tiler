@@ -48,7 +48,16 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then paneru: `VirtualMoveNumber` carries the focused window to the
   indexed row under the `MoveFocus` Follow/Stay policy; target column
   position stays TBD. `S(S-pan-ws)`; target position queued.
-- Then Ours KDE: Source collapses; target admits at remembered-leaf/focus-history/root; follow on verified transfer; `D(D-dec-cos)` + step-3 `D(D-dec-ww)`
+- Then Ours KDE: source collapses; target admits at remembered-leaf/focus-history/root
+  identically for follow/stay. Numbered follow defaults unchanged; explicit
+  stay is registered unbound, preserves source selection and applies source
+  focused-removal MRU (A here). Floating boundaries transfer membership only,
+  default follows and explicit stay preserves source view/native boundary focus.
+  Item 2 implemented offline, native journey pending.
+  [Core/protocol](../../../crates/tiler-core/tests/session_send_to_workspace.rs),
+  [adapter fixtures](../../../kwin/tests/workspace-send-follow-stay.test.ts),
+  [record](../../changes/archive/kde-workspace-send-follow-stay.md);
+  `D(D-dec-cos)` + step-3 `D(D-dec-ww)`.
 - Then Ours Windows: Source collapses; target admits at remembered-leaf/focus-history/root; follow on verified transfer; `D(D-dec-cos)` + step-3 `D(D-dec-ww)`
 - Variant hook: V-WS-FOLLOW.
 
@@ -255,7 +264,12 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   floating desktop mode). `S(S-kar-acts)`.
 - Then paneru: fixture-inapplicable (no floating workspace mode; `Manage`
   is per-window and the tier flip is focus-only). `S(S-pan-cmds)`.
-- Then Ours KDE: Membership-only boundary send, only tiled side reflows; `D(D-dec-ww)`; physical feel TBD
+- Then Ours KDE: membership-only boundary send, only tiled side reflows,
+  floating frames untouched. Default follows with verified arrival/switch/focus
+  readback; explicit stay preserves source view/native boundary focus. Item 2
+  implemented offline; physical feel/native journey pending.
+  [Fixtures](../../../kwin/tests/workspace-send-follow-stay.test.ts),
+  [record](../../changes/archive/kde-workspace-send-follow-stay.md); `D(D-dec-ww)`.
 - Then Ours Windows: Synthetic/native Paint roundtrip preserves floating frame, reflows source before hide and freshly admits on return; [workspace mode record](../../changes/archive/windows-workspace-tiling.md); physical feel TBD
 - Variant hook: V-WS-FOLLOW.
 
@@ -368,7 +382,9 @@ verb inventory); selected intent and doc assertions are never evidence.
   inventory; `Virtual` is directional North/South only).
   `S(S-pan-cmds)`.
 - Then Ours KDE: WS2 then WS3, stable-ID two-view toggle via Meta+Ctrl+Tab;
-  implemented offline, native journey TBD. Scoped observed-change history in
+  implemented; single-output native journey user-confirmed 2026-10-07
+  ("worked perfectly"). Individual cases/presets were not specified;
+  multi-output/hotplug/preset checks remain pending. Scoped observed-change history in
   [adapter](../../../kwin/src/workspace-native.ts),
   [fixtures](../../../kwin/tests/workspace-previous-relative.test.ts),
   [record](../../changes/archive/kde-workspace-history-ring.md).
@@ -550,8 +566,9 @@ verb inventory); selected intent and doc assertions are never evidence.
   existing order includes ordinals beyond 9; selection creates nothing.
   H/K/Left/Up previous, J/L/Down/Right next, all Meta+Ctrl. Authentic clears
   stock KWin desktop-switch arrows through confirmed shortcut application;
-  Compatible disables our arrows, letters remain. Implemented offline, native
-  journey TBD. [Adapter](../../../kwin/src/workspace-native.ts),
+  Compatible disables our arrows, letters remain. Single-output native journey
+  user-confirmed 2026-10-07 ("worked perfectly"); individual edge/>9 cases and
+  presets unspecified, multi-output/presets pending. [Adapter](../../../kwin/src/workspace-native.ts),
   [fixtures](../../../kwin/tests/workspace-previous-relative.test.ts),
   [reconciler](../../../kwin/native-effect/shortcutreconciler.cpp),
   [record](../../changes/archive/kde-workspace-history-ring.md).
@@ -730,17 +747,28 @@ verb inventory); selected intent and doc assertions are never evidence.
 - Then paneru: South moves with the len-greater-than-one gate and
   North stops at index 0, each carrying the `MoveFocus`
   Follow/Stay policy. `S(S-pan-ws)`.
-- Then Ours KDE: no-counterpart (explicit-target sends only; no
-  relative verb). `S(S-ours-planops)`.
+- Then Ours KDE: next resolves WS3, previous WS1 from the existing scoped
+  ordinal ring (not MRU), once before transfer. Default relative follow
+  Meta+Ctrl+Shift+H/K/Left/Up previous, J/L/Down/Right next; stay registered
+  unbound, keeps WS2 selected and source MRU focus. Admission unchanged.
+  Authentic clears stock KWin Window One Desktop arrows; Compatible disables
+  our four arrows, keeps letters. Implemented offline, native journey pending.
+  [Fixtures](../../../kwin/tests/workspace-send-follow-stay.test.ts),
+  [reconciler](../../../kwin/native-effect/shortcutreconciler.cpp),
+  [record](../../changes/archive/kde-workspace-send-follow-stay.md).
 - Then Ours Windows: no-counterpart (index-only `Send`; no relative
   verb). `S(S-ours-planops)`.
 - Variant hook: V-WS-FOLLOW (follow policy for relative sends).
 
-## Selected additions (USER 2026-10-07; KDE item 1 implemented offline)
+## Selected additions (USER 2026-10-07; KDE items 1/2 delivered)
 
 Targets follow [items 1/2 and decision 1.5](../../decisions.md#cross-platform-behavior).
-KDE R-WS-08/11 and R-WS-15..17 now carry offline adapter/fixture evidence;
-native journeys remain TBD. Other source cells retain their pinned-current meaning.
+KDE R-WS-08/11 and R-WS-15..17 carry offline adapter/fixture evidence;
+the user confirmed item 1's single-output native journey on 2026-10-07
+("worked perfectly"), without specifying individual cases or presets.
+Multi-output/hotplug and preset checks remain pending. Item 2 R-WS-01/14 and
+R-WS-18..20 carry offline evidence only; native journeys pending.
+Other source cells retain their pinned-current meaning.
 R-WS-08 selects two-view previous-ID toggle, per-output local/global-unique
 history or one shared history; record all successful observed changes, not
 same-workspace activation/output focus alone. Removed/unassigned/out-of-scope
@@ -750,8 +778,10 @@ ring, wrapping including trailing empty and ordinals beyond 9, selection
 creates nothing. R-WS-01/14 select numbered/relative follow defaults plus
 bindable unbound stay, same ring resolved once before transfer, normal spare
 maintenance; item 2 repairs KDE's source-view-preserving floating-boundary
-path to the already-decided follow default. Item 2 remains implementation
-pending on KDE; both items remain pending on Windows.
+path to the already-decided follow default. Item 2 is implemented offline on
+shared core/KDE; both adapters' additions remain pending on Windows. Decision
+2.3's compile-only `follow: true` fix preserves current Windows behavior;
+stay/relative wiring remains in the [handoff](../../backlog.md).
 
 ### R-WS-15: previous on L after a workspace change on R
 
@@ -867,8 +897,8 @@ pending on KDE; both items remain pending on Windows.
 - Then paneru: TBD.
 - Then Ours KDE: selected B fills existing E; normal lifecycle supplies
   next empty; source A survives. Follow goes with B, stay preserves source
-  view. Item 1.4 selection ring implemented offline, native journey TBD;
-  relative send/follow/stay remains implementation pending (item 2.2).
+  view with focused-removal MRU. Implemented offline (item 2.2), native journey
+  pending. Ring/spare and send-flight [fixtures](../../../kwin/tests/workspace-send-follow-stay.test.ts).
 - Then Ours Windows: same selected ring/spare/follow/stay target;
   implementation pending; items 1.4/2.2.
 - Variant hook: V-WS-FOLLOW.
@@ -896,7 +926,8 @@ pending on KDE; both items remain pending on Windows.
 - Then paneru: TBD.
 - Then Ours KDE: selected previous wraps to pre-transfer E, fills it;
   normal lifecycle supplies next empty. Follow with B, stay on WS1 with A.
-  Implementation pending; item 2.2.
+  Implemented offline; item 2.2, native journey pending.
+  [Fixtures](../../../kwin/tests/workspace-send-follow-stay.test.ts).
 - Then Ours Windows: same selected ordinal-wrap/follow/stay target;
   implementation pending; item 2.2.
 - Variant hook: V-WS-FOLLOW.
@@ -923,7 +954,11 @@ pending on KDE; both items remain pending on Windows.
 - Then paneru: TBD.
 - Then Ours KDE: selected target is pre-transfer E in both legs; fills E,
   normal lifecycle supplies next empty. Follow with B; stay preserves source
-  view. Implementation pending; exact source lifecycle/native focus TBD.
+  view. Core emptied-source desired focus is null (adapter issues no focus
+  setter); native focus and exact source retention/removal remain TBD.
+  Implemented offline (item 2.2); native journey pending.
+  [Core](../../../crates/tiler-core/tests/session_send_to_workspace.rs),
+  [ring/flight fixtures](../../../kwin/tests/workspace-send-follow-stay.test.ts).
 - Then Ours Windows: same selected target/spare/follow/stay rule;
   implementation pending; exact source lifecycle/native focus TBD.
 - Variant hook: V-WS-FOLLOW.

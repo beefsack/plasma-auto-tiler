@@ -120,12 +120,37 @@ fn mv(w: &str, o: &str, ws: &str) -> SessionCommand {
         window: WindowId(w.to_owned()),
         target_output: OutputId(o.to_owned()),
         target_workspace: WorkspaceId(ws.to_owned()),
+        follow: true,
+    }
+}
+fn mv_stay(w: &str, o: &str, ws: &str) -> SessionCommand {
+    SessionCommand::MoveToWorkspace {
+        window: WindowId(w.to_owned()),
+        target_output: OutputId(o.to_owned()),
+        target_workspace: WorkspaceId(ws.to_owned()),
+        follow: false,
     }
 }
 fn propose_mv(s: &mut Session, w: &str, o: &str, ws: &str, c: &str) -> SessionPlan {
     let o0 = obs(s, vec![]);
     s.propose(&mv(w, o, ws), &o0, &corr(c), &full())
         .expect("move proposes")
+}
+fn propose_stay(s: &mut Session, w: &str, o: &str, ws: &str, c: &str) -> SessionPlan {
+    let o0 = obs(s, vec![]);
+    s.propose(&mv_stay(w, o, ws), &o0, &corr(c), &full())
+        .expect("stay proposes")
+}
+fn occupied_trio() -> Session {
+    // Shared 3-source fixture with an occupied target: win-t1/win-t2 on
+    // ws-b, win-1/win-2/win-3 on ws-a, focus ending on win-3.
+    let mut s = session();
+    admit(&mut s, "win-t1", "out-1", "ws-b", 120, 80, "occ-1");
+    admit(&mut s, "win-t2", "out-1", "ws-b", 120, 80, "occ-2");
+    admit(&mut s, "win-1", "out-1", "ws-a", 120, 80, "occ-3");
+    admit(&mut s, "win-2", "out-1", "ws-a", 120, 80, "occ-4");
+    admit(&mut s, "win-3", "out-1", "ws-a", 120, 80, "occ-5");
+    s
 }
 fn mr(s: &mut Session, cmd: &SessionCommand, c: &str, caps: &LifecycleCapabilities) -> RefusalKind {
     let o0 = obs(s, vec![]);
@@ -445,6 +470,169 @@ fn refusals_fail_closed_then_lifecycle_diverges() {
     assert_eq!(s.divergence(), Some(DivergenceKind::PostconditionMismatch));
     assert!(!s.has_pending_desired());
     assert_eq!(s_leaves(&s, "out-1", "ws-b"), vec!["leaf-win-2"]);
+}
+
+#[test]
+fn stay_keeps_source_selected_with_mru_focus() {
+    let mut s = session();
+    admit(&mut s, "win-1", "out-1", "ws-a", 120, 80, "corr-1");
+    admit(&mut s, "win-2", "out-1", "ws-a", 120, 80, "corr-2");
+    admit(&mut s, "win-3", "out-1", "ws-a", 120, 80, "corr-3");
+    let plan = propose_stay(&mut s, "win-3", "out-1", "ws-b", "corr-4");
+    assert!(matches!(
+        (&plan.dispatch.intent, &plan.dispatch.operation),
+        (LifecycleIntent::MoveToWorkspace { window, target_workspace, follow, .. },
+         LifecycleOperation::MoveTiled { leaf, source_workspace, target_workspace: tw, .. })
+        if window.0 == "win-3" && target_workspace.0 == "ws-b" && !follow
+            && leaf.0 == "leaf-win-3" && source_workspace.0 == "ws-a" && tw.0 == "ws-b"
+    ));
+    // Destination admission is unchanged: the mover lands as a lone root.
+    assert_eq!(p_leaves(&plan, "out-1", "ws-b"), vec!["leaf-win-3"]);
+    assert_eq!(
+        p_leaves(&plan, "out-1", "ws-a"),
+        vec!["leaf-win-1", "leaf-win-2"]
+    );
+    // Stay never selects the target: source MRU survivor keeps focus.
+    assert_eq!(plan.desired_focus_domain, Some(dk("out-1", "ws-a")));
+    assert_eq!(
+        plan.desired_focus_leaf,
+        Some(NodeId("leaf-win-2".to_owned()))
+    );
+    assert_eq!(plan.desired_geometry.len(), 3);
+    ack_verify(&mut s, &plan, "corr-4", 500);
+    assert_eq!(s.snapshot(), plan.desired_snapshot);
+    assert_eq!(
+        s.focus(),
+        (
+            Some(dk("out-1", "ws-a")),
+            Some(NodeId("leaf-win-2".to_owned()))
+        )
+    );
+}
+
+#[test]
+fn stay_of_sole_source_window_leaves_no_focus() {
+    let mut s = session();
+    admit(&mut s, "win-solo", "out-1", "ws-a", 120, 80, "corr-1");
+    let plan = propose_stay(&mut s, "win-solo", "out-1", "ws-b", "corr-2");
+    assert_eq!(p_leaves(&plan, "out-1", "ws-b"), vec!["leaf-win-solo"]);
+    assert!(at(&plan.desired_snapshot.domains, "out-1", "ws-a").is_none());
+    assert_eq!(plan.desired_focus_domain, None);
+    assert_eq!(plan.desired_focus_leaf, None);
+    assert_eq!(plan.desired_geometry.len(), 1);
+    ack_verify(&mut s, &plan, "corr-2", 501);
+    assert!(s_leaves(&s, "out-1", "ws-a").is_empty());
+    assert_eq!(s.focus(), (None, None));
+}
+
+#[test]
+fn follow_and_stay_share_transfer_with_focus_only_difference() {
+    // Same 3-source fixture with an occupied target: follow and stay propose
+    // byte-identical transfer state (snapshot, geometry, admission
+    // operation) and differ only in the intent follow flag plus desired
+    // focus. Stay focus equals an ordinary focused removal on the same
+    // state, proving stay reuses the existing removal MRU path.
+    let mut s_follow = occupied_trio();
+    let mut s_stay = occupied_trio();
+    let mut s_remove = occupied_trio();
+    let follow = propose_mv(&mut s_follow, "win-3", "out-1", "ws-b", "corr-x1");
+    let stay = propose_stay(&mut s_stay, "win-3", "out-1", "ws-b", "corr-x2");
+    let o_remove = obs(&s_remove, vec![]);
+    let removed = s_remove
+        .propose(
+            &SessionCommand::Remove {
+                window: WindowId("win-3".to_owned()),
+            },
+            &o_remove,
+            &corr("corr-x3"),
+            &full(),
+        )
+        .expect("remove proposes");
+    assert_eq!(follow.desired_snapshot, stay.desired_snapshot);
+    assert_eq!(follow.desired_geometry, stay.desired_geometry);
+    assert_eq!(follow.dispatch.operation, stay.dispatch.operation);
+    assert_eq!(
+        follow.dispatch.intent,
+        LifecycleIntent::MoveToWorkspace {
+            window: WindowId("win-3".to_owned()),
+            target_output: OutputId("out-1".to_owned()),
+            target_workspace: WorkspaceId("ws-b".to_owned()),
+            follow: true,
+        }
+    );
+    assert_eq!(
+        stay.dispatch.intent,
+        LifecycleIntent::MoveToWorkspace {
+            window: WindowId("win-3".to_owned()),
+            target_output: OutputId("out-1".to_owned()),
+            target_workspace: WorkspaceId("ws-b".to_owned()),
+            follow: false,
+        }
+    );
+    assert_eq!(follow.desired_focus_domain, Some(dk("out-1", "ws-b")));
+    assert_eq!(
+        follow.desired_focus_leaf,
+        Some(NodeId("leaf-win-3".to_owned()))
+    );
+    assert_eq!(stay.desired_focus_domain, removed.desired_focus_domain);
+    assert_eq!(stay.desired_focus_leaf, removed.desired_focus_leaf);
+    assert_eq!(stay.desired_focus_domain, Some(dk("out-1", "ws-a")));
+    assert_eq!(
+        stay.desired_focus_leaf,
+        Some(NodeId("leaf-win-2".to_owned()))
+    );
+    ack_verify(&mut s_follow, &follow, "corr-x1", 600);
+    ack_verify(&mut s_stay, &stay, "corr-x2", 600);
+    assert_eq!(
+        s_follow.focus(),
+        (
+            Some(dk("out-1", "ws-b")),
+            Some(NodeId("leaf-win-3".to_owned()))
+        )
+    );
+    assert_eq!(
+        s_stay.focus(),
+        (
+            Some(dk("out-1", "ws-a")),
+            Some(NodeId("leaf-win-2".to_owned()))
+        )
+    );
+}
+
+#[test]
+fn post_stay_observation_keeps_native_focus_over_mru() {
+    // After a stay send commits with source MRU focus (win-2), a post-hoc
+    // observation naming a different native focus (win-1) stays
+    // authoritative: converge keeps the observed focus instead of snapping
+    // back to the MRU. Reconcile policy is unchanged by the stay addition;
+    // this pins the existing external-observation behavior on the stay flow.
+    let mut s = session();
+    admit(&mut s, "win-1", "out-1", "ws-a", 120, 80, "corr-1");
+    admit(&mut s, "win-2", "out-1", "ws-a", 120, 80, "corr-2");
+    admit(&mut s, "win-3", "out-1", "ws-a", 120, 80, "corr-3");
+    let stay = propose_stay(&mut s, "win-3", "out-1", "ws-b", "corr-4");
+    ack_verify(&mut s, &stay, "corr-4", 500);
+    assert_eq!(
+        s.focus(),
+        (
+            Some(dk("out-1", "ws-a")),
+            Some(NodeId("leaf-win-2".to_owned()))
+        )
+    );
+    let observed = obs(&s, vec![]);
+    let counts = s
+        .converge_observation(&observed, Some(&WindowId("win-1".to_owned())))
+        .expect("converges");
+    assert_eq!(counts.removed, 0);
+    assert_eq!(counts.admitted, 0);
+    assert_eq!(counts.flags_adopted, 0);
+    assert_eq!(
+        s.focus(),
+        (
+            Some(dk("out-1", "ws-a")),
+            Some(NodeId("leaf-win-1".to_owned()))
+        )
+    );
 }
 
 #[test]

@@ -324,6 +324,9 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
     Correctness over non-breakage: Windows build/behavior breakage is
     acceptable provided the backlog lists the specific Windows changes
     needed. Each implementation piece extends that handoff.
+  - 2.3 coordination (USER 2026-10-07; items 2-5): compile-only Windows
+    fixes preserving current Windows behavior are allowed; correctness-first
+    adapter wiring remains in the backlog handoff.
   - Item 1, R-WS-08 / R-WS-11:
     - 1.1: previous-view toggle is Meta+Ctrl+Tab on KDE / Win+Ctrl+Tab on
       Windows. Previous/next workspace uses Meta/Win+Ctrl+arrows and

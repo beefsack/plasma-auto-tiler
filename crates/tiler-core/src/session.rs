@@ -126,6 +126,9 @@ pub enum SessionCommand {
         window: WindowId,
         target_output: OutputId,
         target_workspace: WorkspaceId,
+        /// True follows the mover into the target domain; false stays on the
+        /// source domain with the existing focused-removal MRU focus.
+        follow: bool,
     },
     /// Explicit, stateful intentional-float transition. A tiled target becomes
     /// a non-tree floating exception; a tracked floating target is freshly

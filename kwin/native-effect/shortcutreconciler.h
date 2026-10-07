@@ -60,6 +60,14 @@ const QDBusArgument &operator>>(const QDBusArgument &argument, QSet<QKeySequence
 //     kwin/Switch One Desktop Down cleared
 //   row 18 clear: kwin/plasma-auto-tiler-workspace-next-right-arrow -> Meta+Ctrl+Right;
 //     kwin/Switch One Desktop to the Right cleared
+//   row 19 clear: kwin/plasma-auto-tiler-send-prev-left-arrow -> Meta+Ctrl+Shift+Left;
+//     kwin/Window One Desktop to the Left cleared
+//   row 20 clear: kwin/plasma-auto-tiler-send-prev-up-arrow -> Meta+Ctrl+Shift+Up;
+//     kwin/Window One Desktop Up cleared
+//   row 21 clear: kwin/plasma-auto-tiler-send-next-down-arrow -> Meta+Ctrl+Shift+Down;
+//     kwin/Window One Desktop Down cleared
+//   row 22 clear: kwin/plasma-auto-tiler-send-next-right-arrow -> Meta+Ctrl+Shift+Right;
+//     kwin/Window One Desktop to the Right cleared
 //
 // Uses only the KGlobalAccel D-Bus APIs proven on live Plasma 6.7.4:
 //   org.kde.kglobalaccel /kglobalaccel org.kde.KGlobalAccel
@@ -154,6 +162,14 @@ inline constexpr int SHORTCUT_META_CTRL_J = 335544394; // Meta+Ctrl+J workspace 
 inline constexpr int SHORTCUT_META_CTRL_L = 335544396; // Meta+Ctrl+L workspace next-l
 inline constexpr int SHORTCUT_META_CTRL_DOWN = 352321557; // Meta+Ctrl+Down workspace next-down-arrow
 inline constexpr int SHORTCUT_META_CTRL_RIGHT = 352321556; // Meta+Ctrl+Right workspace next-right-arrow
+inline constexpr int SHORTCUT_META_CTRL_SHIFT_H = 369098824; // Meta+Ctrl+Shift+H send prev-h
+inline constexpr int SHORTCUT_META_CTRL_SHIFT_K = 369098827; // Meta+Ctrl+Shift+K send prev-k
+inline constexpr int SHORTCUT_META_CTRL_SHIFT_J = 369098826; // Meta+Ctrl+Shift+J send next-j
+inline constexpr int SHORTCUT_META_CTRL_SHIFT_L = 369098828; // Meta+Ctrl+Shift+L send next-l
+inline constexpr int SHORTCUT_META_CTRL_SHIFT_LEFT = 385875986; // Meta+Ctrl+Shift+Left send prev-left-arrow
+inline constexpr int SHORTCUT_META_CTRL_SHIFT_UP = 385875987; // Meta+Ctrl+Shift+Up send prev-up-arrow
+inline constexpr int SHORTCUT_META_CTRL_SHIFT_RIGHT = 385875988; // Meta+Ctrl+Shift+Right send next-right-arrow
+inline constexpr int SHORTCUT_META_CTRL_SHIFT_DOWN = 385875989; // Meta+Ctrl+Shift+Down send next-down-arrow
 inline constexpr uint SHORTCUT_SET_FLAGS = 6; // SetPresent|NoAutoloading
 inline constexpr int SHORTCUT_MAX_KEYS_PER_TUPLE = 16;
 inline constexpr int SHORTCUT_MAX_TUPLES = 16384;
@@ -327,6 +343,14 @@ inline const QString &shortcutWorkspaceNextRightArrowComponent() { static const 
 inline const QString &shortcutWorkspaceNextRightArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-workspace-next-right-arrow"); return v; }
 inline const QString &shortcutSwitchOneDesktopRightComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutSwitchOneDesktopRightAction() { static const QString v = QStringLiteral("Switch One Desktop to the Right"); return v; }
+inline const QString &shortcutWindowOneDesktopLeftComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutWindowOneDesktopLeftAction() { static const QString v = QStringLiteral("Window One Desktop to the Left"); return v; }
+inline const QString &shortcutWindowOneDesktopUpComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutWindowOneDesktopUpAction() { static const QString v = QStringLiteral("Window One Desktop Up"); return v; }
+inline const QString &shortcutWindowOneDesktopDownComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutWindowOneDesktopDownAction() { static const QString v = QStringLiteral("Window One Desktop Down"); return v; }
+inline const QString &shortcutWindowOneDesktopRightComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutWindowOneDesktopRightAction() { static const QString v = QStringLiteral("Window One Desktop to the Right"); return v; }
 inline const QString &shortcutResolutionRelocate() { static const QString v = QStringLiteral("relocate"); return v; }
 inline const QString &shortcutResolutionClear() { static const QString v = QStringLiteral("clear"); return v; }
 
@@ -365,16 +389,22 @@ struct ShortcutConflictRow
 const QList<ShortcutConflictRow> &shortcutConflictTable();
 // Full project catalog: 36 directional/toggle rows from planShortcutCatalog
 // (focus/move letters plus arrows, outwards/inwards resize letters plus
-// arrows, four toggles) followed by 39 workspace rows from
+// arrows, four toggles) followed by 39 item-1 workspace rows from
 // workspaceShortcutCatalog (Meta+0..9 select, Meta+Shift+0..9 move,
 // shifted-symbol move aliases, Meta+Ctrl+Tab previous toggle plus
-// Meta+Ctrl+H/J/K/L and Meta+Ctrl+arrows relative steps). Deterministic
-// order, unique canonical keys.
+// Meta+Ctrl+H/J/K/L and Meta+Ctrl+arrows relative steps), followed by 36
+// item-2 workspace rows (8 Meta+Ctrl+Shift+H/J/K/L and arrows relative
+// send-and-follow, 20 unbound numbered send-and-stay with symbol aliases
+// plus append rows, 8 unbound relative send-and-stay). Deterministic
+// order, unique action IDs (unbound rows share canonical key 0).
 // kind is one of focus, move, resize, toggle, workspace-select,
-// workspace-move, workspace-previous, workspace-relative. knownForeign* is
-// the compiled KDE conflict for the 19 conflict-table rows only; empty
-// (key 0) means no known conflict and the row must report honestly instead
-// of inventing one.
+// workspace-move, workspace-previous, workspace-relative,
+// workspace-send-relative, workspace-move-stay, workspace-send-relative-stay.
+// knownForeign* is the compiled KDE conflict for the 23 conflict-table rows
+// only; empty (key 0) means no known conflict and the row must report
+// honestly instead of inventing one. Unbound rows carry canonical key 0
+// and empty display; they stay rebindable through the existing KCM route
+// and are skipped by required-key scans.
 struct ShortcutCatalogEntry
 {
     QString component;

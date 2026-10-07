@@ -412,9 +412,10 @@ QLabel *labelByName(ActiveBorderConfigModule &module, const char *name)
 void seedFullCatalogQuietExtras(FakeShortcutStore &store)
 {
     // Full-catalog canonical quiet extras: every catalog row missing live is
-    // appended at its canonical chord with no foreign holders, so legacy
-    // 20-row seeds stay strict under full-catalog missing-enabled rules
-    // while old oracles keep their intended outcomes.
+    // appended at its canonical chord (empty for unbound rows) with no
+    // foreign holders, so legacy 20-row seeds stay strict under
+    // full-catalog missing-enabled rules while old oracles keep their
+    // intended outcomes.
     for (const ShortcutCatalogEntry &entry : shortcutProjectCatalog()) {
         bool found = false;
         for (const ShortcutTuple &tuple : store.tuples) {
@@ -424,15 +425,17 @@ void seedFullCatalogQuietExtras(FakeShortcutStore &store)
             }
         }
         if (!found) {
-            store.tuples.append(makeTuple(entry.component, entry.action, QList<int>{entry.canonicalKey}));
+            const QList<int> active = entry.canonicalKey == 0 ? QList<int>() : QList<int>{entry.canonicalKey};
+            store.tuples.append(makeTuple(entry.component, entry.action, active));
         }
     }
 }
 
 void seedReady(FakeShortcutStore &store)
 {
-    // Twenty project rows at non-post values with zero foreign holders of
-    // the twenty required chords, so Apply succeeds.
+    // Project rows at non-post values with zero foreign holders, so Apply
+    // succeeds. Full-catalog extras fill the remaining rows at canonical
+    // (empty for unbound stay rows).
     store.tuples = {
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420}),
         makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
@@ -567,10 +570,39 @@ void selectionPresetsAndDraft()
     module.setShortcutStores(&store, &cleared);
     module.load();
     CHECK(module.shortcutDisabledIds().isEmpty());
+    // Item 2 default-unbound rows are at canonical empty, not disabled: the
+    // stay row starts enabled, present-empty, and rebindable through the
+    // existing route, and load must not auto-stage it.
+    {
+        const QString stayId = QStringLiteral("kwin/plasma-auto-tiler-stay-workspace-1");
+        CHECK(!module.shortcutDisabledIds().contains(stayId));
+        bool stayFound = false;
+        for (const ShortcutTuple &tuple : store.tuples) {
+            if (tuple.component == QStringLiteral("kwin")
+                && tuple.action == QStringLiteral("plasma-auto-tiler-stay-workspace-1")) {
+                stayFound = true;
+                CHECK(tuple.active.isEmpty());
+            }
+        }
+        CHECK(stayFound);
+        QString writeError;
+        QList<int> confirmed;
+        CHECK(store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-1"),
+                              QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{999}, &confirmed,
+                              &writeError));
+        CHECK(confirmed == QList<int>{999});
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.component == QStringLiteral("kwin")
+                && tuple.action == QStringLiteral("plasma-auto-tiler-stay-workspace-1")) {
+                tuple.active.clear();
+            }
+        }
+        store.writeLog.clear();
+    }
     QListWidget *list = conflictListByModule(module);
     CHECK(list != nullptr);
     if (list != nullptr) {
-        CHECK(list->count() == 75);
+        CHECK(list->count() == 111);
     }
     QPushButton *compatible = presetButtonByModule(module, "shortcutCompatibleButton");
     QPushButton *authentic = presetButtonByModule(module, "shortcutAuthenticButton");
@@ -582,7 +614,7 @@ void selectionPresetsAndDraft()
     const QString focusId = QStringLiteral("kwin/plasma-auto-tiler-focus-right");
     const QString ws1 = QStringLiteral("kwin/plasma-auto-tiler-workspace-1");
     const QStringList draft = module.shortcutDisabledIds();
-    CHECK(draft.size() == 20);
+    CHECK(draft.size() == 24);
     CHECK(draft.contains(focusId));
     CHECK(draft.contains(ws1));
     CHECK(draft.indexOf(focusId) < draft.indexOf(ws1));
@@ -794,7 +826,7 @@ void selectionMissingEnabledStatus()
         module.load();
         CHECK(module.shortcutStatusText().contains(QStringLiteral("unavailable"))
               || module.shortcutStatusText().contains(QStringLiteral("missing")));
-        CHECK(!module.shortcutStatusText().contains(QStringLiteral("applied (75 rows")));
+        CHECK(!module.shortcutStatusText().contains(QStringLiteral("applied (111 rows")));
     }
     {
         FakeShortcutStore store;
@@ -841,7 +873,7 @@ void selectionDisabledLockAbsentShowsRows()
     QListWidget *list = conflictListByModule(module);
     CHECK(list != nullptr);
     if (list != nullptr) {
-        CHECK(list->count() == 75);
+        CHECK(list->count() == 111);
     }
 }
 
@@ -972,7 +1004,7 @@ void stateAndErrorPresentation()
         module.setShortcutStores(&store, &cleared);
         module.load();
         CHECK(module.shortcutStatusText().contains(QStringLiteral("Ready")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("75 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("111 rows")));
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(buttonByName(module, "shortcutFinishApplyButton") == nullptr);
         CHECK(buttonByName(module, "shortcutRestoreButton") == nullptr);
@@ -1003,7 +1035,7 @@ void stateAndErrorPresentation()
         module.requestShortcutApply();
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(module.shortcutStatusText().contains(QStringLiteral("applied")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("75 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("111 rows")));
     }
     // Conflict with an unknown foreign holder.
     {
