@@ -527,7 +527,10 @@ const QList<ShortcutCatalogEntry> &shortcutProjectCatalog()
     // 37 plan rows then 39 item-1 workspace rows then 36 item-2 workspace
     // rows (8 bound relative send-and-follow, 20 unbound numbered
     // send-and-stay with symbol aliases plus append rows, 8 unbound
-    // relative send-and-stay). Bound canonical keys stay unique across the
+    // relative send-and-stay) then 12 item-5 output rows (8 bound
+    // Meta+Ctrl+Alt+H/J/K/L and arrows send-and-follow, 4 unbound
+    // directional send-and-stay in exact planOutputSendShortcutCatalog
+    // order). Bound canonical keys stay unique across the
     // catalog; unbound rows share key 0 with empty display. knownForeign*
     // mirrors the conflict table for its 23 project actions; every other
     // row carries empty known foreign state.
@@ -783,6 +786,34 @@ const QList<ShortcutCatalogEntry> &shortcutProjectCatalog()
           {}, {}, 0, QStringLiteral("workspace-send-relative-stay")},
         {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-stay-next-right-arrow"), 0,
           QStringLiteral(""), {}, {}, 0, QStringLiteral("workspace-send-relative-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-left"), SHORTCUT_META_CTRL_ALT_H,
+          QStringLiteral("Meta+Ctrl+Alt+H"), {}, {}, 0, QStringLiteral("output-send")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-left-arrow"),
+          SHORTCUT_META_CTRL_ALT_LEFT, QStringLiteral("Meta+Ctrl+Alt+Left"), {}, {}, 0,
+          QStringLiteral("output-send")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-left-stay"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("output-send-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-down"), SHORTCUT_META_CTRL_ALT_J,
+          QStringLiteral("Meta+Ctrl+Alt+J"), {}, {}, 0, QStringLiteral("output-send")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-down-arrow"),
+          SHORTCUT_META_CTRL_ALT_DOWN, QStringLiteral("Meta+Ctrl+Alt+Down"), {}, {}, 0,
+          QStringLiteral("output-send")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-down-stay"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("output-send-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-up"), SHORTCUT_META_CTRL_ALT_K,
+          QStringLiteral("Meta+Ctrl+Alt+K"), {}, {}, 0, QStringLiteral("output-send")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-up-arrow"),
+          SHORTCUT_META_CTRL_ALT_UP, QStringLiteral("Meta+Ctrl+Alt+Up"), {}, {}, 0,
+          QStringLiteral("output-send")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-up-stay"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("output-send-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-right"), SHORTCUT_META_CTRL_ALT_L,
+          QStringLiteral("Meta+Ctrl+Alt+L"), {}, {}, 0, QStringLiteral("output-send")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-right-arrow"),
+          SHORTCUT_META_CTRL_ALT_RIGHT, QStringLiteral("Meta+Ctrl+Alt+Right"), {}, {}, 0,
+          QStringLiteral("output-send")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-right-stay"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("output-send-stay")},
     };
     return catalog;
 }

@@ -421,6 +421,11 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
       tiled-subject eligibility, sticky excluded. Floating-workspace
       boundaries transfer membership only, reflowing only tiled sides.
       Ordinary float transfer remains a separate open item.
+    - Status: shared core/protocol + KDE four-direction moves, explicit
+      output follow/stay and native catalog/presets delivered offline
+      ([record](changes/archive/four-direction-output-transfer.md)); Windows
+      wiring and user-owned two-output native journey pending. Full rectangles
+      select adjacency only; placement retains per-desktop work areas.
 - User decision 2026-10-07 (functional spec format): keep
   [the functional spec](spec/functional-spec.md) as a single file; revisit
   splitting if it grows much larger. Requirements are normative only where a
@@ -1819,8 +1824,10 @@ the corresponding item ships; each such entry names its replacement.
   lone root. Approved 2026-09-20, updated by USER step-3 decision 2026-09-25 (current, offline only, no live verification claimed): exhausted default-Vertical
   `Meta+Left`/`Meta+Right` R4 movement is the selected product behavior across
   a horizontally adjacent output into that output's currently selected logical
-  workspace. Local R1/R2/R3 wins first; Up/Down, wrapping, and workspace
-  cycling remain excluded. Rust converges complete source plus target observations, then synchronously commits the planned R4 topology into the canonical per-domain sessions and returns both-domain geometry plus the native assignment; no pair survives the call. Rust retains target remembered-leaf/root insertion and the existing owner, generation, revision, correlation,
+  workspace. Local R1/R2/R3 wins first. USER item 5 (2026-10-07) extends
+  crossing to all four directions and sole root leaves, selecting unique
+  reciprocal neighbors on full output rectangles; wrapping and workspace
+  cycling remain excluded. Rust converges complete source plus target observations, then synchronously commits the planned R4 topology into the canonical per-domain sessions and returns both-domain geometry plus the native assignment; no pair survives the call. Rust retains target remembered-leaf/root edge insertion nearest the source (explicit output send instead uses ordinary admission) and the existing owner, generation, revision, correlation,
   single-flight, visibility, exception, and
   fail-closed target fences, with no acknowledgement, verification, pending, status, cancel, or abandon. The active `DescribePlan` route delivers the
   corresponding exhausted horizontal focus transfer with no layout or

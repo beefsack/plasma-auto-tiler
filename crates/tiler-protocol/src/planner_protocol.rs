@@ -66,7 +66,7 @@ const GEOMETRY_MAX_GAP: i32 = tiler_core::bounds::MAX_GAP;
 /// Canonical production directional fingerprint (FNV-1a 32-bit) over the
 /// full two-domain evidence, byte-identical to the adapter's
 /// `planDirectionalFingerprint`: ordered domain primitives (output,
-/// workspace, raw bounds, gaps, left/right adjacency), the focused id, and
+/// workspace, raw bounds, gaps, four-direction adjacency), the focused id,
 /// every window sorted by id (id, output, workspace, rect, floating,
 /// fit-excluded). Any alteration of target rect, bounds, or adjacency
 /// changes the value. Legacy single-domain requests keep `planFingerprint`.
@@ -122,6 +122,20 @@ fn directional_fingerprint(
                 .get("right")
                 .map(String::as_str)
                 .unwrap_or(""),
+        );
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, "up");
+        sep(&mut hash, 0x1f);
+        feed(
+            &mut hash,
+            entry.adjacent.get("up").map(String::as_str).unwrap_or(""),
+        );
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, "down");
+        sep(&mut hash, 0x1f);
+        feed(
+            &mut hash,
+            entry.adjacent.get("down").map(String::as_str).unwrap_or(""),
         );
     }
     sep(&mut hash, 0x1f);
@@ -248,10 +262,11 @@ struct ObservedDto {
 
 /// Production directional domains payload (DescribePlan active route only).
 /// Bounded primitive per domain: output, workspace, work-area bounds, inner
-/// and outer gaps, plus horizontal reciprocal adjacency (`left`/`right` to an
+/// and outer gaps, plus reciprocal adjacency (`left`/`right`/`up`/`down` to an
 /// output name). At most two domains: source first (must equal `domain`),
-/// then the horizontally adjacent output's current logical workspace (which
-/// may differ in workspace id). Up/Down keys are never admitted.
+/// then the adjacent output's current logical workspace (which
+/// may differ in workspace id). Four-direction adjacency (item 5.2) carries
+/// FULL output rectangles resolved adapter-side; panel gaps never block.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DirectionalDomainDto {
@@ -280,7 +295,7 @@ struct RequestDto {
     #[serde(default)]
     target_windows: Vec<ObservedDto>,
     /// Production directional cross-output observation: source plus at most
-    /// one horizontally reciprocal adjacent domain. Absent for legacy
+    /// one reciprocal adjacent domain. Absent for legacy
     /// single-domain requests, whose behavior is unchanged.
     #[serde(default)]
     domains: Option<Vec<DirectionalDomainDto>>,
@@ -909,8 +924,9 @@ struct Validated {
 }
 
 /// Parse one directional wire domain into its projected [`OutputDomain`].
-/// Fails closed on any unreadable shape; only `left`/`right` adjacency keys
-/// are admitted (Up/Down never cross).
+/// Fails closed on any unreadable shape; all four cardinal adjacency keys
+/// (`left`/`right`/`up`/`down`) are admitted for four-direction cross (item
+/// 5.2). Anything else refuses.
 fn parse_directional_domain(
     entry: &DirectionalDomainDto,
     correlation_id: &str,
@@ -976,6 +992,8 @@ fn parse_directional_domain(
         let direction = match key.as_str() {
             "left" => Direction::Left,
             "right" => Direction::Right,
+            "up" => Direction::Up,
+            "down" => Direction::Down,
             _ => {
                 return Err(snapshot_invalid(
                     correlation_id.to_owned(),
@@ -1264,18 +1282,27 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
                 }
             }
         }
-        // Two-domain reciprocity: source names target on Left/Right and the
-        // target names source back on the opposite side. Single-domain
-        // payloads carry no adjacency requirement.
+        // Two-domain reciprocity: source names target on one cardinal side
+        // and the target names source back on the opposite side. Unique
+        // reciprocal edge-touch selection over FULL output rectangles is
+        // adapter-owned (item 5.2); the core only admits the resolved pair
+        // and refuses ambiguous (non-reciprocal) topology fail-closed.
+        // Single-domain payloads carry no adjacency requirement.
         if parsed.len() == 2 {
             let (source_domain, _) = &parsed[0];
             let (target_domain, _) = &parsed[1];
             let mut reciprocal = false;
-            for direction in [Direction::Left, Direction::Right] {
+            for direction in [
+                Direction::Left,
+                Direction::Right,
+                Direction::Up,
+                Direction::Down,
+            ] {
                 let opposite = match direction {
                     Direction::Left => Direction::Right,
                     Direction::Right => Direction::Left,
-                    _ => continue,
+                    Direction::Up => Direction::Down,
+                    Direction::Down => Direction::Up,
                 };
                 if source_domain.adjacent.get(&direction) == Some(&target_domain.id)
                     && target_domain.adjacent.get(&opposite) == Some(&source_domain.id)
@@ -1911,6 +1938,76 @@ fn serialize_send_workspace_reply(
     })
 }
 
+/// Explicit output-send serializer driven by a
+/// [`tiler_core::boundary::SendWorkspacePlan`] (single source). Same ordinary
+/// `move-tiled` transfer shape as [`serialize_send_workspace_reply`] (plus the
+/// explicit `follow` selection) under the distinct `send-to-output` wire kind:
+/// the destination output's current workspace resolved adapter-side. Detail
+/// key order (`kind`, `policy_version`, `capability`) matches workspace send.
+#[allow(clippy::too_many_lines)]
+fn serialize_send_output_reply(
+    correlation_id: &str,
+    plan: &tiler_core::boundary::SendWorkspacePlan,
+) -> String {
+    let tiler_core::boundary::SendWorkspacePlan {
+        operation:
+            LifecycleOperation::MoveTiled {
+                window,
+                leaf,
+                source_output,
+                source_workspace,
+                target_output,
+                target_workspace,
+            },
+        ..
+    } = &plan
+    else {
+        unreachable!("SendWorkspacePlan always carries MoveTiled");
+    };
+    let operation_value = serde_json::json!({
+        "op": "move-tiled",
+        "window": window.0,
+        "leaf": leaf.0,
+        "source_output": source_output.0,
+        "source_workspace": source_workspace.0,
+        "target_output": target_output.0,
+        "target_workspace": target_workspace.0,
+        "follow": plan.follow,
+    });
+    // Same binding posture as workspace send: the wire token binds the reply
+    // for exact matching, not as a native-verification or
+    // committed-native-success assertion. The adapter reconciles both domains
+    // after the immediate planned-topology commit.
+    let preconditions: Vec<&'static str> = plan
+        .preconditions
+        .iter()
+        .map(|p| lifecycle_precondition_str(*p))
+        .collect();
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: correlation_id.to_owned(),
+        outcome: "planned",
+        kind: Some("send-to-output".to_owned()),
+        message: None,
+        base_revision: Some(plan.base_revision),
+        detail: Some(serde_json::json!({
+            "kind": "send-to-output",
+            "policy_version": plan.policy_version,
+            "capability": "move-tiled",
+        })),
+        desired_geometry: Some(plan.geometry.iter().map(geometry_reply).collect()),
+        desired_focus: match (&plan.focus_domain, &plan.focus_leaf) {
+            (Some(d), Some(l)) => Some(focus_reply(d, l)),
+            _ => None,
+        },
+        float_geometry: None,
+        preconditions: Some(preconditions),
+        operation: Some(operation_value),
+        preview_rect: None,
+        hover_prior: None,
+    })
+}
+
 /// Byte-exact read-only drag-preview serializer driven by a
 /// [`tiler_core::boundary::DragPreviewPlan`] (single source). Outcome
 /// `preview` with kind `drag-preview`: the proposed source rectangle plus the
@@ -2009,6 +2106,7 @@ fn serialize_core_reply(ctx: &Validated, reply: &tiler_core::boundary::CoreReply
         CoreReply::Projection(plan) => planned_projection_reply(&cid, plan),
         CoreReply::Tiled(plan) => planned_tiled_reply(&cid, plan),
         CoreReply::SendWorkspace(plan) => serialize_send_workspace_reply(&cid, plan),
+        CoreReply::SendOutput(plan) => serialize_send_output_reply(&cid, plan),
         CoreReply::MoveDirectional(plan) => serialize_move_reply(&cid, plan),
         CoreReply::FocusDirectional(plan) => serialize_focus_reply(&cid, plan),
         CoreReply::Resize(plan) => serialize_resize_reply(&cid, plan),
@@ -2168,6 +2266,9 @@ impl Planner {
         };
         if validated_op(&ctx).as_str() == "send-to-workspace" {
             return self.evaluate_workspace_request(&ctx);
+        }
+        if validated_op(&ctx).as_str() == "send-to-output" {
+            return self.evaluate_send_output_request(&ctx);
         }
         self.sync_binding(&ctx.owner, &ctx.generation);
         // Typed codec: reconcile/update-gaps/active-group
@@ -2932,13 +3033,20 @@ impl Planner {
         self.handle_and_serialize(ctx, event)
     }
 
-    /// Shared standalone workspace-send target scope: optional `target_domain`
+    /// Shared standalone send target scope: optional `target_domain`
     /// plus `target_windows` against the source `domain`. Refuses
-    /// cross-output, same-workspace, and malformed target windows
+    /// same-workspace, and malformed target windows
     /// fail-closed with bounded kinds, and returns the projected target domain
-    /// plus its key. No mover/command binding; the request and status paths
+    /// plus its key. Workspace send (`cross_output=false`) refuses
+    /// cross-output targets; explicit output send (`cross_output=true`)
+    /// requires a different output (same-output targets refuse) so the two
+    /// ops stay distinct. No mover/command binding; the request and status paths
     /// add their own command checks.
-    fn workspace_target_scope(&self, ctx: &Validated) -> Result<(OutputDomain, DomainKey), String> {
+    fn send_target_scope(
+        &self,
+        ctx: &Validated,
+        cross_output: bool,
+    ) -> Result<(OutputDomain, DomainKey), String> {
         let cid = ctx.request.correlation_id.clone();
         let Some(target_dto) = &ctx.request.target_domain else {
             return Err(rejected(
@@ -2961,19 +3069,29 @@ impl Planner {
                 "target workspace is invalid",
             ));
         }
-        if target_dto.output != ctx.request.domain.output {
-            return Err(rejected(
-                cid,
-                "cross-output",
-                "target workspace is not on the focused output",
-            ));
-        }
-        if target_dto.workspace == ctx.request.domain.workspace {
-            return Err(rejected(
-                cid,
-                "unchanged-workspace",
-                "target workspace equals the source workspace",
-            ));
+        if cross_output {
+            if target_dto.output == ctx.request.domain.output {
+                return Err(rejected(
+                    cid,
+                    "cross-domain-mismatch",
+                    "target output equals the source output",
+                ));
+            }
+        } else {
+            if target_dto.output != ctx.request.domain.output {
+                return Err(rejected(
+                    cid,
+                    "cross-output",
+                    "target workspace is not on the focused output",
+                ));
+            }
+            if target_dto.workspace == ctx.request.domain.workspace {
+                return Err(rejected(
+                    cid,
+                    "unchanged-workspace",
+                    "target workspace equals the source workspace",
+                ));
+            }
         }
         let carried_bounds = Rect {
             x: target_dto.bounds.x,
@@ -3075,7 +3193,7 @@ impl Planner {
         // Target scope first (presence, cross-output, bounds, homing), then
         // the mover binding; a missing target still reports
         // `workspace-target-invalid` from the shared scope helper.
-        let (target_domain, target_key) = self.workspace_target_scope(ctx)?;
+        let (target_domain, target_key) = self.send_target_scope(ctx, false)?;
         if ctx.request.focused_window.is_empty() {
             return Err(rejected(
                 cid,
@@ -3155,6 +3273,104 @@ impl Planner {
             Err(reply) => return reply,
         };
         let core_command = tiler_core::boundary::CoreCommand::SendToWorkspace {
+            window: input.window.0.clone(),
+            target_output: input.target_key.output.0.clone(),
+            target_workspace: input.target_key.workspace.0.clone(),
+            follow: input.follow,
+        };
+        let mut event = core_event(ctx, &core_command);
+        event.target_domain = Some((input.target_domain, input.target_key));
+        self.handle_and_serialize(ctx, &event)
+    }
+
+    /// Validate the explicit output-send target: shared send scope in
+    /// cross-output mode (a different output's current workspace, resolved
+    /// adapter-side) plus the mover binding. Same-output targets refuse;
+    /// same-domain targets refuse downstream as `Unchanged`; unknown targets
+    /// as `UnknownDomain`. Otherwise mirrors [`Planner::validate_workspace_input`].
+    fn validate_send_output_input(&self, ctx: &Validated) -> Result<WorkspaceInput, String> {
+        let cid = ctx.request.correlation_id.clone();
+        let (target_domain, target_key) = self.send_target_scope(ctx, true)?;
+        if ctx.request.focused_window.is_empty() {
+            return Err(rejected(
+                cid,
+                "absent-focus",
+                "no focused window is observed",
+            ));
+        }
+        // Strict tagged decode after the target scope and focus checks above
+        // (scope-before-parse order mirrors workspace send). A missing
+        // `follow` defaults true, preserving the follow default for legacy
+        // requests.
+        let (window, target_output, target_workspace, follow) =
+            match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+                Ok(SyncCommand::SendToOutput {
+                    window,
+                    target_output,
+                    target_workspace,
+                    follow,
+                }) => (window, target_output, target_workspace, follow),
+                Ok(_) => {
+                    return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "move-op-invalid"));
+                }
+                Err(error) => {
+                    if is_unknown_variant(&error) {
+                        return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "move-op-invalid"));
+                    }
+                    let (kind, message) = classify_parse_error(&error);
+                    return Err(rejected(valid_correlation_echo(&ctx.raw), kind, message));
+                }
+            };
+        if !is_opaque_id(&window) {
+            return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "move-window-invalid"));
+        }
+        if !is_opaque_id(&target_output) {
+            return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "move-output-invalid"));
+        }
+        if !is_opaque_id(&target_workspace) {
+            return Err(snapshot_invalid(
+                cid,
+                MSG_OPAQUE_ID,
+                "move-workspace-invalid",
+            ));
+        }
+        if window != ctx.request.focused_window {
+            return Err(rejected(
+                cid,
+                "focus-mismatch",
+                "the moved window is not the focused window",
+            ));
+        }
+        if target_output != target_key.output.0 || target_workspace != target_key.workspace.0 {
+            return Err(rejected(
+                cid,
+                "target-mismatch",
+                "command target does not match the target domain",
+            ));
+        }
+        Ok(WorkspaceInput {
+            target_domain,
+            target_key,
+            window: WindowId(window),
+            follow,
+        })
+    }
+
+    /// Explicit output-send request phase: propose the cross-output move to
+    /// the destination output's current workspace synchronously through the
+    /// Engine with native assignment plus both-domain geometry.
+    ///
+    /// Codec/scope stays here (shared send scope in cross-output mode,
+    /// tagged command decode, mover binding in
+    /// [`Planner::validate_send_output_input`]); the outcome itself is the
+    /// Engine-owned [`tiler_core::engine::Engine::handle`] typed entry point
+    /// over the validated target scope.
+    fn evaluate_send_output_request(&mut self, ctx: &Validated) -> String {
+        let input = match self.validate_send_output_input(ctx) {
+            Ok(input) => input,
+            Err(reply) => return reply,
+        };
+        let core_command = tiler_core::boundary::CoreCommand::SendToOutput {
             window: input.window.0.clone(),
             target_output: input.target_key.output.0.clone(),
             target_workspace: input.target_key.workspace.0.clone(),
@@ -3436,11 +3652,11 @@ struct DragPayload {
 
 /// Typed synchronous command codec (narrow).
 ///
-/// Internally tagged on `op` with `deny_unknown_fields` for all thirteen
+/// Internally tagged on `op` with `deny_unknown_fields` for all fourteen
 /// synchronous command ops: reconcile, update-gaps, active-group,
 /// release-domain, move, focus, resize, pointer-resize, toggle-float,
-/// toggle-orientation, `send-to-workspace`, `drag-drop`, and read-only
-/// `drag-preview`.
+/// toggle-orientation, `send-to-workspace`, `send-to-output`, `drag-drop`,
+/// and read-only `drag-preview`.
 /// Sync handlers parse
 /// [`SyncCommand`] once in place after the existing dispatch boundaries
 /// (validation, send dispatch, binding sync): the production `evaluate`
@@ -3529,6 +3745,22 @@ enum SyncCommand {
         /// Follow/stay selection: true follows the mover into the target,
         /// false stays on the source. Absent preserves the historical
         /// follow behavior.
+        #[serde(default = "default_follow")]
+        follow: bool,
+    },
+    /// Explicit output send (REQ-OUT-04, item 5.3/5.4): the destination
+    /// output's current workspace resolved adapter-side, carried as an
+    /// explicit cross-output target domain. Distinct wire op from
+    /// `send-to-workspace`, which stays same-output. Ordinary admission and
+    /// explicit follow/stay; omitted `follow` defaults true like workspace
+    /// send. Follow binds Meta/Win+Ctrl+Alt+arrows and +H/J/K/L; stay is
+    /// bindable, unbound (adapter-owned bindings).
+    #[serde(rename = "send-to-output")]
+    SendToOutput {
+        window: String,
+        target_output: String,
+        target_workspace: String,
+        /// Follow/stay selection, identical to `send-to-workspace`.
         #[serde(default = "default_follow")]
         follow: bool,
     },
@@ -3631,6 +3863,17 @@ fn core_command_from_sync(command: &SyncCommand) -> Option<tiler_core::boundary:
             target_workspace,
             follow,
         } => Some(CoreCommand::SendToWorkspace {
+            window: window.clone(),
+            target_output: target_output.clone(),
+            target_workspace: target_workspace.clone(),
+            follow: *follow,
+        }),
+        SyncCommand::SendToOutput {
+            window,
+            target_output,
+            target_workspace,
+            follow,
+        } => Some(CoreCommand::SendToOutput {
             window: window.clone(),
             target_output: target_output.clone(),
             target_workspace: target_workspace.clone(),
@@ -9255,6 +9498,675 @@ mod tests {
         assert_eq!(geometry.len(), 1, "{reply}");
         assert_eq!(geometry[0]["window"], "win-1", "{reply}");
         assert_eq!(geometry[0]["workspace"], "ws-2", "{reply}");
+    }
+
+    fn output_entry(window: &str, output: &str, x: i32) -> serde_json::Value {
+        serde_json::json!({
+            "window": window,
+            "output": output,
+            "workspace": "ws-1",
+            "rect": {"x": x, "y": 0, "w": 100, "h": 80},
+        })
+    }
+
+    /// Full explicit output-send request over source out-1/ws-1 and the
+    /// destination output's current workspace out-2/ws-1 (resolved
+    /// adapter-side). Mirrors [`workspace_request`] with a cross-output
+    /// target scope.
+    fn output_send_request(
+        correlation: &str,
+        focused: &str,
+        source: Vec<serde_json::Value>,
+        target: Vec<serde_json::Value>,
+        command: serde_json::Value,
+    ) -> String {
+        let windows = if source.is_empty() {
+            serde_json::json!([])
+        } else {
+            serde_json::Value::Array(source)
+        };
+        serde_json::json!({
+            "v": 1,
+            "correlation_id": correlation,
+            "owner": "owner-1",
+            "generation": "gen-1",
+            "revision": 0,
+            "fingerprint": 7,
+            "domain": {
+                "output": "out-1",
+                "workspace": "ws-1",
+                "bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
+                "gap": 0,
+                "outer_gap": 0,
+            },
+            "target_domain": {
+                "output": "out-2",
+                "workspace": "ws-1",
+                "bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
+                "gap": 0,
+                "outer_gap": 0,
+            },
+            "focused_window": focused,
+            "windows": windows,
+            "target_windows": serde_json::Value::Array(target),
+            "command": command,
+        })
+        .to_string()
+    }
+
+    fn output_send_body(window: &str) -> serde_json::Value {
+        // Legacy shape omits `follow`: the default stays follow.
+        serde_json::json!({
+            "op": "send-to-output",
+            "window": window,
+            "target_output": "out-2",
+            "target_workspace": "ws-1",
+        })
+    }
+
+    fn output_stay_body(window: &str) -> serde_json::Value {
+        serde_json::json!({
+            "op": "send-to-output",
+            "window": window,
+            "target_output": "out-2",
+            "target_workspace": "ws-1",
+            "follow": false,
+        })
+    }
+
+    #[test]
+    fn output_send_follow_defaults_with_distinct_wire_kind() {
+        // Explicit output send is DISTINCT from workspace send: omitted
+        // `follow` defaults true, the reply kind is `send-to-output`, and
+        // the `move-tiled` operation carries the cross-output assignment
+        // with both-domain geometry.
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&output_send_request(
+            "out-send-follow-1",
+            "win-1",
+            vec![output_entry("win-1", "out-1", 0)],
+            vec![output_entry("win-t1", "out-2", 0)],
+            output_send_body("win-1"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["kind"], "send-to-output", "{reply}");
+        assert_eq!(reply["detail"]["kind"], "send-to-output", "{reply}");
+        assert_eq!(reply["detail"]["capability"], "move-tiled", "{reply}");
+        assert_eq!(reply["operation"]["op"], "move-tiled", "{reply}");
+        assert_eq!(reply["operation"]["follow"], true, "{reply}");
+        assert_eq!(reply["operation"]["source_output"], "out-1", "{reply}");
+        assert_eq!(reply["operation"]["target_output"], "out-2", "{reply}");
+        assert_eq!(reply["desired_focus"]["domain_output"], "out-2", "{reply}");
+        assert_eq!(
+            reply["desired_focus"]["domain_workspace"], "ws-1",
+            "{reply}"
+        );
+        let geometry = reply["desired_geometry"].as_array().expect("geometry");
+        // The sole source window moved, so the emptied source carries no
+        // geometry; the target carries the mover beside the existing window.
+        assert_eq!(geometry.len(), 2, "{reply}");
+        let mut members: Vec<(&str, &str)> = geometry
+            .iter()
+            .map(|g| {
+                (
+                    g["window"].as_str().expect("window"),
+                    g["output"].as_str().expect("output"),
+                )
+            })
+            .collect();
+        members.sort();
+        assert_eq!(
+            members,
+            vec![("win-1", "out-2"), ("win-t1", "out-2")],
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn output_send_stay_keeps_source_without_selecting_target() {
+        // Stay mirrors workspace-send stay across outputs: the source MRU
+        // survivor keeps focus, follow=false echoes, and the mover still
+        // lands on the destination output. Two reconciles establish the
+        // source MRU (win-1, then win-2).
+        let mut planner = Planner::new();
+        let both = &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)];
+        for (index, focused) in ["win-1", "win-2"].iter().enumerate() {
+            let rec = parse_reply(&planner.evaluate(&retained_request_for_domain(
+                &format!("out-send-stay-focus-{index}"),
+                "owner-1",
+                "gen-1",
+                "out-1",
+                "ws-1",
+                focused,
+                both,
+                serde_json::json!({"op": "reconcile"}),
+            )));
+            assert_eq!(rec["outcome"], "planned", "{rec}");
+        }
+        let reply = parse_reply(&planner.evaluate(&output_send_request(
+            "out-send-stay-1",
+            "win-2",
+            vec![
+                output_entry("win-1", "out-1", 0),
+                output_entry("win-2", "out-1", 200),
+            ],
+            vec![output_entry("win-t1", "out-2", 0)],
+            output_stay_body("win-2"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["kind"], "send-to-output", "{reply}");
+        assert_eq!(reply["operation"]["follow"], false, "{reply}");
+        assert_eq!(reply["operation"]["window"], "win-2", "{reply}");
+        assert_eq!(reply["desired_focus"]["domain_output"], "out-1", "{reply}");
+        let focus_leaf = reply["desired_focus"]["leaf"].as_str().expect("focus leaf");
+        let geometry = reply["desired_geometry"].as_array().expect("geometry");
+        let focus_window = geometry
+            .iter()
+            .find(|g| g["leaf"] == focus_leaf && g["output"] == "out-1")
+            .and_then(|g| g["window"].as_str())
+            .expect("source focus resolves");
+        assert_eq!(focus_window, "win-1", "{reply}");
+        let mut members: Vec<(String, String, String)> = geometry
+            .iter()
+            .map(|g| {
+                (
+                    g["window"].as_str().expect("window").to_owned(),
+                    g["output"].as_str().expect("output").to_owned(),
+                    g["workspace"].as_str().expect("workspace").to_owned(),
+                )
+            })
+            .collect();
+        members.sort();
+        assert_eq!(
+            members,
+            vec![
+                ("win-1".to_owned(), "out-1".to_owned(), "ws-1".to_owned()),
+                ("win-2".to_owned(), "out-2".to_owned(), "ws-1".to_owned()),
+                ("win-t1".to_owned(), "out-2".to_owned(), "ws-1".to_owned()),
+            ],
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn output_send_mru_fallback_plans_beside_history() {
+        // 5.4 focus-history fallback over the wire: the destination's
+        // remembered leaf (t2) departs via workspace send first, leaving a
+        // stale anchor while the destination history retains t1b. The later
+        // output send still plans end to end with the mover on the target
+        // and target focus; the beside-history landing itself is pinned
+        // structurally at the session/engine layers.
+        let mut planner = Planner::new();
+        for (index, (focused, windows)) in [
+            ("t1a", vec![("t1a", 0, 0, 100, 80)]),
+            (
+                "t1b",
+                vec![("t1a", 0, 0, 100, 80), ("t1b", 200, 0, 100, 80)],
+            ),
+            (
+                "t2",
+                vec![
+                    ("t1a", 0, 0, 100, 80),
+                    ("t1b", 200, 0, 100, 80),
+                    ("t2", 400, 0, 100, 80),
+                ],
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let rec = parse_reply(&planner.evaluate(&retained_request_for_domain(
+                &format!("out-send-mru-tgt-{index}"),
+                "owner-1",
+                "gen-1",
+                "out-2",
+                "ws-1",
+                focused,
+                &windows,
+                serde_json::json!({"op": "reconcile"}),
+            )));
+            assert_eq!(rec["outcome"], "planned", "{rec}");
+        }
+        // Depart t2 to a same-output spare workspace, staling the anchor.
+        let depart = serde_json::json!({
+            "v": 1,
+            "correlation_id": "out-send-mru-depart",
+            "owner": "owner-1",
+            "generation": "gen-1",
+            "revision": 0,
+            "fingerprint": 7,
+            "domain": {
+                "output": "out-2",
+                "workspace": "ws-1",
+                "bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
+                "gap": 0,
+                "outer_gap": 0,
+            },
+            "target_domain": {
+                "output": "out-2",
+                "workspace": "ws-2",
+                "bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
+                "gap": 0,
+                "outer_gap": 0,
+            },
+            "focused_window": "t2",
+            "windows": [
+                {"window": "t1a", "output": "out-2", "workspace": "ws-1",
+                 "rect": {"x": 0, "y": 0, "w": 100, "h": 80}},
+                {"window": "t1b", "output": "out-2", "workspace": "ws-1",
+                 "rect": {"x": 200, "y": 0, "w": 100, "h": 80}},
+                {"window": "t2", "output": "out-2", "workspace": "ws-1",
+                 "rect": {"x": 400, "y": 0, "w": 100, "h": 80}},
+            ],
+            "target_windows": [],
+            "command": {
+                "op": "send-to-workspace",
+                "window": "t2",
+                "target_output": "out-2",
+                "target_workspace": "ws-2",
+            },
+        })
+        .to_string();
+        let departed = parse_reply(&planner.evaluate(&depart));
+        assert_eq!(departed["outcome"], "planned", "{departed}");
+        for (index, focused) in ["s1", "s2"].iter().enumerate() {
+            let windows: Vec<(&str, i32, i32, i32, i32)> = if *focused == "s1" {
+                vec![("s1", 0, 0, 100, 80)]
+            } else {
+                vec![("s1", 0, 0, 100, 80), ("s2", 200, 0, 100, 80)]
+            };
+            let rec = parse_reply(&planner.evaluate(&retained_request_for_domain(
+                &format!("out-send-mru-src-{index}"),
+                "owner-1",
+                "gen-1",
+                "out-1",
+                "ws-1",
+                focused,
+                &windows,
+                serde_json::json!({"op": "reconcile"}),
+            )));
+            assert_eq!(rec["outcome"], "planned", "{rec}");
+        }
+        let reply = parse_reply(&planner.evaluate(&output_send_request(
+            "out-send-mru-1",
+            "s2",
+            vec![
+                output_entry("s1", "out-1", 0),
+                output_entry("s2", "out-1", 200),
+            ],
+            vec![
+                output_entry("t1a", "out-2", 0),
+                output_entry("t1b", "out-2", 200),
+            ],
+            output_send_body("s2"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["kind"], "send-to-output", "{reply}");
+        assert_eq!(reply["operation"]["follow"], true, "{reply}");
+        assert_eq!(reply["desired_focus"]["domain_output"], "out-2", "{reply}");
+        let mut members: Vec<(String, String)> = reply["desired_geometry"]
+            .as_array()
+            .expect("geometry")
+            .iter()
+            .map(|g| {
+                (
+                    g["window"].as_str().expect("window").to_owned(),
+                    g["output"].as_str().expect("output").to_owned(),
+                )
+            })
+            .collect();
+        members.sort();
+        assert_eq!(
+            members,
+            vec![
+                ("s1".to_owned(), "out-1".to_owned()),
+                ("s2".to_owned(), "out-2".to_owned()),
+                ("t1a".to_owned(), "out-2".to_owned()),
+                ("t1b".to_owned(), "out-2".to_owned()),
+            ],
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn output_send_empty_destination_admits_lone_root() {
+        // Genuine root fallback over the wire: the destination output was
+        // never observed, so the mover becomes its lone root. Follow focuses
+        // the target; stay with a sole source window carries no focus and the
+        // reply geometry holds only the mover.
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&output_send_request(
+            "out-send-empty-follow-1",
+            "win-1",
+            vec![output_entry("win-1", "out-1", 0)],
+            vec![],
+            output_send_body("win-1"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["kind"], "send-to-output", "{reply}");
+        assert_eq!(reply["desired_focus"]["domain_output"], "out-2", "{reply}");
+        let geometry = reply["desired_geometry"].as_array().expect("geometry");
+        assert_eq!(geometry.len(), 1, "{reply}");
+        assert_eq!(geometry[0]["window"], "win-1", "{reply}");
+        assert_eq!(geometry[0]["output"], "out-2", "{reply}");
+
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&output_send_request(
+            "out-send-empty-stay-1",
+            "win-1",
+            vec![output_entry("win-1", "out-1", 0)],
+            vec![],
+            output_stay_body("win-1"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["operation"]["follow"], false, "{reply}");
+        assert_eq!(reply["desired_focus"], serde_json::Value::Null, "{reply}");
+        let geometry = reply["desired_geometry"].as_array().expect("geometry");
+        assert_eq!(geometry.len(), 1, "{reply}");
+        assert_eq!(geometry[0]["window"], "win-1", "{reply}");
+        assert_eq!(geometry[0]["output"], "out-2", "{reply}");
+    }
+
+    #[test]
+    fn output_send_refuses_same_output_target() {
+        // Same-output targets refuse: that scope belongs to workspace send,
+        // keeping the two ops distinct.
+        let mut planner = Planner::new();
+        let mut request: serde_json::Value = serde_json::from_str(&output_send_request(
+            "out-send-same-1",
+            "win-1",
+            vec![output_entry("win-1", "out-1", 0)],
+            vec![output_entry("win-t1", "out-2", 0)],
+            output_send_body("win-1"),
+        ))
+        .expect("json");
+        request["target_domain"]["output"] = serde_json::json!("out-1");
+        request["target_domain"]["workspace"] = serde_json::json!("ws-2");
+        request["command"]["target_output"] = serde_json::json!("out-1");
+        request["command"]["target_workspace"] = serde_json::json!("ws-2");
+        let reply = parse_reply(&planner.evaluate(&request.to_string()));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "cross-domain-mismatch", "{reply}");
+    }
+
+    #[test]
+    fn output_send_refuses_target_and_focus_mismatch() {
+        let mut planner = Planner::new();
+        let mut request: serde_json::Value = serde_json::from_str(&output_send_request(
+            "out-send-mismatch-1",
+            "win-1",
+            vec![output_entry("win-1", "out-1", 0)],
+            vec![output_entry("win-t1", "out-2", 0)],
+            output_send_body("win-1"),
+        ))
+        .expect("json");
+        request["command"]["target_workspace"] = serde_json::json!("ws-9");
+        let reply = parse_reply(&planner.evaluate(&request.to_string()));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "target-mismatch", "{reply}");
+
+        let mut planner = Planner::new();
+        let request: serde_json::Value = serde_json::from_str(&output_send_request(
+            "out-send-mismatch-2",
+            "win-2",
+            vec![
+                output_entry("win-1", "out-1", 0),
+                output_entry("win-2", "out-1", 200),
+            ],
+            vec![output_entry("win-t1", "out-2", 0)],
+            output_send_body("win-1"),
+        ))
+        .expect("json");
+        let reply = parse_reply(&planner.evaluate(&request.to_string()));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "focus-mismatch", "{reply}");
+    }
+
+    #[test]
+    fn directional_vertical_pair_crosses_after_exhaustion() {
+        // Item 5.1/5.2: a sole root leaf crosses stacked outputs Down through
+        // the two-domain route with up/down adjacency (FULL output rectangles
+        // resolved adapter-side). Seeds mirror the horizontal edge test, then
+        // win-1 (sole leaf on DP-6) moves down onto occupied HDMI-2.
+        fn reconcile_for(
+            correlation: &str,
+            output: &str,
+            bounds: serde_json::Value,
+            focused: &str,
+            windows: serde_json::Value,
+        ) -> String {
+            serde_json::json!({
+                "v": 1,
+                "correlation_id": correlation,
+                "owner": "owner-1",
+                "generation": "gen-1",
+                "revision": 0,
+                "fingerprint": 7,
+                "domain": {
+                    "output": output,
+                    "workspace": "ws-1",
+                    "bounds": bounds,
+                    "gap": 8,
+                    "outer_gap": 8,
+                },
+                "focused_window": focused,
+                "windows": windows,
+                "command": {"op": "reconcile"},
+            })
+            .to_string()
+        }
+        fn stacked_for(correlation: &str, focused: &str, command: serde_json::Value) -> String {
+            let domains = serde_json::json!([
+                {
+                    "output": "DP-6",
+                    "workspace": "ws-1",
+                    "bounds": {"x": 0, "y": 0, "w": 1920, "h": 540},
+                    "gap": 8,
+                    "outer_gap": 8,
+                    "adjacent": {"down": "HDMI-2"},
+                },
+                {
+                    "output": "HDMI-2",
+                    "workspace": "ws-1",
+                    "bounds": {"x": 0, "y": 540, "w": 1920, "h": 540},
+                    "gap": 8,
+                    "outer_gap": 8,
+                    "adjacent": {"up": "DP-6"},
+                },
+            ]);
+            let windows = serde_json::json!([
+                {
+                    "window": "win-1",
+                    "output": "DP-6",
+                    "workspace": "ws-1",
+                    "rect": {"x": 0, "y": 0, "w": 1920, "h": 540},
+                },
+                {
+                    "window": "win-2",
+                    "output": "HDMI-2",
+                    "workspace": "ws-1",
+                    "rect": {"x": 0, "y": 540, "w": 1920, "h": 540},
+                },
+            ]);
+            let domain_entries: Vec<DirectionalDomainDto> =
+                serde_json::from_value(domains.clone()).expect("domains decode");
+            let window_entries: Vec<ObservedDto> =
+                serde_json::from_value(windows.clone()).expect("windows decode");
+            let fingerprint = directional_fingerprint(&domain_entries, focused, &window_entries);
+            serde_json::json!({
+                "v": 1,
+                "correlation_id": correlation,
+                "owner": "owner-1",
+                "generation": "gen-1",
+                "revision": 0,
+                "fingerprint": fingerprint,
+                "domain": {
+                    "output": "DP-6",
+                    "workspace": "ws-1",
+                    "bounds": {"x": 0, "y": 0, "w": 1920, "h": 540},
+                    "gap": 8,
+                    "outer_gap": 8,
+                },
+                "domains": domains,
+                "focused_window": focused,
+                "windows": windows,
+                "command": command,
+            })
+            .to_string()
+        }
+        let mut planner = Planner::new();
+        let source = parse_reply(&planner.evaluate(&reconcile_for(
+            "stack-seed-1",
+            "DP-6",
+            serde_json::json!({"x": 0, "y": 0, "w": 1920, "h": 540}),
+            "win-1",
+            serde_json::json!([
+                {"window": "win-1", "output": "DP-6", "workspace": "ws-1",
+                 "rect": {"x": 0, "y": 0, "w": 1920, "h": 540}},
+            ]),
+        )));
+        assert_eq!(source["outcome"], "planned", "{source}");
+        let target = parse_reply(&planner.evaluate(&reconcile_for(
+            "stack-seed-2",
+            "HDMI-2",
+            serde_json::json!({"x": 0, "y": 540, "w": 1920, "h": 540}),
+            "win-2",
+            serde_json::json!([
+                {"window": "win-2", "output": "HDMI-2", "workspace": "ws-1",
+                 "rect": {"x": 0, "y": 540, "w": 1920, "h": 540}},
+            ]),
+        )));
+        assert_eq!(target["outcome"], "planned", "{target}");
+        let moved = parse_reply(&planner.evaluate(&stacked_for(
+            "stack-move-1",
+            "win-1",
+            serde_json::json!({"op": "move", "window": "win-1", "direction": "down"}),
+        )));
+        assert_eq!(moved["outcome"], "planned", "{moved}");
+        assert_eq!(moved["detail"]["kind"], "move", "{moved}");
+        assert_eq!(moved["detail"]["direction"], "down", "{moved}");
+        assert_eq!(moved["detail"]["rule"], "R4", "{moved}");
+        assert_eq!(moved["operation"]["target_output"], "HDMI-2", "{moved}");
+        assert_eq!(moved["operation"]["source_output"], "DP-6", "{moved}");
+        assert_eq!(moved["operation"]["target"], "occupied", "{moved}");
+        assert_eq!(moved["desired_focus"]["domain_output"], "HDMI-2", "{moved}");
+    }
+
+    #[test]
+    fn directional_vertical_pair_requires_reciprocity() {
+        // Item 5.2: a one-sided vertical edge refuses as `domain-invalid`
+        // (ambiguous topology), and altering vertical adjacency without
+        // updating the fingerprint refuses as `fingerprint-mismatch`: the
+        // fingerprint binds all four adjacency sides.
+        fn stacked_for(
+            correlation: &str,
+            focused: &str,
+            command: serde_json::Value,
+            source_adjacent: serde_json::Value,
+            target_adjacent: serde_json::Value,
+            recompute: bool,
+        ) -> String {
+            let domains = serde_json::json!([
+                {
+                    "output": "DP-6",
+                    "workspace": "ws-1",
+                    "bounds": {"x": 0, "y": 0, "w": 1920, "h": 540},
+                    "gap": 8,
+                    "outer_gap": 8,
+                    "adjacent": source_adjacent,
+                },
+                {
+                    "output": "HDMI-2",
+                    "workspace": "ws-1",
+                    "bounds": {"x": 0, "y": 540, "w": 1920, "h": 540},
+                    "gap": 8,
+                    "outer_gap": 8,
+                    "adjacent": target_adjacent,
+                },
+            ]);
+            let windows = serde_json::json!([
+                {
+                    "window": "win-1",
+                    "output": "DP-6",
+                    "workspace": "ws-1",
+                    "rect": {"x": 0, "y": 0, "w": 1920, "h": 540},
+                },
+                {
+                    "window": "win-2",
+                    "output": "HDMI-2",
+                    "workspace": "ws-1",
+                    "rect": {"x": 0, "y": 540, "w": 1920, "h": 540},
+                },
+            ]);
+            let fingerprint = if recompute {
+                let domain_entries: Vec<DirectionalDomainDto> =
+                    serde_json::from_value(domains.clone()).expect("domains decode");
+                let window_entries: Vec<ObservedDto> =
+                    serde_json::from_value(windows.clone()).expect("windows decode");
+                directional_fingerprint(&domain_entries, focused, &window_entries)
+            } else {
+                7
+            };
+            serde_json::json!({
+                "v": 1,
+                "correlation_id": correlation,
+                "owner": "owner-1",
+                "generation": "gen-1",
+                "revision": 0,
+                "fingerprint": fingerprint,
+                "domain": {
+                    "output": "DP-6",
+                    "workspace": "ws-1",
+                    "bounds": {"x": 0, "y": 0, "w": 1920, "h": 540},
+                    "gap": 8,
+                    "outer_gap": 8,
+                },
+                "domains": domains,
+                "focused_window": focused,
+                "windows": windows,
+                "command": command,
+            })
+            .to_string()
+        }
+        let move_down =
+            || serde_json::json!({"op": "move", "window": "win-1", "direction": "down"});
+        // One-sided: source names down, target names nothing back.
+        let mut planner = Planner::new();
+        let one_sided = parse_reply(&planner.evaluate(&stacked_for(
+            "stack-recip-1",
+            "win-1",
+            move_down(),
+            serde_json::json!({"down": "HDMI-2"}),
+            serde_json::json!({}),
+            true,
+        )));
+        assert_eq!(one_sided["outcome"], "rejected", "{one_sided}");
+        assert_eq!(one_sided["detail"], "domain-invalid", "{one_sided}");
+        // Wrong-side reciprocity: target answers on left instead of up.
+        let mut planner = Planner::new();
+        let wrong_side = parse_reply(&planner.evaluate(&stacked_for(
+            "stack-recip-2",
+            "win-1",
+            move_down(),
+            serde_json::json!({"down": "HDMI-2"}),
+            serde_json::json!({"left": "DP-6"}),
+            true,
+        )));
+        assert_eq!(wrong_side["outcome"], "rejected", "{wrong_side}");
+        assert_eq!(wrong_side["detail"], "domain-invalid", "{wrong_side}");
+        // Stale fingerprint after adding a vertical edge: refuses before any
+        // planning, proving up/down adjacency feeds the fingerprint.
+        let mut planner = Planner::new();
+        let stale = parse_reply(&planner.evaluate(&stacked_for(
+            "stack-recip-3",
+            "win-1",
+            move_down(),
+            serde_json::json!({"down": "HDMI-2"}),
+            serde_json::json!({"up": "DP-6"}),
+            false,
+        )));
+        assert_eq!(stale["outcome"], "rejected", "{stale}");
+        assert_eq!(stale["detail"], "fingerprint-mismatch", "{stale}");
     }
 
     #[test]

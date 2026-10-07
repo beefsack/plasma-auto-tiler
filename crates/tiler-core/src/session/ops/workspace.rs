@@ -48,6 +48,69 @@ impl super::super::Session {
         correlation_id: &CorrelationId,
         capabilities: &LifecycleCapabilities,
     ) -> Result<SessionPlan, ProposeError> {
+        self.propose_send_impl(
+            window,
+            target_output,
+            target_workspace,
+            follow,
+            false,
+            session_observation,
+            correlation_id,
+            capabilities,
+        )
+    }
+
+    /// Explicit output send (REQ-OUT-04, item 5.4): identical ordinary
+    /// transfer to [`Session::propose_move_to_workspace`] (focused tiled
+    /// subject only, sticky/intentional floats ineligible as `NotTiled`;
+    /// remembered-leaf, destination focus-history, root admission; explicit
+    /// follow/stay), except the target is the destination output's current
+    /// workspace resolved adapter-side, so cross-output targets are admitted.
+    /// Same-output targets refuse as [`RefusalKind::CrossDomainMismatch`]
+    /// (that scope belongs to the workspace-send op); same-domain targets
+    /// refuse as [`RefusalKind::Unchanged`], unknown targets as
+    /// [`RefusalKind::UnknownDomain`]. Floating-workspace boundaries are
+    /// adapter-owned (native membership transfer with tiled-side reflow, as
+    /// for workspace send); this plans tiled-to-tiled transfers only.
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+    pub(in crate::session) fn propose_move_to_output(
+        &mut self,
+        window: &WindowId,
+        target_output: &OutputId,
+        target_workspace: &WorkspaceId,
+        follow: bool,
+        session_observation: &SessionObservation,
+        correlation_id: &CorrelationId,
+        capabilities: &LifecycleCapabilities,
+    ) -> Result<SessionPlan, ProposeError> {
+        self.propose_send_impl(
+            window,
+            target_output,
+            target_workspace,
+            follow,
+            true,
+            session_observation,
+            correlation_id,
+            capabilities,
+        )
+    }
+
+    /// Shared ordinary-send implementation behind workspace send
+    /// (`allow_cross_output=false`: same-output distinct-workspace only) and
+    /// explicit output send (`allow_cross_output=true`: the destination
+    /// output's current workspace, same-output refused).
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+    fn propose_send_impl(
+        &mut self,
+        window: &WindowId,
+        target_output: &OutputId,
+        target_workspace: &WorkspaceId,
+        follow: bool,
+        allow_cross_output: bool,
+        session_observation: &SessionObservation,
+        correlation_id: &CorrelationId,
+        capabilities: &LifecycleCapabilities,
+    ) -> Result<SessionPlan, ProposeError> {
         // Completeness: observed must equal the known tiled-plus-exception
         // set (the transfer adds/removes no window identity).
         let known: BTreeSet<&WindowId> =
@@ -94,16 +157,25 @@ impl super::super::Session {
             output: target_output.clone(),
             workspace: target_workspace.clone(),
         };
-        if target_key == source_key {
-            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        if allow_cross_output {
+            // Explicit output send is cross-output only: a same-output
+            // target (even a distinct workspace) belongs to the
+            // workspace-send op.
+            if target_key.output == source_key.output {
+                return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
+            }
+        } else {
+            if target_key == source_key {
+                return Err(ProposeError::Refused(RefusalKind::Unchanged));
+            }
+            if target_key.output != source_key.output {
+                return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
+            }
         }
         let Some(target_domain) = self.domains.iter().find(|d| d.key() == target_key).cloned()
         else {
             return Err(ProposeError::Refused(RefusalKind::UnknownDomain));
         };
-        if target_key.output != source_key.output {
-            return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
-        }
         let base_revision = session_observation.observation.revision;
         // Source removal with recursive collapse.
         let source_tree = self.trees.get(&source_key).cloned().flatten();
@@ -225,11 +297,20 @@ impl super::super::Session {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }
         let desired_snapshot = self.snapshot_for(&desired_trees, &desired_windows);
-        let intent = LifecycleIntent::MoveToWorkspace {
-            window: window.clone(),
-            target_output: target_key.output.clone(),
-            target_workspace: target_key.workspace.clone(),
-            follow,
+        let intent = if allow_cross_output {
+            LifecycleIntent::MoveToOutput {
+                window: window.clone(),
+                target_output: target_key.output.clone(),
+                target_workspace: target_key.workspace.clone(),
+                follow,
+            }
+        } else {
+            LifecycleIntent::MoveToWorkspace {
+                window: window.clone(),
+                target_output: target_key.output.clone(),
+                target_workspace: target_key.workspace.clone(),
+                follow,
+            }
         };
         let operation = LifecycleOperation::MoveTiled {
             window: window.clone(),

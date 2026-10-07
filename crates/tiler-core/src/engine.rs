@@ -89,7 +89,7 @@ pub struct Engine {
     last_startup_fit_trace: Option<EngineStartupFitTrace>,
     /// Trace-only send placement diagnostic for the current op.
     ///
-    /// Set when [`Engine::workspace_request`] successfully proposes a
+    /// Set when [`Engine::transfer_request`] successfully proposes a
     /// `MoveToWorkspace` plan, copying the session's anchor/axis/projected
     /// selection. Cleared at the start of every [`Engine::handle`].
     last_send_placement: Option<EngineSendPlacementTrace>,
@@ -849,7 +849,8 @@ impl Engine {
                     _ => self.update_gaps_request(event),
                 }
             }
-            CoreCommand::SendToWorkspace { .. } => self.workspace_request(event),
+            CoreCommand::SendToWorkspace { .. } => self.transfer_request(event, false),
+            CoreCommand::SendToOutput { .. } => self.transfer_request(event, true),
             CoreCommand::ActiveGroup => self.active_group_request(event),
             CoreCommand::ReleaseDomain => self.release_request(event),
             CoreCommand::ToggleFloat { .. } => {
@@ -1853,18 +1854,34 @@ impl Engine {
     /// (`canonical-*`), fresh-source seed (`seed-failed`), one combined
     /// convergence, focus sync (`focus-mismatch`), propose (mapped to
     /// `Rejected`), and the `MoveTiled` shape gate (`move-op-invalid`).
-    fn workspace_request(&mut self, event: &CoreEvent) -> CoreReply {
-        let CoreCommand::SendToWorkspace {
-            window,
-            target_output,
-            target_workspace,
-            follow,
-        } = &event.command
-        else {
-            return CoreReply::Rejected {
-                kind: "unknown-value",
-                message: "request contains an unknown value",
-            };
+    ///
+    /// Shared by workspace send (`output_send=false`: `SendToWorkspace` /
+    /// `MoveToWorkspace`, same-output distinct-workspace only) and explicit
+    /// output send (`output_send=true`: `SendToOutput` / `MoveToOutput`,
+    /// the destination output's current workspace, cross-output only). The
+    /// canonical two-domain transfer, ordinary admission, and follow/stay
+    /// are identical; only the command/intent scope and the reply kind
+    /// differ.
+    fn transfer_request(&mut self, event: &CoreEvent, output_send: bool) -> CoreReply {
+        let (window, target_output, target_workspace, follow) = match &event.command {
+            CoreCommand::SendToWorkspace {
+                window,
+                target_output,
+                target_workspace,
+                follow,
+            } if !output_send => (window, target_output, target_workspace, follow),
+            CoreCommand::SendToOutput {
+                window,
+                target_output,
+                target_workspace,
+                follow,
+            } if output_send => (window, target_output, target_workspace, follow),
+            _ => {
+                return CoreReply::Rejected {
+                    kind: "unknown-value",
+                    message: "request contains an unknown value",
+                };
+            }
         };
         let Some((target_domain, target_key)) = event.target_domain.as_ref() else {
             return CoreReply::Rejected {
@@ -1988,7 +2005,7 @@ impl Engine {
                 }
             }
         };
-        let mut session = match Session::paired_from_canonical(
+        let mut session = match Session::paired_from_canonical_for_send(
             &source,
             target.as_ref(),
             vec![event.domain.clone(), target_domain.clone()],
@@ -2029,7 +2046,11 @@ impl Engine {
                 if counts.removed + counts.admitted + counts.flags_adopted > 0 {
                     self.last_convergence = Some(EngineConvergenceReport {
                         correlation: event.correlation.clone(),
-                        op: "send-to-workspace",
+                        op: if output_send {
+                            "send-to-output"
+                        } else {
+                            "send-to-workspace"
+                        },
                         removed: counts.removed,
                         admitted: counts.admitted,
                         flags_adopted: counts.flags_adopted,
@@ -2078,11 +2099,20 @@ impl Engine {
                 message: kind.message(),
             };
         }
-        let session_command = SessionCommand::MoveToWorkspace {
-            window: crate::directional::WindowId(window.clone()),
-            target_output: target_key.output.clone(),
-            target_workspace: target_key.workspace.clone(),
-            follow: *follow,
+        let session_command = if output_send {
+            SessionCommand::MoveToOutput {
+                window: crate::directional::WindowId(window.clone()),
+                target_output: target_key.output.clone(),
+                target_workspace: target_key.workspace.clone(),
+                follow: *follow,
+            }
+        } else {
+            SessionCommand::MoveToWorkspace {
+                window: crate::directional::WindowId(window.clone()),
+                target_output: target_key.output.clone(),
+                target_workspace: target_key.workspace.clone(),
+                follow: *follow,
+            }
         };
         match session.propose(
             &session_command,
@@ -2110,6 +2140,9 @@ impl Engine {
                 if Self::commit_lifecycle(&mut session, &plan, event, base)
                     && self.store_canonical_pair(source_key, target_key, session, event.outer_gap)
                 {
+                    if output_send {
+                        return CoreReply::SendOutput(typed);
+                    }
                     return CoreReply::SendWorkspace(typed);
                 }
                 CoreReply::SnapshotInvalid {

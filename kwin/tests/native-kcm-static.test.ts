@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { planShortcutCatalog } from "../src/plan-adapter-entry";
+import { planOutputSendShortcutCatalog, planShortcutCatalog } from "../src/plan-adapter-entry";
 import { workspaceShortcutCatalog } from "../src/workspace-native";
 
 const read = (path: string): string => readFileSync(join(process.cwd(), path), "utf8");
@@ -450,6 +450,7 @@ describe("native KCM static contract", () => {
     it("keeps the native shortcut catalog in parity with the TS shortcut catalogs", () => {
         const plan = planShortcutCatalog("cosmic");
         const workspace = workspaceShortcutCatalog();
+        const output = planOutputSendShortcutCatalog();
         const tsByAction = new Map<string, string>();
         for (const row of plan) {
             tsByAction.set(row.action, row.sequence);
@@ -457,10 +458,14 @@ describe("native KCM static contract", () => {
         for (const row of workspace) {
             tsByAction.set(row.action, row.sequence);
         }
+        for (const row of output) {
+            tsByAction.set(row.action, row.sequence);
+        }
         // Item 2 adds 36 workspace rows (8 relative follow, 20 absolute
         // stay with symbol aliases, 8 relative stay) to the 76 legacy rows
-        // (37 plan rows including toggle-orientation plus 39 item-1).
-        assert.equal(tsByAction.size, 112);
+        // (37 plan rows including toggle-orientation plus 39 item-1), and
+        // item 5 adds 12 output rows (8 follow with arrow aliases, 4 stay).
+        assert.equal(tsByAction.size, 124);
         const nativeByAction = new Map<string, string>();
         const nativeOrder: string[] = [];
         const entryPattern =
@@ -476,24 +481,33 @@ describe("native KCM static contract", () => {
                 nativeOrder.push(action);
             }
         }
-        // Item 2 parity: all 112 bindings now, including the 28 unbound
-        // stay rows with empty default sequences.
-        assert.equal(nativeByAction.size, 112);
+        // Item 5 parity: all 124 bindings now, including the 32 unbound
+        // stay rows (28 workspace plus 4 output) with empty defaults.
+        assert.equal(nativeByAction.size, 124);
         for (const [action, sequence] of nativeByAction) {
             assert.equal(tsByAction.get(action), sequence);
         }
-        const tsOrder = [...plan.map((row) => row.action), ...workspace.map((row) => row.action)];
+        const tsOrder = [
+            ...plan.map((row) => row.action),
+            ...workspace.map((row) => row.action),
+            ...output.map((row) => row.action),
+        ];
         assert.deepEqual(new Set(nativeOrder), new Set(tsOrder));
         assert.equal(nativeOrder.length, tsOrder.length);
-        // Item 2 order: the 36 new rows follow the 76 legacy rows in exact
-        // TS catalog order.
-        assert.deepEqual(nativeOrder.slice(76), workspace.slice(-36).map((row) => row.action));
-        for (const row of workspace) {
+        // Item 2 order: the 36 workspace rows follow the 76 legacy rows in
+        // exact TS catalog order; item 5 output rows follow in exact TS order.
+        assert.deepEqual(nativeOrder.slice(76, 112), workspace.slice(-36).map((row) => row.action));
+        assert.deepEqual(
+            nativeOrder.slice(112),
+            output.map((row) => row.action),
+        );
+        for (const row of [...workspace, ...output]) {
             if (row.sequence === "") {
                 assert.equal(nativeByAction.get(row.action), "");
             }
         }
-        // Spot-check the 8 bound follow chords and the unbound stay defaults.
+        // Spot-check the 8 bound workspace follow chords, the 8 bound output
+        // follow chords, and the unbound stay defaults.
         assert.equal(nativeByAction.get("plasma-auto-tiler-toggle-orientation"), "Meta+O");
         for (const [action, sequence] of [
             ["plasma-auto-tiler-send-prev-h", "Meta+Ctrl+Shift+H"],
@@ -504,8 +518,37 @@ describe("native KCM static contract", () => {
             ["plasma-auto-tiler-send-next-l", "Meta+Ctrl+Shift+L"],
             ["plasma-auto-tiler-send-next-down-arrow", "Meta+Ctrl+Shift+Down"],
             ["plasma-auto-tiler-send-next-right-arrow", "Meta+Ctrl+Shift+Right"],
+            ["plasma-auto-tiler-send-output-left", "Meta+Ctrl+Alt+H"],
+            ["plasma-auto-tiler-send-output-left-arrow", "Meta+Ctrl+Alt+Left"],
+            ["plasma-auto-tiler-send-output-down", "Meta+Ctrl+Alt+J"],
+            ["plasma-auto-tiler-send-output-down-arrow", "Meta+Ctrl+Alt+Down"],
+            ["plasma-auto-tiler-send-output-up", "Meta+Ctrl+Alt+K"],
+            ["plasma-auto-tiler-send-output-up-arrow", "Meta+Ctrl+Alt+Up"],
+            ["plasma-auto-tiler-send-output-right", "Meta+Ctrl+Alt+L"],
+            ["plasma-auto-tiler-send-output-right-arrow", "Meta+Ctrl+Alt+Right"],
         ] as const) {
             assert.equal(nativeByAction.get(action), sequence);
+        }
+        for (const action of [
+            "plasma-auto-tiler-send-output-left-stay",
+            "plasma-auto-tiler-send-output-down-stay",
+            "plasma-auto-tiler-send-output-up-stay",
+            "plasma-auto-tiler-send-output-right-stay",
+        ] as const) {
+            assert.equal(nativeByAction.get(action), "");
+        }
+        // Item 5 adds no stock conflicts for the Meta+Ctrl+Alt arms.
+        for (const token of [
+            "SHORTCUT_META_CTRL_ALT_H = 469762120",
+            "SHORTCUT_META_CTRL_ALT_J = 469762122",
+            "SHORTCUT_META_CTRL_ALT_K = 469762123",
+            "SHORTCUT_META_CTRL_ALT_L = 469762124",
+            "SHORTCUT_META_CTRL_ALT_LEFT = 486539282",
+            "SHORTCUT_META_CTRL_ALT_UP = 486539283",
+            "SHORTCUT_META_CTRL_ALT_DOWN = 486539285",
+            "SHORTCUT_META_CTRL_ALT_RIGHT = 486539284",
+        ]) {
+            assert.match(reconcilerHeader, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
         }
         // New stock conflicts for the send-arrow follow rows.
         for (const token of [

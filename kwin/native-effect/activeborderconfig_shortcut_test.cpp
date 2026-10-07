@@ -572,7 +572,8 @@ void selectionPresetsAndDraft()
     CHECK(module.shortcutDisabledIds().isEmpty());
     // Item 2 default-unbound rows are at canonical empty, not disabled: the
     // stay row starts enabled, present-empty, and rebindable through the
-    // existing route, and load must not auto-stage it.
+    // existing route, and load must not auto-stage it. Item 5 stay rows
+    // share the same zero-key support.
     {
         const QString stayId = QStringLiteral("kwin/plasma-auto-tiler-stay-workspace-1");
         CHECK(!module.shortcutDisabledIds().contains(stayId));
@@ -598,11 +599,34 @@ void selectionPresetsAndDraft()
             }
         }
         store.writeLog.clear();
+        const QString outStayId = QStringLiteral("kwin/plasma-auto-tiler-send-output-left-stay");
+        CHECK(!module.shortcutDisabledIds().contains(outStayId));
+        bool outStayFound = false;
+        for (const ShortcutTuple &tuple : store.tuples) {
+            if (tuple.component == QStringLiteral("kwin")
+                && tuple.action == QStringLiteral("plasma-auto-tiler-send-output-left-stay")) {
+                outStayFound = true;
+                CHECK(tuple.active.isEmpty());
+            }
+        }
+        CHECK(outStayFound);
+        CHECK(store.writeKeys(QStringLiteral("kwin"),
+                              QStringLiteral("plasma-auto-tiler-send-output-left-stay"),
+                              QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{999}, &confirmed,
+                              &writeError));
+        CHECK(confirmed == QList<int>{999});
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.component == QStringLiteral("kwin")
+                && tuple.action == QStringLiteral("plasma-auto-tiler-send-output-left-stay")) {
+                tuple.active.clear();
+            }
+        }
+        store.writeLog.clear();
     }
     QListWidget *list = conflictListByModule(module);
     CHECK(list != nullptr);
     if (list != nullptr) {
-        CHECK(list->count() == 112);
+        CHECK(list->count() == 124);
     }
     QPushButton *compatible = presetButtonByModule(module, "shortcutCompatibleButton");
     QPushButton *authentic = presetButtonByModule(module, "shortcutAuthenticButton");
@@ -629,6 +653,20 @@ void selectionPresetsAndDraft()
     CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-prev-k")));
     CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-next-j")));
     CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-next-l")));
+    // Item 5 Compatible: the eight follow rows and four stay rows keep with
+    // no stock KDE holder for the Meta+Ctrl+Alt arms.
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-left")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-left-arrow")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-left-stay")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-down")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-down-arrow")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-down-stay")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-up")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-up-arrow")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-up-stay")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-right")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-right-arrow")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-right-stay")));
     CHECK(store.totalWrites() == 0);
     CHECK(cleared.saves == 0);
     CHECK(!module.isShortcutForceApplyVisible());
@@ -826,7 +864,7 @@ void selectionMissingEnabledStatus()
         module.load();
         CHECK(module.shortcutStatusText().contains(QStringLiteral("unavailable"))
               || module.shortcutStatusText().contains(QStringLiteral("missing")));
-        CHECK(!module.shortcutStatusText().contains(QStringLiteral("applied (112 rows")));
+        CHECK(!module.shortcutStatusText().contains(QStringLiteral("applied (124 rows")));
     }
     {
         FakeShortcutStore store;
@@ -873,7 +911,7 @@ void selectionDisabledLockAbsentShowsRows()
     QListWidget *list = conflictListByModule(module);
     CHECK(list != nullptr);
     if (list != nullptr) {
-        CHECK(list->count() == 112);
+        CHECK(list->count() == 124);
     }
 }
 
@@ -1004,7 +1042,7 @@ void stateAndErrorPresentation()
         module.setShortcutStores(&store, &cleared);
         module.load();
         CHECK(module.shortcutStatusText().contains(QStringLiteral("Ready")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("112 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("124 rows")));
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(buttonByName(module, "shortcutFinishApplyButton") == nullptr);
         CHECK(buttonByName(module, "shortcutRestoreButton") == nullptr);
@@ -1035,7 +1073,7 @@ void stateAndErrorPresentation()
         module.requestShortcutApply();
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(module.shortcutStatusText().contains(QStringLiteral("applied")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("112 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("124 rows")));
     }
     // Conflict with an unknown foreign holder.
     {

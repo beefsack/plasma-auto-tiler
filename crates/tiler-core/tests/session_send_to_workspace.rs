@@ -653,3 +653,420 @@ fn r1_r4_untouched() {
     );
     assert!(full().supports(LifecycleCapability::MoveTiled));
 }
+
+// ---- explicit output send (REQ-OUT-04, item 5.3/5.4) ----
+
+fn out_mv(w: &str, o: &str, ws: &str, follow: bool) -> SessionCommand {
+    SessionCommand::MoveToOutput {
+        window: WindowId(w.to_owned()),
+        target_output: OutputId(o.to_owned()),
+        target_workspace: WorkspaceId(ws.to_owned()),
+        follow,
+    }
+}
+fn propose_out(s: &mut Session, w: &str, o: &str, ws: &str, follow: bool, c: &str) -> SessionPlan {
+    // Mirror the Engine path: sync session focus from the observed focused
+    // (mover) window before proposing, since admits leave focus on the last
+    // admitted domain which may be the target.
+    let link = s
+        .snapshot()
+        .windows
+        .iter()
+        .find(|l| l.window.0 == w)
+        .unwrap_or_else(|| panic!("mover link {w}"))
+        .clone();
+    assert!(s.sync_focus_from_window(&dk(&link.output.0, &link.workspace.0), &link.window));
+    let o0 = obs(s, vec![]);
+    s.propose(&out_mv(w, o, ws, follow), &o0, &corr(c), &full())
+        .unwrap_or_else(|e| panic!("output send proposes: {e:?}"))
+}
+fn parent_of(tree: &Node, leaf: &str) -> Option<NodeId> {
+    match tree {
+        Node::Leaf { .. } => None,
+        Node::Group { id, children, .. } => {
+            if children.iter().any(|c| c.id().0 == leaf) {
+                return Some(id.clone());
+            }
+            children.iter().find_map(|c| parent_of(c, leaf))
+        }
+    }
+}
+
+#[test]
+fn output_send_follow_moves_to_destination_current_workspace() {
+    // Follow carries the mover to the destination output's current workspace
+    // (resolved adapter-side, here out-2/ws-a): source collapses, focus and
+    // the retargeted link follow, geometry covers both domains.
+    let mut s = session();
+    admit(&mut s, "win-1", "out-1", "ws-a", 120, 80, "out-1");
+    admit(&mut s, "win-2", "out-1", "ws-a", 120, 80, "out-2");
+    admit(&mut s, "win-t", "out-2", "ws-a", 120, 80, "out-3");
+    let plan = propose_out(&mut s, "win-2", "out-2", "ws-a", true, "out-4");
+    assert!(matches!(
+        (&plan.dispatch.intent, &plan.dispatch.operation),
+        (
+            LifecycleIntent::MoveToOutput { window, target_output, target_workspace, follow: true },
+            LifecycleOperation::MoveTiled { leaf, source_output, target_output: to, .. }
+        )
+        if window.0 == "win-2" && target_output.0 == "out-2" && target_workspace.0 == "ws-a"
+            && leaf.0 == "leaf-win-2" && source_output.0 == "out-1" && to.0 == "out-2"
+    ));
+    assert_eq!(plan.desired_focus_domain, Some(dk("out-2", "ws-a")));
+    assert_eq!(
+        plan.desired_focus_leaf,
+        Some(NodeId("leaf-win-2".to_owned()))
+    );
+    ack_verify(&mut s, &plan, "out-4", 300);
+    assert_eq!(
+        s_leaves(&s, "out-1", "ws-a"),
+        vec!["leaf-win-1".to_string()]
+    );
+    assert!(s_leaves(&s, "out-2", "ws-a").contains(&"leaf-win-2".to_string()));
+    let link = s
+        .snapshot()
+        .windows
+        .iter()
+        .find(|l| l.window.0 == "win-2")
+        .expect("mover link")
+        .clone();
+    assert_eq!(link.output.0, "out-2");
+    assert_eq!(link.workspace.0, "ws-a");
+    assert_eq!(
+        s.focus(),
+        (
+            Some(dk("out-2", "ws-a")),
+            Some(NodeId("leaf-win-2".to_owned()))
+        )
+    );
+}
+
+#[test]
+fn output_send_stay_keeps_source_mru_without_selecting_target() {
+    // Stay moves the window but leaves the source selected: the source MRU
+    // survivor keeps focus and the operation echoes follow=false.
+    // Destination admission matches the follow path.
+    fn trio(tag: &str) -> Session {
+        let mut s = session();
+        admit(
+            &mut s,
+            "win-1",
+            "out-1",
+            "ws-a",
+            120,
+            80,
+            &format!("{tag}-1"),
+        );
+        admit(
+            &mut s,
+            "win-2",
+            "out-1",
+            "ws-a",
+            120,
+            80,
+            &format!("{tag}-2"),
+        );
+        admit(
+            &mut s,
+            "win-3",
+            "out-1",
+            "ws-a",
+            120,
+            80,
+            &format!("{tag}-3"),
+        );
+        admit(
+            &mut s,
+            "win-t",
+            "out-2",
+            "ws-a",
+            120,
+            80,
+            &format!("{tag}-4"),
+        );
+        s
+    }
+    let mut s_follow = trio("stay-f");
+    let follow_plan = propose_out(&mut s_follow, "win-3", "out-2", "ws-a", true, "stay-f5");
+    let mut s_stay = trio("stay-s");
+    let stay_plan = propose_out(&mut s_stay, "win-3", "out-2", "ws-a", false, "stay-s5");
+    // Identical destination topology/geometry/operation; only focus differs.
+    assert_eq!(
+        p_leaves(&stay_plan, "out-2", "ws-a"),
+        p_leaves(&follow_plan, "out-2", "ws-a")
+    );
+    assert_eq!(
+        stay_plan.desired_geometry, follow_plan.desired_geometry,
+        "stay/follow share destination geometry"
+    );
+    assert!(matches!(
+        &stay_plan.dispatch.intent,
+        LifecycleIntent::MoveToOutput { follow: false, .. }
+    ));
+    assert_eq!(stay_plan.desired_focus_domain, Some(dk("out-1", "ws-a")));
+    assert_eq!(
+        stay_plan.desired_focus_leaf,
+        Some(NodeId("leaf-win-2".to_owned())),
+        "source MRU survivor keeps focus"
+    );
+    ack_verify(&mut s_stay, &stay_plan, "stay-s5", 310);
+    assert_eq!(
+        s_stay.focus(),
+        (
+            Some(dk("out-1", "ws-a")),
+            Some(NodeId("leaf-win-2".to_owned()))
+        )
+    );
+    assert!(s_leaves(&s_stay, "out-2", "ws-a").contains(&"leaf-win-3".to_string()));
+}
+
+#[test]
+fn output_send_admits_at_remembered_leaf() {
+    // Ordinary admission: the mover splits beside the destination's
+    // remembered last-active leaf (here win-t2, focused last on the target).
+    let mut s = session();
+    admit(&mut s, "win-t1", "out-2", "ws-a", 120, 80, "rem-1");
+    admit(&mut s, "win-t2", "out-2", "ws-a", 120, 80, "rem-2");
+    admit(&mut s, "win-1", "out-1", "ws-a", 120, 80, "rem-3");
+    admit(&mut s, "win-2", "out-1", "ws-a", 120, 80, "rem-4");
+    let plan = propose_out(&mut s, "win-2", "out-2", "ws-a", true, "rem-5");
+    let target = at(&plan.desired_snapshot.domains, "out-2", "ws-a").expect("target");
+    assert_eq!(flat(Some(&target)).len(), 3);
+    let mover_parent = parent_of(&target, "leaf-win-2").expect("mover parent");
+    assert_eq!(
+        parent_of(&target, "leaf-win-t2"),
+        Some(mover_parent),
+        "mover splits beside the remembered leaf"
+    );
+    ack_verify(&mut s, &plan, "rem-5", 320);
+    assert!(s_leaves(&s, "out-2", "ws-a").contains(&"leaf-win-2".to_string()));
+}
+
+#[test]
+fn output_send_scope_refusals_keep_ops_distinct() {
+    // Explicit output send is DISTINCT from workspace send: same-output
+    // targets refuse (that scope belongs to `MoveToWorkspace`), unknown
+    // targets refuse as UnknownDomain. Same-domain is same-output, hence
+    // CrossDomainMismatch rather than Unchanged.
+    let mut s = session();
+    admit(&mut s, "win-1", "out-1", "ws-a", 120, 80, "scope-1");
+    admit(&mut s, "win-2", "out-1", "ws-a", 120, 80, "scope-2");
+    assert_eq!(
+        mr(
+            &mut s,
+            &out_mv("win-2", "out-1", "ws-b", true),
+            "scope-3",
+            &full()
+        ),
+        RefusalKind::CrossDomainMismatch,
+        "same-output distinct workspace belongs to workspace send"
+    );
+    assert_eq!(
+        mr(
+            &mut s,
+            &out_mv("win-2", "out-1", "ws-a", true),
+            "scope-4",
+            &full()
+        ),
+        RefusalKind::CrossDomainMismatch,
+        "same-domain is same-output for output send"
+    );
+    assert_eq!(
+        mr(
+            &mut s,
+            &out_mv("win-2", "out-9", "ws-z", true),
+            "scope-5",
+            &full()
+        ),
+        RefusalKind::UnknownDomain
+    );
+    // Workspace send keeps refusing cross-output targets (unchanged).
+    assert_eq!(
+        mr(
+            &mut s,
+            &SessionCommand::MoveToWorkspace {
+                window: WindowId("win-2".to_owned()),
+                target_output: OutputId("out-2".to_owned()),
+                target_workspace: WorkspaceId("ws-a".to_owned()),
+                follow: true,
+            },
+            "scope-6",
+            &full()
+        ),
+        RefusalKind::CrossDomainMismatch
+    );
+}
+
+#[test]
+fn output_send_refuses_sticky_and_intentional_floats() {
+    // Sticky/intentional floats are ineligible like workspace send: float
+    // and sticky exception movers refuse as NotTiled.
+    for (flag, admit_c, mr_c) in [
+        ("floating", "elig-f1", "elig-f2"),
+        ("sticky", "elig-s1", "elig-s2"),
+    ] {
+        let mut s = session();
+        admit(&mut s, "win-1", "out-1", "ws-a", 120, 80, admit_c);
+        let mut row = tiled("win-f", "out-1", "ws-a");
+        if flag == "floating" {
+            row.floating = true;
+        } else {
+            row.sticky = true;
+        }
+        let o0 = obs(&s, vec![row]);
+        let mut flags = ExceptionFlags::none();
+        if flag == "floating" {
+            flags.floating = true;
+        } else {
+            flags.sticky = true;
+        }
+        let cmd = SessionCommand::Admit {
+            window: WindowId("win-f".to_owned()),
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-a".to_owned()),
+            exceptions: flags,
+            exception_behavior: Some(ExceptionBehavior::Defer),
+            placement_bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 120,
+                h: 80,
+            },
+        };
+        let dp = s
+            .propose(&cmd, &o0, &corr(admit_c), &full())
+            .expect("defer");
+        ack_verify(&mut s, &dp, admit_c, 330);
+        assert_eq!(
+            mr(
+                &mut s,
+                &out_mv("win-f", "out-2", "ws-a", true),
+                mr_c,
+                &full()
+            ),
+            RefusalKind::NotTiled,
+            "{flag} movers are ineligible"
+        );
+    }
+}
+
+#[test]
+fn output_send_uses_focus_history_when_remembered_stale() {
+    // 5.4 destination focus-history fallback: the destination's remembered
+    // last-active leaf (win-a3) departed via an earlier output send, leaving
+    // a stale anchor, while the destination focus history retains win-a2.
+    // The mover must split beside the history leaf (not the stale remembered
+    // leaf, not a root wrap): same parent as win-a2 in the desired target.
+    let mut s = session();
+    admit(&mut s, "win-a1", "out-2", "ws-a", 120, 80, "mru-1");
+    admit(&mut s, "win-a2", "out-2", "ws-a", 120, 80, "mru-2");
+    admit(&mut s, "win-a3", "out-2", "ws-a", 120, 80, "mru-3");
+    admit(&mut s, "win-b1", "out-1", "ws-b", 120, 80, "mru-4");
+    let first = propose_out(&mut s, "win-a3", "out-1", "ws-b", true, "mru-5");
+    ack_verify(&mut s, &first, "mru-5", 400);
+    assert_eq!(s_leaves(&s, "out-2", "ws-a").len(), 2);
+    admit(&mut s, "win-c1", "out-1", "ws-a", 120, 80, "mru-6");
+    admit(&mut s, "win-c2", "out-1", "ws-a", 120, 80, "mru-7");
+    let plan = propose_out(&mut s, "win-c2", "out-2", "ws-a", true, "mru-8");
+    assert!(matches!(
+        &plan.dispatch.intent,
+        LifecycleIntent::MoveToOutput { follow: true, .. }
+    ));
+    let target = at(&plan.desired_snapshot.domains, "out-2", "ws-a").expect("target");
+    assert_eq!(flat(Some(&target)).len(), 3);
+    let mover_parent = parent_of(&target, "leaf-win-c2").expect("mover parent");
+    assert_eq!(
+        parent_of(&target, "leaf-win-a2"),
+        Some(mover_parent),
+        "mover splits beside the focus-history leaf, not a root wrap"
+    );
+    assert_eq!(plan.desired_focus_domain, Some(dk("out-2", "ws-a")));
+    assert_eq!(
+        plan.desired_focus_leaf,
+        Some(NodeId("leaf-win-c2".to_owned()))
+    );
+    ack_verify(&mut s, &plan, "mru-8", 410);
+    // Source collapses; the earlier send domain is undisturbed.
+    assert_eq!(
+        s_leaves(&s, "out-1", "ws-a"),
+        vec!["leaf-win-c1".to_string()]
+    );
+    let mut ws_b = s_leaves(&s, "out-1", "ws-b");
+    ws_b.sort();
+    assert_eq!(
+        ws_b,
+        vec!["leaf-win-a3".to_string(), "leaf-win-b1".to_string()]
+    );
+    assert!(s_leaves(&s, "out-2", "ws-a").contains(&"leaf-win-c2".to_string()));
+}
+
+#[test]
+fn output_send_empty_destination_admits_lone_root_follow_and_stay() {
+    // Genuine root fallback: no remembered leaf and no destination focus
+    // history exist (destination never admitted), so the mover becomes the
+    // lone root. Follow focuses the mover on the target; stay with a sole
+    // source window leaves no focus, and no other domain is disturbed.
+    fn pair(tag: &str) -> Session {
+        let mut s = session();
+        admit(
+            &mut s,
+            "win-1",
+            "out-1",
+            "ws-a",
+            120,
+            80,
+            &format!("{tag}-1"),
+        );
+        admit(
+            &mut s,
+            "win-2",
+            "out-1",
+            "ws-a",
+            120,
+            80,
+            &format!("{tag}-2"),
+        );
+        s
+    }
+    let mut s_follow = pair("empty-f");
+    let follow_plan = propose_out(&mut s_follow, "win-2", "out-2", "ws-a", true, "empty-f3");
+    assert_eq!(
+        p_leaves(&follow_plan, "out-2", "ws-a"),
+        vec!["leaf-win-2".to_string()],
+        "mover is the lone root of the empty destination"
+    );
+    assert_eq!(follow_plan.desired_focus_domain, Some(dk("out-2", "ws-a")));
+    assert_eq!(
+        follow_plan.desired_focus_leaf,
+        Some(NodeId("leaf-win-2".to_owned()))
+    );
+    ack_verify(&mut s_follow, &follow_plan, "empty-f3", 420);
+    assert_eq!(
+        s_leaves(&s_follow, "out-1", "ws-a"),
+        vec!["leaf-win-1".to_string()]
+    );
+    assert!(s_leaves(&s_follow, "out-1", "ws-b").is_empty());
+
+    let mut s_stay = Session::new(
+        owner(),
+        generation(),
+        0,
+        7,
+        vec![
+            dom("out-1", "ws-a"),
+            dom("out-1", "ws-b"),
+            dom("out-2", "ws-a"),
+        ],
+    )
+    .expect("s");
+    admit(&mut s_stay, "solo", "out-1", "ws-a", 120, 80, "empty-s1");
+    let stay_plan = propose_out(&mut s_stay, "solo", "out-2", "ws-a", false, "empty-s2");
+    assert_eq!(
+        p_leaves(&stay_plan, "out-2", "ws-a"),
+        vec!["leaf-solo".to_string()]
+    );
+    assert_eq!(stay_plan.desired_focus_domain, None);
+    assert_eq!(stay_plan.desired_focus_leaf, None);
+    ack_verify(&mut s_stay, &stay_plan, "empty-s2", 430);
+    assert!(s_leaves(&s_stay, "out-1", "ws-a").is_empty());
+    assert_eq!(s_stay.focus(), (None, None));
+}

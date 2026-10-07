@@ -42,9 +42,13 @@
 // check.
 //
 // Refusal routes are exact bounded tokens: no-planner, owner-loss,
-// stale-revision, cross-output, same-workspace, absent-focus, non-tiled-focus,
-// desktop-cap (observed desktop count above the KWin cap of 25), and
-// last-desktop (no distinct target desktop can exist). Pre-flight refusals
+// stale-revision, cross-output, same-output, same-workspace, target-mismatch,
+// transfer-unavailable, absent-focus, non-tiled-focus, desktop-cap (observed
+// desktop count above the KWin cap of 25), and last-desktop (no distinct
+// target desktop can exist). `cross-output` guards the same-output route;
+// `same-output` guards the explicit output-send route (use workspace send);
+// `target-mismatch` is a drifted output-send destination; `transfer-unavailable`
+// is missing output-transfer capabilities. Pre-flight refusals
 // (scope-invalid plus the requestSend validation tokens above) log one
 // structured best-effort `plasma-auto-tiler:route-diag` line and return false
 // with the adapter still enabled, so a later valid send can proceed.
@@ -212,6 +216,22 @@ export interface WorkspaceSendAdapterEnv {
     readonly scheduleOnce: (delayMs: number, callback: () => void) => () => void;
     readonly log: (message: string) => void;
     readonly observe: (targetWorkspace: string, pinnedSourceWorkspace?: string) => WorkspaceSendObserved | null;
+    // Cross-output observation for explicit output send (REQ-OUT-04, item
+    // 5.3/5.4): source output current workspace plus the named destination
+    // output's current workspace with per-output windows. Resolves the
+    // destination workspace once; a target workspace that is not the live
+    // current desktop of the named output fails closed (null). The flight
+    // pin (source output plus workspace, both frozen at dispatch) rides the
+    // trailing parameters: deriving the source from the live active window
+    // would collapse target===source once the still-active mover lands on
+    // the destination, and geometry/arrival could never confirm. Absent in
+    // legacy harnesses, which refuse output send at dispatch.
+    readonly observeOutput?: (
+        targetOutput: string,
+        targetWorkspace: string,
+        pinnedSourceWorkspace?: string,
+        pinnedSourceOutput?: string,
+    ) => WorkspaceSendObserved | null;
     // Single settlement edge for entry-owned coordination: invoked exactly
     // once on every terminal path that held a flight (arrival, failed native
     // write, stale/rejected reply, missing callback, deadline, closed mover,
@@ -239,6 +259,39 @@ export interface WorkspaceSendAdapterEnv {
     // Absent only in legacy isolated core tests, which retain the immediate
     // post-write observation path.
     readonly subscribeMoverDesktops?: (moverRef: object, handler: () => void) => (() => void) | null;
+    // Synchronous desktop-membership read for the cross-output placement
+    // arrival proof (read alongside the output on the dispatch-retained
+    // mover ref). Production entries bind this to the Window.desktops
+    // membership stable ids.
+    readonly readDesktopIds?: (ref: object) => ReadonlyArray<string> | null;
+    // Read-only live mover evidence for cross-output mid-write fences. The
+    // dispatch-retained ref must still resolve to the identical live object
+    // in the current window list with its native identity and current
+    // exception flags, homed or not: a half-applied transfer is valid
+    // mid-flight but a closed or replaced mover must fail closed before any
+    // later setter. Null on anything unreadable. Never invents identity
+    // (exact retained ref only). Absent hooks fail closed wherever the
+    // unhomed path needs them.
+    readonly readMoverLive?: (moverRef: object) => {
+        readonly id: string;
+        readonly floating: boolean;
+        readonly sticky: boolean;
+        readonly fullscreen: boolean;
+        readonly maximized: boolean;
+    } | null;
+    // Cross-output transfer capabilities for explicit output send (REQ-OUT-04,
+    // item 5.3/5.4). All seven must be present for output send; any absence
+    // refuses at dispatch with `transfer-unavailable` and same-output
+    // behavior is unchanged. Bound to public typed surfaces only: the output
+    // observation hook, exact Output object resolution by name,
+    // workspace.sendClientToScreen with the exact target Output object,
+    // synchronous output and desktop reads for the placement arrival proof,
+    // a read-only live mover hook for mid-write lifetime proofs, and a
+    // one-shot outputChanged fence for delayed arrival.
+    readonly resolveOutput?: (name: string) => object | null;
+    readonly sendClientToScreen?: (mover: object, output: object) => boolean;
+    readonly readOutputName?: (ref: object) => string | null;
+    readonly subscribeMoverOutput?: (moverRef: object, handler: (old: unknown) => void) => (() => void) | null;
 }
 
 // Exact terminal flight domains carried on the single settlement edge so the
@@ -438,6 +491,25 @@ function toDiagOrdinal(value: unknown): number {
     return toDiagInt(value, 0, 9);
 }
 
+// Cross-output transfer gate for explicit output send. All seven must be
+// present: the output observation hook, exact Output object resolution by
+// name, sendClientToScreen transfer, synchronous output and desktop reads
+// for the placement arrival proof, the read-only live mover hook for
+// mid-write lifetime proofs, and the one-shot outputChanged fence for
+// delayed arrival. Any absence refuses output send at dispatch with
+// `transfer-unavailable` and same-output behavior is unchanged.
+function outputTransferSupported(env: WorkspaceSendAdapterEnv): boolean {
+    return (
+        typeof env.observeOutput === "function" &&
+        typeof env.resolveOutput === "function" &&
+        typeof env.sendClientToScreen === "function" &&
+        typeof env.readOutputName === "function" &&
+        typeof env.readDesktopIds === "function" &&
+        typeof env.readMoverLive === "function" &&
+        typeof env.subscribeMoverOutput === "function"
+    );
+}
+
 // Exact lifecycle precondition vector for a same-output move-tiled plan. The
 // `adapter-must-verify-postconditions` token is accepted for codec
 // compatibility with the immediate-commit Rust reply; this adapter performs
@@ -620,7 +692,11 @@ function validateMoveTiledOperation(value: unknown): { record: Record<string, un
     return { record: value, follow };
 }
 
-function validatePlanned(reply: unknown, correlationId: string): WorkspacePlanned | null {
+function validatePlanned(
+    reply: unknown,
+    correlationId: string,
+    expectedKind: "send-to-workspace" | "send-to-output",
+): WorkspacePlanned | null {
     if (!isRecord(reply)) {
         return null;
     }
@@ -633,7 +709,10 @@ function validatePlanned(reply: unknown, correlationId: string): WorkspacePlanne
     if (reply["outcome"] !== "planned") {
         return null;
     }
-    if (reply["kind"] !== "send-to-workspace") {
+    // The wire kind binds the route: same-output flights accept only
+    // `send-to-workspace`, cross-output flights only `send-to-output`. A
+    // mismatched kind is a mismatched reply and never actuates.
+    if (reply["kind"] !== expectedKind) {
         return null;
     }
     const baseRevision = reply["base_revision"];
@@ -652,10 +731,12 @@ function validatePlanned(reply: unknown, correlationId: string): WorkspacePlanne
     const opFollow = operationValidated.follow;
     // Follow is target-bound: the planned desired focus must name the moved
     // leaf in the operation target domain. Stay is source-bound: the
-    // planned desired focus is null when the source is left empty, else it
-    // must name the source domain with a non-mover survivor leaf (the
-    // source-MRU fallback, never the target). Any other focus is a
-    // mismatched (stale or malicious) reply and never actuates or follows.
+    // planned desired focus is null (or absent on the wire, which Rust
+    // omits when the plan carries no focus) when the source is left empty
+    // or focus-less, else it must name the source domain with a non-mover
+    // survivor leaf (the source-MRU fallback, never the target). Any other
+    // focus is a mismatched (stale or malicious) reply and never actuates
+    // or follows.
     const focusRaw = reply["desired_focus"];
     let followFocus: WorkspaceFollowFocus | null = null;
     if (opFollow) {
@@ -682,7 +763,7 @@ function validatePlanned(reply: unknown, correlationId: string): WorkspacePlanne
             leaf: focusRaw["leaf"] as string,
         });
     } else {
-        if (focusRaw === null) {
+        if (focusRaw === null || focusRaw === undefined) {
             followFocus = null;
         } else {
             if (!isRecord(focusRaw) || !hasExactKeys(focusRaw, ["domain_output", "domain_workspace", "leaf"])) {
@@ -1033,6 +1114,19 @@ interface WorkspacePendingFlight {
     // into the target (desktop switch then mover focus), false stays on the
     // source (no switch, no focus write). Bound to the echoed operation.
     readonly follow: boolean;
+    // Dispatch-retained mover ref for cross-output arrival proofs. Scope-
+    // homed scans cannot see a half-applied transfer (output moved,
+    // membership pending, or vice versa), so cross-output arrival is proven
+    // by native output plus single-desktop reads on this ref (R4 precedent),
+    // never by homing. Same-output flights never consult it.
+    readonly moverRef: object | null;
+    // Explicit output send (REQ-OUT-04, item 5.3/5.4): the target lives on a
+    // different output whose current workspace was resolved once at dispatch.
+    // False preserves the historical same-output workspace-send behavior.
+    // Cross-output flights transfer output first (R4 order), prove output in
+    // arrival, and skip the desktop switch on follow (the destination is
+    // already visible on its output; focus carries the follow).
+    readonly crossOutput: boolean;
     baseRevision: number;
     planned: WorkspacePlanned | null;
     // Arrival follow runs at most once per flight. It never advances any
@@ -1077,6 +1171,10 @@ export class WorkspaceSendAdapter {
     // when the immediate observation shows no arrival yet; detached on the
     // first signal and on every terminal path.
     private arrivalDetach: (() => void) | null = null;
+    // Cross-output companion for the mover outputChanged fence. Armed and
+    // detached alongside arrivalDetach on output-send flights only; null on
+    // same-output flights, which never consult it.
+    private arrivalOutputDetach: (() => void) | null = null;
     private seq = 0;
     // Bounded correlation rotation: after WORKSPACE_SEND_MAX_SEQ correlations
     // the sequence wraps with a rotation prefix so correlations are never
@@ -1286,7 +1384,14 @@ export class WorkspaceSendAdapter {
         // source; anything else (including absent) follows the mover into
         // the target, preserving the historical follow behavior.
         const wantsFollow = follow !== false;
-        const payload = this.buildRequestPayload(observed, correlation, flightInnerGap, flightOuterGap, wantsFollow);
+        const payload = this.buildRequestPayload(
+            observed,
+            correlation,
+            flightInnerGap,
+            flightOuterGap,
+            wantsFollow,
+            "send-to-workspace",
+        );
         if (payload === null) {
             this.refuse("payload-invalid", correlation);
             return false;
@@ -1309,6 +1414,142 @@ export class WorkspaceSendAdapter {
             flightInnerGap,
             flightOuterGap,
             wantsFollow,
+            false,
+        );
+        return this.inFlight;
+    }
+
+    // Explicit output send (REQ-OUT-04, item 5.3/5.4): the mover crosses to
+    // the named destination output's current workspace (resolved once by the
+    // entry via FULL-rectangle adjacency selection). Distinct wire op
+    // `send-to-output` with the same `target_domain`/`target_windows` shape
+    // and the same ordinary admission plus explicit follow/stay as workspace
+    // send. Tiled-subject eligibility mirrors workspace send (sticky and
+    // intentional floats excluded via the observer's tiled-only mover gate).
+    // Floating-workspace boundaries never reach here: the entry transfers
+    // membership-only there. Requires all seven transfer capabilities;
+    // otherwise refuses `transfer-unavailable` with same-output behavior
+    // unchanged. Same-output targets refuse `same-output` (use workspace
+    // send); the core stays authoritative for unchanged/unknown domains.
+    requestSendToOutput(
+        targetOutput: unknown,
+        targetWorkspace: unknown,
+        follow?: unknown,
+        requestedOrdinal?: unknown,
+    ): boolean {
+        if (!this.enabled) {
+            this.refuse("disabled");
+            return false;
+        }
+        if (this.inFlight) {
+            this.diag("request", this.activeCorrelation, this.pending?.baseRevision ?? 0, "refuse", "in-flight");
+            return false;
+        }
+        if (!isOpaqueId(targetOutput) || !isOpaqueId(targetWorkspace)) {
+            this.refuse("target-invalid");
+            return false;
+        }
+        if (!outputTransferSupported(this.env)) {
+            this.refuse("transfer-unavailable");
+            return false;
+        }
+        if (this.seq < 0 || this.seq > WORKSPACE_SEND_MAX_SEQ) {
+            const nextEpoch = this.seqEpoch + 1;
+            if (!Number.isSafeInteger(nextEpoch)) {
+                this.refuse("sequence-invalid");
+                return false;
+            }
+            const candidate = `${this.generation}-w${String(nextEpoch)}r0`;
+            if (!isCorrelationId(candidate)) {
+                this.refuse("sequence-invalid");
+                return false;
+            }
+            this.seqEpoch = nextEpoch;
+            this.seq = 0;
+            this.diag("request", candidate, 0, "sequence-exhausted", "correlation-rotated");
+        }
+        const observed = this.freshOutputObserved(targetOutput, targetWorkspace);
+        if (observed === null) {
+            this.refuse("scope-invalid");
+            return false;
+        }
+        // Distinct outputs may share one current workspace/desktop (a single
+        // global desktop shown everywhere): no last-desktop gate here, only
+        // the desktop cap, target existence, and the same-output refusal.
+        // Same-output workspace send keeps its own last-desktop gate.
+        if (!observed.targetExists) {
+            this.refuse("target-workspace-missing");
+            return false;
+        }
+        // The output-send target must live on a different output with the
+        // entry-resolved current workspace; same-output targets belong to
+        // workspace send and a drifted workspace is stale scope.
+        if (observed.targetOutput !== (targetOutput as string)) {
+            this.refuse("target-mismatch");
+            return false;
+        }
+        if (observed.targetOutput === observed.sourceOutput) {
+            this.refuse("same-output");
+            return false;
+        }
+        if (observed.targetWorkspace !== (targetWorkspace as string)) {
+            this.refuse("target-mismatch");
+            return false;
+        }
+        if (observed.activeRef === null) {
+            this.refuse("absent-focus");
+            return false;
+        }
+        if (observed.focusedId === "" || !observed.sourceWindows.some((w) => w.id === observed.focusedId)) {
+            this.refuse("non-tiled-focus");
+            return false;
+        }
+        if (observed.desktopCount > WORKSPACE_SEND_MAX_DESKTOPS) {
+            this.refuse("desktop-cap");
+            return false;
+        }
+        const correlation =
+            this.seqEpoch === 0
+                ? `${this.generation}-w${String(this.seq)}`
+                : `${this.generation}-w${String(this.seqEpoch)}r${String(this.seq)}`;
+        this.seq += 1;
+        if (!isCorrelationId(correlation)) {
+            this.refuse("correlation-invalid");
+            return false;
+        }
+        const snapshot = snapshotOf(observed);
+        const flightInnerGap = this.innerGap;
+        const flightOuterGap = this.outerGap;
+        const wantsFollow = follow !== false;
+        const payload = this.buildRequestPayload(
+            observed,
+            correlation,
+            flightInnerGap,
+            flightOuterGap,
+            wantsFollow,
+            "send-to-output",
+        );
+        if (payload === null) {
+            this.refuse("payload-invalid", correlation);
+            return false;
+        }
+        if (payload.length > WORKSPACE_SEND_MAX_REQUEST_BYTES) {
+            this.refuse("request-over-cap", correlation);
+            return false;
+        }
+        this.startFlight(
+            correlation,
+            snapshot,
+            observed,
+            observed.targetWorkspace,
+            observed.focusedId,
+            observed.targetDesktopRef,
+            payload,
+            toDiagOrdinal(requestedOrdinal),
+            flightInnerGap,
+            flightOuterGap,
+            wantsFollow,
+            true,
         );
         return this.inFlight;
     }
@@ -1327,12 +1568,52 @@ export class WorkspaceSendAdapter {
         return observed as WorkspaceSendObserved;
     }
 
+    private freshOutputObserved(
+        targetOutput: string,
+        targetWorkspace: string,
+        pinnedSourceWorkspace?: string,
+        pinnedSourceOutput?: string,
+    ): WorkspaceSendObserved | null {
+        const hook = this.env.observeOutput;
+        if (typeof hook !== "function") {
+            return null;
+        }
+        let observed: WorkspaceSendObserved | null = null;
+        try {
+            observed = hook(targetOutput, targetWorkspace, pinnedSourceWorkspace, pinnedSourceOutput);
+        } catch (error) {
+            void error;
+            observed = null;
+        }
+        if (!validateObserved(observed)) {
+            return null;
+        }
+        return observed as WorkspaceSendObserved;
+    }
+
+    // Flight-aware re-observation: cross-output flights resolve through the
+    // output hook with the frozen destination pair AND the frozen source
+    // pair; same-output flights keep the workspace hook. Anything unreadable
+    // fails closed (null).
+    private freshForPending(pending: WorkspacePendingFlight): WorkspaceSendObserved | null {
+        if (pending.crossOutput) {
+            return this.freshOutputObserved(
+                pending.snapshot.targetOutput,
+                pending.targetWorkspace,
+                pending.snapshot.sourceWorkspace,
+                pending.snapshot.sourceOutput,
+            );
+        }
+        return this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+    }
+
     private buildRequestPayload(
         observed: WorkspaceSendObserved,
         correlation: string,
         innerGap: number,
         outerGap: number,
         follow: boolean,
+        op: "send-to-workspace" | "send-to-output",
     ): string | null {
         // Portable wire fields only: `floating` and `fit_excluded` (the
         // observer-carried fit opt-out, already ORed over floating, sticky,
@@ -1396,7 +1677,7 @@ export class WorkspaceSendAdapter {
                 windows: sourceWindows,
                 target_windows: targetWindows,
                 command: {
-                    op: "send-to-workspace",
+                    op,
                     window: observed.focusedId,
                     target_output: observed.targetOutput,
                     target_workspace: observed.targetWorkspace,
@@ -1430,6 +1711,7 @@ export class WorkspaceSendAdapter {
         innerGap: number,
         outerGap: number,
         follow: boolean,
+        crossOutput: boolean,
     ): void {
         this.inFlight = true;
         this.detachArrival();
@@ -1449,6 +1731,8 @@ export class WorkspaceSendAdapter {
             srcInSource: flags.srcInSource,
             srcInTarget: flags.srcInTarget,
             follow,
+            crossOutput,
+            moverRef: observed.moverRef ?? null,
             baseRevision: 0,
             planned: null,
             followed: false,
@@ -1714,7 +1998,7 @@ export class WorkspaceSendAdapter {
             this.settleTerminal(flight, correlation, "service-fault", "release");
             return;
         }
-        const planned = validatePlanned(parsed, correlation);
+        const planned = validatePlanned(parsed, correlation, pending.crossOutput ? "send-to-output" : "send-to-workspace");
         if (planned === null) {
             this.settleTerminal(flight, correlation, "precondition-mismatch", "release");
             return;
@@ -1843,7 +2127,7 @@ export class WorkspaceSendAdapter {
             this.settleTerminal(flight, correlation, "stale-scope", "release");
             return;
         }
-        const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        const fresh = this.freshForPending(pending);
         if (fresh === null) {
             this.settleTerminal(flight, correlation, "stale-revision", "release");
             return;
@@ -1857,6 +2141,16 @@ export class WorkspaceSendAdapter {
         // membership but revokes visibility, so a stay must run zero
         // writes. Follow re-selects the view itself and is unaffected.
         if (!pending.follow && !sourceStillSelected(fresh, pending.snapshot)) {
+            this.settleTerminal(flight, correlation, "stale-revision", "release");
+            return;
+        }
+        // Explicit output follow never reselects the source (no desktop
+        // switch rides an output follow: the destination is already visible
+        // on its output), so the actual source current workspace must still
+        // match the frozen source before the first setter, for follow and
+        // stay alike. A pinned observation can report a hidden old source;
+        // following from a switched-away source would strand focus.
+        if (pending.crossOutput && !sourceStillSelected(fresh, pending.snapshot)) {
             this.settleTerminal(flight, correlation, "stale-revision", "release");
             return;
         }
@@ -1881,13 +2175,43 @@ export class WorkspaceSendAdapter {
         // immediate post-write observation.
         this.armArrivalSignal(flight, correlation);
         this.nativeWriteDepth += 1;
-        const geometryWritten = this.writeGeometries(flight, correlation, pending, planned);
-        // Pre-write observation immediately before the mover membership
-        // write. Best-effort only.
-        this.emitFollowDiag(correlation, planned.baseRevision, "send-pre-mover", fresh, this.diagBasisOf(pending), -1, -1);
-        const moverWritten = geometryWritten && this.writeMoverDesktops(flight, correlation, pending);
+        // Cross-output order (R4 order): output transfer, mover desktop
+        // membership, then planned geometries. Transfer and membership run
+        // back-to-back on dispatch-captured refs with token/gap/tiled fences
+        // only: no scope re-observation between them can mistake the
+        // intended synchronous relocation for stale scope. Geometry uses the
+        // same captured refs with a relocation-tolerant fence (a half-applied
+        // transfer is valid mid-flight; the strict arrival proof re-observes
+        // once all setters have applied). Same-output flights keep the
+        // historical geometry-then-membership order with no transfer.
+        // A failed transfer settles terminal with no follow.
+        let transferred = true;
+        let moverWritten = false;
+        let geometryWritten = false;
+        if (pending.crossOutput) {
+            const writeRefs = new Map<string, object>();
+            for (const entry of [...fresh.sourceWindows, ...fresh.targetWindows]) {
+                if (!writeRefs.has(entry.id)) {
+                    writeRefs.set(entry.id, entry.ref);
+                }
+            }
+            const moverRef = writeRefs.get(pending.moverId) ?? null;
+            transferred = moverRef !== null && this.writeOutputTransfer(flight, correlation, pending, moverRef);
+            // Pre-write observation immediately before the mover membership
+            // write. Best-effort only.
+            this.emitFollowDiag(correlation, planned.baseRevision, "send-pre-mover", fresh, this.diagBasisOf(pending), -1, -1);
+            moverWritten = transferred && this.writeMoverDesktopsCrossOutput(flight, correlation, pending, moverRef);
+            geometryWritten = moverWritten && this.writeGeometries(flight, correlation, pending, planned, writeRefs);
+        } else {
+            transferred = true;
+            geometryWritten = this.writeGeometries(flight, correlation, pending, planned);
+            // Pre-write observation immediately before the mover membership
+            // write. Best-effort only.
+            this.emitFollowDiag(correlation, planned.baseRevision, "send-pre-mover", fresh, this.diagBasisOf(pending), -1, -1);
+            moverWritten = geometryWritten && this.writeMoverDesktops(flight, correlation, pending);
+        }
         this.nativeWriteDepth -= 1;
-        if (!geometryWritten || !moverWritten) {
+        if (!transferred || !geometryWritten || !moverWritten) {
             if (!this.isFlightTiled(pending)) {
                 this.settleTerminal(flight, correlation, "workspace-floating", "release");
                 return;
@@ -1926,11 +2250,107 @@ export class WorkspaceSendAdapter {
         return null;
     }
 
+    // Cross-output transfer setter (R4 order, first native write): moves the
+    // mover to the exact destination Output object via sendClientToScreen.
+    // Fenced on token, flight identity, frozen gaps, and tiled domains only:
+    // the mover ref is dispatch-captured and no scope re-observation runs
+    // between the back-to-back transfer and membership setters, so the
+    // intended synchronous relocation is never mistaken for stale scope. The
+    // strict scope fence (geometry) and the arrival proof re-observe once
+    // both setters have applied. Same-output flights never call this.
+    private writeOutputTransfer(
+        flight: number,
+        correlation: string,
+        pending: WorkspacePendingFlight,
+        moverRef: object,
+    ): boolean {
+        if (!this.fencesHold(flight, correlation) || this.pending !== pending) {
+            return false;
+        }
+        if (!this.isFlightTiled(pending) || !this.flightGapsHold(pending)) {
+            return false;
+        }
+        const resolveOutput = this.env.resolveOutput;
+        const sendClientToScreen = this.env.sendClientToScreen;
+        if (typeof resolveOutput !== "function" || typeof sendClientToScreen !== "function") {
+            return false;
+        }
+        let outputRef: object | null = null;
+        try {
+            outputRef = resolveOutput(pending.snapshot.targetOutput);
+        } catch (error) {
+            void error;
+            outputRef = null;
+        }
+        if (outputRef === null) {
+            return false;
+        }
+        let transferred = false;
+        try {
+            transferred = sendClientToScreen(moverRef, outputRef) === true;
+        } catch (error) {
+            void error;
+            transferred = false;
+        }
+        if (transferred) {
+            this.diag("arrival", correlation, pending.baseRevision, "transfer", "transferred");
+        }
+        return transferred;
+    }
+
+    // Cross-output membership setter (R4 order, second native write): writes
+    // the mover desktop membership with the dispatch-captured target desktop
+    // ref. Same minimal fences as the transfer above, plus the live-mover
+    // proof (a reentrant close or replace between the two setters must stop
+    // here: a dead wrapper may still accept the write), the source-visibility
+    // hold, and the domain-scope hold. The strict scope fence runs at
+    // geometry time once both setters have applied.
+    private writeMoverDesktopsCrossOutput(
+        flight: number,
+        correlation: string,
+        pending: WorkspacePendingFlight,
+        moverRef: object | null,
+    ): boolean {
+        if (moverRef === null) {
+            return false;
+        }
+        if (!this.fencesHold(flight, correlation) || this.pending !== pending) {
+            return false;
+        }
+        if (!this.isFlightTiled(pending) || !this.flightGapsHold(pending)) {
+            return false;
+        }
+        if (!this.crossOutputMoverLive(pending)) {
+            return false;
+        }
+        const fresh = this.freshForPending(pending);
+        if (
+            fresh === null ||
+            !scopeMatchesSnapshot(fresh, pending.snapshot) ||
+            !sourceStillSelected(fresh, pending.snapshot)
+        ) {
+            return false;
+        }
+        if (pending.targetDesktopRef === null) {
+            return false;
+        }
+        let written = false;
+        try {
+            written = this.env.setDesktops(moverRef, [pending.targetDesktopRef]) === true;
+        } catch (error) {
+            void error;
+            written = false;
+        }
+        return written;
+    }
+
     // One-shot delayed-arrival trigger: the next mover desktopsChanged signal
     // re-observes and follows once on a fresh exact membership proof. The
     // armed arrival deadline still bounds the wait; the immediate post-write
     // observation covers synchronous arrival. Armed before native writes so
     // a signal between setters and the post-write observation is not missed.
+    // Cross-output flights additionally arm the mover outputChanged fence so
+    // a delayed output transfer stays observable through the same one-shot.
     private armArrivalSignal(flight: number, correlation: string): void {
         const pending = this.pending;
         if (pending === null || pending.correlation !== correlation) {
@@ -1943,7 +2363,7 @@ export class WorkspaceSendAdapter {
         if (typeof subscribe !== "function") {
             return;
         }
-        const current = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        const current = this.freshForPending(pending);
         if (current === null) {
             return;
         }
@@ -1962,6 +2382,21 @@ export class WorkspaceSendAdapter {
             return;
         }
         this.arrivalDetach = detach;
+        if (pending.crossOutput && this.arrivalOutputDetach === null) {
+            const subscribeOutput = this.env.subscribeMoverOutput;
+            if (typeof subscribeOutput === "function") {
+                let outputDetach: (() => void) | null = null;
+                try {
+                    outputDetach = subscribeOutput(moverRef, () => this.onArrivalSignal(flight, correlation));
+                } catch (error) {
+                    void error;
+                    outputDetach = null;
+                }
+                if (outputDetach !== null && typeof outputDetach === "function") {
+                    this.arrivalOutputDetach = outputDetach;
+                }
+            }
+        }
     }
 
     private detachArrival(): void {
@@ -1970,6 +2405,15 @@ export class WorkspaceSendAdapter {
         if (detach !== null) {
             try {
                 detach();
+            } catch (error) {
+                void error;
+            }
+        }
+        const outputDetach = this.arrivalOutputDetach;
+        this.arrivalOutputDetach = null;
+        if (outputDetach !== null) {
+            try {
+                outputDetach();
             } catch (error) {
                 void error;
             }
@@ -1995,7 +2439,113 @@ export class WorkspaceSendAdapter {
                 void error;
             }
         }
+        const outputDetach = this.arrivalOutputDetach;
+        this.arrivalOutputDetach = null;
+        if (outputDetach !== null) {
+            try {
+                outputDetach();
+            } catch (error) {
+                void error;
+            }
+        }
         this.checkArrival(flight, correlation);
+    }
+
+    // Live-mover proof for cross-output mid-write steps (membership right
+    // after the output setter, geometry across a half-applied transfer):
+    // the dispatch-retained ref must still resolve to the identical live
+    // object in the current window list with its native identity and clean
+    // exception flags. Scope homing is never consulted (half-applied
+    // transfers are valid mid-flight); a closed, replaced, or excepted
+    // mover fails closed before any later setter. Never invents identity.
+    private crossOutputMoverLive(pending: WorkspacePendingFlight): boolean {
+        const moverRef = pending.moverRef;
+        if (moverRef === null) {
+            return false;
+        }
+        const hook = this.env.readMoverLive;
+        if (typeof hook !== "function") {
+            return false;
+        }
+        let live: {
+            readonly id: string;
+            readonly floating: boolean;
+            readonly sticky: boolean;
+            readonly fullscreen: boolean;
+            readonly maximized: boolean;
+        } | null = null;
+        try {
+            live = hook(moverRef);
+        } catch (error) {
+            void error;
+            return false;
+        }
+        if (live === null || typeof live !== "object") {
+            return false;
+        }
+        if (
+            live.id !== pending.moverId ||
+            typeof live.floating !== "boolean" ||
+            typeof live.sticky !== "boolean" ||
+            typeof live.fullscreen !== "boolean" ||
+            typeof live.maximized !== "boolean"
+        ) {
+            return false;
+        }
+        if (live.floating || live.sticky || live.fullscreen || live.maximized) {
+            return false;
+        }
+        return true;
+    }
+
+    // Retained-ref stability across a fresh observation: every window
+    // carrying the mover id must be the identical live object as the
+    // dispatch-retained ref. A replaced mover (same stable id, new object)
+    // fails here even when homed with clean flags; an unhomed mover passes
+    // vacuously and proves out through the live-mover hook instead.
+    private moverRefStable(
+        fresh: WorkspaceSendObserved,
+        pending: WorkspacePendingFlight,
+    ): boolean {
+        for (const entry of [...fresh.sourceWindows, ...fresh.targetWindows]) {
+            if (entry.id === pending.moverId && entry.ref !== pending.moverRef) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Synchronous native placement read for the cross-output arrival proof
+    // on the dispatch-retained mover ref. True only when the mover reads
+    // back exactly on the destination output with exactly the destination
+    // workspace as its sole desktop. Scope-homed scans cannot see a
+    // half-applied transfer, so this never homes: throwing or unreadable
+    // reads are not arrival (the flight keeps waiting for the signal or the
+    // bounded arrival deadline; there is no cross-output mover-closed fast
+    // path). Scope divergence is handled by the caller.
+    private moverPlacementMatches(pending: WorkspacePendingFlight): boolean {
+        const moverRef = pending.moverRef;
+        if (moverRef === null) {
+            return false;
+        }
+        const snapshot = pending.snapshot;
+        let output: string | null = null;
+        let desktopIds: ReadonlyArray<string> | null = null;
+        try {
+            output = this.env.readOutputName?.(moverRef) ?? null;
+            desktopIds = this.env.readDesktopIds?.(moverRef) ?? null;
+        } catch (error) {
+            void error;
+            return false;
+        }
+        if (output === null || desktopIds === null) {
+            return false;
+        }
+        return (
+            output === snapshot.targetOutput &&
+            desktopIds.length === 1 &&
+            desktopIds[0] === snapshot.targetWorkspace
+        );
     }
 
     // Fresh exact arrival proof: the mover is absent from the source and
@@ -2003,19 +2553,40 @@ export class WorkspaceSendAdapter {
     // when the flight reached a terminal path (arrival follow done, closed
     // mover, or stale scope); false when the mover simply has not arrived
     // yet and the flight keeps waiting for the signal or the deadline.
-    // Never waits for unrelated geometry.
+    // Never waits for unrelated geometry. Cross-output flights prove
+    // arrival by native placement on the dispatch-retained mover ref (exact
+    // destination output plus sole destination desktop): a half-applied
+    // transfer is valid mid-flight and must wait, never settle as closed.
     private checkArrival(flight: number, correlation: string): boolean {
         const pending = this.pending;
         const planned = pending?.planned ?? null;
         if (pending === null || planned === null || !this.fencesHold(flight, correlation)) {
             return false;
         }
-        const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        const fresh = this.freshForPending(pending);
         if (fresh === null) {
             return false;
         }
         if (!scopeMatchesSnapshot(fresh, pending.snapshot)) {
             this.settleTerminal(flight, correlation, "stale-revision", "release");
+            return true;
+        }
+        if (pending.crossOutput) {
+            // Placement plus live-mover proof on the dispatch-retained ref:
+            // retained properties may stay readable on a removed or replaced
+            // wrapper, so the hook must still resolve the identical live
+            // object with its native identity and clean flags. A half-
+            // applied transfer is valid mid-flight and waits; anything else
+            // unproven waits for the signal or the bounded arrival deadline.
+            if (!this.moverRefStable(fresh, pending) || !this.crossOutputMoverLive(pending) || !this.moverPlacementMatches(pending)) {
+                return false;
+            }
+            this.diag("arrival", correlation, planned.baseRevision, "arrival", "arrived");
+            // Post-write observation: verified placement plus the frozen
+            // dispatch source in the diagnostic basis. Best-effort.
+            this.emitFollowDiag(correlation, planned.baseRevision, "send-post-mover", fresh, this.diagBasisOf(pending), -1, -1);
+            this.followOnce(flight, correlation, fresh);
+            this.settleTerminal(flight, correlation, "arrived", "arrival");
             return true;
         }
         let inSource = false;
@@ -2076,6 +2647,14 @@ export class WorkspaceSendAdapter {
             this.confirmStayOnce(flight, correlation);
             return;
         }
+        // Cross-output follow skips the desktop switch: the destination
+        // workspace is already the current workspace on its output, so only
+        // the mover focus carries the follow. Stay reuses the shared
+        // source-MRU path above unchanged.
+        if (pending.crossOutput) {
+            this.followOutputOnce(flight, correlation);
+            return;
+        }
         const switchToTarget = this.env.switchToTarget;
         const focusWindow = this.env.focusWindow;
         if (typeof switchToTarget !== "function" || typeof focusWindow !== "function") {
@@ -2086,7 +2665,7 @@ export class WorkspaceSendAdapter {
         }
         // Fresh arrival membership proof before the switch: the passed
         // arrival may be stale after the intervening setters.
-        const preSwitch = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        const preSwitch = this.freshForPending(pending);
         if (preSwitch === null || !this.fencesHold(flight, correlation) || this.pending !== pending) {
             pending.followed = true;
             pending.followOutcome = "arrival-unconfirmed";
@@ -2142,7 +2721,7 @@ export class WorkspaceSendAdapter {
         // result below is unaffected.
         let postSwitch: WorkspaceSendObserved | null = null;
         try {
-            postSwitch = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+            postSwitch = this.freshForPending(pending);
         } catch (error) {
             void error;
             postSwitch = null;
@@ -2169,7 +2748,7 @@ export class WorkspaceSendAdapter {
         // Fresh arrival membership proof before focus: the mover may have
         // closed or moved elsewhere during the switch. Ambiguous or stale
         // proof refuses focus without a setter.
-        const preFocus = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        const preFocus = this.freshForPending(pending);
         if (preFocus === null || !this.fencesHold(flight, correlation) || this.pending !== pending) {
             pending.followOutcome = "arrival-unconfirmed";
             this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
@@ -2211,7 +2790,99 @@ export class WorkspaceSendAdapter {
         // re-read. Diagnostic only; the focus result below is unaffected.
         let postFocus: WorkspaceSendObserved | null = null;
         try {
-            postFocus = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+            postFocus = this.freshForPending(pending);
+        } catch (error) {
+            void error;
+            postFocus = null;
+        }
+        this.emitFollowDiag(
+            correlation,
+            planned.baseRevision,
+            "follow-focused",
+            postFocus,
+            basis,
+            1,
+            focused ? 1 : 0,
+        );
+        pending.followOutcome = focused ? "state-confirmed" : "focus-unconfirmed";
+        this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
+        this.nativeFollowDepth -= 1;
+    }
+
+    // Cross-output follow for a verified transfer: re-prove the exact
+    // arrival by native placement on the dispatch-retained mover ref (exact
+    // destination output plus sole destination desktop, dispatch scope
+    // unchanged), then focus the mover with no desktop switch ever running.
+    // The destination is already visible on its output; the focus carries
+    // the follow. The source pin persists through focus even though the
+    // active window changed outputs. A failed or ambiguous proof refuses
+    // without setters.
+    private followOutputOnce(flight: number, correlation: string): void {
+        const pending = this.pending;
+        const planned = pending?.planned ?? null;
+        if (pending === null || planned === null || pending.followed || !this.fencesHold(flight, correlation)) {
+            return;
+        }
+        const focusWindow = this.env.focusWindow;
+        if (typeof focusWindow !== "function") {
+            pending.followed = true;
+            pending.followOutcome = "hooks-unavailable";
+            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
+            return;
+        }
+        const proof = this.freshForPending(pending);
+        if (proof === null || !this.fencesHold(flight, correlation) || this.pending !== pending) {
+            pending.followed = true;
+            pending.followOutcome = "arrival-unconfirmed";
+            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
+            return;
+        }
+        // Scope-homed scans cannot see a half-applied transfer; the mover
+        // must additionally be absent from the live source scope here (a
+        // mover still fully home pre-arrival waits instead).
+        let focusInSource = false;
+        for (const entry of proof.sourceWindows) {
+            if (entry.id === pending.moverId) {
+                focusInSource = true;
+                break;
+            }
+        }
+        const focusMoverRef = pending.moverRef;
+        if (
+            focusInSource ||
+            focusMoverRef === null ||
+            !scopeMatchesSnapshot(proof, pending.snapshot) ||
+            !this.moverRefStable(proof, pending) ||
+            !this.crossOutputMoverLive(pending) ||
+            !this.moverPlacementMatches(pending)
+        ) {
+            pending.followed = true;
+            pending.followOutcome = "arrival-unconfirmed";
+            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
+            return;
+        }
+        const basis: WorkspaceFollowDiagBasis = this.diagBasisOf(pending);
+        pending.followed = true;
+        this.emitFollowDiag(correlation, planned.baseRevision, "follow-pre", proof, basis, -1, -1);
+        let focused = false;
+        this.nativeFollowDepth += 1;
+        try {
+            if (!this.fencesHold(flight, correlation) || this.pending !== pending) {
+                this.nativeFollowDepth -= 1;
+                return;
+            }
+            focused = focusWindow(focusMoverRef, {
+                correlation,
+                revision: planned.baseRevision,
+                nextSequence: () => this.nextDiagSeq(),
+            }) === true;
+        } catch (error) {
+            void error;
+            focused = false;
+        }
+        let postFocus: WorkspaceSendObserved | null = null;
+        try {
+            postFocus = this.freshForPending(pending);
         } catch (error) {
             void error;
             postFocus = null;
@@ -2247,14 +2918,19 @@ export class WorkspaceSendAdapter {
         if (pending === null || planned === null || pending.followed || !this.fencesHold(flight, correlation)) {
             return;
         }
-        const proof = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        const proof = this.freshForPending(pending);
         if (proof === null || !this.fencesHold(flight, correlation) || this.pending !== pending) {
             pending.followed = true;
             pending.followOutcome = "arrival-unconfirmed";
             this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
             return;
         }
-        let proofMoverRef: object | null = null;
+        // Mover arrival: cross-output flights prove native placement on the
+        // dispatch-retained ref (a half-applied transfer is valid mid-flight
+        // and must not read as unarrived); same-output flights use
+        // scope-homed membership. Either way the mover must additionally be
+        // absent from the live source scope and the dispatch scope must
+        // still match.
         let proofInSource = false;
         for (const entry of proof.sourceWindows) {
             if (entry.id === pending.moverId) {
@@ -2262,13 +2938,18 @@ export class WorkspaceSendAdapter {
                 break;
             }
         }
-        for (const entry of proof.targetWindows) {
-            if (entry.id === pending.moverId) {
-                proofMoverRef = entry.ref;
-                break;
+        let moverArrived = false;
+        if (pending.crossOutput) {
+            moverArrived = !proofInSource && this.moverRefStable(proof, pending) && this.moverPlacementMatches(pending);
+        } else {
+            for (const entry of proof.targetWindows) {
+                if (entry.id === pending.moverId) {
+                    moverArrived = !proofInSource;
+                    break;
+                }
             }
         }
-        if (proofInSource || proofMoverRef === null || !scopeMatchesSnapshot(proof, pending.snapshot)) {
+        if (!moverArrived || !scopeMatchesSnapshot(proof, pending.snapshot)) {
             pending.followed = true;
             pending.followOutcome = "arrival-unconfirmed";
             this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
@@ -2338,7 +3019,7 @@ export class WorkspaceSendAdapter {
         // re-read. Diagnostic only; the focus result below is unaffected.
         let postFocus: WorkspaceSendObserved | null = null;
         try {
-            postFocus = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+            postFocus = this.freshForPending(pending);
         } catch (error) {
             void error;
             postFocus = null;
@@ -2499,7 +3180,7 @@ export class WorkspaceSendAdapter {
     // carries the exact dispatch source+target scope. Never throws.
     private scopeStillMatches(pending: WorkspacePendingFlight): boolean {
         try {
-            const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+            const fresh = this.freshForPending(pending);
             return (
                 fresh !== null &&
                 scopeMatchesSnapshot(fresh, pending.snapshot) &&
@@ -2553,15 +3234,146 @@ export class WorkspaceSendAdapter {
         }
     }
 
+    // Relocation-tolerant scope fence for cross-output geometry writes
+    // (R4 parity): the dispatch domains, gaps, tiled modes, and live source
+    // selection must hold. Observed windows carry no output/workspace
+    // fields: scope comes from list membership (sourceWindows vs
+    // targetWindows). The non-mover set must equal exactly: every snapshot
+    // survivor homed in its dispatch list with identical flags, with no
+    // missing survivors and no newly arrived windows. The mover must sit in
+    // at most one list, homed and non-exceptional, or in neither mid-
+    // transfer with the live-mover proof (identical live ref, native
+    // identity, clean flags); a closed, replaced, or excepted mover fails
+    // closed here with zero further setters. Dispatch-captured refs still
+    // target an unhomed mover safely; global coordinates need no output.
+    private crossOutputGeometryScopeAllows(
+        flight: number,
+        correlation: string,
+        pending: WorkspacePendingFlight,
+    ): boolean {
+        if (!this.fencesHold(flight, correlation) || this.pending !== pending) {
+            return false;
+        }
+        if (!this.flightGapsHold(pending)) {
+            return false;
+        }
+        const fresh = this.freshForPending(pending);
+        if (fresh === null || !scopeMatchesSnapshot(fresh, pending.snapshot)) {
+            return false;
+        }
+        if (!sourceStillSelected(fresh, pending.snapshot)) {
+            return false;
+        }
+        const snapshot = pending.snapshot;
+        const freshById = new Map<string, WorkspaceSendObservedWindow>();
+        const freshSourceIds = new Set<string>();
+        const freshTargetIds = new Set<string>();
+        for (const entry of fresh.sourceWindows) {
+            if (!freshById.has(entry.id)) {
+                freshById.set(entry.id, entry);
+            }
+            freshSourceIds.add(entry.id);
+        }
+        for (const entry of fresh.targetWindows) {
+            if (!freshById.has(entry.id)) {
+                freshById.set(entry.id, entry);
+            }
+            freshTargetIds.add(entry.id);
+        }
+        const flagsEqual = (
+            seen: WorkspaceSendObservedWindow,
+            expected: WorkspaceSendSnapshotWindow,
+        ): boolean =>
+            (seen.fullscreen === true) === expected.fullscreen &&
+            (seen.maximized === true) === expected.maximized &&
+            (seen.floating === true) === expected.floating &&
+            (seen.sticky === true) === expected.sticky &&
+            (seen.fitExcluded === true || seen.fit_excluded === true) === expected.fitExcluded;
+        const snapshotNonMovers = new Set<string>();
+        for (const entry of [...snapshot.sourceWindows, ...snapshot.targetWindows]) {
+            if (entry.id !== pending.moverId) {
+                snapshotNonMovers.add(entry.id);
+            }
+        }
+        const freshNonMovers = new Set<string>();
+        for (const id of [...freshSourceIds, ...freshTargetIds]) {
+            if (id !== pending.moverId) {
+                freshNonMovers.add(id);
+            }
+        }
+        // Exact non-mover set equality: no missing survivors, no newly
+        // arrived windows mid-write.
+        if (freshNonMovers.size !== snapshotNonMovers.size) {
+            return false;
+        }
+        for (const id of snapshotNonMovers) {
+            if (!freshNonMovers.has(id)) {
+                return false;
+            }
+        }
+        for (const entry of snapshot.sourceWindows) {
+            if (entry.id === pending.moverId) {
+                continue;
+            }
+            const seen = freshById.get(entry.id);
+            if (seen === undefined || !freshSourceIds.has(entry.id)) {
+                return false;
+            }
+            if (!flagsEqual(seen, entry)) {
+                return false;
+            }
+        }
+        for (const entry of snapshot.targetWindows) {
+            if (entry.id === pending.moverId) {
+                continue;
+            }
+            const seen = freshById.get(entry.id);
+            if (seen === undefined || !freshTargetIds.has(entry.id)) {
+                return false;
+            }
+            if (!flagsEqual(seen, entry)) {
+                return false;
+            }
+        }
+        // The mover may sit in either dispatch list (source, half, or
+        // target placement by list homing) or in neither mid-transfer.
+        // Homed movers must stay non-exceptional; unhomed movers prove
+        // identical live ref, native identity, and clean flags, and prove
+        // out at the placement arrival proof.
+        const moverInSource = freshSourceIds.has(pending.moverId);
+        const moverInTarget = freshTargetIds.has(pending.moverId);
+        if (moverInSource && moverInTarget) {
+            return false;
+        }
+        if (moverInSource || moverInTarget) {
+            const moverSeen = freshById.get(pending.moverId);
+            if (moverSeen === undefined) {
+                return false;
+            }
+            if (moverSeen.fullscreen || moverSeen.maximized || moverSeen.floating === true || moverSeen.sticky === true) {
+                return false;
+            }
+            // A homed mover must be the dispatch-retained live object: a
+            // same-id replacement fails here even with clean flags.
+            if (moverSeen.ref !== pending.moverRef) {
+                return false;
+            }
+            return true;
+        }
+        return this.crossOutputMoverLive(pending);
+    }
+
     private writeGeometries(
         flight: number,
         correlation: string,
         pending: WorkspacePendingFlight,
         planned: WorkspacePlanned,
+        writeRefs?: ReadonlyMap<string, object> | null,
     ): boolean {
         // Stable ordering baseline from the dispatch snapshot; per-setter
         // targets and scope fences below always resolve from a fresh
-        // observation.
+        // observation unless dispatch-captured refs ride along (cross-output
+        // only, tolerating the intended relocation mid-write).
         const baseline = new Map<string, WorkspaceSendRect>();
         for (const entry of pending.snapshot.sourceWindows) {
             baseline.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
@@ -2585,13 +3397,7 @@ export class WorkspaceSendAdapter {
             if (!this.isFlightTiled(pending)) {
                 return false;
             }
-            const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
-            if (fresh === null || !scopeMatchesSnapshot(fresh, pending.snapshot) || !this.flightGapsHold(pending)) {
-                return false;
-            }
-            if (!this.flagsStillMatch(fresh, pending.snapshot)) {
-                return false;
-            }
+            let target: object | null = null;
             const entry = ordered[writeOrdinal];
             if (entry === undefined) {
                 return false;
@@ -2600,7 +3406,21 @@ export class WorkspaceSendAdapter {
             if (overlays.has(entry.window)) {
                 continue;
             }
-            const target = this.resolveWindowRef(fresh, entry.window);
+            if (writeRefs !== undefined && writeRefs !== null) {
+                if (!this.crossOutputGeometryScopeAllows(flight, correlation, pending)) {
+                    return false;
+                }
+                target = writeRefs.get(entry.window) ?? null;
+            } else {
+                const fresh = this.freshForPending(pending);
+                if (fresh === null || !scopeMatchesSnapshot(fresh, pending.snapshot) || !this.flightGapsHold(pending)) {
+                    return false;
+                }
+                if (!this.flagsStillMatch(fresh, pending.snapshot)) {
+                    return false;
+                }
+                target = this.resolveWindowRef(fresh, entry.window);
+            }
             if (target === null) {
                 return false;
             }
@@ -2646,7 +3466,7 @@ export class WorkspaceSendAdapter {
         if (!this.isFlightTiled(pending)) {
             return false;
         }
-        const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        const fresh = this.freshForPending(pending);
         if (fresh === null || !scopeMatchesSnapshot(fresh, pending.snapshot) || !this.flightGapsHold(pending)) {
             return false;
         }

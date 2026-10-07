@@ -171,6 +171,14 @@ inline constexpr int SHORTCUT_META_CTRL_SHIFT_LEFT = 385875986; // Meta+Ctrl+Shi
 inline constexpr int SHORTCUT_META_CTRL_SHIFT_UP = 385875987; // Meta+Ctrl+Shift+Up send prev-up-arrow
 inline constexpr int SHORTCUT_META_CTRL_SHIFT_RIGHT = 385875988; // Meta+Ctrl+Shift+Right send next-right-arrow
 inline constexpr int SHORTCUT_META_CTRL_SHIFT_DOWN = 385875989; // Meta+Ctrl+Shift+Down send next-down-arrow
+inline constexpr int SHORTCUT_META_CTRL_ALT_H = 469762120; // Meta+Ctrl+Alt+H send-output left follow
+inline constexpr int SHORTCUT_META_CTRL_ALT_J = 469762122; // Meta+Ctrl+Alt+J send-output down follow
+inline constexpr int SHORTCUT_META_CTRL_ALT_K = 469762123; // Meta+Ctrl+Alt+K send-output up follow
+inline constexpr int SHORTCUT_META_CTRL_ALT_L = 469762124; // Meta+Ctrl+Alt+L send-output right follow
+inline constexpr int SHORTCUT_META_CTRL_ALT_LEFT = 486539282; // Meta+Ctrl+Alt+Left send-output left-arrow follow
+inline constexpr int SHORTCUT_META_CTRL_ALT_UP = 486539283; // Meta+Ctrl+Alt+Up send-output up-arrow follow
+inline constexpr int SHORTCUT_META_CTRL_ALT_RIGHT = 486539284; // Meta+Ctrl+Alt+Right send-output right-arrow follow
+inline constexpr int SHORTCUT_META_CTRL_ALT_DOWN = 486539285; // Meta+Ctrl+Alt+Down send-output down-arrow follow
 inline constexpr uint SHORTCUT_SET_FLAGS = 6; // SetPresent|NoAutoloading
 inline constexpr int SHORTCUT_MAX_KEYS_PER_TUPLE = 16;
 inline constexpr int SHORTCUT_MAX_TUPLES = 16384;
@@ -396,11 +404,14 @@ const QList<ShortcutConflictRow> &shortcutConflictTable();
 // Meta+Ctrl+H/J/K/L and Meta+Ctrl+arrows relative steps), followed by 36
 // item-2 workspace rows (8 Meta+Ctrl+Shift+H/J/K/L and arrows relative
 // send-and-follow, 20 unbound numbered send-and-stay with symbol aliases
-// plus append rows, 8 unbound relative send-and-stay). Deterministic
-// order, unique action IDs (unbound rows share canonical key 0).
+// plus append rows, 8 unbound relative send-and-stay), followed by 12
+// item-5 output rows from planOutputSendShortcutCatalog (8 Meta+Ctrl+Alt+H/J/K/L
+// and arrows send-and-follow, 4 unbound directional send-and-stay).
+// Deterministic order, unique action IDs (unbound rows share canonical key 0).
 // kind is one of focus, move, resize, toggle, workspace-select,
 // workspace-move, workspace-previous, workspace-relative,
-// workspace-send-relative, workspace-move-stay, workspace-send-relative-stay.
+// workspace-send-relative, workspace-move-stay, workspace-send-relative-stay,
+// output-send, output-send-stay.
 // knownForeign* is the compiled KDE conflict for the 23 conflict-table rows
 // only; empty (key 0) means no known conflict and the row must report
 // honestly instead of inventing one. Unbound rows carry canonical key 0

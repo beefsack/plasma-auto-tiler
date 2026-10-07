@@ -1170,38 +1170,44 @@ pub(in crate::session) fn apply_move_operation(
             if target_domain.adjacent.get(&opposite_direction(direction)) != Some(&source.output) {
                 return None;
             }
-            // Only Left/Right cross (Vertical layout output axis). Up/Down
-            // never reach here via the planner; fail closed if they do.
-            if !matches!(direction, Direction::Left | Direction::Right) {
-                return None;
-            }
+            // Only the four cardinal crossings apply (the planner emits only
+            // `Direction` values; fail closed on anything else if it arrives).
             let source_tree = desired_trees.get(source).cloned().flatten()?;
-            // R4: source must be a root group with the mover as a direct
-            // root-edge child in D; target occupancy must match.
-            if !matches!(source_tree, Node::Group { .. }) {
-                return None;
-            }
-            let (children, _shares, _sid, _saxis) =
-                find_group_full(&source_tree, source_tree.id())?;
-            if *source_root_child_index >= children.len() {
-                return None;
-            }
-            if children[*source_root_child_index].id() != focused_leaf {
-                return None;
-            }
-            // Source root edge: first child for negative D, last for positive.
-            let expected_edge = if step == -1 {
-                0
+            // R4: the mover sits exhausted at the source root edge in D: a
+            // root-group edge child, or the sole root leaf itself (index 0,
+            // REQ-MOV-08/OUT-01 item 5.1). Target occupancy must match.
+            let sole_leaf_source =
+                matches!(source_tree, Node::Leaf { .. }) && source_tree.id() == focused_leaf;
+            if sole_leaf_source {
+                if *source_root_child_index != 0 {
+                    return None;
+                }
             } else {
-                children.len().checked_sub(1)?
-            };
-            if *source_root_child_index != expected_edge {
-                return None;
+                if !matches!(source_tree, Node::Group { .. }) {
+                    return None;
+                }
+                let (children, _shares, _sid, _saxis) =
+                    find_group_full(&source_tree, source_tree.id())?;
+                if *source_root_child_index >= children.len() {
+                    return None;
+                }
+                if children[*source_root_child_index].id() != focused_leaf {
+                    return None;
+                }
+                // Source root edge: first child for negative D, last for positive.
+                let expected_edge = if step == -1 {
+                    0
+                } else {
+                    children.len().checked_sub(1)?
+                };
+                if *source_root_child_index != expected_edge {
+                    return None;
+                }
+                if !matches!(children[*source_root_child_index], Node::Leaf { .. }) {
+                    return None;
+                }
             }
-            if !matches!(children[*source_root_child_index], Node::Leaf { .. }) {
-                return None;
-            }
-            // Extract mover from source.
+            // Extract mover from source (a sole leaf empties its domain).
             let new_source = remove_leaf_from_tree(policy, Some(source_tree), focused_leaf);
             desired_trees.insert(source.clone(), new_source);
             // Attach to target: beside the target domain's valid focused leaf

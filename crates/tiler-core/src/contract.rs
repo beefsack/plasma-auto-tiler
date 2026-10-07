@@ -401,6 +401,20 @@ pub enum LifecycleIntent {
         /// is identical; only the desired focus differs.
         follow: bool,
     },
+    /// Explicit output send (REQ-OUT-04, item 5.3/5.4): the focused tiled
+    /// window moves to the destination output's current workspace, resolved
+    /// adapter-side and carried as an explicit cross-output target domain.
+    /// Distinct from [`LifecycleIntent::MoveToWorkspace`], which stays
+    /// same-output. Admission (remembered leaf, destination focus history,
+    /// root fallback) and follow/stay are ordinary; only the target scope
+    /// differs.
+    MoveToOutput {
+        window: WindowId,
+        target_output: OutputId,
+        target_workspace: WorkspaceId,
+        /// Follow/stay selection, identical to `MoveToWorkspace`.
+        follow: bool,
+    },
     ToggleOrientation {
         window: WindowId,
         output: OutputId,

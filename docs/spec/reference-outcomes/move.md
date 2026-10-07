@@ -188,7 +188,9 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then karousel/Lazy: no left column on the single-window path, so the
   move returns without acting and A stays. `S(S-kar-move)`.
 - Then paneru: TBD; west peer resolution untraced. `S(S-pan-move)`.
-- Then Ours KDE: Local R1/R2/R3 first; exhausted horizontal R4 crosses output, never workspace; Up/Down excluded; `D(D-dec-cos)` (offline only)
+- Then Ours KDE: Local R1/R2/R3 first; no adjacent output in this fixture means
+  no-op. Exhausted R4 otherwise crosses in all four directions, never cycles
+  workspaces; [item-5 offline record](../../changes/archive/four-direction-output-transfer.md).
 - Then Ours Windows: Local R1/R2/R3 first; exhausted horizontal R4 crosses output, never workspace; Up/Down excluded; `D(D-dec-cos)` (offline only)
 - Variant hook: V-R4-DIR.
 
@@ -307,7 +309,7 @@ ancestry claims. Ours cells cite the Engine move rules at `9241c94`
   `Swap(North)` inventory below; Ours Engine `plan_move` Up.
   Explicit output-transfer verbs are not this leg (R-OUT-04 covers those).
 - Observe: exhausted vertical move crosses output vs stays/restructures
-  locally. Existing R4 hook excludes Up/Down for Ours.
+  locally. Ours item 5 extends R4 to Up/Down after local exhaustion.
 - Then COSMIC: TBD; vertical output fallback unresolved. `S(S-cos-move)`.
 - Then Hyprland/Dwindle: crosses to U via the monitor fallback.
   `S(S-hyp-move)`.
@@ -330,10 +332,13 @@ ancestry claims. Ours cells cite the Engine move rules at `9241c94`
 - Then karousel/Lazy: fixture-inapplicable for cross-output (single-screen
   profile). `S(S-kar-base)`.
 - Then paneru: TBD; up-crossing peer resolution untraced. `S(S-pan-move)`.
-- Then Ours KDE: stays local (Up never crosses; Boundary no-op, no R4).
-  `S(S-ours-move)`.
-- Then Ours Windows: same local no-op as Ours KDE (Up/Down excluded from
-  R4). `S(S-ours-move)`.
+- Then Ours KDE: A crosses up after local exhaustion; source becomes B,
+  destination `V[X,A*]` places A nearest the source. Full-rectangle adjacency,
+  work-area placement and arrival/follow fences delivered offline;
+  [record](../../changes/archive/four-direction-output-transfer.md). Native journey pending.
+- Then Ours Windows: local no-op in the current single-output adapter;
+  shared core now supports four-direction R4 but adapter wiring remains
+  pending, multi-output parked. `S(S-ours-move)` is the pinned baseline.
 - Variant hook: V-R4-DIR.
 
 ## Explicit-swap fresh legs (additive reuse; no duplicated start/action row)
@@ -427,8 +432,8 @@ windows); leaf/group rules unchanged. R-MOV-08 selects local restructure/
 swap/escape first, then all-four-direction crossing including sole root
 leaf. Adjacency uses unique reciprocal edge-touch + positive overlap on FULL
 output rectangles, horizontal too; no candidate no-op, ambiguous/unreadable
-refuse, no wrap. Item 3 shared core/KDE is delivered offline; Windows wiring
-and item 5 remain pending. Delivery evidence below is offline, not a live
+refuse, no wrap. Items 3/5 shared core/KDE are delivered offline; Windows wiring
+and native journeys remain pending. Delivery evidence below is offline, not a live
 observation or new reference vote.
 
 ### R-MOV-09: flat-swap right with unequal sibling shares
@@ -513,9 +518,11 @@ observation or new reference vote.
 - Then PaperWM: TBD.
 - Then karousel/Lazy: TBD.
 - Then paneru: TBD.
-- Then Ours KDE: selected A crosses to U's current workspace; sole root
-  is eligible in all four directions. Implementation pending; item 5.1/5.2;
-  exact destination topology/native journey TBD.
+- Then Ours KDE: A crosses to U's current workspace; sole root is eligible
+  in all four directions, source becomes empty. Empty target becomes sole A;
+  occupied target uses unchanged R4 edge insertion nearest the source.
+  Core compass tests and production-entry/Engine fixture delivered offline;
+  [record](../../changes/archive/four-direction-output-transfer.md). Native journey TBD.
 - Then Ours Windows: same selected crossing/eligibility target;
   implementation pending, multi-output parked; exact native journey TBD.
 - Variant hook: V-R4-DIR.
@@ -540,8 +547,9 @@ observation or new reference vote.
 - Then PaperWM: TBD.
 - Then karousel/Lazy: TBD.
 - Then paneru: TBD.
-- Then Ours KDE: selected refuse ambiguous topology, no transfer;
-  implementation pending; item 5.2.
+- Then Ours KDE: refuses ambiguous topology, no transfer or layout writes.
+  Forward and reverse uniqueness tested offline, item 5.2;
+  [record](../../changes/archive/four-direction-output-transfer.md). Native journey TBD.
 - Then Ours Windows: same selected refusal; implementation pending,
   multi-output parked; item 5.2.
 - Variant hook: V-R4-DIR.
@@ -568,8 +576,11 @@ observation or new reference vote.
 - Then PaperWM: TBD.
 - Then karousel/Lazy: TBD.
 - Then paneru: TBD.
-- Then Ours KDE: selected crosses in both legs using FULL rectangles;
-  panel gap does not block. Implementation pending; item 5.2.
+- Then Ours KDE: crosses in both legs using FULL rectangles for selection;
+  panel gap does not block. Placement still uses each desktop's work area.
+  Both-axis observer tests and stacked-output production-entry/Engine fixture
+  delivered offline; [record](../../changes/archive/four-direction-output-transfer.md).
+  Native journey TBD.
 - Then Ours Windows: same selected full-rectangle crossing;
   implementation pending, multi-output parked; item 5.2.
 - Variant hook: V-R4-DIR.

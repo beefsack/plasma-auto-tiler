@@ -128,25 +128,28 @@ export interface PlanObservedWindow {
 }
 
 // Production directional domain descriptor: bounded primitive per domain
-// (output, workspace, work-area bounds, inner/outer gaps, horizontal
+// (output, workspace, work-area bounds, inner/outer gaps, four-direction
 // reciprocal adjacency). At most two entries: source first, then the
-// horizontally adjacent output's current logical workspace (which may differ
-// in workspace id). Only `left`/`right` adjacency keys are admitted.
+// adjacent output's current logical workspace (which may differ in workspace
+// id). FULL output rectangles select the neighbor adapter-side; carried
+// bounds stay work areas. All four cardinal adjacency keys are admitted.
 export interface PlanDomain {
     readonly output: string;
     readonly workspace: string;
     readonly bounds: PlanRect;
     readonly gap: number;
     readonly outerGap: number;
-    readonly adjacent: Readonly<Partial<Record<"left" | "right", string>>>;
+    readonly adjacent: Readonly<Partial<Record<"left" | "right" | "up" | "down", string>>>;
 }
 
-// Typed production directional observation outcome (active Left/Right
-// route only). `ready` carries the validated two-domain observation;
-// `no-target` means a confirmed no-adjacent/single-output condition and
-// keeps local single-domain behavior; `invalid` covers ambiguous,
-// unreadable, or malformed two-domain evidence and must refuse before any
-// local mutation. Up/Down never consult this hook.
+    // Typed production directional observation outcome (active route).
+    // `ready` carries the validated two-domain observation; `no-target`
+    // means a confirmed no-adjacent/single-output condition and keeps local
+    // single-domain behavior; `invalid` covers ambiguous, unreadable, or
+    // malformed two-domain evidence and must refuse before any local
+    // mutation. Item 5 authorizes moves and output sends across outputs in
+    // all four directions; focus consults this hook for left/right only
+    // (up/down stay local single-domain).
 export type DirectionalObservationStatus = "ready" | "no-target" | "invalid";
 
 export interface DirectionalObservation {
@@ -166,7 +169,7 @@ export interface PlanObserved {
     // the removal observation; interactive tiled commands must refuse.
     readonly activeExcluded?: boolean;
     // Production directional observation: source plus at most one
-    // horizontally reciprocal adjacent domain. Absent for legacy
+    // reciprocal adjacent domain in any of the four directions. Absent for legacy
     // single-domain observations. Windows carry their exact output/workspace
     // across both domains; the fingerprint binds the full observation.
     readonly domains?: ReadonlyArray<PlanDomain>;
@@ -606,14 +609,19 @@ export interface PlanAdapterEnv {
     // production. Hidden flights only ever admit/remove/reconcile geometry
     // and never route focus or interactive commands.
     readonly observeHidden?: () => ReadonlyArray<PlanObserved>;
-    // Production directional observation for Left/Right focus/move: source
-    // plus the horizontally reciprocal adjacent output's current desktop
+    // Production directional observation for focus/move: source
+    // plus the reciprocal adjacent output's current desktop
     // (bounded max two domains) with multi-domain windows. Absent in
-    // isolated core tests; Up/Down never use it. May return the typed
+    // isolated core tests. Focus uses left/right only; move probes all four
+    // directions. The optional flight pin freezes the source pair across
+    // transfer and arrival: deriving the source from the live active window
+    // would flip it once the still-active mover lands on the destination.
+    // R4 re-observation pins; dispatch observes unpinned. May return the typed
     // {@link DirectionalObservation} outcome or, for legacy mocks, a bare
     // {@link PlanObserved} (treated as ready) or null (treated as invalid).
     readonly observeDirectional?: (
         direction: PlanDirection,
+        pinnedSource?: { readonly output: string; readonly workspace: string },
     ) => DirectionalObservation | PlanObserved | null;
     readonly clearMaximize: (target: object) => MaximizeClearOutcome;
     readonly setMaximize?: (target: object, maximized: boolean) => NativeStateWriteOutcome;
@@ -733,10 +741,11 @@ export interface DirectionalFingerprintWindow {
 
 // Canonical production directional fingerprint (FNV-1a 32-bit) over the full
 // two-domain evidence, byte-identical to Rust's `directional_fingerprint`:
-// ordered domain primitives (output, workspace, raw bounds, gaps, left/right
-// adjacency), the focused id, and every window sorted by id. Any alteration
-// of target rect, bounds, or adjacency changes the value and fails Rust
-// request validation. Legacy single-domain requests keep `planFingerprint`.
+// ordered domain primitives (output, workspace, raw bounds, gaps,
+// left/right/up/down adjacency in fixed order), the focused id, and every
+// window sorted by id. Any alteration of target rect, bounds, or adjacency
+// changes the value and fails Rust request validation. Legacy single-domain
+// requests keep `planFingerprint`.
 export function planDirectionalFingerprint(
     domains: ReadonlyArray<PlanDomain>,
     focusedId: string,
@@ -781,6 +790,14 @@ export function planDirectionalFingerprint(
         feed("right");
         sep(0x1f);
         feed((entry.adjacent as Record<string, string>)["right"] ?? "");
+        sep(0x1f);
+        feed("up");
+        sep(0x1f);
+        feed((entry.adjacent as Record<string, string>)["up"] ?? "");
+        sep(0x1f);
+        feed("down");
+        sep(0x1f);
+        feed((entry.adjacent as Record<string, string>)["down"] ?? "");
     }
     sep(0x1f);
     feed(focusedId);
@@ -1690,7 +1707,7 @@ function validateObserved(observed: PlanObserved | null): observed is PlanObserv
     }
     // Directional domains: at most two primitive entries, source first and
     // equal to the carried source domain, with distinct outputs and
-    // reciprocal left/right adjacency when two are present.
+    // reciprocal adjacency on one cardinal side when two are present.
     const domains = observed.domains;
     if (domains !== undefined) {
         if (!Array.isArray(domains) || domains.length === 0 || domains.length > 2) {
@@ -1731,7 +1748,7 @@ function validateObserved(observed: PlanObserved | null): observed is PlanObserv
                 return false;
             }
             for (const key of Object.keys(candidate.adjacent)) {
-                if (key !== "left" && key !== "right") {
+                if (key !== "left" && key !== "right" && key !== "up" && key !== "down") {
                     return false;
                 }
                 const target = (candidate.adjacent as Record<string, unknown>)[key];
@@ -1748,8 +1765,15 @@ function validateObserved(observed: PlanObserved | null): observed is PlanObserv
             const firstEntry = domains[0] as PlanDomain;
             const secondEntry = domains[1] as PlanDomain;
             let reciprocal = false;
-            for (const direction of ["left", "right"] as const) {
-                const opposite = direction === "left" ? "right" : "left";
+            for (const direction of ["left", "right", "up", "down"] as const) {
+                const opposite =
+                    direction === "left"
+                        ? "right"
+                        : direction === "right"
+                          ? "left"
+                          : direction === "up"
+                            ? "down"
+                            : "up";
                 if (
                     (firstEntry.adjacent as Record<string, string>)[direction] === secondEntry.output &&
                     (secondEntry.adjacent as Record<string, string>)[opposite] === firstEntry.output
@@ -2317,16 +2341,20 @@ export class PlanAdapter {
         this.detaches = [];
     }
 
-    // Directional observation outcome for Left/Right focus/move. `ready`
+    // Directional observation outcome for focus/move. `ready`
     // carries a validated two-domain observation; `no-target` is a confirmed
     // no-adjacent/single-output condition that keeps local single-domain
     // behavior; `invalid` (ambiguous, unreadable, malformed) must refuse
-    // before any local mutation. `legacy` covers Up/Down and hook-absent
+    // before any local mutation. `legacy` covers hook-absent
     // isolated tests, which stay on the normal single-domain observation.
+    // Item 5 authorizes moves and output sends across outputs, not vertical
+    // focus: focus consults the hook for left/right only (up/down stay
+    // legacy single-domain); move probes all four directions.
     private readDirectional(
         direction: PlanDirection,
+        forMove: boolean,
     ): { kind: "ready"; observed: PlanObserved } | { kind: "no-target" } | { kind: "invalid" } | { kind: "legacy" } {
-        if (direction !== "left" && direction !== "right") {
+        if (!forMove && direction !== "left" && direction !== "right") {
             return { kind: "legacy" };
         }
         const hook = this.env.observeDirectional;
@@ -2366,10 +2394,10 @@ export class PlanAdapter {
     // write.
     private freshDirectionalForFlight(flightState: PendingFlight): PlanObserved | null {
         const direction = flightState.direction;
-        if (direction !== "left" && direction !== "right") {
+        if (!isDirection(direction)) {
             return null;
         }
-        const outcome = this.readDirectional(direction);
+        const outcome = this.readDirectional(direction, flightState.op === "move");
         return outcome.kind === "ready" ? outcome.observed : null;
     }
 
@@ -2390,7 +2418,7 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=focus`);
             return;
         }
-        const directional = this.readDirectional(direction);
+        const directional = this.readDirectional(direction, false);
         if (directional.kind === "invalid") {
             this.logToken(`${LOG_PREFIX}:focus-refused-ambiguous`);
             return;
@@ -3086,7 +3114,7 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=move`);
             return;
         }
-        const directional = this.readDirectional(direction);
+        const directional = this.readDirectional(direction, true);
         if (directional.kind === "invalid") {
             this.logToken(`${LOG_PREFIX}:move-refused-ambiguous`);
             return;
@@ -5087,7 +5115,7 @@ export class PlanAdapter {
         }
     }
 
-    // Lean R4 terminal helper: an R4-shape pending flight (move, Left/Right,
+    // Lean R4 terminal helper: an R4-shape pending flight (move, four-direction,
     // two-domain snapshot) forces one complete source AND target reconcile
     // through the existing `notifySendSettled` chain, including equal
     // evidence. No-op for ordinary flights. Called on every R4 terminal
@@ -5100,7 +5128,7 @@ export class PlanAdapter {
         if (flightState.op !== "move" || flightState.background === true) {
             return;
         }
-        if (flightState.direction !== "left" && flightState.direction !== "right") {
+        if (!isDirection(flightState.direction)) {
             return;
         }
         const domains = flightState.snapshot.domains;
@@ -7815,7 +7843,7 @@ export class PlanAdapter {
         if (move.rule !== "R4" || move.capability !== "CrossOutputTransfer") {
             return false;
         }
-        if (move.direction !== "left" && move.direction !== "right") {
+        if (!isDirection(move.direction)) {
             return false;
         }
         if (flightState.direction === null || move.direction !== flightState.direction) {
@@ -8034,7 +8062,18 @@ export class PlanAdapter {
                 this.r4SettleTerminal(r4, fenced);
                 return;
             }
-            if (!this.r4FreshScopeAllowsMover(flightState, operation.window, source, target, false)) {
+            // Non-homing inter-setter fence between the back-to-back
+            // transfer and membership writes: token/owner binding above
+            // plus unchanged directional domains (pinned re-observation),
+            // a live mover via native reads on the retained ref, frozen
+            // gaps, and tiled modes on both domains. Reentrant drift,
+            // close, replace, or toggle between the two setters settles
+            // terminal with no further setter: a dead wrapper may still
+            // accept a write, so setters never prove liveness by
+            // themselves. Never homes windows (half-applied placement is
+            // valid here); geometry and arrival re-observe once both
+            // setters have applied.
+            if (!this.r4InterSetterFencesHold(flightState, r4)) {
                 this.r4SettleTerminal(r4, "stale-scope");
                 return;
             }
@@ -8844,15 +8883,22 @@ export class PlanAdapter {
     // dispatch-time validation (focused-in-source, homing, fingerprint,
     // revalidate) because the intended mover relocation itself breaks those
     // gates (half placement is unhomed, target placement moves focus). Only
-    // structural identity is enforced by callers.
-    private r4RawFresh(direction: PlanDirection): PlanObserved | null {
+    // structural identity is enforced by callers. Pins the flight source so
+    // the still-active mover on the destination cannot flip the observation
+    // source mid-flight.
+    private r4RawFresh(direction: PlanDirection, snapshot: PlanSnapshot | null): PlanObserved | null {
         const hook = this.env.observeDirectional;
         if (typeof hook !== "function") {
             return null;
         }
         let raw: DirectionalObservation | PlanObserved | null = null;
         try {
-            raw = hook(direction);
+            raw = hook(
+                direction,
+                snapshot === null
+                    ? undefined
+                    : { output: snapshot.domainOutput, workspace: snapshot.domainWorkspace },
+            );
         } catch (error) {
             void error;
             return null;
@@ -8874,6 +8920,54 @@ export class PlanAdapter {
         return candidate;
     }
 
+    // Non-homing inter-setter fence between the back-to-back R4 transfer
+    // and membership writes. See the call site for the full contract.
+    private r4InterSetterFencesHold(flightState: PendingFlight, r4: R4Flight): boolean {
+        const direction = flightState.direction;
+        if (!isDirection(direction)) {
+            return false;
+        }
+        const fresh = this.r4RawFresh(direction, flightState.snapshot);
+        if (fresh === null) {
+            return false;
+        }
+        const snapshot = flightState.snapshot;
+        const domains = snapshot.domains;
+        if (domains === undefined || domains.length !== 2) {
+            return false;
+        }
+        const source = domains[0] as PlanDomain;
+        const target = domains[1] as PlanDomain;
+        if (!domainsEqual(fresh.domains, domains)) {
+            return false;
+        }
+        if (fresh.domainGap !== snapshot.domainGap || fresh.domainOuterGap !== snapshot.domainOuterGap) {
+            return false;
+        }
+        // Lifetime on the retained mover ref via native reads: a closed or
+        // replaced mover fails here even when a dead wrapper would still
+        // accept the membership write below.
+        let output: string | null = null;
+        let ids: ReadonlyArray<string> | null = null;
+        try {
+            output = this.env.readOutputName?.(r4.moverRef) ?? null;
+            ids = this.env.readDesktopIds?.(r4.moverRef) ?? null;
+        } catch (error) {
+            void error;
+            return false;
+        }
+        if (output === null || ids === null) {
+            return false;
+        }
+        if (!this.isTiledDomain(source.output, source.workspace)) {
+            return false;
+        }
+        if (!this.isTiledDomain(target.output, target.workspace)) {
+            return false;
+        }
+        return true;
+    }
+
     // Structural scope fence for R4 writes: exact domain/scope identity plus
     // window-set identity, ignoring rects, fingerprint, and focus. Tolerates
     // the intended mover relocation while rejecting unrelated stale changes:
@@ -8892,10 +8986,10 @@ export class PlanAdapter {
         requireTarget: boolean,
     ): boolean {
         const direction = flightState.direction;
-        if (direction !== "left" && direction !== "right") {
+        if (!isDirection(direction)) {
             return false;
         }
-        const fresh = this.r4RawFresh(direction);
+        const fresh = this.r4RawFresh(direction, flightState.snapshot);
         if (fresh === null) {
             return false;
         }
@@ -9200,10 +9294,10 @@ export class PlanAdapter {
     // is still pending so delayed arrival stays waiting; callers must not
     // treat false as terminal.
     private r4ObservedMoverOnTarget(r4: R4Flight): boolean {
-        if (r4.direction !== "left" && r4.direction !== "right") {
+        if (!isDirection(r4.direction)) {
             return false;
         }
-        const fresh = this.r4RawFresh(r4.direction);
+        const fresh = this.r4RawFresh(r4.direction, r4.snapshot);
         if (fresh === null) {
             return false;
         }

@@ -79,6 +79,20 @@ impl super::super::Session {
                 correlation_id,
                 capabilities,
             ),
+            SessionCommand::MoveToOutput {
+                window,
+                target_output,
+                target_workspace,
+                follow,
+            } => self.propose_move_to_output(
+                window,
+                target_output,
+                target_workspace,
+                *follow,
+                session_observation,
+                correlation_id,
+                capabilities,
+            ),
             SessionCommand::ToggleFloat {
                 window,
                 float_geometry,
@@ -114,9 +128,12 @@ impl super::super::Session {
             SessionCommand::Remove { .. } => {}
             // Same-output workspace transfer targets are validated precisely
             // inside `propose_move_to_workspace` (`UnknownDomain` for unknown
-            // targets, `CrossDomainMismatch` for cross-output); only observed
+            // targets, `CrossDomainMismatch` for cross-output); explicit
+            // output-send targets are validated precisely inside
+            // `propose_move_to_output` (`UnknownDomain` for unknown targets,
+            // `CrossDomainMismatch` for same-output); only observed
             // entries are checked here.
-            SessionCommand::MoveToWorkspace { .. } => {}
+            SessionCommand::MoveToWorkspace { .. } | SessionCommand::MoveToOutput { .. } => {}
             SessionCommand::ToggleFloat { .. } => {}
             SessionCommand::ToggleOrientation { .. } => {}
         }
@@ -578,6 +595,12 @@ pub(in crate::session) fn valid_command_shapes(command: &SessionCommand) -> bool
         }
         SessionCommand::Remove { window } => !window.0.is_empty(),
         SessionCommand::MoveToWorkspace {
+            window,
+            target_output,
+            target_workspace,
+            ..
+        }
+        | SessionCommand::MoveToOutput {
             window,
             target_output,
             target_workspace,

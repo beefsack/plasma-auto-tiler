@@ -130,6 +130,21 @@ pub enum SessionCommand {
         /// source domain with the existing focused-removal MRU focus.
         follow: bool,
     },
+    /// Explicit output send (REQ-OUT-04, item 5.3/5.4): same ordinary
+    /// transfer as [`SessionCommand::MoveToWorkspace`] (remembered leaf,
+    /// destination focus history, root fallback; explicit follow/stay) but
+    /// the target is the destination output's current workspace, resolved
+    /// adapter-side. Unlike `MoveToWorkspace`, cross-output targets are
+    /// admitted; same-output targets refuse as `CrossDomainMismatch` so the
+    /// two ops stay distinct.
+    MoveToOutput {
+        window: WindowId,
+        target_output: OutputId,
+        target_workspace: WorkspaceId,
+        /// True follows the mover into the target domain; false stays on the
+        /// source domain with the existing focused-removal MRU focus.
+        follow: bool,
+    },
     /// Explicit, stateful intentional-float transition. A tiled target becomes
     /// a non-tree floating exception; a tracked floating target is freshly
     /// admitted back into the tree.
@@ -785,6 +800,32 @@ impl Session {
         target: Option<&Session>,
         pair_domains: Vec<OutputDomain>,
     ) -> Result<Session, CanonicalPairError> {
+        Self::paired_from_canonical_impl(source, target, pair_domains, true)
+    }
+
+    /// Canonical pair assembly for explicit sends (workspace send and
+    /// explicit output send, REQ-WS-01/REQ-OUT-04): identical to
+    /// [`Session::paired_from_canonical`] except the cross-output reciprocal-
+    /// adjacency fence is skipped. An explicit send names both endpoints
+    /// (the destination output's current workspace is resolved adapter-side),
+    /// so no adjacency-derived candidate needs disambiguation; every other
+    /// fence (distinct keys, usable components, identity, duplicate state)
+    /// still applies. Directional R4 keeps the fenced constructor: there the
+    /// target IS the adjacency-derived candidate.
+    pub fn paired_from_canonical_for_send(
+        source: &Session,
+        target: Option<&Session>,
+        pair_domains: Vec<OutputDomain>,
+    ) -> Result<Session, CanonicalPairError> {
+        Self::paired_from_canonical_impl(source, target, pair_domains, false)
+    }
+
+    fn paired_from_canonical_impl(
+        source: &Session,
+        target: Option<&Session>,
+        pair_domains: Vec<OutputDomain>,
+        require_adjacency: bool,
+    ) -> Result<Session, CanonicalPairError> {
         if pair_domains.len() != 2
             || !pair_domains.iter().all(|d| d.validate())
             || pair_domains[0].key() == pair_domains[1].key()
@@ -792,9 +833,12 @@ impl Session {
         {
             return Err(CanonicalPairError::DomainMismatch);
         }
-        // Cross-output pairs keep the reciprocal-adjacency fence; same-output
-        // distinct-workspace pairs need no cross-output adjacency.
-        if pair_domains[0].id != pair_domains[1].id
+        // Cross-output pairs keep the reciprocal-adjacency fence, except for
+        // explicit sends whose endpoints are both named (see
+        // `paired_from_canonical_for_send`); same-output distinct-workspace
+        // pairs need no cross-output adjacency.
+        if require_adjacency
+            && pair_domains[0].id != pair_domains[1].id
             && (!pair_domains[0]
                 .adjacent
                 .values()

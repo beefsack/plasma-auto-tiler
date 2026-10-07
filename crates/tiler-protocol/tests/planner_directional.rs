@@ -303,6 +303,26 @@ fn directional_fp(
                 .and_then(|v| v.as_str())
                 .unwrap_or(""),
         );
+        sep(&mut h, 0x1f);
+        feed(&mut h, "up");
+        sep(&mut h, 0x1f);
+        feed(
+            &mut h,
+            d["adjacent"]
+                .get("up")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+        );
+        sep(&mut h, 0x1f);
+        feed(&mut h, "down");
+        sep(&mut h, 0x1f);
+        feed(
+            &mut h,
+            d["adjacent"]
+                .get("down")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+        );
     }
     sep(&mut h, 0x1f);
     feed(&mut h, focused);
@@ -387,8 +407,10 @@ fn directional_fingerprint_golden_vector() {
     // Cross-language pin with the adapter's `planDirectionalFingerprint`
     // test: both derivations must emit this exact value for the same input.
     // Recompute here only by changing the canonical scheme on both sides.
+    // Item 5.2 scheme: left/right/up/down adjacency in fixed order (was
+    // left/right only); the adapter pin must move in sync.
     let fp = directional_fp(&domains_payload(), "win-a", &one_each_windows());
-    assert_eq!(fp, 1986527274, "golden directional fingerprint");
+    assert_eq!(fp, 2130914552, "golden directional fingerprint");
 }
 
 #[test]
@@ -552,7 +574,11 @@ fn move_cross_empty_target_plans_r4() {
 }
 
 #[test]
-fn move_up_stays_local_never_r4() {
+fn move_up_without_vertical_candidate_stays_local() {
+    // No up-adjacent output exists in this pair (left/right adjacency only),
+    // so the exhausted Up move stays local: no candidate is a local outcome,
+    // never a cross. Vertical crossing with a real up-candidate is covered
+    // by the stacked unit route (`directional_vertical_pair_crosses_after_exhaustion`).
     let mut planner = Planner::new();
     let windows = vec![
         win("win-a", "out-2", "ws-b", 810, 10, 300, 200),

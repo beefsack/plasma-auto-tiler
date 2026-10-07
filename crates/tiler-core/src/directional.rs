@@ -63,6 +63,16 @@ fn step_for(direction: Direction) -> i32 {
     }
 }
 
+/// Opposite direction, for reciprocal adjacency checks.
+fn opposite_direction(direction: Direction) -> Direction {
+    match direction {
+        Direction::Left => Direction::Right,
+        Direction::Right => Direction::Left,
+        Direction::Up => Direction::Down,
+        Direction::Down => Direction::Up,
+    }
+}
+
 /// Opaque platform-neutral output identity.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct OutputId(pub String);
@@ -1032,24 +1042,40 @@ pub fn plan_move_with_capabilities(
         );
     };
     let local = plan_local(intent, validated.source, &path);
-    let boundary_exhausted = matches!(
+    // Local restructure/swap/escape wins first: any planned local outcome
+    // returns unchanged (gated by capabilities only).
+    if matches!(local, MoveOutcome::Planned(_)) {
+        return gate(local, capabilities);
+    }
+    // Cross eligibility (REQ-MOV-08/OUT-01, item 5.1): the mover is exhausted
+    // locally with no applicable restructure, either at the root edge of a
+    // root group (`Boundary` with a one-level path) or as a sole root leaf
+    // (`SingleRootLeaf` with an empty path over a lone leaf tree). Any other
+    // noop (notably `NoAdjacentOutput`: no candidate in this direction) is
+    // returned unchanged with no cross attempt and no output wrapping.
+    let sole_leaf = matches!(
+        local,
+        MoveOutcome::Noop {
+            reason: NoopReason::SingleRootLeaf,
+        }
+    ) && path.is_empty()
+        && matches!(tree, Node::Leaf { .. });
+    let root_edge = matches!(
         local,
         MoveOutcome::Noop {
             reason: NoopReason::Boundary,
         }
-    );
-    if !boundary_exhausted {
+    ) && path.len() == 1
+        && matches!(tree, Node::Group { .. });
+    if !sole_leaf && !root_edge {
         return gate(local, capabilities);
     }
-    if path.len() != 1 || !matches!(tree, Node::Group { .. }) {
-        return gate(local, capabilities);
-    }
-    // Source default Vertical layout output axis only: only Left/Right cross
-    // horizontally adjacent outputs. Up/Down retain local behavior and never
-    // cross (no vertical output crossing, no workspace cycling).
-    if !matches!(intent.direction, Direction::Left | Direction::Right) {
-        return gate(local, capabilities);
-    }
+    // Four-direction cross (item 5.2): the adapter owns output topology and
+    // resolves the candidate; the core crosses the named adjacent output in
+    // the requested direction on FULL output rectangles (panel gaps never
+    // block: geometry selection is adapter-side, never work-area gated
+    // here). No candidate is a no-op; ambiguous or unreadable topology
+    // refuses fail-closed; outputs never wrap.
     let Some(target_id) = validated.source.adjacent.get(&intent.direction) else {
         return MoveOutcome::Noop {
             reason: NoopReason::NoAdjacentOutput,
@@ -1060,10 +1086,20 @@ pub fn plan_move_with_capabilities(
         .iter()
         .find(|output| &output.id == target_id)
     else {
-        return MoveOutcome::Noop {
-            reason: NoopReason::NoAdjacentOutput,
-        };
+        return rejected(
+            RejectionKind::MalformedTopology,
+            "output adjacency references an output missing from the snapshot",
+        );
     };
+    // Ambiguous topology refuses: the cross target must name the source back
+    // on the opposite side (unique reciprocal adjacency). A one-sided or
+    // mismatched edge cannot identify the crossing unambiguously.
+    if target.adjacent.get(&opposite_direction(intent.direction)) != Some(&validated.source.id) {
+        return rejected(
+            RejectionKind::MalformedTopology,
+            "output adjacency is not reciprocal in the requested direction",
+        );
+    }
     // Cross-workspace allowed: the target is the adjacent output's currently
     // selected logical workspace (its Snapshot workspace), not the same
     // backing desktop index. Ambiguous duplicate output ids fail closed at
@@ -1071,7 +1107,7 @@ pub fn plan_move_with_capabilities(
     // make find() ambiguous); here the first match wins deterministically but
     // session-layer adjacency validation requires exactly one domain per
     // output id for cross-output to avoid ambiguity.
-    let source_root_child_index = path[0].child_index;
+    let source_root_child_index = if sole_leaf { 0 } else { path[0].child_index };
     let outcome = MoveOutcome::Planned(MovePlan::for_operation(
         intent,
         MoveOperation::CrossOutput {

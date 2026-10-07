@@ -676,9 +676,34 @@ fn r4_occupied_and_empty_after_boundary_s20_s22_s23_p1_p5_f1_f3() {
 }
 
 #[test]
-fn r4_denied_without_adjacency_and_never_vertically() {
+fn r4_denied_without_adjacency_and_crosses_vertically_after_exhaustion() {
+    // No candidate is a no-op (all four directions, no output wrapping).
+    // A sole leaf with no adjacency has no candidate in any direction.
+    let lone = single_output(leaf("W"));
+    for direction in [
+        Direction::Left,
+        Direction::Right,
+        Direction::Up,
+        Direction::Down,
+    ] {
+        assert_eq!(
+            plan_move(&lone, &intent("source", "W", direction)),
+            MoveOutcome::Noop {
+                reason: NoopReason::NoAdjacentOutput
+            },
+            "{direction:?}"
+        );
+    }
+    // Root-edge group movers with no adjacency also no-op per direction:
+    // Right from the right edge (B), Left from the left edge (W).
     let tree = group("root", Axis::Horizontal, vec![leaf("W"), leaf("B")]);
-    let missing = single_output(tree.clone());
+    let missing = single_output(tree);
+    assert_eq!(
+        plan_move(&missing, &intent("source", "B", Direction::Right)),
+        MoveOutcome::Noop {
+            reason: NoopReason::NoAdjacentOutput
+        }
+    );
     assert_eq!(
         plan_move(&missing, &intent("source", "W", Direction::Left)),
         MoveOutcome::Noop {
@@ -686,7 +711,8 @@ fn r4_denied_without_adjacency_and_never_vertically() {
         }
     );
 
-    // Up/Down never cross even with vertical adjacency: local behavior only.
+    // REQ-MOV-08/OUT-01 item 5.1/5.2: exhausted vertical moves cross stacked
+    // outputs after local exhaustion, like horizontal moves.
     let vertical = snapshot(vec![
         output("top", Some(leaf("X")), vec![(Direction::Down, "source")]),
         output(
@@ -696,12 +722,150 @@ fn r4_denied_without_adjacency_and_never_vertically() {
         ),
     ]);
     let outcome = plan_move(&vertical, &intent("source", "W", Direction::Up));
+    let plan = planned(&outcome);
+    assert_eq!(plan.rule, Rule::R4);
+    match &plan.operation {
+        MoveOperation::CrossOutput {
+            target_output,
+            target_workspace,
+            source_root_child_index,
+            target,
+            ..
+        } => {
+            assert_eq!(target_output, &OutputId::from("top"));
+            assert_eq!(target_workspace, &WorkspaceId::from("workspace-1"));
+            assert_eq!(*source_root_child_index, 0);
+            assert_eq!(*target, CrossOutputTarget::Occupied);
+        }
+        other => panic!("expected cross-output, got {other:?}"),
+    }
+}
+
+#[test]
+fn r4_local_restructure_wins_before_cross_in_all_directions() {
+    // Item 5.1: local restructure/swap/escape wins first even when an
+    // adjacent output exists in the requested direction.
+    let pair = || {
+        snapshot(vec![
+            output("left", Some(leaf("X")), vec![(Direction::Right, "source")]),
+            output(
+                "source",
+                Some(group("root", Axis::Vertical, vec![leaf("W"), leaf("B")])),
+                vec![(Direction::Left, "left")],
+            ),
+        ])
+    };
+    // W moving down inside a vertical pair swaps locally (R2a), never R4.
+    let outcome = plan_move(&pair(), &intent("source", "W", Direction::Down));
+    let plan = planned(&outcome);
     assert!(
-        !matches!(
-            outcome,
-            MoveOutcome::Planned(ref plan) if plan.rule == Rule::R4
+        !matches!(plan.operation, MoveOperation::CrossOutput { .. }),
+        "local swap must win, got {:?}",
+        plan.operation
+    );
+    assert_eq!(plan.rule, Rule::R2a);
+
+    // Horizontal R1 wrap wins over the adjacent cross too: W sits in a
+    // perpendicular (vertical) root group, so Left wraps locally.
+    let outcome = plan_move(&pair(), &intent("source", "W", Direction::Left));
+    let plan = planned(&outcome);
+    assert_eq!(plan.rule, Rule::R1);
+    assert!(
+        !matches!(plan.operation, MoveOperation::CrossOutput { .. }),
+        "local wrap must win, got {:?}",
+        plan.operation
+    );
+}
+
+#[test]
+fn r4_sole_root_leaf_crosses_all_four_directions() {
+    // Item 5.1: a sole root leaf crosses with an adjacent output in all four
+    // directions (changing the old horizontal SingleRootLeaf no-cross).
+    let world = || {
+        snapshot(vec![
+            output("left", Some(leaf("L")), vec![(Direction::Right, "source")]),
+            output("right", Some(leaf("R")), vec![(Direction::Left, "source")]),
+            output("top", Some(leaf("T")), vec![(Direction::Down, "source")]),
+            output("bottom", Some(leaf("D")), vec![(Direction::Up, "source")]),
+            output(
+                "source",
+                Some(leaf("W")),
+                vec![
+                    (Direction::Left, "left"),
+                    (Direction::Right, "right"),
+                    (Direction::Up, "top"),
+                    (Direction::Down, "bottom"),
+                ],
+            ),
+        ])
+    };
+    for (direction, target) in [
+        (Direction::Left, "left"),
+        (Direction::Right, "right"),
+        (Direction::Up, "top"),
+        (Direction::Down, "bottom"),
+    ] {
+        let outcome = plan_move(&world(), &intent("source", "W", direction));
+        let plan = planned(&outcome);
+        assert_eq!(plan.rule, Rule::R4, "{direction:?}");
+        match &plan.operation {
+            MoveOperation::CrossOutput {
+                target_output,
+                source_root_child_index,
+                ..
+            } => {
+                assert_eq!(target_output, &OutputId::from(target), "{direction:?}");
+                assert_eq!(*source_root_child_index, 0, "{direction:?}");
+            }
+            other => panic!("expected cross-output, got {other:?}"),
+        }
+    }
+    // Sole leaf with no candidate is a no-op, never a cross.
+    let lone = single_output(leaf("W"));
+    assert_eq!(
+        plan_move(&lone, &intent("source", "W", Direction::Up)),
+        MoveOutcome::Noop {
+            reason: NoopReason::NoAdjacentOutput
+        }
+    );
+}
+
+#[test]
+fn r4_ambiguous_non_reciprocal_adjacency_refuses() {
+    // Item 5.2: ambiguous/unreadable topology refuses fail-closed. The source
+    // names an adjacent output that does not name the source back, so no
+    // unique reciprocal candidate exists.
+    let one_sided = snapshot(vec![
+        output("left", Some(leaf("X")), vec![]),
+        output(
+            "source",
+            Some(group("root", Axis::Horizontal, vec![leaf("W"), leaf("B")])),
+            vec![(Direction::Left, "left")],
         ),
-        "vertical output crossing must never plan R4"
+    ]);
+    assert!(
+        matches!(
+            plan_move(&one_sided, &intent("source", "W", Direction::Left)),
+            MoveOutcome::Rejected { .. }
+        ),
+        "one-sided adjacency must refuse"
+    );
+    // Wrong-side reciprocity (target names the source on the wrong side)
+    // refuses as well.
+    let mismatched = snapshot(vec![
+        output("left", Some(leaf("X")), vec![(Direction::Up, "source")]),
+        output(
+            "source",
+            Some(group("root", Axis::Horizontal, vec![leaf("W"), leaf("B")])),
+            vec![(Direction::Left, "left")],
+        ),
+    ]);
+    assert!(
+        matches!(
+            plan_move(&mismatched, &intent("source", "W", Direction::Left)),
+            MoveOutcome::Rejected { .. }
+        ),
+        "wrong-side adjacency must refuse"
     );
 }
 

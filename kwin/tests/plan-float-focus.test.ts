@@ -411,6 +411,8 @@ describe("plan adapter float-origin focus", () => {
     });
 
     it("retains on up miss even with a directional target present", () => {
+        // Item 5 authorizes moves and output sends across outputs, not
+        // vertical float-origin focus: up/down misses retain.
         const r = refs();
         const observed = floatObserved(r, { directional: true });
         const mocks = mockEnv(r, observed);

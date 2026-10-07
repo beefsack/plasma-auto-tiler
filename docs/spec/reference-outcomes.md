@@ -3149,7 +3149,7 @@ Legend:
 | V-INS-AXIS | New-window split axis: long-edge vs orientation-toggle vs alternate | Selected as user statement `D-dec-x` |
 | V-MOVE-PERP | Perpendicular move: COSMIC restructure vs no-op/swap | COSMIC R1 selected; foreign swap/no-op unselected (`D-dec-cos`) |
 | V-MOVE-NARY | 3+-child wrap vs flat swap; same-orientation nesting allowed | Ordered N-ary + R2b/R2c/R3 selected (`D-dec-cos`); USER 2026-10-07 item 3: global `sameAxisMove` / `core.same_axis_move`, `cosmic-wrap` default or `flat-swap` for R2c adjacent direct leaf siblings only, shares travel with windows; leaf/group rules unchanged. Shared core/KDE [delivered offline](../changes/archive/same-axis-move-setting.md); Windows wiring/native journey pending (R-MOV-03/09/10) |
-| V-WS-FOLLOW | Send follows focus vs leaves focus in source | `D-dec-cos` selects verified follow; USER 2026-10-07 item 2: numbered/relative follow defaults, bindable unbound stay, target resolved once in existing-order ring; shared core/KDE [delivered offline](../changes/archive/kde-workspace-send-follow-stay.md), floating-boundary follow gap repaired, item-2 native journey/Windows wiring pending (R-WS-18..20). Item 5 explicit output follow/stay remains implementation pending (R-OUT-07) |
+| V-WS-FOLLOW | Send follows focus vs leaves focus in source | `D-dec-cos` selects verified follow; USER 2026-10-07 item 2: numbered/relative follow defaults, bindable unbound stay, target resolved once in existing-order ring; shared core/KDE [delivered offline](../changes/archive/kde-workspace-send-follow-stay.md), floating-boundary follow gap repaired, item-2 native journey/Windows wiring pending (R-WS-18..20). Item 5 explicit output follow/stay [delivered offline](../changes/archive/four-direction-output-transfer.md), native journey/Windows wiring pending (R-OUT-04/07) |
 | V-WS-SHELL-ACTIVATE | Shell selection of another workspace's window: switch workspace vs pull window | KDE native configured policy (default switch); Windows option unselected (`D-alt-tab`) |
 | V-WS-ANCHOR | Target anchor: remembered-leaf vs focus-history vs root; axis by long edge | Selected rule (`D-dec-x` + `D-place` synthetic proof) |
 | V-FLOAT-GEO | First-float geometry: centered 60% vs app frame vs tile share | `D-dec-ww` selects centered-60% first, retained after |
@@ -3163,7 +3163,7 @@ Legend:
 | V-START-MIN | Minimum-infeasible writes: origin+minimum vs skip vs float | B6 selected on both platforms, no setting (user 2026-10-07); KDE [delivered offline](../changes/archive/kde-minimum-origin-placement.md), native journey TBD (`D-place`; [adapter](../../kwin/src/plan-adapter.ts) `overconstrainedEffective`) |
 | V-CLOSE-FOCUS | Removal focus: source-MRU top vs spatial neighbor vs target history | `D-dec-cos` selects source-MRU top |
 | V-GROUP-STACK | Tabbed stacks: supported vs fail-closed refuse | User 2026-10-07: tabs first after 0.1; close active tab keeps group, activates next (COSMIC/Hyprland/i3/sway); until then refuse closed (`D-dec-cos`) |
-| V-R4-DIR | Exhausted directional move: cross-output vs no-op vs workspace cycle | USER 2026-10-07 item 5: local restructure/swap/escape first, then all-four-direction crossing including sole root leaf; unique reciprocal edge-touch + positive overlap on FULL output rectangles, horizontal too; no candidate no-op, ambiguous/unreadable refuse, no wrap (implementation pending; R-MOV-08/11..13) |
+| V-R4-DIR | Exhausted directional move: cross-output vs no-op vs workspace cycle | USER 2026-10-07 item 5: local restructure/swap/escape first, then all-four-direction crossing including sole root leaf; unique reciprocal edge-touch + positive overlap on FULL output rectangles, horizontal too; no candidate no-op, ambiguous/unreadable refuse, no wrap. Shared core/KDE [delivered offline](../changes/archive/four-direction-output-transfer.md), work-area placement/edge landing retained; native journey/Windows wiring pending (R-MOV-08/11..13) |
 | V-DRAG-ZONE | Drop zones: edge/interior/stack mapping; centre-stack refused | `D-dec-cos` + `D-dec-nest` select split-only |
 
 ## Coverage accounting
@@ -3210,7 +3210,7 @@ minimum-size stays a supplemental file (not nested in resize).
 |---|---|---|---|
 | Insertion | [insertion.md](reference-outcomes/insertion.md) | R-INS-01..08 (8) | none (R-INS-03..08 landed in piece B1) |
 | Focus | [focus.md](reference-outcomes/focus.md) | R-FOC-01..04 (4) | none (landed in piece B2) |
-| Move | [move.md](reference-outcomes/move.md) | R-MOV-01..13 (13) | R-MOV-09..13 added 2026-10-07; reference outcomes TBD; KDE item 3 R-MOV-03/09/10 delivered offline; item 5 pending |
+| Move | [move.md](reference-outcomes/move.md) | R-MOV-01..13 (13) | R-MOV-09..13 added 2026-10-07; reference outcomes TBD; KDE items 3/5 R-MOV-03/08/09..13 delivered offline; native journeys/Windows wiring pending |
 | Resize | [resize.md](reference-outcomes/resize.md) | R-RSZ-01..04 (4) | none (landed in piece B4) |
 | Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | R-LAY-01..06 (6) | R-LAY-01/05/06 KDE implemented offline; native journey/Windows wiring pending; R-LAY-05/06 reference outcomes TBD |
 | Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..20 (20) | R-WS-15..20 added 2026-10-07; reference outcomes TBD; KDE items 1/2 delivered, item 1 single-output user-confirmed, item 2 offline only |
@@ -3219,7 +3219,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Groups / stacks | [groups-stacks.md](reference-outcomes/groups-stacks.md) | R-GRP-01..03 (3) | none (R-GRP-02..03 landed with scrolling backfill) |
 | Floating | [floating.md](reference-outcomes/floating.md) | R-FLT-01..14 (14) | none (R-FLT-12..14 landed with scrolling backfill) |
 | Close / reflow | [close.md](reference-outcomes/close.md) | R-CLOSE-01..05 (5) | none (R-CLOSE-03..05 landed with scrolling backfill) |
-| Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..07 (7) | R-OUT-07 added 2026-10-07; reference outcomes TBD |
+| Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..07 (7) | R-OUT-07 added 2026-10-07; reference outcomes TBD; KDE item 5 R-OUT-01/04/07 delivered offline; native journey/Windows wiring pending |
 | Mouse | [mouse.md](reference-outcomes/mouse.md) | R-DRAG-01..08 + R-MOU-01..03 (11) | none (R-MOU-01..03 landed with scrolling backfill) |
 | Special windows | [special-windows.md](reference-outcomes/special-windows.md) | R-SPC-01..05 (5) | none (landed; no backfill: no prior rows) |
 | Activation | [activation.md](reference-outcomes/activation.md) | R-ACT-01..02 (2) | none (landed; no backfill: no prior rows) |

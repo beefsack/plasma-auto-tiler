@@ -42,8 +42,8 @@ Draft totals: 74 NORMATIVE, 61 OPEN, 9 PROVISIONAL requirement rows;
 Selected additions carry remaining KDE/Windows implementation gaps; KDE
 REQ-WS-08/11 have a user-confirmed single-output native journey; multi-output
 and unspecified presets remain pending. Shared core/KDE REQ-WS-01/01b/06/14
-and REQ-MOV-03/REQ-LAY-01 are implemented offline; Windows wiring and
-item-2/3/4 native journeys pending. The macOS
+and REQ-MOV-03/08/08b, REQ-LAY-01 and REQ-OUT-01/04 are implemented offline;
+Windows wiring and item-2/3/4/5 native journeys pending. The macOS
 adapter gap counts once platform-wide. Coverage: 139 scenarios, 24 Table A predicates.
 
 <a id="insertion"></a>
@@ -80,8 +80,9 @@ Hooks: none recorded; focus wrap remains OPEN.
 ## 3. Move ([R-MOV](reference-outcomes/move.md#move-reference-outcomes))
 
 Hooks: V-MOVE-NARY selects configurable wrap; V-R4-DIR selects four-direction
-fallback including sole root leaves on full-output adjacency (implementation
-pending). V-MOVE-PERP retains the selected COSMIC behavior.
+fallback including sole root leaves on full-output adjacency (shared core/KDE
+implemented offline, Windows wiring/native journey pending). V-MOVE-PERP
+retains the selected COSMIC behavior.
 
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
@@ -92,8 +93,8 @@ pending). V-MOVE-PERP retains the selected COSMIC behavior.
 | REQ-MOV-05 | [R-MOV-05](reference-outcomes/move.md#r-mov-05-edge-move-with-no-left-neighbor) edge move, no left neighbor | current: edge no-op | current: no-op | current: no-op | behavior OPEN; implementation absent | OPEN | Table B pending explicit |
 | REQ-MOV-06 | [R-MOV-06](reference-outcomes/move.md#r-mov-06-move-into-a-nested-perpendicular-neighbor-with-remembered-child) move into nested neighbor | current: midpoint insert, exact index TBD | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | no selection |
 | REQ-MOV-07 | [R-MOV-07](reference-outcomes/move.md#r-mov-07-orthogonal-escape-across-a-perpendicular-parent) orthogonal escape | current: wrap outcome, no strong consensus | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | no selection |
-| REQ-MOV-08 | [R-MOV-08](reference-outcomes/move.md#r-mov-08-exhausted-vertical-move-across-stacked-outputs), R-MOV-11..13 cross-after-exhaustion | Local restructure/swap/escape first; otherwise cross in all four directions, including sole root leaf. Unique reciprocal edge-touch + positive-overlap candidate on FULL output rectangles, horizontal too; no candidate no-op, ambiguous/unreadable topology refuse, no output wrap | gap: vertical/sole-leaf/full-rect implementation pending | gap: implementation pending; multi-output parked | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 5.1/5.2 USER 2026-10-07 |
-| REQ-MOV-08b | [R-MOV-08](reference-outcomes/move.md#r-mov-08-exhausted-vertical-move-across-stacked-outputs) cross-after-exhaustion | Cross to output above after local exhaustion using REQ-MOV-08 selection | gap: stays local; implementation pending | gap: stays local; implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 5 USER 2026-10-07 |
+| REQ-MOV-08 | [R-MOV-08](reference-outcomes/move.md#r-mov-08-exhausted-vertical-move-across-stacked-outputs), R-MOV-11..13 cross-after-exhaustion | Local restructure/swap/escape first; otherwise cross in all four directions, including sole root leaf. Unique reciprocal edge-touch + positive-overlap candidate on FULL output rectangles, horizontal too; no candidate no-op, ambiguous/unreadable topology refuse, no output wrap. Placement retains work areas; directional landing stays nearest the source | implemented offline: core/protocol/adapter all-four fallback, sole leaves, full-rect selection and arrival fences ([record](../changes/archive/four-direction-output-transfer.md)); native journey pending | gap: shared core supports crossing; adapter wiring pending, multi-output parked | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 5.1/5.2 USER 2026-10-07 |
+| REQ-MOV-08b | [R-MOV-08](reference-outcomes/move.md#r-mov-08-exhausted-vertical-move-across-stacked-outputs) cross-after-exhaustion | Cross to output above after local exhaustion using REQ-MOV-08 selection | implemented offline: up/down crossing; native journey pending | gap: stays local; adapter wiring pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 5 USER 2026-10-07 |
 
 <a id="resize"></a>
 ## 4. Resize ([R-RSZ](reference-outcomes/resize.md#resize-reference-outcomes))
@@ -244,14 +245,14 @@ Hooks: V-GROUP-STACK is scheduled first after 0.1; until then stacks refuse clos
 
 Hooks: V-R4-DIR selects four-direction full-output adjacency and sole-root
 crossing after local exhaustion; V-WS-FOLLOW also covers explicit output send
-(implementation pending).
+(shared core/KDE implemented offline; Windows wiring/native journey pending).
 
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
-| REQ-OUT-01 | [R-OUT-01](reference-outcomes/multi-output.md#r-out-01-move-left-onto-an-occupied-output) move left onto occupied output | Exhausted horizontal move crosses into adjacent output's current workspace; sole-root eligibility and FULL-rectangle selection as REQ-MOV-08 | gap: ordinary crossing works; sole-root/full-rect changes pending | gap: implementation pending (multi-output parked) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) R4 USER step-3 2026-09-25; [item 5](../decisions.md#cross-platform-behavior) USER 2026-10-07 |
+| REQ-OUT-01 | [R-OUT-01](reference-outcomes/multi-output.md#r-out-01-move-left-onto-an-occupied-output) move left onto occupied output | Exhausted horizontal move crosses into adjacent output's current workspace; sole-root eligibility and FULL-rectangle selection as REQ-MOV-08 | implemented offline: full-rect selection, sole-root crossing, unchanged edge landing and work-area geometry; native journey pending | gap: adapter wiring pending (multi-output parked) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) R4 USER step-3 2026-09-25; [item 5](../decisions.md#cross-platform-behavior) USER 2026-10-07 |
 | REQ-OUT-02 | [R-OUT-02](reference-outcomes/multi-output.md#r-out-02-perpendicular-move-at-an-output-edge) perpendicular move at edge | current: local vs cross TBD | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table C; no selection |
 | REQ-OUT-03 | [R-OUT-03](reference-outcomes/multi-output.md#r-out-03-focus-left-across-outputs) focus left across outputs | Exhausted horizontal focus transfers with no layout/membership writes | current: transfers | current: transfers (proposal) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) R4 focus-transfer route |
-| REQ-OUT-04 | [R-OUT-04](reference-outcomes/multi-output.md#r-out-04-explicitly-send-a-window-to-the-other-output), R-OUT-07 explicit output send | Explicit follow/stay send independent of local exhaustion, same four-direction FULL-output selection as REQ-MOV-08. Follow Meta/Win+Ctrl+Alt+arrows and +H/J/K/L; stay bindable unbound. Destination current workspace; ordinary workspace-send remembered-leaf/focus-history/root admission, command follow/stay. Initially tiled-subject eligibility, sticky excluded; floating boundaries membership-only, reflow tiled sides only; ordinary float transfer OPEN | gap: no output-send verb; implementation pending | gap: no output-send verb; implementation pending; multi-output parked | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 5 USER 2026-10-07 |
+| REQ-OUT-04 | [R-OUT-04](reference-outcomes/multi-output.md#r-out-04-explicitly-send-a-window-to-the-other-output), R-OUT-07 explicit output send | Explicit follow/stay send independent of local exhaustion, same four-direction FULL-output selection as REQ-MOV-08. Follow Meta/Win+Ctrl+Alt+arrows and +H/J/K/L; stay bindable unbound. Destination current workspace; ordinary workspace-send remembered-leaf/focus-history/root admission, command follow/stay. Initially tiled-subject eligibility, sticky excluded; floating boundaries membership-only, reflow tiled sides only; ordinary float transfer OPEN | implemented offline: distinct core/protocol output-send, pinned source/target arrival and visibility fences, follow/source-MRU stay, membership-only floating boundaries, catalog/presets ([record](../changes/archive/four-direction-output-transfer.md)); native journey pending | gap: shared core supports output-send; adapter/input/catalog wiring pending, multi-output parked | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 5 USER 2026-10-07 |
 | REQ-OUT-05 | [R-OUT-05](reference-outcomes/multi-output.md#r-out-05-open-a-window-with-two-occupied-outputs) open with two outputs | current: admission routing TBD both | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U; no selection |
 | REQ-OUT-06 | [R-OUT-06](reference-outcomes/multi-output.md#r-out-06-disconnect-and-reconnect-an-occupied-output) disconnect/reconnect output | Displaced workspaces return to original monitor with current contents; explicit moves stay | current: returns | current: TBD (parked PC) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) displacement policy |
 
@@ -383,8 +384,8 @@ Rotate/master and cycle verbs remain unselected.
 | Relative switch | Meta+Ctrl+H/K, Meta+Ctrl+Left/Up previous; Meta+Ctrl+J/L, Meta+Ctrl+Down/Right next (single-output native journey user-confirmed; multi-output/presets pending) | Win+Ctrl+H/J/K/L, Win+Ctrl+Left/Down/Up/Right (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
 | Relative send-and-follow | Meta+Ctrl+Shift+H/K, Meta+Ctrl+Shift+Left/Up previous; Meta+Ctrl+Shift+J/L, Meta+Ctrl+Shift+Down/Right next (implemented offline, native journey pending) | Win+Ctrl+Shift+H/J/K/L, Win+Ctrl+Shift+Left/Down/Up/Right (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
 | Whole-workspace output move | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
-| Output send-and-follow | Meta+Ctrl+Alt+H/J/K/L, Meta+Ctrl+Alt+Left/Down/Up/Right (implementation pending) | Win+Ctrl+Alt+H/J/K/L, Win+Ctrl+Alt+Left/Down/Up/Right (implementation pending) | mapping OPEN | [#13 Multi-output](#output) |
-| Output send-and-stay | unbound, bindable (implementation pending) | unbound, bindable (implementation pending) | mapping OPEN | [#13 Multi-output](#output) |
+| Output send-and-follow | Meta+Ctrl+Alt+H/J/K/L, Meta+Ctrl+Alt+Left/Down/Up/Right (implemented offline, native journey pending) | Win+Ctrl+Alt+H/J/K/L, Win+Ctrl+Alt+Left/Down/Up/Right (implementation pending) | mapping OPEN | [#13 Multi-output](#output) |
+| Output send-and-stay | unbound, bindable (implemented offline, native journey pending) | unbound, bindable (implementation pending) | mapping OPEN | [#13 Multi-output](#output) |
 | Parent orientation toggle | Meta+O (implemented offline; native journey pending) | Win+O (implementation pending; orientation-lock conflict) | mapping OPEN | [#5 Layout](#layout) |
 | Workspace layout selection | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#5 Layout](#layout) |
 | Rotate/master | unbound (no verb selected) | unbound (no verb selected) | mapping OPEN | [#5 Layout](#layout) |

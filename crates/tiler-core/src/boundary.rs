@@ -32,10 +32,10 @@ use crate::session::{
     SessionDragPlan, SessionFocusPlan, SessionMovePlan, SessionPlan, SessionResizePlan,
 };
 
-/// Typed command for all 13 wire ops: reconcile, update-gaps, active-group,
+/// Typed command for all 14 wire ops: reconcile, update-gaps, active-group,
 /// release-domain, move, focus, resize, pointer-resize, toggle-float,
-/// toggle-orientation, `send-to-workspace`, `drag-drop`, and read-only
-/// `drag-preview`.
+/// toggle-orientation, `send-to-workspace`, `send-to-output`, `drag-drop`,
+/// and read-only `drag-preview`.
 /// Payloads are already-decoded clones; fallible wire vocabularies
 /// (direction/mode) cross opaquely so this conversion stays total
 /// and handler precedence is untouched.
@@ -98,6 +98,18 @@ pub enum CoreCommand {
         /// historical follow behavior); false stays on the source domain.
         follow: bool,
     },
+    /// Explicit output send (REQ-OUT-04, item 5.3/5.4): the destination
+    /// output's current workspace resolved adapter-side, carried as an
+    /// explicit cross-output target. Distinct from `SendToWorkspace`, which
+    /// stays same-output. Ordinary admission and explicit follow/stay.
+    SendToOutput {
+        window: String,
+        target_output: String,
+        target_workspace: String,
+        /// True follows the mover into the target (default); false stays on
+        /// the source domain.
+        follow: bool,
+    },
     DragDrop {
         window: String,
         x: i32,
@@ -141,6 +153,7 @@ impl CoreCommand {
             Self::ToggleFloat { .. } => "toggle-float",
             Self::ToggleOrientation { .. } => "toggle-orientation",
             Self::SendToWorkspace { .. } => "send-to-workspace",
+            Self::SendToOutput { .. } => "send-to-output",
             Self::DragDrop { .. } => "drag-drop",
             Self::DragPreview { .. } => "drag-preview",
         }
@@ -305,9 +318,12 @@ impl TiledPlan {
 /// desired geometry, retained focus, follow/stay selection, and the exact
 /// `MoveTiled` operation plus lifecycle preconditions for native assignment.
 /// Construction is fallible (`None` unless the dispatch carries both the
-/// `MoveTiled` operation and the explicit `MoveToWorkspace` intent with its
+/// `MoveTiled` operation and an explicit send intent with its
 /// follow/stay selection); the caller maps that to its existing
 /// `move-op-invalid` rejection at the exact legacy position. Never validates.
+/// Shared by workspace send (`MoveToWorkspace` intent) and explicit output
+/// send (`MoveToOutput` intent): the transfer shape is ordinary in both; only
+/// the target scope differs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendWorkspacePlan {
     pub base_revision: u64,
@@ -322,16 +338,16 @@ pub struct SendWorkspacePlan {
 
 impl SendWorkspacePlan {
     /// Typed construction from an authoritative workspace [`SessionPlan`]:
-    /// requires the explicit `MoveToWorkspace` intent (which carries the
+    /// requires an explicit send intent (which carries the
     /// follow/stay selection) alongside the `MoveTiled` operation. A
-    /// `MoveTiled` operation under any other intent is not a workspace send
+    /// `MoveTiled` operation under any other intent is not a send
     /// and refuses.
     #[must_use]
     pub fn from_session(plan: &SessionPlan) -> Option<Self> {
-        let crate::contract::LifecycleIntent::MoveToWorkspace { follow, .. } =
-            &plan.dispatch.intent
-        else {
-            return None;
+        let follow = match &plan.dispatch.intent {
+            crate::contract::LifecycleIntent::MoveToWorkspace { follow, .. }
+            | crate::contract::LifecycleIntent::MoveToOutput { follow, .. } => *follow,
+            _ => return None,
         };
         match &plan.dispatch.operation {
             LifecycleOperation::MoveTiled { .. } => Some(Self {
@@ -340,7 +356,7 @@ impl SendWorkspacePlan {
                 geometry: plan.desired_geometry.clone(),
                 focus_domain: plan.desired_focus_domain.clone(),
                 focus_leaf: plan.desired_focus_leaf.clone(),
-                follow: *follow,
+                follow,
                 operation: plan.dispatch.operation.clone(),
                 preconditions: plan.dispatch.preconditions.clone(),
             }),
@@ -648,6 +664,9 @@ pub enum CoreReply {
     Projection(ProjectionPlan),
     Tiled(TiledPlan),
     SendWorkspace(SendWorkspacePlan),
+    /// Explicit output send success: the same ordinary [`SendWorkspacePlan`]
+    /// transfer shape under the distinct `send-to-output` wire kind.
+    SendOutput(SendWorkspacePlan),
     MoveDirectional(MovePlanReply),
     FocusDirectional(FocusPlanReply),
     Resize(ResizePlanReply),
@@ -990,7 +1009,7 @@ mod tests {
     }
 
     #[test]
-    fn all_thirteen_ops_have_distinct_wire_tokens() {
+    fn all_fourteen_ops_have_distinct_wire_tokens() {
         use std::collections::HashSet;
         let commands = vec![
             CoreCommand::Reconcile,
@@ -1035,6 +1054,12 @@ mod tests {
                 target_workspace: "s".to_owned(),
                 follow: true,
             },
+            CoreCommand::SendToOutput {
+                window: "w".to_owned(),
+                target_output: "o".to_owned(),
+                target_workspace: "s".to_owned(),
+                follow: true,
+            },
             CoreCommand::DragDrop {
                 window: "w".to_owned(),
                 x: 0,
@@ -1050,12 +1075,13 @@ mod tests {
                 source: None,
             },
         ];
-        assert_eq!(commands.len(), 13);
+        assert_eq!(commands.len(), 14);
         let tokens: HashSet<&'static str> = commands.iter().map(|c| c.op()).collect();
-        assert_eq!(tokens.len(), 13);
+        assert_eq!(tokens.len(), 14);
         assert!(tokens.contains("reconcile"));
         assert!(tokens.contains("release-domain"));
         assert!(tokens.contains("send-to-workspace"));
+        assert!(tokens.contains("send-to-output"));
         assert!(tokens.contains("drag-drop"));
         assert!(tokens.contains("drag-preview"));
         assert_eq!(TiledKind::DragDrop.kind_str(), "drag-drop");

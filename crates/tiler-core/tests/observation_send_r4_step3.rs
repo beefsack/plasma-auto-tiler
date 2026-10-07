@@ -981,3 +981,260 @@ fn send_return_after_send_away_splits_mru_tall_target() {
         vec!["leaf-notepad", "leaf-paint", "leaf-terminal"]
     );
 }
+
+// ---- explicit output send (REQ-OUT-04, item 5.3/5.4) ----
+
+fn seed_output_send_engine() -> (Engine, OutputDomain, OutputDomain, OutputDomain) {
+    // Cross-output seeding: source out-1/ws-a (s1, mover s2), destination
+    // out-2/ws-a (t1a, t1b, t2), third domain out-1/ws-b (b1).
+    let mut source =
+        Session::new(owner(), generation(), 0, 7, vec![domain("out-1", "ws-a")]).expect("source");
+    admit_to(&mut source, "s1", "out-1", "ws-a", "os-1");
+    admit_to(&mut source, "s2", "out-1", "ws-a", "os-2");
+    let mut target =
+        Session::new(owner(), generation(), 0, 7, vec![domain("out-2", "ws-a")]).expect("target");
+    admit_to(&mut target, "t1a", "out-2", "ws-a", "ot-1");
+    admit_to(&mut target, "t1b", "out-2", "ws-a", "ot-2");
+    admit_to(&mut target, "t2", "out-2", "ws-a", "ot-3");
+    let mut third =
+        Session::new(owner(), generation(), 0, 7, vec![domain("out-1", "ws-b")]).expect("third");
+    admit_to(&mut third, "b1", "out-1", "ws-b", "ob-1");
+    let source_domain = source.domains().first().expect("sd").clone();
+    let target_domain = target.domains().first().expect("td").clone();
+    let third_domain = third.domains().first().expect("thirdd").clone();
+    let mut engine = Engine::new();
+    engine.sync_binding(&owner(), &generation());
+    engine.store_committed(key("out-1", "ws-a"), source, 0);
+    engine.store_committed(key("out-2", "ws-a"), target, 0);
+    engine.store_committed(key("out-1", "ws-b"), third, 0);
+    (engine, source_domain, target_domain, third_domain)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn output_send_event(
+    source: &OutputDomain,
+    source_windows: Vec<EngineWindow>,
+    mover: &str,
+    target: &OutputDomain,
+    target_windows: Vec<EngineWindow>,
+    follow: bool,
+    c: &str,
+) -> CoreEvent {
+    CoreEvent {
+        owner: owner(),
+        generation: generation(),
+        correlation: corr(c),
+        revision: 0,
+        fingerprint: 7,
+        domain: source.clone(),
+        domain_key: source.key(),
+        outer_gap: 0,
+        focused_window: WindowId(mover.to_owned()),
+        windows: source_windows,
+        directional: None,
+        directional_target_outer_gap: None,
+        target_domain: Some((target.clone(), target.key())),
+        target_windows,
+        command: CoreCommand::SendToOutput {
+            window: mover.to_owned(),
+            target_output: target.key().output.0.clone(),
+            target_workspace: target.key().workspace.0.clone(),
+            follow,
+        },
+    }
+}
+
+fn parent_of(tree: &Node, leaf: &str) -> Option<String> {
+    match tree {
+        Node::Leaf { .. } => None,
+        Node::Group { id, children, .. } => {
+            if children.iter().any(|c| c.id().0 == leaf) {
+                return Some(id.0.clone());
+            }
+            children.iter().find_map(|c| parent_of(c, leaf))
+        }
+    }
+}
+
+fn tree_of_session(session: &Session, o: &str, ws: &str) -> Option<Node> {
+    session
+        .snapshot()
+        .domains
+        .into_iter()
+        .find(|d| d.output.0 == o && d.workspace.0 == ws)
+        .and_then(|d| d.tree)
+}
+
+#[test]
+fn output_send_uses_focus_history_when_remembered_stale() {
+    let (mut engine, source_domain, target_domain, third_domain) = seed_output_send_engine();
+    // Stage the stale anchor: send t2 (the destination's remembered leaf) to
+    // ws-b, leaving last-active pointing at a departed leaf while the
+    // destination focus history retains t1b.
+    let stage = output_send_event(
+        &target_domain,
+        vec![
+            carried("t1a", "out-2", "ws-a", 0),
+            carried("t1b", "out-2", "ws-a", 10),
+            carried("t2", "out-2", "ws-a", 20),
+        ],
+        "t2",
+        &third_domain,
+        vec![carried("b1", "out-1", "ws-b", 0)],
+        true,
+        "out-eng-stage-1",
+    );
+    match engine.handle(&stage) {
+        CoreReply::SendOutput(_) => {}
+        other => panic!("staging send must commit SendOutput, got {other:?}"),
+    }
+    // Ordinary send of s2 onto out-2/ws-a: remembered t2 is stale, so the
+    // destination focus history (t1b) anchors admission beside t1b.
+    let event = output_send_event(
+        &source_domain,
+        vec![
+            carried("s1", "out-1", "ws-a", 0),
+            carried("s2", "out-1", "ws-a", 10),
+        ],
+        "s2",
+        &target_domain,
+        vec![
+            carried("t1a", "out-2", "ws-a", 0),
+            carried("t1b", "out-2", "ws-a", 10),
+        ],
+        true,
+        "out-eng-mru-1",
+    );
+    let plan = match engine.handle(&event) {
+        CoreReply::SendOutput(plan) => plan,
+        other => panic!("output send must commit SendOutput, got {other:?}"),
+    };
+    assert!(plan.follow);
+    assert_eq!(plan.focus_domain, Some(key("out-2", "ws-a")));
+    assert_eq!(
+        plan.focus_leaf.as_ref().map(|leaf| leaf.0.as_str()),
+        Some("leaf-s2")
+    );
+    let tgt = engine.session(&key("out-2", "ws-a")).expect("tgt retained");
+    let tree = tree_of_session(tgt, "out-2", "ws-a").expect("target tree");
+    assert_eq!(leaves_of(tgt, "out-2", "ws-a").len(), 3);
+    assert_eq!(
+        parent_of(&tree, "leaf-s2"),
+        parent_of(&tree, "leaf-t1b"),
+        "mover splits beside the focus-history leaf"
+    );
+    assert_eq!(
+        homed(tgt, "s2"),
+        Some(("out-2".to_owned(), "ws-a".to_owned()))
+    );
+    // Both-domain geometry; the earlier send domain is undisturbed.
+    let mut ids: Vec<(String, String)> = plan
+        .geometry
+        .iter()
+        .map(|g| (g.window.0.clone(), g.output.0.clone()))
+        .collect();
+    ids.sort();
+    assert_eq!(
+        ids,
+        vec![
+            ("s1".to_owned(), "out-1".to_owned()),
+            ("s2".to_owned(), "out-2".to_owned()),
+            ("t1a".to_owned(), "out-2".to_owned()),
+            ("t1b".to_owned(), "out-2".to_owned()),
+        ]
+    );
+    let third = engine
+        .session(&key("out-1", "ws-b"))
+        .expect("third retained");
+    let mut ws_b = leaves_of(third, "out-1", "ws-b");
+    ws_b.sort();
+    assert_eq!(ws_b, vec!["leaf-b1".to_string(), "leaf-t2".to_string()]);
+}
+
+#[test]
+fn output_send_empty_destination_admits_lone_root_follow_and_stay() {
+    // Genuine root fallback through the Engine: the destination output was
+    // never observed, so the mover becomes its lone root with ordinary
+    // follow/stay focus. Stay with a sole source window leaves no focus and
+    // retires the emptied source slot.
+    let mut source =
+        Session::new(owner(), generation(), 0, 7, vec![domain("out-1", "ws-a")]).expect("source");
+    admit_to(&mut source, "s1", "out-1", "ws-a", "oe-1");
+    admit_to(&mut source, "m", "out-1", "ws-a", "oe-2");
+    let source_domain = source.domains().first().expect("sd").clone();
+    let mut engine = Engine::new();
+    engine.sync_binding(&owner(), &generation());
+    engine.store_committed(key("out-1", "ws-a"), source, 0);
+    let fresh_target = domain("out-2", "ws-1");
+    let follow = output_send_event(
+        &source_domain,
+        vec![
+            carried("s1", "out-1", "ws-a", 0),
+            carried("m", "out-1", "ws-a", 10),
+        ],
+        "m",
+        &fresh_target,
+        vec![],
+        true,
+        "out-eng-empty-follow-1",
+    );
+    let plan = match engine.handle(&follow) {
+        CoreReply::SendOutput(plan) => plan,
+        other => panic!("follow must commit SendOutput, got {other:?}"),
+    };
+    let tgt = engine
+        .session(&key("out-2", "ws-1"))
+        .expect("target created");
+    assert_eq!(leaves_of(tgt, "out-2", "ws-1"), vec!["leaf-m".to_string()]);
+    assert_eq!(plan.focus_domain, Some(key("out-2", "ws-1")));
+    let mut ids: Vec<(String, String)> = plan
+        .geometry
+        .iter()
+        .map(|g| (g.window.0.clone(), g.output.0.clone()))
+        .collect();
+    ids.sort();
+    assert_eq!(
+        ids,
+        vec![
+            ("m".to_owned(), "out-2".to_owned()),
+            ("s1".to_owned(), "out-1".to_owned()),
+        ]
+    );
+
+    let mut solo_source =
+        Session::new(owner(), generation(), 0, 7, vec![domain("out-1", "ws-a")]).expect("source");
+    admit_to(&mut solo_source, "solo", "out-1", "ws-a", "oe-solo-1");
+    let solo_domain = solo_source.domains().first().expect("sd").clone();
+    let mut solo_engine = Engine::new();
+    solo_engine.sync_binding(&owner(), &generation());
+    solo_engine.store_committed(key("out-1", "ws-a"), solo_source, 0);
+    let stay = output_send_event(
+        &solo_domain,
+        vec![carried("solo", "out-1", "ws-a", 0)],
+        "solo",
+        &domain("out-2", "ws-1"),
+        vec![],
+        false,
+        "out-eng-empty-stay-1",
+    );
+    let stay_plan = match solo_engine.handle(&stay) {
+        CoreReply::SendOutput(plan) => plan,
+        other => panic!("stay must commit SendOutput, got {other:?}"),
+    };
+    assert!(!stay_plan.follow);
+    assert_eq!(stay_plan.focus_domain, None);
+    assert_eq!(stay_plan.focus_leaf, None);
+    let stay_tgt = solo_engine
+        .session(&key("out-2", "ws-1"))
+        .expect("target created");
+    assert_eq!(
+        leaves_of(stay_tgt, "out-2", "ws-1"),
+        vec!["leaf-solo".to_string()]
+    );
+    assert_eq!(stay_plan.geometry.len(), 1);
+    assert_eq!(stay_plan.geometry[0].window.0, "solo");
+    assert!(
+        solo_engine.session(&key("out-1", "ws-a")).is_none(),
+        "emptied source slot retires"
+    );
+}

@@ -232,7 +232,8 @@ decisions of 2026-09-24 are under
   [decisions](decisions.md#cross-platform-behavior)
   [audit](research/cross-platform-core/post-windows-audit.md)
 - P1 | Adopt reference-consensus additions | User 2026-10-07 accepted the
-  Orchestrator recommendations from the consensus Table A; not started,
+  Orchestrator recommendations from the consensus Table A; items 1-5 shared
+  core/KDE delivered (item 1 single-output user-confirmed, items 2-5 offline),
   each through the shared Engine where possible, KDE and Windows unless
   noted ([consensus](research/reference-wm-consensus.md)):
   R-MOV-08 allow vertical move onto another output once local movement is
@@ -251,7 +252,7 @@ decisions of 2026-09-24 are under
   swap alternative (user 2026-10-07); R-DRAG-08 Windows Win+drag activates
   the mover at press instead of on drop (user 2026-10-07).
   Detailed selections 2026-10-07 (items 1-5 and D1 in
-  [decisions](decisions.md#cross-platform-behavior)); KDE items 1-4 delivered
+  [decisions](decisions.md#cross-platform-behavior)); KDE items 1-5 delivered
   offline, remaining implementation pending:
   KDE-side session owns shared Rust core + KDE adapter; separate Windows
   agent wires later. Correctness over non-breakage: Windows build/behavior
@@ -302,7 +303,10 @@ decisions of 2026-09-24 are under
      orientation lock conflict: Authentic takes over, Compatible disables.
      Pending live check for user: Meta+O toggles root and nested immediate
      parent, twice restores order/shares/focus, lone window is a no-op.
-  5. R-MOV-08 + R-OUT-04: local restructure/swap/escape first, then cross
+  5. R-MOV-08 + R-OUT-04 (shared core/protocol + KDE delivered offline;
+     two-output native journey pending;
+     [record](changes/archive/four-direction-output-transfer.md)):
+     local restructure/swap/escape first, then cross
      all four directions, including sole root leaf (horizontal too).
      Unique reciprocal edge-touch + positive-overlap adjacency on FULL
      output rectangles, horizontal too; no candidate no-op, ambiguous/
@@ -314,6 +318,9 @@ decisions of 2026-09-24 are under
      root) and command follow/stay. Initially tiled-subject eligibility,
      sticky excluded; floating boundaries membership-only, tiled sides
      reflow. Ordinary float transfer stays open.
+     Full rectangles select adjacency only; work-area placement and R4 edge
+     landing nearest the source remain. Explicit send reuses item-2 follow/
+     source-MRU stay, with pinned source/target current-view arrival fences.
   Bindings for other accepted additions remain to be chosen.
 - P1 | Windows handoff: reference-consensus additions | D1, user 2026-10-07:
   Windows agent wires each adapter piece after its KDE-side delivery.
@@ -475,14 +482,56 @@ decisions of 2026-09-24 are under
        floating-workspace/focus and overlay fixtures. Linux workspace tests
        compile/test portable Windows modules (394 tests); Windows native
        owner/input/UI and physical Win+O takeover remain Windows-owned.
-  - Item 5, after core piece lands: four-direction reciprocal adjacency on
-    full monitor rectangles; `CrossOutput` replies (two-domain geometry,
-    membership transfer, visibility, follow/stay focus); output-send event;
-    Ctrl+Alt input/catalog/presets. Depends on parked Windows multi-output work.
+  - Item 5: shared Rust core/protocol + KDE delivered offline; zero Windows
+     compile fixes required, current Windows behavior preserved. Depends on
+     parked Windows multi-output work. Exact sites under `crates/tiler-windows/`:
+     - `src/tiling_sys.rs:6083-6110` retained directional event construction:
+       supply complete source plus adjacent output's current workspace in
+       `CoreEvent.directional`, including target outer gap, and opt into
+       `cross_output_transfer` only with native transfer/fence support.
+       Derive unique reciprocal edge-touch + positive-overlap neighbors in
+       all four directions from FULL monitor rectangles, not work areas;
+       no candidate no-op, ambiguous/unreadable refuse, no wrap. Keep domain
+       bounds as work areas. Local move rules and sole-leaf eligibility are
+       now core-owned. Focus remains the existing horizontal policy.
+     - `src/tiling_sys.rs:6173-6205` currently applies only geometry for
+       `CoreReply::MoveDirectional`: handle `MoveOperation::CrossOutput`
+       native output/membership transfer before both-domain geometry, with
+       exact lifetime, frozen domain/gap/mode/current-view fences, fresh
+       arrival and one follow. Preserve nearest-source directional landing;
+       failed/partial transfer converges without replay or success claims.
+     - `src/workspace_owner.rs:70-147` / `build_send_event`,
+       `stamp_send_target`: add a DISTINCT output-send builder producing
+       `CoreCommand::SendToOutput { window, target_output, target_workspace,
+       follow }`; resolve destination CURRENT workspace once. Workspace-send
+       remains same-output. Reuse ordinary admission/canonical pair machinery;
+       same desktop ID on different outputs is valid (no last-desktop gate).
+     - `src/workspace_owner.rs:396-417` / `planned_writes` currently falls
+       through for new `CoreReply::SendOutput`; extract its geometry.
+       `src/tiling_sys.rs:10848-10883` send builder/reply dispatch and
+       `workspace_do_send` are same-output patterns, not output-send wiring:
+       add the new reply route and apply command follow/stay (reuse item 2),
+       source MRU/null focus, visibility and live-arrival fences.
+     - `src/tiling_sys.rs:10314` / `workspace_do_send_native` and
+       `src/workspace_owner.rs:162-171` / `SendRoute`: extend output sends
+       through floating-workspace boundaries with membership-only transfer
+       and tiled-side reflow; sticky/intentional float movers stay excluded.
+       Ordinary float output transfer remains OPEN.
+     - `src/snapkey.rs:427` / `WorkspaceOp`, classifier/queues/suppression,
+       `src/settings.rs:757-827` / `binding_catalog` and preset/rebind validation:
+       distinct output-follow Win+Ctrl+Alt+arrows/HJKL and four unbound
+       directional stay rows; exact Ctrl+Alt modifier routing, hold/repeat/
+       release and origin lifetime. Reuse item-1/2 modifier work; Windows
+       shortcut ownership is unknown, do not invent stock-holder claims.
+     - Portable Linux workspace tests/clippy pass with no Windows edits.
+       Port core/KDE compass, local-first, sole-leaf, full-rect panel-gap,
+       reverse ambiguity, ordinary remembered/MRU/root admission, shared
+       desktop, follow/stay, floating-boundary and stale/lifetime fixtures;
+       native Windows acceptance remains Windows-owned.
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.
-  KDE Keep/Disable list (now 112 bindings after item 4, including 28 unbound
+  KDE Keep/Disable list (now 124 bindings after item 5, including 32 unbound
   stay rows) and presets delivered
   offline
   (`e1bb52a`, `cdd4ef4`, `96d04ab`; CI green); provisional choices in
@@ -927,6 +976,18 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 
 ### Multi-output PC
 
+- KDE item 5 R-MOV-08/R-OUT-04 (offline delivered, needs two outputs): stack
+  outputs vertically; Meta+Shift+Up/Down crosses after local swap/restructure/
+  escape is exhausted, including a sole window. Add a panel work-area gap:
+  full rectangles still select the neighbor, tiles stay inside work areas.
+  Horizontal Meta+Shift+Left/Right still works, including sole windows;
+  no candidate stays put, ambiguous topology refuses. Meta+Ctrl+Alt+arrows/
+  HJKL sends before local exhaustion to the target's CURRENT workspace and
+  follows the mover; rebind directional output-stay from empty defaults and
+  verify source selection/MRU focus and ordinary remembered-leaf admission.
+  Check membership-only floating boundaries with only tiled-side reflow.
+  [Record](changes/archive/four-direction-output-transfer.md),
+  [live guide](live-kwin-testing.md). User-owned; no item-5 live result claimed.
 - Core extraction K1 visual policy: laptop confirmed by the user
   (2026-09-30: active border, fullscreen/maximise suppression, group
   underlay, drag preview). Remaining: border, underlay and preview remap

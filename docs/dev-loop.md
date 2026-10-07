@@ -261,6 +261,28 @@ prove live callbacks.
 
 ## Journal Line Forms
 
+Output move/send (item 5, offline verified; two-output native journey pending):
+
+- `plasma-auto-tiler:plan:output-send-refused-ambiguous`: forward or reverse
+  adjacency is not unique; zero transfer writes. Unreadable topology reports
+  `event=output-send outcome=scope-invalid reason=topology-unreadable`.
+- `plasma-auto-tiler:plan:busy-refused kind=output-send`: existing plan/send
+  flight holds the route; no second dispatch.
+- `plasma-auto-tiler:route-diag component=cosmic-send stage=entry ... event=output-send`:
+  `outcome=no-target` is a no-op; `refused`, `scope-invalid`,
+  `native-refused` and `native-failed` describe refusals/failures.
+  `gate=floating-boundary outcome=native-moved` is membership-only;
+  `follow=followed|stayed|arrival-unconfirmed|focus-unconfirmed` reports the
+  separate focus/visibility proof. Floating frames are not placement plans.
+- Tiled output send reuses send diagnostics with
+  `stage=arrival event=transfer outcome=transferred`, then `event=arrival outcome=arrived`;
+  follow reports `state-confirmed`, stay `stay-confirmed`. Output and sole
+  desktop membership must read back on the exact live mover; no desktop switch
+  runs because the destination workspace is already current on its output.
+- R4 move diagnostics/arrival fences now cover Up/Down as well as Left/Right.
+  Full output rectangles select adjacency; carried placement remains work-area
+  based. Failed/stale/timeout transfers force both-domain refresh without replay.
+
 Workspace send follow/stay (item 2, offline verified; native journey pending):
 
 - `plasma-auto-tiler:route-diag component=cosmic-send stage=follow ... event=follow outcome=stay-confirmed`:

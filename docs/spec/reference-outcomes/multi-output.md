@@ -46,7 +46,11 @@ paneru legs distinguish the native Space from virtual rows.
   has none; West/East never fall through to another display, only
   North/South do). `D1`/`D2` displays keep their strips.
   `S(S-pan-swap)`.
-- Then Ours KDE: Exhausted horizontal R4 into output's current workspace; same commit/fence protocol as send; `D(D-dec-cos)` offline only
+- Then Ours KDE: exhausted horizontal R4 into output's current workspace,
+  `L=H[X,A*]`, `R=B`, edge insertion nearest source. Unique reciprocal FULL
+  rectangle selection now includes sole root leaves; work-area placement and
+  commit/arrival fences retained. [Item-5 offline record](../../changes/archive/four-direction-output-transfer.md);
+  native journey pending.
 - Then Ours Windows: Exhausted horizontal R4 into output's current workspace; same commit/fence protocol as send; `D(D-dec-cos)` offline only
 - Variant hook: V-R4-DIR.
 
@@ -113,7 +117,8 @@ with screen (`S(S-awe-tag)`); niri `MoveWindowToMonitorLeft`
 whole-space `moveToMonitor` (`S(S-pap-mon)`); karousel has no output
 verb (single-screen, `S(S-kar-single)`); paneru `window nextdisplay`
 (Follow; `nextdisplaysend` is the Stay variant) (`S(S-pan-display)`);
-Ours Engine workspace send refuses cross-output (`S(S-ours-out)`).
+Ours has distinct `send-to-output` follow/stay commands (item 5, delivered
+offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned baseline).
 
 ### R-OUT-03: focus left across outputs
 
@@ -228,12 +233,17 @@ Ours Engine workspace send refuses cross-output (`S(S-ours-out)`).
 - Then paneru: carries by appending A to D1's selected strip with
   width-ratio preserved; Follow keeps A focused with the mouse
   warped to it. `S(S-pan-display)`.
-- Then Ours KDE: no counterpart (Engine workspace send is
-  same-output only and refuses cross-output; directional
-  `CrossOutput` move is a separate verb, not this send leg).
-  `S(S-ours-out)` + `S(S-ours-ws)`.
-- Then Ours Windows: same qualified no counterpart outcome as Ours KDE
-  via the shared Engine refusal. `S(S-ours-out)` + `S(S-ours-ws)`.
+- Then Ours KDE: explicit `send-to-output` carries A to L's current workspace
+  using ordinary remembered-leaf/focus-history/root admission, not a swap or
+  directional edge insertion. Follow Meta+Ctrl+Alt+arrows/HJKL focuses A;
+  bindable unbound stay keeps source selection and focuses source MRU (B
+  here). Sticky/intentional floats excluded; floating-workspace boundaries
+  transfer membership only, tiled sides reflow. Shared core/protocol, KDE
+  arrival/visibility fences and native catalog/presets delivered offline;
+  [record](../../changes/archive/four-direction-output-transfer.md). Native journey TBD.
+- Then Ours Windows: no current adapter counterpart; shared core now exposes
+  distinct output send, Windows wiring remains pending with multi-output parked.
+  `S(S-ours-out)` + `S(S-ours-ws)` describe the pinned baseline refusal.
 - Variant hook: V-WS-FOLLOW (follow vocabulary reused from
   R-WS-01; follow/stay outcomes remain profile-specific).
 
@@ -333,7 +343,7 @@ Ours Engine workspace send refuses cross-output (`S(S-ours-out)`).
 - Variant hook: provisional/TBD (host-topology hook, to discuss;
   distinct from R-WS-12 whole-workspace reassignment).
 
-## Selected addition (USER 2026-10-07; implementation pending)
+## Selected addition (USER 2026-10-07; delivery status per profile)
 
 [Item 5](../../decisions.md#cross-platform-behavior) selects R-OUT-04's
 explicit follow/stay output send; follow Meta/Win+Ctrl+Alt+arrows and +H/J/K/L,
@@ -342,8 +352,9 @@ positive-overlap selection uses FULL output rectangles; no candidate no-op,
 ambiguous/unreadable refuse, no wrap. Destination current workspace, ordinary
 workspace-send admission and command follow/stay; initially tiled-subject
 eligibility, sticky excluded, floating boundaries membership-only with tiled
-sides reflowing; ordinary float transfer OPEN. Implementation pending on
-KDE/Windows; selected intent is not new evidence for pinned cells above.
+sides reflowing; ordinary float transfer OPEN. Shared core/KDE delivered
+offline; Windows wiring and native journeys pending. Pinned baseline source
+keys remain historical; delivery evidence is linked separately in KDE cells.
 
 ### R-OUT-07: explicit send before local exhaustion with remembered Y
 
@@ -371,10 +382,13 @@ KDE/Windows; selected intent is not new evidence for pinned cells above.
 - Then PaperWM: TBD.
 - Then karousel/Lazy: TBD.
 - Then paneru: TBD.
-- Then Ours KDE: selected source collapses to B; A transfers to R's
-  current workspace and admits at remembered Y (long-edge vertical split
-  here, exact child order TBD). Follow with A; stay on L. Local neighbor B
-  does not gate explicit send. Implementation pending; item 5.3/5.4.
+- Then Ours KDE: source collapses to B; A transfers to R's current workspace
+  and admits at remembered Y (long-edge vertical split here); follow focuses
+  A on R, stay keeps L selected and focuses B. Local neighbor B does not gate
+  explicit send. Remembered/focus-history/empty-root admission, follow/stay
+  and production-entry/Engine geometry/arrival tested offline;
+  [record](../../changes/archive/four-direction-output-transfer.md). Exact native
+  child-order journey TBD; item 5.3/5.4.
 - Then Ours Windows: same selected explicit transfer/admission/follow/stay
   target; implementation pending, multi-output parked; exact child order TBD.
 - Variant hook: V-WS-FOLLOW.

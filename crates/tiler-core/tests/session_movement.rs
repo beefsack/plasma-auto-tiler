@@ -2348,3 +2348,286 @@ fn portable_session_movement_prohibits_platform_imports() {
         }
     }
 }
+
+// ---- item 5: four-direction cross (REQ-MOV-08/OUT-01, decisions 5.1/5.2) ----
+
+fn stacked_session() -> Session {
+    // out-top above out-bottom: reciprocal Up/Down adjacency, one workspace.
+    Session::new(
+        owner(),
+        generation(),
+        0,
+        7,
+        vec![
+            domain_with_adjacent("out-top", "ws-1", vec![(Direction::Down, "out-bottom")]),
+            domain_with_adjacent("out-bottom", "ws-1", vec![(Direction::Up, "out-top")]),
+        ],
+    )
+    .expect("stacked session")
+}
+
+fn tree_of(session: &Session, output: &str, workspace: &str) -> Option<Node> {
+    session
+        .snapshot()
+        .domains
+        .into_iter()
+        .find(|d| d.output.0 == output && d.workspace.0 == workspace)
+        .and_then(|d| d.tree)
+}
+
+fn root_children(tree: &Node) -> (tiler_core::directional::Axis, Vec<String>) {
+    match tree {
+        Node::Leaf { id } => panic!("expected root group, got leaf {}", id.0),
+        Node::Group { axis, children, .. } => {
+            (*axis, children.iter().map(|c| c.id().0.clone()).collect())
+        }
+    }
+}
+
+#[test]
+fn r4_vertical_cross_occupied_landing_nearest_source() {
+    // Stacked outputs: win-t occupies out-bottom; V[win-1 win-2] sits on
+    // out-top with the mover win-2 at the bottom edge. Moving Down crosses
+    // after local exhaustion (item 5.1) and lands with the existing edge
+    // insertion nearest the source (item 5.2 landing, unchanged): the mover
+    // splits beside the remembered target leaf on the D axis with W nearest
+    // the source (above), i.e. mover first.
+    let mut s = stacked_session();
+    admit_commit(&mut s, "win-t", "out-bottom", "ws-1", true, "v-0");
+    admit_commit(&mut s, "win-1", "out-top", "ws-1", false, "v-1");
+    admit_commit(&mut s, "win-2", "out-top", "ws-1", false, "v-2");
+    let k = key("out-top", "ws-1");
+    assert_eq!(focused_window(&s, &k).0, "win-2");
+    let plan = move_commit_focused(&mut s, &k, Direction::Down, "v-3", &Capabilities::full());
+    assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R4);
+    match &plan.dispatch.operation {
+        tiler_core::directional::MoveOperation::CrossOutput {
+            target_output,
+            target_workspace,
+            target,
+            ..
+        } => {
+            assert_eq!(target_output.0, "out-bottom");
+            assert_eq!(target_workspace.0, "ws-1");
+            assert_eq!(
+                *target,
+                tiler_core::directional::CrossOutputTarget::Occupied
+            );
+        }
+        other => panic!("expected cross-output, got {other:?}"),
+    }
+    assert_eq!(plan.desired_focus_domain, key("out-bottom", "ws-1"));
+    assert_eq!(plan.desired_focus_leaf.0, "leaf-win-2");
+    let target = tree_of(&s, "out-bottom", "ws-1").expect("target tree");
+    let (axis, children) = root_children(&target);
+    assert_eq!(axis, tiler_core::directional::Axis::Vertical);
+    assert_eq!(children.len(), 2);
+    assert_eq!(children[0], "leaf-win-2", "mover nearest the source above");
+    assert_eq!(children[1], "leaf-win-t");
+    assert_eq!(
+        leaves(&s, "out-top", "ws-1"),
+        vec!["leaf-win-1".to_string()]
+    );
+    assert_geometry_complete(&plan, &s);
+}
+
+#[test]
+fn r4_vertical_cross_up_landing_nearest_source() {
+    // Mirror: mover at the top edge of out-bottom moves Up onto occupied
+    // out-top; the mover lands last (nearest the source below).
+    let mut s = stacked_session();
+    admit_commit(&mut s, "win-t", "out-top", "ws-1", true, "u-0");
+    admit_commit(&mut s, "win-1", "out-bottom", "ws-1", false, "u-1");
+    admit_commit(&mut s, "win-2", "out-bottom", "ws-1", false, "u-2");
+    // Focus win-1 (top edge of the bottom stack) via directional focus.
+    let kb = key("out-bottom", "ws-1");
+    let w2 = focused_window(&s, &kb);
+    assert_eq!(w2.0, "win-2");
+    focus_commit(
+        &mut s,
+        &kb,
+        &w2,
+        Direction::Up,
+        "u-focus",
+        &tiler_core::contract::FocusCapabilities::full(),
+    );
+    assert_eq!(focused_window(&s, &kb).0, "win-1");
+    let plan = move_commit_focused(&mut s, &kb, Direction::Up, "u-3", &Capabilities::full());
+    assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R4);
+    assert_eq!(plan.desired_focus_domain, key("out-top", "ws-1"));
+    let target = tree_of(&s, "out-top", "ws-1").expect("target tree");
+    let (axis, children) = root_children(&target);
+    assert_eq!(axis, tiler_core::directional::Axis::Vertical);
+    assert_eq!(children.len(), 2);
+    assert_eq!(children[0], "leaf-win-t");
+    assert_eq!(children[1], "leaf-win-1", "mover nearest the source below");
+    assert_eq!(
+        leaves(&s, "out-bottom", "ws-1"),
+        vec!["leaf-win-2".to_string()]
+    );
+    assert_geometry_complete(&plan, &s);
+}
+
+#[test]
+fn r4_sole_leaf_cross_empties_source_all_directions() {
+    // Item 5.1: a sole root leaf crosses in all four directions (changing the
+    // old horizontal SingleRootLeaf no-cross). The source domain empties and
+    // the mover becomes the lone root of the target's current workspace.
+    for (direction, target_output) in [
+        (Direction::Left, "out-w"),
+        (Direction::Right, "out-e"),
+        (Direction::Up, "out-n"),
+        (Direction::Down, "out-s"),
+    ] {
+        let opposite = match direction {
+            Direction::Left => Direction::Right,
+            Direction::Right => Direction::Left,
+            Direction::Up => Direction::Down,
+            Direction::Down => Direction::Up,
+        };
+        let mut s = Session::new(
+            owner(),
+            generation(),
+            0,
+            7,
+            vec![
+                domain_with_adjacent("out-c", "ws-1", vec![(direction, target_output)]),
+                domain_with_adjacent(target_output, "ws-1", vec![(opposite, "out-c")]),
+            ],
+        )
+        .expect("compass session");
+        admit_commit(&mut s, "solo", "out-c", "ws-1", true, "solo-1");
+        let k = key("out-c", "ws-1");
+        let plan = move_commit_focused(&mut s, &k, direction, "solo-2", &Capabilities::full());
+        assert_eq!(
+            plan.dispatch.rule,
+            tiler_core::directional::Rule::R4,
+            "{direction:?}"
+        );
+        assert_eq!(plan.desired_focus_domain, key(target_output, "ws-1"));
+        assert_eq!(plan.desired_focus_leaf.0, "leaf-solo");
+        assert_eq!(tree_of(&s, "out-c", "ws-1"), None, "{direction:?}");
+        assert_eq!(
+            leaves(&s, target_output, "ws-1"),
+            vec!["leaf-solo".to_string()],
+            "{direction:?}"
+        );
+        assert_geometry_complete(&plan, &s);
+    }
+}
+
+#[test]
+fn r4_ambiguous_adjacency_refuses_end_to_end() {
+    // Item 5.2: ambiguous (non-reciprocal) topology refuses fail-closed at
+    // every layer. Session construction rejects a one-sided edge outright,
+    // so no session with ambiguous adjacency can propose; the standalone
+    // planner additionally refuses non-reciprocal cross candidates
+    // (directional `r4_ambiguous_non_reciprocal_adjacency_refuses`) and the
+    // protocol pair validation refuses them as `domain-invalid`.
+    let one_sided = Session::new(
+        owner(),
+        generation(),
+        0,
+        7,
+        vec![
+            domain_with_adjacent("out-1", "ws-1", vec![(Direction::Right, "out-2")]),
+            domain("out-2", "ws-1", 200, 200),
+        ],
+    );
+    assert!(
+        one_sided.is_err(),
+        "one-sided adjacency must fail session construction"
+    );
+    // Reciprocal sessions construct and cross; a missing candidate stays a
+    // PlannerNoop with no pending (no output wrapping).
+    let mut s = stacked_session();
+    admit_commit(&mut s, "win-1", "out-top", "ws-1", true, "n-1");
+    admit_commit(&mut s, "win-2", "out-top", "ws-1", true, "n-2");
+    let k = key("out-top", "ws-1");
+    let before = s.snapshot();
+    let rev = s.accepted_revision();
+    let w = focused_window(&s, &k);
+    let obs = complete_obs(&s, vec![]);
+    // win-2 sits at the right root edge; Right names no adjacent output.
+    assert_eq!(
+        s.propose_move(
+            &k,
+            &w,
+            Direction::Right,
+            &obs,
+            &correlation("n-3"),
+            &Capabilities::full()
+        ),
+        Err(ProposeError::Refused(RefusalKind::PlannerNoop))
+    );
+    assert!(!s.has_pending());
+    assert_eq!(s.snapshot(), before);
+    assert_eq!(s.accepted_revision(), rev);
+}
+
+#[test]
+fn r4_sole_leaf_cross_occupied_landing_nearest_source_all_directions() {
+    // Item 5.2 landing for the 5.1 sole-leaf cross: onto an occupied target
+    // the mover wraps beside the existing leaf on the D axis with W nearest
+    // the source (mover first for positive steps Right/Down, last for
+    // negative steps Left/Up). Local behavior is unchanged: a sole leaf has
+    // no local restructure, so every direction crosses.
+    use tiler_core::directional::Axis;
+    for (direction, target_output, mover_first) in [
+        (Direction::Left, "out-w", false),
+        (Direction::Right, "out-e", true),
+        (Direction::Up, "out-n", false),
+        (Direction::Down, "out-s", true),
+    ] {
+        let opposite = match direction {
+            Direction::Left => Direction::Right,
+            Direction::Right => Direction::Left,
+            Direction::Up => Direction::Down,
+            Direction::Down => Direction::Up,
+        };
+        let mut s = Session::new(
+            owner(),
+            generation(),
+            0,
+            7,
+            vec![
+                domain_with_adjacent("out-c", "ws-1", vec![(direction, target_output)]),
+                domain_with_adjacent(target_output, "ws-1", vec![(opposite, "out-c")]),
+            ],
+        )
+        .expect("compass session");
+        admit_commit(&mut s, "stay", target_output, "ws-1", true, "occ-1");
+        admit_commit(&mut s, "solo", "out-c", "ws-1", true, "occ-2");
+        let k = key("out-c", "ws-1");
+        let plan = move_commit_focused(&mut s, &k, direction, "occ-3", &Capabilities::full());
+        assert_eq!(
+            plan.dispatch.rule,
+            tiler_core::directional::Rule::R4,
+            "{direction:?}"
+        );
+        match &plan.dispatch.operation {
+            tiler_core::directional::MoveOperation::CrossOutput { target, .. } => {
+                assert_eq!(
+                    *target,
+                    tiler_core::directional::CrossOutputTarget::Occupied,
+                    "{direction:?}"
+                );
+            }
+            other => panic!("expected cross-output, got {other:?}"),
+        }
+        let tree = tree_of(&s, target_output, "ws-1").expect("target tree");
+        let (axis, children) = root_children(&tree);
+        assert_eq!(axis, Axis::for_direction(direction), "{direction:?}");
+        assert_eq!(children.len(), 2, "{direction:?}");
+        let expected = if mover_first {
+            vec!["leaf-solo".to_string(), "leaf-stay".to_string()]
+        } else {
+            vec!["leaf-stay".to_string(), "leaf-solo".to_string()]
+        };
+        assert_eq!(children, expected, "mover nearest source {direction:?}");
+        assert_eq!(plan.desired_focus_domain, key(target_output, "ws-1"));
+        assert_eq!(plan.desired_focus_leaf.0, "leaf-solo");
+        assert_eq!(tree_of(&s, "out-c", "ws-1"), None, "{direction:?}");
+        assert_geometry_complete(&plan, &s);
+    }
+}
