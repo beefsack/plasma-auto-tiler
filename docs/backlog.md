@@ -324,10 +324,246 @@ decisions of 2026-09-24 are under
   Bindings for other accepted additions remain to be chosen.
 - P1 | Windows handoff: reference-consensus additions | D1, user 2026-10-07:
   Windows agent wires each adapter piece after its KDE-side delivery.
-  Initial sketches below are extended/refined by each implementation piece,
-  including specific Windows repairs needed after core build/behavior breaks:
+  ### How to use this handoff
+
+  - Source-checked 2026-10-08 at HEAD
+    `9bbc83b6bf37295cb2883d9d31880599e7bdf088`. All source line numbers below
+    refer to this revision; re-find the named function after pulling.
+  - KDE/shared deliveries: item 1 `7f1a9ee`, item 2 `8d476ee`, item 3
+    `0dc7518`, item 4 `fa15add`, item 5 `9bbc83b`. Item 1 has user-confirmed
+    SINGLE-output live acceptance (2026-10-07, unspecified edge cases/presets).
+    Items 2-5 are offline-delivered; multi-output/hotplug/preset and native
+    journeys remain pending. None of this proves Windows native behavior.
+  - D1: KDE session owns shared core plus KDE; Windows session owns its adapter.
+    Correctness wins over Windows non-breakage, with exact repairs recorded
+    here. Decision 2.3 permits behavior-preserving compile-only Windows fixes
+    for items 2-5; those fixes are not completed Windows implementations.
+  - Git coordination: inspect `git status` and the diff; on a clean Windows
+    clone use `git pull --rebase` before starting and before an authorized
+    publication. A concurrent KDE agent may advance shared files/docs. On dirty
+    state or rebase conflict, report to the Orchestrator; do not stash/reset/
+    checkout or overwrite another agent's work. Stage only your files, propose
+    one single-line message, and hand the staged change to the Orchestrator to
+    commit/push unless separately authorized.
+  - Progress: own one `docs/changes/<piece>.md` per implementation piece with
+    scope, acceptance, exact pending work and evidence; archive on completion.
+    Give the Orchestrator the handoff/backlog status to advance. Update linked
+    Ours Windows matrix cells and spec Win cells with dated, revision-bound
+    offline evidence; native outcomes stay TBD until user-tested. Preserve
+    reference outcomes and product decisions; add decision delivery pointers.
+
+  ### Execution order and shared Windows plumbing
+
+  | Order | Deliverable | Dependency / boundary |
+  | --- | --- | --- |
+  | 1 | Item 1 local history/ring plus exact Ctrl/Tab input/settings support | Shared input foundation for items 2 and 5. Global-unique/shared runtime and multi-output remain separately pending. |
+  | 2 | Item 2 explicit follow/stay, then relative sends | Reuse item 1 ring/action routing, not MRU target selection. |
+  | 3 | Item 3 live same-axis setting | Independent; replace compile constant without rebuilding trees. |
+  | 4 | Item 4 orientation action | Reuse input/catalog/live settings infrastructure. |
+  | 5 | Parked Windows parity queue item 9 multi-output foundation, then item 5 | Per-monitor current-view observation, membership/geometry/visibility/recovery fences first; user live checks need the other Windows PC. Offline topology/Engine tests can precede that. |
+
+  - Source notation: `src/...` / `tests/...` below are under
+    `crates/tiler-windows/`; `core/...` is `crates/tiler-core/src/`;
+    `protocol/...` is `crates/tiler-protocol/src/`. KDE paths start `kwin/`.
+    Proposed Windows IDs below are new implementation names mirroring KDE
+    suffixes, not existing rows; existing Windows digit IDs are retained.
+  - Verified input limits: `src/snapkey.rs:1012` `SnapClassify::push` rejects
+    fresh Ctrl/Alt chords at :1101; `push_owned` :1146/:1250 also rejects them.
+    Consumed holds retain their paired verdict when modifiers change.
+    `ChordRemap` :130 and `ChordDisable` :144 carry only VK+Shift.
+    `src/settings.rs:389` `parse_chord` ALREADY parses Ctrl/Alt tokens, but
+    `vk_for_key_name` :337 supports letters/digits/F1-F24/arrows, not Tab or
+    Escape. Add Tab for item 1; Escape currently only passes through for drag
+    cancellation (`src/snapkey.rs:54-56`), not a selected binding addition.
+    `validate_bindings` (`src/settings.rs:1317/:1363`) and
+    `apply_rebind_text` (`src/settings_ui.rs:403/:425`) reject Ctrl/Alt rebinds.
+  - Items 1/2/5 share changes to `BindingFamily` (`src/settings.rs:475`),
+    `binding_wants_shift` :1032, `binding_canonical_vk` :1044,
+    `effective_bindings` :1071, `build_remap` :1154, `build_disabled` :1206,
+    `validate_bindings` :1317. Carry exact Shift/Ctrl/Alt plus explicit ACTION
+    through routing, duplicate detection, canonical hold slots and release
+    pins. VK alone cannot identify focus/relative select/relative follow/output
+    follow; an unbound stay row has no canonical default VK but must rebind.
+  - Extend `src/snapkey.rs:427` `WorkspaceOp`, `WorkspaceIntent` :445,
+    `Classified` :503, `MaskTrigger` :545, `SnapClassify` :580,
+    `push` :1012/`push_owned` :1146, `QueuedWorkspaceIntent` :2055,
+    `QueuedSnapEvent` :2116 and `classify_and_queue` :2217. Preserve origin
+    binding (`SnapOrigin` :1976, `resolve_origin` :2003), down/repeat/up pairing,
+    held Disable/rebind behavior, saturation verdict and E8 mask reservation
+    (:2303). Do not just remove Ctrl/Alt guards and reuse Shift-derived actions.
+    Authentic owns chords independently of foreground eligibility; native
+    actions still require fresh origin, lifetime, suspension and scope guards.
+  - Schema stays version 1 (`src/settings.rs:31`): binding overrides remain
+    `bindings[id] = {state, chord?}` (:280-299), absent means Keep, missing
+    `chord` defaults None. New stay rows have no default chords; Keep means
+    unbound, not Disabled/effective interception. Repair `effective_bindings`,
+    canonical-target validation and `src/settings_ui.rs:175/:231`
+    `row_text`/`refresh_info`; do not parse empty sequence as a key.
+  - Dynamic Settings rows use `binding_catalog` (:757), `refresh_list`
+    (`src/settings_ui.rs:207`), `stage_state` :459 and `collect_draft` :345.
+    Support Keep/Disable/Rebind, full-modifier duplicates and actual rebound
+    conflict text. Preserve atomic Apply (`do_apply` :495) and saved-file
+    Revert (`do_revert` :580). Live routing adoption uses
+    `src/tiling_sys.rs:13432` `apply_live_settings` / :13547 `poll_live_settings`.
+    Update hard-coded UI text in `src/settings_ui.rs:1088` preset explanation,
+    :1093 "Shortcuts (48 rows)" and :1100 rebind/modifier note as rows land;
+    unknown OS ownership must not be labeled conflict-free.
+  - Presets use `src/settings.rs:1490` `apply_preset` (reset overrides, no
+    replacement chords) and `compatible_disabled_ids` :1528 (currently 35).
+    Update fixed counts/assertions as rows land. Compatible treatment is
+    specified per item below, not copied from KDE foreign-holder tables.
+    Windows uses owned-chord interception, not KGlobalAccel holder clearing.
+  - Tray: `src/tray.rs:120` `unresolved_conflicts` warns only known-incomplete
+    containment (G/F11, opt-in physical L); unknown containment adds no warning.
+    `menu_items` :235 and `settings_for_choice` :345 already expose Settings,
+    presets and workspace mode. Propagate catalog/presets/status tests; these
+    five pieces do not select additional menu commands.
+
+  ### Common definition of done and live-check protocol
+
+  - [ ] Each item meets its behavior, adapter, settings/input and tests below;
+    replace compile placeholders where required. Portable tests use real
+    retained Engine replies, exact-lifetime and hidden-row policy, not just
+    callback/catalog presence. Pure workspace/owner/tiling/settings/classifier/
+    tray tests run on Linux; cfg(windows) owner/hook/UI wiring needs Windows.
+  - [ ] Run native offline gates from ordinary PS7 with root mise-selected
+    MSVC (`rustc -vV` host must be `x86_64-pc-windows-msvc`), per the
+    [Windows runbook](windows-dev-environment.md#5-prove-linker-discovery-and-run-native-offline-development-gates):
+
+    ```powershell
+    mise exec -- rustc -vV
+    mise exec -- cargo build --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows
+    mise exec -- cargo test --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows
+    mise exec -- cargo fmt --all -- --check
+    mise exec -- cargo clippy --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows --all-targets -- -D warnings
+    git diff --check
+    ```
+
+  - [ ] CI `.github/workflows/ci.yml`: `windows` :95-128, `rust` :32-47 and
+    applicable `kwin` :13-30, `shell` :49-80, `native` :82-93 green after
+    Orchestrator-authorized publication; `macos` :130-148 remains green.
+    Linux handback: `devenv shell --impure -- cargo test --workspace`,
+    `devenv shell --impure -- cargo clippy --workspace --all-targets -- -D warnings`,
+    `devenv shell --impure -- cargo fmt --all -- --check`; shared changes also
+    need applicable KWin/mock-shell/native checks and `just check-portable`
+    through Linux agent/CI. Record unrun gates as pending.
+  - [ ] Update the linked Ours Windows matrix cells, spec `REQ-*` Win/status/
+    shortcut rows, decision delivery pointers and one archived change record
+    per piece. Keep native pending separate from offline completion. Preserve
+    existing TBD order/focus/lifecycle outcomes. New ambiguities need shortest
+    discriminating matrix rows with unsupported outcomes TBD.
+  - Live steps below are a USER queue, not mutation authorization. Read
+    [live Windows testing](live-windows-testing.md) before planning them. User
+    owns physical input and ordinary-app dogfood; agent native experiments need
+    separate classes/resources/chords/duration/end condition and identified
+    disposable owned windows. Follow the approved dependency list/mise route;
+    installs are user-owned. This docs handoff ran no live tests.
+  - EACH live journey: record OS build, revision/diff, artifact path/SHA-256,
+    exact owner PID/start/session/integrity, display full/work rectangles/DPI
+    and permitted windows; prove independent stop/restore first. User starts
+    the authorized owner (`mise exec -- just --justfile windows.justfile dev`),
+    applies the specified preset/settings, performs the steps, then runs
+    `mise exec -- just --justfile windows.justfile stop`. Verify hook release,
+    hidden-window reveal and owned session-setting restoration. Forced loss
+    needs separate authority and the exact-owner recovery ladder. Callback/API
+    success alone does not prove physical OS suppression.
+
+  ### Item implementation checklists
   - Item 1: KDE adapter delivered offline, no shared Rust core/API changes or
     resulting Windows build repairs. Windows changes still needed:
+
+    #### Item 1 behavior and reference seams
+
+    - Normative: decisions 1.1-1.5; [spec](spec/functional-spec.md#workspaces)
+      REQ-WS-08/11; [matrix](spec/reference-outcomes/workspaces.md)
+      R-WS-08/11/15/16/17. Two-view toggle, not MRU traversal. Record successful
+      observed numbered/relative/toggle/native/foreground/send-follow/hotplug
+      view changes; never attempted setters, same-workspace activation or
+      output focus alone. Local/global-unique history/rings are per-output;
+      shared has one history/ring. Stable previous ID survives emptiness but
+      clears on removal/unassignment/leaving recording-output scope. No-op
+      until next recorded change; never recreate/reinterpret by ordinal.
+    - Ring includes ALL existing scoped order, trailing empty and >9; wrap
+      both ends, select creates nothing. Disconnect drops previous AND observed
+      baseline. Reconnect selection never consults/restores history; prime a
+      fresh baseline and record subsequent observed displacement/return changes.
+      Observe before/after hotplug actuation so A->B->D records B, not A.
+    - Core currently supplies only existing workspace lifecycle primitives:
+      `core/workspace.rs:7` `select_existing`, :16 `resolve_send_target`, :21
+      `WorkspaceFacts`, :29 `TrailingPlan`, :35 `plan_trailing`, :88
+      `choose_displaced_destination`. Numbered resolvers stop at 9; do NOT
+      implement the ring through those resolvers. No history/ring CoreCommand,
+      protocol command or reply was added by `7f1a9ee`; this is adapter state.
+    - KDE reference: `kwin/src/workspace-native.ts:990` `selectPrevious`,
+      :1051 `selectRelative`, :2141 `recordHistoryObservations`, :2185
+      `observeSharedHistory`, :2203 `scopedRingIds`, :2224
+      `validatePreviousEntries`; `handleTopologySignal` :921 observes hotplug.
+      Catalog :152-222; native compiled holder identities at
+      `kwin/native-effect/shortcutreconciler.h:55-62`.
+      [Offline fixtures](../kwin/tests/workspace-previous-relative.test.ts),
+      [delivery/live status](changes/archive/kde-workspace-history-ring.md).
+
+    #### Item 1 catalog, conflicts and acceptance
+
+    | Proposed Windows id | Default chord | Intent | Compatible |
+    | --- | --- | --- | --- |
+    | `workspace-previous` | Win+Ctrl+Tab | Two-view toggle | Keep |
+    | `workspace-prev-h`, `workspace-prev-k` | Win+Ctrl+H, Win+Ctrl+K respectively | Previous ordinal | Keep |
+    | `workspace-prev-left-arrow` | Win+Ctrl+Left | Previous ordinal | Disable |
+    | `workspace-prev-up-arrow` | Win+Ctrl+Up | Previous ordinal | Keep |
+    | `workspace-next-j`, `workspace-next-l` | Win+Ctrl+J, Win+Ctrl+L respectively | Next ordinal | Keep |
+    | `workspace-next-down-arrow` | Win+Ctrl+Down | Next ordinal | Keep |
+    | `workspace-next-right-arrow` | Win+Ctrl+Right | Next ordinal | Disable |
+
+    - Authentic keeps all nine rows. Win+Ctrl+Left/Right native virtual-desktop
+      ownership is UNVERIFIED in repository (decision 1.1), not measured here.
+      Extend `src/settings.rs:954` `chord_conflict` past its Ctrl/Alt early
+      return: identify those chords with text such as "Windows virtual desktop
+      switch (ownership unverified in repository); override needs takeover,
+      containment unproven live". Tab/letters/Up/Down get an honest ownership-
+      unknown note, not a stock-holder or conflict-free claim. Compatible
+      disables these two new rows for that recorded conflict; KDE disables
+      all four arrows for different KWin holders. Test presets independently.
+    - Exact native integration: `src/tiling_sys.rs:9819` `workspace_do_select`
+      activates only after verified hide/reveal (:10061), then obtains fresh
+      target focus/geometry. Add observation recording at that completed view
+      transition, including when later focus/geometry fails; view evidence,
+      not the final action success label, controls history. Dispatch through
+      `workspace_tick` :11395 and its selection arm :11530; also cover
+      `poll_workspace_cli_request` :11130, `poll_foreground_workspace` :11912
+      and `sync_monitor_outputs` :12050. `chord_output` :8508 /
+      `src/workspace_owner.rs:25` `output_context` resolve command scope.
+    - State/resolvers/invalidation are the `ManagedWorkspaces` changes below;
+      input/catalog/UI use the shared plumbing checklist above. No new
+      persisted history/settings field or standalone history UI control;
+      expose the nine action rows through the existing binding editor.
+      Exact state sites: `src/workspace.rs:95` `ManagedWorkspaces`, :244
+      `activate`, :255 `select`, :262 `select_trailing`, :297 `resolve_send`,
+      :303 `resolve_send_trailing`, :508 `apply_cleanup`, :561
+      `displace_output_to`, :603 `reconnect_output`, :673 `workspace_ids`.
+      Add pure stable-ID toggle/ring resolvers without activating/appending;
+      observe actual completed transitions separately from these setters.
+    - [ ] Portable: add observed-change vs failed-attempt tests, repeated
+      toggle WS1->WS2->WS3->WS2->WS3, same-view/output-focus isolation,
+      surviving empty vs deleted/moved ID, disconnect/reconnect baseline,
+      local/global-unique/shared scope fixtures, >9/trailing wrap and unchanged
+      inventory. Extend `tests/snapkey.rs` / `tests/settings.rs` for exact
+      Ctrl/Tab routing, extra modifiers, held live rebind/disable, queue/mask,
+      duplicate modifiers and Compatible vs Authentic rows.
+    - [ ] Windows-only: owner selection/foreground/CLI producers, native
+      hook release/suppression and settings Keep/Disable/Rebind Apply/Revert.
+      Local-only delivery must explicitly keep non-local/multi-output pending.
+    - User journey: occupy WS1/2/3; select 1->2->3; Win+Ctrl+Tab twice must
+      show 2 then 3. Select first, previous must reach last existing trailing
+      empty; next wraps to first without creation. Populate through ordinal
+      10 using normal trailing sends, then verify relative selection >9.
+      Re-select same view, toggle unchanged; after verified send-follow toggle
+      returns to source. Repeat Left/Right with Compatible (project disabled,
+      record native desktop effect) and Authentic (project view switch, record
+      whether native desktop ALSO switches), plus disable/takeover-off release.
+      Multi-output user: R-WS-15 isolation and R-WS-17 disconnect/toggle/reconnect
+      sequence; moved previous D clears on L if no intervening change.
+
     - `workspace.rs` / `ManagedWorkspaces`: stable-ID previous plus observed
       current baseline per output for local/global-unique, one shared scope
       when non-local modes land. Resolve previous and ordinal relative targets
@@ -362,18 +598,110 @@ decisions of 2026-09-24 are under
   - Item 2: shared Rust core + KDE delivered offline. Windows compile-only
     fix applied (decision 2.3), preserving current always-follow behavior;
     exact handoff (all paths below under `crates/tiler-windows/`):
-    - Compile fix applied: `src/workspace_owner.rs:127` constructor now sets
-      `follow: true`; the exhaustive command match in
-      `send_event_binds_target_and_focused_mover` at :1286 requires
-      `follow: true`. Both preserve current Windows always-follow behavior.
+
+    #### Item 2 behavior and shared contract
+
+    - Normative: decisions 2.1/2.2/2.3 and R-WS-01 follow/stay selection;
+      [spec](spec/functional-spec.md#workspaces) REQ-WS-01/01b/06/14;
+      [matrix](spec/reference-outcomes/workspaces.md) R-WS-01/14/18/19/20.
+      Numbered follow stays default; separate numbered/relative stay unbound.
+      Relative target is item 1 scoped ordinal step, never previous-history,
+      resolved ONCE before transfer, wrapping through trailing empty and >9.
+      Filling trailing empty invokes ordinary lifecycle for the next spare.
+    - Tiled follow focuses mover at target after verified transfer. Tiled stay
+      retains source selection/visibility and source focused-removal MRU;
+      null focus issues no setter, native removal focus stands. Admission,
+      source collapse and destination geometry are identical for both intents:
+      valid remembered destination leaf, then valid destination focus history,
+      then genuine root fallback, long-edge split. Floating boundaries remain
+      membership-only, floating frames untouched, tiled sides reflow; stay
+      retains existing native boundary focus, no invented float MRU tracking.
+      Sticky/intentional-float eligibility remains as shipped.
+    - Exact core: `core/boundary.rs:93-100`
+      `CoreCommand::SendToWorkspace {window,target_output,target_workspace,follow}`;
+      :170-185 `CoreEvent` carries source `domain/domain_key/windows/outer_gap`
+      and `target_domain/target_windows`. :328-337 `SendWorkspacePlan` fields
+      `base_revision, policy_version, geometry, focus_domain, focus_leaf,
+      follow, operation, preconditions`; :666 `CoreReply::SendWorkspace`.
+      `core/session.rs:125` `SessionCommand::MoveToWorkspace` and
+      `core/contract.rs:394` `LifecycleIntent::MoveToWorkspace` carry explicit
+      follow. `core/session/ops/workspace.rs:103` `propose_send_impl` owns
+      admission (:198) and source-MRU/null stay (:269).
+    - `core/engine.rs:1865` `transfer_request` converges the complete canonical
+      pair and immediately commits planned topology (:2140), not native
+      success. Windows calls Engine directly; no second Session transaction or
+      JSON roundtrip is needed. `protocol/planner_protocol.rs:3740-3750`
+      `SyncCommand::SendToWorkspace` wire op `send-to-workspace` defaults
+      omitted `follow` to true; native Windows must pass the actual intent.
+    - KDE reference: `kwin/src/workspace-native.ts:1162`
+      `resolveRelativeMoveTarget`; `kwin/src/plan-adapter-entry.ts:4964`
+      `requestWorkspaceMove`, :5104 `requestWorkspaceRelativeMove`, :5156
+      `transferResolvedWorkspace` (floating boundary); `kwin/src/workspace-send-adapter.ts:1309`
+      `requestSend`, :2635 `followOnce`, :2915 `confirmStayOnce` (fresh arrival,
+      pinned source visibility and exact MRU/null focus, no desktop switch).
+      [Fixtures](../kwin/tests/workspace-send-follow-stay.test.ts),
+      [record](changes/archive/kde-workspace-send-follow-stay.md).
+
+    #### Item 2 binding and acceptance checklist
+
+    | Windows id | Default chord | Intent |
+    | --- | --- | --- |
+    | Existing `workspace-send-1`..`workspace-send-9`, `workspace-send-0` | Win+Shift+1..9/0 | Numbered follow; 0 reuse/append trailing |
+    | Proposed `send-prev-h/k/left-arrow/up-arrow` (four ids) | Win+Ctrl+Shift+H/K/Left/Up respectively | Relative previous follow |
+    | Proposed `send-next-j/l/down-arrow/right-arrow` (four ids) | Win+Ctrl+Shift+J/L/Down/Right respectively | Relative next follow |
+    | Proposed `stay-workspace-1`..`stay-workspace-9`, `stay-workspace-0` | Unbound (ten rows) | Numbered stay; 0 reuse/append trailing |
+    | Proposed `send-stay-prev-h/k/left-arrow/up-arrow`, `send-stay-next-j/l/down-arrow/right-arrow` | Unbound (eight separate rows) | Relative stay |
+
+    - KDE catalog `kwin/src/workspace-native.ts:225-392` includes shifted-symbol
+      aliases for numbered stay; Windows digits share the same VK with symbols
+      (`src/settings.rs:830-834`), so no duplicate physical symbol rows.
+      Use explicit follow/stay ACTION in shared input/remap/queue work, not
+      focus inference or Shift alone. Existing CLI send remains follow unless
+      its transport is explicitly extended for needed tests.
+    - Authentic keeps follow rows and unbound stay. Windows Ctrl+Shift arrow
+      ownership is UNKNOWN (2.1); no new Windows Compatible disables are
+      selected from KDE's four Window One Desktop holders. Keep new defaults
+      pending evidenced conflicts, display "Windows shortcut ownership unknown;
+      containment unproven live" by extending `chord_conflict` :954 past its
+      Ctrl/Alt early return (:956-957), including effective rebound chords.
+      KDE Compatible disables four arrows; do not claim those Windows holders.
+    - Replace `follow:true` in builder/test below with real command wiring.
+      No new global follow setting/schema field; per-binding action encodes
+      intent. Keep schema-v1 missing binding overrides at Keep/unbound as above.
+    - [ ] Portable `src/workspace_owner.rs` / `tests/tiling.rs`: explicit true/
+      false events, stamped targets preserve intent, actual Engine admission
+      byte/topology equality, stay MRU vs null, hidden target no-write, relative
+      wrap/trailing/>9/frozen target. Port real core/KDE fixture semantics.
+      `tests/snapkey.rs` / `tests/settings.rs`: all bound and unbound actions,
+      modifier arms, rebind-away defaults, full-key duplicates, live holds.
+    - [ ] Windows-only: Engine/native-boundary tails, source-selected fences
+      before writes AND focus, target hidden/reveal policy, recycled lifetime,
+      changed view/mode/gaps, partial transfer reconciliation without replay.
+      Run common CI/doc gates; item 1 history records follow but not stay.
+    - User: WS1 A,B (focus A then B), WS2 C; Win+Shift+2 follows B, source
+      collapses to A. Fresh fixture, bind a stay row through Settings to a
+      validated unused chord (example Win+Ctrl+Shift+F6, after checking it is
+      unused in the effective catalog); send B, WS1 remains shown/focused A,
+      WS2 stays hidden. Select WS2 to inspect unchanged admission. Repeat relative next
+      from WS10 into trailing E and previous from WS1 to pre-transfer last E;
+      E fills and one next spare appears. Sole-B stay keeps source selected,
+      no explicit focus setter; record native focus/lifecycle as TBD evidence.
+      Tray-toggle WS2 floating, repeat both intents both directions: floating
+      frames stable and only tiled sides reflow. Apply/Revert/unbind restores
+      defaults; physical Ctrl+Shift arrows must not leak under Authentic.
+
+    - Compile fix applied: `src/workspace_owner.rs:127-132` constructor sets
+      `follow: true` at :131; the exhaustive command match in
+      `send_event_binds_target_and_focused_mover` at :1286-1290 requires
+      `follow: true` at :1290. Both preserve always-follow Windows behavior.
       Real wiring remains: `build_send_event` :70 must accept explicit
       `follow: bool` instead of the constant. `stamp_send_target` :138/:139
       already uses `..`; preserve intent while replacing target IDs.
     - Thread that parameter through every `build_send_event` caller:
-      `src/tiling_sys.rs:10844` (`workspace_do_send`) and test calls in
+      `src/tiling_sys.rs:10848` (`workspace_do_send`) and test calls in
       `src/workspace_owner.rs:1270,1726,1915,2070,2282,2588` and
       `tests/tiling.rs:2217`. Existing follow tests pass true; add false cases.
-    - `src/tiling_sys.rs` / `workspace_do_send` :10548, reply match :10872
+    - `src/tiling_sys.rs` / `workspace_do_send` :10552, reply match :10876
       and verified transfer/tail :10945 onward: retain the `SendWorkspace`
       payload, branch on `plan.follow`. Follow selects/reveals target and
       focuses mover; stay hides the transferred mover without selecting or
@@ -382,7 +710,7 @@ decisions of 2026-09-24 are under
       resolution (no setter for null), and reflows only writable source rows.
       Destination admission/structural geometry remain identical; target
       writes obey existing hidden-row fences. Do not infer intent from focus.
-    - `src/tiling_sys.rs` / `workspace_do_send_native` :10310 and call :10688:
+    - `src/tiling_sys.rs` / `workspace_do_send_native` :10314 and call :10692:
       thread the same explicit intent through floating boundaries. Membership
       transfer remains native-only, tiled sides reconcile, floating frames
       stay untouched; follow uses verified target selection/mover focus;
@@ -392,7 +720,7 @@ decisions of 2026-09-24 are under
       `SessionCommand::MoveToWorkspace` and `LifecycleIntent::MoveToWorkspace`
       have no Windows sites; no direct `SendWorkspacePlan` constructors or
       destructures. Its added `follow` field reaches `CoreReply::SendWorkspace`.
-      Besides production :10872 above, existing payload reads in
+      Besides production :10876 above, existing payload reads in
       `src/workspace_owner.rs:1210,1513,1602,1946,2099,2163,2215,2311,3016,3225`
       only consume geometry/operation and need no shape repair; extend relevant
       send tests to assert intent/focus. Wildcard reply arms
@@ -413,13 +741,76 @@ decisions of 2026-09-24 are under
       remains pending. Port follow/stay MRU/null, admission equality, visibility
       fences, relative wrap/spare and floating-boundary regression coverage.
   - Item 3: shared Rust core/protocol + KDE delivered offline. Windows
-     compile-only defaults preserve current behavior (decision 2.3); actual
-     wiring remains pending. Sites below under `crates/tiler-windows/`:
+      compile-only defaults preserve current behavior (decision 2.3); actual
+      wiring remains pending. Sites below under `crates/tiler-windows/`:
+
+     #### Item 3 behavior, references and acceptance
+
+     - Normative: decisions 3.1/3.2; [spec](spec/functional-spec.md#move)
+       REQ-MOV-03; [matrix](spec/reference-outcomes/move.md) R-MOV-03/09/10.
+       Global `core.same_axis_move`, `cosmic-wrap` default, `flat-swap`
+       alternative. Only R2c adjacent direct LEAF siblings in the same N-ary
+       group change; unequal shares travel with window identities. Binary R2a,
+       group-neighbor wraps/insertion, escape and output boundaries keep their
+       rules. Default `H[A,B*,C,D]` right -> `H[A,H[B,C],D]`; flat ->
+       `H[A,C,B*,D]`. No rebuilding, retroactive flattening or new swap verb.
+     - Core: `core/directional.rs:218` `SameAxisMove::{CosmicWrap,FlatSwap}`,
+       :229 `as_wire_str`, :239 `parse_wire`; :202 `MoveIntent.same_axis_move`.
+       `core/boundary.rs:48-57` `CoreCommand::Move {window,direction,
+       cross_output_transfer,same_axis_move}`; :372 `MovePlanReply`, :670
+       `CoreReply::MoveDirectional` unchanged. `core/engine.rs:2531`
+       `directional_move_request` threads the typed mode. Windows should use
+       these semantics, not reimplement swapping in native geometry.
+       `protocol/planner_protocol.rs:3686-3697` `SyncCommand::Move` decodes
+       `same_axis_move` string (missing wrap), :3800-3812 maps the validated
+       token. Unknown/mistyped values refuse; core has no serde dependency.
+     - KDE: `kwin/src/same-axis-move.ts:15/:33` normalize/read;
+       `kwin/src/plan-adapter-entry.ts:7414-7427` reloads subsequent-move value;
+       `kwin/src/plan-adapter.ts:3100` `requestMove` sends explicit flat token
+       at :3178 (default omitted). KCM `kwin/native-effect/unifiedsettings_module.cpp:57`
+       `readSameAxisMove`, :115-120 combo; Save/reconfigure live pickup detailed
+       in [record](changes/archive/same-axis-move-setting.md).
+       [KDE fixtures](../kwin/tests/same-axis-move.test.ts) and
+       [core fixtures](../crates/tiler-core/tests/session_movement.rs).
+     - Windows schema/control: add `CoreSettings.same_axis_move` at
+       `src/settings.rs:99` with serde missing-default and Default :124;
+       validate exact tokens in `validate_settings` :1268 (map via shared
+       `parse_wire`, reject unknown, no silent invalid->default). Keep v=1,
+       startup invalid-file and live last-good behavior. UI adds a global
+       "Same-axis move" two-choice control in `src/settings_ui.rs:939`
+       `cmd_settings` / control
+       construction :1054, `refresh_all` :292 and `collect_draft` :345; Apply
+       writes tokens and Revert reloads saved selection. Read last-good per
+       move in `keyboard_tick` (`src/tiling_sys.rs:5645`, command :6102-6110),
+       with wrap fallback for proof owners lacking `settings_live` (:1210).
+       Same-axis-only settings adoption must not trigger tree rebuild/resync.
+     - Bindings/presets/conflicts/tray: no new action/chord or conflict entry;
+       existing Win+Shift+H/J/K/L/arrows use the setting. Authentic/Compatible
+       change bindings only (`src/settings.rs:1490` `apply_preset`), not this core setting.
+       Existing tray Settings opens its control, no menu addition.
+     - [ ] Portable: schema-v1 old file missing field -> wrap; both token
+       roundtrips, invalid value/type refused, atomic save and live invalid file
+       keeps last-good. Retained Engine tests for right AND left unequal-share
+       leaf swaps, wrap default, group neighbor R-MOV-10 unchanged, binary/
+       nested-boundary parity, focus retention, mode change no topology mutation
+       until next move. Replace test constant only where exercising settings;
+       retain explicit default-wrap fixtures as appropriate.
+     - [ ] Windows-only: Settings Apply/Revert and startup/proof fallback;
+       verify `keyboard_tick` uses adopted setting, not hard-coded mode; common
+       gates/docs update only R-MOV-03/09/10, not item-5 rows.
+     - User: prepare R-MOV-03 four-leaf row; default right wraps B/C. Fresh
+       row, Settings Flat swap + Apply, right yields A,C,B,D focused B. Repeat
+       left and unequal widths, verify widths travel. Change setting on an
+       existing nested tree: Apply alone changes no layout; next move uses
+       new mode. R-MOV-10 group-neighbor result stays wrap, not whole-group
+       swap. Stage another choice then Revert, verify saved choice returns.
+
      - Applied compile fixes: `src/tiling_sys.rs:6102`, `SnapOp::Move` arm
        constructing `CoreCommand::Move`, sets
        `same_axis_move: tiler_core::directional::SameAxisMove::CosmicWrap`;
-       `tests/snapkey.rs:915`, `engine_focus_moves_through_nested_topology`,
-       uses the same constant. No Windows behavior change.
+       `tests/snapkey.rs:915-919`, `engine_focus_moves_through_nested_topology`,
+       uses the same constant (production field :6109, test field :919).
+       No Windows behavior change.
      - `src/settings.rs:99` / `CoreSettings`, `Default` :124 and
        `validate_settings` :1268: add `core.same_axis_move` within schema
        version 1, serde missing default `cosmic-wrap`, exact values
@@ -449,8 +840,76 @@ decisions of 2026-09-24 are under
        tree rebuild. Linux workspace tests/clippy compile portable Windows
        modules; native Windows UI/owner checks remain Windows-owned.
   - Item 4: shared Rust core/protocol + KDE delivered offline; zero Windows
-     compile fixes required, existing Windows behavior preserved. Exact
-     wiring handoff (paths under `crates/tiler-windows/`):
+      compile fixes required, existing Windows behavior preserved. Exact
+      wiring handoff (paths under `crates/tiler-windows/`):
+
+     #### Item 4 behavior, references and acceptance
+
+     - Normative: decisions 4.1/4.2; [spec](spec/functional-spec.md#layout)
+       REQ-LAY-01; [matrix](spec/reference-outcomes/layout-commands.md)
+       R-LAY-01/05/06. Win+O toggles focused tiled leaf's immediate parent,
+       root included, retaining order/shares/focus. Twice returns exact tree.
+       Lone root, float/no tiled focus and floating workspace are no-write
+       outcomes; focused maximized/fullscreen refuses. Sibling overlays remain
+       reserved slots, reproject but skip native geometry/state writes. No
+       future-admission orientation hint; long-edge and collapse unchanged.
+     - Core: `core/boundary.rs:90-92`
+       `CoreCommand::ToggleOrientation {window}`; :200
+       `TiledKind::ToggleOrientation`; :250-259 `TiledPlan` carries revision,
+       policy version, kind, geometry, focus domain/leaf and optional float
+       fields (empty for orientation). :665 `CoreReply::Tiled`.
+       `core/session.rs:161` `SessionCommand::ToggleOrientation`,
+       `core/contract.rs:418/:460` lifecycle intent/operation;
+       `core/session/ops/toggle_orientation.rs:39` `propose_toggle_orientation`
+       and :212 `flip_group_axis` preserve direct parent's children/shares;
+       :102-121 focused overlay refusal / lone `unchanged`.
+       `core/engine.rs:2464` `toggle_orientation_request` ordinary retained
+       single-domain handling. `protocol/planner_protocol.rs:3738-3739` wire
+       `{"op":"toggle-orientation","window":"<id>"}`, :3857 typed mapping.
+     - KDE: `kwin/src/plan-adapter.ts:3269` `requestToggleOrientation` gates
+       subject/workspace, :3314 exact command; :1655
+       `isToggleOrientationDetail`, :7014 orientation reply validation.
+       `kwin/src/plan-adapter-entry.ts:449-456` catalog; native key constant
+       `kwin/native-effect/shortcutreconciler.h:126`.
+       [Fixtures](../kwin/tests/plan-toggle-orientation.test.ts),
+       [record](changes/archive/parent-orientation-toggle.md).
+     - Binding id `toggle-orientation`, default Win+O, unshifted. Add
+       `ToggleKind::Orientation` at `src/settings.rs:523` with token/Shift
+       methods (:530-548), catalog :757 and live effective/remap handling.
+       Authentic keeps; Compatible adds this one disabled id (:1528) for
+       orientation lock. Existing `chord_conflict` :983 text is
+       "orientation lock owns Win+O; override needs takeover". The catalog
+       claim is repository-VERIFIED with Microsoft-list attribution (:943-952);
+       OS ownership was not independently rechecked by this handoff, and
+       physical suppression is UNVERIFIED. No current Windows Win+O action.
+     - No persisted core field; schema-v1 absent binding override means Keep.
+       Dynamic settings editor exposes Keep/Disable/Rebind; add O (0x4F) to
+       classifier inventory, exact Win+O action/queue/mask handling below.
+       Default Shift/Ctrl/Alt variants pass through; preserve key pairing and
+       existing activation fences. Resolve any unselected autorepeat outcome
+       with a discriminating matrix row/TBD, not a new policy in this handoff.
+       Dedicated `src/tiling_sys.rs:5645` `keyboard_tick` arm, not a SnapOp movement request;
+       assembly uses `src/tiling.rs:1226` `build_reconcile_event_for_floating`,
+       replace command, accept only matching Tiled kind, apply geometry with
+       fresh fences. Current helpers do not magically dispatch the new action.
+     - [ ] Portable Engine/owner: root both axes, nested parent-only, unequal
+       shares double roundtrip, focus/minimum allocation, lone no-op then wide
+       long-edge admission, float/no-focus/floating-workspace/overlay fixtures;
+       focused overlay refusal and sibling write-skip must be distinguished.
+       `tests/settings.rs` / `tests/snapkey.rs`: O catalog/preset/conflict,
+       rebind/disable, exact modifiers, repeat/release, mask and saturation.
+     - [ ] Windows-only owner/input/UI: stale origin/lifetime or suspension
+       causes zero writes; real matching Tiled reply actuates without view
+       switch, sibling overlays untouched. Common gates/docs: R-LAY-01/05/06.
+     - User: ordinary root pair A,B (B focused), Win+O -> V then -> H with
+       identities/shares/focus retained. R-LAY-05 nested H[A,V[B*,C]] toggles
+       only V. Sole A on wide area: no effect; opening B still uses long edge
+       (record native newcomer order/focus, currently TBD). Float/workspace-
+       floating/focused overlay: no effect; sibling overlay native state stays.
+       Compatible passes Win+O to OS, Authentic toggles only project layout;
+       record OS orientation-lock effect/suppression with unchanged displays,
+       and test Disable/rebind/Apply/Revert/takeover-off release.
+
      - `src/settings.rs:523` / `ToggleKind` and token/Shift methods :530-548:
        add orientation; `binding_catalog` :757-827 adds `toggle-orientation`
        default Win+O. Reuse `chord_conflict` :983 orientation-lock text;
@@ -480,12 +939,136 @@ decisions of 2026-09-24 are under
      - Port root H/V, nested parent-only, double-toggle unequal-share/order/
        focus, minimum allocation, lone-leaf no-op plus long-edge admission,
        floating-workspace/focus and overlay fixtures. Linux workspace tests
-       compile/test portable Windows modules (394 tests); Windows native
+       compile/test portable Windows modules; Windows native
        owner/input/UI and physical Win+O takeover remain Windows-owned.
   - Item 5: shared Rust core/protocol + KDE delivered offline; zero Windows
-     compile fixes required, current Windows behavior preserved. Depends on
-     parked Windows multi-output work. Exact sites under `crates/tiler-windows/`:
-     - `src/tiling_sys.rs:6083-6110` retained directional event construction:
+      compile fixes required, current Windows behavior preserved. Depends on
+      parked Windows multi-output work. Exact sites under `crates/tiler-windows/`:
+
+     #### Item 5 behavior and shared contract
+
+     - Normative: decisions 5.1-5.4; [spec](spec/functional-spec.md#move)
+       REQ-MOV-08/08b and [output](spec/functional-spec.md#output)
+       REQ-OUT-01/04; [move matrix](spec/reference-outcomes/move.md)
+       R-MOV-08/11/12/13 and [output matrix](spec/reference-outcomes/multi-output.md)
+       R-OUT-01/04/07. Local restructure/swap/escape wins first; exhausted
+       movement crosses all four ways, sole root leaf included. Explicit send
+       crosses before exhaustion. No wrapping outputs or cycling workspaces.
+     - Resolve neighbor on FULL rectangles: exact touching edge and positive
+       perpendicular overlap, UNIQUE in forward and reverse direction. Panels
+       cannot break adjacency; work areas still govern placement. No candidate
+       no-op; ambiguous/unreadable refuses, no arbitrary nearest/focused output.
+       Directional R4 landing is target edge nearest source; explicit send uses
+       ordinary remembered-leaf/destination-MRU/root long-edge admission into
+       destination CURRENT workspace, not R4 edge insertion. Directional focus
+       keeps existing horizontal policy; vertical focus is not selected here.
+     - Follow/stay as item 2: follow focuses mover on target output (target
+       workspace already shown, no needless desktop switch); stay retains
+       source current view/MRU or null no-setter focus. Tiled subject initially,
+       sticky/intentional floats excluded; floating-workspace boundaries are
+       membership-only with only tiled-side reflow. Ordinary float transfer
+       remains OPEN, not implicitly implemented by output send.
+     - Core types: `core/boundary.rs:48-57` `CoreCommand::Move` capability flag
+       and typed same-axis mode; :170-185 `CoreEvent.directional` source-first
+       pair plus `directional_target_outer_gap`, both-domain `windows`.
+       `core/directional.rs:147-152` `Output.adjacent` accepts Direction four ways;
+       :334 `MoveOperation::CrossOutput`. Actual Engine reply is
+       `CoreReply::MoveDirectional(MovePlanReply)` (`core/boundary.rs:670`), where
+       `MovePlanReply.cross: Option<MoveCrossView>` (:372-400) carries source/
+       target output/workspace, mover window/leaf/direction, target occupancy,
+       source root-child index and preconditions. Windows handles `plan.cross`,
+       not a nonexistent `MoveOperation` field in the reply.
+     - Explicit send `core/boundary.rs:105-112`
+       `CoreCommand::SendToOutput {window,target_output,target_workspace,follow}`
+       uses `target_domain/target_windows`, returns :669
+       `CoreReply::SendOutput(SendWorkspacePlan)` with item-2 fields.
+       `core/session.rs:140` `SessionCommand::MoveToOutput`,
+       `core/contract.rs:411` `LifecycleIntent::MoveToOutput`;
+       `core/engine.rs:1865` `transfer_request` canonical ordinary send and
+       :2531 `directional_move_request` R4 planned commit. Geometry/native
+       arrival remain Windows adapter work. Same workspace ID on different
+       outputs is valid; workspace send stays same-output distinct-workspace.
+     - Protocol `protocol/planner_protocol.rs:3758-3766` `SyncCommand::SendToOutput`
+       wire `send-to-output` (missing follow true), :1948
+       `serialize_send_output_reply` emits distinct kind, move-tiled operation
+       + follow and desired focus/geometry. Directional adjacency parsing
+       :930-1049 and fingerprint :73-166 include up/down; adapter owns geometric
+       uniqueness. Windows direct Engine path needs complete validated pair
+       construction, not an invocation of private codec types.
+     - KDE mirrors: `kwin/src/plan-adapter-entry.ts:562` `readFullOutputRect`,
+       :601 `readOutputTopology`, :677 `selectAdjacentOutput`, :2557
+       `observeOutputSendTarget`, :5304 `requestOutputSend` (floating boundary),
+       :5571 `focusOutputMover`; `kwin/src/workspace-send-adapter.ts:1434`
+       `requestSendToOutput`, :2820 `followOutputOnce`, :2915 `confirmStayOnce`.
+       Retain frozen source identity when active mover changes outputs; actual
+       source visibility is a separate fence. Both views/modes/gaps/window
+       sets and exact lifetime must still match before EACH membership,
+       geometry and focus write; partial arrival cannot masquerade as success.
+       [Engine fixtures](../kwin/tests/output-send-engine-fixture.test.ts),
+       [adapter fixtures](../kwin/tests/output-send.test.ts),
+       [record](changes/archive/four-direction-output-transfer.md).
+
+     #### Item 5 bindings, exact native additions and acceptance
+
+     | Proposed Windows id | Default chord | Intent / presets |
+     | --- | --- | --- |
+     | `send-output-left`, `send-output-down`, `send-output-up`, `send-output-right` | Win+Ctrl+Alt+H/J/K/L respectively | Follow, both presets keep |
+     | `send-output-left-arrow`, `send-output-down-arrow`, `send-output-up-arrow`, `send-output-right-arrow` | Win+Ctrl+Alt+Left/Down/Up/Right respectively | Follow, both presets keep |
+     | `send-output-left-stay`, `send-output-down-stay`, `send-output-up-stay`, `send-output-right-stay` | Unbound (four canonical rows) | Stay, both presets keep unbound |
+
+     - KDE catalog `kwin/src/plan-adapter-entry.ts:169-201` and native constants
+       `kwin/native-effect/shortcutreconciler.h:174-181` establish 8 follow + 4
+       stay rows. Ownership UNKNOWN on Windows (5.3), use truthful unknown/
+       containment-unproven `chord_conflict` text, extending the Ctrl/Alt early
+       return in `src/settings.rs:956-957`. No new Compatible disables;
+       do not borrow resize-shrink (COSMIC) or item-2 arm (niri).
+       No new global field; schema-v1 binding defaults and full Ctrl+Alt action
+       rebinding/queue/suppression reuse items 1/2. Native OS suppression pending.
+     - Exact additions: topology from `src/tiling_sys.rs:264` `all_monitors`
+       / :282 `monitor_fulls` preserving device/full/work association;
+       domain bounds through `workspace_domain_for` :8540. `keyboard_tick`
+       :5645 constructs directional event at :6082-6110, handle `plan.cross`
+       at :6173 before geometry (:4866 `apply_geometry`), verify membership
+       and native target-output arrival before one `actuate_focus` (:5402).
+       Explicit output builder beside `src/workspace_owner.rs:70`
+       `build_send_event` must construct DISTINCT `SendToOutput`, not merely
+       retarget workspace send. Extend `planned_writes` :396 / native
+       `desired_entries` (`src/tiling_sys.rs:4211`) for `SendOutput`; add output
+       reply/actuation route beside `workspace_do_send` (:10552), not its same-output tail.
+     - Output target is already visible: stay must not hide the arriving mover
+       simply because item-2 workspace stay hides an INACTIVE destination.
+       Preserve source visibility, keep target current view, reflow writable
+       visible tiled rows on both outputs; only focus distinguishes follow.
+       Membership-only floating boundaries use the same distinction. Native
+       placement/transfer capability is part of parked item 9; do not enable
+       `cross_output_transfer` before it exists. Failure converges both domains
+       without setter replay, guessed rollback or success claims.
+     - [ ] Portable: full-rect compass tests, no candidate, forward/reverse
+       ambiguity, panel gap both axes, local-first under both item-3 modes,
+       sole-root empty/occupied targets, directional nearest-source landing
+       vs explicit remembered/MRU/root admission, same workspace on different
+       outputs, follow/stay/null, floating-boundary only-tiled reflow and
+       excluded floats/sticky. Use real Engine reply geometry, `plan.cross`
+       and `SendOutput` extraction; catalog/modifier/preset/rebind tests.
+     - [ ] Windows-only: physical full/work area + mixed-DPI placement, fresh
+       output/current-view/mode/gap/lifetime fences during writes, half-applied
+       transfer, delayed arrival, no repeated follow; independent owned-window
+       stop/restore across outputs. Common gates/docs R-MOV-08/11..13 and
+       R-OUT-01/04/07; item 9 and physical acceptance remain explicit blockers.
+     - User on two-output PC: stack outputs, lower V[A*,B], upper X; exhausted
+       Win+Shift+Up moves A nearest source below X, source B; fresh sole A also
+       crosses. Mirror Left/Right/Down, empty and occupied destinations. With
+       local move available it wins; explicit Win+Ctrl+Alt+direction instead
+       transfers before exhaustion to CURRENT target workspace. Prepare
+       R-OUT-07 remembered Y: admission splits Y long edge; follow focuses A,
+       bind `send-output-right-stay` to an unused validated Win+Ctrl+Alt+F6,
+       then stay leaves source B focused with target A visible. Panel gap
+       R-MOV-13 still crosses, placement respects work area. User-readable
+       ambiguous/no-candidate topology must refuse/no-op with no writes.
+       Floating-boundary frames stable/tiled-side reflow; source/target drift
+       and lifetime failure cases belong in fixtures, not uncontrolled dogfood.
+
+     - `src/tiling_sys.rs:6082-6110` retained directional event construction:
        supply complete source plus adjacent output's current workspace in
        `CoreEvent.directional`, including target outer gap, and opt into
        `cross_output_transfer` only with native transfer/fence support.
@@ -495,7 +1078,8 @@ decisions of 2026-09-24 are under
        bounds as work areas. Local move rules and sole-leaf eligibility are
        now core-owned. Focus remains the existing horizontal policy.
      - `src/tiling_sys.rs:6173-6205` currently applies only geometry for
-       `CoreReply::MoveDirectional`: handle `MoveOperation::CrossOutput`
+       `CoreReply::MoveDirectional`: handle `plan.cross` (`MoveCrossView`,
+       constructed from `MoveOperation::CrossOutput` by the core) and
        native output/membership transfer before both-domain geometry, with
        exact lifetime, frozen domain/gap/mode/current-view fences, fresh
        arrival and one follow. Preserve nearest-source directional landing;
@@ -508,7 +1092,7 @@ decisions of 2026-09-24 are under
        same desktop ID on different outputs is valid (no last-desktop gate).
      - `src/workspace_owner.rs:396-417` / `planned_writes` currently falls
        through for new `CoreReply::SendOutput`; extract its geometry.
-       `src/tiling_sys.rs:10848-10883` send builder/reply dispatch and
+       `src/tiling_sys.rs:10848-10884` send builder/reply dispatch and
        `workspace_do_send` are same-output patterns, not output-send wiring:
        add the new reply route and apply command follow/stay (reuse item 2),
        source MRU/null focus, visibility and live-arrival fences.
@@ -528,6 +1112,16 @@ decisions of 2026-09-24 are under
        reverse ambiguity, ordinary remembered/MRU/root admission, shared
        desktop, follow/stay, floating-boundary and stale/lifetime fixtures;
        native Windows acceptance remains Windows-owned.
+
+  ### Source discrepancies to preserve and report
+
+  | Existing assertion | Current source / implementation gap | Handoff treatment |
+  | --- | --- | --- |
+  | R-OUT-01 Ours Windows describes exhausted horizontal R4 with send-like commit/fences (`spec/reference-outcomes/multi-output.md:54`); R-MOV-05 says horizontal crosses, Up/Down excluded (`spec/reference-outcomes/move.md:194`). | `src/tiling_sys.rs:6082-6110` builds a single-domain event and sets `cross_output_transfer:false`; no Windows cross actuation exists. Shared core now supports all four directions. | Treat cells as historical/pinned assertions, not evidence of current Windows capability. Item 5 is blocked on item 9; report discrepancy, do not alter matrix outcomes in this docs handoff. |
+  | R-WS-10/16 Ours Windows says no removal path (`spec/reference-outcomes/workspaces.md:498-499/:841-842`); spec REQ-WS-10 repeats it. | `src/workspace.rs:508` `apply_cleanup` removes IDs; `src/tiling_sys.rs:10074-10080` selection invokes cleanup; `core/workspace.rs:35` removes eligible invisible empties. | Preserve outcome cells; exact native removal journey remains TBD. Item 1 must invalidate actual removed IDs and test surviving empties separately. |
+  | Existing higher-level item-2 summary says Compatible disables arrows, while decision 2.1 identifies stock holders only on KDE and says Windows ownership unknown. | `src/settings.rs:954-957` currently returns None for all Ctrl/Alt chords; no Windows holder evidence for new send/output arms. | KDE arrows are disabled by KDE Compatible. Windows unknown new arms keep defaults with unknown-ownership text until evidenced policy is recorded; do not manufacture Windows holder claims. |
+  | Current settings/rebind helpers assume every implemented action has a canonical default chord. | `src/settings.rs:1044-1048` returns None for an empty default; `build_remap` :1182-1184 silently skips that action; `validate_bindings` :1405-1406 rejects it. Keep-empty is currently active/effective (:1082-1084); UI `refresh_info` (`src/settings_ui.rs:248-255`) labels it disabled. | Items 2/5 must wire unbound ACTION targets explicitly, make Keep-empty non-intercepting and display unbound distinctly from Disabled. These are adapter limitations, not a decision reversal. |
+
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.
