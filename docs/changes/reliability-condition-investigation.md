@@ -398,18 +398,18 @@
   mutation or seeding) and `cargo build` succeeds. No runtime
   claim is made.
 
-### Born-Maximized Admission (Q3) - DELIVERED OFFLINE, LIVE GATE PENDING
+### Maximized Admission (Q3, R-MAX-03/R-MAX-06) - DELIVERED OFFLINE, LIVE GATE PENDING
 
 - This replaces the old maximize-admission clear gate linked from the pending
   live checks. The no-re-maximize-loop invariant remains: a session-restored
   maximized app must not be repeatedly restored or have geometry fought by
   the tiler. Q3 changes the expected first state from restored/tiled to
   maximized over a reserved tile slot; native restore later reveals that slot.
-- `kwin/src/plan-adapter.ts`: `noteFirstDomainOrigin` pins the first domain
-  mode to the exact Window reference. `clearMaximizeAtAdmission` preserves
-  tiled-first maxima; floating-first R-MAX-03 retile and held-born-fullscreen
-  release keep their existing one-shot clear/echo fence, with no retry even
-  if the app immediately reasserts maximize.
+- `kwin/src/plan-adapter.ts`: `clearMaximizeAtAdmission` preserves first-seen
+  maxima, including R-MAX-03 floating-to-tiled admission under the 2026-10-07
+  Q3 scope decision. The first-domain origin gate is retired. Held-born-fullscreen
+  release alone keeps the existing exact-ref one-shot clear/echo fence, with
+  no retry even if the app immediately reasserts maximize.
 - Anti-loop: Q3 admission issues neither clear nor maximize. Existing retained
   projection, `fit_excluded`, `skip-maximized` writes and overlay drift
   exclusion avoid native geometry fighting. Repeated maximized observations
@@ -417,8 +417,10 @@
 - Offline evidence: real Engine/adapter admission and restore fixtures prove
   the slot and sibling allocation, actual restored-frame write, foreground
   and hidden overlay isolation, quiet repeats and no native clear/toggle.
-  R-MAX-03, failed-clear one-shot and immediate re-maximize coverage remain.
-  See [delivery record](archive/kde-born-maximized-overlay.md).
+  R-MAX-03 retile/restore, non-maximized retile, synchronous write signals and
+  born-maximized newcomer interaction are covered; held-fullscreen one-shot
+  coverage remains. See [born-maximized record](archive/kde-born-maximized-overlay.md)
+  and [scope delivery](archive/kde-maximized-floating-retile-overlay.md).
 
 #### User-Owned Live Gate - Not Run
 
@@ -435,9 +437,13 @@
    A remains maximized over its slot, restores into it when requested, and
    never enters a re-maximize loop. Capture the same flags/frames/trace;
    visual appearance or setter-return diagnostics alone are not acceptance.
-4. Separately retain R-MAX-03 as a control: first observe a maximized app on a
-   floating workspace, toggle that workspace tiled, and verify one clear
-   attempt, no retry. Do not interpret that deliberate clear as a Q3 failure.
+4. R-MAX-03: first observe maximized A without a slot beside ordinary B on a
+   floating workspace, toggle that workspace tiled, and record flags/frames/trace.
+   A stays maximized with a reserved target (`skip-maximized`), B takes its
+   allocated share, and no admission clear/toggle occurs. Natively unmaximize
+   A: its actual frame lands in that target, B keeps its share, and repeated
+   maximize/unmaximize settles without loops or geometry fighting. Repeat
+   with a session-restored maximized A at a user-owned session boundary.
 
 ## Proposed Slices
 

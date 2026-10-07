@@ -357,10 +357,10 @@ Per slice-2 pointer echo fence transition (one fixed token each):
 - `plasma-auto-tiler:plan:echo-fence-cleared-equality`
 - `plasma-auto-tiler:plan:echo-fence-mismatched`
 
-Per maximize-at-admission clear (floating-first R-MAX-03 retile or first exit
-of a held born-fullscreen window only; one attempt per live window identity,
-never a retry). Q3 first-seen maximized admission on a tiled domain reserves
-a slot and preserves maximize, so it emits no clear/echo lines; an applied
+Per maximize-at-admission clear (first exit of a held born-fullscreen window
+only; one attempt per live window identity, never a retry). Q3 first-seen
+maximized admission, including R-MAX-03 floating-to-tiled, reserves a slot and
+preserves maximize, so it emits no clear/echo lines; an applied
 overlay reports `skip-maximized` with its reserved rectangle:
 
 - `plasma-auto-tiler:plan:maximize-admission-clear window=<id> resource_class=<class> outcome=<issued|invoked|missing|threw|observed-cleared|observed-maximized|observed-absent>`

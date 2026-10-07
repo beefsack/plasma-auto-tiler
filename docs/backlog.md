@@ -188,11 +188,15 @@ decisions of 2026-09-24 are under
   [record](changes/archive/kde-minimum-origin-placement.md)). Q3 born-maximized admission follows COSMIC:
   tile with a reserved slot and keep the maximize as an overlay, no launch
   unmaximize (KDE and Windows); KDE delivered offline `9b612be` (901 KWin
-  tests, CI green; R-MAX-03 floating-to-tiled one-shot clear unchanged
-  pending the scope question; live steps in
+  tests, CI green; live steps in
   [record](changes/archive/kde-born-maximized-overlay.md): born-maximized
   launch beside a sibling, native restore into the slot, session-restore
-  no loop). B9 overlaid intentional unfloat:
+  no loop). User Q3 scope decision 2026-10-07 also covers R-MAX-03:
+  KDE floating-to-tiled reserved-slot overlay delivered offline (921 KWin /
+  1107 Rust tests); no admission clear, later unmaximize lands in the slot,
+  synchronous/repeated maximize signals settle. Native check pending in
+  [record](changes/archive/kde-maximized-floating-retile-overlay.md).
+  B9 overlaid intentional unfloat:
   provisionally unfloat and stay maximized (KDE dispatches already; settled
   result unverified); Windows changes from refusal after the user's COSMIC
   check of R-FLT-06. Pinned 11-WM source comparison added. B7
@@ -217,8 +221,10 @@ decisions of 2026-09-24 are under
   reserved slot plus maximize overlay, replacing the one-shot admission
   clear on Windows (and KDE, same decision); user 2026-10-07: Q3 also
   covers the R-MAX-03 floating-to-tiled case (stays maximized over a
-  reserved slot) - implement on both platforms (KDE `9b612be` left
-  R-MAX-03 one-shot); (c) B9 overlaid unfloat: Windows stops
+  reserved slot). KDE R-MAX-03 and R-MAX-06 delivered offline, native checks
+  pending ([scope record](changes/archive/kde-maximized-floating-retile-overlay.md));
+  Windows parity (b) remains pending for the Windows agent.
+  (c) B9 overlaid unfloat: Windows stops
   refusing once the user's COSMIC R-FLT-06 check settles retain vs
   unmaximize; (d) audit finding: Windows keyboard resize and non-local
   workspace modes are unimplemented despite catalog/settings text
@@ -517,6 +523,14 @@ reference-WM checks, which test other compositors.
   (`cf6ab31`): steps in
   [Q3 record](changes/archive/kde-born-maximized-overlay.md) and
   [B6 record](changes/archive/kde-minimum-origin-placement.md).
+- KDE R-MAX-03 Q3 scope: on a floating workspace, first observe maximized A
+  without a tile slot beside ordinary B. Toggle the workspace tiled: A stays
+  maximized over a reserved slot, B takes its allocated share. Natively
+  unmaximize A: it lands in that slot; repeat maximize/unmaximize and confirm
+  quiet settlement with no unsolicited toggles or geometry fighting. Repeat
+  with a session-restored maximized A at a user-owned session boundary; no loop.
+  [Scope record](changes/archive/kde-maximized-floating-retile-overlay.md),
+  [live guide](live-kwin-testing.md).
 
 - Tray workspace toggle: floating/tiled toggling confirmed live by the user
   (2026-09-29). Remaining: default change logs `stage=persist

@@ -6802,46 +6802,211 @@ describe("plan adapter maximize isolation", () => {
         }
     });
 
-    it("floating-domain first sight retiled clears maximize exactly once", () => {
-        // A window first seen on a floating domain is outside tiling until
-        // the domain retiles: the first tiled admission clears native
-        // maximize exactly once, and later maximize observations never
-        // re-clear.
+    it("workspace floating-to-tiled keeps maximize over a reserved slot (R-MAX-03)", async () => {
+        // R-MAX-03 Q3: a first-seen maximized window on a floating workspace
+        // keeps native maximize when the workspace toggles to tiled. The
+        // retile issues no native clear or toggle; the member reserves a tile
+        // slot as a maximized overlay while the sibling takes its share. A
+        // later actual unmaximize writes the retained slot, and a fresh
+        // born-maximized newcomer reserves alongside through the same path.
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         let tiled = false;
         (mocks.env as unknown as { isDomainTiled?: (output: string, workspace: string) => boolean }).isDomainTiled = () => tiled;
-        let maximized = true;
         mocks.observeImpl = () =>
             makeObserved(refs, {
                 focused: refs.a,
                 rects: { "win-a": { x: 0, y: 0, w: 1200, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
-                maximized: maximized ? { "win-a": true } : {},
+                maximized: { "win-a": true },
                 resourceClasses: { "win-a": "firefox" },
             });
-        mocks.maximizeClearImpl = (target): MaximizeClearOutcome => {
-            assert.equal(target, refs.a);
-            maximized = false;
-            fire(mocks, "maximize", refs.a);
-            return "invoked";
-        };
+        const adapter = enableAdapter(mocks);
+        const engine = BornMaxEngineBridge.start();
+        try {
+            adapter.requestResync();
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, 0, "floating startup dispatches nothing");
+            assert.equal(mocks.maximizeClears.length, 0, "floating startup clears nothing");
+            assert.ok(mocks.logs.some((line) => line.includes("workspace-floating")), "floating workspace observed as floating");
+            tiled = true;
+            fire(mocks, "added");
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, 1, "retile dispatches one reconcile");
+            assert.equal(mocks.maximizeClears.length, 0, "retile issues no native maximize clear");
+            assert.equal(mocks.maximizeToggles.length, 0, "retile issues no native maximize toggle");
+            const admitPayload = plannerPayload(mocks, 0);
+            assert.deepEqual((admitPayload["command"] as Record<string, unknown>)["op"], "reconcile");
+            const admitWindows = admitPayload["windows"] as Array<Record<string, unknown>>;
+            assert.equal(admitWindows.find((entry) => entry["window"] === "win-a")?.["fit_excluded"], true, "maximized overlay rides fit_excluded");
+            const admitReply = await flushBornMaxPlan(mocks, engine, 0);
+            assert.equal(admitReply["outcome"], "planned", `retile plans, Engine replied ${JSON.stringify(admitReply)}`);
+            const reserved = bornMaxRect(admitReply, "win-a");
+            const share = bornMaxRect(admitReply, "win-b");
+            assert.ok(reserved.w < 1200 && share.w < 1200, "both members receive a share, not a slotless maximum");
+            assert.ok(
+                reserved.x + reserved.w <= share.x || share.x + share.w <= reserved.x,
+                "the sibling allocation leaves room for the reserved slot",
+            );
+            assert.ok(!mocks.geometries.some((entry) => entry.target === refs.a), "maximized overlay never actuated");
+            assert.ok(
+                mocks.geometries.some(
+                    (entry) =>
+                        entry.target === refs.b &&
+                        entry.rect.x === share.x &&
+                        entry.rect.y === share.y &&
+                        entry.rect.w === share.w &&
+                        entry.rect.h === share.h,
+                ),
+                "sibling takes its allocated share",
+            );
+            assert.ok(
+                mocks.logs.some(
+                    (line) =>
+                        line ===
+                        `plasma-auto-tiler:plan:write window=win-a resource_class=firefox disposition=skip-maximized rect=${String(reserved.x)},${String(reserved.y)},${String(reserved.w)},${String(reserved.h)}`,
+                ),
+                "overlay carries skip-maximized with its reserved rect",
+            );
+            // Repeated maximize signals while still maximized stay quiet.
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    focused: refs.a,
+                    rects: { "win-a": { x: 0, y: 0, w: 1200, h: 800 }, "win-b": share },
+                    maximized: { "win-a": true },
+                    resourceClasses: { "win-a": "firefox" },
+                });
+            const callsAfterAdmit = mocks.dbusCalls.length;
+            const writesAfterAdmit = mocks.geometries.length;
+            fire(mocks, "maximize");
+            fire(mocks, "maximize");
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, callsAfterAdmit, "repeated maximized signals stay quiet");
+            assert.equal(mocks.geometries.length, writesAfterAdmit, "repeated maximized signals write nothing");
+            assert.equal(mocks.maximizeClears.length, 0, "repeated maximized signals clear nothing");
+            assert.equal(mocks.maximizeToggles.length, 0, "repeated maximized signals toggle nothing");
+            // Synchronous signals delivered during native geometry writes
+            // settle quiet: arm the writer to echo sync signals, then report
+            // an actual native unmaximize with a wrong plausible frame.
+            const innerGeometry = mocks.geometryImpl;
+            mocks.geometryImpl = (target, rect): boolean => {
+                const ok = innerGeometry(target, rect);
+                fire(mocks, "geometry", target);
+                fire(mocks, "maximize", refs.a);
+                return ok;
+            };
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    focused: refs.a,
+                    rects: { "win-a": { x: 100, y: 100, w: 400, h: 400 }, "win-b": share },
+                    resourceClasses: { "win-a": "firefox" },
+                });
+            fire(mocks, "maximize");
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, 2, "restore dispatches one reconcile");
+            const restoreReply = await flushBornMaxPlan(mocks, engine, 1);
+            assert.equal(restoreReply["outcome"], "planned", `restore plans, Engine replied ${JSON.stringify(restoreReply)}`);
+            const restoreCorrelation = plannerPayload(mocks, 1)["correlation_id"] as string;
+            assert.ok(
+                mocks.logs.some((line) => line.includes(`cmd=${restoreCorrelation}`) && line.includes("outcome=planned-applied")),
+                "synchronous maximize/geometry write signals do not interrupt restore application",
+            );
+            assert.deepEqual(bornMaxRect(restoreReply, "win-a"), reserved, "retained slot survives the restore round-trip");
+            assert.ok(
+                mocks.geometries.some(
+                    (entry) =>
+                        entry.target === refs.a &&
+                        entry.rect.x === reserved.x &&
+                        entry.rect.y === reserved.y &&
+                        entry.rect.w === reserved.w &&
+                        entry.rect.h === reserved.h,
+                ),
+                "restore lands in the reserved slot",
+            );
+            for (const entry of mocks.geometries.filter((candidate) => candidate.target === refs.b)) {
+                assert.deepEqual(entry.rect, share, "sibling keeps its share");
+            }
+            // Settled restore stays quiet despite the sync write echoes.
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    focused: refs.a,
+                    rects: { "win-a": reserved, "win-b": share },
+                    resourceClasses: { "win-a": "firefox" },
+                });
+            const callsAfterRestore = mocks.dbusCalls.length;
+            const writesAfterRestore = mocks.geometries.length;
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, callsAfterRestore, "converged restore stays quiet");
+            assert.equal(mocks.geometries.length, writesAfterRestore, "converged restore writes nothing");
+            assert.equal(mocks.maximizeClears.length, 0, "restore issues no native maximize clear");
+            assert.equal(mocks.maximizeToggles.length, 0, "restore issues no native maximize toggle");
+            // Born-max interaction: a fresh maximized newcomer on the same
+            // tiled domain reserves through the same overlay path.
+            mocks.observeImpl = () =>
+                makeObserved3(refs, {
+                    focused: refs.a,
+                    rects: {
+                        "win-a": reserved,
+                        "win-b": share,
+                        "win-c": { x: 0, y: 0, w: 1200, h: 800 },
+                    },
+                    maximized: { "win-c": true },
+                });
+            fire(mocks, "added");
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, callsAfterRestore + 1, "newcomer admission dispatches one reconcile");
+            assert.equal(mocks.maximizeClears.length, 0, "newcomer admission issues no native maximize clear");
+            const newcomerReply = await flushBornMaxPlan(mocks, engine, callsAfterRestore);
+            assert.equal(newcomerReply["outcome"], "planned", `newcomer plans, Engine replied ${JSON.stringify(newcomerReply)}`);
+            assert.ok(bornMaxRect(newcomerReply, "win-c") !== undefined, "Engine retains the newcomer slot");
+            assert.ok(!mocks.geometries.some((entry) => entry.target === refs.c), "newcomer overlay never actuated");
+            mocks.observeImpl = () =>
+                makeObserved3(refs, {
+                    focused: refs.a,
+                    rects: {
+                        "win-a": bornMaxRect(newcomerReply, "win-a"),
+                        "win-b": bornMaxRect(newcomerReply, "win-b"),
+                        "win-c": { x: 0, y: 0, w: 1200, h: 800 },
+                    },
+                    maximized: { "win-c": true },
+                });
+            const callsAfterNewcomer = mocks.dbusCalls.length;
+            const writesAfterNewcomer = mocks.geometries.length;
+            fire(mocks, "maximize", refs.c);
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, callsAfterNewcomer, "born-maximized newcomer settles after R-MAX-03 restore");
+            assert.equal(mocks.geometries.length, writesAfterNewcomer, "newcomer signals do not repeat geometry writes");
+            assert.equal(mocks.maximizeClears.length, 0, "combined paths never clear maximize");
+            assert.equal(mocks.maximizeToggles.length, 0, "combined paths never toggle maximize");
+            assert.equal(adapter.isEnabled, true);
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("normal floating-to-tiled admits without maximize handling", () => {
+        // Control leg: a floating workspace with no maximized windows tiles
+        // normally on toggle with geometry writes and no clear or toggle.
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let tiled = false;
+        (mocks.env as unknown as { isDomainTiled?: (output: string, workspace: string) => boolean }).isDomainTiled = () => tiled;
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 100, h: 100 }, "win-b": { x: 100, y: 0, w: 100, h: 100 } },
+            });
         const adapter = enableAdapter(mocks);
         adapter.requestResync();
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, 0, "floating startup dispatches nothing");
-        assert.equal(mocks.maximizeClears.length, 0, "floating startup clears nothing");
-        assert.ok(mocks.logs.some((line) => line.includes("workspace-floating")), "floating workspace observed as floating");
         tiled = true;
         fire(mocks, "added");
         runDebounce(mocks);
-        assert.deepEqual(mocks.maximizeClears, [refs.a], "retile clears exactly once");
-        assert.equal((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "reconcile");
-        assert.ok(
-            mocks.logs.some(
-                (line) => line === "plasma-auto-tiler:plan:maximize-admission-clear window=win-a resource_class=firefox outcome=observed-cleared",
-            ),
-            "retile clear observed before admission",
-        );
+        assert.equal(mocks.dbusCalls.length, 1, "retile dispatches one reconcile");
+        assert.equal(mocks.maximizeClears.length, 0, "normal retile clears nothing");
+        assert.equal(mocks.maximizeToggles.length, 0, "normal retile toggles nothing");
         const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
         mocks.callbacks[0]?.(
             plannedReply(
@@ -6853,26 +7018,16 @@ describe("plan adapter maximize isolation", () => {
                 "win-a-leaf",
             ),
         );
-        const callsAfterAdmit = mocks.dbusCalls.length;
-        maximized = true;
-        mocks.observeImpl = () =>
-            makeObserved(refs, {
-                focused: refs.a,
-                rects: { "win-a": { x: 0, y: 0, w: 1200, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
-                maximized: { "win-a": true },
-                resourceClasses: { "win-a": "firefox" },
-            });
-        fire(mocks, "maximize");
-        runDebounce(mocks);
-        assert.deepEqual(mocks.maximizeClears, [refs.a], "later maximize never re-clears");
-        assert.equal(mocks.dbusCalls.length, callsAfterAdmit, "later maximize keeps its slot without dispatch");
+        assert.ok(mocks.geometries.some((entry) => entry.target === refs.a), "retiled member takes its share");
+        assert.ok(mocks.geometries.some((entry) => entry.target === refs.b), "sibling takes its share");
         assert.equal(adapter.isEnabled, true);
     });
 
-    it("tiled-first later visiting floating never becomes floating-first", () => {
-        // Exact-reference first-origin without a prior apply: a refused
-        // directional move captures tiled-first with no dispatch, so a later
-        // floating visit and the first admission retile issue no clear.
+    it("tiled admission never clears across later floating visits", () => {
+        // R-MAX-03/R-MAX-06 share one overlay rule now: a maximized window
+        // first seen on any domain keeps its maximize over a reserved slot,
+        // so a refused directional move captures nothing to clear and later
+        // floating visits plus the first admission retile issue no clear.
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         let tiled = true;
@@ -6922,14 +7077,14 @@ describe("plan adapter maximize isolation", () => {
         assert.equal(adapter.isEnabled, true);
     });
 
-    it("hidden floating-first retile clears once; reused id with a new ref never inherits", () => {
-        // Hidden discriminator in two isolated windows: win-r3 proves hidden
-        // floating-first retile clears once; win-h captures floating-first
-        // WITHOUT retile/clear/apply, then reuses the same id with a different
-        // exact ref first seen tiled (no removed signal, so replacement not
-        // eviction) and must dispatch its admission slot with zero clears.
-        // win-h has no applied slot and no attempts before replacement, so
-        // only exact-ref origin can suppress the clear.
+    it("hidden floating-to-tiled keeps maximize over a reserved slot; reused id never clears", () => {
+        // Hidden R-MAX-03 discriminator in two isolated windows: win-r3 proves
+        // a hidden floating-to-tiled retile keeps maximize with zero clears;
+        // win-h reuses the same id with a different exact ref first seen tiled
+        // (no removed signal, so replacement not eviction) and must dispatch
+        // its admission slot with zero clears. Neither window has an applied
+        // slot or attempts before its admission, so any clear would be a
+        // first-origin regression.
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         let hiddenTiled = false;
@@ -6998,8 +7153,11 @@ describe("plan adapter maximize isolation", () => {
         fire(mocks, "added");
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, callsAfterBase + 1, "hidden retile dispatches one reconcile");
-        assert.deepEqual(mocks.maximizeClears, [refR3], "hidden floating-first retile clears once");
+        assert.equal(mocks.maximizeClears.length, 0, "hidden retile issues no native maximize clear");
+        assert.equal(mocks.maximizeToggles.length, 0, "hidden retile issues no native maximize toggle");
         const hiddenCorr = plannerPayload(mocks, callsAfterBase)["correlation_id"] as string;
+        const hiddenWindows = plannerPayload(mocks, callsAfterBase)["windows"] as Array<Record<string, unknown>>;
+        assert.equal(hiddenWindows.find((entry) => entry["window"] === "win-r3")?.["fit_excluded"], true, "hidden overlay rides fit_excluded");
         mocks.callbacks[callsAfterBase]?.(
             plannedReply(hiddenCorr, [{ window: "win-r3", rect: { x: 0, y: 0, w: 1200, h: 800 } }], null),
         );
@@ -7007,9 +7165,9 @@ describe("plan adapter maximize isolation", () => {
             mocks.logs.some((line) => line.includes(`cmd=${hiddenCorr}`) && line.includes("outcome=planned-applied")),
             "hidden retile applies its slot",
         );
-        // Stage 2: capture floating-first for a fresh id WITHOUT retile, then
-        // reuse the id with a new ref first seen tiled. No removed signal, no
-        // apply, no attempts for win-h before replacement.
+        // Stage 2: observe a fresh id on the floating domain WITHOUT retile,
+        // then reuse the id with a new ref first seen tiled. No removed
+        // signal, no apply, no attempts for win-h before replacement.
         hiddenId = "win-h";
         hiddenRefCurrent = refOld;
         hiddenTiled = false;
@@ -7017,13 +7175,13 @@ describe("plan adapter maximize isolation", () => {
         runDebounce(mocks);
         const callsBeforeReuse = mocks.dbusCalls.length;
         assert.equal(mocks.dbusCalls.length, callsBeforeReuse, "reuse-id floating capture dispatches nothing");
-        assert.equal(mocks.maximizeClears.length, 1, "reuse-id floating capture clears nothing new");
+        assert.equal(mocks.maximizeClears.length, 0, "reuse-id floating capture clears nothing");
         hiddenRefCurrent = refNew;
         hiddenTiled = true;
         fire(mocks, "added");
         runDebounce(mocks);
-        assert.equal(mocks.dbusCalls.length, callsBeforeReuse + 1, "reused tiled-first id dispatches its admission");
-        assert.equal(mocks.maximizeClears.length, 1, "reused id with a new tiled-first ref issues no clear");
+        assert.equal(mocks.dbusCalls.length, callsBeforeReuse + 1, "reused id dispatches its admission");
+        assert.equal(mocks.maximizeClears.length, 0, "reused id with a new ref issues no clear");
         const reuseIndex = callsBeforeReuse;
         const reusePayload = plannerPayload(mocks, reuseIndex);
         assert.equal((reusePayload["domain"] as Record<string, unknown>)["workspace"], "ws-2", "reuse admission targets its domain");
@@ -7473,28 +7631,23 @@ describe("plan adapter maximize isolation", () => {
         assert.equal(adapter.isEnabled, true);
     });
 
-    it("does not re-clear or loop when an admitted window immediately re-maximizes", () => {
-        // R-MAX-03 floating-first one-shot: first seen on a floating domain,
-        // then retiled clears once; an immediate re-maximize never re-clears.
+    it("retile never clears and an immediate re-maximize never loops (R-MAX-03)", () => {
+        // R-MAX-03 Q3: first seen on a floating domain, then retiled with
+        // maximize kept: no clear runs, the overlay admission applies, and an
+        // immediate re-maximize never clears or dispatches a loop.
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         let tiled = false;
         (mocks.env as unknown as { isDomainTiled?: (output: string, workspace: string) => boolean }).isDomainTiled = () => tiled;
-        let maximized = true;
         mocks.observeImpl = () =>
             makeObserved(refs, {
                 focused: refs.a,
                 rects: {
-                    "win-a": maximized ? { x: 0, y: 0, w: 1200, h: 800 } : { x: 0, y: 0, w: 600, h: 800 },
+                    "win-a": { x: 0, y: 0, w: 1200, h: 800 },
                     "win-b": { x: 600, y: 0, w: 600, h: 800 },
                 },
-                maximized: { "win-a": maximized },
+                maximized: { "win-a": true },
             });
-        mocks.maximizeClearImpl = (): MaximizeClearOutcome => {
-            maximized = false;
-            fire(mocks, "maximize", refs.a);
-            return "invoked";
-        };
         const adapter = enableAdapter(mocks);
         adapter.requestResync();
         runDebounce(mocks);
@@ -7503,48 +7656,56 @@ describe("plan adapter maximize isolation", () => {
         tiled = true;
         fire(mocks, "added");
         runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 1, "retile dispatches one reconcile");
+        assert.equal(mocks.maximizeClears.length, 0, "retile issues no native maximize clear");
         const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
         mocks.callbacks[0]?.(
             plannedReply(
                 correlation,
                 [
-                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
-                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 800, h: 800 } },
                 ],
-                "win-a-leaf",
+                "win-b-leaf",
             ),
         );
-        maximized = true;
+        assert.ok(
+            mocks.logs.some((line) => line.includes(`cmd=${correlation}`) && line.includes("outcome=planned-applied")),
+            "overlay admission applies",
+        );
+        assert.ok(!mocks.geometries.some((entry) => entry.target === refs.a), "maximized overlay never actuated");
+        assert.ok(mocks.geometries.some((entry) => entry.target === refs.b), "sibling takes its share");
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 1200, h: 800 },
+                    "win-b": { x: 400, y: 0, w: 800, h: 800 },
+                },
+                maximized: { "win-a": true },
+            });
         fire(mocks, "maximize");
         runDebounce(mocks);
-        assert.equal(mocks.maximizeClears.length, 1, "the admission clear is one-shot");
+        assert.equal(mocks.maximizeClears.length, 0, "post-admission maximize never clears");
         assert.equal(mocks.dbusCalls.length, 1, "post-admission maximize does not dispatch a loop");
         assert.equal(adapter.isEnabled, true);
     });
 
-    it("applies an admission reconcile when the cleared window re-maximizes before the reply", () => {
-        // Race tolerance rides the clears list: the fresh reconcile carries
-        // the same admissionMaximizeClears as the retired admit, so a
-        // same-rect re-maximize between dispatch and reply still applies
-        // instead of failing stale-scope, with no second clear. R-MAX-03
-        // floating-first retile preserves the one-shot clear path.
+    it("a re-maximize echo between retile dispatch and reply still applies with no clear", () => {
+        // Reply-boundary tolerance without any clear: the retile dispatch
+        // observes maximize, a synchronous re-maximize echo lands before the
+        // reply with the flag still set, and the admission still applies
+        // instead of failing stale-scope.
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         let tiled = false;
         (mocks.env as unknown as { isDomainTiled?: (output: string, workspace: string) => boolean }).isDomainTiled = () => tiled;
-        let maximized = true;
-        let remaximized = false;
         mocks.observeImpl = () =>
             makeObserved(refs, {
                 focused: refs.a,
-                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
-                maximized: { "win-a": maximized || remaximized },
+                rects: { "win-a": { x: 0, y: 0, w: 1200, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+                maximized: { "win-a": true },
             });
-        mocks.maximizeClearImpl = (): MaximizeClearOutcome => {
-            maximized = false;
-            fire(mocks, "maximize", refs.a);
-            return "invoked";
-        };
         const adapter = enableAdapter(mocks);
         adapter.requestResync();
         runDebounce(mocks);
@@ -7552,10 +7713,10 @@ describe("plan adapter maximize isolation", () => {
         tiled = true;
         fire(mocks, "added");
         runDebounce(mocks);
-        assert.deepEqual(mocks.maximizeClears, [refs.a]);
+        assert.equal(mocks.maximizeClears.length, 0, "retile issues no native maximize clear");
         assert.equal((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "reconcile");
         const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
-        remaximized = true;
+        fire(mocks, "maximize", refs.a);
         const writesBefore = mocks.geometries.length;
         mocks.callbacks[0]?.(
             plannedReply(
@@ -7569,11 +7730,11 @@ describe("plan adapter maximize isolation", () => {
         );
         assert.ok(
             mocks.logs.some((line) => line.includes(`cmd=${correlation}`) && line.includes("outcome=planned-applied")),
-            "re-maximized admission reconcile applies through the clears tolerance",
+            "re-maximized admission reconcile applies with the flag still set",
         );
         assert.ok(mocks.geometries.some((entry) => entry.target === refs.b), "unaffected sibling still tiled");
         assert.ok(!mocks.geometries.slice(writesBefore).some((entry) => entry.target === refs.a), "re-maximized member never actuated");
-        assert.equal(mocks.maximizeClears.length, 1, "no second clear");
+        assert.equal(mocks.maximizeClears.length, 0, "no clear at any point");
         assert.equal(adapter.isEnabled, true);
     });
 

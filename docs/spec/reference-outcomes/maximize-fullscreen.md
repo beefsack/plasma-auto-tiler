@@ -111,7 +111,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 - When: Toggle tiled; restore A if still maximized
 
-- Observe: Preserve floating maximum, then one-shot native restore and actual fresh tiled plan/write/readback
+- Observe: Maximum across toggle, reserved tile slot and sibling allocation, then native restore and actual tiled write/readback
 
 - Observe (column leg): whether the workspace floating target exists natively.
 
@@ -133,9 +133,9 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   floating desktop mode). `S(S-kar-acts)`.
 - Then paneru: fixture-inapplicable (no floating workspace mode; window
   management is per-window). `S(S-pan-cmds)`.
-- Then Ours KDE: source floating gate skips admission clear; first tiled admission restores unslotted maximum once and refetches normal state (`kwin/src/plan-adapter.ts:4883-4888,5330-5397`); physical feel TBD
+- Then Ours KDE: Selected Q3 scope, delivered offline: floating skips slot seeding and preserves native maximize; toggling tiled reserves A's tile slot without clearing or toggling maximize. Siblings receive their allocated shares; later native unmaximize lands A in its reserved slot. Existing `fit_excluded` / `skip-maximized` overlay isolation keeps repeated maximize signals and synchronous geometry-write signals from fighting native state. `clearMaximizeAtAdmission` now clears only held born-fullscreen exits; R-MAX-03 and born-maximized R-MAX-06 share the overlay path ([adapter](../../../kwin/src/plan-adapter.ts), real Engine [fixtures](../../../kwin/tests/plan-adapter.test.ts), [record](../../changes/archive/kde-maximized-floating-retile-overlay.md)); [Q3 scope decision](../../decisions.md#cross-platform-behavior). Native toggle/restore and session-restore no-loop acceptance remain user-owned, TBD.
 - Then Ours Windows: slotless membership preserves floating maximum and hide/reveal, then one clear and fresh tiled plan/native write/matched target readback proven with Notepad/Paint; slotted overlays skip re-clear [accepted correction](../../changes/archive/windows-workspace-tiling.md#r-max-03-accepted-correction); physical feel TBD
-- Variant hook: V-WS-TILING.
+- Variant hook: V-WS-TILING plus V-MAX-MODEL - selected Q3 reserved-slot overlay includes floating-to-tiled admission; KDE delivered offline, live TBD; Windows parity (b) pending.
 
 <a id="r-max-04-backfill-shortcut-maximize-native-restore-repress-scrolling"></a>
 ### R-MAX-04: shortcut maximize, native restore, repress
@@ -260,9 +260,9 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   leg (no verb or model path); a host-zoomed first-seen window is
   owner-specific with admission/restore behavior TBD.
   `S(S-pan-cmds)` + `S(S-pan-axfs)`; journey queued.
-- Then Ours KDE: Selected Q3, delivered offline: first-seen maximized A on a tiled domain reserves a tile slot and retains native maximize as an overlay; no launch unmaximize. B receives its ordinary admission share; native restore of A lands in the reserved slot. Repeated maximized observations settle without native clear, toggle or geometry fighting. `PlanAdapter.noteFirstDomainOrigin` / `clearMaximizeAtAdmission` distinguish this from the unchanged R-MAX-03 floating-first one-shot restore; existing `fit_excluded` / `skip-maximized` preserve the overlay ([adapter](../../../kwin/src/plan-adapter.ts), real Engine admission/restore [fixtures](../../../kwin/tests/plan-adapter.test.ts), [change](../../changes/archive/kde-born-maximized-overlay.md)); [Q3 decision](../../decisions.md#cross-platform-behavior). Exact native launch/session-restore journey remains user-owned, TBD.
+- Then Ours KDE: Selected Q3, delivered offline: first-seen maximized A on a tiled domain reserves a tile slot and retains native maximize as an overlay; no launch unmaximize. B receives its ordinary admission share; native restore of A lands in the reserved slot. Repeated maximized observations settle without native clear, toggle or geometry fighting. Existing `fit_excluded` / `skip-maximized` preserve the overlay ([adapter](../../../kwin/src/plan-adapter.ts), real Engine admission/restore [fixtures](../../../kwin/tests/plan-adapter.test.ts), [change](../../changes/archive/kde-born-maximized-overlay.md)); [Q3 decision](../../decisions.md#cross-platform-behavior). R-MAX-03 now shares this path ([scope delivery](../../changes/archive/kde-maximized-floating-retile-overlay.md)); the first-domain origin gate is retired. Exact native launch/session-restore journey remains user-owned, TBD.
 - Then Ours Windows: Q3 reserved-slot overlay is selected, implementation gap: current Windows makes one admission-time clear attempt; retained slots/fullscreen/floating domains are exempt. Windows delivery and exact native journey pending; [Q3 decision](../../decisions.md#cross-platform-behavior).
-- Variant hook: V-MAX-MODEL - selected retained-slot overlay, including Q3 born-maximized admission; KDE delivered offline, live TBD; Windows delivery pending. [Q3 scope decision 2026-10-07](../../decisions.md#cross-platform-behavior) also covers R-MAX-03 floating-to-tiled admission (implementation pending on both platforms).
+- Variant hook: V-MAX-MODEL - selected retained-slot overlay, including Q3 born-maximized admission and [Q3 scope decision 2026-10-07](../../decisions.md#cross-platform-behavior) R-MAX-03 floating-to-tiled admission; KDE delivered offline, live TBD; Windows delivery pending.
 
 <a id="r-max-07-backfill-captionless-full-monitor-cover-scrolling"></a>
 ### R-MAX-07: captionless full-monitor cover
