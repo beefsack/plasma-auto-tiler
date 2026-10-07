@@ -191,7 +191,12 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Ours KDE: Local R1/R2/R3 first; no adjacent output in this fixture means
   no-op. Exhausted R4 otherwise crosses in all four directions, never cycles
   workspaces; [item-5 offline record](../../changes/archive/four-direction-output-transfer.md).
-- Then Ours Windows: Local R1/R2/R3 first; exhausted horizontal R4 crosses output, never workspace; Up/Down excluded; `D(D-dec-cos)` (offline only)
+- Then Ours Windows: local-only (corrected 2026-10-08 at `db31234`):
+  Local R1/R2/R3 first; no adjacent output in this fixture means no-op.
+  No Windows crossing wired: single-domain event `cross_output_transfer:false`
+  (`crates/tiler-windows/src/tiling_sys.rs:6099/6105`); handoff item 5 plus
+  the parked parity-queue multi-output foundation pending. `D(D-dec-cos)` is
+  the selected target, not current capability.
 - Variant hook: V-R4-DIR.
 
 

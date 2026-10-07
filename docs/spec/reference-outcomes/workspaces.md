@@ -495,8 +495,16 @@ verb inventory); selected intent and doc assertions are never evidence.
   non-active rows). `S(S-pan-ws)`.
 - Then Ours KDE: owner-specific (Plasma owns desktop add/remove; the
   adapter only writes membership). `S(S-ours-ws)`.
-- Then Ours Windows: retained (order model has no workspace-removal
-  path; close cleanup drops member state only). `S(S-ours-ws)`.
+- Then Ours Windows: emptied-middle removal route exists (corrected
+  2026-10-08 at `db31234`): `crates/tiler-windows/src/workspace.rs:508`
+  `apply_cleanup` removes stable IDs, invoked from retirement cleanup at
+  `crates/tiler-windows/src/tiling_sys.rs:9228-9234` and selection at :10074-10080;
+  `crates/tiler-core/src/workspace.rs:35` removes eligible invisible
+  empties, preserving the trailing spare and minimum count. Eligible invisible
+  empties can be removed; visible, occupied, or retained-policy-excluded ids
+  stay. Whether this exact given (emptied
+  middle WS2 after a send, then select WS3) retains or removes on Windows
+  is TBD; no live acceptance recorded here. `S(S-ours-ws)`.
 - Variant hook: provisional/TBD (empty-workspace lifecycle hook).
 
 ### R-WS-11: next workspace; previous workspace
@@ -838,8 +846,12 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   recorded change, no recreation/reinterpretation. Surviving empty E stays
   valid. Implemented offline, native journey TBD; item 1.3.
   [Fixtures](../../../kwin/tests/workspace-previous-relative.test.ts).
-- Then Ours Windows: same selected stable-ID rule; implementation pending;
-  exact removal journey TBD (current model has no removal path).
+- Then Ours Windows: same selected stable-ID rule; implementation pending.
+  A removal route exists (`crates/tiler-windows/src/workspace.rs:508`;
+  `crates/tiler-windows/src/tiling_sys.rs:9228-9234`, :10074-10080);
+  whether the exact given (removed trailing empty E as previous) clears on
+  Windows is TBD; no live acceptance recorded here (corrected 2026-10-08
+  at `db31234`).
 - Variant hook: provisional/TBD (R-WS-08 previous-ID validity).
 
 ### R-WS-17: previous around disconnect displacement and reconnect return

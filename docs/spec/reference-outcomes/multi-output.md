@@ -51,7 +51,12 @@ paneru legs distinguish the native Space from virtual rows.
   rectangle selection now includes sole root leaves; work-area placement and
   commit/arrival fences retained. [Item-5 offline record](../../changes/archive/four-direction-output-transfer.md);
   native journey pending.
-- Then Ours Windows: Exhausted horizontal R4 into output's current workspace; same commit/fence protocol as send; `D(D-dec-cos)` offline only
+- Then Ours Windows: local-only (corrected 2026-10-08 at `db31234`):
+  single-domain directional event with `cross_output_transfer:false`
+  (`crates/tiler-windows/src/tiling_sys.rs:6099/6105`); no cross actuation.
+  Shared core now supports four-direction R4; adapter wiring pending with
+  handoff item 5, blocked on the parked parity-queue multi-output
+  foundation. No native acceptance claimed.
 - Variant hook: V-R4-DIR.
 
 <a id="r-out-02-scrolling-assessment-perpendicular-move-at-an-output-edge"></a>

@@ -327,8 +327,12 @@ decisions of 2026-09-24 are under
   ### How to use this handoff
 
   - Source-checked 2026-10-08 at HEAD
-    `9bbc83b6bf37295cb2883d9d31880599e7bdf088`. All source line numbers below
-    refer to this revision; re-find the named function after pulling.
+    `9bbc83b6bf37295cb2883d9d31880599e7bdf088` for items 1-5 and shared
+    plumbing; re-find the named function after pulling.
+  - Current-revision check 2026-10-08 at HEAD
+    `db31234f450e11af78406518150438c623ea91e4` for entries 6-12 and the
+    matrix/spec corrections below; original revision provenance above is
+    preserved. Re-find named symbols after pulling; no pull performed.
   - KDE/shared deliveries: item 1 `7f1a9ee`, item 2 `8d476ee`, item 3
     `0dc7518`, item 4 `fa15add`, item 5 `9bbc83b`. Item 1 has user-confirmed
     SINGLE-output live acceptance (2026-10-07, unspecified edge cases/presets).
@@ -360,7 +364,19 @@ decisions of 2026-09-24 are under
   | 2 | Item 2 explicit follow/stay, then relative sends | Reuse item 1 ring/action routing, not MRU target selection. |
   | 3 | Item 3 live same-axis setting | Independent; replace compile constant without rebuilding trees. |
   | 4 | Item 4 orientation action | Reuse input/catalog/live settings infrastructure. |
-  | 5 | Parked Windows parity queue item 9 multi-output foundation, then item 5 | Per-monitor current-view observation, membership/geometry/visibility/recovery fences first; user live checks need the other Windows PC. Offline topology/Engine tests can precede that. |
+  | 5 | Parked parity-queue multi-output foundation, then handoff item 5 | Per-monitor current-view observation, membership/geometry/visibility/recovery fences first; user live checks need the other Windows PC. Offline topology/Engine tests can precede that. |
+  | 6 | Keyboard resize R-RSZ-01 (parity d) | Independent; needs fresh Alt-capable trigger plus dedicated resize intent. No dependency on items 1-5 except shared modifier routing. |
+  | 7 | Press-focus R-DRAG-08 | Independent of items 1-5; touches Win-drag arm only. Keep R-DRAG-07 stationary-source/moving-preview split intact. |
+  | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; durable float intent must remain distinct from recovery authority. Persistence mechanism unselected; REQ-RST-01c stays OPEN. |
+  | 9 | Fullscreen send R-MAX-09 (Windows carry; NOT the parked parity-queue multi-output foundation) | Depends on handoff item 2 follow/stay wiring only; same-output workspace carry, no cross-output claim. |
+  | 10 | Float/half-snap parity (a) R-FLT-07..11 | Independent of items 1-5; reuses existing focus/move catalog rows, no new chords. |
+  | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; keep first-fullscreen-exit and B9 refusal intact. Independent of items 1-5. |
+  | 12 | Non-local workspace modes parity (d) | Depends on handoff items 1/2 (ring + follow/stay) and the parked parity-queue multi-output foundation; last. |
+
+  Q2-Q5 reservation: R-SPC-04, R-RST-01 KDE delivery, R-WS-12 and R-LAY-04
+  own their KDE pieces; when each lands, its owning session appends a Windows
+  handoff entry here in the same numbered format. Do not pre-write their
+  adapter wiring.
 
   - Source notation: `src/...` / `tests/...` below are under
     `crates/tiler-windows/`; `core/...` is `crates/tiler-core/src/`;
@@ -1113,14 +1129,617 @@ decisions of 2026-09-24 are under
        desktop, follow/stay, floating-boundary and stale/lifetime fixtures;
        native Windows acceptance remains Windows-owned.
 
+  - Item 6: keyboard resize R-RSZ-01 (parity d). Table A R-RSZ-01 accepted
+    2026-10-07 (Windows keyboard trigger via shared Engine pixel path; P1
+    adoption entry in this file, [consensus](research/reference-wm-consensus.md);
+    KDE match stays B). Catalog text already documents the rows; the trigger
+    is the gap.
+
+    #### Item 6 behavior and reference seams
+
+    - Normative: [spec](spec/functional-spec.md#resize) REQ-RSZ-01 pixel
+      `cosmic_v1` path plus REQ-RSZ-01b Windows trigger; [matrix](spec/reference-outcomes/resize.md)
+      R-RSZ-01 (Ours KDE: 12px press 0, then 14/16/18/20 on repeat, adjacent
+      shares only, inwards reverses, minima clamp; Ours Windows:
+      no-counterpart). Four outward and four inward rows, each with letter
+      and arrow defaults (16 physical chords): Win+Alt grows outwards,
+      Win+Alt+Shift shrinks inwards.
+      Step schedule `(10 + 2 + 2 * press_index).min(20)` (`core/cosmic_v1.rs:228-240`;
+      first press 12px). Dedicated resize intent; never `SnapOp::Move`.
+    - Core/engine/protocol (verified 2026-10-08 at `db31234`):
+      `core/boundary.rs:69-74` `CoreCommand::Resize {window, direction, mode,
+      press_index}`; `core/engine.rs:892` dispatch plus :3044-3108
+      `resize_request` (retained converge, `ResizeCapabilities
+      {keyboard_resize: true, pointer_resize: false}`, `ResizePlanReply::
+      from_keyboard`); `core/contract.rs:830-883` capability gates;
+      `core/session/ops/resize.rs:49` `propose_resize`, gate :134, keyboard
+      derivation :1383-1504; `protocol/planner_protocol.rs:208-211`
+      `parse_mode`, :2683 `SyncCommand::Resize` parse, :2734 core mapping,
+      :3712-3719 wire shape, :3824-3834 typed mapping, :1797-1858 reply
+      serializer, :2112 reply dispatch, :2314 retained eval.
+    - KDE reference: `kwin/src/plan-adapter.ts:3197` `requestResize` (fences:
+      disabled, invalid direction/mode, busy, observe, activeExcluded,
+      workspace-floating, fullscreen, maximized; repeat state
+      `repeatFocused/repeatDirection/repeatMode/repeatNext` :2110-2113 and
+      :3241-3257; dispatch body `{op: "resize", window, direction, mode,
+      press_index}` :3253-3257); `kwin/src/plan-adapter-entry.ts:4102`
+      catalog entry, delegates :7536/:7844; `kwin/tests/plan-adapter.test.ts:417`
+      resize-param test plus :898 busy-refused.
+    - Current Windows gap: `src/settings.rs:693` `RESIZE_ROWS` (8 ids, Alt
+      outwards defaults, Alt+Shift inwards defaults), `binding_catalog`
+      :769-777 marks them `implemented:false` ("not intercepted on Windows:
+      Alt chords pass through untracked"). `src/snapkey.rs:104` `SnapOp`
+      has only Focus/Move; `snap_repeat_live` :301 pins Win-only repeats;
+      `key_op` maps :870/:1176/:1208/:1254. `src/tiling_sys.rs:5645`
+      `keyboard_tick` builds Focus (:6096-6100) and Move (:6102-6110) only.
+
+    #### Item 6 adapter checklist
+
+    - `src/snapkey.rs`: add a Resize op beside `SnapOp` :104 (`as_str`
+      :109-114); extend `snap_repeat_live` :301 with an Alt-pinned arm
+      (Win+Alt held, Shift selecting inwards vs outwards per
+      `binding_wants_shift` `src/settings.rs:1038`); extend `key_op` maps
+      :870/:1176/:1208/:1254 and `push` :1012 / `push_owned` :1146
+      Ctrl/Alt acceptance scoped to these documented resize chords only;
+      carry exact Alt (+Shift) plus ACTION through intents, queues
+      (`QueuedSnapEvent` :2116, `classify_and_queue` :2217), hold/repeat/
+      release pins and E8 mask (:2303). Unrelated Ctrl/Alt-rebind refusal
+      (`validate_bindings` :1317, `apply_rebind_text`
+      `src/settings_ui.rs:403/:425`) stays.
+    - `src/settings.rs`: flip each `RESIZE_ROWS` row to `implemented:true`
+      as it lands; extend `chord_conflict` :954 past the Alt early return
+      with truthful ownership text (Windows Alt-chord ownership is
+      unrecorded: "ownership unverified in repository; containment unproven
+      live", never conflict-free). Presets: `compatible_disabled_ids`
+      :1528 lists implemented conflicting rows only; NO Compatible-disable
+      or Authentic-takeover is recorded for Alt resize chords, so preset
+      treatment is TBD, not a silent keep. KDE clears stock kwin Switch
+      Window arrows through KCM Apply/Force/Revert ([shortcuts decision](decisions.md#shortcuts)
+      2026-09-28); the Windows analogue is unselected.
+    - `src/tiling_sys.rs` `keyboard_tick` :5645: add a dedicated Resize arm
+      (not a `SnapOp::Move` request) constructing an ordinary single-domain
+      event with `CoreCommand::Resize {window: focused mover, direction,
+      mode, press_index}`; `press_index` from per-focus/direction/mode
+      repeat tracking mirroring KDE :3241-3257; pre-dispatch fences mirror
+      KDE :3197-3239 (suspension/lifetime, floating subject, floating
+      workspace, fullscreen/maximized overlay). On `CoreReply::Resize`,
+      extract via existing `planned_writes` (`src/workspace_owner.rs:412`)
+      and apply through `apply_geometry` :4866 with the Move-arm fences
+      (:6172-6205); pointer-resize precedent :13040-13060.
+    - [ ] Portable: `tests/snapkey.rs` exact Alt/Shift routing, extra
+      modifiers, held live rebind/disable, queue/mask, duplicate modifiers;
+      `tests/settings.rs` catalog flags, conflict text, preset TBD behavior;
+      `tests/tiling.rs` retained-Engine resize geometry: 12px first press,
+      14/16/18/20 repeats, adjacent-shares-only, inward reversal, one-sided
+      minima clamp, no Move semantic. Port `crates/tiler-core/tests/session_resize.rs`
+      semantics (`horizontal_both_directions` :358, `vertical_both_directions`
+      :389, `edge_refusals_are_unchanged` :516, `normalization_and_clamp_to_exhaustion`
+      :565, `focus_retained_and_plan_carries_semantics` :648).
+    - [ ] Windows-only: owner hook release/suppression plus settings
+      Keep/Disable/Rebind Apply/Revert for the 8 rows; native chord
+      suppression needs Windows evidence.
+    - User journey: use horizontal and vertical tiled pairs, focusing the
+      member with a shared boundary in each requested direction. Win+Alt+
+      H/L/J/K plus arrows grow outward once each (12px before clamps);
+      outer edges without a resize boundary remain no-ops. Win+Alt+Shift variants
+      shrink inward (reversal); repeat-hold one direction to the 20px cap;
+      drive one pair into its minimum (clamp one-sided, no axis search);
+      Apply/Revert plus takeover-off release; unrelated Ctrl/Alt chords
+      still pass through.
+    - DoD: all 8 rows resize through the shared pixel path with
+      press_index steps; no Move semantic; catalog/conflict/preset-tests
+      updated with preset TBD recorded; matrix `R-RSZ-01` Ours Windows cell
+      updated with dated offline evidence, native pending.
+
+  - Item 7: press-focus R-DRAG-08. User decision 2026-10-07 (R-DRAG-08;
+    [decisions](decisions.md#cross-platform-behavior)): a Meta/Win client
+    drag focuses the dragged window at press on both platforms. Windows
+    changes from activate-on-drop; KDE timing needs a live check ([pending
+    live checks](#pending-live-checks)).
+
+    #### Item 7 behavior and reference seams
+
+    - Normative: [spec](spec/functional-spec.md#drag) REQ-DRAG-08 plus
+      REQ-DRAG-03 producer note; [matrix](spec/reference-outcomes/mouse.md)
+      R-DRAG-08 (Ours Windows today: foreground retained during hold, B
+      activated on valid drop; Ours KDE: exact focus timing TBD).
+      R-DRAG-07 stationary-source/moving-preview split and parked underlay
+      C stay unchanged.
+    - Current Windows exact (verified 2026-10-08 at `db31234`): Win+Left
+      arm `windrag_down` (`src/tiling_sys.rs:12427`) validates tiled-only
+      published origins, live identity/tag/token (`no-token`,
+      `stale-snapshot`), captures gesture start (`capture_gesture_start`
+      :12342), sets `gesture_producer` "windrag", `windrag_start_cursor`,
+      `windrag_bound`, `move_kind` Move and `active`. Focus is bound later
+      at drop-settle in `gesture_tick` :12900-12935 via `actuate_focus`
+      (:5402, E8-prime plus attach plus one setter with exact readback),
+      logged `windrag-focus`; failed actuation refuses with snap-back, no
+      plan. Model: `src/win_mouse.rs:38` `WinDragSnapshot`, :51
+      `WinDragEdge`, :71 `validate_windrag_down`, :90 `WinDragKind`, :104
+      `WinDragQueue`, :329 `settle_pointer_journey`. Title-bar drag runs
+      the native modal loop (OS focuses at press; no project code); Esc
+      cancel is `clear_windrag_gesture` :12531 (no plan, no geometry change).
+    - KDE: Ours KDE cell timing is TBD by live check, not by adapter work;
+      oracle grab/drag route diagnostics live at
+      `kwin/src/plan-adapter-entry.ts:5888-6073` (`grabSource`) and
+      :6864-6894. Port evidence: `kwin/tests/drag-press-evidence.test.ts`.
+    - Core/drop seam: `core/boundary.rs:113-125` `DragDrop` carries the
+      mover and hover prior, not native press-focus authority. Windows
+      `src/tiling_sys.rs:13018-13028` constructs that command only at drop;
+      :13051-13074 applies the retained reply. Press activation adds no
+      Engine mutation or layout write to that unchanged drop contract.
+
+    #### Item 7 adapter checklist
+
+    - `src/tiling_sys.rs`: bind mover focus in `windrag_down` :12427 right
+      after the `active` insert (all START fences already passed:
+      unmanaged, unknown-subject, busy, identity-changed, stale-snapshot,
+      no-token, no-pre), using the same `actuate_focus` :5402 authority as
+      the drop path. On press-actuation failure, refuse the arm with
+      snap-back and no plan (mirror :12912-12928). At drop-settle
+      :12900-12935, avoid redundant activation only after fresh foreground
+      readback; preserve settle-time refusal if the required focus cannot
+      be verified. Keep every other gate (START identity/lifetime, member match,
+      sticky/float refusal, domain routing, same-output fence) and the
+      Engine plan path unchanged. `windrag_up` :12508 and
+      `clear_windrag_gesture` :12531 unchanged; title-bar path untouched.
+      No new chord; no settings/catalog/preset row is touched.
+    - [ ] Portable: `src/win_mouse.rs` model tests (`validate_windrag_down`
+      edges, queue cap/discipline, `settle_pointer_journey` ordering) plus
+      new press-ordering cases: unfocused-B press binds focus before any
+      move; no-move press yields focus with zero layout writes; Esc cancel
+      keeps focus with zero writes; drop at edge transfers with the mover
+      focused; failed press actuation snaps back with no plan. Port
+      `kwin/tests/drag-press-evidence.test.ts` ordering assertions.
+    - [ ] Windows-only: owner-side arm/drop/cancel with exact foreground
+      readback; native foreground evidence on press.
+    - User journey: unfocused-B Win+Left press with no move (B focused,
+      layout unchanged); Esc cancel (B stays focused, no write); press,
+      move, drop at A's edge (transfer, B focused); underlay C remains
+      parked.
+    - DoD: press-focus on Win client drag with no drop-path regression;
+      R-DRAG-07 split preserved; matrix `R-DRAG-08` Ours Windows cell
+      updated with dated offline evidence, KDE timing still live-TBD.
+
+  - Item 8: restart R-RST-01 plus R-FLT-05 sticky persistence. User
+    decisions 2026-10-07 (R-FLT-05, R-RST-01 float identity;
+    [decisions](decisions.md#cross-platform-behavior)): sticky floats stay
+    sticky across owner restart including Windows, delivered with the
+    R-RST-01 work. KDE delivery rides the Q2-Q5 reservation above.
+
+    #### Item 8 behavior and reference seams
+
+    - Normative: [spec](spec/functional-spec.md#startup) REQ-RST-01/01b plus
+      REQ-FLT-05; [matrix](spec/reference-outcomes/restart-persistence.md)
+      R-RST-01 (Ours KDE: intentional F loses ordinary-float status because
+      its id set resets; Ours Windows: runtime store resets while settings
+      persist without layout restore) and
+      [matrix](spec/reference-outcomes/floating.md) R-FLT-05. Sticky stays
+      sticky and intentional floats survive owner restart. REQ-RST-01c
+      membership/set/focus remains OPEN; no invented persistence identity
+      or storage scheme.
+    - Core seams (verified 2026-10-08 at `db31234`): `core/session.rs:546`
+      `exceptions` map, `core/session/world.rs:433` `is_exception` (Engine
+      float/settle reads at `core/engine.rs:835/:1467`), `core/session.rs:148`
+      intentional-float transition. Exceptions ride the session, never the
+      settings file.
+    - KDE runtime (verified 2026-10-08 at `db31234`): observed
+      float/sticky classification `kwin/src/plan-adapter.ts:7043-7051`
+      `floatSourceOf` (float-set vs all-desktops), per-observation
+      `floatingById` :8229, env `setFloating` :635. The id set resets on
+      restart per the matrix cell; re-persisting it is the reserved KDE
+      delivery, not this handoff.
+    - Windows exact (verified 2026-10-08 at `db31234`): runtime intent
+      `state.floated: BTreeSet<WindowKey>` (`src/tiling_sys.rs:1452`,
+      init empty :13813); float toggle inserts :7361/:8103, unfloat
+      removes :7668, close cleanup :4150; domain-release carry via
+      `float_carry_tokens` (`src/workspace_owner.rs:207`, used :4286;
+      fixtures :1352 `float_carry_survives_a_fresh_engine_session`);
+      Engine read `engine_is_float` :3963. Sticky lane: `state.sticky` map
+      plus on-window SetProp markers `src/tiling.rs:450`
+      `sticky_marker_value` (1 = pre-sticky tiled, 2 = pre-sticky float)
+      and :457 `parse_sticky_marker`; `src/product_hide.rs:487-547`
+      read/install/remove; adoption fixtures
+      `src/workspace_owner.rs:2894` roundtrip and :3245
+      `sticky_adopt_consumes_both_markers_as_normal_float_then_tiles`.
+      Runtime maps (`member_tokens`, `hidden_claims`, `member_identity`,
+      `member_tags` :1280-1303) never serialize. These existing maps and
+      recovery records are not a selected durable float-intent mechanism.
+
+    #### Item 8 adapter checklist
+
+    - `src/tiling_sys.rs` + `src/workspace_owner.rs`: on fresh observation
+      after owner restart, restore the accepted intentional-float/sticky
+      classification before first tiling. Current marker-adoption fixtures
+      consume both origins as ordinary float (:3245); that is the gap,
+      not the intended restart outcome. Preserve exact-lifetime admission
+      fences (`member_tokens`/`member_identity`/`member_tags`,
+      `visible_lifetime_ok`, `reused_hwnd_stale`) and independent recovery.
+      Do not authorize writes from a marker or guessed HWND alone.
+      Persistence/identity mechanism, journal-versus-separate-store routing
+      and schema are not selected here; record the implementation proposal
+      before wiring. REQ-RST-01c membership/set/focus remains OPEN. Existing
+      live sticky toggles retain the two pre-sticky origins; the exact
+      post-restart un-stick result is not selected by R-FLT-05 and stays TBD.
+      No new shortcut/catalog row or preset is selected.
+    - [ ] Portable: `float_carry_survives_a_fresh_engine_session` :1352,
+      marker roundtrip :2894, sticky-adopt :3245, plus new offline-restart
+      cases: surviving sticky marker re-adopts as sticky (both origins),
+      intentional ordinary float survives, marker mismatch fails closed,
+      recycled HWND refuses. Keep same-owner un-stick origin tests; leave
+      post-restart un-stick assertions TBD under R-FLT-05/R-RST-01. Core:
+      `crates/tiler-core/tests/restart_disjoint_adoption.rs` and
+      `crates/tiler-core/tests/session_lifecycle.rs` exception
+      fixtures. Windows: `tests/restore.rs` (reveal/skip/missing/ambiguous),
+      `tests/storage.rs` roundtrip/refusal, `tests/lifecycle.rs`.
+    - [ ] Windows-only: owner restart with live windows across all three
+      lanes; ledger/journal crash recovery unchanged.
+    - User journey: two sticky floats (one made sticky from tiled, one
+      from intentional float), one ordinary intentional float and one tile;
+      restart owner; both sticky windows remain sticky and the ordinary
+      float remains floating. Observe and record un-stick results for both
+      origins without selecting a post-restart outcome; membership/focus
+      stays TBD under REQ-RST-01c. No layout-restoration claim.
+    - DoD: sticky/intentional floats survive restart without identity
+      guessing; undecided post-restart outcomes remain TBD; REQ-RST-01c OPEN;
+      matrix `R-RST-01` and `R-FLT-05` Ours Windows cells updated with
+      dated offline evidence, native journey TBD.
+
+  - Item 9: fullscreen send R-MAX-09 (Windows carry). Table A R-MAX-09
+    accepted 2026-10-07: Windows workspace send carries fullscreen state
+    without restoring first (P1 adoption entry in this file). Depends on
+    handoff item 2 follow/stay wiring only; same-output workspace carry,
+    never the parked parity-queue multi-output foundation.
+
+    #### Item 9 behavior and reference seams
+
+    - Normative: [spec](spec/functional-spec.md#maximize) REQ-MAX-09;
+      [matrix](spec/reference-outcomes/maximize-fullscreen.md) R-MAX-09
+      (Ours Windows today: tiled maximized B sends through the retained
+      Engine route with follow, fullscreen B refuses with no writes;
+      Ours KDE: same-output desktop-send outcome TBD, R4 cross-output
+      Engine path cited). KDE observe-first/maximize leg stays OPEN; only
+      workspace carry is selected, never output-fullscreen carry.
+    - R-MAX-05 boundary (not a send outcome): the project-toggle refusal on
+      app-owned fullscreen without a preimage is a separate invariant
+      (user decision 2026-10-07 R-MAX-05; [matrix](spec/reference-outcomes/maximize-fullscreen.md)
+      R-MAX-05 Ours Windows; `src/tiling_sys.rs:6808`
+      `fullscreen-refused-app-owned`). This item preserves that toggle path
+      untouched; it selects fullscreen workspace-send carry only.
+    - Current Windows gates (verified 2026-10-08 at `db31234`):
+      `workspace_do_send` (`src/tiling_sys.rs:10552`) pre-dispatch overlay
+      gate :10713-10737 (retained mover: fullscreen refuses
+      `send-refused-fullscreen` :10728-10730, maximized proceeds through
+      `send_flags_stable` plus `is_zoomed_now` rechecks); native boundary
+      `workspace_do_send_native` :10314 with its own gate :10374; retained
+      tail :10900-10945 (same fullscreen/maximized branches, post-tag
+      lifetime recheck, `assign`, verified transfer before follow);
+      builder/reply :10848-10884. `src/workspace_owner.rs:70`
+      `build_send_event`, :138 `stamp_send_target`, :170-180 `SendRoute`,
+      :396 `planned_writes`. Core: `core/engine.rs:1858-1865`
+      `transfer_request`, `core/boundary.rs:93-112`
+      `SendToWorkspace`/`SendToOutput`.
+    - KDE seams, not carry acceptance: numbered workspace send enters
+      `kwin/src/plan-adapter-entry.ts:4964` `requestWorkspaceMove`; tiled
+      routing uses `kwin/src/workspace-send-adapter.ts:1309` `requestSend`
+      and :2635 `followOnce`. Its :1363-1365 `non-tiled-focus` gate and
+      native send behavior are context for the observe-first KDE R-MAX-09
+      row, not authority to select a KDE fullscreen outcome.
+
+    #### Item 9 adapter checklist
+
+    - `src/tiling_sys.rs`: at the :10728-10730 and :10914 fullscreen
+      branches, let a project-fullscreened mover proceed exactly like the
+      maximized leg beside it: live flag-stability recheck, ordinary
+      `transfer_request` admission (remembered leaf, destination focus
+      history, root fallback), target allocation kept, overlay geometry
+      never written, command follow/stay per handoff item 2 (follow
+      selects/reveals target and focuses mover after verified transfer;
+      stay hides the mover without selecting target and applies source
+      MRU/null focus), verified transfer before follow. Retain every
+      exclusion (unmanaged, suspended, identity/lifetime) and setter
+      isolation; R-MAX-05 toggle path untouched. Any genuinely unresolved
+      mover subcase gets a TBD governing matrix row, never an invented
+      refusal.
+    - [ ] Portable: `src/workspace_owner.rs` send fixtures
+      (`send_event_binds_target_and_focused_mover` :1251,
+      `send_plan_scopes_source_reflow_through_writable_subset` :2229) plus
+      new fullscreen-carry cases: true-Engine source/target allocation
+      equality with the maximized leg, overlay geometry skip (zero native
+      writes for the mover), follow vs stay focus/visibility, maximized vs
+      fullscreen distinction; `tests/tiling.rs` retained-Engine send
+      coverage with lifetime/arrival/recovery.
+    - [ ] Windows-only: Engine/native-boundary tails, source-selected
+      fences before writes and focus, hidden target reveal policy, recycled
+      lifetime, partial-transfer reconciliation without replay.
+    - Settings/input/catalog/presets: reuse handoff item 2's follow/stay
+      actions and exact-modifier routing. Current numbered send rows are
+      `src/settings.rs:823-826` / `workspace_row` :830; this carry change
+      selects no additional binding, conflict, preset or UI control.
+      `apply_preset` :1490 / `compatible_disabled_ids` :1528 stay under
+      item 2's recorded policy, not a new fullscreen-specific policy.
+    - User journey: project-fullscreened B on WS1, WS2 occupied; follow
+      send (B arrives still fullscreen, source collapses to A, B focused);
+      fresh fixture, stay send (WS1 stays shown on A, B fullscreen on
+      hidden WS2, select WS2 to verify); maximized leg repeats unchanged;
+      native restore/exit of arrived B behaves as before.
+    - DoD: workspace fullscreen carry without prior restore; exclusions and
+      R-MAX-05 toggle refusal intact; matrix `R-MAX-09` Ours Windows cell
+      updated with dated offline evidence, KDE leg still observe-first,
+      native TBD.
+
+  - Item 10: float/half-snap parity (a), R-FLT-07..11. User decision
+    2026-10-05 float-nav ([decisions](decisions.md#window-and-workspace-behavior));
+    KDE delivered offline ([record](changes/archive/kde-floating-directional-navigation.md)).
+    Windows parity pending; cross-platform consistency already selected.
+
+    #### Item 10 behavior and reference seams
+
+    - Normative: [spec](spec/functional-spec.md#floating) REQ-FLT-07/08/09/
+      09b/10/11; [matrix](spec/reference-outcomes/floating.md) R-FLT-07..11.
+      Tile-origin focus lands on tiles, floats never targeted; float-origin
+      focus selects same-domain floats by top-left axis distance, considering
+      sticky entries before ordinary entries in encounter order; nearer
+      ordinary entries can win. Up/Left ties keep first, Down/Right last. Miss
+      retains focus and reuses the recorded horizontal output-edge behavior
+      without COSMIC workspace cycling; float-origin Meta/Win+Shift+arrow
+      snaps to the stateless work-area half, stays floating and focused.
+      Quarters, maximize and repeated-outward transfer states deferred.
+    - KDE exact (verified 2026-10-08 at `db31234`):
+      `kwin/src/plan-adapter.ts:944` `floatSubjectEntry` (focused
+      same-domain float/sticky gate), :974 `selectFloatFocusTarget`
+      (sticky entries first, then ordinary in one axis-distance race;
+      Up/Left admit non-positive deltas and keep first tie, Down/Right
+      strictly positive and keep last), :1036 `floatHalfSnapRect`
+      (inner-gap formula over work-area bounds, trunc halves), :2460
+      `requestFloatFocus` via dispatch :2433, :2533 `requestFloatMove` via
+      :3129 (exactly one `setGeometry` plus focus retention; no Engine
+      admission, no dispatch, no overlay clear, repeats request the same
+      half again). Fixtures: `kwin/tests/plan-float-focus.test.ts`,
+      `kwin/tests/plan-float-move.test.ts:144-282` (four-direction
+      arithmetic, trunc, sticky parity, stateless repeats, stale refusal).
+    - Core: `core/boundary.rs:58-67` Focus op (`float_subject` flag),
+      `core/engine.rs:2840/:3022` focus proposal,
+      `core/session/ops/focus.rs:26` `propose_focus`; cross-output float
+      focus leg covered in
+      `crates/tiler-core/tests/session_float_focus_cross.rs`.
+      Half-snaps are adapter-native geometry (no Engine plan) on KDE;
+      Windows must do the same, never an Engine admission.
+    - Current Windows exact (verified 2026-10-08 at `db31234`):
+      `src/tiling_sys.rs:5911-5935` sticky refusal (`focus-refused-sticky` /
+      `move-refused-sticky`) plus float refusal (`focus-refused-floating` /
+      `move-refused-floating`); `CoreCommand::Focus` :6096 with
+      `float_subject:false` :6100; focus actuation `actuate_focus` :5402;
+      float read `engine_is_float` :3963.
+
+    #### Item 10 adapter checklist
+
+    - `src/tiling_sys.rs` `keyboard_tick` :5645: before the Engine
+      Focus/Move build, branch on float subject (`engine_is_float` :3963
+      or `state.sticky` member, mirroring the :5911-5935 gates): Focus
+      runs the ported `selectFloatFocusTarget` over same-domain observed
+      floats (one distance race, sticky encounter-order first, same tie rules) via
+      `actuate_focus` :5402; miss retains focus and reuses the existing
+      horizontal output-edge path, never workspace cycling and never a new
+      crossing. Move runs the ported `floatHalfSnapRect` over the work-area
+      bounds plus inner gap, performs exactly one geometry write with the
+      existing writable/hidden/minimum fences, and retains focus on the
+      same subject; no Engine call. Keep the refusal vocabulary for
+      ineligible subjects, invalid geometry, stale subjects and the
+      deferred quarter/max/outward states.
+    - [ ] Portable: `tests/tiling.rs` + `tests/snapkey.rs` (existing
+      focus/move rows, no new chords): nearer ordinary vs farther sticky,
+      first/last tie selection, miss
+      retention, repeated half-snaps stateless with exact allocation,
+      tile-origin skip, deferred states still refused. Port
+      `kwin/tests/plan-float-focus.test.ts` axis/tie cases and
+      `kwin/tests/plan-float-move.test.ts:144-282` arithmetic/repeat/stale cases.
+    - Settings/input/catalog/presets: existing `FOCUS_MOVE_ROWS`
+      (`src/settings.rs:575`) / `binding_catalog` :757-768 are implemented;
+      retain their Keep/Disable/Rebind and `compatible_disabled_ids` :1528
+      conflict policy. Half-snaps use current inner-gap settings; no new
+      shortcut, preset rule or persistent snap-state setting is selected.
+    - [ ] Windows-only: single-write readback, minimum-hint clamp,
+      mixed-DPI work-area placement; native suppression evidence.
+    - User journey: float-to-float Win+arrows (ordinary pair, then sticky
+      pair: verify encounter-order tie rules); Win+Shift+arrows all four halves
+      twice (same half again); miss holds focus; tile-origin Win+arrows
+      ignore floats.
+    - DoD: REQ-FLT-07..11 behave with deferred states still deferred;
+      matrix `R-FLT-07..11` Ours Windows cells updated with dated offline
+      evidence, native TBD.
+
+  - Item 11: born-max/floating-retile overlay parity (b), Q3 including
+    R-MAX-03. User decisions Q3 plus Q3 scope 2026-10-07
+    ([decisions](decisions.md#cross-platform-behavior)): born-maximized
+    tiles with a reserved slot and keeps maximize as an overlay, no launch
+    unmaximize, on KDE and Windows; Q3 also covers R-MAX-03
+    floating-to-tiled admission, replacing the one-shot restore on both.
+    KDE R-MAX-06 delivered offline, R-MAX-03 delivered offline in
+    `29c75fe` ([record](changes/archive/kde-maximized-floating-retile-overlay.md),
+    born-max [record](changes/archive/kde-born-maximized-overlay.md)).
+
+    #### Item 11 behavior and reference seams
+
+    - Normative: [spec](spec/functional-spec.md#maximize) REQ-MAX-03/03b/06;
+      [matrix](spec/reference-outcomes/maximize-fullscreen.md) R-MAX-03
+      (Ours KDE: floating skips slot seeding, retile reserves the slot,
+      native unmaximize lands in it; Ours Windows: one-shot retile restore
+      still in code) and R-MAX-06 (Ours KDE: reserved-slot overlay, no
+      launch clear; Ours Windows: one admission-time clear attempt,
+      retained slots/fullscreen/floating domains exempt). No launch
+      unmaximize, no one-shot retile restore. First fullscreen exit and
+      the B9 Windows refusal (until the COSMIC R-FLT-06 check) preserved;
+      no R-MAX-08 nav choice.
+    - KDE exact (verified 2026-10-08 at `db31234`):
+      `kwin/src/plan-adapter.ts:5933` `clearMaximizeAtAdmission` (skips
+      fullscreen, skips attempted ids via `maximizeAdmissionAttempts`,
+      clears only the exact-ref-held born-fullscreen exit
+      `heldInitialFullscreen`, echo arm/clear, observed refetch); call
+      sites :5476/:5791; env `clearMaximize` :626; overlay = retained
+      tile slot plus `fit_excluded` / `skip-maximized` isolation with
+      quiet repeated/synchronous signals (matrix R-MAX-03/06 KDE cells).
+      Fixtures: `kwin/tests/plan-adapter.test.ts`.
+      Carried projection is `kwin/src/plan-adapter.ts:2721-2740`, payload
+      `fit_excluded` :6071 and native `skip-maximized` :8338-8339. Shared
+      `core/engine.rs:478-512` converges the carried set; core projection
+      `core/boundary.rs:802-807` omits excluded frames from observed-clamp
+      assessment while retaining planned geometry. No new Engine behavior
+      is selected by this parity piece.
+      The implementation-status sentence at `decisions.md:571` still calls
+      R-MAX-03 one-shot; `29c75fe` and its archive record supersede that
+      KDE delivery status, not the recorded Q3 behavior decision.
+    - Windows exact (verified 2026-10-08 at `db31234`):
+      `src/tiling.rs:550` `should_clear_maximize_at_admission`,
+      :567 `should_admit_slotless_maximized`; callers
+      `admission_clear_eligible` (`src/tiling_sys.rs:3785`),
+      `clear_maximize_at_admission` :3810 (attempt-key
+      mark-before-native-call, `restore_zoom_placement`, assembly
+      :3802-3898), `admit_slotless_maximized` :8726 (is_member,
+      `member_rects`, holdable-key, lifetime gates),
+      `admit_born_fullscreen` :8622. First-exit lane kept:
+      `FullscreenMeta` read/write :3400-3496, `enter_fullscreen` :3520,
+      `exit_fullscreen_owned` :3574, `track_fullscreen_holds` :3713.
+      B9 lane kept: `float_toggle_refusal` (`src/tiling.rs:402`) and
+      `sticky_toggle_refusal` (:418). Fixture:
+      `floating_retained_max_stays_slotless_then_tiled_seeds_and_plans`
+      (`src/tiling_sys.rs:17164`).
+      Row assembly is `src/tiling_sys.rs:4243`, retained maxima :4423-4468;
+      slot seeding calls `src/tiling.rs:581` `should_seed_member_slot` at
+      :4432, with canonical retained rectangles from `src/tiling.rs:480`.
+
+    #### Item 11 adapter checklist
+
+    - `src/tiling.rs` + `src/tiling_sys.rs`: replace the one-shot clear on
+      both admission legs (slotless maximize :8726 and tiled clear :3810;
+      :8622 is the separate born-fullscreen hold) with the reserved-slot
+      overlay: retain membership, seed the slot (`member_rects`), skip native
+      clear and geometry writes while overlaid, land native unmaximize in
+      the slot, settle repeated maximize/geometry signals quiet with no
+      unsolicited toggles or fighting. Retire
+      `should_clear_maximize_at_admission` one-shot use; keep the held
+      born-fullscreen single exit and the B9 toggle refusals byte-identical
+      in behavior. No new chord, no new setting, no R-MAX-08 change.
+    - Settings/input/catalog/presets: reuse current native/project maximize
+      and workspace tiled/floating controls. Catalog toggles remain in
+      `src/settings.rs:799-818`, workspace default :250-263, Settings UI
+      `src/settings_ui.rs:314/:394` and tray `src/tray.rs:179-275`; no new catalog row or
+      `compatible_disabled_ids` :1528 policy is selected by Q3.
+    - [ ] Portable: :17164 plus new cases: born-max beside a sibling
+      (sibling keeps its allocated share), hidden-workspace retile,
+      floating-toggle retile, native restore to the exact retained slot,
+      quiet repeated signals, reused IDs, session-boundary restored max
+      with no loop.
+    - [ ] Windows-only: native maximize/unmaximize roundtrip into the
+      slot; graceful/crash recovery of overlaid members.
+    - User journey: born-maximized launch beside a sibling (slot reserved,
+      overlay quiet); native unmaximize lands in the slot; repeat
+      maximize/unmaximize settles quiet; floating workspace with maximized
+      A beside ordinary B, toggle tiled (A stays maximized over its slot,
+      B takes its share), native unmaximize lands in the slot; repeat
+      with a session-restored maximized A at a user-owned session
+      boundary, no loop.
+    - DoD: one-shot clear replaced by reserved-slot overlay on both legs;
+      first-fullscreen-exit and B9 refusal preserved; matrix `R-MAX-03` /
+      `R-MAX-06` Ours Windows cells updated with dated offline evidence,
+      native TBD.
+
+  - Item 12: non-local workspace modes parity (d). Decisions 1.2/1.5
+    ([decisions](decisions.md#cross-platform-behavior)): local and
+    global-unique keep per-output history/rings, shared keeps one
+    history/ring. KDE mappings delivered offline; Windows local-only
+    today. Depends on handoff items 1/2 (history/ring + follow/stay) and
+    the parked parity-queue multi-output foundation; last.
+
+    #### Item 12 behavior and reference seams
+
+    - Normative: [spec](spec/functional-spec.md#workspaces) REQ-WS-08/11
+      (Win columns: history/toggle and relative-switch implementation
+      pending, non-local modes pending);
+      [matrix](spec/reference-outcomes/workspaces.md) R-WS-08/11 plus
+      R-WS-15 (per-output isolation vs shared), R-WS-16 (removed-ID
+      invalidation), R-WS-17 (hotplug history/scope). KDE mappings are
+      selected and the spec carries scoped history/rings; any exact
+      Windows outcome not defined is a TBD governing row, never invention.
+    - KDE exact (verified 2026-10-08 at `db31234`):
+      `kwin/src/workspace-native.ts:990` `selectPrevious` (shared branch
+      :995 `selectPreviousShared` :2250; per-output `previousByOutput`,
+      `previousInScope`, `swapGlobalIfVisibleElsewhere` for global-unique),
+      :1051 `selectRelative` (shared branch :1059 `selectRelativeShared`
+      :2281; `rebuildGlobalMapping` vs `rebuildLocalMapping`,
+      `scopedRingIds` :2203), :2141 `recordHistoryObservations`, :2185
+      `observeSharedHistory`. Fixtures:
+      `kwin/tests/workspace-previous-relative.test.ts`.
+      Current shared Rust policy `core/workspace.rs:7-17` resolves local
+      ordinals, and :35 `plan_trailing` handles local cleanup. It does not
+      supply the KDE global/shared mapping machinery; preserve D1 ownership
+      if this adapter parity needs a new shared-core contract.
+    - Windows exact (verified 2026-10-08 at `db31234`):
+      `src/workspace.rs:95-109` `ManagedWorkspaces` fields are
+      outputs/displaced/membership/next_ws/next_output/default_tiled/tiled:
+      no previous-history or relative-ring resolver, no mode-scope field.
+      Workspace order exists; mode provision is
+      per-workspace tiled/floating ONLY: `is_tiled` :150, `set_tiled`
+      :166, `default_tiled` :133/:139, settings
+      `core.workspace.default_tiled` (`src/settings.rs:250-263`), settings
+      UI :314/:394, tray per-workspace toggle (`src/tray.rs:179-275`). No
+      global/local/shared scope setting exists anywhere in settings, UI
+      or tray; the tray workspace-tiling action is a per-workspace
+      tiled/floating toggle, never a global mode selector. Routing:
+      `src/tiling_sys.rs:9819` `workspace_do_select`, verified
+      hide/reveal :10061, `workspace_tick` :11395, selection arm :11530,
+      `poll_foreground_workspace` :11912, `sync_monitor_outputs` :12050,
+      `chord_output` :8508, `src/workspace_owner.rs:25`
+      `output_context`. Cleanup `plan_cleanup`/`apply_cleanup`
+      (`src/workspace.rs:453-508`) invoked :9228-9234 and :10074-10080.
+
+    #### Item 12 adapter checklist
+
+    - `src/workspace.rs` `ManagedWorkspaces`: add mode scope
+      (local/global-unique/shared) plus per-output previous/observed
+      history and scoped ring resolvers from handoff item 1 (pure
+      stable-ID resolve, no activation/append/trailing creation);
+      global-unique swaps the visible-elsewhere entry instead of
+      duplicating selection (KDE `swapGlobalIfVisibleElsewhere` parity),
+      shared keeps one history/ring. Record actual completed transitions
+      at :10061 (including failed focus/geometry), `workspace_tick`
+      :11530, foreground :11912 and monitor sync :12050; invalidate
+      removed/unassigned/out-of-scope ids through the existing cleanup;
+      discard disconnected-output history, never consult history for
+      reconnect selection. Membership/visibility/recovery routing follows
+      the transfer. No new shortcut, no new preset, no tray command.
+    - [ ] Portable: local vs global-unique vs shared isolation (R-WS-15),
+      surviving-empty vs removed/moved id (R-WS-16), disconnect/displacement/
+      reconnect/return scope with conditional second toggle (R-WS-17),
+      output-focus-alone non-recording, cross-output previous and relative
+      selection, >9/trailing wrap per scope. Port
+      `kwin/tests/workspace-previous-relative.test.ts` case for case.
+    - Settings/input/catalog/presets: existing workspace shortcut rows
+      (`src/settings.rs:819-826`) and handoff items 1/2 supply the selected
+      chords; `compatible_disabled_ids` :1528 remains their policy. Scope
+      configuration exposure/schema and live mode-change transition behavior
+      are not selected by the provision at `decisions.md:169`; resolve those
+      before adding controls. Existing `WorkspaceSettings` :250-263, UI
+      `src/settings_ui.rs:314/:394` and `src/tray.rs:179-275` are
+      tiled/floating controls, not scope.
+    - [ ] Windows-only: owner selection/foreground/CLI producers, hotplug
+      journeys, multi-output native evidence on the second PC.
+    - User journey: two-output L/R with WS1/WS2 on L; L WS1->WS2, change
+      R, focus L, previous twice (local: WS1 then WS2; R unchanged);
+      shared mode WS1->WS2->WS3 then previous twice (WS2 then WS3);
+      disconnect/reconnect return-scope sequence per R-WS-17.
+    - DoD: non-local modes behave per scoped history/ring with undefined
+      outcomes as TBD rows; matrix `R-WS-15..17` Ours Windows cells updated
+      with dated offline evidence, native TBD.
+
   ### Source discrepancies to preserve and report
 
   | Existing assertion | Current source / implementation gap | Handoff treatment |
   | --- | --- | --- |
-  | R-OUT-01 Ours Windows describes exhausted horizontal R4 with send-like commit/fences (`spec/reference-outcomes/multi-output.md:54`); R-MOV-05 says horizontal crosses, Up/Down excluded (`spec/reference-outcomes/move.md:194`). | `src/tiling_sys.rs:6082-6110` builds a single-domain event and sets `cross_output_transfer:false`; no Windows cross actuation exists. Shared core now supports all four directions. | Treat cells as historical/pinned assertions, not evidence of current Windows capability. Item 5 is blocked on item 9; report discrepancy, do not alter matrix outcomes in this docs handoff. |
-  | R-WS-10/16 Ours Windows says no removal path (`spec/reference-outcomes/workspaces.md:498-499/:841-842`); spec REQ-WS-10 repeats it. | `src/workspace.rs:508` `apply_cleanup` removes IDs; `src/tiling_sys.rs:10074-10080` selection invokes cleanup; `core/workspace.rs:35` removes eligible invisible empties. | Preserve outcome cells; exact native removal journey remains TBD. Item 1 must invalidate actual removed IDs and test surviving empties separately. |
-  | Existing higher-level item-2 summary says Compatible disables arrows, while decision 2.1 identifies stock holders only on KDE and says Windows ownership unknown. | `src/settings.rs:954-957` currently returns None for all Ctrl/Alt chords; no Windows holder evidence for new send/output arms. | KDE arrows are disabled by KDE Compatible. Windows unknown new arms keep defaults with unknown-ownership text until evidenced policy is recorded; do not manufacture Windows holder claims. |
-  | Current settings/rebind helpers assume every implemented action has a canonical default chord. | `src/settings.rs:1044-1048` returns None for an empty default; `build_remap` :1182-1184 silently skips that action; `validate_bindings` :1405-1406 rejects it. Keep-empty is currently active/effective (:1082-1084); UI `refresh_info` (`src/settings_ui.rs:248-255`) labels it disabled. | Items 2/5 must wire unbound ACTION targets explicitly, make Keep-empty non-intercepting and display unbound distinctly from Disabled. These are adapter limitations, not a decision reversal. |
+  | [R-OUT-01](spec/reference-outcomes/multi-output.md#r-out-01-scrolling-assessment-move-left-onto-an-occupied-output) Ours Windows claimed exhausted-horizontal R4; [R-MOV-05](spec/reference-outcomes/move.md#r-mov-05-backfill-edge-move-with-no-left-neighbor-scrolling) claimed horizontal crossing with Up/Down excluded. | `src/tiling_sys.rs:6099/6105` sets `cross_output_transfer:false` in a single-domain event; no Windows cross actuation. Shared core supports four-direction R4. | Corrected both cells 2026-10-08 at `db31234` to local-only current-code facts. Handoff item 5 remains blocked on the parked parity-queue multi-output foundation; no native acceptance claimed. |
+  | [R-WS-10](spec/reference-outcomes/workspaces.md#r-ws-10-send-b-away-empty-middle-retained-vs-removed) and [R-WS-16](spec/reference-outcomes/workspaces.md#r-ws-16-previous-after-the-visited-empty-workspace-is-removed) Ours Windows said no removal path; spec REQ-WS-10 repeated it. | `src/workspace.rs:508` removes stable IDs; `src/tiling_sys.rs:9228-9234` retirement cleanup and :10074-10080 selection invoke it. `core/workspace.rs:35` plans eligible invisible-empty removal, protecting the trailing spare and minimum count. | Corrected both cells and REQ-WS-10 2026-10-08 at `db31234`. Exact native scenarios remain TBD; handoff item 1 invalidates actually removed IDs and tests surviving empties separately. |
+  | Existing higher-level item-2 summary says Compatible disables arrows, while decision 2.1 identifies stock holders only on KDE and says Windows ownership unknown. | `src/settings.rs:954-957` currently returns None for all Ctrl/Alt chords; no Windows holder evidence for new send/output arms. Verified 2026-10-08 at `db31234`; status outstanding, no new policy selected. | KDE arrows are disabled by KDE Compatible. Windows unknown new arms keep defaults with unknown-ownership text until evidenced policy is recorded; do not manufacture Windows holder claims. |
+  | Current settings/rebind helpers assume every implemented action has a canonical default chord. | `src/settings.rs:1044` canonical helper returns None for empty defaults; `build_remap` :1182 skips that action; `validate_bindings` :1405 rejects it. Keep-empty is currently active/effective (:1082); UI `refresh_info` (`src/settings_ui.rs:248`) labels it disabled. Verified 2026-10-08 at `db31234`; status outstanding, plus `settings_ui.rs:286` resize note. | Items 2/5 must wire unbound ACTION targets explicitly, make Keep-empty non-intercepting and display unbound distinctly from Disabled. These are adapter limitations, not a decision reversal. |
 
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
