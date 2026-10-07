@@ -160,6 +160,18 @@ R-FLT-06 waits on the COSMIC live check; R-FLT-09 retains existing Windows parit
 | R-RST-01 float | ordinary float status survives the owner restart | recover-4/4ev (B/I/X/A), 3/4 fam; Q float outcome TBD | TBD (native restart journey) | no / no (intentional floats reset: session-local id set on KDE, session-local float store cleared on stop on Windows) | State persistence gap; preserve intentional-float identity across owner restart | Preserve intentional-float identity across restart | Accepted 2026-10-07: preserve floats across restart |
 | R-RSZ-01 Windows | explicit pixel-step grow/shrink path | pixel-5/8 (C,H,B,I,S), 3/4 fam; H/B partial for neighbor/reversal | yes | KDE matches (stays B) / Windows no keyboard trigger (`S-ours-winbind`) | Inventory gap, not a rejecting policy | Add Windows keyboard-resize trigger via shared Engine pixel path | Accepted 2026-10-07: Windows keyboard resize |
 
+Additional decisions 2026-10-07 outside Table A
+([recorded selections](../decisions.md#cross-platform-behavior)):
+
+- R-MAX-03 Q3 scope: keep maximize over a reserved slot on floating-to-tiled
+  admission, replacing one-shot restore; implementation pending on both platforms.
+- R-DRAG-07: follow host-native drag presentation where available; keep KDE
+  pointer-following and Windows title-bar native movement. Windows Win+drag
+  keeps its stationary source plus moving preview unless native-loop delegation
+  is nearly free.
+- R-DRAG-08: Meta/Win client drag focuses the mover at press on both platforms;
+  Windows implementation pending, KDE timing needs a live check.
+
 WS-01 notes: original-eight shipped-default bindings follow in 3/8
 (C MoveToWorkspace, H window.move with follow absent, Q togroup
 switch_group=True) and stay in 5/8 (B node -d without --follow,

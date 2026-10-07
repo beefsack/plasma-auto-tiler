@@ -296,14 +296,16 @@ decisions of 2026-09-24 are under
   [Cross-WM consensus analysis](research/reference-wm-consensus.md) Table A
   now lists 24 Ours-vs-strong-consensus differences with recommendations
   (see Open user decisions), plus strong-consensus predicates where Ours is
-  TBD pending native observation. Unresolved splits needing a choice:
-  R-DRAG-07 Win-drag (KDE frame follows pointer, Windows stationary
-  preview) and R-DRAG-08 focus at press vs Windows on drop. Live-test
-  queue: 508 cells grouped by environment (per reference WM, Ours KDE 39,
+  TBD pending native observation. Splits decided 2026-10-07:
+  R-DRAG-07 host-native presentation (KDE frame follows pointer, Windows
+  Win-drag stationary preview) and R-DRAG-08 focus at press on both
+  platforms (Windows implementation pending, KDE timing needs a live check).
+  Live-test queue: 508 cells grouped by environment (per reference WM, Ours KDE 39,
   Ours Windows 37, macOS/paneru 82) in the archived record; candidate for
-  per-WM VM (possibly nix) setups, not yet designed. Next: user reviews
-  Table A; plan live-test environments; priority native TBD rows R-WS-02,
-  R-WS-04, R-WS-05, R-START-03, R-MAX-01 remain.
+  per-WM environments proposed in the
+  [live-test environment proposal](research/live-test-vms/proposal.md).
+  Table A decisions are recorded under "Open user decisions" below;
+  priority native TBD rows R-WS-02, R-WS-04, R-WS-05, R-START-03, R-MAX-01 remain.
 - P2 | Prior-art catalogue upkeep | Completed 2026-10-03 (`e4c1d92`):
   [maintained index](research/prior-art.md), grouped by desktop and type
   (compositor-native vs host-integrated) with algorithm families,
@@ -731,9 +733,9 @@ reference-WM checks, which test other compositors.
   kept (gaming); R-MIN-01..03 B6 kept (overlap is a last resort); the
   R-DRAG-04 Esc cancel kept (setting maybe later); R-GRP-03 tabs scheduled
   after 0.1; R-DRAG-07 host-native drag presentation (Windows Win+drag
-  stays stationary); R-DRAG-08 focus at press. All Table A rows decided
-  (R-FLT-06 waits on the user's COSMIC B9 check; R-FLT-09 is already
-  planned Windows parity).
+  stays stationary); R-DRAG-08 focus at press. Table A rows decided
+  except R-FLT-06, which waits on the user's COSMIC B9 check;
+  R-FLT-09 is already planned Windows parity.
 - Live-test environments for the 508-cell matrix queue
   ([proposal](research/live-test-vms/proposal.md), revised 2026-10-07 at
   the user's request): one shared per-WM definition (packages with

@@ -38,7 +38,7 @@ Table A predicate rows carry literal status `OPEN (Table A R-xxx)`, unless a
 recorded user selection for that predicate is normative (then Status is
 NORMATIVE and Source cites the selection).
 
-Draft totals: 50 NORMATIVE, 83 OPEN, 11 PROVISIONAL requirement rows;
+Draft totals: 74 NORMATIVE, 61 OPEN, 9 PROVISIONAL requirement rows;
 Send-and-stay adds a selected KDE/Windows implementation gap; the macOS
 adapter gap counts once platform-wide. Coverage: 125 scenarios, 24 Table A predicates.
 
@@ -416,10 +416,10 @@ Consensus differences are not contradictions (consensus selects nothing).
   keeps Windows inference and KDE flag-based classification as an intentional
   platform difference, not a gap.
 - T-04: [R-MAX-06 Ours cells](reference-outcomes/maximize-fullscreen.md#r-max-06-admit-a-first-seen-maximized-window)
-  call preserve variants unselected, but [Q3](../decisions.md#cross-platform-behavior)
-  selects reserved-slot overlay. Their current one-shot-clear description still
-  matches lagging Windows implementation but not delivered KDE code; their
-  selection label is stale. Matrix cells are preserved as evidence.
+  now identify [Q3](../decisions.md#cross-platform-behavior) as selected,
+  with KDE delivered offline and Windows implementation pending. The
+  one-shot-clear description applies to Windows only; exact native journeys
+  remain TBD.
 
 <a id="open-index"></a>
 ## 21. Open-decisions index
