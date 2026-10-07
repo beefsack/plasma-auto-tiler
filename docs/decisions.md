@@ -269,7 +269,7 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
 - User decision 2026-10-07 (R-WS-01): workspace send keeps following the
   window by default (matching the shipped default bindings of COSMIC,
   Hyprland, qtile, niri and PaperWM); a separate send-and-stay command is
-  added (COSMIC Send/Move pair), binding chosen at implementation. The
+  added (COSMIC Send/Move pair), unbound by default (item 2 below). The
   original eight split 3 follow / 5 stay by shipped default; all offer both.
 - User decision 2026-10-07 (reference default rule): where the reference
   WMs do not show extremely strong agreement against COSMIC, COSMIC's
@@ -317,6 +317,102 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   wrap (R2c, `H[A,B*,C,D]` move right gives `H[A,H[B,C],D]`) as default and
   make it configurable, with flat sibling swap (i3/sway) as the alternative
   (implementation pending).
+- User decisions 2026-10-07 (reference-consensus additions, implementation
+  pending; [implementation order and Windows handoff](backlog.md)):
+  - D1 coordination: the KDE-side session implements the shared Rust core
+    plus KDE adapter; the separate Windows agent wires its adapter later.
+    Correctness over non-breakage: Windows build/behavior breakage is
+    acceptable provided the backlog lists the specific Windows changes
+    needed. Each implementation piece extends that handoff.
+  - Item 1, R-WS-08 / R-WS-11:
+    - 1.1: previous-view toggle is Meta+Ctrl+Tab on KDE / Win+Ctrl+Tab on
+      Windows. Previous/next workspace uses Meta/Win+Ctrl+arrows and
+      Meta/Win+Ctrl+H/J/K/L: left/up previous, right/down next (COSMIC
+      parity, `cosmic-comp/data/keybindings.ron:49-56`). KDE stock KWin
+      "Switch One Desktop Down/Up/to the Left/to the Right" holds the
+      arrow forms (`~/.config/kglobalshortcutsrc` default column :95-98).
+      Windows native desktop switching holds Win+Ctrl+Left/Right (general
+      knowledge, unverified in repo). Authentic takes over and clears those
+      holders; Compatible disables our conflicting arrow forms; letters remain.
+    - 1.2: local and global-unique modes keep per-output previous history
+      and relative rings; shared mode keeps one history/ring. Record every
+      successful observed workspace change regardless of producer (our
+      commands, native switches, verified send-follow). Same-workspace
+      activation and merely focusing another output do not record. Previous
+      is a two-view toggle, not MRU traversal.
+    - 1.3: remember stable workspace IDs. A surviving workspace, even empty,
+      remains valid. A removed/unassigned ID clears the previous entry;
+      toggle is a no-op until the next recorded change. No ordinal
+      reinterpretation or recreation.
+    - 1.4: the ring is every existing workspace in scoped order, including
+      the trailing empty and ordinals beyond 9; first/last wrap. Selection
+      itself creates nothing.
+    - 1.5: reconnect selection never consults or restores history; its
+      selection policy is unchanged. Separate R-WS-08 history records
+      hotplug-driven observed changes (disconnect displacement / reconnect
+      return) like any other successful observed change. A previous entry
+      is valid only while that workspace remains in the recording output's
+      scope; movement to another output (e.g. return on reconnect) clears it
+      like removal, so toggle is a no-op until the next recorded change.
+      A disconnected output's history is discarded with the output;
+      output identity is session-local.
+  - Item 2, R-WS-01 / R-WS-14:
+    - 2.1: keep numbered follow chords Meta/Win+Shift+digits. Relative
+      send-and-follow uses Meta/Win+Ctrl+Shift+arrows and +H/J/K/L.
+      Numbered and relative send-and-stay are bindable, unbound by default.
+      KDE stock KWin "Window One Desktop Down/Up/to the Left/to the Right"
+      holds the arrow forms (`kglobalshortcutsrc:173-176`): Authentic clears
+      them, Compatible disables our arrows; letters remain. Windows
+      Win+Ctrl+Shift+arrows ownership is unknown.
+    - 2.2: relative send uses the same scoped ring as 1.4, previous/next
+      ordinal step, not MRU, wrapping including the trailing empty. Sending
+      into it fills it; normal lifecycle maintenance supplies the next empty.
+      Resolve the target once before transfer. Follow/stay applies to both
+      absolute and relative sends.
+    - Existing-decision application: KDE floating-boundary sends currently
+      preserve source view (`kwin/src/plan-adapter-entry.ts:4018-4022,4067-4085`),
+      contrary to the decided follow default above and under Windows workspace
+      tiling mode. Item 2 routes explicit follow/stay through that path so the
+      default follows; this is an implementation gap, not a new decision.
+  - Item 3, R-MOV-03:
+    - 3.1: one global setting, KDE `sameAxisMove`, Windows
+      `core.same_axis_move`, with `cosmic-wrap` default and `flat-swap`.
+      Windows adds the field within settings schema version 1; missing
+      defaults to `cosmic-wrap`. Changes apply to subsequent moves without
+      rebuilding existing trees. KDE gets a settings UI control.
+    - 3.2: flat-swap replaces only R2c when the neighbor is an adjacent
+      direct leaf sibling in the same group; shares travel with windows
+      (existing swap semantics). Leaf/group neighbors keep current rules;
+      add TBD discriminating rows before broadening.
+  - Item 4, R-LAY-01:
+    - 4.1: Meta+O / Win+O (COSMIC parity). No stock KDE holder found in
+      `kglobalshortcutsrc`; Windows Win+O is OS orientation lock
+      (`crates/tiler-windows/src/settings.rs:983`). Authentic takes over;
+      Compatible disables our Windows binding.
+    - 4.2: toggle the immediate parent group, including root, preserving
+      child order, shares and focus. Lone root leaf is a no-op. No saved
+      orientation hint for future admissions; long-edge rule unchanged.
+  - Item 5, R-MOV-08 / R-OUT-04:
+    - 5.1: local restructure/swap/escape wins first; when none applies the
+      window crosses. A sole root leaf also crosses with an adjacent output
+      in all four directions, changing today's horizontal SingleRootLeaf
+      no-cross too.
+    - 5.2: extend the existing unique + reciprocal edge-touch + positive-
+      overlap selection to all four directions, using FULL output rectangles,
+      not work areas (panel gaps cannot block). Applies to horizontal too,
+      replacing today's work-area rule. No candidate is a no-op;
+      ambiguous/unreadable topology refuses. No output wrapping.
+    - 5.3: explicit send-to-output has follow and stay forms. Follow binds
+      Meta/Win+Ctrl+Alt+arrows and +H/J/K/L; stay is bindable, unbound.
+      COSMIC's Super+Shift+Alt arm collides with our resize-shrink; niri's
+      arm collides with 2.1. Meta+Ctrl+Alt arms are absent from
+      `kglobalshortcutsrc`; Windows ownership is unknown.
+    - 5.4: target the destination output's current workspace; ordinary
+      workspace-send admission (remembered leaf, destination focus history,
+      root fallback) and per-command follow/stay. Initially workspace-send
+      tiled-subject eligibility, sticky excluded. Floating-workspace
+      boundaries transfer membership only, reflowing only tiled sides.
+      Ordinary float transfer remains a separate open item.
 - User decision 2026-10-07 (functional spec format): keep
   [the functional spec](spec/functional-spec.md) as a single file; revisit
   splitting if it grows much larger. Requirements are normative only where a
@@ -1525,7 +1621,10 @@ the corresponding item ships; each such entry names its replacement.
   automatic return. Reconnect focus: active window in a returning workspace
   shows that workspace on the reconnected monitor with focus retained;
   active window on a surviving output preserves view/focus with no stealing;
-  other selection ordinary, no prior-view tracking or new state/history.
+  other selection ordinary: reconnect selection does not consult or restore
+  prior-view history. This restricts reconnect selection policy only; separate
+  R-WS-08 history records observed hotplug changes under user decision 1.5
+  (2026-10-07, [Cross-Platform Behavior](#cross-platform-behavior)).
   Initial scope session-local, no restart-persistent mapping or return
   guarantee.
 - `Meta+1..9` select an existing 1-based logical workspace without creation.

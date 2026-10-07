@@ -332,3 +332,49 @@ Ours Engine workspace send refuses cross-output (`S(S-ours-out)`).
   configured output in this profile). TBD; queued.
 - Variant hook: provisional/TBD (host-topology hook, to discuss;
   distinct from R-WS-12 whole-workspace reassignment).
+
+## Selected addition (USER 2026-10-07; implementation pending)
+
+[Item 5](../../decisions.md#cross-platform-behavior) selects R-OUT-04's
+explicit follow/stay output send; follow Meta/Win+Ctrl+Alt+arrows and +H/J/K/L,
+stay bindable unbound. Four-direction unique reciprocal edge-touch and
+positive-overlap selection uses FULL output rectangles; no candidate no-op,
+ambiguous/unreadable refuse, no wrap. Destination current workspace, ordinary
+workspace-send admission and command follow/stay; initially tiled-subject
+eligibility, sticky excluded, floating boundaries membership-only with tiled
+sides reflowing; ordinary float transfer OPEN. Implementation pending on
+KDE/Windows; selected intent is not new evidence for pinned cells above.
+
+### R-OUT-07: explicit send before local exhaustion with remembered Y
+
+- Given (tree leg): aligned full rectangles L `(0,0,1920,1080)` and
+  R `(1920,0,1920,1080)`, unique reciprocal adjacency. Source L
+  `H[A*,B]` has a local right neighbor B; destination R's current workspace
+  `H[X,Y]` has valid remembered leaf Y. Ordinary tiles, no rules or minimum
+  constraints; Y's projected rectangle is tall.
+- Given (column leg): source `COL[C1[A*],C2[B]]`, destination
+  `COL[CX[X],CY[Y]]` with Y remembered; native model/admission distinction
+  recorded, never substituted for recursive long-edge splitting.
+- When: explicitly send A right with follow, before any local move;
+  fresh reset, repeat with stay.
+- Observe: transfer vs local restructure/swap, remembered Y admission vs
+  root or X, current destination workspace, and follow/stay.
+- Then COSMIC: TBD.
+- Then Hyprland/Dwindle: TBD.
+- Then bspwm: TBD.
+- Then i3: TBD.
+- Then xmonad/Tall+Navigation2D: TBD.
+- Then sway: TBD.
+- Then qtile/Columns: TBD.
+- Then awesome/tile: TBD.
+- Then niri: TBD.
+- Then PaperWM: TBD.
+- Then karousel/Lazy: TBD.
+- Then paneru: TBD.
+- Then Ours KDE: selected source collapses to B; A transfers to R's
+  current workspace and admits at remembered Y (long-edge vertical split
+  here, exact child order TBD). Follow with A; stay on L. Local neighbor B
+  does not gate explicit send. Implementation pending; item 5.3/5.4.
+- Then Ours Windows: same selected explicit transfer/admission/follow/stay
+  target; implementation pending, multi-output parked; exact child order TBD.
+- Variant hook: V-WS-FOLLOW.

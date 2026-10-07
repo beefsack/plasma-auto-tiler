@@ -413,3 +413,153 @@ expansion record; outcomes are qualified legs, not second scenarios.
 - Then Ours Windows: no-counterpart; no standalone swap verb in the shared
   directional operation inventory.
   `S(S-ours-move)`.
+
+## Selected additions (USER 2026-10-07; implementation pending)
+
+[Items 3/5](../../decisions.md#cross-platform-behavior) select R-MOV-03's
+global `sameAxisMove` / `core.same_axis_move` setting (`cosmic-wrap` default,
+`flat-swap` only for adjacent direct leaf siblings in R2c, shares travel with
+windows); leaf/group rules unchanged. R-MOV-08 selects local restructure/
+swap/escape first, then all-four-direction crossing including sole root
+leaf. Adjacency uses unique reciprocal edge-touch + positive overlap on FULL
+output rectangles, horizontal too; no candidate no-op, ambiguous/unreadable
+refuse, no wrap. These are KDE/Windows targets, implementation pending,
+not new source/live evidence; pinned current cells above remain evidence.
+
+### R-MOV-09: flat-swap right with unequal sibling shares
+
+- Given (tree leg): `H[A,B*,C,D]`, shares 1/10, 2/10, 3/10, 4/10;
+  flat-swap selected. Ordinary tiles, one output, no minimum constraints.
+- Given (other models): exact N-ary unequal-share fixture/flat-swap variant
+  applicability TBD; do not silently replace it with equal shares or columns.
+- When: move B right once.
+- Observe: flat identity order, shares travelling with windows vs slots,
+  focus, and absence of new wrap group.
+- Then COSMIC: TBD.
+- Then Hyprland/Dwindle: TBD.
+- Then bspwm: TBD.
+- Then i3: TBD.
+- Then xmonad/Tall+Navigation2D: TBD.
+- Then sway: TBD.
+- Then qtile/Columns: TBD.
+- Then awesome/tile: TBD.
+- Then niri: TBD.
+- Then PaperWM: TBD.
+- Then karousel/Lazy: TBD.
+- Then paneru: TBD.
+- Then Ours KDE: selected `H[A,C,B*,D]` with shares 1/10, 3/10, 2/10,
+  4/10; focus B, no wrap. Implementation pending; item 3.2.
+- Then Ours Windows: same selected flat-swap/share target;
+  implementation pending; item 3.2.
+- Variant hook: V-MOVE-NARY.
+
+### R-MOV-10: flat-swap right beside a group neighbor
+
+- Given (tree leg): `H[A,B*,V[C,D],E]`, flat-swap selected; one output,
+  ordinary tiles, no minimum constraints. B's adjacent direct sibling is V,
+  not a leaf. Record shares and V's remembered child before the move.
+- Given (other models): exact nested fixture/variant applicability TBD;
+  never manufacture H/V ancestry for columns.
+- When: move B right once.
+- Observe: unchanged leaf/group rule vs broadening flat-swap to whole groups;
+  target child/index, topology, shares and focus.
+- Then COSMIC: TBD.
+- Then Hyprland/Dwindle: TBD.
+- Then bspwm: TBD.
+- Then i3: TBD.
+- Then xmonad/Tall+Navigation2D: TBD.
+- Then sway: TBD.
+- Then qtile/Columns: TBD.
+- Then awesome/tile: TBD.
+- Then niri: TBD.
+- Then PaperWM: TBD.
+- Then karousel/Lazy: TBD.
+- Then paneru: TBD.
+- Then Ours KDE: selected existing leaf/group rule unchanged, no flat-swap
+  broadening; setting implementation pending. Exact topology/index/shares TBD.
+- Then Ours Windows: same selected restricted setting scope;
+  implementation pending. Exact topology/index/shares TBD.
+- Variant hook: V-MOVE-NARY.
+
+### R-MOV-11: sole root leaf moves up to the adjacent output
+
+- Given: lower output L full rectangle `(0,1080,1920,1080)` holds sole A*;
+  upper U `(0,0,1920,1080)` has a current workspace; topology readable,
+  unique reciprocal edge-touch with positive horizontal overlap. Record
+  destination contents/focus before acting. Fresh mirrored left/right/down
+  legs use the same sole-leaf and adjacency predicate.
+- When: move A up; repeat mirrored directions from fresh fixtures.
+- Observe: sole-root crossing vs no-cross gate; target current workspace,
+  source membership and target admission (exact unspecified target TBD).
+- Then COSMIC: TBD.
+- Then Hyprland/Dwindle: TBD.
+- Then bspwm: TBD.
+- Then i3: TBD.
+- Then xmonad/Tall+Navigation2D: TBD.
+- Then sway: TBD.
+- Then qtile/Columns: TBD.
+- Then awesome/tile: TBD.
+- Then niri: TBD.
+- Then PaperWM: TBD.
+- Then karousel/Lazy: TBD.
+- Then paneru: TBD.
+- Then Ours KDE: selected A crosses to U's current workspace; sole root
+  is eligible in all four directions. Implementation pending; item 5.1/5.2;
+  exact destination topology/native journey TBD.
+- Then Ours Windows: same selected crossing/eligibility target;
+  implementation pending, multi-output parked; exact native journey TBD.
+- Variant hook: V-R4-DIR.
+
+### R-MOV-12: exhausted up move with two candidate outputs above
+
+- Given: L `(0,1080,1920,1080)` holds sole A*; U1 `(0,0,960,1080)` and
+  U2 `(960,0,960,1080)` both touch L's upper edge with positive overlap.
+  Full topology readable; each upper output has a current workspace.
+- When: move A up once.
+- Observe: ambiguity refusal vs selecting a candidate by focus/geometry;
+  membership/layout writes.
+- Then COSMIC: TBD.
+- Then Hyprland/Dwindle: TBD.
+- Then bspwm: TBD.
+- Then i3: TBD.
+- Then xmonad/Tall+Navigation2D: TBD.
+- Then sway: TBD.
+- Then qtile/Columns: TBD.
+- Then awesome/tile: TBD.
+- Then niri: TBD.
+- Then PaperWM: TBD.
+- Then karousel/Lazy: TBD.
+- Then paneru: TBD.
+- Then Ours KDE: selected refuse ambiguous topology, no transfer;
+  implementation pending; item 5.2.
+- Then Ours Windows: same selected refusal; implementation pending,
+  multi-output parked; item 5.2.
+- Variant hook: V-R4-DIR.
+
+### R-MOV-13: panel work-area gap with touching full output rectangles
+
+- Given: U full `(0,0,1920,1080)`, work area `(0,0,1920,1040)`;
+  L full/work area `(0,1080,1920,1080)` holds sole A*. A panel on U
+  leaves a 40px work-area gap; full rectangles are unique reciprocal
+  edge-touch neighbors with positive overlap. Fresh horizontal leg:
+  left full `(0,0,1920,1080)`, work area `(0,0,1880,1080)`;
+  right full/work area `(1920,0,1920,1080)` holds sole A*.
+- When: move A up; fresh horizontal leg move A left.
+- Observe: full-output adjacency vs work-area-gap rejection, both axes.
+- Then COSMIC: TBD.
+- Then Hyprland/Dwindle: TBD.
+- Then bspwm: TBD.
+- Then i3: TBD.
+- Then xmonad/Tall+Navigation2D: TBD.
+- Then sway: TBD.
+- Then qtile/Columns: TBD.
+- Then awesome/tile: TBD.
+- Then niri: TBD.
+- Then PaperWM: TBD.
+- Then karousel/Lazy: TBD.
+- Then paneru: TBD.
+- Then Ours KDE: selected crosses in both legs using FULL rectangles;
+  panel gap does not block. Implementation pending; item 5.2.
+- Then Ours Windows: same selected full-rectangle crossing;
+  implementation pending, multi-output parked; item 5.2.
+- Variant hook: V-R4-DIR.

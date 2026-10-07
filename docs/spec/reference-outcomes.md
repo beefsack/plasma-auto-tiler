@@ -3148,8 +3148,8 @@ Legend:
 |---|---|---|
 | V-INS-AXIS | New-window split axis: long-edge vs orientation-toggle vs alternate | Selected as user statement `D-dec-x` |
 | V-MOVE-PERP | Perpendicular move: COSMIC restructure vs no-op/swap | COSMIC R1 selected; foreign swap/no-op unselected (`D-dec-cos`) |
-| V-MOVE-NARY | 3+-child wrap vs flat insert; same-orientation nesting allowed | Ordered N-ary + R2b/R2c/R3 selected (`D-dec-cos`); user 2026-10-07: COSMIC wrap default, configurable flat sibling swap alternative (implementation pending) |
-| V-WS-FOLLOW | Send follows focus vs leaves focus in source | `D-dec-cos` selects follow-on-verified-transfer; step-3; user 2026-10-07: keep follow default, add separate send-and-stay (implementation pending; COSMIC Send/Move pair, binding at implementation) |
+| V-MOVE-NARY | 3+-child wrap vs flat insert; same-orientation nesting allowed | Ordered N-ary + R2b/R2c/R3 selected (`D-dec-cos`); USER 2026-10-07 item 3: global `sameAxisMove` / `core.same_axis_move`, `cosmic-wrap` default or `flat-swap` for R2c adjacent direct leaf siblings only, shares travel with windows; leaf/group rules unchanged (implementation pending; R-MOV-09/10) |
+| V-WS-FOLLOW | Send follows focus vs leaves focus in source | `D-dec-cos` selects verified follow; USER 2026-10-07 item 2: numbered/relative follow defaults, bindable unbound stay, target resolved once in existing-order ring; floating-boundary follow gap to be repaired by item 2. Item 5 also selects explicit output follow/stay (implementation pending; R-WS-18..20, R-OUT-07) |
 | V-WS-SHELL-ACTIVATE | Shell selection of another workspace's window: switch workspace vs pull window | KDE native configured policy (default switch); Windows option unselected (`D-alt-tab`) |
 | V-WS-ANCHOR | Target anchor: remembered-leaf vs focus-history vs root; axis by long edge | Selected rule (`D-dec-x` + `D-place` synthetic proof) |
 | V-FLOAT-GEO | First-float geometry: centered 60% vs app frame vs tile share | `D-dec-ww` selects centered-60% first, retained after |
@@ -3163,22 +3163,28 @@ Legend:
 | V-START-MIN | Minimum-infeasible writes: origin+minimum vs skip vs float | B6 selected on both platforms, no setting (user 2026-10-07); KDE [delivered offline](../changes/archive/kde-minimum-origin-placement.md), native journey TBD (`D-place`; [adapter](../../kwin/src/plan-adapter.ts) `overconstrainedEffective`) |
 | V-CLOSE-FOCUS | Removal focus: source-MRU top vs spatial neighbor vs target history | `D-dec-cos` selects source-MRU top |
 | V-GROUP-STACK | Tabbed stacks: supported vs fail-closed refuse | User 2026-10-07: tabs first after 0.1; close active tab keeps group, activates next (COSMIC/Hyprland/i3/sway); until then refuse closed (`D-dec-cos`) |
-| V-R4-DIR | Exhausted directional move: cross-output vs no-op vs workspace cycle | `D-dec-cos` selects horizontal cross-output R4; user 2026-10-07: also accept vertical cross-output once local movement exhausted (R-MOV-08; implementation pending, supersedes Up/Down exclusion) |
+| V-R4-DIR | Exhausted directional move: cross-output vs no-op vs workspace cycle | USER 2026-10-07 item 5: local restructure/swap/escape first, then all-four-direction crossing including sole root leaf; unique reciprocal edge-touch + positive overlap on FULL output rectangles, horizontal too; no candidate no-op, ambiguous/unreadable refuse, no wrap (implementation pending; R-MOV-08/11..13) |
 | V-DRAG-ZONE | Drop zones: edge/interior/stack mapping; centre-stack refused | `D-dec-cos` + `D-dec-nest` select split-only |
 
 ## Coverage accounting
 
-- 125 scenarios: 58 historical plus all 67 approved additions.
-- 1198 expansion coverage cells: 67x14 new, 58x4 scrolling assessments,
+- 139 scenarios: 58 historical plus 67 expansion additions and 14
+  discriminators for USER selections 2026-10-07 (items 1-5, including 1.5).
+  New IDs: R-WS-15..20, R-MOV-09..13, R-LAY-05/06, R-OUT-07.
+  Their 196 Then bullets distinguish selected implementation-pending targets
+  from TBD reference outcomes; they do not add reference-consensus votes.
+- Baseline expansion accounting: 1198 coverage cells: 67x14 new, 58x4 scrolling assessments,
   and 2x14 explicit-swap legs. Mutually exclusive semantic status totals:
   evidenced 372, partial 237, TBD-only 224, qualified-only 328, mixed 37.
   Mixed includes separate qualified/applicable legs; it does not mean a no-op.
 - 522 historical wide-table cells at baseline `e160894` (eight references
   plus combined Ours per row) are migrated to GWT without retrospectively
   assigning the new status classes. Present form: 58 historical scenarios
-  x 14 profiles = 812 Then bullets; 125 scenarios x 14 = 1750 Then bullets
+  x 14 profiles = 812 Then bullets; 139 scenarios x 14 = 1946 Then bullets
   (+28 explicit-swap-leg bullets). Expansion record's total coverage count
-  remains 1720 as baseline provenance; cells are not a uniform 125x14 grid.
+  remains 1720 as baseline provenance; baseline assessed cells were not a
+  uniform 125x14 grid. Baseline semantic-status totals above exclude the 14
+  decision discriminators.
 - [Archived expansion record](../changes/archive/reference-matrix-expansion.md)
   holds final accounting, source/inventory/native-test queue and residual work.
 
@@ -3192,9 +3198,10 @@ plus 7 workspace scenarios, 3 minimize scenarios, 2 maximize scenarios,
 2 groups scenarios, 3 floating scenarios, 3 close scenarios,
 4 multi-output scenarios, 3 mouse scenarios, 5 special-windows scenarios,
 2 activation scenarios, 2 restart scenarios and 10 column scenarios, GWT
-only: 125 scenarios total).
+only: 125 expansion-baseline scenarios, plus 14 decision discriminators
+2026-10-07: 139 scenarios total).
 This index retains purpose, row-addition rule, notation,
-profiles, evidence tags/legend, variant hooks, and deferred. All 125
+profiles, evidence tags/legend, variant hooks, and deferred. All 139
 scenarios use the GWT form below; no wide-table rows remain.
 Areas follow the approved priority order; column mechanics follows, and
 minimum-size stays a supplemental file (not nested in resize).
@@ -3203,16 +3210,16 @@ minimum-size stays a supplemental file (not nested in resize).
 |---|---|---|---|
 | Insertion | [insertion.md](reference-outcomes/insertion.md) | R-INS-01..08 (8) | none (R-INS-03..08 landed in piece B1) |
 | Focus | [focus.md](reference-outcomes/focus.md) | R-FOC-01..04 (4) | none (landed in piece B2) |
-| Move | [move.md](reference-outcomes/move.md) | R-MOV-01..08 (8) | none (R-MOV-06..08 landed in piece B3) |
+| Move | [move.md](reference-outcomes/move.md) | R-MOV-01..13 (13) | R-MOV-09..13 added 2026-10-07; reference outcomes TBD |
 | Resize | [resize.md](reference-outcomes/resize.md) | R-RSZ-01..04 (4) | none (landed in piece B4) |
-| Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | R-LAY-01..04 (4) | none (landed in piece B5) |
-| Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..14 (14) | none (R-WS-08..14 landed with scrolling backfill) |
+| Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | R-LAY-01..06 (6) | R-LAY-05/06 added 2026-10-07; reference outcomes TBD |
+| Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..20 (20) | R-WS-15..20 added 2026-10-07; reference outcomes TBD |
 | Minimize | [minimize.md](reference-outcomes/minimize.md) | R-MNZ-01..03 (3) | none (landed) |
 | Maximise / fullscreen | [maximize-fullscreen.md](reference-outcomes/maximize-fullscreen.md) | R-MAX-01..09 (9) | none (landed with scrolling backfill) |
 | Groups / stacks | [groups-stacks.md](reference-outcomes/groups-stacks.md) | R-GRP-01..03 (3) | none (R-GRP-02..03 landed with scrolling backfill) |
 | Floating | [floating.md](reference-outcomes/floating.md) | R-FLT-01..14 (14) | none (R-FLT-12..14 landed with scrolling backfill) |
 | Close / reflow | [close.md](reference-outcomes/close.md) | R-CLOSE-01..05 (5) | none (R-CLOSE-03..05 landed with scrolling backfill) |
-| Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..06 (6) | none (R-OUT-03..06 landed with scrolling backfill) |
+| Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..07 (7) | R-OUT-07 added 2026-10-07; reference outcomes TBD |
 | Mouse | [mouse.md](reference-outcomes/mouse.md) | R-DRAG-01..08 + R-MOU-01..03 (11) | none (R-MOU-01..03 landed with scrolling backfill) |
 | Special windows | [special-windows.md](reference-outcomes/special-windows.md) | R-SPC-01..05 (5) | none (landed; no backfill: no prior rows) |
 | Activation | [activation.md](reference-outcomes/activation.md) | R-ACT-01..02 (2) | none (landed; no backfill: no prior rows) |

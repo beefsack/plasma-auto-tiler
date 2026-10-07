@@ -724,3 +724,190 @@ verb inventory); selected intent and doc assertions are never evidence.
 - Then Ours Windows: no-counterpart (index-only `Send`; no relative
   verb). `S(S-ours-planops)`.
 - Variant hook: V-WS-FOLLOW (follow policy for relative sends).
+
+## Selected additions (USER 2026-10-07; implementation pending)
+
+These targets are decisions, not new source/live evidence; existing source
+cells above retain their pinned-current meaning. [Items 1/2 and decision 1.5](../../decisions.md#cross-platform-behavior):
+R-WS-08 selects two-view previous-ID toggle, per-output local/global-unique
+history or one shared history; record all successful observed changes, not
+same-workspace activation/output focus alone. Removed/unassigned/out-of-scope
+IDs clear; disconnected output history is discarded. Hotplug records without
+history-driven reconnect selection. R-WS-11 selects the scoped existing-order
+ring, wrapping including trailing empty and ordinals beyond 9, selection
+creates nothing. R-WS-01/14 select numbered/relative follow defaults plus
+bindable unbound stay, same ring resolved once before transfer, normal spare
+maintenance; item 2 repairs KDE's source-view-preserving floating-boundary
+path to the already-decided follow default. All additions are implementation
+pending on KDE/Windows.
+
+### R-WS-15: previous on L after a workspace change on R
+
+- Given (local/global-unique leg): occupied WS1/WS2 on L and two occupied
+  workspaces on R; stable IDs, separate scoped orders. Start on L WS1.
+- Given (shared leg): one shared workspace set shown across L/R; the
+  corresponding observed changes are to WS1, WS2, then WS3, not independent
+  per-output views. Reference native scope/model applicability stays TBD.
+- When: visit L WS1 -> WS2; change R's workspace; focus L without changing
+  its workspace; invoke previous twice. Shared leg: visit WS1 -> WS2 ->
+  WS3, then invoke previous twice.
+- Observe: per-output isolation vs shared two-view history; output-focus
+  alone vs workspace change as a history producer.
+- Then COSMIC: TBD.
+- Then Hyprland/Dwindle: TBD.
+- Then bspwm: TBD.
+- Then i3: TBD.
+- Then xmonad/Tall+Navigation2D: TBD.
+- Then sway: TBD.
+- Then qtile/Columns: TBD.
+- Then awesome/tile: TBD.
+- Then niri: TBD.
+- Then PaperWM: TBD.
+- Then karousel/Lazy: TBD.
+- Then paneru: TBD.
+- Then Ours KDE: selected local/global-unique L WS1 then WS2, R unchanged;
+  shared WS2 then WS3. Implementation pending; item 1.2.
+- Then Ours Windows: same selected scope/toggle target; implementation
+  pending, including non-local modes; item 1.2.
+- Variant hook: provisional/TBD (R-WS-08 history scope).
+
+### R-WS-16: previous after the visited empty workspace is removed
+
+- Given: a scoped trailing empty E and occupied W with stable IDs.
+- When: visit E -> W; let E be removed by the native/managed lifecycle;
+  invoke previous. Do not substitute another ordinal for E. If the profile
+  cannot remove E, removal applicability/outcome stays TBD.
+- Observe: removed-ID invalidation vs ordinal reinterpretation/recreation;
+  separately record whether the empty ID actually survives.
+- Then COSMIC: TBD.
+- Then Hyprland/Dwindle: TBD.
+- Then bspwm: TBD.
+- Then i3: TBD.
+- Then xmonad/Tall+Navigation2D: TBD.
+- Then sway: TBD.
+- Then qtile/Columns: TBD.
+- Then awesome/tile: TBD.
+- Then niri: TBD.
+- Then PaperWM: TBD.
+- Then karousel/Lazy: TBD.
+- Then paneru: TBD.
+- Then Ours KDE: selected removal clears previous E; no-op until next
+  recorded change, no recreation/reinterpretation. Surviving empty E stays
+  valid. Implementation pending; item 1.3; exact lifecycle journey TBD.
+- Then Ours Windows: same selected stable-ID rule; implementation pending;
+  exact removal journey TBD (current model has no removal path).
+- Variant hook: provisional/TBD (R-WS-08 previous-ID validity).
+
+### R-WS-17: previous around disconnect displacement and reconnect return
+
+- Given: local/global-unique L shows occupied WS2, previous WS1; R has an
+  active window on workspace D whose disconnect displacement will show D
+  on L. Record session-local output IDs and workspace scope.
+- When: disconnect R; observe D shown on L; invoke previous on L;
+  reconnect R; observe D's return scope; invoke previous on L again.
+- Observe: hotplug history recording, reconnect selection independent of
+  history, and clearing a previous ID when it returns to another output.
+- Then COSMIC: TBD.
+- Then Hyprland/Dwindle: TBD.
+- Then bspwm: TBD.
+- Then i3: TBD.
+- Then xmonad/Tall+Navigation2D: TBD.
+- Then sway: TBD.
+- Then qtile/Columns: TBD.
+- Then awesome/tile: TBD.
+- Then niri: TBD.
+- Then PaperWM: TBD.
+- Then karousel/Lazy: TBD.
+- Then paneru: TBD.
+- Then Ours KDE: selected disconnect WS2 -> D records previous WS2;
+  first toggle selects WS2, previous D. D's return to R clears L's previous
+  D; if reconnect preserves L WS2 with no further recorded change, second
+  toggle is a no-op. Reconnect never consults/restores history; any observed
+  workspace change records normally; R's disconnected history is discarded.
+  Implementation pending (1.5); exact native selection/focus journey TBD.
+- Then Ours Windows: same selected 1.5 history/scope rule and conditional
+  second toggle; implementation pending, multi-output parked; native journey TBD.
+- Variant hook: provisional/TBD (R-WS-08 hotplug history).
+
+### R-WS-18: relative next send fills the trailing empty
+
+- Given (tree leg): scoped order occupied WS1..WS10, shown last occupied
+  WS10 `H[A,B*]`, trailing empty E. WS10 establishes an ordinal beyond 9.
+- Given (column leg): same order with WS10 `COL[C1[A],C2[B*]]`;
+  trailing-empty/model applicability TBD per reference.
+- When: send B next with follow; inspect E and the spare; fresh reset,
+  repeat with stay. Resolve the pre-transfer order once each run.
+- Observe: E reused/filled vs new target; next trailing spare; follow/stay.
+- Then COSMIC: TBD.
+- Then Hyprland/Dwindle: TBD.
+- Then bspwm: TBD.
+- Then i3: TBD.
+- Then xmonad/Tall+Navigation2D: TBD.
+- Then sway: TBD.
+- Then qtile/Columns: TBD.
+- Then awesome/tile: TBD.
+- Then niri: TBD.
+- Then PaperWM: TBD.
+- Then karousel/Lazy: TBD.
+- Then paneru: TBD.
+- Then Ours KDE: selected B fills existing E; normal lifecycle supplies
+  next empty; source A survives. Follow goes with B, stay preserves source
+  view. Implementation pending; items 1.4/2.2.
+- Then Ours Windows: same selected ring/spare/follow/stay target;
+  implementation pending; items 1.4/2.2.
+- Variant hook: V-WS-FOLLOW.
+
+### R-WS-19: relative previous send wraps from the first workspace
+
+- Given (tree leg): scoped occupied WS1..WS3, shown first WS1 `H[A,B*]`,
+  trailing empty E last; history does not redefine the ordinal order.
+- Given (column leg): WS1 `COL[C1[A],C2[B*]]` with the same order;
+  trailing-empty/model applicability TBD per reference.
+- When: send B previous with follow; fresh reset, repeat with stay.
+- Observe: ordinal wrap to E vs MRU target; target resolved before transfer;
+  spare maintenance and follow/stay.
+- Then COSMIC: TBD.
+- Then Hyprland/Dwindle: TBD.
+- Then bspwm: TBD.
+- Then i3: TBD.
+- Then xmonad/Tall+Navigation2D: TBD.
+- Then sway: TBD.
+- Then qtile/Columns: TBD.
+- Then awesome/tile: TBD.
+- Then niri: TBD.
+- Then PaperWM: TBD.
+- Then karousel/Lazy: TBD.
+- Then paneru: TBD.
+- Then Ours KDE: selected previous wraps to pre-transfer E, fills it;
+  normal lifecycle supplies next empty. Follow with B, stay on WS1 with A.
+  Implementation pending; item 2.2.
+- Then Ours Windows: same selected ordinal-wrap/follow/stay target;
+  implementation pending; item 2.2.
+- Variant hook: V-WS-FOLLOW.
+
+### R-WS-20: relative edge sends when the source becomes empty
+
+- Given: fresh fixtures from R-WS-18 and R-WS-19, but source holds sole B*
+  (column leg `COL[C1[B*]]`); all other scope/order preparation unchanged.
+- When: send B next from last occupied; reset, send B previous from first;
+  repeat each from fresh fixtures with stay instead of follow.
+- Observe: source emptiness vs target/spare resolution and follow/stay;
+  record source retention/removal and exact empty-source focus separately.
+- Then COSMIC: TBD.
+- Then Hyprland/Dwindle: TBD.
+- Then bspwm: TBD.
+- Then i3: TBD.
+- Then xmonad/Tall+Navigation2D: TBD.
+- Then sway: TBD.
+- Then qtile/Columns: TBD.
+- Then awesome/tile: TBD.
+- Then niri: TBD.
+- Then PaperWM: TBD.
+- Then karousel/Lazy: TBD.
+- Then paneru: TBD.
+- Then Ours KDE: selected target is pre-transfer E in both legs; fills E,
+  normal lifecycle supplies next empty. Follow with B; stay preserves source
+  view. Implementation pending; exact source lifecycle/native focus TBD.
+- Then Ours Windows: same selected target/spare/follow/stay rule;
+  implementation pending; exact source lifecycle/native focus TBD.
+- Variant hook: V-WS-FOLLOW.

@@ -246,11 +246,85 @@ decisions of 2026-09-24 are under
   restart, including Windows sticky floats staying sticky (R-FLT-05, user
   2026-10-07); R-RSZ-01 Windows keyboard resize (overlaps Windows parity (d));
   R-WS-01 separate send-and-stay command beside the existing follow send
-  (user 2026-10-07; COSMIC Send/Move pair; binding chosen at
-  implementation); R-MOV-03 setting: COSMIC wrap default, flat sibling
+  (user 2026-10-07; COSMIC Send/Move pair; stay unbound by default);
+  R-MOV-03 setting: COSMIC wrap default, flat sibling
   swap alternative (user 2026-10-07); R-DRAG-08 Windows Win+drag activates
   the mover at press instead of on drop (user 2026-10-07).
-  Shortcuts for new verbs need choosing when each starts.
+  Detailed selections 2026-10-07 (items 1-5 and D1 in
+  [decisions](decisions.md#cross-platform-behavior)), implementation pending:
+  KDE-side session owns shared Rust core + KDE adapter; separate Windows
+  agent wires later. Correctness over non-breakage: Windows build/behavior
+  may break provided the handoff below lists the specific changes needed.
+  Implementation order:
+  1. R-WS-08 + R-WS-11: Meta/Win+Ctrl+Tab previous-view two-state toggle;
+     Meta/Win+Ctrl+arrows and +H/J/K/L relative switch (left/up previous,
+     right/down next). Local/global-unique per-output history/ring, shared
+     one history/ring; every successful observed workspace change records,
+     including native/send-follow/hotplug, not same-workspace activation or
+     output focus alone. Stable IDs, surviving empties valid; removed,
+     unassigned or out-of-recording-output-scope IDs clear; no-op until next
+     recorded change, no recreation/ordinal reinterpretation. Disconnected
+     output history discarded; reconnect selection never consults/restores
+     history (1.5). Ring wraps all existing scoped workspaces, trailing empty
+     and ordinals beyond 9 included; selection creates nothing. Authentic
+     clears conflicting holders; Compatible disables conflicting arrows,
+     letters remain (KDE KWin desktop-switch arrows; Windows native Left/Right
+     ownership general knowledge, unverified in repo).
+  2. R-WS-01 + R-WS-14: keep numbered follow Meta/Win+Shift+digits; relative
+     follow Meta/Win+Ctrl+Shift+arrows and +H/J/K/L. Numbered/relative stay
+     bindable, unbound. Relative targets ordinal step in item 1 ring, not
+     MRU, resolved once before transfer; fills trailing empty, normal
+     lifecycle supplies next spare. Follow/stay both absolute/relative.
+     Authentic clears KDE KWin window-desktop arrow holders; Compatible
+     disables our arrows, letters remain; Windows ownership unknown.
+     Existing-decision application: route explicit follow/stay through KDE
+     floating-boundary send, currently source-view-preserving
+     (`kwin/src/plan-adapter-entry.ts:4018-4022,4067-4085`), so default follows.
+  3. R-MOV-03: global KDE `sameAxisMove` / Windows `core.same_axis_move`,
+     `cosmic-wrap` default or `flat-swap`; Windows additive version-1 field,
+     missing defaults to wrap. Apply to subsequent moves without tree
+     rebuilding; KDE settings UI control. Flat-swap replaces R2c only for
+     adjacent direct leaf siblings; shares travel with windows. Leaf/group
+     rules unchanged; discriminating TBD rows before broadening.
+  4. R-LAY-01: Meta+O / Win+O immediate-parent axis toggle including root,
+     preserving order/shares/focus; sole root leaf no-op, no saved admission
+     hint, long-edge rule unchanged. No KDE stock holder found; Windows
+     orientation lock conflict: Authentic takes over, Compatible disables.
+  5. R-MOV-08 + R-OUT-04: local restructure/swap/escape first, then cross
+     all four directions, including sole root leaf (horizontal too).
+     Unique reciprocal edge-touch + positive-overlap adjacency on FULL
+     output rectangles, horizontal too; no candidate no-op, ambiguous/
+     unreadable refuse, no wrap. Explicit output-follow Meta/Win+Ctrl+Alt+
+     arrows and +H/J/K/L; stay bindable unbound. KDE arms absent from
+     `kglobalshortcutsrc`, Windows ownership unknown; COSMIC's arm collides
+     with resize-shrink, niri's with item 2. Target destination current
+     workspace with ordinary send admission (remembered leaf, focus history,
+     root) and command follow/stay. Initially tiled-subject eligibility,
+     sticky excluded; floating boundaries membership-only, tiled sides
+     reflow. Ordinary float transfer stays open.
+  Bindings for other accepted additions remain to be chosen.
+- P1 | Windows handoff: reference-consensus additions | D1, user 2026-10-07:
+  Windows agent wires the adapter after KDE-side shared-core pieces land.
+  Initial sketches below are extended/refined by each implementation piece,
+  including specific Windows repairs needed after core build/behavior breaks:
+  - Item 1, after core piece lands: `ManagedWorkspaces` previous-ID state
+    and relative resolution; record history after successful native selection;
+    dispatch via `workspace_do_select`; `settings.rs` / `snapkey.rs` Tab and
+    Ctrl-exact chord support (current routing rejects Ctrl/Alt and Tab);
+    presets. Apply 1.5 hotplug recording, scope invalidation and disconnected-
+    output history discard; reconnect selection does not use history.
+  - Item 2, after core piece lands: new follow/stay intent in
+    `CoreCommand::SendToWorkspace` constructors (`workspace_owner.rs`
+    `build_send_event`); split send tail follow vs stay; relative target
+    resolution; Ctrl+Shift routing; unbound stay catalog.
+  - Item 3, after core piece lands: `core.same_axis_move` serde default and
+    validation, Settings control; pass enum into every `CoreCommand::Move`.
+  - Item 4, after core piece lands: Win+O catalog/action, orientation-lock
+    conflict text, Compatible disable entry; apply returned geometry.
+  - Item 5, after core piece lands: four-direction reciprocal adjacency on
+    full monitor rectangles; `CrossOutput` replies (two-domain geometry,
+    membership transfer, visibility, follow/stay focus); output-send event;
+    Ctrl+Alt input/catalog/presets. Depends on parked Windows multi-output work.
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.

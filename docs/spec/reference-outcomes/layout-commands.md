@@ -227,3 +227,63 @@ Ours cells cite the Engine + adapter op inventory at `a77dd34`
 - Then Ours Windows: same missing-verb leg as Ours KDE.
   `S(S-ours-planops)`.
 - Variant hook: provisional/TBD (layout-scope hook, to discuss).
+
+## Selected addition (USER 2026-10-07; implementation pending)
+
+[Item 4](../../decisions.md#cross-platform-behavior) selects R-LAY-01:
+Meta+O / Win+O immediate-parent toggle including root, order/shares/focus
+preserved; sole root leaf no-op and no saved admission hint. This target is
+implementation pending on KDE/Windows, not new evidence for pinned cells above.
+
+### R-LAY-05: immediate parent toggled twice in a nested tree
+
+- Given (tree leg): `H[A,V[B*,C]]`, ordinary tiles, record child shares;
+  root H and B's immediate parent V are distinct. No minimum constraints.
+- Given (other models): exact nested fixture/axis-toggle applicability TBD;
+  no manufactured tree counterpart for column models.
+- When: toggle parent split axis twice, observing after each invocation.
+- Observe: immediate parent vs root scope; order/shares/focus preserved,
+  second toggle returns the original tree.
+- Then COSMIC: TBD.
+- Then Hyprland/Dwindle: TBD.
+- Then bspwm: TBD.
+- Then i3: TBD.
+- Then xmonad/Tall+Navigation2D: TBD.
+- Then sway: TBD.
+- Then qtile/Columns: TBD.
+- Then awesome/tile: TBD.
+- Then niri: TBD.
+- Then PaperWM: TBD.
+- Then karousel/Lazy: TBD.
+- Then paneru: TBD.
+- Then Ours KDE: selected `H[A,H[B*,C]]` then `H[A,V[B*,C]]`, order,
+  shares and B focus preserved; implementation pending; item 4.2.
+- Then Ours Windows: same selected scope/roundtrip target;
+  implementation pending; item 4.2.
+- Variant hook: provisional/TBD (R-LAY-01 orientation scope).
+
+### R-LAY-06: sole-leaf toggle then ordinary admission
+
+- Given: sole root A* on a wide 1920x1080 work area, no rules, no minimum
+  constraints or manual preselection; record root-leaf state before toggle.
+- When: toggle parent axis once; ordinarily admit B with A as target.
+- Observe: sole-leaf no-op vs saved orientation affecting future admission;
+  long-edge admission axis.
+- Then COSMIC: TBD.
+- Then Hyprland/Dwindle: TBD.
+- Then bspwm: TBD.
+- Then i3: TBD.
+- Then xmonad/Tall+Navigation2D: TBD.
+- Then sway: TBD.
+- Then qtile/Columns: TBD.
+- Then awesome/tile: TBD.
+- Then niri: TBD.
+- Then PaperWM: TBD.
+- Then karousel/Lazy: TBD.
+- Then paneru: TBD.
+- Then Ours KDE: selected toggle no-op, no saved hint; admission uses
+  unchanged long-edge rule (horizontal here). Implementation pending;
+  exact newcomer order/native focus TBD; item 4.2.
+- Then Ours Windows: same selected no-hint/long-edge target;
+  implementation pending; exact newcomer order/native focus TBD; item 4.2.
+- Variant hook: provisional/TBD (R-LAY-01 sole-leaf admission hint).

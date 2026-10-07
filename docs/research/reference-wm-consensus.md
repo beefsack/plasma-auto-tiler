@@ -1,9 +1,9 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-07. Base: main HEAD `b942020`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (125 rows:
-115-row audit preserved below, plus 10-row column-mechanics expansion
-[R-COL-01..10](../spec/reference-outcomes/column-mechanics.md)).
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (139 rows:
+125-row audit baseline below, plus 14 USER-decision discriminators added
+2026-10-07; reference outcomes TBD, excluded from these consensus counts).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -132,6 +132,8 @@ Decision column; the selected deliberate divergences retain selected policy;
 consensus never overrides standing decisions. R-WS-01 records the user's 2026-10-07
 selection; all 24 rows have a decision or pending-check annotation.
 R-FLT-06 waits on the COSMIC live check; R-FLT-09 retains existing Windows parity.
+Items 1-5 detail annotations below refine eight selected rows without changing
+their reference votes or asserting implementation evidence.
 
 | Row | Consensus | Count | COSMIC | Ours KDE / Windows | Deliberate vs feature absence | Recommendation | Decision 2026-10-07 |
 |---|---|---|---|---|---|---|---|
@@ -171,6 +173,64 @@ Additional decisions 2026-10-07 outside Table A
   is nearly free.
 - R-DRAG-08: Meta/Win client drag focuses the mover at press on both platforms;
   Windows implementation pending, KDE timing needs a live check.
+
+### Detailed USER selections 2026-10-07: reference-consensus additions
+
+[Recorded decisions D1 and items 1-5](../decisions.md#cross-platform-behavior),
+[implementation order / Windows handoff](../backlog.md): KDE-side session
+implements shared Rust core + KDE adapter, Windows agent wires later;
+Windows build/behavior breakage acceptable when specific repairs are in the
+handoff, extended by each implementation piece. All eight rows below have
+selected targets, implementation pending; annotations are not reference votes.
+
+- R-WS-08 (item 1): Meta/Win+Ctrl+Tab two-view toggle, stable previous ID.
+  Local/global-unique per-output history, shared one history. Every successful
+  observed change records (commands/native/verified follow/hotplug), not
+  same-workspace activation/output focus. Surviving empties valid;
+  removed/unassigned/out-of-recording-output-scope IDs clear, no-op until next
+  change, no reinterpretation/recreation. Decision 1.5: reconnect selection
+  never consults/restores history; hotplug records normally; disconnected
+  output history discarded (session-local output identity). R-WS-15..17.
+- R-WS-11 (item 1): Meta/Win+Ctrl+arrows and +H/J/K/L, left/up previous,
+  right/down next (COSMIC parity). Same mode scope; ring contains all existing
+  ordered workspaces, including trailing empty and ordinals beyond 9, wraps
+  first/last, selection creates nothing. Authentic takes conflicting holders;
+  Compatible disables conflicting arrows, letters remain (KDE KWin desktop
+  switch, Windows native Left/Right general knowledge, unverified in repo).
+- R-WS-01 (item 2): keep numbered follow Meta/Win+Shift+digits;
+  numbered/relative stay commands bindable, unbound. Follow/stay applies to
+  absolute/relative sends including floating boundaries. Existing-default
+  application: KDE currently preserves source view at floating boundaries;
+  item 2 routes explicit intent so default follows, not a new follow decision.
+- R-WS-14 (item 2): relative follow Meta/Win+Ctrl+Shift+arrows and +H/J/K/L;
+  ordinal previous/next in R-WS-11 ring, not MRU, wrapping including trailing
+  empty; resolve once before transfer. Filling trailing empty gets next spare
+  from normal lifecycle. Authentic clears KDE KWin window-desktop arrow
+  holders; Compatible disables our arrows, letters remain; Windows ownership
+  unknown. Discriminators R-WS-18..20 (stay and emptied-source fresh runs).
+- R-MOV-03 (item 3): global KDE `sameAxisMove` / Windows
+  `core.same_axis_move`, `cosmic-wrap` default or `flat-swap`. Windows additive
+  schema-v1 field, missing defaults to wrap; subsequent moves change without
+  tree rebuild; KDE UI control. Flat-swap replaces R2c only for adjacent direct
+  leaf siblings in the same group, shares travel with windows; leaf/group rules
+  unchanged, TBD rows before broadening. R-MOV-09/10.
+- R-LAY-01 (item 4): Meta+O / Win+O immediate-parent toggle including root,
+  order/shares/focus preserved; sole leaf no-op, no saved admission hint,
+  long-edge unchanged. No KDE stock holder found; Win+O orientation lock:
+  Authentic takes over, Compatible disables. R-LAY-05/06.
+- R-MOV-08 (item 5): local restructure/swap/escape first, then cross all
+  four directions, sole root leaf too (horizontal gate also changes).
+  Unique reciprocal edge-touch + positive overlap on FULL output rectangles
+  (horizontal too), not work areas; panel gaps do not block. No candidate
+  no-op, ambiguous/unreadable refuse, no output wrap. R-MOV-11..13.
+- R-OUT-04 (item 5): explicit follow/stay send; follow
+  Meta/Win+Ctrl+Alt+arrows and +H/J/K/L, stay bindable unbound. KDE arms absent
+  from `kglobalshortcutsrc`, Windows ownership unknown; COSMIC's Shift+Alt arm
+  collides with resize-shrink, niri's with item 2. Same output selection as
+  R-MOV-08, destination current workspace; ordinary send remembered-leaf,
+  focus-history, root admission and command follow/stay. Initially tiled
+  eligibility, sticky excluded; floating boundaries membership-only, tiled
+  sides reflow; ordinary float transfer remains OPEN. R-OUT-07.
 
 WS-01 notes: original-eight shipped-default bindings follow in 3/8
 (C MoveToWorkspace, H window.move with follow absent, Q togroup

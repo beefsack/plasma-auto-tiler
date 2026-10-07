@@ -39,8 +39,8 @@ recorded user selection for that predicate is normative (then Status is
 NORMATIVE and Source cites the selection).
 
 Draft totals: 74 NORMATIVE, 61 OPEN, 9 PROVISIONAL requirement rows;
-Send-and-stay adds a selected KDE/Windows implementation gap; the macOS
-adapter gap counts once platform-wide. Coverage: 125 scenarios, 24 Table A predicates.
+Selected additions carry KDE/Windows implementation gaps; the macOS
+adapter gap counts once platform-wide. Coverage: 139 scenarios, 24 Table A predicates.
 
 <a id="insertion"></a>
 ## 1. Insertion ([R-INS](reference-outcomes/insertion.md#insertion-reference-outcomes))
@@ -75,20 +75,21 @@ Hooks: none recorded; focus wrap remains OPEN.
 <a id="move"></a>
 ## 3. Move ([R-MOV](reference-outcomes/move.md#move-reference-outcomes))
 
-Hooks: V-MOVE-NARY selects configurable wrap; V-R4-DIR adds vertical fallback
-(implementation pending). V-MOVE-PERP retains the selected COSMIC behavior.
+Hooks: V-MOVE-NARY selects configurable wrap; V-R4-DIR selects four-direction
+fallback including sole root leaves on full-output adjacency (implementation
+pending). V-MOVE-PERP retains the selected COSMIC behavior.
 
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
 | REQ-MOV-01 | [R-MOV-01](reference-outcomes/move.md#r-mov-01-perpendicular-move-of-a-flat-triple) perpendicular move of flat triple | current: behavior TBD against implementations | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | no selection |
 | REQ-MOV-02 | [R-MOV-02](reference-outcomes/move.md#r-mov-02-in-group-vertical-swap) in-group vertical swap | current: in-place swap, focus follows mover | current: swap | current: swap | behavior OPEN; implementation absent | OPEN | Table B pending explicit |
-| REQ-MOV-03 | [R-MOV-03](reference-outcomes/move.md#r-mov-03-same-row-carry-to-the-right) same-row carry right | COSMIC same-orientation wrap is default: `H[A,B*,C,D]` right gives `H[A,H[B,C],D]`; offer flat sibling swap (i3/sway) as a setting | gap: wrap works; setting implementation pending | gap: wrap works; setting implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-MOV-03 2026-10-07 |
+| REQ-MOV-03 | [R-MOV-03](reference-outcomes/move.md#r-mov-03-same-row-carry-to-the-right), R-MOV-09/10 same-axis setting | One global KDE `sameAxisMove` / Windows `core.same_axis_move`: `cosmic-wrap` default (`H[A,B*,C,D]` right -> `H[A,H[B,C],D]`) or `flat-swap`; replaces R2c only for adjacent direct leaf siblings in the same group, shares travel with windows; leaf/group rules unchanged, TBD rows before broadening. Windows additive schema-v1 field, missing defaults to wrap; subsequent moves use changes without tree rebuild; KDE UI control | gap: wrap works; setting/UI implementation pending | gap: wrap works; setting/schema/UI implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 3 USER 2026-10-07 |
 | REQ-MOV-04 | [R-MOV-04](reference-outcomes/move.md#r-mov-04-same-axis-ancestor-escape) same-axis ancestor escape | current: escape/retain TBD | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | no selection |
 | REQ-MOV-05 | [R-MOV-05](reference-outcomes/move.md#r-mov-05-edge-move-with-no-left-neighbor) edge move, no left neighbor | current: edge no-op | current: no-op | current: no-op | behavior OPEN; implementation absent | OPEN | Table B pending explicit |
 | REQ-MOV-06 | [R-MOV-06](reference-outcomes/move.md#r-mov-06-move-into-a-nested-perpendicular-neighbor-with-remembered-child) move into nested neighbor | current: midpoint insert, exact index TBD | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | no selection |
 | REQ-MOV-07 | [R-MOV-07](reference-outcomes/move.md#r-mov-07-orthogonal-escape-across-a-perpendicular-parent) orthogonal escape | current: wrap outcome, no strong consensus | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | no selection |
-| REQ-MOV-08 | [R-MOV-08](reference-outcomes/move.md#r-mov-08-exhausted-vertical-move-across-stacked-outputs) exhausted vertical move | Vertical move crosses to the adjacent output once local movement is exhausted; supersedes Up/Down exclusion from R4 | gap: stays local; implementation pending | gap: stays local; implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Adopt reference-consensus additions, USER 2026-10-07 |
-| REQ-MOV-08b | [R-MOV-08](reference-outcomes/move.md#r-mov-08-exhausted-vertical-move-across-stacked-outputs) cross-after-exhaustion | Cross to output above after local exhaustion (REQ-MOV-08) | gap: stays local; implementation pending | gap: stays local; implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-MOV-08 accepted 2026-10-07 |
+| REQ-MOV-08 | [R-MOV-08](reference-outcomes/move.md#r-mov-08-exhausted-vertical-move-across-stacked-outputs), R-MOV-11..13 cross-after-exhaustion | Local restructure/swap/escape first; otherwise cross in all four directions, including sole root leaf. Unique reciprocal edge-touch + positive-overlap candidate on FULL output rectangles, horizontal too; no candidate no-op, ambiguous/unreadable topology refuse, no output wrap | gap: vertical/sole-leaf/full-rect implementation pending | gap: implementation pending; multi-output parked | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 5.1/5.2 USER 2026-10-07 |
+| REQ-MOV-08b | [R-MOV-08](reference-outcomes/move.md#r-mov-08-exhausted-vertical-move-across-stacked-outputs) cross-after-exhaustion | Cross to output above after local exhaustion using REQ-MOV-08 selection | gap: stays local; implementation pending | gap: stays local; implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 5 USER 2026-10-07 |
 
 <a id="resize"></a>
 ## 4. Resize ([R-RSZ](reference-outcomes/resize.md#resize-reference-outcomes))
@@ -106,7 +107,7 @@ Hooks: V-MOVE-NARY selects configurable wrap; V-R4-DIR adds vertical fallback
 
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
-| REQ-LAY-01 | [R-LAY-01](reference-outcomes/layout-commands.md#r-lay-01-toggle-parent-split-orientation) toggle parent orientation | Toggle the parent split axis, preserving children; implementation pending | gap: no orientation verb | gap: no orientation verb | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-LAY-01 accepted 2026-10-07 |
+| REQ-LAY-01 | [R-LAY-01](reference-outcomes/layout-commands.md#r-lay-01-toggle-parent-split-orientation), R-LAY-05/06 toggle parent orientation | Meta+O / Win+O toggles immediate parent including root, preserving child order/shares/focus; lone root leaf no-op, no saved future-admission hint (long-edge unchanged). No KDE stock holder found; Windows orientation-lock conflict: Authentic takes over, Compatible disables | gap: no orientation verb; implementation pending | gap: no orientation verb; implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 4 USER 2026-10-07 |
 | REQ-LAY-02 | [R-LAY-02](reference-outcomes/layout-commands.md#r-lay-02-rotate-90-degrees-mirror-leftright-separate-fresh-legs) rotate/mirror | No rotate/mirror verb | n/a | n/a | applicability OPEN | OPEN | no selection |
 | REQ-LAY-03 | [R-LAY-03](reference-outcomes/layout-commands.md#r-lay-03-promote-b-to-master) promote B to master | No master verb or state | n/a | n/a | applicability OPEN | OPEN | no selection |
 | REQ-LAY-04 | [R-LAY-04](reference-outcomes/layout-commands.md#r-lay-04-select-a-native-alternative-layout-on-ws2-return-to-ws1) select native layout | Layout selection is workspace-local, preserving order; implementation pending (layout choices unselected) | gap: no layout-select verb | gap: no layout-select verb | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-LAY-04 accepted 2026-10-07 |
@@ -120,22 +121,22 @@ V-WS-SHELL-ACTIVATE remains OPEN on Windows.
 
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
-| REQ-WS-01 | [R-WS-01](reference-outcomes/workspaces.md#r-ws-01-send-to-another-workspace) send to another workspace | Send moves focused tiled window, source collapses, follow on verified transfer | current: follow | current: follow | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) approved 2026-09-20 + USER step-3 2026-09-25 |
-| REQ-WS-01b | [R-WS-01](reference-outcomes/workspaces.md#r-ws-01-send-to-another-workspace) send-and-stay command | Separate send-and-stay command alongside follow-by-default send; binding chosen at implementation | gap: follow only; implementation pending | gap: follow only; implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) R-WS-01 USER 2026-10-07 |
+| REQ-WS-01 | [R-WS-01](reference-outcomes/workspaces.md#r-ws-01-send-to-another-workspace) send to another workspace | Send moves focused tiled window, source collapses, follow on verified transfer; keep Meta/Win+Shift+digits numbered follow defaults; explicit follow/stay applies to absolute and relative sends, including floating boundaries | gap: tiled follow works; floating boundary preserves source view ([entry](../../kwin/src/plan-adapter-entry.ts):4018-4022,4067-4085); item 2 repairs existing-default gap | current: follow; new intent wiring pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) approved 2026-09-20 + USER step-3 2026-09-25; [item 2](../decisions.md#cross-platform-behavior) USER 2026-10-07 |
+| REQ-WS-01b | [R-WS-01](reference-outcomes/workspaces.md#r-ws-01-send-to-another-workspace) send-and-stay command | Separate numbered and relative send-and-stay commands, bindable but unbound by default, alongside follow defaults | gap: implementation pending | gap: follow only; implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 2 USER 2026-10-07 |
 | REQ-WS-02 | [R-WS-02](reference-outcomes/workspaces.md#r-ws-02-send-back-and-return-anchor) send back, return anchor | Return lands at remembered A via validated last-active leaf | current: remembered A | current: remembered A | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) approved 2026-09-20 |
 | REQ-WS-02b | [R-WS-02](reference-outcomes/workspaces.md#r-ws-02-send-back-and-return-anchor) after-order | Pending: exact after-order of B | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U R-WS-02 after |
 | REQ-WS-03 | [R-WS-03](reference-outcomes/workspaces.md#r-ws-03-trailing-empty-shortcut) trailing-empty shortcut | Reuse trailing empty before creating (`Meta+0`/`Meta+Shift+0`) | current: reuse | current: reuse ([decisions](../decisions.md#windows-port) 2026-10-02) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) USER step-3 2026-09-25 |
 | REQ-WS-04 | [R-WS-04](reference-outcomes/workspaces.md#r-ws-04-memory-invalidation) memory invalidation | Resolve valid remembered leaf, then valid focus history, then genuine no-focus root fallback; scenario result TBD | current: TBD | current: TBD | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) fallback chain selected |
 | REQ-WS-05 | [R-WS-05](reference-outcomes/workspaces.md#r-ws-05-floating-transfer) floating transfer | current: floated roundtrip untested | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U R-WS-05 |
-| REQ-WS-06 | [R-WS-06](reference-outcomes/workspaces.md#r-ws-06-send-to-a-floating-workspace) send to a floating workspace | Membership-only boundary send, only tiled side reflows; sticky movers refuse; intentional floats ineligible | current: boundary send | current: boundary send (synthetic Paint proof) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#windows-workspace-tiling-mode) 2026-10-04 |
+| REQ-WS-06 | [R-WS-06](reference-outcomes/workspaces.md#r-ws-06-send-to-a-floating-workspace) send to a floating workspace | Membership-only boundary send, only tiled side reflows; sticky movers refuse; intentional floats ineligible; per-command follow/stay, default follow | gap: boundary membership/reflow works; default follow pending (REQ-WS-01) | current: boundary follow (synthetic Paint proof); stay intent pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#windows-workspace-tiling-mode) 2026-10-04; [item 2](../decisions.md#cross-platform-behavior) existing-decision application 2026-10-07 |
 | REQ-WS-07 | [R-WS-07](reference-outcomes/workspaces.md#r-ws-07-shell-switcher-listing) shell switcher listing | Windows SW_HIDE omission observed; listing/activation policy undecided | current: shell-driven (KDE TabBox policy) | current: SW_HIDE omission observed | behavior OPEN; implementation absent | OPEN | Table U R-WS-07; no design selected (research: [alt-tab note](../research/windows-port/alt-tab-hidden-workspaces.md)) |
-| REQ-WS-08 | [R-WS-08](reference-outcomes/workspaces.md#r-ws-08-back-and-forth-workspace-twice) previous-view toggle | Toggle to the previously viewed workspace; implementation pending | gap: no history verb | gap: no history verb | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-WS-08 accepted 2026-10-07 |
+| REQ-WS-08 | [R-WS-08](reference-outcomes/workspaces.md#r-ws-08-back-and-forth-workspace-twice), R-WS-15..17 previous-view toggle | Meta/Win+Ctrl+Tab two-view toggle, not MRU. Local/global-unique per-output history, shared one history. Record every successful observed workspace change (commands/native/send-follow/hotplug); same-workspace activation/output focus alone do not record. Stable IDs: surviving empty valid; removed/unassigned/out-of-recording-output-scope clears, no-op until next recorded change, no ordinal reinterpretation/recreation. Disconnected output history discarded (session-local identity); reconnect selection never consults/restores history | gap: history/toggle implementation pending | gap: history/toggle implementation pending; non-local modes pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 1.1..1.3/1.5 USER 2026-10-07 |
 | REQ-WS-09 | [R-WS-09](reference-outcomes/workspaces.md#r-ws-09-select-ws2-select-ws1-return-focus-and-viewport) select WS2 / select WS1 | current: select WS2 then select WS1 with no sends; return-focus detail TBD (current KDE shell-driven TBD; current Windows remembered last_focus) | current: shell-driven TBD | current: remembered last_focus | behavior OPEN; implementation absent | OPEN | Table U R-WS-09; source matrix only (verified-follow stays normative under REQ-WS-01/02) |
 | REQ-WS-10 | [R-WS-10](reference-outcomes/workspaces.md#r-ws-10-send-b-away-empty-middle-retained-vs-removed) empty middle retained/removed | current: KDE owner-specific (Plasma owns add/remove); Windows retained (no removal path) | current: owner-specific | current: retained | behavior OPEN; implementation absent | OPEN | Table C; no selection |
-| REQ-WS-11 | [R-WS-11](reference-outcomes/workspaces.md#r-ws-11-next-workspace-previous-workspace) next/previous workspace | Next/previous workspace switch wraps at inventory ends; implementation pending | gap: no relative-switch verb | gap: no relative-switch verb | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-WS-11 accepted 2026-10-07 |
+| REQ-WS-11 | [R-WS-11](reference-outcomes/workspaces.md#r-ws-11-next-workspace-previous-workspace) next/previous workspace | Meta/Win+Ctrl+arrows and +H/J/K/L: left/up previous, right/down next. Local/global-unique per-output ring, shared one ring; all existing scoped order including trailing empty and ordinals beyond 9, wrapping first/last; selection creates nothing. Authentic takes conflicting desktop-switch holders, Compatible disables conflicting arrows, letters remain | gap: no relative-switch verb; implementation pending | gap: no relative-switch verb; implementation pending; non-local modes pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 1.1/1.2/1.4 USER 2026-10-07 |
 | REQ-WS-12 | [R-WS-12](reference-outcomes/workspaces.md#r-ws-12-move-whole-ws2-to-r) move whole WS2 | Move a whole workspace to another output; implementation pending (destination/focus detail TBD) | gap: no whole-workspace verb | gap: no whole-workspace verb | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-WS-12 accepted 2026-10-07 |
 | REQ-WS-13 | [R-WS-13](reference-outcomes/workspaces.md#r-ws-13-select-absent-ws9) select absent WS9 | Select existing only, no creation; KDE shell-driven, Windows refuses unknown target | current: shell-driven | current: refuses | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#windows-port) existing-only 2026-10-02 |
-| REQ-WS-14 | [R-WS-14](reference-outcomes/workspaces.md#r-ws-14-send-b-to-next-fresh-run-send-b-to-previous) relative send | Send a window to the next/previous workspace; implementation pending | gap: no relative-send verb | gap: no relative-send verb | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-WS-14 accepted 2026-10-07 |
+| REQ-WS-14 | [R-WS-14](reference-outcomes/workspaces.md#r-ws-14-send-b-to-next-fresh-run-send-b-to-previous), R-WS-18..20 relative send | Same scoped ring as REQ-WS-11; previous/next ordinal step, not MRU, wraps including trailing empty; resolve once before transfer. Fill trailing empty, normal lifecycle supplies next spare. Follow Meta/Win+Ctrl+Shift+arrows and +H/J/K/L; stay bindable unbound. Authentic clears KDE KWin window-desktop arrow holders; Compatible disables our arrows, letters remain; Windows arrow ownership unknown | gap: no relative-send verb; implementation pending | gap: no relative-send verb; implementation pending | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 2 USER 2026-10-07 |
 
 Note: Windows global-unique/shared mappings await runtime implementation
 ([decisions](../decisions.md#windows-port) provision 2026-10-04;
@@ -237,15 +238,16 @@ Hooks: V-GROUP-STACK is scheduled first after 0.1; until then stacks refuse clos
 <a id="output"></a>
 ## 13. Multi-output ([R-OUT](reference-outcomes/multi-output.md#multi-output-reference-outcomes))
 
-Hooks: V-R4-DIR retains horizontal crossing and adds vertical move fallback
-after local exhaustion (implementation pending).
+Hooks: V-R4-DIR selects four-direction full-output adjacency and sole-root
+crossing after local exhaustion; V-WS-FOLLOW also covers explicit output send
+(implementation pending).
 
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
-| REQ-OUT-01 | [R-OUT-01](reference-outcomes/multi-output.md#r-out-01-move-left-onto-an-occupied-output) move left onto occupied output | Exhausted horizontal move crosses into adjacent output's current workspace | current: crosses | current: TBD (multi-output parked) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) R4 USER step-3 2026-09-25 |
+| REQ-OUT-01 | [R-OUT-01](reference-outcomes/multi-output.md#r-out-01-move-left-onto-an-occupied-output) move left onto occupied output | Exhausted horizontal move crosses into adjacent output's current workspace; sole-root eligibility and FULL-rectangle selection as REQ-MOV-08 | gap: ordinary crossing works; sole-root/full-rect changes pending | gap: implementation pending (multi-output parked) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) R4 USER step-3 2026-09-25; [item 5](../decisions.md#cross-platform-behavior) USER 2026-10-07 |
 | REQ-OUT-02 | [R-OUT-02](reference-outcomes/multi-output.md#r-out-02-perpendicular-move-at-an-output-edge) perpendicular move at edge | current: local vs cross TBD | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table C; no selection |
 | REQ-OUT-03 | [R-OUT-03](reference-outcomes/multi-output.md#r-out-03-focus-left-across-outputs) focus left across outputs | Exhausted horizontal focus transfers with no layout/membership writes | current: transfers | current: transfers (proposal) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) R4 focus-transfer route |
-| REQ-OUT-04 | [R-OUT-04](reference-outcomes/multi-output.md#r-out-04-explicitly-send-a-window-to-the-other-output) explicit output send | Provide explicit window-to-output send through the shared Engine where possible, distinct from directional move; implementation pending | gap: no output-send verb | gap: no output-send verb | same target; implementation gap (adapter absent) | NORMATIVE | [backlog](../backlog.md) Table A R-OUT-04 accepted 2026-10-07 |
+| REQ-OUT-04 | [R-OUT-04](reference-outcomes/multi-output.md#r-out-04-explicitly-send-a-window-to-the-other-output), R-OUT-07 explicit output send | Explicit follow/stay send independent of local exhaustion, same four-direction FULL-output selection as REQ-MOV-08. Follow Meta/Win+Ctrl+Alt+arrows and +H/J/K/L; stay bindable unbound. Destination current workspace; ordinary workspace-send remembered-leaf/focus-history/root admission, command follow/stay. Initially tiled-subject eligibility, sticky excluded; floating boundaries membership-only, reflow tiled sides only; ordinary float transfer OPEN | gap: no output-send verb; implementation pending | gap: no output-send verb; implementation pending; multi-output parked | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cross-platform-behavior) item 5 USER 2026-10-07 |
 | REQ-OUT-05 | [R-OUT-05](reference-outcomes/multi-output.md#r-out-05-open-a-window-with-two-occupied-outputs) open with two outputs | current: admission routing TBD both | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U; no selection |
 | REQ-OUT-06 | [R-OUT-06](reference-outcomes/multi-output.md#r-out-06-disconnect-and-reconnect-an-occupied-output) disconnect/reconnect output | Displaced workspaces return to original monitor with current contents; explicit moves stay | current: returns | current: TBD (parked PC) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) displacement policy |
 
@@ -345,9 +347,10 @@ direction plus inwards/outwards mode),
 per-output-local (default), global-unique and shared use the same chord
 catalog; Windows global-unique/shared mappings await runtime implementation),
 [Windows](../../crates/tiler-windows/src/settings.rs) `binding_catalog`.
-Spec links below point at behavior sections inside this file. Accepted new
-verbs remain unbound until implementation; choose their bindings then
-([backlog](../backlog.md) Adopt reference-consensus additions, 2026-10-07).
+Spec links below point at behavior sections inside this file. Items 1-5 have
+selected defaults below, implementation pending; bindings for other accepted
+additions remain unchosen ([decisions](../decisions.md#cross-platform-behavior),
+USER 2026-10-07).
 Rotate/master and cycle verbs remain unselected.
 
 | Action | KDE default | Windows default | macOS | Spec |
@@ -370,14 +373,16 @@ Rotate/master and cycle verbs remain unselected.
 | Trailing empty select | Meta+0 | Win+0 | mapping OPEN | [#6 Workspaces](#workspaces) |
 | Send to workspace 1..9 | Meta+Shift+1..9; Meta+!, Meta+@, Meta+#, Meta+$, Meta+%, Meta+^, Meta+&, Meta+*, Meta+( aliases | Win+Shift+1..9 (symbols share digit key, no separate row) | mapping OPEN | [#6 Workspaces](#workspaces) |
 | Send to trailing/append | Meta+Shift+0, Meta+) alias | Win+Shift+0 | mapping OPEN | [#6 Workspaces](#workspaces) |
-| Send-and-stay | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
+| Numbered/relative send-and-stay | unbound, bindable (implementation pending) | unbound, bindable (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
 | Workspace tiling toggle | unbound (tray action, empty key sequence) | unbound (tray checkbox only) | mapping OPEN | [#7 Floating](#floating) |
-| Previous-workspace toggle | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
-| Relative switch | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
-| Relative send | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
+| Previous-workspace toggle | Meta+Ctrl+Tab (implementation pending) | Win+Ctrl+Tab (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
+| Relative switch | Meta+Ctrl+H/J/K/L, Meta+Ctrl+Left/Down/Up/Right (implementation pending) | Win+Ctrl+H/J/K/L, Win+Ctrl+Left/Down/Up/Right (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
+| Relative send-and-follow | Meta+Ctrl+Shift+H/J/K/L, Meta+Ctrl+Shift+Left/Down/Up/Right (implementation pending) | Win+Ctrl+Shift+H/J/K/L, Win+Ctrl+Shift+Left/Down/Up/Right (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
 | Whole-workspace output move | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
-| Output send | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#13 Multi-output](#output) |
-| Orientation/layout | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#5 Layout](#layout) |
+| Output send-and-follow | Meta+Ctrl+Alt+H/J/K/L, Meta+Ctrl+Alt+Left/Down/Up/Right (implementation pending) | Win+Ctrl+Alt+H/J/K/L, Win+Ctrl+Alt+Left/Down/Up/Right (implementation pending) | mapping OPEN | [#13 Multi-output](#output) |
+| Output send-and-stay | unbound, bindable (implementation pending) | unbound, bindable (implementation pending) | mapping OPEN | [#13 Multi-output](#output) |
+| Parent orientation toggle | Meta+O (implementation pending) | Win+O (implementation pending) | mapping OPEN | [#5 Layout](#layout) |
+| Workspace layout selection | unbound (implementation pending) | unbound (implementation pending) | mapping OPEN | [#5 Layout](#layout) |
 | Rotate/master | unbound (no verb selected) | unbound (no verb selected) | mapping OPEN | [#5 Layout](#layout) |
 | Cycle next/previous | unbound (no verb) | unbound (no verb) | mapping OPEN | [#2 Focus](#focus) |
 
@@ -389,6 +394,17 @@ OS relocation note (not a project action): KDE `Meta+L` focus-right
 relocates `ksmserver/Lock Session` to `Meta+Esc`
 ([decisions](../decisions.md#shortcuts)); Windows `Win+L` stays explicit
 opt-in only and unproven ([decisions](../decisions.md#windows-port)).
+
+Items 1-5 conflicts (USER 2026-10-07): KDE KWin desktop-switch
+Meta+Ctrl+arrows and window-desktop Meta+Ctrl+Shift+arrows are cleared by
+Authentic; Compatible disables our corresponding arrows, letters remain.
+Windows native Win+Ctrl+Left/Right conflicts are general knowledge, unverified
+in repo; Authentic takes over, Compatible disables those arrow forms.
+Windows Win+Ctrl+Shift+arrows and Win+Ctrl+Alt arms have unknown ownership.
+Meta+O and Meta+Ctrl+Alt arms have no stock holder found in the user's
+`kglobalshortcutsrc`; Win+O is orientation lock (Authentic takes over,
+Compatible disables). COSMIC output-send's Shift+Alt arm collides with our
+resize-shrink, niri's with relative follow; selected output-send uses Ctrl+Alt.
 
 <a id="contradictions"></a>
 ## 20. Contradictions and supersessions
@@ -404,6 +420,11 @@ supersedes R-MAX-03 one-shot retile restore with Q3, horizontal-only move
 fallback with R-MOV-08 vertical crossing, intentional-float restart reset
 with R-RST-01, and indefinite stack deferral with first-after-0.1 scheduling.
 Consensus differences are not contradictions (consensus selects nothing).
+Items 1-5 details (2026-10-07) also replace horizontal SingleRootLeaf no-cross
+and work-area move adjacency with sole-root crossing and FULL-output adjacency.
+Decision 1.5 clarifies reconnect selection vs separate observed-change history:
+selection does not consult/restore history; hotplug changes record and
+out-of-recording-output-scope previous IDs clear.
 
 - T-01 resolved: [Q3 scope 2026-10-07](../decisions.md#cross-platform-behavior)
   includes R-MAX-03 floating-to-tiled admission. KDE delivered offline;
