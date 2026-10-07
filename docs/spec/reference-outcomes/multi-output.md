@@ -102,7 +102,8 @@ the responsive client via its native explicit output-transfer route, not
 an edge move): COSMIC `MoveToOutput` (follow) / `SendToOutput` (stay)
 (`S(S-cos-out)`); Hyprland `movetoworkspace` to L's workspace in follow
 form, silent refocuses the source (`S(S-hyp-movews)`); bspwm
-`node -m west --follow` (`S(S-bsp-send)` + `S(S-bsp-xfer)`); i3
+`node -m west` unflagged (without `--follow` stays on the source; `--follow`
+follows) (`S(S-bsp-send)` + `S(S-bsp-xfer)`); i3
 `move container to output` (`S(S-i3-move)` + `S(S-i3-outmove)`); xmonad
 `windowToScreen` (`S(S-xmo-scope)`); sway `move container to output`
 (`S(S-sway-move)` + `S(S-sway-outmove)`); qtile `togroup` to L's group
@@ -195,7 +196,8 @@ Ours Engine workspace send refuses cross-output (`S(S-ours-out)`).
   `movetoworkspace`; follow switches monitor and focuses A,
   silent refocuses the source. `S(S-hyp-movews)`.
 - Then bspwm: carries via `transfer_node` (unlink plus insert at L's
-  focus X, second child, not a swap); `--follow` focuses A on L.
+  focus X, second child, not a swap); unflagged form without `--follow`
+  stays on the source, `--follow` focuses A on L.
   `S(S-bsp-send)` + `S(S-bsp-xfer)`.
 - Then i3: carries A to L's visible workspace at TAIL (nodes
   `[X,A]`); mover-focused follow via `workspace_show` focuses A on

@@ -64,7 +64,7 @@ C=COSMIC, H=Hyprland, B=bspwm, I=i3, X=xmonad, S=sway, Q=qtile, A=awesome.
 | R-MOV-03 | W nested wrap, F flat swap, C column-carry | ER EG F F ET F C F | 5/3 | F4 | A (COSMIC observed wrap ER; H EG, X ET) |
 | R-MOV-04 | E escape, N binary-retain, P partial extract, C carry, S swap/miss | ER N N P ET P C S | 6/2 | tie N2/P2 | C audit-only |
 | R-MOV-05 | O noop | ER O O O O O O O | 7/1 | O7 | B 7/7 sourced (COSMIC observed ER) |
-| R-WS-01 send verb | N Send stays, F Send follows | N F F N N N F N | 8/0 | N5 | A send-leg (Move-verb inventory 4/4 tie, not Send consensus) |
+| R-WS-01 shipped-default send | F follows, S stays | F F S S S S F S | 8/0 | S5 | A shipped-default leg (stay-5/8, 3/4 fam; ours follows both; alternates inventoried, never voted) |
 | R-WS-02 | A returns at A; order after/before; axis qualifier | A EG A A A A A EG | 6/2 | A6 | B anchor; U after-4/5ev (C,B,I,S vs X); axis qualifier |
 | R-WS-03 | R reuses | R EU EU EU EU EU EU EU | 1/7 | - | C audit-only (singleton, not consensus) |
 | R-WS-04 | D lands at surviving D, O other anchor (X at live C) | D D EF D O D EF EF | 5/3 | D4 | U (ours unknown) |
@@ -129,12 +129,13 @@ Ours differs = established follow/refusal/etc on at least one platform,
 or an inventory-evidenced verb/state gap on both platforms (missing verbs
 never vote as agreement). Recommendations queue batch user review; the
 selected deliberate divergences retain selected policy; consensus never
-overrides standing decisions; nothing is selected here.
+overrides standing decisions. R-WS-01 records the user's 2026-10-07
+selection; the remaining recommendations await user review.
 
 | Row | Consensus | Count | COSMIC | Ours KDE / Windows | Deliberate vs feature absence | Recommendation |
 |---|---|---|---|---|---|---|
 | R-MOV-08 | exhausted vertical move crosses to the output above | cross-5/8 (H,B,I,S,A), 3/4 fam; Q stays, C/X TBD | TBD | no / no (Up/Down excluded from R4) | Deliberate directional output policy; existing V-R4-DIR exclusion, user reconsideration queued | Revise to cross after local movement is exhausted |
-| R-WS-01 send | declared-profile Send stays (leaves source focus) | N5/8, 3/4 fam (C,I,X,S,A) | yes (Send stays; Move is alternate) | follow / follow (recorded verified-transfer policy) | Deliberate command semantics; profile/binding-dependent | Retain selected follow semantics |
+| R-WS-01 send | shipped-default binding stays (leaves source focus) | S5/8, 3/4 fam (B,I,X,S,A) | no (shipped MoveToWorkspace follows; SendToWorkspace stays is the unbound alternate) | follow / follow (recorded verified-transfer policy) | Deliberate command semantics; profile/binding-dependent | Retain selected follow; separate send-and-stay decided 2026-10-07 |
 | R-MOV-03 | flat swap, not same-orientation nested wrap | F4/5ev, 3 fam | observed wrap ER, no source vote | no / no (Engine R2c wrap; fixture-qualified) | Deliberate swaps across models, not exact topology parity | Retain selected R2c wrap |
 | R-FLT-05 | restart retains sticky visibility | V3/3ev thin (B,I,A), 3 fam | unknown | yes / no (normal-float marker consumption); native journey TBD | Deliberate state restoration; missing sticky/restart fixtures excluded | Establish native sticky/restart journey first |
 | R-FLT-06 refusal | no refusal of overlaid-unfloat toggle | NO4/4ev (C,H,Q,A), 3 fam | yes (unmax-then-admits) | yes-allows / no-refuses (selected B9 is no-refusal) | Deliberate toggle paths; absent native-max fixtures excluded | Resolve Windows refusal against selected B9 direction |
@@ -158,10 +159,28 @@ overrides standing decisions; nothing is selected here.
 | R-RST-01 float | ordinary float status survives the owner restart | recover-4/4ev (B/I/X/A), 3/4 fam; Q float outcome TBD | TBD (native restart journey) | no / no (intentional floats reset: session-local id set on KDE, session-local float store cleared on stop on Windows) | State persistence gap; preserve intentional-float identity across owner restart | Preserve intentional-float identity across restart |
 | R-RSZ-01 Windows | explicit pixel-step grow/shrink path | pixel-5/8 (C,H,B,I,S), 3/4 fam; H/B partial for neighbor/reversal | yes | KDE matches (stays B) / Windows no keyboard trigger (`S-ours-winbind`) | Inventory gap, not a rejecting policy | Add Windows keyboard-resize trigger via shared Engine pixel path |
 
-WS-01 notes: H silent (no-follow) path exists alongside profiled follow;
-alternate Move-verb inventory is a 4/4 tie (C/H/B/Q follow vs I/X/S/A
-default-stay), reported as inventory, never read as Send consensus. COSMIC
-MoveToWorkspace follow is not a Send vote.
+WS-01 notes: original-eight shipped-default bindings follow in 3/8
+(C MoveToWorkspace, H window.move with follow absent, Q togroup
+switch_group=True) and stay in 5/8 (B node -d without --follow,
+I/S move-to-workspace, X W.shift, A move_to_tag). Evidenced
+extensions: niri follows (move-column-to-workspace focus=true
+default) and PaperWM follows on shipped take/move completion (drop
+into the selected space plus `Main.activateWindow`,
+tiling.js:5528-5555 at 8bf6dd2, `S-pap-take`; accepted). Ten
+evidenced profiles (original eight + niri + PaperWM) tally 5 follow /
+5 stay; legacy inactive-space-insertion no-steal (`S-pap-ins`) is a
+different journey, not the shipped-send outcome. karousel/paneru
+remain qualified (partial focus/position). Modern Wayland
+(COSMIC, Hyprland, niri) follows while i3/sway/bspwm/xmonad/awesome
+stay; qtile follows. Alternates: COSMIC SendToWorkspace stays;
+Hyprland follow=false stays; bspwm --follow follows; qtile
+switch_group=False stays; niri focus=false stays; i3/sway independent
+`workspace` switch after move; xmonad W.greedyView . W.shift composition;
+awesome move_to_tag then view_only. All original eight offer both policies
+through verbs, flags or command compositions; niri does too. PaperWM's
+send-and-stay alternate remains unestablished. Alternates are inventory
+only, never consensus votes. Ours keeps follow plus a separate send-and-stay
+(decided 2026-10-07).
 
 ## Table B: strong consensus ours matches (20; pending explicit)
 
@@ -677,9 +696,11 @@ applicability, paneru has no whole-workspace counterpart, karousel is
 single-screen inapplicable. R-WS-13 niri clamps, paneru creates,
 PaperWM/karousel are owner-specific, Q/A are fixture-inapplicable on
 static inventories. R-WS-14 niri/paneru resolve relatively with
-edge-stop/focus policies, PaperWM/karousel stay partial on
-completion/follow. Backfill: R-WS-01 niri/PaperWM complete with named
-`focus=true` default (niri) and no-steal (PaperWM), karousel/paneru
+edge-stop/focus policies; PaperWM completion follows with insertion
+position still partial, and karousel follow remains partial.
+Backfill: R-WS-01 niri/PaperWM complete with named
+`focus=true` default (niri) and shipped-completion follow (PaperWM;
+insertion no-steal is a different journey), karousel/paneru
 stay partial on focus/position; R-WS-02 runs the full A-then-B
 C-inclusive sequence with A-anchored returns and viewport/focus
 remainders on all four; R-WS-03 has no trailing-shortcut counterpart

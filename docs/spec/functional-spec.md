@@ -3,13 +3,16 @@
 Status: Provisional, to discuss. First concise cut; single file by design.
 
 Scope: NORMATIVE only for user-selected recorded decisions in
-[decisions.md](../decisions.md) (row-level Source anchor). PROVISIONAL only
+[decisions.md](../decisions.md) (row-level Source anchor) or explicit dated
+USER selections recorded in the requirement row (e.g. REQ-WS-01b USER
+decision 2026-10-07). PROVISIONAL only
 for recorded provisional clauses. Everything else is OPEN: `current:`
 describes observed behavior without asserting it as required, plus the TBD
 decision. Reference outcomes in [reference-outcomes.md](reference-outcomes.md)
 and [reference-outcomes/](reference-outcomes/) are evidence only. Consensus
 analysis in [reference-wm-consensus.md](../research/reference-wm-consensus.md)
-selects nothing. Table A predicates each get an explicit OPEN row
+selects nothing (the R-WS-01 row reflects the recorded 2026-10-07 user
+decision). Table A predicates each get an explicit OPEN row
 (`Table A R-xxx`), even where current selected behavior stays normative.
 
 Counting: each `REQ-*` row counts once under Status. `gap` marks a selected
@@ -20,11 +23,13 @@ OPEN rows use `behavior OPEN; implementation absent`; KDE/Windows-only rows use
 (no macOS implementation exists). The known macOS adapter absence counts once
 platform-wide, not per row. Intentional differences cite
 a recorded choice; uncited divergence is `observed divergence`, not intentional.
-Table A predicate rows carry literal status `OPEN (Table A R-xxx)`.
+Table A predicate rows carry literal status `OPEN (Table A R-xxx)`, unless a
+recorded user selection for that predicate is normative (then Status is
+NORMATIVE and Source cites the selection).
 
-Draft totals: 49 NORMATIVE, 84 OPEN, 11 PROVISIONAL requirement rows;
-12 selected requirement rows have KDE/Windows implementation gaps, plus one
-platform-wide macOS adapter gap. Coverage: 125 scenarios, 24 Table A predicates.
+Draft totals: 50 NORMATIVE, 83 OPEN, 11 PROVISIONAL requirement rows;
+Send-and-stay adds a selected KDE/Windows implementation gap; the macOS
+adapter gap counts once platform-wide. Coverage: 125 scenarios, 24 Table A predicates.
 
 <a id="insertion"></a>
 ## 1. Insertion ([R-INS](reference-outcomes/insertion.md#insertion-reference-outcomes))
@@ -102,7 +107,7 @@ Hooks: V-WS-FOLLOW, V-WS-ANCHOR, V-WS-TILING, V-WS-SHELL-ACTIVATE. PROVISIONAL i
 | Req | Scenario | Requirement / current | KDE | Win | macOS | Status | Source |
 |---|---|---|---|---|---|---|---|
 | REQ-WS-01 | [R-WS-01](reference-outcomes/workspaces.md#r-ws-01-send-to-another-workspace) send to another workspace | Send moves focused tiled window, source collapses, follow on verified transfer | current: follow | current: follow | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) approved 2026-09-20 + USER step-3 2026-09-25 |
-| REQ-WS-01b | [R-WS-01](reference-outcomes/workspaces.md#r-ws-01-send-to-another-workspace) Send-stays variant | Pending: declared-profile Send-stays (N5 consensus) vs selected follow | current: follow | current: follow | behavior OPEN; implementation absent | OPEN (Table A R-WS-01) | Table A R-WS-01 |
+| REQ-WS-01b | [R-WS-01](reference-outcomes/workspaces.md#r-ws-01-send-to-another-workspace) send-and-stay command | Separate send-and-stay command alongside follow-by-default send; binding chosen at implementation | current: follow only (send-and-stay gap) | current: follow only (send-and-stay gap) | same target; implementation gap (adapter absent) | NORMATIVE | USER decision 2026-10-07 |
 | REQ-WS-02 | [R-WS-02](reference-outcomes/workspaces.md#r-ws-02-send-back-and-return-anchor) send back, return anchor | Return lands at remembered A via validated last-active leaf | current: remembered A | current: remembered A | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#cosmic-movement-and-groups) approved 2026-09-20 |
 | REQ-WS-02b | [R-WS-02](reference-outcomes/workspaces.md#r-ws-02-send-back-and-return-anchor) after-order | Pending: exact after-order of B | current: TBD | current: TBD | behavior OPEN; implementation absent | OPEN | Table U R-WS-02 after |
 | REQ-WS-03 | [R-WS-03](reference-outcomes/workspaces.md#r-ws-03-trailing-empty-shortcut) trailing-empty shortcut | Reuse trailing empty before creating (`Meta+0`/`Meta+Shift+0`) | current: reuse | current: reuse ([decisions](../decisions.md#windows-port) 2026-10-02) | same target; implementation gap (adapter absent) | NORMATIVE | [decisions](../decisions.md#window-and-workspace-behavior) USER step-3 2026-09-25 |

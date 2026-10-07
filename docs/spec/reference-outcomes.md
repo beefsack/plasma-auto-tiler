@@ -42,7 +42,7 @@ trivially different start state.
 |---|---|---|
 | COSMIC (cosmic-comp) | User-tested version/config unknown; source `3d55cba0` (commit date 2026-10-01) | Prospective tests: tiled mode, ordinary admission without explicit direction; record orientation/gaps |
 | Hyprland | Docs baseline `v0.56.2`; separate source `19fb395d` (commit date 2026-10-04) | Prospective tests: Dwindle (`general:layout`), preserve_split=false, force_split=0 follow_mouse, smart_split=false, split_width_multiplier=1, use_active_for_splits=true, default_split_ratio=1, split_bias=0 directional, permanent_direction_override=false, precise_mouse_move=false, no preselect; semantic directional move (not swap), send follows (not silent), window_direction_monitor_fallback=true; group auto_group=true (join-only), group_on_movetoworkspace=false; size_limits_tiled=false; ordinary config, no custom rules (defaults evidenced `S(S-hyp-defaults)`); Master needs a separate profile |
-| bspwm | Docs baseline `0.9.12`; separate source `e11eff4` (commit date 2026-01-08) | Prospective tests: tiled, automatic_scheme=longest_side, initial_polarity=second_child, split_ratio=0.5, honor_size_hints=false; directional swap via `node -s DIR --follow`, send via `node -d N --follow` |
+| bspwm | Docs baseline `0.9.12`; separate source `e11eff4` (commit date 2026-01-08) | Prospective tests: tiled, automatic_scheme=longest_side, initial_polarity=second_child, split_ratio=0.5, honor_size_hints=false; directional swap via `node -s DIR --follow`, send via shipped `node -d N` (stays; `--follow` alternate follows) |
 | i3 | Local checkout `903bcd51` (2026-09-21) | Prospective tests: splith unless fixture-directed, no custom workspace/window rules; semantic `move <direction>` vs separate `swap`, native `move to workspace` is no-follow (`S(S-i3-move)` + `S(S-i3-movews)`); no implicit maximize/workspace float mode (`S(S-i3-max)` + `S(S-i3-wsmode)`); tiled-drag producer conditional/TBD where stated (shipped `etc/config` `tiling_drag modifier titlebar` vs code default modifier-only); semantic gestures, not literal keys |
 | xmonad | Local checkout `284dd52c9c957cab6b6e5cc7580f2a63dafa00a7` (2026-10-03); contrib `5097a457e7a409bc9a7584dc5aa82b34c69d6dda` (2026-10-03) | Prospective tests: core `Tall nmaster=1 ratio=1/2 delta=3/100`, layout choice (Tall, Mirror Tall, Full) with Tall active; core keys stack focus (`focusUp`/`focusDown`/`focusMaster`) and stack swap (`swapUp`/`swapDown`/`swapMaster`) only, no directional core verb; workspace send is `StackSet.shift`/`shiftWin` via `insertUp`/`delete'` with source view unchanged (no view/follow); manage is `Operations.manage` `insertUp` plus fixed-size/transient float only, core `manageHook` MPlayer-only, core `handleEventHook` default-true; directional focus/move is contrib `Navigation2D` `windowGo`/`windowSwap` with `withNavigation2DConfig def` (tiled hybrid line/side, float center, screen line, no custom layout, wrap False; tiled/float separate layers, miss is no-op); EWMH is `ewmh` + `ewmhFullscreen` with `fullscreenEventHook` and default `fullscreenHooks` (`doFullFloat`/`doSink`), no fullscreen manage hook (admission itself tiles; fullscreen is post-map `ClientMessage` only); no tab stacks, no sticky, no maximize state, no workspace tiling toggle in this profile; tree fixtures may be inapplicable (Tall is flat master/stack, not N-ary H/V) |
 | sway | Local checkout `1652c54b` (2026-09-21; describe `1.11-rc2-165-g1652c54b`) | Prospective tests: shipped `config.in`, no custom rules (`default_orientation` unset `L_NONE`, `workspace_layout` default); manual `splith`/`splitv` (`$mod+b`/`$mod+v`), layout toggle styles; fixture-directed splits, new-workspace layout follows output geometry (H unless portrait output); semantic `move <direction>` vs separate `swap container with ...`; native `move ... to workspace` is no-follow (source-inactive refocus), independent `workspace` command switches; `S(S-sway-default)` + `S(S-sway-wsdefault)` + `S(S-sway-move)` + `S(S-sway-movews)` + `S(S-sway-switch)` |
@@ -358,6 +358,9 @@ Legend:
   :599-608 (mover focus restored to source inactive: no-follow, no switch)
   @1652c54b73f67df17b7b4ab0b0f7048204aa8104
   (`move container to workspace` is no-follow; order is after the target focus)
+- `S-sway-wskeys` sway:config.in:127-136 ($mod+Shift+n
+  `move container to workspace number`) + independent `workspace`
+  switch per `S(S-sway-switch)` @1652c54b73f67df17b7b4ab0b0f7048204aa8104
 - `S-sway-outmove` sway:sway/commands/move.c:277-298
   (`container_move_to_next_output` to the active workspace via directional
   attach) and sway/tree/output.c:316-331 (`output_get_in_direction` uses
@@ -1102,6 +1105,9 @@ Legend:
   src/commands.c:223-229,316-369 (`move to workspace` name/number via the
   same path) @903bcd518df32b0e055b17f5da3f988a0187fd3d
   (`move container to workspace` is no-follow; order is after the target focus)
+- `S-i3-wskeys` i3:etc/config:152-162 (Mod1+Shift+n
+  `move container to workspace number`) + independent `workspace`
+  switch per `S(S-i3-ws)` @903bcd518df32b0e055b17f5da3f988a0187fd3d
 - `S-i3-flt-toggle` i3:src/floating.c:277-281,328-342,367 (`floating_enable`
   detaches to a workspace floating wrapper framed from stored geometry with
   size clamp) and :419-447 (`floating_disable` inserts after the
@@ -2154,9 +2160,18 @@ Legend:
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
   (move-left/right verb path; registration is `space.swap`)
 - `S-pap-take` PaperWM:tiling.js:5407-5420 (`takeWindow` removes the
-  window from its space for navigator cross-space moves)
+  window from its space for navigator cross-space moves) and :5395-5400
+  (`moveDown/UpSpace` via `selectSequenceSpace(..., true)`) and
+  :5528-5555 (destroy finalization: insert into the selected space,
+  make selectedWindow, then `Main.activateWindow`: shipped completion
+  follows) + keybindings.js:189 (`take-window` registration) and
+  :172-173 (move-down/up-workspace) + schemas/org.gnome.shell.extensions.paperwm.gschema.xml:68-75
+  (Super+Ctrl+Page_Down/Up move defaults) and :173-175 (Super+t take
+  default)
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
-  (cross-space transfer verb; overlay-state carry untraced)
+  (cross-space transfer verb; overlay-state carry untraced; shipped
+  completion follows; legacy inactive-space no-steal per `S(S-pap-ins)`
+  is a different journey, not the shipped-send outcome)
 - `S-kar-acts` karousel:src/lib/keyBindings/Actions.ts:6-60 (focus verbs) +
   :86-175 (window/column move verbs) + :176-260 (`windowToggleFloating`
   per-window only, column move/stacked/width/preset verbs; no
@@ -2210,6 +2225,13 @@ Legend:
   defaults true) @3d55cba06c9cf6f27609cdefb520f7857dba20af for the
   compositor paths (config path per `S(S-cos-wslay)` repo split)
   (no history-toggle verb in the workspace action inventory)
+- `S-cos-wskeys` cosmic-comp:data/keybindings.ron:38-47
+  (Super+Shift+1..9 `MoveToWorkspace`, Super+Shift+0
+  `MoveToLastWorkspace`; no `SendToWorkspace` binding) and :57-64
+  (Super+Shift+Ctrl arrows/hjkl `MoveToPrevious/NextWorkspace`) +
+  justfile:17-18 (keybindings.ron installs as the
+  CosmicSettings.Shortcuts defaults)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
 - `S-hyp-ws`
   Hyprland:src/config/shared/actions/ConfigActions.cpp:170-198
   (`back_and_forth` resolve: re-invoking switch-to-current goes to the
@@ -2231,6 +2253,12 @@ Legend:
   default 1) + src/config/values/ConfigValues.cpp:615 (`workspace_back_and_forth`
   default 0 off) @19fb395d45314960e6f79f17994a84094f1cd4f6
   (numbered IDs are stable; empty-object destruction untraced)
+- `S-hyp-wskeys` Hyprland:example/hyprland.lua:277-278 (mainMod+n
+  workspace focus, mainMod+SHIFT+n `window.move({workspace=i})` with
+  follow absent) + src/config/lua/bindings/LuaBindingsDispatchers.cpp:813-818
+  (workspace block: follow absent so silent is false, shipped move
+  follows; `follow=false` stays; the :826-829 analog is the monitor
+  block) @19fb395d45314960e6f79f17994a84094f1cd4f6
 - `S-bsp-ws` bspwm:doc/bspwm.1.asciidoc:52 (`CYCLE_DIR` next|prev) and
   :215 (DESKTOP_SEL grammar) and :233-234 (`last` is the previously
   focused desktop) and :418-422 (`node -d/-m` desktop/monitor send with
@@ -2244,6 +2272,9 @@ Legend:
   `S(S-bsp-close)` (focus_node history fallback)
   @e11eff4 for the doc path,
   @e11eff4cb3333216ad03c815609a4ed79e08929c for src
+- `S-bsp-wskeys` bspwm:examples/sxhkdrc:83-85 (super+shift+n
+  `node -d '^{1-9,10}'` with no `--follow`: shipped send stays;
+  `--follow` alternate per `S(S-bsp-send)`) @e11eff4
 - `S-i3-ws` i3:src/workspace.c:131-160 (`workspace_get` creates on
   demand) and :438-505 (`workspace_show` records the previous name,
   focuses the descended remembered focus, closes the empty old
@@ -2263,6 +2294,10 @@ Legend:
   transfer only) + src/XMonad/Config.hs:50-57 (workspace list is static
   configuration) + `S(S-xmo-ctl)` (no back-and-forth, relative-switch,
   or relative-send verb in the profiled inventory)
+  @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+- `S-xmo-wskeys` xmonad:src/XMonad/Config.hs:230-234 (mod-[1..9]
+  `W.greedyView` switch, mod-shift-[1..9] `W.shift` send: shipped send
+  stays; `W.greedyView . W.shift` composition views after the shift)
   @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
 - `S-sway-ws` sway:sway/tree/workspace.c:177-200 (`workspace_create`)
   and :299-334 (`workspace_consider_destroy` drops empty non-active)
@@ -2285,6 +2320,10 @@ Legend:
   (`get_next_group`/`get_previous_group` modulo) +
   libqtile/backend/x11/window.py:1946-1960 (`togroup` takes explicit
   group names only) + `S(S-qti-wsdef)` (static groups 1-9)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+- `S-qti-wskeys` qtile:libqtile/resources/default_config.py:77-98
+  (mod+shift+n `togroup(i.name, switch_group=True)`: shipped send
+  follows; commented `togroup(i.name)` stays alternate)
   @83c697a5621306c3586efca31867efcfa0482e2d
 - `S-awe-ws` awesome:lib/awful/tag.lua:489-532 (`tag.history.update`
   per-screen MRU) and :534-566 (`history.restore` defaults to the
@@ -2316,6 +2355,12 @@ Legend:
   state, floating space, and active flag) +
   src/input/mod.rs:1536 (`FocusWorkspacePrevious` binding) +
   src/ui/mru.rs:584-592 (MRU UI lists every workspace's windows)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+- `S-nir-wskeys` niri:resources/default-config.kdl:528-536
+  (Mod+Ctrl+1..9 `move-column-to-workspace`: shipped send moves the
+  column and follows under the `focus=true` default) and :471/:539
+  (window-only variants are commented alternates, not shipped binds) +
+  `focus=false` stays per `S(S-nir-ws)`
   @ed22699d99462f61ab171472d3ea67e844ea580d
 - `S-pap-space` PaperWM:tiling.js:1096-1127 (`switchLinear` column loop)
   and :2865-2925 (`selectSequenceSpace`: adjacent steps stop at the

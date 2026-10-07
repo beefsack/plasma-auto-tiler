@@ -266,6 +266,11 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   Reference baselines use pinned shipped defaults and named discriminating
   variants. PaperWM.spoon is corroboration only. Evidence expands the corpus,
   not the selected product behavior or consensus denominator.
+- User decision 2026-10-07 (R-WS-01): workspace send keeps following the
+  window by default (matching the shipped default bindings of COSMIC,
+  Hyprland, qtile, niri and PaperWM); a separate send-and-stay command is
+  added (COSMIC Send/Move pair), binding chosen at implementation. The
+  original eight split 3 follow / 5 stay by shipped default; all offer both.
 - User decision 2026-10-07 (functional spec format): keep
   [the functional spec](spec/functional-spec.md) as a single file; revisit
   splitting if it grows much larger. Requirements are normative only where a

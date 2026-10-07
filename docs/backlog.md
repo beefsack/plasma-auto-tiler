@@ -237,7 +237,10 @@ decisions of 2026-09-24 are under
   window to output; R-MAX-09 carry fullscreen across workspace send on
   Windows (observe KDE first); R-SPC-04 float fixed-size windows on
   admission; R-RST-01 keep intentional floats floating across owner
-  restart; R-RSZ-01 Windows keyboard resize (overlaps Windows parity (d)).
+  restart; R-RSZ-01 Windows keyboard resize (overlaps Windows parity (d));
+  R-WS-01 separate send-and-stay command beside the existing follow send
+  (user 2026-10-07; COSMIC Send/Move pair; binding chosen at
+  implementation).
   Shortcuts for new verbs need choosing when each starts.
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
@@ -702,18 +705,24 @@ reference-WM checks, which test other compositors.
   Meta mapping. [plan](research/macos-port/plan.md)
 - Reference consensus differences (functional specification line above):
   the 12 new 2026-10-07 recommendations were accepted (see "Adopt
-  reference-consensus additions"); the remaining Table A rows (R-WS-01,
-  R-MOV-03, R-FLT-05/06/09, R-MAX-05/07, R-MIN-01..03, R-DRAG-04, R-GRP-03)
+  reference-consensus additions"); R-WS-01 decided 2026-10-07 (keep
+  follow default, add send-and-stay); the remaining Table A rows (R-MOV-03, R-FLT-05/06/09, R-MAX-05/07, R-MIN-01..03, R-DRAG-04, R-GRP-03)
   and the R-DRAG-07/08 splits are being decided one by one in
   conversation.
-- Live-test VMs for the 508-cell matrix queue: proposal `c17af1e`
-  ([proposal](research/live-test-vms/proposal.md)) recommends one flake
-  with a NixOS `build-vm` config per WM at the pinned source commits,
-  shared fixture clients and an observation helper; first slice
-  i3/sway/bspwm (50 cells; niri instead of bspwm if scrolling evidence is
-  the priority), 8-14 authoring days, one guest at a time (4 GiB guest RAM,
-  80-120 GiB disk). Needs: approve route, slice and budget, then authorise
-  implementation.
+- Live-test environments for the 508-cell matrix queue
+  ([proposal](research/live-test-vms/proposal.md), revised 2026-10-07 at
+  the user's request): one shared per-WM definition (packages with
+  optional pinned-source override, profile config, fixture clients,
+  observation helper) feeding two run modes: A nested on the host Plasma
+  session (Wayland WMs as a nested window, X11 WMs in Xephyr; KWin
+  "Ignore global shortcuts" rule for Super) and B lean `build-vm` VM
+  sharing the host store (multi-output, hotplug, real sessions). User
+  prefers A, switching to B when needed. Reasoned estimates, unmeasured:
+  A first slice 1.5-3 GiB store growth (all WMs ~6-15 GiB); B adds ~1-3
+  GiB plus sparse 4-8 GiB disks. Nested launches unverified at runtime.
+  Recommended first slice i3/sway/bspwm. Needs: confirm slice and budget,
+  then authorise implementation (not started; user 2026-10-07: document
+  only).
 - Review of 2026-10-03/04 autonomous provisional choices (all marked
   "Provisional, to discuss" in [decisions](decisions.md)): mise rolling
   versions, Windows settings/tray/presets, drag producers,

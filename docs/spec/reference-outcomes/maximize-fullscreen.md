@@ -425,7 +425,7 @@ rectangles where geometry is load-bearing.
 - When: send B to WS2 with the profile native workspace send; record the
   follow policy (follow vs stay). Native verbs: COSMIC `MoveToWorkspace`
   (follows) vs `SendToWorkspace` (no-follow); Hyprland `movetoworkspace`;
-  bspwm `node -d WS --follow`; i3/sway `move to workspace`; xmonad
+  bspwm `node -d WS` (without `--follow` stays; `--follow` follows); i3/sway `move to workspace`; xmonad
   `shiftWin`; qtile `togroup` (follows under shipped `switch_group`);
   awesome `move_to_tag`; niri `MoveWindowToWorkspace` (vs
   `MoveColumnToWorkspace`); PaperWM navigator `takeWindow`; karousel
@@ -445,8 +445,8 @@ rectangles where geometry is load-bearing.
 - Then bspwm: max leg no-counterpart (no maximize state:
   `S(S-bsp-layout)` + `S(S-bsp-admit)`); full leg transfers the same
   node via unlink with sibling promotion plus destination-focus insert
-  while the node stays vacant-fullscreen in place, following under
-  `--follow`. `S(S-bsp-xfer)` + `S(S-bsp-state)` + `S(S-bsp-fs)`.
+  while the node stays vacant-fullscreen in place (shipped form without
+  `--follow` stays on the source; following only under `--follow`). `S(S-bsp-xfer)` + `S(S-bsp-state)` + `S(S-bsp-fs)`.
 - Then i3: max leg no-counterpart (`S(S-i3-max)`); full leg re-attaches
   the same container (mode flag travels with it) at the destination
   focus with source reflow, focused within WS2 but without switching to

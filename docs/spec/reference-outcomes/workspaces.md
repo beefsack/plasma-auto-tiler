@@ -14,30 +14,34 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   0.5W at shipped defaults. Paneru uses one Space with two virtual
   rows (A/B-active row, C row).
 
-- When: Send B to WS2
+- When: Move/send B to WS2 with the profile's shipped-default binding. From fresh fixtures, replay the alternate stay/follow verb, flag or composition where established; do not assume the default follows.
 
-- When (column leg): send B to WS2 (the profile's native workspace send).
+- When (column leg): move/send B to WS2 with the profile's shipped-default workspace-transfer binding; replay the established alternate from a fresh fixture. Record column vs window granularity and finish any navigator/drop journey before observing focus.
 
 - Observe: Source collapse, target position, focus
 
 - Observe (column leg): source collapse, target column position, focus
   (follow vs stay).
 
-- Then COSMIC: Source collapses to A; target splits C's long edge (C geometry unrecorded), B after C; `SendToWorkspace` leaves focus (falls back to A), `MoveToWorkspace` follows with B; `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-send)` + `S(S-cos-focusfix)`
-- Then Hyprland/Dwindle: Follow switches workspace and focuses mover, silent refocuses the source; source collapses via sibling promotion; target anchor is sole C regardless of cursor (only tiled candidate on WS2); splits C's long edge (C geometry unrecorded, so axis TBD), B before/after C TBD (cursor half); `S(S-hyp-movews)`
-- Then bspwm: Source unlinks with sibling promotion; target inserts at WS2 focus C, splitting C's long edge with B second child after C; `--follow` keeps focus on B; exact axis (C geometry unrecorded)/frames TBD; `S(S-bsp-send)` + `S(S-bsp-xfer)`
-- Then i3: `move container to workspace` (no-follow, stays on WS1): source collapses to sole A; target C,B with B after focused C; focus stays A; `S(S-i3-movews)`
-- Then xmonad/Tall+Navigation2D: shiftWin inserts above target focus via insertUp, source view unchanged; `S(S-xmo-shift)`
-- Then sway: `move container to workspace` (no-follow, stays on WS1): source collapses to sole A; target C,B with B after focus-inactive C; mover focus restored to source inactive (A); independent `workspace` command switches instead; `S(S-sway-movews)` + `S(S-sway-switch)`
-- Then qtile/Columns: togroup removes B from the source (empty column dropped) and group.add admits it at the target Columns anchor with mover focus; the shipped binding follows via switch_group=True; exact target order/frames TBD; `S(S-qti-group)` + `S(S-qti-add)` + `S(S-qti-remove)`
-- Then awesome/tile: move_to_tag transfers B with no view switch (no-follow, stays on WS1); source reflows via tile recalc with history refocus (A); target keeps B's retained global-client position (move_to_tag reinserts nothing); exact order/frames TBD; `S(S-awe-tag)` + `S(S-awe-hist)` + `S(S-awe-tile)`
-- Then niri: B transfers to the target workspace as a new column after
-  C (the sole target column is active); `move-window-to-workspace`
-  with `focus=true` (shipped default) follows with B via Smart
-  activation, `focus=false` stays on the source. `S(S-nir-ws)`.
-- Then PaperWM: B moves and re-inserts after C at the open position,
-  and inserts landing on an inactive space never steal focus (the
-  source collapses to sole A). `S(S-pap-ins)`.
+- Then COSMIC: Shipped `MoveToWorkspace` (Super+Shift+1..9) follows with B: source collapses to A; target splits C's long edge (C geometry unrecorded), B after C; alternate `SendToWorkspace` (unbound at shipped defaults) leaves focus (falls back to A); `S(S-cos-wskeys)` + `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-send)` + `S(S-cos-focusfix)`
+- Then Hyprland/Dwindle: Shipped `hl.dsp.window.move({workspace=i})` (mainMod+Shift+n, follow absent so silent is false) follows: switches workspace and focuses mover; alternate `follow=false` stays (silent refocuses the source); source collapses via sibling promotion; target anchor is sole C regardless of cursor (only tiled candidate on WS2); splits C's long edge (C geometry unrecorded, so axis TBD), B before/after C TBD (cursor half); `S(S-hyp-wskeys)` + `S(S-hyp-movews)`
+- Then bspwm: Shipped `node -d '^{1-9,10}'` (super+shift+n, no `--follow`) stays on the source; alternate `--follow` keeps focus on B; source unlinks with sibling promotion; target inserts at WS2 focus C, splitting C's long edge with B second child after C; exact axis (C geometry unrecorded)/frames TBD; `S(S-bsp-wskeys)` + `S(S-bsp-send)` + `S(S-bsp-xfer)`
+- Then i3: Shipped `move container to workspace number N` (Mod1+Shift+n, no-follow, stays on WS1): source collapses to sole A; target C,B with B after focused C; focus stays A; alternate independent `workspace` command switches instead; `S(S-i3-wskeys)` + `S(S-i3-movews)`
+- Then xmonad/Tall+Navigation2D: Shipped mod-shift-[1..9] `W.shift` stays (source view unchanged): shiftWin inserts above target focus via insertUp; alternate composition `W.greedyView . W.shift` views after the shift; `S(S-xmo-wskeys)` + `S(S-xmo-shift)`
+- Then sway: Shipped `move container to workspace number N` ($mod+Shift+n, no-follow, stays on WS1): source collapses to sole A; target C,B with B after focus-inactive C; mover focus restored to source inactive (A); alternate independent `workspace` command switches instead; `S(S-sway-wskeys)` + `S(S-sway-movews)` + `S(S-sway-switch)`
+- Then qtile/Columns: Shipped `togroup(i.name, switch_group=True)` (mod+shift+n) follows with mover focus: togroup removes B from the source (empty column dropped) and group.add admits it at the target Columns anchor; alternate `switch_group=False` stays; exact target order/frames TBD; `S(S-qti-wskeys)` + `S(S-qti-group)` + `S(S-qti-add)` + `S(S-qti-remove)`
+- Then awesome/tile: Shipped mod+Shift+numrow `move_to_tag` stays (no view switch): source reflows via tile recalc with history refocus (A); target keeps B's retained global-client position (move_to_tag reinserts nothing); alternate `tag:view_only()` after the move switches; exact order/frames TBD; `S(S-awe-keys)` + `S(S-awe-tag)` + `S(S-awe-hist)` + `S(S-awe-tile)`
+- Then niri: Shipped `move-column-to-workspace N` (Mod+Ctrl+N,
+  column granularity) with `focus=true` (default) follows with B via
+  Smart activation; alternate `focus=false` stays. B transfers to the
+  target workspace as a new column after C (the sole target column is
+  active). `S(S-nir-wskeys)` + `S(S-nir-ws)`.
+- Then PaperWM: Shipped `move-down/up-workspace` (Super+Ctrl+PageDown/Up)
+  and `take-window` (Super+t) follow: drop into the selected space
+  plus `Main.activateWindow` (tiling.js:5528-5555 at 8bf6dd2);
+  fresh-insertion no-steal on inactive spaces (`S-pap-ins`) is a
+  different journey, not the shipped-send outcome; send-and-stay
+  alternate TBD. `S(S-pap-take)` + `S(S-pap-ins)`.
 - Then karousel/Lazy: the column moves grids and appends after the
   target's last column (after sole C); focus stays TBD. `S(S-kar-ws)`;
   focus queued.
@@ -72,7 +76,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 - Then COSMIC: Returns at A (target MRU): tall `V[A,B]` stacked, wide `H[A,B]` side-by-side, B after A, no old-slot restore; `SendToWorkspace` stays on WS2 (kept because active, not as trailing empty) with focus none, `MoveToWorkspace` follows to WS1 with B; `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-send)` + `S(S-cos-focusfix)`
 - Then Hyprland/Dwindle: No remembered-leaf anchor in source (not MRU/slot restore): the target holds C and A (B's departure leaves both), so the return anchor is C vs A TBD (cursor closest-node; sends carry no focal, and the mover itself is excluded from anchor candidacy); only if A is selected does the given box resolve the axis (tall 1268x1364 portrait so `V`, wide 2544x678 landscape so `H`); order TBD (cursor half); follow switches workspace and focuses mover, silent refocuses the source; `S(S-hyp-movews)`
-- Then bspwm: Return inserts at WS1 focus A (explicit selection), splitting A's long edge with B second child after A: tall `V[A,B]`, wide `H[A,B]`; no old-slot restore (fresh split); `--follow` focuses B; exact frames TBD; `S(S-bsp-xfer)` + `S(S-bsp-insert)`
+- Then bspwm: Return inserts at WS1 focus A (explicit selection), splitting A's long edge with B second child after A: tall `V[A,B]`, wide `H[A,B]`; no old-slot restore (fresh split); shipped `node -d` without `--follow` stays on the source, `--follow` focuses B; exact frames TBD; `S(S-bsp-xfer)` + `S(S-bsp-insert)`
 - Then i3: `move container to workspace` (no-follow both legs, stays on source): B returns into the surviving single-child parent after A (tall `V[A,B]`, wide `H[A,B]`), old-slot coincidence via parent persistence, not MRU fresh-map; return leaves focus on the now-empty WS2; `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: Return inserts above live WS1 focus A via `insertUp` (target-stack order `[B,A]`, B focused there; source view unchanged, no follow; no old-slot store); Tall is fixed master/stack (no long-edge axis, no MRU/history anchor), so the tall `V`/wide `H` fixture distinction is inapplicable: exact axes/frames TBD; `S(S-xmo-shift)` + `S(S-xmo-layout)`
 - Then sway: `move container to workspace` (no-follow both legs, stays on source): B returns into the surviving single-child parent after focus-inactive A (tall `V[A,B]`, wide `H[A,B]`), old-slot coincidence via parent persistence, not MRU fresh-map; axis from the surviving parent layout, not geometry; return leaves focus on the now-empty WS2; `S(S-sway-movews)` + `S(S-sway-cleanup)`
@@ -195,7 +199,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 - Then COSMIC: Floating B transfers; fresh tiled admission at A (splits A's long edge, B after A), float not retained; `SendToWorkspace` + select focuses A (WS1 MRU; B admitted unfocused), `MoveToWorkspace` focuses B; `S(S-cos-send)` + `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-focusfix)`
 - Then Hyprland/Dwindle: Forward B takes a full-work-area tile box on empty WS2 (sole tiled tile, not maximized mode); floated B transfers retaining float state at monitor-relative position (never fresh-tiled on arrival); the floated return makes no new tiling admission, so no anchor/axis/order applies: sole A stays the unchanged tiled tile; follow/silent focus per `S(S-hyp-movews)`; exact frames TBD; `S(S-hyp-movews)`
-- Then bspwm: Forward B sole on WS2; floated B transfers retaining float (node moves with client state, no fresh tiling; sole A unchanged); `--follow` keeps focus on B; exact frames TBD; `S(S-bsp-xfer)` + `S(S-bsp-float)`
+- Then bspwm: Forward B sole on WS2; floated B transfers retaining float (node moves with client state, no fresh tiling; sole A unchanged); shipped send without `--follow` stays on the source, `--follow` keeps focus on B; exact frames TBD; `S(S-bsp-xfer)` + `S(S-bsp-float)`
 - Then i3: `move container to workspace` (no-follow both legs): forward B sole on WS2; floated B transfers as a floating wrapper to WS1 (float retained, no fresh tiling; sole A unchanged); return stays on the now-empty WS2; `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: Forward B sole on WS2; floated B transfers retaining float (`shiftWin` uses `delete'` preserving the floating map, no fresh tiling; sole A unchanged); source view unchanged (no follow); exact frames TBD; `S(S-xmo-shift)` + `S(S-xmo-float)`
 - Then sway: `move container to workspace` (no-follow both legs): forward B sole on WS2; floated B transfers as floating to WS1 (float retained, no fresh tiling; coordinate fix only on output change, same-output leg performs no rewrite; sole A unchanged); return stays on the now-empty WS2; `S(S-sway-movews)`
@@ -676,16 +680,16 @@ verb inventory); selected intent and doc assertions are never evidence.
   profile below); explicit-only inventories never substitute an
   absolute send.
 - Observe: relative target resolution and follow policy.
-- Then COSMIC: resolves to active plus/minus one (next cycles to
-  index 0 and previous to the last with wraparound, else output
-  fallback); `MoveTo` follows with B, `SendTo` leaves focus.
-  `S(S-cos-ws)`.
+- Then COSMIC: Shipped `MoveToNextWorkspace`/`MoveToPreviousWorkspace`
+  resolve to active plus/minus one (next cycles to index 0 and previous
+  to the last with wraparound, else output fallback) and follow with B;
+  `SendToNextWorkspace`/`SendToPreviousWorkspace` leave focus.
+  `S(S-cos-ws)` + `S(S-cos-wskeys)`.
 - Then Hyprland/Dwindle: plain `next` targets WS3; plain `previous`
   targets the MRU previous workspace, not necessarily WS1. Follow
   focuses B; silent refocuses the source. `S(S-hyp-movews)` +
   `S(S-hyp-ws)`.
-- Then bspwm: `node -d next`/`prev` resolves the relative desktop
-  (`--follow` keeps focus on B). `S(S-bsp-ws)`.
+- Then bspwm: unflagged relative form `node -d next`/`prev` resolves the relative desktop (without `--follow` stays on the source; `--follow` keeps focus on B). `S(S-bsp-ws)`.
 - Then i3: `move to workspace next`/`prev` resolves through the same
   no-follow path (focus restored to the source). `S(S-i3-movews)` +
   `S(S-i3-ws)`.
@@ -703,10 +707,12 @@ verb inventory); selected intent and doc assertions are never evidence.
   same-screen only). Queued.
 - Then niri: resolves to the adjacent index with clamping at both
   ends (same-index is a no-op, never a wrap); Smart follow activates
-  the target when the mover was active. `S(S-nir-ws)`.
+  the target when the mover was active (`focus=false` stays).
+  `S(S-nir-ws)`.
 - Then PaperWM: resolves to the adjacent space with take-window and
-  stops at the ends; take/follow/insert completion stays TBD.
-  `S(S-pap-space)`; completion queued.
+  stops at the ends; drop completes with insert plus `Main.activateWindow`
+  (follow per take finalization), insert position stays TBD.
+  `S(S-pap-space)` + `S(S-pap-take)`; position queued.
 - Then karousel/Lazy: resolves to the adjacent desktop with an edge
   stop and moves the whole column C2 (appended after the target's
   last column); follow stays TBD. `S(S-kar-ws)`; follow queued.
