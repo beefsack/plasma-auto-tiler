@@ -254,15 +254,27 @@ Column legs below use separately stated column Givens with the same identities a
 - Then xmonad/Tall+Navigation2D: TBD (no maximize state in source: `Full` is a workspace layout rendering focus fullscreen, maximize flags are not tree state); toggle path is float/`sink` only; `S(S-xmo-layout)` + `S(S-xmo-float)`
 - Then sway: Maximized precondition has no counterpart here (no maximize state; client request only schedules a configure); toggle path has no maximize/refusal branch, so an ordinary float B toggles via the standard float path; settled slot/frame/focus TBD; `S(S-sway-float)` + `S(S-sway-max)`
 - Then qtile/Columns: Maximized is a float state, so toggling float on maximized B runs the unfloat path (fresh tiled admission, maximize not retained); settled frame/focus TBD; `S(S-qti-float)` + `S(S-qti-fs)`
-- Then awesome/tile: Maximized implies implicit float, so the toggle runs against explicit/implicit precedence with maximize retained orthogonally; settled slot/frame/focus TBD (live-only); `S(S-awe-float)` + `S(S-awe-fs)`
-- Then niri: native maximize flag sourced (`set_maximized` column flag);
-  toggle interplay TBD. `S(S-nir-maxfs)`; interplay queued.
+- Then awesome/tile: Maximized implies implicit float, so the toggle (`floating.toggle` via `set_floating`) flips only the explicit `floating` property while the maximize-driven implicit flag is retained orthogonally (explicit reads first); no unmaximize branch and no attempted-state fence, maximize stays a plain boolean. Settled slot/frame/focus TBD (live-only); `S(S-awe-float)` + `S(S-awe-fs)`
+- Then niri: toggle runs the plain tile-move path with no maximize or
+  refusal branch (`toggle_window_floating`: scrolling `remove_tile`
+  then floating `add_tile`); floating admission resolves a non-normal
+  size via the stored floating size else `(0,0)`, and the column
+  pending-maximized flag stays on the removed scrolling column
+  (floating windows cannot be maximized). Settled frame is
+  client-driven and focus follows the active target; both TBD
+  (live-only), and native configure timing TBD.
+  `S(S-nir-maxfs)` + `S(S-nir-flttoggle)`; frame/focus queued.
 - Then PaperWM: no-counterpart for an ordinary non-sticky float toggle;
   scratch unmake also unsticks, not this action. Tiled native maximize's
   width conversion does not establish a maximized-dialog toggle.
   `S(S-pap-acts)` + `S(S-pap-float)`.
-- Then karousel/Lazy: native maximize membership with `skipArrange`
-  sourced; toggle interplay TBD. `S(S-kar-maxfs)`; interplay queued.
+- Then karousel/Lazy: `windowToggleFloating` flips the Tiled/Floating
+  state with no maximize or clear branch, and the Floating state keeps
+  the host maximize (height cap only); admission-time force-unmaximize
+  is a different journey, not this toggle. The maximized KWin state
+  travels host-side with the client; settled frame/focus and native
+  clear timing TBD (live-only). `S(S-kar-maxfs)` + `S(S-kar-acts)` +
+  `S(S-kar-float)`; frame queued.
 - Then paneru: a host-zoomed window is the applicable owner-specific
   journey (still TBD); no paneru-native maximized leg exists (`Operation`
   has no maximize verb and no zoom AX read, so the toggle has no native
