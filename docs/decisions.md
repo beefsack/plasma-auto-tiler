@@ -395,7 +395,7 @@ platform API behavior.
   select adjacency only; placement retains per-desktop work areas.
 ## Fixed-Size Admission
 - User decisions 2026-10-08 (fixed-size admission R-SPC-04 D1-D8, outcomes
-  decided; D1/D5/D6 delivered offline, D7 implementation pending):
+  decided; D1/D5/D6/D7 delivered offline, native checks pending):
   - D1 predicate: COSMIC whole-vector equality default as delivered
     (both min/max vectors present, usable, nonnegative, not full-zero
     or unbounded sentinels, equal on both axes; equal partial-zero
@@ -436,7 +436,8 @@ platform API behavior.
   - D7 startup: startup adoption classifies as delivered (foreground
     and hidden) PLUS fixed-window user tile overrides persist across
     owner restart in the same intentional-float store, with recompute
-    fallback if unavailable; pending.
+    fallback if unavailable.
+  - D7 status: Linux planner/KDE delivered offline ([record](changes/archive/fixed-window-tile-override-restart.md)); Windows handoff only, native checks pending.
   - D8 no-touch: automatic fixed floats are membership-only: no
     geometry, focus, stacking or keep-above writes. Manual floats
     retain keep-above because intentional floats stay above windowed

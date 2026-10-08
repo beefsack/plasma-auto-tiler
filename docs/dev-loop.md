@@ -421,17 +421,19 @@ terminal separately. These summaries carry no window/native IDs, geometry,
 resource classes, captions or payloads. Admission adds no geometry, focus,
 stacking or keep-above writes to the automatically floating client.
 
-Intentional-float owner restart (ordinary output; one startup read and settled
+Intentional-float/fixed-window tile-override owner restart (ordinary output; one startup read and settled
 membership writes, not per-frame snapshots):
 
-- `[kwin] plasma-auto-tiler:plan:intent-read correlation=<generation>-i<seq> outcome=<ok|degraded|rejected> stored=<N> returned=<N> reason=<fixed-token|->`
-- `[kwin] plasma-auto-tiler:plan:intent-write correlation=<generation>-i<seq> outcome=<stored|rejected|unavailable> stored=<N|-> reason=<fixed-token|->`
-- `[planner] plasma-auto-tiler:intent-summary direction=egress op=<read|write> correlation=<correlation|-> outcome=<outcome> stored=<N|-> returned=<N|-> reason=<fixed-token|->`
+- `[kwin] plasma-auto-tiler:plan:intent-read correlation=<generation>-i<seq> outcome=<ok|degraded|rejected> stored=<N> returned=<N> tile_stored=<N> tile_returned=<N> reason=<fixed-token|->`
+- `[kwin] plasma-auto-tiler:plan:intent-write correlation=<generation>-i<seq> outcome=<stored|rejected|unavailable> stored=<N|-> tile_stored=<N|-> reason=<fixed-token|->`
+- `[planner] plasma-auto-tiler:intent-summary direction=egress op=<read|write> correlation=<correlation|-> outcome=<outcome> stored=<N|-> returned=<N|-> tile_stored=<N|-> tile_returned=<N|-> reason=<fixed-token|->`
 - `[kwin] plasma-auto-tiler:plan:intent-bootstrap-deferred kind=<operation>`
 
 `stored` on the write terminal is a separate storage acknowledgement, not
 `planned-applied` and not an atomic native/store commit. Read hydration occurs
 before planning; membership only leaves recovered float frames untouched.
+`tile_stored`/`tile_returned` count explicit fixed-window tile overrides;
+they authorize normal tile placement, never saved positions or float writes.
 Missing state is empty. Degraded reasons include `unreadable`, `corrupt`,
 `namespace-mismatch` and `namespace-unavailable`; transport terminals include
 `timeout`, `transport`, `malformed` and `oversize`. Reads settle empty on those

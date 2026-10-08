@@ -327,10 +327,10 @@ Restart journeys (config reload is not owner restart):
 - Then PaperWM: controlled disable+enable stages SaveState and re-adds existing windows with prevSpace layout restored where present; exact widths, F placement and B selection TBD. `S(S-pap-rst)`; queued.
 - Then karousel/Lazy: no layout restore exists (live-only Grid state); script disable+enable re-admits existing windows via addClient as fresh columns; exact order/widths/focus TBD. `S(S-kar-rst)` + `S(S-kar-start)`; queued.
 - Then paneru: startup windows match SessionRestore within grace from the durable state file; exact strips/widths, F handling and focus TBD. `S(S-pan-rst)`; queued.
-- Then Ours KDE: freshly re-observes/adopts windows and hydrates settled intentional F before first planning; F keeps ordinary-float identity and its current frame with no hydration geometry/stacking/focus writes (NORMATIVE Q3 D1-D4, User 2026-10-08; fixed-window user tile overrides persist, selected, implementation pending). Implemented offline 2026-10-08 for intentional membership only with [real Planner/entry fixtures](../../../kwin/tests/float-intent.test.ts) and [private store/bus fixtures](../../../crates/plasma-auto-tiler/src/float_intent_store.rs); tile-override persistence is not covered by those fixtures. Missing store is empty; corrupt/unreadable/mismatched reads are diagnosed and proceed empty, so degraded restart can lose F intent. Native sticky/overlay flags remain observed; layout/ratios/workspace set/native focus recovery remain TBD. [Record](../../changes/archive/kde-intentional-float-restart.md); native journey queued.
+- Then Ours KDE: freshly re-observes/adopts windows and hydrates settled intentional F before first planning; F keeps ordinary-float identity and its current frame with no hydration geometry/stacking/focus writes (NORMATIVE Q3 D1-D4, User 2026-10-08). Fixed-window tile overrides also persist membership in the same store (D7 delivered offline 2026-10-09). [Real Planner/entry fixtures](../../../kwin/tests/float-intent.test.ts) and [private store/bus fixtures](../../../crates/plasma-auto-tiler/src/float_intent_store.rs) cover success-only persistence, clear and fallback. Missing store is empty; corrupt/unreadable/mismatched reads are diagnosed and proceed empty, so degraded restart can lose intent and fixed clients recompute to untouched floats. Native sticky/overlay flags remain observed; layout/ratios/workspace set/native focus recovery remain TBD. [Q3 record](../../changes/archive/kde-intentional-float-restart.md), [D7 record](../../changes/archive/fixed-window-tile-override-restart.md); native journey queued.
 - Then Ours Windows: freshly observes/adopts windows; intentional F loses its ordinary-float status because its runtime store resets. Settings persist but do not restore the layout; restored memberships and native focus TBD. `S(S-ours-win-rst)`; queued.
 - Variant hook: NORMATIVE restart recovery (User 2026-10-08; fixed-window
-  tile-override persistence implementation pending).
+  tile-override persistence delivered offline).
 
 ### R-RST-02: end session, restore session and apps
 
@@ -399,6 +399,8 @@ Restart journeys (config reload is not owner restart):
   survive through membership-only adoption (NORMATIVE Q3 D2, User 2026-10-08); no hydration
   geometry, stacking or focus writes to F. Implemented offline with counted
   setters and real Planner [entry fixtures](../../../kwin/tests/float-intent.test.ts).
+  D7's additive tile membership stores no frames and adds no writes to F;
+  only matched explicit tile overrides receive normal tile placement.
   Native stopped-owner journey remains TBD; degraded store follows D4.
 - Then Ours Windows: intentional identity retention is selected by R-RST-01;
   stopped-owner drift outcome TBD. Windows handoff item 8; behavior unchanged.
@@ -419,6 +421,12 @@ Restart journeys (config reload is not owner restart):
 - When: stop the owner with E/F alive; both clients clear their fixed-size
   constraints to become resizable; restart the owner in the same login
   session. Reset independently from R-RST-03; no explicit tile command.
+- Discriminating D7 variant (independent reset): fixed T is explicitly tiled
+  successfully before stop; T loses hints while stopped, restarts, then gains
+  fixed hints while workspace tiling is disabled; enable tiling. Control: N
+  was non-fixed when explicitly tiled, gains fixed hints while stopped, then
+  restarts. Reference outcomes for these added legs are TBD for every profile;
+  native Ours legs remain TBD.
 - Observe: E's intentional membership vs F's fresh admission using current
   hints; whether automatic float origin accidentally became durable intent.
 - Then COSMIC: stopped-owner journey and origin recovery TBD; ordinary map
@@ -445,10 +453,12 @@ Restart journeys (config reload is not owner restart):
   Implemented offline with real Planner [two-owner hint-loss fixtures](../../../kwin/tests/float-intent.test.ts),
   under NORMATIVE Q3 D1-D4; E takes no slot and receives no hydration writes.
   Native journey TBD; automatic origin is recomputed, not persisted; fixed-window
-  Q2 tile overrides persist, implementation pending.
+  Q2 tile overrides persist in the same membership store (D7 delivered offline
+  2026-10-09). In the discriminator, T's matched explicit identity survives
+  hint loss and later enable; N gains no durable tile override and recomputes
+  fixed-floating without writes. [D7 record](../../changes/archive/fixed-window-tile-override-restart.md).
 - Then Ours Windows: combined origin fixture and recovery TBD (handoff items
   8 and 13); fixed-size admission wiring is pending and behavior unchanged.
 - Variant hook: NORMATIVE intentional membership vs recomputed automatic
-  origin (User 2026-10-08; selected, tile-override persistence
-  implementation pending);
+  origin (User 2026-10-08; tile-override persistence delivered offline);
   existing R-RST-01 and Q2 D7 intent, not a new hint-classification decision.

@@ -1,9 +1,12 @@
-//! Session-scoped float-intent membership store.
+//! Session-scoped float-intent membership store, extended with explicit
+//! fixed-window tile overrides (D7).
 //!
-//! Rust-owned private store for settled explicit float intent: membership
-//! only (normalized live `internalId` strings). No rects, focus, stacking,
-//! history, or native writes. The narrow planner-service persistence
-//! exception for float intent only.
+//! Rust-owned private store for settled explicit float intent plus settled
+//! explicit fixed-window tile overrides: membership only (normalized live
+//! `internalId` strings per side). No rects, focus, stacking, history, or
+//! native writes. The narrow planner-service persistence exception for
+//! intent membership only. Float and tile memberships stay disjoint and
+//! bounded; overlap rejects before disk and persisted overlap reads corrupt.
 //!
 //! Layout: `<root>/plasma-auto-tiler/float-intent.json` (`XDG_RUNTIME_DIR`
 //! in production, a private temp root in tests). Every access is anchored:
@@ -32,18 +35,25 @@
 //!
 //! Wire contract on `org.plasmaautotiler.Planner1` (see planner_service):
 //! `ReadFloatIntent({"v":1,"correlation_id":..,"live"?[..]})` returns
-//! `ok` with `members`/`stored`/`returned`, or `degraded` empty with
+//! `ok` with `members`/`stored`/`returned` plus `tile`/`tile_stored`/
+//! `tile_returned` (absent `tile` in old replies reads as empty), or
+//! `degraded` empty with
 //! `namespace-unavailable|unreadable|corrupt|namespace-mismatch`, or
 //! `rejected` with `unauthorized|not-kwin-owner`. `live`, when present, is
 //! the caller-attested complete inventory: entries must each normalize or
-//! the request rejects, and the reply is pruned to the intersection without
-//! mutating the file. `WriteFloatIntent({"v":1,"correlation_id":..,
-//! "members":[..]})` persists the full snapshot (empty clears) and returns
-//! `stored`, or `rejected` (`unauthorized|not-kwin-owner|invalid-request|
+//! the request rejects, and both sides of the reply are pruned to the
+//! intersection without mutating the file.
+//! `WriteFloatIntent({"v":1,"correlation_id":..,
+//! "members":[..],"tile"?[..]})` persists the full snapshot of both sides
+//! (each empty clears its side; absent `tile` means an empty full tile
+//! snapshot) and returns `stored` plus `tile_stored`, or `rejected`
+//! (`unauthorized|not-kwin-owner|invalid-request|
 //! invalid-members`), or `unavailable` (`namespace-unavailable|
-//! store-unavailable`). Oversize bodies fail closed as `Unavailable` errors.
-//! Logs carry only the validated correlation (or `-`), op, outcome, counts,
-//! and fixed reasons: never ids, owners, bus ids, paths, or payloads.
+//! store-unavailable`). Overlap across sides rejects as `invalid-members`.
+//! Oversize bodies fail closed as `Unavailable` errors.
+//! Logs carry only the validated correlation (or `-`), op, outcome, float
+//! and tile counts, and fixed reasons: never ids, owners, bus ids, paths,
+//! or payloads.
 
 use std::collections::HashSet;
 use std::io::{Read, Write};
@@ -67,6 +77,8 @@ pub(crate) const INTENT_MAX_REQUEST_BYTES: usize = 256 * 1024;
 pub(crate) const INTENT_MAX_REPLY_BYTES: usize = 256 * 1024;
 /// Member cap per snapshot, well above any live count.
 pub(crate) const MAX_FLOAT_MEMBERS: usize = 1024;
+/// Tile-override cap per snapshot, mirroring float membership.
+pub(crate) const MAX_TILE_MEMBERS: usize = 1024;
 pub(crate) const MAX_CORRELATION_LEN: usize = 128;
 pub(crate) const MAX_MEMBER_ID_LEN: usize = 128;
 pub(crate) const MAX_NAMESPACE_FIELD_LEN: usize = 256;
@@ -236,11 +248,12 @@ impl FloatIntentStore {
             Ok(Some(bytes)) => bytes,
             Err(()) => return IntentRead::degraded("unreadable"),
         };
-        let members = match parse_store_bytes(&bytes, namespace) {
-            Ok(members) => members,
+        let (members, tile) = match parse_store_bytes(&bytes, namespace) {
+            Ok(pair) => pair,
             Err(reason) => return IntentRead::degraded(reason),
         };
         let stored = members.len();
+        let tile_stored = tile.len();
         let kept: Vec<String> = match live {
             None => members,
             Some(allowed) => members
@@ -248,23 +261,52 @@ impl FloatIntentStore {
                 .filter(|id| allowed.contains(id))
                 .collect(),
         };
-        IntentRead::ok(kept, stored)
+        let kept_tile: Vec<String> = match live {
+            None => tile,
+            Some(allowed) => tile.into_iter().filter(|id| allowed.contains(id)).collect(),
+        };
+        IntentRead::ok(kept, stored, kept_tile, tile_stored)
     }
 
     /// Replace with the full snapshot (empty clears). Members normalize;
     /// duplicates and over-count reject before touching disk. Filesystem
     /// failures retain local intent.
+    /// Test-only float shorthand: tile side is empty (absent wire tile also
+    /// means an empty full tile snapshot).
+    #[cfg(test)]
     pub(crate) fn write_membership(
         &self,
         namespace: &IntentNamespace,
         members: &[String],
     ) -> Result<usize, &'static str> {
+        self.write_both(namespace, members, &[])
+            .map(|(stored, _)| stored)
+    }
+
+    /// Replace both float and tile snapshots atomically (each empty clears
+    /// its side). Both sides normalize; duplicates, over-count, and any
+    /// float/tile overlap reject before touching disk. Filesystem failures
+    /// retain local intent.
+    pub(crate) fn write_both(
+        &self,
+        namespace: &IntentNamespace,
+        members: &[String],
+        tile: &[String],
+    ) -> Result<(usize, usize), &'static str> {
         let normalized = normalize_all(members)?;
+        let normalized_tile = normalize_all(tile)?;
+        if normalized_tile.len() > MAX_TILE_MEMBERS {
+            return Err("invalid-members");
+        }
+        if normalized.iter().any(|id| normalized_tile.contains(id)) {
+            return Err("invalid-members");
+        }
         let body = serde_json::to_string(&StoreFile {
             v: INTENT_STORE_VERSION,
             bus: namespace.bus_id.clone(),
             kwin: namespace.kwin_owner.clone(),
             members: normalized.clone(),
+            tile: normalized_tile.clone(),
         })
         .map_err(|_| "store-unavailable")?;
         if body.len() as u64 > MAX_STORE_FILE_BYTES {
@@ -286,16 +328,19 @@ impl FloatIntentStore {
         }
         atomic_replace(&project, body.as_bytes(), &temp_file_name())
             .map_err(|()| "store-unavailable")?;
-        Ok(normalized.len())
+        Ok((normalized.len(), normalized_tile.len()))
     }
 }
 
 /// Read outcome: returned members, readable on-disk count (`0` when missing
 /// or degraded), and the degraded reason if the content was unusable.
+/// Tile mirrors float: returned overrides plus on-disk count.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct IntentRead {
     pub(crate) members: Vec<String>,
     pub(crate) stored: usize,
+    pub(crate) tile_members: Vec<String>,
+    pub(crate) tile_stored: usize,
     pub(crate) degraded: Option<&'static str>,
 }
 
@@ -304,14 +349,23 @@ impl IntentRead {
         Self {
             members: Vec::new(),
             stored: 0,
+            tile_members: Vec::new(),
+            tile_stored: 0,
             degraded: None,
         }
     }
 
-    fn ok(members: Vec<String>, stored: usize) -> Self {
+    fn ok(
+        members: Vec<String>,
+        stored: usize,
+        tile_members: Vec<String>,
+        tile_stored: usize,
+    ) -> Self {
         Self {
             members,
             stored,
+            tile_members,
+            tile_stored,
             degraded: None,
         }
     }
@@ -320,6 +374,8 @@ impl IntentRead {
         Self {
             members: Vec::new(),
             stored: 0,
+            tile_members: Vec::new(),
+            tile_stored: 0,
             degraded: Some(reason),
         }
     }
@@ -331,12 +387,14 @@ struct StoreFile {
     bus: String,
     kwin: String,
     members: Vec<String>,
+    #[serde(default)]
+    tile: Vec<String>,
 }
 
 fn parse_store_bytes(
     bytes: &[u8],
     namespace: &IntentNamespace,
-) -> Result<Vec<String>, &'static str> {
+) -> Result<(Vec<String>, Vec<String>), &'static str> {
     let file: StoreFile = serde_json::from_slice(bytes).map_err(|_| "corrupt")?;
     if file.v != INTENT_STORE_VERSION {
         return Err("corrupt");
@@ -344,7 +402,12 @@ fn parse_store_bytes(
     if file.bus != namespace.bus_id || file.kwin != namespace.kwin_owner {
         return Err("namespace-mismatch");
     }
-    normalize_all(&file.members).map_err(|_| "corrupt")
+    let members = normalize_all(&file.members).map_err(|_| "corrupt")?;
+    let tile = normalize_all(&file.tile).map_err(|_| "corrupt")?;
+    if members.iter().any(|id| tile.contains(id)) {
+        return Err("corrupt");
+    }
+    Ok((members, tile))
 }
 
 // ---------------------------------------------------------------------------
@@ -521,6 +584,8 @@ struct WriteWire {
     v: u32,
     correlation_id: String,
     members: Vec<serde_json::Value>,
+    #[serde(default)]
+    tile: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Deserialize)]
@@ -534,6 +599,8 @@ struct ReadWire {
 pub(crate) struct WriteRequest {
     pub(crate) correlation: String,
     pub(crate) members: Vec<String>,
+    /// Full tile snapshot; empty or absent clears stored tile membership.
+    pub(crate) tile: Option<Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -587,6 +654,8 @@ fn valid_wire(v: u32, correlation_id: &str) -> Result<String, RequestParseError>
 
 /// Structural failures are `invalid-request`; over-count is `invalid-members`
 /// (id content is validated by the store write, also `invalid-members`).
+/// `tile`, when present, follows the same rules with the tile cap; absence
+/// means an empty full tile snapshot.
 pub(crate) fn parse_write_request(body: &str) -> Result<WriteRequest, RequestParseError> {
     let wire: WriteWire =
         serde_json::from_str(body).map_err(|_| RequestParseError::new("-", "invalid-request"))?;
@@ -597,9 +666,14 @@ pub(crate) fn parse_write_request(body: &str) -> Result<WriteRequest, RequestPar
         MAX_FLOAT_MEMBERS,
         "invalid-members",
     )?;
+    let tile = wire
+        .tile
+        .map(|entries| string_entries(&entries, &correlation, MAX_TILE_MEMBERS, "invalid-members"))
+        .transpose()?;
     Ok(WriteRequest {
         correlation,
         members,
+        tile,
     })
 }
 
@@ -637,12 +711,13 @@ pub(crate) fn intent_rejection(correlation: &str, reason: &str) -> String {
     .to_string()
 }
 
-pub(crate) fn write_stored_reply(correlation: &str, stored: usize) -> String {
+pub(crate) fn write_stored_reply(correlation: &str, stored: usize, tile_stored: usize) -> String {
     serde_json::json!({
         "v": 1,
         "correlation_id": sanitize_correlation(correlation),
         "outcome": "stored",
         "stored": stored,
+        "tile_stored": tile_stored,
     })
     .to_string()
 }
@@ -658,7 +733,13 @@ pub(crate) fn write_failed_reply(correlation: &str, outcome: &str, reason: &str)
     .to_string()
 }
 
-pub(crate) fn read_ok_reply(correlation: &str, members: &[String], stored: usize) -> String {
+pub(crate) fn read_ok_reply(
+    correlation: &str,
+    members: &[String],
+    stored: usize,
+    tile_members: &[String],
+    tile_stored: usize,
+) -> String {
     serde_json::json!({
         "v": 1,
         "correlation_id": sanitize_correlation(correlation),
@@ -666,6 +747,9 @@ pub(crate) fn read_ok_reply(correlation: &str, members: &[String], stored: usize
         "members": members,
         "stored": stored,
         "returned": members.len(),
+        "tile": tile_members,
+        "tile_stored": tile_stored,
+        "tile_returned": tile_members.len(),
     })
     .to_string()
 }
@@ -679,6 +763,9 @@ pub(crate) fn read_degraded_reply(correlation: &str, reason: &str) -> String {
         "members": [],
         "stored": 0,
         "returned": 0,
+        "tile": [],
+        "tile_stored": 0,
+        "tile_returned": 0,
         "reason": reason,
     })
     .to_string()
@@ -686,19 +773,24 @@ pub(crate) fn read_degraded_reply(correlation: &str, reason: &str) -> String {
 
 /// Bounded terminal summary over counts and fixed labels only: no ids,
 /// owners, bus ids, paths, payloads, or error strings.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn intent_egress_summary(
     op: &str,
     correlation: &str,
     outcome: &str,
     stored: Option<usize>,
     returned: Option<usize>,
+    tile_stored: Option<usize>,
+    tile_returned: Option<usize>,
     reason: Option<&str>,
 ) -> String {
     format!(
-        "plasma-auto-tiler:intent-summary direction=egress op={op} correlation={} outcome={outcome} stored={} returned={} reason={}",
+        "plasma-auto-tiler:intent-summary direction=egress op={op} correlation={} outcome={outcome} stored={} returned={} tile_stored={} tile_returned={} reason={}",
         sanitize_correlation(correlation),
         stored.map_or_else(|| "-".to_owned(), |count| count.to_string()),
         returned.map_or_else(|| "-".to_owned(), |count| count.to_string()),
+        tile_stored.map_or_else(|| "-".to_owned(), |count| count.to_string()),
+        tile_returned.map_or_else(|| "-".to_owned(), |count| count.to_string()),
         reason.unwrap_or("-"),
     )
 }
@@ -1214,16 +1306,29 @@ mod tests {
 
     #[test]
     fn summaries_carry_counts_never_ids() {
-        let line = intent_egress_summary("read", "evil-id\n:1.999", "ok", Some(2), Some(1), None);
+        let line = intent_egress_summary(
+            "read",
+            "evil-id\n:1.999",
+            "ok",
+            Some(2),
+            Some(1),
+            Some(1),
+            Some(1),
+            None,
+        );
         assert!(line.contains("correlation=-"), "{line}");
         assert!(line.contains("stored=2"), "{line}");
         assert!(line.contains("returned=1"), "{line}");
+        assert!(line.contains("tile_stored=1"), "{line}");
+        assert!(line.contains("tile_returned=1"), "{line}");
         assert!(!line.contains("evil"), "{line}");
         assert!(!line.contains(":1.999"), "{line}");
         let line = intent_egress_summary(
             "write",
             "corr-1",
             "degraded",
+            Some(0),
+            Some(0),
             Some(0),
             Some(0),
             Some("corrupt"),
@@ -1235,10 +1340,11 @@ mod tests {
 
     #[test]
     fn wire_replies_are_bounded_fixed_shapes() {
-        let ok = write_stored_reply("corr-1", 2);
+        let ok = write_stored_reply("corr-1", 2, 1);
         let parsed: serde_json::Value = serde_json::from_str(&ok).expect("valid JSON");
         assert_eq!(parsed["outcome"], "stored");
         assert_eq!(parsed["stored"], 2);
+        assert_eq!(parsed["tile_stored"], 1);
         assert!(ok.len() <= INTENT_MAX_REPLY_BYTES);
         let rejected = intent_rejection("evil corr", "unauthorized");
         assert!(rejected.contains("\"correlation_id\":\"-\""), "{rejected}");
@@ -1247,10 +1353,15 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&degraded).expect("valid JSON");
         assert_eq!(parsed["outcome"], "degraded");
         assert_eq!(parsed["members"].as_array().expect("array").len(), 0);
-        let ok = read_ok_reply("corr-1", &["win-a".to_owned()], 1);
+        assert_eq!(parsed["tile"].as_array().expect("array").len(), 0);
+        assert_eq!(parsed["tile_stored"], 0);
+        assert_eq!(parsed["tile_returned"], 0);
+        let ok = read_ok_reply("corr-1", &["win-a".to_owned()], 1, &["win-t".to_owned()], 1);
         let parsed: serde_json::Value = serde_json::from_str(&ok).expect("valid JSON");
         assert_eq!(parsed["stored"], 1);
         assert_eq!(parsed["returned"], 1);
+        assert_eq!(parsed["tile_stored"], 1);
+        assert_eq!(parsed["tile_returned"], 1);
     }
 
     #[test]
@@ -1293,6 +1404,119 @@ mod tests {
             r#"{"v":1,"correlation_id":"bad corr"}"#,
         ] {
             assert!(parse_read_request(body).is_err(), "{body}");
+        }
+    }
+
+    #[test]
+    fn tile_roundtrip_survives_restart_disjoint_and_bounded() {
+        let root = fresh_root("tile-rt");
+        let store = FloatIntentStore::with_root(root.clone());
+        let ns = namespace("bus-tile", ":1.7");
+        let (stored, tile_stored) = store
+            .write_both(&ns, &["win-a".to_owned()], &["win-t".to_owned()])
+            .expect("write both");
+        assert_eq!((stored, tile_stored), (1, 1));
+        let read = FloatIntentStore::with_root(root.clone()).read_membership(&ns);
+        assert_eq!(read.degraded, None);
+        assert_eq!(read.members, vec!["win-a".to_owned()]);
+        assert_eq!(read.tile_members, vec!["win-t".to_owned()]);
+        assert_eq!((read.stored, read.tile_stored), (1, 1));
+        // Overlap rejects before touching disk.
+        assert_eq!(
+            store.write_both(&ns, &["win-a".to_owned()], &["win-a".to_owned()]),
+            Err("invalid-members")
+        );
+        assert_eq!(
+            store.write_both(&ns, &["bad id".to_owned()], &[]),
+            Err("invalid-members")
+        );
+        assert_eq!(
+            store.write_both(&ns, &[], &["dup".to_owned(), "dup".to_owned()]),
+            Err("invalid-members")
+        );
+        // File unchanged by rejected writes.
+        let kept = store.read_membership(&ns);
+        assert_eq!(kept.members, vec!["win-a".to_owned()]);
+        assert_eq!(kept.tile_members, vec!["win-t".to_owned()]);
+        drop_root(&root);
+    }
+
+    #[test]
+    fn tile_prune_clear_and_old_format_fallback() {
+        let root = fresh_root("tile-prune");
+        let store = FloatIntentStore::with_root(root.clone());
+        let ns = namespace("bus-tile-prune", ":1.7");
+        store
+            .write_both(
+                &ns,
+                &["win-a".to_owned(), "win-gone".to_owned()],
+                &["win-t".to_owned(), "win-t-gone".to_owned()],
+            )
+            .expect("write");
+        let pruned = store.read_pruned(&ns, &["win-a".to_owned(), "win-t".to_owned()]);
+        assert_eq!(pruned.degraded, None);
+        assert_eq!(pruned.stored, 2);
+        assert_eq!(pruned.tile_stored, 2);
+        assert_eq!(pruned.members, vec!["win-a".to_owned()]);
+        assert_eq!(pruned.tile_members, vec!["win-t".to_owned()]);
+        // File not mutated by prune.
+        assert_eq!(store.read_membership(&ns).stored, 2);
+        // Clear tile with empty snapshot, float survives.
+        let (stored, tile_stored) = store
+            .write_both(&ns, &["win-a".to_owned()], &[])
+            .expect("clear tile");
+        assert_eq!((stored, tile_stored), (1, 0));
+        let read = store.read_membership(&ns);
+        assert_eq!(read.members, vec!["win-a".to_owned()]);
+        assert!(read.tile_members.is_empty());
+        // Old format (no tile field) reads as tile-empty, not degraded.
+        plant_file(
+            &root,
+            br#"{"v":1,"bus":"bus-tile-prune","kwin":":1.7","members":["win-a"]}"#,
+        );
+        let old = store.read_membership(&ns);
+        assert_eq!(old.degraded, None);
+        assert_eq!(old.members, vec!["win-a".to_owned()]);
+        assert!(old.tile_members.is_empty());
+        assert_eq!(old.tile_stored, 0);
+        // Overlapping persisted sets degrade corrupt.
+        plant_file(
+            &root,
+            br#"{"v":1,"bus":"bus-tile-prune","kwin":":1.7","members":["win-a"],"tile":["win-a"]}"#,
+        );
+        assert_eq!(store.read_membership(&ns).degraded, Some("corrupt"));
+        // Float-only test shorthand writes an empty tile side.
+        plant_file(
+            &root,
+            br#"{"v":1,"bus":"bus-tile-prune","kwin":":1.7","members":["win-a"],"tile":["win-t"]}"#,
+        );
+        assert_eq!(store.write_membership(&ns, &["win-b".to_owned()]), Ok(1));
+        let kept = store.read_membership(&ns);
+        assert_eq!(kept.members, vec!["win-b".to_owned()]);
+        assert!(kept.tile_members.is_empty());
+        drop_root(&root);
+    }
+
+    #[test]
+    fn tile_write_parsing_absent_means_empty() {
+        let plain = parse_write_request(r#"{"v":1,"correlation_id":"corr-1","members":["win-a"]}"#)
+            .expect("valid");
+        assert!(plain.tile.is_none());
+        let with_tile = parse_write_request(
+            r#"{"v":1,"correlation_id":"corr-1","members":["win-a"],"tile":["win-t"]}"#,
+        )
+        .expect("valid");
+        assert_eq!(with_tile.tile, Some(vec!["win-t".to_owned()]));
+        let cleared =
+            parse_write_request(r#"{"v":1,"correlation_id":"corr-1","members":[],"tile":[]}"#)
+                .expect("valid");
+        assert_eq!(cleared.tile, Some(Vec::new()));
+        for body in [
+            r#"{"v":1,"correlation_id":"corr-1","members":[],"tile":{}}"#,
+            r#"{"v":1,"correlation_id":"corr-1","members":[],"tile":[42]}"#,
+        ] {
+            let error = parse_write_request(body).expect_err("must reject");
+            assert_eq!(error.reason, "invalid-request", "{body}");
         }
     }
 }

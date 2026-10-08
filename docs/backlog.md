@@ -13,8 +13,6 @@ decisions of 2026-09-24 are under
 - P0 | Implement 2026-10-08 decision changes | Review completed; selections approved.
   Implement the changed selections in shared core plus KDE, with Windows
   handoff updates (items 13/8/14 plus the same-axis move setting):
-  - D7 fixed-window user tile overrides persist across owner restart in the
-    same intentional-float store with recompute fallback.
   - Migration D8 fullscreen plus maximized members are carried: no refusal
     in moved members or affected views; native move only with no extra
     fullscreen size/position/focus writes. An explicit user move is not
@@ -298,7 +296,7 @@ decisions of 2026-09-24 are under
   functional naming [delivered offline](changes/archive/admission-and-move-settings.md);
   D5 first-fullscreen-exit and D6 tiling-enable check
   [delivered offline](changes/archive/fixed-size-exit-and-enable.md);
-  D7 tile-override store is pending implementation, then native checks;
+  D7 tile-override store [delivered offline](changes/archive/fixed-window-tile-override-restart.md), native checks pending;
   [record](changes/archive/fixed-size-admission.md). Windows Q2
   behavior remains unchanged; handoff item 13 supplies its exact wiring.
   Q3 R-RST-01 Linux planner/KDE intentional-float restart delivered offline
@@ -430,12 +428,12 @@ decisions of 2026-09-24 are under
   | 5 | Parked parity-queue multi-output foundation, then handoff item 5 | Per-monitor current-view observation, membership/geometry/visibility/recovery fences first; user live checks need the other Windows PC. Offline topology/Engine tests can precede that. |
   | 6 | Keyboard resize R-RSZ-01 (parity d) | Independent; needs fresh Alt-capable trigger plus dedicated resize intent. No dependency on items 1-5 except shared modifier routing. |
   | 7 | Press-focus R-DRAG-08 | Independent of items 1-5; touches Win-drag arm only. Keep R-DRAG-07 stationary-source/moving-preview split intact. |
-  | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; KDE Q3 delivered offline under user decisions 2026-10-08 (normative as delivered). Ordinary/sticky intent must remain distinct from automatic fixed origin and recovery authority; Windows mechanism unselected, REQ-RST-01c stays OPEN. D7 tile-override restart store pending. |
+  | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; KDE Q3 plus D7 tile-override store delivered offline. Ordinary/sticky intent must remain distinct from automatic fixed origin and recovery authority; Windows mechanism unselected, REQ-RST-01c stays OPEN. Coordinate D7 membership with item 13. |
   | 9 | Fullscreen send R-MAX-09 (Windows carry; NOT the parked parity-queue multi-output foundation) | Depends on handoff item 2 follow/stay wiring only; same-output workspace carry, no cross-output claim. |
   | 10 | Float/half-snap parity (a) R-FLT-07..11 | Independent of items 1-5; reuses existing focus/move catalog rows, no new chords. |
   | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; first-fullscreen-exit is separate (D5 core/KDE delivered offline, Windows pending). B9 unmaximize/fresh-admit is the P0 item above. Independent of items 1-5. |
   | 12 | Non-local workspace modes parity (d) | Depends on handoff items 1/2 (ring + follow/stay) and the parked parity-queue multi-output foundation; last. |
-  | 13 | Q2 fixed-size float admission R-SPC-04 | KDE/shared offline delivery including D1 predicate setting, D5 first-fullscreen-exit and D6 tiling-enable check; Windows max-track observation, predicate/schema/UI and lifetime/origin wiring before enabling the Engine opt-in. KDE pending: D7 tile-override restart store. Fixed/maximize intersection coordinates with item 11. |
+  | 13 | Q2 fixed-size float admission R-SPC-04 | KDE/shared offline delivery including D1 predicate setting, D5 first-fullscreen-exit, D6 tiling-enable check and D7 tile-override restart store; Windows max-track observation, predicate/schema/UI and lifetime/origin wiring before enabling the Engine opt-in. Windows D7 persistence coordinates with item 8; fixed/maximize intersection with item 11. |
   | 14 | Q4 whole-workspace migration R-WS-12 | Core/KDE offline delivery under user decisions 2026-10-08 (normative as delivered); depends on item 5's parked multi-output foundation, item 1 history invalidation and item 12 for non-local runtime modes. Pending: fullscreen+maximized carry overlays (changed D8). No Windows behavior delivered. |
 
   Q2 R-SPC-04 occupies handoff item 13 below; Q3 R-RST-01 KDE delivery is
@@ -1375,8 +1373,9 @@ decisions of 2026-09-24 are under
     R-RST-01 work. KDE Q3 delivered offline 2026-10-08 under user decisions
     2026-10-08 (normative as delivered);
     [record](changes/archive/kde-intentional-float-restart.md).
-    Windows code/behavior unchanged in that delivery. D7 tile-override
-    restart store pending.
+    Windows code/behavior unchanged in that delivery. KDE D7 tile-override
+    restart store [delivered offline](changes/archive/fixed-window-tile-override-restart.md);
+    Windows still lacks float persistence and tile overrides remain a gap.
 
     #### Item 8 behavior and reference seams
 
@@ -1404,7 +1403,7 @@ decisions of 2026-09-24 are under
       geometry/focus/stacking/pre-sticky history or automatic fixed origin.
       No effect dependency or new shared adapter extraction. These are KDE
       implementation seams, not instructions to port D-Bus/file storage to Win.
-    - KDE design handoff (user decisions 2026-10-08, delivered offline; D7 tile-override store pending): recovered
+    - KDE design handoff (user decisions 2026-10-08, Q3 plus D7 delivered offline): recovered
       ordinary floats retain the live frame with no hydration writes. Only
       settled explicit intent is durable; scoped/hidden/minimized absence
       does not clear it. Missing state is empty; corrupt/unreadable/mismatched
@@ -1412,7 +1411,13 @@ decisions of 2026-09-24 are under
       truth and the next settled membership update rewrites the full set.
       Storage ACK is distinct from native application; no atomicity claim.
       Ordinary intent and automatic fixed origin remain separate (R-RST-04,
-      Windows item 13). Recovery ownership must never derive from marker alone.
+      Windows item 13). D7 adds disjoint fixed-window tile membership to the
+      same store, no positions: persist after successful application, clear
+      on re-float/close, prune only complete inventory. Matched overrides
+      survive hint/predicate changes; missing/degraded/unmatched records
+      recompute (fixed -> untouched float). Windows must deliver this with
+      item 13 after selecting its item-8 persistence mechanism; no KDE D-Bus
+      storage requirement for Windows. Recovery ownership must never derive from marker alone.
     - Windows exact (verified 2026-10-08 at `db31234`): runtime intent
       `state.floated: BTreeSet<WindowKey>` (`src/tiling_sys.rs:1452`,
       init empty :13813); float toggle inserts :7361/:8103, unfloat
@@ -1826,7 +1831,8 @@ decisions of 2026-09-24 are under
     D1 predicate setting and functional naming delivered offline
     ([record](changes/archive/admission-and-move-settings.md)); D5/D6 delivered
     offline ([record](changes/archive/fixed-size-exit-and-enable.md)); D7
-    remains pending KDE implementation. Windows predicate and D5/D6 wiring remain pending.
+    delivered offline ([record](changes/archive/fixed-window-tile-override-restart.md)).
+    Windows predicate, D5/D6 and D7 persistence wiring remain pending.
     [Record](changes/archive/fixed-size-admission.md),
     [decisions](decisions.md#fixed-size-admission),
     [matrix](spec/reference-outcomes/special-windows.md#q2-fixed-size-admission-discriminators-2026-10-08).
@@ -1926,9 +1932,14 @@ decisions of 2026-09-24 are under
       it. Workspace enable checks every window being tiled (fixed stays
       untouched float, others tile); intentional/sticky stay under existing
       rules, user tile overrides stay tiled. Restart recomputes absent
-      authoritative identity with fallback; D7 tile-override persistence in
-      the same intentional-float store is pending (do not fold the rest of
-      R-RST-01 into this piece).
+      authoritative identity with fallback. D7 is delivered on KDE only:
+      successfully applied fixed-window tile overrides persist membership in
+      the same intentional-float store, no positions. Clear on re-float,
+      verified close and complete-inventory prune; retain through hint/predicate
+      changes. Missing/degraded/unmatched records recompute fixed to untouched
+      float, with bounded outcome logs and no hold/retry. Windows lacks float
+      persistence: coordinate with item 8's mechanism before implementing D7;
+      this handoff delivers no Windows runtime behavior.
     - Add `CoreSettings.fixed_size_predicate` / `core.fixed_size_predicate`
       within schema version 1: missing defaults to `both-axes-fixed`, alternative
       `either-axis-fixed`; validate using shared `FixedSizePredicate::parse_wire`.
@@ -1950,7 +1961,9 @@ decisions of 2026-09-24 are under
       hint/predicate changes and repeated toggles, fixed/non-fixed arrivals
       while floating, changed hints/predicate at enable, explicit tile
       overrides vs ordinary admission pins, intentional/sticky controls,
-      failure paths and all setter no-write accounting. Both new classification
+      failure paths and all setter no-write accounting; D7 success-only persist,
+      restart tile hydration, re-float/close/complete-prune, hint-loss/enable,
+      degraded/legacy/mismatched fallback and non-fixed controls. Both new classification
       points must emit bounded correlated decision diagnostics.
     - [ ] Windows-only: fresh max-track/DPI/inset observations, timeout/hung
       clients, native overlay/restore and fixed borderless/exclusive games;
@@ -1961,7 +1974,7 @@ decisions of 2026-09-24 are under
     - DoD: decided clauses implemented with current Windows
       rules preserved; dated Ours Windows matrix/spec evidence, no native
       claim without user testing; user decisions 2026-10-08 approved, changed
-      D1/D5/D6 Windows wiring and D7 implementation pending.
+      D1/D5/D6 and D7 Windows wiring pending; KDE D7 delivered offline.
 
   - Item 14: Q4 whole-active-workspace output migration R-WS-12. The addition
     was accepted 2026-10-07; D1-D9 detail is user decisions 2026-10-08
@@ -2356,6 +2369,14 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 
 ### Single-output laptop
 
+- D7 fixed-window tile override across script reload/planner restart (KDE
+  offline delivered): successfully tile a fixed client, reload the script and
+  restart the planner with the same live client; it remains tiled. Check hint
+  loss/predicate changes then workspace enable, re-float/close/complete-inventory
+  prune, hidden clients, degraded/old-format/unmatched fallback to untouched
+  fixed float, and separate hydrate/persist/clear ACK counts. Ordinary non-fixed
+  commands gain no tile persistence; float controls receive zero extra writes.
+  [Record](changes/archive/fixed-window-tile-override-restart.md). User-owned, native TBD.
 - D5 born-fullscreen first exit incl. games (KDE offline delivered): both
   predicates, current hints/predicate after fullscreen churn, non-fixed exit
   tiles, prior fixed float restores, later toggles retain identity. Verify no
@@ -2396,8 +2417,8 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   hints do not auto-float. Gain/lose fixed hints after admission without
   changing float identity. Meta+G tiles an automatic float and stays tiled
   through minimize/restore, workspace/output observation and domain re-adoption;
-  new client/ref and owner restart recompute (D7 tile-override persistence
-  pending implementation). Sticky origin commands retain
+  new client/ref recomputes; owner restart restores matched fixed-window tile
+  overrides with recompute fallback (D7 delivered offline). Sticky origin commands retain
   their prior semantics. Fixed born-maximized stays floating beneath native
   maximize; workspace enable keeps fixed automatic floats slotless while
   maximized, native unmaximize stays floating (explicit tile overrides use Q3).

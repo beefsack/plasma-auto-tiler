@@ -47,18 +47,24 @@ export const PLAN_START_FLAGS = 0;
 export const PLAN_START_PRIMARY = 1;
 export const PLAN_START_ALREADY = 2;
 
-// Settled intentional-float persistence (Q3): Rust-owned private runtime
-// membership store over the existing Planner1 interface (same service,
-// object, and interface as DescribePlan; well-known name so D-Bus
-// activation can start a stopped planner). Membership only: normalized
-// native ids, never geometry, focus, stacking, or sticky history.
-// ReadFloatIntent {"v":1,"correlation_id","live"?[]} prunes the stored set
+// Settled intent persistence (Q3 float plus D7 explicit fixed-window tile
+// overrides): Rust-owned private runtime membership store over the existing
+// Planner1 interface (same service, object, and interface as DescribePlan;
+// well-known name so D-Bus activation can start a stopped planner).
+// Membership only per side: normalized native ids, never geometry, focus,
+// stacking, or sticky history. Float and tile sides stay disjoint.
+// ReadFloatIntent {"v":1,"correlation_id","live"?[]} prunes both stored sets
 // to the caller-attested complete inventory when live is present; the file
-// is never mutated by a read. WriteFloatIntent {"v":1,"correlation_id",
-// "members":[full settled set]} replaces the snapshot (empty clears).
+// is never mutated by a read. The ok reply carries members/stored/returned
+// plus tile/tile_stored/tile_returned (absent tile reads as empty).
+// WriteFloatIntent {"v":1,"correlation_id", "members":[full settled float],
+// "tile"?[full tile overrides]} replaces both snapshots (each empty clears
+// its side; absent tile means an empty full tile snapshot).
 // Both methods share the planner's own intent lock (separate from plan),
 // so concurrent intent calls fail as busy; KWin callDBus errors may never
-// callback, so every intent call carries its own bounded deadline.
+// callback, so every intent call carries its own bounded deadline. Intent
+// logs carry correlation, outcome, float and tile counts, and fixed reasons
+// only.
 export const INTENT_READ_METHOD = "ReadFloatIntent";
 export const INTENT_WRITE_METHOD = "WriteFloatIntent";
 // Full 1024-member snapshot with margin, mirroring the Rust wire caps.
@@ -713,21 +719,23 @@ export interface PlanAdapterEnv {
     // foreground logical commands. Never invoked on stale/rejected/error
     // or unfinished boundaries.
     readonly onPlannedApplied?: (op: PlanOp) => void;
-    // Q3 settled float-intent bridge (opt-in, capability-gated): the entry
-    // supplies both hooks or neither, and only then does the adapter run
-    // one bounded ReadFloatIntent before first plan admission plus settled
-    // WriteFloatIntent snapshots afterwards. observeCompleteInventory
-    // decodes the full live window list (all outputs/desktops including
-    // minimized/hidden); complete=false (or null/throw) means the
-    // inventory is unproven and the read omits live (no pruning).
-    // onIntentHydrated receives the adopted settled membership once per
-    // bootstrap so the entry can populate its in-progress floating set
-    // before initial planning; never invoked after shutdown.
+    // Q3 settled float-intent bridge plus D7 tile overrides (opt-in,
+    // capability-gated): the entry supplies both hooks or neither, and only
+    // then does the adapter run one bounded ReadFloatIntent before first plan
+    // admission plus settled WriteFloatIntent snapshots afterwards.
+    // observeCompleteInventory decodes the full live window list (all
+    // outputs/desktops including minimized/hidden); complete=false (or
+    // null/throw) means the inventory is unproven and the read omits live
+    // (no pruning).
+    // onIntentHydrated receives the adopted settled float membership plus
+    // the restored tile overrides once per bootstrap so the entry can
+    // populate its in-progress floating set before initial planning; never
+    // invoked after shutdown.
     readonly observeCompleteInventory?: () => {
         readonly complete: boolean;
         readonly ids: ReadonlyArray<string>;
     } | null;
-    readonly onIntentHydrated?: (members: ReadonlyArray<string>) => void;
+    readonly onIntentHydrated?: (members: ReadonlyArray<string>, tile: ReadonlyArray<string>) => void;
     // R-MOV-03 same-axis move mode for the move wire command. Read live per
     // move request so an entry-owned Options configChanged re-read applies
     // to subsequent moves with no tree rebuild. Absent/invalid resolves to
@@ -2298,7 +2306,8 @@ export class PlanAdapter {
     private intentCallToken = 0;
     private intentSeq = 0;
     private intentMembers = new Set<string>();
-    private intentPendingWrite: ReadonlyArray<string> | null = null;
+    private intentTileMembers = new Set<string>();
+    private intentPendingWrite: { readonly members: ReadonlyArray<string>; readonly tile: ReadonlyArray<string> } | null = null;
     private intentDeadlineCancel: (() => void) | null = null;
     // Bootstrap close-race fence: verified closes that land while the
     // single read is in flight, when the local set cannot prove membership
@@ -2461,6 +2470,7 @@ export class PlanAdapter {
         this.intentBusy = false;
         this.intentSeq = 0;
         this.intentMembers.clear();
+        this.intentTileMembers.clear();
         this.intentPendingWrite = null;
         this.intentDeadlineCancel = null;
         this.intentBootstrapClosed.clear();
@@ -2517,6 +2527,7 @@ export class PlanAdapter {
         this.intentBusy = false;
         this.intentSeq = 0;
         this.intentMembers.clear();
+        this.intentTileMembers.clear();
         this.intentPendingWrite = null;
         this.intentBootstrapClosed.clear();
         for (const detach of this.detaches) {
@@ -3313,7 +3324,9 @@ export class PlanAdapter {
             this.scheduleIntentWrite();
             return;
         }
-        if (this.intentMembers.delete(id)) {
+        const floated = this.intentMembers.delete(id);
+        const tiled = this.intentTileMembers.delete(id);
+        if (floated || tiled) {
             this.scheduleIntentWrite();
         }
     }
@@ -3321,6 +3334,11 @@ export class PlanAdapter {
     // Test seam: current settled intent membership (durable set only).
     getIntentMembers(): ReadonlyArray<string> {
         return Object.freeze([...this.intentMembers]);
+    }
+
+    // Test seam: current settled tile-override membership (durable only).
+    getIntentTileMembers(): ReadonlyArray<string> {
+        return Object.freeze([...this.intentTileMembers]);
     }
 
     // Read-only fixed-size origin query for whole-workspace migration
@@ -3390,7 +3408,7 @@ export class PlanAdapter {
         const token = this.intentCallToken;
         const correlation = this.intentCorrelation();
         if (correlation === null) {
-            this.settleIntentRead(token, "-", "degraded", "malformed", [], 0, 0);
+            this.settleIntentRead(token, "-", "degraded", "malformed", [], 0, 0, [], 0, 0);
             return true;
         }
         // Complete inventory only: an unproven list omits live so the read
@@ -3436,7 +3454,7 @@ export class PlanAdapter {
             payload = "";
         }
         if (payload === "" || payload.length > INTENT_MAX_BYTES) {
-            this.settleIntentRead(token, correlation, "degraded", "oversize", [], 0, 0);
+            this.settleIntentRead(token, correlation, "degraded", "oversize", [], 0, 0, [], 0, 0);
             return true;
         }
         try {
@@ -3446,7 +3464,7 @@ export class PlanAdapter {
         } catch (error) {
             void error;
             this.intentDeadlineCancel = null;
-            this.settleIntentRead(token, correlation, "degraded", "transport", [], 0, 0);
+            this.settleIntentRead(token, correlation, "degraded", "transport", [], 0, 0, [], 0, 0);
             return true;
         }
         try {
@@ -3461,7 +3479,7 @@ export class PlanAdapter {
         } catch (error) {
             void error;
             this.clearIntentDeadline();
-            this.settleIntentRead(token, correlation, "degraded", "transport", [], 0, 0);
+            this.settleIntentRead(token, correlation, "degraded", "transport", [], 0, 0, [], 0, 0);
         }
         return true;
     }
@@ -3492,11 +3510,13 @@ export class PlanAdapter {
         outcome: string,
         stored: number,
         returned: number,
+        tileStored: number,
+        tileReturned: number,
         reason: string,
     ): void {
         try {
             this.env.log(
-                `${LOG_PREFIX}:intent-read correlation=${correlation} outcome=${outcome} stored=${String(stored)} returned=${String(returned)} reason=${reason}`,
+                `${LOG_PREFIX}:intent-read correlation=${correlation} outcome=${outcome} stored=${String(stored)} returned=${String(returned)} tile_stored=${String(tileStored)} tile_returned=${String(tileReturned)} reason=${reason}`,
             );
         } catch (error) {
             void error;
@@ -3507,11 +3527,12 @@ export class PlanAdapter {
         correlation: string,
         outcome: string,
         stored: number | null,
+        tileStored: number | null,
         reason: string,
     ): void {
         try {
             this.env.log(
-                `${LOG_PREFIX}:intent-write correlation=${correlation} outcome=${outcome} stored=${stored === null ? "-" : String(stored)} reason=${reason}`,
+                `${LOG_PREFIX}:intent-write correlation=${correlation} outcome=${outcome} stored=${stored === null ? "-" : String(stored)} tile_stored=${tileStored === null ? "-" : String(tileStored)} reason=${reason}`,
             );
         } catch (error) {
             void error;
@@ -3523,7 +3544,7 @@ export class PlanAdapter {
             return;
         }
         if (typeof reply !== "string" || reply.length > INTENT_MAX_BYTES) {
-            this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0);
+            this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0, [], 0, 0);
             return;
         }
         let parsed: unknown = null;
@@ -3531,32 +3552,53 @@ export class PlanAdapter {
             parsed = JSON.parse(reply);
         } catch (error) {
             void error;
-            this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0);
+            this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0, [], 0, 0);
             return;
         }
         if (!isRecord(parsed) || parsed["v"] !== 1 || parsed["correlation_id"] !== correlation) {
-            this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0);
+            this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0, [], 0, 0);
             return;
         }
         const outcome = parsed["outcome"];
         if (outcome === "ok") {
             const raw = parsed["members"];
             if (!Array.isArray(raw) || raw.length > INTENT_MAX_MEMBERS) {
-                this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0);
+                this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0, [], 0, 0);
                 return;
             }
             const seen = new Set<string>();
             const members: string[] = [];
             for (const entry of raw) {
                 if (!isOpaqueId(entry) || seen.has(entry)) {
-                    this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0);
+                    this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0, [], 0, 0);
                     return;
                 }
                 seen.add(entry);
                 members.push(entry);
             }
+            // Tile side is additive and backward compatible: absent means an
+            // old-format reply with no overrides; present must validate like
+            // float and stay disjoint, else the whole read is malformed.
+            const rawTile = parsed["tile"];
+            let tile: string[] = [];
+            if (rawTile !== undefined) {
+                if (!Array.isArray(rawTile) || rawTile.length > INTENT_MAX_MEMBERS) {
+                    this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0, [], 0, 0);
+                    return;
+                }
+                for (const entry of rawTile) {
+                    if (!isOpaqueId(entry) || seen.has(entry)) {
+                        this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0, [], 0, 0);
+                        return;
+                    }
+                    seen.add(entry);
+                    tile.push(entry);
+                }
+            }
             const stored = parsed["stored"];
             const returned = parsed["returned"];
+            const tileStored = rawTile === undefined ? 0 : parsed["tile_stored"];
+            const tileReturned = rawTile === undefined ? 0 : parsed["tile_returned"];
             // Counts are validated, never trusted: safe non-negative
             // integers within the member bound, with returned exactly the
             // adopted membership length. Anything else is malformed.
@@ -3567,17 +3609,29 @@ export class PlanAdapter {
                 stored > INTENT_MAX_MEMBERS ||
                 returned !== members.length
             ) {
-                this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0);
+                this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0, [], 0, 0);
                 return;
             }
-            this.settleIntentRead(token, correlation, "ok", "-", members, stored, returned);
+            if (rawTile !== undefined) {
+                if (
+                    typeof tileStored !== "number" ||
+                    !Number.isInteger(tileStored) ||
+                    tileStored < 0 ||
+                    tileStored > INTENT_MAX_MEMBERS ||
+                    tileReturned !== tile.length
+                ) {
+                    this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0, [], 0, 0);
+                    return;
+                }
+            }
+            this.settleIntentRead(token, correlation, "ok", "-", members, stored as number, returned as number, tile, tileStored as number, tileReturned as number);
             return;
         }
         if (outcome === "degraded" || outcome === "rejected") {
-            this.settleIntentRead(token, correlation, outcome, sanitizeIntentReason(parsed["reason"]), [], 0, 0);
+            this.settleIntentRead(token, correlation, outcome, sanitizeIntentReason(parsed["reason"]), [], 0, 0, [], 0, 0);
             return;
         }
-        this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0);
+        this.settleIntentRead(token, correlation, "degraded", "malformed", [], 0, 0, [], 0, 0);
     }
 
     private onIntentReadTimeout(token: number, correlation: string): void {
@@ -3587,7 +3641,7 @@ export class PlanAdapter {
         // Transport silence (missing callback, busy planner, dead service)
         // is diagnosed exactly like any other degraded read: proceed
         // empty with fixed reason and counts, never block admission.
-        this.settleIntentRead(token, correlation, "degraded", "timeout", [], 0, 0);
+        this.settleIntentRead(token, correlation, "degraded", "timeout", [], 0, 0, [], 0, 0);
     }
 
     // Single read terminal: adopts ok membership (unioned with any settled
@@ -3606,6 +3660,9 @@ export class PlanAdapter {
         members: ReadonlyArray<string>,
         stored: number,
         returned: number,
+        tileMembers: ReadonlyArray<string>,
+        tileStored: number,
+        tileReturned: number,
     ): void {
         if (!this.intentActive || token !== this.intentCallToken) {
             return;
@@ -3615,31 +3672,43 @@ export class PlanAdapter {
         this.intentBusy = false;
         if (outcome === "ok") {
             const merged = new Set<string>(members);
+            const mergedTile = new Set<string>(tileMembers);
             if (this.intentPendingWrite !== null) {
-                for (const id of this.intentPendingWrite) {
+                for (const id of this.intentPendingWrite.members) {
                     merged.add(id);
+                }
+                for (const id of this.intentPendingWrite.tile) {
+                    mergedTile.add(id);
                 }
             }
             for (const id of this.intentBootstrapClosed) {
                 merged.delete(id);
+                mergedTile.delete(id);
+            }
+            // Float wins any cross-set collision so gaming/intent floats stay
+            // untouched; tile never revives a float.
+            for (const id of merged) {
+                mergedTile.delete(id);
             }
             this.intentMembers = merged;
+            this.intentTileMembers = mergedTile;
             if (this.intentPendingWrite !== null) {
-                this.intentPendingWrite = [...merged];
+                this.intentPendingWrite = { members: [...merged], tile: [...mergedTile] };
             }
         } else {
             for (const id of this.intentBootstrapClosed) {
                 this.intentMembers.delete(id);
+                this.intentTileMembers.delete(id);
             }
             if (this.intentPendingWrite !== null) {
-                this.intentPendingWrite = [...this.intentMembers];
+                this.intentPendingWrite = { members: [...this.intentMembers], tile: [...this.intentTileMembers] };
             }
         }
         this.intentBootstrapClosed.clear();
         this.intentReady = true;
-        this.intentReadLog(correlation, outcome, stored, returned, reason);
+        this.intentReadLog(correlation, outcome, stored, returned, tileStored, tileReturned, reason);
         try {
-            this.env.onIntentHydrated?.([...this.intentMembers]);
+            this.env.onIntentHydrated?.([...this.intentMembers], [...this.intentTileMembers]);
         } catch (error) {
             void error;
         }
@@ -3657,6 +3726,36 @@ export class PlanAdapter {
     // boundary that already committed the Q2 stage, so the durable record
     // moves exactly when native application is proven. No staging
     // machinery beyond the full snapshot below.
+    // D7 fixed-window-only tile gate for an applied unfloat: the durable
+    // tile side moves only when the override is fixed under the current
+    // selected predicate at dispatch hints, carries fixed-auto origin in
+    // the flight snapshot, or already holds durable tile identity (which
+    // retains through hint loss). Ordinary non-fixed unfloats clear float
+    // without creating tile so a later fixed gain recomputes float.
+    private unfloatPersistsTileOverride(id: string, flightState: PendingFlight): boolean {
+        if (this.intentTileMembers.has(id)) {
+            return true;
+        }
+        const snapshot = flightState.snapshot;
+        for (const entry of snapshot.windows) {
+            if (entry.id !== id) {
+                continue;
+            }
+            if (entry.fixedAuto === true) {
+                return true;
+            }
+            try {
+                if (isFixedSize(entry.minSize, entry.maxSize, this.readFixedSizePredicate())) {
+                    return true;
+                }
+            } catch (error) {
+                void error;
+            }
+            return false;
+        }
+        return false;
+    }
+
     private updateSettledIntentFromFlight(flightState: PendingFlight): void {
         if (!this.intentActive) {
             return;
@@ -3667,8 +3766,12 @@ export class PlanAdapter {
         }
         if (target.floating) {
             this.intentMembers.add(target.window);
+            this.intentTileMembers.delete(target.window);
         } else {
             this.intentMembers.delete(target.window);
+            if (this.unfloatPersistsTileOverride(target.window, flightState)) {
+                this.intentTileMembers.add(target.window);
+            }
         }
         this.scheduleIntentWrite();
     }
@@ -3681,7 +3784,7 @@ export class PlanAdapter {
         if (!this.intentActive) {
             return;
         }
-        this.intentPendingWrite = [...this.intentMembers];
+        this.intentPendingWrite = { members: [...this.intentMembers], tile: [...this.intentTileMembers] };
         this.pumpIntent();
     }
 
@@ -3693,33 +3796,34 @@ export class PlanAdapter {
         if (snapshot === null) {
             return;
         }
-        if (snapshot.length > INTENT_MAX_MEMBERS) {
-            this.intentWriteLog("-", "unavailable", snapshot.length, "oversize");
+        if (snapshot.members.length > INTENT_MAX_MEMBERS || snapshot.tile.length > INTENT_MAX_MEMBERS) {
+            this.intentWriteLog("-", "unavailable", snapshot.members.length, snapshot.tile.length, "oversize");
             return;
         }
         const correlation = this.intentCorrelation();
         if (correlation === null) {
-            this.intentWriteLog("-", "unavailable", snapshot.length, "malformed");
+            this.intentWriteLog("-", "unavailable", snapshot.members.length, snapshot.tile.length, "malformed");
             return;
         }
         let payload = "";
         try {
-            payload = JSON.stringify({ v: 1, correlation_id: correlation, members: snapshot });
+            payload = JSON.stringify({ v: 1, correlation_id: correlation, members: snapshot.members, tile: snapshot.tile });
         } catch (error) {
             void error;
-            this.intentWriteLog(correlation, "unavailable", snapshot.length, "oversize");
+            this.intentWriteLog(correlation, "unavailable", snapshot.members.length, snapshot.tile.length, "oversize");
             return;
         }
         if (payload === "" || payload.length > INTENT_MAX_BYTES) {
-            this.intentWriteLog(correlation, "unavailable", snapshot.length, "oversize");
+            this.intentWriteLog(correlation, "unavailable", snapshot.members.length, snapshot.tile.length, "oversize");
             return;
         }
         this.intentCallToken += 1;
         const token = this.intentCallToken;
-        const sentCount = snapshot.length;
+        const sentCount = snapshot.members.length;
+        const sentTile = snapshot.tile.length;
         try {
             this.intentDeadlineCancel = this.env.scheduleOnce(INTENT_TIMEOUT_MS, () =>
-                this.onIntentWriteTimeout(token, correlation, sentCount),
+                this.onIntentWriteTimeout(token, correlation, sentCount, sentTile),
             );
         } catch (error) {
             void error;
@@ -3727,7 +3831,7 @@ export class PlanAdapter {
             // Diagnosed transport terminal without sending: the pending
             // snapshot is preserved for the next settled update (no
             // autonomous retry), matching the read path.
-            this.intentWriteLog(correlation, "unavailable", sentCount, "transport");
+            this.intentWriteLog(correlation, "unavailable", sentCount, sentTile, "transport");
             return;
         }
         this.intentPendingWrite = null;
@@ -3739,13 +3843,13 @@ export class PlanAdapter {
                 PLAN_INTERFACE,
                 INTENT_WRITE_METHOD,
                 payload,
-                (reply) => this.onIntentWriteReply(reply, token, correlation, sentCount),
+                (reply) => this.onIntentWriteReply(reply, token, correlation, sentCount, sentTile),
             );
         } catch (error) {
             void error;
             this.clearIntentDeadline();
             this.intentBusy = false;
-            this.intentWriteLog(correlation, "unavailable", null, "transport");
+            this.intentWriteLog(correlation, "unavailable", null, null, "transport");
             // Deliver only already-queued settled updates (a synchronous
             // setter may have coalesced a newer snapshot mid-call); never
             // an autonomous retry of this failed snapshot.
@@ -3757,7 +3861,7 @@ export class PlanAdapter {
     // carries the count; rejected/unavailable carry the fixed reason and
     // keep local intent for the next settled update. A newer coalesced
     // snapshot always pumps next, so full snapshots never reorder.
-    private onIntentWriteReply(reply: unknown, token: number, correlation: string, sentCount: number): void {
+    private onIntentWriteReply(reply: unknown, token: number, correlation: string, sentCount: number, sentTile: number): void {
         if (!this.intentActive || token !== this.intentCallToken || !this.intentBusy) {
             return;
         }
@@ -3770,18 +3874,32 @@ export class PlanAdapter {
                     const outcome = parsed["outcome"];
                     if (outcome === "stored") {
                         // The store ACK must echo the sent full snapshot
-                        // count exactly; anything else is malformed.
+                        // counts exactly; anything else is malformed. Old
+                        // planners omit tile_stored: accept when the float
+                        // count matches and no tile was sent.
+                        const ackTile = parsed["tile_stored"];
                         if (parsed["stored"] !== sentCount) {
-                            this.intentWriteLog(correlation, "unavailable", null, "malformed");
+                            this.intentWriteLog(correlation, "unavailable", null, null, "malformed");
                             this.pumpIntent();
                             return;
                         }
-                        this.intentWriteLog(correlation, "stored", sentCount, "-");
+                        if (ackTile === undefined) {
+                            if (sentTile !== 0) {
+                                this.intentWriteLog(correlation, "unavailable", null, null, "malformed");
+                                this.pumpIntent();
+                                return;
+                            }
+                        } else if (ackTile !== sentTile) {
+                            this.intentWriteLog(correlation, "unavailable", null, null, "malformed");
+                            this.pumpIntent();
+                            return;
+                        }
+                        this.intentWriteLog(correlation, "stored", sentCount, sentTile, "-");
                         this.pumpIntent();
                         return;
                     }
                     if (outcome === "rejected" || outcome === "unavailable") {
-                        this.intentWriteLog(correlation, outcome, null, sanitizeIntentReason(parsed["reason"]));
+                        this.intentWriteLog(correlation, outcome, null, null, sanitizeIntentReason(parsed["reason"]));
                         this.pumpIntent();
                         return;
                     }
@@ -3790,16 +3908,16 @@ export class PlanAdapter {
                 void error;
             }
         }
-        this.intentWriteLog(correlation, "unavailable", null, "malformed");
+        this.intentWriteLog(correlation, "unavailable", null, null, "malformed");
         this.pumpIntent();
     }
 
-    private onIntentWriteTimeout(token: number, correlation: string, _sentCount: number): void {
+    private onIntentWriteTimeout(token: number, correlation: string, _sentCount: number, _sentTile: number): void {
         if (!this.intentActive || token !== this.intentCallToken || !this.intentBusy) {
             return;
         }
         this.intentBusy = false;
-        this.intentWriteLog(correlation, "unavailable", null, "timeout");
+        this.intentWriteLog(correlation, "unavailable", null, null, "timeout");
         this.pumpIntent();
     }
 
@@ -3888,6 +4006,27 @@ export class PlanAdapter {
             }
             const record = this.fixedClients.get(entry.id);
             const liveDomain = `${entry.output}\u0000${entry.workspace}`;
+            // D7 restart hydration: a matched stored override plants kind=
+            // suppress even when current hints are non-fixed, so the saved
+            // explicit win stays authoritative through hint/predicate loss
+            // and a later D6 enable keeps it (enable drops auto/pinned only).
+            // Wire suppression still rides only on fixed hints via the shared
+            // suppress path below; hintless rows stay byte-identical plain.
+            // Sticky already adopted above; intentional-float entries keep
+            // their floating flag through the plain return, and fullscreen
+            // rows keep planner overlay fences.
+            if (record === undefined && this.intentActive && this.intentReady && this.intentTileMembers.has(entry.id)) {
+                this.fixedClients.set(entry.id, { ref, kind: "suppress", domain: liveDomain, reported: true });
+                if (isFixedSize(entry.minSize, entry.maxSize, predicate)) {
+                    const { fixedAuto: _dropped, ...rest } = entry;
+                    void _dropped;
+                    return { ...rest, fixedSuppress: true as const };
+                }
+                const { fixedAuto: _dropped, fixedSuppress: _drop2, ...rest } = entry;
+                void _dropped;
+                void _drop2;
+                return { ...rest };
+            }
             // Retained automatic floats keep identity across hint changes
             // (D2): still floating with origin, still no writes. Refresh
             // homing. Enable reset deletes these records first, so this
@@ -4666,6 +4805,10 @@ export class PlanAdapter {
         if (allDesktops && !this.ensureKeepAbove(target.ref, target.id, resourceClass)) {
             return;
         }
+        // Capture adoption before the native write: a synchronous echo (test
+        // fireDesktopsSync) consumes the adopted marker and persists ordinary
+        // float before the tile block below runs.
+        const wasAdoptedBefore = this.adoptedSticky.has(target.id);
         this.stickyEcho = { ref: target.ref, id: target.id, resourceClass, allDesktops, previousFloating };
         this.logToken(`${LOG_PREFIX}:sticky-toggle window=${target.id} resource_class=${resourceClass} target=${allDesktops ? "all-desktops" : "current-desktop"} outcome=issued`);
         this.logToken(`${LOG_PREFIX}:sticky-echo-armed`);
@@ -4693,9 +4836,35 @@ export class PlanAdapter {
             // float as intentional; sticky-off-to-tile records an
             // explicit tile win for the same live client. Sticky-off
             // with a floating prior stays floating without an override.
+            // D7 durable tile moves only for fixed overrides (fixed now,
+            // durable identity, or fixed-auto origin); ordinary sticky-off
+            // still records the in-memory win but persists no tile.
+            const priorAutoForTile =
+                this.fixedClients.get(target.id) !== undefined &&
+                this.fixedClients.get(target.id)?.kind === "auto" &&
+                this.fixedClients.get(target.id)?.ref === target.ref;
+            const hadTileForSticky = this.intentTileMembers.has(target.id);
             this.dropAutomaticFixed(target.id);
             if (!allDesktops && !previousFloating) {
                 this.noteFixedTileOverride(target.id, target.ref);
+                if (this.intentActive && !wasAdoptedBefore) {
+                    let fixedNowForSticky = false;
+                    try {
+                        const hints = this.hintSizesFor(target.ref);
+                        fixedNowForSticky = isFixedSize(hints.minSize, hints.maxSize, this.readFixedSizePredicate());
+                    } catch (error) {
+                        void error;
+                    }
+                    if (fixedNowForSticky || hadTileForSticky || priorAutoForTile) {
+                        this.intentMembers.delete(target.id);
+                        this.intentTileMembers.add(target.id);
+                        this.scheduleIntentWrite();
+                    }
+                }
+            } else if (allDesktops && this.intentActive) {
+                if (this.intentTileMembers.delete(target.id)) {
+                    this.scheduleIntentWrite();
+                }
             }
         }
         if (this.stickyEcho !== null) {

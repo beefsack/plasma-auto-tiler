@@ -4348,10 +4348,18 @@ function startPlanAdapterEntryOnce(
         ...(overrides.floatIntent === true
             ? {
                   observeCompleteInventory: () => readCompleteIntentInventory(liveWorkspace, nativeOwners),
-                  onIntentHydrated: (members) => {
+                  onIntentHydrated: (members, tile) => {
                       try {
                           for (const id of members) {
                               floatingIds.add(id);
+                          }
+                          // Tile overrides stay tiled (default): ensure a
+                          // stale float never survives for them. Tile refs
+                          // hydrate lazily in the adapter classifier.
+                          if (Array.isArray(tile)) {
+                              for (const id of tile) {
+                                  floatingIds.delete(id);
+                              }
                           }
                       } catch (error) {
                           void error;

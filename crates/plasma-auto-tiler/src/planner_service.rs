@@ -475,6 +475,8 @@ impl PlannerEndpoint {
                       outcome: &str,
                       stored: Option<usize>,
                       returned: Option<usize>,
+                      tile_stored: Option<usize>,
+                      tile_returned: Option<usize>,
                       reason: Option<&str>,
                       reply: String| {
             drop(guard);
@@ -484,6 +486,8 @@ impl PlannerEndpoint {
                 outcome,
                 stored,
                 returned,
+                tile_stored,
+                tile_returned,
                 reason,
             ));
             reply
@@ -496,6 +500,8 @@ impl PlannerEndpoint {
                     guard,
                     &error.correlation,
                     error.reason,
+                    None,
+                    None,
                     None,
                     None,
                     Some(error.reason),
@@ -513,6 +519,8 @@ impl PlannerEndpoint {
                     "rejected",
                     None,
                     None,
+                    None,
+                    None,
                     Some("not-kwin-owner"),
                     reply,
                 ));
@@ -523,6 +531,8 @@ impl PlannerEndpoint {
                     guard,
                     &parsed.correlation,
                     "degraded",
+                    Some(0),
+                    Some(0),
                     Some(0),
                     Some(0),
                     Some(reason),
@@ -538,6 +548,8 @@ impl PlannerEndpoint {
                 "degraded",
                 Some(0),
                 Some(0),
+                Some(0),
+                Some(0),
                 Some("namespace-unavailable"),
                 reply,
             ));
@@ -546,22 +558,33 @@ impl PlannerEndpoint {
             None => store.read_membership(&namespace),
             Some(live) => store.read_pruned(&namespace, live),
         };
-        let (outcome, stored, returned, reason, reply) = match read.degraded {
-            None => (
-                "ok",
-                read.stored,
-                read.members.len(),
-                None,
-                read_ok_reply(&parsed.correlation, &read.members, read.stored),
-            ),
-            Some(reason) => (
-                "degraded",
-                0,
-                0,
-                Some(reason),
-                read_degraded_reply(&parsed.correlation, reason),
-            ),
-        };
+        let (outcome, stored, returned, tile_stored, tile_returned, reason, reply) =
+            match read.degraded {
+                None => (
+                    "ok",
+                    read.stored,
+                    read.members.len(),
+                    read.tile_stored,
+                    read.tile_members.len(),
+                    None,
+                    read_ok_reply(
+                        &parsed.correlation,
+                        &read.members,
+                        read.stored,
+                        &read.tile_members,
+                        read.tile_stored,
+                    ),
+                ),
+                Some(reason) => (
+                    "degraded",
+                    0,
+                    0,
+                    0,
+                    0,
+                    Some(reason),
+                    read_degraded_reply(&parsed.correlation, reason),
+                ),
+            };
         if reply.len() > INTENT_MAX_REPLY_BYTES {
             drop(guard);
             return Err(PlannerError::Unavailable(
@@ -574,6 +597,8 @@ impl PlannerEndpoint {
             outcome,
             Some(stored),
             Some(returned),
+            Some(tile_stored),
+            Some(tile_returned),
             reason,
             reply,
         ))
@@ -611,6 +636,7 @@ impl PlannerEndpoint {
                       correlation: &str,
                       outcome: &str,
                       stored: Option<usize>,
+                      tile_stored: Option<usize>,
                       reason: Option<&str>,
                       reply: String| {
             drop(guard);
@@ -619,6 +645,8 @@ impl PlannerEndpoint {
                 correlation,
                 outcome,
                 stored,
+                None,
+                tile_stored,
                 None,
                 reason,
             ));
@@ -637,6 +665,7 @@ impl PlannerEndpoint {
                     &error.correlation,
                     "rejected",
                     None,
+                    None,
                     Some(error.reason),
                     reply,
                 ));
@@ -651,6 +680,7 @@ impl PlannerEndpoint {
                     &parsed.correlation,
                     "rejected",
                     None,
+                    None,
                     Some("not-kwin-owner"),
                     reply,
                 ));
@@ -662,39 +692,49 @@ impl PlannerEndpoint {
                     &parsed.correlation,
                     "unavailable",
                     None,
+                    None,
                     Some(reason),
                     reply,
                 ));
             }
         };
-        let (outcome, stored, reason, reply) = match &self.intent_store {
+        let (outcome, stored, tile_stored, reason, reply) = match &self.intent_store {
             None => (
                 "unavailable",
+                None,
                 None,
                 Some("namespace-unavailable"),
                 write_failed_reply(&parsed.correlation, "unavailable", "namespace-unavailable"),
             ),
-            Some(store) => match store.write_membership(&namespace, &parsed.members) {
-                Ok(stored) => (
-                    "stored",
-                    Some(stored),
-                    None,
-                    write_stored_reply(&parsed.correlation, stored),
-                ),
-                Err(reason) => {
-                    let outcome = if reason == "invalid-members" {
-                        "rejected"
-                    } else {
-                        "unavailable"
-                    };
-                    (
-                        outcome,
+            Some(store) => {
+                // Absent tile means an empty full tile snapshot; present tile
+                // (even empty) replaces atomically with float. Full snapshots
+                // remain disjoint.
+                let tile_members: Vec<String> = parsed.tile.clone().unwrap_or_default();
+                match store.write_both(&namespace, &parsed.members, &tile_members) {
+                    Ok((stored, stored_tile)) => (
+                        "stored",
+                        Some(stored),
+                        Some(stored_tile),
                         None,
-                        Some(reason),
-                        write_failed_reply(&parsed.correlation, outcome, reason),
-                    )
+                        write_stored_reply(&parsed.correlation, stored, stored_tile),
+                    ),
+                    Err(reason) => {
+                        let outcome = if reason == "invalid-members" {
+                            "rejected"
+                        } else {
+                            "unavailable"
+                        };
+                        (
+                            outcome,
+                            None,
+                            None,
+                            Some(reason),
+                            write_failed_reply(&parsed.correlation, outcome, reason),
+                        )
+                    }
                 }
-            },
+            }
         };
         if reply.len() > INTENT_MAX_REPLY_BYTES {
             drop(guard);
@@ -707,6 +747,7 @@ impl PlannerEndpoint {
             &parsed.correlation,
             outcome,
             stored,
+            tile_stored,
             reason,
             reply,
         ))
@@ -1313,6 +1354,93 @@ mod tests {
         .expect("clear reply is JSON");
         assert_eq!(cleared["outcome"], "stored");
         assert_eq!(cleared["stored"], 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn private_bus_tile_override_roundtrip_preserves_disjointness() {
+        use crate::float_intent_store::READ_METHOD as READ;
+        use crate::float_intent_store::WRITE_METHOD as WRITE;
+        let Some(bus) = PrivateBus::start() else {
+            eprintln!("SKIP: dbus-daemon unavailable for hermetic intent test");
+            return;
+        };
+        let Some(server) = bus.session() else {
+            eprintln!("SKIP: private bus daemon never listened");
+            return;
+        };
+        let Some(root) = fresh_intent_root() else {
+            eprintln!("SKIP: temp dir unavailable for hermetic intent test");
+            return;
+        };
+        serve_intent_endpoint(&server, PlannerEndpoint::with_intent_root(root.clone()));
+        let Some(client) = bus.session() else {
+            eprintln!("SKIP: private bus daemon dropped the second connection");
+            return;
+        };
+        client
+            .request_name(KWIN_SERVICE)
+            .expect("claim KWin name on private bus");
+        let proxy = intent_proxy(&client);
+        // Float plus tile persist atomically with disjoint counts.
+        let stored: serde_json::Value = serde_json::from_str(&call_intent(
+            &proxy,
+            WRITE,
+            r#"{"v":1,"correlation_id":"intent-tile-1","members":["win-a"],"tile":["win-t"]}"#,
+        ))
+        .expect("write reply is JSON");
+        assert_eq!(stored["outcome"], "stored");
+        assert_eq!(stored["stored"], 1);
+        assert_eq!(stored["tile_stored"], 1);
+        // Overlapping snapshots reject without touching disk.
+        let rejected: serde_json::Value = serde_json::from_str(&call_intent(
+            &proxy,
+            WRITE,
+            r#"{"v":1,"correlation_id":"intent-tile-2","members":["win-a"],"tile":["win-a"]}"#,
+        ))
+        .expect("rejection is JSON");
+        assert_eq!(rejected["outcome"], "rejected");
+        assert_eq!(rejected["reason"], "invalid-members");
+        // Reads return both sides; live prunes both without mutating the file.
+        let read: serde_json::Value = serde_json::from_str(&call_intent(
+            &proxy,
+            READ,
+            r#"{"v":1,"correlation_id":"intent-tile-3"}"#,
+        ))
+        .expect("read reply is JSON");
+        assert_eq!(read["outcome"], "ok");
+        assert_eq!(read["stored"], 1);
+        assert_eq!(read["tile_stored"], 1);
+        assert_eq!(read["tile_returned"], 1);
+        let pruned: serde_json::Value = serde_json::from_str(&call_intent(
+            &proxy,
+            READ,
+            r#"{"v":1,"correlation_id":"intent-tile-4","live":["win-a"]}"#,
+        ))
+        .expect("pruned read is JSON");
+        assert_eq!(pruned["outcome"], "ok");
+        assert_eq!(pruned["stored"], 1);
+        assert_eq!(pruned["returned"], 1);
+        assert_eq!(pruned["tile_stored"], 1);
+        assert_eq!(pruned["tile_returned"], 0);
+        // Float-only write carries an empty tile snapshot and clears it.
+        let preserved: serde_json::Value = serde_json::from_str(&call_intent(
+            &proxy,
+            WRITE,
+            r#"{"v":1,"correlation_id":"intent-tile-5","members":["win-b"]}"#,
+        ))
+        .expect("write reply is JSON");
+        assert_eq!(preserved["outcome"], "stored");
+        assert_eq!(preserved["stored"], 1);
+        assert_eq!(preserved["tile_stored"], 0);
+        let cleared: serde_json::Value = serde_json::from_str(&call_intent(
+            &proxy,
+            WRITE,
+            r#"{"v":1,"correlation_id":"intent-tile-6","members":["win-b"],"tile":[]}"#,
+        ))
+        .expect("clear reply is JSON");
+        assert_eq!(cleared["outcome"], "stored");
+        assert_eq!(cleared["tile_stored"], 0);
         let _ = std::fs::remove_dir_all(&root);
     }
 

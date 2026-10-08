@@ -415,6 +415,8 @@ All fresh variants below reset the client and WM state independently.
   suppression survives omitted/scoped/released observations; new refs
   classify again (NORMATIVE D3, no setting). Implemented offline 2026-10-08,
   [real Planner and sticky fixtures](../../../kwin/tests/fixed-size-admission.test.ts).
+  D7 now restores matched fixed-window tile overrides across owner restart
+  ([restart fixtures](../../../kwin/tests/float-intent.test.ts)); no positions persist.
   Physical hide/show/domain reassignment TBD.
 - Then Ours Windows: TBD (handoff only; behavior frozen).
 - Variant hook: NORMATIVE explicit intent vs automatic fixed
@@ -568,6 +570,12 @@ All fresh variants below reset the client and WM state independently.
   startup/restart where supported; no H/V tree is asserted, including the
   explicit-tile and unavailable-store variants.
 - When: start the tiler owner with the clients still alive.
+- Discriminating variants: successful override then re-float/close; a complete
+  startup inventory omits a closed client vs a partial inventory omits a live
+  hidden client; old v1 file has no tile field, corrupt file, or stored ID does
+  not match E. Each restarts independently. Hint-loss/enable and non-fixed
+  controls are in R-RST-04. Reference outcomes for all added legs remain TBD;
+  native Ours outcomes remain TBD.
 - Observe: fixed classification at adoption vs open-only classification;
   previous explicit tile override vs recomputed automatic identity.
   Reference outcomes for the unavailable-store variant are TBD.
@@ -586,13 +594,18 @@ All fresh variants below reset the client and WM state independently.
 - Then paneru: TBD.
 - Then Ours KDE: startup foreground/hidden adoption floats fixed E;
   fixed-window user tile overrides persist across owner restart in the
-  same intentional-float store, recompute fallback if unavailable
-  (NORMATIVE D7, User 2026-10-08; persistence selected, implementation pending).
+  same intentional-float store, recompute fallback if missing/degraded/unmatched
+  (NORMATIVE D7, User 2026-10-08; persistence delivered offline 2026-10-09).
   Startup classification implemented offline 2026-10-08;
   [startup entry fixtures](../../../kwin/tests/fixed-size-workspace-entry.test.ts)
   and [restart fixtures](../../../kwin/tests/fixed-size-admission.test.ts).
-  Native owner journey TBD; R-RST-01 float identity work stays separate.
+  [D7 real Planner/entry and lifecycle fixtures](../../../kwin/tests/float-intent.test.ts)
+  prove success-only persistence, tile hydration, clear on re-float/close and
+  complete-inventory filtering; partial omission retains membership.
+  Legacy v1 without tile reads compatibly empty for overrides; degraded reads
+  log and proceed empty, both recompute fixed E to untouched float.
+  Native owner journey TBD; [D7 record](../../changes/archive/fixed-window-tile-override-restart.md).
 - Then Ours Windows: TBD (handoff only; behavior frozen).
 - Variant hook: NORMATIVE admission/adoption scope (User 2026-10-08);
   explicit identity persistence is separately selected by R-RST-01,
-  tile-override persistence selected, implementation pending.
+  tile-override persistence delivered offline.

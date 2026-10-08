@@ -54,10 +54,13 @@ function requestCorrelation(payload: string): string {
 
 class FakeIntentStore {
     stored = new Set<string>();
+    storedTile = new Set<string>();
     readMode: IntentMode = "auto";
     writeMode: IntentMode = "auto";
     // Scripted non-ok read terminal (null = answer from stored state).
     scriptedRead: { outcome: "degraded" | "rejected"; reason: string } | "corrupt-bytes" | null = null;
+    // When true, ok reads omit the tile side (old-format planner).
+    oldFormatReads = false;
     reads: string[] = [];
     writes: string[] = [];
     readCalls = 0;
@@ -78,6 +81,9 @@ class FakeIntentStore {
                 members: [],
                 stored: 0,
                 returned: 0,
+                tile: [],
+                tile_stored: 0,
+                tile_returned: 0,
                 reason: scripted.reason,
             });
         }
@@ -107,6 +113,17 @@ class FakeIntentStore {
             live = new Set(raw as string[]);
         }
         const returned = [...this.stored].filter((id) => live === null || live.has(id));
+        const returnedTile = [...this.storedTile].filter((id) => live === null || live.has(id));
+        if (this.oldFormatReads) {
+            return JSON.stringify({
+                v: 1,
+                correlation_id: correlation,
+                outcome: "ok",
+                members: returned,
+                stored: this.stored.size,
+                returned: returned.length,
+            });
+        }
         return JSON.stringify({
             v: 1,
             correlation_id: correlation,
@@ -114,6 +131,9 @@ class FakeIntentStore {
             members: returned,
             stored: this.stored.size,
             returned: returned.length,
+            tile: returnedTile,
+            tile_stored: this.storedTile.size,
+            tile_returned: returnedTile.length,
         });
     }
 
@@ -138,8 +158,23 @@ class FakeIntentStore {
         if (new Set(members as string[]).size !== (members as string[]).length) {
             return JSON.stringify({ v: 1, correlation_id: correlation, outcome: "rejected", reason: "invalid-members" });
         }
+        let tile: string[] = [];
+        if (request["tile"] !== undefined) {
+            const rawTile = request["tile"];
+            if (!Array.isArray(rawTile) || rawTile.length > 1024 || !rawTile.every(opaqueId)) {
+                return JSON.stringify({ v: 1, correlation_id: correlation, outcome: "rejected", reason: "invalid-members" });
+            }
+            if (new Set(rawTile as string[]).size !== (rawTile as string[]).length) {
+                return JSON.stringify({ v: 1, correlation_id: correlation, outcome: "rejected", reason: "invalid-members" });
+            }
+            tile = rawTile as string[];
+        }
+        if (tile.some((id) => (members as string[]).includes(id))) {
+            return JSON.stringify({ v: 1, correlation_id: correlation, outcome: "rejected", reason: "invalid-members" });
+        }
         this.stored = new Set(members as string[]);
-        return JSON.stringify({ v: 1, correlation_id: correlation, outcome: "stored", stored: members.length });
+        this.storedTile = new Set(tile);
+        return JSON.stringify({ v: 1, correlation_id: correlation, outcome: "stored", stored: members.length, tile_stored: tile.length });
     }
 }
 
@@ -218,11 +253,13 @@ interface AdapterMocks {
     readonly desktopToggles: Array<{ target: object; allDesktops: boolean }>;
     readonly subscribes: Array<{ kind: string; handler: (target?: object) => void }>;
     readonly hydrated: string[][];
+    readonly hydratedTile: string[][];
     observeImpl: () => PlanObserved | null;
     observeHiddenImpl: () => ReadonlyArray<PlanObserved>;
     inventoryImpl: () => { complete: boolean; ids: string[] } | null;
     desktopIdsImpl: (target: object) => ReadonlyArray<string> | null;
     stickyToggleImpl: (allDesktops: boolean) => void;
+    constraintImpl: ((target: object) => { readonly resizeable: boolean | null; readonly minSize: { readonly w: number; readonly h: number } | null; readonly maxSize: { readonly w: number; readonly h: number } | null } | null) | null;
     throwScheduleOnceOnce: boolean;
     throwWriteOnce: boolean;
     fireDesktopsSync: boolean;
@@ -244,6 +281,7 @@ function mockAdapterEnv(refs: { a: object; b: object }, withIntent: boolean): Ad
         desktopToggles: [],
         subscribes: [],
         hydrated: [],
+        hydratedTile: [],
         observeImpl: (): PlanObserved | null => makeObserved(refs),
         observeHiddenImpl: (): ReadonlyArray<PlanObserved> => [],
         inventoryImpl: (): { complete: boolean; ids: string[] } | null => ({
@@ -252,6 +290,7 @@ function mockAdapterEnv(refs: { a: object; b: object }, withIntent: boolean): Ad
         }),
         desktopIdsImpl: (_target: object): ReadonlyArray<string> | null => [],
         stickyToggleImpl: (_allDesktops: boolean): void => {},
+        constraintImpl: null,
         throwScheduleOnceOnce: false,
         throwWriteOnce: false,
         fireDesktopsSync: false,
@@ -285,8 +324,9 @@ function mockAdapterEnv(refs: { a: object; b: object }, withIntent: boolean): Ad
         withIntent === true
             ? {
                   observeCompleteInventory: (): { complete: boolean; ids: string[] } | null => state.inventoryImpl(),
-                  onIntentHydrated: (members: ReadonlyArray<string>): void => {
+                  onIntentHydrated: (members: ReadonlyArray<string>, tile: ReadonlyArray<string>): void => {
                       state.hydrated.push([...members]);
+                      state.hydratedTile.push([...(tile ?? [])]);
                   },
               }
             : {};
@@ -371,6 +411,16 @@ function mockAdapterEnv(refs: { a: object; b: object }, withIntent: boolean): Ad
             return (): void => {};
         },
         readDesktopIds: (target: object): ReadonlyArray<string> | null => state.desktopIdsImpl(target),
+        readWindowConstraints: (target: object) => {
+            try {
+                return state.constraintImpl !== null && state.constraintImpl !== undefined
+                    ? (state.constraintImpl(target) as never)
+                    : null;
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
         ...hooks,
     };
     (state as { env: PlanAdapterEnv }).env = env;
@@ -1399,6 +1449,330 @@ describe("float-intent settled writes", () => {
     });
 });
 
+describe("tile-override restart persistence", () => {
+    const FIXED_HINT = { w: 640, h: 480 };
+
+    function fixedConstraintsFor(_refs: { a: object; b: object }, fixedRef: object | null) {
+        return (target: object) => {
+            if (fixedRef !== null && target === fixedRef) {
+                return { resizeable: false, minSize: { ...FIXED_HINT }, maxSize: { ...FIXED_HINT } };
+            }
+            return { resizeable: true, minSize: null, maxSize: null };
+        };
+    }
+
+    it("persists explicit tile only after applied success, never on failure", async () => {
+        const refs = makeRefs();
+        const mocks = mockAdapterEnv(refs, true);
+        // win-b is fixed; win-a is ordinary. Bootstrap with win-b as settled
+        // intentional float so the unfloat flight is well-defined.
+        mocks.constraintImpl = fixedConstraintsFor(refs, refs.b);
+        mocks.intent.stored = new Set(["win-b"]);
+        const adapter = enableAdapter(mocks);
+        assert.equal(adapter.startIntentBootstrap(), true);
+        assert.deepEqual(adapter.getIntentMembers(), ["win-b"]);
+        assert.deepEqual(adapter.getIntentTileMembers(), []);
+        const engine = EngineBridge.start();
+        try {
+            // Unfloat the same live client: success persists the tile override
+            // and clears the float.
+            mocks.observeImpl = () => makeObserved(refs, { focusedB: true, floatingB: true, fingerprint: "fp-t2" });
+            adapter.requestFloat();
+            const plans = planIndices(mocks);
+            assert.equal(plans.length, 1);
+            assert.equal((await flushPlanAt(mocks, engine, plans[0] as number))["outcome"], "planned");
+            assert.deepEqual(adapter.getIntentMembers(), []);
+            assert.deepEqual(adapter.getIntentTileMembers(), ["win-b"]);
+            const writes = intentIndices(mocks, INTENT_WRITE_METHOD);
+            assert.equal(writes.length, 1);
+            assert.deepEqual(intentPayloadAt(mocks, writes[0] as number)["tile"], ["win-b"]);
+            const line = intentWriteLogs(mocks).pop();
+            assert.ok(line !== undefined);
+            assert.ok(line.includes("outcome=stored") && line.includes("tile_stored=1"), line);
+            assert.ok(!line.includes("win-b"), line);
+            // Re-float the same client: tile clears, float returns.
+            mocks.observeImpl = () => makeObserved(refs, { focusedB: true, fingerprint: "fp-t3" });
+            adapter.requestFloat();
+            const plans2 = planIndices(mocks);
+            assert.equal(plans2.length, 2);
+            assert.equal((await flushPlanAt(mocks, engine, plans2[1] as number))["outcome"], "planned");
+            assert.deepEqual(adapter.getIntentMembers(), ["win-b"]);
+            assert.deepEqual(adapter.getIntentTileMembers(), []);
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("failed apply never persists the staged tile", async () => {
+        const refs = makeRefs();
+        const mocks = mockAdapterEnv(refs, true);
+        mocks.constraintImpl = fixedConstraintsFor(refs, refs.b);
+        mocks.intent.stored = new Set(["win-b"]);
+        const adapter = enableAdapter(mocks);
+        assert.equal(adapter.startIntentBootstrap(), true);
+        assert.deepEqual(adapter.getIntentMembers(), ["win-b"]);
+        const engine = EngineBridge.start();
+        try {
+            // Unfloat flight times out: the staged tile drops, float survives.
+            mocks.observeImpl = () => makeObserved(refs, { focusedB: true, floatingB: true, fingerprint: "fp-f2" });
+            adapter.requestFloat();
+            const plans = planIndices(mocks);
+            assert.equal(plans.length, 1);
+            fireSingleTimeout(mocks);
+            assert.deepEqual(adapter.getIntentMembers(), ["win-b"]);
+            assert.deepEqual(adapter.getIntentTileMembers(), []);
+            // No tile write went out for the failed flight.
+            for (const index of intentIndices(mocks, INTENT_WRITE_METHOD)) {
+                assert.deepEqual(intentPayloadAt(mocks, index)["tile"], []);
+            }
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("hydrate keeps the fixed override tiled with suppress and no extra writes", async () => {
+        const refs = makeRefs();
+        const mocks = mockAdapterEnv(refs, true);
+        mocks.constraintImpl = fixedConstraintsFor(refs, refs.b);
+        mocks.intent.storedTile = new Set(["win-b"]);
+        const adapter = enableAdapter(mocks);
+        assert.equal(adapter.startIntentBootstrap(), true);
+        assert.deepEqual(mocks.hydratedTile, [["win-b"]]);
+        assert.deepEqual(adapter.getIntentTileMembers(), ["win-b"]);
+        const line = intentReadLog(mocks);
+        assert.ok(line !== undefined);
+        assert.ok(line.includes("outcome=ok") && line.includes("tile_returned=1"), line);
+        assert.ok(!line.includes("win-b"), line);
+        const engine = EngineBridge.start();
+        try {
+            mocks.observeImpl = () => makeObserved(refs, { focusedB: true, fingerprint: "fp-h1" });
+            fire(mocks, "added");
+            runDebounce(mocks);
+            const plans = planIndices(mocks);
+            assert.equal(plans.length, 1);
+            const payload = JSON.parse(mocks.dbusCalls[plans[0] as number]?.payload as string) as Record<string, unknown>;
+            const row = (payload["windows"] as Array<Record<string, unknown>>).find(
+                (entry) => entry["window"] === "win-b",
+            );
+            assert.ok(row !== undefined, "wire carries the restored override");
+            assert.equal(row["fixed_suppress"], true);
+            assert.equal((await flushPlanAt(mocks, engine, plans[0] as number))["outcome"], "planned");
+            // The restored tile is placed; no float toggles or sticky writes
+            // touch untouched clients beyond that explicit placement.
+            const forB = mocks.geometries.filter((entry) => entry.target === refs.b);
+            assert.ok(forB.length >= 1, "restored tile is placed");
+            assert.deepEqual(mocks.floatingWrites, []);
+            assert.deepEqual(mocks.desktopToggles, []);
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("re-float clears, close evicts, and complete prune drops the tile", async () => {
+        const refs = makeRefs();
+        const mocks = mockAdapterEnv(refs, true);
+        mocks.constraintImpl = fixedConstraintsFor(refs, refs.b);
+        mocks.intent.stored = new Set(["win-b"]);
+        mocks.intent.storedTile = new Set(["win-t"]);
+        mocks.inventoryImpl = () => ({ complete: true, ids: ["win-a", "win-b", "win-t"] });
+        const adapter = enableAdapter(mocks);
+        assert.equal(adapter.startIntentBootstrap(), true);
+        assert.deepEqual(adapter.getIntentTileMembers(), ["win-t"]);
+        // Complete live inventory prunes the gone tile from the reply; the
+        // fixture store answers pruned.
+        const pruned = mocks.intent.readReply(
+            JSON.stringify({ v: 1, correlation_id: "probe-1", live: ["win-a", "win-b"] }),
+        );
+        assert.ok(pruned !== null && JSON.parse(pruned)["tile_returned"] === 0);
+        // Verified close evicts the tile and persists the cleared snapshot.
+        adapter.noteNativeRemovedId("win-t");
+        assert.deepEqual(adapter.getIntentTileMembers(), []);
+        let writes = intentIndices(mocks, INTENT_WRITE_METHOD);
+        assert.ok(writes.length >= 1);
+        assert.deepEqual(intentPayloadAt(mocks, writes[writes.length - 1] as number)["tile"], []);
+        // Re-float path: hydrating a tile then floating it clears tile via
+        // the applied flight (covered by the success test); here assert the
+        // local disjoint invariant directly.
+        assert.ok(!adapter.getIntentMembers().some((id) => adapter.getIntentTileMembers().includes(id)));
+    });
+
+    it("degraded, old-format, and unmatched tile fall back to recompute", () => {
+        for (const mode of ["degraded", "old-format", "unmatched"] as const) {
+            const refs = makeRefs();
+            const mocks = mockAdapterEnv(refs, true);
+            mocks.constraintImpl = fixedConstraintsFor(refs, refs.b);
+            if (mode === "degraded") {
+                mocks.intent.scriptedRead = { outcome: "degraded", reason: "corrupt" };
+            } else if (mode === "old-format") {
+                mocks.intent.oldFormatReads = true;
+                mocks.intent.storedTile = new Set(["win-b"]);
+            } else {
+                mocks.intent.storedTile = new Set(["win-gone"]);
+            }
+            const adapter = enableAdapter(mocks);
+            assert.equal(adapter.startIntentBootstrap(), true);
+            assert.deepEqual(adapter.getIntentTileMembers(), [], mode);
+            const line = intentReadLog(mocks);
+            assert.ok(line !== undefined, mode);
+            if (mode === "degraded") {
+                assert.ok(line.includes("outcome=degraded") && line.includes("reason=corrupt"), line);
+            } else {
+                assert.ok(line.includes("outcome=ok"), line);
+            }
+            assert.ok(!line.includes("win-"), line);
+        }
+    });
+
+    it("non-fixed unfloat stays plain with no suppress and persists no tile", async () => {
+        const refs = makeRefs();
+        const mocks = mockAdapterEnv(refs, true);
+        // No fixed hints anywhere: both windows ordinary.
+        mocks.constraintImpl = () => ({ resizeable: true, minSize: null, maxSize: null });
+        mocks.intent.stored = new Set(["win-b"]);
+        const adapter = enableAdapter(mocks);
+        assert.equal(adapter.startIntentBootstrap(), true);
+        assert.deepEqual(adapter.getIntentMembers(), ["win-b"]);
+        const engine = EngineBridge.start();
+        try {
+            mocks.observeImpl = () => makeObserved(refs, { focusedB: true, floatingB: true, fingerprint: "fp-nf2" });
+            adapter.requestFloat();
+            const plans = planIndices(mocks);
+            assert.equal(plans.length, 1);
+            const payload = JSON.parse(mocks.dbusCalls[plans[0] as number]?.payload as string) as Record<string, unknown>;
+            const row = (payload["windows"] as Array<Record<string, unknown>>).find(
+                (entry) => entry["window"] === "win-b",
+            );
+            assert.ok(row !== undefined);
+            assert.ok(!("fixed_suppress" in row), "non-fixed rows stay byte-identical");
+            assert.equal((await flushPlanAt(mocks, engine, plans[0] as number))["outcome"], "planned");
+            // Ordinary unfloat clears float but creates no durable tile.
+            assert.deepEqual(adapter.getIntentMembers(), []);
+            assert.deepEqual(adapter.getIntentTileMembers(), []);
+            const writes = intentIndices(mocks, INTENT_WRITE_METHOD);
+            assert.equal(writes.length, 1);
+            assert.deepEqual(intentPayloadAt(mocks, writes[0] as number)["tile"], []);
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("ordinary unfloat then fixed gain while stopped recomputes float, not tile", async () => {
+        // Owner 1: ordinary (non-fixed) float then unfloat persists no tile.
+        const refs = makeRefs();
+        const mocks = mockAdapterEnv(refs, true);
+        mocks.constraintImpl = () => ({ resizeable: true, minSize: null, maxSize: null });
+        mocks.intent.stored = new Set(["win-b"]);
+        const first = enableAdapter(mocks);
+        assert.equal(first.startIntentBootstrap(), true);
+        const engine = EngineBridge.start();
+        try {
+            mocks.observeImpl = () => makeObserved(refs, { focusedB: true, floatingB: true, fingerprint: "fp-g1" });
+            first.requestFloat();
+            const plans = planIndices(mocks);
+            assert.equal((await flushPlanAt(mocks, engine, plans[0] as number))["outcome"], "planned");
+            assert.deepEqual(first.getIntentTileMembers(), []);
+        } finally {
+            await engine.close();
+        }
+        // While stopped the window gains fixed hints. Restart from the same
+        // fixture store: no tile override exists, so fresh classification
+        // recomputes an automatic float rather than a suppress pin.
+        const refs2 = makeRefs();
+        const mocks2 = mockAdapterEnv(refs2, true);
+        mocks2.constraintImpl = fixedConstraintsFor(refs2, refs2.b);
+        mocks2.intent.stored = new Set(mocks.intent.stored);
+        mocks2.intent.storedTile = new Set(mocks.intent.storedTile);
+        const second = enableAdapter(mocks2);
+        assert.equal(second.startIntentBootstrap(), true);
+        assert.deepEqual(second.getIntentTileMembers(), []);
+        const engine2 = EngineBridge.start();
+        try {
+            mocks2.observeImpl = () => makeObserved(refs2, { focusedB: true, fingerprint: "fp-g2" });
+            fire(mocks2, "added");
+            runDebounce(mocks2);
+            const plans = planIndices(mocks2);
+            assert.equal(plans.length, 1);
+            const payload = JSON.parse(mocks2.dbusCalls[plans[0] as number]?.payload as string) as Record<string, unknown>;
+            const row = (payload["windows"] as Array<Record<string, unknown>>).find(
+                (entry) => entry["window"] === "win-b",
+            );
+            assert.ok(row !== undefined);
+            assert.equal(row["floating"], true);
+            assert.equal(row["fixed_auto"], true);
+            assert.ok(!("fixed_suppress" in row), "no persisted tile to restore");
+            assert.equal((await flushPlanAt(mocks2, engine2, plans[0] as number))["outcome"], "planned");
+        } finally {
+            await engine2.close();
+        }
+    });
+
+    it("matched override survives hint loss across restart and enable", async () => {
+        // Owner 1: fixed unfloat persists the explicit tile.
+        const refs = makeRefs();
+        const mocks = mockAdapterEnv(refs, true);
+        mocks.constraintImpl = fixedConstraintsFor(refs, refs.b);
+        mocks.intent.stored = new Set(["win-b"]);
+        const first = enableAdapter(mocks);
+        assert.equal(first.startIntentBootstrap(), true);
+        const engine = EngineBridge.start();
+        try {
+            mocks.observeImpl = () => makeObserved(refs, { focusedB: true, floatingB: true, fingerprint: "fp-d1" });
+            first.requestFloat();
+            const plans = planIndices(mocks);
+            assert.equal((await flushPlanAt(mocks, engine, plans[0] as number))["outcome"], "planned");
+            assert.deepEqual(first.getIntentTileMembers(), ["win-b"]);
+        } finally {
+            await engine.close();
+        }
+        // Owner 2 restarts while hints are lost: the matched override plants
+        // suppress (plain wire, no suppress emit) and stays authoritative.
+        const refs2 = makeRefs();
+        const mocks2 = mockAdapterEnv(refs2, true);
+        mocks2.constraintImpl = () => ({ resizeable: true, minSize: null, maxSize: null });
+        mocks2.intent.stored = new Set(mocks.intent.stored);
+        mocks2.intent.storedTile = new Set(mocks.intent.storedTile);
+        mocks2.inventoryImpl = () => ({ complete: true, ids: ["win-a", "win-b"] });
+        const second = enableAdapter(mocks2);
+        assert.equal(second.startIntentBootstrap(), true);
+        assert.deepEqual(second.getIntentTileMembers(), ["win-b"]);
+        const engine2 = EngineBridge.start();
+        try {
+            mocks2.observeImpl = () => makeObserved(refs2, { focusedB: true, fingerprint: "fp-d2" });
+            fire(mocks2, "added");
+            runDebounce(mocks2);
+            let plans = planIndices(mocks2);
+            assert.equal(plans.length, 1);
+            let payload = JSON.parse(mocks2.dbusCalls[plans[0] as number]?.payload as string) as Record<string, unknown>;
+            let row = (payload["windows"] as Array<Record<string, unknown>>).find(
+                (entry) => entry["window"] === "win-b",
+            );
+            assert.ok(row !== undefined);
+            assert.ok(!("fixed_suppress" in row), "hintless matched override emits plain wire");
+            assert.ok(!("fixed_auto" in row), "matched override never recomputes automatic");
+            assert.equal((await flushPlanAt(mocks2, engine2, plans[0] as number))["outcome"], "planned");
+            // Hints return, then a workspace disable/enable recheck runs: the
+            // explicit suppress survives (enable drops auto/pinned only) and
+            // tiles again.
+            mocks2.constraintImpl = fixedConstraintsFor(refs2, refs2.b);
+            second.retileAutomaticFixed("out-1", "ws-1", ["win-a", "win-b"]);
+            mocks2.observeImpl = () => makeObserved(refs2, { focusedB: true, fingerprint: "fp-d3", driftAX: 4 });
+            fire(mocks2, "added");
+            runDebounce(mocks2);
+            plans = planIndices(mocks2);
+            assert.equal(plans.length, 2);
+            payload = JSON.parse(mocks2.dbusCalls[plans[1] as number]?.payload as string) as Record<string, unknown>;
+            row = (payload["windows"] as Array<Record<string, unknown>>).find(
+                (entry) => entry["window"] === "win-b",
+            );
+            assert.ok(row !== undefined);
+            assert.equal(row["fixed_suppress"], true);
+            assert.equal((await flushPlanAt(mocks2, engine2, plans[1] as number))["outcome"], "planned");
+        } finally {
+            await engine2.close();
+        }
+    });
+});
+
 // ---------------------------------------------------------------------------
 // Production-entry fixture: real observeNative/hidden/inventory paths over a
 // fake workspace, real Planner for plan dispatches, fixture intent store.
@@ -1896,6 +2270,37 @@ describe("float-intent through the production entry", () => {
             assertZeroWinWrites(world, winB, "foreground hydration");
             assert.equal(world.workspace["activeWindow"], winA);
             assert.equal(world.activeWindowWrites, 0, "native focus not actuated");
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("hydrates a fixed tile override through the production entry with suppress", async () => {
+        const world = fakeWorld();
+        const winA = addWin(world, "win-a", { x: 0 });
+        const winB = addWin(world, "win-b", { x: 600, fixed: true });
+        world.workspace["activeWindow"] = winA;
+        const store = new FakeIntentStore();
+        store.storedTile = new Set(["win-b"]);
+        const { mocks } = startIntentEntry(world, store);
+        world.added.fire();
+        runEntryDebounce(mocks);
+        const payload = lastPlanPayload(mocks);
+        const row = wireRow(payload, "win-b");
+        assert.equal(row["fixed_suppress"], true);
+        const engine = EngineBridge.start();
+        try {
+            resetWinWriteCounts(world);
+            const flushed = { count: 0 };
+            await drainEntryPlans(mocks, engine, flushed);
+            // The restored tile is placed via the explicit tile path; focus
+            // is never actuated for hydration.
+            assert.ok((winWriteCounts(world, winB).frame ?? 0) >= 1, "restored tile is placed");
+            assert.equal(world.activeWindowWrites, 0, "native focus not actuated");
+            const readLog = mocks.logs.find((entry) => entry.includes(":intent-read "));
+            assert.ok(readLog !== undefined);
+            assert.ok(readLog.includes("tile_returned=1"), readLog);
+            assert.ok(!readLog.includes("win-b"), readLog);
         } finally {
             await engine.close();
         }
