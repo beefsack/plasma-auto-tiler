@@ -556,10 +556,13 @@ All fresh variants below reset the client and WM state independently.
   born-maximized/unmaximize legs have no counterpart. Client ack TBD.
   `S(S-sway-spc)` + `S(S-sway-max)`.
 - Then qtile/Columns: E admits floating via the fixed-size rule;
-  maximized is a floating-layer state at work-area size, so born-maximized
-  stays floating; native unmaximize clears maximized but the fixed rule
-  still matches, so it stays floating. Exact frames/focus TBD.
-  `S(S-qti-spc)` + `S(S-qti-fs)`.
+  maximize is a floating-layer state at work-area size. Maximize entered
+  after fixed-float admission saves `FLOATING`, and unmaximize restores
+  that saved state without re-running the fixed rule. X11 client maximize
+  messages echo the property without driving this mode; Wayland requests
+  drive the setter. Exact born-request ordering, frames and focus TBD
+  (client/native timing). `S(S-qti-spc)` + `S(S-qti-fs)` +
+  `S(S-qti-fs-restore)`.
 - Then awesome/tile: E admits implicitly floating (both positive axes
   equal; maximized also implies implicit float; manage-time maximized
   hint applies), so born-maximized stays implicitly floating; native

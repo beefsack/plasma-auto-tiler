@@ -602,7 +602,8 @@ Legend:
   + libqtile/resources/default_config.py:47-55
   (`Mod+f` fullscreen, `Mod+t` floating)
   @83c697a5621306c3586efca31867efcfa0482e2d
-- `S-qti-fs-restore` qtile:libqtile/backend/base/window.py:305-323
+- `S-qti-fs-restore` qtile:libqtile/backend/base/window.py:262-285
+  (maximize saves the current float state and restores it on exit) and :305-323
   (`_set_fullscreen` saves the prior float-state on entry and restores it
   on exit) + :340-361 (`save_float_state`/`restore_float_state`: geometry
   plus saved state re-applied; restore never re-runs the float-rule match)
