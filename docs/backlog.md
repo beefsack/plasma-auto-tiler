@@ -191,7 +191,13 @@ decisions of 2026-09-24 are under
   faithful regression red/green, 846 KWin tests and all gates pass. User
   laptop re-check (2026-10-05): normal and sticky float focus correct
   ([evidence](changes/archive/kde-post-windows-followups.md#laptop-re-check-user-owned)).
-  Still pending: native-change repeats and held-key autorepeat.
+  Q8 offline repeat evidence delivered: second same-reference maximize/sticky
+  native-change cycles, duplicate sticky notification convergence and one native
+  attempt per delivered maximize callback; existing maximize/fullscreen/geometry
+  repeat fixtures reused ([record](changes/archive/kde-repeat-offline-fixtures.md)).
+  Still pending, user-owned live: native-change repeats and held-key autorepeat;
+  physical delivery/suppression remains
+  [TBD](spec/reference-outcomes.md#r-max-04--r-flt-02-kde-held-key-discriminator).
   User decisions 2026-10-05: B6 infeasible minimums use origin+minimum on
   both platforms (Windows already does it); KDE delivered offline
   `cf6ab31` (920 KWin / 1107 Rust tests, CI green; client shortfalls get
@@ -2382,6 +2388,15 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 
 ### Single-output laptop
 
+- B1/B2 native-change repeats and held-key autorepeat (Q8 offline evidence
+  delivered): repeat Meta+M/native-restore/repress and the inverse ordering;
+  repeat sticky-on/native-unstick/repress and sticky-off/native-restick/repress,
+  both tiled and floating origins. Hold/release Meta+M and Meta+Shift+G, record
+  KGlobalAccel callback count/visible cycling and release/repress behavior.
+  Physical repeat behavior remains TBD; these live checks stay user-owned.
+  [Original steps](changes/archive/kde-post-windows-followups.md#user-owned-laptop-checks),
+  [offline record](changes/archive/kde-repeat-offline-fixtures.md),
+  [discriminator](spec/reference-outcomes.md#r-max-04--r-flt-02-kde-held-key-discriminator).
 - B9 unfloat while maximized on KDE (offline delivered): intentionally float
   B, natively maximize it, then toggle float off once. Verify maximize clears
   before fresh tiled placement, focus/settlement logs, ordinary nonmax unfloat,

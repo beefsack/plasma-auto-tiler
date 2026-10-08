@@ -2527,6 +2527,120 @@ describe("plan adapter sticky and maximize toggles", () => {
         ]);
     });
 
+    it("reissues maximize across two same-ref native restore cycles with no suppression", () => {
+        // B1 repeat: a second native restore/repress round still issues one write per activation.
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let maximized = false;
+        mocks.observeImpl = () => makeObserved(refs, { maximized: { "win-a": maximized } });
+        mocks.maximizeToggleImpl = (_target, value) => {
+            maximized = value;
+            fire(mocks, "maximize", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestMaximize();
+        for (let cycle = 0; cycle < 2; cycle += 1) {
+            maximized = false;
+            fire(mocks, "maximize", refs.a);
+            adapter.requestMaximize();
+        }
+        assert.deepEqual(mocks.maximizeToggles, [
+            { target: refs.a, maximized: true },
+            { target: refs.a, maximized: true },
+            { target: refs.a, maximized: true },
+        ]);
+        assert.equal(maximized, true, "two restore cycles end maximized after the third repress");
+        assert.ok(!mocks.logs.some((line) => line.includes("maximize-refused-attempted")), "per-activation semantics never refuse a repeated cycle");
+    });
+
+    it("reissues sticky-off across two same-ref native restick cycles with no suppression", () => {
+        // B2 repeat: a second native restick/repress round still issues one write per activation.
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        (mocks.env as { readDesktopIds?: (target: object) => ReadonlyArray<string> | null }).readDesktopIds = () => [];
+        const floating = true;
+        let sticky = false;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": floating }, sticky: { "win-a": sticky } });
+        mocks.desktopToggleImpl = (_target, allDesktops) => {
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        adapter.requestSticky();
+        for (let cycle = 0; cycle < 2; cycle += 1) {
+            sticky = true;
+            fire(mocks, "desktops", refs.a);
+            adapter.requestSticky();
+        }
+        assert.deepEqual(mocks.desktopToggles, [
+            { target: refs.a, allDesktops: true },
+            { target: refs.a, allDesktops: false },
+            { target: refs.a, allDesktops: false },
+            { target: refs.a, allDesktops: false },
+        ]);
+        assert.equal(sticky, false, "two restick cycles end unstuck after the fourth repress");
+        assert.ok(!mocks.logs.some((line) => line.includes("sticky-refused-attempted")), "per-activation semantics never refuse a repeated cycle");
+    });
+
+    it("stays quiet across duplicate desktopsChanged notifications on a settled sticky float", () => {
+        // Duplicate-notification leg: two identical native sticky-state
+        // notifications on a settled sticky float dispatch and write nothing.
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let floating = false;
+        let sticky = false;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": floating }, sticky: { "win-a": sticky } });
+        mocks.desktopToggleImpl = (_target, allDesktops) => {
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        const floatPayload = plannerPayload(mocks, 0);
+        floating = true;
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: floatPayload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 100, y: 100, w: 600, h: 400 } },
+        }));
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: true }]);
+        assert.equal(floating, true, "sticky-on settles floating");
+        assert.equal(sticky, true, "sticky-on settles stuck");
+        const callsAfterSettle = mocks.dbusCalls.length;
+        const writesAfterSettle = mocks.geometries.length;
+        // Converge observation to the applied placement, as real KWin
+        // reports after the writes land; duplicates must then stay quiet.
+        mocks.observeImpl = () => makeObserved(refs, {
+            rects: { "win-a": { x: 100, y: 100, w: 600, h: 400 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+            floating: { "win-a": true },
+            sticky: { "win-a": true },
+        });
+        fire(mocks, "desktops", refs.a);
+        fire(mocks, "desktops", refs.a);
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsAfterSettle + 1, "duplicate sticky notifications coalesce into one flag reconcile, not one per signal");
+        assert.equal(mocks.geometries.length, writesAfterSettle, "duplicate sticky notifications write nothing");
+        assert.equal(mocks.desktopToggles.length, 1, "duplicate sticky notifications toggle nothing");
+        // The flag reconcile covers only the tiled sibling; the floating
+        // member is excluded from reply coverage by contract.
+        const reconcile = plannerPayload(mocks, callsAfterSettle)["correlation_id"] as string;
+        mocks.callbacks[callsAfterSettle]?.(
+            plannedReply(reconcile, [{ window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } }], null),
+        );
+        fire(mocks, "desktops", refs.a);
+        fire(mocks, "desktops", refs.a);
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsAfterSettle + 1, "converged duplicates dispatch nothing further");
+        assert.equal(sticky, true, "settled sticky float stays stuck");
+        assert.equal(adapter.isEnabled, true);
+    });
+
     it("tiled-origin sticky-on keeps the exact subject active across a synchronous membership steal", () => {
         // Tiled-origin sticky-on under a synchronous membership steal: the
         // all-desktops write flips activation to the sibling while Rust
@@ -3890,6 +4004,39 @@ describe("plan entry live observation and shortcuts", () => {
         assert.equal(active["fullScreen"], false);
         assert.equal(mocks.dbusCalls.length, 0);
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:fullscreen-toggle window=win-a resource_class=test-app target=restored outcome=invoked"));
+        handle?.stop();
+    });
+
+    it("issues one native maximize attempt per repeated toggle-maximize callback delivery", () => {
+        // Shortcut-stream leg through the production entry seam: repeated
+        // registered Meta+M callback deliveries each attempt once. Callbacks
+        // are not physical proof: held-key KGlobalAccel repeat stays user-owned.
+        const world = fakeWorld();
+        const winA = world.wins[0] as Record<string, unknown>;
+        const nativeValues: boolean[] = [];
+        winA["setMaximize"] = (vertically: unknown, horizontally: unknown): void => {
+            nativeValues.push(vertically === true && horizontally === true);
+            winA["maximizeMode"] = vertically === false && horizontally === false ? 0 : 3;
+            for (const handler of world.winMax.get(winA as object)?.handlers ?? []) {
+                handler();
+            }
+        };
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        const row = mocks.shortcuts.find((entry) => entry.action === "plasma-auto-tiler-toggle-maximize") as {
+            sequence: string;
+            callback: () => void;
+        };
+        assert.equal(row.sequence, "Meta+M");
+        row.callback();
+        row.callback();
+        row.callback();
+        assert.deepEqual(nativeValues, [true, false, true], "each callback delivery attempts exactly once with alternating targets");
+        assert.equal(winA["maximizeMode"], 3, "three deliveries end maximized");
+        assert.equal(mocks.logs.filter((line) => line.includes("target=maximized outcome=issued")).length, 2, "two maximize targets issued");
+        assert.equal(mocks.logs.filter((line) => line.includes("target=restored outcome=issued")).length, 1, "one restore target issued");
+        assert.equal(mocks.dbusCalls.length, 0, "maximize toggle issues no planner commands");
+        assert.ok(!mocks.logs.some((line) => line.includes("maximize-refused-attempted")), "per-activation semantics never refuse a repeated delivery");
         handle?.stop();
     });
 

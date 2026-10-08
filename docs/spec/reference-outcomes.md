@@ -23,6 +23,17 @@ Minimal variants of [R-FLT-06](reference-outcomes/floating.md#r-flt-06-float-tog
 | Clear not confirmed | Intentionally float B; maximize B; toggle float off while clear is refused or remains unobserved; press again after normal state is observed | No admission on unconfirmed clear, float intent retained, logged narrow refusal with no stuck flight; later explicit press fresh-admits | No reference profile has an observation gate: each toggle path runs synchronously in source with no pending or refused-clear branch (COSMIC unmaximize-first `S(S-cos-flttoggle)`; Hyprland clear/re-apply `S(S-hyp-float)`; qtile unfloat `S(S-qti-float)`; i3 `floating_disable` `S(S-i3-flt-toggle)`; sway `container_set_floating` `S(S-sway-float)`; awesome `set_floating` `S(S-awe-float)`; niri plain move `S(S-nir-flttoggle)`; karousel state flip `S(S-kar-acts)`). Refused/unobserved-clear hold with later-press recovery is Ours-only; native clear ack and focus visuals TBD in every row (true runtime, live-only) |
 | Sticky boundary | Make B sticky; maximize B; toggle ordinary float once | Existing sticky-maximize refusal unchanged; ordinary R-FLT-06 does not select a sticky policy change | Sticky legs per R-FLT-02: COSMIC output-set layer `S(S-cos-sticky)`; Hyprland float-only pin guard `S(S-hyp-pin)` (tiled pin refused); bspwm no float guard `S(S-bsp-sticky)`; i3 sets on any con but pushes floats only `S(S-i3-sticky)`; sway sets unconditionally but effective only when floating `S(S-sway-sticky)`; awesome orthogonal `S(S-awe-sticky)`; xmonad/qtile/niri/karousel/paneru no sticky verb (`S(S-xmo-float)`, `S(S-qti-float)`, `S(S-nir-acts)`, `S(S-kar-acts)`, `S(S-pan-cmds)`); PaperWM scratch stuck plus above plus float `S(S-pap-float)`. Maximize and toggle legs per R-MAX-01/R-FLT-06 above; the sticky plus maximize plus toggle combination itself is untraced in every profile, settled TBD |
 
+### R-MAX-04 / R-FLT-02 KDE held-key discriminator
+
+Minimal action sequence for the pending B1/B2 physical-repeat leg. The
+[toggle activation decision](../decisions.md#window-state-float-sticky-maximize-fullscreen)
+selects at most one native attempt per explicit activation; it does not
+establish KGlobalAccel's held-key delivery or select a repeat-suppression policy.
+
+| Variant | Minimal action sequence | Offline evidence | Physical outcome / remaining decision |
+| --- | --- | --- | --- |
+| Held-key delivery | Focus ordinary eligible A; hold Meta+M past the repeat delay; release; press once again. From a fresh ordinary A, repeat with Meta+Shift+G | [KWin fixtures](../../kwin/tests/plan-adapter.test.ts) pin one native attempt per delivered maximize callback, repeated native restore/restick cycles and duplicate sticky notification convergence; existing sticky fixtures pin per-activation attempts | Ours KDE: callback count while held, visible cycling, release/repress delivery and any required suppression policy TBD, user-owned. Ours Windows: held repeats consumed without dispatch per the recorded decision; physical journey TBD. Reference WMs: this exact held-key sequence TBD; no source/native claim added |
+
 ### R-CTL-05 M13 Lead readings
 
 Minimal variants of [R-CTL-05/06](reference-outcomes/restart-persistence.md#r-ctl-05-shortcut-staging-and-apply), User 2026-10-08 M13 = B. Native store stays authoritative; these are offline KDE outcomes, not live acceptance or selected Windows runtime changes.
