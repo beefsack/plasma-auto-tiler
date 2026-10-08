@@ -375,18 +375,87 @@ keys remain historical; delivery evidence is linked separately in KDE cells.
   fresh reset, repeat with stay.
 - Observe: transfer vs local restructure/swap, remembered Y admission vs
   root or X, current destination workspace, and follow/stay.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: transfers A to R's active workspace via `move_current`
+  (source unmap, not a local restructure; local B never gates); the
+  direction branch root-wraps (Vertical for Right, newcomer first, so
+  `H[A,H[X,Y]]`), ignoring remembered Y (MRU split is the
+  direction-less path only). `MoveToOutput` follows with focus on A,
+  `SendToOutput` retains source focus (B sole). Exact pixel frames TBD
+  (work area, decorations and native response unrecorded). `S(S-cos-out)` + `S(S-cos-send)` +
+  `S(S-out07-cos-dirwrap)`.
+- Then Hyprland/Dwindle: carries A to R's workspace via `movetoworkspace`
+  (remove plus `assignToSpace` move/add; explicit send, so local B never
+  gates); re-admission anchor is the mouse closest-node because the
+  active-window candidate must share the target workspace while A lives
+  on the source, so remembered Y is not a stored anchor; drop order
+  follows the `force_split=0` pointer half. Follow switches monitor and
+  focuses A with cursor warp; silent refocuses the source (B sole).
+  Exact anchor/order and split frames TBD (cursor unrecorded).
+  `S(S-hyp-movews)`.
+- Then bspwm: carries via `node -m east` `transfer_node` (unlink with
+  sibling promotion on L, so B sole; insert at R's desktop focus, not a
+  swap; local B never gates); anchor is destination focus Y with A as
+  second child under the longest-side axis (tall Y gives HORIZONTAL
+  `(Y,A)`). Unflagged stays on the source; `--follow` focuses A on R.
+  Exact pixel frames TBD (work area and native response unrecorded). `S(S-bsp-send)` +
+  `S(S-bsp-xfer)` + `S(S-bsp-insert)` + `S(S-out07-bsp-mon)`.
+- Then i3: carries A to R's visible workspace via `move_to_output_directed`
+  (closest east output; explicit send, so local B never gates); RIGHT
+  attaches at HEAD (`[A,X,Y]`, focus TAIL) with mover-focused follow via
+  `workspace_show` (no stay variant in this verb). Source detaches with
+  percent fix (L sole B). Exact pixel frames TBD (work area, decorations
+  and native response unrecorded). `S(S-i3-outmove)`.
+- Then xmonad/Tall+Navigation2D: carries via `windowToScreen` (`shiftWin`:
+  `insertUp` above target focus plus `delete'` source; separate verb from
+  `windowSwap`, so local B never gates); A becomes the focused element
+  on R's stack with no view switch (stay-like; no follow variant).
+  Anchor is above target focus (Y's slot only when Y is target focus;
+  no remembered-Y store). Source collapses to sole B. Exact Tall frames
+  TBD (flat master/stack, no H counterpart). `S(S-xmo-scope)` +
+  `S(S-xmo-shift)`.
+- Then sway: carries via `move container to output right` to R's active
+  workspace (adjacent output only; explicit send, so local B never
+  gates); destination is the seat focus-inactive on R (Y when Y is MRU)
+  with attach-after (`[X,Y,A]`) or workspace append. Outcome stays on
+  the source (mover focus restored to source inactive B; no follow
+  variant in this command, distinct from the directional-exhaustion
+  next-output path). Exact frames TBD. `S(S-out07-sway-out)` +
+  `S(S-sway-movews)`.
+- Then qtile/Columns: carries via `togroup` to R's group (hide plus source
+  `remove` plus target `add`, not a swap; local B never gates); Columns
+  admits into Y's column at Y's slot (insert at current, newcomer
+  focused; `insert_position` 0 puts A above Y when Y is current).
+  Shipped follow (`switch_group=True`) switches via `toscreen` with mover
+  focus; stay keeps the source view with source refocus (B). Source C1
+  empties, so the column drops. Exact frames TBD. `S(S-qti-group)` +
+  `S(S-qti-add)` + `S(S-qti-remove)`.
+- Then awesome/tile: carries via `move_to_tag` (screen plus tags set, no
+  view switch; tile recalc on both screens; local B never gates);
+  focused mover emits activate raise, so focus stays A (view never
+  follows; no stay/follow split). Exact tag order/frames and
+  tag-visibility journey TBD. `S(S-awe-tag)` + `S(S-awe-tile)`.
+- Then niri: carries via `MoveWindowToMonitorRight` (`move_to_output`
+  remove/insert into R's active workspace plus `focus_output`; always
+  follows, no stay variant; local B never gates); target admits as a new
+  column after active (`active+1`; after Y when Y is active, so
+  active-relative, not a remembered-Y store). Column leg: source C1
+  sole-tile column drops whole (B remains, focus B). Exact widths TBD
+  (viewport unrecorded). `S(S-nir-mon)` + `S(S-nir-ins)` +
+  `S(S-nir-close)`.
+- Then PaperWM: carries via `switchMonitor` with window carry (removes
+  from the source space, `change_workspace` to R's space,
+  `activateWithFocus`; always follows, no stay-with-window variant;
+  local B never gates, not the whole-space `moveToMonitor` fallback).
+  Exact column position TBD (native order untraced). `S(S-pap-mon)` +
+  `S(S-pap-moveverbs)`.
+- Then karousel/Lazy: fixture-inapplicable (single-screen profile; no
+  output verb, never a transfer vote). `S(S-kar-single)`.
+- Then paneru: carries via `window nextdisplay` / `nextdisplaysend`
+  (`ToNextDisplay`: removes from the source strip, appends to the target
+  display's selected strip with width-ratio preserved; local B never
+  gates); anchor is strip-end append (after CY, not at Y's slot; no
+  remembered-Y store). Follow keeps A focused with the mouse warped;
+  Stay refocuses the source neighbour (B here). `S(S-pan-display)`.
 - Then Ours KDE: source collapses to B; A transfers to R's current workspace
   and admits at remembered Y (long-edge vertical split here); follow focuses
   A on R, stay keeps L selected and focuses B. Local neighbor B does not gate
