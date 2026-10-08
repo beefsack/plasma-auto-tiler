@@ -2294,8 +2294,13 @@ decisions of 2026-09-24 are under
   needs sender, method, and fault-stack evidence before attributing it to
   the effect or script.
   [record](changes/archive/kwin-qkeysequence-dbus-abort.md)
-- P2 | Integrated Plasma feasibility verdict | Establish a safe structural
-  verdict; the unsafe nested path stays stopped.
+- P2 | Integrated Plasma feasibility verdict | PARKED, offline verdict B
+  (2026-10-09): bounded version-coupled Custom Tile research is structurally
+  plausible, not production/runtime acceptance. Recommend retained Rust Engine
+  plus direct geometry; unsafe nested path stays stopped. Open user decisions:
+  close with this verdict or retain parked research. Any revival needs a
+  separate scope/architecture choice, fresh safety design and user-owned live
+  evidence; no live probe is prerequisite to the offline verdict.
   [change](changes/integrated-plasma-structural-feasibility.md)
 - P2 | JavaScript workload evidence | Sustained-workload evidence before any
   native replacement for discrete window management.
