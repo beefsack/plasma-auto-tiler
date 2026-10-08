@@ -609,6 +609,202 @@ describe("fixed-size admission through the real Planner", () => {
         }
     });
 
+    it("maximized intentional unfloat clears before admission and applies the tiled slot through the real Planner", async () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+        const engine = EngineBridge.start();
+        try {
+            // Seed both windows tiled through the real Planner.
+            mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-b9-n1" });
+            dispatchAdded(mocks);
+            assert.equal(await flushPlan(mocks, engine, 0).then((reply) => reply["outcome"]), "planned");
+            // Intentional float of win-b.
+            let floatingB = false;
+            let maximizedB = false;
+            let rectB = { x: 600, y: 0, w: 600, h: 800 };
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    focused: refs.b,
+                    floatingB,
+                    maximizedB,
+                    rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": rectB },
+                    fingerprint: "fp-b9-n2",
+                });
+            adapter.requestFloat();
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, 2, "float dispatches toggle-float");
+            // Native float takes effect in the apply below, so the
+            // apply-time observation still shows the tiled frame.
+            const floatReply = await flushPlan(mocks, engine, 1);
+            assert.equal(floatReply["outcome"], "planned", `float plans, got ${JSON.stringify(floatReply)}`);
+            assert.deepEqual(mocks.floatingWrites[mocks.floatingWrites.length - 1], { id: "win-b", floating: true });
+            // Native maximize of the intentional float, then explicit unfloat:
+            // the clear settles before any admission geometry. Settlement
+            // is derived from the recorded clear itself: the pre-clear
+            // observation still shows maximize, every later read shows the
+            // restored frame.
+            maximizedB = true;
+            const maximizedFrame = { x: 0, y: 0, w: 1200, h: 800 };
+            const restoredFrame = { x: 300, y: 200, w: 500, h: 400 };
+            const clearsBeforeUnfloat = mocks.maximizeClears.length;
+            mocks.observeImpl = () => {
+                const cleared = mocks.maximizeClears.length > clearsBeforeUnfloat;
+                return makeObserved(refs, {
+                    focused: refs.b,
+                    floatingB: true,
+                    maximizedB: !cleared,
+                    rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": cleared ? restoredFrame : maximizedFrame },
+                    fingerprint: "fp-b9-n3",
+                });
+            };
+            const callsBefore = mocks.dbusCalls.length;
+            const clearsBefore = mocks.maximizeClears.length;
+            adapter.requestFloat();
+            runDebounce(mocks);
+            assert.equal(mocks.maximizeClears.length, clearsBefore + 1, "exactly one native clear before admission");
+            assert.equal(mocks.dbusCalls.length, callsBefore + 1, "observed-clear fresh-admits");
+            const command = JSON.parse(mocks.dbusCalls[callsBefore]?.payload as string)[
+                "command"
+            ] as Record<string, unknown>;
+            assert.deepEqual(command, {
+                op: "toggle-float",
+                window: "win-b",
+                float_rect: { x: 300, y: 200, w: 500, h: 400 },
+            });
+            assert.ok(
+                mocks.logs.some((line) => line.includes("outcome=observed-cleared")),
+                "settlement observed before admission",
+            );
+            const reply = await flushPlan(mocks, engine, callsBefore);
+            assert.equal(reply["outcome"], "planned", `unfloat plans, got ${JSON.stringify(reply)}`);
+            const slot = desiredWindows(reply).find((entry) => entry["window"] === "win-b");
+            assert.ok(slot !== undefined, "cleared float rejoins the tiled topology");
+            assert.notDeepEqual(
+                slot["rect"],
+                { x: 0, y: 0, w: 1200, h: 800 },
+                "admission places the tile, never the maximized frame",
+            );
+            const writesB = mocks.geometries.filter((write) => write.target === refs.b);
+            assert.deepEqual(
+                writesB[writesB.length - 1],
+                { target: refs.b, rect: slot["rect"] as { x: number; y: number; w: number; h: number } },
+                "restored tile written exactly once at its planned slot",
+            );
+            assert.deepEqual(mocks.floatingWrites[mocks.floatingWrites.length - 1], { id: "win-b", floating: false });
+            assert.ok(
+                mocks.logs.some(
+                    (entry) => entry.includes("kind=toggle-float") && entry.includes("outcome=planned-applied"),
+                ),
+                "applied terminal logged for the cleared unfloat",
+            );
+            // Settled tiling never re-clears.
+            floatingB = false;
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.b, fingerprint: "fp-b9-n4" });
+            const settledCalls = mocks.dbusCalls.length;
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            assert.equal(mocks.maximizeClears.length, clearsBefore + 1, "settled tiling never re-clears");
+            if (mocks.dbusCalls.length > settledCalls) {
+                const last = JSON.parse(
+                    mocks.dbusCalls[mocks.dbusCalls.length - 1]?.payload as string,
+                ) as Record<string, unknown>;
+                assert.ok(!("floating" in wireOf(last, "win-b")), "settled member rides as a normal tile");
+            }
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("maximized automatic unfloat clears before admission and keeps the D3 tile through the real Planner", async () => {
+        const { refs, mocks } = fixedMocks();
+        const adapter = enableAdapter(mocks);
+        const engine = EngineBridge.start();
+        try {
+            // Automatic float admission for the fixed client.
+            mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-b9-f1" });
+            dispatchAdded(mocks);
+            assert.equal(await flushPlan(mocks, engine, 0).then((reply) => reply["outcome"]), "planned");
+            // Native maximize of the automatic float (still natively tiled).
+            // Settlement derives from the recorded clear: pre-clear reads
+            // show maximize, later reads show the restored frame.
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    focused: refs.b,
+                    maximizedB: mocks.maximizeClears.length === 0,
+                    fingerprint: "fp-b9-f2",
+                });
+            const callsBefore = mocks.dbusCalls.length;
+            adapter.requestFloat();
+            runDebounce(mocks);
+            assert.equal(mocks.maximizeClears.length, 1, "fixed clients still clear before admission");
+            assert.equal(mocks.dbusCalls.length, callsBefore + 1, "explicit tile dispatches despite fixed hints");
+            assert.ok(
+                mocks.logs.some((line) => line.includes("outcome=observed-cleared")),
+                "settlement observed before admission",
+            );
+            const reply = await flushPlan(mocks, engine, callsBefore);
+            assert.equal(reply["outcome"], "planned", `unfloat plans, got ${JSON.stringify(reply)}`);
+            assert.ok(
+                desiredWindows(reply).some((entry) => entry["window"] === "win-b"),
+                "cleared fixed client rejoins the tiled topology",
+            );
+            const slot = desiredWindows(reply).find((entry) => entry["window"] === "win-b");
+            const fixedWrites = mocks.geometries.filter((write) => write.target === refs.b);
+            assert.deepEqual(
+                fixedWrites[fixedWrites.length - 1],
+                { target: refs.b, rect: slot?.["rect"] as { x: number; y: number; w: number; h: number } },
+                "fixed tile written exactly once at its planned slot",
+            );
+            assert.ok(
+                mocks.logs.some(
+                    (entry) => entry.includes("kind=toggle-float") && entry.includes("outcome=planned-applied"),
+                ),
+                "applied terminal logged for the fixed unfloat",
+            );
+            // D3/D7: the same live client stays tiled with suppression and
+            // survives the next observation through the real Planner.
+            mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-b9-f3" });
+            const after = dispatchAdded(mocks);
+            const excused = wireOf(after, "win-b");
+            assert.ok(!("floating" in excused), "explicit tile wins, no re-float");
+            assert.equal(excused["fixed_suppress"], true);
+            assert.ok(!("fixed_auto" in excused));
+            assert.equal(
+                await flushPlan(mocks, engine, mocks.dbusCalls.length - 1).then((reply) => reply["outcome"]),
+                "planned",
+            );
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("still-maximized settlement consults no Planner dispatch", async () => {
+        const { refs, mocks } = fixedMocks();
+        const adapter = enableAdapter(mocks);
+        const engine = EngineBridge.start();
+        try {
+            mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-b9-s1" });
+            dispatchAdded(mocks);
+            assert.equal(await flushPlan(mocks, engine, 0).then((reply) => reply["outcome"]), "planned");
+            // The native clear lands but the host keeps maximize: narrow
+            // refusal, no Planner contact, no stuck operation.
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.b, maximizedB: true, fingerprint: "fp-b9-s2" });
+            const callsBefore = mocks.dbusCalls.length;
+            adapter.requestFloat();
+            runDebounce(mocks);
+            assert.equal(mocks.maximizeClears.length, 1, "one clear attempt per press");
+            assert.equal(mocks.dbusCalls.length, callsBefore, "raced clear never admits beneath retained maximize");
+            assert.ok(mocks.logs.some((line) => line.includes("outcome=observed-maximized")));
+            assert.ok(
+                mocks.logs.some((line) => line.includes("float-refused-maximize-clear") && line.includes("cause=still-maximized")),
+            );
+            assert.equal(adapter.isInFlight, false, "operation released with no stuck state");
+        } finally {
+            await engine.close();
+        }
+    });
+
     it("a refused native sticky write preserves the automatic identity", async () => {
         const { refs, mocks } = fixedMocks();
         const adapter = enableAdapter(mocks);

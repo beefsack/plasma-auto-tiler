@@ -2853,3 +2853,234 @@ fn live_tile_override_wins_under_either_axis_predicate() {
         .expect("converge");
     assert!(!session.is_exception(&WindowId("win-f".to_owned())));
 }
+
+// B9 maximized intentional unfloat (M09=A): shared-core regression evidence.
+// No production change: a floating window still observed maximized refuses
+// the unfloat (pre-clear state), while the same float observed unmaximized
+// (post-clear state) fresh-admits as a new tiled window with the D3 suppress
+// pin, so fixed clients never re-auto-float. Both the ordinary and the
+// fixed-size legs are covered.
+#[test]
+fn b9_maximized_float_unfloat_refuses_until_clear_then_fresh_admits() {
+    // Ordinary non-fixed leg.
+    let mut session = fixed_session();
+    admit_plain(&mut session, "win-a", "c-b9-a1");
+    admit_plain(&mut session, "win-b", "c-b9-a2");
+    float_intentional(&mut session, "win-b", "c-b9-f1");
+    // Pre-clear: floating + maximized refuses.
+    {
+        let base = session.accepted_revision();
+        let windows = vec![
+            plain("win-a"),
+            obs(
+                "win-b",
+                true,
+                false,
+                true,
+                false,
+                false,
+                false,
+                WindowSizeHints::none(),
+            ),
+        ];
+        let err = session
+            .propose(
+                &SessionCommand::ToggleFloat {
+                    window: WindowId("win-b".to_owned()),
+                    float_geometry: Some(Rect {
+                        x: 0,
+                        y: 0,
+                        w: 1200,
+                        h: 800,
+                    }),
+                },
+                &observation(base, windows),
+                &correlation("c-b9-pre1"),
+                &LifecycleCapabilities::full(),
+            )
+            .unwrap_err();
+        assert_eq!(
+            err,
+            ProposeError::Refused(RefusalKind::PartialObservation),
+            "maximized float must refuse before the native clear"
+        );
+        assert!(!session.has_pending_desired(), "refusal stages nothing");
+    }
+    // Post-clear: floating + unmaximized fresh-admits with the D3 pin.
+    {
+        let base = session.accepted_revision();
+        let windows = vec![
+            plain("win-a"),
+            obs(
+                "win-b",
+                true,
+                false,
+                false,
+                false,
+                false,
+                false,
+                WindowSizeHints::none(),
+            ),
+        ];
+        let plan = session
+            .propose(
+                &SessionCommand::ToggleFloat {
+                    window: WindowId("win-b".to_owned()),
+                    float_geometry: Some(Rect {
+                        x: 100,
+                        y: 100,
+                        w: 400,
+                        h: 300,
+                    }),
+                },
+                &observation(base, windows),
+                &correlation("c-b9-post1"),
+                &LifecycleCapabilities::full(),
+            )
+            .unwrap_or_else(|e| panic!("cleared unfloat admits: {e:?}"));
+        session
+            .acknowledge(&AdapterAck::new(
+                correlation("c-b9-post1"),
+                owner(),
+                generation(),
+                base,
+                AckOutcome::Accepted,
+            ))
+            .expect("ack");
+        session
+            .verify_lifecycle(&tiler_core::contract::LifecyclePostObservation::new(
+                Observation::new(owner(), generation(), base, 200 + base),
+                correlation("c-b9-post1"),
+                true,
+                plan.dispatch.preconditions.clone(),
+                plan.dispatch.operation.clone(),
+            ))
+            .expect("verify");
+        assert_eq!(
+            tiled_ids(&session),
+            vec!["win-a".to_owned(), "win-b".to_owned()],
+            "cleared float rejoins the tiled topology"
+        );
+        assert!(
+            session.has_fixed_tile_override(&WindowId("win-b".to_owned())),
+            "explicit unfloat records the user tile win"
+        );
+    }
+
+    // Fixed-size leg: automatic float, maximized, then cleared.
+    let mut fixed_session_state = fixed_session();
+    admit_plain(&mut fixed_session_state, "win-a", "c-b9-fa");
+    let base = fixed_session_state.accepted_revision();
+    fixed_session_state
+        .converge_observation(
+            &observation(base, vec![plain("win-a"), fixed("win-f")]),
+            None,
+        )
+        .expect("admit fixed automatic");
+    assert!(fixed_session_state.is_automatic_fixed_float(&WindowId("win-f".to_owned())));
+    // Pre-clear refuses without staging.
+    {
+        let base = fixed_session_state.accepted_revision();
+        let mut windows: Vec<ObservedWindow> = fixed_session_state
+            .snapshot()
+            .windows
+            .iter()
+            .map(|l| plain(&l.window.0))
+            .collect();
+        windows.extend(fixed_session_state.exception_observed());
+        for entry in windows.iter_mut() {
+            if entry.window.0 == "win-f" {
+                entry.floating = true;
+                entry.maximized = true;
+            }
+        }
+        windows.sort_by(|a, b| a.window.0.cmp(&b.window.0));
+        let err = fixed_session_state
+            .propose(
+                &SessionCommand::ToggleFloat {
+                    window: WindowId("win-f".to_owned()),
+                    float_geometry: Some(Rect {
+                        x: 0,
+                        y: 0,
+                        w: 1200,
+                        h: 800,
+                    }),
+                },
+                &observation(base, windows),
+                &correlation("c-b9-pre2"),
+                &LifecycleCapabilities::full(),
+            )
+            .unwrap_err();
+        assert_eq!(
+            err,
+            ProposeError::Refused(RefusalKind::PartialObservation),
+            "maximized automatic float must refuse before the native clear"
+        );
+    }
+    // Post-clear admits with the suppress pin and never re-auto-floats.
+    {
+        let base = fixed_session_state.accepted_revision();
+        let mut windows: Vec<ObservedWindow> = fixed_session_state
+            .snapshot()
+            .windows
+            .iter()
+            .map(|l| plain(&l.window.0))
+            .collect();
+        windows.extend(fixed_session_state.exception_observed());
+        for entry in windows.iter_mut() {
+            if entry.window.0 == "win-f" {
+                entry.floating = true;
+                entry.maximized = false;
+            }
+        }
+        windows.sort_by(|a, b| a.window.0.cmp(&b.window.0));
+        let plan = fixed_session_state
+            .propose(
+                &SessionCommand::ToggleFloat {
+                    window: WindowId("win-f".to_owned()),
+                    float_geometry: Some(Rect {
+                        x: 100,
+                        y: 100,
+                        w: 400,
+                        h: 300,
+                    }),
+                },
+                &observation(base, windows),
+                &correlation("c-b9-post2"),
+                &LifecycleCapabilities::full(),
+            )
+            .unwrap_or_else(|e| panic!("cleared fixed unfloat admits: {e:?}"));
+        fixed_session_state
+            .acknowledge(&AdapterAck::new(
+                correlation("c-b9-post2"),
+                owner(),
+                generation(),
+                base,
+                AckOutcome::Accepted,
+            ))
+            .expect("ack");
+        fixed_session_state
+            .verify_lifecycle(&tiler_core::contract::LifecyclePostObservation::new(
+                Observation::new(owner(), generation(), base, 200 + base),
+                correlation("c-b9-post2"),
+                true,
+                plan.dispatch.preconditions.clone(),
+                plan.dispatch.operation.clone(),
+            ))
+            .expect("verify");
+        let id = WindowId("win-f".to_owned());
+        assert!(
+            fixed_session_state.has_fixed_tile_override(&id),
+            "explicit unfloat wins over fixed re-float"
+        );
+        assert!(
+            !fixed_session_state.is_automatic_fixed_float(&id),
+            "automatic identity withdrawn"
+        );
+        assert_eq!(
+            tiled_ids(&fixed_session_state),
+            vec!["win-a".to_owned(), "win-f".to_owned()],
+            "fixed client tiles after the clear"
+        );
+    }
+}

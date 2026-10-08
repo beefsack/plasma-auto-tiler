@@ -1480,7 +1480,7 @@ platform API behavior.
     and commit after target effects verify; failed effects never strand
     membership. Born-fullscreen holds stay distinct from intentional float
     actuation. One attempt per discrete down. B9 selected behavior
-    (unmaximize-then-fresh-admit) is implementation-pending on both platforms.
+    (unmaximize-then-fresh-admit) is delivered offline on KDE; Windows pending.
     Status: machine evidence proves activation and cleanup only; float
     behavior, physical input/display and other arrangements remain user-owned
     ([float](changes/archive/windows-float.md)).
@@ -1515,9 +1515,10 @@ platform API behavior.
   - KDE: R-MAX-06 and R-MAX-03 delivered offline, the latter at `29c75fe` ([record](changes/archive/kde-maximized-floating-retile-overlay.md)); Windows parity and native acceptance pending.
 - B9 (user decision 2026-10-08): an explicit unfloat of an intentionally
   floating window that is natively maximized unmaximizes then fresh-admits
-  (COSMIC). No retained-maximize unfloat. Approved; implementation pending
-  on both platforms. The user's COSMIC R-FLT-06 observation confirmation
+  (COSMIC). No retained-maximize unfloat. The user's COSMIC R-FLT-06
+  observation confirmation
   remains (not an implementation gate).
+  - Status: shared-core regression/KDE delivered offline ([record](changes/archive/maximized-intentional-unfloat.md)); Windows handoff item 15 and native KDE acceptance pending.
   Analysis: [post-Windows audit](research/cross-platform-core/post-windows-audit.md),
   [cross-WM consensus](research/reference-wm-consensus.md).
 - Observation-driven reconciliation, three-strike anti-fighting acceptance,

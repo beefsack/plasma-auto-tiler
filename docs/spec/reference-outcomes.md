@@ -13,6 +13,16 @@ behavior or ambiguity (reference WMs disagree, or our behavior is undecided).
 Reuse existing coverage rather than duplicating a scenario with a
 trivially different start state.
 
+### R-FLT-06 Lead readings
+
+Minimal variants of [R-FLT-06](reference-outcomes/floating.md#r-flt-06-float-toggle-over-a-maximized-window), recorded with the [B9 delivery](../changes/archive/maximized-intentional-unfloat.md). These qualify the ordinary-float row without changing fullscreen or sticky policy.
+
+| Variant | Action sequence | Ours KDE offline outcome / Lead reading | References / native |
+| --- | --- | --- | --- |
+| Fixed explicit override | Admit fixed B as an automatic float; maximize B; toggle ordinary float off once; observe again | Clear maximize, observe clear, fresh-admit; successful explicit tile commits D3/D7 override, so B does not re-auto-float | TBD |
+| Clear not confirmed | Intentionally float B; maximize B; toggle float off while clear is refused or remains unobserved; press again after normal state is observed | No admission on unconfirmed clear, float intent retained, logged narrow refusal with no stuck flight; later explicit press fresh-admits | TBD |
+| Sticky boundary | Make B sticky; maximize B; toggle ordinary float once | Existing sticky-maximize refusal unchanged; ordinary R-FLT-06 does not select a sticky policy change | TBD |
+
 ## Notation
 
 - `H[a,b,c]` horizontal split, children left to right.

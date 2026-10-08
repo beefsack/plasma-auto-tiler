@@ -10,14 +10,6 @@ decisions of 2026-09-24 are under
 
 ## Open work
 
-- P0 | Maximized intentional unfloat (B9 / M09) | User 2026-10-08:
-  unmaximize, then admit as a new window (COSMIC), on shared core plus KDE,
-  with Windows adapter handoff. KDE currently dispatches unfloat without
-  clearing maximize (`kwin/src/plan-adapter.ts` `requestFloat`); Windows
-  `float_toggle_refusal` still refuses. Preserve normal-to-float overlay
-  refusals and native identity/settlement fences. The user's COSMIC R-FLT-06
-  observation is confirmation, not an implementation gate.
-  [decision](decisions.md#window-state-float-sticky-maximize-fullscreen)
 - P1 | KDE Keep-preserving shortcut Apply (M13) | Project Apply must preserve
   current assignments, including user-customized chords, for Keep bindings;
   Authentic alone explicitly resets the canonical catalog. Current
@@ -226,8 +218,9 @@ decisions of 2026-09-24 are under
   synchronous/repeated maximize signals settle. Native check pending in
   [record](changes/archive/kde-maximized-floating-retile-overlay.md).
   B9 overlaid intentional unfloat: user 2026-10-08 selected unmaximize then
-  fresh admission. KDE retains maximize and Windows refuses: both are gaps,
-  owned by the P0 B9 item above; COSMIC R-FLT-06 check is confirmation only.
+  fresh admission. Shared-core regression/KDE delivered offline
+  ([record](changes/archive/maximized-intentional-unfloat.md)); Windows refusal
+  remains a gap owned by handoff item 15; COSMIC confirmation and KDE native check pending.
   Pinned 11-WM source comparison added. B7
   movement-only underlay A/B delivered offline (Meta+Shift chord or focused
   native user move; host-matched native build and all gates pass; paired
@@ -256,7 +249,7 @@ decisions of 2026-09-24 are under
   Windows parity (b) remains pending for the Windows agent.
   (c) B9 overlaid unfloat: unmaximize then fresh-admit, selected 2026-10-08;
   remove the Windows refusal, with the user's COSMIC check as confirmation
-  only (P0 B9 item above); (d) audit finding: Windows keyboard resize and non-local
+  only (handoff item 15; KDE delivered offline); (d) audit finding: Windows keyboard resize and non-local
   workspace modes are unimplemented despite catalog/settings text
   (`settings.rs:769-777`, `workspace.rs:95-108`).
   [decisions](decisions.md#window-state-float-sticky-maximize-fullscreen)
@@ -425,10 +418,11 @@ decisions of 2026-09-24 are under
   | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; KDE Q3 plus D7 tile-override store delivered offline. Ordinary/sticky intent must remain distinct from automatic fixed origin and recovery authority; Windows mechanism unselected, REQ-RST-01c stays OPEN. Coordinate D7 membership with item 13. |
   | 9 | Fullscreen send R-MAX-09 (Windows carry; NOT the parked parity-queue multi-output foundation) | Depends on handoff item 2 follow/stay wiring only; same-output workspace carry, no cross-output claim. |
   | 10 | Float/half-snap parity (a) R-FLT-07..11 | Independent of items 1-5; reuses existing focus/move catalog rows, no new chords. |
-  | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; first-fullscreen-exit is separate (D5 core/KDE delivered offline, Windows pending). B9 unmaximize/fresh-admit is the P0 item above. Independent of items 1-5. |
+  | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; first-fullscreen-exit is separate (D5 core/KDE delivered offline, Windows pending). B9 unmaximize/fresh-admit is item 15. Independent of items 1-5. |
   | 12 | Non-local workspace modes parity (d) | Depends on handoff items 1/2 (ring + follow/stay) and the parked parity-queue multi-output foundation; last. |
   | 13 | Q2 fixed-size float admission R-SPC-04 | KDE/shared offline delivery including D1 predicate setting, D5 first-fullscreen-exit, D6 tiling-enable check and D7 tile-override restart store; Windows max-track observation, predicate/schema/UI and lifetime/origin wiring before enabling the Engine opt-in. Windows D7 persistence coordinates with item 8; fixed/maximize intersection with item 11. |
   | 14 | Q4 whole-workspace migration R-WS-12 | Core/KDE offline delivery including D8 overlay carry under user decisions 2026-10-08 (normative as delivered); depends on item 5's parked multi-output foundation, item 1 history invalidation and item 12 for non-local runtime modes. Windows adapter including D8 pending; no Windows behavior delivered. |
+  | 15 | B9 / M09 maximized intentional unfloat R-FLT-06 | KDE/shared-core offline evidence delivered; replace Windows maximize refusal only for ordinary floating-to-tiled toggle, clear/observe before fresh admission. Coordinate fixed tile overrides with items 8/13; independent of Q3 item 11 overlay retention. |
 
   Q2 R-SPC-04 occupies handoff item 13 below; Q3 R-RST-01 KDE delivery is
   complete offline and updates existing item 8. Q4 R-WS-12 fills item 14.
@@ -1652,7 +1646,7 @@ decisions of 2026-09-24 are under
       launch clear; Ours Windows: one admission-time clear attempt,
       retained slots/fullscreen/floating domains exempt). No launch
       unmaximize, no one-shot retile restore. First fullscreen exit is separate
-      (D5 core/KDE delivered offline, Windows pending); B9 unmaximize/fresh-admit is the P0 item above;
+      (D5 core/KDE delivered offline, Windows pending); B9 unmaximize/fresh-admit is item 15;
       no R-MAX-08 nav choice.
     - KDE exact (verified 2026-10-08 at `db31234`):
       `kwin/src/plan-adapter.ts:5933` `clearMaximizeAtAdmission` (skips
@@ -1702,7 +1696,7 @@ decisions of 2026-09-24 are under
       unsolicited toggles or fighting. Retire
       `should_clear_maximize_at_admission` one-shot use; keep the held
       born-fullscreen single exit unchanged within this unit (D5 is separate).
-      B9 unmaximize/fresh-admit is separately owned by the P0 item; preserve
+      B9 unmaximize/fresh-admit is separately owned by item 15; preserve
       all unrelated overlay refusals. No new chord, setting or R-MAX-08 change.
     - Settings/input/catalog/presets: reuse current native/project maximize
       and workspace tiled/floating controls. Catalog toggles remain in
@@ -1851,7 +1845,7 @@ decisions of 2026-09-24 are under
       without a slot; explicit user tile overrides still use R-MAX-03's
       reserved slot. Windows borderless-game
       inference stays selected; B9 unmaximize/fresh-admit is separately
-      selected and implementation-pending (P0 item above).
+      delivered offline on KDE, Windows handoff item 15 pending.
     - References: COSMIC @3d55cba0 `src/shell/layout/mod.rs:46-52`,
       `src/shell/element/surface.rs:565-595`, `src/shell/mod.rs:2957-3022`,
       `src/shell/workspace.rs:1440-1454,1491-1519`. Fullscreen birth/restore
@@ -2090,6 +2084,31 @@ decisions of 2026-09-24 are under
       Update Ours Windows/spec with dated offline evidence; native outcomes TBD
       until user-tested. User decisions 2026-10-08 approved; D8 carry
       core/KDE delivered offline, Windows adapter pending.
+
+  - Item 15: B9 / M09=A maximized intentional unfloat R-FLT-06 (User
+    2026-10-08). Shared-core/KDE delivered offline; Windows runtime unchanged.
+    [Record](changes/archive/maximized-intentional-unfloat.md),
+    [spec](spec/functional-spec.md#7-floating-r-flt),
+    [row](spec/reference-outcomes/floating.md#r-flt-06-float-toggle-over-a-maximized-window).
+    - Replace `src/tiling.rs` `float_toggle_refusal` maximize refusal ONLY
+      for an ordinary currently floating target being explicitly tiled.
+      Preserve normal-to-float overlay refusals, fullscreen handling,
+      sticky gates, native identity and verified effect/settlement fences.
+    - One native unmaximize attempt per explicit activation; observe the
+      same live client unmaximized before Engine fresh admission or geometry
+      writes. Use the restored frame and ordinary new-window rule, never an
+      old slot. Reuse existing native observation/settlement patterns, no timers.
+    - Refused/unobserved/raced clear: log cause, retain float membership and
+      usable preimages, end only that operation, keep other functionality and
+      later explicit presses available. No automatic clear retry or fighting.
+    - Fixed automatic or intentional floats use the existing D3/D7 explicit
+      user tile override on successful admission (items 8/13); no automatic
+      re-float. Q3 born-max/workspace-retile overlay retention stays item 11.
+    - Acceptance: clear-before-geometry real Engine/native-setter regression,
+      ordinary nonmax unfloat unchanged, refusal/unobserved clear with no
+      stuck state and later-press recovery, exact-ref/focus/fullscreen races,
+      fixed override after subsequent observation/restart. Update Windows
+      REQ-FLT-06/06b and Ours cell with offline evidence; native journey TBD.
 
   ### Source discrepancies to preserve and report
 
@@ -2371,6 +2390,12 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 
 ### Single-output laptop
 
+- B9 unfloat while maximized on KDE (offline delivered): intentionally float
+  B, natively maximize it, then toggle float off once. Verify maximize clears
+  before fresh tiled placement, focus/settlement logs, ordinary nonmax unfloat,
+  fixed-client explicit tile override, refused/raced clear and later-press
+  recovery. Fullscreen/sticky gates remain unchanged. User-owned, native TBD.
+  [Record](changes/archive/maximized-intentional-unfloat.md).
 - D7 fixed-window tile override across script reload/planner restart (KDE
   offline delivered): successfully tile a fixed client, reload the script and
   restart the planner with the same live client; it remains tiled. Check hint

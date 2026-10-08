@@ -4486,13 +4486,95 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:float-refused-maximize`);
             return;
         }
-        const snapshot = this.carriedSnapshot(observed);
+        // B9 maximized unfloat: one native clear, then refetch and fall
+        // through to the common unfloat path below. Narrow failures return
+        // before any dispatch with no stuck operation.
+        let liveObserved = observed;
+        let liveTarget = target;
+        if (floating && target.maximized && !target.fullscreen) {
+            const windowId = target.id;
+            const nativeRef = target.ref;
+            this.logToken(`${LOG_PREFIX}:float-unfloat-maximize-clear window=${windowId} resource_class=${resourceClass} outcome=issued`);
+            this.maximizeAdmissionEcho = nativeRef;
+            this.logToken(`${LOG_PREFIX}:maximize-admission-echo-armed`);
+            let outcome: MaximizeClearOutcome = "threw";
+            try {
+                outcome = this.env.clearMaximize(nativeRef);
+            } catch (error) {
+                void error;
+            }
+            this.logToken(`${LOG_PREFIX}:float-unfloat-maximize-clear window=${windowId} resource_class=${resourceClass} outcome=${outcome}`);
+            if (this.maximizeAdmissionEcho !== null) {
+                this.maximizeAdmissionEcho = null;
+                this.logToken(`${LOG_PREFIX}:maximize-admission-echo-cleared-no-signal`);
+            }
+            if (outcome !== "invoked") {
+                this.logToken(`${LOG_PREFIX}:float-refused-maximize-clear window=${windowId} resource_class=${resourceClass} cause=native-write-${outcome} recovery=retry-on-next-press`);
+                return;
+            }
+            let fresh: PlanObserved | null = null;
+            try {
+                fresh = this.freshObserved();
+            } catch (error) {
+                void error;
+                fresh = null;
+            }
+            const current = fresh?.windows.find((entry) => entry.id === windowId);
+            const settled =
+                current !== undefined && current.ref === nativeRef && !current.maximized
+                    ? current
+                    : undefined;
+            if (fresh === null || settled === undefined) {
+                const seen =
+                    fresh === null
+                        ? "observed-missing"
+                        : current === undefined || current.ref !== nativeRef
+                          ? "observed-absent"
+                          : "observed-maximized";
+                const cause =
+                    fresh === null
+                        ? "observe-missing"
+                        : current === undefined || current.ref !== nativeRef
+                          ? "identity-raced"
+                          : "still-maximized";
+                this.logToken(`${LOG_PREFIX}:float-unfloat-maximize-clear window=${windowId} resource_class=${resourceClass} outcome=${seen}`);
+                this.logToken(`${LOG_PREFIX}:float-refused-maximize-clear window=${windowId} resource_class=${resourceClass} cause=${cause} recovery=retry-on-next-press`);
+                return;
+            }
+            if (settled.fullscreen || fresh.focusedId !== windowId || !this.isEffectivelyFloating(fresh, windowId)) {
+                const seen = settled.fullscreen
+                    ? "observed-fullscreen"
+                    : fresh.focusedId !== windowId
+                      ? "observed-focus-raced"
+                      : "observed-unfloated";
+                const cause = settled.fullscreen
+                    ? "fullscreen-raced"
+                    : fresh.focusedId !== windowId
+                      ? "focus-raced"
+                      : "floating-lost";
+                this.logToken(`${LOG_PREFIX}:float-unfloat-maximize-clear window=${windowId} resource_class=${resourceClass} outcome=${seen}`);
+                this.logToken(`${LOG_PREFIX}:float-refused-maximize-clear window=${windowId} resource_class=${resourceClass} cause=${cause} recovery=retry-on-next-press`);
+                return;
+            }
+            if (!this.isTiledDomain(fresh.domainOutput, fresh.domainWorkspace)) {
+                this.logToken(`${LOG_PREFIX}:float-refused-workspace-floating`);
+                return;
+            }
+            if (this.r4Flight !== null || this.inFlight) {
+                this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-float`);
+                return;
+            }
+            this.logToken(`${LOG_PREFIX}:float-unfloat-maximize-clear window=${windowId} resource_class=${resourceClass} outcome=observed-cleared`);
+            liveObserved = fresh;
+            liveTarget = settled;
+        }
+        const snapshot = this.carriedSnapshot(liveObserved);
         // Float selects the session-retained placement (the request carries no
         // rect, so the session never recomputes a center for a window that has
         // floated before). Unfloat carries the live frame rect so a user
         // moved/resized float is retained for the next float.
         const rect = floating
-            ? { x: target.rect.x, y: target.rect.y, w: target.rect.w, h: target.rect.h }
+            ? { x: liveTarget.rect.x, y: liveTarget.rect.y, w: liveTarget.rect.w, h: liveTarget.rect.h }
             : null;
         // Q2 explicit user tile (D3): the unfloat stages a suppress pin
         // for the same live client, committed only when the plan is
@@ -4502,10 +4584,10 @@ export class PlanAdapter {
         this.dispatch({
             op: "toggle-float",
             snapshot,
-            removed: floating ? null : target.id,
-            body: rect === null ? { op: "toggle-float", window: target.id } : { op: "toggle-float", window: target.id, float_rect: rect },
-            floatTarget: { window: target.id, floating: !floating },
-            fixedStage: { id: target.id, ref: target.ref, kind: floating ? "suppress" : null },
+            removed: floating ? null : liveTarget.id,
+            body: rect === null ? { op: "toggle-float", window: liveTarget.id } : { op: "toggle-float", window: liveTarget.id, float_rect: rect },
+            floatTarget: { window: liveTarget.id, floating: !floating },
+            fixedStage: { id: liveTarget.id, ref: liveTarget.ref, kind: floating ? "suppress" : null },
         });
     }
 
