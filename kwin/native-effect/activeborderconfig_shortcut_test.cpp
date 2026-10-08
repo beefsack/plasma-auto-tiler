@@ -570,6 +570,7 @@ void selectionPresetsAndDraft()
     module.setShortcutStores(&store, &cleared);
     module.load();
     CHECK(module.shortcutDisabledIds().isEmpty());
+    CHECK(!module.shortcutAuthenticStaged());
     // Item 2 default-unbound rows are at canonical empty, not disabled: the
     // stay row starts enabled, present-empty, and rebindable through the
     // existing route, and load must not auto-stage it. Item 5 stay rows
@@ -699,10 +700,21 @@ void selectionPresetsAndDraft()
     CHECK(store.totalWrites() == 0);
     CHECK(cleared.saves == 0);
     CHECK(!module.isShortcutForceApplyVisible());
+    CHECK(!module.shortcutAuthenticStaged());
     if (authentic != nullptr) {
         authentic->click();
     }
     CHECK(module.shortcutDisabledIds().isEmpty());
+    CHECK(module.shortcutAuthenticStaged());
+    CHECK(store.totalWrites() == 0);
+    CHECK(cleared.saves == 0);
+    // Compatible resets the staged Authentic intent to Keep, then disables
+    // the same conflicting rows again. Staging only either way.
+    if (compatible != nullptr) {
+        compatible->click();
+    }
+    CHECK(!module.shortcutAuthenticStaged());
+    CHECK(module.shortcutDisabledIds().size() == 24);
     CHECK(store.totalWrites() == 0);
     CHECK(cleared.saves == 0);
 }
@@ -755,6 +767,11 @@ void selectionDraftEditCancelsPreview()
     });
     module.setShortcutStores(&store, &cleared);
     module.load();
+    QPushButton *authenticForDraft = presetButtonByModule(module, "shortcutAuthenticButton");
+    CHECK(authenticForDraft != nullptr);
+    if (authenticForDraft != nullptr) {
+        authenticForDraft->click();
+    }
     module.requestShortcutApply();
     CHECK(confirms == 1);
     CHECK(module.isShortcutForceApplyVisible());
@@ -779,6 +796,11 @@ void selectionStaleDraftRefusesForce()
     module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
     module.setShortcutStores(&store, &cleared);
     module.load();
+    QPushButton *authenticForStale = presetButtonByModule(module, "shortcutAuthenticButton");
+    CHECK(authenticForStale != nullptr);
+    if (authenticForStale != nullptr) {
+        authenticForStale->click();
+    }
     module.requestShortcutApply();
     CHECK(module.isShortcutForceApplyVisible());
     setRowDisabled(module, QStringLiteral("kwin/plasma-auto-tiler-workspace-1"), true);
@@ -824,6 +846,11 @@ void selectionRevertKeepsOwnAssignment()
     module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
     module.setShortcutStores(&store, &cleared);
     module.load();
+    QPushButton *authenticForRevert = presetButtonByModule(module, "shortcutAuthenticButton");
+    CHECK(authenticForRevert != nullptr);
+    if (authenticForRevert != nullptr) {
+        authenticForRevert->click();
+    }
     module.requestShortcutApply();
     CHECK(module.isShortcutForceApplyVisible());
     module.requestShortcutForceApply();
@@ -1037,8 +1064,16 @@ void confirmationGatesEveryMutation()
     CHECK(confirms == 1);
     CHECK(store.totalWrites() == 0);
     CHECK(cleared.saves == 0);
-    // Accepted Apply with zero holders: succeeds.
+    // Accepted Apply with zero holders: succeeds. Canonical assignment
+    // requires staged Authentic; plain Keep would preserve with zero
+    // writes.
     allow = true;
+    QPushButton *authenticForConfirm = presetButtonByModule(module, "shortcutAuthenticButton");
+    CHECK(authenticForConfirm != nullptr);
+    if (authenticForConfirm != nullptr) {
+        authenticForConfirm->click();
+    }
+    CHECK(module.shortcutAuthenticStaged());
     module.requestShortcutApply();
     CHECK(confirms == 2);
     CHECK(store.totalWrites() > 0);
@@ -1061,7 +1096,9 @@ void confirmationGatesEveryMutation()
 
 void stateAndErrorPresentation()
 {
-    // Ready with zero holders.
+    // Preserved with zero holders: Keep is trivially satisfied, so a fresh
+    // load with nothing staged reports preservation, never canonical
+    // ownership.
     {
         FakeShortcutStore store;
         seedReady(store);
@@ -1070,7 +1107,7 @@ void stateAndErrorPresentation()
         module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
         module.setShortcutStores(&store, &cleared);
         module.load();
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("Ready")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("preserved")));
         CHECK(module.shortcutStatusText().contains(QStringLiteral("128 rows")));
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(buttonByName(module, "shortcutFinishApplyButton") == nullptr);
@@ -1090,7 +1127,9 @@ void stateAndErrorPresentation()
             CHECK(error->text() == module.shortcutErrorText());
         }
     }
-    // Applied after Apply.
+    // Applied then consumed after an Authentic Apply: canonical chords are
+    // committed and the staged reset intent is consumed, so the page reports
+    // preservation for the next Apply.
     {
         FakeShortcutStore store;
         seedReady(store);
@@ -1099,12 +1138,19 @@ void stateAndErrorPresentation()
         module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
         module.setShortcutStores(&store, &cleared);
         module.load();
+        QPushButton *authentic = presetButtonByModule(module, "shortcutAuthenticButton");
+        CHECK(authentic != nullptr);
+        if (authentic != nullptr) {
+            authentic->click();
+        }
         module.requestShortcutApply();
         CHECK(module.shortcutErrorText().isEmpty());
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("applied")));
+        CHECK(!module.shortcutAuthenticStaged());
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("preserved")));
         CHECK(module.shortcutStatusText().contains(QStringLiteral("128 rows")));
     }
-    // Conflict with an unknown foreign holder.
+    // Conflict with an unknown foreign holder (Authentic stages the lock
+    // relocation chords, so Meta+Esc is in scope).
     {
         FakeShortcutStore store;
         seedReady(store);
@@ -1114,6 +1160,11 @@ void stateAndErrorPresentation()
         module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
         module.setShortcutStores(&store, &cleared);
         module.load();
+        QPushButton *authentic = presetButtonByModule(module, "shortcutAuthenticButton");
+        CHECK(authentic != nullptr);
+        if (authentic != nullptr) {
+            authentic->click();
+        }
         CHECK(module.shortcutStatusText().contains(QStringLiteral("Conflict")));
         CHECK(module.shortcutStatusText().contains(QStringLiteral("Meta+Esc")));
         module.requestShortcutApply();
@@ -1175,6 +1226,13 @@ void stateAndErrorPresentation()
         module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
         module.setShortcutStores(&store, &cleared);
         module.load();
+        // Stage Authentic before asserting: the authorized displacement is
+        // in scope only while the lock relocation is staged.
+        QPushButton *authenticForSysmon = presetButtonByModule(module, "shortcutAuthenticButton");
+        CHECK(authenticForSysmon != nullptr);
+        if (authenticForSysmon != nullptr) {
+            authenticForSysmon->click();
+        }
         CHECK(!module.shortcutStatusText().contains(QStringLiteral("Conflict")));
         CHECK(module.shortcutStatusText().contains(QStringLiteral("Ready")));
         module.requestShortcutApply();
@@ -1210,6 +1268,13 @@ void forcePreviewAcceptCancelRevert()
     module.load();
     CHECK(!module.isShortcutForceApplyVisible());
     CHECK(!module.isShortcutForceCancelVisible());
+    // Canonical assignment requires staged Authentic: the foreign holder
+    // claims the canonical chord while the own row is customized.
+    QPushButton *authenticForForce = presetButtonByModule(module, "shortcutAuthenticButton");
+    CHECK(authenticForForce != nullptr);
+    if (authenticForForce != nullptr) {
+        authenticForForce->click();
+    }
     // Apply refuses with zero mutation and raises the exact preview.
     module.requestShortcutApply();
     CHECK(confirms == 1);
@@ -1313,6 +1378,11 @@ void recoveryVisibilityAndRouting()
     module.load();
     CHECK(buttonByName(module, "shortcutFinishApplyButton") == nullptr);
     CHECK(buttonByName(module, "shortcutRestoreButton") == nullptr);
+    QPushButton *authenticForRecovery = presetButtonByModule(module, "shortcutAuthenticButton");
+    CHECK(authenticForRecovery != nullptr);
+    if (authenticForRecovery != nullptr) {
+        authenticForRecovery->click();
+    }
     module.requestShortcutApply();
     CHECK(confirms == 1);
     CHECK(module.isShortcutForceApplyVisible());
@@ -1398,6 +1468,11 @@ void knownForeignStatusAlignsWithApply()
     module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
     module.setShortcutStores(&store, &cleared);
     module.load();
+    QPushButton *authenticForKnown = presetButtonByModule(module, "shortcutAuthenticButton");
+    CHECK(authenticForKnown != nullptr);
+    if (authenticForKnown != nullptr) {
+        authenticForKnown->click();
+    }
     CHECK(module.shortcutStatusText().contains(QStringLiteral("Conflict")));
     CHECK(module.shortcutStatusText().contains(QStringLiteral("Meta+G")));
     CHECK(!module.shortcutStatusText().contains(QStringLiteral("Ready")));
@@ -1423,6 +1498,11 @@ void growArrowStatusAlignsWithApply()
     module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
     module.setShortcutStores(&store, &cleared);
     module.load();
+    QPushButton *authenticForGrow = presetButtonByModule(module, "shortcutAuthenticButton");
+    CHECK(authenticForGrow != nullptr);
+    if (authenticForGrow != nullptr) {
+        authenticForGrow->click();
+    }
     CHECK(module.shortcutStatusText().contains(QStringLiteral("Conflict")));
     CHECK(module.shortcutStatusText().contains(QStringLiteral("Meta+Alt+Left")));
     CHECK(!module.shortcutStatusText().contains(QStringLiteral("Ready")));
@@ -1467,6 +1547,11 @@ void focusMoveArrowStatusAlignsWithApply()
         module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
         module.setShortcutStores(&store, &cleared);
         module.load();
+        QPushButton *authenticForFocusMove = presetButtonByModule(module, "shortcutAuthenticButton");
+        CHECK(authenticForFocusMove != nullptr);
+        if (authenticForFocusMove != nullptr) {
+            authenticForFocusMove->click();
+        }
         CHECK(module.shortcutStatusText().contains(QStringLiteral("Conflict")));
         CHECK(module.shortcutStatusText().contains(displays.at(i)));
         CHECK(!module.shortcutStatusText().contains(QStringLiteral("Ready")));
@@ -1494,6 +1579,11 @@ void terminalFailureLogIncludesReason()
     });
     module.setShortcutStores(&store, &cleared);
     module.load();
+    QPushButton *authenticForLog = presetButtonByModule(module, "shortcutAuthenticButton");
+    CHECK(authenticForLog != nullptr);
+    if (authenticForLog != nullptr) {
+        authenticForLog->click();
+    }
     QStringList messages;
     ShortcutDiag::setSink([&](QtMsgType, const QString &message) {
         messages.append(message);
@@ -1524,6 +1614,380 @@ void terminalFailureLogIncludesReason()
     CHECK(sawTerminalFailure);
     CHECK(sawStaleForceFailure);
     CHECK(cleared.saves == 0);
+}
+
+void selectionKeepPreservesCustomCanonicalEmpty()
+{
+    // Plain Keep Apply preserves every enabled row: a customized chord, a
+    // canonical chord, and a present-empty assignment all stay, with zero
+    // writes. Status reports preservation, never canonical ownership.
+    FakeShortcutStore store;
+    seedReady(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            tuple.active = QList<int>{777001};
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+            tuple.active.clear();
+        }
+    }
+    FakeClearedStore cleared;
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
+    module.setShortcutStores(&store, &cleared);
+    module.load();
+    CHECK(!module.shortcutAuthenticStaged());
+    // The live-empty row auto-stages Disable; restage it to Keep so empty
+    // means leave empty.
+    CHECK(module.shortcutDisabledIds().contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-1")));
+    setRowDisabled(module, QStringLiteral("kwin/plasma-auto-tiler-workspace-1"), false);
+    CHECK(!module.shortcutDisabledIds().contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-1")));
+    module.requestShortcutApply();
+    CHECK(module.shortcutErrorText().isEmpty());
+    CHECK(!module.isShortcutForceApplyVisible());
+    CHECK(store.totalWrites() == 0);
+    CHECK(cleared.saves == 0);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            CHECK(tuple.active == (QList<int>{777001}));
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+            CHECK(tuple.active.isEmpty());
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-maximize")) {
+            CHECK(tuple.active == (QList<int>{10}));
+        }
+        if (tuple.action == QStringLiteral("Lock Session")) {
+            CHECK(tuple.active == (QList<int>{META_L}));
+        }
+    }
+    CHECK(module.shortcutStatusText().contains(QStringLiteral("preserved")));
+    CHECK(module.shortcutStatusText().contains(QStringLiteral("128 rows")));
+}
+
+void selectionAuthenticAssignsCanonical()
+{
+    // Staged Authentic commits canonical chords on confirmed Apply,
+    // including the focus/lock relocation, without touching foreign
+    // holders, and the staged reset intent is consumed there.
+    FakeShortcutStore store;
+    seedReady(store);
+    FakeClearedStore cleared;
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
+    module.setShortcutStores(&store, &cleared);
+    module.load();
+    QPushButton *authentic = presetButtonByModule(module, "shortcutAuthenticButton");
+    CHECK(authentic != nullptr);
+    if (authentic != nullptr) {
+        authentic->click();
+    }
+    CHECK(module.shortcutAuthenticStaged());
+    CHECK(module.shortcutDisabledIds().isEmpty());
+    module.requestShortcutApply();
+    CHECK(module.shortcutErrorText().isEmpty());
+    CHECK(!module.shortcutAuthenticStaged());
+    CHECK(store.totalWrites() > 0);
+    CHECK(store.foreignWriteLog.isEmpty());
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            CHECK(tuple.active == (QList<int>{META_G}));
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-up")) {
+            CHECK(tuple.active == (QList<int>{META_ALT_K}));
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+            CHECK(tuple.active == (QList<int>{META_L}));
+        }
+        if (tuple.action == QStringLiteral("Lock Session")) {
+            CHECK(tuple.active == (QList<int>{META_ESC}));
+        }
+    }
+    CHECK(module.shortcutStatusText().contains(QStringLiteral("preserved")));
+}
+
+void selectionCompatibleKeepsCustomNonconflict()
+{
+    // Compatible disables known/canonical conflicts while an unrelated
+    // customized row stays Keep; Apply clears the disabled own rows and
+    // leaves the custom chord and the foreign holder untouched.
+    FakeShortcutStore store;
+    seedReady(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-2")) {
+            tuple.active = QList<int>{888001};
+        }
+    }
+    store.tuples.append(makeTuple(QStringLiteral("kwin"), QStringLiteral("Grid View"), QList<int>{META_G}));
+    FakeClearedStore cleared;
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
+    module.setShortcutStores(&store, &cleared);
+    module.load();
+    QPushButton *compatible = presetButtonByModule(module, "shortcutCompatibleButton");
+    CHECK(compatible != nullptr);
+    if (compatible != nullptr) {
+        compatible->click();
+    }
+    CHECK(!module.shortcutAuthenticStaged());
+    CHECK(module.shortcutDisabledIds().contains(QStringLiteral("kwin/plasma-auto-tiler-toggle-float")));
+    CHECK(!module.shortcutDisabledIds().contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-2")));
+    module.requestShortcutApply();
+    CHECK(module.shortcutErrorText().isEmpty());
+    CHECK(store.foreignWriteLog.isEmpty());
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-2")) {
+            CHECK(tuple.active == (QList<int>{888001}));
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            CHECK(tuple.active.isEmpty());
+        }
+        if (tuple.action == QStringLiteral("Grid View")) {
+            CHECK(tuple.active == (QList<int>{META_G}));
+        }
+    }
+}
+
+void selectionKeepCustomConflictPreviewForce()
+{
+    // A Keep-customized chord claimed by a foreign holder refuses Apply
+    // naming the actual chord. Force previews the actual removal and clears
+    // only the foreign holder, preserving the custom chord with zero
+    // project writes.
+    FakeShortcutStore store;
+    seedReady(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            tuple.active = QList<int>{777001};
+        }
+    }
+    addForeignHolder(store, QStringLiteral("org.example"), QStringLiteral("other-app"), QList<int>{777001},
+                    QList<int>{5555});
+    FakeClearedStore cleared;
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
+    module.setShortcutStores(&store, &cleared);
+    module.load();
+    CHECK(!module.shortcutAuthenticStaged());
+    module.requestShortcutApply();
+    CHECK(store.totalWrites() == 0);
+    CHECK(!module.shortcutErrorText().isEmpty());
+    // The refusal names the live actual chord, never a silent canonical.
+    CHECK(module.shortcutErrorText().contains(ShortcutReconciler::keyDisplayName(777001)));
+    CHECK(!module.shortcutErrorText().contains(QStringLiteral("Meta+G")));
+    CHECK(module.isShortcutForceApplyVisible());
+    CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("other-app")));
+    CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("stay at their current assignments")));
+    module.requestShortcutForceApply();
+    CHECK(module.shortcutErrorText().isEmpty());
+    CHECK(!module.isShortcutForceApplyVisible());
+    CHECK(store.writeLog.isEmpty());
+    CHECK(!store.foreignWriteLog.isEmpty());
+    CHECK(cleared.saves == 1);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("other-app")) {
+            CHECK(tuple.active.isEmpty());
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            CHECK(tuple.active == (QList<int>{777001}));
+        }
+    }
+}
+
+void selectionForceRevalidationKeepDrift()
+{
+    // A Keep-actual drift after preview fails Force as stale with zero
+    // writes and zero cleared-list persists.
+    FakeShortcutStore store;
+    seedReady(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            tuple.active = QList<int>{777001};
+        }
+    }
+    addForeignHolder(store, QStringLiteral("org.example"), QStringLiteral("other-app"), QList<int>{777001},
+                    QList<int>{5555});
+    FakeClearedStore cleared;
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
+    module.setShortcutStores(&store, &cleared);
+    module.load();
+    module.requestShortcutApply();
+    CHECK(module.isShortcutForceApplyVisible());
+    // Drift the Keep row to a superset: the conflicting chord stays claimed
+    // so revalidation still sees a holder, but the live image differs and
+    // Force must refuse as stale before any persist.
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            tuple.active = QList<int>{777001, 888002};
+        }
+    }
+    module.requestShortcutForceApply();
+    CHECK(!module.shortcutErrorText().isEmpty());
+    CHECK(module.shortcutErrorText().contains(QStringLiteral("stale")));
+    CHECK(store.totalWrites() == 0);
+    CHECK(cleared.saves == 0);
+    CHECK(cleared.stored.isEmpty());
+    CHECK(!module.isShortcutForceApplyVisible());
+}
+
+void selectionSaveIsolationWithAuthentic()
+{
+    // A staged Authentic intent plus a disabled row never leaks into
+    // ordinary Save: zero shortcut writes, intent and draft retained.
+    FakeShortcutStore store;
+    seedReady(store);
+    FakeClearedStore cleared;
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
+    module.setShortcutStores(&store, &cleared);
+    module.load();
+    QPushButton *authentic = presetButtonByModule(module, "shortcutAuthenticButton");
+    CHECK(authentic != nullptr);
+    if (authentic != nullptr) {
+        authentic->click();
+    }
+    setRowDisabled(module, QStringLiteral("kwin/plasma-auto-tiler-workspace-1"), true);
+    CHECK(module.shortcutAuthenticStaged());
+    CHECK(module.shortcutDisabledIds().size() == 1);
+    module.save();
+    CHECK(store.totalWrites() == 0);
+    CHECK(cleared.saves == 0);
+    CHECK(cleared.clears == 0);
+    CHECK(module.shortcutAuthenticStaged());
+    CHECK(module.shortcutDisabledIds().size() == 1);
+    module.save();
+    CHECK(store.totalWrites() == 0);
+    CHECK(cleared.saves == 0);
+    CHECK(module.shortcutAuthenticStaged());
+}
+
+void selectionAuthenticApplyConsumesPreservesLaterCustom()
+{
+    // Lifecycle: staged Authentic is committed by a confirmed successful
+    // Apply and consumed there. A later external customization in KDE
+    // Shortcuts with the still-open KCM must survive the next confirmed
+    // Apply (Keep preserves with no reset).
+    FakeShortcutStore store;
+    seedReady(store);
+    FakeClearedStore cleared;
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
+    module.setShortcutStores(&store, &cleared);
+    module.load();
+    QPushButton *authentic = presetButtonByModule(module, "shortcutAuthenticButton");
+    CHECK(authentic != nullptr);
+    if (authentic != nullptr) {
+        authentic->click();
+    }
+    CHECK(module.shortcutAuthenticStaged());
+    module.requestShortcutApply();
+    CHECK(module.shortcutErrorText().isEmpty());
+    CHECK(!module.shortcutAuthenticStaged());
+    CHECK(store.totalWrites() > 0);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            CHECK(tuple.active == (QList<int>{META_G}));
+        }
+    }
+    // Still-open KCM: the user customizes the current native chord in KDE
+    // Shortcuts (external mutation, no KCM reload, draft untouched).
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            tuple.active = QList<int>{777001};
+        }
+    }
+    const int writesAfterFirst = store.totalWrites();
+    CHECK(module.shortcutDisabledIds().isEmpty());
+    CHECK(!module.shortcutAuthenticStaged());
+    module.requestShortcutApply();
+    CHECK(module.shortcutErrorText().isEmpty());
+    CHECK(!module.shortcutAuthenticStaged());
+    CHECK(!module.isShortcutForceApplyVisible());
+    CHECK(store.totalWrites() == writesAfterFirst);
+    CHECK(cleared.saves == 0);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            CHECK(tuple.active == (QList<int>{777001}));
+        }
+    }
+    CHECK(module.shortcutStatusText().contains(QStringLiteral("preserved")));
+}
+
+void selectionAuthenticForceConsumesRetainsOnFailure()
+{
+    // Force lifecycle: a refused Apply and a declined Force retain the
+    // staged Authentic intent; a confirmed successful Force consumes it, so
+    // a later external customization with the still-open KCM is preserved
+    // by the next confirmed Apply.
+    FakeShortcutStore store;
+    seedReady(store);
+    addForeignHolder(store, QStringLiteral("org.example"), QStringLiteral("other-launch"),
+                     QList<int>{META_G, 999}, QList<int>{1111});
+    FakeClearedStore cleared;
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    bool allow = true;
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&](const QString &, const QString &) {
+        ++confirms;
+        return allow;
+    });
+    module.setShortcutStores(&store, &cleared);
+    module.load();
+    QPushButton *authentic = presetButtonByModule(module, "shortcutAuthenticButton");
+    CHECK(authentic != nullptr);
+    if (authentic != nullptr) {
+        authentic->click();
+    }
+    CHECK(module.shortcutAuthenticStaged());
+    module.requestShortcutApply();
+    CHECK(confirms == 1);
+    CHECK(store.totalWrites() == 0);
+    CHECK(!module.shortcutErrorText().isEmpty());
+    CHECK(module.shortcutAuthenticStaged());
+    CHECK(module.isShortcutForceApplyVisible());
+    // Declined Force retains the staged intent with the preview kept.
+    allow = false;
+    module.requestShortcutForceApply();
+    CHECK(confirms == 2);
+    CHECK(store.totalWrites() == 0);
+    CHECK(cleared.saves == 0);
+    CHECK(module.shortcutAuthenticStaged());
+    CHECK(module.isShortcutForceApplyVisible());
+    // Accepted Force succeeds and consumes the staged intent.
+    allow = true;
+    module.requestShortcutForceApply();
+    CHECK(confirms == 3);
+    CHECK(module.shortcutErrorText().isEmpty());
+    CHECK(!module.shortcutAuthenticStaged());
+    CHECK(!module.isShortcutForceApplyVisible());
+    CHECK(cleared.saves == 1);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            CHECK(tuple.active == (QList<int>{META_G}));
+        }
+        if (tuple.action == QStringLiteral("other-launch")) {
+            CHECK(tuple.active == (QList<int>{999}));
+        }
+    }
+    // Still-open KCM: external customization then a confirmed Keep Apply
+    // preserves it with no additional writes and no reset.
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            tuple.active = QList<int>{777002};
+        }
+    }
+    const int writesAfterForce = store.totalWrites();
+    module.requestShortcutApply();
+    CHECK(confirms == 4);
+    CHECK(module.shortcutErrorText().isEmpty());
+    CHECK(!module.shortcutAuthenticStaged());
+    CHECK(store.totalWrites() == writesAfterForce);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            CHECK(tuple.active == (QList<int>{777002}));
+        }
+    }
 }
 
 } // namespace
@@ -1575,6 +2039,14 @@ int main(int argc, char **argv)
         selectionCompatibleQueryFailurePreservesDraft();
         selectionForeignDefaultCompatibleAfterClear();
         selectionReadableRowText();
+        selectionKeepPreservesCustomCanonicalEmpty();
+        selectionAuthenticAssignsCanonical();
+        selectionCompatibleKeepsCustomNonconflict();
+        selectionKeepCustomConflictPreviewForce();
+        selectionForceRevalidationKeepDrift();
+        selectionSaveIsolationWithAuthentic();
+        selectionAuthenticApplyConsumesPreservesLaterCustom();
+        selectionAuthenticForceConsumesRetainsOnFailure();
     } else {
         std::fprintf(stderr, "unknown scenario: %s\n", argv[1]);
         return EXIT_FAILURE;

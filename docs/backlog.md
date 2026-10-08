@@ -10,16 +10,6 @@ decisions of 2026-09-24 are under
 
 ## Open work
 
-- P1 | KDE Keep-preserving shortcut Apply (M13) | Project Apply must preserve
-  current assignments, including user-customized chords, for Keep bindings;
-  Authentic alone explicitly resets the canonical catalog. Current
-  `shortcutreconciler.cpp` `expectedPost` and `unifiedsettings_module.cpp`
-  `catalogPost` choose canonical posts for kept/enabled rows. Update staged
-  preset intent, preview, Apply/Force and verification consistently; preserve
-  ordinary Save isolation, explicit confirmation, foreign-holder revalidation
-  and separate Revert Shortcuts.
-  [decision](decisions.md#shortcuts-conflicts-and-presets)
-
 - P0 | Windows port | KDE-first core extraction finished at K1 (user
   2026-09-30; K2/K3 revisit when macOS starts, see
   [extraction](research/cross-platform-core/extraction.md),
@@ -2124,7 +2114,8 @@ decisions of 2026-09-24 are under
   existing shortcut override Apply/Force/Revert; macOS when it starts.
   KDE Keep/Disable catalog and presets delivered offline
   (`e1bb52a`, `cdd4ef4`, `96d04ab`; CI green); choices ratified 2026-10-08
-  with Keep-preserving Apply implementation pending (P1 M13 item above).
+  with Keep-preserving Apply delivered offline 2026-10-09 (M13): custom,
+  canonical and empty assignments preserved; only staged Authentic resets.
   Integrated rebind and KDE first-run prompt deferred. KDE live
   acceptance pending: [checks](live-shortcut-override-verification.md),
   [record](changes/kde-shortcut-conflicts.md).

@@ -57,19 +57,19 @@ Inspect only; do not create, edit, or delete it.
 
 ## Apply
 
-- Select `Authentic (keep all)` to stage the full canonical catalog. This
+- Select `Authentic (use canonical)` to stage the full canonical catalog. This
   does not write shortcuts. Existing empty own assignments initialize as
   Disable when the page opens; Authentic deliberately resets those choices.
 - Click `Apply Shortcuts` and confirm only the dialog titled
 `Apply Shortcuts` (`kwin/native-effect/unifiedsettings_module.cpp:runShortcutApply`).
-It assigns all kept catalog bindings, including workspace and symbol aliases.
-With focus-right kept, it takes `Meta+L` and moves Lock Session to `Meta+Esc`,
+With Authentic staged it assigns all enabled catalog bindings, including workspace and symbol aliases.
+With focus-right enabled under Authentic, it takes `Meta+L` and moves Lock Session to `Meta+Esc`,
 plus `Meta+Alt+K`, `Meta+Alt+L`, `Meta+Alt+Left`, `Meta+Alt+Down`,
 `Meta+Alt+Up`, `Meta+Alt+Right`, `Meta+G`, `Meta+M`,
 `Meta+Left/Down/Up/Right`, and `Meta+Shift+Left/Right`. The four focus arrows
 clear KWin Quick Tile defaults; the two move arrows clear KWin's next/previous
 screen defaults.
-- Success assigns every enabled catalog action. A missing enabled action or
+- Authentic success assigns every enabled catalog action; ordinary Keep preserves current assignments. A missing enabled action or
   preflight conflict refuses without writes;
   preserve the reported write count if a later operation fails.
 Capture the resulting status verbatim.
@@ -168,9 +168,28 @@ With disposable windows, physically press each chord and confirm:
   claimed until the existing retained-ID/retry checks above are performed.
 - Stage Authentic, decline confirmation, then confirm a fresh Apply/Force:
   no change on decline; on success kept bindings return to canonical chords.
-  A custom rebind made in KDE Shortcuts is shown as current, but this explicit
-  project Apply deliberately replaces it. First-run prompt/in-page rebind
+  A custom rebind made in KDE Shortcuts is shown as current; only this staged
+  Authentic Apply deliberately replaces it. First-run prompt/in-page rebind
   controls are deferred; opening Settings alone must not correct shortcuts.
+
+### Pending: M13 Keep preserves custom KDE chords across Apply
+
+- In KDE System Settings > Shortcuts, customize a disposable nonconflicting
+  project binding. Reopen project Settings, leave it Keep, confirm Apply
+  Shortcuts, and verify its current assignment and physical delivery remain
+  customized. Repeat after closing/reopening and the user-owned session restart.
+- Repeat with a canonical chord and an empty assignment checked Keep: each
+  remains unchanged. Only staged Authentic followed by confirmed Apply/Force
+  returns these bindings to canonical; staging or declining never writes.
+- After successful Authentic Apply/Force, customize again in KDE Shortcuts
+  with the project page still open, then confirm another Apply. The new custom
+  assignment must survive: successful commit consumes the reset intent.
+- Give a disposable foreign action the same custom chord plus an unrelated
+  chord. Verify the conflict list and Force preview name the custom chord,
+  confirmed/revalidated Force preserves the project custom chord and the
+  foreign unrelated chord, and stale confirmation refuses. Stage Compatible
+  and verify conflicting rows disable while nonconflicting custom rows remain
+  unchanged. Ordinary Settings Apply and separate Revert keep their isolation.
 
 ## Diagnostics
 

@@ -562,6 +562,10 @@ struct ShortcutForcePreview
     // Force applies only against the same draft; draft edits cancel the
     // pending preview and a mismatched draft fails as stale.
     QStringList disabledIds;
+    // Exact staged Authentic intent this preview was built for. Force
+    // applies only when the caller stages the same intent; a mismatch
+    // fails as stale with zero writes.
+    bool authenticStaged = false;
 };
 
 struct ShortcutForceApplyResult
@@ -740,14 +744,18 @@ class ShortcutReconciler
 public:
     explicit ShortcutReconciler(ShortcutStore *store, ClearedActionsStore *cleared = nullptr);
     ShortcutApplyResult apply();
-    // Selection-aware Apply: enabled catalog rows are assigned their
-    // canonical chords (and Lock Session is relocated only when focus-right
-    // is enabled); disabled catalog rows present live with a non-empty
-    // active list are cleared to empty through the existing own-action
-    // transport and rely on native persistence (no parallel local state).
-    // Disabled rows never scan, refuse, clear foreign holders, or relocate
-    // the lock. Empty disabled set preserves the legacy apply() behavior.
+    // Selection-aware Apply over an explicit staged draft. The single-arg
+    // form stages Authentic for every enabled row (assigns canonical
+    // chords, relocates Lock Session when focus-right is enabled:
+    // historical behavior). The two-arg form adds the staged Authentic
+    // intent: false preserves each enabled (Keep) row at its live
+    // assignment (custom chords and empty assignments included) and leaves
+    // Lock Session untouched. Disabled rows present live with a non-empty
+    // active list are cleared to empty in both forms through the existing
+    // own-action transport; they never scan, refuse, clear foreign holders,
+    // or relocate the lock.
     ShortcutApplyResult applySelected(const QSet<QString> &disabledIds);
+    ShortcutApplyResult applySelected(const QSet<QString> &disabledIds, bool authenticStaged);
     // Revert restores defaults for every non-project ID in the durable
     // cleared list (project-owned kwin/plasma-auto-tiler-* IDs, including
     // legacy ones, stay cleared) and empties the list only after all of
@@ -763,8 +771,11 @@ public:
     // Monitor Meta+Esc holder. Never forceable when any store, ownership,
     // transport, or parsing check fails.
     ShortcutForcePreview previewForceApply();
-    // Selection-aware Force preview bound to the exact draft.
+    // Selection-aware Force preview bound to the exact draft and intent.
+    // The single-arg form stages Authentic for every enabled row
+    // (historical behavior); the two-arg form binds the staged intent.
     ShortcutForcePreview previewForceApplySelected(const QSet<QString> &disabledIds);
+    ShortcutForcePreview previewForceApplySelected(const QSet<QString> &disabledIds, bool authenticStaged);
     // Confirmed force: revalidates the preview snapshot against a fresh live
     // read (stale snapshots fail closed with zero writes, including zero
     // cleared-list writes when stale before persist), persists the union of
@@ -779,10 +790,13 @@ public:
     // defaults for an action Force never cleared.
     ShortcutForceApplyResult applyForced(const ShortcutForcePreview &confirmed);
     // Selection-aware confirmed Force: revalidates the preview snapshot and
-    // the draft against fresh live state before any write. A draft mismatch
-    // fails as stale with zero writes.
+    // the draft against fresh live state before any write. A draft or
+    // Authentic-intent mismatch fails as stale with zero writes.
     ShortcutForceApplyResult applyForcedSelected(const ShortcutForcePreview &confirmed,
-                                                const QSet<QString> &disabledIds);
+                                                 const QSet<QString> &disabledIds);
+    ShortcutForceApplyResult applyForcedSelected(const ShortcutForcePreview &confirmed,
+                                                 const QSet<QString> &disabledIds,
+                                                 bool authenticStaged);
 
     static bool isAllowlisted(const QString &component, const QString &action);
     // Current project-owned action: any full-catalog project row. Never
@@ -802,8 +816,22 @@ public:
     static QList<int> remainderAfterClear(const QList<int> &active);
     // Selection-scoped variants over the enabled catalog chords only. A
     // disabled focus-right additionally drops the Meta+L/Meta+Esc chords.
+    // Two-arg forms stage Authentic for every enabled row (canonical chords,
+    // historical behavior). Four-arg forms add the staged Authentic intent
+    // plus the live Keep actuals (keepKeys, catalog-ordered, zero-filtered
+    // by the implementation): authenticStaged true ignores keepKeys and
+    // behaves like the two-arg form; false requires the authentic canonical
+    // chords plus the Keep live chords (Lock Session relocation chords only
+    // while focus-right itself is Authentic-enabled).
     static QList<int> conflictingKeysFor(const QList<int> &active, const QSet<QString> &disabledIds);
+    static QList<int> conflictingKeysFor(const QList<int> &active, const QSet<QString> &disabledIds,
+                                         bool authenticStaged, const QList<int> &keepKeys);
     static QList<int> remainderAfterClearFor(const QList<int> &active, const QSet<QString> &disabledIds);
+    static QList<int> remainderAfterClearFor(const QList<int> &active, const QSet<QString> &disabledIds,
+                                             bool authenticStaged, const QList<int> &keepKeys);
+    // Required-key image over an explicit holder-active intersection.
+    static QList<int> conflictingKeysIn(const QList<int> &active, const QList<int> &required);
+    static QList<int> remainderAfterClearIn(const QList<int> &active, const QList<int> &required);
     static QList<int> lockPostFor(const QList<int> &lockPre);
     static QList<int> dedupKeys(const QList<int> &keys);
     static bool keysValid(const QList<int> &keys);
@@ -863,10 +891,18 @@ public:
     static bool clearedActionsPathSafe(const QString &path, QString *error);
     // Defect B keyed conflict detection (authoritative, not enumeration).
     static QList<int> relevantConflictKeys();
-    // Selection-scoped required chords: canonical keys of enabled catalog
-    // rows, plus the Lock Session relocation chords only when focus-right
-    // is enabled. Catalog order, deduplicated.
+    // Selection-scoped required chords: canonical keys of Authentic-enabled
+    // catalog rows, plus the caller-supplied live Keep chords (keepKeys),
+    // plus the Lock Session relocation chords only when focus-right is
+    // Authentic-enabled. Catalog order, deduplicated. The single-arg form
+    // stages Authentic for every enabled row (historical behavior).
     static QList<int> enabledRequiredKeys(const QSet<QString> &disabledIds);
+    static QList<int> enabledRequiredKeys(const QSet<QString> &disabledIds, bool authenticStaged,
+                                          const QList<int> &keepKeys);
+    // Live Keep chords in catalog order from an explicit per-catalog active
+    // image (missing rows contribute nothing). Empty unless preserving.
+    static QList<int> keepKeysForImages(const QList<QList<int>> &liveImages, const QSet<QString> &disabledIds,
+                                        bool authenticStaged);
     static QString keyDisplayName(int key);
     // Bounded safe key-list image for diagnostics/preview: "none" for empty,
     // otherwise comma-joined ints. Only ever called with validated key lists.
@@ -939,12 +975,20 @@ public:
     static KeyedOccupancyResult checkKeyedForeignOccupancyDetailed(ShortcutStore *store);
     static bool checkKeyedForeignOccupancy(ShortcutStore *store, QString *error);
     // Selection-scoped occupancy gate over the enabled required chords.
+    // Two-arg form stages Authentic for every enabled row (historical
+    // behavior); three-arg form binds the staged Authentic intent, with
+    // Keep rows contributing their live actual chords.
     static KeyedOccupancyResult checkKeyedForeignOccupancyDetailedFor(ShortcutStore *store,
-                                                                     const QSet<QString> &disabledIds);
+                                                                      const QSet<QString> &disabledIds);
+    static KeyedOccupancyResult checkKeyedForeignOccupancyDetailedFor(ShortcutStore *store,
+                                                                      const QSet<QString> &disabledIds,
+                                                                      bool authenticStaged);
     // Full-catalog row displays in catalog order: one keyed holder query
-    // per row for current holders, plus the known compiled default and the
-    // live project defaults from readAll. Any store failure fails closed
-    // with the row marked unknown; never invents holders or defaults.
+    // per row for current holders (canonical chord plus live actual chords,
+    // so Keep-customized rows report their actual conflicts), plus the known
+    // compiled default and the live project defaults from readAll. Any store
+    // failure fails closed with the row marked unknown; never invents
+    // holders or defaults.
     static bool collectRowDisplays(ShortcutStore *store, QList<ShortcutRowDisplay> *rows, QString *error);
     // Shared occupancy exemption behind the status check and the backend
     // holder scan: project actions own their chords, Lock Session owns
@@ -999,19 +1043,29 @@ private:
     // holder scan. Zero writes. Fails closed on any transport, parsing,
     // consistency, or lock-precondition failure. Disabled catalog rows are
     // out of scope: their chords are never scanned and their holders never
-    // become clear rows or blockers; a disabled focus-right additionally
-    // leaves the lock unresolved with no Meta+L/Meta+Esc scan.
+    // become clear rows or blockers. Keep (non-Authentic) rows contribute
+    // their live actual chords to the scan and are never assigned; the lock
+    // resolves only while focus-right itself is Authentic-enabled (a Keep or
+    // disabled focus-right leaves the lock out of scope with no
+    // Meta+L/Meta+Esc scan, resolution, or relocation).
     bool collectHolderSnapshot(HolderSnapshot *snapshot, QString *error);
     bool collectHolderSnapshotFor(HolderSnapshot *snapshot, const QSet<QString> &disabledIds, QString *error);
+    bool collectHolderSnapshotFor(HolderSnapshot *snapshot, const QSet<QString> &disabledIds,
+                                  bool authenticStaged, QString *error);
     // Assigns project posts and relocates Lock Session from a fresh read.
     // Used by both apply (no holders present) and the second half of force
-    // (holders just cleared). Owner-pinned with confirmed replies.
+    // (holders just cleared). Owner-pinned with confirmed replies. Keep rows
+    // are verified present but never assigned; the lock relocates only while
+    // focus-right is Authentic-enabled.
     ShortcutApplyResult writeProjectKeys(const char *operation);
     ShortcutApplyResult writeProjectKeysFor(const char *operation, const QSet<QString> &disabledIds);
+    ShortcutApplyResult writeProjectKeysFor(const char *operation, const QSet<QString> &disabledIds,
+                                            bool authenticStaged);
     // Fresh preview builder behind previewForceApply and the force
     // revalidation inside applyForced.
     ShortcutForcePreview buildForcePreview();
     ShortcutForcePreview buildForcePreviewFor(const QSet<QString> &disabledIds);
+    ShortcutForcePreview buildForcePreviewFor(const QSet<QString> &disabledIds, bool authenticStaged);
     static bool forceMismatchFromRow(const ClearRow &row, ShortcutForceMismatch *out);
 };
 

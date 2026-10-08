@@ -931,7 +931,17 @@ QList<int> ShortcutReconciler::conflictingKeys(const QList<int> &active)
 
 QList<int> ShortcutReconciler::conflictingKeysFor(const QList<int> &active, const QSet<QString> &disabledIds)
 {
-    const QList<int> required = enabledRequiredKeys(disabledIds);
+    return conflictingKeysFor(active, disabledIds, true, QList<int>());
+}
+
+QList<int> ShortcutReconciler::conflictingKeysFor(const QList<int> &active, const QSet<QString> &disabledIds,
+                                                 bool authenticStaged, const QList<int> &keepKeys)
+{
+    return conflictingKeysIn(active, enabledRequiredKeys(disabledIds, authenticStaged, keepKeys));
+}
+
+QList<int> ShortcutReconciler::conflictingKeysIn(const QList<int> &active, const QList<int> &required)
+{
     QList<int> out;
     out.reserve(active.size());
     for (int key : active) {
@@ -957,7 +967,17 @@ QList<int> ShortcutReconciler::remainderAfterClear(const QList<int> &active)
 
 QList<int> ShortcutReconciler::remainderAfterClearFor(const QList<int> &active, const QSet<QString> &disabledIds)
 {
-    const QList<int> required = enabledRequiredKeys(disabledIds);
+    return remainderAfterClearFor(active, disabledIds, true, QList<int>());
+}
+
+QList<int> ShortcutReconciler::remainderAfterClearFor(const QList<int> &active, const QSet<QString> &disabledIds,
+                                                     bool authenticStaged, const QList<int> &keepKeys)
+{
+    return remainderAfterClearIn(active, enabledRequiredKeys(disabledIds, authenticStaged, keepKeys));
+}
+
+QList<int> ShortcutReconciler::remainderAfterClearIn(const QList<int> &active, const QList<int> &required)
+{
     QList<int> out;
     out.reserve(active.size());
     for (int key : active) {
@@ -1539,23 +1559,65 @@ QList<int> ShortcutReconciler::relevantConflictKeys()
 
 QList<int> ShortcutReconciler::enabledRequiredKeys(const QSet<QString> &disabledIds)
 {
+    return enabledRequiredKeys(disabledIds, true, QList<int>());
+}
+
+QList<int> ShortcutReconciler::keepKeysForImages(const QList<QList<int>> &liveImages,
+                                                 const QSet<QString> &disabledIds, bool authenticStaged)
+{
+    // Live Keep chords in catalog order from an explicit per-catalog active
+    // image. Bounded: at most SHORTCUT_MAX_TUPLES keys even from a forged
+    // image; forged content still fails the full live revalidation later.
     QList<int> out;
-    const bool focusEnabled =
-        !disabledIds.contains(shortcutCatalogId(shortcutFocusComponent(), shortcutFocusAction()));
-    for (const ShortcutCatalogEntry &entry : shortcutProjectCatalog()) {
+    if (authenticStaged) {
+        return out;
+    }
+    const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
+    const int rows = qMin(catalog.size(), liveImages.size());
+    for (int i = 0; i < rows; ++i) {
+        const ShortcutCatalogEntry &entry = catalog.at(i);
         if (disabledIds.contains(shortcutCatalogId(entry.component, entry.action))) {
             continue;
         }
-        if (entry.canonicalKey == 0) {
-            continue;
+        for (int key : liveImages.at(i)) {
+            if (out.size() >= SHORTCUT_MAX_TUPLES) {
+                return out;
+            }
+            out.append(key);
         }
-        if (!out.contains(entry.canonicalKey)) {
-            out.append(entry.canonicalKey);
+    }
+    return out;
+}
+
+QList<int> ShortcutReconciler::enabledRequiredKeys(const QSet<QString> &disabledIds, bool authenticStaged,
+                                                  const QList<int> &keepKeys)
+{
+    QList<int> out;
+    if (authenticStaged) {
+        for (const ShortcutCatalogEntry &entry : shortcutProjectCatalog()) {
+            if (disabledIds.contains(shortcutCatalogId(entry.component, entry.action))) {
+                continue;
+            }
+            if (entry.canonicalKey == 0) {
+                continue;
+            }
+            if (!out.contains(entry.canonicalKey)) {
+                out.append(entry.canonicalKey);
+            }
+        }
+    } else {
+        for (int key : keepKeys) {
+            if (key != 0 && !out.contains(key)) {
+                out.append(key);
+            }
         }
     }
     // The Lock Session relocation chords stay required only while focus-right
-    // itself is enabled; a disabled focus-right never scans Meta+Esc.
-    if (focusEnabled) {
+    // itself is Authentic-enabled; a Keep or disabled focus-right never
+    // scans Meta+Esc.
+    const bool focusEnabled =
+        !disabledIds.contains(shortcutCatalogId(shortcutFocusComponent(), shortcutFocusAction()));
+    if (focusEnabled && authenticStaged) {
         const ShortcutConflictRow &lockRow = shortcutConflictTable().at(0);
         for (int key : lockRow.resolutionTarget) {
             if (!out.contains(key)) {
@@ -1856,6 +1918,13 @@ KeyedOccupancyResult ShortcutReconciler::checkKeyedForeignOccupancyDetailed(Shor
 KeyedOccupancyResult ShortcutReconciler::checkKeyedForeignOccupancyDetailedFor(ShortcutStore *store,
                                                                               const QSet<QString> &disabledIds)
 {
+    return checkKeyedForeignOccupancyDetailedFor(store, disabledIds, true);
+}
+
+KeyedOccupancyResult ShortcutReconciler::checkKeyedForeignOccupancyDetailedFor(ShortcutStore *store,
+                                                                              const QSet<QString> &disabledIds,
+                                                                              bool authenticStaged)
+{
     KeyedOccupancyResult result;
     result.status = KeyedOccupancy::Clear;
     auto unavailable = [&](const QString &message) {
@@ -1877,7 +1946,32 @@ KeyedOccupancyResult ShortcutReconciler::checkKeyedForeignOccupancyDetailedFor(S
             return unavailable(idError);
         }
     }
-    const QList<int> keys = enabledRequiredKeys(disabledIds);
+    // Keep rows contribute their live actual chords (customized chords
+    // included); Authentic-enabled rows contribute canonical chords. A
+    // failed tuple read reports unavailable honestly instead of claiming
+    // clarity from a partial image.
+    QList<ShortcutTuple> tuples;
+    QString readError;
+    if (!store->readAll(&tuples, &readError)) {
+        return unavailable(readError.isEmpty() ? QStringLiteral("allShortcutInfos call failed") : readError);
+    }
+    QList<QList<int>> actives;
+    {
+        const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
+        actives.reserve(catalog.size());
+        for (const ShortcutCatalogEntry &entry : catalog) {
+            QList<int> active;
+            for (const ShortcutTuple &tuple : tuples) {
+                if (tuple.component == entry.component && tuple.action == entry.action) {
+                    active = tuple.active;
+                    break;
+                }
+            }
+            actives.append(active);
+        }
+    }
+    const QList<int> keepKeys = keepKeysForImages(actives, disabledIds, authenticStaged);
+    const QList<int> keys = enabledRequiredKeys(disabledIds, authenticStaged, keepKeys);
     for (int key : keys) {
         // Disjoint single-key range checks without duplicate validation:
         // negative first, then zero (non-positive), then over-max. The
@@ -2021,20 +2115,50 @@ bool ShortcutReconciler::collectRowDisplays(ShortcutStore *store, QList<Shortcut
                 row.projectDefaults = tuple.defaults;
             }
         }
-        // Current holders via the authoritative keyed query. A failed query
-        // marks this row unknown; other rows still report. Unbound rows
-        // (key 0) never query: they report empty holders as known so the
-        // existing KCM rebinding route stays usable with an empty default.
+        // Current holders via the authoritative keyed queries: the canonical
+        // chord plus the live actual chords, so a Keep-customized row reports
+        // its actual conflicts instead of only the canonical image. A failed
+        // query marks this row unknown; other rows still report. Unbound
+        // rows (key 0) with an empty assignment never query: they report
+        // empty holders as known so the existing KCM rebinding route stays
+        // usable with an empty default.
+        QList<int> queryKeys;
+        if (entry.canonicalKey != 0) {
+            queryKeys.append(entry.canonicalKey);
+        }
+        if (row.present) {
+            for (int key : row.current) {
+                if (key != 0 && !queryKeys.contains(key)) {
+                    queryKeys.append(key);
+                }
+            }
+        }
         QList<ShortcutKeyHolder> holders;
         QString holderError;
-        if (entry.canonicalKey == 0) {
+        if (queryKeys.isEmpty()) {
             row.holdersKnown = true;
             row.holders = holders;
-        } else if (!store->shortcutsByKey(entry.canonicalKey, &holders, &holderError)) {
-            row.holdersKnown = false;
         } else {
-            row.holdersKnown = true;
-            row.holders = holders;
+            QSet<QString> seenHolderIds;
+            bool queriesOk = true;
+            for (int queryKey : queryKeys) {
+                QList<ShortcutKeyHolder> one;
+                if (!store->shortcutsByKey(queryKey, &one, &holderError)) {
+                    queriesOk = false;
+                    break;
+                }
+                for (const ShortcutKeyHolder &holder : one) {
+                    const QString id = shortcutCatalogId(holder.component, holder.action);
+                    if (!seenHolderIds.contains(id)) {
+                        seenHolderIds.insert(id);
+                        holders.append(holder);
+                    }
+                }
+            }
+            row.holdersKnown = queriesOk;
+            if (queriesOk) {
+                row.holders = holders;
+            }
         }
         // Known KDE default for the compiled rows, read live so a cleared
         // foreign holder still shows its default. Failures mark the known
@@ -2065,10 +2189,24 @@ bool ShortcutReconciler::collectRowDisplays(ShortcutStore *store, QList<Shortcut
             row.defaultsKnown = true;
             row.knownDefaults = QList<int>();
         }
-        // Live foreign wire defaults from readAll for every row (compiled
-        // table stays the fallback above). Own project defaults and Lock
-        // Session are never OS conflicts.
-        row.foreignDefaultIds = foreignDefaultIdsForKey(entry.canonicalKey, tuples);
+        // Live foreign wire defaults from readAll for every queried chord
+        // (canonical plus live actuals; compiled table stays the fallback
+        // above). Own project defaults and Lock Session are never listed.
+        QStringList foreignIds = foreignDefaultIdsForKey(entry.canonicalKey, tuples);
+        if (row.present) {
+            for (int key : row.current) {
+                if (key == 0 || key == entry.canonicalKey) {
+                    continue;
+                }
+                for (const QString &id : foreignDefaultIdsForKey(key, tuples)) {
+                    if (!foreignIds.contains(id)) {
+                        foreignIds.append(id);
+                    }
+                }
+            }
+        }
+        foreignIds.sort();
+        row.foreignDefaultIds = foreignIds;
         row.foreignDefaultsKnown = true;
         out.append(row);
     }
@@ -3054,6 +3192,12 @@ bool ShortcutReconciler::collectHolderSnapshot(HolderSnapshot *snapshot, QString
 bool ShortcutReconciler::collectHolderSnapshotFor(HolderSnapshot *snapshot, const QSet<QString> &disabledIds,
                                                   QString *error)
 {
+    return collectHolderSnapshotFor(snapshot, disabledIds, true, error);
+}
+
+bool ShortcutReconciler::collectHolderSnapshotFor(HolderSnapshot *snapshot, const QSet<QString> &disabledIds,
+                                                  bool authenticStaged, QString *error)
+{
     if (!m_store) {
         if (error) {
             *error = QStringLiteral("reconciler is not configured");
@@ -3083,8 +3227,12 @@ bool ShortcutReconciler::collectHolderSnapshotFor(HolderSnapshot *snapshot, cons
     const QList<ShortcutConflictRow> &table = shortcutConflictTable();
     const QString focusId = shortcutCatalogId(table.at(0).projectComponent, table.at(0).projectAction);
     const bool focusEnabled = !disabledIds.contains(focusId);
+    // The lock resolves only while focus-right itself is Authentic-enabled:
+    // a Keep focus preserves its current assignment and a disabled focus is
+    // cleared, so neither relocates Lock Session.
+    const bool focusAuthentic = focusEnabled && authenticStaged;
     snap.projects.reserve(table.size());
-    if (focusEnabled) {
+    if (focusAuthentic) {
         ShortcutTuple focusCurrent;
         if (!findAllowlisted(tuples, table.at(0).projectComponent, table.at(0).projectAction, &focusCurrent,
                              error)) {
@@ -3097,8 +3245,9 @@ bool ShortcutReconciler::collectHolderSnapshotFor(HolderSnapshot *snapshot, cons
         snap.lockResolved = true;
         snap.projects.append(focusCurrent);
     } else {
-        // Disabled focus-right leaves the lock out of scope: no resolution,
-        // no relocation, and no Meta+L/Meta+Esc holder scan below.
+        // A Keep or disabled focus-right leaves the lock out of scope: no
+        // resolution, no relocation, and no Meta+L/Meta+Esc holder scan
+        // below.
         snap.projects.append(ShortcutTuple());
     }
     for (int i = 1; i < table.size(); ++i) {
@@ -3137,7 +3286,7 @@ bool ShortcutReconciler::collectHolderSnapshotFor(HolderSnapshot *snapshot, cons
         }
         snap.projects.append(current);
     }
-    if (focusEnabled && (!keysValid(snap.projects.at(0).active) || !keysValid(snap.lock.active))) {
+    if (focusAuthentic && (!keysValid(snap.projects.at(0).active) || !keysValid(snap.lock.active))) {
         if (error) {
             *error = QStringLiteral("allowlisted tuple is unbounded");
         }
@@ -3215,7 +3364,10 @@ bool ShortcutReconciler::collectHolderSnapshotFor(HolderSnapshot *snapshot, cons
         cosmetics.insert(tuple.component + QStringLiteral("/") + tuple.action,
                          qMakePair(tuple.componentFriendly, tuple.friendly));
     }
-    // Authoritative per-required-key holder scan over the enabled chords.
+    // Authoritative per-required-key holder scan over the enabled chords:
+    // Authentic-enabled rows contribute their canonical chords, Keep rows
+    // contribute their live actual chords (customized chords included), and
+    // the lock chords join only while focus-right is Authentic-enabled.
     // Project actions and Lock Session own their chords; the explicit
     // System Monitor Meta+Esc holder is user-authorized. Every other actual
     // holder becomes a clear row, whatever its identity (known, unknown, or
@@ -3223,7 +3375,8 @@ bool ShortcutReconciler::collectHolderSnapshotFor(HolderSnapshot *snapshot, cons
     // rows or blockers.
     // Transport, parsing, and consistency failures sort before the lock
     // gate below, matching the historical refusal precedence.
-    const QList<int> required = enabledRequiredKeys(disabledIds);
+    const QList<int> keepKeys = keepKeysForImages(snap.catalogActives, disabledIds, authenticStaged);
+    const QList<int> required = enabledRequiredKeys(disabledIds, authenticStaged, keepKeys);
     QMap<QString, int> rowIndex;
     for (int key : required) {
         QString keyError;
@@ -3323,7 +3476,7 @@ bool ShortcutReconciler::collectHolderSnapshotFor(HolderSnapshot *snapshot, cons
             const QString id = holder.component + QStringLiteral("/") + holder.action;
             const auto existing = rowIndex.find(id);
             if (existing == rowIndex.end()) {
-                const QList<int> removals = conflictingKeysFor(holder.active, disabledIds);
+                const QList<int> removals = conflictingKeysIn(holder.active, required);
                 if (removals.isEmpty()) {
                     // Listed for the key but holds no required chord in its
                     // active list: claims the chord (e.g. via a
@@ -3345,7 +3498,7 @@ bool ShortcutReconciler::collectHolderSnapshotFor(HolderSnapshot *snapshot, cons
                 }
                 row.active = holder.active;
                 row.removals = removals;
-                row.remainder = remainderAfterClearFor(holder.active, disabledIds);
+                row.remainder = remainderAfterClearIn(holder.active, required);
                 rowIndex.insert(id, snap.rows.size());
                 snap.rows.append(row);
                 if (snap.rows.size() > SHORTCUT_MAX_TUPLES) {
@@ -3387,10 +3540,10 @@ bool ShortcutReconciler::collectHolderSnapshotFor(HolderSnapshot *snapshot, cons
         return a.action < b.action;
     });
     // Lock preconditions are relocate logic and apply only while focus-right
-    // is enabled: without the preimage to replace and without the target
-    // already held there is nothing safe to do. A disabled focus-right
-    // skips this gate entirely with the lock out of scope.
-    if (focusEnabled) {
+    // is Authentic-enabled: without the preimage to replace and without the
+    // target already held there is nothing safe to do. A Keep or disabled
+    // focus-right skips this gate entirely with the lock out of scope.
+    if (focusAuthentic) {
         const ShortcutConflictRow &lockRow = shortcutConflictTable().at(0);
         bool hasPre = false;
         bool hasTarget = false;
@@ -3419,10 +3572,16 @@ bool ShortcutReconciler::collectHolderSnapshotFor(HolderSnapshot *snapshot, cons
 
 ShortcutApplyResult ShortcutReconciler::writeProjectKeys(const char *operation)
 {
-    return writeProjectKeysFor(operation, QSet<QString>());
+    return writeProjectKeysFor(operation, QSet<QString>(), true);
 }
 
 ShortcutApplyResult ShortcutReconciler::writeProjectKeysFor(const char *operation, const QSet<QString> &disabledIds)
+{
+    return writeProjectKeysFor(operation, disabledIds, true);
+}
+
+ShortcutApplyResult ShortcutReconciler::writeProjectKeysFor(const char *operation, const QSet<QString> &disabledIds,
+                                                            bool authenticStaged)
 {
     ShortcutApplyResult result;
     if (!m_store) {
@@ -3432,14 +3591,17 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeysFor(const char *operatio
     const QList<ShortcutConflictRow> &table = shortcutConflictTable();
     const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
     ShortcutDiag::log(QtDebugMsg, operation, "start", "running",
-                      QStringLiteral("rows=%1 disabled=%2").arg(catalog.size()).arg(disabledIds.size()));
+                      QStringLiteral("rows=%1 disabled=%2 authentic=%3")
+                          .arg(catalog.size())
+                          .arg(disabledIds.size())
+                          .arg(authenticStaged ? 1 : 0));
     const int startWrites = m_store->writeCount();
     auto usedWrites = [&]() {
         return m_store->writeCount() - startWrites;
     };
     QString error;
     HolderSnapshot snap;
-    if (!collectHolderSnapshotFor(&snap, disabledIds, &error)) {
+    if (!collectHolderSnapshotFor(&snap, disabledIds, authenticStaged, &error)) {
         result.error = error;
         ShortcutDiag::log(QtWarningMsg, operation, "preflight", "refused", error);
         return result;
@@ -3531,8 +3693,16 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeysFor(const char *operatio
     };
     const QString focusId = shortcutCatalogId(table.at(0).projectComponent, table.at(0).projectAction);
     const bool focusEnabled = !disabledIds.contains(focusId);
+    // Per-binding outcome diagnostics: identity only (catalog ID), never
+    // key payloads. Kinds: kept (Keep skip), assigned (Authentic write),
+    // already-assigned (Authentic no-op), cleared (Disable clear),
+    // already-cleared (Disable no-op), relocated/already-relocated (lock).
+    auto logRow = [&](const char *outcome, const QString &id) {
+        ShortcutDiag::log(QtDebugMsg, operation, "write", outcome, id);
+    };
     // Phase 1: focus must own its post before lock drops the preimage.
-    // Skipped entirely while focus-right is disabled.
+    // Runs only while focus-right itself is Authentic-enabled; a Keep or
+    // disabled focus leaves the lock untouched.
     if (snap.lockResolved) {
         const QList<int> focusPost = table.at(0).projectPost;
         const ShortcutTuple &focusSnap = snap.projects.at(0);
@@ -3543,6 +3713,9 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeysFor(const char *operatio
                 result.writes = usedWrites();
                 return result;
             }
+            logRow("assigned", focusId);
+        } else {
+            logRow("already-assigned", focusId);
         }
         // Phase 2: lock relocation preserving exact other keys/order, gated
         // on a fresh read showing focus still owning its post.
@@ -3569,6 +3742,7 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeysFor(const char *operatio
                 return result;
             }
             const QList<int> lockPost = lockPostFor(lockGate.active);
+            const QString lockId = shortcutCatalogId(lockGate.component, lockGate.action);
             if (lockGate.active != lockPost) {
                 if (!writeOne(lockGate.component, lockGate.action, lockGate.componentFriendly, lockGate.friendly,
                                lockPost, "lock", &error)) {
@@ -3576,13 +3750,17 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeysFor(const char *operatio
                     result.writes = usedWrites();
                     return result;
                 }
+                logRow("relocated", lockId);
+            } else {
+                logRow("already-relocated", lockId);
             }
         }
     }
-    // Phase 3: enabled project assignments from a fresh read, in catalog
-    // order. Missing enabled rows fail closed; missing disabled rows stay
-    // allowed (no assignment). Phase 4 clears disabled own rows to empty
-    // through the existing transport; foreign holders are never touched.
+    // Phase 3: Authentic-enabled project assignments from a fresh read, in
+    // catalog order. Keep rows are preserved untouched. Missing enabled
+    // rows fail closed; missing disabled rows stay allowed (no assignment).
+    // Phase 4 clears disabled own rows to empty through the existing
+    // transport; foreign holders are never touched.
     {
         QList<ShortcutTuple> tuples;
         if (!m_store->readAll(&tuples, &error)) {
@@ -3605,8 +3783,8 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeysFor(const char *operatio
         QList<Clear> clears;
         for (const ShortcutCatalogEntry &entry : catalog) {
             const QString id = shortcutCatalogId(entry.component, entry.action);
-            if (id == focusId && focusEnabled) {
-                continue; // phase 1 owns the enabled focus row
+            if (id == focusId && focusEnabled && authenticStaged) {
+                continue; // phase 1 owns the Authentic-enabled focus row
             }
             ShortcutTuple current;
             const bool tableRow = isTableProject(entry.component, entry.action);
@@ -3669,13 +3847,24 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeysFor(const char *operatio
             if (disabledIds.contains(id)) {
                 if (!current.active.isEmpty()) {
                     clears.append({current, whatFor(entry)});
+                } else {
+                    logRow("already-cleared", id);
                 }
+                continue;
+            }
+            if (!authenticStaged) {
+                // Keep preserves the current live assignment, including
+                // customized chords and empty assignments: never assigned.
+                // Presence is already bound by the preflight snapshot.
+                logRow("kept", id);
                 continue;
             }
             QList<int> post;
             expectedPost(entry, &post);
             if (current.active != post) {
                 needs.append({current, post, whatFor(entry)});
+            } else {
+                logRow("already-assigned", id);
             }
         }
         for (const Need &need : needs) {
@@ -3686,6 +3875,7 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeysFor(const char *operatio
                 result.writes = usedWrites();
                 return result;
             }
+            logRow("assigned", shortcutCatalogId(need.current.component, need.current.action));
         }
         for (const Clear &clear : clears) {
             const QByteArray whatBytes = clear.what.toUtf8();
@@ -3695,12 +3885,15 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeysFor(const char *operatio
                 result.writes = usedWrites();
                 return result;
             }
+            logRow("cleared", shortcutCatalogId(clear.current.component, clear.current.action));
         }
     }
-    // Finish: only the expected image is permitted. Enabled rows sit at
-    // their posts, disabled rows are empty, missing disabled rows are out
-    // of scope, missing enabled rows fail, duplicates fail, and the lock
-    // is verified only while it is in scope.
+    // Finish: only the expected image is permitted. Authentic-enabled rows
+    // sit at their posts, Keep rows must still match the preflight image
+    // (custom, canonical, or empty: any drift fails instead of claiming a
+    // preserve), disabled rows are empty, missing disabled rows are out of
+    // scope, missing enabled rows fail, duplicates fail, and the lock is
+    // verified only while it is in scope (Authentic focus).
     {
         QList<ShortcutTuple> finalTuples;
         if (!m_store->readAll(&finalTuples, &error)) {
@@ -3709,7 +3902,8 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeysFor(const char *operatio
             return result;
         }
         bool verified = true;
-        for (const ShortcutCatalogEntry &entry : catalog) {
+        for (int catalogIndex = 0; catalogIndex < catalog.size(); ++catalogIndex) {
+            const ShortcutCatalogEntry &entry = catalog.at(catalogIndex);
             const QString id = shortcutCatalogId(entry.component, entry.action);
             if (id == focusId) {
                 if (!focusEnabled) {
@@ -3745,9 +3939,15 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeysFor(const char *operatio
                     result.writes = usedWrites();
                     return result;
                 }
-                QList<int> post;
-                expectedPost(entry, &post);
-                if (current.active != post) {
+                if (authenticStaged) {
+                    QList<int> post;
+                    expectedPost(entry, &post);
+                    if (current.active != post) {
+                        verified = false;
+                    }
+                } else if (current.active != snap.catalogActives.at(catalogIndex)) {
+                    // Keep must still match the preflight image: drift fails
+                    // instead of claiming a preserve.
                     verified = false;
                 }
                 continue;
@@ -3814,9 +4014,15 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeysFor(const char *operatio
                 }
                 continue;
             }
-            QList<int> post;
-            expectedPost(entry, &post);
-            if (current.active != post) {
+            if (authenticStaged) {
+                QList<int> post;
+                expectedPost(entry, &post);
+                if (current.active != post) {
+                    verified = false;
+                }
+            } else if (current.active != snap.catalogActives.at(catalogIndex)) {
+                // Keep must still match the preflight image: drift fails
+                // instead of claiming a preserve.
                 verified = false;
             }
         }
@@ -3874,7 +4080,12 @@ ShortcutApplyResult ShortcutReconciler::apply()
 
 ShortcutApplyResult ShortcutReconciler::applySelected(const QSet<QString> &disabledIds)
 {
-    return writeProjectKeysFor("apply", disabledIds);
+    return writeProjectKeysFor("apply", disabledIds, true);
+}
+
+ShortcutApplyResult ShortcutReconciler::applySelected(const QSet<QString> &disabledIds, bool authenticStaged)
+{
+    return writeProjectKeysFor("apply", disabledIds, authenticStaged);
 }
 
 ShortcutRevertResult ShortcutReconciler::revert()
@@ -4015,10 +4226,16 @@ bool ShortcutReconciler::forceMismatchFromRow(const ClearRow &row, ShortcutForce
 
 ShortcutForcePreview ShortcutReconciler::buildForcePreview()
 {
-    return buildForcePreviewFor(QSet<QString>());
+    return buildForcePreviewFor(QSet<QString>(), true);
 }
 
 ShortcutForcePreview ShortcutReconciler::buildForcePreviewFor(const QSet<QString> &disabledIds)
+{
+    return buildForcePreviewFor(disabledIds, true);
+}
+
+ShortcutForcePreview ShortcutReconciler::buildForcePreviewFor(const QSet<QString> &disabledIds,
+                                                              bool authenticStaged)
 {
     ShortcutForcePreview preview;
     auto refuse = [&](const QString &message) {
@@ -4031,13 +4248,13 @@ ShortcutForcePreview ShortcutReconciler::buildForcePreviewFor(const QSet<QString
     }
     HolderSnapshot snap;
     QString error;
-    if (!collectHolderSnapshotFor(&snap, disabledIds, &error)) {
+    if (!collectHolderSnapshotFor(&snap, disabledIds, authenticStaged, &error)) {
         return refuse(error);
     }
     // Lock preconditions are relocate logic, never forceable: even with
     // clearable holders, a lock binding with nothing to replace refuses the
     // preview up front instead of failing mid-force after clearing. Out of
-    // scope while focus-right is disabled.
+    // scope while focus-right is Keep or disabled.
     if (snap.lockResolved) {
         const ShortcutConflictRow &lockRow = shortcutConflictTable().at(0);
         bool hasPre = false;
@@ -4074,6 +4291,7 @@ ShortcutForcePreview ShortcutReconciler::buildForcePreviewFor(const QSet<QString
     preview.livePresent.append(snap.lockResolved);
     preview.disabledIds = QStringList(disabledIds.begin(), disabledIds.end());
     preview.disabledIds.sort();
+    preview.authenticStaged = authenticStaged;
     if (!snap.blocked.isEmpty()) {
         const Blocker &first = snap.blocked.first();
         return refuse(QStringLiteral("refusing force: %1 is claimed by %2/%3 with no active binding to clear")
@@ -4110,7 +4328,13 @@ ShortcutForcePreview ShortcutReconciler::previewForceApply()
 
 ShortcutForcePreview ShortcutReconciler::previewForceApplySelected(const QSet<QString> &disabledIds)
 {
-    ShortcutForcePreview preview = buildForcePreviewFor(disabledIds);
+    return previewForceApplySelected(disabledIds, true);
+}
+
+ShortcutForcePreview ShortcutReconciler::previewForceApplySelected(const QSet<QString> &disabledIds,
+                                                                  bool authenticStaged)
+{
+    ShortcutForcePreview preview = buildForcePreviewFor(disabledIds, authenticStaged);
     if (preview.forceable) {
         QStringList rows;
         for (const ShortcutForceMismatch &mismatch : preview.mismatches) {
@@ -4118,7 +4342,9 @@ ShortcutForcePreview ShortcutReconciler::previewForceApplySelected(const QSet<QS
                             .arg(mismatch.component, mismatch.action, keysDisplay(mismatch.actual),
                                  keysDisplay(mismatch.expectedPre), keysDisplay(mismatch.post)));
         }
-        rows.prepend(QStringLiteral("disabled=%1").arg(preview.disabledIds.size()));
+        rows.prepend(QStringLiteral("disabled=%1 authentic=%2")
+                         .arg(preview.disabledIds.size())
+                         .arg(preview.authenticStaged ? 1 : 0));
         ShortcutDiag::log(QtInfoMsg, "force-preview", "preview", "forceable", rows.join(QStringLiteral("; ")));
     } else {
         ShortcutDiag::log(QtDebugMsg, "force-preview", "preview", "not-forceable", preview.error);
@@ -4128,11 +4354,18 @@ ShortcutForcePreview ShortcutReconciler::previewForceApplySelected(const QSet<QS
 
 ShortcutForceApplyResult ShortcutReconciler::applyForced(const ShortcutForcePreview &confirmed)
 {
-    return applyForcedSelected(confirmed, QSet<QString>());
+    return applyForcedSelected(confirmed, QSet<QString>(), true);
 }
 
 ShortcutForceApplyResult ShortcutReconciler::applyForcedSelected(const ShortcutForcePreview &confirmed,
-                                                                const QSet<QString> &disabledIds)
+                                                                 const QSet<QString> &disabledIds)
+{
+    return applyForcedSelected(confirmed, disabledIds, true);
+}
+
+ShortcutForceApplyResult ShortcutReconciler::applyForcedSelected(const ShortcutForcePreview &confirmed,
+                                                                 const QSet<QString> &disabledIds,
+                                                                 bool authenticStaged)
 {
     ShortcutForceApplyResult result;
     auto fail = [&](const QString &message, const char *outcome) {
@@ -4160,9 +4393,9 @@ ShortcutForceApplyResult ShortcutReconciler::applyForcedSelected(const ShortcutF
     if (confirmed.mismatches.isEmpty() || confirmed.mismatches.size() > SHORTCUT_MAX_TUPLES) {
         return fail(QStringLiteral("forced override is unbounded"), "unbounded");
     }
-    // The preview binds its exact staged draft: a draft edit cancels the
-    // pending preview, and any residual mismatch fails here as stale with
-    // zero writes.
+    // The preview binds its exact staged draft and Authentic intent: a
+    // draft edit cancels the pending preview, and any residual mismatch
+    // fails here as stale with zero writes.
     {
         QStringList current = QStringList(disabledIds.begin(), disabledIds.end());
         current.sort();
@@ -4170,10 +4403,16 @@ ShortcutForceApplyResult ShortcutReconciler::applyForcedSelected(const ShortcutF
             return fail(QStringLiteral("confirmed force image is stale; re-preview before forcing"),
                         "stale-draft");
         }
+        if (confirmed.authenticStaged != authenticStaged) {
+            return fail(QStringLiteral("confirmed force image is stale; re-preview before forcing"),
+                        "stale-intent");
+        }
     }
     // No arbitrary action/key inputs: every confirmed row must carry a
     // bounded identity with removals/remainder exactly derived from its
-    // actuals under the confirmed draft. Anything forged fails closed here.
+    // actuals under the confirmed draft and intent. Anything forged fails
+    // closed here.
+    const QList<int> keepKeys = keepKeysForImages(confirmed.liveImages, disabledIds, authenticStaged);
     QStringList seen;
     for (const ShortcutForceMismatch &mismatch : confirmed.mismatches) {
         if (!stringValid(mismatch.component) || !stringValid(mismatch.action)
@@ -4187,15 +4426,15 @@ ShortcutForceApplyResult ShortcutReconciler::applyForcedSelected(const ShortcutF
             return fail(QStringLiteral("forced override is unbounded"), "duplicate");
         }
         seen.append(id);
-        if (mismatch.expectedPre != conflictingKeysFor(mismatch.actual, disabledIds)
-            || mismatch.post != remainderAfterClearFor(mismatch.actual, disabledIds)) {
+        if (mismatch.expectedPre != conflictingKeysFor(mismatch.actual, disabledIds, authenticStaged, keepKeys)
+            || mismatch.post != remainderAfterClearFor(mismatch.actual, disabledIds, authenticStaged, keepKeys)) {
             return fail(QStringLiteral("forced override is unbounded"), "image-mismatch");
         }
     }
     // Revalidation after confirmation, before any write (including
     // cleared-list writes): recompute the full preflight under the same
-    // draft and require the exact confirmed snapshot.
-    const ShortcutForcePreview current = buildForcePreviewFor(disabledIds);
+    // draft and intent and require the exact confirmed snapshot.
+    const ShortcutForcePreview current = buildForcePreviewFor(disabledIds, authenticStaged);
     if (!current.forceable) {
         return fail(current.error.isEmpty() ? QStringLiteral("confirmed force image is stale; re-preview before forcing")
                                             : current.error,
@@ -4203,6 +4442,7 @@ ShortcutForceApplyResult ShortcutReconciler::applyForcedSelected(const ShortcutF
     }
     if (current.owner != confirmed.owner || current.uid != confirmed.uid
         || current.liveImages != confirmed.liveImages || current.livePresent != confirmed.livePresent
+        || current.authenticStaged != confirmed.authenticStaged
         || current.mismatches.size() != confirmed.mismatches.size()) {
         return fail(QStringLiteral("confirmed force image is stale; re-preview before forcing"), "stale");
     }
@@ -4326,11 +4566,58 @@ ShortcutForceApplyResult ShortcutReconciler::applyForcedSelected(const ShortcutF
         }
     }
     // Project assignments from a fresh read now that holders are cleared.
-    const ShortcutApplyResult projects = writeProjectKeysFor("force-apply", disabledIds);
-    result.ok = projects.ok;
-    result.error = projects.error;
+    const ShortcutApplyResult projects = writeProjectKeysFor("force-apply", disabledIds, authenticStaged);
+    if (!projects.ok) {
+        result.ok = false;
+        result.error = projects.error;
+        result.writes = usedWrites();
+        ShortcutDiag::log(QtWarningMsg, "force-apply", "finish", "failed",
+                          QStringLiteral("writes=%1").arg(result.writes));
+        return result;
+    }
+    // Honest Keep check against the confirmed image: a Keep assignment that
+    // changed during clearing or project writes fails here without reset
+    // (no corrective writes). The project-phase snapshot cannot see drift
+    // that landed before it was taken.
+    {
+        QList<ShortcutTuple> fresh;
+        if (!m_store->readAll(&fresh, &storeError)) {
+            result.ok = false;
+            result.error = storeError.isEmpty() ? QStringLiteral("allShortcutInfos call failed") : storeError;
+            result.writes = usedWrites();
+            ShortcutDiag::log(QtWarningMsg, "force-apply", "finish", "failed", result.error);
+            return result;
+        }
+        const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
+        const int rows = qMin(catalog.size(), confirmed.liveImages.size());
+        for (int i = 0; i < rows; ++i) {
+            const ShortcutCatalogEntry &entry = catalog.at(i);
+            const QString id = shortcutCatalogId(entry.component, entry.action);
+            if (disabledIds.contains(id) || authenticStaged) {
+                continue; // cleared/canonical images already verified above
+            }
+            int matches = 0;
+            QList<int> live;
+            for (const ShortcutTuple &tuple : fresh) {
+                if (tuple.component == entry.component && tuple.action == entry.action) {
+                    ++matches;
+                    live = tuple.active;
+                }
+            }
+            if (matches != 1 || live != confirmed.liveImages.at(i)) {
+                result.ok = false;
+                result.error = QStringLiteral(
+                    "finish-apply verification failed: live state differs from the expected image");
+                result.writes = usedWrites();
+                ShortcutDiag::log(QtWarningMsg, "force-apply", "finish", "failed", result.error);
+                return result;
+            }
+        }
+    }
+    result.ok = true;
+    result.error.clear();
     result.writes = usedWrites();
-    ShortcutDiag::log(result.ok ? QtInfoMsg : QtWarningMsg, "force-apply", "finish", result.ok ? "ok" : "failed",
+    ShortcutDiag::log(QtInfoMsg, "force-apply", "finish", "ok",
                       QStringLiteral("writes=%1").arg(result.writes));
     return result;
 }

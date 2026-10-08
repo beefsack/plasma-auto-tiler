@@ -4417,6 +4417,7 @@ void selectionMixedRefusesEnabledOnly()
     CHECK(preview.mismatches.size() == 1);
     CHECK(preview.mismatches.at(0).action == QStringLiteral("Window Quick Tile Left"));
     CHECK(preview.disabledIds == QStringList{ws1});
+    CHECK(preview.authenticStaged);
 }
 
 void selectionForceBindsDraftAndDrift()
@@ -4436,6 +4437,7 @@ void selectionForceBindsDraftAndDrift()
         ShortcutReconciler(&store, &cleared).previewForceApplySelected(QSet<QString>());
     CHECK(preview.forceable);
     CHECK(preview.disabledIds.isEmpty());
+    CHECK(preview.authenticStaged);
     CHECK(preview.liveImages.size() == 129);
     const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"));
     const ShortcutForceApplyResult staleDraft =
@@ -4703,6 +4705,380 @@ void selectionPresenceBindsForceSnapshot()
     const ShortcutForcePreview current =
         ShortcutReconciler(&store, &cleared).previewForceApplySelected(QSet<QString>{ws1});
     CHECK(current.livePresent != preview.livePresent);
+}
+
+// Fixture drift during another write: mutates one Keep row once, either on
+// the next project write or the next foreign clear, to prove verification
+// catches mid-write drift without reset.
+class KeepDriftShortcutStore : public FakeShortcutStore
+{
+public:
+    bool driftKeepOnWrite = false;
+    bool driftKeepOnForeign = false;
+
+    bool writeKeys(const QString &component, const QString &action, const QString &componentFriendly,
+                   const QString &friendly, const QList<int> &keys, QList<int> *confirmed,
+                   QString *error) override
+    {
+        if (driftKeepOnWrite) {
+            driftKeepOnWrite = false;
+            for (ShortcutTuple &tuple : tuples) {
+                if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+                    tuple.active = QList<int>{888002};
+                }
+            }
+        }
+        return FakeShortcutStore::writeKeys(component, action, componentFriendly, friendly, keys, confirmed,
+                                            error);
+    }
+
+    bool setForeignShortcutKeys(const QString &component, const QString &action,
+                                const QString &componentFriendly, const QString &friendly,
+                                const QList<int> &keys, QString *error) override
+    {
+        if (driftKeepOnForeign) {
+            driftKeepOnForeign = false;
+            for (ShortcutTuple &tuple : tuples) {
+                if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+                    tuple.active = QList<int>{888002};
+                }
+            }
+        }
+        return FakeShortcutStore::setForeignShortcutKeys(component, action, componentFriendly, friendly, keys,
+                                                          error);
+    }
+};
+
+void selectionKeepPreservesCustomCanonicalEmpty()
+{
+    // Keep (non-Authentic) Apply preserves every enabled row at its live
+    // assignment: customized chords, canonical chords, and empty
+    // assignments all stay, with zero project writes and a passing
+    // post-write verification. Staged Authentic assigns canonical instead.
+    FakeShortcutStore store;
+    seedFullQuiet(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            tuple.active = QList<int>{777001};
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+            tuple.active.clear();
+        }
+    }
+    FakeClearedActions cleared;
+    const ShortcutApplyResult preserved =
+        ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>(), false);
+    CHECK(preserved.ok);
+    CHECK(preserved.error.isEmpty());
+    CHECK(preserved.writes == 0);
+    CHECK(store.writeCount() == 0);
+    CHECK(cleared.saves == 0);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            CHECK(tuple.active == (QList<int>{777001}));
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+            CHECK(tuple.active.isEmpty());
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-maximize")) {
+            CHECK(tuple.active == (QList<int>{META_M}));
+        }
+        if (tuple.action == QStringLiteral("Lock Session")) {
+            CHECK(tuple.active == (QList<int>{META_ESC}));
+        }
+    }
+    // The same state under staged Authentic assigns canonical chords.
+    const ShortcutApplyResult authentic =
+        ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>(), true);
+    CHECK(authentic.ok);
+    CHECK(authentic.writes > 0);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            CHECK(tuple.active == (QList<int>{META_G}));
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+            CHECK(tuple.active == (QList<int>{SHORTCUT_META_1}));
+        }
+    }
+}
+
+void selectionKeepCustomConflictPreviewForcePreserves()
+{
+    // A Keep-customized chord claimed by a foreign holder refuses Apply
+    // naming the actual chord. Force previews the actual removal and, once
+    // confirmed, clears only the foreign holder while the Keep row stays at
+    // its customized chord with zero project writes.
+    FakeShortcutStore store;
+    seedFullQuiet(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            tuple.active = QList<int>{777001};
+        }
+    }
+    store.tuples.append(makeTuple(QStringLiteral("org.example"), QStringLiteral("other-app"), QList<int>{777001}));
+    FakeClearedActions cleared;
+    const ShortcutApplyResult refused =
+        ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>(), false);
+    CHECK(!refused.ok);
+    // The refusal names the live actual chord, never a silent canonical.
+    CHECK(refused.error.contains(ShortcutReconciler::keyDisplayName(777001)));
+    CHECK(!refused.error.contains(QStringLiteral("Meta+G")));
+    CHECK(refused.writes == 0);
+    CHECK(store.writeCount() == 0);
+    const ShortcutForcePreview preview =
+        ShortcutReconciler(&store, &cleared).previewForceApplySelected(QSet<QString>(), false);
+    CHECK(preview.forceable);
+    CHECK(!preview.authenticStaged);
+    CHECK(preview.mismatches.size() == 1);
+    CHECK(preview.mismatches.at(0).action == QStringLiteral("other-app"));
+    CHECK(preview.mismatches.at(0).actual == (QList<int>{777001}));
+    CHECK(preview.mismatches.at(0).expectedPre == (QList<int>{777001}));
+    CHECK(preview.mismatches.at(0).post.isEmpty());
+    const ShortcutForceApplyResult forced =
+        ShortcutReconciler(&store, &cleared).applyForcedSelected(preview, QSet<QString>(), false);
+    CHECK(forced.ok);
+    CHECK(store.writeLog.isEmpty());
+    CHECK(!store.foreignWriteLog.isEmpty());
+    CHECK(cleared.stored.size() == 1);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("other-app")) {
+            CHECK(tuple.active.isEmpty());
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            CHECK(tuple.active == (QList<int>{777001}));
+        }
+    }
+}
+
+void selectionKeepDriftDuringWriteFailsWithoutReset()
+{
+    // Fixture drift during another selected write: disabling workspace-1
+    // performs a clear write while toggle-float stays Keep. Control first:
+    // an unchanged custom preserves and succeeds. With drift, the Keep row
+    // no longer matches the preflight image, so verification fails without
+    // reset (the drifted custom stays, never silently canonical).
+    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"));
+    {
+        KeepDriftShortcutStore store;
+        seedFullQuiet(store);
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+                tuple.active = QList<int>{777001};
+            }
+        }
+        FakeClearedActions cleared;
+        const ShortcutApplyResult result =
+            ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>{ws1}, false);
+        CHECK(result.ok);
+        CHECK(result.writes == 1);
+        for (const ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+                CHECK(tuple.active == (QList<int>{777001}));
+            }
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+                CHECK(tuple.active.isEmpty());
+            }
+        }
+    }
+    {
+        KeepDriftShortcutStore store;
+        seedFullQuiet(store);
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+                tuple.active = QList<int>{777001};
+            }
+        }
+        store.driftKeepOnWrite = true;
+        FakeClearedActions cleared;
+        const ShortcutApplyResult result =
+            ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>{ws1}, false);
+        CHECK(!result.ok);
+        CHECK(result.error.contains(QStringLiteral("live state differs")));
+        CHECK(result.writes == 1);
+        CHECK(store.writeLog.size() == 1);
+        for (const ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+                CHECK(tuple.active == (QList<int>{888002}));
+            }
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+                CHECK(tuple.active.isEmpty());
+            }
+        }
+    }
+}
+
+void selectionForceKeepDriftDuringClearFailsWithoutReset()
+{
+    // Fixture drift during Force clearing: the Keep row changes after the
+    // confirmed preview, so the project-phase snapshot cannot see it, but
+    // the post-write check against the confirmed image fails without reset
+    // (no project writes, drifted custom stays).
+    KeepDriftShortcutStore store;
+    seedFullQuiet(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            tuple.active = QList<int>{777001};
+        }
+    }
+    store.tuples.append(makeTuple(QStringLiteral("org.example"), QStringLiteral("other-app"), QList<int>{777001}));
+    store.driftKeepOnForeign = true;
+    FakeClearedActions cleared;
+    const ShortcutForcePreview preview =
+        ShortcutReconciler(&store, &cleared).previewForceApplySelected(QSet<QString>(), false);
+    CHECK(preview.forceable);
+    const ShortcutForceApplyResult forced =
+        ShortcutReconciler(&store, &cleared).applyForcedSelected(preview, QSet<QString>(), false);
+    CHECK(!forced.ok);
+    CHECK(forced.error.contains(QStringLiteral("live state differs")));
+    CHECK(forced.writes == 1);
+    CHECK(store.writeLog.isEmpty());
+    CHECK(!store.foreignWriteLog.isEmpty());
+    CHECK(cleared.saves == 1);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("other-app")) {
+            CHECK(tuple.active.isEmpty());
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            CHECK(tuple.active == (QList<int>{888002}));
+        }
+    }
+}
+
+void selectionForceIntentMismatchStale()
+{
+    // A preview built under one Authentic intent cannot be consumed under
+    // the other: the mismatch fails as stale with zero writes, before any
+    // cleared-list persist.
+    FakeShortcutStore store;
+    seedFullQuiet(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            tuple.active = QList<int>{777001};
+        }
+    }
+    store.tuples.append(makeTuple(QStringLiteral("org.example"), QStringLiteral("other-app"), QList<int>{777001}));
+    FakeClearedActions cleared;
+    const ShortcutForcePreview keepPreview =
+        ShortcutReconciler(&store, &cleared).previewForceApplySelected(QSet<QString>(), false);
+    CHECK(keepPreview.forceable);
+    const ShortcutForceApplyResult staleIntent =
+        ShortcutReconciler(&store, &cleared).applyForcedSelected(keepPreview, QSet<QString>(), true);
+    CHECK(!staleIntent.ok);
+    CHECK(staleIntent.error.contains(QStringLiteral("stale")));
+    CHECK(staleIntent.writes == 0);
+    CHECK(store.writeCount() == 0);
+    CHECK(cleared.saves == 0);
+    CHECK(cleared.stored.isEmpty());
+    // The reverse direction: an Authentic preview over a canonical conflict
+    // cannot be consumed while preserving.
+    FakeShortcutStore canonical;
+    seedFullQuiet(canonical);
+    canonical.tuples.append(makeTuple(QStringLiteral("kwin"), QStringLiteral("Grid View"), QList<int>{META_G}));
+    FakeClearedActions canonicalCleared;
+    const ShortcutForcePreview authenticPreview =
+        ShortcutReconciler(&canonical, &canonicalCleared).previewForceApplySelected(QSet<QString>(), true);
+    CHECK(authenticPreview.forceable);
+    CHECK(authenticPreview.authenticStaged);
+    const ShortcutForceApplyResult staleKeep =
+        ShortcutReconciler(&canonical, &canonicalCleared)
+            .applyForcedSelected(authenticPreview, QSet<QString>(), false);
+    CHECK(!staleKeep.ok);
+    CHECK(staleKeep.error.contains(QStringLiteral("stale")));
+    CHECK(staleKeep.writes == 0);
+    CHECK(canonical.writeCount() == 0);
+    CHECK(canonicalCleared.saves == 0);
+}
+
+void selectionKeepOccupancyGate()
+{
+    // The keyed gate under Keep intent scans live actual chords: quiet
+    // customs unclaimed are Clear, a foreign holder on the actual custom
+    // conflicts, and Meta+Esc holders stay out of scope without Authentic.
+    FakeShortcutStore store;
+    seedFullQuiet(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            tuple.active = QList<int>{777001};
+        }
+    }
+    {
+        const KeyedOccupancyResult quiet =
+            ShortcutReconciler::checkKeyedForeignOccupancyDetailedFor(&store, QSet<QString>(), false);
+        CHECK(quiet.status == KeyedOccupancy::Clear);
+    }
+    store.tuples.append(makeTuple(QStringLiteral("org.example"), QStringLiteral("other-app"), QList<int>{777001}));
+    {
+        const KeyedOccupancyResult conflict =
+            ShortcutReconciler::checkKeyedForeignOccupancyDetailedFor(&store, QSet<QString>(), false);
+        CHECK(conflict.status == KeyedOccupancy::Conflict);
+        CHECK(conflict.detail.contains(ShortcutReconciler::keyDisplayName(777001)));
+    }
+    store.tuples.append(makeTuple(QStringLiteral("kwin"), QStringLiteral("other-esc"), QList<int>{META_ESC}));
+    {
+        const KeyedOccupancyResult keepScope =
+            ShortcutReconciler::checkKeyedForeignOccupancyDetailedFor(&store, QSet<QString>(), false);
+        CHECK(keepScope.status == KeyedOccupancy::Conflict);
+        CHECK(keepScope.detail.contains(ShortcutReconciler::keyDisplayName(777001)));
+        const KeyedOccupancyResult authenticScope =
+            ShortcutReconciler::checkKeyedForeignOccupancyDetailedFor(&store, QSet<QString>(), true);
+        CHECK(authenticScope.status == KeyedOccupancy::Conflict);
+        CHECK(authenticScope.detail.contains(QStringLiteral("Meta+Esc")));
+    }
+}
+
+void selectionRequiredKeysKeepVsAuthentic()
+{
+    // Pure selection seams: the legacy forms stage Authentic (canonical),
+    // while the explicit forms bind Keep live chords plus the
+    // Authentic-gated lock chords.
+    const QSet<QString> none;
+    CHECK(ShortcutReconciler::enabledRequiredKeys(none).contains(SHORTCUT_META_1));
+    CHECK(ShortcutReconciler::enabledRequiredKeys(none, true, QList<int>()).contains(SHORTCUT_META_1));
+    CHECK(!ShortcutReconciler::enabledRequiredKeys(none, false, QList<int>()).contains(SHORTCUT_META_1));
+    CHECK(ShortcutReconciler::enabledRequiredKeys(none, false, QList<int>{777001}).contains(777001));
+    CHECK(!ShortcutReconciler::enabledRequiredKeys(none, false, QList<int>{777001}).contains(SHORTCUT_META_1));
+    CHECK(!ShortcutReconciler::enabledRequiredKeys(none, false, QList<int>{0}).contains(0));
+    CHECK(ShortcutReconciler::conflictingKeysFor(QList<int>{777001, 999}, none, false, QList<int>{777001})
+          == QList<int>{777001});
+    CHECK(ShortcutReconciler::remainderAfterClearFor(QList<int>{777001, 999}, none, false, QList<int>{777001})
+          == QList<int>{999});
+    CHECK(ShortcutReconciler::conflictingKeysIn(QList<int>{777001, 999}, QList<int>{777001})
+          == QList<int>{777001});
+}
+
+void selectionRowDisplayShowsActualHolders()
+{
+    // Row displays merge canonical and live-actual holder queries, so a
+    // Keep-customized row reports the foreign holder of its actual chord.
+    FakeShortcutStore store;
+    seedFullQuiet(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            tuple.active = QList<int>{777001};
+        }
+    }
+    store.tuples.append(makeTuple(QStringLiteral("org.example"), QStringLiteral("other-app"), QList<int>{777001}));
+    QList<ShortcutRowDisplay> rows;
+    QString error;
+    CHECK(ShortcutReconciler::collectRowDisplays(&store, &rows, &error));
+    bool found = false;
+    for (const ShortcutRowDisplay &row : rows) {
+        if (row.catalog.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            found = true;
+            CHECK(row.present);
+            CHECK(row.current == (QList<int>{777001}));
+            CHECK(row.holdersKnown);
+            bool sawForeign = false;
+            for (const ShortcutKeyHolder &holder : row.holders) {
+                if (holder.component == QStringLiteral("org.example")
+                    && holder.action == QStringLiteral("other-app")) {
+                    sawForeign = true;
+                }
+            }
+            CHECK(sawForeign);
+        }
+    }
+    CHECK(found);
 }
 
 void workspaceRelativeDesktopSwitchRows()
@@ -5709,6 +6085,14 @@ int main(int argc, char **argv)
         selectionDisabledTableRowAbsentAllowed();
         selectionFocusDisabledLockAbsentAllowed();
         selectionPresenceBindsForceSnapshot();
+        selectionKeepPreservesCustomCanonicalEmpty();
+        selectionKeepCustomConflictPreviewForcePreserves();
+        selectionKeepDriftDuringWriteFailsWithoutReset();
+        selectionForceKeepDriftDuringClearFailsWithoutReset();
+        selectionForceIntentMismatchStale();
+        selectionKeepOccupancyGate();
+        selectionRequiredKeysKeepVsAuthentic();
+        selectionRowDisplayShowsActualHolders();
         toggleOrientationCatalogPresetRows();
     }
     if (scenario != QStringLiteral("all") && scenario != QStringLiteral("success") && scenario != QStringLiteral("conflict")

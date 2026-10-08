@@ -581,19 +581,23 @@ platform API behavior.
   explicit confirmed Apply or confirmed and revalidated Force commits them.
   Ordinary settings Save stays isolated. Project Apply preserves the current
   assignment for Keep, including custom chords; Authentic explicitly resets to
-  the canonical catalog. Implementation gap: current code resets kept rows to
-  canonical (see backlog). Compatible: reset to Keep, then disable compiled
+  the canonical catalog, staged until confirmed Apply/Force and consumed on
+  success (failed/declined attempts retain intent). Delivered offline
+  2026-10-09: Keep preserves custom, canonical, and empty assignments; conflicts
+  on custom assignments show their actual chords without a silent reset.
+  Compatible: reset to Keep, then disable compiled
   known conflicts and discovered foreign default/current-holder collisions; no
   replacement chords or automatic foreign-default restoration; use Revert
   Shortcuts separately after earlier Force clearing. Disabled focus-right
   leaves Lock Session and Meta+Esc untouched. Persistence: Disable clears only
   the project's KGlobalAccel assignment; native shortcut storage is
   authoritative, no parallel preset file; empty assignments cannot distinguish
-  deliberate disabling from earlier unresolved registration; restart
+  deliberate disabling from earlier unresolved registration; Keep of either
+  stays empty unless Authentic was staged (Lead reading M13). Restart
   persistence is user-owned live acceptance. Deferred: first-run preset prompt
   and integrated rebind editor; KDE Shortcuts remains the custom-binding
   editor; no startup correction or re-registration. See [KDE conflict
-  model](changes/kde-shortcut-conflicts.md).
+  model](changes/kde-shortcut-conflicts.md) and [M13 delivery](changes/archive/kde-keep-preserving-shortcut-apply.md).
 - Force/Revert contract (applying the user's 2026-09-26 Delivery 2 direction):
   Force may clear ANY holder of a project-required chord after listing and
   confirmation. The preview lists every active holder with found keys, exact

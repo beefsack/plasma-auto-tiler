@@ -23,6 +23,20 @@ Minimal variants of [R-FLT-06](reference-outcomes/floating.md#r-flt-06-float-tog
 | Clear not confirmed | Intentionally float B; maximize B; toggle float off while clear is refused or remains unobserved; press again after normal state is observed | No admission on unconfirmed clear, float intent retained, logged narrow refusal with no stuck flight; later explicit press fresh-admits | TBD |
 | Sticky boundary | Make B sticky; maximize B; toggle ordinary float once | Existing sticky-maximize refusal unchanged; ordinary R-FLT-06 does not select a sticky policy change | TBD |
 
+### R-CTL-05 M13 Lead readings
+
+Minimal variants of [R-CTL-05/06](reference-outcomes/restart-persistence.md#r-ctl-05-shortcut-staging-and-apply), User 2026-10-08 M13 = B. Native store stays authoritative; these are offline KDE outcomes, not live acceptance or selected Windows runtime changes.
+
+| Variant | Minimal action sequence | Ours KDE offline outcome / Lead reading | References / native |
+| --- | --- | --- | --- |
+| Keep custom / canonical | Assign a custom chord in KDE Shortcuts (repeat with canonical); keep row checked; confirm project Apply | Assignment unchanged; post-write verification compares the preserved image | TBD |
+| Keep empty | Clear a project's assignment (or observe unresolved empty registration); check Keep; confirm Apply | Stays empty; Keep never repairs or enables it | TBD |
+| Authentic intent | Customize or clear a binding; stage Authentic; decline Apply; then confirm fresh Apply | Staging/decline writes nothing; confirmed Apply writes canonical | TBD |
+| Consumed Authentic | Stage Authentic; confirm Apply/Force successfully; customize in KDE Shortcuts with project Settings still open; confirm Apply again | Successful commit consumes reset intent; later Apply preserves the new custom chord. Failure/decline retains staged intent | TBD |
+| Compatible | Customize a nonconflicting row; stage Compatible; confirm Apply | Known/discovered conflicts disabled; nonconflicting custom assignments preserved, no replacements | TBD |
+| Keep custom conflict | Give a project and foreign action the same custom chord; Keep; Apply; preview Force; confirm | Actual custom chord shown; Apply refuses; confirmed/revalidated Force removes only that chord from the foreign holder and preserves project assignment | TBD |
+| Stale Force / write drift | Preview custom conflict; change project/foreign assignment or staged intent; confirm Force (separately: change Keep during a selected write) | Stale confirmation refuses before writes; post-write drift fails verification without canonical reset | TBD |
+
 ## Notation
 
 - `H[a,b,c]` horizontal split, children left to right.

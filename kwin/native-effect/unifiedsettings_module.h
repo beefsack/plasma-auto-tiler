@@ -46,8 +46,11 @@ public:
     bool isShortcutForceApplyVisible() const;
     bool isShortcutForceCancelVisible() const;
     // Staged Keep/Disable draft as sorted catalog IDs ("component/action").
-    // Empty means Authentic (keep every binding).
+    // Empty means Keep every binding. The Authentic preset additionally
+    // stages canonical assignment for every enabled binding; otherwise
+    // enabled bindings are preserved at their current assignments.
     QStringList shortcutDisabledIds() const;
+    bool shortcutAuthenticStaged() const;
     void refreshShortcutState();
     virtual bool confirmShortcutAction(const QString &title, const QString &text);
 
@@ -75,7 +78,7 @@ private:
     void runShortcutRevert(const char *operation);
     void clearForcePreview();
     static QString buildForcePreviewText(const ShortcutForcePreview &preview);
-    static QString buildConflictRowText(const ShortcutRowDisplay &row, bool disabled);
+    static QString buildConflictRowText(const ShortcutRowDisplay &row, bool disabled, bool authenticStaged);
     void updateShortcutPresentation();
     void refreshShortcutConflictList(const QList<ShortcutRowDisplay> &rows);
     void onShortcutDraftChanged();
@@ -106,6 +109,12 @@ private:
     // Checked list rows are kept; unchecked rows are disabled. Staged only:
     // ordinary Save, startup, and installation never apply it.
     QSet<QString> m_shortcutDisabledDraft;
+    // Staged Authentic intent for every enabled binding: assignment to the
+    // canonical chords on the next confirmed Apply/Force. False preserves
+    // each enabled binding at its current assignment (customized chords and
+    // empty assignments included). Staged only by the Authentic preset;
+    // Compatible, load, and defaults restage Keep (false).
+    bool m_shortcutAuthenticStaged = false;
 
     QVariantMap m_loadedScriptValues;
     bool m_loadedInnerGapRawValid = true;

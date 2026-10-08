@@ -447,7 +447,7 @@ describe("native KCM static contract", () => {
         }
         assert.match(unified, /checkKeyedForeignOccupancyDetailedFor/);
         assert.match(unified, /collectRowDisplays/);
-        assert.match(unifiedUi, /Authentic \(keep all\)/);
+        assert.match(unifiedUi, /Authentic \(use canonical\)/);
         assert.match(unifiedUi, /Compatible \(disable conflicting\)/);
         // Selection scenarios run in hosted native CI.
         assert.ok(cmake.includes("native-effect-shortcut-selection"));

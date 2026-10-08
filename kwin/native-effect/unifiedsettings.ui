@@ -235,7 +235,7 @@
            <item>
             <widget class="QPushButton" name="shortcutAuthenticButton">
              <property name="text">
-              <string>Authentic (keep all)</string>
+              <string>Authentic (use canonical)</string>
              </property>
             </widget>
            </item>
@@ -283,7 +283,7 @@
         <item>
          <widget class="QLabel" name="shortcutDescription">
           <property name="text">
-             <string>The full project catalog (directional, toggle, and workspace bindings) lists each canonical chord with its current assignment and known/current holders; unavailable queries are reported honestly. Checked rows are kept, unchecked rows are disabled. Authentic keeps every binding; Compatible disables known-conflicting rows and current holder collisions without replacement chords. Settings Apply never changes shortcuts; use Apply Shortcuts with confirmation. Disabling clears only the project's own assignment. Force Apply appears only for a pending preview that lists every holder with the exact keys removed and kept. Cancel discards the preview without writes. Revert restores KDE defaults for cleared bindings.</string>
+             <string>The full project catalog (directional, toggle, and workspace bindings) lists each canonical chord with its current assignment and known/current holders; unavailable queries are reported honestly. Checked rows are kept at their current assignments, unchecked rows are disabled. Authentic stages canonical assignments for enabled bindings; Compatible resets to Keep then disables known-conflicting rows and current holder collisions without replacement chords. Settings Apply never changes shortcuts; use Apply Shortcuts with confirmation. Disabling clears only the project's own assignment. Force Apply appears only for a pending preview that lists every holder with the exact keys removed and kept. Cancel discards the preview without writes. Revert restores KDE defaults for cleared bindings.</string>
           </property>
          <property name="wordWrap">
           <bool>true</bool>

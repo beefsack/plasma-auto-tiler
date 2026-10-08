@@ -286,8 +286,10 @@ void UnifiedSettingsModule::setShortcutStores(ShortcutStore *store, ClearedActio
     // empty restage Disable. Default-unbound rows (canonical key 0) are at
     // their canonical empty binding, not a disablement, so they never
     // auto-stage. Missing rows are not Disable; absence and read failure
-    // stage Authentic. Refresh never clobbers the staged draft.
+    // stage Keep (Authentic intent cleared). Refresh never clobbers the
+    // staged draft.
     m_shortcutDisabledDraft.clear();
+    m_shortcutAuthenticStaged = false;
     if (m_shortcutStore != nullptr) {
         QList<ShortcutTuple> tuples;
         QString readError;
@@ -346,25 +348,33 @@ QStringList UnifiedSettingsModule::shortcutDisabledIds() const
     return out;
 }
 
+bool UnifiedSettingsModule::shortcutAuthenticStaged() const
+{
+    return m_shortcutAuthenticStaged;
+}
+
 void UnifiedSettingsModule::requestShortcutPresetAuthentic()
 {
-    // Authentic is the default: reset the staged draft to Keep and drop any
-    // pending preview bound to the previous draft. No store writes.
+    // Authentic explicitly stages canonical assignment for every enabled
+    // binding: the draft resets to Keep and the intent stages canonical,
+    // committed only by a later confirmed Apply/Force. No store writes.
     m_shortcutDisabledDraft.clear();
-    ShortcutDiag::log(QtDebugMsg, "preset", "authentic", "staged", QStringLiteral("disabled=0"));
+    m_shortcutAuthenticStaged = true;
+    ShortcutDiag::log(QtDebugMsg, "preset", "authentic", "staged", QStringLiteral("disabled=0 authentic=1"));
     clearForcePreview();
     refreshShortcutState();
 }
 
 void UnifiedSettingsModule::requestShortcutPresetCompatible()
 {
-    // Compatible explicitly resets the draft, then disables the
-    // known-conflicting canonical rows plus rows whose canonical chord
-    // currently collides with a live holder or a live foreign wire default
-    // (actives cleared but defaults still claim the chord). Deterministic
-    // catalog order; the rest stay Keep. Never writes the daemon and never
-    // invents replacement chords. Any failed read/query aborts honestly with
-    // the previous draft kept.
+    // Compatible resets the draft to Keep (clearing any staged Authentic
+    // intent), then disables the known-conflicting canonical rows plus rows
+    // whose canonical chord currently collides with a live holder or a live
+    // foreign wire default (actives cleared but defaults still claim the
+    // chord). Deterministic catalog order; the rest stay Keep at their
+    // current assignments. Never writes the daemon and never invents
+    // replacement chords. Any failed read/query aborts honestly with the
+    // previous draft and intent kept.
     if (m_shortcutStore == nullptr || m_clearedStore == nullptr) {
         m_shortcutError = QStringLiteral("reconciler is not configured");
         updateShortcutPresentation();
@@ -405,8 +415,9 @@ void UnifiedSettingsModule::requestShortcutPresetCompatible()
     const QStringList disabled =
         presetCompatibleDisabledIds(catalog, shortcutKnownConflictIds(), colliding);
     m_shortcutDisabledDraft = QSet<QString>(disabled.begin(), disabled.end());
+    m_shortcutAuthenticStaged = false;
     ShortcutDiag::log(QtDebugMsg, "preset", "compatible", "staged",
-                      QStringLiteral("disabled=%1").arg(disabled.size()));
+                      QStringLiteral("disabled=%1 authentic=0").arg(disabled.size()));
     clearForcePreview();
     refreshShortcutState();
 }
@@ -433,12 +444,16 @@ void UnifiedSettingsModule::onShortcutDraftChanged()
         return;
     }
     // Any draft edit cancels the pending preview: the preview binds its
-    // exact draft and a changed draft must re-preview before forcing. The
-    // state refresh is queued: rebuilding the list here would delete the
-    // edited item while its change signal is still on the stack.
+    // exact draft and intent and a changed draft must re-preview before
+    // forcing. The state refresh is queued: rebuilding the list here would
+    // delete the edited item while its change signal is still on the stack.
+    // Manual edits preserve the staged Authentic intent for the rows that
+    // stay enabled.
     m_shortcutDisabledDraft = draft;
     ShortcutDiag::log(QtDebugMsg, "preset", "draft", "edited",
-                      QStringLiteral("disabled=%1").arg(draft.size()));
+                      QStringLiteral("disabled=%1 authentic=%2")
+                          .arg(draft.size())
+                          .arg(m_shortcutAuthenticStaged ? 1 : 0));
     clearForcePreview();
     updateShortcutPresentation();
     QMetaObject::invokeMethod(this, &UnifiedSettingsModule::refreshShortcutState, Qt::QueuedConnection);
@@ -468,16 +483,18 @@ void UnifiedSettingsModule::requestShortcutForceApply()
     if (!m_forcePreviewValid || !m_forcePreview.forceable) {
         return;
     }
-    // The preview binds its exact staged draft; a draft edit since cancels
-    // the preview, and this residual check fails closed as stale.
+    // The preview binds its exact staged draft and Authentic intent; a draft
+    // edit since cancels the preview, and this residual check fails closed
+    // as stale.
     {
         QStringList draftNow(m_shortcutDisabledDraft.begin(), m_shortcutDisabledDraft.end());
         draftNow.sort();
-        if (draftNow != m_forcePreview.disabledIds) {
+        if (draftNow != m_forcePreview.disabledIds
+            || m_shortcutAuthenticStaged != m_forcePreview.authenticStaged) {
             m_shortcutError =
                 QStringLiteral("confirmed force image is stale; re-preview before forcing");
             ShortcutDiag::log(QtWarningMsg, "force-apply", "result", "failed",
-                              QStringLiteral("reason=stale-draft writes=0"));
+                              QStringLiteral("reason=stale-intent writes=0"));
             clearForcePreview();
             refreshShortcutState();
             return;
@@ -494,10 +511,12 @@ void UnifiedSettingsModule::requestShortcutForceApply()
         return;
     }
     ShortcutReconciler reconciler(m_shortcutStore, m_clearedStore);
-    // applyForced revalidates the confirmed snapshot and the staged draft
-    // against fresh live state before any write (including cleared-list
-    // writes); stale snapshots fail with zero writes.
-    const ShortcutForceApplyResult result = reconciler.applyForcedSelected(m_forcePreview, m_shortcutDisabledDraft);
+    // applyForced revalidates the confirmed snapshot, the staged draft, and
+    // the staged Authentic intent against fresh live state before any write
+    // (including cleared-list writes); stale snapshots fail with zero
+    // writes.
+    const ShortcutForceApplyResult result =
+        reconciler.applyForcedSelected(m_forcePreview, m_shortcutDisabledDraft, m_shortcutAuthenticStaged);
     if (result.ok) {
         m_shortcutError.clear();
     } else {
@@ -505,8 +524,19 @@ void UnifiedSettingsModule::requestShortcutForceApply()
     }
     ShortcutDiag::log(result.ok ? QtInfoMsg : QtWarningMsg, "force-apply", "result",
                       result.ok ? "ok" : "failed",
-                      result.ok ? QStringLiteral("writes=%1").arg(result.writes)
-                                : QStringLiteral("reason=%1 writes=%2").arg(result.error).arg(result.writes));
+                      result.ok ? QStringLiteral("writes=%1 authentic=%2")
+                                      .arg(result.writes)
+                                      .arg(m_shortcutAuthenticStaged ? 1 : 0)
+                                 : QStringLiteral("reason=%1 writes=%2 authentic=%3")
+                                       .arg(result.error)
+                                       .arg(result.writes)
+                                       .arg(m_shortcutAuthenticStaged ? 1 : 0));
+    // Staged Authentic reset intent is committed by a successful Apply/Force
+    // and consumed here; failed or declined attempts retain it. Logging
+    // above uses the original staged intent.
+    if (result.ok) {
+        m_shortcutAuthenticStaged = false;
+    }
     // A consumed or stale confirmation never persists: the next Force needs
     // a fresh preview.
     clearForcePreview();
@@ -533,12 +563,15 @@ void UnifiedSettingsModule::clearForcePreview()
 QString UnifiedSettingsModule::buildForcePreviewText(const ShortcutForcePreview &preview)
 {
     QStringList lines;
-    lines.append(QStringLiteral("Force Apply will clear %1 binding(s) with %2 disabled binding(s) kept out of scope. "
+    lines.append(QStringLiteral("Force Apply will clear %1 binding(s) with %2 disabled binding(s) kept out of scope "
+                                "while enabled bindings %3. "
                                 "Each row shows the exact required keys removed and the unrelated keys kept. "
                                 "Revalidation runs again after confirmation against the same staged selection; "
                                 "stale state aborts without writes.")
                      .arg(preview.mismatches.size())
-                     .arg(preview.disabledIds.size()));
+                     .arg(preview.disabledIds.size())
+                     .arg(preview.authenticStaged ? QStringLiteral("take their canonical chords")
+                                                  : QStringLiteral("stay at their current assignments")));
     for (const ShortcutForceMismatch &mismatch : preview.mismatches) {
         lines.append(QStringLiteral("- %1/%2: found %3; will remove %4 and keep %5.")
                          .arg(mismatch.component, mismatch.action,
@@ -561,11 +594,19 @@ void UnifiedSettingsModule::runShortcutApply(const char *operation)
         }
     }
     const int disabled = catalog.size() - enabled;
-    QString confirmText = QStringLiteral("Assign %1 enabled binding(s) to their canonical chords").arg(enabled);
-    if (focusEnabled) {
-        confirmText += QStringLiteral("; focus-right takes Meta+L and Lock Session moves to Meta+Esc");
+    QString confirmText;
+    if (m_shortcutAuthenticStaged) {
+        confirmText = QStringLiteral("Assign %1 enabled binding(s) to their canonical chords").arg(enabled);
     } else {
+        confirmText =
+            QStringLiteral("Preserve %1 enabled binding(s) at their current assignments").arg(enabled);
+    }
+    if (focusEnabled && m_shortcutAuthenticStaged) {
+        confirmText += QStringLiteral("; focus-right takes Meta+L and Lock Session moves to Meta+Esc");
+    } else if (!focusEnabled) {
         confirmText += QStringLiteral("; focus-right stays disabled and Lock Session is untouched");
+    } else {
+        confirmText += QStringLiteral("; focus-right keeps its current assignment and Lock Session is untouched");
     }
     if (disabled > 0) {
         confirmText += QStringLiteral("; clear %1 disabled own binding(s)").arg(disabled);
@@ -583,7 +624,8 @@ void UnifiedSettingsModule::runShortcutApply(const char *operation)
         return;
     }
     ShortcutReconciler reconciler(m_shortcutStore, m_clearedStore);
-    const ShortcutApplyResult result = reconciler.applySelected(m_shortcutDisabledDraft);
+    const ShortcutApplyResult result =
+        reconciler.applySelected(m_shortcutDisabledDraft, m_shortcutAuthenticStaged);
     if (result.ok) {
         m_shortcutError.clear();
         clearForcePreview();
@@ -591,7 +633,8 @@ void UnifiedSettingsModule::runShortcutApply(const char *operation)
         m_shortcutError = result.error.isEmpty() ? QStringLiteral("Apply failed") : result.error;
         // Explicit Force preview only when a holder claims a required key;
         // every other refusal clears any pending preview.
-        const ShortcutForcePreview preview = reconciler.previewForceApplySelected(m_shortcutDisabledDraft);
+        const ShortcutForcePreview preview =
+            reconciler.previewForceApplySelected(m_shortcutDisabledDraft, m_shortcutAuthenticStaged);
         if (preview.forceable) {
             m_forcePreview = preview;
             m_forcePreviewValid = true;
@@ -601,12 +644,24 @@ void UnifiedSettingsModule::runShortcutApply(const char *operation)
         }
     }
     ShortcutDiag::log(result.ok ? QtInfoMsg : QtWarningMsg, operation, "result", result.ok ? "ok" : "failed",
-                      result.ok ? QStringLiteral("writes=%1").arg(result.writes)
-                                : QStringLiteral("reason=%1 writes=%2").arg(result.error).arg(result.writes));
+                      result.ok ? QStringLiteral("writes=%1 authentic=%2")
+                                      .arg(result.writes)
+                                      .arg(m_shortcutAuthenticStaged ? 1 : 0)
+                                 : QStringLiteral("reason=%1 writes=%2 authentic=%3")
+                                       .arg(result.error)
+                                       .arg(result.writes)
+                                       .arg(m_shortcutAuthenticStaged ? 1 : 0));
+    // Staged Authentic reset intent is committed by a successful Apply and
+    // consumed here; failed or declined attempts retain it. Logging above
+    // uses the original staged intent.
+    if (result.ok) {
+        m_shortcutAuthenticStaged = false;
+    }
     refreshShortcutState();
 }
 
-QString UnifiedSettingsModule::buildConflictRowText(const ShortcutRowDisplay &row, bool disabled)
+QString UnifiedSettingsModule::buildConflictRowText(const ShortcutRowDisplay &row, bool disabled,
+                                                      bool authenticStaged)
 {
     const QString current = row.present ? ShortcutReconciler::keysDisplayNames(row.current)
                                         : QStringLiteral("missing");
@@ -664,7 +719,9 @@ QString UnifiedSettingsModule::buildConflictRowText(const ShortcutRowDisplay &ro
         holders = parts.isEmpty() ? QStringLiteral("none") : parts.join(QStringLiteral("; "));
     }
     return QStringLiteral("%1 [%2]: canonical %3, current %4; own default %5; known KDE %6; holders %7.")
-        .arg(row.catalog.action, disabled ? QStringLiteral("Disable") : QStringLiteral("Keep"),
+        .arg(row.catalog.action,
+              disabled ? QStringLiteral("Disable")
+                       : (authenticStaged ? QStringLiteral("Authentic") : QStringLiteral("Keep")),
              row.catalog.canonicalDisplay, current, ownDefault, known, holders);
 }
 
@@ -678,7 +735,7 @@ void UnifiedSettingsModule::refreshShortcutConflictList(const QList<ShortcutRowD
     for (const ShortcutRowDisplay &row : rows) {
         const QString id = shortcutCatalogId(row.catalog.component, row.catalog.action);
         const bool disabled = m_shortcutDisabledDraft.contains(id);
-        QListWidgetItem *item = new QListWidgetItem(buildConflictRowText(row, disabled));
+        QListWidgetItem *item = new QListWidgetItem(buildConflictRowText(row, disabled, m_shortcutAuthenticStaged));
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
         item->setCheckState(disabled ? Qt::Unchecked : Qt::Checked);
         item->setData(Qt::UserRole, id);
@@ -828,13 +885,14 @@ void UnifiedSettingsModule::refreshShortcutState()
         }
     }
     // Missing disabled rows stay allowed (no assignment); duplicates fail
-    // even when disabled. A disabled focus-right leaves the lock out of
-    // scope entirely, so an absent lock still shows the row list.
+    // even when disabled. A Keep or disabled focus-right leaves the lock
+    // out of scope entirely, so an absent lock still shows the row list.
     const QString refreshFocusId =
         shortcutCatalogId(table.at(0).projectComponent, table.at(0).projectAction);
     const bool refreshFocusEnabled = !m_shortcutDisabledDraft.contains(refreshFocusId);
+    const bool refreshLockInScope = refreshFocusEnabled && m_shortcutAuthenticStaged;
     bool projectsMissing = false;
-    if (refreshFocusEnabled && (lockMatches != 1 || lockCurrent == nullptr)) {
+    if (refreshLockInScope && (lockMatches != 1 || lockCurrent == nullptr)) {
         projectsMissing = true;
     }
     for (int i = 0; i < table.size(); ++i) {
@@ -892,11 +950,13 @@ void UnifiedSettingsModule::refreshShortcutState()
         }
     }
     // Keyed holder gate over the enabled chords only, never tuple
-    // enumeration. Typed outcome keeps Conflict vs unavailable semantics.
-    // A disabled focus-right excludes the Meta+L/Meta+Esc chords here.
+    // enumeration. Authentic-enabled rows contribute canonical chords, Keep
+    // rows their live actual chords. Typed outcome keeps Conflict vs
+    // unavailable semantics. A Keep or disabled focus-right excludes the
+    // Meta+L/Meta+Esc chords here.
     {
-        const KeyedOccupancyResult keyed =
-            ShortcutReconciler::checkKeyedForeignOccupancyDetailedFor(m_shortcutStore, m_shortcutDisabledDraft);
+        const KeyedOccupancyResult keyed = ShortcutReconciler::checkKeyedForeignOccupancyDetailedFor(
+            m_shortcutStore, m_shortcutDisabledDraft, m_shortcutAuthenticStaged);
         if (keyed.status != KeyedOccupancy::Clear) {
             if (keyed.status == KeyedOccupancy::Conflict) {
                 m_shortcutStatus = QStringLiteral("Conflict: %1. Apply is refused.").arg(keyed.detail);
@@ -930,6 +990,10 @@ void UnifiedSettingsModule::refreshShortcutState()
             }
             continue;
         }
+        if (!m_shortcutAuthenticStaged) {
+            // Keep preserves the current assignment by definition.
+            continue;
+        }
         QList<int> post;
         catalogPost(entry, &post);
         if (current->active != post) {
@@ -939,7 +1003,7 @@ void UnifiedSettingsModule::refreshShortcutState()
     }
     bool lockHasPre = false;
     bool lockHasTarget = false;
-    if (focusEnabled && lockCurrent != nullptr) {
+    if (focusEnabled && m_shortcutAuthenticStaged && lockCurrent != nullptr) {
         for (int key : table.at(0).foreignExpectedPre) {
             if (lockCurrent->active.contains(key)) {
                 lockHasPre = true;
@@ -952,6 +1016,10 @@ void UnifiedSettingsModule::refreshShortcutState()
         }
     } else if (!focusEnabled) {
         lockHasTarget = true;
+    } else {
+        // Keep focus preserves its current assignment with Lock Session
+        // untouched: the lock stays out of scope like a disabled focus.
+        lockHasTarget = true;
     }
     QString clearedHint;
     if (!cleared.isEmpty()) {
@@ -962,27 +1030,56 @@ void UnifiedSettingsModule::refreshShortcutState()
     if (!m_shortcutDisabledDraft.isEmpty()) {
         draftHint = QStringLiteral(" %1 disabled binding(s) staged.").arg(m_shortcutDisabledDraft.size());
     }
+    QString focusHint;
+    if (!focusEnabled) {
+        focusHint = QStringLiteral(", focus-right disabled");
+    } else if (m_shortcutAuthenticStaged) {
+        focusHint = QStringLiteral(", Lock Session owns Meta+Esc");
+    } else {
+        focusHint = QStringLiteral(", focus-right kept at its current assignment");
+    }
     if (allAtPost && !lockHasPre && lockHasTarget) {
-        m_shortcutStatus = QStringLiteral("Shortcuts applied (%1 rows%2): enabled bindings own their canonical "
-                                           "chords%3.")
-                               .arg(catalog.size())
-                               .arg(m_shortcutDisabledDraft.isEmpty() ? QString()
-                                                                      : QStringLiteral(", %1 disabled")
-                                                                            .arg(m_shortcutDisabledDraft.size()))
-                               .arg(focusEnabled ? QStringLiteral(", Lock Session owns Meta+Esc")
-                                                 : QStringLiteral(", focus-right disabled"))
-            + clearedHint;
+        if (m_shortcutAuthenticStaged) {
+            m_shortcutStatus = QStringLiteral("Shortcuts applied (%1 rows%2): enabled bindings own their canonical "
+                                               "chords%3.")
+                                    .arg(catalog.size())
+                                    .arg(m_shortcutDisabledDraft.isEmpty()
+                                             ? QString()
+                                             : QStringLiteral(", %1 disabled").arg(m_shortcutDisabledDraft.size()))
+                                    .arg(focusHint)
+                + clearedHint;
+        } else {
+            m_shortcutStatus = QStringLiteral("Shortcuts preserved (%1 rows%2): enabled bindings kept at their "
+                                               "current assignments%3.")
+                                    .arg(catalog.size())
+                                    .arg(m_shortcutDisabledDraft.isEmpty()
+                                             ? QString()
+                                             : QStringLiteral(", %1 disabled").arg(m_shortcutDisabledDraft.size()))
+                                    .arg(focusHint)
+                + clearedHint;
+        }
         updateShortcutPresentation();
         return;
     }
-    m_shortcutStatus = QStringLiteral("Ready (%1 rows%2): Apply will assign enabled bindings and clear disabled "
-                                       "own bindings%3.")
-                           .arg(catalog.size())
-                           .arg(m_shortcutDisabledDraft.isEmpty()
-                                    ? QString()
-                                    : QStringLiteral(", %1 disabled").arg(m_shortcutDisabledDraft.size()))
-                           .arg(draftHint)
-        + clearedHint;
+    if (m_shortcutAuthenticStaged) {
+        m_shortcutStatus = QStringLiteral("Ready (%1 rows%2): Apply will assign enabled bindings to canonical and "
+                                           "clear disabled own bindings%3.")
+                                .arg(catalog.size())
+                                .arg(m_shortcutDisabledDraft.isEmpty()
+                                         ? QString()
+                                         : QStringLiteral(", %1 disabled").arg(m_shortcutDisabledDraft.size()))
+                                .arg(draftHint)
+            + clearedHint;
+    } else {
+        m_shortcutStatus = QStringLiteral("Ready (%1 rows%2): Apply will preserve enabled bindings at current "
+                                           "assignments and clear disabled own bindings%3.")
+                                .arg(catalog.size())
+                                .arg(m_shortcutDisabledDraft.isEmpty()
+                                         ? QString()
+                                         : QStringLiteral(", %1 disabled").arg(m_shortcutDisabledDraft.size()))
+                                .arg(draftHint)
+            + clearedHint;
+    }
     updateShortcutPresentation();
 }
 
@@ -1034,10 +1131,11 @@ void UnifiedSettingsModule::load()
     // Reopening stages live-disabled rows (present own assignments that
     // are empty); default-unbound rows (canonical key 0) are at canonical
     // empty, not a disablement. Missing rows are not Disable and read
-    // failure stages Authentic. Authentic/defaults explicitly restage Keep;
-    // Compatible explicitly resets and recomputes. Refresh never clobbers
-    // the draft.
+    // failure stages Keep (Authentic intent cleared). Authentic/defaults
+    // explicitly restage Keep; Compatible explicitly resets and recomputes.
+    // Refresh never clobbers the draft.
     m_shortcutDisabledDraft.clear();
+    m_shortcutAuthenticStaged = false;
     if (m_shortcutStore != nullptr) {
         QList<ShortcutTuple> liveTuples;
         QString liveError;
@@ -1334,9 +1432,10 @@ void UnifiedSettingsModule::defaults()
     m_ui.fixedSizePredicateCombo->setCurrentIndex(m_ui.fixedSizePredicateCombo->findData(QStringLiteral("both-axes-fixed")));
     m_ui.innerGapSpinBox->setValue(kGapDefault);
     m_ui.outerGapSpinBox->setValue(kGapDefault);
-    // Defaults restage Authentic for the shortcut draft with no preview;
+    // Defaults restage Keep for the shortcut draft with no preview;
     // persisting still never writes shortcuts.
     m_shortcutDisabledDraft.clear();
+    m_shortcutAuthenticStaged = false;
     clearForcePreview();
     refreshShortcutState();
     updateScriptState();

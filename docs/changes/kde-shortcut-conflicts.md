@@ -3,7 +3,7 @@
 ## Goal and scope
 
 - Add a per-binding conflict list, Keep/Disable choices, and Compatible/Authentic presets to the unified KDE Settings page.
-- Mirror Windows terminology: Authentic is the default; Compatible disables conflicting bindings without replacement chords.
+- Mirror Windows preset terminology: Authentic explicitly stages canonical assignments; Compatible disables conflicting bindings without replacement chords. Opening KDE Settings preserves native assignments as Keep/Disable, without staging a reset.
 - Reuse explicit Apply Shortcuts, confirmed/revalidated Force Apply, and Revert-to-KDE-defaults. Ordinary settings Save, startup, and installation do not perform shortcut correction.
 - KDE only, developed offline from Windows. Rebind and a first-run prompt are deferred unless existing KDE facilities make them trivial. No tray expansion, dependency changes, or macOS implementation.
 
@@ -11,12 +11,14 @@
 
 - List the full current KDE project catalog, including arrow and shifted-symbol aliases, with canonical chord, current assignment, and known default/current-holder conflicts; report unavailable queries honestly.
 - Keep/Disable and presets stage a draft. Only explicit confirmed shortcut Apply/Force writes KGlobalAccel; disabling clears the project's action, not a foreign holder.
-- Compatible resets the draft and disables bindings colliding with KDE defaults or current foreign holders; Authentic resets it to Keep. No invented replacements.
+- Compatible resets the draft to Keep and disables bindings colliding with KDE defaults or current foreign holders; Authentic resets it to enabled canonical intent. Keep preserves current custom/canonical/empty assignments. No invented replacements.
 - Enabled choices constrain Apply and Force holder scans and writes; disabled focus-right must not relocate Lock Session. Existing owner pinning, stale-preview refusal, durable cleared-ID recovery, and Revert behavior remain valid.
 - Regression coverage for preset selection, disabled bindings, mixed selections, Force drift, and settings-Save isolation. Hosted Rust/KWin/shell CI green; native Qt/KCM tests run in hosted CI if existing gates omit them.
 - Document provisional KDE choices, discriminating reference outcomes, and user-owned live acceptance steps.
 
 ## Approach and bounded units
+
+- M13 Keep-preserving Apply delivered offline 2026-10-09; specification, Lead readings, bounded units and evidence are in the [archived M13 record](archive/kde-keep-preserving-shortcut-apply.md). This umbrella record remains active for user-owned KDE acceptance.
 
 1. Investigation: existing KCM is Qt Widgets, not QML; full script catalog has directional, toggle, workspace, and alias actions. Existing correction backend handles a smaller conflict table. Accepted source investigation, no live evidence.
 2. Implementation: extend the existing reconciler to support the full catalog and explicit selected bindings, reuse KGlobalAccel persistence for own cleared assignments, add staged Widgets controls and meaningful hermetic coverage. Keep native transport and cleared-foreign-ID storage.
@@ -34,6 +36,7 @@
 - First hosted run on `e1bb52a` ([37188296548](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37188296548)): Rust/KWin/shell/Windows/macOS passed; native production/test compilation passed under `-Werror`, but 3 of 33 CTest suites failed. One causal test repair removes duplicate workspace rows already supplied by full-catalog seeds, updates preview assertions to readable chords, and checks both the exempt lock holder and keyed-only foreign holder. Product behavior and mutation oracles unchanged.
 - Accepted final implementation evidence on `cdd4ef4` ([37188768454](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37188768454)): all six hosted jobs green (Rust, KWin, shell, native, Windows, macOS). Native production/test build under `-Wall -Wextra -Werror` and all 33 CTest suites passed, including both selection suites. KWin tests/typecheck include native/TypeScript catalog parity. No local Linux or live desktop evidence is claimed.
 - Live acceptance remains pending: follow the conflict-list/preset section in `docs/live-shortcut-override-verification.md`. Keep this record active until user-owned KDE acceptance.
+- M13 pending live check: **M13 Keep preserves custom KDE chords across Apply**. Keep now preserves actual assignments; Authentic stages canonical reset and its intent is consumed on successful Apply/Force. Failed/declined attempts retain the staged intent.
 
 ## Handover
 
