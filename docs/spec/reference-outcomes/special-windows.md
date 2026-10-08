@@ -285,18 +285,34 @@ All fresh variants below reset the client and WM state independently.
   `S(S-cos-fixed-hints)`.
 - Then Hyprland/Dwindle: Wayland floats in both; X11 tiles in both.
   `S(S-hyp-fixed-hints)`.
-- Then bspwm: TBD (single-axis fixture not separately traced here).
-- Then i3: TBD (single-axis fixture not separately traced here).
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: xdg floats in both; Xwayland outcome TBD here.
-  `S(S-sway-fixed-hints)`.
-- Then qtile/Columns: TBD.
+- Then bspwm: tiles in both variants; `_apply_hints` requires
+  min_width==max_width and min_height==max_height together, so one-axis
+  equality fails. `S(S-bsp-spc)`.
+- Then i3: tiles in both variants; the fixed branch requires max_width>0
+  and max_height>0 with both axes equal, so one-axis equality fails.
+  `S(S-i3-min)`.
+- Then xmonad/Tall+Navigation2D: tiles in both variants; `isFixedSize`
+  is whole-tuple `sh_min_size==sh_max_size`, so one-axis equality fails.
+  `S(S-xmo-float)`.
+- Then sway: xdg floats in both; Xwayland floats in both (both minima>0
+  with either-axis equality). `S(S-sway-fixed-hints)` + `S(S-sway-spc)`.
+- Then qtile/Columns: tiles in both variants; `has_fixed_size` requires
+  both flags with 0<min==max on both axes, so one-axis equality fails.
+  `S(S-qti-min)`.
 - Then awesome/tile: neither variant satisfies implicit fixed-size floating;
   both axes must match. `S(S-awe-fixed-dynamic)`.
-- Then niri: TBD (fixture-specific admission not traced here).
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD (native resizeable mapping untraced).
-- Then paneru: TBD.
+- Then niri: width-fixed tiles while height-fixed floats; the predicate is
+  height-only (`min.h>0` and `min.h==max.h`), so only the height-fixed
+  variant satisfies it. `S(S-nir-spc)`.
+- Then PaperWM: tiles in both variants; `add_filter` admits Normal
+  non-transient windows with no fixed-size exclusion. `S(S-pap-spc)`.
+- Then karousel/Lazy: tiles in both variants; one-axis difference keeps
+  KWin `isResizable` true under either-axis strict inequality, so the
+  shapeability gate still tiles (given moveable ordinary clients).
+  `S(S-kar-spc)` + `S(S-kwin-resizeable)`.
+- Then paneru: no fixed-size admission counterpart (role-gated admission
+  has no size-hint predicate; float is rule-assigned; AX exposes no
+  min/max hint equality). `S(S-pan-admit)`.
 - Then Ours KDE: `both-axes-fixed` default tiles in both variants;
   `either-axis-fixed` floats in both without target writes (NORMATIVE D1).
   Switch to either-axis after admitting tiled E: E remains tiled; a new
@@ -320,24 +336,51 @@ All fresh variants below reset the client and WM state independently.
 - When: open E with one hint variant.
 - Observe: absence/zero/sentinel normalization vs raw equality.
 - Then COSMIC: Wayland unset/(0,0) do not satisfy the fixed branch;
-  both partial-zero variants do and float. X11 absent does not match;
-  present zero hints and sentinel-native handling TBD.
-  `S(S-cos-fixed-hints)`.
+  both partial-zero variants and the sentinel do and float. X11 absent
+  does not match; present-zero and sentinel X11-native handling TBD
+  (optional-hint mapping not pinned). `S(S-cos-fixed-hints)`.
 - Then Hyprland/Dwindle: unset and zero/partial-zero variants do not
-  satisfy the fixed branch on either backend; sentinel-native handling TBD.
-  `S(S-hyp-fixed-hints)`.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: xdg unset/zero/partial-zero fail the fixed branch;
-  Xwayland and sentinel-native handling TBD. `S(S-sway-fixed-hints)`.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: unset and zero/partial-zero fail the fixed branch;
-  sentinel-native handling TBD. `S(S-awe-fixed-dynamic)`.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+  satisfy the fixed branch on either backend; the sentinel floats on
+  both (no sentinel branch; Wayland minima>1 with either-axis equality,
+  X11 all>0 with both-axis equality); the height-absent guard tiles on
+  both (Wayland min<=1 gate, X11 min>0 gate). `S(S-hyp-fixed-hints)`.
+- Then bspwm: absent tiles (flag gate fails); (0,0), both partial-zero
+  and sentinel float (raw whole-size equality, no zero/sentinel guard);
+  the height-absent guard stays TBD (absent-height xcb representation
+  not pinned; no equality-positive inference). `S(S-bsp-spc)`.
+- Then i3: absent, (0,0), both partial-zero and the height-absent guard
+  tile (max_width>0 and max_height>0 gate fails); the sentinel floats
+  (both axes positive and equal). `S(S-i3-min)`.
+- Then xmonad/Tall+Navigation2D: absent tiles (`Nothing`); (0,0), both
+  partial-zero and sentinel float (whole-tuple `Just` equality, no zero
+  guard); the height-absent guard stays TBD (absent-height `Maybe`
+  representation not pinned). `S(S-xmo-float)`.
+- Then sway: xdg unset/zero/partial-zero and the height-absent guard fail
+  (both minima nonzero gate); xdg sentinel floats. Xwayland unset/zero/
+  partial-zero and the guard fail (both minima>0 gate); Xwayland
+  sentinel floats (either-axis equality). `S(S-sway-fixed-hints)` +
+  `S(S-sway-spc)`.
+- Then qtile/Columns: absent, (0,0), both partial-zero and the
+  height-absent guard tile (both flags with 0<min==max on both axes);
+  the sentinel floats. `S(S-qti-min)`.
+- Then awesome/tile: unset, zero/partial-zero and the height-absent guard
+  fail the fixed branch (all four bounds >0 required); the sentinel
+  floats (both axes positive and equal). `S(S-awe-fixed-dynamic)`.
+- Then niri: absent, (0,0), (640,0) and the height-absent guard tile
+  (height gate `min.h>0` fails); (0,480) and the sentinel float (height
+  equality holds). `S(S-nir-spc)`.
+- Then PaperWM: tiles every hint variant (Normal non-transient admission
+  only; no fixed-size branch). `S(S-pap-spc)`.
+- Then karousel/Lazy: Wayland absent, (0,0), both partial-zero and the
+  height-absent guard tile (enforced-minimum vs `INT_MAX` mapping keeps
+  strict inequality); Wayland sentinel floats (min==max). X11
+  present-value (0,0), partial-zero and sentinel legs float (raw hint
+  equality, no inequality); X11 absent and guard-height representation
+  stays TBD (NET SizeHints defaults outside the pinned KWin files; no
+  positive inference). `S(S-kar-spc)` + `S(S-kwin-resizeable)`.
+- Then paneru: no fixed-size admission counterpart for any hint variant
+  (same rule-gated admission; AX exposes no min/max hint equality).
+  `S(S-pan-admit)`.
 - Then Ours KDE: missing/full-zero/sentinel do not auto-float; equal
   partial-zero vectors do (NORMATIVE D1, no resizeable inference).
   Implemented offline 2026-10-08; [shared predicate fixtures](../../../crates/tiler-core/tests/fixed_size_admission.rs),
@@ -360,21 +403,54 @@ All fresh variants below reset the client and WM state independently.
   floating B removes its maximum hints and becomes resizable.
 - Observe: admission-only identity vs reactive float/tile status; frames
   and focus separately TBD. This is not R-SPC-05's minimum-raise fixture.
-- Then COSMIC: fixed classification traced at initial admission only;
-  exact post-admission transitions TBD. `S(S-cos-fixed-admission)`.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD (hint refresh alone does not establish status).
+- Then COSMIC: tiled B stays tiled after becoming fixed; automatic fixed
+  float stays floating after becoming resizable (`is_dialog` runs once at
+  map; no hint-change reclassification in source). Frames and focus TBD
+  (client timing, live-only). `S(S-cos-fixed-admission)`.
+- Then Hyprland/Dwindle: tiled B stays tiled; automatic float stays
+  floating (`suggestsFloat` applies at initial map with group/predict
+  gates; no hint-signal recompute). Frames and focus TBD (client
+  timing, live-only). `S(S-hyp-float)`.
+- Then bspwm: tiled B stays tiled; automatic float stays floating (hint
+  refresh only updates stored hints with arrange; admission state is not
+  re-run, and arrange ignores hints under the shipped default). Frames
+  and focus TBD (client timing, live-only). `S(S-bsp-hint)`.
+- Then i3: tiled B stays tiled; automatic float stays floating (fixed
+  check is admission-only; later hint updates only clamp floating via
+  `floating_check_size`, never re-admit tiles; tiled render ignores
+  hints). Frames and focus TBD (client timing, live-only). `S(S-i3-min)`
+  + `S(S-i3-fixed-runtime)`.
+- Then xmonad/Tall+Navigation2D: tiled B stays tiled; automatic float
+  stays floating (fixed/transient check runs once in `manage`; later
+  status changes only via manual float/sink). Frames and focus TBD
+  (client timing, live-only). `S(S-xmo-float)`.
+- Then sway: tiled B stays tiled; automatic float stays floating (float
+  admission evaluated at map; the runtime Xwayland hint path handles
+  urgency only, no re-admission). Frames and focus TBD (client timing,
+  live-only). `S(S-sway-min)`.
+- Then qtile/Columns: tiled B stays tiled; automatic float stays floating
+  (hint refresh updates stored hints with no tiled promotion; only
+  floating increments relayout). Frames and focus TBD (client timing,
+  live-only). `S(S-qti-min)`.
 - Then awesome/tile: implicit floating turns on/off respectively unless
   explicitly overridden; exact resulting frames/focus TBD.
   `S(S-awe-fixed-dynamic)`.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then niri: tiled B stays tiled; automatic float stays floating
+  (`compute_open_floating` runs at the four open callsites only; later
+  status changes only via the plain tile-move toggle). Frames and focus
+  TBD (client timing, live-only). `S(S-nir-fixed-open)` +
+  `S(S-nir-flttoggle)`.
+- Then PaperWM: tiled B stays tiled; automatic float does not arise (no
+  fixed-size branch; `add_filter` is admission-only). Where B floats by
+  another gate, hint loss alone does not retile it. Frames and focus TBD
+  (client timing, live-only). `S(S-pap-spc)`.
+- Then karousel/Lazy: tiled B stays tiled; automatic float stays
+  floating (gates evaluated once at `addClient`; only a caption-follow
+  signal re-evaluates, with no size-hint watcher). Frames and focus TBD
+  (client timing, live-only). `S(S-kar-admit)`.
+- Then paneru: no fixed-size admission counterpart, so hint gain/loss has
+  no reclassification to observe (role-gated admission; rule-assigned
+  float only). `S(S-pan-admit)`.
 - Then Ours KDE: tiled B stays tiled after becoming fixed; automatic
   fixed float stays floating after becoming resizable. Existing hint
   projection/clamp continues (NORMATIVE D2); react to self-resize to avoid
@@ -398,18 +474,43 @@ All fresh variants below reset the client and WM state independently.
 - Then COSMIC: ordinary fixed F tiles directly without a hint check;
   sticky command equivalence and later reclassification TBD.
   `S(S-cos-fixed-toggle)`.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
+- Then Hyprland/Dwindle: explicit tile survives observation (toggle via
+  `changeFloatingMode` with no refusal branch; `suggestsFloat` applies at
+  initial map only). Exact frames/focus TBD (client timing, live-only).
+  `S(S-hyp-float)`.
+- Then bspwm: explicit tile survives observation (state toggle is vacant
+  in place; later hint refresh does not re-run admission). Exact
+  frames/focus TBD (client timing, live-only). `S(S-bsp-state)`.
+- Then i3: explicit tile survives observation (`floating_disable`
+  inserts after the tiling-focused descendant; later hint updates never
+  re-admit). Exact frames/focus TBD (client timing, live-only).
+  `S(S-i3-flt-toggle)`.
+- Then xmonad/Tall+Navigation2D: explicit tile survives observation
+  (`sink` clears only the floating map; no automatic re-float on later
+  observation). Exact frames/focus TBD (client timing, live-only).
+  `S(S-xmo-float)`.
+- Then sway: explicit tile survives observation (`container_set_floating`
+  is the explicit path; `wants_floating` is evaluated at map only).
+  Exact frames/focus TBD (client timing, live-only). `S(S-sway-float)`.
+- Then qtile/Columns: explicit tile survives observation (toggle flips
+  state with tile-frame retain and layout re-add; float rules are
+  evaluated at admission, not re-applied on observation). Exact
+  frames/focus TBD (client timing, live-only). `S(S-qti-float)`.
 - Then awesome/tile: explicit floating=false overrides implicit fixed
   status; exact sticky-command equivalent TBD. `S(S-awe-fixed-dynamic)`.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then niri: explicit tile survives observation (plain tile-move toggle;
+  `compute_open_floating` runs at open only). Exact frames/focus TBD
+  (client timing, live-only). `S(S-nir-flttoggle)` + `S(S-nir-fixed-open)`.
+- Then PaperWM: F is already tiled on admission, so explicit tile retains
+  the tile (no fixed-size float to override). Exact frames/focus TBD
+  (client timing, live-only). `S(S-pap-spc)`.
+- Then karousel/Lazy: explicit tile is refused for the unshapeable fixed
+  float (float-to-tile requires `canTileEver`), so F stays floating;
+  observation does not retile it. Exact frames/focus TBD (client timing,
+  live-only). `S(S-kar-admit)`.
+- Then paneru: no fixed-size admission counterpart, so an explicit tile of
+  a fixed client has no automatic-float override to test (role-gated
+  admission; rule-assigned float only). `S(S-pan-admit)`.
 - Then Ours KDE: explicit tile wins for the same live client, including
   sticky Meta+G; ordinary observation does not re-float it. Exact-ref
   suppression survives omitted/scoped/released observations; new refs
@@ -433,17 +534,58 @@ All fresh variants below reset the client and WM state independently.
 - Then COSMIC: fixed E admits floating, then maximizes with original
   layer Floating; unmaximize returns to that layer. Exact frame/focus TBD.
   `S(S-cos-fixed-admission)` + `S(S-cos-fixed-maximize)`.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD (combined birth/restore path not traced).
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then Hyprland/Dwindle: fixed E admits floating at map (`suggestsFloat`
+  min==max applied at initial map); born-maximized applies as
+  `FSMODE_MAXIMIZED` at the work area (pending maximum consumed at map);
+  native unmaximize exits to `NONE` leaving placement to recalc with
+  floating retained. Exact frames/focus TBD (client timing, live-only).
+  `S(S-hyp-float)` + `S(S-hyp-fs)` + `S(S-hyp-bornmax)`.
+- Then bspwm: E floats (min==max hints rule); no maximize command/state
+  exists (desktop layout tiled/monocle only; maximize flags are not tree
+  state), so the born-maximized/unmaximize legs have no counterpart.
+  Client ack TBD. `S(S-bsp-spc)` + `S(S-bsp-layout)` + `S(S-bsp-admit)`.
+- Then i3: E floats (min==max branch); no maximize verb/state exists
+  (maximize is derived-only), so the born-maximized/unmaximize legs have
+  no counterpart. Client ack TBD. `S(S-i3-min)` + `S(S-i3-max)`.
+- Then xmonad/Tall+Navigation2D: E floats (fixed/transient manage); no
+  maximize command/state exists (`Full` is a workspace layout, not
+  per-window maximize), so the born-maximized/unmaximize legs have no
+  counterpart. `S(S-xmo-float)` + `S(S-xmo-layout)`.
+- Then sway: E floats (xdg either-axis min==max; xwayland fixed branch);
+  no maximize verb exists (request only schedules a configure), so the
+  born-maximized/unmaximize legs have no counterpart. Client ack TBD.
+  `S(S-sway-spc)` + `S(S-sway-max)`.
+- Then qtile/Columns: E admits floating via the fixed-size rule;
+  maximized is a floating-layer state at work-area size, so born-maximized
+  stays floating; native unmaximize clears maximized but the fixed rule
+  still matches, so it stays floating. Exact frames/focus TBD.
+  `S(S-qti-spc)` + `S(S-qti-fs)`.
+- Then awesome/tile: E admits implicitly floating (both positive axes
+  equal; maximized also implies implicit float; manage-time maximized
+  hint applies), so born-maximized stays implicitly floating; native
+  unmaximize clears maximized but fixed keeps implicit float, so it stays
+  floating. Exact frames/focus TBD (client timing, live-only).
+  `S(S-awe-fixed-dynamic)` + `S(S-awe-float)` + `S(S-awe-fs)`.
+- Then niri: fixed height floats via `compute_open_floating`, but a
+  pending-maximized tile opens in the scrolling layout; so born-maximized
+  E admits as a scrolling maximized column; native restore clears the flag
+  and lands tiled (restore-to-floating only when a normal tile was
+  maximized from floating). Exact frames TBD.
+  `S(S-nir-spc)` + `S(S-nir-fixed-open)` + `S(S-nir-maxfs)`.
+- Then PaperWM: E tiles (Normal non-transient admission; no fixed-size
+  branch); native maximize converts to width-maximize with
+  `unmaximizedRect` memory; native restore is moot (no maximized flag
+  left). Exact frames TBD. `S(S-pap-spc)` + `S(S-pap-widthmax)`.
+- Then karousel/Lazy: E floats as untileable under the shapeability gate
+  (both-axes min==max keeps `isResizable` false); gates evaluate once at
+  `addClient` with no size-hint watcher, so born-maximized stays floating
+  and native unmaximize leaves it floating. Exact native maximize
+  frames/focus TBD. `S(S-kar-spc)` + `S(S-kwin-resizeable)` +
+  `S(S-kar-admit)`.
+- Then paneru: no fixed-size admission counterpart (role-gated admission
+  with no size predicate; float is rule-assigned) and no maximize verb,
+  so the combined fixed+maximize/unmaximize outcome TBD (no built-in
+  equivalent). `S(S-pan-admit)` + `S(S-pan-cmds)`.
 - Then Ours KDE: fixed E floats beneath native maximize, no reserved
   tile on admission; unmaximize leaves it floating (NORMATIVE D4).
   Non-fixed Q3 is unchanged. D6 workspace enable while maximized keeps a
@@ -471,21 +613,98 @@ All fresh variants below reset the client and WM state independently.
   previously recorded layer. Non-fixed N first exit tiles. During fullscreen, game state is untouched.
   Reference outcomes for the non-fixed N and changed-hints/predicate/repeated-exit
   variants are TBD for every reference profile; native Ours legs remain TBD.
-- Then COSMIC: born fullscreen skips normal float/tile mapping, has no
-  restore state and tiles on exit to a tiled workspace; previously
-  floating E restores floating with retained geometry.
-  `S(S-cos-fixed-admission)` + `S(S-cos-fixed-fullscreen)`.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD (combined lifecycle not traced).
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: born E and non-fixed N both skip normal mapping (None
+  restore) and exit to the tiling default with no hint check; previously
+  floating E restores floating with retained geometry; hint changes while
+  fullscreen have no effect (float/tile decided at map); re-entering
+  fullscreen from the exited tile carries Some restore, so repeated exit
+  restores the saved tile/float layer, not current hints. Exact frames/focus
+  TBD (client timing, live-only). `S(S-cos-fixed-admission)` +
+  `S(S-cos-fixed-fullscreen)` + `S(S-cos-fsrestore)`.
+- Then Hyprland/Dwindle: non-fixed N applies fullscreen over ordinary
+  tiling and exit to `NONE` recovers tiles; E born/prior retain floating
+  as before with float size remembered. Product predicate switch has no
+  counterpart (Wayland either-axis minima>1 / X11 both positive axes
+  hardcoded, no setting); hint changes while fullscreen have no effect
+  (`suggestsFloat` at initial map only); repeated exits follow the same
+  recalc path, not current hints. Exact frames/focus TBD (client timing,
+  live-only). `S(S-hyp-float)` + `S(S-hyp-fs)` + `S(S-hyp-fixed-hints)`.
+- Then bspwm: non-fixed N admits fullscreen state and exit returns to
+  last-state tiled (vacant in place); E born/prior end floating as before.
+  Predicate switch is product-only (whole-size equality hardcoded in
+  `_apply_hints`); hint changes update stored hints only with arrange
+  ignoring them under the shipped default, so exits follow last-state, not
+  current hints; repeated exits replay last-state. Exact frames/focus TBD
+  (client timing, live-only). `S(S-bsp-spc)` + `S(S-bsp-admit)` +
+  `S(S-bsp-fs)` + `S(S-bsp-state)` + `S(S-bsp-hint)`.
+- Then i3: non-fixed N toggles fullscreen mode on a tiled container and
+  exit clears it staying tiled; E born/prior stay floating as before.
+  Predicate switch is product-only (both-axes positive equality hardcoded);
+  hint updates route to `floating_check_size` for floating containers only
+  and never re-admit tiles, so mid-fullscreen hint changes do not alter the
+  exit layer; repeated exits clear the mode to the same saved layer. Exact
+  frames/focus TBD (client timing, live-only). `S(S-i3-min)` +
+  `S(S-i3-admit)` + `S(S-i3-fs)` + `S(S-i3-fixed-runtime)`.
+- Then xmonad/Tall+Navigation2D: non-fixed N admits tiled (no manage float
+  cause) then `doFullFloat`, exit `doSink` stays tiled; E born/prior land
+  tiled as before (sink clears the map, no re-float). Predicate switch is
+  product-only (whole-tuple equality, no setting); hint changes have no
+  post-manage path (manage once; later only manual float/sink); repeated
+  exits sink again. Exact frames TBD. `S(S-xmo-float)` + `S(S-xmo-ewmh)` +
+  `S(S-xmo-admit)`.
+- Then sway: non-fixed N maps fullscreen on a tiled container and exit
+  clears the mode staying tiled; E born/prior retain floating as before.
+  Predicate switch is product-only (xdg/xwayland either-axis hardcoded);
+  the runtime hint path handles urgency only with map-time evaluation, so
+  hint changes do not alter the exit; repeated exits replay the mode clear.
+  Exact frames/focus TBD (client timing, live-only). `S(S-sway-spc)` +
+  `S(S-sway-full)` + `S(S-sway-min)` + `S(S-sway-fixed-hints)`.
+- Then qtile/Columns: X11-established legs: non-fixed N and born-fixed E
+  both admit fullscreen-first (`auto_fullscreen` before the fixed-rule
+  `elif`, match skipped) saving `NOT_FLOATING`, so both exit tiled via
+  save/restore; prior floating E (admitted `FLOATING` via the fixed rule,
+  then fullscreen saving `FLOATING`) restores floating. Exit never re-runs
+  the float-rule match; hint updates never promote tiles (floating
+  increments only), so mid-fullscreen hint changes do not alter the exit;
+  repeated exits replay save/restore. Native ack/focus TBD.
+  `S(S-qti-spc)` + `S(S-qti-fs)` + `S(S-qti-fs-restore)` + `S(S-qti-min)`.
+- Then awesome/tile: non-fixed N admits implicit float via fullscreen and
+  native exit clears it landing tiled; E born/prior stay floating while
+  fixed holds as before. One-axis start tiles (both axes must match;
+  product predicate switch has no counterpart, hardcoded). Changing hints
+  to both-axis fixed while fullscreen recomputes implicit float (hint
+  signals unless explicitly overridden), so the first exit floats; losing
+  hints while fullscreen recomputes but fullscreen retains, and the second
+  exit clears to tiled. Repeated exits track current hints, not saved
+  state. Exact frames/focus TBD (client timing, live-only).
+  `S(S-awe-fixed-dynamic)` + `S(S-awe-float)` + `S(S-awe-fs)`.
+- Then niri: non-fixed N opens scrolling fullscreen (no fixed float) and
+  exit lands tiled; E born opens scrolling fullscreen exiting tiled while
+  prior floating restores floating, as before. Predicate switch is
+  product-only (height-only predicate hardcoded); hint changes have no
+  open-path caller (open only; later plain toggle), so exits follow
+  `restore_to_floating` memory, not current hints; repeated exits replay
+  memory. Exact frames TBD. `S(S-nir-spc)` + `S(S-nir-fixed-open)` +
+  `S(S-nir-maxfs)`.
+- Then PaperWM: non-fixed N is honored fullscreen and exit restores the
+  saved tiled frame to tiled, same as born-fixed E; the prior-floating
+  fixed leg still has no faithful start. Hint changes have no branch (no
+  fixed-size exclusion); repeated exits restore the saved frame again.
+  Exact frames TBD. `S(S-pap-spc)` + `S(S-pap-fsframe)`.
+- Then karousel/Lazy: non-fixed N born-fullscreen tiles (fullscreen is
+  shapeable) and exit restores tiled; E born exits floating via
+  untileable-after-exit while prior floating stays floating. Predicate
+  switch is product-only (KWin either-axis strict inequality hardcoded, no
+  both/either setting); hint changes have no watcher (only caption-follow
+  re-evaluates) but the exit check reads current shapeability, so a hint
+  change takes effect at exit; repeated exits re-evaluate at each exit.
+  Exact frames/focus TBD. `S(S-kar-spc)` + `S(S-kwin-resizeable)` +
+  `S(S-kar-maxfs)` + `S(S-kar-admit)`.
+- Then paneru: non-fixed N follows the same role-gated admission as E (no
+  size predicate; float is rule-assigned) with fullscreen as a host AX
+  marker, so N/E born/prior exits stay TBD (owner-specific journey);
+  predicate/hint variants have no size path to act on. `S(S-pan-admit)` +
+  `S(S-pan-cmds)` + `S(S-pan-axfs)`.
 - Then Ours KDE: born-fullscreen first exit classifies as newly admitted:
   fixed floats with no writes, otherwise tiles; previously automatic
   floating restores floating. No target writes while fullscreen (NORMATIVE
@@ -521,27 +740,57 @@ All fresh variants below reset the client and WM state independently.
   Reference outcomes for the F arrival and changed-hints/predicate/override/
   maximized-control variants are TBD for every reference profile; native Ours
   legs remain TBD.
-- Then COSMIC: retiles both E and C without a fixed-hint check; exact
-  frames/focus TBD. `S(S-cos-fixed-workspace)`.
+- Then COSMIC: retiles E, C, and F arrivals without a fixed-hint check
+  (enable maps every ordinary floater); disable/give-fixed/enable still
+  tiles with fixed ignored; predicate switch is product-only (whole-size
+  equality, no setting); explicit override is moot in the cited path
+  (tiles anyway); maximized control tiles then re-overlays maximized with
+  the layer retargeted, and restore reveals the retained slot. Exact
+  frames/focus TBD. `S(S-cos-fixed-workspace)` + `S(S-cos-fixed-maximize)`.
 - Then Hyprland/Dwindle: no workspace-mode counterpart per R-FLT-04;
-  fixed-specific outcome TBD. `S(S-hyp-float)`.
-- Then bspwm: no workspace-mode counterpart per R-FLT-04; outcome TBD.
-  `S(S-bsp-layout)`.
-- Then i3: no workspace-mode counterpart per R-FLT-04; outcome TBD.
-  `S(S-i3-wsmode)`.
+  F-arrival, changed-hints/predicate, override, and maximized legs share
+  the absence (no workspace action to enable; conditional legs never run).
+  Outcome TBD. `S(S-hyp-float)`.
+- Then bspwm: no workspace-mode counterpart per R-FLT-04; F-arrival,
+  changed-hints/predicate, override, and maximized legs share the absence.
+  Outcome TBD. `S(S-bsp-layout)`.
+- Then i3: no workspace-mode counterpart per R-FLT-04; F-arrival,
+  changed-hints/predicate, override, and maximized legs share the absence.
+  Outcome TBD. `S(S-i3-wsmode)`.
 - Then xmonad/Tall+Navigation2D: no workspace-mode counterpart per
-  R-FLT-04; outcome TBD. `S(S-xmo-layout)`.
-- Then sway: no workspace-mode counterpart per R-FLT-04; outcome TBD.
-  `S(S-sway-wsmode)`.
+  R-FLT-04; F-arrival, changed-hints/predicate, override, and maximized
+  legs share the absence. Outcome TBD. `S(S-xmo-layout)`.
+- Then sway: no workspace-mode counterpart per R-FLT-04; F-arrival,
+  changed-hints/predicate, override, and maximized legs share the absence.
+  Outcome TBD. `S(S-sway-wsmode)`.
 - Then qtile/Columns: no workspace-mode counterpart per R-FLT-04;
-  outcome TBD. `S(S-qti-float)`.
-- Then awesome/tile: layout-mode action exists; exact fixed E outcome
-  TBD here. `S(S-awe-layout)`.
-- Then niri: no workspace-mode counterpart; outcome TBD. `S(S-nir-float)`.
-- Then PaperWM: no workspace-mode counterpart; outcome TBD. `S(S-pap-acts)`.
-- Then karousel/Lazy: no workspace-mode counterpart; outcome TBD.
-  `S(S-kar-acts)`.
-- Then paneru: no workspace-mode counterpart; outcome TBD. `S(S-pan-cmds)`.
+  F-arrival, changed-hints/predicate, override, and maximized legs share
+  the absence. Outcome TBD. `S(S-qti-float)`.
+- Then awesome/tile: per-tag layout switch (floating<->tile, no global
+  flag): F arrival admitted under the floating layout keeps geometry
+  (`c.floating` unset), then re-tile recalc floats fixed F (excluded from
+  `tiled_clients`) while ordinary arrivals tile; disable/give-fixed/enable
+  floats fixed E on recalc and tiles one-axis (both axes must match);
+  predicate switch is product-only; explicit `floating=false` survives the
+  recalc staying tiled (explicit over implicit); maximized control stays
+  maximized-and-implicitly-floating across the switch, and
+  restore-then-unmaximize keeps fixed E floating while non-fixed rejoins
+  tiled order. Intentional C stays explicitly floating throughout. Exact
+  frames/focus TBD. `S(S-awe-layout)` + `S(S-awe-float)` + `S(S-awe-tile)`
+  + `S(S-awe-fixed-dynamic)` + `S(S-awe-fs)`.
+- Then niri: no workspace-mode counterpart; F-arrival,
+  changed-hints/predicate, override, and maximized legs share the absence
+  (per-window toggle only). Outcome TBD. `S(S-nir-float)`.
+- Then PaperWM: no workspace-mode counterpart; F-arrival,
+  changed-hints/predicate, override, and maximized legs share the absence.
+  Outcome TBD. `S(S-pap-acts)`.
+- Then karousel/Lazy: no workspace-mode counterpart (no toggle verb in the
+  Actions inventory; `windowToggleFloating` is per-window only); F-arrival,
+  changed-hints/predicate, override, and maximized legs share the absence.
+  Outcome TBD. `S(S-kar-acts)`.
+- Then paneru: no workspace-mode counterpart; F-arrival,
+  changed-hints/predicate, override, and maximized legs share the absence.
+  Outcome TBD. `S(S-pan-cmds)`.
 - Then Ours KDE: enabling workspace tiling checks every window being
   tiled including arrivals while floating: fixed stays/becomes untouched
   float, others tile; explicit user tile overrides stay tiled;
@@ -581,17 +830,74 @@ All fresh variants below reset the client and WM state independently.
   Reference outcomes for the unavailable-store variant are TBD.
 - Then COSMIC: exact owner-adoption counterpart/outcome TBD; ordinary
   compositor map is not evidence for this script-owner journey.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+  Store-fault/ID/omission variants have no counterpart in the
+  pinned-workspace persistence inventory (orderly persist only).
+  `S(S-cos-persist)`.
+- Then Hyprland/Dwindle: no-counterpart for this owner restart with
+  clients alive (no re-exec verb in the dispatcher inventory; reload keeps
+  the live tree only and exit stops the compositor). Outcome TBD, including
+  re-float/close and store-fault/ID/omission variants (no dump or store
+  in inventory). `S(S-hyp-reload)` + `S(S-hyp-shortcut)`.
+- Then bspwm: owner `wm -r` dumps full state and re-execs restoring it
+  (ratios, WS membership, float frames, sticky/state/lastState, focus
+  history/stack round-trip); fixed E stays floating and explicitly tiled E
+  stays tiled as dumped state. Re-floated E restores as floating and closed
+  E is absent (dump reflects live state). Store-fault (missing/unreadable/
+  corrupt/v1/mismatched) and complete-vs-partial omission variants have no
+  counterpart in the dump/load inventory (orderly fields only). Exact
+  restart/visibility journey TBD. `S(S-bsp-restore)`.
+- Then i3: restart carries the layout file and re-execs (percents, focused
+  flag/activation, floating geometry round-trip); fixed E stays floating
+  and explicitly tiled E stays tiled. Re-floated E restores as floating and
+  closed E is absent. Store-fault/ID/omission variants have no counterpart
+  in the layout-file inventory (in-place restart fields only). Fresh-login
+  session wiring TBD. `S(S-i3-restart)`.
+- Then xmonad/Tall+Navigation2D: restart resumes the windowset including
+  the floating map with Tall recalculated; fixed E carries as an ordinary
+  float and explicitly tiled E (sink clears the map) stays tiled. Re-floated
+  E carries as floating and closed E is absent. Store-fault/ID/omission
+  variants have no counterpart (StateFile carries the whole StackSet only).
+  `S(S-xmo-restart)` + `S(S-xmo-float)`.
+- Then sway: no-counterpart for this owner restart with clients alive
+  (command inventory carries `reload` and `exit` with no restart verb;
+  reload is in-place config only). Outcome TBD, including re-float/close
+  and store-fault/ID/omission variants. `S(S-sway-reload)`.
+- Then qtile/Columns: groups/layouts/screens restore while widths reset
+  and windows re-admit (state carries no per-window float); fixed E
+  re-admits floating via the fixed-size rule, so an explicit tile override
+  is lost (re-float moot) and closed E is absent. Store-fault/ID/omission
+  variants have no counterpart (groups/layouts/screens/scratchpads only,
+  no tile store). Exact placement/focus TBD. `S(S-qti-state)` +
+  `S(S-qti-reload)` + `S(S-qti-spc)`.
+- Then awesome/tile: client order and floating state restore with tags
+  recreated (shares recalculate); fixed E recomputes to implicit float on
+  re-manage while explicit `floating=false` persists as a property.
+  Re-floated E restores as floating and closed E is absent. Store-fault/ID/
+  v1 variants have no counterpart (order+floating only, no tile store).
+  Exact frames/focus TBD. `S(S-awe-ctl)` + `S(S-awe-float)` +
+  `S(S-awe-fixed-dynamic)`.
+- Then niri: no-counterpart for this owner restart with layout recovery
+  (Quit exits and LoadConfigFile reloads config only; no layout dump or
+  re-exec verb). Outcome TBD, including re-float/close and store-fault/ID/
+  omission variants (no store in inventory). `S(S-nir-rst)`.
+- Then PaperWM: controlled disable+enable stages SaveState and re-adds
+  existing windows with prevSpace layout restored; fixed E tiles (no
+  fixed-size branch) and explicitly tiled E stays tiled. Closed E is
+  absent. Store-fault/ID/omission variants have no counterpart (SaveState
+  covers monitors/spaces/widths only). Exact widths/focus TBD.
+  `S(S-pap-rst)` + `S(S-pap-spc)`.
+- Then karousel/Lazy: script enable adopts existing clients in workspace
+  order via `addClient` with live-only Grid state (no persisted layout);
+  fixed E re-admits floating via the shapeability gate, so an explicit
+  tile override is lost. Re-floated E is Floating and closed E is absent.
+  Store-fault/ID/omission variants have no counterpart (no store at all).
+  Exact order/widths/focus TBD. `S(S-kar-start)` + `S(S-kar-rst)` +
+  `S(S-kar-spc)` + `S(S-kar-admit)`.
+- Then paneru: startup windows match SessionRestore within grace; fixed E
+  has no size predicate so it follows role-gated admission (float only if
+  rule-assigned). Closed E is absent from matching. Store-fault/ID/omission
+  variants have no counterpart beyond grace-windowed matching. Exact
+  strips/widths/focus TBD. `S(S-pan-rst)` + `S(S-pan-admit)`.
 - Then Ours KDE: startup foreground/hidden adoption floats fixed E;
   fixed-window user tile overrides persist across owner restart in the
   same intentional-float store, recompute fallback if missing/degraded/unmatched
