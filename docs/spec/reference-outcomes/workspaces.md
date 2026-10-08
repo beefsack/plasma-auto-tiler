@@ -92,17 +92,29 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then qtile/Columns: Return is fresh admission at live target focus (insert_position=0), no old-slot restore; Columns has no long-edge axis (in-column vertical stack, width-shared columns), so the tall/wide axis distinction is inapplicable; exact order/frames TBD; `S(S-qti-group)` + `S(S-qti-add)`
 - Then awesome/tile: Both legs no-follow (move_to_tag never switches view); return keeps B's retained global-client position via move_to_tag (no reinsertion, no old-slot store; tile is stateless recalc); tall/wide long-edge distinction inapplicable (fixed master/stack partition); exact order/frames TBD; `S(S-awe-tag)` + `S(S-awe-tile)`
 - Then niri: B re-admits after the explicitly focused A with Smart
-  follow; viewport stays TBD. `S(S-nir-ins)` + `S(S-nir-ws)`;
-  viewport queued.
+  follow, and every column activation animates the view to B's column
+  (centered vs minimal fit per the focus-scroll policy); the exact
+  scrolled offset stays TBD. `S(S-nir-ins)` + `S(S-nir-ws)` +
+  `S(S-nir-view)`; offset queued.
 - Then PaperWM: B re-inserts after the explicitly focused A at the open
-  position (selected+1 RIGHT at the shipped default); focus and viewport
-  stay TBD. `S(S-pap-ins)`; focus/viewport queued.
+  position (selected+1 RIGHT at the shipped default); via the shipped
+  take path the drop finalizes with selectedWindow plus
+  `Main.activateWindow`, so the return follows with B, while the
+  fresh-insertion no-steal on inactive spaces is a different journey.
+  Viewport is ensured minimal with the exact offset TBD.
+  `S(S-pap-ins)` + `S(S-pap-take)`; offset queued.
 - Then karousel/Lazy: B's column re-admits after the explicitly focused
-  A (last-focused, else last); KWin-side focus and viewport stay TBD.
-  `S(S-kar-ins)`; focus/viewport queued.
+  A (last-focused, else last); removal refreshes `lastFocusedColumn`,
+  and the cross-desktop `moveToGrid` passes Immediate focus (the target
+  column's window-to-focus is focused) because the moved column was
+  focused, else no pass. KWin-delivered focus and viewport stay TBD.
+  `S(S-kar-ins)` + `S(S-kar-ws)`; delivered-focus/viewport queued.
 - Then paneru: B re-inserts at the remembered strip index for A, else
-  the config insertion index, overlap, or end; focus stays TBD.
-  `S(S-pan-ins)`; focus queued.
+  the config insertion index, overlap, or end; arrival focus follows the
+  `VirtualMoveNumber` verb's `MoveFocus` policy (Follow carries focus to
+  B, Stay refocuses the source neighbour), which this fixture leaves
+  unstated, so the exact focus stays TBD. `S(S-pan-ins)` + `S(S-pan-ws)`;
+  focus queued.
 - Then Ours KDE: Remembered A: tall stacked, wide side-by-side; `D(D-place)` synthetic proof, physical feel pending; exact order TBD
 - Then Ours Windows: Remembered A: tall stacked, wide side-by-side; `D(D-place)` synthetic proof, physical feel pending; exact order TBD
 - Variant hook: V-WS-ANCHOR.
@@ -166,16 +178,24 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 - Then COSMIC: Floated C leaves the tiling tree (D sole); MRU search skips C (no tiling node) and matches D, so B admits at surviving D from history (not root), splits D's long edge (D geometry unrecorded), B after D; `SendToWorkspace` leaves focus (falls back to A), `MoveToWorkspace` follows with B; `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-focusfix)` + `S(S-cos-send)`
 - Then Hyprland/Dwindle: No remembered-leaf or history anchor in source (floated C simply leaves the tiled set); target anchor is sole D regardless of cursor (only tiled candidate on WS2); splits D's long edge (D geometry unrecorded, so axis TBD), B before/after D TBD (cursor half); `S(S-hyp-movews)`
-- Then bspwm: TBD (no remembered-leaf/history anchor in source; arrival inserts at live WS2 focus, and the split against the floated leaf is unevidenced here); `S(S-bsp-xfer)`
+- Then bspwm: no remembered-leaf/history anchor exists in source; floated C
+  keeps its tree slot vacant in place with no focus write (so the live WS2
+  focus stays C, now floating) and leaves the tiling space geometrically.
+  Arrival inserts at that live focus via `transfer_node`; the split of a
+  tiled newcomer against the floated-leaf anchor is unevidenced here, so
+  axis/order/frames stay TBD. `S(S-bsp-xfer)` + `S(S-bsp-state)` +
+  `S(S-bsp-float)`; split queued.
 - Then i3: `move container to workspace` (no-follow): floated C sits in the WS2 floating list (floating-target fallback), so the anchor is sole D with B after D; source collapses; focus stays A; `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: Floated C stays in the stack with focus retained (`float` is a floating-map write only); B arrives via `shiftWin` as `insertUp` above live WS2 focus C (order `[B,C,D]`, B focused there; no floating-leaf split, Tall has no splits); source collapses to A with source view unchanged (no follow); C remains floating; exact frames TBD; `S(S-xmo-shift)` + `S(S-xmo-float)`
 - Then sway: `move container to workspace` (no-follow): the workspace destination resolves via focus-inactive tiling only, so floated C never anchors; B lands after sole D; source collapses; focus stays A; `S(S-sway-movews)`
 - Then qtile/Columns: No remembered-leaf/history anchor in source (floated C leaves the layouts for the floating list); B admits at live WS2 focus via the ordinary anchor; exact order TBD (D geometry and live focus unrecorded); `S(S-qti-group)` + `S(S-qti-add)` + `S(S-qti-float)`
 - Then awesome/tile: No remembered-leaf/history admission anchor in source (tile recalc over live tiled order); floated C leaves the tiled set; B admits via the ordinary path with no view switch; exact order/frames TBD; `S(S-awe-tag)` + `S(S-awe-float)` + `S(S-awe-tile)`
-- Then niri: floated C leaves the strip (floating state is
-  per-workspace), and B admits through the ordinary column path with
-  no leaf memory to invalidate; exact anchor stays TBD.
-  `S(S-nir-ws)`; anchor queued.
+- Then niri: floated C leaves the strip into WS2's own floating space
+  (each workspace owns its scrolling state, floating space, and active
+  flag), and B admits through the ordinary column path at active+1 with
+  no leaf memory to invalidate. Which column is active after floating C
+  is untraced, so the exact anchor stays TBD. `S(S-nir-ws)` +
+  `S(S-nir-ins)`; anchor queued.
 - Then PaperWM: anchoring is open-position index only, so no
   remembered-leaf memory exists to invalidate; the float path stays
   TBD. `S(S-pap-ins)`; float leg queued.
@@ -218,12 +238,24 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   remove/add path (never fresh-tiled on arrival) and sole A is
   unchanged; `focus=true` (default) follows with B, `focus=false`
   stays. `S(S-nir-ws)`.
-- Then PaperWM: TBD (float cross-space path untraced; floats are
-  GNOME-native). Queued.
-- Then karousel/Lazy: TBD (the sourced per-column tiled transfer does
-  not prove the whole float journey; unmanaged float transfer
-  untraced). Queued.
-- Then paneru: TBD (unmanaged cross-row path untraced). Queued.
+- Then PaperWM: forward B admits sole on WS2 (fresh windows redirect to the
+  selected space at the open position); floating B itself lives in the
+  per-space `_floating` list (non-tileable admission floats plus
+  `make_above`), and `removeWindow` dispatches floats to `removeFloating`.
+  Whether the cross-space take re-inserts B floating or fresh-tiled is
+  untraced, so retained-vs-fresh stays TBD. `S(S-pap-ins)` +
+  `S(S-pap-float)`; carry queued.
+- Then karousel/Lazy: forward B opens a new column sole on the target
+  desktop (appended after the last column); floating is a separate client
+  state with float/toggle transitions, and the column verbs take a column
+  argument that a floating B is not in. Whether the float state carries
+  across desktops is untraced, so retained-vs-fresh stays TBD.
+  `S(S-kar-ins)` + `S(S-kar-float)`; carry queued.
+- Then paneru: forward B moves via `VirtualMoveNumber` to the indexed row;
+  floating B is `Unmanaged::Floating`, outside tiling, with its own
+  focus-history record. Whether the virtual move carries the unmanaged
+  float or fresh-admits it tiled is untraced, so retained-vs-fresh and
+  focus stay TBD. `S(S-pan-ws)` + `S(S-pan-flt)`; carry queued.
 - Then Ours KDE: TBD (explicit send applies to focused tiled windows `D(D-dec-cos)`; floated roundtrip untested)
 - Then Ours Windows: TBD (explicit send applies to focused tiled windows `D(D-dec-cos)`; floated roundtrip untested)
 - Variant hook: V-FLOAT-GEO.
@@ -812,18 +844,72 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   WS3, then invoke previous twice.
 - Observe: per-output isolation vs shared two-view history; output-focus
   alone vs workspace change as a history producer.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: no-counterpart (no history-toggle verb exists; `LastWorkspace`
+  targets the last index `len-1`, not the last-viewed workspace).
+  `S(S-cos-ws)`.
+- Then Hyprland/Dwindle: single global MRU timeline (entries carry
+  workspace+monitor); `=1` previous is timeline-next (global), `=2`
+  scans timeline-next for the same monitor; workspace.active and
+  monitor.focused (deferred) both record, so the R change and the
+  focus-L both re-front their entries; shipped `=0` only re-activates.
+  Local leg (enabled `=1` variant): first previous shows R's current
+  workspace, second toggles back to WS2; `=2` variant: first shows WS1,
+  second WS2. Arrival focus via the focus candidate with pointer-hit
+  precedence stays TBD (pointer fixture unspecified). Shared leg: no
+  shared set exists (per-monitor ownership); local-leg rule applies per
+  monitor. `S(S-hyp-ws)`; focus queued.
+- Then bspwm: global history walk (`last` = HISTORY_OLDER match,
+  monitor scope unfiltered without the `local` option); every desktop
+  activation records, same-desktop focus records nothing
+  (`activate_desktop` returns false). Local leg: first `last` shows R's
+  current workspace, second returns to WS2; shown desktop per press
+  established, exact focused node via the history fallback stays TBD.
+  Shared leg: desktops are per-monitor; no shared set exists.
+  `S(S-bsp-ws)` + `S(S-bsp-close)`; focused-node queued.
+- Then i3: single global `previous_workspace_name`; every `workspace_show`
+  records except the same-workspace early return (before the record) and
+  internal cons. Local leg: the R change overwrites the previous, so first
+  `back_and_forth` shows R's old workspace (on its output, descended
+  remembered focus), second returns to WS2; output-focus alone records
+  nothing. Shared leg: same single-toggle on the one output (WS2 then
+  WS3); cross-output sharing N/A. `S(S-i3-ws)`.
+- Then xmonad/Tall+Navigation2D: no-counterpart (no back-and-forth or
+  previous-workspace verb in the profiled key inventory). `S(S-xmo-ctl)`.
+- Then sway: per-seat single `prev_workspace_name`; `set_workspace`
+  records on change only (same-workspace early return records nothing).
+  Local leg: first `back_and_forth` shows R's old workspace (seat
+  focus-inactive focus), second returns to WS2; output-focus alone
+  records nothing. Shared leg: same single-toggle on the one output
+  (WS2 then WS3). `S(S-sway-ws)` + `S(S-sway-switch)`.
+- Then qtile/Columns: per-screen `previous_group` (saved on `set_group`
+  only when the group changes; same-group re-select and bare screen
+  focus record nothing); bare `toggle_group()` falls back to it.
+  Local leg: WS1 then WS2 with the group's remembered `current_window`
+  refocus. Shared leg model-inapplicable (a group shows on one screen
+  at a time; cross-screen `set_group` swaps). `S(S-qti-ws)`.
+- Then awesome/tile: per-screen tag history (identical selected-set
+  re-select records nothing); `history.restore()` defaults to the
+  `"previous"` toggle. Local leg: WS1 then WS2 with history-preferred
+  refocus. Shared leg model-inapplicable (tags are per-screen).
+  `S(S-awe-ws)` + `S(S-awe-hist)`.
+- Then niri: per-monitor `previous_workspace_id` (recorded on every
+  activation; same-index activation records nothing); `FocusWorkspacePrevious`
+  / `switch_workspace_previous` goes to it, unresolvable stays.
+  Local leg: WS1 then WS2 with the active workspace's active window
+  focused. Shared leg fixture-inapplicable (each output owns its
+  workspaces; no shared set). `S(S-nir-ws)`.
+- Then PaperWM: MRU-list traversal with wrap, not a two-state toggle
+  (`selectSequenceSpace` steps DOWN to the next-older live-MRU entry
+  and wraps; the MRU is computed live, not recorded). Local leg: each
+  press keeps walking down the list (never auto-returns); exact
+  per-press spaces depend on the live stack order, TBD. Shared leg:
+  spaces are per-monitor. `S(S-pap-space)`; per-press targets queued.
+- Then karousel/Lazy: no-counterpart (no desktop-switch or history
+  verb in the Actions inventory; desktop switching is KWin-native).
+  `S(S-kar-acts)`.
+- Then paneru: no-counterpart (no history verb in the `Operation`
+  inventory; `Virtual` is directional North/South only).
+  `S(S-pan-ws)`.
 - Then Ours KDE: local/global-unique L WS1 then WS2, R unchanged;
   shared WS2 then WS3. Implemented offline, native journey TBD; item 1.2.
   [Fixtures](../../../kwin/tests/workspace-previous-relative.test.ts).
@@ -839,18 +925,49 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   cannot remove E, removal applicability/outcome stays TBD.
 - Observe: removed-ID invalidation vs ordinal reinterpretation/recreation;
   separately record whether the empty ID actually survives.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: no-counterpart (no history-toggle verb exists; `LastWorkspace`
+  targets the last index `len-1`, not the last-viewed workspace).
+  `S(S-cos-ws)`.
+- Then Hyprland/Dwindle: previous is timeline-next after W; dead-workspace
+  entries are pruned by `gc`, and numeric targets resolve via find-or-create
+  (recreation path). Whether E itself is destroyed vs retained is untraced
+  (persistent-rule ownership), so the outcome is conditional: E retained
+  shows E, E destroyed+pruned falls through to the next-older entry;
+  exact E survival and gc timing stay TBD. `S(S-hyp-ws)`; E-survival queued.
+- Then bspwm: E survives (desktops persist until the explicit `desktop -r`;
+  emptiness never auto-removes), and `last` shows the surviving E.
+  `S(S-bsp-ws)` + `S(S-bsp-wsretain)`.
+- Then i3: E closes when empty and invisible, but previous is name-based
+  and `workspace_get` creates on demand, so invoking previous recreates E
+  by name and switches to it (recreation, not invalidation).
+  `S(S-i3-ws)` + `S(S-i3-wsretain)`.
+- Then xmonad/Tall+Navigation2D: no-counterpart (no back-and-forth or
+  previous-workspace verb in the profiled key inventory). `S(S-xmo-ctl)`.
+- Then sway: empty non-active workspaces are destroyed, but `back_and_forth`
+  falls back to creating the previous name, so invoking previous recreates
+  E and switches to it (recreation, not invalidation). `S(S-sway-ws)` +
+  `S(S-sway-wsretain)`.
+- Then qtile/Columns: removal inapplicable (static groups 1-9; emptiness
+  never removes), so E survives and the previous-group toggle shows E.
+  `S(S-qti-ws)` + `S(S-qti-wsdef)`.
+- Then awesome/tile: removal inapplicable (static per-screen tags; only the
+  explicit `tag.delete` removes), so E survives and `history.restore()`
+  shows E. `S(S-awe-ws)`.
+- Then niri: the trailing empty is spared by cleanup (active and trailing
+  workspaces are never dropped), so E survives and `switch_workspace_previous`
+  resolves the stored id to E and shows it; a removed id would resolve to
+  no-op instead. `S(S-nir-ws)`.
+- Then PaperWM: workspace add/remove is GNOME-owned (PaperWM only mirrors);
+  `removeSpace` splices a removed space out of the MRU walk, so a removed E
+  drops from the traversal with wrap to the next-older entry. Whether E
+  itself survives depends on GNOME policy, TBD. `S(S-pap-space)`;
+  E-survival queued.
+- Then karousel/Lazy: no-counterpart (no desktop-switch or history
+  verb in the Actions inventory; desktop switching is KWin-native).
+  `S(S-kar-acts)`.
+- Then paneru: no-counterpart (no history verb in the `Operation`
+  inventory; `Virtual` is directional North/South only).
+  `S(S-pan-ws)`.
 - Then Ours KDE: removal clears previous E; no-op until next
   recorded change, no recreation/reinterpretation. Surviving empty E stays
   valid. Implemented offline, native journey TBD; item 1.3.
@@ -872,18 +989,60 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   reconnect R; observe D's return scope; invoke previous on L again.
 - Observe: hotplug history recording, reconnect selection independent of
   history, and clearing a previous ID when it returns to another output.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: no-counterpart (no history-toggle verb exists; `LastWorkspace`
+  targets the last index `len-1`, not the last-viewed workspace).
+  `S(S-cos-ws)`.
+- Then Hyprland/Dwindle: D shown on L fires workspace.active and records it
+  on the single global timeline (monitor-focus also re-tracks); first
+  previous from D goes timeline-next, which is WS2 (both the `=1` global
+  and `=2` same-monitor scans agree here). No previous-ID invalidation
+  exists (entries persist; dead ones are pruned by `gc`). Reconnect return
+  scope and the exact second toggle stay TBD. `S(S-hyp-ws)`;
+  return/second queued.
+- Then bspwm: shipped defaults retain the disconnected monitor and its
+  desktops (`remove-unplugged`/`remove-disabled` default false; same-id
+  return reuses them), so D never shows on L and the displacement has no
+  counterpart at defaults; the named removal variant migrates all desktops
+  to the target before removing. Under that variant the `last` history
+  walk applies; exact first/second targets stay TBD. `S(S-bsp-monrm)` +
+  `S(S-bsp-ws)`; variant targets queued.
+- Then i3: the displaced workspace migrates to L with its name preserved and
+  showing it records WS2 as previous (same-workspace re-show excluded);
+  first previous on L selects WS2 with its descended remembered focus.
+  Reconnect return placement and the exact second toggle stay TBD.
+  `S(S-i3-ws)`.
+- Then xmonad/Tall+Navigation2D: no-counterpart (no back-and-forth or
+  previous-workspace verb in the profiled key inventory). `S(S-xmo-ctl)`.
+- Then sway: output removal evacuates each workspace to the
+  highest-available else fallback output (destroying empties); showing D
+  on L records WS2 in the per-seat previous; first previous on L selects
+  WS2 with seat focus-inactive focus. Reconnect affinity and the exact
+  second toggle stay TBD. `S(S-sway-evac)` + `S(S-sway-ws)`;
+  return/second queued.
+- Then qtile/Columns: previous is per-screen, so R-side state lives on the
+  removed screen object while L's own record (WS1) survives intact; first
+  previous on L selects WS1 with the group's remembered `current_window`.
+  Disconnect migration and reconnect return scope stay TBD. `S(S-qti-ws)`;
+  return/second queued.
+- Then awesome/tile: per-screen history survives on L (R-side history stays
+  with R's screen); the displaced tag arrives via `tag.screen`
+  reassignment (members move, old screen restores from history); first
+  previous on L restores the WS1 set. Reconnect return scope and the exact
+  second toggle stay TBD. `S(S-awe-ws)`; return/second queued.
+- Then niri: displaced workspaces insert before the trailing empty on L
+  (`append_workspaces`); showing D on L records WS2 in L's per-monitor
+  previous id, so the first previous on L selects WS2. Reconnect return
+  scope and the exact second toggle stay TBD. `S(S-nir-ws)`;
+  return/second queued.
+- Then PaperWM: owner-specific (GNOME owns outputs and workspace add/remove;
+  PaperWM only mirrors via `workspacesChanged`); the MRU is live-computed,
+  so there is no recorded previous ID to invalidate. Native displacement
+  selection, return scope, and toggles stay TBD. `S(S-pap-space)`.
+- Then karousel/Lazy: fixture-inapplicable (single-screen profile has
+  no second output to receive WS2). `S(S-kar-single)`.
+- Then paneru: no-counterpart (no history verb in the `Operation`
+  inventory; `Virtual` is directional North/South only).
+  `S(S-pan-ws)`.
 - Then Ours KDE: disconnect WS2 -> D records previous WS2;
   first toggle selects WS2, previous D. D's return to R clears L's previous
   D; if reconnect preserves L WS2 with no further recorded change, second
@@ -904,18 +1063,66 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
 - When: send B next with follow; inspect E and the spare; fresh reset,
   repeat with stay. Resolve the pre-transfer order once each run.
 - Observe: E reused/filled vs new target; next trailing spare; follow/stay.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: next resolves to active+1, which is the existing trailing
+  empty E; B fills E (sole; no split), source collapses to A, and
+  `ensure_last_empty` supplies the next spare while removing non-active
+  non-last empties. `MoveToNextWorkspace` follows with B, `SendToNextWorkspace`
+  leaves focus. Exact frames TBD. `S(S-cos-ws)` + `S(S-cos-send)` +
+  `S(S-cos-newgroup)`; frames queued.
+- Then Hyprland/Dwindle: plain next targets numeric+1 via find-or-create;
+  follow focuses the mover, silent refocuses the source. E is filled when
+  it is the numeric+1 workspace, else a new numeric workspace is created
+  (no trailing-empty semantic exists); B lands sole (empty target has no
+  anchor contest). Exact E-vs-created identity and frames stay TBD.
+  `S(S-hyp-ws)` + `S(S-hyp-movews)`; identity/frames queued.
+- Then bspwm: E is an explicit desktop; unflagged `node -d next` resolves
+  the relative desktop, transfers with sibling promotion at the source,
+  and inserts at the WS2/E destination focus; `--follow` keeps focus on B,
+  otherwise the send stays on the source. Desktops are retained (no spare
+  lifecycle). Split axis derives from the anchor rectangle's long edge;
+  exact anchor geometry/frames TBD. `S(S-bsp-ws)` + `S(S-bsp-xfer)` +
+  `S(S-bsp-insert)`; frames queued.
+- Then i3: `move to workspace next` resolves via the same no-follow path
+  (both the follow and stay runs stay: mover focus restored to the source);
+  B attaches after the E target focus. No spare is created (creation is
+  on-demand via select); source A survives. Exact frames TBD.
+  `S(S-i3-movews)` + `S(S-i3-ws)`; frames queued.
+- Then xmonad/Tall+Navigation2D: no-counterpart (no relative-send verb in
+  the profiled core+Navigation2D inventory; relative shift needs CycleWS).
+  `S(S-xmo-ctl)`.
+- Then sway: `move to workspace next` resolves via the same no-follow path
+  (both runs stay: mover focus restored to the source inactive); B attaches
+  after the E target focus. No spare is created; source A survives.
+  Exact frames TBD. `S(S-sway-movews)` + `S(S-sway-ws)`; frames queued.
+- Then qtile/Columns: no-counterpart (`togroup` takes explicit group
+  names only; next/previous are view verbs that transfer nothing).
+  `S(S-qti-ws)`.
+- Then awesome/tile: bounded TBD (`move_to_tag` is explicit-only per
+  `S(S-awe-tag)`; shipped keys bind index focus/swap only per `S(S-awe-keys)`;
+  no relative-send resolution is established in the traced inventory).
+  Queued.
+- Then niri: down resolves to `min(active+1, len-1)`, which is E; B fills E
+  (sole) and filling the last workspace inserts the next empty bottom spare;
+  source A survives. Smart follow activates the target when the mover was
+  active (`focus=false` stays). Settled widths TBD. `S(S-nir-ws)` +
+  `S(S-nir-ins)`; widths queued.
+- Then PaperWM: `moveDownSpace` takes the selected window first and steps to
+  the adjacent space with an end stop; the drop completes with insert plus
+  `Main.activateWindow` (follow per take finalization). Target insert is
+  the open-position index (exact position TBD per the R-WS-14 precedent);
+  whether E exists as a GNOME space stays TBD. `S(S-pap-space)` +
+  `S(S-pap-take)` + `S(S-pap-ins)`; position/E-applicability queued.
+- Then karousel/Lazy: `columnMoveToNextDesktop` steps to the adjacent desktop
+  with an edge stop and moves the whole column C2, appended after the
+  target's last column; source A survives. KWin-side follow and viewport
+  stay TBD; E-as-desktop existence is KWin-owned, TBD. `S(S-kar-ws)`;
+  follow/viewport queued.
+- Then paneru: South relative move carries the `MoveFocus` Follow/Stay policy
+  under the len-greater-than-one gate; at the last row South auto-creates
+  only with `create_workspace_automatically` on (shipped default off),
+  else stays. Whether E exists as a virtual row (trailing-empty/model
+  applicability) stays TBD, so the exact target stays TBD. `S(S-pan-ws)`;
+  target queued.
 - Then Ours KDE: selected B fills existing E; normal lifecycle supplies
   next empty; source A survives. Follow goes with B, stay preserves source
   view with focused-removal MRU. Implemented offline (item 2.2), native journey
@@ -933,18 +1140,51 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
 - When: send B previous with follow; fresh reset, repeat with stay.
 - Observe: ordinal wrap to E vs MRU target; target resolved before transfer;
   spare maintenance and follow/stay.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: previous resolves to active-1; from the first workspace the
+  decrement fails and wraparound (shipped default on) cycles to
+  `MoveToLastWorkspace`/`SendToLastWorkspace`, which is the pre-transfer E;
+  B fills E (sole), source collapses to A, next spare ensured. Follow goes
+  with B, stay leaves focus. Exact frames TBD. `S(S-cos-ws)` +
+  `S(S-cos-send)` + `S(S-cos-newgroup)`; frames queued.
+- Then Hyprland/Dwindle: plain previous resolves to the MRU-history previous,
+  never an ordinal wrap, so no wrap to E occurs here; the fresh fixture
+  carries no history past WS1, leaving the exact no-history target TBD
+  (likely no-op). Follow/silent focus per the move path stays as
+  established. `S(S-hyp-ws)` + `S(S-hyp-movews)`; no-history target queued.
+- Then bspwm: the desktop list is circular, so previous from the first wraps
+  to the last desktop E; transfer inserts at the E destination focus with
+  source sibling promotion; `--follow` keeps focus on B, otherwise stays.
+  Desktops are retained. Exact anchor geometry/frames TBD. `S(S-bsp-ws)` +
+  `S(S-bsp-xfer)` + `S(S-bsp-insert)`; frames queued.
+- Then i3: `move to workspace prev` wraps via the first/last fallback to the
+  pre-transfer E through the same no-follow path (both runs stay); B attaches
+  after the E target focus; no spare is created; source A survives. Exact
+  frames TBD. `S(S-i3-movews)` + `S(S-i3-ws)`; frames queued.
+- Then xmonad/Tall+Navigation2D: no-counterpart (no relative-send verb in
+  the profiled core+Navigation2D inventory; relative shift needs CycleWS).
+  `S(S-xmo-ctl)`.
+- Then sway: `move to workspace prev` wraps via the last/first fallback to
+  the pre-transfer E through the same no-follow path (both runs stay);
+  B attaches after the E target focus; no spare is created; source A
+  survives. Exact frames TBD. `S(S-sway-movews)` + `S(S-sway-ws)`;
+  frames queued.
+- Then qtile/Columns: no-counterpart (`togroup` takes explicit group
+  names only; next/previous are view verbs that transfer nothing).
+  `S(S-qti-ws)`.
+- Then awesome/tile: bounded TBD (`move_to_tag` is explicit-only per
+  `S(S-awe-tag)`; shipped keys bind index focus/swap only per `S(S-awe-keys)`;
+  no relative-send resolution is established in the traced inventory).
+  Queued.
+- Then niri: up resolves to `saturating_sub(1)` = same index from the first
+  workspace, which is a no-op that never wraps, so no transfer to E occurs
+  in either run. `S(S-nir-ws)`.
+- Then PaperWM: `moveUpSpace` steps to the adjacent space with an end stop,
+  so from the first space no move occurs in either run. `S(S-pap-space)`.
+- Then karousel/Lazy: `columnMoveToPreviousDesktop` stops at the first
+  desktop edge, so from the first desktop no move occurs in either run.
+  `S(S-kar-ws)`.
+- Then paneru: North relative move stops at index 0, so from the first row
+  no move occurs in either run. `S(S-pan-ws)`.
 - Then Ours KDE: selected previous wraps to pre-transfer E, fills it;
   normal lifecycle supplies next empty. Follow with B, stay on WS1 with A.
   Implemented offline; item 2.2, native journey pending.
@@ -961,18 +1201,69 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   repeat each from fresh fixtures with stay instead of follow.
 - Observe: source emptiness vs target/spare resolution and follow/stay;
   record source retention/removal and exact empty-source focus separately.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: next leg refuses (single-window source to the adjacent
+  trailing empty: `InvalidWorkspaceIndex` before any transfer, both follow
+  and stay runs; source unchanged; post-refusal output-move vs wrap
+  fallback TBD). Previous leg proceeds (non-adjacent wrap to the
+  pre-transfer E, fills it, next spare ensured; follow with B, stay keeps
+  the active emptied source). Emptied-source removal timing and exact
+  frames stay TBD. `S(S-cos-wssingle)` + `S(S-cos-ws)` + `S(S-cos-send)`;
+  fallback/timing/frames queued.
+- Then Hyprland/Dwindle: next targets numeric+1 via find-or-create (fills E
+  when E is numeric+1, else creates); follow focuses the mover, silent
+  refocuses the source. Numbered IDs never renumber but emptied-source
+  object destruction is untraced, so source retention stays TBD; exact
+  frames TBD. Previous from the first follows the MRU-history rule (never
+  an ordinal wrap), exact target TBD. `S(S-hyp-ws)` + `S(S-hyp-movews)`;
+  retention/frames queued.
+- Then bspwm: emptied source retained either leg (desktops persist until the
+  explicit `desktop -r`); transfer inserts at the destination focus;
+  `--follow` keeps focus on B, otherwise the send stays on the (emptied)
+  source. Exact empty-source focused node and frames TBD. `S(S-bsp-ws)` +
+  `S(S-bsp-xfer)` + `S(S-bsp-wsretain)`; focus/frames queued.
+- Then i3: next/previous resolve via the wrap fallback through the same
+  no-follow path (both runs stay; mover focus restored to the source);
+  attachment is after the target focus. The emptied source is retained
+  while visible and closes once empty and invisible. Exact focused
+  container and frames TBD. `S(S-i3-movews)` + `S(S-i3-ws)` +
+  `S(S-i3-wsretain)`; focus/frames queued.
+- Then xmonad/Tall+Navigation2D: no-counterpart (no relative-send verb in
+  the profiled core+Navigation2D inventory; relative shift needs CycleWS).
+  `S(S-xmo-ctl)`.
+- Then sway: next/previous resolve via the wrap fallback through the same
+  no-follow path (both runs stay); attachment is after the target focus.
+  The emptied source is spared while active and destroyed once empty and
+  non-active. Exact empty-source focus TBD. `S(S-sway-movews)` +
+  `S(S-sway-ws)` + `S(S-sway-wsretain)`; focus queued.
+- Then qtile/Columns: no-counterpart (`togroup` takes explicit group
+  names only; next/previous are view verbs that transfer nothing).
+  `S(S-qti-ws)`.
+- Then awesome/tile: bounded TBD (`move_to_tag` is explicit-only per
+  `S(S-awe-tag)`; shipped keys bind index focus/swap only per `S(S-awe-keys)`;
+  no relative-send resolution is established in the traced inventory).
+  Queued.
+- Then niri: next fills E (sole) with the next empty bottom spare; with
+  Smart follow the target activates and the emptied source (non-active,
+  non-trailing) is removed at cleanup, while `focus=false` stay keeps the
+  active emptied source spared. Cleanup is skipped while a switch animation
+  runs, so exact removal timing and empty-source focus stay TBD. Previous
+  from the first is a same-index no-op (never wraps). `S(S-nir-ws)` +
+  `S(S-nir-ins)`; timing/focus queued.
+- Then PaperWM: next fills E when present (take-first, open-position
+  insert, `Main.activateWindow` follow); the emptied source's column
+  splices with space removal GNOME-owned, TBD. Previous from the first
+  stops at the end (no move). Exact insert position and E-applicability
+  stay TBD. `S(S-pap-space)` + `S(S-pap-take)` + `S(S-pap-ins)`;
+  position/removal queued.
+- Then karousel/Lazy: next steps to the adjacent desktop when one exists
+  (whole sole-window column appended after the target's last column) with
+  an edge stop at the actual last; previous from the first stops (no move).
+  E-as-desktop existence is KWin-owned (TBD); emptied-grid retention and
+  KWin-side follow/viewport stay TBD. `S(S-kar-ws)`; follow/viewport
+  queued.
+- Then paneru: both legs are no-moves (South relative move needs
+  len-greater-than-one, but the sole-B strip has length one; North stops
+  at index 0). `S(S-pan-ws)`.
 - Then Ours KDE: selected target is pre-transfer E in both legs; fills E,
   normal lifecycle supplies next empty. Follow with B; stay preserves source
   view. Core emptied-source desired focus is null (adapter issues no focus
@@ -1007,18 +1298,57 @@ baseline above is unchanged. Record:
 - When: migrate WS2 right.
 - Observe: migration vs refusal reason; views unchanged on refusal;
   no setting writes.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: no mode/shared/per-output gate exists in the profiled
+  inventory; the active WS2 migrates via `MigrateWorkspaceToOutput`
+  (activates there, switches output); refusal legs have no counterpart.
+  `S(S-cos-ws)`.
+- Then Hyprland/Dwindle: no mode gate exists; whole-workspace
+  reassignment via `moveToMonitor`; displaced destination view and focus
+  stay TBD. `S(S-hyp-ws)`; displaced-view queued.
+- Then bspwm: no mode gate exists; whole-desktop reassignment via
+  `desktop -m MONITOR`; both branches resolve the source through the
+  focus fallback (NULL desk is transient: history-last-else-head is
+  shown with its focus-memory node), so follow and stay differ only in
+  destination focus (follow focuses the moved desktop, stay keeps
+  source focus). Which history entry shows is fixture-unstated.
+  `S(S-bsp-ws)` + `S(S-bsp-wsstay)` + `S(S-bsp-close)`; history-entry
+  queued.
+- Then i3: no mode gate exists; WS2 is active so the bare
+  `move workspace to output R` detaches/attaches the whole workspace
+  with floating fix and shows it on R with the descended remembered
+  focus; the emptied source shows its next focus-stack entry (created
+  if last). `S(S-i3-ws)`.
+- Then xmonad/Tall+Navigation2D: no-counterpart (no workspace-ownership
+  move verb exists; the mode gate is likewise absent). `S(S-xmo-ws)`.
+- Then sway: no mode gate exists; WS2 is active so
+  `move workspace to output` (handler-context active) detaches/attaches
+  with source refill; R shows the migrated WS2 with B focused (the
+  workspace node's parent follows output ownership, and the stacked
+  WS2 node qualifies on R with no focus write); L's shown entry stays
+  TBD (remaining order and prior stack unstated). `S(S-sway-ws)` +
+  `S(S-sway-wsactive)`; L-shown queued.
+- Then qtile/Columns: no mode gate exists; view-ownership reassignment
+  via `toscreen` on R (both workspaces screened, so the groups swap);
+  R refocuses the mover (WS2's remembered `current_window`, B) while
+  L's refocus target stays TBD (WS3's remembered window is
+  fixture-unstated). `S(S-qti-ws)`; L-focus queued.
+- Then awesome/tile: no mode gate exists; view-ownership reassignment
+  via `tag.screen` (all member clients move; R keeps showing WS3 since
+  selection is untouched; the old screen restores from history, whose
+  content is fixture-unstated); exact restored set and focus stay TBD.
+  `S(S-awe-ws)`; restored-set/focus queued.
+- Then niri: no mode gate exists; whole-workspace reassignment via
+  `MoveWorkspaceToMonitorByRef` (explicit output-plus-reference
+  resolution; the moved-active variant activates the target).
+  `S(S-nir-ws)`.
+- Then PaperWM: no mode gate exists; whole-space reassignment
+  choreography via `move-space-monitor` (swap fallback when it is the
+  monitor's last space); exact views stay TBD. `S(S-pap-space)`; views
+  queued.
+- Then karousel/Lazy: fixture-inapplicable (single-screen profile has
+  no second output to receive WS2). `S(S-kar-single)`.
+- Then paneru: no-counterpart (`ToNextDisplay` moves the focused
+  window only, never a whole strip or Space). `S(S-pan-cmds)`.
 - Then Ours KDE: local/global-unique with strict-true flag migrate;
   shared refuses `mode-shared`, false refuses `per-output-disabled`,
   unreadable refuses `per-output-unreadable`; never writes the
@@ -1038,18 +1368,56 @@ baseline above is unchanged. Record:
 - When: migrate WS2 right.
 - Observe: backing id retained; tree/order/shares/remembered
   focus/tiling mode; target order and shown view; moved active focus.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: the same workspace object moves between sets (removed
+  from the source, inserted after R's active) with `set_output`
+  carrying tiling plus floating layers; it activates there and switches
+  output, so tree/order is retained as the same object; moved-active
+  focus and share remainder stay TBD. `S(S-cos-ws)` +
+  `S(S-cos-wsmove-fs)`; focus queued.
+- Then Hyprland/Dwindle: the workspace object is reassigned to R
+  (`m_monitor`); members keep the workspace with floating reposition
+  and fullscreen setBox; pinned members stay behind; target order,
+  displaced view and moved focus stay TBD. `S(S-hyp-ws)` +
+  `S(S-hyp-wsmove-fs)` + `S(S-hyp-pinstay)`; order/view queued.
+- Then bspwm: the desktop object is reassigned via transfer
+  (unlink/insert, tree retained); the source always resolves through
+  the focus fallback (NULL desk transient: history-last-else-head shown
+  with focus memory); follow and stay differ only in destination focus
+  (follow focuses the moved desktop's remembered focus (B) on a focused
+  monitor, stay keeps source focus); the flag is fixture-unstated.
+  `S(S-bsp-ws)` + `S(S-bsp-wsstay)` + `S(S-bsp-close)`; flag queued.
+- Then i3: the same con detaches/attaches (layout retained) with
+  floating coordinate fix; shown on R with the descended remembered
+  focus (B); the emptied source shows its next focus-stack entry
+  (created if last). `S(S-i3-ws)`.
+- Then xmonad/Tall+Navigation2D: no-counterpart (no workspace-ownership
+  move verb exists). `S(S-xmo-ws)`.
+- Then sway: detach/attach with source refill (replacement with raw
+  focus when last, else no show write); R shows the migrated WS2 with
+  B focused (ownership query, no focus write); L shows WS1 (stacked
+  WS1 node, else the sole-remainder items[0] fallback); the exact L
+  focus node stays TBD (no refocus write; WS1 content unstated).
+  `S(S-sway-ws)` + `S(S-sway-wsactive)`; L-focus queued.
+- Then qtile/Columns: cross-screen `set_group` swaps WS2 with WS3 (both
+  screened); R refocuses B via `layout_all` while L's refocus target
+  stays TBD (WS3's remembered `current_window` is fixture-unstated);
+  exact frames TBD. `S(S-qti-ws)`; L-focus/frames queued.
+- Then awesome/tile: `tag.screen` moves the tag plus all member clients
+  (layout retained as the same tag); R keeps showing WS3 (selection
+  untouched) while the old screen restores from history (content
+  fixture-unstated); exact restored set and focus stay TBD.
+  `S(S-awe-ws)`; restored-set/focus queued.
+- Then niri: remove/insert by reference with moved-active activation;
+  inserts after R's active entry; members retained via `set_output`
+  re-entry; focus resolves to the moved workspace's active window (B).
+  `S(S-nir-wsmove)` + `S(S-nir-ws)`.
+- Then PaperWM: `move-space-monitor` choreography (swap fallback when
+  the monitor's last space); layout carry and exact views/focus stay
+  TBD. `S(S-pap-space)`; carry/views queued.
+- Then karousel/Lazy: fixture-inapplicable (single-screen profile has
+  no second output). `S(S-kar-single)`.
+- Then paneru: no-counterpart (`ToNextDisplay` moves the focused
+  window only). `S(S-pan-cmds)`.
 - Then Ours KDE: same id, tree/order/shares/remembered
   focus/tiling mode retained via `relocate_domain`; inserts after the
   target current and shows the migrated workspace; the prior target
@@ -1072,18 +1440,62 @@ baseline above is unchanged. Record:
 - When: migrate right; inspect the source view and both
   minimum-two/trailing-spare inventories.
 - Observe: source refill vs removal; empty migration vs refusal.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: the source shows the last remaining entry (post-remove
+  falls back to last with Active state; a fresh empty is added only if
+  the set emptied); the empty E migrates identically (no emptiness gate
+  among the traced migrate refusals). `S(S-cos-wsmig)`.
+- Then Hyprland/Dwindle: numbered IDs never renumber, but whether the
+  emptied source object is destroyed vs retained stays TBD
+  (persistent-rule ownership untraced); empty-E migration likewise TBD.
+  `S(S-hyp-ws)`; retention/empty-migration queued.
+- Then bspwm: retained (desktops persist until the explicit
+  `desktop -r`); both legs resolve the source through the focus
+  fallback: history-last-else-head is shown with focus memory (the
+  fixture's visit history is unstated, so WS1 vs E stays TBD; E as a
+  never-visited spare constrains but never establishes the pick); the
+  empty E transfers identically (no emptiness gate). `S(S-bsp-ws)` +
+  `S(S-bsp-wsretain)` + `S(S-bsp-wsstay)` + `S(S-bsp-close)`;
+  history-entry queued.
+- Then i3: the emptied source shows the most-recent focus-head entry
+  (a replacement is created when the moved workspace was last); the
+  empty E detaches/attaches the same way (no emptiness gate); leg 1
+  shows WS2 on R with the descended focus (B) via the same show chain
+  as R-WS-21, the E leg focuses the empty node. `S(S-i3-ws)`.
+- Then xmonad/Tall+Navigation2D: no-counterpart (no workspace-ownership
+  move verb exists). `S(S-xmo-ws)`.
+- Then sway: detach/attach with source refill (replacement created
+  with raw focus when last); the empty E migrates identically (no
+  emptiness gate); both legs leave L showing WS1 (leg 1: stacked WS1
+  node, else items[0] of the Given order; leg 2: WS1 sole remainder):
+  the query resolves through the stacked workspace nodes with no focus
+  write; exact focus nodes stay TBD (WS1 content unstated). `S(S-sway-ws)`
+  + `S(S-sway-wsactive)`; focus queued.
+- Then qtile/Columns: retained (static groups 1-9); both legs swap
+  with WS3 (moved and target groups are all screened: L shows WS3, R
+  shows the mover); each screen refocuses its new group's remembered
+  `current_window` (WS3's remembered window is fixture-unstated, so the
+  exact L focus stays TBD). `S(S-qti-ws)` + `S(S-qti-wsdef)`; L-focus
+  queued.
+- Then awesome/tile: retained (static per-screen tags; only the
+  explicit `tag.delete` removes); the empty E reassigns via
+  `tag.screen` the same way; the old screen restores from history
+  (the moved tag was selected, so restore runs; history content is
+  fixture-unstated, so the exact restored set stays TBD). `S(S-awe-ws)`;
+  restored-set queued.
+- Then niri: cleanup drops empty non-active non-trailing workspaces
+  (the trailing empty is spared); source refill is the previous entry,
+  so leg 1 shows WS1; the E leg migrates by index the same way
+  (activation only when moved-active; E's index is fixture-unstated,
+  so its exact predecessor stays TBD). `S(S-nir-ws)` +
+  `S(S-nir-wsremove)`; E-predecessor queued.
+- Then PaperWM: owner-specific (GNOME owns workspace add/remove;
+  PaperWM only mirrors via `workspacesChanged`); the move choreography
+  applies; source refill/removal and empty-E migration stay TBD (GNOME
+  policy). `S(S-pap-space)`; refill/removal queued.
+- Then karousel/Lazy: fixture-inapplicable (single-screen profile has
+  no second output). `S(S-kar-single)`.
+- Then paneru: no-counterpart (window-only move verb; no whole-strip
+  or Space move). `S(S-pan-cmds)`.
 - Then Ours KDE: source shows the last remaining scoped entry;
   existing minimum-two/trailing-spare lifecycle converges on topology
   signals; empty migrates under the same id with no fabricated focus.
@@ -1103,18 +1515,54 @@ baseline above is unchanged. Record:
 - When: migrate WS2 right; inspect F class/origin/output and S
   output/all-desktops flag.
 - Observe: float carry vs fresh admission; sticky move vs stay.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: F carries both legs (set_output moves the tiling plus
+  floating layers, fixed-size floats included); S stays (per-output-set
+  sticky layer, never a workspace member). `S(S-cos-wsmove-fs)` +
+  `S(S-cos-sticky)`.
+- Then Hyprland/Dwindle: F carries both legs (floating reposition on
+  the move); S stays (pinned members are reassigned to the next
+  workspace on the old monitor, never carried). `S(S-hyp-wsmove-fs)` +
+  `S(S-hyp-pinstay)`.
+- Then bspwm: F carries (whole-desktop transfer moves the tree;
+  floating uses no tiling space and stays in-tree); S stays on the
+  source (stickies move off the transferred desktop back to the
+  source's shown remainder, else to the destination's shown desk).
+  `S(S-bsp-ws)` + `S(S-bsp-float)` + `S(S-bsp-wsstay)`.
+- Then i3: F carries (detach/attach with floating coordinate fix); S
+  carries as a member in both cases: tiled stickies never match the
+  show-time push filter, and a floating S travels inside the moved
+  workspace's floating list, so the source-refill show (which pushes
+  floating stickies to the shown workspace) never re-homes it.
+  `S(S-i3-wsmove-fs)` + `S(S-i3-sticky)` + `S(S-i3-stickyshow)`.
+- Then xmonad/Tall+Navigation2D: no-counterpart (no workspace-ownership
+  move verb exists). `S(S-xmo-ws)`.
+- Then sway: F carries (detach/attach carries the workspace floating
+  list); S carries as a member (the sticky pull to the focused
+  workspace runs on switches only; the move path writes raw focus, so
+  no re-home runs before observation; a later switch would pull a
+  floating S). `S(S-sway-wsmove-fs)` + `S(S-sway-sticky)` +
+  `S(S-sway-stickypull)`.
+- Then qtile/Columns: F carries (`set_screen` pushes floats via
+  `to_screen` and shows them); the sticky leg stays TBD (no sticky
+  state/verb traced in the profiled group/window inventory).
+  `S(S-qti-ws)`; sticky queued.
+- Then awesome/tile: F carries (`tag.screen` moves all member clients;
+  float is a persistent property); S carries as a member too
+  (`set_screen` rewrites screen plus tags for every tagged client with
+  no sticky guard; sticky only grants visibility on all selected tags,
+  never source ownership). `S(S-awe-ws)` + `S(S-awe-float)` +
+  `S(S-awe-sticky)`.
+- Then niri: F carries (each workspace owns its floating space;
+  `set_output` re-enters all windows); no-counterpart for the sticky
+  leg (no sticky state or verb in the profiled `Action` inventory).
+  `S(S-nir-wsmove)` + `S(S-nir-ws)` + `S(S-nir-acts)`.
+- Then PaperWM: TBD (the `move-space-monitor` choreography is untraced
+  for per-space `_floating` carry and scratch/stuck stay here).
+  `S(S-pap-space)` + `S(S-pap-float)`; carry/stay queued.
+- Then karousel/Lazy: fixture-inapplicable (single-screen profile has
+  no second output). `S(S-kar-single)`.
+- Then paneru: no-counterpart (window-only move verb; unmanaged floats
+  never migrate as members). `S(S-pan-cmds)` + `S(S-pan-flt)`.
 - Then Ours KDE: F carries with class/origin preserved via native
   output remap (never fresh-tiled); S stays on the source and is
   never a member. Implemented offline (NORMATIVE D7, User 2026-10-08),
@@ -1147,32 +1595,45 @@ baseline above is unchanged. Record:
   resizes fullscreen windows to the new monitor box with no refusal gate.
   `S(S-hyp-wsmove-fs)`; maximized members move as members (no separate
   gate traced).
-- Then bspwm: TBD (no workspace-mode counterpart per R-FLT-04; fixed
-  overlay-carry outcome untraced here).
+- Then bspwm: carries fullscreen as members (whole-desktop transfer;
+  fullscreen toggles vacant in place with the tree slot kept; no
+  overlay gate in the transfer path); no maximize state exists so no
+  maximize claim; delayed re-fit and mid-flight legs stay TBD (native
+  runtime). `S(S-bsp-ws)` + `S(S-bsp-state)` + `S(S-bsp-fs)`; re-fit
+  queued.
 - Then i3: carries fullscreen: `workspace_move_to_output` detaches and
   attaches the whole workspace with floating coordinate fix and no overlay
   gate; `workspace_show` manages CF_OUTPUT fullscreen state.
   `S(S-i3-wsmove-fs)`; no maximize state exists so no maximize claim.
-- Then xmonad/Tall+Navigation2D: TBD (no workspace-ownership move verb;
-  no maximize state in this profile).
+- Then xmonad/Tall+Navigation2D: no-counterpart (no workspace-ownership
+  move verb exists; no maximize state in this profile). `S(S-xmo-ws)` +
+  `S(S-xmo-layout)`.
 - Then sway: carries fullscreen: `workspace_move_to_output` detaches and
   attaches the whole workspace with source refill and no overlay gate;
   arrange sets the fullscreen container to the output geometry.
   `S(S-sway-wsmove-fs)`; no maximize state claimed.
-- Then qtile/Columns: TBD (view-ownership reassignment path untraced for
-  overlay members here).
-- Then awesome/tile: TBD (view-ownership reassignment path untraced for
-  overlay members here).
+- Then qtile/Columns: carries as members (view-ownership reassignment
+  via `toscreen`/`set_screen` incl floating show; fullscreen/maximized
+  are window float states with no separate move gate traced); delayed
+  re-fit and mid-flight legs stay TBD (client/native runtime).
+  `S(S-qti-ws)` + `S(S-qti-fs)`; re-fit queued.
+- Then awesome/tile: carries as members (`tag.screen` moves all member
+  clients; fullscreen/maximized are plain boolean properties with no
+  move gate traced); delayed re-fit and mid-flight legs stay TBD
+  (client/native runtime). `S(S-awe-ws)` + `S(S-awe-fs)`; re-fit queued.
 - Then niri: carries as workspace members: `move_workspace_to_output_by_id`
   removes/inserts the whole workspace with activation only when
   moved-active and no overlay gate; `set_output` re-enters all windows on
   the new output. `S(S-nir-wsmove)`; fullscreen/maximized move as members
   (no overlay-specific branch traced).
 - Then PaperWM: TBD (whole-space choreography untraced for overlay
-  members here).
-- Then karousel/Lazy: TBD (single-screen profile has no second output;
-  overlay-carry outcome untraced here).
-- Then paneru: TBD (no whole-strip or Space move counterpart).
+  members here; layout skips placement for fullscreen/maximized).
+  `S(S-pap-space)` + `S(S-pap-unmov)`; overlay-carry queued.
+- Then karousel/Lazy: fixture-inapplicable (single-screen profile has
+  no second output; overlay membership is otherwise kept with arrange
+  skipped). `S(S-kar-single)` + `S(S-kar-maxfs)`.
+- Then paneru: no-counterpart (no whole-strip or Space move verb;
+  `ToNextDisplay` is window-only). `S(S-pan-cmds)`.
 - Then Ours KDE: NORMATIVE D8 CHANGED (User 2026-10-08): fullscreen plus
   maximized members are carried with no refusal in moved members or
   affected views; the tiler issues only the native move with no extra
@@ -1202,18 +1663,61 @@ baseline above is unchanged. Record:
   previous. Separately reconnect the displaced origin after migration.
 - Observe: previous clearing vs ordinal reuse; return-association
   removal scope; planned vs completed reporting.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: no-counterpart (no history-toggle verb exists; `LastWorkspace`
+  targets the last index `len-1`, not the last-viewed workspace).
+  `S(S-cos-ws)`.
+- Then Hyprland/Dwindle: single global MRU timeline (entries persist;
+  dead ones pruned by `gc`); the monitor-move path references no
+  history tracker (verified absent in PlacementController.cpp), so
+  timeline fronting on moves stays TBD, as do reconnect return scope
+  and the exact second toggle. `S(S-hyp-ws)`; fronting/return/second
+  queued.
+- Then bspwm: transfer drops the moved desktop's history entries and
+  adds none for it, so the first `last` after migration skips WS2 to
+  the next-older entry (fixture history unstated, so the exact target
+  stays TBD); return-association scope and planned/completed reporting
+  stay TBD (no such concepts in source). `S(S-bsp-ws)` +
+  `S(S-bsp-wshist)`; next-older target queued.
+- Then i3: single global `previous_workspace_name`; the move's two
+  shows record refill-then-mover names, so invoking previous selects
+  the recorded refill entry (exact refill TBD on fixture grounds);
+  reconnect return placement and the exact second toggle stay TBD.
+  `S(S-i3-ws)`; refill-return/second queued.
+- Then xmonad/Tall+Navigation2D: no-counterpart (no back-and-forth or
+  previous-workspace verb in the profiled key inventory). `S(S-xmo-ctl)`.
+- Then sway: per-seat single `prev_workspace_name`; the move itself
+  records nothing (raw focus only, never the recording switch path),
+  so previous still names the pre-select workspace (exact target TBD,
+  W_prev unstated); reconnect affinity and the exact second toggle
+  stay TBD. `S(S-sway-ws)` + `S(S-sway-evac)`; target/second queued.
+- Then qtile/Columns: per-screen `previous_group`; the cross-screen
+  swap writes previous only on the requesting screen (R records WS3;
+  L's record still names the pre-select group), so invoking previous
+  on L shows the pre-select group (exact TBD, W_prev unstated); return
+  scope stays TBD. `S(S-qti-ws)`; pre-select/return queued.
+- Then awesome/tile: per-screen tag history; the migration itself
+  restores L's previous set (the moved tag was selected, so the
+  `set_screen` restore runs during the move); the subsequent
+  previous-toggle target stays TBD (toggling back references the
+  now-R-homed tag, untraced), as do return scope and the second
+  toggle. `S(S-awe-ws)`; toggle/return queued.
+- Then niri: per-monitor `previous_workspace_id`; neither the remove
+  nor the insert path writes it, so previous still names the pre-select
+  entry and invoking it shows that entry (exact TBD, W_prev unstated;
+  an off-monitor id resolves to no-op); return scope and the exact
+  second toggle stay TBD. `S(S-nir-ws)` + `S(S-nir-wsremove)`;
+  pre-select/return queued.
+- Then PaperWM: live-computed MRU walk (no recorded previous ID to
+  invalidate); invoking previous steps DOWN to the next-older live
+  entry (exact TBD, live order unstated); GNOME owns add/remove, so
+  return scope and further toggles stay TBD. `S(S-pap-space)`;
+  entry/return queued.
+- Then karousel/Lazy: no-counterpart (no desktop-switch or history
+  verb in the Actions inventory; desktop switching is KWin-native).
+  `S(S-kar-acts)`.
+- Then paneru: no-counterpart (no history verb in the `Operation`
+  inventory; `Virtual` is directional North/South only).
+  `S(S-pan-ws)`.
 - Then Ours KDE: previous IDs that leave the recording output scope
   clear, with no ordinal reinterpretation or recreation; only the moved id drops from the
   hotplug-return associations (siblings kept); the Engine `planned`

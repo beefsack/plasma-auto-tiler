@@ -1,9 +1,11 @@
 # Reference-WM consensus across the full matrix (analysis note)
 
 Date: 2026-10-07. Base: main HEAD `b942020`.
-Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (139 rows:
-125-row audit baseline below, plus 14 USER-decision discriminators added
-2026-10-07; reference outcomes TBD, excluded from these consensus counts).
+Matrix: [reference-outcomes matrix](../spec/reference-outcomes.md) (155 rows).
+The tables below retain the 125-row historical audit baseline. Later
+USER-decision discriminators were excluded when their reference outcomes
+were TBD; established new legs are counted in the
+[2026-10-09 source-fill supplement](#pinned-source-fill-supplement-2026-10-09).
 Profiles/legend: matrix profile and legend sections. Families (4, per user):
 COSMIC n-ary; binary (Hyprland dwindle + bspwm); tree (i3 + sway, correlated);
 layout-driven (xmonad + qtile + awesome, correlated triple).
@@ -1706,3 +1708,48 @@ is a Table A native prerequisite. R-FLT-11 Windows remains implementation-pendin
 so observation follows implementation. R-FLT-08 live confirmation,
 R-MAX-04 acknowledgements/visuals and R-DRAG-03 exact pixels do not add
 standalone tests: their semantic predicates are already established.
+
+## Pinned-source-fill supplement (2026-10-09)
+
+- Base matrix `04b818b`; source pins and `S()` citations remain in the
+  [matrix legend](../spec/reference-outcomes.md#evidence-tags). Each row below
+  links the filled cells containing its evidence. Counts are per stated leg,
+  not whole-row consensus or a new requirement. Native frames/focus, missing
+  fixture geometry, and unsupported compound legs remain TBD.
+- Original eight voters only: C/H/B/I/X/S/Q/A, with the same four families.
+  niri/PaperWM/karousel/paneru remain supplemental non-voters. Feature absence
+  never votes as a no-op. Unestablished source-workspace index, destination
+  contents, or effective axis excludes only the affected leg.
+- Strength uses the header rule, including all-but-one of evidenced voters.
+  In particular, cross-4/stay-1 across three families is strong; it does not
+  fail merely because there are fewer than five agreeing voters.
+- FLAG: these new counts qualify already-selected move/layout/fixed-window
+  and migration requirements. Decisions, Ours cells and NORMATIVE rows are
+  unchanged; any reconsideration requires user selection. Historical tables
+  and their totals remain the dated audit snapshot.
+
+| Source-filled predicate | Applicable source votes | Non-voting / unsupported leg | Strength and selected-row relevance |
+|---|---|---|---|
+| [R-MOV-09](../spec/reference-outcomes/move.md#r-mov-09-flat-swap-right-with-unequal-sibling-shares) flat sibling result | swap I,S = 2; wrap C = 1 | B establishes geometric peer swap, but exact N-ary embedding is unrecorded; H/X/Q/A exact fixture TBD/inapplicable | 2/3, two families only; weak. FLAG REQ-MOV-03 / same-axis setting; no default change |
+| [R-MOV-10](../spec/reference-outcomes/move.md#r-mov-10-flat-swap-right-beside-a-group-neighbor) exact group-neighbor topology | enter I,S = 2; wrap C = 1 | B geometric leaf swap does not establish the exact N-ary start; H/X/Q/A exact fixture TBD/inapplicable | 2/3, two families only; weak. FLAG REQ-MOV-03 leaf/group boundary |
+| [R-MOV-11](../spec/reference-outcomes/move.md#r-mov-11-sole-root-leaf-moves-up-to-the-adjacent-output) sole-root Up crossing | cross H,I,S,A = 4; stay Q = 1 | C workspace-first: cross only from first source workspace, index unspecified; B/X destination contents TBD | 4/5, three families; strong. FLAG REQ-MOV-08 / item 5: COSMIC is conditional on this fixture |
+| [R-MOV-12](../spec/reference-outcomes/move.md#r-mov-12-exhausted-up-move-with-two-candidate-outputs-above) two-output Up action | select H,I,S,A = 4; stay Q = 1; explicit ambiguity refusal = 0 among those five | C reaches output selection conditionally; B/X swap-vs-miss depends on destination contents; selected output identity TBD | 4/5 selecting, three families; strong. FLAG REQ-MOV-08 / item 5: selected ambiguity refusal differs from these evidenced actions |
+| [R-MOV-13](../spec/reference-outcomes/move.md#r-mov-13-panel-work-area-gap-with-touching-full-output-rectangles) gap, Up leg | cross H,I,S,A = 4; stay Q = 1 | C source index unspecified; B/X destination contents TBD | 4/5, three families; strong. FLAG REQ-MOV-08 full-output selection |
+| R-MOV-13 gap, Left leg | cross C,H,I,S,A = 5; stay Q = 1 | B/X destination contents TBD | 5/6, four families; strong. FLAG REQ-MOV-08 full-output selection |
+| [R-LAY-05](../spec/reference-outcomes/layout-commands.md#r-lay-05-immediate-parent-toggled-twice-in-a-nested-tree) effective immediate-parent axis toggle | toggle C,B,I,S = 4 | H flips the parent bit but effective axis TBD under geometry recalc; X/Q/A no counterpart | 4/4, three families; strong. FLAG REQ-LAY-01 / item 4 |
+| [R-LAY-06](../spec/reference-outcomes/layout-commands.md#r-lay-06-sole-leaf-toggle-then-ordinary-admission) sole toggle future-admission hint | no saved hint C,H,B = 3; saved hint I,S = 2 | X/Q/A no orientation-toggle counterpart | 3/5, three families but not strong by the header threshold. FLAG REQ-LAY-01: selected no-hint behavior retained |
+| [R-OUT-07](../spec/reference-outcomes/multi-output.md#r-out-07-explicit-send-before-local-exhaustion-with-remembered-y) explicit transfer despite local neighbor | transfer C,H,B,I,X,S,Q,A = 8 | Target anchor/order and follow/stay are separate, differing or partial legs | 8/8, four families; strong. FLAG explicit output-send selection / item 5.3-5.4 |
+| [R-SPC-06](../spec/reference-outcomes/special-windows.md#r-spc-06-admit-a-client-fixed-on-only-one-axis) one-axis fixed admission | tile C,B,I,X,Q,A = 6; float S = 1 | H splits by protocol: Wayland floats, X11 tiles | 6/7 unqualified votes, four families; strong. FLAG REQ-SPC-04a / Q2 D1: selected both-axis default aligns; either-axis alternative remains selected |
+| [R-SPC-08](../spec/reference-outcomes/special-windows.md#r-spc-08-gain-or-lose-fixed-hints-after-admission) hint-change classification | admission-only C,H,B,I,X,S,Q = 7; reactive implicit A = 1 | Frames/focus TBD; explicit overrides are a different leg | 7/8, four families; strong. FLAG REQ-SPC-04b / Q2 D2 |
+| [R-SPC-09](../spec/reference-outcomes/special-windows.md#r-spc-09-explicitly-tile-an-automatically-admitted-fixed-float) ordinary explicit tile | survives H,B,I,X,S,Q,A = 7; C directly tiles = 1 partial later-observation leg | C later reclassification remains TBD in this row; sticky equivalent is separate; supplemental karousel refuses | 7/7 fully established override votes, three families; strong. FLAG REQ-SPC-04c / Q2 D3; no sticky vote inferred |
+| [R-WS-24](../spec/reference-outcomes/workspaces.md#r-ws-24-float-carry-sticky-stay) workspace float carry | carry C,H,B,I,S,Q,A = 7 | X lacks ownership-move counterpart; exact native frame/focus legs separate | 7/7, four families; strong. FLAG REQ-WS-12g / Q4 D7 |
+| R-WS-24 sticky member | source stay C,H,B = 3; carry I,S,A = 3 | Q sticky leg TBD; X lacks ownership-move counterpart | 3/3 split, no consensus. FLAG REQ-WS-12g / Q4 D7 selected sticky-stay |
+| [R-WS-25](../spec/reference-outcomes/workspaces.md#r-ws-25-overlay-refusal) fullscreen workspace carry | carry C,H,B,I,S,Q,A = 7 | X lacks ownership-move counterpart; native re-fit/mid-flight change legs TBD | 7/7, four families; strong. FLAG REQ-WS-12h / Q4 D8 |
+| R-WS-25 maximize workspace carry | carry C,H,Q,A = 4 | B/I/X/S no applicable maximize state in this profile; native re-fit/mid-flight legs TBD | 4/4, three families; strong. FLAG REQ-WS-12h / Q4 D8 |
+
+- Other filled workspace-history, born-fullscreen, restart, B9 and M13 legs
+  remain profile-specific or owner-specific. Their source mechanisms and
+  unresolved outcomes are recorded in the matrix; this supplement does not
+  manufacture a single vote for a compound fixture. R-START-03/R-MAX-01 and
+  the existing R-WS-02/04/05 historical-vote predicates are unchanged by the
+  added partial evidence.

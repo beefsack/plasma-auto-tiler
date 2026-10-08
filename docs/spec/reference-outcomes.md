@@ -19,9 +19,9 @@ Minimal variants of [R-FLT-06](reference-outcomes/floating.md#r-flt-06-float-tog
 
 | Variant | Action sequence | Ours KDE offline outcome / Lead reading | References / native |
 | --- | --- | --- | --- |
-| Fixed explicit override | Admit fixed B as an automatic float; maximize B; toggle ordinary float off once; observe again | Clear maximize, observe clear, fresh-admit; successful explicit tile commits D3/D7 override, so B does not re-auto-float | TBD |
-| Clear not confirmed | Intentionally float B; maximize B; toggle float off while clear is refused or remains unobserved; press again after normal state is observed | No admission on unconfirmed clear, float intent retained, logged narrow refusal with no stuck flight; later explicit press fresh-admits | TBD |
-| Sticky boundary | Make B sticky; maximize B; toggle ordinary float once | Existing sticky-maximize refusal unchanged; ordinary R-FLT-06 does not select a sticky policy change | TBD |
+| Fixed explicit override | Admit fixed B as an automatic float; maximize B; toggle ordinary float off once; observe again | Clear maximize, observe clear, fresh-admit; successful explicit tile commits D3/D7 override, so B does not re-auto-float | Fixed admission floats per profile: COSMIC min-max `S(S-cos-min)`; Hyprland `suggestsFloat` min-max `S(S-hyp-float)`; bspwm fixed admission `S(S-bsp-admit)`; i3 fixed floats `S(S-i3-min)`; xmonad fixed/transient `S(S-xmo-float)`; sway `wants_floating` fixed `S(S-sway-max)`; qtile fixed-size rules `S(S-qti-float)`; awesome fixed implicit `S(S-awe-fixed-dynamic)`; niri `compute_open_floating` `S(S-nir-spc)`; karousel shapeability gate `S(S-kar-spc)`; PaperWM `add_filter` admits Normal non-transient only with rejects floating `S(S-pap-spc)` (fixed-size mapping TBD). Maximize legs per R-MAX-01 (bspwm/i3/xmonad/sway no maximize counterpart; PaperWM width-only `S(S-pap-widthmax)`; paneru host-only `S(S-pan-axfs)`). Toggle legs per R-FLT-06: COSMIC unmaximize-first `S(S-cos-flttoggle)`; Hyprland clear/re-apply retaining `S(S-hyp-float)`; qtile unfloat with maximize dropped `S(S-qti-float)` + `S(S-qti-fs)`; awesome explicit-only flip `S(S-awe-float)` + `S(S-awe-fs)`; i3/sway standard disable `S(S-i3-flt-toggle)` / `S(S-sway-float)`; niri plain move `S(S-nir-flttoggle)`; karousel state flip `S(S-kar-acts)` + `S(S-kar-float)`. Explicit-override commit has no reference counterpart (Ours-only); settled frames/focus TBD |
+| Clear not confirmed | Intentionally float B; maximize B; toggle float off while clear is refused or remains unobserved; press again after normal state is observed | No admission on unconfirmed clear, float intent retained, logged narrow refusal with no stuck flight; later explicit press fresh-admits | No reference profile has an observation gate: each toggle path runs synchronously in source with no pending or refused-clear branch (COSMIC unmaximize-first `S(S-cos-flttoggle)`; Hyprland clear/re-apply `S(S-hyp-float)`; qtile unfloat `S(S-qti-float)`; i3 `floating_disable` `S(S-i3-flt-toggle)`; sway `container_set_floating` `S(S-sway-float)`; awesome `set_floating` `S(S-awe-float)`; niri plain move `S(S-nir-flttoggle)`; karousel state flip `S(S-kar-acts)`). Refused/unobserved-clear hold with later-press recovery is Ours-only; native clear ack and focus visuals TBD in every row (true runtime, live-only) |
+| Sticky boundary | Make B sticky; maximize B; toggle ordinary float once | Existing sticky-maximize refusal unchanged; ordinary R-FLT-06 does not select a sticky policy change | Sticky legs per R-FLT-02: COSMIC output-set layer `S(S-cos-sticky)`; Hyprland float-only pin guard `S(S-hyp-pin)` (tiled pin refused); bspwm no float guard `S(S-bsp-sticky)`; i3 sets on any con but pushes floats only `S(S-i3-sticky)`; sway sets unconditionally but effective only when floating `S(S-sway-sticky)`; awesome orthogonal `S(S-awe-sticky)`; xmonad/qtile/niri/karousel/paneru no sticky verb (`S(S-xmo-float)`, `S(S-qti-float)`, `S(S-nir-acts)`, `S(S-kar-acts)`, `S(S-pan-cmds)`); PaperWM scratch stuck plus above plus float `S(S-pap-float)`. Maximize and toggle legs per R-MAX-01/R-FLT-06 above; the sticky plus maximize plus toggle combination itself is untraced in every profile, settled TBD |
 
 ### R-CTL-05 M13 Lead readings
 
@@ -29,13 +29,13 @@ Minimal variants of [R-CTL-05/06](reference-outcomes/restart-persistence.md#r-ct
 
 | Variant | Minimal action sequence | Ours KDE offline outcome / Lead reading | References / native |
 | --- | --- | --- | --- |
-| Keep custom / canonical | Assign a custom chord in KDE Shortcuts (repeat with canonical); keep row checked; confirm project Apply | Assignment unchanged; post-write verification compares the preserved image | TBD |
-| Keep empty | Clear a project's assignment (or observe unresolved empty registration); check Keep; confirm Apply | Stays empty; Keep never repairs or enables it | TBD |
-| Authentic intent | Customize or clear a binding; stage Authentic; decline Apply; then confirm fresh Apply | Staging/decline writes nothing; confirmed Apply writes canonical | TBD |
-| Consumed Authentic | Stage Authentic; confirm Apply/Force successfully; customize in KDE Shortcuts with project Settings still open; confirm Apply again | Successful commit consumes reset intent; later Apply preserves the new custom chord. Failure/decline retains staged intent | TBD |
-| Compatible | Customize a nonconflicting row; stage Compatible; confirm Apply | Known/discovered conflicts disabled; nonconflicting custom assignments preserved, no replacements | TBD |
-| Keep custom conflict | Give a project and foreign action the same custom chord; Keep; Apply; preview Force; confirm | Actual custom chord shown; Apply refuses; confirmed/revalidated Force removes only that chord from the foreign holder and preserves project assignment | TBD |
-| Stale Force / write drift | Preview custom conflict; change project/foreign assignment or staged intent; confirm Force (separately: change Keep during a selected write) | Stale confirmation refuses before writes; post-write drift fails verification without canonical reset | TBD |
+| Keep custom / canonical | Assign a custom chord in KDE Shortcuts (repeat with canonical); keep row checked; confirm project Apply | Assignment unchanged; post-write verification compares the preserved image | No counterpart: pinned shortcut inventories define bindings only with no Keep/staging verbs, so a kept custom chord has no native leg; outcome TBD (owner-specific, project-only Keep). COSMIC `S(S-cos-shortcut)`; Hyprland `S(S-hyp-shortcut)`; bspwm `S(S-bsp-ctl)`; i3 `S(S-i3-bind)`; xmonad `S(S-xmo-ctl)`; sway `S(S-sway-bind)`; qtile `S(S-qti-keys)`; awesome `S(S-awe-keys)`; niri `S(S-nir-acts)`; PaperWM `S(S-pap-acts)`; karousel `S(S-kar-acts)`; paneru `S(S-pan-cmds)` |
+| Keep empty | Clear a project's assignment (or observe unresolved empty registration); check Keep; confirm Apply | Stays empty; Keep never repairs or enables it | No counterpart: same binding-only inventories list no Keep/empty-repair verbs; outcome TBD (owner-specific, project-only Keep). `S(S-cos-shortcut)` + `S(S-hyp-shortcut)` + `S(S-bsp-ctl)` + `S(S-i3-bind)` + `S(S-xmo-ctl)` + `S(S-sway-bind)` + `S(S-qti-keys)` + `S(S-awe-keys)` + `S(S-nir-acts)` + `S(S-pap-acts)` + `S(S-kar-acts)` + `S(S-pan-cmds)` |
+| Authentic intent | Customize or clear a binding; stage Authentic; decline Apply; then confirm fresh Apply | Staging/decline writes nothing; confirmed Apply writes canonical | No counterpart: no staged-Authentic/decline model in any pinned shortcut inventory; outcome TBD (owner-specific, project-only Authentic staging). `S(S-cos-shortcut)` + `S(S-hyp-shortcut)` + `S(S-bsp-ctl)` + `S(S-i3-bind)` + `S(S-xmo-ctl)` + `S(S-sway-bind)` + `S(S-qti-keys)` + `S(S-awe-keys)` + `S(S-nir-acts)` + `S(S-pap-acts)` + `S(S-kar-acts)` + `S(S-pan-cmds)` |
+| Consumed Authentic | Stage Authentic; confirm Apply/Force successfully; customize in KDE Shortcuts with project Settings still open; confirm Apply again | Successful commit consumes reset intent; later Apply preserves the new custom chord. Failure/decline retains staged intent | No counterpart: no consumable reset-intent/commit model in any pinned shortcut inventory; outcome TBD (owner-specific, project-only Authentic). `S(S-cos-shortcut)` + `S(S-hyp-shortcut)` + `S(S-bsp-ctl)` + `S(S-i3-bind)` + `S(S-xmo-ctl)` + `S(S-sway-bind)` + `S(S-qti-keys)` + `S(S-awe-keys)` + `S(S-nir-acts)` + `S(S-pap-acts)` + `S(S-kar-acts)` + `S(S-pan-cmds)` |
+| Compatible | Customize a nonconflicting row; stage Compatible; confirm Apply | Known/discovered conflicts disabled; nonconflicting custom assignments preserved, no replacements | No counterpart: no Compatible staging model in any pinned shortcut inventory (conflict lookup/unbind/mask verbs only, no staging); outcome TBD (owner-specific, project-only Compatible). `S(S-cos-shortcut)` + `S(S-hyp-shortcut)` + `S(S-bsp-ctl)` + `S(S-i3-bind)` + `S(S-xmo-ctl)` + `S(S-sway-bind)` + `S(S-qti-keys)` + `S(S-awe-keys)` + `S(S-nir-acts)` + `S(S-pap-acts)` + `S(S-kar-acts)` + `S(S-pan-cmds)` |
+| Keep custom conflict | Give a project and foreign action the same custom chord; Keep; Apply; preview Force; confirm | Actual custom chord shown; Apply refuses; confirmed/revalidated Force removes only that chord from the foreign holder and preserves project assignment | No counterpart: no Keep/preview/Force foreign-clearing model in any pinned shortcut inventory (mask/unbind verbs only, no draft preview); outcome TBD (owner-specific, project-only Keep/Force). `S(S-cos-shortcut)` + `S(S-hyp-shortcut)` + `S(S-bsp-ctl)` + `S(S-i3-bind)` + `S(S-xmo-ctl)` + `S(S-sway-bind)` + `S(S-qti-keys)` + `S(S-awe-keys)` + `S(S-nir-acts)` + `S(S-pap-acts)` + `S(S-kar-acts)` + `S(S-pan-cmds)` |
+| Stale Force / write drift | Preview custom conflict; change project/foreign assignment or staged intent; confirm Force (separately: change Keep during a selected write) | Stale confirmation refuses before writes; post-write drift fails verification without canonical reset | No counterpart: no stale-preview/write-drift revalidation model in any pinned shortcut inventory; outcome TBD (owner-specific, project-only Force; live timing-dependent). `S(S-cos-shortcut)` + `S(S-hyp-shortcut)` + `S(S-bsp-ctl)` + `S(S-i3-bind)` + `S(S-xmo-ctl)` + `S(S-sway-bind)` + `S(S-qti-keys)` + `S(S-awe-keys)` + `S(S-nir-acts)` + `S(S-pap-acts)` + `S(S-kar-acts)` + `S(S-pan-cmds)` |
 
 ## Notation
 
@@ -334,6 +334,12 @@ Legend:
   (`-v` moves by pixels) @e11eff4
 - `S-bsp-send` bspwm:doc/bspwm.1.asciidoc:418-422
   (`-d` send to desktop / `-m` send to monitor) @e11eff4
+- `S-out07-bsp-mon` bspwm:doc/bspwm.1.asciidoc:287-300
+  (`MONITOR_SEL` includes `DIR`; east selects the monitor in that
+  direction relative to the reference monitor)
+  @e11eff4
+  (send target selector; transfer and follow per `S(S-bsp-send)` +
+  `S(S-bsp-xfer)`)
 - `S-bsp-hint` bspwm:doc/bspwm.1.asciidoc:819-820
   (`honor_size_hints` defaults false) + src/events.c:98-218
   (`configure_request`: tiled requests get a synthetic notify, allocation
@@ -416,6 +422,13 @@ Legend:
   attach) and sway/tree/output.c:316-331 (`output_get_in_direction` uses
   adjacent output only, NULL when none)
   @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+- `S-out07-sway-out` sway:sway/commands/move.c:519-525
+  (`move container to output <dir>` resolves the adjacent output and takes
+  the seat focus-inactive node on it as destination) and :598-608 (mover
+  focus restored to the source inactive: stay, no follow variant)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (attach-after destination per `S(S-sway-movews)`; distinct from the
+  directional-exhaustion path `S(S-sway-outmove)`)
 - `S-sway-wsdefault` sway:sway/tree/output.c:441-450
   (`output_get_default_layout`: configured `default_orientation`, else
   V iff output taller than wide, else H) and sway/config.c:252-253
@@ -588,6 +601,11 @@ Legend:
   `_NET_WM_STATE` messages echoed to the property only, no maximized drive)
   + libqtile/resources/default_config.py:47-55
   (`Mod+f` fullscreen, `Mod+t` floating)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+- `S-qti-fs-restore` qtile:libqtile/backend/base/window.py:305-323
+  (`_set_fullscreen` saves the prior float-state on entry and restores it
+  on exit) + :340-361 (`save_float_state`/`restore_float_state`: geometry
+  plus saved state re-applied; restore never re-runs the float-rule match)
   @83c697a5621306c3586efca31867efcfa0482e2d
 - `S-qti-drag` qtile:libqtile/backend/x11/window.py:2238-2250
   (unbound tiled `set_position`: floating tweaks frame, tiled swaps with the
@@ -838,7 +856,7 @@ Legend:
 - `S-bsp-admit` bspwm:src/rule.c:256-293 and src/tree.c:787-795
   @e11eff4cb3333216ad03c815609a4ed79e08929c
   (fullscreen state/fixed-size floating admission; maximum flags not admission state)
-- `S-bsp-close` bspwm:src/tree.c:1337-1405 (`unlink_node` sibling promotion) and :1407-1421 (`close_node` delete/kill) and :1441-1474 (`remove_node` + focus guess) and :538-578 (`focus_node` history fallback) and src/history.c:171-180 (`history_last_node` MRU) @e11eff4cb3333216ad03c815609a4ed79e08929c
+- `S-bsp-close` bspwm:src/tree.c:1337-1405 (`unlink_node` sibling promotion) and :1407-1421 (`close_node` delete/kill) and :1441-1474 (`remove_node` + focus guess) and :538-578 (`focus_node` history fallback) and :645-663 (shows the resolved desktop, sets its focus and records history) and src/history.c:171-180 (`history_last_node` MRU) @e11eff4cb3333216ad03c815609a4ed79e08929c
   (close removal + MRU refocus, no spatial rule)
 - `S-bsp-wsretain` bspwm:src/messages.c:793-803 (desktop removal only via
   explicit `desktop -r`, refused on the sole desktop) and
@@ -874,6 +892,11 @@ Legend:
   src/floating.c:76-130,187-229 (`floating_check_size` float-only min/max
   clamp) @903bcd518df32b0e055b17f5da3f988a0187fd3d
   (tiled allocation unclamped; float clamp and fixed-size float admission separate)
+- `S-i3-fixed-runtime` i3:src/handlers.c:1007-1020 (`handle_normal_hints`
+  routes hint updates to `floating_check_size` plus render for floating
+  containers only; tiled containers get no re-admission)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (post-admission hint changes never re-float tiles)
 - `S-i3-admit` i3:src/manage.c:139-143,402-421 and src/con.c:428-474,
   src/x.c:834-864 @903bcd518df32b0e055b17f5da3f988a0187fd3d
   (fullscreen atom admission; maximize flags derived from layout)
@@ -1139,6 +1162,14 @@ Legend:
   L_SPLITH/L_SPLITV) @903bcd518df32b0e055b17f5da3f988a0187fd3d
   (tabbed/stacked are parent split layouts holding tabs; neither path
   writes focus, so focus stays on the previously focused child)
+- `S-i3-solesave` i3:src/con.c:2019-2056 (workspace parent with children
+  wraps them into a new split container carrying the requested split
+  layout; focus order preserved) + src/workspace.c:55-70 (shipped auto
+  orientation: wide output SPLITH, portrait SPLITV) and src/config.c:215-216
+  (code default `NO_ORIENTATION` auto)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (sole-leaf toggle saves the flipped layout into a wrapper, so the next
+  admission inherits it)
 - `S-i3-move` i3:src/move.c:259-353 (`tree_move` same-orientation swap,
   force-orientation wrap, lone-workspace output-directed fallback) and
   :355-404 (move into the container above via `insert_con_into`) and
@@ -1457,6 +1488,13 @@ Legend:
   @3d55cba0
   (new_group moves the split leaf first, then appends the newcomer, and
   keeps the old position; child order is insertion order)
+- `S-cos-sizes` cosmic-comp:src/shell/layout/tiling/mod.rs:177-190
+  (`Data::new_group` halves the placeholder geo) and :219-244
+  (`add_window` proportional rescale plus leftover insert) and :246-252
+  (`swap_windows` exchanges sizes with windows) and :255-290
+  (`remove_window` proportional redistribution plus overflow-to-last)
+  @3d55cba0
+  (group share arithmetic; pixels need the output width)
 - `S-cos-mapfocus` cosmic-comp:src/shell/mod.rs:2970-2984
   (new window joins the focused stack), :3001-3014 (fresh tiling map at
   target MRU, no restore state), :3028-3041 (newcomer is the focus target
@@ -1472,6 +1510,13 @@ Legend:
   non-last empties removed) and
   src/shell/layout/floating/mod.rs:474-476 (arrival with no position
   reuses last geometry loc, else cascade) @3d55cba0
+- `S-out07-cos-dirwrap` cosmic-comp:src/shell/layout/tiling/mod.rs:563-585
+  (output-send direction branch: wraps the target root with the newcomer
+  in a Vertical group for Left/Right, newcomer at index 0 for Right/Down
+  else 1; the MRU node is ignored on this path)
+  @3d55cba0
+  (directional output admission ignores the remembered leaf; ordinary
+  MRU split is the direction-less branch per `S(S-cos-axis)`)
 - `S-cos-sysact` cosmic-comp:src/input/actions.rs:1034-1039
   @3d55cba0
   (`System` shortcut actions, which include the Alt+Tab window switcher,
@@ -1789,6 +1834,18 @@ Legend:
   mapping) and :1598-1830 (R1/R2/R3 branches plus output fallback)
   @3d55cba06c9cf6f27609cdefb520f7857dba20af
   (directional move implementation; unresolved predicates are identified in cells)
+- `S-cos-move-out` cosmic-comp:src/input/actions.rs:812-880
+  (`Action::Move` maps `MoveFurther` to previous/next-workspace at default
+  `Vertical` else `MoveToOutput`, propagate true) and :613-660
+  (`MoveToOutput` via `next_output` plus `move_current` with follow) and
+  :436-470 (`MoveToPreviousWorkspace` Err plus propagate falls to
+  `MoveToOutput`) and src/shell/mod.rs:2273-2300 (`next_output` full-geometry
+  overlap plus nearest origin distance, no refusal) and :3164-3200
+  (`move_current` to the target output active workspace) and
+  cosmic-comp-config/src/workspace.rs:48-53 (default `Vertical`)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af for compositor paths,
+  @3d55cba0 for config
+  (exhausted-move output callchain; enumeration order unrecorded)
 - `S-bsp-move-target` bspwm:src/tree.c:1124-1149 (directional candidates
   are leaves on all monitors' shown desktops; distance then history rank)
   and :1489-1620 (leaf exchange, same-desktop focus retention and
@@ -1984,6 +2041,13 @@ Legend:
   @ed22699d99462f61ab171472d3ea67e844ea580d
   (float admission plus parent-placement and app-rule PiP legs; native
   xdg splash/utility types do not exist; other PiP apps and focus stay TBD)
+- `S-nir-fixed-open` niri:src/window/mod.rs:377-396
+  (`compute_open_floating` definition: explicit rule, parent, or fixed
+  positive height) + src/handlers/compositor.rs:150 (layer-shell open
+  path) and src/handlers/xdg_shell.rs:635,845,1164 (map/configure open
+  paths; the only callsites)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (fixed classification runs at open only; no hint-change caller)
 - `S-pap-spc` PaperWM:tiling.js:3341-3374 (`isTransient`/`hasTransient`;
   transients take focus, blocking the parent on Wayland) and :3927-3945
   (`add_filter` admits Normal non-transient windows only) and :4125-4135
@@ -1999,6 +2063,34 @@ Legend:
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
   (transient/modal exclusion plus shapeability gate; KWin kind-flag
   mapping and focus stay TBD)
+- `S-kwin-resizeable` kwin:src/window.h:546 (`resizeable` scripting
+  property reads `isResizable`) + src/xdgshellwindow.cpp:628-644
+  (`minSize` expands to an enforced minimum, absent `maxSize` maps to
+  `INT_MAX`) and :682-696 (`isResizable` is either-axis strict
+  inequality `min.w<max.w || min.h<max.h`, modulo fullscreen/special/
+  forced-size gates) + src/x11window.cpp:3050-3058 (`minSize`/`maxSize`
+  pass ICCCM hints through with rules only) and :3446-3472 (same
+  either-axis inequality plus unmanaged/NET/motif gates) @8438567a
+  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
+  KDE/kwin@8438567a provenance; karousel `resizeable` resolves here)
+- `S-kar-admit` karousel:src/lib/world/ClientManager.ts:30-56
+  (`addClient` evaluates the shapeability gates once at add) and
+  :158-176 (`toggleFloatingClient`: float-to-tile requires `canTileEver`,
+  so an unshapeable fixed float keeps floating; tile-to-float always
+  applies) + src/lib/rules/WindowRuleEnforcer.ts:30-44 (only
+  `captionChanged`   re-evaluates tiling, for caption-follow rules; no
+  size-hint watcher) @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (admission-once plus explicit-toggle gate; hint-change recompute absent)
+- `S-kar-readmit` karousel:src/lib/world/World.ts:92-96
+  (`addExistingClients` iterates live `Workspace.windows` into `addClient`
+  each) + src/lib/world/ClientManager.ts:30-56 (`addClient` re-evaluates
+  `canTileEver` shapeability plus rules/desktop fresh at add; rejects
+  construct Floating anew) + src/lib/keyBindings/Actions.ts:1-60 (no
+  restart/reload/persist verb in the Actions inventory)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (re-admission reclassifies every client from current host flags with no
+  durable float-intent or tile-override store; prior float origin leaves
+  no trace)
 - `S-hyp-cfg` Hyprland:src/desktop/view/window/Window.cpp:950-970
   (`onConfigureRequest`: tiled X11 requests are refused via an
   authoritative `sendWindowSize` resend; only floats take the request)
@@ -2008,6 +2100,16 @@ Legend:
   non-real role/subrole windows ignored; forced-manage rule override)
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
   (role-gated management; transient/dialog/splash outcomes stay TBD)
+- `S-pan-admit` paneru:src/manager/windows.rs:291-301 (`is_real` is
+  standard-subrole or window-role plus floating-subrole; no size
+  predicate) + src/ecs.rs:838-856 (`WindowProperties::floating` is
+  rule-configured, never hint-derived) + src/ecs/triggers.rs:1472
+  (non-resizable/minimum-width surfaces only as a runtime resize-failure
+  observation, never an admission classifier)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (no fixed-size admission counterpart: AX exposes no min/max hint
+  equality, so fixed-hint fixtures cannot classify; rule-assigned float
+  only)
 - `S-ours-spc-kde` KDE observer gate at this HEAD:
   plasma-auto-tiler:kwin/src/plan-adapter-entry.ts:781 (non-`normalWindow`
   snapshots skipped before observation) + kwin/src/kwin-globals.d.ts:131
@@ -2176,6 +2278,18 @@ Legend:
   the supplied fullscreen fence rather than always declining focus)
   @ed22699d99462f61ab171472d3ea67e844ea580d
   (native maximized/fullscreen state; width actions are distinct)
+- `S-nir-flttoggle` niri:src/layout/workspace.rs:1418-1468
+  (`toggle_window_floating` moves the tile scrolling<->floating via
+  `remove_tile`/`add_tile` with no maximize, clear, or refusal branch;
+  floating arrival activates only the requested target) and :1403-1416
+  (`toggle_maximized` reads the column pending flag; floating windows
+  cannot be maximized) + src/layout/floating.rs:425-440 (floating
+  admission resolves a non-normal size via the stored floating size else
+  `(0,0)`) + src/layout/scrolling.rs:1062-1090 (`remove_tile` drops the
+  tile with its column; sole-tile removal drops the whole column with
+  its pending flag)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (plain tile-move toggle path; settled frame is client-driven)
 - `S-nir-wscarry` niri:src/layout/tests.rs:3708-3725
   (`MoveColumnToWorkspace` keeps the column Maximized after transfer and
   unfullscreen) and :3728-3750 (`MoveWindowToWorkspace` drops the
@@ -2188,6 +2302,10 @@ Legend:
   @19fb395d45314960e6f79f17994a84094f1cd4f6
   (carries fullscreen; maximized members move as members with no separate
   gate traced; no refusal)
+- `S-hyp-pinstay` Hyprland:src/state/workspace/PlacementController.cpp:301-306
+  (pinned members are reassigned to the next workspace on the old monitor,
+  never carried with the moved workspace)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
 - `S-sway-wsmove-fs` sway:sway/tree/workspace.c:1131-1161
   (workspace_move_to_output detach/attach with source refill, no overlay
   gate) + sway/tree/arrange.c:310-316 (fullscreen container set to output
@@ -2306,8 +2424,15 @@ Legend:
   (`ensure_last_empty` adds only when the last is occupied/pinned) +
   cosmic-comp-config/src/workspace.rs:14-20 (`workspace_wraparound`
   defaults true) @3d55cba06c9cf6f27609cdefb520f7857dba20af for the
-  compositor paths (config path per `S(S-cos-wslay)` repo split)
-  (no history-toggle verb in the workspace action inventory)
+   compositor paths (config path per `S(S-cos-wslay)` repo split)
+   (no history-toggle verb in the workspace action inventory)
+- `S-cos-wsmig` cosmic-comp:src/shell/mod.rs:1032-1062
+  (`migrate_workspace`: Global-mode / same-output / unknown-target-set
+  refusals; otherwise the same workspace object is removed, set to the
+  new output, and inserted after the target active; no emptiness gate)
+  and :713-728 (`post_remove_workspace`: an emptied set gains one fresh
+  workspace, else the active falls to the last entry with Active state)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
 - `S-cos-wskeys` cosmic-comp:data/keybindings.ron:38-47
   (Super+Shift+1..9 `MoveToWorkspace`, Super+Shift+0
   `MoveToLastWorkspace`; no `SendToWorkspace` binding) and :57-64
@@ -2315,6 +2440,12 @@ Legend:
   justfile:17-18 (keybindings.ron installs as the
   CosmicSettings.Shortcuts defaults)
   @3d55cba06c9cf6f27609cdefb520f7857dba20af
+- `S-cos-wssingle` cosmic-comp:src/shell/mod.rs:3181-3194
+  (`move_current` refuses with `InvalidWorkspaceIndex` when the send stays
+  on the same output, targets the last workspace, starts from the adjacent
+  workspace, the source holds a single window, and the target is empty;
+  both follow and stay refuse before any transfer)
+  @3d55cba0
 - `S-hyp-ws`
   Hyprland:src/config/shared/actions/ConfigActions.cpp:170-198
   (`back_and_forth` resolve: re-invoking switch-to-current goes to the
@@ -2358,6 +2489,19 @@ Legend:
 - `S-bsp-wskeys` bspwm:examples/sxhkdrc:83-85 (super+shift+n
   `node -d '^{1-9,10}'` with no `--follow`: shipped send stays;
   `--follow` alternate per `S(S-bsp-send)`) @e11eff4
+- `S-bsp-wsstay` bspwm:src/desktop.c:173-178 (`transfer_desktop` counts
+  sticky nodes only when the moved desktop was active, then unlinks) and
+  :186-188 (insert on the destination, destination sticky-count takes them)
+  and :207-213 (stickies moved off the transferred desktop back to the
+  source's shown remainder, else to the destination's shown desk)
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (sticky stays on the source output's shown desktop; only with no source
+  desktop shown does it land on the destination's shown desk)
+- `S-bsp-wshist` bspwm:src/history.c:114-121 (`history_remove` with a NULL
+  node drops every entry locating the desktop) + src/desktop.c:188
+  (transfer drops the moved desktop's entries and adds none for it)
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (the migrated desktop leaves the `last` history walk)
 - `S-i3-ws` i3:src/workspace.c:131-160 (`workspace_get` creates on
   demand) and :438-505 (`workspace_show` records the previous name,
   focuses the descended remembered focus, closes the empty old
@@ -2370,6 +2514,11 @@ Legend:
   and :293-296 (relative move-to-workspace) and :375-433 (relative and
   whole-workspace move grammar)
   @903bcd518df32b0e055b17f5da3f988a0187fd3d
+- `S-i3-stickyshow` i3:src/workspace.c:562-567 (`workspace_show` tail
+  pushes floating sticky windows to the now-visible workspace after
+  focusing) + `S(S-i3-sticky)` push filter (tiling cons skipped)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (show-time sticky re-home targets the shown workspace only)
 - `S-xmo-ws` xmonad:src/XMonad/StackSet.hs:182 (`Stack.focus` per
   workspace) and :231-260 (`view` keeps each workspace's focus,
   unknown tags return unchanged) and :262-275 (`greedyView` display
@@ -2393,6 +2542,21 @@ Legend:
   (`move to workspace` next/prev/number/back_and_forth) and :630-665
   (`move workspace to output` acts on the handler-context active
   workspace) @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+- `S-sway-stickypull` sway:sway/input/seat.c:1209-1221 (seat
+  workspace-focus change moves sticky floaters to the newly focused
+  workspace; the move path writes raw focus only, never this path)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (sticky re-home runs on switches, never inside workspace moves)
+- `S-sway-wsactive` sway:sway/desktop/output.c:76-85 (output active is
+  queried: seat-stack child else list items[0]) +
+  sway/input/seat.c:1412-1432 (stack walk matches on direct parent) +
+  sway/tree/node.c:103-121 (a workspace node's parent follows its output
+  ownership) + sway/input/seat.c:1177-1188 (focus pushes the workspace
+  node onto the stack) + sway/tree/output.c:333-345 (attach re-points
+  the workspace's output ownership)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (the shown workspace follows ownership queries without any focus
+  write; the moved workspace node qualifies on the new output)
 - `S-qti-ws` qtile:libqtile/config.py:578-625 (`set_group` assigns or
   cross-screen swaps, saving `previous_group`) and :626 (`_toggle_group`
   falls back to the previous group) and :715-735 (`next_group`/
@@ -2445,6 +2609,11 @@ Legend:
   (window-only variants are commented alternates, not shipped binds) +
   `focus=false` stays per `S(S-nir-ws)`
   @ed22699d99462f61ab171472d3ea67e844ea580d
+- `S-nir-wsremove` niri:src/layout/monitor.rs:696-719
+  (`remove_workspace_by_idx`: removing the last spawns a bottom spare
+  first; the active steps to the previous entry; switch cleared, cleanup
+  runs) @ed22699d99462f61ab171472d3ea67e844ea580d
+  (source refill after a workspace leaves is the previous entry)
 - `S-pap-space` PaperWM:tiling.js:1096-1127 (`switchLinear` column loop)
   and :2865-2925 (`selectSequenceSpace`: adjacent steps stop at the
   ends, `move` takes the window first) and :3034-3070
@@ -2970,6 +3139,12 @@ Legend:
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
   (window carry vs whole-space move vs same-space swap distinguished;
   exact column position stays TBD)
+- `S-pap-moveverbs` PaperWM:keybindings.js:101-112
+  (`move-monitor-*` bind `switchMonitor` with carry true) and :114-124
+  (`switch-monitor-*` carry false) and :230-237 (`move-left/right/up/down`
+  bind same-space `swap`)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (registered directional verb inventory; implementation is `S(S-pap-mon)`)
 - `S-kar-single` karousel single-screen scope:
   karousel:README.md:20-23 (Limitations: no multiple screens) +
   `S(S-kar-base)` shipped single-screen profile
@@ -3010,6 +3185,12 @@ Legend:
   only for North/South; West/East never cross displays)
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
   (directional move-left stays within the strip/display)
+- `S-pan-swap-peer` paneru:src/commands.rs:135-175
+  (`get_window_in_direction`: East/West resolve to strip
+  neighbours, North/South resolve inside a `Stack` column only and
+  return None for `Single`/`Tabs`/`Fullscren`)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (peer-resolution leg for directional swap; carry/focus via `S(S-pan-swap)`)
 - `S-xmo-scope` xmonad cross-screen scope and shift focus:
   xmonad-contrib:XMonad/Actions/Navigation2D.hs:587-612
   (`navigableWindows` covers all visible screens via `sortedScreens`,
@@ -3170,6 +3351,15 @@ Legend:
   `SaveState` (:93-102), disable saves via `prepare` (:207-228), and
   enable re-adds through `spaces.init` plus `addAll(prevSpace)`
   (:154-199, :389-395))
+- `S-pap-readopt` PaperWM:tiling.js:3831-3835 (`SaveState` holds
+  prevMonitors/prevSpaces/prevTargetX only, no float member) and
+  :2115-2123 (`addAll`: above-or-minimized windows re-float via
+  `Scratch.makeScratch`, everything else re-tiles through `add_filter`)
+  + scratch.js:62-83 (`makeScratch`: float flag plus above)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (float state re-derives from live host above flags at re-adoption;
+  list-only floats have no staged counterpart; fixed-size windows pass
+  `add_filter`, so no fixed origin exists)
 - `S-kar-start` karousel:src/lib/world/World.ts:75 (construction
   calls `addExistingClients`) and :92-96 (iterates `Workspace.windows`
   into `addClient` each) + src/lib/world/ClientManager.ts:30-45
@@ -3255,19 +3445,22 @@ Legend:
   discriminators for USER selections 2026-10-07 (items 1-5, including 1.5).
   New IDs: R-WS-15..20, R-MOV-09..13, R-LAY-05/06, R-OUT-07.
   Their 196 Then bullets distinguish selected targets (with delivery evidence where available)
-  from TBD reference outcomes; they do not add reference-consensus votes.
+  from reference outcomes that were TBD at addition. Established source-fill
+  legs now vote under the ordinary evidence rule; current counts are in the
+  [source-fill consensus supplement](../research/reference-wm-consensus.md#pinned-source-fill-supplement-2026-10-09).
   Eight Q2 discriminators R-SPC-06..13 added 2026-10-08 contribute 112 Then
   bullets; D1-D8 are user-selected NORMATIVE
   (User 2026-10-08; D1/D5/D6 delivered offline, D7 implementation pending),
   KDE is implemented offline; R-SPC-11/12 include minimal changed-hint/predicate,
   repeated-exit and maximized-enable discriminators with reference/native TBD,
-  unsupported reference/native outcomes stay TBD and no consensus is recomputed.
+  unsupported reference/native outcomes stay TBD; the source-fill supplement
+  counts only established discriminating legs, without changing selections.
   Six Q4 migration discriminators R-WS-21..26 added 2026-10-08 contribute 84
   Then bullets; D1-D9 are user-selected NORMATIVE
   (User 2026-10-08; D8 carry implementation pending
   plus live check), KDE is implemented
-  offline, and native/unsupported reference outcomes remain TBD except the
-  R-WS-25 overlay-carry source evidence added 2026-10-08.
+  offline. Pinned-source transfer and carry legs are filled; unsupported
+  native/runtime and fixture-dependent outcomes remain TBD.
 - Baseline expansion accounting: 1198 coverage cells: 67x14 new, 58x4 scrolling assessments,
   and 2x14 explicit-swap legs. Mutually exclusive semantic status totals:
   evidenced 372, partial 237, TBD-only 224, qualified-only 328, mixed 37.
@@ -3307,16 +3500,16 @@ minimum-size stays a supplemental file (not nested in resize).
 |---|---|---|---|
 | Insertion | [insertion.md](reference-outcomes/insertion.md) | R-INS-01..08 (8) | none (R-INS-03..08 landed in piece B1) |
 | Focus | [focus.md](reference-outcomes/focus.md) | R-FOC-01..04 (4) | none (landed in piece B2) |
-| Move | [move.md](reference-outcomes/move.md) | R-MOV-01..13 (13) | R-MOV-09..13 added 2026-10-07; reference outcomes TBD; KDE items 3/5 R-MOV-03/08/09..13 delivered offline; native journeys/Windows wiring pending |
+| Move | [move.md](reference-outcomes/move.md) | R-MOV-01..13 (13) | R-MOV-09..13 added 2026-10-07; reference source legs filled, unsupported legs TBD; KDE items 3/5 R-MOV-03/08/09..13 delivered offline; native journeys/Windows wiring pending |
 | Resize | [resize.md](reference-outcomes/resize.md) | R-RSZ-01..04 (4) | none (landed in piece B4) |
-| Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | R-LAY-01..06 (6) | R-LAY-01/05/06 KDE implemented offline; native journey/Windows wiring pending; R-LAY-05/06 reference outcomes TBD |
+| Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | R-LAY-01..06 (6) | R-LAY-01/05/06 KDE implemented offline; native journey/Windows wiring pending; R-LAY-05/06 reference source legs filled, unsupported legs TBD |
 | Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..26 (26) | KDE items 1/2 delivered, item 1 single-output user-confirmed, item 2 offline only; Q4 R-WS-12/21..26 implemented offline under user-selected NORMATIVE D1-D9 (User 2026-10-08; D8 carry implementation pending); native/Windows legs TBD except R-WS-25 overlay-carry source evidence |
 | Minimize | [minimize.md](reference-outcomes/minimize.md) | R-MNZ-01..03 (3) | none (landed) |
 | Maximise / fullscreen | [maximize-fullscreen.md](reference-outcomes/maximize-fullscreen.md) | R-MAX-01..09 (9) | none (landed with scrolling backfill) |
 | Groups / stacks | [groups-stacks.md](reference-outcomes/groups-stacks.md) | R-GRP-01..03 (3) | none (R-GRP-02..03 landed with scrolling backfill) |
 | Floating | [floating.md](reference-outcomes/floating.md) | R-FLT-01..14 (14) | none (R-FLT-12..14 landed with scrolling backfill) |
 | Close / reflow | [close.md](reference-outcomes/close.md) | R-CLOSE-01..05 (5) | none (R-CLOSE-03..05 landed with scrolling backfill) |
-| Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..07 (7) | R-OUT-07 added 2026-10-07; reference outcomes TBD; KDE item 5 R-OUT-01/04/07 delivered offline; native journey/Windows wiring pending |
+| Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..07 (7) | R-OUT-07 added 2026-10-07; reference source legs filled, unsupported legs TBD; KDE item 5 R-OUT-01/04/07 delivered offline; native journey/Windows wiring pending |
 | Mouse | [mouse.md](reference-outcomes/mouse.md) | R-DRAG-01..08 + R-MOU-01..03 (11) | none (R-MOU-01..03 landed with scrolling backfill) |
 | Special windows | [special-windows.md](reference-outcomes/special-windows.md) | R-SPC-01..13 (13) | R-SPC-04/06..13 KDE implemented offline under user-selected NORMATIVE D1-D8 (User 2026-10-08; D1/D5/D6 delivered offline, D7 implementation pending); R-SPC-11/12 changed-hint/predicate/repeated-toggle and maximized-enable variants discriminate Lead readings; native, Windows wiring and unsupported reference outcomes TBD |
 | Activation | [activation.md](reference-outcomes/activation.md) | R-ACT-01..02 (2) | none (landed; no backfill: no prior rows) |
