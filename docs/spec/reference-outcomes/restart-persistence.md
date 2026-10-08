@@ -79,11 +79,11 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then i3: Unsupported action parameter here: no tiling-off/enable toggle in source (workspaces always lay out tiles; float is per-window); tiled render ignores size hints while float clamps, exact origins/frames TBD; `S(S-i3-wsmode)` + `S(S-i3-min)`
 - Then xmonad/Tall+Navigation2D: Unsupported enable parameter as above (no tiling-off toggle); Tall sizing is unconditional (no minimum clamp in the tile path; fixed-size floats separately); exact origins/frames TBD; `S(S-xmo-layout)` + `S(S-xmo-admit)`
 - Then sway: Unsupported enable parameter as above (no tiling-off toggle); tiled arrange ignores client hints (fraction normalize + 10px zeroing bound; `MIN_SANE` 100x60 gap-reservation only, no hint consult) while float clamp is config min/max (client hints on floating resize only); fixed-size min==max admits floating instead; exact origins/frames TBD; `S(S-sway-wsmode)` + `S(S-sway-min)` + `S(S-sway-max)`
-- Then qtile/Columns: Unsupported enable action as above; exact origins/frames TBD (tiled size-hint handling unevidenced in the inspected path); `S(S-qti-add)` + `S(S-qti-float)`
+- Then qtile/Columns: Unsupported enable action as above; tiled Columns `place` calls carry no `respect_hints` (defaults false) while float placement clamps with `respect_hints=true`, so infeasible minima on tiled clients are ignored at placement (overlap/overflow possible); exact origins/frames TBD (native geometry, live-only); `S(S-qti-add)` + `S(S-qti-float)` + `S(S-qti-min)`
 - Then awesome/tile: Same per-tag switch; on re-tile the tile consults size hints when arranging and fixed-size floats instead (MIN policy), explicit floats preserved; exact origins/frames/response TBD; `S(S-awe-layout)` + `S(S-awe-tile)` + `S(S-awe-float)`
 - Then niri: no-counterpart (no tiling enable/disable verb in the full Action inventory); minimum handling TBD with no applicable journey. `S(S-nir-acts)`.
-- Then PaperWM: extension enable adopts the five free windows through the existing-window path; minimum handling and exact origins TBD. `S(S-pap-ins)` + `S(S-pap-rst)`; queued.
-- Then karousel/Lazy: script enable re-admits the five free windows via addExistingClients; minimum handling and exact origins TBD. `S(S-kar-ins)` + `S(S-kar-start)`; queued.
+- Then PaperWM: extension enable adopts the five free windows through the existing-window path; no minima-clamp path is established in the inspected tiling path, so minimum handling and exact origins TBD. `S(S-pap-ins)` + `S(S-pap-rst)`; queued.
+- Then karousel/Lazy: script enable re-admits the five free windows via addExistingClients; column `setWidth` clamps into `[getMinWidth, getMaxWidth]` (floor from the widest client minimum, capped at tiling width); admission still tiles shapeable clients; exact origins/frames TBD (native geometry, live-only). `S(S-kar-ins)` + `S(S-kar-start)` + `S(S-kar-min)`; queued.
 - Then paneru: no-counterpart (no tiling enable verb; startup matching is session restore, never substituted). `S(S-pan-cmds)`.
 - Then Ours KDE: Minimum-infeasible startup fits still decline to sequential long-edge seeding; writable infeasible tiles then use origin+minimum (B6, overlap/overflow possible). Code: [adapter](../../../kwin/src/plan-adapter.ts) `overconstrainedEffective`, `writeGeometries`; [startup fixture](../../../kwin/tests/workspace-send-engine-fixture.test.ts). Exact native fixture TBD; `D(D-place)`
 - Then Ours Windows: tile origin, extent at least declared minimum (overlap/overflow possible); `D(D-place)` + `D(D-dec-win)` provisional divergence; exact fixture TBD
@@ -210,18 +210,18 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 
 - Observe: Staging/Save leave shortcuts untouched; Disable survives; Lock Session unchanged
 
-- Then COSMIC: Closest COSMIC equivalent: shortcut state is system `defaults` plus user `custom`, `Disable` masks a default binding, and the compositor hot-reloads on config change; there is no staging/Compatible/Force model in the sourced components, so Save/Apply/restart semantics have no counterpart here; `S(S-cos-shortcut)`; owner-specific outcome TBD
-- Then Hyprland/Dwindle: Closest Hyprland equivalent: conflict lookup plus `unbind` exist, but no Compatible staging/Save/Apply/Force model in source, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-hyp-shortcut)`
-- Then bspwm: Closest bspwm equivalent: node `-t` state (incl `~` alternate) and `-g` flags exist, but no Compatible staging/Save/Apply/Force model in source, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-bsp-ctl)`
-- Then i3: Closest i3 equivalent: `bindsym`/`bindcode` defines bindings via `configure_binding`, applied on reload/restart; no Compatible staging/Save/Apply/Force model in the inspected command/config inventory, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-i3-bind)`
-- Then xmonad/Tall+Navigation2D: Closest xmonad equivalent: keys/mouseBindings define bindings applied on restart/recompile; no Compatible staging/Save/Apply/Force model in source, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-xmo-ctl)`
-- Then sway: Closest sway equivalent: `bindsym`/`bindcode` defines bindings, applied on reload; no Compatible staging/Save/Apply/Force model in the inspected command inventory, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-sway-bind)` + `S(S-sway-reload)`
-- Then qtile/Columns: Closest qtile equivalent: static Key bindings grabbed at startup and re-grabbed on reload (ungrab/clear/regrab, no staging/Compatible/Apply/Force model); Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-qti-keys)`
-- Then awesome/tile: Closest awesome equivalent: global/client keys defined via append keybindings applied on restart/reload; no Compatible staging/Save/Apply/Force model in source, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-awe-keys)` + `S(S-awe-ctl)`
-- Then niri: owner-specific (no staging/Compatible/Apply model in the full Action inventory); outcome TBD. `S(S-nir-acts)`.
-- Then PaperWM: owner-specific (no staging/Compatible/Apply model in the inspected inventory); outcome TBD. `S(S-pap-acts)`.
-- Then karousel/Lazy: owner-specific (no staging/Compatible/Apply model in the inspected Actions inventory); outcome TBD. `S(S-kar-acts)`.
-- Then paneru: owner-specific (no staging/Compatible/Apply model in the command inventory); outcome TBD. `S(S-pan-cmds)`.
+- Then COSMIC: Closest COSMIC equivalent: shortcut state is system `defaults` plus user `custom`, `Disable` masks a default binding, and the compositor hot-reloads on config change; there is no Keep/Authentic/Compatible staging/Save/Apply/Force model in the sourced components, so Save/Apply/restart semantics have no counterpart here; `S(S-cos-shortcut)`; owner-specific outcome TBD
+- Then Hyprland/Dwindle: Closest Hyprland equivalent: conflict lookup plus `unbind` exist, but no Keep/Authentic/Compatible staging/Save/Apply/Force model in source, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-hyp-shortcut)`
+- Then bspwm: Closest bspwm equivalent: node `-t` state (incl `~` alternate) and `-g` flags exist, but no Keep/Authentic/Compatible staging/Save/Apply/Force model in source, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-bsp-ctl)`
+- Then i3: Closest i3 equivalent: `bindsym`/`bindcode` defines bindings via `configure_binding`, applied on reload/restart; no Keep/Authentic/Compatible staging/Save/Apply/Force model in the inspected command/config inventory, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-i3-bind)`
+- Then xmonad/Tall+Navigation2D: Closest xmonad equivalent: keys/mouseBindings define bindings applied on restart/recompile; no Keep/Authentic/Compatible staging/Save/Apply/Force model in source, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-xmo-ctl)`
+- Then sway: Closest sway equivalent: `bindsym`/`bindcode` defines bindings, applied on reload; no Keep/Authentic/Compatible staging/Save/Apply/Force model in the inspected command inventory, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-sway-bind)` + `S(S-sway-reload)`
+- Then qtile/Columns: Closest qtile equivalent: static Key bindings grabbed at startup and re-grabbed on reload (ungrab/clear/regrab, no Keep/Authentic/Compatible staging/Save/Apply/Force model); Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-qti-keys)`
+- Then awesome/tile: Closest awesome equivalent: global/client keys defined via append keybindings applied on restart/reload; no Keep/Authentic/Compatible staging/Save/Apply/Force model in source, so Save/Apply/restart semantics have no counterpart here; owner-specific outcome TBD; `S(S-awe-keys)` + `S(S-awe-ctl)`
+- Then niri: owner-specific (no Keep/Authentic/Compatible staging/Save/Apply/Force model in the full Action inventory); outcome TBD. `S(S-nir-acts)`.
+- Then PaperWM: owner-specific (no Keep/Authentic/Compatible staging/Save/Apply/Force model in the inspected inventory); outcome TBD. `S(S-pap-acts)`.
+- Then karousel/Lazy: owner-specific (no Keep/Authentic/Compatible staging/Save/Apply/Force model in the inspected Actions inventory); outcome TBD. `S(S-kar-acts)`.
+- Then paneru: owner-specific (no Keep/Authentic/Compatible staging/Save/Apply/Force model in the command inventory); outcome TBD. `S(S-pan-cmds)`.
 - Then Ours KDE: KDE selected: explicit own-action clear, native storage authoritative, no Lock relocation while disabled; live restart/physical delivery TBD [record](../../changes/kde-shortcut-conflicts.md)
 - Then Ours Windows: Windows Apply validates and atomically saves; Revert discards unsaved edits and reloads the saved file; Close never saves. Per-binding Keep/Disable/Rebind with the interim Win+existing-Shift limit; Compatible resets the catalog then disables 35 OS-conflicting chords with no replacements. KDE Force/foreign-holder clearing has no Windows counterpart (unsupported, TBD). Synthetic/native proof passed; physical input and other DPI/output arrangements remain user-owned [record](../../changes/archive/windows-settings.md)
 - Variant hook: V-SHORTCUT-CONFLICT.
@@ -237,18 +237,18 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 
 - Observe: Draft edit invalidates preview; disabled row causes no foreign clearing; unrelated chord survives
 
-- Then COSMIC: Closest COSMIC equivalent: writing `Disable` for one binding in `custom` masks only that default while unrelated chords keep resolving from `defaults`; there is no preview/Force step in the sourced components; `S(S-cos-shortcut)`; owner-specific outcome TBD
-- Then Hyprland/Dwindle: Closest Hyprland equivalent: conflict lookup plus `unbind` exist, but no preview/Force/draft step in source; owner-specific outcome TBD; `S(S-hyp-shortcut)`
-- Then bspwm: Closest bspwm equivalent: node `-t`/`-g` exist, but no preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-bsp-ctl)`
-- Then i3: Closest i3 equivalent: `bindsym`/`bindcode` defines bindings via `configure_binding`; no preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-i3-bind)`
-- Then xmonad/Tall+Navigation2D: Closest xmonad equivalent: `keys` defines bindings; no preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-xmo-ctl)`
-- Then sway: Closest sway equivalent: `bindsym`/`bindcode` defines bindings, `unbindsym`/`unbindcode` removes; no preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-sway-bind)`
-- Then qtile/Columns: Closest qtile equivalent: Key definitions only, no preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-qti-keys)`
-- Then awesome/tile: Closest awesome equivalent: key definitions only, no preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-awe-keys)`
-- Then niri: owner-specific (no preview/Force/draft model in the full Action inventory); outcome TBD. `S(S-nir-acts)`.
-- Then PaperWM: owner-specific (no preview/Force/draft model in the inspected inventory); outcome TBD. `S(S-pap-acts)`.
-- Then karousel/Lazy: owner-specific (no preview/Force/draft model in the inspected Actions inventory); outcome TBD. `S(S-kar-acts)`.
-- Then paneru: owner-specific (no preview/Force/draft model in the command inventory); outcome TBD. `S(S-pan-cmds)`.
+- Then COSMIC: Closest COSMIC equivalent: writing `Disable` for one binding in `custom` masks only that default while unrelated chords keep resolving from `defaults`; there is no Keep/preview/Force/draft step in the sourced components; `S(S-cos-shortcut)`; owner-specific outcome TBD
+- Then Hyprland/Dwindle: Closest Hyprland equivalent: conflict lookup plus `unbind` exist, but no Keep/Authentic/preview/Force/draft step in source; owner-specific outcome TBD; `S(S-hyp-shortcut)`
+- Then bspwm: Closest bspwm equivalent: node `-t`/`-g` exist, but no Keep/Authentic/preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-bsp-ctl)`
+- Then i3: Closest i3 equivalent: `bindsym`/`bindcode` defines bindings via `configure_binding`; no Keep/Authentic/preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-i3-bind)`
+- Then xmonad/Tall+Navigation2D: Closest xmonad equivalent: `keys` defines bindings; no Keep/Authentic/preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-xmo-ctl)`
+- Then sway: Closest sway equivalent: `bindsym`/`bindcode` defines bindings, `unbindsym`/`unbindcode` removes; no Keep/Authentic/preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-sway-bind)`
+- Then qtile/Columns: Closest qtile equivalent: Key definitions only, no Keep/Authentic/preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-qti-keys)`
+- Then awesome/tile: Closest awesome equivalent: key definitions only, no Keep/Authentic/preview/Force/draft/Disable-masking model in the inspected inventory; draft/Disable/unrelated-chord outcome TBD (owner-specific, no counterpart); `S(S-awe-keys)`
+- Then niri: owner-specific (no Keep/Authentic/preview/Force/draft model in the full Action inventory); outcome TBD. `S(S-nir-acts)`.
+- Then PaperWM: owner-specific (no Keep/Authentic/preview/Force/draft model in the inspected inventory); outcome TBD. `S(S-pap-acts)`.
+- Then karousel/Lazy: owner-specific (no Keep/Authentic/preview/Force/draft model in the inspected Actions inventory); outcome TBD. `S(S-kar-acts)`.
+- Then paneru: owner-specific (no Keep/Authentic/preview/Force/draft model in the command inventory); outcome TBD. `S(S-pan-cmds)`.
 - Then Ours KDE: KDE selected: exact draft/owner/presence/active-image revalidation, no disabled-key holder mutation; live outcome TBD [record](../../changes/kde-shortcut-conflicts.md)
 - Then Ours Windows: Windows Compatible resets the catalog then disables 35 OS-conflicting physical chords, inventing no replacements; actual rebound-chord conflicts are shown. KDE draft/Force preview and disabled-key holder mutation have no Windows counterpart (unsupported, TBD) [record](../../changes/archive/windows-settings.md)
 - Variant hook: V-SHORTCUT-CONFLICT.
@@ -370,31 +370,73 @@ Restart journeys (config reload is not owner restart):
   preserved or a saved pre-stop frame is written back; record any geometry,
   focus or stacking writes to F during adoption.
 - Then COSMIC: client-preserving stopped-owner journey unestablished;
-  outcome TBD. Pinned workspace persistence is not this evidence.
+  pinned workspace config serializes pinned workspaces only with no float
+  identity or geometry; whether the live moved frame survives or a saved
+  frame writes back is TBD (no client-preserving journey to compare
+  against; store timing-dependent).
   `S(S-cos-persist)`.
 - Then Hyprland/Dwindle: stopped-owner journey and drift outcome TBD;
-  reload is not owner restart. `S(S-hyp-reload)`.
-- Then bspwm: R-RST-01 dump/restore is evidenced, but native movement during
-  this stopped-owner gap and resulting frame are TBD. `S(S-bsp-restore)`.
-- Then i3: R-RST-01 layout save/re-exec is evidenced, but this stopped-owner
-  gap and resulting frame are TBD. `S(S-i3-restart)`.
-- Then xmonad/Tall+Navigation2D: resume restores the saved windowset in
-  R-RST-01; stopped-owner native movement and resulting frame TBD.
+  reload is not owner restart (in-place config only, no re-exec or layout
+  dump); no serialized float frame exists to compare against the live
+  drift. `S(S-hyp-reload)`.
+- Then bspwm: dump round-trips the float frame (`floatingRectangle`
+  dumped/restored) on the direct re-exec journey, but native movement
+  during this stopped-owner gap is a different journey; whether the live
+  moved frame survives or the saved pre-stop frame writes back is TBD
+  (store timing-dependent, live-only). Dump fields round-trip
+  focus/history/rectangles with no tile-override member.
+  `S(S-bsp-restore)`.
+- Then i3: layout save/re-exec round-trips percents, focus and floating
+  geometry on the direct restart journey only; this stopped-owner gap with
+  a host move in between is not that journey, so the resulting frame is
+  TBD (store timing-dependent, live-only). Layout-file fields carry
+  percent/focus/rect/floating-geometry with no tile-override member.
+  `S(S-i3-restart)`.
+- Then xmonad/Tall+Navigation2D: resume restores the saved windowset
+  (incl the floating map) on the direct resume journey; stopped-owner
+  native movement and resulting frame TBD (client timing, live-only). A
+  malformed StateFile yields no resume (failing `Read` parses to
+  `Nothing`), but that fresh-start leg does not establish this drift gap.
+  The two-member StateFile (windowset plus ext-state) carries no
+  tile-override member.
   `S(S-xmo-restart)`.
 - Then sway: stopped-owner journey and drift outcome TBD; reload is not
-  owner restart. `S(S-sway-reload)`.
-- Then qtile/Columns: native journey applicability and drift outcome TBD;
-  X11 restart metadata is not proof of this gap. `S(S-qti-state)`.
-- Then awesome/tile: restart floating-state persistence does not establish
-  this stopped-owner geometry leg; outcome TBD. `S(S-awe-ctl)`.
+  owner restart (in-place config only, no restart verb or layout dump);
+  no serialized float frame exists to compare against the live drift.
+  `S(S-sway-reload)`.
+- Then qtile/Columns: restart metadata carries groups/layouts/screens only
+  with no per-window float geometry and no tile-override member, so there
+  is no saved F frame to compare; native journey applicability and drift
+  outcome TBD (no serialized float frame; store timing-dependent). `S(S-qti-state)`.
+- Then awesome/tile: restart persists client order and the explicit
+  floating state (explicit/implicit precedence) while tile shares
+  recalculate; that journey does not establish this stopped-owner geometry
+  leg, so whether the live moved frame survives is TBD (store
+  timing-dependent, live-only). Persisted members are client order plus
+  registered floating properties, with no tile-override member.
+  `S(S-awe-ctl)` + `S(S-awe-fixed-dynamic)`.
 - Then niri: stopped-owner journey and drift outcome TBD; config reload is
-  not owner restart. `S(S-nir-rst)`.
-- Then PaperWM: disable/enable has a counterpart; F's drift outcome TBD.
-  `S(S-pap-rst)`.
-- Then karousel/Lazy: script disable/enable has a counterpart; F's drift
-  outcome TBD. `S(S-kar-rst)` + `S(S-kar-start)`.
-- Then paneru: daemon exit/relaunch has a counterpart; F's drift outcome
-  TBD. `S(S-pan-rst)`.
+  not owner restart (quit plus config reload only, no layout dump or
+  re-exec verb); no serialized float frame exists to compare. `S(S-nir-rst)`.
+- Then PaperWM: disable/enable has a counterpart (SaveState stages
+  monitors/spaces/targetX only, no float member); re-adoption re-derives
+  float from live host flags (above/minimized re-float via scratch) while
+  list-only floats have no staged counterpart, and the fixture does not
+  specify F's float mechanism, so whether F re-floats or re-tiles is TBD
+  (host-state boundary, live-only). The staged maps carry no
+  tile-override member. `S(S-pap-readopt)` + `S(S-pap-rst)`.
+- Then karousel/Lazy: script disable+enable re-admits every live client
+  fresh (`addExistingClients` into `addClient`, re-evaluating current
+  shapeability with no durable intent store), so a still-shapeable F
+  re-tiles as a fresh column and its moved frame is never consulted;
+  exact order/widths TBD (native geometry, live-only). No float-intent or
+  tile-override store (no persist verb in the Actions inventory).
+  `S(S-kar-readmit)`.
+- Then paneru: daemon exit/relaunch has a counterpart (durable state file
+  plus grace-windowed startup matching); F's drift outcome TBD (identity
+  rematch timing-dependent, live-only). A version-mismatched state file
+  loads as absent, but that startup leg does not establish this drift gap.
+  The staged versioned state carries no tile-override member. `S(S-pan-rst)`.
 - Then Ours KDE: intentional F's identity and current moved/resized live frame
   survive through membership-only adoption (NORMATIVE Q3 D2, User 2026-10-08); no hydration
   geometry, stacking or focus writes to F. Implemented offline with counted
@@ -429,25 +471,82 @@ Restart journeys (config reload is not owner restart):
   native Ours legs remain TBD.
 - Observe: E's intentional membership vs F's fresh admission using current
   hints; whether automatic float origin accidentally became durable intent.
-- Then COSMIC: stopped-owner journey and origin recovery TBD; ordinary map
-  classification is not this evidence. `S(S-cos-fixed-admission)`.
-- Then Hyprland/Dwindle: fixture applicability, stopped-owner journey and
-  origin recovery TBD.
-- Then bspwm: fixed-size and explicit origins under this stopped-owner
-  journey TBD; R-RST-01 restore alone does not establish the discriminator.
-- Then i3: origin recovery after hint changes during a stopped-owner gap TBD.
-- Then xmonad/Tall+Navigation2D: origin recovery after hint changes during a
-  stopped-owner gap TBD.
-- Then sway: fixture applicability, stopped-owner journey and origin
-  recovery TBD.
-- Then qtile/Columns: fixture applicability and exact origin recovery TBD.
-- Then awesome/tile: explicit vs implicit floating exists, but recovery after
-  hint changes during this stopped-owner gap TBD. `S(S-awe-fixed-dynamic)`.
-- Then niri: fixture applicability, stopped-owner journey and origin
-  recovery TBD.
-- Then PaperWM: distinct origin fixture and recovery TBD.
-- Then karousel/Lazy: distinct origin fixture and recovery TBD.
-- Then paneru: distinct origin fixture and recovery TBD.
+- Then COSMIC: fixed admission floats fixed-size maps while ordinary maps
+  tile (admission-only classification); stopped-owner journey and origin
+  recovery after the hint clear TBD (no stopped-owner re-admission
+  evidence; client timing, live-only). Config persistence covers pinned
+  workspaces only with no tile-override member; T/N discriminator legs TBD
+  (same gap timing). `S(S-cos-fixed-admission)` + `S(S-cos-persist)`.
+- Then Hyprland/Dwindle: `suggestsFloat` floats min==max hints at initial
+  map only; fixture E/F origins are constructible, but stopped-owner
+  journey and origin recovery after the hint clear TBD (no hint-change
+  recompute in source; client timing, live-only). No float or tile state
+  dump exists (config reload only, no re-exec verb); T/N discriminator
+  legs TBD. `S(S-hyp-float)` + `S(S-hyp-reload)`.
+- Then bspwm: fixed-size admission floats while ordinary admission tiles;
+  origin recovery under this stopped-owner journey TBD (R-RST-01 restore
+  alone does not establish the discriminator; client timing, live-only).
+  Dump fields round-trip focus/history/rectangles with no tile-override
+  member; T/N discriminator legs TBD.
+  `S(S-bsp-admit)` + `S(S-bsp-restore)`.
+- Then i3: fixed-size min==max admission floats while tiled allocation
+  ignores hints; post-admission hint updates never re-admit tiles (float
+  clamp only). Origin recovery after hint changes during this
+  stopped-owner gap TBD (store/client-timing-dependent, live-only).
+  Layout-file fields carry percent/focus/rect/floating-geometry with no
+  tile-override member; T/N discriminator legs TBD. `S(S-i3-min)` +
+  `S(S-i3-fixed-runtime)` + `S(S-i3-restart)`.
+- Then xmonad/Tall+Navigation2D: fixed/transient check floats at manage
+  only; later status changes only via manual float/sink. Origin recovery
+  after hint changes during this   stopped-owner gap TBD (client timing,
+  live-only). The two-member StateFile (windowset plus ext-state) carries
+  no tile-override member; T/N discriminator legs TBD.
+  `S(S-xmo-float)` + `S(S-xmo-restart)`.
+- Then sway: `wants_floating` floats fixed-size (min==max) at map while
+  tiled arrange ignores hints; the runtime hint path handles urgency only
+  with no re-admission. Fixture applicability is established, but
+  stopped-owner journey and origin recovery TBD (client timing,
+  live-only). No float or tile state dump exists (in-place reload only);
+  T/N discriminator legs TBD.
+  `S(S-sway-max)` + `S(S-sway-min)` + `S(S-sway-reload)`.
+- Then qtile/Columns: fixed-size rules float at admission while tiled
+  placement ignores hints and hint refresh never promotes tiles.
+  Fixture applicability is established, but stopped-owner journey and
+  exact origin recovery TBD (client timing, live-only). QtileState carries
+  groups/layouts/screens/scratchpads with no tile-override member; T/N
+  discriminator legs TBD. `S(S-qti-float)` + `S(S-qti-min)` +
+  `S(S-qti-state)`.
+- Then awesome/tile: explicit vs implicit floating exists (hint signals
+  recompute implicit floating unless an explicit state overrides), but
+  recovery after hint changes during this stopped-owner gap TBD (client
+  timing, live-only). Persisted members are client order plus registered
+  floating properties, with no tile-override member; T/N discriminator
+  legs TBD.
+  `S(S-awe-fixed-dynamic)` + `S(S-awe-ctl)`.
+- Then niri: `compute_open_floating` classifies at the open callsites only
+  (explicit rule, parent, or fixed positive height); later changes only via
+  the plain tile-move toggle. Stopped-owner journey and origin recovery TBD
+  (client timing, live-only). No layout dump exists at all (quit plus
+  config reload only); T/N discriminator legs TBD. `S(S-nir-fixed-open)` + `S(S-nir-flttoggle)` + `S(S-nir-rst)`.
+- Then PaperWM: distinct fixed origin has no counterpart (`add_filter`
+  admits Normal non-transient windows with no fixed-size branch, so a
+  fixed-size client tiles rather than floats), so the E/F origin fixture
+  is inapplicable here; recovery TBD with no applicable journey. The
+  staged maps carry no tile-override member; T/N discriminator legs TBD.
+  `S(S-pap-spc)` + `S(S-pap-readopt)`.
+- Then karousel/Lazy: re-admission classifies E and F purely from current
+  host flags (`addExistingClients` into `addClient` against live
+  moveable/resizeable; no durable origin store), so with fixed hints
+  cleared both re-admit Tiled as fresh columns regardless of prior
+  explicit/automatic origin; exact order/widths TBD (native geometry,
+  live-only). T/N discriminator legs TBD (same gap timing).
+  `S(S-kar-readmit)` + `S(S-kar-spc)` + `S(S-kwin-resizeable)`.
+- Then paneru: distinct fixed origin has no counterpart (role-gated
+  admission with no size predicate; float is rule-assigned; AX exposes no
+  min/max hint equality), so the E/F origin fixture is inapplicable here;
+  recovery TBD with no applicable journey. The staged versioned state
+  carries no tile-override member; T/N discriminator legs TBD.
+  `S(S-pan-admit)` + `S(S-pan-rst)`.
 - Then Ours KDE: selected R-RST-01 preserves intentional E; Q2 NORMATIVE
   D7 (User 2026-10-08) recomputes automatic F from current hints, so F is newly tiled here.
   Implemented offline with real Planner [two-owner hint-loss fixtures](../../../kwin/tests/float-intent.test.ts),
