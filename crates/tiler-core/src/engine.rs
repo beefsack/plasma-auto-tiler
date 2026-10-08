@@ -19,8 +19,8 @@ use crate::bounds::{is_gap, is_opaque_id};
 use crate::contract::{
     AckOutcome, AdapterAck, DivergenceKind, DragCapabilities, DragPostObservation,
     FocusCapabilities, FocusPostObservation, LIFECYCLE_POLICY_VERSION, LifecycleCapabilities,
-    LifecyclePostObservation, Observation, PostObservation, ResizeCapabilities, ResizeMode,
-    ResizePostObservation,
+    LifecyclePostObservation, LifecyclePrecondition, Observation, PostObservation,
+    ResizeCapabilities, ResizeMode, ResizePostObservation,
 };
 use crate::directional::{
     Axis, Capabilities, Direction, MoveOperation, Node, NodeId, OutputId, WindowId, WorkspaceId,
@@ -109,6 +109,13 @@ pub struct Engine {
     /// Bounded counts plus correlation/op/reason only, never native
     /// identifiers.
     last_fixed_admission: Option<EngineFixedAdmissionReport>,
+    /// Last whole-workspace migration report for protocol logging.
+    ///
+    /// Set exactly once per successful explicit migration in
+    /// [`Engine::migrate_workspace_request`]; cleared at the start of every
+    /// [`Engine::handle`]. Bounded counts plus correlation/direction only,
+    /// never native identifiers.
+    last_migration: Option<EngineMigrationReport>,
 }
 
 /// Bounded correlated observation-convergence report for the protocol logging
@@ -143,6 +150,24 @@ pub struct EngineFixedAdmissionReport {
     /// Fixed decision token (`fixed-equal` when admitted, else the
     /// first applicable `not-fixed-*` reason).
     pub reason: &'static str,
+}
+
+/// Bounded correlated whole-workspace migration report for the protocol
+/// logging boundary (R-WS-12). Records the retained rekey only, never native
+/// completion. Counts plus direction/empty tokens only, never native
+/// identifiers, geometry, domains, owner, or payloads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineMigrationReport {
+    /// Validated correlation for this op (cross-service lookup key).
+    pub correlation: CorrelationId,
+    /// Requested direction token (`left`/`right`/`up`/`down`).
+    pub direction: &'static str,
+    /// Carried source members relocated (tiled plus floating).
+    pub members: usize,
+    /// Retained floating exceptions carried with the domain.
+    pub floats: usize,
+    /// True only for the empty-domain path (no retained session moved).
+    pub empty: bool,
 }
 
 /// Bounded correlated fresh adoption-fit report for the protocol logging
@@ -346,6 +371,7 @@ impl Default for Engine {
             converged_this_op: false,
             fixed_size_admission: false,
             last_fixed_admission: None,
+            last_migration: None,
         }
     }
 }
@@ -516,6 +542,14 @@ impl Engine {
     #[must_use]
     pub fn last_fixed_admission(&self) -> Option<&EngineFixedAdmissionReport> {
         self.last_fixed_admission.as_ref()
+    }
+
+    /// Last whole-workspace migration report for protocol logging, if the
+    /// current [`Engine::handle`] completed an explicit migration.
+    /// Bounded counts plus correlation/direction only.
+    #[must_use]
+    pub fn last_migration(&self) -> Option<&EngineMigrationReport> {
+        self.last_migration.as_ref()
     }
 
     /// Carry the Engine opt-in into a session without touching owner,
@@ -971,6 +1005,7 @@ impl Engine {
         self.last_startup_fit_trace = None;
         self.last_send_placement = None;
         self.last_fixed_admission = None;
+        self.last_migration = None;
         self.converged_this_op = false;
         match &event.command {
             CoreCommand::Reconcile => {
@@ -1004,6 +1039,7 @@ impl Engine {
             }
             CoreCommand::SendToWorkspace { .. } => self.transfer_request(event, false),
             CoreCommand::SendToOutput { .. } => self.transfer_request(event, true),
+            CoreCommand::MigrateWorkspace { .. } => self.migrate_workspace_request(event),
             CoreCommand::ActiveGroup => self.active_group_request(event),
             CoreCommand::ReleaseDomain => self.release_request(event),
             CoreCommand::ToggleFloat { .. } => {
@@ -2408,6 +2444,397 @@ impl Engine {
                 message: error.message(),
             },
         }
+    }
+
+    /// Explicit whole-workspace migration (R-WS-12) through
+    /// [`Session::relocate_domain`]: same workspace id, different output.
+    /// Sticky members (carried `sticky`) stay homed on the source in a
+    /// residual session; workspace floats ride with the domain. The active
+    /// client may be tiled, float, sticky, or absent: reply focus names a
+    /// migrating tiled leaf only, while `active_window` names a migrated
+    /// member only (null for absent or stayed-sticky actives, follow-only).
+    /// Currency runs on clones via the standard
+    /// convergence primitive, so refusals never mutate live state; commit
+    /// stores the relocated domain (plus the sticky residual when nonempty).
+    /// Reply `planned` means retained rekey only; native transfer stays
+    /// adapter-gated on `adapter-must-verify-postconditions`.
+    fn migrate_workspace_request(&mut self, event: &CoreEvent) -> CoreReply {
+        let CoreCommand::MigrateWorkspace { direction } = &event.command else {
+            return CoreReply::Rejected {
+                kind: "unknown-value",
+                message: "request contains an unknown value",
+            };
+        };
+        let Some(direction_parsed) = parse_engine_direction(direction) else {
+            return CoreReply::Rejected {
+                kind: DIRECTION_KIND,
+                message: DIRECTION_MESSAGE,
+            };
+        };
+        let Some((target_domain, target_key)) = event.target_domain.as_ref() else {
+            return CoreReply::Rejected {
+                kind: "workspace-target-invalid",
+                message: "target workspace domain is missing",
+            };
+        };
+        let source_key = event.domain_key.clone();
+        let target_key = target_key.clone();
+        if target_key.workspace != source_key.workspace || target_key.output == source_key.output {
+            return CoreReply::Rejected {
+                kind: "cross-domain-mismatch",
+                message: "command target does not match the target domain",
+            };
+        }
+        // Overlay gate before any retained mutation: explicit fullscreen /
+        // maximized, or maximized-shaped fit-excluded without
+        // floating/sticky/fullscreen. Floats ride; sticky stays natively.
+        for entry in event.windows.iter().chain(event.target_windows.iter()) {
+            if entry.fullscreen
+                || entry.maximized
+                || (entry.fit_excluded && !entry.floating && !entry.sticky)
+            {
+                return CoreReply::Rejected {
+                    kind: "overlay-present",
+                    message: "workspace contains a fullscreen or maximized window",
+                };
+            }
+        }
+        // The migration target carries no observation: any carried target
+        // window, or any retained target session, is SAME-workspace residue.
+        // A destination showing a DIFFERENT workspace stays KDE-native.
+        if !event.target_windows.is_empty() || self.sessions.contains_key(&target_key) {
+            return CoreReply::Rejected {
+                kind: RefusalKind::Unchanged.as_str(),
+                message: RefusalKind::Unchanged.message(),
+            };
+        }
+        if !is_gap(event.outer_gap) {
+            return CoreReply::Rejected {
+                kind: "domain-mismatch",
+                message: "domain outer gap does not match retained state",
+            };
+        }
+        let empty_plan = |base: u64, active: Option<WindowId>| {
+            CoreReply::MigrateWorkspace(crate::boundary::MigrateWorkspacePlan {
+                base_revision: base,
+                direction: direction_parsed,
+                source: source_key.clone(),
+                target: target_key.clone(),
+                geometry: Vec::new(),
+                focus_domain: None,
+                focus_leaf: None,
+                active_window: active,
+                members: 0,
+                floats: 0,
+                preconditions: vec![
+                    LifecyclePrecondition::WindowObserved,
+                    LifecyclePrecondition::DesiredTopologyValid,
+                    LifecyclePrecondition::AdapterMustVerifyPostconditions,
+                ],
+            })
+        };
+        // Empty migration moves no slot. Absent sources need empty focus;
+        // a retained empty session migrates the same way.
+        let Some(session) = self.sessions.get(&source_key).cloned() else {
+            if event.windows.is_empty() && event.focused_window.0.is_empty() {
+                self.last_migration = Some(EngineMigrationReport {
+                    correlation: event.correlation.clone(),
+                    direction: direction_token(direction_parsed),
+                    members: 0,
+                    floats: 0,
+                    empty: true,
+                });
+                return empty_plan(event.revision, None);
+            }
+            return CoreReply::Rejected {
+                kind: RefusalKind::UnknownDomain.as_str(),
+                message: RefusalKind::UnknownDomain.message(),
+            };
+        };
+        if session.owner() != &event.owner {
+            return CoreReply::Diverged(DivergenceKind::OwnerMismatch);
+        }
+        if session.generation() != &event.generation {
+            return CoreReply::Diverged(DivergenceKind::GenerationMismatch);
+        }
+        if let Some(reason) = session.divergence() {
+            return CoreReply::Diverged(reason);
+        }
+        if !session_usable(&session) || session.has_pending_desired() || session.has_drag() {
+            return CoreReply::Rejected {
+                kind: PENDING_EXISTS_KIND,
+                message: PENDING_EXISTS_MESSAGE,
+            };
+        }
+        if !session_domain_matches(&session, &event.domain)
+            || self.outer_gap_ref(&source_key).copied() != Some(event.outer_gap)
+        {
+            return CoreReply::Rejected {
+                kind: "domain-mismatch",
+                message: "domain outer gap does not match retained state",
+            };
+        }
+        // The wire revision is vestigial across the whole protocol
+        // (adapters hardcode 0; every op derives observation bases from the
+        // accepted revision internally, as the clone currency below does).
+        // Staleness is fenced by membership, not by the revision token.
+        // Frozen identity: every retained member must be carried, so currency
+        // below can only adopt flags/admit newcomers, never erase unseen
+        // (sticky) origin.
+        for entry in &event.windows {
+            if entry.output != source_key.output || entry.workspace != source_key.workspace {
+                return CoreReply::Rejected {
+                    kind: RefusalKind::CrossDomainMismatch.as_str(),
+                    message: RefusalKind::CrossDomainMismatch.message(),
+                };
+            }
+        }
+        let mut retained_ids: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        let retained_snapshot = session.snapshot();
+        for link in retained_snapshot.windows.iter() {
+            retained_ids.insert(link.window.0.as_str());
+        }
+        let retained_exceptions = session.exception_observed();
+        for observed in retained_exceptions.iter() {
+            retained_ids.insert(observed.window.0.as_str());
+        }
+        if !retained_ids.iter().all(|id| {
+            event
+                .windows
+                .iter()
+                .any(|entry| &entry.window.0.as_str() == id)
+        }) {
+            return CoreReply::Rejected {
+                kind: RefusalKind::PartialObservation.as_str(),
+                message: RefusalKind::PartialObservation.message(),
+            };
+        }
+        // Dangling active client: a named focus must be carried. Empty focus
+        // migrates without fabricated focus.
+        if !event.focused_window.0.is_empty()
+            && !event
+                .windows
+                .iter()
+                .any(|entry| entry.window == event.focused_window)
+        {
+            return CoreReply::Rejected {
+                kind: RefusalKind::FocusMismatch.as_str(),
+                message: RefusalKind::FocusMismatch.message(),
+            };
+        }
+        // Retained-empty sources migrate empty only when nothing is carried;
+        // carried newcomers fall through to the normal adoption flow below.
+        if committed_session_is_empty(&session) && event.windows.is_empty() {
+            let base = session.accepted_revision();
+            self.sessions.remove(&source_key);
+            self.outer_gaps.remove(&source_key);
+            self.last_migration = Some(EngineMigrationReport {
+                correlation: event.correlation.clone(),
+                direction: direction_token(direction_parsed),
+                members: 0,
+                floats: 0,
+                empty: true,
+            });
+            return empty_plan(base, None);
+        }
+        // Partition on clones: migrating members move, carried-sticky stays.
+        // Subset convergence removes the other side through the standard
+        // primitive; any failure refuses with live state untouched.
+        let sticky_ids: std::collections::BTreeSet<&str> = event
+            .windows
+            .iter()
+            .filter(|entry| entry.sticky)
+            .map(|entry| entry.window.0.as_str())
+            .collect();
+        let active = (!event.focused_window.0.is_empty()).then(|| event.focused_window.clone());
+        let mut moved = session.clone();
+        let migrating: std::collections::BTreeSet<&str> = event
+            .windows
+            .iter()
+            .filter(|entry| !entry.sticky)
+            .map(|entry| entry.window.0.as_str())
+            .collect();
+        let moved_focus = match &active {
+            Some(window) if migrating.contains(window.0.as_str()) => Some(window),
+            _ => None,
+        };
+        let moved_obs = SessionObservation {
+            observation: crate::contract::Observation::new(
+                event.owner.clone(),
+                event.generation.clone(),
+                moved.accepted_revision(),
+                event.fingerprint,
+            ),
+            windows: event
+                .windows
+                .iter()
+                .filter(|entry| migrating.contains(entry.window.0.as_str()))
+                .map(crate::seed::observed_window_from_engine)
+                .collect(),
+        };
+        if let Err(error) = moved.converge_observation(&moved_obs, moved_focus) {
+            return match error {
+                ProposeError::Diverged(reason) => CoreReply::Diverged(reason),
+                ProposeError::PendingExists => CoreReply::Rejected {
+                    kind: PENDING_EXISTS_KIND,
+                    message: PENDING_EXISTS_MESSAGE,
+                },
+                ProposeError::Refused(kind) => CoreReply::Rejected {
+                    kind: kind.as_str(),
+                    message: kind.message(),
+                },
+            };
+        }
+        let stay = if sticky_ids.is_empty() {
+            None
+        } else {
+            let mut stay = session.clone();
+            let stay_focus = match &active {
+                Some(window) if sticky_ids.contains(window.0.as_str()) => Some(window),
+                _ => None,
+            };
+            let stay_obs = SessionObservation {
+                observation: crate::contract::Observation::new(
+                    event.owner.clone(),
+                    event.generation.clone(),
+                    stay.accepted_revision(),
+                    event.fingerprint,
+                ),
+                windows: event
+                    .windows
+                    .iter()
+                    .filter(|entry| sticky_ids.contains(entry.window.0.as_str()))
+                    .map(crate::seed::observed_window_from_engine)
+                    .collect(),
+            };
+            if let Err(error) = stay.converge_observation(&stay_obs, stay_focus) {
+                return match error {
+                    ProposeError::Diverged(reason) => CoreReply::Diverged(reason),
+                    ProposeError::PendingExists => CoreReply::Rejected {
+                        kind: PENDING_EXISTS_KIND,
+                        message: PENDING_EXISTS_MESSAGE,
+                    },
+                    ProposeError::Refused(kind) => CoreReply::Rejected {
+                        kind: kind.as_str(),
+                        message: kind.message(),
+                    },
+                };
+            }
+            Some(stay)
+        };
+        if !moved.relocate_domain(
+            &source_key,
+            &target_key,
+            target_domain.bounds,
+            target_domain.gap,
+        ) {
+            return CoreReply::Rejected {
+                kind: RefusalKind::MalformedTopology.as_str(),
+                message: RefusalKind::MalformedTopology.message(),
+            };
+        }
+        // Follow-only echo: reply focus names a migrating tiled leaf only,
+        // and `active_window` names a migrated member only. A stayed sticky
+        // active echoes null like an absent client: KDE still switches to the
+        // migrated workspace after verified arrival and never activates a
+        // source window on the target. Retained bookkeeping is untouched.
+        let moved_snapshot = moved.snapshot();
+        let active_leaf = match &active {
+            Some(window) => moved_snapshot
+                .windows
+                .iter()
+                .find(|link| &link.window == window)
+                .map(|link| link.leaf.clone()),
+            None => None,
+        };
+        let (focus_domain, focus_leaf) = match active_leaf {
+            Some(leaf) => (Some(target_key.clone()), Some(leaf)),
+            None => (None, None),
+        };
+        let mut hints: std::collections::BTreeMap<WindowId, crate::size_hints::WindowSizeHints> =
+            std::collections::BTreeMap::new();
+        for entry in &event.windows {
+            hints.insert(entry.window.clone(), entry.hints);
+        }
+        let geometry = if moved_snapshot.windows.is_empty() {
+            Vec::new()
+        } else {
+            let Some(plan) = crate::boundary::project_retained_tiled_geometry(
+                &moved,
+                &target_key,
+                target_domain.bounds,
+                target_domain.gap,
+                match (&focus_domain, &focus_leaf) {
+                    (Some(domain), Some(leaf)) => Some((domain.clone(), leaf.clone())),
+                    _ => None,
+                },
+                crate::boundary::ProjectionKind::Reconcile,
+                &hints,
+                &event.windows,
+            ) else {
+                return CoreReply::Rejected {
+                    kind: RefusalKind::MalformedTopology.as_str(),
+                    message: RefusalKind::MalformedTopology.message(),
+                };
+            };
+            plan.geometry
+        };
+        let members = moved_snapshot.windows.len() + moved.exception_count();
+        let floats = moved.exception_count();
+        let revision = moved.accepted_revision();
+        let reply_active = match &active {
+            Some(window)
+                if moved_snapshot
+                    .windows
+                    .iter()
+                    .any(|link| &link.window == window)
+                    || moved.is_exception(window) =>
+            {
+                Some(window.clone())
+            }
+            _ => None,
+        };
+        // Commit: relocated domain takes the target slot; the sticky residual
+        // keeps the source slot (and its outer gap) only while nonempty.
+        let stay = stay.filter(|stay| !committed_session_is_empty(stay));
+        let moved_empty = committed_session_is_empty(&moved);
+        self.sessions.remove(&source_key);
+        if !moved_empty {
+            self.outer_gaps.insert(target_key.clone(), event.outer_gap);
+            self.sessions.insert(target_key.clone(), moved);
+        }
+        if let Some(stay) = stay {
+            self.sessions.insert(source_key.clone(), stay);
+        } else {
+            self.outer_gaps.remove(&source_key);
+        }
+        self.last_migration = Some(EngineMigrationReport {
+            correlation: event.correlation.clone(),
+            direction: direction_token(direction_parsed),
+            members,
+            floats,
+            empty: moved_empty,
+        });
+        if moved_empty {
+            return empty_plan(revision, reply_active);
+        }
+        CoreReply::MigrateWorkspace(crate::boundary::MigrateWorkspacePlan {
+            base_revision: revision,
+            direction: direction_parsed,
+            source: source_key,
+            target: target_key,
+            geometry,
+            focus_domain,
+            focus_leaf,
+            active_window: reply_active,
+            members,
+            floats,
+            preconditions: vec![
+                LifecyclePrecondition::WindowObserved,
+                LifecyclePrecondition::DesiredTopologyValid,
+                LifecyclePrecondition::AdapterMustVerifyPostconditions,
+            ],
+        })
     }
 
     /// Shared retained propose/commit: try the usable retained session, then
@@ -4002,6 +4429,16 @@ fn parse_engine_direction(value: &str) -> Option<Direction> {
     }
 }
 
+/// Stable direction token shared by the migration report and its summary.
+fn direction_token(direction: Direction) -> &'static str {
+    match direction {
+        Direction::Left => "left",
+        Direction::Right => "right",
+        Direction::Up => "up",
+        Direction::Down => "down",
+    }
+}
+
 /// Parsed-mode gate mirroring the protocol vocabulary.
 fn parse_engine_mode(value: &str) -> Option<ResizeMode> {
     match value {
@@ -4210,6 +4647,7 @@ mod tests {
                 floating: false,
                 fit_excluded: false,
                 fullscreen: false,
+                maximized: false,
                 sticky: false,
                 fixed_auto: false,
                 fixed_suppress: false,
@@ -4243,6 +4681,7 @@ mod tests {
                 floating: false,
                 fit_excluded: false,
                 fullscreen: false,
+                maximized: false,
                 sticky: false,
                 fixed_auto: false,
                 fixed_suppress: false,
@@ -4388,6 +4827,7 @@ mod tests {
             floating: false,
             fit_excluded: false,
             fullscreen: false,
+            maximized: false,
             sticky: false,
             fixed_auto: false,
             fixed_suppress: false,
@@ -4453,6 +4893,7 @@ mod tests {
                 floating: false,
                 fit_excluded: false,
                 fullscreen: false,
+                maximized: false,
                 sticky: false,
                 fixed_auto: false,
                 fixed_suppress: false,
@@ -4488,6 +4929,7 @@ mod tests {
                 floating: false,
                 fit_excluded: false,
                 fullscreen: false,
+                maximized: false,
                 sticky: false,
                 fixed_auto: false,
                 fixed_suppress: false,
@@ -4546,6 +4988,7 @@ mod tests {
                 floating: true,
                 fit_excluded: true,
                 fullscreen: false,
+                maximized: false,
                 sticky: false,
                 fixed_auto: false,
                 fixed_suppress: false,
@@ -4564,6 +5007,7 @@ mod tests {
                 floating: false,
                 fit_excluded: false,
                 fullscreen: false,
+                maximized: false,
                 sticky: false,
                 fixed_auto: false,
                 fixed_suppress: false,
@@ -4582,6 +5026,7 @@ mod tests {
                 floating: false,
                 fit_excluded: false,
                 fullscreen: false,
+                maximized: false,
                 sticky: false,
                 fixed_auto: false,
                 fixed_suppress: false,
@@ -4653,6 +5098,7 @@ mod tests {
             floating: false,
             fit_excluded: false,
             fullscreen: false,
+            maximized: false,
             sticky: false,
             fixed_auto: false,
             fixed_suppress: false,
@@ -4686,6 +5132,7 @@ mod tests {
                 floating: false,
                 fit_excluded: false,
                 fullscreen: false,
+                maximized: false,
                 sticky: false,
                 fixed_auto: false,
                 fixed_suppress: false,
@@ -4733,6 +5180,7 @@ mod tests {
             floating: false,
             fit_excluded: false,
             fullscreen: false,
+            maximized: false,
             sticky: false,
             fixed_auto: false,
             fixed_suppress: false,
@@ -4767,6 +5215,7 @@ mod tests {
                 floating: false,
                 fit_excluded: false,
                 fullscreen: false,
+                maximized: false,
                 sticky: false,
                 fixed_auto: false,
                 fixed_suppress: false,
@@ -4814,6 +5263,7 @@ mod tests {
                 floating: false,
                 fit_excluded: false,
                 fullscreen: false,
+                maximized: false,
                 sticky: false,
                 fixed_auto: false,
                 fixed_suppress: false,
@@ -4879,6 +5329,7 @@ mod tests {
             floating: false,
             fit_excluded: false,
             fullscreen: false,
+            maximized: false,
             sticky: false,
             fixed_auto: false,
             fixed_suppress: false,
@@ -4935,6 +5386,7 @@ mod tests {
             floating: false,
             fit_excluded: false,
             fullscreen: false,
+            maximized: false,
             sticky: false,
             fixed_auto: false,
             fixed_suppress: false,
@@ -5003,6 +5455,7 @@ mod tests {
                 floating: false,
                 fit_excluded: false,
                 fullscreen: false,
+                maximized: false,
                 sticky: false,
                 fixed_auto: false,
                 fixed_suppress: false,
@@ -5049,6 +5502,7 @@ mod tests {
                 floating: false,
                 fit_excluded: false,
                 fullscreen: false,
+                maximized: false,
                 sticky: false,
                 fixed_auto: false,
                 fixed_suppress: false,
@@ -5083,6 +5537,7 @@ mod tests {
                 floating: false,
                 fit_excluded: false,
                 fullscreen: false,
+                maximized: false,
                 sticky: false,
                 fixed_auto: false,
                 fixed_suppress: false,
@@ -5159,6 +5614,7 @@ mod tests {
             floating: false,
             fit_excluded: false,
             fullscreen: false,
+            maximized: false,
             sticky: false,
             fixed_auto: false,
             fixed_suppress: false,
@@ -5496,6 +5952,1367 @@ mod tests {
                 .windows
                 .iter()
                 .any(|l| l.window.0 == "win-m")
+        );
+    }
+
+    #[test]
+    fn migrate_workspace_preserves_topology_shares_focus_and_floats() {
+        use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
+        use crate::contract::{LifecycleCapabilities, Observation};
+        use crate::directional::WindowId;
+        use crate::ids::CorrelationId;
+        use crate::seed::EngineWindow;
+        use crate::session::{ObservedWindow, SessionObservation};
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out-1", "ws-2");
+        let source_key = source_domain.key();
+        // Three tiled members seed a nested topology; the third floats below.
+        let seed_order = ["win-a", "win-b", "win-c"]
+            .iter()
+            .enumerate()
+            .map(|(i, window)| EngineWindow {
+                window: WindowId(window.to_string()),
+                output: OutputId("out-1".to_owned()),
+                workspace: WorkspaceId("ws-2".to_owned()),
+                rect: Rect {
+                    x: (i as i32) * 100,
+                    y: 0,
+                    w: 100,
+                    h: 100,
+                },
+                floating: false,
+                fit_excluded: false,
+                fullscreen: false,
+                maximized: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            })
+            .collect::<Vec<_>>();
+        let mut seeded = crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &seed_order)
+            .expect("seeds three");
+        // Intentional float of win-c through the convergence primitive (keeps
+        // the existing retained rectangle, here `None`).
+        let base = seeded.accepted_revision();
+        let obs_windows: Vec<ObservedWindow> = seeded
+            .snapshot()
+            .windows
+            .iter()
+            .map(|link| {
+                let floating = link.window.0 == "win-c";
+                ObservedWindow {
+                    window: link.window.clone(),
+                    output: link.output.clone(),
+                    workspace: link.workspace.clone(),
+                    floating,
+                    fullscreen: false,
+                    maximized: false,
+                    sticky: false,
+                    fixed_auto: false,
+                    fixed_suppress: false,
+                    hints: crate::size_hints::WindowSizeHints::none(),
+                }
+            })
+            .collect();
+        seeded
+            .converge_observation(
+                &SessionObservation {
+                    observation: Observation::new(owner.clone(), gen_id.clone(), base, 7),
+                    windows: obs_windows,
+                },
+                Some(&WindowId("win-b".to_owned())),
+            )
+            .expect("float converges");
+        assert!(seeded.is_exception(&WindowId("win-c".to_owned())));
+        let pre_tree = seeded.tree_for(&source_key).cloned();
+        let (pre_focus_domain, pre_focus_leaf) = seeded.focus();
+        assert_eq!(pre_focus_domain, Some(source_key.clone()));
+        let pre_revision = seeded.accepted_revision();
+        let pre_float_geometry = seeded.floating_geometry(&WindowId("win-c".to_owned()));
+        engine.store_committed(source_key.clone(), seeded, 3);
+        // Unrelated domain stays byte-identical through the migration.
+        let other_domain = domain("out-9", "ws-9");
+        let other_key = other_domain.key();
+        let other_order = vec![EngineWindow {
+            window: WindowId("win-9".to_owned()),
+            output: OutputId("out-9".to_owned()),
+            workspace: WorkspaceId("ws-9".to_owned()),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: 10,
+                h: 10,
+            },
+            floating: false,
+            fit_excluded: false,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
+        }];
+        let other = crate::seed::seed_session(&owner, &gen_id, 7, &other_domain, &other_order)
+            .expect("seeds other");
+        engine.store_committed(other_key.clone(), other, 5);
+        let other_before = engine
+            .session(&other_key)
+            .expect("other retained")
+            .snapshot();
+        // Carried source observation mirrors the retained set: tiled members
+        // plain, the float exception with floating plus fit-excluded.
+        let carried = ["win-a", "win-b"]
+            .iter()
+            .map(|window| EngineWindow {
+                window: WindowId(window.to_string()),
+                output: OutputId("out-1".to_owned()),
+                workspace: WorkspaceId("ws-2".to_owned()),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+                floating: false,
+                fit_excluded: false,
+                fullscreen: false,
+                maximized: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            })
+            .chain(std::iter::once(EngineWindow {
+                window: WindowId("win-c".to_owned()),
+                output: OutputId("out-1".to_owned()),
+                workspace: WorkspaceId("ws-2".to_owned()),
+                rect: Rect {
+                    x: 240,
+                    y: 160,
+                    w: 100,
+                    h: 100,
+                },
+                floating: true,
+                fit_excluded: true,
+                fullscreen: false,
+                maximized: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            }))
+            .collect::<Vec<_>>();
+        let target_domain = OutputDomain {
+            id: OutputId("out-2".to_owned()),
+            workspace: WorkspaceId("ws-2".to_owned()),
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 800,
+                h: 600,
+            },
+            gap: 0,
+            adjacent: BTreeMap::new(),
+        };
+        let target_key = target_domain.key();
+        let event = CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse("corr-migrate-preserve").expect("valid"),
+            revision: pre_revision,
+            fingerprint: 7,
+            domain: source_domain.clone(),
+            domain_key: source_key.clone(),
+            outer_gap: 3,
+            focused_window: WindowId("win-b".to_owned()),
+            windows: carried,
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: Some((target_domain.clone(), target_key.clone())),
+            target_windows: vec![],
+            command: CoreCommand::MigrateWorkspace {
+                direction: "right".to_owned(),
+            },
+        };
+        let plan = match engine.handle(&event) {
+            CoreReply::MigrateWorkspace(plan) => plan,
+            other => panic!("migration must plan, got {other:?}"),
+        };
+        assert_eq!(plan.base_revision, pre_revision, "revision preserved");
+        assert_eq!(plan.source, source_key);
+        assert_eq!(plan.target, target_key);
+        assert_eq!(plan.geometry.len(), 2, "tiled members project");
+        assert_eq!(plan.focus_domain, Some(target_key.clone()));
+        assert_eq!(plan.focus_leaf, pre_focus_leaf);
+        assert_eq!(
+            plan.active_window,
+            Some(WindowId("win-b".to_owned())),
+            "active client named"
+        );
+        assert_eq!(plan.members, 3);
+        assert_eq!(plan.floats, 1);
+        assert!(
+            plan.preconditions
+                .contains(&crate::contract::LifecyclePrecondition::AdapterMustVerifyPostconditions)
+        );
+        assert!(!engine.contains(&source_key), "source rekeyed away");
+        assert!(engine.contains(&target_key), "target retained");
+        assert_eq!(engine.outer_gap(&target_key), Some(3));
+        let moved = engine.session(&target_key).expect("moved");
+        assert_eq!(moved.tree_for(&target_key), pre_tree.as_ref());
+        assert_eq!(moved.accepted_revision(), pre_revision);
+        let mut members: Vec<String> = moved
+            .snapshot()
+            .windows
+            .iter()
+            .map(|l| {
+                assert_eq!(l.output.0, "out-2");
+                assert_eq!(l.workspace.0, "ws-2");
+                l.window.0.clone()
+            })
+            .collect();
+        members.sort();
+        assert_eq!(members, vec!["win-a".to_string(), "win-b".to_string()]);
+        assert!(moved.is_exception(&WindowId("win-c".to_owned())));
+        assert_eq!(
+            moved.floating_geometry(&WindowId("win-c".to_owned())),
+            pre_float_geometry,
+            "float geometry preserved"
+        );
+        assert_eq!(moved.focus(), (Some(target_key.clone()), pre_focus_leaf));
+        assert_eq!(
+            engine.session(&other_key).expect("other kept").snapshot(),
+            other_before,
+            "unrelated domain unchanged"
+        );
+        let report = engine.last_migration().expect("migration logged");
+        assert_eq!(report.members, 3);
+        assert_eq!(report.floats, 1);
+        assert!(!report.empty);
+        let _ = LifecycleCapabilities::full();
+    }
+
+    #[test]
+    fn migrate_workspace_allows_empty_without_fabricated_focus() {
+        use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
+        use crate::directional::WindowId;
+        use crate::ids::CorrelationId;
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let other_domain = domain("out-9", "ws-9");
+        let other_key = other_domain.key();
+        let other_order = vec![crate::seed::EngineWindow {
+            window: WindowId("win-9".to_owned()),
+            output: OutputId("out-9".to_owned()),
+            workspace: WorkspaceId("ws-9".to_owned()),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: 10,
+                h: 10,
+            },
+            floating: false,
+            fit_excluded: false,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+            fixed_auto: false,
+            fixed_suppress: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
+        }];
+        let other = crate::seed::seed_session(&owner, &gen_id, 7, &other_domain, &other_order)
+            .expect("seeds other");
+        engine.store_committed(other_key.clone(), other, 5);
+        let other_before = engine
+            .session(&other_key)
+            .expect("other retained")
+            .snapshot();
+        let source_domain = domain("out-1", "ws-2");
+        let source_key = source_domain.key();
+        let target_domain = domain("out-2", "ws-2");
+        let target_key = target_domain.key();
+        let event = CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse("corr-migrate-empty").expect("valid"),
+            revision: 0,
+            fingerprint: 7,
+            domain: source_domain,
+            domain_key: source_key.clone(),
+            outer_gap: 0,
+            focused_window: WindowId(String::new()),
+            windows: vec![],
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: Some((target_domain, target_key.clone())),
+            target_windows: vec![],
+            command: CoreCommand::MigrateWorkspace {
+                direction: "right".to_owned(),
+            },
+        };
+        match engine.handle(&event) {
+            CoreReply::MigrateWorkspace(plan) => {
+                assert!(plan.geometry.is_empty());
+                assert_eq!(plan.focus_domain, None);
+                assert_eq!(plan.focus_leaf, None);
+            }
+            other => panic!("empty migration must plan, got {other:?}"),
+        }
+        assert!(!engine.contains(&source_key));
+        assert!(!engine.contains(&target_key), "empty moves no slot");
+        assert_eq!(
+            engine.session(&other_key).expect("other kept").snapshot(),
+            other_before,
+            "unrelated domain unchanged"
+        );
+        let report = engine.last_migration().expect("migration logged");
+        assert!(report.empty);
+        assert_eq!(report.members, 0);
+    }
+
+    #[test]
+    fn migrate_workspace_refuses_overlay_invalid_target_and_residue() {
+        use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
+        use crate::directional::WindowId;
+        use crate::ids::CorrelationId;
+        use crate::seed::EngineWindow;
+        fn carried(
+            output: &str,
+            workspace: &str,
+            window: &str,
+            fullscreen: bool,
+            fit_excluded: bool,
+        ) -> EngineWindow {
+            EngineWindow {
+                window: WindowId(window.to_owned()),
+                output: OutputId(output.to_owned()),
+                workspace: WorkspaceId(workspace.to_owned()),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+                floating: false,
+                fit_excluded,
+                fullscreen,
+                maximized: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            }
+        }
+        fn migrate_event(
+            owner: &OwnerId,
+            gen_id: &GenerationId,
+            source_domain: &OutputDomain,
+            windows: Vec<EngineWindow>,
+            target: Option<(OutputDomain, DomainKey)>,
+            target_windows: Vec<EngineWindow>,
+            correlation: &str,
+        ) -> CoreEvent {
+            CoreEvent {
+                owner: owner.clone(),
+                generation: gen_id.clone(),
+                correlation: CorrelationId::parse(correlation).expect("valid"),
+                revision: 0,
+                fingerprint: 7,
+                domain: source_domain.clone(),
+                domain_key: source_domain.key(),
+                outer_gap: 0,
+                focused_window: WindowId("win-1".to_owned()),
+                windows,
+                directional: None,
+                directional_target_outer_gap: None,
+                target_domain: target,
+                target_windows,
+                command: CoreCommand::MigrateWorkspace {
+                    direction: "right".to_owned(),
+                },
+            }
+        }
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out-1", "ws-2");
+        let source_key = source_domain.key();
+        let seed_order = ["win-1", "win-2"]
+            .iter()
+            .map(|window| carried("out-1", "ws-2", window, false, false))
+            .collect::<Vec<_>>();
+        let seeded = crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &seed_order)
+            .expect("seeds two");
+        let pre_revision = seeded.accepted_revision();
+        engine.store_committed(source_key.clone(), seeded, 0);
+        let target_domain = domain("out-2", "ws-2");
+        let target_key = target_domain.key();
+        // Fullscreen overlay refuses before any mutation.
+        let overlay = migrate_event(
+            &owner,
+            &gen_id,
+            &source_domain,
+            vec![
+                carried("out-1", "ws-2", "win-1", true, true),
+                carried("out-1", "ws-2", "win-2", false, false),
+            ],
+            Some((target_domain.clone(), target_key.clone())),
+            vec![],
+            "corr-migrate-overlay",
+        );
+        match engine.handle(&overlay) {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "overlay-present"),
+            other => panic!("overlay must refuse, got {other:?}"),
+        }
+        // Maximized-shaped fit-excluded (no floating/sticky/fullscreen) refuses.
+        let maximized = migrate_event(
+            &owner,
+            &gen_id,
+            &source_domain,
+            vec![
+                carried("out-1", "ws-2", "win-1", false, true),
+                carried("out-1", "ws-2", "win-2", false, false),
+            ],
+            Some((target_domain.clone(), target_key.clone())),
+            vec![],
+            "corr-migrate-maximized",
+        );
+        match engine.handle(&maximized) {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "overlay-present"),
+            other => panic!("maximized must refuse, got {other:?}"),
+        }
+        // Same-output target refuses.
+        let same_output = migrate_event(
+            &owner,
+            &gen_id,
+            &source_domain,
+            seed_order.clone(),
+            Some((source_domain.clone(), source_key.clone())),
+            vec![],
+            "corr-migrate-same-output",
+        );
+        match engine.handle(&same_output) {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "cross-domain-mismatch"),
+            other => panic!("same-output must refuse, got {other:?}"),
+        }
+        // Different-workspace target refuses.
+        let other_ws = domain("out-2", "ws-9");
+        let other_ws_key = other_ws.key();
+        let cross_ws = migrate_event(
+            &owner,
+            &gen_id,
+            &source_domain,
+            seed_order.clone(),
+            Some((other_ws, other_ws_key)),
+            vec![],
+            "corr-migrate-cross-ws",
+        );
+        match engine.handle(&cross_ws) {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "cross-domain-mismatch"),
+            other => panic!("different-workspace must refuse, got {other:?}"),
+        }
+        // Carried target windows (SAME-workspace residue) refuse.
+        let residue_carried = migrate_event(
+            &owner,
+            &gen_id,
+            &source_domain,
+            seed_order.clone(),
+            Some((target_domain.clone(), target_key.clone())),
+            vec![carried("out-2", "ws-2", "win-x", false, false)],
+            "corr-migrate-residue-carried",
+        );
+        match engine.handle(&residue_carried) {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "unchanged"),
+            other => panic!("carried residue must refuse, got {other:?}"),
+        }
+        // Retained target residue refuses.
+        let target_seed_order = ["win-1", "win-2"]
+            .iter()
+            .map(|window| carried("out-2", "ws-2", window, false, false))
+            .collect::<Vec<_>>();
+        engine.insert_raw(
+            target_key.clone(),
+            crate::seed::seed_session(&owner, &gen_id, 7, &target_domain, &target_seed_order)
+                .map(|mut session| {
+                    session.set_policy(engine.policy().clone());
+                    session
+                })
+                .expect("seeds target residue"),
+            0,
+        );
+        let retained_residue = migrate_event(
+            &owner,
+            &gen_id,
+            &source_domain,
+            seed_order.clone(),
+            Some((target_domain.clone(), target_key.clone())),
+            vec![],
+            "corr-migrate-residue-retained",
+        );
+        match engine.handle(&retained_residue) {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "unchanged"),
+            other => panic!("retained residue must refuse, got {other:?}"),
+        }
+        engine.remove(&target_key);
+        // Unknown source with members refuses (never autorekeys).
+        let unknown_domain = domain("out-7", "ws-7");
+        let unknown_target = domain("out-8", "ws-7");
+        let unknown_key = unknown_target.key();
+        let unknown = migrate_event(
+            &owner,
+            &gen_id,
+            &unknown_domain,
+            vec![carried("out-7", "ws-7", "win-z", false, false)],
+            Some((unknown_target, unknown_key)),
+            vec![],
+            "corr-migrate-unknown",
+        );
+        match engine.handle(&unknown) {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "unknown-domain"),
+            other => panic!("unknown source must refuse, got {other:?}"),
+        }
+        // Pending residue refuses.
+        {
+            use crate::contract::{AckOutcome, AdapterAck, LifecycleCapabilities, Observation};
+            use crate::session::{ExceptionFlags, SessionCommand, SessionObservation};
+            let session = engine.session_mut(&source_key).expect("source");
+            let base = session.accepted_revision();
+            let observed = SessionObservation {
+                observation: Observation::new(owner.clone(), gen_id.clone(), base, 7),
+                windows: crate::seed::session_observation_for(
+                    &owner,
+                    &gen_id,
+                    base,
+                    7,
+                    &seed_order,
+                )
+                .windows
+                .into_iter()
+                .chain(std::iter::once(crate::session::ObservedWindow {
+                    window: WindowId("win-new".to_owned()),
+                    output: OutputId("out-1".to_owned()),
+                    workspace: WorkspaceId("ws-2".to_owned()),
+                    floating: false,
+                    fullscreen: false,
+                    maximized: false,
+                    sticky: false,
+                    fixed_auto: false,
+                    fixed_suppress: false,
+                    hints: crate::size_hints::WindowSizeHints::none(),
+                }))
+                .collect(),
+            };
+            let correlation = CorrelationId::parse("corr-migrate-stage-pending").expect("valid");
+            session
+                .propose(
+                    &SessionCommand::Admit {
+                        window: WindowId("win-new".to_owned()),
+                        output: OutputId("out-1".to_owned()),
+                        workspace: WorkspaceId("ws-2".to_owned()),
+                        exceptions: ExceptionFlags::none(),
+                        exception_behavior: None,
+                        placement_bounds: Rect {
+                            x: 0,
+                            y: 0,
+                            w: 800,
+                            h: 600,
+                        },
+                        suppress_fixed_float: false,
+                    },
+                    &observed,
+                    &correlation,
+                    &LifecycleCapabilities::full(),
+                )
+                .expect("stages pending");
+            let _ = AdapterAck::new(
+                correlation,
+                owner.clone(),
+                gen_id.clone(),
+                base,
+                AckOutcome::Accepted,
+            );
+        }
+        let pending = migrate_event(
+            &owner,
+            &gen_id,
+            &source_domain,
+            seed_order.clone(),
+            Some((target_domain.clone(), target_key.clone())),
+            vec![],
+            "corr-migrate-pending",
+        );
+        match engine.handle(&pending) {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "pending-exists"),
+            other => panic!("pending must refuse, got {other:?}"),
+        }
+        // Every refusal left the source exactly intact.
+        assert!(engine.contains(&source_key));
+        assert!(!engine.contains(&target_key));
+        let retained = engine.session(&source_key).expect("source kept");
+        assert_eq!(retained.accepted_revision(), pre_revision);
+        let mut members: Vec<String> = retained
+            .snapshot()
+            .windows
+            .iter()
+            .map(|l| l.window.0.clone())
+            .collect();
+        members.sort();
+        assert_eq!(members, vec!["win-1".to_string(), "win-2".to_string()]);
+    }
+
+    fn migrate_carried(member: (&str, bool, bool)) -> EngineWindow {
+        // (window, floating, sticky) homed on the (out-1, ws-2) fixture
+        // source with adapter-shaped flags.
+        let (window, floating, sticky) = member;
+        EngineWindow {
+            window: WindowId(window.to_owned()),
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-2".to_owned()),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: 10,
+                h: 10,
+            },
+            floating,
+            fit_excluded: floating || sticky,
+            fullscreen: false,
+            maximized: false,
+            sticky,
+            fixed_auto: false,
+            fixed_suppress: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
+        }
+    }
+
+    fn migrate_float_adopted(
+        session: &mut Session,
+        owner: &OwnerId,
+        gen_id: &GenerationId,
+        floats: &[&str],
+        focus: Option<&WindowId>,
+    ) {
+        use crate::contract::Observation;
+        use crate::session::{ObservedWindow, SessionObservation};
+        let base = session.accepted_revision();
+        let windows: Vec<ObservedWindow> = session
+            .snapshot()
+            .windows
+            .iter()
+            .map(|link| ObservedWindow {
+                window: link.window.clone(),
+                output: link.output.clone(),
+                workspace: link.workspace.clone(),
+                floating: floats.contains(&link.window.0.as_str()),
+                fullscreen: false,
+                maximized: false,
+                sticky: false,
+                fixed_auto: false,
+                fixed_suppress: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            })
+            .collect();
+        session
+            .converge_observation(
+                &SessionObservation {
+                    observation: Observation::new(owner.clone(), gen_id.clone(), base, 7),
+                    windows,
+                },
+                focus,
+            )
+            .expect("float adoption converges");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn migrate_event_for(
+        owner: &OwnerId,
+        gen_id: &GenerationId,
+        source_domain: &OutputDomain,
+        revision: u64,
+        focused: &str,
+        windows: Vec<EngineWindow>,
+        target_domain: &OutputDomain,
+        correlation: &str,
+    ) -> CoreEvent {
+        use crate::boundary::CoreCommand;
+        use crate::ids::CorrelationId;
+        CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse(correlation).expect("valid"),
+            revision,
+            fingerprint: 7,
+            domain: source_domain.clone(),
+            domain_key: source_domain.key(),
+            outer_gap: 0,
+            focused_window: WindowId(focused.to_owned()),
+            windows,
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: Some((target_domain.clone(), target_domain.key())),
+            target_windows: vec![],
+            command: CoreCommand::MigrateWorkspace {
+                direction: "right".to_owned(),
+            },
+        }
+    }
+
+    #[test]
+    fn migrate_workspace_active_float_names_client_without_tile_focus() {
+        use crate::boundary::CoreReply;
+        use crate::directional::WindowId;
+        // Focused names the float exception: no tiled leaf to echo, so the
+        // reply carries no focus while `active_window` names the client; the
+        // stored tiled focus still rekeys with the domain.
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out-1", "ws-2");
+        let source_key = source_domain.key();
+        let order = ["win-a", "win-b", "win-c"]
+            .iter()
+            .map(|window| migrate_carried((window, false, false)))
+            .collect::<Vec<_>>();
+        let mut seeded =
+            crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
+        migrate_float_adopted(
+            &mut seeded,
+            &owner,
+            &gen_id,
+            &["win-c"],
+            Some(&WindowId("win-b".to_owned())),
+        );
+        let (_, pre_leaf) = seeded.focus();
+        let pre_leaf = pre_leaf.expect("tiled focus retained");
+        let pre_revision = seeded.accepted_revision();
+        engine.store_committed(source_key.clone(), seeded, 0);
+        let target_domain = domain("out-2", "ws-2");
+        let target_key = target_domain.key();
+        let carried = ["win-a", "win-b"]
+            .iter()
+            .map(|window| migrate_carried((window, false, false)))
+            .chain(std::iter::once(migrate_carried(("win-c", true, false))))
+            .collect::<Vec<_>>();
+        let event = migrate_event_for(
+            &owner,
+            &gen_id,
+            &source_domain,
+            pre_revision,
+            "win-c",
+            carried,
+            &target_domain,
+            "corr-migrate-active-float",
+        );
+        let plan = match engine.handle(&event) {
+            CoreReply::MigrateWorkspace(plan) => plan,
+            other => panic!("active-float migration must plan, got {other:?}"),
+        };
+        assert_eq!(plan.geometry.len(), 2);
+        assert_eq!(plan.focus_domain, None, "no tile focus fabricated");
+        assert_eq!(plan.focus_leaf, None);
+        assert_eq!(plan.active_window, Some(WindowId("win-c".to_owned())));
+        let moved = engine.session(&target_key).expect("moved");
+        assert_eq!(moved.focus(), (Some(target_key), Some(pre_leaf)));
+        assert!(moved.is_exception(&WindowId("win-c".to_owned())));
+    }
+
+    #[test]
+    fn migrate_workspace_float_only_carries_exceptions() {
+        use crate::boundary::CoreReply;
+        use crate::directional::WindowId;
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out-1", "ws-2");
+        let source_key = source_domain.key();
+        let order = ["win-a", "win-b"]
+            .iter()
+            .map(|window| migrate_carried((window, false, false)))
+            .collect::<Vec<_>>();
+        let mut seeded =
+            crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
+        migrate_float_adopted(&mut seeded, &owner, &gen_id, &["win-a", "win-b"], None);
+        assert!(seeded.tree_for(&source_key).is_none(), "no tiled tree left");
+        let pre_revision = seeded.accepted_revision();
+        engine.store_committed(source_key.clone(), seeded, 0);
+        let target_domain = domain("out-2", "ws-2");
+        let target_key = target_domain.key();
+        let carried = ["win-a", "win-b"]
+            .iter()
+            .map(|window| migrate_carried((window, true, false)))
+            .collect::<Vec<_>>();
+        let event = migrate_event_for(
+            &owner,
+            &gen_id,
+            &source_domain,
+            pre_revision,
+            "win-a",
+            carried,
+            &target_domain,
+            "corr-migrate-float-only",
+        );
+        let plan = match engine.handle(&event) {
+            CoreReply::MigrateWorkspace(plan) => plan,
+            other => panic!("float-only migration must plan, got {other:?}"),
+        };
+        assert!(plan.geometry.is_empty());
+        assert_eq!(plan.focus_domain, None);
+        assert_eq!(plan.active_window, Some(WindowId("win-a".to_owned())));
+        assert_eq!(plan.members, 2);
+        assert_eq!(plan.floats, 2);
+        let moved = engine.session(&target_key).expect("moved");
+        for window in ["win-a", "win-b"] {
+            assert!(moved.is_exception(&WindowId(window.to_owned())));
+        }
+        assert!(!engine.contains(&source_key));
+    }
+
+    #[test]
+    fn migrate_workspace_absent_active_client_keeps_members() {
+        use crate::boundary::CoreReply;
+        use crate::directional::WindowId;
+        // No active client (empty focus with members): members still migrate
+        // with no fabricated focus on either side.
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out-1", "ws-2");
+        let source_key = source_domain.key();
+        let order = ["win-a", "win-b"]
+            .iter()
+            .map(|window| migrate_carried((window, false, false)))
+            .collect::<Vec<_>>();
+        let seeded =
+            crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
+        let pre_revision = seeded.accepted_revision();
+        engine.store_committed(source_key.clone(), seeded, 0);
+        let target_domain = domain("out-2", "ws-2");
+        let target_key = target_domain.key();
+        let event = migrate_event_for(
+            &owner,
+            &gen_id,
+            &source_domain,
+            pre_revision,
+            "",
+            order,
+            &target_domain,
+            "corr-migrate-no-active",
+        );
+        let plan = match engine.handle(&event) {
+            CoreReply::MigrateWorkspace(plan) => plan,
+            other => panic!("no-active migration must plan, got {other:?}"),
+        };
+        assert_eq!(plan.geometry.len(), 2);
+        assert_eq!(plan.focus_domain, None);
+        assert_eq!(plan.active_window, None);
+        assert!(engine.session(&target_key).is_some());
+        assert!(!engine.contains(&source_key));
+        let _ = WindowId("win-a".to_owned());
+    }
+
+    #[test]
+    fn migrate_workspace_retained_empty_session_migrates_empty() {
+        use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
+        use crate::directional::WindowId;
+        use crate::ids::CorrelationId;
+        // A retained (raw-inserted) empty session migrates like the absent
+        // path: the slot is retired with no focus and no geometry.
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out-1", "ws-2");
+        let source_key = source_domain.key();
+        let empty = Session::new(
+            owner.clone(),
+            gen_id.clone(),
+            0,
+            7,
+            vec![source_domain.clone()],
+        )
+        .expect("empty session");
+        engine.insert_raw(source_key.clone(), empty, 0);
+        let target_domain = domain("out-2", "ws-2");
+        let target_key = target_domain.key();
+        let event = CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse("corr-migrate-empty-present").expect("valid"),
+            revision: 0,
+            fingerprint: 7,
+            domain: source_domain,
+            domain_key: source_key.clone(),
+            outer_gap: 0,
+            focused_window: WindowId(String::new()),
+            windows: vec![],
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: Some((target_domain, target_key.clone())),
+            target_windows: vec![],
+            command: CoreCommand::MigrateWorkspace {
+                direction: "right".to_owned(),
+            },
+        };
+        match engine.handle(&event) {
+            CoreReply::MigrateWorkspace(plan) => {
+                assert!(plan.geometry.is_empty());
+                assert_eq!(plan.focus_domain, None);
+            }
+            other => panic!("retained-empty migration must plan, got {other:?}"),
+        }
+        assert!(!engine.contains(&source_key));
+        assert!(!engine.contains(&target_key));
+    }
+
+    #[test]
+    fn migrate_workspace_sticky_stays_homed_on_source() {
+        use crate::boundary::CoreReply;
+        use crate::directional::WindowId;
+        // Sticky rides the carried observation for identity but never the
+        // target: tiled members plus the workspace float move, the sticky
+        // link stays homed on the source with its leaf and class intact.
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out-1", "ws-2");
+        let source_key = source_domain.key();
+        let order = ["win-1", "win-2", "win-f"]
+            .iter()
+            .map(|window| migrate_carried((window, false, false)))
+            .collect::<Vec<_>>();
+        let mut seeded =
+            crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
+        migrate_float_adopted(
+            &mut seeded,
+            &owner,
+            &gen_id,
+            &["win-f"],
+            Some(&WindowId("win-1".to_owned())),
+        );
+        // The sticky window converges as an ordinary tiled link (sticky is
+        // adapter-owned); it joins retained state through the same primitive.
+        {
+            use crate::contract::Observation;
+            use crate::session::{ObservedWindow, SessionObservation};
+            let base = seeded.accepted_revision();
+            let mut windows: Vec<ObservedWindow> = seeded
+                .snapshot()
+                .windows
+                .iter()
+                .map(|link| ObservedWindow {
+                    window: link.window.clone(),
+                    output: link.output.clone(),
+                    workspace: link.workspace.clone(),
+                    floating: false,
+                    fullscreen: false,
+                    maximized: false,
+                    sticky: false,
+                    fixed_auto: false,
+                    fixed_suppress: false,
+                    hints: crate::size_hints::WindowSizeHints::none(),
+                })
+                .collect();
+            windows.extend(seeded.exception_observed());
+            windows.push(ObservedWindow {
+                window: WindowId("win-s".to_owned()),
+                output: OutputId("out-1".to_owned()),
+                workspace: WorkspaceId("ws-2".to_owned()),
+                floating: false,
+                fullscreen: false,
+                maximized: false,
+                sticky: true,
+                fixed_auto: false,
+                fixed_suppress: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            });
+            seeded
+                .converge_observation(
+                    &SessionObservation {
+                        observation: Observation::new(owner.clone(), gen_id.clone(), base, 7),
+                        windows,
+                    },
+                    Some(&WindowId("win-1".to_owned())),
+                )
+                .expect("sticky converges");
+        }
+        let sticky_leaf = seeded
+            .snapshot()
+            .windows
+            .iter()
+            .find(|link| link.window.0 == "win-s")
+            .expect("sticky linked")
+            .leaf
+            .clone();
+        let pre_revision = seeded.accepted_revision();
+        engine.store_committed(source_key.clone(), seeded, 0);
+        let target_domain = domain("out-2", "ws-2");
+        let target_key = target_domain.key();
+        let carried = ["win-1", "win-2"]
+            .iter()
+            .map(|window| migrate_carried((window, false, false)))
+            .chain(std::iter::once(migrate_carried(("win-f", true, false))))
+            .chain(std::iter::once(migrate_carried(("win-s", false, true))))
+            .collect::<Vec<_>>();
+        let event = migrate_event_for(
+            &owner,
+            &gen_id,
+            &source_domain,
+            pre_revision,
+            "win-1",
+            carried,
+            &target_domain,
+            "corr-migrate-sticky",
+        );
+        let plan = match engine.handle(&event) {
+            CoreReply::MigrateWorkspace(plan) => plan,
+            other => panic!("sticky migration must plan, got {other:?}"),
+        };
+        assert_eq!(plan.geometry.len(), 2, "sticky takes no tile");
+        assert!(plan.geometry.iter().all(|entry| entry.window.0 != "win-s"));
+        assert_eq!(plan.active_window, Some(WindowId("win-1".to_owned())));
+        let moved = engine.session(&target_key).expect("moved");
+        assert!(
+            moved
+                .snapshot()
+                .windows
+                .iter()
+                .all(|link| link.window.0 != "win-s"),
+            "sticky never rehomes to the target"
+        );
+        assert!(moved.is_exception(&WindowId("win-f".to_owned())));
+        let stay = engine.session(&source_key).expect("sticky residual");
+        let stay_snapshot = stay.snapshot();
+        let stay_link = stay_snapshot
+            .windows
+            .iter()
+            .find(|link| link.window.0 == "win-s")
+            .expect("sticky kept");
+        assert_eq!(stay_link.output.0, "out-1", "source home preserved");
+        assert_eq!(stay_link.workspace.0, "ws-2");
+        assert_eq!(stay_link.leaf, sticky_leaf, "leaf identity preserved");
+        assert_eq!(engine.outer_gap(&source_key), Some(0));
+        let report = engine.last_migration().expect("migration logged");
+        assert_eq!(report.members, 3);
+        assert_eq!(report.floats, 1);
+    }
+
+    #[test]
+    fn migrate_workspace_ignores_wire_revision() {
+        use crate::boundary::CoreReply;
+        // The wire revision is vestigial (adapters hardcode 0; bases derive
+        // internally like every other op): an arbitrary revision with exact
+        // members still plans at the retained revision.
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out-1", "ws-2");
+        let source_key = source_domain.key();
+        let order = ["win-1", "win-2"]
+            .iter()
+            .map(|window| migrate_carried((window, false, false)))
+            .collect::<Vec<_>>();
+        let seeded =
+            crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
+        let pre_revision = seeded.accepted_revision();
+        engine.store_committed(source_key.clone(), seeded, 0);
+        let target_domain = domain("out-2", "ws-2");
+        let event = migrate_event_for(
+            &owner,
+            &gen_id,
+            &source_domain,
+            u64::MAX,
+            "win-1",
+            order,
+            &target_domain,
+            "corr-migrate-wire-rev",
+        );
+        match engine.handle(&event) {
+            CoreReply::MigrateWorkspace(plan) => assert_eq!(plan.base_revision, pre_revision),
+            other => panic!("vestigial revision must still plan, got {other:?}"),
+        }
+        assert!(!engine.contains(&source_key));
+    }
+
+    #[test]
+    fn migrate_workspace_refuses_partial_and_maximized_float() {
+        use crate::boundary::CoreReply;
+        use crate::directional::WindowId;
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out-1", "ws-2");
+        let source_key = source_domain.key();
+        let order = ["win-1", "win-2"]
+            .iter()
+            .map(|window| migrate_carried((window, false, false)))
+            .collect::<Vec<_>>();
+        let seeded =
+            crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
+        let pre_revision = seeded.accepted_revision();
+        assert!(pre_revision > 0);
+        engine.store_committed(source_key.clone(), seeded, 0);
+        let target_domain = domain("out-2", "ws-2");
+        // Partial membership (unseen retained member) refuses without commit.
+        let partial = migrate_event_for(
+            &owner,
+            &gen_id,
+            &source_domain,
+            pre_revision,
+            "win-1",
+            vec![migrate_carried(("win-1", false, false))],
+            &target_domain,
+            "corr-migrate-partial",
+        );
+        match engine.handle(&partial) {
+            CoreReply::Rejected { kind, message } => {
+                assert_eq!(kind, "partial-observation");
+                assert_eq!(message, "observation does not cover the known window set");
+            }
+            other => panic!("partial must refuse, got {other:?}"),
+        }
+        // A maximized float is still an overlay: the explicit maximized flag
+        // (not the fit-excluded proxy) refuses before any mutation.
+        let mut max_float = migrate_carried(("win-1", true, false));
+        max_float.maximized = true;
+        let overlay = migrate_event_for(
+            &owner,
+            &gen_id,
+            &source_domain,
+            pre_revision,
+            "win-1",
+            vec![max_float, migrate_carried(("win-2", false, false))],
+            &target_domain,
+            "corr-migrate-max-float",
+        );
+        match engine.handle(&overlay) {
+            CoreReply::Rejected { kind, message } => {
+                assert_eq!(kind, "overlay-present");
+                assert_eq!(
+                    message,
+                    "workspace contains a fullscreen or maximized window"
+                );
+            }
+            other => panic!("maximized float must refuse, got {other:?}"),
+        }
+        assert!(engine.contains(&source_key), "refusals mutate nothing");
+        assert!(!engine.contains(&target_domain.key()));
+        let retained = engine.session(&source_key).expect("source kept");
+        assert_eq!(retained.accepted_revision(), pre_revision);
+        let _ = WindowId("win-1".to_owned());
+    }
+
+    #[test]
+    fn migrate_workspace_retained_empty_adopts_carried_newcomers() {
+        use crate::boundary::CoreReply;
+        use crate::directional::WindowId;
+        // Retained-empty sources migrate empty only when nothing is carried;
+        // carried newcomers are adopted through the normal flow instead of
+        // being discarded with the retired slot.
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out-1", "ws-2");
+        let source_key = source_domain.key();
+        let empty = Session::new(
+            owner.clone(),
+            gen_id.clone(),
+            0,
+            7,
+            vec![source_domain.clone()],
+        )
+        .expect("empty session");
+        engine.insert_raw(source_key.clone(), empty, 0);
+        let target_domain = domain("out-2", "ws-2");
+        let target_key = target_domain.key();
+        let order = ["win-1", "win-2"]
+            .iter()
+            .map(|window| migrate_carried((window, false, false)))
+            .collect::<Vec<_>>();
+        let event = migrate_event_for(
+            &owner,
+            &gen_id,
+            &source_domain,
+            0,
+            "win-1",
+            order,
+            &target_domain,
+            "corr-migrate-empty-adopt",
+        );
+        let plan = match engine.handle(&event) {
+            CoreReply::MigrateWorkspace(plan) => plan,
+            other => panic!("newcomers must be adopted and migrated, got {other:?}"),
+        };
+        assert_eq!(plan.geometry.len(), 2);
+        assert_eq!(plan.active_window, Some(WindowId("win-1".to_owned())));
+        let moved = engine.session(&target_key).expect("moved");
+        assert_eq!(moved.snapshot().windows.len(), 2);
+        assert!(!engine.contains(&source_key));
+    }
+
+    #[test]
+    fn migrate_workspace_refuses_off_source_homing_and_dangling_focus() {
+        use crate::boundary::CoreReply;
+        use crate::directional::WindowId;
+        // Direct Engine callers get the same fences as the protocol route:
+        // off-source homing and unfocused-but-named clients refuse with live
+        // state exactly intact.
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out-1", "ws-2");
+        let source_key = source_domain.key();
+        let order = ["win-1", "win-2"]
+            .iter()
+            .map(|window| migrate_carried((window, false, false)))
+            .collect::<Vec<_>>();
+        let seeded =
+            crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
+        let pre_revision = seeded.accepted_revision();
+        engine.store_committed(source_key.clone(), seeded, 0);
+        let target_domain = domain("out-2", "ws-2");
+        let mut drifted = migrate_carried(("win-2", false, false));
+        drifted.output = OutputId("out-9".to_owned());
+        let homing = migrate_event_for(
+            &owner,
+            &gen_id,
+            &source_domain,
+            pre_revision,
+            "win-1",
+            vec![migrate_carried(("win-1", false, false)), drifted],
+            &target_domain,
+            "corr-migrate-homing",
+        );
+        match engine.handle(&homing) {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "cross-domain-mismatch"),
+            other => panic!("off-source homing must refuse, got {other:?}"),
+        }
+        let dangling = migrate_event_for(
+            &owner,
+            &gen_id,
+            &source_domain,
+            pre_revision,
+            "win-z",
+            order,
+            &target_domain,
+            "corr-migrate-dangling",
+        );
+        match engine.handle(&dangling) {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "focus-mismatch"),
+            other => panic!("dangling focus must refuse, got {other:?}"),
+        }
+        assert!(engine.contains(&source_key));
+        assert!(!engine.contains(&target_domain.key()));
+        assert_eq!(
+            engine
+                .session(&source_key)
+                .expect("kept")
+                .accepted_revision(),
+            pre_revision
+        );
+        let _ = WindowId("win-1".to_owned());
+    }
+
+    #[test]
+    fn migrate_workspace_sticky_active_echoes_null() {
+        use crate::boundary::CoreReply;
+        use crate::directional::WindowId;
+        // Follow-only: a stayed sticky active echoes null like an absent
+        // client. KDE still shows the migrated workspace after verified
+        // arrival and never activates the source sticky on the target.
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out-1", "ws-2");
+        let source_key = source_domain.key();
+        let order = ["win-1", "win-s"]
+            .iter()
+            .map(|window| migrate_carried((window, false, false)))
+            .collect::<Vec<_>>();
+        let mut seeded =
+            crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
+        migrate_float_adopted(&mut seeded, &owner, &gen_id, &[], None);
+        {
+            use crate::contract::Observation;
+            use crate::session::{ObservedWindow, SessionObservation};
+            let base = seeded.accepted_revision();
+            let mut windows: Vec<ObservedWindow> = seeded
+                .snapshot()
+                .windows
+                .iter()
+                .map(|link| ObservedWindow {
+                    window: link.window.clone(),
+                    output: link.output.clone(),
+                    workspace: link.workspace.clone(),
+                    floating: false,
+                    fullscreen: false,
+                    maximized: false,
+                    sticky: link.window.0 == "win-s",
+                    fixed_auto: false,
+                    fixed_suppress: false,
+                    hints: crate::size_hints::WindowSizeHints::none(),
+                })
+                .collect();
+            windows.extend(seeded.exception_observed());
+            seeded
+                .converge_observation(
+                    &SessionObservation {
+                        observation: Observation::new(owner.clone(), gen_id.clone(), base, 7),
+                        windows,
+                    },
+                    Some(&WindowId("win-s".to_owned())),
+                )
+                .expect("sticky converges");
+        }
+        let pre_revision = seeded.accepted_revision();
+        engine.store_committed(source_key.clone(), seeded, 0);
+        let target_domain = domain("out-2", "ws-2");
+        let target_key = target_domain.key();
+        let carried = vec![
+            migrate_carried(("win-1", false, false)),
+            migrate_carried(("win-s", false, true)),
+        ];
+        let event = migrate_event_for(
+            &owner,
+            &gen_id,
+            &source_domain,
+            pre_revision,
+            "win-s",
+            carried,
+            &target_domain,
+            "corr-migrate-sticky-active",
+        );
+        let plan = match engine.handle(&event) {
+            CoreReply::MigrateWorkspace(plan) => plan,
+            other => panic!("sticky-active migration must plan, got {other:?}"),
+        };
+        assert_eq!(plan.geometry.len(), 1);
+        assert_eq!(plan.focus_domain, None);
+        assert_eq!(plan.active_window, None, "stayed sticky never echoes");
+        let moved = engine.session(&target_key).expect("moved");
+        assert_eq!(moved.snapshot().windows.len(), 1);
+        let stay = engine.session(&source_key).expect("residual");
+        assert!(
+            stay.snapshot()
+                .windows
+                .iter()
+                .any(|link| link.window.0 == "win-s"),
+            "sticky stays homed on source"
         );
     }
 

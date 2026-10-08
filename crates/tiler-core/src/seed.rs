@@ -39,6 +39,11 @@ pub struct EngineWindow {
     /// fullscreen bypasses the fixed classifier. Defaults false so
     /// existing carriers behave exactly as before.
     pub fullscreen: bool,
+    /// Native maximized overlay (R-WS-12 migration gate): carried so the
+    /// whole-workspace refusal detects maximized floats independently of
+    /// the `fit_excluded` proxy. Defaults false so existing carriers
+    /// behave exactly as before.
+    pub maximized: bool,
     /// Native sticky state (Q2 fixed-size admission, D3/D6): sticky
     /// floats are intentional, never automatic. Defaults false.
     pub sticky: bool,
@@ -426,9 +431,8 @@ pub fn seed_target_bounds(session: &Session, domain: &OutputDomain) -> Rect {
 }
 
 /// Portable observed-window mapping: tiled seed observations carry no
-/// exception flags beyond the carried floating/fullscreen/sticky bits
-/// (maximized stays a native-only overlay). Hints propagate unchanged
-/// (advisory only; never identity).
+/// exception flags beyond the carried floating/fullscreen/maximized/sticky
+/// bits. Hints propagate unchanged (advisory only; never identity).
 #[must_use]
 pub fn observed_window_from_engine(entry: &EngineWindow) -> ObservedWindow {
     ObservedWindow {
@@ -437,7 +441,7 @@ pub fn observed_window_from_engine(entry: &EngineWindow) -> ObservedWindow {
         workspace: entry.workspace.clone(),
         floating: entry.floating,
         fullscreen: entry.fullscreen,
-        maximized: false,
+        maximized: entry.maximized,
         sticky: entry.sticky,
         fixed_auto: entry.fixed_auto,
         fixed_suppress: entry.fixed_suppress,
@@ -738,6 +742,7 @@ mod tests {
             floating: false,
             fit_excluded: false,
             fullscreen: false,
+            maximized: false,
             sticky: false,
             fixed_auto: false,
             fixed_suppress: false,

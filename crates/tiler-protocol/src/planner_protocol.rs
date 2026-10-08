@@ -247,6 +247,12 @@ struct ObservedDto {
     /// existing fixtures parse unchanged.
     #[serde(default)]
     fullscreen: bool,
+    /// Native maximized overlay (R-WS-12 migration gate): carried so the
+    /// whole-workspace refusal detects maximized floats independently of
+    /// the `fit_excluded` proxy. Defaults false so existing fixtures parse
+    /// unchanged.
+    #[serde(default)]
+    maximized: bool,
     /// Native sticky state for the Q2 fixed-size classifier (D3/D6):
     /// sticky floats are intentional, never automatic. Defaults false.
     #[serde(default)]
@@ -699,6 +705,51 @@ fn emit_engine_fixed_admission(engine: &Engine) {
                 report.evaluated,
                 report.admitted,
                 report.reason,
+            )
+        );
+    }
+}
+
+/// Normal-level whole-workspace migration summary (R-WS-12): exactly one per
+/// successful explicit migration, owned by the Engine decision and emitted at
+/// `handle_and_serialize`. It records the retained rekey only, never native
+/// completion: the adapter transfers natively afterwards under
+/// `adapter-must-verify-postconditions`. Correlated direction plus relocated
+/// member/float counts and the empty-domain marker; never identifiers,
+/// geometry, domains, owner, or payloads.
+#[must_use]
+pub fn summarize_plan_migration(
+    correlation: &str,
+    direction: &str,
+    members: usize,
+    floats: usize,
+    empty: bool,
+) -> String {
+    format!(
+        "{PLAN_SUMMARY_PREFIX} direction=migration op=migrate-workspace correlation={} migrate_direction={} members={} floats={} empty={}",
+        summary_correlation(Some(correlation)),
+        summary_token(Some(direction)),
+        members,
+        floats,
+        if empty { "true" } else { "false" },
+    )
+}
+
+/// Emit the bounded correlated migration summary for the just-completed
+/// [`Engine::handle`] call, if it completed an explicit migration.
+/// Log-only; refusals record nothing so they stay at the ingress/egress pair.
+fn emit_engine_migration(engine: &Engine) {
+    if let Some(report) = engine.last_migration() {
+        use std::io::Write;
+        let _ = writeln!(
+            std::io::stderr(),
+            "{}",
+            summarize_plan_migration(
+                report.correlation.as_str(),
+                report.direction,
+                report.members,
+                report.floats,
+                report.empty,
             )
         );
     }
@@ -1423,7 +1474,11 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
             }
         }
     }
-    if !request.windows.is_empty()
+    // Whole-workspace migration permits an empty active client with
+    // members (no fabricated focus); the Engine owns that gate.
+    let migrate_no_active = op_str == "migrate-workspace" && request.focused_window.is_empty();
+    if !migrate_no_active
+        && !request.windows.is_empty()
         && !request
             .windows
             .iter()
@@ -2076,6 +2131,65 @@ fn serialize_send_output_reply(
     })
 }
 
+/// Whole-workspace migration serializer driven by a
+/// [`tiler_core::boundary::MigrateWorkspacePlan`] (single source). The
+/// operation binds the frozen source/target identity plus the carried active
+/// client (`active_window`, null when the request carried none) the adapter
+/// must gate setters and follow/completion on. `detail.commit` names the
+/// retained effect (`retained-rekey-planned`); native completion is never
+/// claimed here.
+fn serialize_migrate_workspace_reply(
+    correlation_id: &str,
+    plan: &tiler_core::boundary::MigrateWorkspacePlan,
+) -> String {
+    let operation_value = serde_json::json!({
+        "op": "migrate-workspace",
+        "direction": direction_str(plan.direction),
+        "source_output": plan.source.output.0,
+        "source_workspace": plan.source.workspace.0,
+        "target_output": plan.target.output.0,
+        "target_workspace": plan.target.workspace.0,
+        "active_window": plan.active_window.as_ref().map(|window| window.0.clone()),
+    });
+    let preconditions: Vec<&'static str> = plan
+        .preconditions
+        .iter()
+        .map(|p| lifecycle_precondition_str(*p))
+        .collect();
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: correlation_id.to_owned(),
+        outcome: "planned",
+        kind: Some("migrate-workspace".to_owned()),
+        message: None,
+        base_revision: Some(plan.base_revision),
+        detail: Some(serde_json::json!({
+            "kind": "migrate-workspace",
+            "policy_version": tiler_core::contract::LIFECYCLE_POLICY_VERSION,
+            "capability": "migrate-workspace",
+            "commit": "retained-rekey-planned",
+            "direction": direction_str(plan.direction),
+            "source_output": plan.source.output.0,
+            "source_workspace": plan.source.workspace.0,
+            "target_output": plan.target.output.0,
+            "target_workspace": plan.target.workspace.0,
+            "active_window": plan.active_window.as_ref().map(|window| window.0.clone()),
+            "members": plan.members,
+            "floats": plan.floats,
+        })),
+        desired_geometry: Some(plan.geometry.iter().map(geometry_reply).collect()),
+        desired_focus: match (&plan.focus_domain, &plan.focus_leaf) {
+            (Some(d), Some(l)) => Some(focus_reply(d, l)),
+            _ => None,
+        },
+        float_geometry: None,
+        preconditions: Some(preconditions),
+        operation: Some(operation_value),
+        preview_rect: None,
+        hover_prior: None,
+    })
+}
+
 /// Byte-exact read-only drag-preview serializer driven by a
 /// [`tiler_core::boundary::DragPreviewPlan`] (single source). Outcome
 /// `preview` with kind `drag-preview`: the proposed source rectangle plus the
@@ -2175,6 +2289,7 @@ fn serialize_core_reply(ctx: &Validated, reply: &tiler_core::boundary::CoreReply
         CoreReply::Tiled(plan) => planned_tiled_reply(&cid, plan),
         CoreReply::SendWorkspace(plan) => serialize_send_workspace_reply(&cid, plan),
         CoreReply::SendOutput(plan) => serialize_send_output_reply(&cid, plan),
+        CoreReply::MigrateWorkspace(plan) => serialize_migrate_workspace_reply(&cid, plan),
         CoreReply::MoveDirectional(plan) => serialize_move_reply(&cid, plan),
         CoreReply::FocusDirectional(plan) => serialize_focus_reply(&cid, plan),
         CoreReply::Resize(plan) => serialize_resize_reply(&cid, plan),
@@ -2208,6 +2323,7 @@ fn engine_window_from_dto(entry: &ObservedDto) -> tiler_core::seed::EngineWindow
         floating: entry.floating,
         fit_excluded: entry.fit_excluded,
         fullscreen: entry.fullscreen,
+        maximized: entry.maximized,
         sticky: entry.sticky,
         fixed_auto: entry.fixed_auto,
         fixed_suppress: entry.fixed_suppress,
@@ -2352,6 +2468,9 @@ impl Planner {
         if validated_op(&ctx).as_str() == "send-to-output" {
             return self.evaluate_send_output_request(&ctx);
         }
+        if validated_op(&ctx).as_str() == "migrate-workspace" {
+            return self.evaluate_migrate_workspace_request(&ctx);
+        }
         self.sync_binding(&ctx.owner, &ctx.generation);
         // Typed codec: reconcile/update-gaps/active-group
         // parse once via `SyncCommand` after all boundaries (validation,
@@ -2423,6 +2542,7 @@ impl Planner {
         emit_engine_convergence(&self.engine);
         emit_engine_adoption_fit(&self.engine);
         emit_engine_fixed_admission(&self.engine);
+        emit_engine_migration(&self.engine);
         emit_engine_placement_trace(&self.engine);
         serialize_core_reply(ctx, &reply)
     }
@@ -3463,6 +3583,149 @@ impl Planner {
         event.target_domain = Some((input.target_domain, input.target_key));
         self.handle_and_serialize(ctx, &event)
     }
+
+    /// Whole-workspace migration target scope: the target keeps the source
+    /// workspace id on a different output; `target_windows` must be empty
+    /// (a DIFFERENT current workspace on the destination stays KDE-native).
+    fn migrate_target_scope(&self, ctx: &Validated) -> Result<(OutputDomain, DomainKey), String> {
+        let cid = ctx.request.correlation_id.clone();
+        let Some(target_dto) = &ctx.request.target_domain else {
+            return Err(rejected(
+                cid,
+                "workspace-target-invalid",
+                "target workspace domain is missing",
+            ));
+        };
+        if !is_opaque_id(&target_dto.output) {
+            return Err(rejected(
+                cid,
+                "workspace-target-invalid",
+                "target output is invalid",
+            ));
+        }
+        if !is_opaque_id(&target_dto.workspace) {
+            return Err(rejected(
+                cid,
+                "workspace-target-invalid",
+                "target workspace is invalid",
+            ));
+        }
+        if target_dto.output == ctx.request.domain.output {
+            return Err(rejected(
+                cid,
+                "cross-domain-mismatch",
+                "target output equals the source output",
+            ));
+        }
+        if target_dto.workspace != ctx.request.domain.workspace {
+            return Err(rejected(cid, "cross-domain-mismatch", MSG_CROSS_DOMAIN));
+        }
+        if !ctx.request.target_windows.is_empty() {
+            return Err(rejected(
+                cid,
+                RefusalKind::Unchanged.as_str(),
+                RefusalKind::Unchanged.message(),
+            ));
+        }
+        let carried_bounds = Rect {
+            x: target_dto.bounds.x,
+            y: target_dto.bounds.y,
+            w: target_dto.bounds.w,
+            h: target_dto.bounds.h,
+        };
+        if !valid_carried_rect(
+            carried_bounds.x,
+            carried_bounds.y,
+            carried_bounds.w,
+            carried_bounds.h,
+        ) {
+            return Err(snapshot_invalid(
+                cid,
+                MSG_OBSERVATION,
+                "domain-bounds-invalid",
+            ));
+        }
+        if target_dto.gap < 0 {
+            return Err(snapshot_invalid(cid, MSG_OBSERVATION, "gap-low"));
+        }
+        if target_dto.gap > GEOMETRY_MAX_GAP {
+            return Err(snapshot_invalid(cid, MSG_OBSERVATION, "gap-high"));
+        }
+        if target_dto.outer_gap < 0 {
+            return Err(snapshot_invalid(cid, MSG_OBSERVATION, "outer-gap-low"));
+        }
+        if target_dto.outer_gap > GEOMETRY_MAX_GAP {
+            return Err(snapshot_invalid(cid, MSG_OBSERVATION, "outer-gap-high"));
+        }
+        let Ok(projected_target) =
+            tiler_core::geometry::inset_bounds(carried_bounds, target_dto.outer_gap)
+        else {
+            return Err(snapshot_invalid(cid, MSG_OBSERVATION, "inset-exhausted"));
+        };
+        let target_domain = OutputDomain {
+            id: OutputId(target_dto.output.clone()),
+            workspace: WorkspaceId(target_dto.workspace.clone()),
+            bounds: projected_target,
+            gap: target_dto.gap,
+            adjacent: std::collections::BTreeMap::new(),
+        };
+        if !target_domain.validate() {
+            return Err(snapshot_invalid(cid, MSG_OBSERVATION, "domain-invalid"));
+        }
+        let target_key = DomainKey {
+            output: OutputId(target_dto.output.clone()),
+            workspace: WorkspaceId(target_dto.workspace.clone()),
+        };
+        Ok((target_domain, target_key))
+    }
+
+    /// Validate the migration request: target scope plus the directional
+    /// verb. No mover binding (whole domain), no follow flag (follow-only).
+    /// Empty members require empty focus; the Engine owns the rest.
+    fn validate_migrate_input(
+        &self,
+        ctx: &Validated,
+    ) -> Result<(OutputDomain, DomainKey, String), String> {
+        let cid = ctx.request.correlation_id.clone();
+        let (target_domain, target_key) = self.migrate_target_scope(ctx)?;
+        if ctx.request.windows.is_empty() && !ctx.request.focused_window.is_empty() {
+            return Err(rejected(
+                cid,
+                RefusalKind::FocusMismatch.as_str(),
+                RefusalKind::FocusMismatch.message(),
+            ));
+        }
+        let direction = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+            Ok(SyncCommand::MigrateWorkspace { direction }) => direction,
+            Ok(_) => {
+                return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "migrate-op-invalid"));
+            }
+            Err(error) => {
+                if is_unknown_variant(&error) {
+                    return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "migrate-op-invalid"));
+                }
+                let (kind, message) = classify_parse_error(&error);
+                return Err(rejected(valid_correlation_echo(&ctx.raw), kind, message));
+            }
+        };
+        if parse_direction(&direction).is_none() {
+            return Err(rejected(cid, "direction-invalid", MSG_DIRECTION));
+        }
+        Ok((target_domain, target_key, direction))
+    }
+
+    /// Explicit whole-workspace migration request phase: retained rekey
+    /// through the Engine. Reply `planned` means retained rekey only.
+    fn evaluate_migrate_workspace_request(&mut self, ctx: &Validated) -> String {
+        let (target_domain, target_key, direction) = match self.validate_migrate_input(ctx) {
+            Ok(input) => input,
+            Err(reply) => return reply,
+        };
+        let core_command = tiler_core::boundary::CoreCommand::MigrateWorkspace { direction };
+        let mut event = core_event(ctx, &core_command);
+        event.target_domain = Some((target_domain, target_key));
+        self.handle_and_serialize(ctx, &event)
+    }
 }
 
 fn evaluate_toggle_float_with(
@@ -3735,11 +3998,11 @@ struct DragPayload {
 
 /// Typed synchronous command codec (narrow).
 ///
-/// Internally tagged on `op` with `deny_unknown_fields` for all fourteen
+/// Internally tagged on `op` with `deny_unknown_fields` for all fifteen
 /// synchronous command ops: reconcile, update-gaps, active-group,
 /// release-domain, move, focus, resize, pointer-resize, toggle-float,
-/// toggle-orientation, `send-to-workspace`, `send-to-output`, `drag-drop`,
-/// and read-only `drag-preview`.
+/// toggle-orientation, `send-to-workspace`, `send-to-output`,
+/// `migrate-workspace`, `drag-drop`, and read-only `drag-preview`.
 /// Sync handlers parse
 /// [`SyncCommand`] once in place after the existing dispatch boundaries
 /// (validation, send dispatch, binding sync): the production `evaluate`
@@ -3847,6 +4110,15 @@ enum SyncCommand {
         #[serde(default = "default_follow")]
         follow: bool,
     },
+    /// Explicit whole-workspace output migration (R-WS-12): the active
+    /// workspace keeps its stable backing id and moves to the adjacent
+    /// output resolved adapter-side via full-output-rect adjacency (no wrap).
+    /// Follow-only (no `follow` field); the adapter shows the migrated
+    /// workspace on the target and refills the source natively. Four
+    /// directional actions, bindable and unbound by default (adapter-owned
+    /// bindings). Strict shape via `deny_unknown_fields` on the enum.
+    #[serde(rename = "migrate-workspace")]
+    MigrateWorkspace { direction: String },
     #[serde(rename = "drag-drop")]
     DragDrop(DragPayload),
     #[serde(rename = "drag-preview")]
@@ -3961,6 +4233,9 @@ fn core_command_from_sync(command: &SyncCommand) -> Option<tiler_core::boundary:
             target_output: target_output.clone(),
             target_workspace: target_workspace.clone(),
             follow: *follow,
+        }),
+        SyncCommand::MigrateWorkspace { direction } => Some(CoreCommand::MigrateWorkspace {
+            direction: direction.clone(),
         }),
         SyncCommand::DragDrop(payload) => Some(drag_core_command(payload, false)),
         SyncCommand::DragPreview(payload) => Some(drag_core_command(payload, true)),
@@ -10003,6 +10278,530 @@ mod tests {
         let reply = parse_reply(&planner.evaluate(&request.to_string()));
         assert_eq!(reply["outcome"], "rejected", "{reply}");
         assert_eq!(reply["kind"], "focus-mismatch", "{reply}");
+    }
+
+    fn migrate_entry(window: &str, floating: bool) -> serde_json::Value {
+        let mut entry = serde_json::json!({
+            "window": window,
+            "output": "out-1",
+            "workspace": "ws-1",
+            "rect": {"x": 0, "y": 0, "w": 100, "h": 80},
+        });
+        if floating {
+            entry["floating"] = serde_json::Value::Bool(true);
+            entry["fit_excluded"] = serde_json::Value::Bool(true);
+        }
+        entry
+    }
+
+    fn migrate_request(
+        correlation: &str,
+        focused: &str,
+        windows: Vec<serde_json::Value>,
+        target_output: &str,
+        target_workspace: &str,
+        command: serde_json::Value,
+    ) -> String {
+        migrate_request_at_revision(
+            correlation,
+            0,
+            focused,
+            windows,
+            target_output,
+            target_workspace,
+            command,
+        )
+    }
+
+    fn migrate_request_at_revision(
+        correlation: &str,
+        revision: u64,
+        focused: &str,
+        windows: Vec<serde_json::Value>,
+        target_output: &str,
+        target_workspace: &str,
+        command: serde_json::Value,
+    ) -> String {
+        serde_json::json!({
+            "v": 1,
+            "correlation_id": correlation,
+            "owner": "owner-1",
+            "generation": "gen-1",
+            "revision": revision,
+            "fingerprint": 7,
+            "domain": {
+                "output": "out-1",
+                "workspace": "ws-1",
+                "bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
+                "gap": 0,
+                "outer_gap": 0,
+            },
+            "target_domain": {
+                "output": target_output,
+                "workspace": target_workspace,
+                "bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
+                "gap": 0,
+                "outer_gap": 0,
+            },
+            "focused_window": focused,
+            "windows": serde_json::Value::Array(windows),
+            "target_windows": [],
+            "command": command,
+        })
+        .to_string()
+    }
+
+    fn migrate_body(direction: &str) -> serde_json::Value {
+        serde_json::json!({"op": "migrate-workspace", "direction": direction})
+    }
+
+    #[test]
+    fn migrate_workspace_preserves_floats_and_rekeys() {
+        // Seed two tiled members, float one, then migrate right: the
+        // workspace keeps its backing id on out-2 with the float exception
+        // preserved, the moved tiled client stays focused, and the source
+        // slot is gone (a repeat refuses as unknown-domain).
+        let mut planner = Planner::new();
+        let seed = plan_request(
+            "migrate-seed-1",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        assert_eq!(parse_reply(&planner.evaluate(&seed))["outcome"], "planned");
+        let float = plan_request(
+            "migrate-float-1",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "toggle-float", "window": "win-2"}),
+        );
+        let floated = parse_reply(&planner.evaluate(&float));
+        assert_eq!(floated["outcome"], "planned", "{floated}");
+        assert_eq!(floated["float_geometry"]["window"], "win-2", "{floated}");
+        let base = floated["base_revision"].as_u64().expect("base revision");
+        let reply = parse_reply(&planner.evaluate(&migrate_request_at_revision(
+            "migrate-1",
+            base,
+            "win-1",
+            vec![migrate_entry("win-1", false), migrate_entry("win-2", true)],
+            "out-2",
+            "ws-1",
+            migrate_body("right"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["kind"], "migrate-workspace", "{reply}");
+        assert_eq!(reply["detail"]["kind"], "migrate-workspace", "{reply}");
+        assert_eq!(
+            reply["detail"]["capability"], "migrate-workspace",
+            "{reply}"
+        );
+        assert_eq!(
+            reply["detail"]["commit"], "retained-rekey-planned",
+            "{reply}"
+        );
+        assert_eq!(reply["detail"]["direction"], "right", "{reply}");
+        assert_eq!(reply["detail"]["source_output"], "out-1", "{reply}");
+        assert_eq!(reply["detail"]["source_workspace"], "ws-1", "{reply}");
+        assert_eq!(reply["detail"]["target_output"], "out-2", "{reply}");
+        assert_eq!(reply["detail"]["target_workspace"], "ws-1", "{reply}");
+        assert_eq!(reply["detail"]["active_window"], "win-1", "{reply}");
+        assert_eq!(reply["detail"]["members"], 2, "{reply}");
+        assert_eq!(reply["detail"]["floats"], 1, "{reply}");
+        assert_eq!(reply["operation"]["op"], "migrate-workspace", "{reply}");
+        assert_eq!(reply["operation"]["direction"], "right", "{reply}");
+        assert_eq!(reply["operation"]["source_output"], "out-1", "{reply}");
+        assert_eq!(reply["operation"]["target_output"], "out-2", "{reply}");
+        assert_eq!(reply["operation"]["active_window"], "win-1", "{reply}");
+        let preconditions = reply["preconditions"].as_array().expect("preconditions");
+        assert!(
+            preconditions
+                .iter()
+                .any(|p| p == "adapter-must-verify-postconditions"),
+            "{reply}"
+        );
+        // Only the tiled member projects; the float rides as an exception.
+        let geometry = reply["desired_geometry"].as_array().expect("geometry");
+        assert_eq!(geometry.len(), 1, "{reply}");
+        assert_eq!(geometry[0]["window"], "win-1", "{reply}");
+        assert_eq!(geometry[0]["output"], "out-2", "{reply}");
+        assert_eq!(reply["desired_focus"]["domain_output"], "out-2", "{reply}");
+        assert_eq!(
+            reply["desired_focus"]["domain_workspace"], "ws-1",
+            "{reply}"
+        );
+        // The source slot moved: repeating the same migration refuses on the
+        // retained SAME-workspace target residue guard.
+        let repeat = parse_reply(&planner.evaluate(&migrate_request(
+            "migrate-2",
+            "win-1",
+            vec![migrate_entry("win-1", false), migrate_entry("win-2", true)],
+            "out-2",
+            "ws-1",
+            migrate_body("right"),
+        )));
+        assert_eq!(repeat["outcome"], "rejected", "{repeat}");
+        assert_eq!(repeat["kind"], "unchanged", "{repeat}");
+        // Structured correlated log line at the planner boundary.
+        assert_eq!(
+            summarize_plan_migration("migrate-1", "right", 2, 1, false),
+            "plasma-auto-tiler:plan-summary direction=migration op=migrate-workspace correlation=migrate-1 migrate_direction=right members=2 floats=1 empty=false",
+        );
+    }
+
+    #[test]
+    fn migrate_workspace_refuses_overlay_invalid_and_unknown() {
+        let mut planner = Planner::new();
+        let seed = plan_request(
+            "migrate-neg-seed",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        assert_eq!(parse_reply(&planner.evaluate(&seed))["outcome"], "planned");
+        // Fullscreen overlay refuses before any retained mutation.
+        let mut overlay = migrate_entry("win-1", false);
+        overlay["fullscreen"] = serde_json::Value::Bool(true);
+        overlay["fit_excluded"] = serde_json::Value::Bool(true);
+        let refused = parse_reply(&planner.evaluate(&migrate_request(
+            "migrate-neg-overlay",
+            "win-1",
+            vec![overlay, migrate_entry("win-2", false)],
+            "out-2",
+            "ws-1",
+            migrate_body("right"),
+        )));
+        assert_eq!(refused["outcome"], "rejected", "{refused}");
+        assert_eq!(refused["kind"], "overlay-present", "{refused}");
+        // Maximized-shaped fit-excluded (no floating/sticky/fullscreen) refuses.
+        let mut maximized = migrate_entry("win-1", false);
+        maximized["fit_excluded"] = serde_json::Value::Bool(true);
+        let refused = parse_reply(&planner.evaluate(&migrate_request(
+            "migrate-neg-maximized",
+            "win-1",
+            vec![maximized, migrate_entry("win-2", false)],
+            "out-2",
+            "ws-1",
+            migrate_body("right"),
+        )));
+        assert_eq!(refused["outcome"], "rejected", "{refused}");
+        assert_eq!(refused["kind"], "overlay-present", "{refused}");
+        // Same-output target refuses (migration is cross-output only).
+        let refused = parse_reply(&planner.evaluate(&migrate_request(
+            "migrate-neg-same",
+            "win-1",
+            vec![migrate_entry("win-1", false), migrate_entry("win-2", false)],
+            "out-1",
+            "ws-1",
+            migrate_body("right"),
+        )));
+        assert_eq!(refused["outcome"], "rejected", "{refused}");
+        assert_eq!(refused["kind"], "cross-domain-mismatch", "{refused}");
+        // Different-workspace target refuses (stable backing id preserved).
+        let refused = parse_reply(&planner.evaluate(&migrate_request(
+            "migrate-neg-workspace",
+            "win-1",
+            vec![migrate_entry("win-1", false), migrate_entry("win-2", false)],
+            "out-2",
+            "ws-9",
+            migrate_body("right"),
+        )));
+        assert_eq!(refused["outcome"], "rejected", "{refused}");
+        assert_eq!(refused["kind"], "cross-domain-mismatch", "{refused}");
+        // Unknown direction refuses.
+        let refused = parse_reply(&planner.evaluate(&migrate_request(
+            "migrate-neg-direction",
+            "win-1",
+            vec![migrate_entry("win-1", false), migrate_entry("win-2", false)],
+            "out-2",
+            "ws-1",
+            migrate_body("sideways"),
+        )));
+        assert_eq!(refused["outcome"], "rejected", "{refused}");
+        assert_eq!(refused["kind"], "direction-invalid", "{refused}");
+        // Unknown fields refuse fail-closed.
+        let refused = parse_reply(&planner.evaluate(&migrate_request(
+            "migrate-neg-field",
+            "win-1",
+            vec![migrate_entry("win-1", false), migrate_entry("win-2", false)],
+            "out-2",
+            "ws-1",
+            serde_json::json!({"op": "migrate-workspace", "direction": "right", "bogus": 1}),
+        )));
+        assert_eq!(refused["outcome"], "rejected", "{refused}");
+        assert_eq!(refused["kind"], "unknown-field", "{refused}");
+        // Non-empty target observation refuses (SAME-workspace residue guard).
+        let mut with_target: serde_json::Value = serde_json::from_str(&migrate_request(
+            "migrate-neg-residue",
+            "win-1",
+            vec![migrate_entry("win-1", false), migrate_entry("win-2", false)],
+            "out-2",
+            "ws-1",
+            migrate_body("right"),
+        ))
+        .expect("json");
+        with_target["target_windows"] = serde_json::json!([{
+            "window": "win-x",
+            "output": "out-2",
+            "workspace": "ws-1",
+            "rect": {"x": 0, "y": 0, "w": 100, "h": 80},
+        }]);
+        let refused = parse_reply(&planner.evaluate(&with_target.to_string()));
+        assert_eq!(refused["outcome"], "rejected", "{refused}");
+        assert_eq!(refused["kind"], "unchanged", "{refused}");
+        // Unknown source with members refuses (never autorekeys).
+        let mut fresh = Planner::new();
+        let refused = parse_reply(&fresh.evaluate(&migrate_request(
+            "migrate-neg-unknown",
+            "win-z",
+            vec![migrate_entry("win-z", false)],
+            "out-2",
+            "ws-1",
+            migrate_body("right"),
+        )));
+        assert_eq!(refused["outcome"], "rejected", "{refused}");
+        assert_eq!(refused["kind"], "unknown-domain", "{refused}");
+        // A maximized float is an overlay even though it floats: the
+        // explicit maximized flag (not the fit-excluded proxy) refuses.
+        let mut max_float = migrate_entry("win-1", true);
+        max_float["maximized"] = serde_json::Value::Bool(true);
+        let refused = parse_reply(&planner.evaluate(&migrate_request(
+            "migrate-neg-max-float",
+            "win-1",
+            vec![max_float, migrate_entry("win-2", false)],
+            "out-2",
+            "ws-1",
+            migrate_body("right"),
+        )));
+        assert_eq!(refused["outcome"], "rejected", "{refused}");
+        assert_eq!(refused["kind"], "overlay-present", "{refused}");
+    }
+
+    #[test]
+    fn migrate_workspace_ignores_wire_revision() {
+        // Adapters hardcode revision 0 and every op derives bases
+        // internally: an arbitrary revision with exact members still plans.
+        let mut planner = Planner::new();
+        let seed = plan_request(
+            "migrate-ignrev-seed",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let seeded = parse_reply(&planner.evaluate(&seed));
+        assert_eq!(seeded["outcome"], "planned", "{seeded}");
+        let base = seeded["base_revision"].as_u64().expect("base revision");
+        let reply = parse_reply(&planner.evaluate(&migrate_request_at_revision(
+            "migrate-ignrev-1",
+            base + 999,
+            "win-1",
+            vec![migrate_entry("win-1", false), migrate_entry("win-2", false)],
+            "out-2",
+            "ws-1",
+            migrate_body("right"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["kind"], "migrate-workspace", "{reply}");
+    }
+
+    #[test]
+    fn migrate_workspace_active_float_and_absent_client_reply_shapes() {
+        // Active float: no tiled focus is fabricated, but the operation
+        // still names the client for native activation after verified
+        // arrival. Absent client: members migrate with null active.
+        let mut planner = Planner::new();
+        let seed = plan_request(
+            "migrate-shape-seed",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        assert_eq!(parse_reply(&planner.evaluate(&seed))["outcome"], "planned");
+        let float = plan_request(
+            "migrate-shape-float",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "toggle-float", "window": "win-2"}),
+        );
+        let floated = parse_reply(&planner.evaluate(&float));
+        assert_eq!(floated["outcome"], "planned", "{floated}");
+        let base = floated["base_revision"].as_u64().expect("base revision");
+        let reply = parse_reply(&planner.evaluate(&migrate_request_at_revision(
+            "migrate-shape-float-active",
+            base,
+            "win-2",
+            vec![migrate_entry("win-1", false), migrate_entry("win-2", true)],
+            "out-2",
+            "ws-1",
+            migrate_body("right"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert!(reply.get("desired_focus").is_none(), "{reply}");
+        assert_eq!(reply["operation"]["active_window"], "win-2", "{reply}");
+        assert_eq!(reply["detail"]["active_window"], "win-2", "{reply}");
+        assert_eq!(
+            reply["desired_geometry"].as_array().map(Vec::len),
+            Some(1),
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn migrate_workspace_absent_client_migrates_without_focus() {
+        let mut planner = Planner::new();
+        let seed = plan_request(
+            "migrate-noactive-seed",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let seeded = parse_reply(&planner.evaluate(&seed));
+        assert_eq!(seeded["outcome"], "planned", "{seeded}");
+        let base = seeded["base_revision"].as_u64().expect("base revision");
+        let reply = parse_reply(&planner.evaluate(&migrate_request_at_revision(
+            "migrate-noactive-1",
+            base,
+            "",
+            vec![migrate_entry("win-1", false), migrate_entry("win-2", false)],
+            "out-2",
+            "ws-1",
+            migrate_body("left"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["kind"], "migrate-workspace", "{reply}");
+        assert!(reply.get("desired_focus").is_none(), "{reply}");
+        assert_eq!(
+            reply["operation"]["active_window"],
+            serde_json::Value::Null,
+            "{reply}"
+        );
+        assert_eq!(
+            reply["desired_geometry"].as_array().map(Vec::len),
+            Some(2),
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn migrate_workspace_sticky_stays_on_source_wire_proof() {
+        // Wire-level proof of the sticky residual: the sticky member takes
+        // no target geometry, and a follow-up source reconcile still plans
+        // it there while the target residue guard holds.
+        let mut planner = Planner::new();
+        let seed = plan_request(
+            "migrate-sticky-seed",
+            "win-1",
+            &["win-1", "win-2", "win-s"],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let seeded = parse_reply(&planner.evaluate(&seed));
+        assert_eq!(seeded["outcome"], "planned", "{seeded}");
+        let base = seeded["base_revision"].as_u64().expect("base revision");
+        let mut sticky = migrate_entry("win-s", false);
+        sticky["sticky"] = serde_json::Value::Bool(true);
+        sticky["fit_excluded"] = serde_json::Value::Bool(true);
+        let reply = parse_reply(&planner.evaluate(&migrate_request_at_revision(
+            "migrate-sticky-1",
+            base,
+            "win-1",
+            vec![
+                migrate_entry("win-1", false),
+                migrate_entry("win-2", false),
+                sticky,
+            ],
+            "out-2",
+            "ws-1",
+            migrate_body("right"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        let geometry = reply["desired_geometry"].as_array().expect("geometry");
+        assert_eq!(geometry.len(), 2, "{reply}");
+        assert!(
+            geometry.iter().all(|entry| entry["window"] != "win-s"),
+            "{reply}"
+        );
+        assert_eq!(reply["operation"]["active_window"], "win-1", "{reply}");
+        // The sticky residual still lives on the source output.
+        let mut regather: serde_json::Value = serde_json::from_str(&plan_request(
+            "migrate-sticky-regather",
+            "win-s",
+            &["win-s"],
+            serde_json::json!({"op": "reconcile"}),
+        ))
+        .expect("json");
+        regather["windows"][0]["sticky"] = serde_json::Value::Bool(true);
+        regather["windows"][0]["fit_excluded"] = serde_json::Value::Bool(true);
+        let regathered = parse_reply(&planner.evaluate(&regather.to_string()));
+        assert_eq!(regathered["outcome"], "planned", "{regathered}");
+    }
+
+    #[test]
+    fn migrate_workspace_sticky_active_echoes_null() {
+        // Follow-only on the wire too: a stayed sticky active echoes null
+        // focus and null active client, never a source window to activate.
+        let mut planner = Planner::new();
+        let seed = plan_request(
+            "migrate-sactive-seed",
+            "win-1",
+            &["win-1", "win-s"],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let seeded = parse_reply(&planner.evaluate(&seed));
+        assert_eq!(seeded["outcome"], "planned", "{seeded}");
+        let base = seeded["base_revision"].as_u64().expect("base revision");
+        let mut sticky = migrate_entry("win-s", false);
+        sticky["sticky"] = serde_json::Value::Bool(true);
+        sticky["fit_excluded"] = serde_json::Value::Bool(true);
+        let reply = parse_reply(&planner.evaluate(&migrate_request_at_revision(
+            "migrate-sactive-1",
+            base,
+            "win-s",
+            vec![migrate_entry("win-1", false), sticky],
+            "out-2",
+            "ws-1",
+            migrate_body("right"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert!(reply.get("desired_focus").is_none(), "{reply}");
+        assert_eq!(
+            reply["operation"]["active_window"],
+            serde_json::Value::Null,
+            "{reply}"
+        );
+        assert_eq!(
+            reply["detail"]["active_window"],
+            serde_json::Value::Null,
+            "{reply}"
+        );
+        assert_eq!(
+            reply["desired_geometry"].as_array().map(Vec::len),
+            Some(1),
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn migrate_workspace_allows_empty_without_fabricated_focus() {
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&migrate_request(
+            "migrate-empty-1",
+            "",
+            vec![],
+            "out-2",
+            "ws-1",
+            migrate_body("left"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["kind"], "migrate-workspace", "{reply}");
+        assert_eq!(
+            reply["desired_geometry"].as_array().map(Vec::len),
+            Some(0),
+            "{reply}"
+        );
+        assert!(reply.get("desired_focus").is_none(), "{reply}");
+        assert_eq!(
+            summarize_plan_migration("migrate-empty-1", "left", 0, 0, true),
+            "plasma-auto-tiler:plan-summary direction=migration op=migrate-workspace correlation=migrate-empty-1 migrate_direction=left members=0 floats=0 empty=true",
+        );
     }
 
     #[test]

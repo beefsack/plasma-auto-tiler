@@ -3202,6 +3202,9 @@ Legend:
   Eight Q2 discriminators R-SPC-06..13 added 2026-10-08 contribute 112 Then
   bullets; autonomous D1-D8 are PROVISIONAL, KDE is implemented offline,
   unsupported reference/native outcomes stay TBD and no consensus is recomputed.
+  Six Q4 migration discriminators R-WS-21..26 added 2026-10-08 contribute 84
+  Then bullets; D1-D9 are autonomous PROVISIONAL choices, KDE is implemented
+  offline, and native/unsupported reference outcomes remain TBD.
 - Baseline expansion accounting: 1198 coverage cells: 67x14 new, 58x4 scrolling assessments,
   and 2x14 explicit-swap legs. Mutually exclusive semantic status totals:
   evidenced 372, partial 237, TBD-only 224, qualified-only 328, mixed 37.
@@ -3209,11 +3212,11 @@ Legend:
 - 522 historical wide-table cells at baseline `e160894` (eight references
   plus combined Ours per row) are migrated to GWT without retrospectively
   assigning the new status classes. Present form: 58 historical scenarios
-  x 14 profiles = 812 Then bullets; 147 scenarios x 14 = 2058 Then bullets
+  x 14 profiles = 812 Then bullets; 155 scenarios x 14 = 2170 Then bullets
   (+28 explicit-swap-leg bullets). Expansion record's total coverage count
   remains 1720 as baseline provenance; baseline assessed cells were not a
   uniform 125x14 grid. Baseline semantic-status totals above exclude the 22
-  decision discriminators.
+  decision discriminators and the later Q3/Q4 additions.
 - [Archived expansion record](../changes/archive/reference-matrix-expansion.md)
   holds final accounting, source/inventory/native-test queue and residual work.
 
@@ -3228,10 +3231,11 @@ plus 7 workspace scenarios, 3 minimize scenarios, 2 maximize scenarios,
 4 multi-output scenarios, 3 mouse scenarios, 5 special-windows scenarios,
 2 activation scenarios, 2 restart scenarios and 10 column scenarios, GWT
 only: 125 expansion-baseline scenarios, plus 14 decision discriminators
-2026-10-07, 8 Q2 fixed-size discriminators and 2 Q3 restart research
-discriminators 2026-10-08: 149 scenarios total).
+2026-10-07, 8 Q2 fixed-size discriminators, 2 Q3 restart research
+discriminators and 6 Q4 workspace migration discriminators 2026-10-08:
+155 scenarios total).
 This index retains purpose, row-addition rule, notation,
-profiles, evidence tags/legend, variant hooks, and deferred. All 149
+profiles, evidence tags/legend, variant hooks, and deferred. All 155
 scenarios use the GWT form below; no wide-table rows remain.
 Areas follow the approved priority order; column mechanics follows, and
 minimum-size stays a supplemental file (not nested in resize).
@@ -3243,7 +3247,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Move | [move.md](reference-outcomes/move.md) | R-MOV-01..13 (13) | R-MOV-09..13 added 2026-10-07; reference outcomes TBD; KDE items 3/5 R-MOV-03/08/09..13 delivered offline; native journeys/Windows wiring pending |
 | Resize | [resize.md](reference-outcomes/resize.md) | R-RSZ-01..04 (4) | none (landed in piece B4) |
 | Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | R-LAY-01..06 (6) | R-LAY-01/05/06 KDE implemented offline; native journey/Windows wiring pending; R-LAY-05/06 reference outcomes TBD |
-| Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..20 (20) | R-WS-15..20 added 2026-10-07; reference outcomes TBD; KDE items 1/2 delivered, item 1 single-output user-confirmed, item 2 offline only |
+| Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..26 (26) | KDE items 1/2 delivered, item 1 single-output user-confirmed, item 2 offline only; Q4 R-WS-12/21..26 implemented offline under autonomous PROVISIONAL D1-D9; native/Windows/unsupported reference legs TBD |
 | Minimize | [minimize.md](reference-outcomes/minimize.md) | R-MNZ-01..03 (3) | none (landed) |
 | Maximise / fullscreen | [maximize-fullscreen.md](reference-outcomes/maximize-fullscreen.md) | R-MAX-01..09 (9) | none (landed with scrolling backfill) |
 | Groups / stacks | [groups-stacks.md](reference-outcomes/groups-stacks.md) | R-GRP-01..03 (3) | none (R-GRP-02..03 landed with scrolling backfill) |

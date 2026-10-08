@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { planOutputSendShortcutCatalog, planShortcutCatalog } from "../src/plan-adapter-entry";
+import { planOutputSendShortcutCatalog, planShortcutCatalog, planWorkspaceMigrateShortcutCatalog } from "../src/plan-adapter-entry";
 import { workspaceShortcutCatalog } from "../src/workspace-native";
 
 const read = (path: string): string => readFileSync(join(process.cwd(), path), "utf8");
@@ -451,6 +451,7 @@ describe("native KCM static contract", () => {
         const plan = planShortcutCatalog("cosmic");
         const workspace = workspaceShortcutCatalog();
         const output = planOutputSendShortcutCatalog();
+        const migrate = planWorkspaceMigrateShortcutCatalog();
         const tsByAction = new Map<string, string>();
         for (const row of plan) {
             tsByAction.set(row.action, row.sequence);
@@ -461,11 +462,15 @@ describe("native KCM static contract", () => {
         for (const row of output) {
             tsByAction.set(row.action, row.sequence);
         }
+        for (const row of migrate) {
+            tsByAction.set(row.action, row.sequence);
+        }
         // Item 2 adds 36 workspace rows (8 relative follow, 20 absolute
         // stay with symbol aliases, 8 relative stay) to the 76 legacy rows
-        // (37 plan rows including toggle-orientation plus 39 item-1), and
-        // item 5 adds 12 output rows (8 follow with arrow aliases, 4 stay).
-        assert.equal(tsByAction.size, 124);
+        // (37 plan rows including toggle-orientation plus 39 item-1), item 5
+        // adds 12 output rows (8 follow with arrow aliases, 4 stay), and
+        // R-WS-12 adds 4 unbound migrate rows (directional follow).
+        assert.equal(tsByAction.size, 128);
         const nativeByAction = new Map<string, string>();
         const nativeOrder: string[] = [];
         const entryPattern =
@@ -481,9 +486,10 @@ describe("native KCM static contract", () => {
                 nativeOrder.push(action);
             }
         }
-        // Item 5 parity: all 124 bindings now, including the 32 unbound
-        // stay rows (28 workspace plus 4 output) with empty defaults.
-        assert.equal(nativeByAction.size, 124);
+        // R-WS-12 parity: all 128 bindings now, including the 36 unbound
+        // rows (28 workspace plus 4 output plus 4 migrate) with empty
+        // defaults. 92 bound, 36 unbound.
+        assert.equal(nativeByAction.size, 128);
         for (const [action, sequence] of nativeByAction) {
             assert.equal(tsByAction.get(action), sequence);
         }
@@ -491,17 +497,23 @@ describe("native KCM static contract", () => {
             ...plan.map((row) => row.action),
             ...workspace.map((row) => row.action),
             ...output.map((row) => row.action),
+            ...migrate.map((row) => row.action),
         ];
         assert.deepEqual(new Set(nativeOrder), new Set(tsOrder));
         assert.equal(nativeOrder.length, tsOrder.length);
         // Item 2 order: the 36 workspace rows follow the 76 legacy rows in
-        // exact TS catalog order; item 5 output rows follow in exact TS order.
+        // exact TS catalog order; item 5 output rows follow in exact TS
+        // order; R-WS-12 migrate rows follow in exact TS order.
         assert.deepEqual(nativeOrder.slice(76, 112), workspace.slice(-36).map((row) => row.action));
         assert.deepEqual(
-            nativeOrder.slice(112),
+            nativeOrder.slice(112, 124),
             output.map((row) => row.action),
         );
-        for (const row of [...workspace, ...output]) {
+        assert.deepEqual(
+            nativeOrder.slice(124),
+            migrate.map((row) => row.action),
+        );
+        for (const row of [...workspace, ...output, ...migrate]) {
             if (row.sequence === "") {
                 assert.equal(nativeByAction.get(row.action), "");
             }
@@ -534,9 +546,39 @@ describe("native KCM static contract", () => {
             "plasma-auto-tiler-send-output-down-stay",
             "plasma-auto-tiler-send-output-up-stay",
             "plasma-auto-tiler-send-output-right-stay",
+            "plasma-auto-tiler-migrate-workspace-left",
+            "plasma-auto-tiler-migrate-workspace-right",
+            "plasma-auto-tiler-migrate-workspace-up",
+            "plasma-auto-tiler-migrate-workspace-down",
         ] as const) {
             assert.equal(nativeByAction.get(action), "");
         }
+        // Bound/unbound split: 92 bound, 36 unbound, no foreign conflict
+        // additions for the migrate arms, both presets Keep.
+        {
+            let bound = 0;
+            let unbound = 0;
+            for (const sequence of tsByAction.values()) {
+                if (sequence === "") {
+                    unbound += 1;
+                } else {
+                    bound += 1;
+                }
+            }
+            assert.equal(bound, 92);
+            assert.equal(unbound, 36);
+        }
+        // R-WS-12 migrate rows follow the item-5 output-transfer pattern:
+        // unbound, workspace-migrate kind, no known foreign holder.
+        for (const action of [
+            "plasma-auto-tiler-migrate-workspace-left",
+            "plasma-auto-tiler-migrate-workspace-right",
+            "plasma-auto-tiler-migrate-workspace-up",
+            "plasma-auto-tiler-migrate-workspace-down",
+        ] as const) {
+            assert.ok(reconciler.includes(action));
+        }
+        assert.ok(reconciler.includes("workspace-migrate"));
         // Item 5 adds no stock conflicts for the Meta+Ctrl+Alt arms.
         for (const token of [
             "SHORTCUT_META_CTRL_ALT_H = 469762120",

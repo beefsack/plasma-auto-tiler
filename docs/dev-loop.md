@@ -321,6 +321,46 @@ acceptance):
 - `plasma-auto-tiler:workspace:workspace-previous-no-op:already-there` and
   `plasma-auto-tiler:workspace:workspace-relative-no-op:already-there`.
 
+Whole-workspace output migration (R-WS-12, follow-only, offline verified;
+native journey pending):
+
+- `plasma-auto-tiler:route-diag component=workspace-migrate stage=entry correlation=<correlation> generation=<generation> revision=0 diag_seq=-1 event=workspace-migrate outcome=<outcome> follow=not-reached gate=pre-commit phase=entry reason=<reason> req_ord=-1 inflight_stage=<stage>`:
+  entry outcomes `invalid-direction`, `disabled`, `busy-send`,
+  `busy-plan`, `mode-shared`, `mode-invalid`, `per-output-disabled`,
+  `per-output-unreadable`, `no-target` (quiet no-op,
+  `reason=no-adjacent-output`), `refused` (`reason=scope-unreadable`).
+  A busy entry also emits `plasma-auto-tiler:plan:busy-refused
+  kind=workspace-migrate`; an unreadable scope also emits
+  `plasma-auto-tiler:plan:workspace-migrate-refused-scope`.
+- `plasma-auto-tiler:route-diag component=workspace-migrate
+  route=migrate-workspace stage=<stage> correlation=<correlation>
+  generation=<generation> revision=<revision> diag_seq=<seq>
+  event=<event> outcome=<outcome>`: pre-commit refusals carry
+  `follow=not-reached gate=pre-commit phase=request reason=<token>`
+  with reasons `disabled`, `direction-invalid`,
+  `transfer-unavailable`, `sequence-invalid`, `scope-invalid`,
+  `mode-shared`, `mode-invalid`, `per-output-disabled`,
+  `per-output-unreadable`, `same-output`, `workspace-mismatch`,
+  `target-visible`, `desktop-cap`, `overlay-present`,
+  `focus-mismatch`, `mode-unreadable`, `mode-mismatch`,
+  `correlation-invalid`, `payload-invalid`, `request-over-cap`,
+  `timeout`, `in-flight`.
+- `plasma-auto-tiler:workspace:workspace-migrate-refused:<shared-mode|unknown-output|unknown-workspace|out-of-scope|target-current|duplicate-target>`,
+  `plasma-auto-tiler:workspace:workspace-previous-invalidated:migrated`,
+  `plasma-auto-tiler:workspace:workspace-migrate-undisplaced`, and
+  `plasma-auto-tiler:workspace:workspace-migrate-completed` (map commit only,
+  never a native-arrival claim).
+- Terminals settle `release` (the settled refresh reconciles both
+  domains from native observation) or `arrival`: `arrived` only after
+  verified per-member arrival, views, and focus; `follow` reports
+  `state-confirmed`, `focus-unconfirmed`, `arrival-unconfirmed`, or
+  `hooks-unavailable`. A written-target/unwritten-source split settles
+  `source-empty` (partial); other uncertain terminals include
+  `member-closed`, `write-failed`, `switch-unconfirmed`,
+  `output-unconfirmed`, `stale-revision`, `stale-scope`, `timeout`,
+  and `arrival-timeout`. The Engine `planned` reply is a retained
+  rekey, never a native-completion claim.
+
 Filter by the recorded KWin PID only: `journalctl --user --no-pager _PID=<kwin-pid>`
 (never `journalctl --system`). All emitted production diagnostics carry the
 fixed `plasma-auto-tiler:` prefix. `just dev` and `just dev verbose` retain

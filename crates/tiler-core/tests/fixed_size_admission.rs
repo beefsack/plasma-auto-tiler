@@ -1435,6 +1435,7 @@ fn carried(
         floating,
         fit_excluded: floating || fullscreen,
         fullscreen,
+        maximized: false,
         sticky,
         fixed_auto,
         fixed_suppress,

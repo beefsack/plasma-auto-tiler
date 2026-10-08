@@ -530,7 +530,9 @@ const QList<ShortcutCatalogEntry> &shortcutProjectCatalog()
     // relative send-and-stay) then 12 item-5 output rows (8 bound
     // Meta+Ctrl+Alt+H/J/K/L and arrows send-and-follow, 4 unbound
     // directional send-and-stay in exact planOutputSendShortcutCatalog
-    // order). Bound canonical keys stay unique across the
+    // order) then 4 R-WS-12 migrate rows (unbound directional follow in
+    // exact planWorkspaceMigrateShortcutCatalog order). Bound canonical
+    // keys stay unique across the
     // catalog; unbound rows share key 0 with empty display. knownForeign*
     // mirrors the conflict table for its 23 project actions; every other
     // row carries empty known foreign state.
@@ -814,6 +816,14 @@ const QList<ShortcutCatalogEntry> &shortcutProjectCatalog()
           QStringLiteral("output-send")},
         {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-right-stay"), 0, QStringLiteral(""),
           {}, {}, 0, QStringLiteral("output-send-stay")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-migrate-workspace-left"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("workspace-migrate")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-migrate-workspace-right"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("workspace-migrate")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-migrate-workspace-up"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("workspace-migrate")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-migrate-workspace-down"), 0, QStringLiteral(""),
+          {}, {}, 0, QStringLiteral("workspace-migrate")},
     };
     return catalog;
 }

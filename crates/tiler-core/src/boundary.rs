@@ -32,10 +32,10 @@ use crate::session::{
     SessionDragPlan, SessionFocusPlan, SessionMovePlan, SessionPlan, SessionResizePlan,
 };
 
-/// Typed command for all 14 wire ops: reconcile, update-gaps, active-group,
+/// Typed command for all 15 wire ops: reconcile, update-gaps, active-group,
 /// release-domain, move, focus, resize, pointer-resize, toggle-float,
-/// toggle-orientation, `send-to-workspace`, `send-to-output`, `drag-drop`,
-/// and read-only `drag-preview`.
+/// toggle-orientation, `send-to-workspace`, `send-to-output`,
+/// `migrate-workspace`, `drag-drop`, and read-only `drag-preview`.
 /// Payloads are already-decoded clones; fallible wire vocabularies
 /// (direction/mode) cross opaquely so this conversion stays total
 /// and handler precedence is untouched.
@@ -110,6 +110,15 @@ pub enum CoreCommand {
         /// the source domain.
         follow: bool,
     },
+    /// Explicit whole-workspace output migration (R-WS-12): the active
+    /// workspace keeps its stable backing id and moves to the adjacent
+    /// output resolved adapter-side via full-output-rect adjacency (no wrap).
+    /// Follow-only; the adapter shows the migrated workspace on the target
+    /// and refills the source natively. Direction crosses opaquely so
+    /// handler-local precedence stays untouched.
+    MigrateWorkspace {
+        direction: String,
+    },
     DragDrop {
         window: String,
         x: i32,
@@ -154,6 +163,7 @@ impl CoreCommand {
             Self::ToggleOrientation { .. } => "toggle-orientation",
             Self::SendToWorkspace { .. } => "send-to-workspace",
             Self::SendToOutput { .. } => "send-to-output",
+            Self::MigrateWorkspace { .. } => "migrate-workspace",
             Self::DragDrop { .. } => "drag-drop",
             Self::DragPreview { .. } => "drag-preview",
         }
@@ -363,6 +373,36 @@ impl SendWorkspacePlan {
             _ => None,
         }
     }
+}
+
+/// Typed whole-workspace migration success plan (R-WS-12): base revision,
+/// requested direction, frozen source/target domain keys, projected target
+/// geometry, retained focus, the active client, and the lifecycle
+/// preconditions the adapter must fence (including
+/// `adapter-must-verify-postconditions`). The retained rekey already
+/// committed; `planned` never claims native completion. The adapter transfers
+/// natively and gates follow/completion on verified membership/view readback.
+/// `focus_domain`/`focus_leaf` name the tiled layout focus, present only when
+/// the active client is a migrating tiled member; `active_window` names the
+/// migrated active member for native activation (`None` when the request
+/// carried no active client or the active stayed sticky: follow-only, never
+/// activate a source window on the target). Never validates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrateWorkspacePlan {
+    pub base_revision: u64,
+    pub direction: Direction,
+    pub source: DomainKey,
+    pub target: DomainKey,
+    pub geometry: Vec<DesiredGeometry>,
+    pub focus_domain: Option<DomainKey>,
+    pub focus_leaf: Option<NodeId>,
+    pub active_window: Option<WindowId>,
+    /// Relocated member count (tiled links plus workspace float exceptions),
+    /// excluding stayed sticky. Count only, for wire detail and logs.
+    pub members: usize,
+    /// Relocated float exception count. Count only.
+    pub floats: usize,
+    pub preconditions: Vec<LifecyclePrecondition>,
 }
 
 /// Typed local move success plan: base revision, structural rule and required
@@ -654,7 +694,7 @@ pub struct DragPreviewPlan {
     pub preview: DragPreview,
 }
 
-/// Typed reply across all 13 ops plus every rejection shape. Success variants
+/// Typed reply across all 14 ops plus every rejection shape. Success variants
 /// carry core plans; rejection variants carry the closed
 /// `&'static str` kind/message/detail vocabulary (single sources live in
 /// [`crate::session`]/[`crate::contract`] and the protocol `MSG_*`
@@ -667,6 +707,10 @@ pub enum CoreReply {
     /// Explicit output send success: the same ordinary [`SendWorkspacePlan`]
     /// transfer shape under the distinct `send-to-output` wire kind.
     SendOutput(SendWorkspacePlan),
+    /// Explicit whole-workspace migration success: the retained
+    /// [`MigrateWorkspacePlan`] rekey shape under the distinct
+    /// `migrate-workspace` wire kind.
+    MigrateWorkspace(MigrateWorkspacePlan),
     MoveDirectional(MovePlanReply),
     FocusDirectional(FocusPlanReply),
     Resize(ResizePlanReply),
@@ -1009,7 +1053,7 @@ mod tests {
     }
 
     #[test]
-    fn all_fourteen_ops_have_distinct_wire_tokens() {
+    fn all_fifteen_ops_have_distinct_wire_tokens() {
         use std::collections::HashSet;
         let commands = vec![
             CoreCommand::Reconcile,
@@ -1060,6 +1104,9 @@ mod tests {
                 target_workspace: "s".to_owned(),
                 follow: true,
             },
+            CoreCommand::MigrateWorkspace {
+                direction: "right".to_owned(),
+            },
             CoreCommand::DragDrop {
                 window: "w".to_owned(),
                 x: 0,
@@ -1075,13 +1122,14 @@ mod tests {
                 source: None,
             },
         ];
-        assert_eq!(commands.len(), 14);
+        assert_eq!(commands.len(), 15);
         let tokens: HashSet<&'static str> = commands.iter().map(|c| c.op()).collect();
-        assert_eq!(tokens.len(), 14);
+        assert_eq!(tokens.len(), 15);
         assert!(tokens.contains("reconcile"));
         assert!(tokens.contains("release-domain"));
         assert!(tokens.contains("send-to-workspace"));
         assert!(tokens.contains("send-to-output"));
+        assert!(tokens.contains("migrate-workspace"));
         assert!(tokens.contains("drag-drop"));
         assert!(tokens.contains("drag-preview"));
         assert_eq!(TiledKind::DragDrop.kind_str(), "drag-drop");

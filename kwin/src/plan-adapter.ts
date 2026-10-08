@@ -3309,6 +3309,29 @@ export class PlanAdapter {
         return Object.freeze([...this.intentMembers]);
     }
 
+    // Read-only fixed-size origin query for whole-workspace migration
+    // (R-WS-12): the adapter-asserted provenance for one stable id, or null
+    // when unrecorded or the live ref was replaced. Exact-ref guarded like
+    // classification; never classifies, never mutates, never writes.
+    originOfFixedClient(id: string, ref: object): "auto" | "suppress" | null {
+        try {
+            const record = this.fixedClients.get(id);
+            if (record === undefined || record.ref !== ref) {
+                return null;
+            }
+            if (record.kind === "auto") {
+                return "auto";
+            }
+            if (record.kind === "suppress") {
+                return "suppress";
+            }
+            return null;
+        } catch (error) {
+            void error;
+            return null;
+        }
+    }
+
     // Test seam: true once the single bootstrap read settles (first plan
     // admission is gated on it while the bridge is active).
     isIntentReady(): boolean {

@@ -43,6 +43,7 @@ fn window(id: &str, output: &str, workspace: &str, x: i32, w: i32) -> EngineWind
         floating: false,
         fit_excluded: false,
         fullscreen: false,
+        maximized: false,
         sticky: false,
         fixed_auto: false,
         fixed_suppress: false,

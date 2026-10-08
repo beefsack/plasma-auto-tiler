@@ -4194,9 +4194,9 @@ void selectionCatalogCounts()
     // steps) plus 36 item-2 workspace rows (8 bound relative send-follow,
     // 20 unbound numbered stay with aliases plus append rows, 8 unbound
     // relative stay) plus 12 item-5 output rows (8 bound follow, 4 unbound
-    // stay).
+    // stay) plus 4 R-WS-12 migrate rows (unbound directional follow).
     const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
-    CHECK(catalog.size() == 124);
+    CHECK(catalog.size() == 128);
     int focus = 0;
     int move = 0;
     int resize = 0;
@@ -4210,6 +4210,7 @@ void selectionCatalogCounts()
     int workspaceSendRelativeStay = 0;
     int outputSend = 0;
     int outputSendStay = 0;
+    int workspaceMigrate = 0;
     QSet<int> keys;
     for (const ShortcutCatalogEntry &entry : catalog) {
         if (entry.kind == QStringLiteral("focus")) {
@@ -4238,6 +4239,8 @@ void selectionCatalogCounts()
             ++outputSend;
         } else if (entry.kind == QStringLiteral("output-send-stay")) {
             ++outputSendStay;
+        } else if (entry.kind == QStringLiteral("workspace-migrate")) {
+            ++workspaceMigrate;
         }
         if (entry.canonicalKey == 0) {
             CHECK(entry.canonicalDisplay.isEmpty());
@@ -4263,6 +4266,7 @@ void selectionCatalogCounts()
     CHECK(workspaceSendRelativeStay == 8);
     CHECK(outputSend == 8);
     CHECK(outputSendStay == 4);
+    CHECK(workspaceMigrate == 4);
     CHECK(keys.size() == 93);
     CHECK(keys.contains(0));
     CHECK(!shortcutCatalogContains(QStringLiteral("kwin"), QStringLiteral("other-action")));
@@ -4279,7 +4283,9 @@ void selectionCatalogCounts()
         QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-left"))));
     CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
         QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-left-stay"))));
-    CHECK(shortcutMaxProjectWrites() == 125);
+    CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
+        QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-migrate-workspace-left"))));
+    CHECK(shortcutMaxProjectWrites() == 129);
     // Displays resolve through the catalog first, table targets preserved.
     CHECK(ShortcutReconciler::keyDisplayName(SHORTCUT_META_1) == QStringLiteral("Meta+1"));
     CHECK(ShortcutReconciler::keyDisplayName(SHORTCUT_META_EXCLAM) == QStringLiteral("Meta+!"));
@@ -4430,7 +4436,7 @@ void selectionForceBindsDraftAndDrift()
         ShortcutReconciler(&store, &cleared).previewForceApplySelected(QSet<QString>());
     CHECK(preview.forceable);
     CHECK(preview.disabledIds.isEmpty());
-    CHECK(preview.liveImages.size() == 125);
+    CHECK(preview.liveImages.size() == 129);
     const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"));
     const ShortcutForceApplyResult staleDraft =
         ShortcutReconciler(&store, &cleared).applyForcedSelected(preview, QSet<QString>{ws1});
@@ -4893,7 +4899,7 @@ void workspaceSendFollowStayRows()
     // numbered stay plus 8 unbound relative stay, in exact TS order.
     CHECK(shortcutConflictTable().size() == 23);
     CHECK(ShortcutReconciler::relevantConflictKeys().size() == 24);
-    CHECK(shortcutProjectCatalog().size() == 124);
+    CHECK(shortcutProjectCatalog().size() == 128);
     const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
     const QList<std::pair<QString, int>> follow = {
         {QStringLiteral("plasma-auto-tiler-send-prev-h"), META_CTRL_SHIFT_H},
@@ -5186,7 +5192,7 @@ void outputSendFollowStayRows()
     // follow rows carry empty known foreign state; both presets Keep.
     CHECK(shortcutConflictTable().size() == 23);
     CHECK(ShortcutReconciler::relevantConflictKeys().size() == 24);
-    CHECK(shortcutProjectCatalog().size() == 124);
+    CHECK(shortcutProjectCatalog().size() == 128);
     const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
     const QList<QString> outputOrder = {
         QStringLiteral("plasma-auto-tiler-send-output-left"),
@@ -5421,6 +5427,103 @@ void outputSendFollowStayRows()
     }
 }
 
+void migrateWorkspaceFollowRows()
+{
+    // R-WS-12 catalog: 4 unbound directional follow rows in exact
+    // planWorkspaceMigrateShortcutCatalog order (left, right, up, down).
+    // No stock KDE holder, so the conflict table stays at 23 rows and the
+    // rows carry empty known foreign state; both presets Keep.
+    CHECK(shortcutConflictTable().size() == 23);
+    CHECK(ShortcutReconciler::relevantConflictKeys().size() == 24);
+    CHECK(shortcutProjectCatalog().size() == 128);
+    const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
+    const QList<QString> migrateOrder = {
+        QStringLiteral("plasma-auto-tiler-migrate-workspace-left"),
+        QStringLiteral("plasma-auto-tiler-migrate-workspace-right"),
+        QStringLiteral("plasma-auto-tiler-migrate-workspace-up"),
+        QStringLiteral("plasma-auto-tiler-migrate-workspace-down"),
+    };
+    for (int i = 0; i < migrateOrder.size(); ++i) {
+        const ShortcutCatalogEntry &entry = catalog.at(124 + i);
+        CHECK(entry.component == QStringLiteral("kwin"));
+        CHECK(entry.action == migrateOrder.at(i));
+        CHECK(entry.canonicalKey == 0);
+        CHECK(entry.canonicalDisplay.isEmpty());
+        CHECK(entry.kind == QStringLiteral("workspace-migrate"));
+        CHECK(entry.knownForeignComponent.isEmpty());
+        CHECK(entry.knownForeignAction.isEmpty());
+        CHECK(entry.knownForeignKey == 0);
+        CHECK(ShortcutReconciler::isProjectAction(QStringLiteral("kwin"), entry.action));
+        CHECK(ShortcutReconciler::isProjectOwned(QStringLiteral("kwin"), entry.action));
+        CHECK(ShortcutReconciler::isAllowlisted(QStringLiteral("kwin"), entry.action));
+        CHECK(!shortcutKnownConflictIds().contains(
+            shortcutCatalogId(QStringLiteral("kwin"), entry.action)));
+        CHECK(!ShortcutReconciler::enabledRequiredKeys(QSet<QString>()).contains(0));
+    }
+    // Both presets Keep the migrate rows when quiet; a live collision stages
+    // Disable through the shared preset seam without inventing a stock holder.
+    {
+        const QSet<QString> known = shortcutKnownConflictIds();
+        const QStringList quiet = presetCompatibleDisabledIds(catalog, known, QSet<QString>());
+        for (const QString &action : migrateOrder) {
+            CHECK(!quiet.contains(shortcutCatalogId(QStringLiteral("kwin"), action)));
+        }
+        const QString migrateLeft =
+            shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-migrate-workspace-left"));
+        const QStringList colliding =
+            presetCompatibleDisabledIds(catalog, known, QSet<QString>{migrateLeft});
+        CHECK(colliding.contains(migrateLeft));
+    }
+    // Quiet Apply leaves migrate rows empty.
+    {
+        FakeShortcutStore store;
+        seedFullQuiet(store);
+        FakeClearedActions cleared;
+        CHECK(ShortcutReconciler(&store, &cleared).apply().ok);
+        for (const QString &action : migrateOrder) {
+            for (const ShortcutTuple &tuple : store.tuples) {
+                if (tuple.action == action) {
+                    CHECK(tuple.active.isEmpty());
+                }
+            }
+        }
+    }
+    // Empty migrate rows stay rebindable and Apply restores the empty default.
+    {
+        FakeShortcutStore store;
+        seedFullQuiet(store);
+        QList<ShortcutRowDisplay> rows;
+        QString error;
+        CHECK(ShortcutReconciler::collectRowDisplays(&store, &rows, &error));
+        bool sawMigrate = false;
+        for (const ShortcutRowDisplay &row : rows) {
+            if (row.catalog.action == QStringLiteral("plasma-auto-tiler-migrate-workspace-left")) {
+                sawMigrate = true;
+                CHECK(row.present);
+                CHECK(row.current.isEmpty());
+                CHECK(row.holdersKnown);
+                CHECK(row.holders.isEmpty());
+            }
+        }
+        CHECK(sawMigrate);
+        QString writeError;
+        QList<int> confirmed;
+        CHECK(store.writeKeys(QStringLiteral("kwin"),
+                              QStringLiteral("plasma-auto-tiler-migrate-workspace-left"),
+                              QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{999}, &confirmed,
+                              &writeError));
+        CHECK(confirmed == QList<int>{999});
+        FakeClearedActions cleared;
+        const ShortcutApplyResult result = ShortcutReconciler(&store, &cleared).apply();
+        CHECK(result.ok);
+        for (const ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-migrate-workspace-left")) {
+                CHECK(tuple.active.isEmpty());
+            }
+        }
+    }
+}
+
 void toggleOrientationCatalogPresetRows()
 {
     // R-LAY-01 Meta+O: no stock KDE holder, so both presets Keep.
@@ -5594,6 +5697,7 @@ int main(int argc, char **argv)
         workspaceRelativeDesktopSwitchRows();
         workspaceSendFollowStayRows();
         outputSendFollowStayRows();
+        migrateWorkspaceFollowRows();
         selectionDisabledSkipsRefusalAndClearsOwn();
         selectionDisabledFocusSkipsLockAndEsc();
         selectionMixedRefusesEnabledOnly();

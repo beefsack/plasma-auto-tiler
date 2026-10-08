@@ -622,11 +622,34 @@ void selectionPresetsAndDraft()
             }
         }
         store.writeLog.clear();
+        const QString migrateId = QStringLiteral("kwin/plasma-auto-tiler-migrate-workspace-left");
+        CHECK(!module.shortcutDisabledIds().contains(migrateId));
+        bool migrateFound = false;
+        for (const ShortcutTuple &tuple : store.tuples) {
+            if (tuple.component == QStringLiteral("kwin")
+                && tuple.action == QStringLiteral("plasma-auto-tiler-migrate-workspace-left")) {
+                migrateFound = true;
+                CHECK(tuple.active.isEmpty());
+            }
+        }
+        CHECK(migrateFound);
+        CHECK(store.writeKeys(QStringLiteral("kwin"),
+                              QStringLiteral("plasma-auto-tiler-migrate-workspace-left"),
+                              QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{999}, &confirmed,
+                              &writeError));
+        CHECK(confirmed == QList<int>{999});
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.component == QStringLiteral("kwin")
+                && tuple.action == QStringLiteral("plasma-auto-tiler-migrate-workspace-left")) {
+                tuple.active.clear();
+            }
+        }
+        store.writeLog.clear();
     }
     QListWidget *list = conflictListByModule(module);
     CHECK(list != nullptr);
     if (list != nullptr) {
-        CHECK(list->count() == 124);
+        CHECK(list->count() == 128);
     }
     QPushButton *compatible = presetButtonByModule(module, "shortcutCompatibleButton");
     QPushButton *authentic = presetButtonByModule(module, "shortcutAuthenticButton");
@@ -667,6 +690,12 @@ void selectionPresetsAndDraft()
     CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-right")));
     CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-right-arrow")));
     CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-right-stay")));
+    // R-WS-12 Compatible: the four unbound migrate rows keep with no stock
+    // KDE holder.
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-migrate-workspace-left")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-migrate-workspace-right")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-migrate-workspace-up")));
+    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-migrate-workspace-down")));
     CHECK(store.totalWrites() == 0);
     CHECK(cleared.saves == 0);
     CHECK(!module.isShortcutForceApplyVisible());
@@ -864,7 +893,7 @@ void selectionMissingEnabledStatus()
         module.load();
         CHECK(module.shortcutStatusText().contains(QStringLiteral("unavailable"))
               || module.shortcutStatusText().contains(QStringLiteral("missing")));
-        CHECK(!module.shortcutStatusText().contains(QStringLiteral("applied (124 rows")));
+        CHECK(!module.shortcutStatusText().contains(QStringLiteral("applied (128 rows")));
     }
     {
         FakeShortcutStore store;
@@ -911,7 +940,7 @@ void selectionDisabledLockAbsentShowsRows()
     QListWidget *list = conflictListByModule(module);
     CHECK(list != nullptr);
     if (list != nullptr) {
-        CHECK(list->count() == 124);
+        CHECK(list->count() == 128);
     }
 }
 
@@ -1042,7 +1071,7 @@ void stateAndErrorPresentation()
         module.setShortcutStores(&store, &cleared);
         module.load();
         CHECK(module.shortcutStatusText().contains(QStringLiteral("Ready")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("124 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("128 rows")));
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(buttonByName(module, "shortcutFinishApplyButton") == nullptr);
         CHECK(buttonByName(module, "shortcutRestoreButton") == nullptr);
@@ -1073,7 +1102,7 @@ void stateAndErrorPresentation()
         module.requestShortcutApply();
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(module.shortcutStatusText().contains(QStringLiteral("applied")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("124 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("128 rows")));
     }
     // Conflict with an unknown foreign holder.
     {

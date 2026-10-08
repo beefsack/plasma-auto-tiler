@@ -45,6 +45,7 @@ fn window(id: &str, output: &str, x: i32) -> EngineWindow {
         floating: false,
         fit_excluded: false,
         fullscreen: false,
+        maximized: false,
         sticky: false,
         fixed_auto: false,
         fixed_suppress: false,

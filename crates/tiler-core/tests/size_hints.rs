@@ -71,6 +71,7 @@ fn engine_window(window: &str, rect: Rect, hints: WindowSizeHints) -> EngineWind
         floating: false,
         fit_excluded: false,
         fullscreen: false,
+        maximized: false,
         sticky: false,
         fixed_auto: false,
         fixed_suppress: false,

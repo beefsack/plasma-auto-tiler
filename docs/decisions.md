@@ -506,6 +506,59 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   undecided post-restart un-stick outcomes. Native checks and all four choices,
   including the architecture boundary, remain pending in
   [backlog](backlog.md#open-user-decisions).
+- Provisional, to discuss (2026-10-08, workspace migration D1 bindings):
+  autonomous Orchestrator selection, not a user decision. Four directional
+  active-workspace migration actions are bindable and UNBOUND by default,
+  follow-only. KDE catalog has 128 bindings (92 bound, 36 unbound); both
+  presets retain empty migration defaults. No new foreign-conflict claims.
+- Provisional, to discuss (2026-10-08, workspace migration D2 capability):
+  KDE supports local/global-unique only with strict
+  `options.perOutputVirtualDesktops === true`. Shared mode, false or unreadable
+  capability refuses with a reason before writes. Never mutate native settings.
+  KDE global-unique is not COSMIC Global; native separability is an additional
+  capability gate for this command, not a revision of existing mode semantics.
+- Provisional, to discuss (2026-10-08, workspace migration D3 targeting):
+  move the active workspace in four directions using item-5 full-output-rect
+  unique reciprocal adjacency, without output wrap; no neighbor is a no-op,
+  ambiguous/unreadable topology refuses. Follow only. The hidden R-WS-12
+  baseline has no counterpart; its independent explicitly selected active leg
+  is supported. No hidden-ID targeting, stay or next/previous-output verb.
+- Provisional, to discuss (2026-10-08, workspace migration D4 destination):
+  preserve backing ID, tree/order/shares, remembered focus and workspace tiling
+  mode using core `relocate_domain`, rather than repeated window sends. Insert
+  immediately after the target output's current workspace and show the moved
+  workspace; the previous target workspace stays listed and hidden.
+- Provisional, to discuss (2026-10-08, workspace migration D5 source/empty):
+  source selects its last remaining scoped workspace. Existing minimum-two and
+  trailing-empty lifecycle converges the inventory. Empty migration is allowed
+  and retains its backing ID; native lifecycle timing remains for user testing.
+- Provisional, to discuss (2026-10-08, workspace migration D6 focus):
+  retain the moved active client only after all member arrivals and both view
+  changes are verified. Empty/sticky-active migration uses native output
+  switching with no fabricated client activation; minimized clients are not
+  unminimized or explicitly focused. Native output/focus timing remains TBD.
+- Provisional, to discuss (2026-10-08, workspace migration D7 floats/sticky):
+  carry workspace-bound intentional/automatic floats with class and origin
+  preserved via native output remap. Sticky all-desktops clients stay on the
+  source and are not migrated members. Native float geometry remains TBD.
+- Provisional, to discuss (2026-10-08, workspace migration D8 game safety):
+  refuse the whole command before any write when moving members or affected
+  current views contain fullscreen/maximized clients; never skip a member to
+  split the workspace. Reviewable deviation: COSMIC carries these states.
+  Gaming Compatibility wins; native/game refusal evidence remains pending.
+- Provisional, to discuss (2026-10-08, workspace migration D9 history/return):
+  apply existing history decisions 1.3/1.5: out-of-source-scope previous IDs
+  clear, disconnected-output history is discarded, reconnect selection never
+  consults/restores it. Remove only the explicitly moved ID from automatic
+  hotplug-return associations, retaining siblings. Native writes are not
+  atomic: Engine `planned` is a retained rekey, not native completion; log
+  correlated refusal, partial/uncertain, verified arrival and reconciliation.
+  D1-D9 core/Linux planner/KDE delivered offline;
+  [record](changes/archive/kde-whole-workspace-output-migration.md),
+  [spec](spec/functional-spec.md#workspaces) REQ-WS-12a..i. Windows changes
+  initialize the new `maximized` field to false only, preserving behavior;
+  handoff item 14 retains actual adapter work. Native acceptance and review of
+  all nine autonomous choices remain in [backlog](backlog.md#open-user-decisions).
 - User decision 2026-10-07 (functional spec format): keep
   [the functional spec](spec/functional-spec.md) as a single file; revisit
   splitting if it grows much larger. Requirements are normative only where a

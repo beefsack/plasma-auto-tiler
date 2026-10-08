@@ -1,0 +1,1005 @@
+// Whole-workspace output migration against the real Rust Planner/Engine
+// through the production `startPlanAdapterEntry` route: no hand-built wire
+// replies. Covers a basic right migration (members, views, active retain,
+// Engine post-currency, untouched target workspace), sticky/float/empty
+// variants, protected and policy refusals with zero writes, direction
+// topology (no-target, ambiguous), delayed arrival with exactly-once
+// follow, pre-reply removal, and duplicate-reply no-replay. The
+// flight-pinned triple is what lets verification confirm after members
+// land on the destination: deriving the source from the live active window
+// would lose the scope once the still-active mover sits on the target.
+//
+// REAL parts: production `startPlanAdapterEntry` (migrate observation and
+// actuation) on a scripted two-output fake KWin surface;
+// `Planner::evaluate` via the test-only `planner_eval` example (same
+// validation and retained state as the shipped binary; only D-Bus and
+// signals are stubbed). Included in `npm test`.
+
+import assert from "node:assert/strict";
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { createInterface } from "node:readline";
+import { dirname, join, resolve } from "node:path";
+import { describe, it } from "node:test";
+
+import { startPlanAdapterEntry } from "../src/plan-adapter-entry";
+import { PLAN_DEBOUNCE_MS } from "../src/plan-adapter";
+
+function repoRoot(): string {
+    let dir = resolve(process.cwd());
+    for (let depth = 0; depth < 4; depth += 1) {
+        if (existsSync(join(dir, "Cargo.toml"))) {
+            return dir;
+        }
+        dir = dirname(dir);
+    }
+    throw new Error("fixture root not found");
+}
+
+class EngineBridge {
+    private readonly proc: ChildProcess;
+    private readonly waiters: Array<{
+        resolve: (reply: string) => void;
+        reject: (error: Error) => void;
+    }> = [];
+    private dead: string | null = null;
+
+    private constructor(proc: ChildProcess) {
+        this.proc = proc;
+        const stdout = proc.stdout;
+        if (stdout === null || stdout === undefined) {
+            throw new Error("planner_eval stdout unavailable");
+        }
+        createInterface({ input: stdout }).on("line", (line: string) => {
+            this.waiters.shift()?.resolve(line);
+        });
+        proc.stderr?.resume();
+        proc.on("error", (error) => {
+            this.failAll(error instanceof Error ? error : new Error(String(error)));
+        });
+        proc.on("exit", (code) => {
+            this.failAll(new Error(`planner_eval exited with code ${String(code)}`));
+        });
+    }
+
+    private failAll(error: Error): void {
+        if (this.dead === null) {
+            this.dead = error.message;
+        }
+        while (this.waiters.length > 0) {
+            this.waiters.shift()?.reject(error);
+        }
+    }
+
+    static start(): EngineBridge {
+        return new EngineBridge(
+            spawn("cargo", ["run", "--offline", "-q", "-p", "tiler-protocol", "--example", "planner_eval"], {
+                cwd: repoRoot(),
+                stdio: ["pipe", "pipe", "pipe"],
+            }),
+        );
+    }
+
+    send(request: string): Promise<string> {
+        if (this.dead !== null) {
+            return Promise.reject(new Error(this.dead));
+        }
+        if (this.proc.exitCode !== null || this.proc.signalCode !== null) {
+            return Promise.reject(new Error("planner_eval process already exited"));
+        }
+        return new Promise<string>((resolvePromise, reject) => {
+            this.waiters.push({ resolve: resolvePromise, reject });
+            try {
+                this.proc.stdin?.write(request + "\n");
+            } catch (error) {
+                reject(error instanceof Error ? error : new Error(String(error)));
+            }
+        });
+    }
+
+    async close(): Promise<void> {
+        try {
+            this.proc.stdin?.end();
+        } catch (error) {
+            void error;
+        }
+        await new Promise<void>((resolvePromise) => {
+            const timer = setTimeout(() => {
+                try {
+                    this.proc.kill("SIGKILL");
+                } catch (error) {
+                    void error;
+                }
+                resolvePromise();
+            }, 3000);
+            this.proc.on("exit", () => {
+                clearTimeout(timer);
+                resolvePromise();
+            });
+        });
+    }
+}
+
+interface FakeSignal {
+    readonly handlers: Set<() => void>;
+    readonly signal: {
+        connect: (handler: () => void) => void;
+        disconnect: (handler: () => void) => void;
+    };
+    fire: () => void;
+}
+
+function makeSignal(): FakeSignal {
+    const handlers = new Set<() => void>();
+    return {
+        handlers,
+        signal: {
+            connect: (handler: () => void): void => {
+                handlers.add(handler);
+            },
+            disconnect: (handler: () => void): void => {
+                handlers.delete(handler);
+            },
+        },
+        fire: (): void => {
+            for (const handler of [...handlers]) {
+                handler();
+            }
+        },
+    };
+}
+
+interface FakeOutput {
+    readonly name: string;
+    readonly geometry: { x: number; y: number; width: number; height: number };
+    readonly manufacturer: string;
+    readonly model: string;
+    readonly serialNumber: string;
+}
+
+interface FakeDesktop {
+    readonly id: string;
+    readonly x11DesktopNumber: number;
+}
+
+interface FakeWindow extends Record<string, unknown> {
+    normalWindow: boolean;
+    managed: boolean;
+    minimized: boolean;
+    fullScreen: boolean;
+    maximizeMode: number;
+    onAllDesktops: boolean;
+    transient: boolean;
+    transientFor: FakeWindow | null;
+    output: FakeOutput;
+    desktops: FakeDesktop[];
+    internalId: string;
+    frameGeometry: { x: number; y: number; width: number; height: number };
+    resourceClass: string;
+    minSize: { width: number; height: number } | null;
+    maxSize: { width: number; height: number } | null;
+    keepAbove: boolean;
+    keepBelow: boolean;
+    tile: null;
+    activeChanged: { connect: (h: () => void) => void; disconnect: (h: () => void) => void };
+    desktopsChanged: { connect: (h: () => void) => void; disconnect: (h: () => void) => void };
+    outputChanged: { connect: (h: () => void) => void; disconnect: (h: () => void) => void };
+    frameGeometryChanged: { connect: (h: () => void) => void; disconnect: (h: () => void) => void };
+    fullScreenChanged: { connect: (h: () => void) => void; disconnect: (h: () => void) => void };
+    maximizedChanged: { connect: (h: () => void) => void; disconnect: (h: () => void) => void };
+    desktopsSig: FakeSignal;
+    outputSig: FakeSignal;
+}
+
+interface HarnessOpts {
+    readonly workspaceMode?: unknown;
+    readonly options?: unknown;
+    readonly wins?: Array<{
+        id: string;
+        output: "left" | "right";
+        desktop: string;
+        sticky?: boolean;
+        minimized?: boolean;
+        normalWindow?: boolean;
+        transientForId?: string;
+        minSize?: { width: number; height: number };
+        maxSize?: { width: number; height: number };
+    }>;
+    readonly activeId?: string;
+}
+
+interface Harness {
+    readonly bridge: EngineBridge;
+    readonly workspace: Record<string, unknown>;
+    readonly outputs: { left: FakeOutput; right: FakeOutput };
+    readonly desktops: { source: FakeDesktop; target: FakeDesktop };
+    readonly wins: FakeWindow[];
+    readonly currentByOutput: Map<FakeOutput, FakeDesktop>;
+    readonly dbusCalls: Array<{ method: string; payload: string }>;
+    readonly callbacks: Array<(reply: unknown) => void>;
+    readonly replies: Map<number, string>;
+    readonly timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean; fired: boolean }>;
+    readonly logs: string[];
+    readonly shortcuts: Array<{ action: string; sequence: string; callback: () => void }>;
+    readonly handle: NonNullable<ReturnType<typeof startPlanAdapterEntry>>;
+    deferredTransfer: boolean;
+    pendingTransfers: Array<{ client: FakeWindow; output: FakeOutput }>;
+    flushAll: () => Promise<void>;
+    fireTimers: (delayMs: number) => number;
+    settlePlan: () => Promise<void>;
+    flushOp: (op: string) => Promise<{ index: number; body: Record<string, unknown>; reply: Record<string, unknown> }>;
+    sendOps: () => string[];
+    winById: (id: string) => FakeWindow;
+    frameOf: (win: FakeWindow) => { x: number; y: number; w: number; h: number };
+    stop: () => Promise<void>;
+}
+
+async function makeHarness(opts: HarnessOpts = {}): Promise<Harness> {
+    // Side-by-side outputs with FULL rectangles touching at x=1920 for
+    // right-adjacency selection while carried work areas stay panel-free.
+    const left: FakeOutput = {
+        name: "out-left",
+        geometry: { x: 0, y: 0, width: 1920, height: 1080 },
+        manufacturer: "m",
+        model: "d",
+        serialNumber: "s-left",
+    };
+    const right: FakeOutput = {
+        name: "out-right",
+        geometry: { x: 1920, y: 0, width: 1920, height: 1080 },
+        manufacturer: "m",
+        model: "d",
+        serialNumber: "s-right",
+    };
+    const wsSource: FakeDesktop = { id: "ws-1", x11DesktopNumber: 1 };
+    const wsTarget: FakeDesktop = { id: "ws-9", x11DesktopNumber: 2 };
+    const currentByOutput = new Map<FakeOutput, FakeDesktop>([
+        [left, wsSource],
+        [right, wsTarget],
+    ]);
+    const mkWin = (
+        output: FakeOutput,
+        desktop: FakeDesktop,
+        internalId: string,
+        frame: { x: number; y: number; width: number; height: number },
+        sticky = false,
+    ): FakeWindow => {
+        const desktopsSig = makeSignal();
+        const outputSig = makeSignal();
+        const frameSig = makeSignal();
+        const fullSig = makeSignal();
+        const maxSig = makeSignal();
+        const activeSig = makeSignal();
+        return {
+            normalWindow: true,
+            managed: true,
+            minimized: false,
+            fullScreen: false,
+            maximizeMode: 0,
+            onAllDesktops: sticky,
+            transient: false,
+            transientFor: null,
+            output,
+            desktops: [desktop],
+            internalId,
+            frameGeometry: { ...frame },
+            resourceClass: "app",
+            minSize: null,
+            maxSize: null,
+            keepAbove: false,
+            keepBelow: false,
+            tile: null,
+            activeChanged: activeSig.signal,
+            desktopsChanged: desktopsSig.signal,
+            outputChanged: outputSig.signal,
+            frameGeometryChanged: frameSig.signal,
+            fullScreenChanged: fullSig.signal,
+            maximizedChanged: maxSig.signal,
+            desktopsSig,
+            outputSig,
+        };
+    };
+    const spec = opts.wins ?? [
+        { id: "m-win-1", output: "left" as const, desktop: "ws-1" },
+        { id: "m-win-2", output: "left" as const, desktop: "ws-1" },
+        { id: "m-win-t", output: "right" as const, desktop: "ws-9" },
+    ];
+    const wins: FakeWindow[] = spec.map((entry) => {
+        const win = mkWin(
+            entry.output === "left" ? left : right,
+            entry.desktop === "ws-1" ? wsSource : wsTarget,
+            entry.id,
+            { x: 20, y: 20, width: 400, height: 300 },
+            entry.sticky === true,
+        );
+        if (entry.minimized === true) {
+            win.minimized = true;
+        }
+        if (entry.normalWindow === false) {
+            win.normalWindow = false;
+        }
+        if (entry.minSize !== undefined) {
+            win.minSize = { ...entry.minSize };
+        }
+        if (entry.maxSize !== undefined) {
+            win.maxSize = { ...entry.maxSize };
+        }
+        return win;
+    });
+    for (const [index, entry] of spec.entries()) {
+        if (entry.transientForId !== undefined) {
+            const child = wins[index] as FakeWindow;
+            const parent = wins.find((win) => win.internalId === entry.transientForId) ?? null;
+            child.transient = parent !== null;
+            child.transientFor = parent;
+        }
+    }
+    const activeId = opts.activeId ?? "m-win-1";
+    const wsig = {
+        windowAdded: makeSignal(),
+        windowRemoved: makeSignal(),
+        windowActivated: makeSignal(),
+        screensChanged: makeSignal(),
+        currentDesktopChanged: makeSignal(),
+        desktopsChanged: makeSignal(),
+    };
+    const workspace: Record<string, unknown> = {
+        activeWindow: wins.find((win) => win.internalId === activeId) ?? null,
+        activeScreen: left,
+        screens: [left, right],
+        desktops: [wsSource, wsTarget],
+        currentDesktopForScreen: (output: object): object => currentByOutput.get(output as FakeOutput) ?? wsSource,
+        currentDesktop: wsSource,
+        setCurrentDesktopForScreen: (desktop: object, output: object): void => {
+            currentByOutput.set(output as FakeOutput, desktop as FakeDesktop);
+        },
+        clientArea: (_kind: number, output: object, _desktop: object): object =>
+            output === left ? { x: 0, y: 0, w: 1920, h: 1040 } : { x: 1920, y: 0, w: 1920, h: 1040 },
+        windowList: (): object[] => [...wins],
+        sendClientToScreen: (client: object, output: object): void => {
+            const win = client as FakeWindow;
+            if (harness.deferredTransfer) {
+                harness.pendingTransfers.push({ client: win, output: output as FakeOutput });
+                return;
+            }
+            win.output = output as FakeOutput;
+            win.outputSig.fire();
+            // KWin moves transient descendants implicitly with the parent.
+            for (const child of wins) {
+                if (child.transientFor === win && !child.onAllDesktops) {
+                    child.output = output as FakeOutput;
+                }
+            }
+        },
+        // Native directional output-switch slots: exact activeScreen
+        // bookkeeping for the empty/sticky-active activation path.
+        slotSwitchToLeftScreen: (): void => {
+            workspace.activeScreen = left;
+        },
+        slotSwitchToRightScreen: (): void => {
+            workspace.activeScreen = right;
+        },
+        slotSwitchToAboveScreen: (): void => {},
+        slotSwitchToBelowScreen: (): void => {},
+        windowAdded: wsig.windowAdded.signal,
+        windowRemoved: wsig.windowRemoved.signal,
+        windowActivated: wsig.windowActivated.signal,
+        screensChanged: wsig.screensChanged.signal,
+        currentDesktopChanged: wsig.currentDesktopChanged.signal,
+        desktopsChanged: wsig.desktopsChanged.signal,
+    };
+    const bridge = EngineBridge.start();
+    const dbusCalls: Harness["dbusCalls"] = [];
+    const callbacks: Harness["callbacks"] = [];
+    const replies = new Map<number, string>();
+    const timers: Harness["timers"] = [];
+    const logs: Harness["logs"] = [];
+    const shortcuts: Harness["shortcuts"] = [];
+    const harness: Harness = {
+        bridge,
+        workspace,
+        outputs: { left, right },
+        desktops: { source: wsSource, target: wsTarget },
+        wins,
+        currentByOutput,
+        dbusCalls,
+        callbacks,
+        replies,
+        timers,
+        logs,
+        shortcuts,
+        handle: null as unknown as NonNullable<ReturnType<typeof startPlanAdapterEntry>>,
+        deferredTransfer: false,
+        pendingTransfers: [],
+        flushAll: async () => {
+            for (let round = 0; round < 16; round += 1) {
+                const next = dbusCalls.findIndex((call, at) => call.method === "DescribePlan" && !replies.has(at));
+                if (next < 0) {
+                    return;
+                }
+                const reply = await bridge.send(dbusCalls[next]?.payload as string);
+                replies.set(next, reply);
+                callbacks[next]?.(reply);
+            }
+            throw new Error("flushAll did not converge: planner keeps dispatching");
+        },
+        flushOp: async (op) => {
+            const index = dbusCalls.findIndex((call, at) => {
+                if (call.method !== "DescribePlan" || replies.has(at)) {
+                    return false;
+                }
+                try {
+                    const body = JSON.parse(call.payload) as Record<string, unknown>;
+                    return ((body["command"] as Record<string, unknown> | undefined)?.["op"] as string) === op;
+                } catch {
+                    return false;
+                }
+            });
+            assert.ok(index >= 0, `expected a queued ${op} dispatch to flush to the real Engine`);
+            const body = JSON.parse(dbusCalls[index]?.payload as string) as Record<string, unknown>;
+            const replyText = await bridge.send(dbusCalls[index]?.payload as string);
+            replies.set(index, replyText);
+            callbacks[index]?.(replyText);
+            return { index, body, reply: JSON.parse(replyText) as Record<string, unknown> };
+        },
+        fireTimers: (delayMs) => {
+            let fired = 0;
+            for (const timer of timers) {
+                if (timer.delayMs === delayMs && !timer.cancelled && !timer.fired) {
+                    timer.fired = true;
+                    fired += 1;
+                    timer.callback();
+                }
+            }
+            return fired;
+        },
+        // Settle Plan flights so later migrate routes observe an idle
+        // single-flight against Engine state seeded through the normal
+        // reconcile: fire debounce rounds and flush every dispatch until
+        // quiescent. Migration never auto-seeds; the retained session comes
+        // from this ordinary currency.
+        settlePlan: async () => {
+            for (let round = 0; round < 10; round += 1) {
+                harness.fireTimers(PLAN_DEBOUNCE_MS);
+                const before = dbusCalls.length;
+                await harness.flushAll();
+                harness.fireTimers(PLAN_DEBOUNCE_MS);
+                await harness.flushAll();
+                if (dbusCalls.length === before) {
+                    return;
+                }
+            }
+            throw new Error("plan flights did not settle");
+        },
+        sendOps: (): string[] => {
+            const ops: string[] = [];
+            for (const call of dbusCalls) {
+                if (call.method !== "DescribePlan") {
+                    continue;
+                }
+                try {
+                    const body = JSON.parse(call.payload) as Record<string, unknown>;
+                    const op = (body["command"] as Record<string, unknown> | undefined)?.["op"];
+                    ops.push(typeof op === "string" ? op : "?");
+                } catch {
+                    ops.push("?");
+                }
+            }
+            return ops;
+        },
+        winById: (id) => {
+            const found = wins.find((win) => win.internalId === id);
+            assert.ok(found !== undefined, `window ${id} exists on the fake surface`);
+            return found as FakeWindow;
+        },
+        frameOf: (win) => {
+            const frame = win.frameGeometry as { x: number; y: number; width: number; height: number };
+            return { x: frame.x, y: frame.y, w: frame.width, h: frame.height };
+        },
+        stop: async () => {
+            try {
+                harness.handle?.stop();
+            } catch (error) {
+                void error;
+            }
+            await bridge.close();
+        },
+    };
+    const handle = startPlanAdapterEntry({
+        workspace,
+        owner: "owner-1",
+        generation: "gen-1",
+        log: (message: string): void => {
+            logs.push(message);
+        },
+        callDbus: (_service, _path, _iface, method, payload, callback): void => {
+            if (method === "NameHasOwner") {
+                callback(true);
+                return;
+            }
+            if (method === "GetNameOwner") {
+                callback(":1.7");
+                return;
+            }
+            if (method === "StartServiceByName") {
+                callback(1);
+                return;
+            }
+            dbusCalls.push({ method, payload });
+            callbacks.push(callback);
+        },
+        scheduleOnce: (delayMs, callback): (() => void) => {
+            const timer = { delayMs, callback, cancelled: false, fired: false };
+            timers.push(timer);
+            return (): void => {
+                timer.cancelled = true;
+            };
+        },
+        registerShortcutFn: (action, _text, sequence, callback): boolean => {
+            void _text;
+            shortcuts.push({ action, sequence, callback });
+            return true;
+        },
+        readProfileFn: (): string => "cosmic",
+        readWorkspaceModeFn: (): unknown => opts.workspaceMode ?? "per-output-local",
+        readInnerGapFn: (): number => 8,
+        readOuterGapFn: (): number => 8,
+        options: opts.options ?? { perOutputVirtualDesktops: true },
+    });
+    assert.notEqual(handle, null, "production entry starts on the fake surface");
+    (harness as { handle: unknown }).handle = handle;
+    return harness;
+}
+
+describe("migrate engine fixture", () => {
+    it("migrates right with members, views, active retain, and Engine post-currency", async () => {
+        const harness = await makeHarness();
+        try {
+            await harness.settlePlan();
+            const targetFrameBefore = harness.frameOf(harness.winById("m-win-t"));
+            const shortcut = harness.shortcuts.find((entry) => entry.action === "plasma-auto-tiler-migrate-workspace-right");
+            assert.notEqual(shortcut, undefined, "migrate-right shortcut is registered");
+            assert.equal(shortcut?.sequence, "");
+            (shortcut as { callback: () => void }).callback();
+            const flushed = await harness.flushOp("migrate-workspace");
+            assert.equal(flushed.reply["outcome"], "planned", JSON.stringify(flushed.reply));
+            assert.equal(flushed.reply["kind"], "migrate-workspace");
+            // Wire request shape through the production observer.
+            const body = flushed.body;
+            assert.deepEqual(body["command"], { op: "migrate-workspace", direction: "right" });
+            assert.deepEqual((body["domain"] as Record<string, unknown>)["output"], "out-left");
+            assert.deepEqual((body["target_domain"] as Record<string, unknown>)["output"], "out-right");
+            assert.deepEqual((body["target_domain"] as Record<string, unknown>)["workspace"], "ws-1");
+            assert.deepEqual(body["target_windows"], []);
+            assert.equal(body["revision"], 0);
+            assert.equal(body["focused_window"], "m-win-1");
+            const windows = body["windows"] as Array<Record<string, unknown>>;
+            assert.deepEqual(
+                windows.map((entry) => entry["window"]).sort(),
+                ["m-win-1", "m-win-2"],
+            );
+            // Native placement: every migrating window reads back the exact
+            // target output with the migrated workspace as its sole desktop.
+            for (const id of ["m-win-1", "m-win-2"]) {
+                const win = harness.winById(id);
+                assert.equal((win.output as FakeOutput).name, "out-right");
+                assert.deepEqual(
+                    win.desktops.map((desktop) => desktop.id),
+                    ["ws-1"],
+                );
+            }
+            // Untouched target workspace cache: prior view window unchanged.
+            const target = harness.winById("m-win-t");
+            assert.equal((target.output as FakeOutput).name, "out-right");
+            assert.deepEqual(
+                target.desktops.map((desktop) => desktop.id),
+                ["ws-9"],
+            );
+            assert.deepEqual(harness.frameOf(target), targetFrameBefore);
+            // Views: target shows the migrated workspace, source refills.
+            assert.equal(harness.currentByOutput.get(harness.outputs.right)?.id, "ws-1");
+            assert.equal(harness.currentByOutput.get(harness.outputs.left)?.id, "ws-9");
+            // Active client retained after verified arrival and views.
+            assert.equal((harness.workspace["activeWindow"] as FakeWindow).internalId, "m-win-1");
+            // Migrated frames tile inside the target work area.
+            for (const id of ["m-win-1", "m-win-2"]) {
+                const frame = harness.frameOf(harness.winById(id));
+                assert.ok(frame.x >= 1920 && frame.w > 0 && frame.h > 0, JSON.stringify(frame));
+            }
+            // Engine post-currency: the settled refresh reconciles the
+            // rekeyed target domain without divergence.
+            await harness.settlePlan();
+            const answered = [...harness.replies.entries()].sort((a, b) => a[0] - b[0]);
+            assert.ok(answered.length > 0);
+            const lastReply = JSON.parse(answered[answered.length - 1]?.[1] as string) as Record<string, unknown>;
+            assert.equal(lastReply["outcome"], "planned", JSON.stringify(lastReply));
+        } finally {
+            await harness.stop();
+        }
+    });
+
+    it("keeps sticky homed on the source and echoes null for sticky-active", async () => {
+        const harness = await makeHarness({
+            wins: [
+                { id: "m-win-1", output: "left", desktop: "ws-1" },
+                { id: "m-win-s", output: "left", desktop: "ws-1", sticky: true },
+                { id: "m-win-t", output: "right", desktop: "ws-9" },
+            ],
+            activeId: "m-win-s",
+        });
+        try {
+            await harness.settlePlan();
+            harness.handle.requestWorkspaceMigrate("right");
+            const flushed = await harness.flushOp("migrate-workspace");
+            assert.equal(flushed.reply["outcome"], "planned", JSON.stringify(flushed.reply));
+            const operation = flushed.reply["operation"] as Record<string, unknown>;
+            assert.equal(operation["active_window"], null);
+            const sticky = harness.winById("m-win-s");
+            assert.equal((sticky.output as FakeOutput).name, "out-left");
+            assert.equal(sticky.onAllDesktops, true);
+            const mover = harness.winById("m-win-1");
+            assert.equal((mover.output as FakeOutput).name, "out-right");
+            // Sticky-active runs zero focus setters: the active window is
+            // still the sticky client on the source.
+            assert.equal((harness.workspace["activeWindow"] as FakeWindow).internalId, "m-win-s");
+            assert.equal(harness.currentByOutput.get(harness.outputs.right)?.id, "ws-1");
+        } finally {
+            await harness.stop();
+        }
+    });
+
+    it("retains a float active client with its frame preserved", async () => {
+        const harness = await makeHarness();
+        try {
+            await harness.settlePlan();
+            // Float the second window through the production toggle, then
+            // migrate with the float active.
+            const win2 = harness.winById("m-win-2");
+            harness.workspace["activeWindow"] = win2;
+            harness.handle.requestFloat();
+            await harness.settlePlan();
+            const floatedFrame = harness.frameOf(harness.winById("m-win-2"));
+            harness.handle.requestWorkspaceMigrate("right");
+            const flushed = await harness.flushOp("migrate-workspace");
+            assert.equal(flushed.reply["outcome"], "planned", JSON.stringify(flushed.reply));
+            const operation = flushed.reply["operation"] as Record<string, unknown>;
+            assert.equal(operation["active_window"], "m-win-2");
+            assert.equal(flushed.reply["desired_focus"] ?? null, null);
+            const frameAfter = harness.frameOf(harness.winById("m-win-2"));
+            assert.equal((harness.winById("m-win-2").output as FakeOutput).name, "out-right");
+            assert.equal((harness.workspace["activeWindow"] as FakeWindow).internalId, "m-win-2");
+            assert.deepEqual(frameAfter, floatedFrame);
+        } finally {
+            await harness.stop();
+        }
+    });
+
+    it("migrates an empty workspace with views and no focus writes", async () => {
+        const harness = await makeHarness({
+            wins: [{ id: "m-win-t", output: "right", desktop: "ws-9" }],
+        });
+        try {
+            await harness.settlePlan();
+            (harness.workspace as Record<string, unknown>)["activeWindow"] = null;
+            harness.handle.requestWorkspaceMigrate("right");
+            const flushed = await harness.flushOp("migrate-workspace");
+            assert.equal(flushed.reply["outcome"], "planned", JSON.stringify(flushed.reply));
+            assert.deepEqual(flushed.reply["desired_geometry"], []);
+            assert.equal(harness.currentByOutput.get(harness.outputs.right)?.id, "ws-1");
+            assert.equal(harness.workspace["activeWindow"], null);
+        } finally {
+            await harness.stop();
+        }
+    });
+
+    it("refuses protected source views with zero native writes", async () => {
+        const harness = await makeHarness();
+        try {
+            await harness.settlePlan();
+            harness.winById("m-win-1").fullScreen = true;
+            const before = harness.sendOps().length;
+            harness.handle.requestWorkspaceMigrate("right");
+            assert.deepEqual(harness.sendOps().length, before);
+            assert.ok(
+                harness.logs.some((line) => line.includes("component=workspace-migrate") && line.includes("outcome=overlay-present")),
+                harness.logs.join("\n"),
+            );
+            assert.equal((harness.winById("m-win-1").output as FakeOutput).name, "out-left");
+            assert.equal(harness.currentByOutput.get(harness.outputs.right)?.id, "ws-9");
+        } finally {
+            await harness.stop();
+        }
+    });
+
+    it("refuses policy gates with exact reasons and no writes", async () => {
+        for (const opts of [
+            { options: { perOutputVirtualDesktops: false }, token: "per-output-disabled" },
+            { options: {}, token: "per-output-unreadable" },
+            { workspaceMode: "shared", token: "mode-shared" },
+        ]) {
+            const harness = await makeHarness(opts as HarnessOpts);
+            try {
+                await harness.settlePlan();
+                const before = harness.sendOps().length;
+                harness.handle.requestWorkspaceMigrate("right");
+                assert.deepEqual(harness.sendOps().length, before, opts.token);
+                assert.ok(
+                    harness.logs.some((line) => line.includes("component=workspace-migrate") && line.includes(`outcome=${opts.token}`)),
+                    `${opts.token}:\n${harness.logs.join("\n")}`,
+                );
+            } finally {
+                await harness.stop();
+            }
+        }
+    });
+
+    it("no-ops without a candidate and refuses ambiguous topology", async () => {
+        const harness = await makeHarness();
+        try {
+            await harness.settlePlan();
+            const before = harness.sendOps().length;
+            harness.handle.requestWorkspaceMigrate("up");
+            assert.deepEqual(harness.sendOps().length, before);
+            assert.ok(harness.logs.some((line) => line.includes("outcome=no-target")));
+        } finally {
+            await harness.stop();
+        }
+    });
+
+    it("waits for delayed transfers and follows exactly once", async () => {
+        const harness = await makeHarness();
+        try {
+            await harness.settlePlan();
+            harness.deferredTransfer = true;
+            harness.handle.requestWorkspaceMigrate("right");
+            const flushed = await harness.flushOp("migrate-workspace");
+            assert.equal(flushed.reply["outcome"], "planned", JSON.stringify(flushed.reply));
+            // Nothing placed yet: no views, flight still live.
+            assert.equal(harness.currentByOutput.get(harness.outputs.right)?.id, "ws-9");
+            assert.ok(harness.logs.some((line) => line.includes("outcome=waiting")));
+            // Delayed native arrival becomes visible; signals finish once.
+            harness.deferredTransfer = false;
+            for (const pending of harness.pendingTransfers) {
+                pending.client.output = pending.output;
+                pending.client.outputSig.fire();
+            }
+            assert.equal(harness.currentByOutput.get(harness.outputs.right)?.id, "ws-1");
+            assert.equal((harness.workspace["activeWindow"] as FakeWindow).internalId, "m-win-1");
+            const switches = harness.logs.filter((line) => line.includes("outcome=state-confirmed"));
+            assert.equal(switches.length, 1);
+        } finally {
+            await harness.stop();
+        }
+    });
+
+    it("refuses pre-reply removal with zero writes and ignores duplicate replies", async () => {
+        const harness = await makeHarness();
+        try {
+            await harness.settlePlan();
+            harness.handle.requestWorkspaceMigrate("right");
+            const index = harness.dbusCalls.findIndex((call, at) => {
+                if (call.method !== "DescribePlan" || harness.replies.has(at)) {
+                    return false;
+                }
+                try {
+                    const body = JSON.parse(call.payload) as Record<string, unknown>;
+                    return ((body["command"] as Record<string, unknown> | undefined)?.["op"] as string) === "migrate-workspace";
+                } catch {
+                    return false;
+                }
+            });
+            assert.ok(index >= 0);
+            // Remove a migrating member before the reply lands.
+            const doomed = harness.winById("m-win-2");
+            const at = harness.wins.indexOf(doomed);
+            harness.wins.splice(at, 1);
+            const replyText = await harness.bridge.send(harness.dbusCalls[index]?.payload as string);
+            harness.replies.set(index, replyText);
+            harness.callbacks[index]?.(replyText);
+            const reply = JSON.parse(replyText) as Record<string, unknown>;
+            assert.equal(reply["outcome"], "planned", replyText);
+            // The pinned re-observation mismatches: zero native writes.
+            assert.equal((harness.winById("m-win-1").output as FakeOutput).name, "out-left");
+            assert.equal(harness.currentByOutput.get(harness.outputs.right)?.id, "ws-9");
+            assert.ok(harness.logs.some((line) => line.includes("outcome=stale-revision")));
+        } finally {
+            await harness.stop();
+        }
+    });
+
+    it("never replays a duplicate real reply", async () => {        const harness = await makeHarness();
+        try {
+            await harness.settlePlan();
+            harness.handle.requestWorkspaceMigrate("right");
+            const index = harness.dbusCalls.findIndex((call, at) => {
+                if (call.method !== "DescribePlan" || harness.replies.has(at)) {
+                    return false;
+                }
+                try {
+                    const body = JSON.parse(call.payload) as Record<string, unknown>;
+                    return ((body["command"] as Record<string, unknown> | undefined)?.["op"] as string) === "migrate-workspace";
+                } catch {
+                    return false;
+                }
+            });
+            assert.ok(index >= 0);
+            const replyText = await harness.bridge.send(harness.dbusCalls[index]?.payload as string);
+            harness.replies.set(index, replyText);
+            harness.callbacks[index]?.(replyText);
+            assert.equal((harness.workspace["activeWindow"] as FakeWindow).internalId, "m-win-1");
+            const rightCount = harness.wins.filter((win) => (win.output as FakeOutput).name === "out-right").length;
+            // A late duplicate of the same reply never replays native writes.
+            harness.callbacks[index]?.(replyText);
+            assert.equal((harness.workspace["activeWindow"] as FakeWindow).internalId, "m-win-1");
+            assert.equal(
+                harness.wins.filter((win) => (win.output as FakeOutput).name === "out-right").length,
+                rightCount,
+            );
+        } finally {
+            await harness.stop();
+        }
+    });
+
+    it("preserves automatic fixed-float origin and hints across migration", async () => {
+        const harness = await makeHarness({
+            wins: [
+                { id: "m-win-1", output: "left", desktop: "ws-1" },
+                {
+                    id: "m-win-fixed",
+                    output: "left",
+                    desktop: "ws-1",
+                    minSize: { width: 400, height: 300 },
+                    maxSize: { width: 400, height: 300 },
+                },
+                { id: "m-win-t", output: "right", desktop: "ws-9" },
+            ],
+        });
+        try {
+            await harness.settlePlan();
+            const fixedBefore = harness.frameOf(harness.winById("m-win-fixed"));
+            harness.handle.requestWorkspaceMigrate("right");
+            const flushed = await harness.flushOp("migrate-workspace");
+            assert.equal(flushed.reply["outcome"], "planned", JSON.stringify(flushed.reply));
+            // The automatic float rides the wire with its origin and hints.
+            const windows = flushed.body["windows"] as Array<Record<string, unknown>>;
+            const fixedWire = windows.find((entry) => entry["window"] === "m-win-fixed") as Record<string, unknown>;
+            assert.equal(fixedWire["floating"], true);
+            assert.equal(fixedWire["fixed_auto"], true);
+            assert.deepEqual(fixedWire["min_size"], { w: 400, h: 300 });
+            assert.deepEqual(fixedWire["max_size"], { w: 400, h: 300 });
+            // Native transfer with the frame preserved (no tiler geometry).
+            const fixed = harness.winById("m-win-fixed");
+            assert.equal((fixed.output as FakeOutput).name, "out-right");
+            assert.deepEqual(harness.frameOf(fixed), fixedBefore);
+            // Post-currency keeps the origin: the follow-up reconcile still
+            // carries fixed_auto for the same client (no origin loss).
+            await harness.settlePlan();
+            const reconciles = harness.dbusCalls
+                .map((call, index) => ({ call, index }))
+                .filter(({ call, index }) => {
+                    if (call.method !== "DescribePlan" || !harness.replies.has(index)) {
+                        return false;
+                    }
+                    try {
+                        const body = JSON.parse(call.payload) as Record<string, unknown>;
+                        return ((body["command"] as Record<string, unknown> | undefined)?.["op"] as string) === "reconcile";
+                    } catch {
+                        return false;
+                    }
+                });
+            assert.ok(reconciles.length > 0, "expected a post-migration reconcile");
+            const rekeyed = reconciles.filter(({ call }) => {
+                try {
+                    const probe = JSON.parse(call.payload) as Record<string, unknown>;
+                    const domain = probe["domain"] as Record<string, unknown>;
+                    return domain["output"] === "out-right" && domain["workspace"] === "ws-1";
+                } catch {
+                    return false;
+                }
+            });
+            assert.ok(rekeyed.length > 0, "expected a post-migration reconcile of the rekeyed domain");
+            const last = rekeyed[rekeyed.length - 1] as { call: { payload: string } };
+            const lastBody = JSON.parse(last.call.payload) as Record<string, unknown>;
+            const lastWindows = lastBody["windows"] as Array<Record<string, unknown>>;
+            const carried = lastWindows.find((entry) => entry["window"] === "m-win-fixed") as Record<string, unknown>;
+            assert.equal(carried["fixed_auto"], true);
+            assert.deepEqual(carried["min_size"], { w: 400, h: 300 });
+        } finally {
+            await harness.stop();
+        }
+    });
+
+    it("preserves an explicit tile override across migration", async () => {
+        const harness = await makeHarness({
+            wins: [
+                { id: "m-win-1", output: "left", desktop: "ws-1" },
+                {
+                    id: "m-win-fixed",
+                    output: "left",
+                    desktop: "ws-1",
+                    minSize: { width: 400, height: 300 },
+                    maxSize: { width: 400, height: 300 },
+                },
+                { id: "m-win-t", output: "right", desktop: "ws-9" },
+            ],
+            activeId: "m-win-fixed",
+        });
+        try {
+            await harness.settlePlan();
+            // Tile the automatic float explicitly: a single toggle
+            // unfloats it and records the suppress pin (explicit user tile
+            // win). Re-pin active first: seeding focuses a tiled
+            // survivor, never the fixed client.
+            harness.workspace["activeWindow"] = harness.winById("m-win-fixed");
+            harness.handle.requestFloat();
+            await harness.settlePlan();
+            harness.handle.requestWorkspaceMigrate("right");
+            const flushed = await harness.flushOp("migrate-workspace");
+            assert.equal(flushed.reply["outcome"], "planned", JSON.stringify(flushed.reply));
+            const windows = flushed.body["windows"] as Array<Record<string, unknown>>;
+            const fixedWire = windows.find((entry) => entry["window"] === "m-win-fixed") as Record<string, unknown>;
+            assert.equal(fixedWire["fixed_suppress"], true);
+            assert.equal("fixed_auto" in fixedWire, false);
+            // The overridden tile migrates as a tiled member with planned
+            // geometry on the target.
+            const fixed = harness.winById("m-win-fixed");
+            assert.equal((fixed.output as FakeOutput).name, "out-right");
+            const frame = harness.frameOf(fixed);
+            assert.ok(frame.x >= 1920 && frame.w > 0, JSON.stringify(frame));
+        } finally {
+            await harness.stop();
+        }
+    });
+
+    it("refuses a fullscreen transient dialog with zero native writes", async () => {
+        const harness = await makeHarness({
+            wins: [
+                { id: "m-win-1", output: "left", desktop: "ws-1" },
+                { id: "m-win-2", output: "left", desktop: "ws-1" },
+                { id: "m-dlg", output: "left", desktop: "ws-1", normalWindow: false, transientForId: "m-win-1" },
+                { id: "m-win-t", output: "right", desktop: "ws-9" },
+            ],
+        });
+        try {
+            await harness.settlePlan();
+            harness.winById("m-dlg").fullScreen = true;
+            const before = harness.sendOps().length;
+            harness.handle.requestWorkspaceMigrate("right");
+            assert.deepEqual(harness.sendOps().length, before);
+            assert.ok(
+                harness.logs.some(
+                    (line) => line.includes("component=workspace-migrate") && line.includes("outcome=overlay-present"),
+                ),
+                harness.logs.join("\n"),
+            );
+            assert.equal((harness.winById("m-win-1").output as FakeOutput).name, "out-left");
+            assert.equal((harness.winById("m-dlg").output as FakeOutput).name, "out-left");
+        } finally {
+            await harness.stop();
+        }
+    });
+
+    it("refuses a stale minimized core link until ordinary reconcile", async () => {
+        const harness = await makeHarness({
+            wins: [
+                { id: "m-win-1", output: "left", desktop: "ws-1" },
+                { id: "m-win-2", output: "left", desktop: "ws-1", minimized: true },
+                { id: "m-win-t", output: "right", desktop: "ws-9" },
+            ],
+        });
+        try {
+            await harness.settlePlan();
+            harness.handle.requestWorkspaceMigrate("right");
+            const flushed = await harness.flushOp("migrate-workspace");
+            // The retained session still links the minimized client as
+            // tiled while the wire filters it: the core refuses partial
+            // observation and the adapter performs zero native writes.
+            assert.equal(flushed.reply["outcome"], "rejected", JSON.stringify(flushed.reply));
+            assert.equal(flushed.reply["kind"], "partial-observation");
+            assert.equal((harness.winById("m-win-1").output as FakeOutput).name, "out-left");
+            assert.equal(harness.currentByOutput.get(harness.outputs.right)?.id, "ws-9");
+        } finally {
+            await harness.stop();
+        }
+    });
+});

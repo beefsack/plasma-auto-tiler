@@ -406,12 +406,14 @@ const QList<ShortcutConflictRow> &shortcutConflictTable();
 // send-and-follow, 20 unbound numbered send-and-stay with symbol aliases
 // plus append rows, 8 unbound relative send-and-stay), followed by 12
 // item-5 output rows from planOutputSendShortcutCatalog (8 Meta+Ctrl+Alt+H/J/K/L
-// and arrows send-and-follow, 4 unbound directional send-and-stay).
+// and arrows send-and-follow, 4 unbound directional send-and-stay),
+// followed by 4 R-WS-12 migrate rows from
+// planWorkspaceMigrateShortcutCatalog (unbound directional follow).
 // Deterministic order, unique action IDs (unbound rows share canonical key 0).
 // kind is one of focus, move, resize, toggle, workspace-select,
 // workspace-move, workspace-previous, workspace-relative,
 // workspace-send-relative, workspace-move-stay, workspace-send-relative-stay,
-// output-send, output-send-stay.
+// output-send, output-send-stay, workspace-migrate.
 // knownForeign* is the compiled KDE conflict for the 23 conflict-table rows
 // only; empty (key 0) means no known conflict and the row must report
 // honestly instead of inventing one. Unbound rows carry canonical key 0

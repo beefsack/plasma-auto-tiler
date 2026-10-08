@@ -264,6 +264,13 @@ decisions of 2026-09-24 are under
   diagnosed-empty availability fallback. Native acceptance and user review
   remain pending; [record](changes/archive/kde-intentional-float-restart.md).
   Windows behavior remains unchanged; handoff item 8 carries its design seams.
+  Q4 R-WS-12 core/Linux planner + KDE whole-active-workspace output migration
+  delivered offline under autonomous PROVISIONAL D1-D9 (2026-10-08): four
+  unbound follow actions, strict native per-output capability, retained domain
+  rekey, source refill, floats/sticky split and whole-overlay refusal. Native
+  acceptance and user review pending;
+  [record](changes/archive/kde-whole-workspace-output-migration.md).
+  Windows changes are compile-only `maximized: false`; item 14 wires behavior.
   KDE-side session owns shared Rust core + KDE adapter; separate Windows
   agent wires later. Correctness over non-breakage: Windows build/behavior
   may break provided the handoff below lists the specific changes needed.
@@ -383,13 +390,12 @@ decisions of 2026-09-24 are under
   | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; keep first-fullscreen-exit and B9 refusal intact. Independent of items 1-5. |
   | 12 | Non-local workspace modes parity (d) | Depends on handoff items 1/2 (ring + follow/stay) and the parked parity-queue multi-output foundation; last. |
   | 13 | Q2 fixed-size float admission R-SPC-04 | KDE/shared offline delivery under autonomous PROVISIONAL D1-D8; max-track observation and lifetime/origin wiring before enabling the Engine opt-in. Fixed/maximize intersection coordinates with item 11. |
+  | 14 | Q4 whole-workspace migration R-WS-12 | Core/KDE offline delivery under autonomous PROVISIONAL D1-D9; depends on item 5's parked multi-output foundation, item 1 history invalidation and item 12 for non-local runtime modes. No Windows behavior delivered. |
 
   Q2 R-SPC-04 occupies handoff item 13 below; Q3 R-RST-01 KDE delivery is
-  complete offline and updates existing item 8. Remaining Q2-Q5 reservation:
-  R-WS-12 and R-LAY-04
-  own their KDE pieces; when each lands, its owning session appends a Windows
-  handoff entry here in the same numbered format. Do not pre-write their
-  adapter wiring.
+  complete offline and updates existing item 8. Q4 R-WS-12 fills item 14.
+  Remaining Q5 reservation: R-LAY-04 owns its KDE piece; when it lands, append
+  a Windows handoff entry here in the same numbered format.
 
   - Source notation: `src/...` / `tests/...` below are under
     `crates/tiler-windows/`; `core/...` is `crates/tiler-core/src/`;
@@ -1859,6 +1865,112 @@ decisions of 2026-09-24 are under
       rules preserved; dated Ours Windows matrix/spec evidence, no native
       claim without user testing; user review of D1-D8 remains tracked.
 
+  - Item 14: Q4 whole-active-workspace output migration R-WS-12. The addition
+    was accepted 2026-10-07; D1-D9 detail is autonomous PROVISIONAL selection
+    2026-10-08, not a user decision. Core/Linux planner/KDE delivered offline;
+    Windows behavior remains unchanged. Depends on the parked multi-output
+    foundation (item 5), scoped history (item 1), and item 12 for non-local
+    modes. [Record](changes/archive/kde-whole-workspace-output-migration.md),
+    [spec](spec/functional-spec.md#workspaces) REQ-WS-12/12a..i,
+    [matrix](spec/reference-outcomes/workspaces.md#r-ws-21-migrate-mode-capability).
+
+    #### Item 14 behavior and shared contract
+
+    - Four directional active-only, follow-only actions, all UNBOUND by default.
+      Resolve item-5 full-output-rect unique reciprocal adjacency, no wrap.
+      Hidden R-WS-12 baseline has no counterpart; explicitly select its active
+      leg. KDE local/global-unique requires strict native per-output desktops;
+      shared/false/unreadable refuses. Windows has no KWin option: establish
+      separable per-monitor views through its existing project workspace owner,
+      not a guessed registry policy or an emulated native capability flag.
+    - Preserve backing ID, tree/order/shares/remembered focus/tiling mode;
+      insert after target current and show migrated, prior target stays hidden.
+      Source selects last remaining scoped entry, existing minimum-two/trailing
+      spare converges; empty allowed. Carry workspace floats with class/origin,
+      sticky stays source. Refuse whole before any write for fullscreen/maximized
+      moved members or affected current views (COSMIC carry deviation, reviewable).
+    - Shared `core/boundary.rs` `CoreCommand::MigrateWorkspace { direction }`
+      and `CoreReply::MigrateWorkspace(MigrateWorkspacePlan)`; event target has
+      the SAME workspace ID on a DIFFERENT output and empty `target_windows`.
+      Destination's DIFFERENT current workspace remains adapter-owned, including
+      its safety gate. `core/engine.rs` `migrate_workspace_request` rekeys via
+      `core/session/world.rs:251` `relocate_domain`, not per-window re-admission.
+      Reply geometry/focus/active_window/member counts and postconditions mean
+      retained `planned`, never native completion. Protocol `migrate-workspace`
+      is codec-only; Windows calls the public Engine types directly.
+    - Follow moved active client only after every member/output/membership and
+      both views are verified; empty/sticky-active uses native output switching
+      without invented focus, minimized clients stay minimized. History 1.3/1.5
+      invalidates out-of-scope previous IDs; remove ONLY moved ID from hotplug
+      return associations. Partial/uncertain native writes reconcile observed
+      domains without replay, guessed rollback or false completion.
+
+    #### Item 14 exact Windows adapter sites
+
+    - `src/workspace.rs:95` `ManagedWorkspaces` currently stores output order,
+      active index, membership, displaced origins and tiled state. Add one
+      whole-workspace reassignment primitive, preserving those stable IDs and
+      state; use `workspace_members` :659 / `workspace_ids` :673 for exact
+      membership/order, and `active_id` :236 / `activate` :244 for source/target
+      view transitions. `displace_output_to` :561 / `reconnect_output` :603
+      must forget only the explicitly moved ID. Do not simulate this by N sends
+      or move the destination workspace back to source.
+    - Add a migrate event builder beside `src/workspace_owner.rs:70`
+      `build_send_event`; permit empty active client, carry every workspace
+      member's overlay/sticky/class/origin flags and target-scope currency.
+      `stamp_send_target` :148 is SendToWorkspace-specific; do not reuse its
+      command. Extend `planned_writes` :406 and native
+      `src/tiling_sys.rs:4211` `desired_entries` for the new typed reply.
+      `verify_membership_transfer` :164 proves ONE mover only: migration must
+      prove the complete set plus retained mapping and both current views.
+    - Add a distinct route beside `src/tiling_sys.rs:10552` `workspace_do_send`
+      (event construction :10848, Engine handle :10865, membership proof :10952)
+      and :10314 `workspace_do_send_native`; their eligibility and :11017
+      `workspace_send_follow` are window-send/same-output tails, not a whole
+      migration implementation. Resolve full rectangles via `all_monitors`
+      :264 / `monitor_fulls` :282, bounds via `workspace_domain_for` :8540.
+      Fence all windows/related natives, source/target current views, mode,
+      lifetime and overlays before the first and every later setter; verify
+      arrivals before geometry/view/focus completion. Protect hidden/minimized
+      clients and existing product-hide/recovery authority through partial writes.
+    - Compile-only edits in this delivery: `src/tiling.rs:1263/:1315`,
+      `src/workspace_owner.rs:98/:115`, and native preview-test constructors
+      `src/tiling_sys.rs:16719/:16927` initialize `EngineWindow.maximized` to
+      false. These are NOT fresh overlay observations. Replace placeholders
+      only when the Windows adapter supplies actual migration safety evidence;
+      retain existing fullscreen inference and game/preimage policies.
+    - Proposed Windows IDs `migrate-workspace-left/right/up/down`, defaults
+      empty, follow-only, no new holder claim. Add catalog family/routing in
+      `src/settings.rs:475` `BindingFamily` / :757 `binding_catalog`;
+      `src/snapkey.rs:427` `WorkspaceOp` / :445 `WorkspaceIntent` currently
+      encode digit select/send, not migration. Reuse items 1/2's explicit ACTION
+      rebinding and full-modifier queue/hold pairing, never a canonical empty VK.
+      Both presets retain unbound defaults; dynamic settings rows remain
+      rebindable with no new tray command. Actual rebound chord conflict policy
+      follows existing validation, not a fabricated default conflict.
+    - KDE mirrors: `kwin/src/plan-adapter-entry.ts` `requestWorkspaceMigrate` /
+      `observeMigrateWorkspace`, `kwin/src/workspace-native.ts`
+      `commitWorkspaceMigration`, `kwin/src/workspace-send-adapter.ts`
+      `requestMigrateWorkspace` / `progressMigrate` and per-setter fences.
+      Port `kwin/tests/workspace-migrate.test.ts` and
+      `workspace-migrate-engine-fixture.test.ts` invariants, not duplicated
+      adapter architecture; no core extraction is selected.
+    - [ ] Portable: retained unequal-share/nested tree, floats/origins, sticky
+      active and minimized/null focus, empty lifecycle, insert-after-current,
+      scoped modes/history/return siblings, all-direction adjacency, overlay
+      no-write refusal, stale revision/ref replacement/removal/partial-arrival
+      recovery; actual Engine reply extraction and unbound rebind/preset tests.
+    - [ ] Windows-only: whole-member physical output transfer, mixed DPI/work
+      areas, native arrival/view/focus timing, hidden/minimized/transient lifetime
+      and no-write game/overlay refusal, owned-window recovery after partial
+      writes. User owns live journeys on the two-output PC.
+    - User journey/DoD: select WS2 `H[A,V[B*,C]]` on L, R shows occupied WS3;
+      bind migration right, verify same WS2/tree/shares, WS3 hidden, L last
+      remaining, B focus only after arrival. Repeat empty, intentional/automatic
+      float plus sticky, overlay refusals and displaced-origin reconnect.
+      Update Ours Windows/spec with dated offline evidence; native outcomes TBD
+      until user-tested. D1-D9 review remains pending.
+
   ### Source discrepancies to preserve and report
 
   | Existing assertion | Current source / implementation gap | Handoff treatment |
@@ -2346,6 +2458,20 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 
 ### Multi-output PC
 
+- KDE Q4 R-WS-12/R-WS-21..26 (offline delivered, D1-D9 PROVISIONAL): rebind
+  the four empty-default migration actions; local/global-unique with native
+  `perOutputVirtualDesktops` on migrates, off/unreadable/shared refuses before
+  writes with exact reason. Select active WS2 with nested unequal-share tree,
+  occupied target WS3 and hidden WS4; verify stable ID/order/tiling mode,
+  insertion after WS3, WS3 hidden, source last remaining and trailing lifecycle.
+  Observe delayed member arrival and both views before focus; empty uses native
+  output switch without client focus. Check intentional/automatic float remap
+  across work areas/scales, sticky source, minimized/transient clients, member
+  removal and partial-write reconciliation. Fresh fullscreen/maximized member,
+  source-view and target-view legs must refuse with zero writes/focus/game
+  interference. Previous invalidation and reconnect forget only moved ID.
+  [Record](changes/archive/kde-whole-workspace-output-migration.md),
+  [live guide](live-kwin-testing.md). User-owned; native outcomes remain TBD.
 - KDE item 5 R-MOV-08/R-OUT-04 (offline delivered, needs two outputs): stack
   outputs vertically; Meta+Shift+Up/Down crosses after local swap/restructure/
   escape is exhausted, including a sole window. Add a panel work-area gap:
@@ -2489,6 +2615,16 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   state until the next settled full update, no hold/retry scheduler or ledger.
   KDE delivered offline; native checks and Windows item 8 pending;
   [record](changes/archive/kde-intentional-float-restart.md).
+  Q4 D1 four unbound directional follow actions and empty presets; D2 strict
+  local/global-unique native capability gate; D3 active-only FULL-rect adjacency;
+  D4 retained backing/tree/order/shares/focus/mode, insert-after-current/show;
+  D5 last-remaining source refill, existing minimum-two/trailing spare, empty
+  allowed; D6 verified arrival/views before focus, empty native output switch;
+  D7 workspace floats carry class/origin, sticky stays; D8 whole no-write overlay
+  refusal (reviewable COSMIC deviation); D9 history 1.3/1.5 and remove only moved
+  ID from hotplug return, correlated partial/uncertain terminals. Shared/KDE
+  delivered offline; native checks and Windows item 14 pending;
+  [record](changes/archive/kde-whole-workspace-output-migration.md).
 
 ## Known issues and risks
 

@@ -60,8 +60,11 @@ import {
     WORKSPACE_SEND_START_METHOD,
     WorkspaceSendAdapter,
     WorkspaceFollowNativeDiagnostic,
+    WorkspaceMigrateObserved,
+    WorkspaceMigratePin,
     WorkspaceSendObserved,
     WorkspaceSendSettled,
+    isMigrateDirection,
     workspaceFingerprint as workspaceSendFingerprint,
 } from "./workspace-send-adapter";
 
@@ -148,6 +151,7 @@ export interface PlanEntryHandle {
     readonly requestWorkspaceRelative: (delta: unknown) => void;
     readonly requestWorkspaceRelativeMove: (delta: unknown, follow?: unknown) => void;
     readonly requestSendToOutput: (direction: unknown, follow?: unknown) => void;
+    readonly requestWorkspaceMigrate: (direction: unknown) => void;
     readonly getWorkspaceTilingSnapshot: () => WorkspaceTilingSnapshot;
     readonly requestWorkspaceTilingToggle: () => void;
 }
@@ -202,6 +206,30 @@ export function planOutputSendShortcutCatalog(): ReadonlyArray<PlanOutputSendSho
             sequence: "",
             direction: entry.direction,
             follow: false,
+        });
+    }
+    return Object.freeze(rows);
+}
+
+export interface PlanWorkspaceMigrateShortcutRow {
+    readonly action: string;
+    readonly text: string;
+    readonly sequence: string;
+    readonly direction: PlanDirection;
+}
+
+// Whole-workspace output migration shortcut catalog (R-WS-12): follow-only
+// forms in four directions, bindable but unbound by default (empty sequence)
+// for user rebinding. Native catalog/preset sync stays a later bounded unit.
+export function planWorkspaceMigrateShortcutCatalog(): ReadonlyArray<PlanWorkspaceMigrateShortcutRow> {
+    const rows: PlanWorkspaceMigrateShortcutRow[] = [];
+    const dirs: ReadonlyArray<PlanDirection> = ["left", "right", "up", "down"];
+    for (const direction of dirs) {
+        rows.push({
+            action: `plasma-auto-tiler-migrate-workspace-${direction}`,
+            text: `Migrate workspace to output ${direction} (follow)`,
+            sequence: "",
+            direction,
         });
     }
     return Object.freeze(rows);
@@ -740,6 +768,784 @@ function selectAdjacentOutput(
         return "ambiguous";
     }
     return target;
+}
+
+// STRICT TRUE live native perOutputVirtualDesktops gate for whole-workspace
+// migration only (R-WS-12): true passes, false refuses, anything unreadable
+// refuses. Existing mode behavior is untouched and no native option/config
+// write ever happens here. The source is the override when tests supply one,
+// else the live lexical KWin `options` global.
+function readPerOutputVirtualDesktopsFlag(source: unknown): boolean | null {
+    try {
+        if (typeof source !== "object" || source === null) {
+            return null;
+        }
+        const raw = readProp(source as object, "perOutputVirtualDesktops");
+        if (raw === true) {
+            return true;
+        }
+        if (raw === false) {
+            return false;
+        }
+        return null;
+    } catch (error) {
+        void error;
+        return null;
+    }
+}
+
+export interface MigrateWorkspacePolicy {
+    readonly mode: string;
+    readonly perOutput: boolean | null;
+}
+
+// Read-only fixed-size origin decoration for migration observation: the
+// adapter-asserted provenance for one stable id and live ref, or null when
+// unrecorded or replaced. Never classifies; the planner owns admission.
+export interface MigrateOriginResolver {
+    readonly originOf: (
+        id: string,
+        ref: object,
+    ) => { readonly fixedAuto: boolean; readonly fixedSuppress: boolean } | null;
+    // Live tiling mode for the migrating workspace id. Absent resolvers
+    // read tiled; the adapter's own mode hook stays authoritative and the
+    // two must agree at dispatch.
+    readonly tilingOf?: (workspaceId: string) => boolean;
+}
+
+export type MigrateWorkspaceObservation =
+    | { readonly status: "ready"; readonly observed: WorkspaceMigrateObserved }
+    | { readonly status: "no-target"; readonly observed: null }
+    | { readonly status: "invalid"; readonly observed: null; readonly reason?: string };
+
+// Production whole-workspace migration observation (R-WS-12): the source
+// output's current workspace as a FULL normal-client view INCLUDING sticky
+// (sticky rides with sticky/fit-excluded flags and stays homed on the
+// source), plus the adjacent target output's FULL current view for the
+// affected-view overlay gate and the drift fence. Selection reuses the
+// FULL-output-rectangle unique reciprocal edge-touch rule (panel gaps
+// cannot break adjacency): a confirmed no-candidate condition is
+// `no-target` (quiet no-op), ambiguous or unreadable evidence is `invalid`
+// and must refuse before any mutation. No output wrapping. Carried domain
+// bounds stay per-desktop work areas (never tiled under panels): the source
+// area for the migrating desktop plus the target-output area for that same
+// backing desktop. The focused id names the migrated active client, the
+// sticky active client, or "" (a dangling focus refuses downstream, never
+// fabricated). Minimized windows ride no wire but still trip the protected
+// tripwire when fullscreen/maximized. Null fail-closed everywhere.
+export function observeMigrateWorkspace(
+    liveWorkspace: unknown,
+    cache: Map<string, string>,
+    floatingIds: ReadonlySet<string>,
+    gaps: DomainGaps,
+    direction: string,
+    policy: MigrateWorkspacePolicy,
+    owners?: Map<string, object>,
+    pinned?: WorkspaceMigratePin,
+    origins?: MigrateOriginResolver,
+): MigrateWorkspaceObservation {
+    const gap = (reason: string): MigrateWorkspaceObservation => ({ status: "invalid", observed: null, reason });
+    const invalid: MigrateWorkspaceObservation = { status: "invalid", observed: null };
+    const noTarget: MigrateWorkspaceObservation = { status: "no-target", observed: null };
+    try {
+        if (!isMigrateDirection(direction)) {
+            return invalid;
+        }
+        void gaps;
+        if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
+            return invalid;
+        }
+        const surface = liveWorkspace as Record<string, unknown>;
+        let active: unknown = undefined;
+        try {
+            active = Reflect.get(surface, "activeWindow");
+        } catch (error) {
+            void error;
+            active = undefined;
+        }
+        const activeRef = typeof active === "object" && active !== null ? (active as object) : null;
+        const topology = readOutputTopology(liveWorkspace);
+        if (topology === null || topology.length === 0) {
+            return invalid;
+        }
+        // Source output: the flight pin, the active window's output, or
+        // the live activeScreen. No first-screen default: an unreadable
+        // exact live output fails closed.
+        let sourceOutput = "";
+        if (pinned !== undefined) {
+            if (!isOpaqueId(pinned.sourceOutput) || !isOpaqueId(pinned.sourceWorkspace) || !isOpaqueId(pinned.targetOutput)) {
+                return invalid;
+            }
+            sourceOutput = pinned.sourceOutput;
+        } else if (activeRef !== null) {
+            const activeOutput = readProp(activeRef, "output");
+            if (typeof activeOutput !== "object" || activeOutput === null) {
+                return invalid;
+            }
+            const nameRaw = readProp(activeOutput as object, "name");
+            if (!isOpaqueId(nameRaw)) {
+                return invalid;
+            }
+            sourceOutput = nameRaw as string;
+        } else {
+            let screen: unknown = undefined;
+            try {
+                screen = Reflect.get(surface, "activeScreen");
+            } catch (error) {
+                void error;
+                screen = undefined;
+            }
+            if (typeof screen !== "object" || screen === null) {
+                return invalid;
+            }
+            const nameRaw = readProp(screen as object, "name");
+            if (!isOpaqueId(nameRaw)) {
+                return invalid;
+            }
+            sourceOutput = nameRaw as string;
+        }
+        const sourceEntry = topology.find((entry) => entry.name === sourceOutput);
+        if (sourceEntry === undefined) {
+            return invalid;
+        }
+        const migratingId = pinned !== undefined ? pinned.sourceWorkspace : sourceEntry.workspace;
+        // Phase-aware source view: pre-write the source must still show the
+        // migrating id; after the flight's own source refill it must show
+        // the frozen refill instead. Anything else is drift.
+        const expectedSourceView = pinned?.expectViews?.source ?? migratingId;
+        if (sourceEntry.workspace !== expectedSourceView) {
+            return invalid;
+        }
+        const selected = selectAdjacentOutput(topology, sourceEntry, direction);
+        if (selected === null) {
+            return noTarget;
+        }
+        if (selected === "ambiguous") {
+            return invalid;
+        }
+        if (pinned !== undefined && selected.name !== pinned.targetOutput) {
+            return invalid;
+        }
+        const targetEntry = selected;
+        // Phase-aware target view: pre-write a target already showing the
+        // migrating workspace is a stale scope; after the flight's own
+        // target switch it must show exactly that.
+        const expectedTargetView = pinned?.expectViews?.target;
+        if (expectedTargetView !== undefined) {
+            if (targetEntry.workspace !== expectedTargetView) {
+                return invalid;
+            }
+        } else if (targetEntry.workspace === migratingId) {
+            return invalid;
+        }
+        const desktops = decodeList(readProp(surface, "desktops"), MAX_DESKTOPS);
+        if (desktops === null || desktops.length === 0) {
+            return invalid;
+        }
+        let migratedDesktopRef: object | null = null;
+        for (const item of desktops) {
+            if (typeof item !== "object" || item === null) {
+                continue;
+            }
+            if (readProp(item as object, "id") === migratingId) {
+                migratedDesktopRef = item as object;
+                break;
+            }
+        }
+        if (migratedDesktopRef === null) {
+            return invalid;
+        }
+        const sourceBounds = readWorkAreaFor(surface, sourceEntry.ref, migratedDesktopRef);
+        if (sourceBounds === null) {
+            return invalid;
+        }
+        const targetBounds = readWorkAreaFor(surface, targetEntry.ref, migratedDesktopRef);
+        if (targetBounds === null) {
+            return invalid;
+        }
+        const lister = readProp(surface, "windowList");
+        if (typeof lister !== "function") {
+            return invalid;
+        }
+        let rawList: unknown = undefined;
+        try {
+            rawList = Reflect.apply(lister as (...args: ReadonlyArray<never>) => unknown, surface, []);
+        } catch (error) {
+            void error;
+            return invalid;
+        }
+        const windows = decodeList(rawList, MAX_LIST);
+        if (windows === null) {
+            return invalid;
+        }
+        const memberOf = (ref: object, workspaceId: string): boolean | null => {
+            const membership = decodeList(readProp(ref, "desktops"), MAX_DESKTOPS);
+            if (membership === null) {
+                return null;
+            }
+            for (const member of membership) {
+                if (typeof member !== "object" || member === null) {
+                    return null;
+                }
+                if (readProp(member as object, "id") === workspaceId) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        type CollectedWindow = {
+            id: string;
+            ref: object;
+            rect: { x: number; y: number; w: number; h: number };
+            output: string;
+            floating: boolean;
+            sticky: boolean;
+            fullscreen: boolean;
+            maximized: boolean;
+            fitExcluded: boolean;
+            minimized: boolean;
+            transient: boolean;
+            fixedAuto: boolean;
+            fixedSuppress: boolean;
+            minSize: { w: number; h: number } | null;
+            maxSize: { w: number; h: number } | null;
+        };
+        type RelatedWindow = {
+            id: string;
+            ref: object;
+            output: string;
+            parentId: string | null;
+            transient: boolean;
+            minimized: boolean;
+            floating: boolean;
+            sticky: boolean;
+            fullscreen: boolean;
+            maximized: boolean;
+            fitExcluded: boolean;
+        };
+        const sourceWindows: CollectedWindow[] = [];
+        const targetViewWindows: CollectedWindow[] = [];
+        const relatedWindows: RelatedWindow[] = [];
+        const seen = new Set<string>();
+        const memberRefs = new Set<object>();
+        let protectedPresent = false;
+        // Transient walk: resolve the topmost migrating ancestor of one
+        // window through `transientFor`, bounded and cycle-guarded. Returns
+        // the carried member ref reached, "unlinked" when the chain ends
+        // outside the migrating set, or null when classification is
+        // impossible (missing API, cycle, bound, unreadable hop): the
+        // caller stops with the exact transient-unknown gap instead of
+        // inventing a refusal or a silent carry.
+        const transientMemberParent = (start: object): object | "unlinked" | null => {
+            const visited = new Set<object>([start]);
+            let current = start;
+            for (let hop = 0; hop < 8; hop += 1) {
+                let parent: unknown = undefined;
+                try {
+                    parent = readProp(current, "transientFor");
+                } catch (error) {
+                    void error;
+                    return null;
+                }
+                if (parent === null || parent === undefined) {
+                    return "unlinked";
+                }
+                if (typeof parent !== "object") {
+                    return null;
+                }
+                if (memberRefs.has(parent as object)) {
+                    return parent as object;
+                }
+                if (visited.has(parent as object)) {
+                    return null;
+                }
+                visited.add(parent as object);
+                current = parent as object;
+            }
+            return null;
+        };
+        const isInView = (ref: object, outputName: string, workspaceId: string): boolean | null => {
+            if (outputName !== sourceOutput && outputName !== targetEntry.name) {
+                return false;
+            }
+            const onWorkspace = memberOf(ref, workspaceId);
+            if (onWorkspace === null) {
+                return null;
+            }
+            if (!onWorkspace) {
+                return false;
+            }
+            return true;
+        };
+        for (const item of windows) {
+            if (typeof item !== "object" || item === null) {
+                continue;
+            }
+            const ref = item as object;
+            if (readProp(ref, "normalWindow") !== true) {
+                continue;
+            }
+            const managed = readProp(ref, "managed");
+            if (managed !== undefined && managed !== true) {
+                continue;
+            }
+            const output = readProp(ref, "output");
+            if (typeof output !== "object" || output === null) {
+                continue;
+            }
+            const outputNameRaw = readProp(output as object, "name");
+            if (!isOpaqueId(outputNameRaw)) {
+                return invalid;
+            }
+            const outputName = outputNameRaw as string;
+            // Migrating members may already sit on either output once the
+            // flight pin is observed across transfer; the affected target
+            // view always rides along for the overlay gate and drift fence.
+            const inScopeOutput = outputName === sourceOutput || outputName === targetEntry.name;
+            if (!inScopeOutput) {
+                continue;
+            }
+            const sticky = readProp(ref, "onAllDesktops") === true;
+            const onMigrating = memberOf(ref, migratingId);
+            if (onMigrating === null) {
+                return invalid;
+            }
+            const onTargetCurrent = memberOf(ref, targetEntry.workspace);
+            if (onTargetCurrent === null) {
+                return invalid;
+            }
+            // Source view: migrating-desktop members on the source output,
+            // plus sticky windows living on the source output (they stay
+            // homed there). Under a flight pin, migrated members already
+            // sitting on the target output still belong here by backing id
+            // so post-transfer verification keeps the frozen set. Minimized
+            // members ride along natively (no wire, no geometry, no focus).
+            // Target view: the target current desktop plus sticky living
+            // there, affected-view gate and drift fence only, never moved.
+            const inSourceView =
+                (outputName === sourceOutput && (onMigrating || sticky)) ||
+                (pinned !== undefined && outputName === targetEntry.name && onMigrating && !sticky);
+            const inTargetView =
+                outputName === targetEntry.name && (onTargetCurrent || sticky);
+            if (!inSourceView && !inTargetView) {
+                continue;
+            }
+            const fullscreen = readProp(ref, "fullScreen") !== false;
+            const maximized = readProp(ref, "maximizeMode") !== 0;
+            const minimized = readProp(ref, "minimized") === true;
+            let native: string | null = null;
+            try {
+                native = normalizeNativeId(readProp(ref, "internalId"));
+            } catch (error) {
+                void error;
+                return invalid;
+            }
+            if (native === null) {
+                return invalid;
+            }
+            const id = internNativeId(cache, native, ref, owners);
+            if (seen.has(id)) {
+                return invalid;
+            }
+            seen.add(id);
+            const frame = readFrameRect(ref);
+            if (typeof frame === "string") {
+                return invalid;
+            }
+            // Adapter-asserted fixed-size provenance decorates the
+            // observation (read-only; the planner owns admission).
+            // Automatic floats observe floating like the ordinary
+            // observation path (isEffectivelyFloating parity): they ride
+            // the wire as floating exceptions with fixed_auto and keep
+            // their origin across the migration. Tile overrides stay
+            // tiled by explicit user win.
+            let fixedAuto = false;
+            let fixedSuppress = false;
+            if (origins !== undefined) {
+                let origin: { readonly fixedAuto: boolean; readonly fixedSuppress: boolean } | null = null;
+                try {
+                    origin = origins.originOf(id, ref);
+                } catch (error) {
+                    void error;
+                    origin = null;
+                }
+                if (origin !== null) {
+                    fixedAuto = origin.fixedAuto === true;
+                    fixedSuppress = origin.fixedSuppress === true;
+                }
+            }
+            const floating = floatingIds.has(id) || sticky || fixedAuto;
+            const fitExcluded = floating || sticky || fullscreen || maximized;
+            if (fullscreen || maximized) {
+                protectedPresent = true;
+            }
+            const transient = readProp(ref, "transient") === true;
+            let minSize: { w: number; h: number } | null = null;
+            let maxSize: { w: number; h: number } | null = null;
+            try {
+                const constraints = readWindowConstraints(ref);
+                if (constraints.minSize !== null) {
+                    minSize = { w: constraints.minSize.w, h: constraints.minSize.h };
+                }
+                if (constraints.maxSize !== null) {
+                    maxSize = { w: constraints.maxSize.w, h: constraints.maxSize.h };
+                }
+            } catch (error) {
+                void error;
+            }
+            const collected: CollectedWindow = {
+                id,
+                ref,
+                rect: { x: frame.x, y: frame.y, w: frame.w, h: frame.h },
+                output: outputName,
+                floating,
+                sticky,
+                fullscreen,
+                maximized,
+                fitExcluded,
+                minimized,
+                transient,
+                fixedAuto,
+                fixedSuppress,
+                minSize,
+                maxSize,
+            };
+            memberRefs.add(ref);
+            // A sticky window on the source output belongs to the migrating
+            // view (it stays homed on the source); anywhere else it only
+            // joins the affected target view for the gate.
+            if (inSourceView) {
+                sourceWindows.push(collected);
+            } else {
+                targetViewWindows.push(collected);
+            }
+        }
+        // Partition pass: non-sticky transient descendants of carried
+        // migrating members move with their parent implicitly, so they
+        // leave the carried lists for related tracking (no explicit
+        // setter, no wire, never reclassified). Sticky transients stay
+        // carried-sticky (never touched either way). A transient chain
+        // that cannot be resolved stops with transient-unknown, and a
+        // parent that left the carried set between passes fails closed.
+        const carriedByRef = new Map<object, { list: CollectedWindow[]; index: number }>();
+        for (const list of [sourceWindows, targetViewWindows]) {
+            list.forEach((entry, index) => {
+                carriedByRef.set(entry.ref, { list, index });
+            });
+        }
+        const memberIdByRef = new Map<object, string>();
+        for (const entry of sourceWindows) {
+            memberIdByRef.set(entry.ref, entry.id);
+        }
+        // Topmost carried migrating ancestor: climb past detached entries
+        // so a transient chain never names another related window.
+        const topCarriedParent = (start: object): string | "unlinked" | null => {
+            let current: object | "unlinked" | null = transientMemberParent(start);
+            const climbed = new Set<object>();
+            while (current !== null && current !== "unlinked") {
+                const carriedId = memberIdByRef.get(current);
+                if (carriedId !== undefined) {
+                    return carriedId;
+                }
+                if (climbed.has(current)) {
+                    return null;
+                }
+                climbed.add(current);
+                let next: unknown = undefined;
+                try {
+                    next = readProp(current, "transientFor");
+                } catch (error) {
+                    void error;
+                    return null;
+                }
+                if (typeof next !== "object" || next === null) {
+                    return "unlinked";
+                }
+                current = next as object;
+            }
+            return current;
+        };
+        const detachToRelated: CollectedWindow[] = [];
+        for (const entry of [...sourceWindows, ...targetViewWindows]) {
+            if (entry.sticky || entry.transient !== true) {
+                continue;
+            }
+            // Reachability only here: any migrating member in the chain
+            // detaches this entry. Topmost resolution runs after the
+            // splice against the surviving carried set.
+            const reached = transientMemberParent(entry.ref);
+            if (reached === null) {
+                return gap("transient-unknown");
+            }
+            if (reached === "unlinked") {
+                continue;
+            }
+            detachToRelated.push(entry);
+        }
+        for (const entry of detachToRelated) {
+            const slot = carriedByRef.get(entry.ref);
+            if (slot !== undefined) {
+                slot.list.splice(slot.index, 1);
+            }
+        }
+        // Rebuild the ref index after partition: detached entries are
+        // related now, never carried.
+        carriedByRef.clear();
+        for (const list of [sourceWindows, targetViewWindows]) {
+            list.forEach((entry, index) => {
+                carriedByRef.set(entry.ref, { list, index });
+            });
+        }
+        memberIdByRef.clear();
+        for (const entry of sourceWindows) {
+            memberIdByRef.set(entry.ref, entry.id);
+        }
+        for (const entry of detachToRelated) {
+            const parentId = topCarriedParent(entry.ref);
+            if (parentId === null) {
+                return gap("transient-unknown");
+            }
+            if (parentId === "unlinked") {
+                // The transient parent left the carried set between passes
+                // (external drift): fail closed, never guess.
+                return invalid;
+            }
+            relatedWindows.push({
+                id: entry.id,
+                ref: entry.ref,
+                output: entry.output,
+                parentId,
+                transient: true,
+                minimized: entry.minimized,
+                floating: entry.floating,
+                sticky: false,
+                fullscreen: entry.fullscreen,
+                maximized: entry.maximized,
+                fitExcluded: entry.fitExcluded,
+            });
+            if (entry.fullscreen || entry.maximized) {
+                protectedPresent = true;
+            }
+        }
+        // Related pass over uncollected windows on scope outputs: transient
+        // descendants (any classification, even dialog/non-normal) plus
+        // protected clients in either affected view. Never moved, never
+        // wired; the gate sees what the carried lists cannot. Detached
+        // entries are already related and never re-examined.
+        const detachedRefs = new Set<object>(detachToRelated.map((entry) => entry.ref));
+        for (const item of windows) {
+            if (typeof item !== "object" || item === null) {
+                continue;
+            }
+            const ref = item as object;
+            if (carriedByRef.has(ref) || detachedRefs.has(ref)) {
+                continue;
+            }
+            const output = readProp(ref, "output");
+            if (typeof output !== "object" || output === null) {
+                continue;
+            }
+            const outputNameRaw = readProp(output as object, "name");
+            if (outputNameRaw !== sourceOutput && outputNameRaw !== targetEntry.name) {
+                continue;
+            }
+            const outputName = outputNameRaw as string;
+            const isTransient = readProp(ref, "transient") === true;
+            let parentId: string | null = null;
+            if (isTransient) {
+                const parent = transientMemberParent(ref);
+                if (parent === null) {
+                    return gap("transient-unknown");
+                }
+                if (parent !== "unlinked") {
+                    const carriedId = memberIdByRef.get(parent);
+                    if (carriedId === undefined) {
+                        return invalid;
+                    }
+                    parentId = carriedId;
+                }
+            }
+            const fullscreen = readProp(ref, "fullScreen") !== false;
+            const maximized = readProp(ref, "maximizeMode") !== 0;
+            if (parentId === null && !fullscreen && !maximized) {
+                continue;
+            }
+            if (parentId === null) {
+                // Protected view-local client: prove affected-view scope
+                // before gating on it.
+                const inSource = isInView(ref, outputName, migratingId);
+                if (inSource === null) {
+                    return invalid;
+                }
+                const inTarget = isInView(ref, outputName, targetEntry.workspace);
+                if (inTarget === null) {
+                    return invalid;
+                }
+                const sticky = readProp(ref, "onAllDesktops") === true;
+                const scoped =
+                    (outputName === sourceOutput && (inSource || sticky)) ||
+                    (outputName === targetEntry.name && (inTarget || sticky));
+                if (!scoped) {
+                    continue;
+                }
+            }
+            let native: string | null = null;
+            try {
+                native = normalizeNativeId(readProp(ref, "internalId"));
+            } catch (error) {
+                void error;
+                return invalid;
+            }
+            if (native === null) {
+                return invalid;
+            }
+            const id = internNativeId(cache, native, ref, owners);
+            if (seen.has(id)) {
+                return invalid;
+            }
+            seen.add(id);
+            const minimized = readProp(ref, "minimized") === true;
+            const sticky = readProp(ref, "onAllDesktops") === true;
+            const floating = floatingIds.has(id) || sticky;
+            relatedWindows.push({
+                id,
+                ref,
+                output: outputName,
+                parentId,
+                transient: isTransient,
+                minimized,
+                floating,
+                sticky,
+                fullscreen,
+                maximized,
+                fitExcluded: floating || sticky || fullscreen || maximized,
+            });
+            if (fullscreen || maximized) {
+                protectedPresent = true;
+            }
+        }
+        // Focus names a carried visible member only: sticky actives stay
+        // homed (null echo downstream) and minimized clients never take
+        // focus. Anything else blanks, never fabricated.
+        let focusedId = "";
+        if (activeRef !== null) {
+            let activeNative: string | null = null;
+            try {
+                activeNative = normalizeNativeId(readProp(activeRef, "internalId"));
+            } catch (error) {
+                void error;
+                return invalid;
+            }
+            if (activeNative !== null) {
+                const activeId = internNativeId(cache, activeNative, activeRef, owners);
+                for (const entry of sourceWindows) {
+                    if (entry.id === activeId && !entry.minimized) {
+                        focusedId = entry.id;
+                        break;
+                    }
+                }
+            }
+        }
+        const sourceSorted = [...sourceWindows, ...relatedWindows].map((entry) => entry.id).sort();
+        const targetSorted = targetViewWindows.map((entry) => entry.id).sort();
+        let sourceTiled = true;
+        if (origins?.tilingOf !== undefined) {
+            try {
+                sourceTiled = origins.tilingOf(migratingId);
+            } catch (error) {
+                void error;
+                return invalid;
+            }
+        }
+        return {
+            status: "ready",
+            observed: {
+                direction,
+                sourceOutput,
+                sourceWorkspace: migratingId,
+                sourceBounds: { x: sourceBounds.x, y: sourceBounds.y, w: sourceBounds.w, h: sourceBounds.h },
+                targetOutput: targetEntry.name,
+                targetWorkspace: migratingId,
+                targetBounds: { x: targetBounds.x, y: targetBounds.y, w: targetBounds.w, h: targetBounds.h },
+                targetCurrentWorkspace: targetEntry.workspace,
+                sourceCurrentWorkspace: sourceEntry.workspace,
+                focusedId,
+                activeRef,
+                sourceWindows: Object.freeze(
+                    sourceWindows.map((entry) =>
+                        Object.freeze({
+                            id: entry.id,
+                            ref: entry.ref,
+                            rect: Object.freeze({ x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h }),
+                            output: entry.output,
+                            floating: entry.floating,
+                            sticky: entry.sticky,
+                            fullscreen: entry.fullscreen,
+                            maximized: entry.maximized,
+                            fitExcluded: entry.fitExcluded,
+                            minimized: entry.minimized,
+                            transient: entry.transient,
+                            fixedAuto: entry.fixedAuto,
+                            fixedSuppress: entry.fixedSuppress,
+                            ...(entry.minSize === null ? {} : { minSize: Object.freeze({ ...entry.minSize }) }),
+                            ...(entry.maxSize === null ? {} : { maxSize: Object.freeze({ ...entry.maxSize }) }),
+                        }),
+                    ),
+                ),
+                targetViewWindows: Object.freeze(
+                    targetViewWindows.map((entry) =>
+                        Object.freeze({
+                            id: entry.id,
+                            ref: entry.ref,
+                            rect: Object.freeze({ x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h }),
+                            output: entry.output,
+                            floating: entry.floating,
+                            sticky: entry.sticky,
+                            fullscreen: entry.fullscreen,
+                            maximized: entry.maximized,
+                            fitExcluded: entry.fitExcluded,
+                            minimized: entry.minimized,
+                            transient: entry.transient,
+                            fixedAuto: entry.fixedAuto,
+                            fixedSuppress: entry.fixedSuppress,
+                            ...(entry.minSize === null ? {} : { minSize: Object.freeze({ ...entry.minSize }) }),
+                            ...(entry.maxSize === null ? {} : { maxSize: Object.freeze({ ...entry.maxSize }) }),
+                        }),
+                    ),
+                ),
+                relatedWindows: Object.freeze(
+                    relatedWindows.map((entry) =>
+                        Object.freeze({
+                            id: entry.id,
+                            ref: entry.ref,
+                            output: entry.output,
+                            parentId: entry.parentId,
+                            transient: entry.transient,
+                            minimized: entry.minimized,
+                            floating: entry.floating,
+                            sticky: entry.sticky,
+                            fullscreen: entry.fullscreen,
+                            maximized: entry.maximized,
+                            fitExcluded: entry.fitExcluded,
+                        }),
+                    ),
+                ),
+                migratedDesktopRef,
+                mode: policy.mode,
+                perOutput: policy.perOutput,
+                sourceTiled,
+                desktopCount: desktops.length,
+                protectedPresent,
+                sourceFingerprint: String(workspaceSendFingerprint(sourceOutput, migratingId, sourceSorted)),
+                targetViewFingerprint: String(
+                    workspaceSendFingerprint(targetEntry.name, targetEntry.workspace, targetSorted),
+                ),
+            },
+        };
+    } catch (error) {
+        void error;
+        return invalid;
+    }
 }
 
 // Production send observation for one target backing desktop. Mirrors the
@@ -4320,6 +5126,31 @@ function startPlanAdapterEntryOnce(
                 }
             }
         }
+        // Whole-workspace migration shortcuts (R-WS-12): follow-only forms
+        // in four directions, registered bindable but unbound. The callbacks
+        // close over requestWorkspaceMigrate, initialized below before any
+        // shortcut can fire.
+        for (const row of planWorkspaceMigrateShortcutCatalog()) {
+            try {
+                const ok = registerFn(row.action, row.text, row.sequence, () =>
+                    requestWorkspaceMigrate(row.direction),
+                );
+                if (ok !== true) {
+                    try {
+                        log(`plasma-auto-tiler:plan:shortcut-failed action=${row.action} sequence=${row.sequence}`);
+                    } catch (error) {
+                        void error;
+                    }
+                }
+            } catch (error) {
+                void error;
+                try {
+                    log(`plasma-auto-tiler:plan:shortcut-failed action=${row.action} sequence=${row.sequence}`);
+                } catch (inner) {
+                    void inner;
+                }
+            }
+        }
     }
     // Production dynamic workspace route: the native adapter owns the
     // project-owned backing-desktop mapping and lifecycle observation; the
@@ -4819,6 +5650,203 @@ function startPlanAdapterEntryOnce(
             } catch (error) {
                 void error;
                 return null;
+            }
+        },
+        // R-WS-12 whole-workspace migration observation: FULL source view
+        // plus the affected target current view, resolved once via
+        // FULL-rectangle adjacency. The adapter re-observes with the frozen
+        // pin across transfer; a drifted scope returns null and fails
+        // closed. Workspace policy (mode plus the STRICT TRUE native
+        // perOutput flag) is captured live on every observation so mode or
+        // flag drift stales the flight.
+        observeMigrate: (direction, pinned) => {
+            try {
+                const policy = {
+                    mode: workspaceNative.getMode(),
+                    perOutput: readPerOutputVirtualDesktopsFlag(
+                        overrides.options !== undefined ? overrides.options : resolveLexicalOptions(),
+                    ),
+                };
+                const seen = observeMigrateWorkspace(
+                    liveWorkspace,
+                    sendNativeIds,
+                    floatingIds,
+                    domainGaps,
+                    direction,
+                    policy,
+                    nativeOwners,
+                    pinned === undefined
+                        ? undefined
+                        : {
+                              sourceOutput: pinned.sourceOutput,
+                              sourceWorkspace: pinned.sourceWorkspace,
+                              targetOutput: pinned.targetOutput,
+                              ...(pinned.expectViews === undefined
+                                  ? {}
+                                  : {
+                                        expectViews: {
+                                            source: pinned.expectViews.source,
+                                            target: pinned.expectViews.target,
+                                        },
+                                    }),
+                          },
+                    {
+                        originOf: (id, ref) => {
+                            try {
+                                const kind = adapter.originOfFixedClient(id, ref);
+
+                                if (kind === null) {
+                                    return null;
+                                }
+                                return { fixedAuto: kind === "auto", fixedSuppress: kind === "suppress" };
+                            } catch (error) {
+                                void error;
+                                return null;
+                            }
+                        },
+                        tilingOf: (workspaceId) => {
+                            try {
+                                return workspaceNative.isTiled(workspaceId);
+                            } catch (error) {
+                                void error;
+                                return true;
+                            }
+                        },
+                    },
+                );
+                return seen.status === "ready" ? seen.observed : null;
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
+        // R-WS-12 session map commit: moves the backing workspace id after
+        // the target output's current workspace. Map-only; native views
+        // run through switchMigrateView below.
+        commitWorkspaceMap: (sourceOutput, targetOutput, workspaceId) => {
+            try {
+                const screens = decodeList(readProp(surface, "screens"), MAX_LIST);
+                if (screens === null) {
+                    return null;
+                }
+                let sourceRef: object | null = null;
+                let targetRef: object | null = null;
+                for (const item of screens) {
+                    if (typeof item !== "object" || item === null) {
+                        continue;
+                    }
+                    if (readProp(item as object, "name") === sourceOutput) {
+                        sourceRef = item as object;
+                    }
+                    if (readProp(item as object, "name") === targetOutput) {
+                        targetRef = item as object;
+                    }
+                }
+                if (sourceRef === null || targetRef === null) {
+                    return null;
+                }
+                return workspaceNative.commitWorkspaceMigration(sourceRef, targetRef, workspaceId);
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
+        // R-WS-12 per-output view switch with an immediate readback: the
+        // named desktop id must read back current on the named output.
+        // True only on a confirmed switch; never retries, never claims.
+        switchMigrateView: (desktopId, outputName) => {
+            try {
+                if (!isOpaqueId(desktopId) || !isOpaqueId(outputName)) {
+                    return false;
+                }
+                const screens = decodeList(readProp(surface, "screens"), MAX_LIST);
+                const desktops = decodeList(readProp(surface, "desktops"), MAX_DESKTOPS);
+                if (screens === null || desktops === null) {
+                    return false;
+                }
+                let outputRef: object | null = null;
+                for (const item of screens) {
+                    if (typeof item === "object" && item !== null && readProp(item as object, "name") === outputName) {
+                        outputRef = item as object;
+                        break;
+                    }
+                }
+                let desktopRef: object | null = null;
+                for (const item of desktops) {
+                    if (typeof item === "object" && item !== null && readProp(item as object, "id") === desktopId) {
+                        desktopRef = item as object;
+                        break;
+                    }
+                }
+                const setter = readProp(surface, "setCurrentDesktopForScreen");
+                const getter = readProp(surface, "currentDesktopForScreen");
+                if (outputRef === null || desktopRef === null || typeof setter !== "function" || typeof getter !== "function") {
+                    return false;
+                }
+                Reflect.apply(setter as (...args: ReadonlyArray<unknown>) => unknown, surface, [desktopRef, outputRef]);
+                let current: unknown = undefined;
+                try {
+                    current = Reflect.apply(getter as (...args: ReadonlyArray<unknown>) => unknown, surface, [outputRef]);
+                } catch (error) {
+                    void error;
+                    return false;
+                }
+                return (
+                    typeof current === "object" && current !== null && readProp(current as object, "id") === desktopId
+                );
+            } catch (error) {
+                void error;
+                return false;
+            }
+        },
+        // R-WS-12 read-only live active output (the KWin activeScreen
+        // name), or null when unreadable. Never switches: the pre-slot
+        // expectation proof for empty/sticky-active output activation.
+        readActiveOutput: () => {
+            try {
+                let screen: unknown = undefined;
+                try {
+                    screen = Reflect.get(liveWorkspace as object, "activeScreen");
+                } catch (error) {
+                    void error;
+                    return null;
+                }
+                if (typeof screen !== "object" || screen === null) {
+                    return null;
+                }
+                const nameRaw = readProp(screen as object, "name");
+                return isOpaqueId(nameRaw) ? (nameRaw as string) : null;
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
+        // R-WS-12 native directional output-switch slot for
+        // empty/sticky-active migrations (KWin useractions
+        // switchToOutput/setActiveOutput). Invoked only when the target
+        // output is not already active, with the source proven active
+        // first. True means the slot was invoked, never a claim: the
+        // adapter reads back the active output itself. No retry, and no
+        // focus setter ever rides along.
+        switchActiveOutput: (direction) => {
+            try {
+                const slot =
+                    direction === "left"
+                        ? "slotSwitchToLeftScreen"
+                        : direction === "right"
+                          ? "slotSwitchToRightScreen"
+                          : direction === "up"
+                            ? "slotSwitchToAboveScreen"
+                            : "slotSwitchToBelowScreen";
+                const fn = readProp(surface, slot);
+                if (typeof fn !== "function") {
+                    return false;
+                }
+                Reflect.apply(fn as (...args: ReadonlyArray<never>) => unknown, surface, []);
+                return true;
+            } catch (error) {
+                void error;
+                return false;
             }
         },
         switchToTarget: (desktopRef, diagnostic) => {
@@ -5762,6 +6790,124 @@ function startPlanAdapterEntryOnce(
                 return;
             }
             workspaceSend.requestSendToOutput(targetOutput, targetWorkspace, follow);
+        } catch (error) {
+            void error;
+        }
+    };
+    // Whole-workspace output migration for one commanded direction
+    // (R-WS-12): the active workspace keeps its backing id and moves to the
+    // adjacent output via FULL-rectangle selection, then the Rust-planned
+    // retained rekey commits through the shared send-transport flight with
+    // the same busy gates as workspace/output sends. Follow-only: the
+    // target shows the migrated workspace and the source refills. No
+    // candidate is a silent no-op; ambiguous/unreadable topology refuses
+    // before any write.
+    const requestWorkspaceMigrate = (directionRaw: unknown): void => {
+        try {
+            const direction = directionRaw as string;
+            if (!isMigrateDirection(direction)) {
+                try {
+                    log(`plasma-auto-tiler:route-diag component=workspace-migrate stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=invalid-direction follow=not-reached gate=pre-commit phase=entry reason=invalid-direction req_ord=-1 inflight_stage=idle`);
+                } catch (error) {
+                    void error;
+                }
+                return;
+            }
+            if (refuseSendWhileBootstrapPending("workspace-migrate", "workspace-migrate", -1)) {
+                return;
+            }
+            if (!workspaceSend.isEnabled || workspaceSend.isInFlight || adapter.isInFlight) {
+                const outcome = !workspaceSend.isEnabled
+                    ? "disabled"
+                    : workspaceSend.isInFlight
+                      ? "busy-send"
+                      : "busy-plan";
+                try {
+                    let correlation = "";
+                    let inflightStage = "idle";
+                    try {
+                        correlation = workspaceSend.activeCorrelation;
+                        inflightStage = workspaceSend.activeStage;
+                    } catch (error) {
+                        void error;
+                    }
+                    log(`plasma-auto-tiler:route-diag component=workspace-migrate stage=entry correlation=${correlation} generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=-1 inflight_stage=${inflightStage}`);
+                    log("plasma-auto-tiler:plan:busy-refused kind=workspace-migrate");
+                } catch (error) {
+                    void error;
+                }
+                return;
+            }
+            // Dispatch probe: no adjacent candidate is a quiet no-target
+            // no-op with no write and no flight; ambiguous/unreadable scope
+            // refuses here before dispatch. The adapter re-observes
+            // authoritatively at dispatch and across the flight.
+            //
+            // Workspace policy gates before the topology probe: mode and
+            // the strict native flag refuse with their exact reasons even
+            // when the topology itself would also refuse (a shared setup
+            // showing one desktop everywhere logs mode-shared, never a
+            // topology artifact). No lifecycle runs on this command path:
+            // the ordinary minimum-two/trailing maintenance converges
+            // independently on topology signals, and no refused command
+            // may create, remove, or switch a desktop.
+            const policy = {
+                mode: workspaceNative.getMode(),
+                perOutput: readPerOutputVirtualDesktopsFlag(
+                    overrides.options !== undefined ? overrides.options : resolveLexicalOptions(),
+                ),
+            };
+            // Policy before probe: mode and the strict native flag refuse
+            // with exact reasons before any topology read, so a shared
+            // same-id setup reports mode-shared rather than a topology
+            // artifact. The adapter enforces the same gates
+            // authoritatively at dispatch.
+            if (policy.mode !== "per-output-local" && policy.mode !== "global-unique") {
+                const outcome = policy.mode === "shared" ? "mode-shared" : "mode-invalid";
+                try {
+                    log(`plasma-auto-tiler:route-diag component=workspace-migrate stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=-1 inflight_stage=idle`);
+                } catch (error) {
+                    void error;
+                }
+                return;
+            }
+            if (policy.perOutput !== true) {
+                const outcome = policy.perOutput === false ? "per-output-disabled" : "per-output-unreadable";
+                try {
+                    log(`plasma-auto-tiler:route-diag component=workspace-migrate stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=-1 inflight_stage=idle`);
+                } catch (error) {
+                    void error;
+                }
+                return;
+            }
+            const probed = observeMigrateWorkspace(
+                liveWorkspace,
+                sendNativeIds,
+                floatingIds,
+                domainGaps,
+                direction,
+                policy,
+                nativeOwners,
+                undefined,
+            );
+            if (probed.status === "no-target") {
+                try {
+                    log(`plasma-auto-tiler:route-diag component=workspace-migrate stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=no-target follow=not-reached gate=pre-commit phase=entry reason=no-adjacent-output req_ord=-1 inflight_stage=idle`);
+                } catch (error) {
+                    void error;
+                }
+                return;
+            }
+            if (probed.status !== "ready" || probed.observed === null) {
+                try {
+                    log(`plasma-auto-tiler:route-diag component=workspace-migrate stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=refused follow=not-reached gate=pre-commit phase=entry reason=scope-unreadable req_ord=-1 inflight_stage=idle`);
+                    log("plasma-auto-tiler:plan:workspace-migrate-refused-scope");
+                } catch (error) {
+                    void error;
+                }
+                return;
+            }
+            workspaceSend.requestMigrateWorkspace(direction);
         } catch (error) {
             void error;
         }
@@ -7820,6 +8966,13 @@ function startPlanAdapterEntryOnce(
                 void error;
             }
         },
+        requestWorkspaceMigrate: (direction) => {
+            try {
+                requestWorkspaceMigrate(direction);
+            } catch (error) {
+                void error;
+            }
+        },
         getWorkspaceTilingSnapshot: () => {
             try {
                 return getWorkspaceTilingSnapshot();
@@ -8079,6 +9232,9 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         },
         requestSendToOutput: (direction, follow) => {
             delegate((target) => target.requestSendToOutput(direction, follow));
+        },
+        requestWorkspaceMigrate: (direction) => {
+            delegate((target) => target.requestWorkspaceMigrate(direction));
         },
         getWorkspaceTilingSnapshot: () => {
             if (current !== null) {

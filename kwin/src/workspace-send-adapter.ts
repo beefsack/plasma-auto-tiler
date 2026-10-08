@@ -292,6 +292,44 @@ export interface WorkspaceSendAdapterEnv {
     readonly sendClientToScreen?: (mover: object, output: object) => boolean;
     readonly readOutputName?: (ref: object) => string | null;
     readonly subscribeMoverOutput?: (moverRef: object, handler: (old: unknown) => void) => (() => void) | null;
+    // Whole-workspace output migration observation (R-WS-12): the source
+    // output's current workspace (FULL view including sticky) plus the
+    // adjacent target output's current workspace (affected-view gate and
+    // drift fence), resolved once via FULL-rectangle adjacency. The flight
+    // pin (direction plus frozen source/target pair) rides the trailing
+    // parameter: deriving the source from the live active window would lose
+    // the scope once members land on the destination. Absent in legacy
+    // harnesses, which refuse migration at dispatch.
+    readonly observeMigrate?: (
+        direction: string,
+        pinned?: WorkspaceMigratePin,
+    ) => WorkspaceMigrateObserved | null;
+    // Session workspace-map commit for migration: moves the backing
+    // workspace id from the source output scope to after the target
+    // output's current workspace. Returns the source refill id (null when
+    // the source scope is empty) or null when refused. Map-only: native
+    // views are written by the adapter through switchMigrateView.
+    readonly commitWorkspaceMap?: (
+        sourceOutput: string,
+        targetOutput: string,
+        workspaceId: string,
+    ) => { readonly refillId: string | null } | null;
+    // Per-output desktop switch with an immediate readback for migration
+    // views (target shows the migrated workspace, source shows the refill).
+    // True only when the readback confirms the named desktop id.
+    readonly switchMigrateView?: (desktopId: string, outputName: string) => boolean;
+    // Read-only live active output name (the KWin activeScreen), or null
+    // when unreadable. Never switches: the pre-slot expectation proof.
+    readonly readActiveOutput?: () => string | null;
+    // Native directional output-switch slot for empty/sticky-active
+    // migrations (KWin useractions switchToOutput/setActiveOutput via the
+    // directional screen slot matching the flight direction). Invoked only
+    // when the target output is not already active, with the source output
+    // proven active first; true means the slot was invoked (never a claim:
+    // the adapter reads back the active output itself). No retry, no
+    // focus setter ever rides along: KWin may choose a native client
+    // itself, which is accepted and never our fabricated focus.
+    readonly switchActiveOutput?: (direction: WorkspaceMigrateDirection) => boolean;
 }
 
 // Exact terminal flight domains carried on the single settlement edge so the
@@ -317,6 +355,289 @@ export interface WorkspaceFollowNativeDiagnostic {
 export interface WorkspaceSendEnableAuth {
     readonly owner: unknown;
     readonly generation: unknown;
+}
+
+// R-WS-12 whole-workspace output migration (follow-only): the active
+// workspace keeps its stable backing id and moves to the adjacent output
+// resolved adapter-side via full-output-rect adjacency (no wrap). Four
+// directional actions, bindable and unbound by default. The Engine rekeys
+// the retained session at plan time, so failures reconcile source/target
+// actual observations and never imply native success.
+
+export const WORKSPACE_MIGRATE_COMPONENT = "workspace-migrate";
+
+export type WorkspaceMigrateDirection = "left" | "right" | "up" | "down";
+
+export const WORKSPACE_MIGRATE_DIRECTIONS: ReadonlyArray<WorkspaceMigrateDirection> = Object.freeze([
+    "left",
+    "right",
+    "up",
+    "down",
+]);
+
+export function isMigrateDirection(value: unknown): value is WorkspaceMigrateDirection {
+    return value === "left" || value === "right" || value === "up" || value === "down";
+}
+
+// Frozen flight pin for migrate re-observation: deriving the source from
+// the live active window would lose the scope once members land on the
+// destination, so every re-observation carries the dispatch triple. The
+// optional phase-aware view expectation lets post-write verification name
+// the exact views the flight itself wrote (target shows the migrated
+// workspace, source shows the refill) instead of the pre-write views.
+export interface WorkspaceMigratePin {
+    readonly sourceOutput: string;
+    readonly sourceWorkspace: string;
+    readonly targetOutput: string;
+    readonly expectViews?: {
+        readonly source: string;
+        readonly target: string;
+    };
+}
+
+export interface WorkspaceMigrateObservedWindow {
+    readonly id: string;
+    readonly ref: object;
+    readonly rect: WorkspaceSendRect;
+    readonly output: string;
+    readonly floating: boolean;
+    readonly sticky: boolean;
+    readonly fullscreen: boolean;
+    readonly maximized: boolean;
+    readonly fitExcluded: boolean;
+    // Minimized members ride the native transfer only: no wire entry, no
+    // planned geometry, no focus. Never classified as intentional float.
+    readonly minimized: boolean;
+    // Transient classification for implicit-arrival tracking: a transient
+    // descendant of a migrating member moves with its parent and never
+    // takes an explicit setter.
+    readonly transient: boolean;
+    // Adapter-asserted fixed-size provenance from PlanAdapter admission
+    // state (read-only decoration, never classified here). Rides the wire
+    // so the core keeps automatic-float and tile-override origin.
+    readonly fixedAuto: boolean;
+    readonly fixedSuppress: boolean;
+    // Advisory client size hints, mirroring the ordinary reconcile wire.
+    // Never join fences: meaningfulness is judged core-side.
+    readonly minSize?: { readonly w: number; readonly h: number };
+    readonly maxSize?: { readonly w: number; readonly h: number };
+}
+
+// Related native clients that ride no wire and take no explicit setter:
+// transient descendants of migrating members (tracked for implicit
+// arrival) plus protected (fullscreen/maximized) clients in either
+// affected view even when dialog/non-normal (affected-view gate only,
+// parentId null, never moved).
+export interface WorkspaceMigrateRelatedWindow {
+    readonly id: string;
+    readonly ref: object;
+    readonly output: string;
+    // Stable id of the migrating member this transient follows, or null
+    // for a view-local protected client that never moves.
+    readonly parentId: string | null;
+    readonly transient: boolean;
+    readonly minimized: boolean;
+    readonly floating: boolean;
+    readonly sticky: boolean;
+    readonly fullscreen: boolean;
+    readonly maximized: boolean;
+    readonly fitExcluded: boolean;
+}
+
+export interface WorkspaceMigrateObserved {
+    readonly direction: WorkspaceMigrateDirection;
+    // Source output current workspace, FULL view including sticky. The
+    // target workspace is the same backing id on a different output.
+    readonly sourceOutput: string;
+    readonly sourceWorkspace: string;
+    readonly sourceBounds: WorkspaceSendRect;
+    readonly targetOutput: string;
+    readonly targetWorkspace: string;
+    readonly targetBounds: WorkspaceSendRect;
+    // Live current workspace on the target output at observation time. The
+    // prior workspace stays listed and hidden unchanged; a drifted view
+    // fails closed. Never the migrating id itself.
+    readonly targetCurrentWorkspace: string;
+    // Live current workspace on the source output at observation time.
+    // Pre-view it must still name the migrating workspace; the refill
+    // replaces it only through the single view write.
+    readonly sourceCurrentWorkspace: string;
+    // Migrated active client, sticky active client, or "" when neither is
+    // active. A named id outside the source view refuses downstream.
+    readonly focusedId: string;
+    readonly activeRef: object | null;
+    readonly sourceWindows: ReadonlyArray<WorkspaceMigrateObservedWindow>;
+    // FULL target current view: affected-view overlay gate plus drift
+    // fence. Sticky entries here are observed, never moved.
+    readonly targetViewWindows: ReadonlyArray<WorkspaceMigrateObservedWindow>;
+    // Related native clients (transient descendants plus view-local
+    // protected clients). Gate plus implicit-arrival tracking only: no
+    // wire entry, no explicit setter, no focus, ever.
+    readonly relatedWindows: ReadonlyArray<WorkspaceMigrateRelatedWindow>;
+    readonly migratedDesktopRef: object | null;
+    // Dispatch-frozen workspace policy: per-output-local/global-unique only,
+    // with the STRICT TRUE live native perOutputVirtualDesktops flag. Any
+    // other mode, a false flag, or an unreadable flag refuses.
+    readonly mode: string;
+    readonly perOutput: boolean | null;
+    // Dispatch-frozen source tiling mode. Floating workspaces migrate
+    // membership-only with zero tiler geometry writes; the mode must read
+    // back unchanged before every setter or the flight stales.
+    readonly sourceTiled: boolean;
+    readonly desktopCount: number;
+    // Overlay tripwire over carried PLUS minimized views: any
+    // fullscreen/maximized (maximized floats included) in either affected
+    // view refuses the whole operation before any native write.
+    readonly protectedPresent: boolean;
+    readonly sourceFingerprint: string;
+    readonly targetViewFingerprint: string;
+}
+
+// Primitive-only snapshot retained across the async D-Bus boundary. Never
+// holds refs: ids, geometry values, scope, policy, flags, and fingerprints
+// only. Targets resolve from a fresh synchronous observation while
+// handling replies.
+export interface WorkspaceMigrateSnapshotWindow {
+    readonly id: string;
+    readonly rect: WorkspaceSendRect;
+    readonly output: string;
+    readonly floating: boolean;
+    readonly sticky: boolean;
+    readonly fullscreen: boolean;
+    readonly maximized: boolean;
+    readonly fitExcluded: boolean;
+    readonly minimized: boolean;
+    readonly transient: boolean;
+    readonly fixedAuto: boolean;
+    readonly fixedSuppress: boolean;
+}
+
+export interface WorkspaceMigrateSnapshotRelated {
+    readonly id: string;
+    readonly output: string;
+    readonly parentId: string | null;
+    readonly transient: boolean;
+    readonly minimized: boolean;
+    readonly floating: boolean;
+    readonly sticky: boolean;
+    readonly fullscreen: boolean;
+    readonly maximized: boolean;
+    readonly fitExcluded: boolean;
+}
+
+export interface WorkspaceMigrateSnapshot {
+    readonly direction: WorkspaceMigrateDirection;
+    readonly sourceOutput: string;
+    readonly sourceWorkspace: string;
+    readonly sourceBounds: WorkspaceSendRect;
+    readonly targetOutput: string;
+    readonly targetWorkspace: string;
+    readonly targetBounds: WorkspaceSendRect;
+    readonly targetCurrentWorkspace: string;
+    readonly sourceCurrentWorkspace: string;
+    readonly focusedId: string;
+    readonly sourceWindows: ReadonlyArray<WorkspaceMigrateSnapshotWindow>;
+    readonly targetViewWindows: ReadonlyArray<WorkspaceMigrateSnapshotWindow>;
+    readonly relatedWindows: ReadonlyArray<WorkspaceMigrateSnapshotRelated>;
+    readonly mode: string;
+    readonly perOutput: boolean | null;
+    readonly sourceTiled: boolean;
+    readonly protectedPresent: boolean;
+    readonly desktopCount: number;
+    readonly sourceFingerprint: string;
+    readonly targetViewFingerprint: string;
+}
+
+export interface WorkspaceMigrateGeometryEntry {
+    readonly window: string;
+    readonly leaf: string;
+    readonly output: string;
+    readonly workspace: string;
+    readonly rect: WorkspaceSendRect;
+}
+
+export interface WorkspaceMigratePlanned {
+    readonly correlationId: string;
+    readonly baseRevision: number;
+    readonly direction: WorkspaceMigrateDirection;
+    readonly sourceOutput: string;
+    readonly sourceWorkspace: string;
+    readonly targetOutput: string;
+    readonly targetWorkspace: string;
+    // Carried non-sticky active member (tiled or float), otherwise null:
+    // empty, absent, and sticky-active routes carry no focus and the
+    // adapter then runs zero focus setters.
+    readonly activeWindow: string | null;
+    readonly geometry: ReadonlyArray<WorkspaceMigrateGeometryEntry>;
+    // Migrating tiled leaf in the target domain, or null when no tiled
+    // active member migrates. Never a float leaf, never fabricated.
+    readonly focusLeaf: string | null;
+    readonly members: number;
+    readonly floats: number;
+}
+
+interface WorkspaceMigrateFlight {
+    readonly correlation: string;
+    readonly direction: WorkspaceMigrateDirection;
+    readonly snapshot: WorkspaceMigrateSnapshot;
+    readonly requestPayload: string;
+    readonly innerGap: number;
+    readonly outerGap: number;
+    // Dispatch-captured member refs for placement proofs. Never re-derived:
+    // a replaced member (same stable id, new object) fails closed.
+    readonly members: ReadonlyArray<{
+        readonly id: string;
+        readonly ref: object;
+        readonly sticky: boolean;
+        readonly floating: boolean;
+        readonly minimized: boolean;
+        readonly output: string;
+    }>;
+    // Dispatch-resolved exact native objects for identity fences. A same-id
+    // replacement refuses before the next setter.
+    readonly targetOutputRef: object;
+    readonly migratedDesktopRef: object;
+    // Dispatch-captured related refs for implicit-arrival proofs. Never
+    // take an explicit setter; a replaced ref fails closed.
+    readonly related: ReadonlyArray<{
+        readonly id: string;
+        readonly ref: object;
+        readonly parentId: string | null;
+        readonly sticky: boolean;
+        readonly output: string;
+    }>;
+    // Dispatch-captured target-view refs for the post-view residue proof.
+    // The flight's own target switch hides the prior view, so afterwards
+    // these prove out through live reads (same output, flags, desktop)
+    // instead of observed lists.
+    readonly watched: ReadonlyArray<{
+        readonly id: string;
+        readonly ref: object;
+        readonly output: string;
+        readonly sticky: boolean;
+        readonly floating: boolean;
+        readonly fullscreen: boolean;
+        readonly maximized: boolean;
+    }>;
+    baseRevision: number;
+    planned: WorkspaceMigratePlanned | null;
+    // Arrival follow plus per-output view writes run at most once per
+    // flight. They never advance any planner phase: the Rust topology is
+    // already rekeyed at plan time.
+    followed: boolean;
+    followOutcome: string;
+    viewsWritten: boolean;
+    // Session-map refill resolved at commit time (null when the source
+    // scope is left empty).
+    refillId?: string | null;
+    // Whether any native setter applied yet, plus the terminal outcome for
+    // a mid-write abort (overlay-present only before the first write).
+    wroteAny: boolean;
+    writeOutcome?: string;
+    // Planned-geometry members whose transfer initiated while placement
+    // was still pending: their target geometry applies once placement
+    // verifies, before any view write. Written ids never rewrite.
+    geomPending: string[];
 }
 
 // Deterministic bounded observation fingerprint (FNV-1a 32-bit over
@@ -1167,6 +1488,11 @@ export class WorkspaceSendAdapter {
     private pinnedOwner: string | null = null;
     private activationStep = 0;
     private pending: WorkspacePendingFlight | null = null;
+    // R-WS-12 migrate flight slot. Shares the single inFlight exclusion,
+    // correlation sequencing, activation, timers, and settlement with the
+    // send flight above: at most one flight of either kind is ever live, so
+    // no second concurrent Engine writer exists.
+    private migrate: WorkspaceMigrateFlight | null = null;
     // One-shot delayed-arrival subscription. Armed after the native writes
     // when the immediate observation shows no arrival yet; detached on the
     // first signal and on every terminal path.
@@ -1175,6 +1501,10 @@ export class WorkspaceSendAdapter {
     // detached alongside arrivalDetach on output-send flights only; null on
     // same-output flights, which never consult it.
     private arrivalOutputDetach: (() => void) | null = null;
+    // R-WS-12 per-member one-shot arrival detaches. Armed before migrate
+    // native writes, consumed on the first signal, cleared on every
+    // terminal path via detachMigrateArrival.
+    private readonly migrateDetaches: Array<() => void> = [];
     private seq = 0;
     // Bounded correlation rotation: after WORKSPACE_SEND_MAX_SEQ correlations
     // the sequence wraps with a rotation prefix so correlations are never
@@ -1241,18 +1571,19 @@ export class WorkspaceSendAdapter {
     // Derived from the existing retained flight only. Entry diagnostics use
     // this to label a refused shortcut without retaining another history.
     get activeCorrelation(): string {
-        return this.pending?.correlation ?? "";
+        return this.migrate?.correlation ?? this.pending?.correlation ?? "";
     }
 
     get activeStage(): string {
-        const pending = this.pending;
-        if (!this.inFlight || pending === null) {
+        const live = this.migrate !== null ? "migrate" : this.pending !== null ? "send" : null;
+        if (!this.inFlight || live === null) {
             return "idle";
         }
         if (this.activationStep !== 5) {
             return "activation";
         }
-        if (pending.planned === null) {
+        const planned = live === "migrate" ? this.migrate?.planned ?? null : this.pending?.planned ?? null;
+        if (planned === null) {
             return "request";
         }
         return "arrival";
@@ -1263,7 +1594,13 @@ export class WorkspaceSendAdapter {
     // arrival or the bounded arrival deadline clears them on every terminal
     // path. Empty before dispatch or after settlement, so retention is
     // strictly flight-lifetime. Primitive ids only, never refs or history.
+    // A migrate flight pins its single backing id (source and target share
+    // it), which keeps the moving workspace alive through the map commit.
     get pendingWorkspaces(): ReadonlyArray<string> {
+        const migrating = this.migrate;
+        if (this.inFlight && migrating !== null) {
+            return Object.freeze([migrating.snapshot.sourceWorkspace]);
+        }
         const pending = this.pending;
         if (!this.inFlight || pending === null) {
             return Object.freeze([]);
@@ -1301,7 +1638,7 @@ export class WorkspaceSendAdapter {
         // so the entry refreshes both domains from native observation. Never
         // reports to the planner and never claims anything about Rust state.
         if (this.inFlight) {
-            this.settleTerminal(this.activeToken, this.pending?.correlation ?? "", "disabled", "release");
+            this.settleTerminal(this.activeToken, this.activeCorrelation, "disabled", "release");
         }
         this.enabled = false;
     }
@@ -1854,7 +2191,7 @@ export class WorkspaceSendAdapter {
         }
         // Absent name: exactly one StartServiceByName(service, 0) phase.
         this.activationStep = 3;
-        this.diag("request", correlation, 0, "activate", "activating");
+        this.flightDiag("request", correlation, 0, "activate", "activating");
         try {
             this.env.callDbus(
                 WORKSPACE_SEND_DBUS_SERVICE,
@@ -1880,7 +2217,7 @@ export class WorkspaceSendAdapter {
         }
         this.pinnedOwner = reply;
         this.activationStep = 5;
-        this.diag("request", correlation, 0, "activate", "owner-pinned");
+        this.flightDiag("request", correlation, 0, "activate", "owner-pinned");
         this.sendPlannerRequest(flight, correlation);
     }
 
@@ -1920,8 +2257,19 @@ export class WorkspaceSendAdapter {
         }
         this.pinnedOwner = reply;
         this.activationStep = 5;
-        this.diag("request", correlation, 0, "activate", "owner-pinned");
+        this.flightDiag("request", correlation, 0, "activate", "owner-pinned");
         this.sendPlannerRequest(flight, correlation);
+    }
+
+    // Activation/transport diag routed by live flight kind: migrate
+    // flights log under the migrate component/route so redaction scopes
+    // stay exact per kind. Send flights keep their historical lines.
+    private flightDiag(stage: string, correlation: string, revision: number, event: string, outcome: string): void {
+        if (this.migrate !== null && this.migrate.correlation === correlation) {
+            this.mdiag(stage, correlation, revision, event, outcome);
+        } else {
+            this.diag(stage, correlation, revision, event, outcome);
+        }
     }
 
     private sendPlannerRequest(flight: number, correlation: string): void {
@@ -1929,7 +2277,14 @@ export class WorkspaceSendAdapter {
             return;
         }
         const pending = this.pending;
-        if (pending === null || !isUniqueOwner(this.pinnedOwner)) {
+        const migrating = this.migrate;
+        const payload =
+            pending !== null && pending.correlation === correlation
+                ? pending.requestPayload
+                : migrating !== null && migrating.correlation === correlation
+                  ? migrating.requestPayload
+                  : null;
+        if (payload === null || !isUniqueOwner(this.pinnedOwner)) {
             this.settleTerminal(flight, correlation, "no-planner", "release");
             return;
         }
@@ -1939,7 +2294,7 @@ export class WorkspaceSendAdapter {
                 WORKSPACE_SEND_OBJECT,
                 WORKSPACE_SEND_INTERFACE,
                 WORKSPACE_SEND_METHOD,
-                pending.requestPayload,
+                payload,
                 (reply) => this.onRequestReply(reply, flight, correlation),
             );
         } catch (error) {
@@ -1956,12 +2311,18 @@ export class WorkspaceSendAdapter {
             return;
         }
         const pending = this.pending;
-        if (pending === null || pending.correlation !== correlation || !isUniqueOwner(this.pinnedOwner) || this.activationStep !== 5) {
+        const migrating = this.migrate;
+        const isSend = pending !== null && pending.correlation === correlation;
+        const isMigrate = !isSend && migrating !== null && migrating.correlation === correlation;
+        if ((!isSend && !isMigrate) || !isUniqueOwner(this.pinnedOwner) || this.activationStep !== 5) {
             return;
         }
         // A duplicate reply after the plan was already bound must never
         // replay native writes.
-        if (pending.planned !== null) {
+        if (isSend && pending?.planned !== null) {
+            return;
+        }
+        if (isMigrate && migrating?.planned !== null) {
             return;
         }
         this.clearRequestTimer();
@@ -1995,6 +2356,26 @@ export class WorkspaceSendAdapter {
             return;
         }
         if (outcome !== "planned") {
+            this.settleTerminal(flight, correlation, "service-fault", "release");
+            return;
+        }
+        if (isMigrate && migrating !== null) {
+            const planned = validateMigratePlanned(parsed, correlation, migrating);
+            if (planned === null) {
+                this.settleTerminal(flight, correlation, "precondition-mismatch", "release");
+                return;
+            }
+            if (!migrateBindingHolds(planned, migrating.snapshot)) {
+                this.settleTerminal(flight, correlation, "precondition-mismatch", "release");
+                return;
+            }
+            migrating.baseRevision = planned.baseRevision;
+            migrating.planned = planned;
+            this.mdiag("request", correlation, planned.baseRevision, "plan", "planned");
+            this.actuateMigrate(flight, correlation);
+            return;
+        }
+        if (pending === null) {
             this.settleTerminal(flight, correlation, "service-fault", "release");
             return;
         }
@@ -2102,12 +2483,11 @@ export class WorkspaceSendAdapter {
     // unchanged. Snapshot scope is fenced separately against a fresh
     // observation at each boundary.
     private fencesHold(flight: number, correlation: string): boolean {
-        const pending = this.pending;
+        const bound = this.pending?.correlation ?? this.migrate?.correlation ?? null;
         return (
             this.inFlight &&
             flight === this.activeToken &&
-            pending !== null &&
-            pending.correlation === correlation &&
+            bound === correlation &&
             this.activationStep === 5 &&
             isUniqueOwner(this.pinnedOwner)
         );
@@ -3166,8 +3546,8 @@ export class WorkspaceSendAdapter {
 
     // Dispatch-frozen gap fence: the live configured pair must still equal
     // the flight-frozen primitives before any reply geometry or membership
-    // write. Never throws.
-    private flightGapsHold(pending: WorkspacePendingFlight): boolean {
+    // write. Never throws. Structural over both flight kinds.
+    private flightGapsHold(pending: { readonly innerGap: number; readonly outerGap: number }): boolean {
         try {
             return pending.innerGap === this.innerGap && pending.outerGap === this.outerGap;
         } catch (error) {
@@ -3214,7 +3594,16 @@ export class WorkspaceSendAdapter {
     // Current-mode gate for a live flight: both flight domains must still
     // be tiled. Either side toggling floating mid-flight forbids further
     // geometry writes. Absent gate or exceptions fail open (tiled).
-    private isFlightTiled(pending: WorkspacePendingFlight): boolean {
+    // Structural over both flight kinds: migrate source and target share
+    // one backing id, so both gates read the same workspace.
+    private isFlightTiled(pending: {
+        readonly snapshot: {
+            readonly sourceOutput: string;
+            readonly sourceWorkspace: string;
+            readonly targetOutput: string;
+            readonly targetWorkspace: string;
+        };
+    }): boolean {
         try {
             const gate = this.env.isDomainTiled;
             if (typeof gate !== "function") {
@@ -3498,21 +3887,25 @@ export class WorkspaceSendAdapter {
             return;
         }
         const pending = this.pending;
-        const revision = pending?.baseRevision ?? 0;
-        const settledCorrelation = pending?.correlation ?? correlation;
-        const snapshot = pending?.snapshot ?? null;
+        const migrating = this.migrate;
+        const route = migrating !== null ? "migrate-workspace" : "send-to-workspace";
+        const revision = migrating?.baseRevision ?? pending?.baseRevision ?? 0;
+        const settledCorrelation = migrating?.correlation ?? pending?.correlation ?? correlation;
+        const snapshot = migrating?.snapshot ?? pending?.snapshot ?? null;
         this.clearRequestTimer();
         this.clearArrivalTimer();
         this.detachArrival();
+        this.detachMigrateArrival();
         this.inFlight = false;
         this.pending = null;
+        this.migrate = null;
         this.activationStep = 0;
         this.pinnedOwner = null;
         this.requestDeadline = 0;
         this.arrivalDeadline = 0;
         try {
             this.env.log(
-                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} route=send-to-workspace stage=release correlation=${settledCorrelation} generation=${this.generation} revision=${String(revision)} diag_seq=${String(this.nextDiagSeq())} event=${sanitizeKind(event)} outcome=${sanitizeKind(outcome)}`,
+                `${LOG_PREFIX} component=${migrating !== null ? WORKSPACE_MIGRATE_COMPONENT : WORKSPACE_SEND_COMPONENT} route=${route} stage=release correlation=${settledCorrelation} generation=${this.generation} revision=${String(revision)} diag_seq=${String(this.nextDiagSeq())} event=${sanitizeKind(event)} outcome=${sanitizeKind(outcome)}`,
             );
         } catch (error) {
             void error;
@@ -3539,10 +3932,10 @@ export class WorkspaceSendAdapter {
         }
         // A bound plan is already actuating synchronously past the request
         // boundary; the arrival deadline owns the flight from there.
-        if (this.pending?.planned !== null) {
+        if ((this.pending?.planned ?? this.migrate?.planned ?? null) !== null) {
             return;
         }
-        const correlation = this.pending?.correlation ?? "";
+        const correlation = this.activeCorrelation;
         this.settleTerminal(flight, correlation, "timeout", "release");
     }
 
@@ -3553,7 +3946,7 @@ export class WorkspaceSendAdapter {
         if (!this.inFlight || flight !== this.activeToken || deadline !== this.arrivalDeadline) {
             return;
         }
-        const correlation = this.pending?.correlation ?? "";
+        const correlation = this.activeCorrelation;
         this.settleTerminal(flight, correlation, "arrival-timeout", "release");
     }
 
@@ -3635,8 +4028,2335 @@ export class WorkspaceSendAdapter {
         }
     }
 
+    // ============ R-WS-12 whole-workspace output migration ============
+    //
+    // Follow-only whole-workspace migration sharing this adapter's single
+    // flight, correlation sequencing, activation, timers, and settlement
+    // with the send paths above: the shared inFlight flag means no second
+    // concurrent Engine writer ever exists. The Engine rekeys the retained
+    // session at plan time, so every failure below reconciles source/target
+    // actual observations through onSettled and never implies native
+    // success. No native atomic promise: all setters carry readbacks, there
+    // is no replay and no focus after uncertainty, and recovery is logged.
+
+    requestMigrateWorkspace(direction: unknown): boolean {
+        if (!this.enabled) {
+            this.mrefuse("disabled");
+            return false;
+        }
+        if (this.inFlight) {
+            this.mdiag(
+                "request",
+                this.activeCorrelation,
+                this.migrate?.baseRevision ?? this.pending?.baseRevision ?? 0,
+                "refuse",
+                "in-flight",
+            );
+            return false;
+        }
+        if (!isMigrateDirection(direction)) {
+            this.mrefuse("direction-invalid");
+            return false;
+        }
+        if (typeof this.env.observeMigrate !== "function") {
+            this.mrefuse("transfer-unavailable");
+            return false;
+        }
+        // Bounded correlation rotation, duplicated from the send paths so
+        // those payloads stay byte-identical. Same session/topology: no
+        // enable reset.
+        if (this.seq < 0 || this.seq > WORKSPACE_SEND_MAX_SEQ) {
+            const nextEpoch = this.seqEpoch + 1;
+            if (!Number.isSafeInteger(nextEpoch)) {
+                this.mrefuse("sequence-invalid");
+                return false;
+            }
+            const candidate = `${this.generation}-w${String(nextEpoch)}r0`;
+            if (!isCorrelationId(candidate)) {
+                this.mrefuse("sequence-invalid");
+                return false;
+            }
+            this.seqEpoch = nextEpoch;
+            this.seq = 0;
+            this.mdiag("request", candidate, 0, "sequence-exhausted", "correlation-rotated");
+        }
+        const observed = this.freshMigrate(direction);
+        if (observed === null) {
+            this.mrefuse("scope-invalid");
+            return false;
+        }
+        // Workspace policy gates with exact reasons. Shared mode, a false
+        // native flag, or an unreadable flag refuses; native option/config
+        // writes never happen here.
+        if (observed.mode !== "per-output-local" && observed.mode !== "global-unique") {
+            this.mrefuse(observed.mode === "shared" ? "mode-shared" : "mode-invalid");
+            return false;
+        }
+        if (observed.perOutput !== true) {
+            this.mrefuse(observed.perOutput === false ? "per-output-disabled" : "per-output-unreadable");
+            return false;
+        }
+        if (observed.sourceOutput === observed.targetOutput) {
+            this.mrefuse("same-output");
+            return false;
+        }
+        if (observed.sourceWorkspace !== observed.targetWorkspace) {
+            this.mrefuse("workspace-mismatch");
+            return false;
+        }
+        if (observed.targetCurrentWorkspace === observed.sourceWorkspace) {
+            this.mrefuse("target-visible");
+            return false;
+        }
+        if (observed.desktopCount > WORKSPACE_SEND_MAX_DESKTOPS) {
+            this.mrefuse("desktop-cap");
+            return false;
+        }
+        // Whole-operation overlay refusal BEFORE ANY native write: moving
+        // members or either affected current view carry fullscreen or
+        // maximized clients (maximized floats included).
+        if (observed.protectedPresent) {
+            this.mrefuse("overlay-present");
+            return false;
+        }
+        if (
+            observed.focusedId !== "" &&
+            !observed.sourceWindows.some((entry) => entry.id === observed.focusedId)
+        ) {
+            this.mrefuse("focus-mismatch");
+            return false;
+        }
+        // Commit-path transfer capabilities. Same-output behavior is
+        // untouched; any absence refuses migration at dispatch. View reads
+        // ride the phase-aware pinned observation (expectViews), so no
+        // separate view-read hook exists.
+        if (
+            typeof this.env.resolveOutput !== "function" ||
+            typeof this.env.sendClientToScreen !== "function" ||
+            typeof this.env.readOutputName !== "function" ||
+            typeof this.env.readDesktopIds !== "function" ||
+            typeof this.env.readMoverLive !== "function" ||
+            typeof this.env.commitWorkspaceMap !== "function" ||
+            typeof this.env.switchMigrateView !== "function" ||
+            typeof this.env.isDomainTiled !== "function"
+        ) {
+            this.mrefuse("transfer-unavailable");
+            return false;
+        }
+        // Source tiling mode is frozen at dispatch and reproven before
+        // every setter. Floating workspaces migrate membership-only with
+        // zero tiler geometry writes; a mode change mid-flight stales.
+        let sourceTiled: boolean;
+        try {
+            sourceTiled = this.env.isDomainTiled(observed.sourceOutput, observed.sourceWorkspace) !== false;
+        } catch (error) {
+            void error;
+            this.mrefuse("mode-unreadable");
+            return false;
+        }
+        // Dispatch-resolved exact target output object for the per-transfer
+        // identity fence: a same-id replacement refuses mid-write.
+        let targetOutputRef: object | null = null;
+        try {
+            targetOutputRef = this.env.resolveOutput(observed.targetOutput);
+        } catch (error) {
+            void error;
+            targetOutputRef = null;
+        }
+        if (targetOutputRef === null) {
+            this.mrefuse("transfer-unavailable");
+            return false;
+        }
+        // Source/project tiling flags must agree: the observed dispatch
+        // mode must equal the live adapter read, or the flight refuses
+        // before any transport. Mid-flight the live read must keep
+        // matching the frozen snapshot or the flight stales.
+        if (sourceTiled !== observed.sourceTiled) {
+            this.mrefuse("mode-mismatch");
+            return false;
+        }
+        const correlation =
+            this.seqEpoch === 0
+                ? `${this.generation}-w${String(this.seq)}`
+                : `${this.generation}-w${String(this.seqEpoch)}r${String(this.seq)}`;
+        this.seq += 1;
+        if (!isCorrelationId(correlation)) {
+            this.mrefuse("correlation-invalid");
+            return false;
+        }
+        const snapshot = snapshotOfMigrate(observed);
+        const payload = this.buildMigratePayload(observed, correlation, this.innerGap, this.outerGap);
+        if (payload === null) {
+            this.mrefuse("payload-invalid", correlation);
+            return false;
+        }
+        if (payload.length > WORKSPACE_SEND_MAX_REQUEST_BYTES) {
+            this.mrefuse("request-over-cap", correlation);
+            return false;
+        }
+        this.startMigrateFlight(correlation, direction, snapshot, observed, payload, targetOutputRef);
+        return this.inFlight;
+    }
+
+    private freshMigrate(
+        direction: WorkspaceMigrateDirection,
+        pinned?: WorkspaceMigratePin,
+    ): WorkspaceMigrateObserved | null {
+        const hook = this.env.observeMigrate;
+        if (typeof hook !== "function") {
+            return null;
+        }
+        let observed: WorkspaceMigrateObserved | null = null;
+        try {
+            observed = hook(direction, pinned);
+        } catch (error) {
+            void error;
+            observed = null;
+        }
+        if (!validateMigrateObserved(observed)) {
+            return null;
+        }
+        return observed as WorkspaceMigrateObserved;
+    }
+
+    private buildMigratePayload(
+        observed: WorkspaceMigrateObserved,
+        correlation: string,
+        innerGap: number,
+        outerGap: number,
+    ): string | null {
+        // Stable wire request: standard v1 envelope over the SOURCE domain,
+        // FULL visible source view INCLUDING sticky (sticky:true plus
+        // fit_excluded:true), floats as floating:true plus fit_excluded:true,
+        // the native maximized bool on every entry (especially floats,
+        // where the maximized flag alone trips the overlay gate), plus the
+        // adapter-asserted fixed-size provenance (fixed_auto for automatic
+        // floats, fixed_suppress for tile overrides) and advisory client
+        // size hints, mirroring the ordinary reconcile wire. Minimized
+        // members ride native-only and are filtered from the request
+        // windows; related transient/protected clients never ride the wire.
+        // The target domain carries the same backing workspace on the
+        // different output with its target bounds and gaps; target_windows
+        // stays empty. Revision stays 0 like the normal adapters; the
+        // Engine derives accepted bases internally.
+        const wireWindows = observed.sourceWindows
+            .filter((entry) => !entry.minimized)
+            .map((entry) => ({
+                window: entry.id,
+                output: observed.sourceOutput,
+                workspace: observed.sourceWorkspace,
+                rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+                ...(entry.floating === true ? { floating: true } : {}),
+                ...(entry.sticky === true ? { sticky: true } : {}),
+                fullscreen: entry.fullscreen === true,
+                maximized: entry.maximized === true,
+                ...(entry.fitExcluded === true ? { fit_excluded: true } : {}),
+                ...(entry.fixedAuto === true ? { fixed_auto: true } : {}),
+                ...(entry.fixedSuppress === true ? { fixed_suppress: true } : {}),
+                ...(entry.minSize === undefined || entry.minSize === null
+                    ? {}
+                    : { min_size: { w: entry.minSize.w, h: entry.minSize.h } }),
+                ...(entry.maxSize === undefined || entry.maxSize === null
+                    ? {}
+                    : { max_size: { w: entry.maxSize.w, h: entry.maxSize.h } }),
+            }));
+        let payload = "";
+        try {
+            payload = JSON.stringify({
+                v: WORKSPACE_SEND_CONTRACT_VERSION,
+                correlation_id: correlation,
+                owner: this.owner,
+                generation: this.generation,
+                revision: 0,
+                fingerprint: this.migrateScopeFingerprint(observed),
+                domain: {
+                    output: observed.sourceOutput,
+                    workspace: observed.sourceWorkspace,
+                    bounds: {
+                        x: observed.sourceBounds.x,
+                        y: observed.sourceBounds.y,
+                        w: observed.sourceBounds.w,
+                        h: observed.sourceBounds.h,
+                    },
+                    gap: innerGap,
+                    outer_gap: outerGap,
+                },
+                target_domain: {
+                    output: observed.targetOutput,
+                    workspace: observed.targetWorkspace,
+                    bounds: {
+                        x: observed.targetBounds.x,
+                        y: observed.targetBounds.y,
+                        w: observed.targetBounds.w,
+                        h: observed.targetBounds.h,
+                    },
+                    gap: innerGap,
+                    outer_gap: outerGap,
+                },
+                focused_window: observed.focusedId,
+                windows: wireWindows,
+                target_windows: [],
+                command: { op: "migrate-workspace", direction: observed.direction },
+            });
+        } catch (error) {
+            void error;
+            return null;
+        }
+        return payload;
+    }
+
+    private migrateScopeFingerprint(observed: WorkspaceMigrateObserved): number {
+        const sourceIds = observed.sourceWindows.map((entry) => entry.id).sort();
+        const source = workspaceFingerprint(observed.sourceOutput, observed.sourceWorkspace, sourceIds);
+        const target = workspaceFingerprint(observed.targetOutput, observed.targetWorkspace, []);
+        return (source ^ target) >>> 0;
+    }
+
+    private startMigrateFlight(
+        correlation: string,
+        direction: WorkspaceMigrateDirection,
+        snapshot: WorkspaceMigrateSnapshot,
+        observed: WorkspaceMigrateObserved,
+        payload: string,
+        targetOutputRef: object,
+    ): void {
+        this.inFlight = true;
+        this.detachArrival();
+        this.detachMigrateArrival();
+        this.diagSeq = 0;
+        const members = observed.sourceWindows.map((entry) => ({
+            id: entry.id,
+            ref: entry.ref,
+            sticky: entry.sticky,
+            floating: entry.floating,
+            minimized: entry.minimized,
+            output: entry.output,
+        }));
+        const related = observed.relatedWindows.map((entry) => ({
+            id: entry.id,
+            ref: entry.ref,
+            parentId: entry.parentId,
+            sticky: entry.sticky,
+            output: entry.output,
+        }));
+        const watched = observed.targetViewWindows.map((entry) => ({
+            id: entry.id,
+            ref: entry.ref,
+            output: entry.output,
+            sticky: entry.sticky,
+            floating: entry.floating,
+            fullscreen: entry.fullscreen,
+            maximized: entry.maximized,
+        }));
+        const migratedDesktopRef = observed.migratedDesktopRef as object | null;
+        if (migratedDesktopRef === null) {
+            this.inFlight = false;
+            this.mrefuse("scope-invalid");
+            return;
+        }
+        this.migrate = {
+            correlation,
+            direction,
+            snapshot,
+            requestPayload: payload,
+            innerGap: this.innerGap,
+            outerGap: this.outerGap,
+            members,
+            related,
+            watched,
+            targetOutputRef,
+            migratedDesktopRef,
+            baseRevision: 0,
+            planned: null,
+            followed: false,
+            followOutcome: "not-reached",
+            viewsWritten: false,
+            wroteAny: false,
+            geomPending: [],
+        };
+        this.mdiag("request", correlation, 0, "dispatch", "started");
+        this.pinnedOwner = null;
+        this.activationStep = 1;
+        this.token += 1;
+        const flight = this.token;
+        this.activeToken = flight;
+        // Arm both bounded deadlines from dispatch: the request deadline
+        // releases an unanswered request, the arrival deadline bounds the
+        // pin and delayed-arrival follow. Separate epochs; neither resets.
+        this.deadlineToken += 1;
+        this.requestDeadline = this.deadlineToken;
+        const requestEpoch = this.requestDeadline;
+        let requestCancel: (() => void) | null = null;
+        try {
+            requestCancel = this.env.scheduleOnce(WORKSPACE_SEND_TIMEOUT_MS, () =>
+                this.onRequestTimeout(flight, requestEpoch),
+            );
+        } catch (error) {
+            void error;
+            requestCancel = null;
+        }
+        if (requestCancel === null) {
+            this.inFlight = false;
+            this.migrate = null;
+            this.activationStep = 0;
+            this.requestDeadline = 0;
+            this.mrefuse("timeout");
+            return;
+        }
+        this.requestTimer = requestCancel;
+        this.deadlineToken += 1;
+        this.arrivalDeadline = this.deadlineToken;
+        const arrivalEpoch = this.arrivalDeadline;
+        let arrivalCancel: (() => void) | null = null;
+        try {
+            arrivalCancel = this.env.scheduleOnce(WORKSPACE_SEND_TIMEOUT_MS, () =>
+                this.onArrivalTimeout(flight, arrivalEpoch),
+            );
+        } catch (error) {
+            void error;
+            arrivalCancel = null;
+        }
+        if (arrivalCancel === null) {
+            this.clearRequestTimer();
+            this.inFlight = false;
+            this.migrate = null;
+            this.activationStep = 0;
+            this.requestDeadline = 0;
+            this.arrivalDeadline = 0;
+            this.mrefuse("timeout");
+            return;
+        }
+        this.arrivalTimer = arrivalCancel;
+        // Phase 1: distinguish presence through NameHasOwner's normal boolean
+        // reply. KWin does not call back for GetNameOwner's absent-name error.
+        try {
+            this.env.callDbus(
+                WORKSPACE_SEND_DBUS_SERVICE,
+                WORKSPACE_SEND_DBUS_OBJECT,
+                WORKSPACE_SEND_DBUS_INTERFACE,
+                WORKSPACE_SEND_HAS_OWNER_METHOD,
+                WORKSPACE_SEND_SERVICE,
+                (reply) => this.onNamePresence(reply, flight, correlation),
+            );
+        } catch (error) {
+            void error;
+            this.settleTerminal(flight, correlation, "no-planner", "release");
+        }
+    }
+
+    // Reply-boundary actuation: re-observe the pinned triple, exact-match
+    // the dispatch snapshot (frozen identity and membership), re-gate the
+    // whole-operation overlay rule, bind the plan, commit the session map,
+    // then transfer members with per-setter fences. Arrival, views, and the
+    // single active retain run through progressMigrate only on verified
+    // placement. Any failure settles terminal with normal recovery through
+    // onSettled; nothing is replayed and nothing implies native success.
+    private actuateMigrate(flight: number, correlation: string): void {        const migrating = this.migrate;
+        const planned = migrating?.planned ?? null;
+        if (migrating === null || planned === null || !this.fencesHold(flight, correlation)) {
+            this.settleTerminal(flight, correlation, "stale-scope", "release");
+            return;
+        }
+        const snapshot = migrating.snapshot;
+        const fresh = this.freshMigrate(migrating.direction, migratePinOf(snapshot));
+        if (fresh === null || !migrateSnapshotsEqual(snapshotOfMigrate(fresh), snapshot)) {
+            this.settleTerminal(flight, correlation, "stale-revision", "release");
+            return;
+        }
+        if (!this.flightGapsHold(migrating)) {
+            this.settleTerminal(flight, correlation, "stale-revision", "release");
+            return;
+        }
+        if (!this.migrateModeHolds(migrating)) {
+            this.settleTerminal(flight, correlation, "stale-revision", "release");
+            return;
+        }
+        if (migrateOverlayPresent(fresh)) {
+            this.settleTerminal(flight, correlation, "overlay-present", "release");
+            return;
+        }
+        if (!migrateBindingHolds(planned, snapshot)) {
+            this.settleTerminal(flight, correlation, "precondition-mismatch", "release");
+            return;
+        }
+        // Session map commit before any native window write: insert the
+        // backing id after the target current workspace. The target prior
+        // workspace stays listed and hidden unchanged.
+        const commitWorkspaceMap = this.env.commitWorkspaceMap;
+        if (typeof commitWorkspaceMap !== "function") {
+            this.settleTerminal(flight, correlation, "transfer-unavailable", "release");
+            return;
+        }
+        let refillId: string | null = null;
+        try {
+            const committed = commitWorkspaceMap(snapshot.sourceOutput, snapshot.targetOutput, snapshot.sourceWorkspace);
+            if (committed === null || typeof committed !== "object") {
+                this.settleTerminal(flight, correlation, "map-commit-failed", "release");
+                return;
+            }
+            refillId = committed.refillId;
+        } catch (error) {
+            void error;
+            this.settleTerminal(flight, correlation, "map-commit-failed", "release");
+            return;
+        }
+        migrating.refillId = refillId;
+        // Arm the one-shot per-member arrival signals BEFORE native writes
+        // so delayed output/membership signals between setters and the
+        // post-write verification stay observable. Synchronous echo during
+        // the write stack stays deferred via nativeWriteDepth and is covered
+        // by the immediate post-write verification.
+        this.armMigrateArrival(flight, correlation);
+        this.nativeWriteDepth += 1;
+        let written = false;
+        try {
+            written = this.writeMigrateMembers(flight, correlation, migrating, planned, fresh);
+        } catch (error) {
+            void error;
+            written = false;
+        }
+        this.nativeWriteDepth -= 1;
+        if (!written) {
+            if (!this.fencesHold(flight, correlation) || !this.flightGapsHold(migrating)) {
+                this.settleTerminal(flight, correlation, "stale-revision", "release");
+                return;
+            }
+            this.settleTerminal(flight, correlation, migrating.writeOutcome ?? "write-failed", "release");
+            return;
+        }
+        this.mdiag("arrival", correlation, planned.baseRevision, "write", "applied");
+        if (this.progressMigrate(flight, correlation) === "waiting") {
+            this.mdiag("arrival", correlation, planned.baseRevision, "arrival", "waiting");
+        }
+    }
+
+    // Current tiling-mode read for a migrate flight: the live source mode
+    // must still equal the frozen dispatch mode. Floating workspaces are
+    // carried membership-only, never refused for their mode; a mode change
+    // mid-flight stales instead. A throw reads as drift. Never throws.
+    private migrateModeHolds(migrating: WorkspaceMigrateFlight): boolean {
+        try {
+            const gate = this.env.isDomainTiled;
+            if (typeof gate !== "function") {
+                return false;
+            }
+            return (
+                gate(migrating.snapshot.sourceOutput, migrating.snapshot.sourceWorkspace) ===
+                migrating.snapshot.sourceTiled
+            );
+        } catch (error) {
+            void error;
+            return false;
+        }
+    }
+
+    // Frozen member + related ref liveness: every dispatch-captured ref
+    // must still resolve to the identical live object with its stable
+    // identity. A closed, replaced, or unreadable ref fails the next
+    // setter. Never throws.
+    private migrateRefsLive(migrating: WorkspaceMigrateFlight): boolean {
+        const hook = this.env.readMoverLive;
+        if (typeof hook !== "function") {
+            return false;
+        }
+        for (const tracked of [...migrating.members, ...migrating.related]) {
+            let live: { readonly id: string } | null = null;
+            try {
+                live = hook(tracked.ref);
+            } catch (error) {
+                void error;
+                return false;
+            }
+            if (live === null || typeof live !== "object" || live.id !== tracked.id) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Full pre-setter hold for one native write: flight identity, frozen
+    // gaps, frozen tiling mode, then a pinned re-observation that must keep
+    // the frozen scope (member refs/windows/desktops/outputs, views,
+    // policy, native flags, related identity). The optional phase-aware
+    // view expectation names the exact views the flight itself already
+    // wrote (post-target-switch, post-source-switch); without it the
+    // pre-write views must still hold. Post-view (residueViews true), the
+    // prior target view is hidden by the flight's own switch: target and
+    // related members prove out through ref-based residue instead of
+    // observed lists, and no new related id may appear. Desktop wrapper
+    // identity is reproven too: a same-id replacement fails closed.
+    // Returns the fresh observation for the setter, or null when the next
+    // setter must not run. Never throws.
+    private migratePreSetterHold(
+        flight: number,
+        correlation: string,
+        migrating: WorkspaceMigrateFlight,
+        expectViews?: { readonly source: string; readonly target: string },
+        residueViews?: boolean,
+    ): WorkspaceMigrateObserved | null {
+        if (!this.fencesHold(flight, correlation) || this.migrate !== migrating) {
+            return null;
+        }
+        if (!this.flightGapsHold(migrating) || !this.migrateModeHolds(migrating)) {
+            return null;
+        }
+        const pin =
+            expectViews === undefined
+                ? migratePinOf(migrating.snapshot)
+                : { ...migratePinOf(migrating.snapshot), expectViews };
+        const fresh = this.freshMigrate(migrating.direction, pin);
+        if (fresh === null) {
+            return null;
+        }
+        const scopeOk =
+            expectViews === undefined
+                ? migrateCommitScopeHolds(fresh, migrating.snapshot)
+                : migrateScopedHolds(fresh, migrating.snapshot, expectViews.source, expectViews.target, !residueViews);
+        if (!scopeOk) {
+            return null;
+        }
+        if (residueViews === true) {
+            if (!this.migrateTargetResidueHolds(migrating, fresh)) {
+                    return null;
+            }
+            if (!this.migrateRelatedPostViewHolds(migrating, fresh)) {
+                    return null;
+            }
+        }
+        if (fresh.migratedDesktopRef !== migrating.migratedDesktopRef) {
+            return null;
+        }
+        if (!this.migrateRefsLive(migrating)) {
+            return null;
+        }
+        return fresh;
+    }
+
+    // Post-view target residue: every dispatch target-view member still
+    // resolves live with its dispatch output, flags, and (non-sticky)
+    // desktop, and no window outside the dispatch target set plus the
+    // migrating members may appear in the live target view. A closed,
+    // moved, replaced, overlaid, or newly arrived survivor fails the next
+    // setter. Never throws.
+    private migrateTargetResidueHolds(
+        migrating: WorkspaceMigrateFlight,
+        fresh: WorkspaceMigrateObserved,
+    ): boolean {
+        const hook = this.env.readMoverLive;
+        if (typeof hook !== "function") {
+            return false;
+        }
+        for (const watched of migrating.watched) {
+            let live: {
+                readonly id: string;
+                readonly floating: boolean;
+                readonly sticky: boolean;
+                readonly fullscreen: boolean;
+                readonly maximized: boolean;
+            } | null = null;
+            try {
+                live = hook(watched.ref);
+            } catch (error) {
+                void error;
+                return false;
+            }
+            if (live === null || typeof live !== "object" || live.id !== watched.id) {
+                return false;
+            }
+            if (
+                live.floating !== watched.floating ||
+                live.sticky !== watched.sticky ||
+                live.fullscreen !== watched.fullscreen ||
+                live.maximized !== watched.maximized
+            ) {
+                return false;
+            }
+            let output: string | null = null;
+            let desktopIds: ReadonlyArray<string> | null = null;
+            try {
+                output = this.env.readOutputName?.(watched.ref) ?? null;
+                desktopIds = this.env.readDesktopIds?.(watched.ref) ?? null;
+            } catch (error) {
+                void error;
+                return false;
+            }
+            if (output === null || desktopIds === null) {
+                return false;
+            }
+            if (output !== watched.output) {
+                return false;
+            }
+            if (!watched.sticky) {
+                if (desktopIds.length !== 1 || desktopIds[0] !== migrating.snapshot.targetCurrentWorkspace) {
+                    return false;
+                }
+            }
+        }
+        // No additions: every live target-view window must belong to the
+        // dispatch target set or the migrating set (which legitimately
+        // joins the view through the flight's own switch).
+        const allowed = new Set<string>();
+        for (const entry of migrating.snapshot.targetViewWindows) {
+            allowed.add(entry.id);
+        }
+        for (const entry of migrating.snapshot.sourceWindows) {
+            allowed.add(entry.id);
+        }
+        for (const entry of fresh.targetViewWindows) {
+            if (!allowed.has(entry.id)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Post-view related proof: every dispatch related client proves out
+    // through live reads (implicit-arrival output rule plus overlay
+    // flags), and no related id outside the dispatch set may appear in
+    // the fresh observation. Never throws.
+    private migrateRelatedPostViewHolds(
+        migrating: WorkspaceMigrateFlight,
+        fresh: WorkspaceMigrateObserved,
+    ): boolean {
+        const hook = this.env.readMoverLive;
+        if (typeof hook !== "function") {
+            return false;
+        }
+        const parentOutput = new Map<string, string>();
+        for (const member of migrating.members) {
+            if (member.sticky) {
+                continue;
+            }
+            let output: string | null = null;
+            try {
+                output = this.env.readOutputName?.(member.ref) ?? null;
+            } catch (error) {
+                void error;
+                return false;
+            }
+            if (output === null) {
+                return false;
+            }
+            parentOutput.set(member.id, output);
+        }
+        const dispatchIds = new Set(migrating.related.map((entry) => entry.id));
+        for (const related of migrating.related) {
+            let live: {
+                readonly id: string;
+                readonly floating: boolean;
+                readonly sticky: boolean;
+                readonly fullscreen: boolean;
+                readonly maximized: boolean;
+            } | null = null;
+            try {
+                live = hook(related.ref);
+            } catch (error) {
+                void error;
+                return false;
+            }
+            if (live === null || typeof live !== "object" || live.id !== related.id) {
+                return false;
+            }
+            let output: string | null = null;
+            try {
+                output = this.env.readOutputName?.(related.ref) ?? null;
+            } catch (error) {
+                void error;
+                return false;
+            }
+            if (output === null) {
+                return false;
+            }
+            if (related.parentId === null || related.sticky) {
+                if (output !== related.output) {
+                    return false;
+                }
+            } else {
+                const parent = parentOutput.get(related.parentId);
+                if (parent === undefined || output !== parent) {
+                    return false;
+                }
+            }
+        }
+        for (const entry of fresh.relatedWindows) {
+            if (!dispatchIds.has(entry.id)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Mid-write abort outcome: overlay trips before the first write refuse
+    // as overlay-present; anything later (including scope drift found by a
+    // pre-setter hold) settles as write-failed for partial recovery. The
+    // first abort wins; later calls keep it.
+    private failMigrateWrite(migrating: WorkspaceMigrateFlight, outcome?: string): false {
+        if (migrating.writeOutcome === undefined) {
+            migrating.writeOutcome = outcome ?? (migrating.wroteAny ? "write-failed" : "stale-revision");
+        }
+        return false;
+    }
+
+    // Phase A: per-member output transfer plus planned target geometry.
+    // Sticky windows are never touched (output and all-desktops stay
+    // source). Tiled members move in planned geometry order, then floats,
+    // then minimized members (transfer only: geometry and focus never
+    // touch minimized). Every member carries a live overlay guard
+    // immediately before its first setter: a member turning
+    // fullscreen/maximized refuses the whole operation, before any write
+    // when nothing moved yet, as write-failed recovery once writes began.
+    // A transfer that initiates while placement is still pending defers
+    // that member's geometry until placement verifies (never rewritten);
+    // only a refused transfer aborts.
+    //
+    // Before EACH transfer the exact target object is re-resolved and
+    // compared to the dispatch identity (a same-id replacement refuses),
+    // and the full pre-setter hold reproves member refs, scopes, views,
+    // policy, flags, gaps, and tiling mode. Floating workspaces carry
+    // membership-only: tiled-observed members still transfer, but no tiler
+    // geometry is ever written there.
+    private writeMigrateMembers(
+        flight: number,
+        correlation: string,
+        migrating: WorkspaceMigrateFlight,
+        planned: WorkspaceMigratePlanned,
+        fresh: WorkspaceMigrateObserved,
+    ): boolean {
+        void fresh;
+        const resolveOutput = this.env.resolveOutput;
+        const sendClientToScreen = this.env.sendClientToScreen;
+        if (typeof resolveOutput !== "function" || typeof sendClientToScreen !== "function") {
+            return this.failMigrateWrite(migrating);
+        }
+        const memberById = new Map<string, { readonly ref: object }>();
+        for (const member of migrating.members) {
+            if (!memberById.has(member.id)) {
+                memberById.set(member.id, { ref: member.ref });
+            }
+        }
+        const geometryOrder = planned.geometry.map((entry) => entry.window);
+        const floatIds = migrating.members
+            .filter((member) => !member.sticky && !member.minimized && !geometryOrder.includes(member.id))
+            .map((member) => member.id)
+            .sort();
+        const minimizedIds = migrating.members
+            .filter((member) => !member.sticky && member.minimized)
+            .map((member) => member.id)
+            .sort();
+        const ordered = [...geometryOrder, ...floatIds, ...minimizedIds];
+        const geometryByWindow = new Map<string, WorkspaceSendRect>();
+        for (const entry of planned.geometry) {
+            geometryByWindow.set(entry.window, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
+        }
+        // Exact migrating set: every non-sticky dispatch member moves, no
+        // skipping windows and no outside-window effect.
+        const expected = migrating.members.filter((member) => !member.sticky).map((member) => member.id).sort();
+        const wanted = [...ordered].sort();
+        if (expected.length !== wanted.length || expected.some((id, index) => id !== wanted[index])) {
+            return this.failMigrateWrite(migrating);
+        }
+        const geometryAllowed = migrating.snapshot.sourceTiled;
+        for (const id of ordered) {
+            const hold = this.migratePreSetterHold(flight, correlation, migrating);
+            if (hold === null) {
+                return this.failMigrateWrite(migrating);
+            }
+            void hold;
+            // Exact target identity per transfer: re-resolve and compare to
+            // the dispatch object before touching native state.
+            let targetOutputRef: object | null = null;
+            try {
+                targetOutputRef = resolveOutput(migrating.snapshot.targetOutput);
+            } catch (error) {
+                void error;
+                targetOutputRef = null;
+            }
+            if (targetOutputRef === null || targetOutputRef !== migrating.targetOutputRef) {
+                return this.failMigrateWrite(migrating);
+            }
+            const member = memberById.get(id) ?? null;
+            if (member === null) {
+                return this.failMigrateWrite(migrating);
+            }
+            const ref = member.ref;
+            // Live overlay guard immediately before the first setter for
+            // this member: transients, quicktiles, and restores ride KWin
+            // transfers, so related normal clients were enumerated
+            // completely at observation and any overlay trips here.
+            if (!this.migrateMemberClean(ref, id)) {
+                return this.failMigrateWrite(migrating, migrating.wroteAny ? "write-failed" : "overlay-present");
+            }
+            let transferred = false;
+            try {
+                transferred = sendClientToScreen(ref, targetOutputRef) === true;
+            } catch (error) {
+                void error;
+                transferred = false;
+            }
+            if (!transferred) {
+                return this.failMigrateWrite(migrating);
+            }
+            migrating.wroteAny = true;
+            // A member that died or was replaced by its own transfer, or
+            // turned overlaid, aborts the whole operation at once: no
+            // further writes, no views, no focus.
+            if (!this.migrateMemberClean(ref, id)) {
+                return this.failMigrateWrite(migrating, "write-failed");
+            }
+            const rect = geometryByWindow.get(id);
+            if (rect === undefined || !geometryAllowed) {
+                // Floats, minimized members, and every member of a floating
+                // workspace carry membership-only: never deferred, never
+                // written.
+                continue;
+            }
+            // Delayed output application defers this member's geometry
+            // until placement verifies; a placed member writes at once.
+            if (!this.migrateMemberPlaced(ref, migrating.snapshot.targetOutput, migrating.snapshot.sourceWorkspace)) {
+                if (!migrating.geomPending.includes(id)) {
+                    migrating.geomPending.push(id);
+                }
+                continue;
+            }
+            let written = false;
+            try {
+                written = this.env.setGeometry(ref, rect) === true;
+            } catch (error) {
+                void error;
+                written = false;
+            }
+            if (!written) {
+                return this.failMigrateWrite(migrating);
+            }
+        }
+        return true;
+    }
+
+    // Read-only live member evidence for mid-write fences: the retained ref
+    // must still resolve to the identical live object in the current window
+    // list with its readable native identity and clean exception flags.
+    // Null on anything unreadable, unlisted, replaced, or overlaid.
+    private migrateMemberClean(ref: object, id: string): boolean {
+        const hook = this.env.readMoverLive;
+        if (typeof hook !== "function") {
+            return false;
+        }
+        let live: {
+            readonly id: string;
+            readonly floating: boolean;
+            readonly sticky: boolean;
+            readonly fullscreen: boolean;
+            readonly maximized: boolean;
+        } | null = null;
+        try {
+            live = hook(ref);
+        } catch (error) {
+            void error;
+            return false;
+        }
+        if (live === null || typeof live !== "object" || live.id !== id) {
+            return false;
+        }
+        return live.fullscreen !== true && live.maximized !== true;
+    }
+
+    // Exact native placement read for one member ref: destination output
+    // plus the migrated workspace as the sole desktop.
+    private migrateMemberPlaced(ref: object, targetOutput: string, workspaceId: string): boolean {
+        let output: string | null = null;
+        let desktopIds: ReadonlyArray<string> | null = null;
+        try {
+            output = this.env.readOutputName?.(ref) ?? null;
+            desktopIds = this.env.readDesktopIds?.(ref) ?? null;
+        } catch (error) {
+            void error;
+            return false;
+        }
+        return output === targetOutput && desktopIds !== null && desktopIds.length === 1 && desktopIds[0] === workspaceId;
+    }
+
+    // Deferred planned geometry for transfers that initiated while
+    // placement was still pending. Runs once placement verifies, before
+    // any view write, with a full pre-setter hold plus a live overlay
+    // re-guard per member. Written ids never rewrite; any failure aborts
+    // with no further writes and no focus. Never runs on floating
+    // workspaces (membership-only there, nothing was deferred).
+    private writeMigratePendingGeometries(
+        flight: number,
+        correlation: string,
+        migrating: WorkspaceMigrateFlight,
+        planned: WorkspaceMigratePlanned,
+    ): boolean {
+        if (!migrating.snapshot.sourceTiled) {
+            return true;
+        }
+        const refById = new Map<string, object>();
+        for (const member of migrating.members) {
+            if (!refById.has(member.id)) {
+                refById.set(member.id, member.ref);
+            }
+        }
+        const geometryByWindow = new Map<string, WorkspaceSendRect>();
+        for (const entry of planned.geometry) {
+            geometryByWindow.set(entry.window, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
+        }
+        const pending = migrating.geomPending.splice(0, migrating.geomPending.length);
+        for (const id of pending) {
+            if (this.migratePreSetterHold(flight, correlation, migrating) === null) {
+                return this.failMigrateWrite(migrating);
+            }
+            const ref = refById.get(id) ?? null;
+            const rect = geometryByWindow.get(id);
+            if (ref === null || rect === undefined) {
+                return this.failMigrateWrite(migrating);
+            }
+            if (!this.migrateMemberClean(ref, id)) {
+                return this.failMigrateWrite(migrating, "write-failed");
+            }
+            if (!this.migrateMemberPlaced(ref, migrating.snapshot.targetOutput, migrating.snapshot.sourceWorkspace)) {
+                return this.failMigrateWrite(migrating);
+            }
+            let written = false;
+            try {
+                written = this.env.setGeometry(ref, rect) === true;
+            } catch (error) {
+                void error;
+                written = false;
+            }
+            if (!written) {
+                return this.failMigrateWrite(migrating);
+            }
+        }
+        return true;
+    }
+
+    // Phases B..F: verified placement, deferred planned geometry,
+    // per-output view writes, output activation for null-active routes, and
+    // the single active retain. Returns "waiting" only when every setter
+    // applied but some members have not arrived yet with none closed: the
+    // armed one-shot signals or the bounded arrival deadline own the flight
+    // from there. Every other path settles terminal exactly once.
+    private progressMigrate(flight: number, correlation: string): "settled" | "waiting" {
+        const migrating = this.migrate;
+        const planned = migrating?.planned ?? null;
+        if (migrating === null || planned === null || !this.fencesHold(flight, correlation) || this.migrate !== migrating) {
+            this.settleTerminal(flight, correlation, "stale-scope", "release");
+            return "settled";
+        }
+        // Pre-view full hold: frozen scope, policy, tiling mode, gaps,
+        // desktop identity, and every frozen ref reproven.
+        if (this.migratePreSetterHold(flight, correlation, migrating) === null) {
+            this.settleTerminal(flight, correlation, "stale-revision", "release");
+            return "settled";
+        }
+        // Verified arrival: every migrating window reads back the exact
+        // native output AND the migrated workspace as its sole desktop
+        // (minimized members included); sticky windows read back unchanged;
+        // related transients follow their live parent output. A member in
+        // neither scope is closed: settle at once, never wait for it.
+        const placement = this.readMigratePlacement(migrating);
+        if (placement === "unreadable") {
+            this.settleTerminal(flight, correlation, "stale-revision", "release");
+            return "settled";
+        }
+        if (placement === "closed") {
+            this.settleTerminal(flight, correlation, "member-closed", "release");
+            return "settled";
+        }
+        if (placement === "pending") {
+            return "waiting";
+        }
+        // Deferred planned geometry lands now that placement verifies,
+        // before any view write. Any failure aborts with no views and no
+        // focus; the settled refresh recovers both domains.
+        if (migrating.geomPending.length > 0) {
+            if (!this.writeMigratePendingGeometries(flight, correlation, migrating, planned)) {
+                this.settleTerminal(flight, correlation, migrating.writeOutcome ?? "write-failed", "release");
+                return "settled";
+            }
+        }
+        // Views run at most once. A sole-scoped source (null refill)
+        // settles source-empty without focus: never claim arrived while
+        // the source still shows the moved id.
+        const views = this.writeMigrateViews(flight, correlation, migrating);
+        if (views === false) {
+            if (!this.fencesHold(flight, correlation) || this.migrate !== migrating) {
+                this.settleTerminal(flight, correlation, "stale-revision", "release");
+                return "settled";
+            }
+            this.settleTerminal(flight, correlation, "switch-unconfirmed", "release");
+            return "settled";
+        }
+        if (views === "partial") {
+            this.settleTerminal(flight, correlation, "source-empty", "release");
+            return "settled";
+        }
+        if (planned.activeWindow === null) {
+            // Empty/sticky-active routes activate the target output
+            // natively, then settle with zero focus setters ever.
+            if (!this.switchMigrateActiveOutput(flight, correlation, migrating)) {
+                this.settleTerminal(flight, correlation, "output-unconfirmed", "release");
+                return "settled";
+            }
+            migrating.followed = true;
+            migrating.followOutcome = "state-confirmed";
+            this.mdiag("follow", migrating.correlation, planned.baseRevision, "follow", migrating.followOutcome);
+            this.settleTerminal(flight, correlation, "arrived", "arrival");
+            return "settled";
+        }
+        this.finishMigrateFocus(flight, correlation, migrating, planned);
+        const outcome = migrating.followOutcome;
+        this.settleTerminal(flight, correlation, outcome === "state-confirmed" ? "arrived" : outcome, "arrival");
+        return "settled";
+    }
+
+    // Per-member placement rollup over dispatch-captured refs. "complete"
+    // only when every non-sticky member (minimized included) proves
+    // destination output plus sole migrated desktop, every sticky member
+    // proves unchanged, and every related transient proves the live output
+    // of its migrating parent (implicit arrival, never an explicit
+    // setter). "pending" when some members still read back on the source
+    // with none closed. "closed" when any member is gone, replaced, or
+    // unreadable. "unreadable" when a scope read itself fails.
+    private readMigratePlacement(migrating: WorkspaceMigrateFlight): "complete" | "pending" | "closed" | "unreadable" {
+        const snapshot = migrating.snapshot;
+        const outputOf = (ref: object): string | null => {
+            try {
+                return this.env.readOutputName?.(ref) ?? null;
+            } catch (error) {
+                void error;
+                return null;
+            }
+        };
+        let pending = false;
+        for (const member of migrating.members) {
+            let live: {
+                readonly id: string;
+                readonly floating: boolean;
+                readonly sticky: boolean;
+                readonly fullscreen: boolean;
+                readonly maximized: boolean;
+            } | null = null;
+            try {
+                live = this.env.readMoverLive?.(member.ref) ?? null;
+            } catch (error) {
+                void error;
+                return "closed";
+            }
+            if (live === null || typeof live !== "object" || live.id !== member.id) {
+                return "closed";
+            }
+            if (member.sticky) {
+                if (live.sticky !== true) {
+                    return "closed";
+                }
+                const output = outputOf(member.ref);
+                if (output === null) {
+                    return "unreadable";
+                }
+                if (output !== member.output) {
+                    return "closed";
+                }
+                continue;
+            }
+            let output: string | null = null;
+            let desktopIds: ReadonlyArray<string> | null = null;
+            try {
+                output = this.env.readOutputName?.(member.ref) ?? null;
+                desktopIds = this.env.readDesktopIds?.(member.ref) ?? null;
+            } catch (error) {
+                void error;
+                return "closed";
+            }
+            if (output === null || desktopIds === null) {
+                return "unreadable";
+            }
+            const homed =
+                desktopIds.length === 1 && desktopIds[0] === snapshot.sourceWorkspace;
+            if (!homed) {
+                return "closed";
+            }
+            if (output === snapshot.targetOutput) {
+                continue;
+            }
+            if (output === snapshot.sourceOutput) {
+                pending = true;
+                continue;
+            }
+            return "closed";
+        }
+        const parentOutput = new Map<string, string>();
+        for (const member of migrating.members) {
+            if (member.sticky) {
+                continue;
+            }
+            const output = outputOf(member.ref);
+            if (output === null) {
+                return "unreadable";
+            }
+            parentOutput.set(member.id, output);
+        }
+        for (const related of migrating.related) {
+            let live: { readonly id: string } | null = null;
+            try {
+                live = this.env.readMoverLive?.(related.ref) ?? null;
+            } catch (error) {
+                void error;
+                return "closed";
+            }
+            if (live === null || typeof live !== "object" || live.id !== related.id) {
+                return "closed";
+            }
+            const output = outputOf(related.ref);
+            if (output === null) {
+                return "unreadable";
+            }
+            if (related.parentId === null) {
+                // View-local protected client: never moves.
+                if (output !== related.output) {
+                    return "closed";
+                }
+                continue;
+            }
+            if (related.sticky) {
+                // Sticky transients stay even when their parent moves.
+                if (output !== related.output) {
+                    return "closed";
+                }
+                continue;
+            }
+            const parent = parentOutput.get(related.parentId);
+            if (parent === undefined) {
+                return "closed";
+            }
+            if (output === parent) {
+                continue;
+            }
+            pending = true;
+        }
+        return pending ? "pending" : "complete";
+    }
+
+    // Phase C: target output shows the migrated workspace, source output
+    // shows the frozen refill (last remaining scoped workspace). Each
+    // switch carries an immediate readback inside the hook plus a
+    // phase-aware hold: after the target switch the source must still show
+    // the source workspace; after the source switch both views must read
+    // back exactly. A failed, ambiguous, or drifted switch never focuses
+    // and never replays. Runs at most once. A sole-scoped source (null
+    // refill) reports "partial": the target view stands as written, but
+    // the flight settles source-empty without focus and never claims
+    // arrived while the source still shows the moved id.
+    private writeMigrateViews(
+        flight: number,
+        correlation: string,
+        migrating: WorkspaceMigrateFlight,
+    ): "done" | "partial" | false {
+        if (migrating.viewsWritten) {
+            return "done";
+        }
+        const switchView = this.env.switchMigrateView;
+        if (typeof switchView !== "function") {
+            return false;
+        }
+        const snapshot = migrating.snapshot;
+        if (this.migratePreSetterHold(flight, correlation, migrating) === null) {
+            return false;
+        }
+        let targetOk = false;
+        try {
+            targetOk = switchView(snapshot.sourceWorkspace, snapshot.targetOutput) === true;
+        } catch (error) {
+            void error;
+            targetOk = false;
+        }
+        if (!targetOk) {
+            return false;
+        }
+        // Prove the first own write plus the remaining view unchanged
+        // before the second write: target shows migrated, source still
+        // shows the source workspace.
+        if (
+            this.migratePreSetterHold(
+                flight,
+                correlation,
+                migrating,
+                {
+                    source: snapshot.sourceWorkspace,
+                    target: snapshot.sourceWorkspace,
+                },
+                true,
+            ) === null
+        ) {
+            return false;
+        }
+        const refillId = migrating.refillId ?? null;
+        if (refillId === null) {
+            // Sole-scoped source: no refill exists. The target view stands
+            // as written, but the flight reports partial: no source write,
+            // no focus, never arrived while the source still shows the
+            // moved id. Recovery reconciles both domains.
+            migrating.viewsWritten = true;
+            this.mdiag("arrival", migrating.correlation, migrating.baseRevision, "view", "source-empty");
+            return "partial";
+        }
+        if (
+            this.migratePreSetterHold(
+                flight,
+                correlation,
+                migrating,
+                {
+                    source: snapshot.sourceWorkspace,
+                    target: snapshot.sourceWorkspace,
+                },
+                true,
+            ) === null
+        ) {
+            return false;
+        }
+        let sourceOk = false;
+        try {
+            sourceOk = switchView(refillId, snapshot.sourceOutput) === true;
+        } catch (error) {
+            void error;
+            sourceOk = false;
+        }
+        if (!sourceOk) {
+            return false;
+        }
+        // After the source write reprove both views exactly: target shows
+        // migrated, source shows the frozen refill.
+        if (
+            this.migratePreSetterHold(
+                flight,
+                correlation,
+                migrating,
+                {
+                    source: refillId,
+                    target: snapshot.sourceWorkspace,
+                },
+                true,
+            ) === null
+        ) {
+            return false;
+        }
+        migrating.viewsWritten = true;
+        return "done";
+    }
+
+    // Phase D2 (null-active routes only): native output activation for
+    // empty/sticky-active migrations. The desktop view setter only takes
+    // visible effect on the active output, so when the target is not
+    // already active the flight invokes the native directional screen
+    // slot matching the migration direction (KWin useractions
+    // switchToOutput/setActiveOutput). Pre-slot the source must read back
+    // active (never switch from a wrong source); post-slot the target
+    // must read back active. A missing slot, a wrong source, or a wrong
+    // readback settles output-unconfirmed with no retry. Zero focus
+    // setters ever ride along: KWin may choose a native client itself,
+    // which is accepted and never our fabricated focus. Runs at most once
+    // per flight (guarded by followed).
+    private switchMigrateActiveOutput(
+        flight: number,
+        correlation: string,
+        migrating: WorkspaceMigrateFlight,
+    ): boolean {
+        const readActive = this.env.readActiveOutput;
+        const switchSlot = this.env.switchActiveOutput;
+        if (typeof readActive !== "function" || typeof switchSlot !== "function") {
+            return false;
+        }
+        const snapshot = migrating.snapshot;
+        let before: string | null = null;
+        try {
+            before = readActive();
+        } catch (error) {
+            void error;
+            return false;
+        }
+        if (before === null) {
+            return false;
+        }
+        if (before === snapshot.targetOutput) {
+            return true;
+        }
+        if (before !== snapshot.sourceOutput) {
+            return false;
+        }
+        if (!this.fencesHold(flight, correlation) || this.migrate !== migrating) {
+            return false;
+        }
+        let invoked = false;
+        try {
+            invoked = switchSlot(migrating.direction) === true;
+        } catch (error) {
+            void error;
+            invoked = false;
+        }
+        if (!invoked) {
+            return false;
+        }
+        let after: string | null = null;
+        try {
+            after = readActive();
+        } catch (error) {
+            void error;
+            return false;
+        }
+        return after === snapshot.targetOutput;
+    }
+
+    // Phase D: retain the migrated active client (tiled or float) after
+    // VERIFIED arrival and views. Empty, absent, and sticky-active routes
+    // carry a null active window and never reach here (output activation
+    // runs instead): no fabricated client focus ever. A mutation after
+    // geometry, after either view write, or a target-view change before
+    // focus refuses focus without setters. Runs at most once.
+    private finishMigrateFocus(
+        flight: number,
+        correlation: string,
+        migrating: WorkspaceMigrateFlight,
+        planned: WorkspaceMigratePlanned,
+    ): void {
+        if (migrating.followed) {
+            return;
+        }
+        migrating.followed = true;
+        if (planned.activeWindow === null) {
+            migrating.followOutcome = "state-confirmed";
+            this.mdiag("follow", migrating.correlation, planned.baseRevision, "follow", migrating.followOutcome);
+            return;
+        }
+        const focusWindow = this.env.focusWindow;
+        if (typeof focusWindow !== "function") {
+            migrating.followOutcome = "hooks-unavailable";
+            this.mdiag("follow", migrating.correlation, planned.baseRevision, "follow", migrating.followOutcome);
+            return;
+        }
+        // Phase-aware post-view proof immediately before focus: both views
+        // read back the flight's own writes, every frozen ref reproves,
+        // and the active member still reads back placed.
+        const refillId = migrating.refillId ?? null;
+        if (refillId === null) {
+            migrating.followOutcome = "arrival-unconfirmed";
+            this.mdiag("follow", migrating.correlation, planned.baseRevision, "follow", migrating.followOutcome);
+            return;
+        }
+        if (
+            this.migratePreSetterHold(
+                flight,
+                correlation,
+                migrating,
+                {
+                    source: refillId,
+                    target: migrating.snapshot.sourceWorkspace,
+                },
+                true,
+            ) === null
+        ) {
+            migrating.followOutcome = "arrival-unconfirmed";
+            this.mdiag("follow", migrating.correlation, planned.baseRevision, "follow", migrating.followOutcome);
+            return;
+        }
+        // Fresh arrival proof immediately before focus: the active member
+        // must still read back placed, with fences held.
+        const active = migrating.members.find((member) => member.id === planned.activeWindow) ?? null;
+        if (
+            active === null ||
+            active.sticky ||
+            active.minimized ||
+            !this.fencesHold(flight, correlation) ||
+            this.migrate !== migrating ||
+            !this.migrateMemberPlaced(active.ref, migrating.snapshot.targetOutput, migrating.snapshot.sourceWorkspace)
+        ) {
+            migrating.followOutcome = "arrival-unconfirmed";
+            this.mdiag("follow", migrating.correlation, planned.baseRevision, "follow", migrating.followOutcome);
+            return;
+        }
+        let focused = false;
+        this.nativeFollowDepth += 1;
+        try {
+            if (this.fencesHold(flight, correlation) && this.migrate === migrating) {
+                focused =
+                    focusWindow(active.ref, {
+                        correlation: migrating.correlation,
+                        revision: planned.baseRevision,
+                        nextSequence: () => this.nextDiagSeq(),
+                    }) === true;
+            }
+        } catch (error) {
+            void error;
+            focused = false;
+        }
+        this.nativeFollowDepth -= 1;
+        migrating.followOutcome = focused ? "state-confirmed" : "focus-unconfirmed";
+        this.mdiag("follow", migrating.correlation, planned.baseRevision, "follow", migrating.followOutcome);
+    }
+
+    // One-shot delayed-arrival triggers: the next per-member (or related
+    // transient) desktopsChanged or outputChanged signal re-verifies and
+    // finishes once on a fresh exact proof. Armed before native writes so
+    // a signal between setters and the post-write verification is not
+    // missed. Synchronous echo during the write stack stays deferred via
+    // nativeWriteDepth. Sticky entries never move and take no signal.
+    private armMigrateArrival(flight: number, correlation: string): void {
+        const migrating = this.migrate;
+        if (migrating === null || migrating.correlation !== correlation || this.migrateDetaches.length > 0) {
+            return;
+        }
+        const subscribeDesktops = this.env.subscribeMoverDesktops;
+        const subscribeOutput = this.env.subscribeMoverOutput;
+        if (typeof subscribeDesktops !== "function" && typeof subscribeOutput !== "function") {
+            return;
+        }
+        const tracked = [
+            ...migrating.members.filter((member) => !member.sticky).map((member) => member.ref),
+            ...migrating.related.filter((related) => !related.sticky).map((related) => related.ref),
+        ];
+        const seen = new Set<object>();
+        for (const ref of tracked) {
+            if (seen.has(ref)) {
+                continue;
+            }
+            seen.add(ref);
+            if (typeof subscribeDesktops === "function") {
+                try {
+                    const detach = subscribeDesktops(ref, () => this.onMigrateArrivalSignal(flight, correlation));
+                    if (typeof detach === "function") {
+                        this.migrateDetaches.push(detach);
+                    }
+                } catch (error) {
+                    void error;
+                }
+            }
+            if (typeof subscribeOutput === "function") {
+                try {
+                    const detach = subscribeOutput(ref, () => this.onMigrateArrivalSignal(flight, correlation));
+                    if (typeof detach === "function") {
+                        this.migrateDetaches.push(detach);
+                    }
+                } catch (error) {
+                    void error;
+                }
+            }
+        }
+    }
+
+    private detachMigrateArrival(): void {
+        const detaches = this.migrateDetaches.splice(0, this.migrateDetaches.length);
+        for (const detach of detaches) {
+            try {
+                detach();
+            } catch (error) {
+                void error;
+            }
+        }
+    }
+
+    private onMigrateArrivalSignal(flight: number, correlation: string): void {
+        // A signal arriving mid-write or mid-follow is covered by the
+        // immediate post-write verification / in-progress follow instead.
+        // Keep the one-shots armed so the delayed arrival stays observable;
+        // do not consume them while the write/follow stack is live.
+        if (this.nativeWriteDepth > 0 || this.nativeFollowDepth > 0) {
+            return;
+        }
+        if (!this.inFlight || flight !== this.activeToken || this.migrate === null) {
+            return;
+        }
+        // One-shot: detach before any further progress so a duplicate signal
+        // cannot produce a second follow.
+        this.detachMigrateArrival();
+        if (this.progressMigrate(flight, correlation) === "waiting" && this.migrateDetaches.length === 0) {
+            this.armMigrateArrival(flight, correlation);
+        }
+    }
+
+    // Refusal during pre-flight (no pin, no hook): one structured migrate
+    // diagnostic with an exact bounded token. Pre-flight refusals stay
+    // enabled with no flight, timer, D-Bus, native, or follow so a
+    // subsequent valid migration can proceed.
+    private mrefuse(outcome: string, correlation = ""): void {
+        this.mdiag("request", correlation, 0, "refuse", outcome);
+    }
+
+    private mdiag(stage: string, correlation: string, revision: number, event: string, outcome: string): void {
+        try {
+            const followGate =
+                event === "refuse"
+                    ? ` follow=not-reached gate=pre-commit phase=request reason=${outcome}`
+                    : "";
+            this.env.log(
+                `${LOG_PREFIX} component=${WORKSPACE_MIGRATE_COMPONENT} route=migrate-workspace stage=${stage} correlation=${correlation} generation=${this.generation} revision=${String(revision)} diag_seq=${String(this.nextDiagSeq())} event=${event} outcome=${outcome}${followGate}`,
+            );
+        } catch (error) {
+            void error;
+        }
+    }
+
     private nextDiagSeq(): number {
         this.diagSeq += 1;
         return this.diagSeq;
     }
+}
+
+// ============ R-WS-12 migrate module helpers (no native access) ============
+
+function migratePinOf(snapshot: WorkspaceMigrateSnapshot): WorkspaceMigratePin {
+    return {
+        sourceOutput: snapshot.sourceOutput,
+        sourceWorkspace: snapshot.sourceWorkspace,
+        targetOutput: snapshot.targetOutput,
+    };
+}
+
+function isMigrateSize(value: unknown): value is { readonly w: number; readonly h: number } {
+    if (typeof value !== "object" || value === null) {
+        return false;
+    }
+    const record = value as Record<string, unknown>;
+    const wRaw = record["w"] !== undefined ? record["w"] : record["width"];
+    const hRaw = record["h"] !== undefined ? record["h"] : record["height"];
+    return (
+        typeof wRaw === "number" &&
+        Number.isInteger(wRaw) &&
+        typeof hRaw === "number" &&
+        Number.isInteger(hRaw) &&
+        wRaw >= 0 &&
+        hRaw >= 0 &&
+        wRaw <= 16384 &&
+        hRaw <= 16384
+    );
+}
+
+function validateMigrateObservedWindow(value: unknown): value is WorkspaceMigrateObservedWindow {
+    if (typeof value !== "object" || value === null) {
+        return false;
+    }
+    const candidate = value as Record<string, unknown>;
+    if (!isOpaqueId(candidate["id"]) || typeof candidate["ref"] !== "object" || candidate["ref"] === null) {
+        return false;
+    }
+    const rect = candidate["rect"];
+    if (typeof rect !== "object" || rect === null) {
+        return false;
+    }
+    const record = rect as Record<string, unknown>;
+    if (
+        !isTargetRect({ x: record["x"], y: record["y"], w: record["w"], h: record["h"] }) ||
+        !isOpaqueId(candidate["output"])
+    ) {
+        return false;
+    }
+    for (const flag of ["floating", "sticky", "fullscreen", "maximized", "fitExcluded", "minimized", "transient", "fixedAuto", "fixedSuppress"]) {
+        if (typeof candidate[flag] !== "boolean") {
+            return false;
+        }
+    }
+    for (const hint of ["minSize", "maxSize"]) {
+        const raw = candidate[hint];
+        if (raw !== undefined && raw !== null && !isMigrateSize(raw)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function validateMigrateRelatedWindow(value: unknown): value is WorkspaceMigrateRelatedWindow {
+    if (typeof value !== "object" || value === null) {
+        return false;
+    }
+    const candidate = value as Record<string, unknown>;
+    if (!isOpaqueId(candidate["id"]) || typeof candidate["ref"] !== "object" || candidate["ref"] === null) {
+        return false;
+    }
+    if (!isOpaqueId(candidate["output"])) {
+        return false;
+    }
+    const parentId = candidate["parentId"];
+    if (parentId !== null && !isOpaqueId(parentId)) {
+        return false;
+    }
+    for (const flag of ["transient", "minimized", "floating", "sticky", "fullscreen", "maximized", "fitExcluded"]) {
+        if (typeof candidate[flag] !== "boolean") {
+            return false;
+        }
+    }
+    return true;
+}
+
+function validateMigrateObserved(value: WorkspaceMigrateObserved | null): value is WorkspaceMigrateObserved {
+    if (value === null || typeof value !== "object") {
+        return false;
+    }
+    if (!isMigrateDirection(value.direction)) {
+        return false;
+    }
+    if (!isOpaqueId(value.sourceOutput) || !isOpaqueId(value.sourceWorkspace)) {
+        return false;
+    }
+    if (!isOpaqueId(value.targetOutput) || !isOpaqueId(value.targetWorkspace)) {
+        return false;
+    }
+    if (!isOpaqueId(value.targetCurrentWorkspace) || !isOpaqueId(value.sourceCurrentWorkspace)) {
+        return false;
+    }
+    if (
+        !isTargetRect({ x: value.sourceBounds.x, y: value.sourceBounds.y, w: value.sourceBounds.w, h: value.sourceBounds.h }) ||
+        !isTargetRect({ x: value.targetBounds.x, y: value.targetBounds.y, w: value.targetBounds.w, h: value.targetBounds.h })
+    ) {
+        return false;
+    }
+    if (value.focusedId !== "" && !isOpaqueId(value.focusedId)) {
+        return false;
+    }
+    // A named focus outside the source view is a dispatch-time
+    // focus-mismatch, not a shape violation: it survives validation so the
+    // request path refuses with the exact reason.
+    if (!Array.isArray(value.sourceWindows) || !Array.isArray(value.targetViewWindows)) {
+        return false;
+    }
+    if (!Array.isArray(value.relatedWindows)) {
+        return false;
+    }
+    const seen = new Set<string>();
+    for (const entry of [...value.sourceWindows, ...value.targetViewWindows]) {
+        if (!validateMigrateObservedWindow(entry)) {
+            return false;
+        }
+        const candidate = entry as WorkspaceMigrateObservedWindow;
+        if (candidate.output !== value.sourceOutput && candidate.output !== value.targetOutput) {
+            return false;
+        }
+        if (seen.has(candidate.id)) {
+            return false;
+        }
+        seen.add(candidate.id);
+    }
+    // Related clients ride no wire but join the frozen identity: no id may
+    // repeat across any list, and a transient parent must name a carried
+    // migrating member.
+    const memberIds = new Set(value.sourceWindows.map((entry) => (entry as WorkspaceMigrateObservedWindow).id));
+    for (const entry of value.relatedWindows) {
+        if (!validateMigrateRelatedWindow(entry)) {
+            return false;
+        }
+        const candidate = entry as WorkspaceMigrateRelatedWindow;
+        if (seen.has(candidate.id)) {
+            return false;
+        }
+        seen.add(candidate.id);
+        if (candidate.parentId !== null && !memberIds.has(candidate.parentId)) {
+            return false;
+        }
+    }
+    if (typeof value.migratedDesktopRef !== "object" || value.migratedDesktopRef === null) {
+        return false;
+    }
+    if (typeof value.mode !== "string" || value.mode.length === 0) {
+        return false;
+    }
+    if (value.perOutput !== true && value.perOutput !== false && value.perOutput !== null) {
+        return false;
+    }
+    if (typeof value.sourceTiled !== "boolean") {
+        return false;
+    }
+    if (typeof value.protectedPresent !== "boolean") {
+        return false;
+    }
+    if (typeof value.desktopCount !== "number" || !Number.isInteger(value.desktopCount) || value.desktopCount < 0) {
+        return false;
+    }
+    if (typeof value.sourceFingerprint !== "string" || typeof value.targetViewFingerprint !== "string") {
+        return false;
+    }
+    return true;
+
+}
+
+function snapshotWindowOfMigrate(entry: WorkspaceMigrateObservedWindow): WorkspaceMigrateSnapshotWindow {
+    return {
+        id: entry.id,
+        rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+        output: entry.output,
+        floating: entry.floating,
+        sticky: entry.sticky,
+        fullscreen: entry.fullscreen,
+        maximized: entry.maximized,
+        fitExcluded: entry.fitExcluded,
+        minimized: entry.minimized,
+        transient: entry.transient,
+        fixedAuto: entry.fixedAuto,
+        fixedSuppress: entry.fixedSuppress,
+    };
+}
+
+function snapshotRelatedOfMigrate(entry: WorkspaceMigrateRelatedWindow): WorkspaceMigrateSnapshotRelated {
+    return {
+        id: entry.id,
+        output: entry.output,
+        parentId: entry.parentId,
+        transient: entry.transient,
+        minimized: entry.minimized,
+        floating: entry.floating,
+        sticky: entry.sticky,
+        fullscreen: entry.fullscreen,
+        maximized: entry.maximized,
+        fitExcluded: entry.fitExcluded,
+    };
+}
+
+export function snapshotOfMigrate(observed: WorkspaceMigrateObserved): WorkspaceMigrateSnapshot {
+    return {
+        direction: observed.direction,
+        sourceOutput: observed.sourceOutput,
+        sourceWorkspace: observed.sourceWorkspace,
+        sourceBounds: {
+            x: observed.sourceBounds.x,
+            y: observed.sourceBounds.y,
+            w: observed.sourceBounds.w,
+            h: observed.sourceBounds.h,
+        },
+        targetOutput: observed.targetOutput,
+        targetWorkspace: observed.targetWorkspace,
+        targetBounds: {
+            x: observed.targetBounds.x,
+            y: observed.targetBounds.y,
+            w: observed.targetBounds.w,
+            h: observed.targetBounds.h,
+        },
+        targetCurrentWorkspace: observed.targetCurrentWorkspace,
+        sourceCurrentWorkspace: observed.sourceCurrentWorkspace,
+        focusedId: observed.focusedId,
+        sourceWindows: Object.freeze(observed.sourceWindows.map(snapshotWindowOfMigrate)),
+        targetViewWindows: Object.freeze(observed.targetViewWindows.map(snapshotWindowOfMigrate)),
+        relatedWindows: Object.freeze(observed.relatedWindows.map(snapshotRelatedOfMigrate)),
+        mode: observed.mode,
+        perOutput: observed.perOutput,
+        sourceTiled: observed.sourceTiled,
+        protectedPresent: observed.protectedPresent,
+        desktopCount: observed.desktopCount,
+        sourceFingerprint: observed.sourceFingerprint,
+        targetViewFingerprint: observed.targetViewFingerprint,
+    };
+}
+
+function migrateWindowListsEqual(
+    a: ReadonlyArray<WorkspaceMigrateSnapshotWindow>,
+    b: ReadonlyArray<WorkspaceMigrateSnapshotWindow>,
+    compareRects: boolean,
+    compareOutput: boolean,
+): boolean {
+    if (a.length !== b.length) {
+        return false;
+    }
+    const byId = new Map<string, WorkspaceMigrateSnapshotWindow>();
+    for (const entry of a) {
+        byId.set(entry.id, entry);
+    }
+    for (const entry of b) {
+        const other = byId.get(entry.id);
+        if (other === undefined) {
+            return false;
+        }
+        if (
+            other.floating !== entry.floating ||
+            other.sticky !== entry.sticky ||
+            other.fullscreen !== entry.fullscreen ||
+            other.maximized !== entry.maximized ||
+            other.fitExcluded !== entry.fitExcluded ||
+            other.minimized !== entry.minimized ||
+            other.transient !== entry.transient ||
+            other.fixedAuto !== entry.fixedAuto ||
+            other.fixedSuppress !== entry.fixedSuppress
+        ) {
+            return false;
+        }
+        if (compareOutput && other.output !== entry.output) {
+            return false;
+        }
+        if (
+            compareRects &&
+            (other.rect.x !== entry.rect.x ||
+                other.rect.y !== entry.rect.y ||
+                other.rect.w !== entry.rect.w ||
+                other.rect.h !== entry.rect.h)
+        ) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Related identity: same id set with equal gate flags. Entries following a
+// migrating parent (parentId set) move implicitly, so their output is
+// proven separately and never compared here; view-local protected
+// clients never move, so their output compares.
+function migrateRelatedListsEqual(
+    a: ReadonlyArray<WorkspaceMigrateSnapshotRelated>,
+    b: ReadonlyArray<WorkspaceMigrateSnapshotRelated>,
+): boolean {
+    if (a.length !== b.length) {
+        return false;
+    }
+    const byId = new Map<string, WorkspaceMigrateSnapshotRelated>();
+    for (const entry of a) {
+        byId.set(entry.id, entry);
+    }
+    for (const entry of b) {
+        const other = byId.get(entry.id);
+        if (other === undefined) {
+            return false;
+        }
+        if (
+            other.parentId !== entry.parentId ||
+            other.transient !== entry.transient ||
+            other.minimized !== entry.minimized ||
+            other.floating !== entry.floating ||
+            other.sticky !== entry.sticky ||
+            other.fullscreen !== entry.fullscreen ||
+            other.maximized !== entry.maximized ||
+            other.fitExcluded !== entry.fitExcluded
+        ) {
+            return false;
+        }
+        if (entry.parentId === null && other.output !== entry.output) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function migrateBoundsEqual(
+    a: WorkspaceSendRect,
+    b: WorkspaceSendRect,
+): boolean {
+    return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+}
+
+// Strict frozen identity and membership validation before writes: the
+// pinned re-observation must equal the dispatch snapshot in scope, views,
+// policy, members, flags, and geometry. Used only at the reply boundary
+// while nothing has moved yet.
+function migrateSnapshotsEqual(a: WorkspaceMigrateSnapshot, b: WorkspaceMigrateSnapshot): boolean {
+    return (
+        a.direction === b.direction &&
+        a.sourceOutput === b.sourceOutput &&
+        a.sourceWorkspace === b.sourceWorkspace &&
+        a.targetOutput === b.targetOutput &&
+        a.targetWorkspace === b.targetWorkspace &&
+        a.targetCurrentWorkspace === b.targetCurrentWorkspace &&
+        a.sourceCurrentWorkspace === b.sourceCurrentWorkspace &&
+        a.focusedId === b.focusedId &&
+        a.mode === b.mode &&
+        a.perOutput === b.perOutput &&
+        a.sourceTiled === b.sourceTiled &&
+        a.protectedPresent === b.protectedPresent &&
+        a.desktopCount === b.desktopCount &&
+        a.sourceFingerprint === b.sourceFingerprint &&
+        a.targetViewFingerprint === b.targetViewFingerprint &&
+        migrateBoundsEqual(a.sourceBounds, b.sourceBounds) &&
+        migrateBoundsEqual(a.targetBounds, b.targetBounds) &&
+        migrateWindowListsEqual(a.sourceWindows, b.sourceWindows, true, true) &&
+        migrateWindowListsEqual(a.targetViewWindows, b.targetViewWindows, true, true) &&
+        migrateRelatedListsEqual(a.relatedWindows, b.relatedWindows)
+    );
+}
+
+// Post-write commit scope: same frozen checks minus volatile fields. Member
+// rects change through planned geometry writes and member outputs change
+// through transfer, so those never compare here; id sets plus exception
+// flags must still match exactly (no missing survivors, no newly arrived
+// windows, no flag flips). The focused/active identity is excluded: KWin
+// may refocus as a side effect of transfers and view switches, and the
+// active retain resolves by stable id only. Views must still show the
+// pre-view state (no external switch under us).
+function migrateCommitScopeHolds(
+    fresh: WorkspaceMigrateObserved,
+    snapshot: WorkspaceMigrateSnapshot,
+): boolean {
+    return migrateScopedHolds(fresh, snapshot, snapshot.sourceWorkspace, snapshot.targetCurrentWorkspace, true);
+}
+
+// Shared frozen-scope comparison with explicit expected views: the
+// pre-write commit state plus the flight's own intermediate and terminal
+// view states. Expected views are the only view inputs; weakening any
+// other check is never a recovery. Source members and related clients
+// always compare by observed list (they stay desktop-homed throughout).
+// The target current view compares by observed list only while no own
+// view write has landed (checkTargetView); afterwards the prior target
+// members are hidden by the flight's own switch and prove out through
+// the ref-based residue check instead.
+function migrateScopedHolds(
+    fresh: WorkspaceMigrateObserved,
+    snapshot: WorkspaceMigrateSnapshot,
+    expectSourceView: string,
+    expectTargetView: string,
+    checkTargetView: boolean,
+): boolean {
+    if (
+        fresh.direction !== snapshot.direction ||
+        fresh.sourceOutput !== snapshot.sourceOutput ||
+        fresh.sourceWorkspace !== snapshot.sourceWorkspace ||
+        fresh.targetOutput !== snapshot.targetOutput ||
+        fresh.targetWorkspace !== snapshot.targetWorkspace ||
+        fresh.targetCurrentWorkspace !== expectTargetView ||
+        fresh.sourceCurrentWorkspace !== expectSourceView ||
+        fresh.mode !== snapshot.mode ||
+        fresh.perOutput !== snapshot.perOutput ||
+        fresh.sourceTiled !== snapshot.sourceTiled ||
+        fresh.protectedPresent !== false ||
+        fresh.desktopCount !== snapshot.desktopCount ||
+        fresh.sourceFingerprint !== snapshot.sourceFingerprint ||
+        (checkTargetView && fresh.targetViewFingerprint !== snapshot.targetViewFingerprint) ||
+        !migrateBoundsEqual(fresh.sourceBounds, snapshot.sourceBounds) ||
+        !migrateBoundsEqual(fresh.targetBounds, snapshot.targetBounds)
+    ) {
+        return false;
+    }
+    if (
+        !migrateWindowListsEqual(snapshotOfMigrate(fresh).sourceWindows, snapshot.sourceWindows, false, false)
+    ) {
+        return false;
+    }
+    if (!migrateRelatedListsEqual(snapshotOfMigrate(fresh).relatedWindows, snapshot.relatedWindows)) {
+        return false;
+    }
+    if (
+        checkTargetView &&
+        !migrateWindowListsEqual(snapshotOfMigrate(fresh).targetViewWindows, snapshot.targetViewWindows, false, true)
+    ) {
+        return false;
+    }
+    return true;
+}
+
+// Whole-operation overlay rule: any fullscreen/maximized client (maximized
+// floats included), or any maximized-shaped fit-excluded window without
+// floating/sticky/fullscreen origin, among the moving members, either
+// affected current view, or the related transient/protected set.
+function migrateOverlayPresent(observed: WorkspaceMigrateObserved): boolean {
+    for (const entry of [...observed.sourceWindows, ...observed.targetViewWindows]) {
+        if (entry.fullscreen || entry.maximized || (entry.fitExcluded && !entry.floating && !entry.sticky)) {
+            return true;
+        }
+    }
+    for (const entry of observed.relatedWindows) {
+        if (entry.fullscreen || entry.maximized || (entry.fitExcluded && !entry.floating && !entry.sticky)) {
+            return true;
+        }
+    }
+    return observed.protectedPresent;
+}
+
+function validateMigrateGeometryEntry(value: unknown): WorkspaceMigrateGeometryEntry | null {
+    if (!isRecord(value)) {
+        return null;
+    }
+    if (!hasExactKeys(value, ["window", "leaf", "output", "workspace", "rect"])) {
+        return null;
+    }
+    if (
+        !isOpaqueId(value["window"]) ||
+        !isOpaqueId(value["leaf"]) ||
+        !isOpaqueId(value["output"]) ||
+        !isOpaqueId(value["workspace"])
+    ) {
+        return null;
+    }
+    const rawRect: unknown = value["rect"];
+    if (!isTargetRect(rawRect)) {
+        return null;
+    }
+    const rect = rawRect as unknown as Record<string, unknown>;
+    return {
+        window: value["window"] as string,
+        leaf: value["leaf"] as string,
+        output: value["output"] as string,
+        workspace: value["workspace"] as string,
+        rect: {
+            x: rect["x"] as number,
+            y: rect["y"] as number,
+            w: rect["w"] as number,
+            h: rect["h"] as number,
+        },
+    };
+}
+
+function validateMigrateOperation(
+    value: unknown,
+    correlation: string,
+    flight: { readonly direction: WorkspaceMigrateDirection; readonly snapshot: WorkspaceMigrateSnapshot },
+): { record: Record<string, unknown>; activeWindow: string | null } | null {
+    void correlation;
+    if (!isRecord(value)) {
+        return null;
+    }
+    if (
+        !hasExactKeys(value, [
+            "op",
+            "direction",
+            "source_output",
+            "source_workspace",
+            "target_output",
+            "target_workspace",
+            "active_window",
+        ])
+    ) {
+        return null;
+    }
+    if (value["op"] !== "migrate-workspace") {
+        return null;
+    }
+    if (!isMigrateDirection(value["direction"]) || value["direction"] !== flight.direction) {
+        return null;
+    }
+    for (const field of ["source_output", "source_workspace", "target_output", "target_workspace"]) {
+        if (!isOpaqueId(value[field])) {
+            return null;
+        }
+    }
+    const snapshot = flight.snapshot;
+    if (
+        (value["source_output"] as string) !== snapshot.sourceOutput ||
+        (value["source_workspace"] as string) !== snapshot.sourceWorkspace ||
+        (value["target_output"] as string) !== snapshot.targetOutput ||
+        (value["target_workspace"] as string) !== snapshot.targetWorkspace
+    ) {
+        return null;
+    }
+    const activeRaw = value["active_window"];
+    if (activeRaw !== null && !isOpaqueId(activeRaw)) {
+        return null;
+    }
+    const activeWindow = activeRaw === null ? null : (activeRaw as string);
+    if (activeWindow !== null && !snapshot.sourceWindows.some((entry) => entry.id === activeWindow)) {
+        return null;
+    }
+    return { record: value, activeWindow };
+}
+
+function validateMigratePlanned(
+    reply: unknown,
+    correlation: string,
+    flight: { readonly direction: WorkspaceMigrateDirection; readonly snapshot: WorkspaceMigrateSnapshot },
+): WorkspaceMigratePlanned | null {
+    if (!isRecord(reply)) {
+        return null;
+    }
+    if (reply["v"] !== WORKSPACE_SEND_CONTRACT_VERSION) {
+        return null;
+    }
+    if (reply["correlation_id"] !== correlation) {
+        return null;
+    }
+    if (reply["outcome"] !== "planned") {
+        return null;
+    }
+    if (reply["kind"] !== "migrate-workspace") {
+        return null;
+    }
+    const baseRevision = reply["base_revision"];
+    if (!isRevision(baseRevision)) {
+        return null;
+    }
+    const preconditions = reply["preconditions"];
+    if (!isExactPreconditions(preconditions)) {
+        return null;
+    }
+    const operationValidated = validateMigrateOperation(reply["operation"], correlation, flight);
+    if (operationValidated === null) {
+        return null;
+    }
+    const operation = operationValidated.record;
+    // Strict detail binding: kind, policy version 1, capability, the
+    // retained-rekey commit marker, direction, both scopes, the active
+    // window echo, and member/float counts. Exact key set, frozen shape.
+    const detailRaw = reply["detail"];
+    if (!isRecord(detailRaw)) {
+        return null;
+    }
+    if (
+        !hasExactKeys(detailRaw, [
+            "kind",
+            "policy_version",
+            "capability",
+            "commit",
+            "direction",
+            "source_output",
+            "source_workspace",
+            "target_output",
+            "target_workspace",
+            "active_window",
+            "members",
+            "floats",
+        ])
+    ) {
+        return null;
+    }
+    if (
+        detailRaw["kind"] !== "migrate-workspace" ||
+        detailRaw["policy_version"] !== 1 ||
+        detailRaw["capability"] !== "migrate-workspace" ||
+        detailRaw["commit"] !== "retained-rekey-planned" ||
+        detailRaw["direction"] !== operation["direction"] ||
+        detailRaw["source_output"] !== operation["source_output"] ||
+        detailRaw["source_workspace"] !== operation["source_workspace"] ||
+        detailRaw["target_output"] !== operation["target_output"] ||
+        detailRaw["target_workspace"] !== operation["target_workspace"]
+    ) {
+        return null;
+    }
+    const detailActive = detailRaw["active_window"];
+    const operationActive = operation["active_window"];
+    if (
+        (detailActive === null) !== (operationActive === null) ||
+        (detailActive !== null && detailActive !== operationActive)
+    ) {
+        return null;
+    }
+    for (const count of ["members", "floats"]) {
+        const raw = detailRaw[count];
+        if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0 || raw > WORKSPACE_SEND_MAX_DESKTOPS * 64) {
+            return null;
+        }
+    }
+    const geometryRaw = reply["desired_geometry"];
+    if (!Array.isArray(geometryRaw)) {
+        return null;
+    }
+    const geometry: WorkspaceMigrateGeometryEntry[] = [];
+    const seen = new Set<string>();
+    for (const entry of geometryRaw) {
+        const valid = validateMigrateGeometryEntry(entry);
+        if (valid === null || seen.has(valid.window)) {
+            return null;
+        }
+        seen.add(valid.window);
+        geometry.push(valid);
+    }
+    // Desired focus binds the follow: null when no tiled active member
+    // migrates, else the migrating tiled leaf in the target domain. Never
+    // a float leaf, never fabricated.
+    const focusRaw = reply["desired_focus"];
+    let focusLeaf: string | null = null;
+    if (focusRaw !== null && focusRaw !== undefined) {
+        if (!isRecord(focusRaw) || !hasExactKeys(focusRaw, ["domain_output", "domain_workspace", "leaf"])) {
+            return null;
+        }
+        if (
+            !isOpaqueId(focusRaw["domain_output"]) ||
+            !isOpaqueId(focusRaw["domain_workspace"]) ||
+            !isOpaqueId(focusRaw["leaf"])
+        ) {
+            return null;
+        }
+        if (
+            (focusRaw["domain_output"] as string) !== flight.snapshot.targetOutput ||
+            (focusRaw["domain_workspace"] as string) !== flight.snapshot.targetWorkspace
+        ) {
+            return null;
+        }
+        focusLeaf = focusRaw["leaf"] as string;
+    }
+    return {
+        correlationId: correlation,
+        baseRevision: baseRevision as number,
+        direction: flight.direction,
+        sourceOutput: flight.snapshot.sourceOutput,
+        sourceWorkspace: flight.snapshot.sourceWorkspace,
+        targetOutput: flight.snapshot.targetOutput,
+        targetWorkspace: flight.snapshot.targetWorkspace,
+        activeWindow: operationValidated.activeWindow,
+        geometry: Object.freeze(geometry),
+        focusLeaf,
+        members: detailRaw["members"] as number,
+        floats: detailRaw["floats"] as number,
+    };
+}
+
+// Frozen plan-to-snapshot binding held before any native write: the
+// operation scopes match, geometry covers exactly the wire members
+// (non-sticky, non-minimized, non-floating) in the target domain, and
+// member/float counts match the wire partition. Minimized members ride
+// native-only and never join the wire counts; sticky members stay homed.
+// Focus/active are consistent (active names a carried visible member only;
+// focus names that member's tiled leaf, or both are null for
+// empty/absent/sticky-active/float-active routes).
+function migrateBindingHolds(planned: WorkspaceMigratePlanned, snapshot: WorkspaceMigrateSnapshot): boolean {
+    if (
+        planned.direction !== snapshot.direction ||
+        planned.sourceOutput !== snapshot.sourceOutput ||
+        planned.sourceWorkspace !== snapshot.sourceWorkspace ||
+        planned.targetOutput !== snapshot.targetOutput ||
+        planned.targetWorkspace !== snapshot.targetWorkspace
+    ) {
+        return false;
+    }
+    // Wire partition: minimized members are native-only (filtered from the
+    // request windows), sticky members stay homed.
+    const wireMembers = snapshot.sourceWindows.filter((entry) => !entry.sticky && !entry.minimized);
+    const tiled = wireMembers.filter((entry) => !entry.floating);
+    const floats = wireMembers.filter((entry) => entry.floating);
+    if (planned.members !== wireMembers.length || planned.floats !== floats.length) {
+        return false;
+    }
+    const tiledIds = new Set(tiled.map((entry) => entry.id));
+    if (planned.geometry.length !== tiled.length) {
+        return false;
+    }
+    const seenWindows = new Set<string>();
+    const leafToWindow = new Map<string, string>();
+    for (const entry of planned.geometry) {
+        if (!tiledIds.has(entry.window) || seenWindows.has(entry.window)) {
+            return false;
+        }
+        seenWindows.add(entry.window);
+        if (entry.output !== snapshot.targetOutput || entry.workspace !== snapshot.targetWorkspace) {
+            return false;
+        }
+        if (leafToWindow.has(entry.leaf)) {
+            return false;
+        }
+        leafToWindow.set(entry.leaf, entry.window);
+    }
+    const active = planned.activeWindow;
+    const focusedEntry = snapshot.sourceWindows.find((entry) => entry.id === snapshot.focusedId) ?? null;
+    if (snapshot.focusedId === "") {
+        if (active !== null) {
+            return false;
+        }
+    } else if (focusedEntry === null) {
+        return false;
+    } else if (focusedEntry.sticky || focusedEntry.minimized) {
+        // Sticky active stays homed on the source and minimized clients
+        // never take focus: the reply echoes null like an absent client
+        // and the adapter runs zero focus setters.
+        if (active !== null) {
+            return false;
+        }
+    } else if (active !== snapshot.focusedId) {
+        return false;
+    }
+    if (planned.focusLeaf === null) {
+        // Null focus covers empty/absent/sticky-active routes plus a
+        // carried visible float active (no tiled leaf to name).
+        if (active === null) {
+            return true;
+        }
+        const activeEntry = snapshot.sourceWindows.find((entry) => entry.id === active) ?? null;
+        return (
+            activeEntry !== null && activeEntry.floating && !activeEntry.sticky && !activeEntry.minimized
+        );
+    }
+    // Set focus must name the active member's own tiled leaf.
+    if (active === null) {
+        return false;
+    }
+    const activeEntry = snapshot.sourceWindows.find((entry) => entry.id === active) ?? null;
+    if (activeEntry === null || activeEntry.floating || activeEntry.sticky || activeEntry.minimized) {
+        return false;
+    }
+    return leafToWindow.get(planned.focusLeaf) === active;
 }

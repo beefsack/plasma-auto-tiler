@@ -1271,6 +1271,134 @@ export class WorkspaceNativeAdapter {
         return created === null ? null : created.id;
     }
 
+    // R-WS-12 whole-workspace output migration map commit. Moves one live
+    // backing desktop id from the source output scope to the target output
+    // scope, inserted immediately after the target output's live current
+    // workspace. The target prior workspace stays listed and hidden
+    // unchanged (an occupied destination is fine: no merge, no swap). Only
+    // per-output-local and global-unique participate; shared refuses. The
+    // migrated id must be live and in the source scope, and the target
+    // current must be readable and different. History entries naming the
+    // migrated id are invalidated out of the source scope, and exactly that
+    // id is dropped from the displaced-by-origin auto-return lists (siblings
+    // untouched). Returns the source refill id (live source current when it
+    // is still scoped, else the last remaining scoped id, else null when the
+    // source scope is empty) or null when refused. Map-only: native views
+    // are written by the caller, lifecycle trailing/minimums converge on the
+    // next topology signal.
+    commitWorkspaceMigration(
+        sourceOutput: object,
+        targetOutput: object,
+        workspaceId: string,
+    ): { refillId: string | null } | null {
+        if (!this.enabled) {
+            return null;
+        }
+        if (this.mode === "shared") {
+            this.logToken("workspace-migrate-refused:shared-mode");
+            return null;
+        }
+        if (!isOpaqueId(workspaceId)) {
+            return null;
+        }
+        const live = this.liveOrdered();
+        if (live === null) {
+            return null;
+        }
+        if (this.mode === "global-unique") {
+            this.rebuildGlobalMapping(live);
+        } else {
+            this.rebuildLocalMapping(live);
+        }
+        const sourceKey = this.outputKeys.keyFor(sourceOutput);
+        const targetKey = this.outputKeys.keyFor(targetOutput);
+        if (sourceKey === undefined || targetKey === undefined || sourceKey === targetKey) {
+            this.logToken("workspace-migrate-refused:unknown-output");
+            return null;
+        }
+        if (this.findLive(workspaceId) === null) {
+            this.logToken("workspace-migrate-refused:unknown-workspace");
+            return null;
+        }
+        const sourceList =
+            this.mode === "global-unique"
+                ? [...this.globalOrdered(live, sourceKey).map((entry) => entry.id)]
+                : [...(this.localWorkspaces.get(sourceKey) ?? [])];
+        if (!sourceList.includes(workspaceId)) {
+            this.logToken("workspace-migrate-refused:out-of-scope");
+            return null;
+        }
+        const targetCurrent = this.currentOnOutput(targetOutput);
+        if (targetCurrent === null || targetCurrent.id === workspaceId) {
+            this.logToken("workspace-migrate-refused:target-current");
+            return null;
+        }
+        // Duplicate target membership refuses with no mutation: the id is
+        // already scoped to the target, so there is nothing to move.
+        const targetList =
+            this.mode === "global-unique"
+                ? this.globalOrdered(live, targetKey).map((entry) => entry.id)
+                : [...(this.localWorkspaces.get(targetKey) ?? [])];
+        if (targetList.includes(workspaceId)) {
+            this.logToken("workspace-migrate-refused:duplicate-target");
+            return null;
+        }
+        const keptSource = sourceList.filter((id) => id !== workspaceId);
+        if (this.mode === "global-unique") {
+            this.unassignGlobal(workspaceId);
+            const targetOrdered = this.globalOrdered(live, targetKey).map((entry) => entry.id);
+            const at = targetOrdered.indexOf(targetCurrent.id);
+            const next = at < 0 ? [...targetOrdered, workspaceId] : [...targetOrdered.slice(0, at + 1), workspaceId, ...targetOrdered.slice(at + 1)];
+            this.globalAssigned.set(targetKey, next.filter((id, index) => next.indexOf(id) === index));
+            this.globalInverse.set(workspaceId, targetKey);
+        } else {
+            this.localWorkspaces.set(sourceKey, keptSource);
+            const nextTarget = [...targetList];
+            const at = nextTarget.indexOf(targetCurrent.id);
+            if (at < 0) {
+                nextTarget.push(workspaceId);
+            } else {
+                nextTarget.splice(at + 1, 0, workspaceId);
+            }
+            this.localWorkspaces.set(
+                targetKey,
+                nextTarget.filter((id, index) => nextTarget.indexOf(id) === index),
+            );
+        }
+        this.managed.add(workspaceId);
+        // History 1.3/1.5: a previous id moved out of the source scope is
+        // invalidated. Only entries that no longer resolve in scope are
+        // dropped; the periodic validator converges the rest.
+        const previousSource = this.previousByOutput.get(sourceKey);
+        if (previousSource !== undefined && previousSource === workspaceId) {
+            this.previousByOutput.delete(sourceKey);
+            this.logToken("workspace-previous-invalidated:migrated");
+        }
+        // Displaced auto-return: drop exactly the migrated id, never
+        // siblings. Empty origins retire; surviving siblings keep theirs.
+        for (const [origin, entry] of [...this.displacedByOrigin]) {
+            if (!entry.workspaceIds.includes(workspaceId)) {
+                continue;
+            }
+            const kept = entry.workspaceIds.filter((id) => id !== workspaceId);
+            if (kept.length === 0) {
+                this.displacedByOrigin.delete(origin);
+            } else {
+                this.displacedByOrigin.set(origin, { workspaceIds: kept, destKey: entry.destKey });
+            }
+            this.logToken("workspace-migrate-undisplaced");
+        }
+        this.validatePreviousEntries();
+        const ring = this.scopedRingIds(sourceKey, live).filter((id) => id !== workspaceId);
+        const liveSourceCurrent = this.currentOnOutput(sourceOutput);
+        const refillId =
+            liveSourceCurrent !== null && ring.includes(liveSourceCurrent.id)
+                ? liveSourceCurrent.id
+                : (ring[ring.length - 1] ?? null);
+        this.logToken("workspace-migrate-completed");
+        return { refillId };
+    }
+
     private logToken(token: string): void {
         try {
             this.env.log(`${LOG_PREFIX}:${token}`);

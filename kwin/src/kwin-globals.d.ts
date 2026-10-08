@@ -181,12 +181,20 @@ interface Window {
     // horizontally, const RectF &restore = RectF())`. Calling false, false
     // restores every nonzero maximize mode.
     setMaximize(vertically: boolean, horizontally: boolean): void;
-    // Read-only in the KWin scripting API at pinned v6.7.4 (window.h
-    // Q_PROPERTY `bool minimized READ isMinimized NOTIFY minimizedChanged`;
-    // scripting API -> KWin::Window -> Read-only Properties -> `minimized`).
+    // Read-only: official KWin scripting API -> KWin::Window -> Read-only
+    // Properties -> `minimized`.
     // Declared read-only: adapters fail closed if this public property cannot
     // be observed while evaluating minimized-window exclusions.
     readonly minimized: boolean;
+    // src/window.h Q_PROPERTY `bool transient READ isTransient NOTIFY
+    // transientChanged` plus `Q_PROPERTY(Window *transientFor READ
+    // transientFor NOTIFY transientChanged)` at pinned v6.7.4: whether this
+    // window is a transient (dialog) and the window it is transient for
+    // (null when independent). Read-only: the migration adapter tracks
+    // transient descendants implicitly (no explicit setters) and gates on
+    // protected transients; it never writes these properties.
+    readonly transient: boolean;
+    readonly transientFor: Window | null;
     // Read-only `QUuid internalId` (window.h Q_PROPERTY `QUuid internalId
     // READ internalId CONSTANT` at pinned v6.7.4; observed in scripting as
     // the opaque `String(Window.internalId)` identity used by proof scripts).
@@ -343,6 +351,17 @@ interface Workspace {
     // The call initiates transfer only; callers must prove the resulting output,
     // desktop membership, geometry, and focus asynchronously before commit.
     sendClientToScreen(client: Window, output: Output): void;
+    // src/scripting/workspace_wrapper.h `public Q_SLOTS` at pinned v6.7.4:
+    // directional output switches routing to the native useractions
+    // switchToOutput/setActiveOutput. They move keyboard focus to the
+    // adjacent output without touching windows, desktops, or focus targets.
+    // All four return void: callers must read back `activeScreen`. Used
+    // only by whole-workspace migration follow for empty/sticky-active
+    // routes when the target output is not already active; never retried.
+    slotSwitchToLeftScreen(): void;
+    slotSwitchToRightScreen(): void;
+    slotSwitchToAboveScreen(): void;
+    slotSwitchToBelowScreen(): void;
     // Writable: src/scripting/workspace_wrapper.h declares the WRITE setter
     //     Q_PROPERTY(KWin::Window *activeWindow READ activeWindow WRITE
     //     setActiveWindow NOTIFY windowActivated)
