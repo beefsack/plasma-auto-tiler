@@ -251,18 +251,49 @@ Reference WM pins and outcomes are unchanged.
 - When: toggle parent split axis twice, observing after each invocation.
 - Observe: immediate parent vs root scope; order/shares/focus preserved,
   second toggle returns the original tree.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: first toggle flips B's immediate parent V to H, yielding
+  `H[A,H[B*,C]]`; same children and order, shares proportionally
+  rescaled, focus B (no focus write on that path); second toggle flips H
+  back to V, restoring exact `H[A,V[B*,C]]`; root H unchanged.
+  `S(S-cos-orient)`.
+- Then Hyprland/Dwindle: `togglesplit` dispatches on the focused node and
+  flips the immediate parent `splitTop` with no focus write, so scope,
+  order and focus are established (immediate parent only, order kept,
+  focus B); the following recalculation re-derives the axis from parent
+  geometry at shipped defaults, so with no fixture rectangles the axis
+  after each invocation stays TBD (underspecified fixture). Second
+  invocation flips the bit again under the same recalculation.
+  `S(S-hyp-lay)` + `S(S-hyp-defaults)`.
+- Then bspwm: first toggle via `node @parent -y` flips the immediate
+  parent split type via `set_type` (same children and order, split ratio
+  retained, focus unchanged - no focus write on that path); root
+  unaffected; second toggle flips the type back, restoring the original
+  tree. `S(S-bsp-type)`.
+- Then i3: first toggle via `layout toggle split` retargets B's immediate
+  parent V and flips it to H (same children, order kept, focus B -
+  neither path writes focus); second toggle flips H back to V, restoring
+  the original tree. `S(S-i3-layout)`.
+- Then xmonad/Tall+Navigation2D: no-counterpart (fixed master/stack
+  algorithm has no split-direction verb; flat Tall has no nested H/V
+  levels to toggle). `S(S-xmo-layout)`.
+- Then sway: first toggle via `layout toggle split` flips B's immediate
+  parent V to H (same children, order kept, focus B - no focus write;
+  two-child parent so no single-child flatten); second toggle flips back,
+  restoring the original tree. `S(S-sway-layout)`.
+- Then qtile/Columns: no-counterpart (`toggle_split` flips split/stacked
+  column mode, not an H/V axis); no manufactured nested-tree counterpart.
+  `S(S-qti-split)`.
+- Then awesome/tile: no-counterpart (fixed master/stack tile geometry;
+  only layout rotation via `inc`, which belongs to R-LAY-04).
+  `S(S-awe-tile)` + `S(S-awe-keys)`.
+- Then niri: no-counterpart (ordered columns have no split axis; the
+  full Action inventory lists no orientation verb). `S(S-nir-acts)`.
+- Then PaperWM: no-counterpart (column model; the registered action
+  inventory lists no orientation verb). `S(S-pap-acts)`.
+- Then karousel/Lazy: no-counterpart (Grid/Column model; the Actions
+  inventory lists no orientation verb). `S(S-kar-acts)`.
+- Then paneru: no-counterpart (the `Operation` inventory lists no
+  orientation verb). `S(S-pan-cmds)`.
 - Then Ours KDE: offline tested `H[A,H[B*,C]]` then exact original
   `H[A,V[B*,C]]`, including unequal child shares, order and B focus;
   root axis unchanged. Meta+O immediate-parent route implemented, native
@@ -278,18 +309,67 @@ Reference WM pins and outcomes are unchanged.
 - When: toggle parent axis once; ordinarily admit B with A as target.
 - Observe: sole-leaf no-op vs saved orientation affecting future admission;
   long-edge admission axis.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: toggle is a no-op (sole Mapped root has no parent group,
+  so `update_orientation` returns without pushing a tree; focus
+  unchanged); subsequent wide-area admission splits A's long edge per
+  the long-edge rule, yielding side-by-side `H[A,B*]` with newcomer B
+  focused. `S(S-cos-orient)` + `S(S-cos-axis)` + `S(S-cos-mapfocus)`.
+- Then Hyprland/Dwindle: toggle is a no-op (`toggleSplit` returns false
+  with no mutation when the node has no parent); subsequent wide-area
+  admission splits side-by-side per the long-edge rule with the newcomer
+  ordered by pointer half at `force_split=0` (no pointer fixture, so
+  exact A/B order stays TBD - true client TBD); newcomer B takes focus.
+  `S(S-hyp-lay)` + `S(S-hyp-ins)` + `S(S-hyp-newfocus)`.
+- Then bspwm: sole-leaf type flip writes no focus and has no visible
+  topology effect (a leaf has no children); it saves no admission hint
+  because ordinary insertion builds the new parent axis from the anchor
+  rectangle's longest side, ignoring the leaf's stored type; the wide
+  1920x1080 anchor (w>h) yields a vertical (side-by-side) parent with A
+  first and newcomer B second under `second_child` polarity, focus B.
+  `S(S-bsp-type)` + `S(S-bsp-insert)`.
+- Then i3: sole-leaf toggle is not a visual no-op structurally - it
+  retargets the workspace parent and wraps A into a new split container
+  carrying the flipped layout (wide-output default SPLITH flips to
+  SPLITV), focus stays A; ordinary admission then attaches B after the
+  focused descendant in that SPLITV parent, yielding `V[A,B*]` with B
+  focused (saved orientation affects admission, unlike Ours).
+  `S(S-i3-layout)` + `S(S-i3-solesave)` + `S(S-i3-ins)`.
+- Then xmonad/Tall+Navigation2D: no-counterpart for the toggle (no
+  split-direction verb); ordinary admission tiles B via `insertUp` above
+  focus with the newcomer brought into focus (master/stack terms, not an
+  H/V axis). `S(S-xmo-layout)` + `S(S-xmo-ins)` + `S(S-xmo-admit)`.
+- Then sway: sole-leaf toggle operates on the parent like i3 and flips
+  the H/V layout (wide-output default H flips to V), focus stays A;
+  ordinary admission inserts B after the focused tiling sibling with
+  newcomer focus, yielding stacked `V[A,B*]` (saved orientation affects
+  admission, unlike Ours). `S(S-sway-layout)` + `S(S-sway-wsdefault)` +
+  `S(S-sway-ins)`.
+- Then qtile/Columns: no-counterpart for the toggle (`toggle_split` is
+  column mode, not an H/V axis); ordinary admission adds B to a
+  new/focused-position column with the newcomer focused when stealable
+  (ordinary windows). `S(S-qti-split)` + `S(S-qti-add)`.
+- Then awesome/tile: no-counterpart for the toggle (fixed tile geometry;
+  rotation only via `inc`); ordinary admission appends B at the end of
+  tile order (`[A,B]`, B last) under the shipped manage focus-filter.
+  `S(S-awe-tile)` + `S(S-awe-keys)` + `S(S-awe-manage)`.
+- Then niri: no-counterpart for the toggle (no orientation verb in the
+  full Action inventory); ordinary admission wraps B in a new column
+  after the active column per the scrolling admission path (settled
+  widths/viewport/smart-activation remainder TBD per the cited admission
+  leg). `S(S-nir-acts)` + `S(S-nir-ins)`.
+- Then PaperWM: no-counterpart for the toggle (no orientation verb in
+  the registered inventory); ordinary admission inserts B RIGHT of A
+  (selected+1 under the shipped RIGHT default) with the newcomer
+  activating on the active space (settled frames TBD per the cited leg).
+  `S(S-pap-acts)` + `S(S-pap-ins)`.
+- Then karousel/Lazy: no-counterpart for the toggle (no orientation verb
+  in the Actions inventory); ordinary admission opens a new column after
+  the last-focused column with end-insert (KWin-side focus, viewport and
+  settled widths TBD per the cited leg). `S(S-kar-acts)` + `S(S-kar-ins)`.
+- Then paneru: no-counterpart for the toggle (no orientation verb in the
+  `Operation` inventory); ordinary admission follows the strip
+  insertion-position policy (focus outcome TBD per the cited leg).
+  `S(S-pan-cmds)` + `S(S-pan-ins)`.
 - Then Ours KDE: offline tested toggle no-op, no pending plan or saved hint;
   subsequent wide-area admission uses unchanged horizontal long-edge rule.
   Core wide fixture gives `H[A,B*]` (newcomer desired focus); exact native
