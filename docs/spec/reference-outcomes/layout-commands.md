@@ -193,8 +193,10 @@ implementation record. Selected intent and doc assertions alone are never eviden
 - Observe: per-workspace vs global layout selection and preserved window
   order.
 - Then COSMIC: no-counterpart (`WorkspaceLayout` Vertical/Horizontal is
-  a single global config; no runtime per-workspace select verb).
-  `S(S-cos-wslay)`.
+  a single global workspace-navigation arrangement, not a tiled algorithm
+  choice; `TileBehavior` Global/PerWorkspace scopes tiling enable, not
+  algorithm selection; no runtime per-workspace layout-select verb).
+  `S(S-cos-wslay)` + `S(S-cos-ctl-tile)`.
 - Then Hyprland/Dwindle: L1 dwindle (global default), L2 master (a
   registered tiled algorithm) via a workspace rule carrying the layout
   override; the rule selects WS2's tiled algorithm per workspace while WS1

@@ -2083,8 +2083,11 @@ Legend:
   (no master concept in the tiling model)
 - `S-cos-wslay` cosmic-comp:cosmic-comp-config/src/workspace.rs:8-45
   (`WorkspaceConfig.workspace_layout` is a single global Vertical/Horizontal
-  value) @3d55cba06c9cf6f27609cdefb520f7857dba20af
-  (no runtime per-workspace layout-select verb)
+  value) + src/input/mod.rs:1230-1231 and src/input/actions.rs:215-219
+  (the value drives workspace-navigation gesture/direction mapping, not a
+  tiled algorithm) @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (no runtime per-workspace layout-select verb; tiling-enable scope lives
+  in `S(S-cos-ctl-tile)`)
 - `S-hyp-lay`
   Hyprland:src/layout/algorithm/tiled/dwindle/DwindleAlgorithm.cpp:676-702
   (`layoutmsg` dispatch: togglesplit/swapsplit/rotatesplit/movetoroot) +

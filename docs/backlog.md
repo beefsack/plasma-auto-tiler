@@ -264,6 +264,7 @@ decisions of 2026-09-24 are under
   R-MOV-03 setting: COSMIC wrap default, flat sibling
   swap alternative (user 2026-10-07); R-DRAG-08 Windows Win+drag activates
   the mover at press instead of on drop (user 2026-10-07).
+  R-LAY-04: research complete, awaiting user decision: [findings](research/workspace-local-layout-selection.md).
   Detailed selections 2026-10-07 (items 1-5 and D1 in
   [decisions](decisions.md#move-layout-and-output-commands)); KDE items 1-5 delivered
   offline, remaining implementation pending:
@@ -2713,6 +2714,7 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 
 ## Open user decisions
 
+- R-LAY-04 workspace-local layout selection: park until a real alternative exists (recommended), narrow to delivered tile/float mode, or choose a bounded alternative before design; [research](research/workspace-local-layout-selection.md).
 - OBS POC inputs: OBS account/project, GitHub PAT/webhook wiring, Fedora
   release, neon/Kubuntu pursuit, absent-during-upgrade policy, pacman repo
   vs AUR.
