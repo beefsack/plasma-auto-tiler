@@ -281,7 +281,7 @@ impl super::super::Session {
             && !entry.fullscreen
             && !entry.sticky
             && !entry.fixed_suppress
-            && crate::size_hints::is_fixed_size(entry.hints)
+            && crate::size_hints::is_fixed_size_with(entry.hints, self.fixed_predicate)
         {
             let mut desired_exceptions = self.exceptions.clone();
             desired_exceptions.insert(

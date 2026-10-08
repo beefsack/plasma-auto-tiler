@@ -55,6 +55,11 @@ QComboBox *sameAxisMoveCombo(KWin::ScriptConfigModule &module)
     return module.widget()->findChild<QComboBox *>(QStringLiteral("sameAxisMoveCombo"));
 }
 
+QComboBox *fixedSizePredicateCombo(KWin::ScriptConfigModule &module)
+{
+    return module.widget()->findChild<QComboBox *>(QStringLiteral("fixedSizePredicateCombo"));
+}
+
 QComboBox *shortcutProfileCombo(KWin::ScriptConfigModule &module)
 {
     return module.widget()->findChild<QComboBox *>(QStringLiteral("shortcutProfileCombo"));
@@ -87,15 +92,28 @@ QString storedWorkspaceMode()
 
 QString storedSameAxisMove()
 {
-    return scriptGroup().readEntry(QStringLiteral("sameAxisMove"), QStringLiteral("cosmic-wrap"));
+    return scriptGroup().readEntry(QStringLiteral("sameAxisMove"), QStringLiteral("group-with-neighbor"));
 }
 
 QString otherSameAxisMove(const QString &current)
 {
-    if (current == QStringLiteral("flat-swap")) {
-        return QStringLiteral("cosmic-wrap");
+    if (current == QStringLiteral("swap-with-neighbor")) {
+        return QStringLiteral("group-with-neighbor");
     }
-    return QStringLiteral("flat-swap");
+    return QStringLiteral("swap-with-neighbor");
+}
+
+QString storedFixedSizePredicate()
+{
+    return scriptGroup().readEntry(QStringLiteral("fixedSizePredicate"), QStringLiteral("both-axes-fixed"));
+}
+
+QString otherFixedSizePredicate(const QString &current)
+{
+    if (current == QStringLiteral("either-axis-fixed")) {
+        return QStringLiteral("both-axes-fixed");
+    }
+    return QStringLiteral("either-axis-fixed");
 }
 
 QString storedShortcutProfile()
@@ -569,7 +587,7 @@ void gapContractNormalizesBoundsAndPersists()
 
 void sameAxisMoveContractDefaultsValidatesAndPersists()
 {
-    // Invalid stored values normalize to the cosmic-wrap default.
+    // Invalid stored values normalize to the group-with-neighbor default.
     {
         KConfigGroup group = scriptGroup();
         group.writeEntry(QStringLiteral("sameAxisMove"), QStringLiteral("bogus"));
@@ -581,10 +599,10 @@ void sameAxisMoveContractDefaultsValidatesAndPersists()
         CHECK(combo != nullptr);
         module.load();
         if (combo) {
-            CHECK(combo->currentData().toString() == QStringLiteral("cosmic-wrap"));
+            CHECK(combo->currentData().toString() == QStringLiteral("group-with-neighbor"));
         }
     }
-    // Missing keys stay missing through load and default back to cosmic-wrap.
+    // Missing keys stay missing through load and default back to group-with-neighbor.
     {
         KConfigGroup group = scriptGroup();
         group.deleteEntry(QStringLiteral("sameAxisMove"));
@@ -596,13 +614,47 @@ void sameAxisMoveContractDefaultsValidatesAndPersists()
         CHECK(combo != nullptr);
         module.load();
         if (combo) {
-            CHECK(combo->currentData().toString() == QStringLiteral("cosmic-wrap"));
+            CHECK(combo->currentData().toString() == QStringLiteral("group-with-neighbor"));
         }
         module.scriptSucceed = true;
         module.save();
         CHECK(!scriptGroup().hasKey(QStringLiteral("sameAxisMove")));
         CHECK(module.scriptCalls == 0);
         CHECK(!module.isScriptRestartRequired());
+    }
+    // Retired pre-release tokens normalize to the default (no aliases).
+    {
+        KConfigGroup group = scriptGroup();
+        group.writeEntry(QStringLiteral("sameAxisMove"), QStringLiteral("cosmic-wrap"));
+        group.sync();
+    }
+    {
+        KWin::ScriptConfigModule module(nullptr, KPluginMetaData());
+        QComboBox *combo = sameAxisMoveCombo(module);
+        CHECK(combo != nullptr);
+        module.load();
+        if (combo) {
+            CHECK(combo->currentData().toString() == QStringLiteral("group-with-neighbor"));
+        }
+    }
+    {
+        KConfigGroup group = scriptGroup();
+        group.writeEntry(QStringLiteral("sameAxisMove"), QStringLiteral("flat-swap"));
+        group.sync();
+    }
+    {
+        KWin::ScriptConfigModule module(nullptr, KPluginMetaData());
+        QComboBox *combo = sameAxisMoveCombo(module);
+        CHECK(combo != nullptr);
+        module.load();
+        if (combo) {
+            CHECK(combo->currentData().toString() == QStringLiteral("group-with-neighbor"));
+        }
+    }
+    {
+        KConfigGroup group = scriptGroup();
+        group.deleteEntry(QStringLiteral("sameAxisMove"));
+        group.sync();
     }
     // A same-axis change persists, sends one live reconfigure, and never
     // requires a session restart.
@@ -630,11 +682,81 @@ void sameAxisMoveContractDefaultsValidatesAndPersists()
         // A follow-up unchanged save must not send again.
         module.save();
         CHECK(module.scriptCalls == 1);
-        // Defaults restore cosmic-wrap.
+        // Defaults restore group-with-neighbor.
         module.defaults();
-        CHECK(combo->currentData().toString() == QStringLiteral("cosmic-wrap"));
+        CHECK(combo->currentData().toString() == QStringLiteral("group-with-neighbor"));
         module.save();
-        CHECK(storedSameAxisMove() == QStringLiteral("cosmic-wrap"));
+        CHECK(storedSameAxisMove() == QStringLiteral("group-with-neighbor"));
+    }
+}
+
+void fixedSizePredicateContractDefaultsValidatesAndPersists()
+{
+    // Invalid stored values normalize to the both-axes-fixed default.
+    {
+        KConfigGroup group = scriptGroup();
+        group.writeEntry(QStringLiteral("fixedSizePredicate"), QStringLiteral("bogus"));
+        group.sync();
+    }
+    {
+        KWin::ScriptConfigModule module(nullptr, KPluginMetaData());
+        QComboBox *combo = fixedSizePredicateCombo(module);
+        CHECK(combo != nullptr);
+        module.load();
+        if (combo) {
+            CHECK(combo->currentData().toString() == QStringLiteral("both-axes-fixed"));
+        }
+    }
+    // Missing keys stay missing through load and default back.
+    {
+        KConfigGroup group = scriptGroup();
+        group.deleteEntry(QStringLiteral("fixedSizePredicate"));
+        group.sync();
+    }
+    {
+        CountingScriptModule module(nullptr, KPluginMetaData());
+        QComboBox *combo = fixedSizePredicateCombo(module);
+        CHECK(combo != nullptr);
+        module.load();
+        if (combo) {
+            CHECK(combo->currentData().toString() == QStringLiteral("both-axes-fixed"));
+        }
+        module.scriptSucceed = true;
+        module.save();
+        CHECK(!scriptGroup().hasKey(QStringLiteral("fixedSizePredicate")));
+        CHECK(module.scriptCalls == 0);
+        CHECK(!module.isScriptRestartRequired());
+    }
+    // A predicate change persists, sends one live reconfigure, and never
+    // requires a session restart.
+    {
+        CountingScriptModule module(nullptr, KPluginMetaData());
+        module.load();
+        QComboBox *combo = fixedSizePredicateCombo(module);
+        CHECK(combo != nullptr);
+        if (!combo) {
+            return;
+        }
+        const QString target = otherFixedSizePredicate(storedFixedSizePredicate());
+        const int index = combo->findData(target);
+        CHECK(index >= 0);
+        combo->setCurrentIndex(index);
+        CHECK(module.needsSave());
+        module.scriptSucceed = true;
+        module.save();
+        CHECK(storedFixedSizePredicate() == target);
+        CHECK(module.scriptCalls == 1);
+        CHECK(!module.isScriptRestartRequired());
+        CHECK(module.scriptStatusText().contains(QStringLiteral("unconfirmed")));
+        CHECK(module.scriptStatusText().contains(QStringLiteral("fixed-size")));
+        CHECK(!containsAppliedClaim(module.scriptStatusText()));
+        CHECK(!module.needsSave());
+        module.save();
+        CHECK(module.scriptCalls == 1);
+        module.defaults();
+        CHECK(combo->currentData().toString() == QStringLiteral("both-axes-fixed"));
+        module.save();
+        CHECK(storedFixedSizePredicate() == QStringLiteral("both-axes-fixed"));
     }
 }
 
@@ -1269,6 +1391,7 @@ int main(int argc, char **argv)
         combinedGapAndSameAxisMoveSaveSendsOnce();
         combinedGapAndSameAxisMoveSaveFailureMentionsBothKeys();
         sameAxisMoveContractDefaultsValidatesAndPersists();
+        fixedSizePredicateContractDefaultsValidatesAndPersists();
         startupRestartLogEnumeratesOnlyChangedKeys();
         startupOnlySaveDisablesSendWithRestartMessage();
         hiddenShortcutProfileIsAbsentAndPreservedUntouched();

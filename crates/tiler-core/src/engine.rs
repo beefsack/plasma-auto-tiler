@@ -102,6 +102,10 @@ pub struct Engine {
     /// Windows carriers (`Engine::new`) keep exact current behavior; the
     /// Linux planner route enables it.
     fixed_size_admission: bool,
+    /// R-SPC-04 D1 fixed-size admission predicate. Both-axes default
+    /// (current delivered behavior). Changing it never reclassifies
+    /// retained windows, only subsequent admissions.
+    fixed_size_predicate: crate::size_hints::FixedSizePredicate,
     /// Last fixed-size admission report for protocol logging.
     ///
     /// Set when [`Engine::handle`] admitted fixed-size windows with the
@@ -370,6 +374,7 @@ impl Default for Engine {
             last_send_placement: None,
             converged_this_op: false,
             fixed_size_admission: false,
+            fixed_size_predicate: crate::size_hints::FixedSizePredicate::BothAxes,
             last_fixed_admission: None,
             last_migration: None,
         }
@@ -536,6 +541,24 @@ impl Engine {
         }
     }
 
+    /// Current R-SPC-04 D1 fixed-size admission predicate. Both-axes
+    /// default (current delivered behavior).
+    #[must_use]
+    pub fn fixed_size_predicate(&self) -> crate::size_hints::FixedSizePredicate {
+        self.fixed_size_predicate
+    }
+
+    /// Select the fixed-size admission predicate for subsequent admissions
+    /// only. Propagates to every retained session on store; fresh sessions
+    /// adopt it at creation. Never touches topology, revision, or existing
+    /// automatic/override marks (D2: no reclassification).
+    pub fn set_fixed_size_predicate(&mut self, predicate: crate::size_hints::FixedSizePredicate) {
+        self.fixed_size_predicate = predicate;
+        for session in self.sessions.values_mut() {
+            session.set_fixed_size_predicate(predicate);
+        }
+    }
+
     /// Last fixed-size admission report for protocol logging, if the
     /// current [`Engine::handle`] admitted automatic fixed floats.
     /// Bounded counts plus correlation/op/reason only.
@@ -556,18 +579,22 @@ impl Engine {
     /// generation, revision, divergence, pending, or drag state.
     fn adopt_fixed_admission(&self, session: &mut Session) {
         session.set_fixed_size_admission(self.fixed_size_admission);
+        session.set_fixed_size_predicate(self.fixed_size_predicate);
     }
 
-    /// Whether a carried window is a fixed-size admission candidate on
-    /// this op: fixed hints, not born fullscreen (D5 bypass), not
-    /// already floating, and no adapter-asserted tile win (D3 suppress
+    /// Predicate-selected candidate check for the retained Engine setting.
+    /// Fixed hints under the predicate, not born fullscreen (D5 bypass),
+    /// not already floating, and no adapter-asserted tile win (D3 suppress
     /// signal). Sticky stays intentional (D6).
-    fn is_fixed_candidate(window: &crate::seed::EngineWindow) -> bool {
+    fn is_fixed_candidate_with(
+        window: &crate::seed::EngineWindow,
+        predicate: crate::size_hints::FixedSizePredicate,
+    ) -> bool {
         !window.floating
             && !window.fullscreen
             && !window.sticky
             && !window.fixed_suppress
-            && crate::size_hints::is_fixed_size(window.hints)
+            && crate::size_hints::is_fixed_size_with(window.hints, predicate)
     }
 
     /// Record the bounded fixed-size admission diagnostic for this op
@@ -653,10 +680,11 @@ impl Engine {
             .get(&event.domain_key)
             .map(|session| session.automatic_fixed_count())
             .unwrap_or(0);
+        let predicate = self.fixed_size_predicate;
         let evaluated = event
             .windows
             .iter()
-            .filter(|window| Self::is_fixed_candidate(window))
+            .filter(|window| Self::is_fixed_candidate_with(window, predicate))
             .count();
         let Some(session_mut) = self.sessions.get_mut(&event.domain_key) else {
             return ConvergeOutcome::NoSession;
@@ -743,10 +771,11 @@ impl Engine {
             Some(&event.focused_window)
         };
         let admitted_before = session.automatic_fixed_count();
+        let predicate = self.fixed_size_predicate;
         let evaluated = event
             .windows
             .iter()
-            .filter(|window| Self::is_fixed_candidate(window))
+            .filter(|window| Self::is_fixed_candidate_with(window, predicate))
             .count();
         match session.converge_observation(&observation, focus) {
             Ok(counts) => {
@@ -1207,10 +1236,11 @@ impl Engine {
                         flags_adopted: counts.flags_adopted,
                     });
                 }
+                let predicate = self.fixed_size_predicate;
                 let evaluated = event
                     .windows
                     .iter()
-                    .filter(|window| Self::is_fixed_candidate(window))
+                    .filter(|window| Self::is_fixed_candidate_with(window, predicate))
                     .count();
                 self.note_fixed_admission(&event.correlation, report_op, evaluated, 0, &fresh);
                 let base = fresh.accepted_revision();
@@ -1248,8 +1278,11 @@ impl Engine {
         let fresh_attempt = placement_bounds.is_none()
             && window.0 == event.focused_window.0
             && self.session(&event.domain_key).is_none();
-        let fixed_present =
-            self.fixed_size_admission && event.windows.iter().any(Self::is_fixed_candidate);
+        let fixed_present = self.fixed_size_admission
+            && event
+                .windows
+                .iter()
+                .any(|window| Self::is_fixed_candidate_with(window, self.fixed_size_predicate));
         if fresh_attempt && fixed_present {
             // Fixed-size members never join the fitted topology: they
             // float at admission (D1), so the fit declines to the
@@ -4707,7 +4740,7 @@ mod tests {
                 window: "win-1".to_owned(),
                 direction: "left".to_owned(),
                 cross_output_transfer: false,
-                same_axis_move: crate::directional::SameAxisMove::CosmicWrap,
+                same_axis_move: crate::directional::SameAxisMove::GroupWithNeighbor,
             },
         };
         match engine.handle(&event) {

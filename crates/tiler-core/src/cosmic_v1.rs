@@ -565,7 +565,7 @@ mod tests {
             focused_leaf: NodeId::from("A"),
             focused_window: WindowId::from("w-A"),
             direction: Direction::Right,
-            same_axis_move: crate::directional::SameAxisMove::CosmicWrap,
+            same_axis_move: crate::directional::SameAxisMove::GroupWithNeighbor,
         };
         match plan_move(&snapshot, &intent) {
             MoveOutcome::Planned(plan) => {

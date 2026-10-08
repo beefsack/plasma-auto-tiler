@@ -193,11 +193,11 @@ pub struct Snapshot {
 /// Directional move intent against a [`Snapshot`].
 ///
 /// `same_axis_move` selects the R-MOV-03 same-orientation behavior for the
-/// R2c neighbor case only: [`SameAxisMove::CosmicWrap`] (default) keeps the
-/// COSMIC nested wrap, [`SameAxisMove::FlatSwap`] swaps an adjacent direct
-/// leaf sibling in place. R1, R2a, R2b, R3, and R4 are identical under both
-/// values. The mode travels in the intent so strict application can refuse
-/// forged operation/mode combinations.
+/// R2c neighbor case only: [`SameAxisMove::GroupWithNeighbor`] (default)
+/// keeps the COSMIC nested wrap, [`SameAxisMove::SwapWithNeighbor`] swaps an
+/// adjacent direct leaf sibling in place. R1, R2a, R2b, R3, and R4 are
+/// identical under both values. The mode travels in the intent so strict
+/// application can refuse forged operation/mode combinations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MoveIntent {
     pub source_output: OutputId,
@@ -207,29 +207,31 @@ pub struct MoveIntent {
     pub same_axis_move: SameAxisMove,
 }
 
-/// R-MOV-03 same-axis move setting (decisions 2026-10-07 item 3.1/3.2).
+/// R-MOV-03 same-axis move setting (decisions 2026-10-07 item 3.1/3.2,
+/// functional IDs 2026-10-08).
 ///
-/// One global setting with two validated values: `cosmic-wrap` (default,
-/// `H[A,B*,C,D]` move right gives `H[A,H[B,C],D]`) and `flat-swap` (i3/sway
-/// alternative, `H[A,C,B*,D]` with shares traveling with windows). The wire
-/// tokens are `cosmic-wrap` and `flat-swap`; a missing protocol field decodes
-/// to the default. Anything else refuses at the protocol boundary, never here.
+/// One global setting with two validated values: `group-with-neighbor`
+/// (default, `H[A,B*,C,D]` move right gives `H[A,H[B,C],D]`) and
+/// `swap-with-neighbor` (i3/sway alternative, `H[A,C,B*,D]` with shares
+/// traveling with windows). The wire tokens are `group-with-neighbor` and
+/// `swap-with-neighbor`; a missing protocol field decodes to the default.
+/// Anything else refuses at the protocol boundary, never here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum SameAxisMove {
-    /// COSMIC nested wrap (default).
+    /// Group with neighbor (default, COSMIC nested wrap).
     #[default]
-    CosmicWrap,
-    /// Flat adjacent-leaf sibling swap (R2c leaf neighbors only).
-    FlatSwap,
+    GroupWithNeighbor,
+    /// Swap with neighbor (R2c leaf neighbors only).
+    SwapWithNeighbor,
 }
 
 impl SameAxisMove {
-    /// Wire token for this value (`cosmic-wrap` / `flat-swap`).
+    /// Wire token for this value (`group-with-neighbor` / `swap-with-neighbor`).
     #[must_use]
     pub const fn as_wire_str(self) -> &'static str {
         match self {
-            Self::CosmicWrap => "cosmic-wrap",
-            Self::FlatSwap => "flat-swap",
+            Self::GroupWithNeighbor => "group-with-neighbor",
+            Self::SwapWithNeighbor => "swap-with-neighbor",
         }
     }
 
@@ -238,8 +240,8 @@ impl SameAxisMove {
     #[must_use]
     pub fn parse_wire(value: &str) -> Option<Self> {
         match value {
-            "cosmic-wrap" => Some(Self::CosmicWrap),
-            "flat-swap" => Some(Self::FlatSwap),
+            "group-with-neighbor" => Some(Self::GroupWithNeighbor),
+            "swap-with-neighbor" => Some(Self::SwapWithNeighbor),
             _ => None,
         }
     }
@@ -939,14 +941,14 @@ fn plan_local(intent: &MoveIntent, source: &Output, path: &[PathLevel<'_>]) -> M
                 }
             }
         }
-        // R-MOV-03 flat-swap (item 3.2): replaces only this R2c case, and
+        // R-MOV-03 swap-with-neighbor (item 3.2): replaces only this R2c case, and
         // only when the directional neighbor is an adjacent direct leaf
         // sibling in the same group. Group neighbors, R2a binary swaps, R2b
         // inserts/splits, and R3 escapes keep the wrap-branch rules below.
         // The emitted swap reuses SwapNeighbor (shares travel with windows at
         // application, like R2a); the rule stays R2c so strict application
-        // can tell the N-ary flat swap from the binary R2a swap.
-        if intent.same_axis_move == SameAxisMove::FlatSwap
+        // can tell the N-ary swap from the binary R2a swap.
+        if intent.same_axis_move == SameAxisMove::SwapWithNeighbor
             && matches!(neighbor, Node::Leaf { .. })
             && matches!(
                 ancestor.children.get(ancestor.child_index),

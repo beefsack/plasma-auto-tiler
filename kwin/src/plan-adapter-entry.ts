@@ -26,6 +26,10 @@
 
 import { DomainGaps, readDomainGaps } from "./domain-gap";
 import { SameAxisMove, readSameAxisMoveValue } from "./same-axis-move";
+import {
+    FixedSizePredicate,
+    readFixedSizePredicateValue,
+} from "./fixed-size-predicate";
 import { identifyGrabbedEdges, identifyPressGrabbed, resolveOracleResizeTargets, startDragOraclePullEntry, DragOracleFinishContext, DragOracleVerdict, OracleGrabbed, OracleGrabSource } from "./drag-oracle-pull";
 import { decodeList } from "./qml-list";
 import {
@@ -119,6 +123,7 @@ export interface PlanEntryOverrides {
     readonly readInnerGapFn?: () => unknown;
     readonly readOuterGapFn?: () => unknown;
     readonly readSameAxisMoveFn?: () => unknown;
+    readonly readFixedSizePredicateFn?: () => unknown;
     readonly options?: unknown;
     // Workspace tiling menu state: invoked whenever the tray snapshot
     // (scope, tiled, default) changes so entry.ts can bump the publisher
@@ -4251,6 +4256,14 @@ function startPlanAdapterEntryOnce(
     // on the KWin Options `configChanged` signal for subsequent moves. No
     // tree rebuild, no resync, no topology work on change.
     let sameAxisMove: SameAxisMove = readSameAxisMoveValue(overrides.readSameAxisMoveFn);
+    // R-SPC-04 D1 fixed-size admission predicate: resolved at startup, then
+    // re-read only on the KWin Options `configChanged` signal for subsequent
+    // admissions. No reclassification, no resync, no topology work on
+    // change; the adapter reads the entry-owned value live per request and
+    // carries it on the planner wire.
+    let fixedSizePredicate: FixedSizePredicate = readFixedSizePredicateValue(
+        overrides.readFixedSizePredicateFn,
+    );
     // Startup-consumed settings snapshot: workspaceMode and shortcutProfile
     // are never re-read for behavior. A configChanged drift against this
     // snapshot is logged restart-required, never adopted here.
@@ -4437,6 +4450,7 @@ function startPlanAdapterEntryOnce(
             }
         },
         readSameAxisMove: () => sameAxisMove,
+        readFixedSizePredicate: () => fixedSizePredicate,
         observe: () => {
             const seen = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners);
             if (seen === null) {
@@ -8770,6 +8784,26 @@ function startPlanAdapterEntryOnce(
                             sameAxisMove = reread;
                             try {
                                 log(`plasma-auto-tiler:plan:config-reloaded stage=same-axis-move mode=${reread}`);
+                            } catch (error) {
+                                void error;
+                            }
+                        }
+                    } catch (error) {
+                        void error;
+                    }
+                    // R-SPC-04 D1 live predicate: re-read the fixed-size
+                    // predicate for subsequent admissions only. No
+                    // reclassification, no resync, no topology work; the
+                    // adapter reads the entry-owned value live per request
+                    // and carries it on the planner wire.
+                    try {
+                        const reread = readFixedSizePredicateValue(
+                            overrides.readFixedSizePredicateFn,
+                        );
+                        if (reread !== fixedSizePredicate) {
+                            fixedSizePredicate = reread;
+                            try {
+                                log(`plasma-auto-tiler:plan:config-reloaded stage=fixed-size-predicate predicate=${reread}`);
                             } catch (error) {
                                 void error;
                             }

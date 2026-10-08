@@ -50,7 +50,7 @@ pub enum CoreCommand {
         direction: String,
         cross_output_transfer: bool,
         /// R-MOV-03 same-axis mode: validated at the protocol boundary
-        /// (missing wire field decodes to [`SameAxisMove::CosmicWrap`]);
+        /// (missing wire field decodes to [`SameAxisMove::GroupWithNeighbor`]);
         /// adapters constructing events directly (Windows) pass the default
         /// to preserve the historical wrap behavior.
         same_axis_move: SameAxisMove,
@@ -1064,7 +1064,7 @@ mod tests {
                 window: "w".to_owned(),
                 direction: "left".to_owned(),
                 cross_output_transfer: true,
-                same_axis_move: SameAxisMove::CosmicWrap,
+                same_axis_move: SameAxisMove::GroupWithNeighbor,
             },
             CoreCommand::Focus {
                 window: "w".to_owned(),
@@ -1450,7 +1450,7 @@ mod tests {
                     focused_leaf: NodeId::from("leaf-1"),
                     focused_window: WindowId("win-1".to_owned()),
                     direction: Direction::Right,
-                    same_axis_move: SameAxisMove::CosmicWrap,
+                    same_axis_move: SameAxisMove::GroupWithNeighbor,
                 },
             },
             desired_snapshot: crate::session::SessionSnapshot {

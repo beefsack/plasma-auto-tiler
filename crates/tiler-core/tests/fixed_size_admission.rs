@@ -2004,3 +2004,242 @@ fn pair_send_split_preserves_automatic_and_override() {
         "target survivor undisturbed"
     );
 }
+
+fn one_axis_hints() -> WindowSizeHints {
+    WindowSizeHints {
+        min_w: Some(640),
+        min_h: Some(100),
+        max_w: Some(640),
+        max_h: Some(480),
+    }
+}
+
+#[test]
+fn predicate_defaults_to_both_axes_matching_delivered_behavior() {
+    use tiler_core::size_hints::{FixedSizePredicate, fixed_size_reason_with, is_fixed_size_with};
+    assert_eq!(FixedSizePredicate::default(), FixedSizePredicate::BothAxes);
+    assert_eq!(
+        FixedSizePredicate::BothAxes.as_wire_str(),
+        "both-axes-fixed"
+    );
+    assert_eq!(
+        FixedSizePredicate::EitherAxis.as_wire_str(),
+        "either-axis-fixed"
+    );
+    assert_eq!(
+        FixedSizePredicate::parse_wire("both-axes-fixed"),
+        Some(FixedSizePredicate::BothAxes)
+    );
+    assert_eq!(
+        FixedSizePredicate::parse_wire("either-axis-fixed"),
+        Some(FixedSizePredicate::EitherAxis)
+    );
+    for invalid in ["", "both", "either", "fixed", "both_axes_fixed", "COSMIC"] {
+        assert_eq!(FixedSizePredicate::parse_wire(invalid), None, "{invalid:?}");
+    }
+    // One-axis fixture: tiles under the default, floats under either-axis.
+    assert!(!is_fixed_size_with(
+        one_axis_hints(),
+        FixedSizePredicate::BothAxes
+    ));
+    assert!(is_fixed_size_with(
+        one_axis_hints(),
+        FixedSizePredicate::EitherAxis
+    ));
+    assert_eq!(
+        fixed_size_reason_with(one_axis_hints(), FixedSizePredicate::BothAxes),
+        "not-fixed-unequal"
+    );
+    assert_eq!(
+        fixed_size_reason_with(one_axis_hints(), FixedSizePredicate::EitherAxis),
+        "fixed-equal"
+    );
+    // Guards preserved under either-axis: missing/sentinel still tile.
+    let missing = WindowSizeHints {
+        min_w: Some(640),
+        min_h: None,
+        max_w: Some(640),
+        max_h: Some(480),
+    };
+    assert!(!is_fixed_size_with(missing, FixedSizePredicate::EitherAxis));
+    let sentinel = WindowSizeHints {
+        min_w: Some(640),
+        min_h: Some(480),
+        max_w: Some(640),
+        max_h: Some(i32::MAX),
+    };
+    assert!(!is_fixed_size_with(
+        sentinel,
+        FixedSizePredicate::EitherAxis
+    ));
+    // Engine/session defaults match.
+    let engine = Engine::new();
+    assert!(!engine.fixed_size_admission(), "opt-in defaults off");
+    assert_eq!(engine.fixed_size_predicate(), FixedSizePredicate::BothAxes);
+    let session = Session::new(owner(), generation(), 0, 7, vec![domain()]).expect("session");
+    assert_eq!(session.fixed_size_predicate(), FixedSizePredicate::BothAxes);
+}
+
+#[test]
+fn either_axis_admits_one_axis_fixed_while_both_axes_tiles() {
+    let mut both = fixed_session();
+    admit_plain(&mut both, "win-a", "c-a");
+    let base = both.accepted_revision();
+    let result = both
+        .converge_observation(
+            &observation(
+                base,
+                vec![
+                    plain("win-a"),
+                    obs(
+                        "win-f",
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        one_axis_hints(),
+                    ),
+                ],
+            ),
+            None,
+        )
+        .expect("converge");
+    assert_eq!(result.flags_adopted, 0, "one-axis tiles under both-axes");
+    assert!(!both.is_exception(&WindowId("win-f".to_owned())));
+    assert_eq!(
+        tiled_ids(&both),
+        vec!["win-a".to_owned(), "win-f".to_owned()]
+    );
+
+    let mut either = fixed_session();
+    either.set_fixed_size_predicate(tiler_core::size_hints::FixedSizePredicate::EitherAxis);
+    admit_plain(&mut either, "win-a", "c-a");
+    let base = either.accepted_revision();
+    let result = either
+        .converge_observation(
+            &observation(
+                base,
+                vec![
+                    plain("win-a"),
+                    obs(
+                        "win-f",
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        one_axis_hints(),
+                    ),
+                ],
+            ),
+            None,
+        )
+        .expect("converge");
+    assert_eq!(result.flags_adopted, 1, "one-axis floats under either-axis");
+    assert!(either.is_exception(&WindowId("win-f".to_owned())));
+    assert!(either.is_automatic_fixed_float(&WindowId("win-f".to_owned())));
+    assert_eq!(tiled_ids(&either), vec!["win-a".to_owned()]);
+}
+
+#[test]
+fn predicate_switch_applies_to_subsequent_admissions_without_reclassifying() {
+    let mut session = fixed_session();
+    admit_plain(&mut session, "win-a", "c-a");
+    // win-b admitted tiled under the both-axes default (one-axis hints tile).
+    let base = session.accepted_revision();
+    session
+        .converge_observation(
+            &observation(
+                base,
+                vec![
+                    plain("win-a"),
+                    obs(
+                        "win-b",
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        one_axis_hints(),
+                    ),
+                ],
+            ),
+            None,
+        )
+        .expect("converge");
+    assert!(!session.is_exception(&WindowId("win-b".to_owned())));
+    // Switch to either-axis: retained win-b stays tiled (no reclassification).
+    session.set_fixed_size_predicate(tiler_core::size_hints::FixedSizePredicate::EitherAxis);
+    let base = session.accepted_revision();
+    session
+        .converge_observation(
+            &observation(base, vec![plain("win-a"), plain("win-b")]),
+            None,
+        )
+        .expect("converge");
+    assert!(
+        !session.is_exception(&WindowId("win-b".to_owned())),
+        "switch must not reclassify retained windows"
+    );
+    assert_eq!(
+        tiled_ids(&session),
+        vec!["win-a".to_owned(), "win-b".to_owned()]
+    );
+    // Subsequent one-axis admission floats under the new predicate.
+    let base = session.accepted_revision();
+    let result = session
+        .converge_observation(
+            &observation(
+                base,
+                vec![
+                    plain("win-a"),
+                    plain("win-b"),
+                    obs(
+                        "win-c",
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        one_axis_hints(),
+                    ),
+                ],
+            ),
+            None,
+        )
+        .expect("converge");
+    assert_eq!(result.flags_adopted, 1);
+    assert!(session.is_automatic_fixed_float(&WindowId("win-c".to_owned())));
+}
+
+#[test]
+fn live_tile_override_wins_under_either_axis_predicate() {
+    let mut session = fixed_session();
+    session.set_fixed_size_predicate(tiler_core::size_hints::FixedSizePredicate::EitherAxis);
+    admit_plain(&mut session, "win-a", "c-a");
+    // Explicit user tile (suppress origin) wins for the live client.
+    admit_with(&mut session, "win-f", "c-f", true, one_axis_hints());
+    assert!(
+        !session.is_exception(&WindowId("win-f".to_owned())),
+        "override wins over either-axis admission"
+    );
+    assert!(session.has_fixed_tile_override(&WindowId("win-f".to_owned())));
+    assert_eq!(
+        tiled_ids(&session),
+        vec!["win-a".to_owned(), "win-f".to_owned()]
+    );
+    // Later re-observation keeps it tiled (no reclassification).
+    let base = session.accepted_revision();
+    session
+        .converge_observation(
+            &observation(base, vec![plain("win-a"), plain("win-f")]),
+            None,
+        )
+        .expect("converge");
+    assert!(!session.is_exception(&WindowId("win-f".to_owned())));
+}

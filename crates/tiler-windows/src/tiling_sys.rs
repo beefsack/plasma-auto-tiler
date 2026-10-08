@@ -6104,9 +6104,9 @@ fn keyboard_tick(
                         direction,
                         cross_output_transfer: false,
                         // Compile-only R-MOV-03 default: Windows keeps the
-                        // historical cosmic-wrap behavior; adapter wiring of
+                        // historical group-with-neighbor behavior; adapter wiring of
                         // `core.same_axis_move` is a backlog handoff item.
-                        same_axis_move: tiler_core::directional::SameAxisMove::CosmicWrap,
+                        same_axis_move: tiler_core::directional::SameAxisMove::GroupWithNeighbor,
                     },
                 };
                 // Single-domain observations run the local retained

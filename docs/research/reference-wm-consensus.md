@@ -211,7 +211,9 @@ selected targets, implementation pending; annotations are not reference votes.
   holders; Compatible disables our arrows, letters remain; Windows ownership
   unknown. Discriminators R-WS-18..20 (stay and emptied-source fresh runs).
 - R-MOV-03 (item 3): global KDE `sameAxisMove` / Windows
-  `core.same_axis_move`, `cosmic-wrap` default or `flat-swap`. Windows additive
+  `core.same_axis_move`, `group-with-neighbor` default or `swap-with-neighbor`.
+  Functional rename delivered offline 2026-10-08; WM names appear in tooltips only.
+  Windows additive
   schema-v1 field, missing defaults to wrap; subsequent moves change without
   tree rebuild; KDE UI control. Flat-swap replaces R2c only for adjacent direct
   leaf siblings in the same group, shares travel with windows; leaf/group rules

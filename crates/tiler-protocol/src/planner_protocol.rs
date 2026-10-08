@@ -328,6 +328,11 @@ struct RequestDto {
     focused_window: String,
     windows: Vec<ObservedDto>,
     command: serde_json::Value,
+    /// R-SPC-04 D1 fixed-size admission predicate (`both-axes-fixed` /
+    /// `either-axis-fixed`). Absent preserves the historical both-axes
+    /// behavior; unknown values refuse fail-closed before any state change.
+    #[serde(default = "default_fixed_size_predicate")]
+    fixed_size_predicate: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -988,6 +993,7 @@ const PLANNER_SNAPSHOT_DETAILS: &[&str] = &[
     "drag-drop-window-invalid",
     "drag-preview-op-invalid",
     "float-rect-invalid",
+    "fixed-predicate-invalid",
 ];
 
 fn classify_parse_error(error: &serde_json::Error) -> (&'static str, &'static str) {
@@ -1567,6 +1573,18 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
         }
         None => (None, None),
     };
+    // R-SPC-04 D1 predicate: omitted carries the both-axes default via the
+    // serde default above; unknown values refuse fail-closed before any
+    // state change under one static detail.
+    if tiler_core::size_hints::FixedSizePredicate::parse_wire(request.fixed_size_predicate.as_str())
+        .is_none()
+    {
+        return Err(snapshot_invalid(
+            request.correlation_id.clone(),
+            MSG_UNKNOWN_VALUE,
+            "fixed-predicate-invalid",
+        ));
+    }
     Ok(Validated {
         request,
         raw,
@@ -2462,6 +2480,14 @@ impl Planner {
             Ok(ctx) => ctx,
             Err(reply) => return reply,
         };
+        // R-SPC-04 D1 predicate: validated above, so this parse is total.
+        // Applied to the retained engine for subsequent admissions only;
+        // existing automatic/override marks are untouched (D2).
+        if let Some(predicate) = tiler_core::size_hints::FixedSizePredicate::parse_wire(
+            ctx.request.fixed_size_predicate.as_str(),
+        ) {
+            self.engine.set_fixed_size_predicate(predicate);
+        }
         if validated_op(&ctx).as_str() == "send-to-workspace" {
             return self.evaluate_workspace_request(&ctx);
         }
@@ -2748,7 +2774,7 @@ impl Planner {
                     cross_output_transfer,
                     // Focus never reads the move-only mode; the default keeps
                     // the value total without touching the focus wire shape.
-                    same_axis_move: SameAxisMove::CosmicWrap,
+                    same_axis_move: SameAxisMove::GroupWithNeighbor,
                     float_subject,
                 },
                 Ok(_) => {
@@ -3801,7 +3827,7 @@ fn evaluate_toggle_float_with(
 /// `cross_output_transfer` default-true is mirrored on the enum variants so
 /// omitted legacy requests keep their historical full-capability behavior.
 /// The `same_axis_move` default mirrors the R-MOV-03 missing-field rule so
-/// omitted legacy requests keep the historical cosmic-wrap behavior.
+/// omitted legacy requests keep the historical group-with-neighbor behavior.
 #[derive(Debug, Clone)]
 struct DirectedCommand {
     window: String,
@@ -3812,7 +3838,7 @@ struct DirectedCommand {
     /// requests retain their historical full-capability behavior.
     cross_output_transfer: bool,
     /// Validated R-MOV-03 same-axis mode (missing wire field decodes to
-    /// [`SameAxisMove::CosmicWrap`]; anything else refuses as
+    /// [`SameAxisMove::GroupWithNeighbor`]; anything else refuses as
     /// `move-op-invalid` before this value exists).
     same_axis_move: SameAxisMove,
     /// Float-origin subject marker for focus only (ignored on move): true
@@ -3827,9 +3853,18 @@ const fn default_cross_output_transfer() -> bool {
 }
 
 /// R-MOV-03 missing-field default: omitted `same_axis_move` decodes to
-/// `cosmic-wrap`, preserving the historical wrap behavior byte-for-byte.
+/// `group-with-neighbor`, preserving the historical wrap behavior byte-for-byte.
 fn default_same_axis_move() -> String {
-    SameAxisMove::CosmicWrap.as_wire_str().to_owned()
+    SameAxisMove::GroupWithNeighbor.as_wire_str().to_owned()
+}
+
+/// R-SPC-04 D1 missing-field default: omitted `fixed_size_predicate` decodes
+/// to `both-axes-fixed`, preserving the delivered both-axes behavior
+/// byte-for-byte.
+fn default_fixed_size_predicate() -> String {
+    tiler_core::size_hints::FixedSizePredicate::BothAxes
+        .as_wire_str()
+        .to_owned()
 }
 
 /// Omitted `follow` on `send-to-workspace` preserves the historical follow
@@ -4035,9 +4070,10 @@ enum SyncCommand {
         direction: String,
         #[serde(default = "default_cross_output_transfer")]
         cross_output_transfer: bool,
-        /// R-MOV-03 same-axis mode (`cosmic-wrap` / `flat-swap`). Absent
-        /// preserves the historical wrap behavior; unknown values refuse as
-        /// `move-op-invalid` at the handler (never silently coerced).
+        /// R-MOV-03 same-axis mode (`group-with-neighbor` /
+        /// `swap-with-neighbor`). Absent preserves the historical wrap
+        /// behavior; unknown values refuse as `move-op-invalid` at the
+        /// handler (never silently coerced).
         #[serde(default = "default_same_axis_move")]
         same_axis_move: String,
     },
@@ -7203,13 +7239,14 @@ mod tests {
     #[test]
     fn typed_sync_codec_same_axis_move_default_variants_and_invalid() {
         // R-MOV-03 wire contract: a missing `same_axis_move` field decodes to
-        // cosmic-wrap (the explicit form replies identically); `flat-swap`
-        // decodes and leaves the binary R2a rule unchanged on this pair;
-        // unknown values refuse as snapshot-invalid `move-op-invalid`;
-        // non-string values refuse via the malformed path; the KDE
-        // `sameAxisMove` camelCase spelling refuses as an unknown field.
-        // Each planned case runs on a freshly seeded planner so committed
-        // plans cannot bleed across cases.
+        // group-with-neighbor (the explicit form replies identically);
+        // `swap-with-neighbor` decodes and leaves the binary R2a rule
+        // unchanged on this pair; unknown values (including the retired
+        // `cosmic-wrap`/`flat-swap` tokens) refuse as snapshot-invalid
+        // `move-op-invalid`; non-string values refuse via the malformed path;
+        // the KDE `sameAxisMove` camelCase spelling refuses as an unknown
+        // field. Each planned case runs on a freshly seeded planner so
+        // committed plans cannot bleed across cases.
         let seed = || {
             let mut planner = Planner::new();
             for (cid, focused, windows, command) in [
@@ -7258,14 +7295,14 @@ mod tests {
             move_command(None),
         );
         assert_eq!(planned_rule(&seed().evaluate(&missing)), "R2a");
-        // Explicit cosmic-wrap replies identically (modulo correlation).
+        // Explicit group-with-neighbor replies identically (modulo correlation).
         let explicit = retained_request(
             "axis-explicit-1",
             "owner-1",
             "gen-1",
             "win-1",
             &two,
-            move_command(Some(serde_json::json!("cosmic-wrap"))),
+            move_command(Some(serde_json::json!("group-with-neighbor"))),
         );
         let missing_reply = parse_reply(&seed().evaluate(&missing));
         let explicit_reply = parse_reply(&seed().evaluate(&explicit));
@@ -7274,14 +7311,14 @@ mod tests {
         for key in ["detail", "desired_geometry", "desired_focus"] {
             assert_eq!(explicit_reply[key], missing_reply[key], "{key}");
         }
-        // Flat-swap decodes and leaves the binary R2a rule unchanged.
+        // Swap-with-neighbor decodes and leaves the binary R2a rule unchanged.
         let flat = retained_request(
             "axis-flat-1",
             "owner-1",
             "gen-1",
             "win-1",
             &two,
-            move_command(Some(serde_json::json!("flat-swap"))),
+            move_command(Some(serde_json::json!("swap-with-neighbor"))),
         );
         assert_eq!(planned_rule(&seed().evaluate(&flat)), "R2a");
         // Unknown values refuse as snapshot-invalid move-op-invalid.
@@ -7297,6 +7334,26 @@ mod tests {
             seed().evaluate(&invalid),
             "{\"v\":1,\"correlation_id\":\"axis-invalid-1\",\"outcome\":\"rejected\",\"kind\":\"snapshot-invalid\",\"message\":\"request contains an unknown value\",\"detail\":\"move-op-invalid\"}",
         );
+        // Retired pre-release tokens refuse identically (no aliases).
+        for (cid, token) in [
+            ("axis-retired-1", "cosmic-wrap"),
+            ("axis-retired-2", "flat-swap"),
+        ] {
+            let retired = retained_request(
+                cid,
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &two,
+                move_command(Some(serde_json::json!(token))),
+            );
+            assert_eq!(
+                seed().evaluate(&retired),
+                format!(
+                    "{{\"v\":1,\"correlation_id\":\"{cid}\",\"outcome\":\"rejected\",\"kind\":\"snapshot-invalid\",\"message\":\"request contains an unknown value\",\"detail\":\"move-op-invalid\"}}"
+                ),
+            );
+        }
         // Non-string values refuse via the malformed path.
         let mistyped = retained_request(
             "axis-mistyped-1",
@@ -7317,7 +7374,7 @@ mod tests {
             "gen-1",
             "win-1",
             &two,
-            serde_json::json!({"op": "move", "window": "win-1", "direction": "right", "sameAxisMove": "flat-swap"}),
+            serde_json::json!({"op": "move", "window": "win-1", "direction": "right", "sameAxisMove": "swap-with-neighbor"}),
         );
         assert_eq!(
             seed().evaluate(&camel),
@@ -7331,8 +7388,8 @@ mod tests {
         // four side-by-side windows nests binary (session-fixture shape), a
         // focus-left walk reaches win-1, and one right move grows the inner
         // group (R2b). Focusing up then moving down hits R2c. Missing and explicit
-        // `cosmic-wrap` wrap (`WrapSiblings`); `flat-swap` swaps
-        // (`SwapNeighbor`); both keep the mover focused.
+        // `group-with-neighbor` wrap (`WrapSiblings`); `swap-with-neighbor`
+        // swaps (`SwapNeighbor`); both keep the mover focused.
         let four = vec![
             ("win-1", 0, 0, 300, 800),
             ("win-2", 300, 0, 300, 800),
@@ -7401,7 +7458,7 @@ mod tests {
             assert_eq!(setup["detail"]["rule"], "R2b", "{setup}");
             // The R2b insertion leaves V[win-2, win-1, H[win-3, win-4]], so
             // focus up to win-2 and move it down onto its leaf neighbor: the
-            // R2c case discriminating wrap from flat-swap.
+            // R2c case discriminating wrap from swap.
             let focused_up = parse_reply(&planner.evaluate(&retained_request(
                 &format!("{correlation}-focus-up"),
                 "owner-1",
@@ -7430,12 +7487,12 @@ mod tests {
         assert_eq!(missing["detail"]["direction"], "down", "{missing}");
         assert_eq!(missing["detail"]["capability"], "WrapSiblings", "{missing}");
         assert_eq!(missing["desired_focus"]["leaf"], "leaf-win-2", "{missing}");
-        let explicit = replay("nary-explicit", Some("cosmic-wrap"));
+        let explicit = replay("nary-explicit", Some("group-with-neighbor"));
         assert_eq!(explicit["outcome"], "planned", "{explicit}");
         for key in ["detail", "desired_geometry", "desired_focus"] {
             assert_eq!(explicit[key], missing[key], "{key}");
         }
-        let flat = replay("nary-flat", Some("flat-swap"));
+        let flat = replay("nary-flat", Some("swap-with-neighbor"));
         assert_eq!(flat["outcome"], "planned", "{flat}");
         assert_eq!(flat["detail"]["rule"], "R2c", "{flat}");
         assert_eq!(flat["detail"]["capability"], "SwapNeighbor", "{flat}");
@@ -7463,10 +7520,11 @@ mod tests {
     #[test]
     fn same_axis_move_codec_decodes_default_and_converts_typed() {
         // Codec unit pins: missing `same_axis_move` deserializes to the
-        // `cosmic-wrap` default; both wire tokens decode; an unknown string
-        // still decodes as a string (the handler refuses it, never the
-        // codec); `core_command_from_sync` maps valid tokens to the typed
-        // enum and returns `None` (never panics) for anything else.
+        // `group-with-neighbor` default; both wire tokens decode; an unknown
+        // string (including retired `cosmic-wrap`/`flat-swap`) still decodes
+        // as a string (the handler refuses it, never the codec);
+        // `core_command_from_sync` maps valid tokens to the typed enum and
+        // returns `None` (never panics) for anything else.
         let decode = |command: serde_json::Value| {
             let decoded: SyncCommand = serde_json::from_value(command).expect("move shape decodes");
             match decoded {
@@ -7476,19 +7534,19 @@ mod tests {
         };
         assert_eq!(
             decode(serde_json::json!({"op": "move", "window": "w", "direction": "right"})),
-            "cosmic-wrap"
+            "group-with-neighbor"
         );
         assert_eq!(
             decode(
-                serde_json::json!({"op": "move", "window": "w", "direction": "right", "same_axis_move": "cosmic-wrap"})
+                serde_json::json!({"op": "move", "window": "w", "direction": "right", "same_axis_move": "group-with-neighbor"})
             ),
-            "cosmic-wrap"
+            "group-with-neighbor"
         );
         assert_eq!(
             decode(
-                serde_json::json!({"op": "move", "window": "w", "direction": "right", "same_axis_move": "flat-swap"})
+                serde_json::json!({"op": "move", "window": "w", "direction": "right", "same_axis_move": "swap-with-neighbor"})
             ),
-            "flat-swap"
+            "swap-with-neighbor"
         );
         assert_eq!(
             decode(
@@ -7505,25 +7563,27 @@ mod tests {
             })
         };
         assert!(matches!(
-            convert("cosmic-wrap"),
+            convert("group-with-neighbor"),
             Some(tiler_core::boundary::CoreCommand::Move {
-                same_axis_move: SameAxisMove::CosmicWrap,
+                same_axis_move: SameAxisMove::GroupWithNeighbor,
                 ..
             })
         ));
         assert!(matches!(
-            convert("flat-swap"),
+            convert("swap-with-neighbor"),
             Some(tiler_core::boundary::CoreCommand::Move {
-                same_axis_move: SameAxisMove::FlatSwap,
+                same_axis_move: SameAxisMove::SwapWithNeighbor,
                 ..
             })
         ));
         assert_eq!(convert("diagonal-wrap"), None);
         assert_eq!(convert(""), None);
+        assert_eq!(convert("cosmic-wrap"), None);
+        assert_eq!(convert("flat-swap"), None);
         for input in [
             serde_json::json!({"op": "move", "window": "w", "direction": "right"}),
-            serde_json::json!({"op": "move", "window": "w", "direction": "right", "same_axis_move": "cosmic-wrap"}),
-            serde_json::json!({"op": "move", "window": "w", "direction": "right", "same_axis_move": "flat-swap"}),
+            serde_json::json!({"op": "move", "window": "w", "direction": "right", "same_axis_move": "group-with-neighbor"}),
+            serde_json::json!({"op": "move", "window": "w", "direction": "right", "same_axis_move": "swap-with-neighbor"}),
         ] {
             let decoded: SyncCommand = serde_json::from_value(input.clone()).expect("move decodes");
             let Some(tiler_core::boundary::CoreCommand::Move { same_axis_move, .. }) =
@@ -7540,7 +7600,7 @@ mod tests {
                 input
                     .get("same_axis_move")
                     .cloned()
-                    .unwrap_or_else(|| serde_json::json!("cosmic-wrap"))
+                    .unwrap_or_else(|| serde_json::json!("group-with-neighbor"))
             );
             let round_trip: SyncCommand = serde_json::from_value(encoded).expect("move round trip");
             assert_eq!(
@@ -7549,9 +7609,223 @@ mod tests {
             );
         }
         // Wire encoding is the validated enum token in both directions.
-        assert_eq!(SameAxisMove::CosmicWrap.as_wire_str(), "cosmic-wrap");
-        assert_eq!(SameAxisMove::FlatSwap.as_wire_str(), "flat-swap");
-        assert_eq!(SameAxisMove::default(), SameAxisMove::CosmicWrap);
+        assert_eq!(
+            SameAxisMove::GroupWithNeighbor.as_wire_str(),
+            "group-with-neighbor"
+        );
+        assert_eq!(
+            SameAxisMove::SwapWithNeighbor.as_wire_str(),
+            "swap-with-neighbor"
+        );
+        assert_eq!(SameAxisMove::default(), SameAxisMove::GroupWithNeighbor);
+    }
+
+    #[test]
+    fn fixed_size_predicate_default_variants_and_invalid() {
+        // R-SPC-04 D1 wire contract: omitted `fixed_size_predicate` decodes
+        // to `both-axes-fixed`; both tokens parse; unknown values (including
+        // camelCase) refuse as snapshot-invalid `fixed-predicate-invalid`
+        // before any state change.
+        use tiler_core::size_hints::FixedSizePredicate;
+        assert_eq!(FixedSizePredicate::default(), FixedSizePredicate::BothAxes);
+        assert_eq!(
+            FixedSizePredicate::BothAxes.as_wire_str(),
+            "both-axes-fixed"
+        );
+        assert_eq!(
+            FixedSizePredicate::EitherAxis.as_wire_str(),
+            "either-axis-fixed"
+        );
+        assert_eq!(
+            FixedSizePredicate::parse_wire("both-axes-fixed"),
+            Some(FixedSizePredicate::BothAxes)
+        );
+        assert_eq!(
+            FixedSizePredicate::parse_wire("either-axis-fixed"),
+            Some(FixedSizePredicate::EitherAxis)
+        );
+        for invalid in [
+            "",
+            "both",
+            "either",
+            "fixed",
+            "fixedSizePredicate",
+            "both_axes_fixed",
+        ] {
+            assert_eq!(FixedSizePredicate::parse_wire(invalid), None, "{invalid:?}");
+        }
+        let base = retained_request(
+            "pred-missing-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&base));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        // Explicit both-axes replies identically to omitted (modulo correlation).
+        let mut explicit_value: serde_json::Value = serde_json::from_str(&base).expect("valid");
+        explicit_value["fixed_size_predicate"] = serde_json::json!("both-axes-fixed");
+        let reply2 = parse_reply(&planner.evaluate(&explicit_value.to_string()));
+        assert_eq!(reply2["outcome"], "planned", "{reply2}");
+        // Unknown predicate refuses fail-closed with no state change.
+        let mut invalid_value: serde_json::Value = serde_json::from_str(&base).expect("valid");
+        invalid_value["fixed_size_predicate"] = serde_json::json!("bogus");
+        assert_eq!(
+            Planner::new().evaluate(&invalid_value.to_string()),
+            "{\"v\":1,\"correlation_id\":\"pred-missing-1\",\"outcome\":\"rejected\",\"kind\":\"snapshot-invalid\",\"message\":\"request contains an unknown value\",\"detail\":\"fixed-predicate-invalid\"}",
+        );
+        // camelCase spelling is not the wire field.
+        let mut camel: serde_json::Value = serde_json::from_str(&base).expect("valid");
+        camel["fixedSizePredicate"] = serde_json::json!("either-axis-fixed");
+        assert_eq!(
+            Planner::new().evaluate(&camel.to_string()),
+            "{\"v\":1,\"correlation_id\":\"pred-missing-1\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
+        );
+    }
+
+    #[test]
+    fn fixed_size_predicate_either_axis_admits_one_axis_with_switch_only_subsequent() {
+        // One retained planner across a predicate switch: one-axis-fixed
+        // tiles under the default, the switch to `either-axis-fixed` keeps
+        // retained tiled windows tiled while a new one-axis client floats
+        // with no tiled geometry, switching back preserves the automatic
+        // float, and an explicit user tile override wins afterwards.
+        let hints = |window: &str| {
+            serde_json::json!({
+                "window": window,
+                "output": "out-1",
+                "workspace": "ws-1",
+                "rect": {"x": 0, "y": 0, "w": 100, "h": 80},
+                "min_size": {"w": 640, "h": 100},
+                "max_size": {"w": 640, "h": 480},
+            })
+        };
+        let floating_hints = |window: &str| {
+            let mut value = hints(window);
+            value["floating"] = serde_json::json!(true);
+            value["fit_excluded"] = serde_json::json!(true);
+            value
+        };
+        let suppressed_hints = |window: &str| {
+            let mut value = hints(window);
+            value["fixed_suppress"] = serde_json::json!(true);
+            value
+        };
+        let request_with =
+            |correlation: &str, windows: serde_json::Value, predicate: Option<&str>| {
+                let mut request = serde_json::json!({
+                    "v": 1,
+                    "correlation_id": correlation,
+                    "owner": "owner-1",
+                    "generation": "gen-1",
+                    "revision": 0,
+                    "fingerprint": 7,
+                    "domain": {
+                        "output": "out-1",
+                        "workspace": "ws-1",
+                        "bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
+                        "gap": 0,
+                        "outer_gap": 0,
+                    },
+                    "focused_window": "win-1",
+                    "windows": windows,
+                    "command": {"op": "reconcile"},
+                });
+                if let Some(predicate) = predicate {
+                    request["fixed_size_predicate"] = serde_json::json!(predicate);
+                }
+                request.to_string()
+            };
+        let geometry_has = |reply: &serde_json::Value, window: &str| {
+            reply["desired_geometry"]
+                .as_array()
+                .expect("geometry")
+                .iter()
+                .any(|g| g["window"] == window)
+        };
+        let mut planner = Planner::new();
+        // Step 1, default predicate: one-axis-fixed tiles (settles tiled).
+        let reply = parse_reply(&planner.evaluate(&request_with(
+            "pred-switch-1",
+            serde_json::json!([
+                {"window": "win-1", "output": "out-1", "workspace": "ws-1", "rect": {"x": 0, "y": 0, "w": 100, "h": 80}},
+                hints("win-2"),
+            ]),
+            None,
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert!(geometry_has(&reply, "win-1"), "{reply}");
+        assert!(
+            geometry_has(&reply, "win-2"),
+            "one-axis tiles by default {reply}"
+        );
+        // Step 2, switched to either-axis on the SAME planner with the same
+        // members plus a new one-axis client: retained win-2 stays tiled
+        // (no reclassification) while brand-new win-3 floats (no geometry).
+        let reply = parse_reply(&planner.evaluate(&request_with(
+            "pred-switch-2",
+            serde_json::json!([
+                {"window": "win-1", "output": "out-1", "workspace": "ws-1", "rect": {"x": 0, "y": 0, "w": 100, "h": 80}},
+                hints("win-2"),
+                hints("win-3"),
+            ]),
+            Some("either-axis-fixed"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert!(geometry_has(&reply, "win-1"), "{reply}");
+        assert!(
+            geometry_has(&reply, "win-2"),
+            "switch keeps retained tiled {reply}"
+        );
+        assert!(
+            !geometry_has(&reply, "win-3"),
+            "new one-axis floats {reply}"
+        );
+        // Step 3, switched back to both-axes with win-3 adopted floating
+        // (as the adapter carries it): the automatic float is preserved,
+        // never re-tiled by the switch.
+        let reply = parse_reply(&planner.evaluate(&request_with(
+            "pred-switch-3",
+            serde_json::json!([
+                {"window": "win-1", "output": "out-1", "workspace": "ws-1", "rect": {"x": 0, "y": 0, "w": 100, "h": 80}},
+                hints("win-2"),
+                floating_hints("win-3"),
+            ]),
+            Some("both-axes-fixed"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert!(geometry_has(&reply, "win-2"), "{reply}");
+        assert!(
+            !geometry_has(&reply, "win-3"),
+            "automatic float preserved {reply}"
+        );
+        // Step 4, explicit user tile override wins for the live client.
+        let reply = parse_reply(&planner.evaluate(&request_with(
+            "pred-switch-4",
+            serde_json::json!([
+                {"window": "win-1", "output": "out-1", "workspace": "ws-1", "rect": {"x": 0, "y": 0, "w": 100, "h": 80}},
+                hints("win-2"),
+                suppressed_hints("win-3"),
+            ]),
+            Some("either-axis-fixed"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert!(geometry_has(&reply, "win-3"), "override tiles {reply}");
+        // Step 5, the recorded override keeps win-3 tiled without the signal.
+        let reply = parse_reply(&planner.evaluate(&request_with(
+            "pred-switch-5",
+            serde_json::json!([
+                {"window": "win-1", "output": "out-1", "workspace": "ws-1", "rect": {"x": 0, "y": 0, "w": 100, "h": 80}},
+                hints("win-2"),
+                hints("win-3"),
+            ]),
+            Some("either-axis-fixed"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert!(geometry_has(&reply, "win-3"), "override persists {reply}");
     }
 
     #[test]
@@ -8230,7 +8504,7 @@ mod tests {
             );
             assert!(seen.insert(*token), "duplicate token: {token}");
         }
-        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 53, "closed registry size");
+        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 54, "closed registry size");
     }
 
     fn geometry_by_window(

@@ -1,5 +1,10 @@
 # Q2: fixed-size float admission (R-SPC-04)
 
+- Follow-up 2026-10-08: D1 predicate setting delivered offline in shared core
+  and KDE; [D1 delivery](admission-and-move-settings.md). User decisions in
+  [decisions](../../decisions.md#fixed-size-admission) supersede the provisional
+  clauses below; D5/D6/D7 changes remain pending.
+
 ## Goal and scope
 
 - Deliver the accepted 2026-10-07 fixed-size admission exception in shared

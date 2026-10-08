@@ -174,7 +174,7 @@ describe("interim tiler reload contract", () => {
     it("sends nothing on an unchanged save and requests reconfigure only for changed live settings", () => {
         const saveBody = functionBody(module, "void UnifiedSettingsModule::save()");
         assert.match(saveBody, /scriptRetryArmed = m_gapReconfigurePending/);
-        assert.match(saveBody, /const bool liveChanged = gapChanged \|\| sameAxisMoveChanged/);
+        assert.match(saveBody, /const bool liveChanged = gapChanged \|\| sameAxisMoveChanged \|\| fixedPredicateChanged/);
         assert.match(saveBody, /if \(liveChanged \|\| scriptRetryArmed\)/);
         assert.match(saveBody, /requestScriptReconfigure\(\)/);
         assert.doesNotMatch(module, /setEnabled\(m_tilerReloadRequired\)/);

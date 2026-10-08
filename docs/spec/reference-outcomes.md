@@ -3204,7 +3204,7 @@ Legend:
 |---|---|---|
 | V-INS-AXIS | New-window split axis: long-edge vs orientation-toggle vs alternate | Selected as user statement `D-dec-x` |
 | V-MOVE-PERP | Perpendicular move: COSMIC restructure vs no-op/swap | COSMIC R1 selected; foreign swap/no-op unselected (`D-dec-cos`) |
-| V-MOVE-NARY | 3+-child wrap vs flat swap; same-orientation nesting allowed | Ordered N-ary + R2b/R2c/R3 selected (`D-dec-cos`); global `sameAxisMove` / `core.same_axis_move`, `group-with-neighbor` default (label `Group with neighbor`, tooltip COSMIC) or `swap-with-neighbor` (label `Swap with neighbor`, tooltip i3, sway) for R2c adjacent direct leaf siblings only, shares travel with windows; leaf/group rules unchanged. Shared core/KDE behavior [delivered offline](../changes/archive/same-axis-move-setting.md); Windows wiring/native journey pending (R-MOV-03/09/10). Exact IDs selected User 2026-10-08; rename implementation pending; breaking pre-release configs acceptable, no migration |
+| V-MOVE-NARY | 3+-child wrap vs flat swap; same-orientation nesting allowed | Ordered N-ary + R2b/R2c/R3 selected (`D-dec-cos`); global `sameAxisMove` / `core.same_axis_move`, `group-with-neighbor` default (label `Group with neighbor`, tooltip COSMIC) or `swap-with-neighbor` (label `Swap with neighbor`, tooltip i3, sway) for R2c adjacent direct leaf siblings only, shares travel with windows; leaf/group rules unchanged. Shared core/KDE behavior and functional IDs [delivered offline](../changes/archive/admission-and-move-settings.md); Windows settings wiring/native journey pending (R-MOV-03/09/10). Exact IDs selected User 2026-10-08; breaking pre-release configs acceptable, no migration or aliases |
 | V-WS-FOLLOW | Send follows focus vs leaves focus in source | `D-dec-cos` selects verified follow; USER 2026-10-07 item 2: numbered/relative follow defaults, bindable unbound stay, target resolved once in existing-order ring; shared core/KDE [delivered offline](../changes/archive/kde-workspace-send-follow-stay.md), floating-boundary follow gap repaired, item-2 native journey/Windows wiring pending (R-WS-18..20). Item 5 explicit output follow/stay [delivered offline](../changes/archive/four-direction-output-transfer.md), native journey/Windows wiring pending (R-OUT-04/07) |
 | V-WS-SHELL-ACTIVATE | Shell selection of another workspace's window: switch workspace vs pull window | KDE native configured policy (default switch); Windows option unselected (`D-alt-tab`) |
 | V-WS-ANCHOR | Target anchor: remembered-leaf vs focus-history vs root; axis by long edge | Selected rule (`D-dec-x` + `D-place` synthetic proof) |
@@ -3231,7 +3231,7 @@ Legend:
   from TBD reference outcomes; they do not add reference-consensus votes.
   Eight Q2 discriminators R-SPC-06..13 added 2026-10-08 contribute 112 Then
   bullets; D1-D8 are user-selected NORMATIVE
-  (User 2026-10-08; changed D1/D5/D6/D7 portions
+  (User 2026-10-08; D1 setting delivered offline, changed D5/D6/D7 portions
   implementation pending), KDE is implemented offline,
   unsupported reference/native outcomes stay TBD and no consensus is recomputed.
   Six Q4 migration discriminators R-WS-21..26 added 2026-10-08 contribute 84
@@ -3290,7 +3290,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Close / reflow | [close.md](reference-outcomes/close.md) | R-CLOSE-01..05 (5) | none (R-CLOSE-03..05 landed with scrolling backfill) |
 | Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..07 (7) | R-OUT-07 added 2026-10-07; reference outcomes TBD; KDE item 5 R-OUT-01/04/07 delivered offline; native journey/Windows wiring pending |
 | Mouse | [mouse.md](reference-outcomes/mouse.md) | R-DRAG-01..08 + R-MOU-01..03 (11) | none (R-MOU-01..03 landed with scrolling backfill) |
-| Special windows | [special-windows.md](reference-outcomes/special-windows.md) | R-SPC-01..13 (13) | R-SPC-04/06..13 KDE implemented offline under user-selected NORMATIVE D1-D8 (User 2026-10-08; changed D1/D5/D6/D7 portions implementation pending); native, Windows wiring and unsupported reference outcomes TBD |
+| Special windows | [special-windows.md](reference-outcomes/special-windows.md) | R-SPC-01..13 (13) | R-SPC-04/06..13 KDE implemented offline under user-selected NORMATIVE D1-D8 (User 2026-10-08; D1 setting delivered offline, changed D5/D6/D7 portions implementation pending); native, Windows wiring and unsupported reference outcomes TBD |
 | Activation | [activation.md](reference-outcomes/activation.md) | R-ACT-01..02 (2) | none (landed; no backfill: no prior rows) |
 | Restart / persistence | [restart-persistence.md](reference-outcomes/restart-persistence.md) | R-START-01..03 + R-CTL-01..07 + R-RST-01..04 (14) | Q3 KDE intentional membership implemented offline under user-selected NORMATIVE D1-D4 (User 2026-10-08; fixed-window tile-override persistence pending); R-RST-03/04 cover frame drift and automatic-vs-intent origin; native, Windows and unsupported reference legs TBD |
 | Column mechanics | [column-mechanics.md](reference-outcomes/column-mechanics.md) | R-COL-01..10 (10) | none (landed) |

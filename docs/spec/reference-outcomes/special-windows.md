@@ -5,8 +5,8 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 Candidates: R-SPC-01 through R-SPC-05 (transients/modals, splash/utility types, PiP, fixed-size admission, app-owned resize/hint changes). No existing special rows to backfill (0 existing rows, 0 cells). PiP is app/flags-specific with no universal native type; no profile invents one.
 
 Q2 discriminators R-SPC-06..13 cover fixed-size edge cases. D1-D8 are
-user-selected NORMATIVE (User 2026-10-08; REQ-SPC-04a..h); changed D1/D5/D6/D7
-portions are implementation pending in Ours KDE;
+user-selected NORMATIVE (User 2026-10-08; REQ-SPC-04a..h); D1 setting delivered
+offline, changed D5/D6/D7 portions are implementation pending in Ours KDE;
 [offline delivery and review record](../../changes/archive/fixed-size-admission.md).
 
 ## New scenarios (GWT; fixtures/actions/discriminators per the approved expansion record)
@@ -202,18 +202,17 @@ transient (no dialog flag) is a different fixture and is not claimed.
 - Then Ours KDE: E is an automatic float outside the tile tree. No E
   geometry, focus, stacking or keep-above writes from classification;
   exact native/game journey TBD. Implemented offline 2026-10-08 under
-  NORMATIVE D1-D8 (User 2026-10-08; changed D1/D5/D6/D7 portions
+  NORMATIVE D1-D8 (User 2026-10-08; D1 setting delivered, changed D5/D6/D7 portions
   implementation pending); [real Planner fixtures](../../../kwin/tests/fixed-size-admission.test.ts),
   [record](../../changes/archive/fixed-size-admission.md).
 - Then Ours Windows: tiles with its declared-hint clamp carried
   into the Engine rows (`WM_GETMINMAXINFO` per member; no
   fixed-size exclusion). `S(S-ours-spc-win)`.
-- Variant hook: NORMATIVE D1/D8 (User 2026-10-08; selected,
-  setting implementation pending). Whole-vector default
-  with functionally named values (`Width and height both fixed` default,
-  tooltip COSMIC; `Width or height fixed`, tooltip Hyprland on Wayland and
-  sway); functional value IDs pending. Existing sameAxisMove values get
-  functional names with WM tooltips; no config migration.
+- Variant hook: NORMATIVE D1/D8 (User 2026-10-08; delivered offline).
+  KDE `fixedSizePredicate=both-axes-fixed` default (`Width and height both fixed`,
+  tooltip COSMIC) or `either-axis-fixed` (`Width or height fixed`, tooltip
+  Hyprland (Wayland), sway); both float this fixture. Windows handoff
+  `core.fixed_size_predicate`; no migration.
 
 ### R-SPC-05: app-owned resize and minimum-hint change on a tile
 
@@ -298,22 +297,25 @@ All fresh variants below reset the client and WM state independently.
 - Then PaperWM: TBD.
 - Then karousel/Lazy: TBD (native resizeable mapping untraced).
 - Then paneru: TBD.
-- Then Ours KDE: tiles in both variants (NORMATIVE D1, whole-vector
-  equality; new either-axis values selected, implementation pending).
-  Implemented offline 2026-10-08;
+- Then Ours KDE: `both-axes-fixed` default tiles in both variants;
+  `either-axis-fixed` floats in both without target writes (NORMATIVE D1).
+  Switch to either-axis after admitting tiled E: E remains tiled; a new
+  otherwise identical F floats. Switching back leaves F floating; explicit
+  user tile overrides still win for the live client. This setting-change
+  leg has no reference-WM outcome claim. Delivered offline 2026-10-08;
   [predicate/Planner fixtures](../../../kwin/tests/fixed-size-admission.test.ts),
-  [record](../../changes/archive/fixed-size-admission.md). Native TBD.
+  [D1 record](../../changes/archive/admission-and-move-settings.md). Native TBD.
 - Then Ours Windows: TBD (handoff only; behavior frozen).
-- Variant hook: NORMATIVE whole-size default (User 2026-10-08);
-  either-axis values selected with functional names, IDs pending,
-  implementation pending.
+- Variant hook: NORMATIVE whole-size default or either-axis setting
+  (User 2026-10-08); functional IDs delivered offline.
 
 ### R-SPC-07: admit with unset, zero or equal partial-zero hints
 
 - Given (tree profiles): `H[A*]`; ordinary non-transient E. Independent
   hint variants: min/max absent; min=max (0,0); min=max (640,0);
   min=max (0,480); min=max (2147483647,2147483647), a KWin unbounded
-  sentinel rather than a usable fixed size. No rule/overlay/type exception.
+  sentinel rather than a usable fixed size. Fresh guard variant: width
+  min=max=640 but both height bounds absent. No rule/overlay/type exception.
 - Given (column profiles): `COL[C1[A*]]`; same independent variants.
 - When: open E with one hint variant.
 - Observe: absence/zero/sentinel normalization vs raw equality.
@@ -340,7 +342,9 @@ All fresh variants below reset the client and WM state independently.
   partial-zero vectors do (NORMATIVE D1, no resizeable inference).
   Implemented offline 2026-10-08; [shared predicate fixtures](../../../crates/tiler-core/tests/fixed_size_admission.rs),
   [KDE fixtures](../../../kwin/tests/fixed-size-admission.test.ts).
-  Native hint representation remains TBD.
+  Both predicates preserve these guards; the width-fixed/height-absent
+  variant tiles under both (whole vectors must be usable). Reference outcomes
+  for that added guard variant and native hint representation remain TBD.
 - Then Ours Windows: TBD (max-track extraction not wired).
 - Variant hook: NORMATIVE whole-size equality vs meaningful-bound
   normalization (User 2026-10-08).

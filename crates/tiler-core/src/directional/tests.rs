@@ -88,7 +88,7 @@ fn intent(source: &str, focused_leaf: &str, direction: Direction) -> MoveIntent 
         focused_leaf: NodeId::from(focused_leaf),
         focused_window: WindowId(format!("w-{focused_leaf}")),
         direction,
-        same_axis_move: SameAxisMove::CosmicWrap,
+        same_axis_move: SameAxisMove::GroupWithNeighbor,
     }
 }
 
@@ -284,18 +284,33 @@ fn r2c_wrap_neighbor_n_ary_s1_01_s4_01_s14_01_s18_01_m2_u1() {
 
 #[test]
 fn same_axis_move_wire_tokens_round_trip_with_wrap_default() {
-    assert_eq!(SameAxisMove::default(), SameAxisMove::CosmicWrap);
-    assert_eq!(SameAxisMove::CosmicWrap.as_wire_str(), "cosmic-wrap");
-    assert_eq!(SameAxisMove::FlatSwap.as_wire_str(), "flat-swap");
+    assert_eq!(SameAxisMove::default(), SameAxisMove::GroupWithNeighbor);
     assert_eq!(
-        SameAxisMove::parse_wire("cosmic-wrap"),
-        Some(SameAxisMove::CosmicWrap)
+        SameAxisMove::GroupWithNeighbor.as_wire_str(),
+        "group-with-neighbor"
     );
     assert_eq!(
-        SameAxisMove::parse_wire("flat-swap"),
-        Some(SameAxisMove::FlatSwap)
+        SameAxisMove::SwapWithNeighbor.as_wire_str(),
+        "swap-with-neighbor"
     );
-    for invalid in ["", "Cosmic-Wrap", "flat_swap", "swap", "wrap", "null"] {
+    assert_eq!(
+        SameAxisMove::parse_wire("group-with-neighbor"),
+        Some(SameAxisMove::GroupWithNeighbor)
+    );
+    assert_eq!(
+        SameAxisMove::parse_wire("swap-with-neighbor"),
+        Some(SameAxisMove::SwapWithNeighbor)
+    );
+    for invalid in [
+        "",
+        "Cosmic-Wrap",
+        "flat_swap",
+        "swap",
+        "wrap",
+        "null",
+        "cosmic-wrap",
+        "flat-swap",
+    ] {
         assert_eq!(SameAxisMove::parse_wire(invalid), None, "{invalid:?}");
     }
 }
@@ -314,7 +329,12 @@ fn flat_swap_nary_right_swaps_adjacent_leaf_sibling() {
     let snap = single_output(tree);
     let outcome = plan_move(
         &snap,
-        &intent_with_mode("source", "W", Direction::Right, SameAxisMove::FlatSwap),
+        &intent_with_mode(
+            "source",
+            "W",
+            Direction::Right,
+            SameAxisMove::SwapWithNeighbor,
+        ),
     );
     let plan = planned(&outcome);
     assert_eq!(
@@ -338,7 +358,12 @@ fn flat_swap_nary_left_and_vertical_swap_adjacent_leaf_sibling() {
     let snap = single_output(tree);
     let outcome = plan_move(
         &snap,
-        &intent_with_mode("source", "S", Direction::Left, SameAxisMove::FlatSwap),
+        &intent_with_mode(
+            "source",
+            "S",
+            Direction::Left,
+            SameAxisMove::SwapWithNeighbor,
+        ),
     );
     let plan = planned(&outcome);
     assert_eq!(
@@ -357,7 +382,12 @@ fn flat_swap_nary_left_and_vertical_swap_adjacent_leaf_sibling() {
     let snap = single_output(vertical);
     let outcome = plan_move(
         &snap,
-        &intent_with_mode("source", "W", Direction::Down, SameAxisMove::FlatSwap),
+        &intent_with_mode(
+            "source",
+            "W",
+            Direction::Down,
+            SameAxisMove::SwapWithNeighbor,
+        ),
     );
     let plan = planned(&outcome);
     assert_eq!(
@@ -370,7 +400,7 @@ fn flat_swap_nary_left_and_vertical_swap_adjacent_leaf_sibling() {
     );
     let outcome = plan_move(
         &snap,
-        &intent_with_mode("source", "S", Direction::Up, SameAxisMove::FlatSwap),
+        &intent_with_mode("source", "S", Direction::Up, SameAxisMove::SwapWithNeighbor),
     );
     let plan = planned(&outcome);
     assert_eq!(
@@ -407,7 +437,12 @@ fn flat_swap_group_neighbor_keeps_wrap_rule() {
     .clone();
     let flat = planned(&plan_move(
         &single_output(tree()),
-        &intent_with_mode("source", "B", Direction::Right, SameAxisMove::FlatSwap),
+        &intent_with_mode(
+            "source",
+            "B",
+            Direction::Right,
+            SameAxisMove::SwapWithNeighbor,
+        ),
     ))
     .operation
     .clone();
@@ -436,7 +471,12 @@ fn flat_swap_leaves_binary_group_and_escape_rules_unchanged() {
     .clone();
     let flat = planned(&plan_move(
         &single_output(binary()),
-        &intent_with_mode("source", "W", Direction::Right, SameAxisMove::FlatSwap),
+        &intent_with_mode(
+            "source",
+            "W",
+            Direction::Right,
+            SameAxisMove::SwapWithNeighbor,
+        ),
     ))
     .operation
     .clone();
@@ -469,7 +509,12 @@ fn flat_swap_leaves_binary_group_and_escape_rules_unchanged() {
     .clone();
     let flat = planned(&plan_move(
         &single_output(nested()),
-        &intent_with_mode("source", "B", Direction::Right, SameAxisMove::FlatSwap),
+        &intent_with_mode(
+            "source",
+            "B",
+            Direction::Right,
+            SameAxisMove::SwapWithNeighbor,
+        ),
     ))
     .operation
     .clone();
@@ -502,7 +547,7 @@ fn same_axis_modes_agree_on_root_ends_and_nested_group_ends() {
         );
         let flat = plan_move(
             &single_output(nary()),
-            &intent_with_mode("source", focused, direction, SameAxisMove::FlatSwap),
+            &intent_with_mode("source", focused, direction, SameAxisMove::SwapWithNeighbor),
         );
         assert_eq!(wrap, flat, "{focused:?} {direction:?}");
         assert!(
@@ -528,7 +573,7 @@ fn same_axis_modes_agree_on_root_ends_and_nested_group_ends() {
         let wrap_outcome = plan_move(&pair(), &intent("source", focused, direction));
         let flat_outcome = plan_move(
             &pair(),
-            &intent_with_mode("source", focused, direction, SameAxisMove::FlatSwap),
+            &intent_with_mode("source", focused, direction, SameAxisMove::SwapWithNeighbor),
         );
         let wrap = planned(&wrap_outcome);
         let flat = planned(&flat_outcome);
@@ -560,7 +605,12 @@ fn same_axis_modes_agree_on_root_ends_and_nested_group_ends() {
     );
     let flat_outcome = plan_move(
         &single_output(nested()),
-        &intent_with_mode("source", "W", Direction::Left, SameAxisMove::FlatSwap),
+        &intent_with_mode(
+            "source",
+            "W",
+            Direction::Left,
+            SameAxisMove::SwapWithNeighbor,
+        ),
     );
     let wrap = planned(&wrap_outcome);
     let flat = planned(&flat_outcome);
@@ -998,7 +1048,7 @@ fn rejects_shared_topology_and_malformed_output_sets() {
                 focused_leaf: NodeId::from("A"),
                 focused_window: WindowId::from("w-A"),
                 direction: Direction::Right,
-                same_axis_move: SameAxisMove::CosmicWrap,
+                same_axis_move: SameAxisMove::GroupWithNeighbor,
             },
         ),
         MoveOutcome::Rejected { .. }

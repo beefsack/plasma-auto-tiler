@@ -29,10 +29,18 @@
         </entry>
         <entry name="sameAxisMove" type="Enum">
             <label>The same-axis move behavior</label>
-            <default>cosmic-wrap</default>
+            <default>group-with-neighbor</default>
             <choices>
-                <choice name="cosmic-wrap" value="cosmic-wrap"/>
-                <choice name="flat-swap" value="flat-swap"/>
+                <choice name="group-with-neighbor" value="group-with-neighbor"/>
+                <choice name="swap-with-neighbor" value="swap-with-neighbor"/>
+            </choices>
+        </entry>
+        <entry name="fixedSizePredicate" type="Enum">
+            <label>The fixed-size admission predicate</label>
+            <default>both-axes-fixed</default>
+            <choices>
+                <choice name="both-axes-fixed" value="both-axes-fixed"/>
+                <choice name="either-axis-fixed" value="either-axis-fixed"/>
             </choices>
         </entry>
         <entry name="innerGap" type="Int">

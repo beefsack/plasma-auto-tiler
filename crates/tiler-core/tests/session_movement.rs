@@ -763,7 +763,7 @@ fn r2c_wrap_neighbor_nary() {
 #[test]
 fn flat_swap_nary_end_to_end_with_traveling_shares() {
     // Same R2c fixture as `r2c_wrap_neighbor_nary`, but the final move runs
-    // under FlatSwap: adjacent direct leaf siblings swap in place, shares
+    // under SwapWithNeighbor: adjacent direct leaf siblings swap in place, shares
     // travel with their windows, focus stays, and no wrapper group appears.
     let mut s = single_session();
     for (i, c) in ["c-1", "c-2", "c-3", "c-4"].iter().enumerate() {
@@ -800,7 +800,7 @@ fn flat_swap_nary_end_to_end_with_traveling_shares() {
         Direction::Right,
         "m-flat",
         &Capabilities::full(),
-        SameAxisMove::FlatSwap,
+        SameAxisMove::SwapWithNeighbor,
     );
     assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R2c);
     match &plan.dispatch.operation {
@@ -835,7 +835,7 @@ fn flat_swap_nary_end_to_end_with_traveling_shares() {
         Direction::Left,
         "m-flat-back",
         &Capabilities::full(),
-        SameAxisMove::FlatSwap,
+        SameAxisMove::SwapWithNeighbor,
     );
     assert_eq!(back.dispatch.rule, tiler_core::directional::Rule::R2c);
     match &back.dispatch.operation {
@@ -855,7 +855,7 @@ fn flat_swap_nary_end_to_end_with_traveling_shares() {
 #[test]
 fn flat_swap_group_end_escape_unchanged() {
     // Same flow as `r3_escape_same_axis` through the R2c wrap, but the final
-    // Left escape runs under FlatSwap: ancestor/boundary behavior is
+    // Left escape runs under SwapWithNeighbor: ancestor/boundary behavior is
     // identical (R3, same-axis insertion, no continuation).
     let mut s = single_session();
     for (i, c) in ["c-1", "c-2", "c-3", "c-4"].iter().enumerate() {
@@ -881,7 +881,7 @@ fn flat_swap_group_end_escape_unchanged() {
         Direction::Left,
         "m-2",
         &Capabilities::full(),
-        SameAxisMove::FlatSwap,
+        SameAxisMove::SwapWithNeighbor,
     );
     assert_eq!(r3.dispatch.rule, tiler_core::directional::Rule::R3);
     match &r3.dispatch.operation {

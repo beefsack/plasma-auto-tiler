@@ -1,5 +1,9 @@
 # Same-axis move setting
 
+- Follow-up 2026-10-08: functional value IDs `group-with-neighbor` /
+  `swap-with-neighbor` delivered offline, superseding the IDs in this historical
+  record; no aliases or migration. [D1 delivery](admission-and-move-settings.md).
+
 ## Goal and scope
 
 - Deliver decisions 2026-10-07 item 3.1/3.2: global `cosmic-wrap` default and `flat-swap` alternative in shared Rust core/protocol and KDE config/KCM.

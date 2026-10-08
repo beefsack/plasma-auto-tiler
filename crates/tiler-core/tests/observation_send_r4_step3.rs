@@ -468,7 +468,7 @@ fn r4_cross_output_commits_immediately_with_empty_target() {
             window: "win-m".to_owned(),
             direction: "right".to_owned(),
             cross_output_transfer: true,
-            same_axis_move: tiler_core::directional::SameAxisMove::CosmicWrap,
+            same_axis_move: tiler_core::directional::SameAxisMove::GroupWithNeighbor,
         },
     };
     let geometry = match engine.handle(&event) {

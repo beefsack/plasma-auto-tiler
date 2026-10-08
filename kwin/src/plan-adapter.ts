@@ -18,6 +18,11 @@
 
 import { orderGeometryWrites } from "./geometry-order";
 import { normalizeSameAxisMove } from "./same-axis-move";
+import {
+    FIXED_SIZE_PREDICATE_DEFAULT,
+    FIXED_SIZE_PREDICATE_EITHER,
+    normalizeFixedSizePredicate,
+} from "./fixed-size-predicate";
 import { KWIN_TRACE_ENABLED } from "./trace";
 
 export const PLAN_SERVICE = "org.plasmaautotiler.Planner";
@@ -726,8 +731,13 @@ export interface PlanAdapterEnv {
     // R-MOV-03 same-axis move mode for the move wire command. Read live per
     // move request so an entry-owned Options configChanged re-read applies
     // to subsequent moves with no tree rebuild. Absent/invalid resolves to
-    // `cosmic-wrap` (wire-omitted, the historical default).
+    // `group-with-neighbor` (wire-omitted, the historical default).
     readonly readSameAxisMove?: () => unknown;
+    // R-SPC-04 D1 fixed-size admission predicate. Read live per request so
+    // an entry-owned Options configChanged re-read applies to subsequent
+    // admissions with no reclassification. Absent/invalid resolves to
+    // `both-axes-fixed` (wire-omitted, the delivered default).
+    readonly readFixedSizePredicate?: () => unknown;
 }
 
 export interface PlanEnableAuth {
@@ -1184,16 +1194,19 @@ function meaningfulMinExtent(value: unknown): number | null {
 }
 
 // Q2 fixed-size float admission predicate (D1), mirroring core
-// `is_fixed_size`: fixed iff min and max are BOTH present with usable
-// nonnegative vector sizes (0..=16384) on BOTH axes and equal on BOTH
-// axes. The entire (0,0) vector does not count; equal partial-zero
-// vectors such as (640,0) or (0,480) do count. Unset bounds, negative
-// values, unbounded sentinels, and out-of-contract values never count.
-// The resizeable flag alone never counts and no either-axis setting
-// exists. Total over all inputs.
+// `is_fixed_size_with`: min and max must BOTH be present with usable
+// nonnegative vector sizes (0..=16384); the entire (0,0) vector does not
+// count; equal partial-zero vectors such as (640,0) or (0,480) do count.
+// Unset bounds, negative values, unbounded sentinels, and out-of-contract
+// values never count. The resizeable flag alone never counts. The final
+// equality is predicate-selected: `both-axes-fixed` (default) needs both
+// axes equal, `either-axis-fixed` needs either axis equal. Total over all
+// inputs. The third `predicate` parameter defaults to the delivered
+// both-axes behavior so legacy callers stay byte-identical.
 export function isFixedSize(
     minSize: { readonly w: unknown; readonly h: unknown } | null | undefined,
     maxSize: { readonly w: unknown; readonly h: unknown } | null | undefined,
+    predicate: unknown = FIXED_SIZE_PREDICATE_DEFAULT,
 ): boolean {
     if (minSize === null || minSize === undefined || maxSize === null || maxSize === undefined) {
         return false;
@@ -1214,6 +1227,9 @@ export function isFixedSize(
     const maxH = maxSize.h as number;
     if (minW === 0 && minH === 0 && maxW === 0 && maxH === 0) {
         return false;
+    }
+    if (normalizeFixedSizePredicate(predicate) === FIXED_SIZE_PREDICATE_EITHER) {
+        return minW === maxW || minH === maxH;
     }
     return minW === maxW && minH === maxH;
 }
@@ -2854,7 +2870,7 @@ export class PlanAdapter {
                         // normal observation tiles, so record an explicit
                         // tile win and never auto-float this live client.
                         const hints = this.hintSizesFor(entry.ref);
-                        if (isFixedSize(hints.minSize, hints.maxSize)) {
+                        if (isFixedSize(hints.minSize, hints.maxSize, this.readFixedSizePredicate())) {
                             this.noteFixedTileOverride(entry.id, entry.ref);
                         }
                     }
@@ -3827,6 +3843,7 @@ export class PlanAdapter {
     // minimized-omission snapshots keep foreign records, and each sighting
     // refreshes the stored domain so retile targets current homing.
     private withFixedSizeFloats(snapshot: PlanSnapshot, observed: PlanObserved): PlanSnapshot {
+        const predicate = this.readFixedSizePredicate();
         const refById = new Map<string, object>();
         for (const entry of observed.windows) {
             if (!refById.has(entry.id)) {
@@ -3877,7 +3894,7 @@ export class PlanAdapter {
             // and non-fixed rows stay byte-identical.
             if (record !== undefined && record.kind === "suppress" && record.ref === ref) {
                 record.domain = liveDomain;
-                if (!isFixedSize(entry.minSize, entry.maxSize)) {
+                if (!isFixedSize(entry.minSize, entry.maxSize, predicate)) {
                     const { fixedAuto: _dropped, fixedSuppress: _drop2, ...rest } = entry;
                     void _dropped;
                     void _drop2;
@@ -3902,7 +3919,7 @@ export class PlanAdapter {
             if (entry.floating === true) {
                 return entry;
             }
-            if (!isFixedSize(entry.minSize, entry.maxSize)) {
+            if (!isFixedSize(entry.minSize, entry.maxSize, predicate)) {
                 // Pin normal first admission (D2/D3): a tiled live client
                 // seen normal records suppression for later, when hints
                 // turn fixed or a recreated session re-observes it. The
@@ -4089,10 +4106,13 @@ export class PlanAdapter {
                 ...(snapshot.domains?.length === 2
                     ? { cross_output_transfer: crossOutputTransferSupported(this.env) }
                     : {}),
-                // R-MOV-03 same-axis mode. The default cosmic-wrap stays
-                // wire-omitted so historical requests are byte-identical;
-                // flat-swap carries explicitly. Invalid resolves to default.
-                ...(this.readSameAxisMove() === "flat-swap" ? { same_axis_move: "flat-swap" } : {}),
+                // R-MOV-03 same-axis mode. The default group-with-neighbor
+                // stays wire-omitted so historical requests are
+                // byte-identical; swap-with-neighbor carries explicitly.
+                // Invalid resolves to default.
+                ...(this.readSameAxisMove() === "swap-with-neighbor"
+                    ? { same_axis_move: "swap-with-neighbor" }
+                    : {}),
             },
             direction,
         });
@@ -4102,12 +4122,25 @@ export class PlanAdapter {
         try {
             const reader = this.env.readSameAxisMove;
             if (typeof reader !== "function") {
-                return "cosmic-wrap";
+                return "group-with-neighbor";
             }
             return normalizeSameAxisMove(reader());
         } catch (error) {
             void error;
-            return "cosmic-wrap";
+            return "group-with-neighbor";
+        }
+    }
+
+    private readFixedSizePredicate(): string {
+        try {
+            const reader = this.env.readFixedSizePredicate;
+            if (typeof reader !== "function") {
+                return FIXED_SIZE_PREDICATE_DEFAULT;
+            }
+            return normalizeFixedSizePredicate(reader());
+        } catch (error) {
+            void error;
+            return FIXED_SIZE_PREDICATE_DEFAULT;
         }
     }
 
@@ -7080,6 +7113,13 @@ export class PlanAdapter {
                 focused_window: snapshot.focusedId,
                 windows,
                 command,
+                // R-SPC-04 D1 predicate. The default both-axes-fixed stays
+                // wire-omitted so historical requests are byte-identical;
+                // either-axis-fixed carries explicitly. Invalid resolves
+                // to default.
+                ...(this.readFixedSizePredicate() === FIXED_SIZE_PREDICATE_EITHER
+                    ? { fixed_size_predicate: FIXED_SIZE_PREDICATE_EITHER }
+                    : {}),
             });
         } catch (error) {
             void error;

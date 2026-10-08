@@ -68,7 +68,7 @@ impl super::super::Session {
     /// Propose directional movement for the selected exact opaque
     /// `(domain, window)` pair.
     ///
-    /// R-MOV-03 default entry: plans under [`SameAxisMove::CosmicWrap`](crate::directional::SameAxisMove::CosmicWrap).
+    /// R-MOV-03 default entry: plans under [`SameAxisMove::GroupWithNeighbor`](crate::directional::SameAxisMove::GroupWithNeighbor).
     /// Adapters carrying an explicit same-axis setting use
     /// [`Session::propose_move_with_same_axis`]; this wrapper preserves the
     /// historical wrap behavior for legacy callers byte-for-byte.
@@ -105,7 +105,7 @@ impl super::super::Session {
             session_observation,
             correlation_id,
             capabilities,
-            crate::directional::SameAxisMove::CosmicWrap,
+            crate::directional::SameAxisMove::GroupWithNeighbor,
         )
     }
 
@@ -114,7 +114,7 @@ impl super::super::Session {
     /// Identical to [`Session::propose_move`] except the carried
     /// [`SameAxisMove`](crate::directional::SameAxisMove) selects the R2c
     /// leaf-neighbor behavior for this subsequent move only; retained trees
-    /// are never rebuilt. `CosmicWrap` is exactly [`Session::propose_move`].
+    /// are never rebuilt. `GroupWithNeighbor` is exactly [`Session::propose_move`].
     #[allow(clippy::too_many_arguments)]
     pub fn propose_move_with_same_axis(
         &mut self,
@@ -521,7 +521,7 @@ pub(in crate::session) fn apply_move_operation(
         return None;
     }
     // Canonical rule per operation variant. SwapNeighbor admits two rules:
-    // R2a (binary swap) and R2c (N-ary flat-swap under FlatSwap); every other
+    // R2a (binary swap) and R2c (N-ary swap under SwapWithNeighbor); every other
     // variant admits exactly one. The per-arm checks below keep each rule's
     // structural bindings disjoint, so neither rule weakens the other.
     let canonical_ok = match operation {
@@ -655,13 +655,13 @@ pub(in crate::session) fn apply_move_operation(
             // together so each window retains its absolute share. Unchanged
             // under both same-axis modes.
             //
-            // R2c flat-swap (item 3.2): the same adjacent-leaf swap in an N-ary
-            // (3+) parallel container, admitted only under FlatSwap with
+            // R2c swap (item 3.2): the same adjacent-leaf swap in an N-ary
+            // (3+) parallel container, admitted only under SwapWithNeighbor with
             // adjacent direct leaf siblings. The forged combinations refuse:
-            // R2c swap under CosmicWrap, and R2a-shape plans mislabeled R2c.
+            // R2c swap under GroupWithNeighbor, and R2a-shape plans mislabeled R2c.
             if plan.rule == Rule::R2c
                 && operation.rule() == Rule::R2c
-                && plan.intent.same_axis_move == SameAxisMove::FlatSwap
+                && plan.intent.same_axis_move == SameAxisMove::SwapWithNeighbor
             {
                 let (children, shares, caxis) = match find_group(&tree, container) {
                     Some((children, axis, _)) => {
@@ -783,11 +783,11 @@ pub(in crate::session) fn apply_move_operation(
             if *focused_before_neighbor != (iw < ineighbor) {
                 return None;
             }
-            // Strict mode binding (item 3.2): under FlatSwap the planner emits
+            // Strict mode binding (item 3.2): under SwapWithNeighbor the planner emits
             // SwapNeighbor for adjacent direct leaf siblings, so a WrapNeighbor
-            // naming a direct leaf sibling under FlatSwap is forged and
+            // naming a direct leaf sibling under SwapWithNeighbor is forged and
             // refuses. Group neighbors keep the wrap rule under both modes.
-            if plan.intent.same_axis_move == crate::directional::SameAxisMove::FlatSwap
+            if plan.intent.same_axis_move == crate::directional::SameAxisMove::SwapWithNeighbor
                 && matches!(children.get(ineighbor), Some(Node::Leaf { .. }))
             {
                 return None;
@@ -1499,7 +1499,7 @@ mod tests {
             let key = domain_key();
             let plan = plan_for(
                 &snapshot,
-                &intent(focused, direction, SameAxisMove::FlatSwap),
+                &intent(focused, direction, SameAxisMove::SwapWithNeighbor),
             );
             assert_eq!(plan.rule, Rule::R2c, "{focused:?} {direction:?}");
             assert!(
@@ -1536,7 +1536,7 @@ mod tests {
 
     #[test]
     fn wrap_apply_keeps_nesting_under_default_mode() {
-        // Same world under the CosmicWrap default still nests: the wrapper
+        // Same world under the GroupWithNeighbor default still nests: the wrapper
         // carries the summed pair share and the flat order is untouched.
         let (trees, windows, domains, snapshot) = nary_world(
             vec![leaf("A"), leaf("B"), leaf("C"), leaf("D")],
@@ -1545,7 +1545,7 @@ mod tests {
         let key = domain_key();
         let plan = plan_for(
             &snapshot,
-            &intent("B", Direction::Right, SameAxisMove::CosmicWrap),
+            &intent("B", Direction::Right, SameAxisMove::GroupWithNeighbor),
         );
         assert!(matches!(plan.operation, MoveOperation::WrapNeighbor { .. }));
         let policy = default_policy();
@@ -1576,13 +1576,13 @@ mod tests {
         let key = domain_key();
         let policy = default_policy();
         // A genuine flat-swap plan relabeled to the wrap mode refuses: the
-        // R2c swap is admitted only under FlatSwap.
+        // R2c swap is admitted only under SwapWithNeighbor.
         let swap = plan_for(
             &snapshot,
-            &intent("B", Direction::Right, SameAxisMove::FlatSwap),
+            &intent("B", Direction::Right, SameAxisMove::SwapWithNeighbor),
         );
         let mut forged_wrap_mode = swap.clone();
-        forged_wrap_mode.intent.same_axis_move = SameAxisMove::CosmicWrap;
+        forged_wrap_mode.intent.same_axis_move = SameAxisMove::GroupWithNeighbor;
         assert!(
             apply_move_operation(
                 &*policy,
@@ -1597,16 +1597,16 @@ mod tests {
                 None,
             )
             .is_none(),
-            "R2c swap under CosmicWrap must refuse"
+            "R2c swap under GroupWithNeighbor must refuse"
         );
         // A genuine wrap plan relabeled to flat-swap refuses when the neighbor
         // is a direct leaf (the planner would have emitted a swap there).
         let wrap = plan_for(
             &snapshot,
-            &intent("B", Direction::Right, SameAxisMove::CosmicWrap),
+            &intent("B", Direction::Right, SameAxisMove::GroupWithNeighbor),
         );
         let mut forged_flat_mode = wrap.clone();
-        forged_flat_mode.intent.same_axis_move = SameAxisMove::FlatSwap;
+        forged_flat_mode.intent.same_axis_move = SameAxisMove::SwapWithNeighbor;
         assert!(
             apply_move_operation(
                 &*policy,
@@ -1621,7 +1621,7 @@ mod tests {
                 None,
             )
             .is_none(),
-            "leaf-neighbor wrap under FlatSwap must refuse"
+            "leaf-neighbor wrap under SwapWithNeighbor must refuse"
         );
         // A non-adjacent R2c swap forgery (B names D) refuses.
         let mut forged_neighbor = swap.clone();
@@ -1703,7 +1703,7 @@ mod tests {
         let key = domain_key();
         let plan = plan_for(
             &snapshot,
-            &intent("B", Direction::Right, SameAxisMove::CosmicWrap),
+            &intent("B", Direction::Right, SameAxisMove::GroupWithNeighbor),
         );
         assert!(matches!(plan.operation, MoveOperation::WrapNeighbor { .. }));
         let policy = default_policy();
@@ -1770,7 +1770,7 @@ mod tests {
         let policy = default_policy();
         let r2a = plan_for(
             &snapshot,
-            &intent("A", Direction::Right, SameAxisMove::FlatSwap),
+            &intent("A", Direction::Right, SameAxisMove::SwapWithNeighbor),
         );
         assert_eq!(r2a.rule, Rule::R2a);
         let mut forged = r2a.clone();
@@ -1797,7 +1797,7 @@ mod tests {
             "binary R2c swap must refuse"
         );
         // R-MOV-10: a wrap plan against a group neighbor stays valid under
-        // FlatSwap (restricted scope, no broadening to groups).
+        // SwapWithNeighbor (restricted scope, no broadening to groups).
         let (trees, windows, domains, snapshot) = nary_world(
             vec![
                 leaf("A"),
@@ -1814,11 +1814,11 @@ mod tests {
         );
         let wrap = plan_for(
             &snapshot,
-            &intent("B", Direction::Right, SameAxisMove::CosmicWrap),
+            &intent("B", Direction::Right, SameAxisMove::GroupWithNeighbor),
         );
         assert!(matches!(wrap.operation, MoveOperation::WrapNeighbor { .. }));
         let mut flat_group_wrap = wrap.clone();
-        flat_group_wrap.intent.same_axis_move = SameAxisMove::FlatSwap;
+        flat_group_wrap.intent.same_axis_move = SameAxisMove::SwapWithNeighbor;
         assert!(
             apply_move_operation(
                 &*policy,
@@ -1833,7 +1833,7 @@ mod tests {
                 None,
             )
             .is_some(),
-            "group-neighbor wrap stays valid under FlatSwap"
+            "group-neighbor wrap stays valid under SwapWithNeighbor"
         );
     }
 }

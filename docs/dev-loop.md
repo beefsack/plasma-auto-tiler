@@ -397,7 +397,16 @@ existing owner/generation provenance plus the compiled-in source revision;
 Same-axis setting reload (ordinary output, only when the validated value changes
 on `Options.configChanged`; affects subsequent move requests, no tree rebuild):
 
-- `plasma-auto-tiler:plan:config-reloaded stage=same-axis-move mode=<cosmic-wrap|flat-swap>`
+- `plasma-auto-tiler:plan:config-reloaded stage=same-axis-move mode=<group-with-neighbor|swap-with-neighbor>`
+
+Fixed-size predicate reload (same trigger; subsequent admissions only, no
+reclassification of existing windows):
+
+- `plasma-auto-tiler:plan:config-reloaded stage=fixed-size-predicate predicate=<both-axes-fixed|either-axis-fixed>`
+
+An unknown protocol `fixed_size_predicate` returns
+`snapshot-invalid/fixed-predicate-invalid`; invalid KDE config falls back to
+`both-axes-fixed` before dispatch.
 
 Fixed-size automatic admission (normal output, only new classifications or
 committed automatic membership, not per-frame polling):

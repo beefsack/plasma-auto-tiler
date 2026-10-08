@@ -621,6 +621,11 @@ pub struct Session {
     /// Cloned verbatim; owner/generation rebinding clears the world map
     /// (Engine) so no tile-override persists across restart (D7).
     fixed_admission: bool,
+    /// R-SPC-04 D1 fixed-size admission predicate. Both-axes default
+    /// (current delivered behavior); either-axis floats one-axis-fixed
+    /// windows. Admission-only: changing it never reclassifies retained
+    /// windows, only subsequent admissions.
+    fixed_predicate: crate::size_hints::FixedSizePredicate,
     /// Classifier-created automatic fixed floats (membership only, D8).
     /// Intentional floats (toggle-float, sticky) never land here (D6).
     automatic_fixed: BTreeSet<WindowId>,
@@ -714,6 +719,7 @@ impl Session {
             exceptions: BTreeMap::new(),
             retained_float_geometry: BTreeMap::new(),
             fixed_admission: false,
+            fixed_predicate: crate::size_hints::FixedSizePredicate::BothAxes,
             automatic_fixed: BTreeSet::new(),
             fixed_tile_override: BTreeSet::new(),
             canonical_pair_target_restore: BTreeMap::new(),
@@ -1044,6 +1050,7 @@ impl Session {
         // per-window automatic/override sets union so cross-domain
         // re-adoption never loses an explicit user tile win (D3).
         pair.fixed_admission = source.fixed_admission;
+        pair.fixed_predicate = source.fixed_predicate;
         pair.automatic_fixed = source.automatic_fixed.clone();
         pair.fixed_tile_override = source.fixed_tile_override.clone();
         if let Some(target) = target {
@@ -1215,6 +1222,8 @@ impl Session {
         // source so the union round-trips. The opt-in rides both outputs.
         source.fixed_admission = self.fixed_admission;
         target.fixed_admission = self.fixed_admission;
+        source.fixed_predicate = self.fixed_predicate;
+        target.fixed_predicate = self.fixed_predicate;
         for id in &self.automatic_fixed {
             if source.windows.contains_key(id) || source.exceptions.contains_key(id) {
                 source.automatic_fixed.insert(id.clone());

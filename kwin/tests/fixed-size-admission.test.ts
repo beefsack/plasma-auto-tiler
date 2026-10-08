@@ -18,7 +18,7 @@ import {
 } from "../src/plan-adapter";
 
 describe("fixed-size admission predicate", () => {
-    it("floats only both-axes equal usable vectors", () => {
+    it("floats only both-axes equal usable vectors by default", () => {
         assert.equal(isFixedSize({ w: 640, h: 480 }, { w: 640, h: 480 }), true);
         assert.equal(isFixedSize({ w: 640, h: 0 }, { w: 640, h: 0 }), true);
         assert.equal(isFixedSize({ w: 0, h: 480 }, { w: 0, h: 480 }), true);
@@ -36,6 +36,42 @@ describe("fixed-size admission predicate", () => {
         );
         assert.equal(isFixedSize({ w: 16385, h: 16385 }, { w: 16385, h: 16385 }), false);
         assert.equal(isFixedSize({ w: 1.5, h: 480 }, { w: 1.5, h: 480 }), false);
+    });
+
+    it("floats either-axis equal vectors under either-axis-fixed with guards preserved", () => {
+        assert.equal(
+            isFixedSize({ w: 640, h: 100 }, { w: 640, h: 480 }, "either-axis-fixed"),
+            true,
+        );
+        assert.equal(
+            isFixedSize({ w: 640, h: 480 }, { w: 800, h: 480 }, "either-axis-fixed"),
+            true,
+        );
+        assert.equal(
+            isFixedSize({ w: 640, h: 480 }, { w: 640, h: 480 }, "either-axis-fixed"),
+            true,
+        );
+        assert.equal(
+            isFixedSize({ w: 640, h: 100 }, { w: 640, h: 480 }, "both-axes-fixed"),
+            false,
+        );
+        assert.equal(
+            isFixedSize({ w: 640, h: 100 }, { w: 640, h: 480 }, "bogus"),
+            false,
+        );
+        // Guards preserved: missing/sentinel still tile under either-axis.
+        assert.equal(
+            isFixedSize({ w: 640, h: 480 }, null, "either-axis-fixed"),
+            false,
+        );
+        assert.equal(
+            isFixedSize({ w: 640, h: 480 }, { w: 2147483647, h: 2147483647 }, "either-axis-fixed"),
+            false,
+        );
+        assert.equal(
+            isFixedSize({ w: 0, h: 0 }, { w: 0, h: 0 }, "either-axis-fixed"),
+            false,
+        );
     });
 });
 
@@ -1494,5 +1530,104 @@ describe("fixed-size admission through the real Planner", () => {
         } finally {
             await engine.close();
         }
+    });
+});
+
+const ONE_AXIS_MIN = { w: 640, h: 100 };
+const ONE_AXIS_MAX = { w: 640, h: 480 };
+
+function oneAxisMocks(): { refs: { a: object; b: object }; mocks: Mocks } {
+    const refs = makeRefs();
+    const mocks = mockEnv(refs);
+    mocks.constraintsImpl = (target): PlanWindowConstraints | null => {
+        if (target === refs.b) {
+            return { resizeable: false, minSize: { ...ONE_AXIS_MIN }, maxSize: { ...ONE_AXIS_MAX } };
+        }
+        return { resizeable: true, minSize: null, maxSize: null };
+    };
+    return { refs, mocks };
+}
+
+describe("fixed-size predicate wire and live switch through the real Planner", () => {
+    it("omits fixed_size_predicate by default and tiles one-axis clients", async () => {
+        const { refs, mocks } = oneAxisMocks();
+        enableAdapter(mocks);
+        const engine = EngineBridge.start();
+        try {
+            mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-pred-omit" });
+            const payload = dispatchAdded(mocks);
+            assert.ok(!("fixed_size_predicate" in payload), "default stays wire-omitted");
+            assert.ok(!("floating" in wireOf(payload, "win-b")), "one-axis tiles by default");
+            const reply = await flushPlan(mocks, engine, 0);
+            assert.equal(reply["outcome"], "planned", `Engine plans, got ${JSON.stringify(reply)}`);
+            assert.ok(
+                desiredWindows(reply).some((entry) => entry["window"] === "win-b"),
+                "one-axis client keeps a tiled slot by default",
+            );
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("carries either-axis-fixed explicitly and never actuates the one-axis float", async () => {
+        const { refs, mocks } = oneAxisMocks();
+        Object.assign(mocks.env, { readFixedSizePredicate: () => "either-axis-fixed" });
+        enableAdapter(mocks);
+        const engine = EngineBridge.start();
+        try {
+            mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-pred-either" });
+            const payload = dispatchAdded(mocks);
+            assert.equal(payload["fixed_size_predicate"], "either-axis-fixed");
+            const fixed = wireOf(payload, "win-b");
+            assert.equal(fixed["floating"], true);
+            assert.equal(fixed["fixed_auto"], true);
+            const reply = await flushPlan(mocks, engine, 0);
+            assert.equal(reply["outcome"], "planned", `Engine plans, got ${JSON.stringify(reply)}`);
+            assert.ok(
+                !desiredWindows(reply).some((entry) => entry["window"] === "win-b"),
+                "one-axis float takes no slot",
+            );
+            assert.deepEqual(
+                mocks.geometries.filter((write) => write.target === refs.b),
+                [],
+                "no geometry write to the one-axis float",
+            );
+            assert.deepEqual(mocks.keepAboveWrites, [], "no automatic keep-above write");
+            assert.deepEqual(mocks.floatingWrites, [], "autoclassification never calls intentional setters");
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("a live predicate switch keeps the retained one-axis client tiled with suppression", () => {
+        const { refs, mocks } = oneAxisMocks();
+        let predicate: unknown = "both-axes-fixed";
+        Object.assign(mocks.env, { readFixedSizePredicate: (): unknown => predicate });
+        enableAdapter(mocks);
+        // First dispatch under the default: one-axis tiles and pins a
+        // suppress record for the live client; the wire stays byte-identical.
+        mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-pred-live-1" });
+        const before = dispatchAdded(mocks);
+        assert.ok(!("fixed_size_predicate" in before), "default stays wire-omitted");
+        assert.ok(!("floating" in wireOf(before, "win-b")), "one-axis tiles by default");
+        assert.ok(!("fixed_suppress" in wireOf(before, "win-b")), "non-fixed rows stay byte-identical");
+        // The reply never arrives: the real timeout terminal fails the
+        // flight with no application and no record change.
+        fireTimeout(mocks);
+        assert.ok(
+            mocks.logs.some((entry) => entry.includes("outcome=timeout")),
+            "timeout terminal logged",
+        );
+        // Switch to either-axis for subsequent admissions only: the retained
+        // client stays tiled via its suppress pin, now carrying suppression
+        // (the only shape the core could reclassify), and the payload
+        // carries the new predicate.
+        predicate = "either-axis-fixed";
+        mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-pred-live-2" });
+        const after = dispatchAdded(mocks);
+        assert.equal(after["fixed_size_predicate"], "either-axis-fixed");
+        assert.ok(!("floating" in wireOf(after, "win-b")), "switch never re-floats the retained client");
+        assert.equal(wireOf(after, "win-b")["fixed_suppress"], true);
+        assert.ok(!("fixed_auto" in wireOf(after, "win-b")));
     });
 });

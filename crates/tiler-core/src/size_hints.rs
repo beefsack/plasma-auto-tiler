@@ -171,18 +171,67 @@ fn usable_fixed_bound(value: Option<i32>) -> Option<i32> {
     }
 }
 
+/// R-SPC-04 D1 fixed-size admission predicate (decisions 2026-10-08).
+///
+/// One global setting with two validated values: `both-axes-fixed` (default,
+/// width and height both fixed) and `either-axis-fixed` (width or height
+/// fixed). The wire tokens are `both-axes-fixed` and `either-axis-fixed`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum FixedSizePredicate {
+    /// Width and height both fixed (default, current delivered behavior).
+    #[default]
+    BothAxes,
+    /// Width or height fixed.
+    EitherAxis,
+}
+
+impl FixedSizePredicate {
+    /// Wire token for this value (`both-axes-fixed` / `either-axis-fixed`).
+    #[must_use]
+    pub const fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::BothAxes => "both-axes-fixed",
+            Self::EitherAxis => "either-axis-fixed",
+        }
+    }
+
+    /// Validated parse of a wire token. `None` for anything else, including
+    /// empty strings: callers refuse fail-closed.
+    #[must_use]
+    pub fn parse_wire(value: &str) -> Option<Self> {
+        match value {
+            "both-axes-fixed" => Some(Self::BothAxes),
+            "either-axis-fixed" => Some(Self::EitherAxis),
+            _ => None,
+        }
+    }
+}
+
 /// Whether `hints` pin a fixed size (Q2 fixed-size float admission, D1).
 ///
-/// Fixed iff min and max are BOTH present with usable nonnegative vector
+/// Default-predicate compatibility wrapper over [`is_fixed_size_with`]:
+/// fixed iff min and max are BOTH present with usable nonnegative vector
 /// sizes on BOTH axes and equal on BOTH axes: `min_w == max_w` and
 /// `min_h == max_h`. The entire (0,0) vector does not count; equal
 /// partial-zero vectors such as (640,0) or (0,480) do count. Unset bounds,
 /// negative values, unbounded sentinels, and out-of-contract (out of
 /// [`GEOMETRY_BOUND`]) values never count. The `resizeable` flag alone
-/// never counts and no either-axis setting exists.
+/// never counts. The either-axis form lives in
+/// [`FixedSizePredicate::EitherAxis`}.
 #[must_use]
 pub fn is_fixed_size(hints: WindowSizeHints) -> bool {
-    fixed_size_reason(hints) == "fixed-equal"
+    is_fixed_size_with(hints, FixedSizePredicate::BothAxes)
+}
+
+/// Predicate-selected fixed-size check.
+///
+/// Validity guards are identical under both values (negative, missing,
+/// sentinel, out-of-range, and full-zero all tile); only the final equality
+/// differs: [`FixedSizePredicate::BothAxes`] needs equality on both axes,
+/// [`FixedSizePredicate::EitherAxis`] on either axis.
+#[must_use]
+pub fn is_fixed_size_with(hints: WindowSizeHints, predicate: FixedSizePredicate) -> bool {
+    fixed_size_reason_with(hints, predicate) == "fixed-equal"
 }
 
 /// Bounded fixed-size decision token for diagnostics (D1).
@@ -193,6 +242,20 @@ pub fn is_fixed_size(hints: WindowSizeHints) -> bool {
 /// `out-of-range`, `zero`, `unequal`). Total over all inputs.
 #[must_use]
 pub fn fixed_size_reason(hints: WindowSizeHints) -> &'static str {
+    fixed_size_reason_with(hints, FixedSizePredicate::BothAxes)
+}
+
+/// Predicate-selected fixed-size decision token.
+///
+/// Same validity-guard order as [`fixed_size_reason`]; only the final
+/// equality differs (both axes vs either axis). `fixed-equal` when
+/// [`is_fixed_size_with`] holds for the predicate, else the first
+/// applicable `not-fixed-*` reason.
+#[must_use]
+pub fn fixed_size_reason_with(
+    hints: WindowSizeHints,
+    predicate: FixedSizePredicate,
+) -> &'static str {
     let raw = [hints.min_w, hints.min_h, hints.max_w, hints.max_h];
     // A present negative bound reports before missing so negative input
     // is never misread as merely unset; a fully unset vector still
@@ -221,8 +284,16 @@ pub fn fixed_size_reason(hints: WindowSizeHints) -> &'static str {
         return "not-fixed-zero";
     }
     // Equal on BOTH axes counts, including equal partial-zero vectors
-    // such as (640,0) or (0,480). Unequal vectors tile.
-    if hints.min_w == hints.max_w && hints.min_h == hints.max_h {
+    // such as (640,0) or (0,480). Unequal vectors tile. The either-axis
+    // predicate keeps every guard above and only relaxes this final
+    // equality to either axis.
+    let both = hints.min_w == hints.max_w && hints.min_h == hints.max_h;
+    let either = hints.min_w == hints.max_w || hints.min_h == hints.max_h;
+    let fixed = match predicate {
+        FixedSizePredicate::BothAxes => both,
+        FixedSizePredicate::EitherAxis => either,
+    };
+    if fixed {
         return "fixed-equal";
     }
     "not-fixed-unequal"

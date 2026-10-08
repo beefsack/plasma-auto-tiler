@@ -342,8 +342,7 @@ platform API behavior.
   (`kwin/src/plan-adapter-entry.ts:4018-4022,4067-4085`); item 2 routes
   explicit follow/stay through that path so the default follows
   (implementation gap, not a new decision).
-- Item 3, R-MOV-03 (user decision 2026-10-08; setting IDs decided, code
-  pending):
+- Item 3, R-MOV-03 (user decision 2026-10-08; functional IDs delivered offline):
   - 3.1: one global setting, KDE `sameAxisMove`, Windows
     `core.same_axis_move`, with `group-with-neighbor` default (label
     `Group with neighbor`, tooltip names COSMIC) and `swap-with-neighbor`
@@ -356,9 +355,7 @@ platform API behavior.
     adjacent direct leaf sibling in the same group; shares travel with
     windows (existing swap semantics). Leaf/group neighbors keep current
     rules; add TBD discriminating rows before broadening.
-  - Status: shared core/KDE delivered offline
-    ([record](changes/archive/same-axis-move-setting.md)); Windows wiring
-    and native journey pending.
+  - Status: functional rename delivered offline in core/protocol/KDE and Windows compile defaults ([record](changes/archive/admission-and-move-settings.md)); Windows settings wiring and native journey pending.
 - Item 4, R-LAY-01:
     - 4.1: Meta+O / Win+O (COSMIC parity). No stock KDE holder found in
       `kglobalshortcutsrc`; Windows Win+O is OS orientation lock
@@ -398,18 +395,23 @@ platform API behavior.
   select adjacency only; placement retains per-desktop work areas.
 ## Fixed-Size Admission
 - User decisions 2026-10-08 (fixed-size admission R-SPC-04 D1-D8, outcomes
-  decided; changed D1/D5/D6/D7 implementation pending):
+  decided; D1 delivered offline, changed D5/D6/D7 implementation pending):
   - D1 predicate: COSMIC whole-vector equality default as delivered
     (both min/max vectors present, usable, nonnegative, not full-zero
     or unbounded sentinels, equal on both axes; equal partial-zero
     counts; no inference from `resizeable`). New setting values are
     functionally named `Width and height both fixed` (default, tooltip
     names COSMIC) and `Width or height fixed` (tooltip names Hyprland
-    on Wayland and sway); functional value IDs pending. Same-axis values:
+    (Wayland) and sway). KDE `fixedSizePredicate`, Windows handoff
+    `core.fixed_size_predicate`: `both-axes-fixed` default or
+    `either-axis-fixed`. Both retain the same hint-validity guards; only
+    the final equality changes from both axes to either axis. Changes
+    affect subsequent admissions only, never existing classifications.
+    Same-axis values:
     see item 3 under Move, Layout and Output Commands (canonical).
     Breaking configs is acceptable
     pre-release (dogfooding correctness priority), no migration,
-    code pending.
+    D1 delivered offline ([record](changes/archive/admission-and-move-settings.md)); Windows predicate/schema/UI wiring remains handoff-only.
   - D2 hint changes: admission-only in both directions as delivered;
     keep reacting to windows resizing themselves to avoid
     gaps/overlaps. No new hint-signal work requested.

@@ -111,10 +111,10 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then karousel/Lazy: single-window B joins C3 at the bottom via the
   single-window path. `S(S-kar-move)`.
 - Then paneru: B swaps east with C in the same strip. `S(S-pan-move)`.
-- Then Ours KDE: `cosmic-wrap` default gives `H[A,H[B,C],D]`; global
-  `sameAxisMove=flat-swap` gives `H[A,C,B*,D]`, shares travel with windows.
+- Then Ours KDE: `group-with-neighbor` default gives `H[A,H[B,C],D]`; global
+  `sameAxisMove=swap-with-neighbor` gives `H[A,C,B*,D]`, shares travel with windows.
   Shared Engine/protocol and KDE KCM/live reread delivered offline;
-  [record](../../changes/archive/same-axis-move-setting.md). Native journey pending;
+  functional IDs [delivered offline](../../changes/archive/admission-and-move-settings.md). Native journey pending;
   `D(D-dec-cos)` + USER 2026-10-07 item 3.
 - Then Ours Windows: Same-orientation wrap per Engine; nested `H[H..]` distinct from flat; `D(D-dec-cos)`
 - Variant hook: V-MOVE-NARY.
@@ -435,7 +435,9 @@ global `sameAxisMove` / `core.same_axis_move` setting (`group-with-neighbor`
 default, label `Group with neighbor`, tooltip COSMIC; `swap-with-neighbor`,
 label `Swap with neighbor`, tooltip i3, sway, only for adjacent direct leaf
 siblings in R2c, shares travel with windows). Exact IDs selected 2026-10-08;
-code still uses `cosmic-wrap`/`flat-swap` pending rename, no migration.
+functional rename delivered offline, no migration or aliases; retired IDs
+follow existing invalid handling. Windows compile default is renamed,
+settings wiring remains pending.
 Leaf/group rules unchanged. R-MOV-08 selects local restructure/
 swap/escape first, then all-four-direction crossing including sole root
 leaf. Adjacency uses unique reciprocal edge-touch + positive overlap on FULL
@@ -444,11 +446,12 @@ refuse, no wrap. Items 3/5 shared core/KDE are delivered offline; Windows wiring
 and native journeys remain pending. Delivery evidence below is offline, not a live
 observation or new reference vote.
 
-### R-MOV-09: flat-swap right with unequal sibling shares
+<a id="r-mov-09-flat-swap-right-with-unequal-sibling-shares"></a>
+### R-MOV-09: swap-with-neighbor right with unequal sibling shares
 
 - Given (tree leg): `H[A,B*,C,D]`, shares 1/10, 2/10, 3/10, 4/10;
-  flat-swap selected. Ordinary tiles, one output, no minimum constraints.
-- Given (other models): exact N-ary unequal-share fixture/flat-swap variant
+  `swap-with-neighbor` selected. Ordinary tiles, one output, no minimum constraints.
+- Given (other models): exact N-ary unequal-share fixture/swap variant
   applicability TBD; do not silently replace it with equal shares or columns.
 - When: move B right once.
 - Observe: flat identity order, shares travelling with windows vs slots,
@@ -469,19 +472,20 @@ observation or new reference vote.
   4/10; focus B, no wrap. Delivered offline, item 3.2; core strict-apply
   and session tests exercise unequal-share right and left swaps;
   [record](../../changes/archive/same-axis-move-setting.md). Native journey pending.
-- Then Ours Windows: same selected flat-swap/share target;
+- Then Ours Windows: same selected `swap-with-neighbor`/share target;
   implementation pending; item 3.2.
 - Variant hook: V-MOVE-NARY.
 
-### R-MOV-10: flat-swap right beside a group neighbor
+<a id="r-mov-10-flat-swap-right-beside-a-group-neighbor"></a>
+### R-MOV-10: swap-with-neighbor right beside a group neighbor
 
-- Given (tree leg): `H[A,B*,V[C,D],E]`, flat-swap selected; one output,
+- Given (tree leg): `H[A,B*,V[C,D],E]`, `swap-with-neighbor` selected; one output,
   ordinary tiles, no minimum constraints. B's adjacent direct sibling is V,
   not a leaf. Record shares and V's remembered child before the move.
 - Given (other models): exact nested fixture/variant applicability TBD;
   never manufacture H/V ancestry for columns.
 - When: move B right once.
-- Observe: unchanged leaf/group rule vs broadening flat-swap to whole groups;
+- Observe: unchanged leaf/group rule vs broadening swapping to whole groups;
   target child/index, topology, shares and focus.
 - Then COSMIC: TBD.
 - Then Hyprland/Dwindle: TBD.

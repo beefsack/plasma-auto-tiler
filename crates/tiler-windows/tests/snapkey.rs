@@ -916,7 +916,7 @@ fn engine_focus_moves_through_nested_topology() {
         window: w2.0.clone(),
         direction: "right".to_owned(),
         cross_output_transfer: false,
-        same_axis_move: tiler_core::directional::SameAxisMove::CosmicWrap,
+        same_axis_move: tiler_core::directional::SameAxisMove::GroupWithNeighbor,
     };
     assert_eq!(mv.command.op(), "move");
     let reply = engine.handle(&mv);

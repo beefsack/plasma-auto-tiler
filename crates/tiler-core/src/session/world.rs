@@ -454,6 +454,20 @@ impl super::Session {
         self.fixed_admission = enabled;
     }
 
+    /// Current R-SPC-04 D1 fixed-size admission predicate. Both-axes
+    /// default (current delivered behavior).
+    #[must_use]
+    pub fn fixed_size_predicate(&self) -> crate::size_hints::FixedSizePredicate {
+        self.fixed_predicate
+    }
+
+    /// Select the fixed-size admission predicate for subsequent admissions
+    /// only. Never touches topology, shares, membership, focus, revision,
+    /// or existing automatic/override marks (D2: no reclassification).
+    pub fn set_fixed_size_predicate(&mut self, predicate: crate::size_hints::FixedSizePredicate) {
+        self.fixed_predicate = predicate;
+    }
+
     /// Whether a window floats by automatic fixed-size classification
     /// (membership only, D8), as opposed to an intentional float (D6).
     #[must_use]
@@ -813,7 +827,7 @@ impl super::Session {
                 && !entry.sticky
                 && !entry.fixed_suppress
                 && !self.fixed_tile_override.contains(&entry.window)
-                && crate::size_hints::is_fixed_size(entry.hints)
+                && crate::size_hints::is_fixed_size_with(entry.hints, self.fixed_predicate)
         };
         // Missing known windows are removed first so survivor collapse
         // preserves order/shares before any admission. BTreeMap iteration is

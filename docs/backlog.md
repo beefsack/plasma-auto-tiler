@@ -13,13 +13,6 @@ decisions of 2026-09-24 are under
 - P0 | Implement 2026-10-08 decision changes | Review completed; selections approved.
   Implement the changed selections in shared core plus KDE, with Windows
   handoff updates (items 13/8/14 plus the same-axis move setting):
-  - D1 functional predicate setting values (`Width and height both fixed`
-    default with COSMIC tooltip; `Width or height fixed` with Hyprland
-    (Wayland) and sway tooltip; functional value IDs) plus functional rename
-    of the `sameAxisMove` values to `group-with-neighbor` (default, label
-    `Group with neighbor`, tooltip COSMIC) and `swap-with-neighbor` (label
-    `Swap with neighbor`, tooltip i3, sway). Update core/protocol/config/UI
-    and Windows handoff; breaking pre-release configs accepted, no migration.
   - D5 born-fullscreen first exit classifies as newly admitted: fixed floats
     with no writes, otherwise tiles; prior fixed floats restore; no writes
     during fullscreen. Deliberate COSMIC deviation for game safety.
@@ -308,8 +301,9 @@ decisions of 2026-09-24 are under
   [decisions](decisions.md#move-layout-and-output-commands)); KDE items 1-5 delivered
   offline, remaining implementation pending:
   Q2 R-SPC-04 shared core/Linux planner + KDE delivered offline under user
-  decisions 2026-10-08 (normative as delivered); changed D1 predicate setting
-  plus functional naming, D5 first-fullscreen-exit, D6 tiling-enable check
+  decisions 2026-10-08 (normative as delivered); D1 predicate setting and
+  functional naming [delivered offline](changes/archive/admission-and-move-settings.md);
+  D5 first-fullscreen-exit, D6 tiling-enable check
   and D7 tile-override store are pending implementation, then native checks;
   [record](changes/archive/fixed-size-admission.md). Windows Q2
   behavior remains unchanged; handoff item 13 supplies its exact wiring.
@@ -362,14 +356,14 @@ decisions of 2026-09-24 are under
   3. R-MOV-03 (shared core + KDE delivered offline; native journey pending;
      [record](changes/archive/same-axis-move-setting.md)):
      global KDE `sameAxisMove` / Windows `core.same_axis_move`,
-     `cosmic-wrap` default or `flat-swap`; Windows additive version-1 field,
-     missing defaults to wrap. Apply to subsequent moves without tree
-     rebuilding; KDE settings UI control. Flat-swap replaces R2c only for
+     `group-with-neighbor` default or `swap-with-neighbor`; Windows additive version-1 field,
+     missing defaults to group. Apply to subsequent moves without tree
+     rebuilding; KDE settings UI control. Swap-with-neighbor replaces R2c only for
      adjacent direct leaf siblings; shares travel with windows. Leaf/group
      rules unchanged; discriminating TBD rows before broadening. User
      2026-10-08: setting and both values take functional names with WM
      tooltips (functional value IDs); breaking pre-release configs accepted,
-     no migration; implementation pending.
+     no migration; functional rename [delivered offline](changes/archive/admission-and-move-settings.md), Windows settings wiring pending.
   4. R-LAY-01 (shared core + KDE delivered offline; native journey pending;
      [record](changes/archive/parent-orientation-toggle.md)):
      Meta+O / Win+O immediate-parent axis toggle including root,
@@ -447,7 +441,7 @@ decisions of 2026-09-24 are under
   | 10 | Float/half-snap parity (a) R-FLT-07..11 | Independent of items 1-5; reuses existing focus/move catalog rows, no new chords. |
   | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; first-fullscreen-exit is separate (D5 pending). B9 unmaximize/fresh-admit is the P0 item above. Independent of items 1-5. |
   | 12 | Non-local workspace modes parity (d) | Depends on handoff items 1/2 (ring + follow/stay) and the parked parity-queue multi-output foundation; last. |
-  | 13 | Q2 fixed-size float admission R-SPC-04 | KDE/shared offline delivery under user decisions 2026-10-08 (normative as delivered); max-track observation and lifetime/origin wiring before enabling the Engine opt-in. Pending: predicate setting plus functional naming, first-fullscreen-exit, tiling-enable check, tile-override restart store. Fixed/maximize intersection coordinates with item 11. |
+   | 13 | Q2 fixed-size float admission R-SPC-04 | KDE/shared offline delivery including D1 predicate setting and functional naming; Windows max-track observation, predicate/schema/UI and lifetime/origin wiring before enabling the Engine opt-in. KDE pending: first-fullscreen-exit, tiling-enable check, tile-override restart store. Fixed/maximize intersection coordinates with item 11. |
   | 14 | Q4 whole-workspace migration R-WS-12 | Core/KDE offline delivery under user decisions 2026-10-08 (normative as delivered); depends on item 5's parked multi-output foundation, item 1 history invalidation and item 12 for non-local runtime modes. Pending: fullscreen+maximized carry overlays (changed D8). No Windows behavior delivered. |
 
   Q2 R-SPC-04 occupies handoff item 13 below; Q3 R-RST-01 KDE delivery is
@@ -841,13 +835,13 @@ decisions of 2026-09-24 are under
 
      - Normative: decisions 3.1/3.2; [spec](spec/functional-spec.md#move)
        REQ-MOV-03; [matrix](spec/reference-outcomes/move.md) R-MOV-03/09/10.
-       Global `core.same_axis_move`, `cosmic-wrap` default, `flat-swap`
+        Global `core.same_axis_move`, `group-with-neighbor` default, `swap-with-neighbor`
        alternative. Only R2c adjacent direct LEAF siblings in the same N-ary
        group change; unequal shares travel with window identities. Binary R2a,
        group-neighbor wraps/insertion, escape and output boundaries keep their
        rules. Default `H[A,B*,C,D]` right -> `H[A,H[B,C],D]`; flat ->
        `H[A,C,B*,D]`. No rebuilding, retroactive flattening or new swap verb.
-     - Core: `core/directional.rs:218` `SameAxisMove::{CosmicWrap,FlatSwap}`,
+      - Core: `core/directional.rs` `SameAxisMove::{GroupWithNeighbor,SwapWithNeighbor}`,
        :229 `as_wire_str`, :239 `parse_wire`; :202 `MoveIntent.same_axis_move`.
        `core/boundary.rs:48-57` `CoreCommand::Move {window,direction,
        cross_output_transfer,same_axis_move}`; :372 `MovePlanReply`, :670
@@ -892,7 +886,7 @@ decisions of 2026-09-24 are under
        verify `keyboard_tick` uses adopted setting, not hard-coded mode; common
        gates/docs update only R-MOV-03/09/10, not item-5 rows.
      - User: prepare R-MOV-03 four-leaf row; default right wraps B/C. Fresh
-       row, Settings Flat swap + Apply, right yields A,C,B,D focused B. Repeat
+        row, Settings Swap with neighbor + Apply, right yields A,C,B,D focused B. Repeat
        left and unequal widths, verify widths travel. Change setting on an
        existing nested tree: Apply alone changes no layout; next move uses
        new mode. R-MOV-10 group-neighbor result stays wrap, not whole-group
@@ -900,15 +894,17 @@ decisions of 2026-09-24 are under
 
      - Applied compile fixes: `src/tiling_sys.rs:6102`, `SnapOp::Move` arm
        constructing `CoreCommand::Move`, sets
-       `same_axis_move: tiler_core::directional::SameAxisMove::CosmicWrap`;
+        `same_axis_move: tiler_core::directional::SameAxisMove::GroupWithNeighbor`;
        `tests/snapkey.rs:915-919`, `engine_focus_moves_through_nested_topology`,
        uses the same constant (production field :6109, test field :919).
        No Windows behavior change.
      - `src/settings.rs:99` / `CoreSettings`, `Default` :124 and
        `validate_settings` :1268: add `core.same_axis_move` within schema
-       version 1, serde missing default `cosmic-wrap`, exact values
-       `cosmic-wrap`/`flat-swap`; reject unknown values through existing
-       invalid-file/last-good behavior, retain atomic saves.
+        version 1, serde missing default `group-with-neighbor`, exact values
+        `group-with-neighbor`/`swap-with-neighbor`; reject unknown/old values through
+        existing invalid-file/last-good behavior, retain atomic saves. Labels
+        `Group with neighbor` / `Swap with neighbor`; tooltips COSMIC / i3, sway.
+        No aliases or migration for retired `cosmic-wrap` / `flat-swap` IDs.
      - `src/settings_ui.rs` / `cmd_settings` :939, controls :1054,
        `refresh_all` :292 and `collect_draft` :345: add the global
        setting control, display/persist the selected token, validate Apply,
@@ -928,7 +924,7 @@ decisions of 2026-09-24 are under
        applying returned geometry for R2c as well as R2a.
      - Extend portable settings decode/default/validation/round-trip and
        live last-good tests; native settings Apply/Revert tests; move tests
-       for N-ary flat-swap both directions with traveling unequal shares,
+        for N-ary swap-with-neighbor both directions with traveling unequal shares,
        default wrap, group-neighbor/boundary parity and live changes without
        tree rebuild. Linux workspace tests/clippy compile portable Windows
        modules; native Windows UI/owner checks remain Windows-owned.
@@ -1831,8 +1827,9 @@ decisions of 2026-09-24 are under
     ordinary fixed-size admission addition 2026-10-07; exact D1-D8 edges
     are user decisions 2026-10-08 (normative as delivered).
     KDE/shared delivered offline; Windows behavior is unchanged in this delivery.
-    Changed D1 predicate setting plus functional naming, D5, D6 and D7 are
-    pending implementation.
+    D1 predicate setting and functional naming delivered offline
+    ([record](changes/archive/admission-and-move-settings.md)); D5, D6 and D7
+    remain pending KDE implementation. Windows predicate wiring remains pending.
     [Record](changes/archive/fixed-size-admission.md),
     [decisions](decisions.md#fixed-size-admission),
     [matrix](spec/reference-outcomes/special-windows.md#q2-fixed-size-admission-discriminators-2026-10-08).
@@ -1850,8 +1847,9 @@ decisions of 2026-09-24 are under
       startup/restart adoption plus tile-override persistence in the same
       intentional-float store with recompute fallback;
       membership-only automatic admission with zero native target writes.
-      Either-axis alternative is now the `Width or height fixed` setting value
-      (functional IDs pending); breaking pre-release configs accepted, no
+      Either-axis alternative is now `either-axis-fixed` (`Width or height fixed`),
+      default `both-axes-fixed` (`Width and height both fixed`); both use the
+      existing hint-validity guards. Breaking pre-release configs accepted, no
       migration. Q3 boundary
       explicitly touched only for fixed-size birth; later fixed/maximized
       retile still uses R-MAX-03's reserved slot. Windows borderless-game
@@ -1863,7 +1861,7 @@ decisions of 2026-09-24 are under
       are distinct (`src/shell/mod.rs:2754-2807,2960-2968`). COSMIC admission
       placement/focus is not permission to touch games; our D8 is no-touch.
     - Shared exact sites in this staged Q2 delivery: `core/size_hints.rs`
-      `is_fixed_size` / `fixed_size_reason`; `core/session/world.rs`
+      `FixedSizePredicate`, `is_fixed_size_with` / `fixed_size_reason_with`; `core/session/world.rs`
       `converge_observation`, automatic/override sets; transactional
       `PendingDesired` in `core/session.rs` and `ops/lifecycle.rs` /
       `ops/float.rs`; `core/engine.rs` `set_fixed_size_admission` default OFF;
@@ -1922,9 +1920,17 @@ decisions of 2026-09-24 are under
       authoritative identity with fallback; D7 tile-override persistence in
       the same intentional-float store is pending (do not fold the rest of
       R-RST-01 into this piece).
-    - No new shortcut, preset or hook. New functional predicate setting
-      values per D1 are selected (functional names, IDs pending; breaking
-      pre-release configs accepted, no migration). Automatic membership must
+    - Add `CoreSettings.fixed_size_predicate` / `core.fixed_size_predicate`
+      within schema version 1: missing defaults to `both-axes-fixed`, alternative
+      `either-axis-fixed`; validate using shared `FixedSizePredicate::parse_wire`.
+      Unknown values use existing invalid-file/last-good handling. UI labels
+      `Width and height both fixed` / `Width or height fixed`; tooltips COSMIC /
+      Hyprland (Wayland), sway. Adopt last-good changes with
+      `Engine::set_fixed_size_predicate` for subsequent admissions only, without
+      resync/reclassification; live user tile overrides still win. Log effective
+      values with other settings. KDE `fixedSizePredicate` and protocol
+      `fixed_size_predicate` are delivered offline; Windows remains handoff-only.
+      No new shortcut, preset or hook; no migration. Automatic membership must
       emit bounded correlated decision evidence and cause no game geometry,
       focus, stacking/keep-above or effects/input interference. Do not call
       the explicit-float placement/focus path for automatic admission.
@@ -1936,13 +1942,13 @@ decisions of 2026-09-24 are under
     - [ ] Windows-only: fresh max-track/DPI/inset observations, timeout/hung
       clients, native overlay/restore and fixed borderless/exclusive games;
       user owns live checks on the Windows PC. Linux tests prove none of these.
-    - [ ] Windows-only: predicate setting values with functional names plus
-      `sameAxisMove` functional rename (functional value IDs pending);
-      setting/schema/UI/live wiring; user owns live checks.
+    - [ ] Windows: predicate default/variants/invalid and subsequent-admission
+      tests, setting/schema/UI/live wiring; same-axis uses item 3's renamed
+      values, with old IDs rejected and no aliases. User owns live checks.
     - DoD: decided clauses implemented with current Windows
       rules preserved; dated Ours Windows matrix/spec evidence, no native
       claim without user testing; user decisions 2026-10-08 approved, changed
-      D1/D5/D6/D7 implementation pending.
+      D1 Windows wiring and D5/D6/D7 implementation pending.
 
   - Item 14: Q4 whole-active-workspace output migration R-WS-12. The addition
     was accepted 2026-10-07; D1-D9 detail is user decisions 2026-10-08
@@ -2351,10 +2357,17 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   persistence claim. Physical startup-time sends and separate storage ACK
   tokens also need verification. [Record](changes/archive/kde-intentional-float-restart.md),
   [live guide](live-kwin-testing.md). No Q3 live result claimed.
+- KDE D1 settings UI (offline delivered): verify predicate labels/tooltips,
+  Save/Defaults/Revert and live pickup; one-axis-fixed new clients tile under
+  `both-axes-fixed`, float without writes under `either-axis-fixed`. Switch
+  values with existing tiles/floats: no reclassification, live tile overrides
+  survive; subsequent admissions use the new value. Verify renamed Same-axis
+  move labels/tooltips and effective reload logs.
+  [Record](changes/archive/admission-and-move-settings.md). User-owned, native TBD.
 - KDE Q2 R-SPC-04/06..13 (offline delivered, user decisions 2026-10-08): open a
   fixed-size ordinary client beside a tile; record unchanged incoming frame,
   focus and stacking, including a fixed borderless game. Check single-axis
-  clients tile, equal partial-zero clients float, unset/full-zero/sentinel
+  clients tile by default and float under `either-axis-fixed`, equal partial-zero clients float, unset/full-zero/sentinel
   hints do not auto-float. Gain/lose fixed hints after admission without
   changing float identity. Meta+G tiles an automatic float and stays tiled
   through minimize/restore, workspace/output observation and domain re-adoption;
@@ -2397,8 +2410,8 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   user-owned. [Record](changes/archive/kde-workspace-send-follow-stay.md),
   [live guide](live-kwin-testing.md). No item-2 live result claimed.
 - KDE R-MOV-03 item 3 (offline delivered): toggle Same-axis move in KCM
-  between Cosmic wrap and Flat swap. In an N-ary group, move an interior
-  leaf toward a direct leaf sibling: wrap creates the nested pair, flat-swap
+  between Group with neighbor and Swap with neighbor. In an N-ary group, move an interior
+  leaf toward a direct leaf sibling: grouping creates the nested pair, swapping
   exchanges windows with unequal shares traveling and focus on the mover.
   Verify Save live reread without controller/session restart, including
   switching back on an existing tree; no tree rebuild on setting change.
