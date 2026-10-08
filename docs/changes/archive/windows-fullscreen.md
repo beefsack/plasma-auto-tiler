@@ -15,7 +15,7 @@
 - Native implementation: `crates/tiler-windows/src/{snapkey,tiling,tiling_sys,
   workspace_owner}.rs`, focused `tests/{snapkey,tiling}.rs`, shortcut catalog
   row and `scripts/windows-fullscreen.ps1`. Durable choices promoted to
-  `docs/decisions.md#windows-fullscreen`; backlog remains Orchestrator-owned.
+  `docs/decisions.md#window-state-float-sticky-maximize-fullscreen`; backlog remains Orchestrator-owned.
 
 ## Material Choices And Review
 

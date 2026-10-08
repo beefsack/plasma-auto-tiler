@@ -163,7 +163,8 @@ their reference votes or asserting implementation evidence.
 | R-RSZ-01 Windows | explicit pixel-step grow/shrink path | pixel-5/8 (C,H,B,I,S), 3/4 fam; H/B partial for neighbor/reversal | yes | KDE matches (stays B) / Windows no keyboard trigger (`S-ours-winbind`) | Inventory gap, not a rejecting policy | Add Windows keyboard-resize trigger via shared Engine pixel path | Accepted 2026-10-07: Windows keyboard resize |
 
 Additional decisions 2026-10-07 outside Table A
-([recorded selections](../decisions.md#cross-platform-behavior)):
+([recorded selections](../decisions.md#window-state-float-sticky-maximize-fullscreen),
+[drag selections](../decisions.md#pointer-drag-and-drop)):
 
 - R-MAX-03 Q3 scope: keep maximize over a reserved slot on floating-to-tiled
   admission, replacing one-shot restore; implementation pending on both platforms.
@@ -176,7 +177,8 @@ Additional decisions 2026-10-07 outside Table A
 
 ### Detailed USER selections 2026-10-07: reference-consensus additions
 
-[Recorded decisions D1 and items 1-5](../decisions.md#cross-platform-behavior),
+[Recorded decisions D1 and items 1-2](../decisions.md#workspaces),
+[items 3-5](../decisions.md#move-layout-and-output-commands),
 [implementation order / Windows handoff](../backlog.md): KDE-side session
 implements shared Rust core + KDE adapter, Windows agent wires later;
 Windows build/behavior breakage acceptable when specific repairs are in the

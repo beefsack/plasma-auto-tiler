@@ -1,28 +1,13 @@
 # Principles
 
-Development process principles, approved by the user. Product goals live in
-`VISION.md`; active product and architecture decisions live in
-`docs/decisions.md`.
+Project principles, approved by the user.
 
-## Alignment
-
-- All goals must align with the vision.
-- All tasks must align with a goal.
-- All effort spent must make a meaningful step towards completing a task.
-
-## Bias Towards Action
-
-- Bias towards action.
-- Avoid overthinking, overdesigning, and process overhead that does not provide
-  more value than the effort it costs.
-
-## Scope, Not Arbitrary Limits
-
-- Do not impose arbitrary gates or numeric constraints on work. They cause
-  failures and worse implementations, because the work gets contorted to fit a
-  number rather than shaped to be correct.
-- Control effort by scoping the work down to a sensible level instead. Keep the
-  implementation the smallest one that is actually correct for that scope.
+- [VISION.md](../VISION.md) is the end goal the project strives for.
+- [docs/principles.md](principles.md) contains high-level rules and reasoning - the what and why.
+- [docs/spec/functional-spec.md](spec/functional-spec.md) is the exact behavior contract (requirement rows).
+- [docs/decisions.md](decisions.md) records the how: selected behavior and implementation choices,
+  including why each was chosen.
+- Overlap is expected; state a thing once and link from elsewhere.
 
 ## Simplicity
 
@@ -43,33 +28,28 @@ Development process principles, approved by the user. Product goals live in
 - Windows change themselves. They resize, change modes, move, and close at any
   time, including mid-operation. Handle these as normal events, not failures.
 - Fail closed only when recovery is impossible, or when continuing would cause
-  harm such as system instability. Otherwise degrade as narrowly as possible,
-  log the cause, and keep functioning, reconciling differences as they are
-  observed.
+  harm such as system instability: refuse the narrowest scope
+  (operation, window, or domain) while unaffected functionality and later
+  recovery remain available.
+- Otherwise degrade as narrowly as possible, log the cause, and keep
+  functioning, reconciling differences as they are observed.
 
 ## Gaming Compatibility
 
 - Gaming compatibility must be flawless. Games, including borderless and
   exclusive fullscreen titles, must run exactly as they would without the
-  tiler: no unwanted tiling, resizing, focus changes, overlays, input
-  interference or performance cost.
+  tiler: no unwanted tiling, resizing, focus changes, overlays or input
+  interference.
+- Aim for zero performance cost. Where a platform makes zero impossible, the
+  residual cost must be demonstrated minimal and imperceivable ([VISION.md](../VISION.md)
+  Gaming And Full-Screen Applications).
 - When a behavior choice trades consistency or reference-WM parity against
   game safety, game safety wins.
 
 ## Observability
 
-- Observability is a core requirement across every component of the project.
-  Implementation and review must include the evidence needed to diagnose its
-  behavior and failures.
-- Emit consistent, structured logs throughout operation lifecycles, with enough
-  coverage of requests, significant decisions, failures, recovery, and terminal
-  outcomes to reconstruct what happened.
-- Carry trace or correlation IDs across component and service boundaries so a
-  request and its related operations can be followed end to end. Distinguish
-  dispatch, acceptance, completion, and uncertainty rather than implying success.
-- Make bounded lifecycle and failure summaries visible in normal operation;
-  keep high-volume detail in opt-in trace logging. Prefer meaningful event
-  coverage over repetitive per-frame or polling noise.
-- Logs must exclude secrets, application content, raw native identifiers, and
-  raw native D-Bus payloads. Logging failures must never change product behavior
-  or prevent operations.
+- Observability is a core requirement across every component: normal logs must
+  let us reconstruct what happened end to end, including why something failed
+  and whether it recovered.
+- Logs report outcomes honestly and never imply more certainty than is known.
+- Observability must never change product behavior or expose secrets or user content.

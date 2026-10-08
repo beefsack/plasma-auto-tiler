@@ -3,333 +3,237 @@
 Only active, user-approved product and project choices are recorded here.
 Historical implementation detail is recoverable in Git history.
 
-## Windows Port
+## Scope and Platform Goals
 
 User decisions 2026-09-30. These select goals and sequencing, not untested
-Windows API behavior; see [Windows plan](research/windows-port/plan.md).
+platform API behavior.
 
 - Support Windows 11 x64 only initially; this can be revisited.
 - Managed per-monitor workspaces are required before Windows or macOS is
   called feature-complete. Tiling-only development previews are allowed.
-- User decision 2026-10-01, option A: Meta/Win shortcuts are defaults across
-  platforms, matching KDE: Win+Arrow navigates focus and Win+Shift+Arrow moves
-  windows. Windows takes over native Snap shortcuts by default, with a visible
-  setting to turn takeover off, following KDE Apply/Revert behavior.
-  Product input mechanism (user-accepted 2026-10-01 on this PC):
-  `WH_KEYBOARD_LL` with `vkE8` menu-mask at Win key-up while Win held,
-  consuming only approved catalog chords; `RegisterHotKey` rejected after
-  all four chords returned 1409 (owner unknown) on this PC. Win+L stays
-  explicit opt-in only and remains unproven. Evidence in
-  [Phase 1 note](changes/windows-phase1-implementation.md).
-- While a workspace is tiled, prevent Windows Snap through both keyboard and
-  mouse paths (edge dragging, Snap Layouts and shake as relevant). Keyboard
-  prevention belongs to the shortcut slice using the selected LL hook. User
-  decision 2026-10-01: try mouse option A first in that slice, session-only
-  `SPI_SETWINARRANGING FALSE` while tiling is active, with visible Apply/Revert,
-  exact preimage capture/readback and conditional restoration on stop. The
-  desktop-wide effect is accepted for the experiment; Windows 11 Snap Layouts
-  flyout/Snap Assist coverage remains to be proven. Snap prevention does not
-  block the tiling-only preview.
-- Experiment with custom drawing and a real group underlay, including Task
-  View and Alt+Tab behavior. Windows now uses the owned layered custom-drawing
-  carrier for the filled underlay; an outline fallback remains acceptable if
-  that mechanism proves unworkable.
 - Windows distribution should be the most obvious and unsurprising for users.
   Store availability alongside manual installation is research scope, not a
   selected package or update channel.
-- Develop directly on the Windows 11 PC, not a VM. Keep the NixOS/Linux flow
-  intact; account for the PC also serving as the KDE multi-output test host.
-- User decision 2026-09-30, option A: pre-1.0 track latest stable Rust and
-  fix breakage. Windows uses rustup stable default with rustfmt/clippy, no
-  directory override and no `rust-toolchain.toml`. Linux and existing Linux
-  CI take Rust from the regularly bumped nixpkgs pin in `devenv.yaml`.
-  Revisit the upgrade process at 1.0.
+- Develop directly on the Windows 11 PC, not a VM (single Gigabyte M27Q
+  baseline; Windows multi-monitor moves to the user's other Win11 PC). Keep
+  the NixOS/Linux flow intact.
+- Sandbox closed 2026-09-30: Phase 1-3 live proof runs on the physical
+  desktop with owned disposable windows first; Sandbox deferred to Phase 4.
+  Route detail stays in [Windows plan](research/windows-port/plan.md).
 - Elevated (administrator) windows stay unmanaged by default: they float at
   their native position while other windows keep tiling. A future opt-in
-  where the user chooses to run the tiler elevated may be considered; it is
-  not a sensible default now.
-- Approved route (user 2026-09-30): one normal single per-user/session
-  `tiler-windows` executable with standalone stop/restore, public hide/reveal,
-  owned disposable test binary, completed `RegisterHotKey` vs `WH_KEYBOARD_LL`
-  comparison (hook selected, registration rejected), proof order offline then
-  Sandbox clean/lifecycle then owned hide/crash-restore then physical repeat
-  then physical input. Lifecycle/recovery plus input proof accepted on this
-  single-display PC; Engine-driven tiling and the focus/move shortcut preview
-  now have automated native evidence. Managed Windows workspaces also have
-  automated native evidence (2026-10-02);
-  physical shortcut acceptance remains pending. Scoped native Settings UI
-  Apply/Revert proof passed on 2026-10-04; physical feel stays user-owned.
-- Sandbox closed 2026-09-30 (user dismissed the WM_CLOSE close confirmation;
-  no Sandbox processes remain): Phase 1-3 live proof runs on the physical
-  desktop with owned disposable windows first; Sandbox is deferred to Phase 4
-  clean-install/runtime plus Win+L guest-only policy. Clean runtime stays
-  pending (static CRT/OS imports are supporting, not proof). Route detail stays
-  in [Windows plan](research/windows-port/plan.md); preflight hashes and the
-  removed `target/sandbox-preflight/` payload record stay in
-  [Phase 1 note](changes/windows-phase1-implementation.md).
-- Accepted baseline (user 2026-09-30, this dev PC): one Gigabyte M27Q only
-  (see [runbook](windows-dev-environment.md)); Windows multi-monitor moves to the
-  user's other Win11 PC. Historical KDE multi-output host assertions are unchanged.
-- User decisions 2026-10-02 (Windows managed workspaces): public `SW_HIDE`
-  with nonactivating reveal is approved, preferring official APIs; a simple
-  same-executable watcher is approved, the user is wary of complexity so no
-  added machinery. Default is per-output-local with KDE parity: Win+1..9 select
-  existing workspaces only, Win+Shift+1..9 send only the focused tiled window
-  and follow after verified transfer, `0` reuses or creates the trailing empty.
-  E8 prime plus `AttachThreadInput` plus exact foreground readback is the
-  approved focus mechanism. Session-only `SPI_SETWINARRANGING` prevention is
-  approved; on Win11 build 26200 disabling via pvParam FALSE requires uiParam
-  TRUE. Automation commands are welcome only as needed, not the primary route.
-  Terminal is ordinary by default with no product special-case. Current CLI is
-  `workspace --select N` / `workspace --send N` (existing/trailing) and opt-in tile
-  `--scope-exe`/`--scope-host-child` proof fences with no default filtering.
-  Recovery ledger v4 stores min/max show-state without geometry; readers accept
-  v1-v3. The window-lifetime membership property is inert, remains until window
-  destruction, and is distrusted/replaced on the next run.
-- User decision 2026-10-02, option A (Windows minimum sizes): query fresh
-  application-declared minimum track sizes and supply visible-frame physical-
-  pixel hints to the existing shared minimum-aware projection. No learning;
-  generic learned limits remain parked. Match KDE when infeasible: retain
-  proportional allocation, flag overconstrained leaves and skip their writes;
-  overlap is possible, with no fighting. Failed, timed-out or invalid native
-  queries supply no hint. Keep existing refused-attempt suppression.
+  where the user runs the tiler elevated may be considered; not a default now.
 - macOS decisions (version floor, App Store, shortcut consent, updates, UI
   language) are deferred until macOS spiking starts.
 - User direction 2026-10-03 (macOS approach): prefer the lower-level,
-  lower-jank route first (yabai-style), since it may help window effects and
-  clean workspaces, accepting that it may not run in locked-down
-  environments. An optional higher-level public-API route (AeroSpace-style,
-  e.g. off-screen parking) may be evaluated later as a configurable
-  alternative. User decision 2026-10-03: default to tier 2, public plus
-  private APIs with SIP left enabled (AeroSpace / yabai-without-scripting-
-  addition class); no Dock injection or reduced SIP. Re-evaluate deeper
-  tiers only if tier 2 cannot solve a problem well.
-- User decision 2026-10-03 (dev environments): adopt a single root
-  `mise.toml` for Windows and macOS toolchains (for example Rust via rustup
-  stable and `just`), run from the project root; OS-specific entries stay in
-  that root file rather than child directories. devenv/Nix stays the source
-  on Linux/NixOS, including system libraries. Minimal `AGENTS.md` changes
-  needed to allow this are approved; avoid bloat.
+  lower-jank route first (yabai-style). An optional higher-level public-API
+  route (AeroSpace-style) may be evaluated later. Default to tier 2, public
+  plus private APIs with SIP left enabled; no Dock injection or reduced SIP.
+  Re-evaluate deeper tiers only if tier 2 cannot solve a problem well.
+## Development Environment
+
+- User decision 2026-10-03 (dev environments): single root `mise.toml` for
+  Windows and macOS toolchains, run from the project root; OS-specific entries
+  stay in that root file. devenv/Nix stays the source on Linux/NixOS, including
+  system libraries. Minimal `AGENTS.md` changes needed to allow this are
+  approved; avoid bloat.
 - Implemented dev route (2026-10-03): root `mise.toml` declares stable Rust
   via rustup with rustfmt/clippy and just/jq/gh/ripgrep on Windows/macOS;
-  yq is Windows-only (the approved macOS inventory does not include it).
-  Use root-run `mise trust`, `mise install` and `mise exec -- <command>`.
-  Git, MSVC/SDK, Xcode/CLT and host shell bootstrap remain manual;
-  installations remain user-owned. Mise selects Rust through process-local
-  `RUSTUP_TOOLCHAIN`, without a persisted directory override or toolchain file.
-- Provisional, to discuss (2026-10-03, dev tool versions): CLI selectors are
-  `latest`, Rust is `stable`, and no `mise.lock` is committed. This keeps the
-  initial route small; installs are rolling rather than reproducible pins.
-- Provisional, to discuss (2026-10-03, dev environment CI): verify mise installs
+  yq is Windows-only. Git, MSVC/SDK, Xcode/CLT and host shell bootstrap
+  remain manual; installations remain user-owned. Rust resolves through
+  process-local `RUSTUP_TOOLCHAIN`, without a persisted directory override,
+  toolchain file, or `rust-toolchain.toml`. Linux Rust/CLIs follow the
+  `devenv.yaml` nixpkgs pin. Operational commands live in
+  [AGENTS.md](../AGENTS.md).
+- User decision 2026-10-08 (dev tool versions): CLI selectors are `latest`,
+  Rust is `stable`, and no `mise.lock` is committed. Pre-1.0 track latest
+  stable Rust and fix breakage; revisit the upgrade process at 1.0.
+- User decision 2026-10-08 (dev environment CI): verify mise installs
   and tool/host/component smoke checks on Windows and macOS 15 arm64, retaining
-  Windows Cargo gates. No exact mise/Nix equality gate: rolling selectors are
-  not shared exact pins, and Linux Rust/CLIs follow the `devenv.yaml` nixpkgs
-  revision. A mismatch with rolling stable is permitted by the Rust policy.
+  Windows Cargo gates. No exact mise/Nix equality gate.
 - Reference implementations cloned locally by the user (2026-10-03) under
-  `~/Development`: macOS AeroSpace, yabai, Amethyst; Windows glazewm (Rust),
-  komorebi; Linux cosmic-comp, Hyprland, i3, bspwm, qtile, PaperWM, xmonad.
-  cosmic-comp is the user's favourite tiling UX (n-ary splits, windows
-  joining and leaving splits) and is a key input to the functional spec.
+  `~/Development` remain inputs to the functional spec; cosmic-comp (n-ary
+  splits) is the user's favourite tiling UX.
 
-### Windows settings
+## Settings, Tray and First-Run
 
-- Windows parity item 11 (2026-10-04): validated version-1 JSON settings persist
-  in `%LOCALAPPDATA%\plasma-auto-tiler\settings.json`. Normal owners read them at
-  startup and poll on the existing pump for live gaps, border/underlay, keyboard
-  bindings/takeover and mouse Snap prevention. Proof owners stay isolated;
-  explicit normal CLI switches remain authoritative for their settings fields.
-  Malformed live files keep last-good state with degraded diagnostics.
-- Apply validates and atomically saves; Revert discards unsaved edits and reloads
-  the saved file, without undoing prior Apply. Close never saves. The UI separates
-  saved/adopted configuration from native-effect proof; mouse prevention uses
-  existing session-only preimage/readback/conditional restoration, no policy.
-- Provisional, to discuss: use plain official Win32 controls through the existing
-  Rust `windows-sys` dependency, with `tiler-windows settings` and
-  `just --justfile windows.justfile settings`, plus the running owner's tray.
-  UI instances are single per user/session; external stale edits
-  trigger reload/refusal. The file store and existing-pump polling are the small
-  Windows analogue of KDE's existing config/reconfigure route.
-- Provisional, to discuss: default Windows border to system accent/theme on,
-  with KDE configured `#2a82da` fallback, replacing the temporary yellow default.
-  Configured colour wins when theme is off or no usable accent is available.
-- Provisional, to discuss (updated 2026-10-04): normal startup with no settings
-  file offers a native Yes=Authentic (default), No=Compatible prompt, briefly
-  explaining Win+G/F11 Game Bar/Xbox implications. The owner lease precedes UI;
-  atomic create-if-absent publication never replaces a file appearing during
-  the prompt. Both presets remain prominently available in Settings.
-  Compatible resets to the default catalog then disables 35 OS-conflicting
-  physical chords, including Win+G/F11; it invents no replacement defaults.
-- Per-binding Keep/Disable/Rebind is available for implemented actions, with
-  separate directional letter/arrow rows and actual rebound-chord conflicts.
-  Win+G/F11 explicitly show incomplete containment, Win+L keeps explicit opt-in,
-  and undocumented chords do not claim conflict-free certainty.
-- Provisional, to discuss: this first slice limits manual rebinds to Win plus
-  the action's existing Shift arm; Alt/Ctrl and unshifted Win+L rebind targets
-  refuse. Keyboard resize rows are visibly unavailable; the additional
-  global-unique/shared workspace mappings await runtime implementation.
-- Synthetic native UI/Apply/Revert, live geometry/border/SPI and cleanup proof
-  passed; physical shortcut/Snap/Xbox and other DPI/output checks stay user-owned.
-  Evidence and limitations: [Windows settings](changes/archive/windows-settings.md).
+- Shared:
+  - Apply/Force/Revert is the only correction flow; ordinary Save never
+    mutates shortcuts or host keys, and installation/startup never mutates
+    global shortcuts.
+  - Proof owners stay isolated from normal configuration.
+- KDE: one unified Settings page (user 2026-09-28 option B) for border,
+  shortcut overrides, gaps and `workspaceMode`; tray Settings, KWin Scripts
+  Configure and Desktop Effects Configure open the same page. Saving changed
+  gaps requests KWin reconfigure and the controller re-reads validated gaps;
+  the request alone does not confirm application. `workspaceMode` is
+  startup-only with a session-restart note. Removed
+  `tilingAlgorithm`/`automaticSplitTarget`/`dropOutlinePreview` values are
+  neither read nor rewritten. `shortcutProfile` stays hidden until distinct
+  profiles exist; its saved value and startup read remain untouched.
+  Launch blocker: every user-facing setting must apply live, except
+  startup-only `workspaceMode`.
+- KDE tray carrier: portable Rust StatusNotifierItem, KWin backend first;
+  stays alive without a watcher, registers on live-confirmed watcher owner;
+  outbound state-snapshot bridge, reconnecting, idempotent, no KWin executable
+  allowlist; no shell, input, or general helper-to-KWin action route (narrow
+  exceptions: keyless KGlobalAccel workspace-tiling toggle and
+  saved-default/reconfigure writes). Snapshots require the sender's unique
+  D-Bus name to equal the current `org.kde.KWin` owner. Ordering (user
+  decision C4 option 2, 2026-09-27): reject and
+  log same-generation lower-revision snapshots; equal-revision heartbeat may
+  refresh; equal-revision different-content revokes trust. Status (user
+  decision 2026-09-28, option 2, for now): fresh
+  authenticated snapshot shows Active, missing/stale shows NeedsAttention.
+  Host-conflict warning (`OverlayIconName=dialog-warning`, top menu row
+  opening Settings) is separate from tiling status. Delivery (user decision
+  2026-09-28, option 2): Home Manager
+  systemd user unit (`Restart=on-failure`); no supervisor; second instance
+  exits successfully on taken name. Diagnostics on stderr/journal with
+  `route-diag component=tray-endpoint`.
+- KDE host-setting conflicts (user 2026-09-29; Fix confirmed live 2026-09-29,
+  Revert/tray-indicator acceptance pending): the unified page reads
+  `kwinrc [Windows]` `ElectricBorderTiling`, `ElectricBorderMaximize` and
+  `ElectricBorders` on open with short explanations. Boolean rows always
+  visible: Fix writes `false` when on; Revert removes the local key when off
+  so the KDE 6.7.5 default `true` takes effect. The `ElectricBorders` row
+  appears only when nonzero; its sole Fix removes the local key so default
+  `0` takes effect. No prior-value journal or ownership tracking. Explicit
+  KConfig changes send KWin reconfigure and read back effective config; a
+  failed write or send is shown/logged, and a queued send does not prove the
+  running compositor applied the value. Startup and ordinary Save never change
+  host keys. Host conflicts add a warning overlay to the tray icon and a top
+  menu row opening Settings; left-click keeps opening the tray menu, snapshot
+  loss keeps its separate NeedsAttention status; no notification or direct
+  Settings-on-icon-click. Uninstall restoring defaults for overridden host
+  settings is unselected and unimplemented.
+- Windows (user 2026-10-08):
+  - Validated version-1 JSON settings in
+    `%LOCALAPPDATA%\plasma-auto-tiler\settings.json`; normal owners read at
+    startup and poll on the existing pump; explicit normal CLI switches stay
+    authoritative per field; malformed live files keep last-good state.
+  - Apply validates and atomically saves; Revert discards unsaved edits and
+    reloads the saved file; Close never saves. Mouse prevention uses existing
+    session-only preimage/readback/conditional restoration, no policy.
+  - Plain official Win32 controls via `windows-sys`; `tiler-windows settings`
+    plus tray; single UI instance per user/session; external stale edits
+    trigger reload/refusal.
+  - The normal running owner owns one official `Shell_NotifyIconW` icon; both
+    clicks open its menu (conflict row, status, workspace tiling,
+    new-workspace default, Settings, Stop). One stable icon GUID; TaskbarCreated
+    revalidates or re-adds; proof owners create no tray or prompt. The
+    taskbar workspace indicator remains parked separately.
+    Settings and the conflict row open the singleton UI; Stop uses ordinary
+    teardown with graceful icon deletion and dead-owner cleanup through the
+    existing recovery lease. Explorer may initially put the icon in overflow.
+  - An amber warning overlay and conflict row identify enabled effective
+    Win+G/F11 chords with known incomplete containment, plus kept Win+L when
+    runtime opt-in allows its unreliable lock override. Disable, rebind-away,
+    Compatible or keyboard takeover off clears the warning; absence of a
+    warning never establishes containment for other unproven chords.
+  - The own-executable Settings control window is unmanaged through existing
+    dialog gates.
+  - Status: synthetic native UI/Apply/Revert, geometry/border/SPI and cleanup
+    proof passed; physical shortcut/Snap/Xbox and other DPI/output checks
+    stay user-owned ([settings](changes/archive/windows-settings.md)).
+  - Status: synthetic/native live proof passed for both presets, stale-choice
+    refusal, menu buttons, warning changes, Stop, TaskbarCreated and crash
+    recovery; real Explorer restart, physical input and other DPI/output
+    arrangements remain user-owned
+    ([tray/first-run](changes/archive/windows-tray-first-run.md)).
 
-### Windows tray and first-run follow-up
+## Workspaces
 
-- Provisional, to discuss (2026-10-04): the normal running owner owns one
-  official `Shell_NotifyIconW` icon. Both clicks open its menu: optional top
-  "Conflicting Windows settings...", disabled live status, current-workspace
-  tiling, new-workspace Tiled/Floating default, Settings and Stop.
-  Settings and the conflict row open the existing singleton UI; Stop follows
-  ordinary owner teardown. Explorer may initially place the icon in overflow.
-- Provisional, to discuss: an amber warning overlay and conflict row identify
-  enabled effective Win+G/F11 chords with known incomplete containment, plus
-  kept Win+L when runtime opt-in allows the unreliable lock override. Disable,
-  rebind-away, compatible or keyboard takeover off clears the warning; other
-  unproven chords do not gain a claim of proven containment from its absence.
-- Workspace tiling/floating and new-workspace default controls shipped with
-  the runtime below. The taskbar workspace indicator remains parked separately.
-- One stable icon GUID supports graceful deletion and dead-owner cleanup under
-  the existing recovery lease. TaskbarCreated revalidates a surviving icon or
-  re-adds a missing one; proof owners do not create a tray or first-run prompt.
-- Provisional, to discuss: the own-executable Settings control window is
-  unmanaged through existing dialog gates, preserving its fixed-size controls
-  under an unfiltered owner. Other applications are unaffected by that test.
-- Synthetic/native live proof covers both presets, stale-choice refusal, both
-  menu buttons, usable Settings/Apply, warning changes, Stop, posted
-  TaskbarCreated and crash recovery. Real Explorer restart, physical input and
-  other DPI/output arrangements remain user-owned. Evidence:
-  [Windows tray and first run](changes/archive/windows-tray-first-run.md).
-
-### Windows workspace tiling mode
-
-- KDE parity (2026-10-04): each managed workspace owns a session-local tiled/
-  floating flag. Startup seeds all workspaces from saved `defaultTiled=true`;
-  live default changes seed only subsequently created workspaces. Overrides
-  reset on owner restart and never persist. The tray shows a current-workspace
-  checkbox and new-workspace default choices; Settings exposes the same default.
-  There is no keyboard binding: KDE's tray action has an empty key sequence.
-- Floating preserves native frames, membership and hide/reveal while stopping
-  domain tiling, directional tile navigation, group underlay and drop preview.
-  Independent active border remains. Retile releases the exact shared Engine
-  domain without writes, then freshly adopts observed geometry with the existing
-  recursive-cut/centre-split fit. Intentional per-window float/sticky and native
-  maximize/fullscreen exceptions keep their semantics; exact-lifetime float
-  intent survives Engine domain release. Mode flips cancel stale gesture effects.
-- Sends touching a floating workspace use project membership transfer and the
-  existing verified follow path, without a two-domain Engine plan. Only the
-  tiled side reconciles: source survivors before hide/follow, or destination
-  fresh admission after reveal. Floating-side frames remain untouched. Sticky
-  movers refuse, and intentional floats on tiled sources remain ineligible.
-- Provisional, to discuss: store KDE's `defaultTiled` equivalent as
-  `core.workspace.default_tiled` in the existing version-1 Windows JSON settings;
-  older settings backfill true. Tray picks update only that saved field through
-  the existing store; settings polling confirms runtime adoption.
-- Provisional, to discuss: extend the existing exact-owner automation transport
-  with `workspace --send N`, acting on fresh foreground managed focus through
-  the normal send path. It is needed for automated boundary proof because normal
-  owners deliberately reject injected shortcut input. Dispatch acknowledgement
-  alone is not effect proof; ordinary keyboard bindings remain the user route.
-- Native locked gates and scoped Notepad/Calculator/Paint synthetic/native
-  effect proof pass, including both boundary sends, fresh retile, active drag
-  effects and default creation/startup. Physical feel and other output/DPI
-  arrangements remain user-owned. Evidence:
-  [Windows workspace tiling](changes/archive/windows-workspace-tiling.md).
-- R-MAX-03 resolved (2026-10-04): first-seen maximized windows join their
-  workspace slotless, preserving floating native geometry and managed
-  hide/reveal without creating an Engine float exception. Floating skips
-  admission clear and tile-slot seeding; first tiled admission restores the
-  unslotted maximum once and refetches for fresh tiling. Previously slotted
-  overlays skip re-clear and restore through normal tiling. This follows KDE
-  `kwin/src/plan-adapter.ts:4905-4909,5213-5216,5351-5418`.
-  Adapter assembly/Engine regressions and scoped Notepad/Paint native proof
-  establish actual tiled plan/write/matched readback, not inventory presence.
-  Earlier rejected hold/release approaches remain historical evidence in the
-  archived record. Physical feel and other DPI/output setups remain user-owned.
-  Superseded in direction by Q3 scope (user 2026-10-07, see
-  [Cross-Platform Behavior](#cross-platform-behavior)): the one-shot restore
-  is replaced by keeping the maximize over a reserved slot.
-
-## Cross-Platform Behavior
-
-- User direction 2026-10-03: the [reference-WM outcome matrix](spec/reference-outcomes.md)
-  records minimal action sequences and per-WM outcomes as the evidence source of
-  truth feeding the cross-platform functional specification. Existing selections
-  remain authoritative; reference outcomes become supported variants only when
-  explicitly selected, with user-settable configuration where applicable.
-- User decision 2026-10-06 (matrix format): keep the matrix index at
-  `docs/spec/reference-outcomes.md`, with one file per area under
-  `docs/spec/reference-outcomes/`, stable scenario IDs and precise fixtures,
-  actions and observations. Every new scenario uses Given/When/Then blocks
-  with one Then bullet per profile: the eight existing references, niri,
-  PaperWM, karousel, paneru, and separate Ours KDE and Ours Windows entries.
-  Existing wide tables stay unchanged until a separate migration. Column and
-  viewport notation is model-qualified; unsupported fixtures/actions and
-  owner-specific journeys are explicitly qualified, applicable unknowns TBD.
-  Reference baselines use pinned shipped defaults and named discriminating
-  variants. PaperWM.spoon is corroboration only. Evidence expands the corpus,
-  not the selected product behavior or consensus denominator.
-- User decision 2026-10-07 (R-WS-01): workspace send keeps following the
-  window by default (matching the shipped default bindings of COSMIC,
-  Hyprland, qtile, niri and PaperWM); a separate send-and-stay command is
-  added (COSMIC Send/Move pair), unbound by default (item 2 below). The
-  original eight split 3 follow / 5 stay by shipped default; all offer both.
-- User decision 2026-10-07 (reference default rule): where the reference
-  WMs do not show extremely strong agreement against COSMIC, COSMIC's
-  behavior stays our default. Where references meaningfully differ, the
-  alternative is offered as a setting; configurability may be deferred or
-  skipped when only one outlier differs or only the scrolling-column
-  (PaperWM-style) WMs differ.
-- User decision 2026-10-07 (R-FLT-05): sticky floats stay sticky across
-  owner restart on Windows too (KDE already does), delivered with the
-  R-RST-01 float-identity restart work; supersedes the 2026-10-03 "normal
-  float after restart is acceptable for now" note.
-- User decision 2026-10-07 (R-MAX-05): Windows keeps refusing the project
-  toggle on app-owned fullscreen without a preimage for now, despite 8/8
-  references exiting; a later spike explores retaining window state early
-  so exit needs no fullscreen-time guess (backlog Future).
-- User decision 2026-10-07 (R-MAX-07): Windows keeps classifying a
-  captionless full-monitor window as fullscreen (8/8 references tile it, but
-  Win32 has no fullscreen state and borderless games rely on this); KDE
-  stays flag-based. Deliberate platform difference, for now. Gaming
-  compatibility must be flawless.
-- User decision 2026-10-07 (R-MIN-01..03): keep minimum-aware allocation
-  plus B6 origin+minimum, no setting, despite 7/8 references ignoring
-  minima (they can crop clients; our hosts and apps hold minimum sizes).
-  Overlapping windows are an absolute last resort in an auto tiler.
-- User decision 2026-10-07 (R-DRAG-04): Esc keeps cancelling a drag on both
-  platforms (host KWin/Windows move convention; i3 also cancels) despite
-  7/8 references dropping at the pointer; a setting may be explored later.
-- User decision 2026-10-07 (R-GRP-03, V-GROUP-STACK): tabbed stacks leave
-  deferral and become the first item after the 0.1 release; closing the
-  active tab keeps the group and activates the next tab (COSMIC, Hyprland,
-  i3, sway). Until then, stacks stay refused.
-- User direction 2026-10-07 (R-DRAG-07): drag presentation follows the host
-  platform's native behavior where one exists, avoiding low-value,
-  high-maintenance custom rendering when there is no functional difference.
-  KDE Meta+drag keeps KWin's pointer-following frame; Windows title-bar drag
-  stays native. Windows Win+drag has no native counterpart, so its existing
-  stationary source plus moving preview stays (cheapest working form);
-  revisit only if delegating to the native move loop is nearly free. macOS
-  follows the same rule when it starts.
-- User decision 2026-10-07 (R-DRAG-08): a Meta/Win client drag focuses the
-  dragged window at press on both platforms (COSMIC and 6/8 references,
-  matching ordinary click focus). Windows changes from activate-on-drop;
-  KDE timing needs a live check.
-- User decision 2026-10-07 (R-MOV-03): keep the COSMIC same-orientation
-  wrap (R2c, `H[A,B*,C,D]` move right gives `H[A,H[B,C],D]`) as default and
-  make it configurable, with flat sibling swap (i3/sway) as the alternative
-  (shared core/KDE delivered offline;
-  [record](changes/archive/same-axis-move-setting.md); Windows wiring and
-  native journey pending).
-- User decisions 2026-10-07 (reference-consensus additions, implementation
-  pending; [implementation order and Windows handoff](backlog.md)):
-  - D1 coordination: the KDE-side session implements the shared Rust core
-    plus KDE adapter; the separate Windows agent wires its adapter later.
-    Correctness over non-breakage: Windows build/behavior breakage is
-    acceptable provided the backlog lists the specific Windows changes
-    needed. Each implementation piece extends that handoff.
-  - 2.3 coordination (USER 2026-10-07; items 2-5): compile-only Windows
-    fixes preserving current Windows behavior are allowed; correctness-first
-    adapter wiring remains in the backlog handoff.
-  - Item 1, R-WS-08 / R-WS-11:
+- Shared model:
+  - Each managed workspace owns a session-local tiled/floating flag. Startup
+    seeds all workspaces from the saved default (`true`); live default changes
+    seed only subsequently created workspaces. Overrides reset on owner
+    restart and never persist. No keyboard binding for the default itself.
+  - Floating preserves native frames, membership and hide/reveal while stopping
+    domain tiling, directional navigation, group underlay and drop preview.
+    The active border stays independent. Retile releases the Engine domain
+    without writes, then fresh admission (clean/tolerance-valid recursive-cut
+    fit, otherwise sequential long-edge seed, no centre inference).
+    Intentional float/sticky and maximize/fullscreen exceptions keep their
+    semantics; exact-lifetime float intent survives domain release. Mode flips
+    cancel stale gesture effects.
+  - Sends touching a floating workspace transfer project membership without a
+    two-domain Engine plan; only the tiled side reconciles. Floating-side
+    frames stay untouched. Sticky movers refuse; intentional floats on tiled
+    sources stay ineligible.
+  - `Meta/Win+1..9` select an existing workspace without creation; `0` reuses
+    or creates the trailing empty. `Meta/Win+Shift+1..9` send only the focused
+    tiled window; send follows by default (R-WS-01) with a bindable unbound
+    send-and-stay counterpart. Relative sends use the scoped ring (item 2).
+    Exact follow is one fresh mover-absent-from-source/present-in-target
+    proof, switch-before-focus without waiting unrelated geometry; no
+    retry/replay; setter returns and signal delivery alone are not proof.
+    Stale, ambiguous, missing, no-op, wrong-target, owner, scope, and hook
+    failures do not follow; unrelated async layout settling never gates
+    confirmed follow.
+    KWin geometry and membership are non-atomic and asynchronous. US shifted
+    aliases (`Meta+!` through `Meta+)`, `Win` equivalents) register alongside
+    digit sends, preserving foreign shortcut records, without establishing physical delivery.
+- USER VISUAL/MANUAL acceptance (rapid multi-workspace move/follow use):
+  accepted for repeated same-session use
+  across many workspaces. The durable preference is graceful, unsurprising
+  handling of confirmed partial successes and responsiveness during rapid
+  use; it authorizes no ignored errors, retries, queue resets, or
+  architecture/uncertain-recovery change.
+- `workspaceMode` (`per-output-local`, `global-unique`, `shared`) runs on a
+    session-local project-owned KWin backing-desktop mapping, never the native
+    COSMIC workspace-set mapping. Adopted preexisting desktops are managed,
+    never disposed on teardown. Every live local/global-unique output domain
+    and the shared domain keeps at least two logical workspaces plus one
+    structural trailing empty (literal native-order trailing empty retained;
+    empty non-final managed desktops removable once invisible everywhere).
+    Occupied (including floating, fullscreen, maximized), visible,
+    flight-pinned, displaced, and unmapped desktops stay protected; sticky
+    all-desktops windows do not occupy every backing desktop; unmapped
+    desktops remain outside management. Disconnected output: displaced layout
+    preserved in separate workspace(s), never merged into remaining layout.
+    Active-focus survivor choice: disconnected-monitor active window shows its
+    relocated workspace with focus retained; surviving-monitor active window
+    preserves current view and focus. On reconnection, displaced workspaces
+    return automatically to their original monitor with then-current contents
+    (never a saved snapshot, never individually pulled-back explicitly moved
+    windows). Multiple-survivor destination: nearest surviving monitor from
+    disconnect-time geometry, fallback current primary then output ordering;
+    never post-disconnect frame geometry as proxy. Reconnect focus: returning-
+    workspace active window shows that workspace with focus retained;
+    surviving-output actives preserve view/focus with no stealing. Reconnect
+    selection never consults or restores prior-view history (R-WS-08 history
+    still records observed hotplug changes per 1.5). Session-local scope, no
+    restart-persistent mapping or return guarantee.
+- KDE: tray writes only `defaultTiled` and requests KWin reconfigure; only a
+  running KWin reread/snapshot confirms it. Per-workspace overrides are
+  session-only and reset on script reload; shared mode toggles the backing
+  workspace across outputs. Keyless KGlobalAccel workspace-tiling action is
+  invoked by the tray without confirming application. No per-workspace history
+  persists.
+- Windows (user decisions 2026-10-02): one normal single per-user/session
+  owner executable with standalone stop/restore. Managed
+  workspaces use public `SW_HIDE` with nonactivating reveal and a simple
+  same-executable watcher (the user is wary of complexity: no added
+  machinery). Store KDE's `defaultTiled` equivalent as
+  `core.workspace.default_tiled` in the existing version-1 Windows JSON
+  settings; older settings backfill `true`. Tray picks update only that saved
+  field through the existing store; settings polling confirms runtime
+  adoption. `Win+1..9` select existing workspaces only;
+  `Win+Shift+1..9` send the focused tiled window with follow after verified
+  transfer. E8 prime plus `AttachThreadInput` plus exact foreground readback
+  is the focus mechanism. Terminal is ordinary. CLI: `workspace --select N` /
+  `workspace --send N`, plus opt-in `--scope-exe`/`--scope-host-child` proof
+  fences. Recovery ledger v4 stores min/max show-state without geometry
+  (readers accept v1-v3); the window-lifetime membership property is inert and
+  distrusted. Exact-owner automation-only `workspace --send N` exists for
+  boundary proof; dispatch acknowledgement is not effect proof.
+  Status: native locked gates and scoped synthetic/native effect proof passed;
+  physical feel and other output/DPI arrangements remain user-owned
+  ([workspace tiling](changes/archive/windows-workspace-tiling.md)).
+- Delivery coordination for items 1-5: see Move, Layout and Output Commands
+  below.
+- Item 1, R-WS-08 / R-WS-11:
     - 1.1: previous-view toggle is Meta+Ctrl+Tab on KDE / Win+Ctrl+Tab on
       Windows. Previous/next workspace uses Meta/Win+Ctrl+arrows and
       Meta/Win+Ctrl+H/J/K/L: left/up previous, right/down next (COSMIC
@@ -338,7 +242,8 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
       arrow forms (`~/.config/kglobalshortcutsrc` default column :95-98).
       Windows native desktop switching holds Win+Ctrl+Left/Right (general
       knowledge, unverified in repo). Authentic takes over and clears those
-      holders; Compatible disables our conflicting arrow forms; letters remain.
+      holders; Compatible disables our conflicting arrow forms; letters
+      remain.
     - 1.2: local and global-unique modes keep per-output previous history
       and relative rings; shared mode keeps one history/ring. Record every
       successful observed workspace change regardless of producer (our
@@ -353,15 +258,13 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
       the trailing empty and ordinals beyond 9; first/last wrap. Selection
       itself creates nothing.
     - 1.5: reconnect selection never consults or restores history; its
-      selection policy is unchanged. Separate R-WS-08 history records
-      hotplug-driven observed changes (disconnect displacement / reconnect
-      return) like any other successful observed change. A previous entry
-      is valid only while that workspace remains in the recording output's
-      scope; movement to another output (e.g. return on reconnect) clears it
-      like removal, so toggle is a no-op until the next recorded change.
-      A disconnected output's history is discarded with the output;
-      output identity is session-local.
-  - Item 2, R-WS-01 / R-WS-14:
+      selection policy is unchanged. Hotplug-driven observed changes record
+      like any other. A previous entry is valid only while that workspace
+      remains in the recording output's scope; movement to another output
+      (e.g. return on reconnect) clears it like removal, so toggle is a no-op
+      until the next recorded change. A disconnected output's history
+      is discarded with the output; output identity is session-local.
+- Item 2, R-WS-01 / R-WS-14:
     - 2.1: keep numbered follow chords Meta/Win+Shift+digits. Relative
       send-and-follow uses Meta/Win+Ctrl+Shift+arrows and +H/J/K/L.
       Numbered and relative send-and-stay are bindable, unbound by default.
@@ -369,27 +272,94 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
       holds the arrow forms (`kglobalshortcutsrc:173-176`): Authentic clears
       them, Compatible disables our arrows; letters remain. Windows
       Win+Ctrl+Shift+arrows ownership is unknown.
-    - 2.2: relative send uses the same scoped ring as 1.4, previous/next
-      ordinal step, not MRU, wrapping including the trailing empty. Sending
-      into it fills it; normal lifecycle maintenance supplies the next empty.
-      Resolve the target once before transfer. Follow/stay applies to both
-      absolute and relative sends.
-    - Existing-decision application: KDE floating-boundary sends currently
-      preserve source view (`kwin/src/plan-adapter-entry.ts:4018-4022,4067-4085`),
-      contrary to the decided follow default above and under Windows workspace
-      tiling mode. Item 2 routes explicit follow/stay through that path so the
-      default follows; this is an implementation gap, not a new decision.
-  - Item 3, R-MOV-03:
-    - 3.1: one global setting, KDE `sameAxisMove`, Windows
-      `core.same_axis_move`, with `cosmic-wrap` default and `flat-swap`.
-      Windows adds the field within settings schema version 1; missing
-      defaults to `cosmic-wrap`. Changes apply to subsequent moves without
-      rebuilding existing trees. KDE gets a settings UI control.
-    - 3.2: flat-swap replaces only R2c when the neighbor is an adjacent
-      direct leaf sibling in the same group; shares travel with windows
-      (existing swap semantics). Leaf/group neighbors keep current rules;
-      add TBD discriminating rows before broadening.
-  - Item 4, R-LAY-01:
+    - 2.2: relative send uses the same scoped ring as 1.4 (ordinal step, not
+      MRU, wrapping including the trailing empty). Sending into it fills it;
+      normal lifecycle maintenance supplies the next empty. Resolve the target
+      once before transfer. Follow/stay applies to absolute and relative
+      sends.
+    - KDE floating-boundary sends currently preserve source view; item 2
+      routes explicit follow/stay through that path so the default follows
+      (implementation gap, not a new decision).
+- User decisions 2026-10-08 (workspace migration R-WS-12 D1-D9, outcomes
+  decided; changed D8 implementation pending):
+  - D1 bindings: four directional active-workspace migration actions,
+    bindable and UNBOUND by default, follow-only, as delivered (presets keep
+    empty migration defaults; no new foreign-conflict claims).
+  - D2 capability: local/global-unique only with strict
+    `options.perOutputVirtualDesktops === true` as delivered. Shared
+    mode, false or unreadable capability refuses with a reason before
+    writes; never mutate native settings.
+  - D3 targeting: active workspace only, using full-output-rect unique
+    reciprocal adjacency, no output wrap, as delivered. No neighbor is
+    a no-op; ambiguous or unreadable topology refuses; follow only.
+  - D4 destination: preserve backing ID, tree/order/shares, remembered
+    focus and workspace tiling mode via core `relocate_domain` as
+    delivered. Insert immediately after the target output's current
+    workspace and show the moved workspace; the previous target
+    workspace stays listed and hidden.
+  - D5 source/empty: source selects its last remaining scoped
+    workspace (COSMIC); empty migration allowed and retains its
+    backing ID, as delivered. Native lifecycle timing remains for
+    user testing.
+  - D6 focus: retain the moved active client only after all member
+    arrivals and both view changes are verified, as delivered.
+    Empty/sticky-active migration uses native output switching with
+    no fabricated client activation; minimized clients are not
+    unminimized or explicitly focused.
+  - D7 floats/sticky: workspace-bound intentional/automatic floats are
+    carried with class and origin preserved via native output remap,
+    as delivered. Sticky all-desktops clients stay on the source and
+    are not migrated members.
+  - D8 overlays (CHANGED, decided, implementation pending):
+    fullscreen plus maximized members are carried, matching
+    Hyprland/sway/i3/niri/COSMIC and native KWin send-to-output. No
+    refusal in moved members or affected views; only the native move,
+    with no extra size/position/focus writes while fullscreen. An
+    explicit user move is not unwanted interference (for example a
+    game on the wrong output). Implementation pending plus live check.
+  - D9 history/return: out-of-source-scope previous IDs clear,
+    disconnected-output history is discarded, reconnect selection
+    never consults or restores it. Remove only the explicitly moved
+    ID from automatic hotplug-return associations. Migrated IDs lose
+    auto return.
+  - Status: core/Linux planner/KDE delivered offline
+    ([record](changes/archive/kde-whole-workspace-output-migration.md),
+    [spec](spec/functional-spec.md#workspaces) REQ-WS-12a..i).
+    Windows changes initialize the new `maximized` field to false
+    only, preserving behavior; native acceptance remains pending.
+
+## Move, Layout and Output Commands
+
+- Delivery coordination (user 2026-10-07; [implementation order and Windows
+  handoff](backlog.md)): the KDE-side session implements the shared Rust core
+  plus KDE adapter; the separate Windows agent wires its adapter later.
+  Correctness over non-breakage: Windows build/behavior breakage is
+  acceptable provided the backlog lists the specific Windows changes needed.
+  Compile-only Windows fixes preserving current Windows behavior are allowed;
+  correctness-first adapter wiring remains in the backlog handoff.
+- Item 1 (R-WS-08 / R-WS-11) and item 2 (R-WS-01 / R-WS-14): see Workspaces
+  above. KDE floating-boundary sends currently preserve source view
+  (`kwin/src/plan-adapter-entry.ts:4018-4022,4067-4085`); item 2 routes
+  explicit follow/stay through that path so the default follows
+  (implementation gap, not a new decision).
+- Item 3, R-MOV-03 (user decision 2026-10-08; setting IDs decided, code
+  pending):
+  - 3.1: one global setting, KDE `sameAxisMove`, Windows
+    `core.same_axis_move`, with `group-with-neighbor` default (label
+    `Group with neighbor`, tooltip names COSMIC) and `swap-with-neighbor`
+    (label `Swap with neighbor`, tooltip names i3, sway).
+    Windows adds the field within settings schema version 1; missing
+    defaults to `group-with-neighbor`. Changes apply to subsequent moves
+    without rebuilding existing trees. KDE gets a settings UI control.
+    No migration.
+  - 3.2: `swap-with-neighbor` replaces only R2c when the neighbor is an
+    adjacent direct leaf sibling in the same group; shares travel with
+    windows (existing swap semantics). Leaf/group neighbors keep current
+    rules; add TBD discriminating rows before broadening.
+  - Status: shared core/KDE delivered offline
+    ([record](changes/archive/same-axis-move-setting.md)); Windows wiring
+    and native journey pending.
+- Item 4, R-LAY-01:
     - 4.1: Meta+O / Win+O (COSMIC parity). No stock KDE holder found in
       `kglobalshortcutsrc`; Windows Win+O is OS orientation lock
       (`crates/tiler-windows/src/settings.rs:983`). Authentic takes over;
@@ -400,7 +370,7 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
     - Status: shared core/protocol + KDE Meta+O/catalog/presets delivered
       offline ([record](changes/archive/parent-orientation-toggle.md));
       Windows wiring and user-owned native journey pending.
-  - Item 5, R-MOV-08 / R-OUT-04:
+- Item 5, R-MOV-08 / R-OUT-04:
     - 5.1: local restructure/swap/escape wins first; when none applies the
       window crosses. A sole root leaf also crosses with an adjacent output
       in all four directions, changing today's horizontal SingleRootLeaf
@@ -424,12 +394,9 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
     - Status: shared core/protocol + KDE four-direction moves, explicit
       output follow/stay and native catalog/presets delivered offline
       ([record](changes/archive/four-direction-output-transfer.md)); Windows
-      wiring and user-owned two-output native journey pending. Full rectangles
-      select adjacency only; placement retains per-desktop work areas.
-- User decision 2026-10-08 (functional naming rule): settings and
-  their values use functional names; reference WMs are named only in the
-  tooltip, not in the setting or value name. Value IDs are functional;
-  exact IDs pending.
+  wiring and user-owned two-output native journey pending. Full rectangles
+  select adjacency only; placement retains per-desktop work areas.
+## Fixed-Size Admission
 - User decisions 2026-10-08 (fixed-size admission R-SPC-04 D1-D8, outcomes
   decided; changed D1/D5/D6/D7 implementation pending):
   - D1 predicate: COSMIC whole-vector equality default as delivered
@@ -438,11 +405,11 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
     counts; no inference from `resizeable`). New setting values are
     functionally named `Width and height both fixed` (default, tooltip
     names COSMIC) and `Width or height fixed` (tooltip names Hyprland
-    on Wayland and sway); functional value IDs pending. Existing
-    `sameAxisMove` `cosmic-wrap`/`flat-swap` values are renamed
-    functionally with WM tooltips; breaking configs is acceptable
+    on Wayland and sway); functional value IDs pending. Same-axis values:
+    see item 3 under Move, Layout and Output Commands (canonical).
+    Breaking configs is acceptable
     pre-release (dogfooding correctness priority), no migration,
-    pending.
+    code pending.
   - D2 hint changes: admission-only in both directions as delivered;
     keep reacting to windows resizing themselves to avoid
     gaps/overlaps. No new hint-signal work requested.
@@ -477,6 +444,7 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
     changes are compile-only false-field plumbing, not behavior
     delivery; native checks of every user-selected choice remain
     pending.
+## Restart Persistence
 - User decisions 2026-10-08 (intentional-float restart R-RST-01 D1-D4,
   outcomes decided, delivered offline; native checks pending):
   - D1 storage: Rust planner-owned private runtime store under
@@ -507,243 +475,254 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
     ([record](changes/archive/kde-intentional-float-restart.md)).
     Windows behavior unchanged; native checks remain pending.
 - User decisions 2026-10-08 (workspace migration R-WS-12 D1-D9, outcomes
-  decided; changed D8 implementation pending):
-  - D1 bindings: four directional active-workspace migration actions,
-    bindable and UNBOUND by default, follow-only, as delivered (KDE
-    catalog 128 bindings: 92 bound, 36 unbound; presets keep empty
-    migration defaults; no new foreign-conflict claims).
-  - D2 capability: local/global-unique only with strict
-    `options.perOutputVirtualDesktops === true` as delivered. Shared
-    mode, false or unreadable capability refuses with a reason before
-    writes; never mutate native settings.
-  - D3 targeting: active workspace only, using full-output-rect unique
-    reciprocal adjacency, no output wrap, as delivered. No neighbor is
-    a no-op; ambiguous or unreadable topology refuses; follow only.
-  - D4 destination: preserve backing ID, tree/order/shares, remembered
-    focus and workspace tiling mode via core `relocate_domain` as
-    delivered. Insert immediately after the target output's current
-    workspace and show the moved workspace; the previous target
-    workspace stays listed and hidden.
-  - D5 source/empty: source selects its last remaining scoped
-    workspace (COSMIC); empty migration allowed and retains its
-    backing ID, as delivered. Native lifecycle timing remains for
-    user testing.
-  - D6 focus: retain the moved active client only after all member
-    arrivals and both view changes are verified, as delivered.
-    Empty/sticky-active migration uses native output switching with
-    no fabricated client activation; minimized clients are not
-    unminimized or explicitly focused.
-  - D7 floats/sticky: workspace-bound intentional/automatic floats are
-    carried with class and origin preserved via native output remap,
-    as delivered. Sticky all-desktops clients stay on the source and
-    are not migrated members.
-  - D8 overlays (CHANGED, decided, implementation pending):
-    fullscreen plus maximized members are carried, matching
-    Hyprland/sway/i3/niri/COSMIC and native KWin send-to-output. No
-    refusal in moved members or affected views; only the native move,
-    with no extra size/position/focus writes while fullscreen. An
-    explicit user move is not unwanted interference (for example a
-    game on the wrong output). Implementation pending plus live
-    check.
-  - D9 history/return: history decisions 1.3/1.5 invalidation as
-    delivered: out-of-source-scope previous IDs clear,
-    disconnected-output history is discarded, reconnect selection
-    never consults or restores it. Remove only the explicitly moved
-    ID from automatic hotplug-return associations. Migrated IDs lose
-    auto return.
-  - Status: core/Linux planner/KDE delivered offline
-    ([record](changes/archive/kde-whole-workspace-output-migration.md),
-    [spec](spec/functional-spec.md#workspaces) REQ-WS-12a..i).
-    Windows changes initialize the new `maximized` field to false
-    only, preserving behavior; native acceptance remains pending.
+  decided; changed D8 implementation pending): see Workspaces above.
+
+## Reference Matrix and Spec Authority
+
+- User direction 2026-10-03: the [reference-WM outcome matrix](spec/reference-outcomes.md)
+  records minimal action sequences and per-WM outcomes as the evidence source of
+  truth feeding the cross-platform functional specification. Existing selections
+  remain authoritative; reference outcomes become supported variants only when
+  explicitly selected, with user-settable configuration where applicable.
+- User decision 2026-10-06 (matrix format): keep the matrix index at
+  `docs/spec/reference-outcomes.md`, with one file per area under
+  `docs/spec/reference-outcomes/`, stable scenario IDs and precise fixtures,
+  actions and observations. Every new scenario uses Given/When/Then blocks
+  with one Then bullet per profile: the eight existing references, niri,
+  PaperWM, karousel, paneru, and separate Ours KDE and Ours Windows entries.
+  Existing wide tables stay unchanged until a separate migration. Column and
+  viewport notation is model-qualified; unsupported fixtures/actions and
+  owner-specific journeys are explicitly qualified, applicable unknowns TBD.
+  Reference baselines use pinned shipped defaults and named discriminating
+  variants. PaperWM.spoon is corroboration only. Evidence expands the corpus,
+  not the selected product behavior or consensus denominator.
+- User decision 2026-10-07 (reference default rule): where the reference
+  WMs do not show extremely strong agreement against COSMIC, COSMIC's
+  behavior stays our default. Where references meaningfully differ, the
+  alternative is offered as a setting; configurability may be deferred or
+  skipped when only one outlier differs or only the scrolling-column
+  (PaperWM-style) WMs differ. The shared functional spec governs; COSMIC is
+  the default-selection yardstick with explicitly recorded host, game, and
+  capability exceptions.
 - User decision 2026-10-07 (functional spec format): keep
   [the functional spec](spec/functional-spec.md) as a single file; revisit
   splitting if it grows much larger. Requirements are normative only where a
   recorded decision selects them; everything else stays OPEN or PROVISIONAL.
-- Provisional, to discuss (2026-10-03, matrix evidence): compact cell citation
-  keys resolve to dated user tests, pinned source file/line ranges or linked
-  documentation; missing outcomes remain TBD, and tested versions are never
-  inferred from later source checkouts.
+- Convention (documentation): compact cell citation keys resolve to dated
+  user tests, pinned source file/line ranges or linked documentation;
+  missing outcomes remain TBD, and tested versions are never inferred from
+  later source checkouts. This convention selects no product behavior.
+  Operational guidance lives in [AGENTS.md](../AGENTS.md).
 - Matrix maintenance: reuse existing scenarios; for each uncovered ambiguity,
   add the shortest discriminating action sequence. Read source where confident;
   otherwise leave the outcome for the user's later test. Variant hook names are
   provisional indexing, not new product or settings commitments.
-- User decision 2026-10-01: keyboard bindings and window/workspace behavior
-  must be consistent across Linux, Windows and macOS so workflows transfer.
-  Meta+Arrow navigates focus; Meta+Shift+Arrow moves windows. The KDE shortcut
-  catalog and behavior are the reference until a shared functional
-  specification exists. macOS modifier mapping is decided when macOS starts.
-  Meta/Win shortcuts are defaults; Windows Snap takeover has a visible off
-  setting with Apply/Revert parity. macOS modifier mapping remains deferred.
-- The initial Windows tiling-only preview left geometry in place on stop/crash.
-  The current Windows slice adds focus/move shortcuts and managed workspaces:
-  hidden windows are revealed on stop/crash without geometry recovery. Terminal
-  has ordinary application behavior, matching KDE. See
-  [managed workspaces](changes/archive/windows-managed-workspaces.md).
-- User decision 2026-10-03 (OS shortcut conflicts, all platforms): a
-  per-binding conflict list is the model. Settings show each binding that
-  conflicts with an OS/desktop shortcut and let the user keep (override),
-  disable or rebind it. Quick-set presets apply in one step: "compatible"
-  (avoid conflicting OS bindings) and "authentic" (stay consistent with
-  tiling WMs such as COSMIC/Hyprland and override OS bindings). The preset
+- Workflows transfer across Linux, Windows and macOS (shortcuts and behavior
+  consistency decided under Shortcuts above).
+## Shortcuts, Conflicts and Presets
+
+- Shared defaults (user 2026-10-01 option A): Meta/Win shortcuts are defaults
+  across platforms, matching KDE: Meta/Win+Arrow navigates focus,
+  Meta/Win+Shift+Arrow moves windows. USER rule 2026-09-28: every HJKL
+  directional shortcut has an
+  arrow-key alias. Grow uses `Meta/Win+Alt+H/J/K/L` plus arrows (the removed
+  Custom Tile controller's legacy `insert-*` reservation on those arrow chords
+  is retired; Plasma 6.7.5 defaults them to `kwin/Switch Window Left/Down/Up/
+  Right`). The initial
+  release supports standard US keyboards and preserves hardcoded shifted
+  aliases; layout detection, omission, opt-in configuration and migration are
+  deferred. macOS modifier mapping is decided when macOS starts.
+- Conflict model (user 2026-10-03, all platforms): a per-binding conflict
+  list. Settings show each binding conflicting with an OS/desktop shortcut
+  and let the user keep (override), disable or rebind it. Quick-set presets:
+  Compatible (avoid conflicting OS bindings) and Authentic (stay consistent
+  with tiling WMs such as COSMIC/Hyprland, override OS bindings). The preset
   choice may be offered on first run. Applies to KDE, Windows and macOS.
-- Windows defaults to authentic mode, with compatible now available in Settings:
-  authentic is the user's preferred mode and the harder one to implement.
-  Owned-chord interception is independent of foreground/action eligibility;
-  unmanaged foreground and ordinary fullscreen suspension do not release those
-  shortcuts to Windows. Native actions still require the existing owner safety
-  checks. This correction is offline-verified; physical suppression and Xbox-mode
-  detection remain pending in [gaming coexistence](changes/windows-gaming-coexistence.md).
-  Follow-up live evidence (2026-10-03) observed an Xbox-mode prompt after a
-  current, hash-attributed marked F11 tap with consumed down/up and successful
-  mask send. Callback consumption is not an OS-suppression acceptance signal.
-  Keep the authentic catalog and documented-API constraint; a mechanism or
-  architecture change, or registry/policy workaround, needs a user decision.
-  Bounded continuation (2026-10-03): a later project-hook install with gaming
-  components already running still produced the Xbox prompt within two seconds
-  of consumed marked F11; G was withheld on first leak. Containment part (a)
-  is parked, with no catalog exception selected. Microsoft's Win-key-swallowing
-  hook sample explicitly excludes Game Bar hotkeys, but does not establish
-  impossibility of consuming G/F11. User-applied Xbox-mode settings or accepting
-  the gap are pending choices; Game Bar keyboard-disable controls remain
-  unverified. Callback consumption and process-start order remain insufficient
-  suppression/hook-order evidence. The unaccepted large gaming fixture draft
-  was discarded under the simplicity principle; the active record owns options
-  and accepted evidence.
-- Provisional, to discuss (2026-10-04, KDE conflict controls): the unified
-  Settings page lists all 66 current project bindings, including arrow and
-  shifted-symbol aliases. Keep/Disable and Authentic/Compatible stage choices;
-  explicit confirmed Apply Shortcuts or Force Apply commits them. Authentic
-  resets to the canonical catalog; ordinary settings Save remains isolated.
-- Provisional, to discuss (2026-10-04, KDE Compatible): reset to Keep, then
-  disable compiled known conflicts and discovered foreign default/current-holder
-  collisions. No replacement chords or automatic foreign-default restoration;
-  use the existing Revert Shortcuts separately after earlier Force clearing.
-  Disabled focus-right leaves Lock Session and Meta+Esc untouched.
-- Provisional, to discuss (2026-10-04, KDE persistence): Disable clears only
-  the project's KGlobalAccel assignment through the existing setter. Reopening
-  initializes choices from present empty assignments; native shortcut storage
-  is authoritative, with no parallel preset file. Empty assignments cannot
-  distinguish deliberate disabling from an earlier unresolved registration.
-  Restart persistence remains user-owned live acceptance.
-- Provisional, to discuss (2026-10-04, KDE deferred controls): a first-run
-  preset prompt and integrated rebind editor are deferred in this smallest
-  slice. Existing KDE Shortcuts remains the custom-binding editor; explicit
-  project Apply resets kept bindings to canonical chords. No startup correction
-  or shortcut re-registration is added. See
-  [KDE conflict model](changes/kde-shortcut-conflicts.md).
-- Coexisting with gaming is a core goal: provide some alternate access to
-  OS gaming surfaces displaced by authentic bindings (Windows Game Bar,
-  displaced by Win+G), and avoid behavior that anti-cheat software could
+- Windows input and Snap (user 2026-10-01): `WH_KEYBOARD_LL` with `vkE8`
+  menu-mask at Win key-up while Win held, consuming only approved catalog
+  chords; `RegisterHotKey` rejected after all four chords returned 1409
+  (owner unknown) on this PC. Win+L stays explicit opt-in only and unproven.
+  Windows takes over native Snap shortcuts by default, with a visible setting
+  to turn takeover off. While a workspace is tiled, prevent Snap through
+  keyboard (selected LL hook) and mouse paths (session-only
+  `SPI_SETWINARRANGING FALSE` while tiling is active, with visible
+  Apply/Revert, exact preimage capture/readback and conditional restoration
+  on stop; on Win11 build 26200 disabling via pvParam FALSE requires uiParam
+  TRUE). Snap Layouts flyout/Snap Assist coverage remains to be proven.
+- Windows Authentic/Compatible (user 2026-10-08): defaults to Authentic with
+  Compatible available in Settings. Owned-chord interception is independent of
+  foreground/action eligibility. Pressing an explicitly bound command
+  (including Win+G while gaming) is an explicit user action for the tiler
+  binding. Authentic Win+G/F11 ownership limitation stays disclosed; use
+  Compatible, disable, or rebind for Game Bar access. The containment gap
+  stays parked for later test and review; a mechanism/architecture change or
+  registry/policy workaround needs a user decision. Windows 100ms pump gaming
+  cost is unmeasured. Status in [gaming
+  coexistence](changes/windows-gaming-coexistence.md).
+- Windows first-run and rebinding (user 2026-10-08): normal startup with no
+  settings file offers native Yes=Authentic (default), No=Compatible,
+  explaining Win+G/F11 implications. The owner lease precedes UI; atomic
+  create-if-absent publication never replaces a file appearing during the
+  prompt. Compatible resets to the default catalog then disables the
+  OS-conflicting physical chords, including Win+G/F11, inventing no
+  replacements. Per-binding Keep/Disable/Rebind with separate directional
+  letter/arrow rows and actual rebound-chord conflicts. Interim rebind limit:
+  Win plus the action's existing Shift arm only; Alt/Ctrl and unshifted Win+L
+  targets refuse; keyboard resize rows visibly unavailable; further workspace
+  mappings await runtime implementation.
+- KDE staged controls (user 2026-10-08): the unified Settings page stages
+  Keep/Disable and Authentic/Compatible choices (see the shortcut catalog in
+  `kwin/native-effect/shortcutreconciler.cpp`: `shortcutProjectCatalog` and
+  `shortcutConflictTable`) over one selection-scoped Apply/Force/Revert flow;
+  explicit confirmed Apply or confirmed and revalidated Force commits them.
+  Ordinary settings Save stays isolated. Project Apply preserves the current
+  assignment for Keep, including custom chords; Authentic explicitly resets to
+  the canonical catalog. Implementation gap: current code resets kept rows to
+  canonical (see backlog). Compatible: reset to Keep, then disable compiled
+  known conflicts and discovered foreign default/current-holder collisions; no
+  replacement chords or automatic foreign-default restoration; use Revert
+  Shortcuts separately after earlier Force clearing. Disabled focus-right
+  leaves Lock Session and Meta+Esc untouched. Persistence: Disable clears only
+  the project's KGlobalAccel assignment; native shortcut storage is
+  authoritative, no parallel preset file; empty assignments cannot distinguish
+  deliberate disabling from earlier unresolved registration; restart
+  persistence is user-owned live acceptance. Deferred: first-run preset prompt
+  and integrated rebind editor; KDE Shortcuts remains the custom-binding
+  editor; no startup correction or re-registration. See [KDE conflict
+  model](changes/kde-shortcut-conflicts.md).
+- Force/Revert contract (applying the user's 2026-09-26 Delivery 2 direction):
+  Force may clear ANY holder of a project-required chord after listing and
+  confirmation. The preview lists every active holder with found keys, exact
+  required keys removed, and unrelated keys kept, including unknown and legacy
+  project-owned IDs; project actions, Lock Session, and the authorized System
+  Monitor `Meta+Esc` holder are exempt. A holder claiming a chord with no
+  required key in its active list blocks Force until unbound manually.
+  Confirmed Force revalidates owner, live images, and the full holder snapshot
+  before persist; stale confirmations fail closed with zero writes. After
+  persist, each holder is re-read immediately before its foreign setter and
+  aborts on drift with zero further writes; the persisted union is retained as
+  an interruption-safe superset. Minimal durable cleared ID list at
+  `~/.config/plasma-auto-tiler/shortcut-clearedrc` is union-persisted BEFORE
+  clearing and emptied only after successful Revert. Revert restores KDE
+  defaults for every non-project ID in the cleared list; project-owned IDs
+  stay cleared; absent/duplicate IDs fail closed retaining the list; an empty
+  list is a no-op success. Journal files are ignored; no migration, Finish
+  Apply, or Restore path remains. Force preview transient labels are never
+  persisted. Stateless Revert was rejected: it would alter never-cleared
+  actions, activate default-only holders, and miss custom holders. Revert
+  replaces the full active key set from fresh current tuples (4-field
+  actionId, no 2-field daemon assumption), so custom cleared bindings are
+  lost, as the user accepted 2026-09-26. Partial Revert failure retains the
+  list for a later resume. Shortcut operations emit bounded structured
+  diagnostics (see Observability above); logging never affects behavior.
+- Required-chord corrections (user 2026-09-28; all through reversible
+  Apply/Force/Revert, never
+  relocated, no broad deletion): project focus/move arrows supersede KWin
+  Quick Tile and Previous/Next Screen defaults; grow arrows supersede
+  Switch Window defaults (clear, do not relocate); `Meta+G` supersedes Grid View and `Meta+M`
+  supersedes Krohnkite Monocle (shadowed-delivery diagnostic until the user
+  applies the override); focus-right `Meta+L` relocates `ksmserver` Lock
+  Session to `Meta+Esc` (sole authorized target-occupant exception: System
+  Monitor may hold `Meta+Esc`, never writable by the override). Approved
+  2026-09-21, standing
+  until revoked: no broad shortcut deletion, unverified actions,
+  ownership/readback changes, or startup mutation. No other foreign occupier
+  is authorized, and no per-component `cleanUp()` path exists.
+- R-MOV-03 same-axis setting: see item 3 under Move, Layout and Output
+  Commands (canonical). Functional naming per Functional naming below.
+- Functional naming (user 2026-10-08): settings and their values use
+  functional names; reference WMs appear only in tooltips. Exact IDs decided
+  for `sameAxisMove` above, pending for the fixed-size predicate values.
+## Gaming Safety
+
+- Gaming compatibility must be flawless (see Principles). Provide alternate
+  access to OS gaming surfaces displaced by authentic bindings (Windows Game
+  Bar, displaced by Win+G), and avoid behavior that anti-cheat software could
   flag as a false positive.
 - User decision 2026-10-03 (Windows "Xbox mode", the Xbox full screen
   experience): when detected, pause tiling, window effects (border/underlay)
   and shortcut handling, while remembering windows and workspaces so they
   are restored when Xbox mode ends. Detection uses a documented Microsoft
-  signal only, no cloak/foreground heuristics (user 2026-10-03); automatic
-  pause stays unimplemented until such a signal exists.
+  signal only, no cloak/foreground heuristics; automatic pause stays
+  unimplemented until such a signal exists.
 - Alternate Game Bar access for keyboard and mouse players (a shortcut over
   a fullscreen game) is a later experiment, after parity and correctness
   work (user 2026-10-03).
-- User statement 2026-10-03: default split placement is long-edge based: a
-  tall target splits vertically (stacked) and a wide target horizontally
-  (side by side), including windows arriving by workspace send.
-- Workspace send resolves the valid remembered destination leaf, then valid
-  destination focus history, before the genuine no-focus root fallback.
-  Minimum hints influence the projected target rectangle and final allocation;
-  they do not search alternative axes or targets for feasibility. The shared
-  Engine applies this on KDE and Windows. See
-  [send-axis evidence](changes/archive/windows-send-split-axis.md).
-- Provisional, to discuss (2026-10-03, Windows placement dogfood): fresh startup
-  preserves clean/tolerance-valid recursive-cut adoption, but declines any fit
-  requiring centre splits to the existing deterministic sequential long-edge
-  seed. Minimum-infeasible clean fits use the same fallback. This supersedes
-  the overlapping centre-fit default below on KDE and Windows together; no
-  topology search or guaranteed balanced 2x2 is selected. Clean previously
-  tiled 2x2/nested layouts retain their fit and identity order.
-- Confirmed for both platforms by user decision B6 (2026-10-05, below);
-  originally provisional (2026-10-03, Windows infeasible minimums): writable
-  admitted windows are placed at the proportional tile's origin with each
-  native extent at least its declared minimum, rather than skipped while their
-  tile space is reserved. Equality/readback/refusal use that effective target.
-  This supersedes Windows' 2026-10-02 overconstrained skip decision; KDE's
-  origin+minimum actuation is delivered offline 2026-10-07. Oversized windows
-  may overlap siblings or extend beyond the work area when the sequential seed cannot fit;
-  no alternative-axis search, floating fallback or global optimizer is selected.
-  Evidence: [placement correctness](changes/archive/windows-placement-correctness.md),
-  [KDE B6 delivery](changes/archive/kde-minimum-origin-placement.md).
-- Provisional, to discuss (2026-10-03, retained Windows overlay minimums):
-  tiled maximized/fullscreen members retain their last-known declared minimum
-  hints, bound to the member's lifetime token and canonical slot, until normal
-  fresh queries resume. This keeps minimum-bound sibling allocations stable;
-  floating/born-slotless, minimized and cloaked rows do not reuse hints.
-  A successful asynchronous Win+M restore dispatch arms a two-second bounded
-  completion wake on the existing 100ms pump. It reconciles once restore is
-  observed, preserving dispatch/gesture/suspend gates and single-attempt toggles.
-- User decisions 2026-10-05 (KDE session; recorded in the backlog, promoted
-  here 2026-10-06), implementation pending:
-  - B6: minimum-infeasible tiles use origin+minimum on both platforms. This
-    confirms the Windows provisional choice above; KDE replaces its skipped
-    writes. The cross-WM consensus (R-MIN-01..03: 7/8 references do not
-    enforce tiled minima by default) is a recorded counterpoint, not a
-    reversal. KDE delivered offline 2026-10-07: origin+minimum writes with
-    effective-target equality and bounded host-shortfall acceptance; native
-    R-MIN-01..03 journeys remain user-owned.
-    [Delivery record](changes/archive/kde-minimum-origin-placement.md).
-  - Q3: a first-seen (born) maximized window follows COSMIC: it tiles with a
-    reserved slot and keeps its maximize as an overlay; no launch unmaximize,
-    on KDE and Windows. This supersedes the one-shot admission maximize
-    clear on both platforms. User decision 2026-10-07: Q3 also covers
-    R-MAX-03; a maximized window stays maximized (reserved-slot overlay) when
-    its floating workspace is toggled to tiled, replacing the one-shot
-    restore on both platforms (implementation pending).
-    KDE R-MAX-06 delivered offline 2026-10-07: reserved-slot overlay with no
-    launch clear; R-MAX-03 still one-shot until implemented.
-    Native launch/restore and session-restore no-loop acceptance remain
-    user-owned. [Delivery record](changes/archive/kde-born-maximized-overlay.md).
-  - B9: an explicit unfloat of an intentionally floating window that is
-    natively maximized provisionally unfloats beneath the maximize and stays
-    maximized (KDE already dispatches; settled result unverified). Windows
-    changes from refusal after the user's COSMIC live check of R-FLT-06.
-    COSMIC source suggests unmaximize-then-admit instead (matrix R-FLT-06),
-    so the live check decides.
-  Analysis: [post-Windows audit](research/cross-platform-core/post-windows-audit.md),
-  [cross-WM consensus](research/reference-wm-consensus.md).
+- Shortcut containment (Authentic Win+G/F11) is decided under Shortcuts above;
+  Windows 100ms pump gaming cost is unmeasured.
 
-## Cross-Platform Core
+## Placement, Minimums and Startup Adoption
 
-- User decision 2026-09-30: portable core extraction is the immediate priority
-  and precedes Windows implementation. Do it under KDE first, with KWin
-  fixtures and applicable live checks establishing no regressions. Windows
-  visibility evidence must inform the later workspace-model shape. The
-  KDE-first phase stops before the logical workspace model (user
-  2026-09-30); its core shape is refined during Windows spiking, then
-  extracted with matching KWin fixtures.
-- User decision 2026-09-30: the KDE-first extraction ends at K1 (visual
-  policy in `tiler-core::visual`). K2 settings/action intent and K3
-  difference classification stay in the KWin script, because sharing them
-  needs a new JS-to-Rust route; they are revisited when the Windows port
-  needs a shared contract. Next: Windows spikes.
-- User decision 2026-10-05: no new core extraction now; revisit when macOS
-  starts, using the candidates and boundary costs in the
+- Shared:
+  - User statement 2026-10-03: default split placement is long-edge based: a
+    tall target splits vertically (stacked) and a wide target horizontally
+    (side by side), including windows arriving by workspace send.
+  - Workspace send resolves the valid remembered destination leaf, then valid
+    destination focus history, before the genuine no-focus root fallback.
+    Minimum hints influence the projected target rectangle and final
+    allocation; they do not search alternative axes or targets for
+    feasibility. The shared Engine applies this on KDE and Windows. See
+    [send-axis evidence](changes/archive/windows-send-split-axis.md).
+  - User decision B6 (2026-10-05): writable admitted windows are placed at
+    the proportional tile's origin with each native extent at least its
+    declared minimum, rather than skipped while their tile space is reserved.
+    Equality/readback/refusal use that effective target. Overconstrained
+    leaves are flagged without skipping. Oversized windows may overlap
+    siblings or extend beyond the work area when the sequential seed cannot
+    fit; no alternative-axis search, floating fallback or global optimizer is
+    selected. This is a deliberate deviation: 7/8 references ignore tiled
+    minima (they can crop clients; our hosts and apps hold minimum sizes).
+    Overlapping windows are an absolute last resort in an auto tiler.
+  - User decision 2026-10-08 (startup adoption): fresh startup preserves
+    clean/tolerance-valid recursive-cut adoption, and declines overlapping or
+    minimum-infeasible fits to the existing deterministic sequential
+    long-edge seed with no centre inference. No topology search or guaranteed
+    balanced 2x2 is selected. Clean previously tiled 2x2/nested layouts retain
+    their fit and identity order. This is not exact COSMIC parity.
+- KDE: origin+minimum actuation delivered offline 2026-10-07 with
+  effective-target equality and bounded host-shortfall acceptance; native
+  R-MIN-01..03 journeys remain user-owned
+  ([record](changes/archive/kde-minimum-origin-placement.md)).
+- Windows:
+  - Query fresh application-declared minimum track sizes and supply
+    visible-frame physical-pixel hints to the shared minimum-aware projection
+    (user 2026-10-02 option A). No learning; generic learned limits parked.
+    Failed, timed-out or invalid native queries supply no hint. Keep existing
+    refused-attempt suppression. Evidence:
+    [placement correctness](changes/archive/windows-placement-correctness.md).
+  - Retained overlay minimums (user 2026-10-08): tiled maximized/fullscreen
+    members retain last-known declared minimum hints, bound to the member's
+    lifetime token and canonical slot, until normal fresh queries resume.
+    Floating/born-slotless, minimized and cloaked rows do not reuse hints. A
+    successful asynchronous Win+M restore dispatch arms a two-second bounded
+    completion wake on the existing 100ms pump; it reconciles once restore is
+    observed. The wake is an observation window, not hint expiry or a latency
+    guarantee; physical timing remains user-owned.
+
+## Engine Architecture and Convergence
+
+- Core extraction (user 2026-09-30): portable core completed through K1
+  (visual policy in `tiler-core::visual`) under KDE first, with KWin fixtures
+  and applicable live checks. K2 settings/action intent and K3 difference
+  classification stay in the KWin script; revisit when macOS starts, using the
+  candidates and boundary costs in the
   [post-Windows audit](research/cross-platform-core/post-windows-audit.md).
-  This supersedes the earlier Windows-triggered extraction timing.
-- User decision 2026-10-05, KDE follow-up order: B1/B2 toggle repair, then
-  B3-B5 shared-change fixture coverage, then B7 underlay A/B, then B8
-  shortcut controls. B6 minimum fallback and the admission-maximize/game
-  question were research at that point; the user later selected B6, Q3 and
-  B9 the same day (see [Cross-Platform Behavior](#cross-platform-behavior)).
-
-## Architecture Direction
-
-User-approved 2026-09-24 from the
-[architecture review](research/architecture-review/review.md). Entries
-elsewhere in this file that conflict remain accurate for shipped code until
-the corresponding item ships; each such entry names its replacement.
-
-- Observed-membership convergence (user decision 2026-09-25; Orchestrator scope
-  2026-09-25; step-2 go-ahead 2026-09-25; steps 1-2 shipped offline, live
-  acceptance pending; evidence in
+  Pending remainder stays in the backlog. Moving the workspace model and
+  remaining portable policy to core is deferred until a non-KWin host needs
+  it; the current KWin logical-workspace implementation is the "native
+  workspaces" mode of that future choice.
+- Architecture direction (user-approved 2026-09-24 from the
+  [architecture review](research/architecture-review/review.md)): a portable
+  `tiler-core` Engine with world/domain state behind a `LayoutPolicy` seam;
+  `tiler-protocol` as a thin codec; a Linux service crate; the KWin script as
+  observer and actuator; the native effect as renderer. Host-synchronous paths
+  may stay in the adapter where moving them would change latency or failure
+  behavior. Keep OS/DE-agnostic logic and policy in or near the Rust core
+  wherever possible; supply needed capabilities through the smallest reliable
+  native integration; no capability, including input, is excluded merely for
+  being native. Existing specific implementation choices stand until changed.
+- Observed-membership convergence (user decision 2026-09-25; steps 1-2
+  shipped offline, live acceptance pending; evidence in
   [observation-convergence](changes/archive/observation-convergence.md)):
   each complete per-domain observation controls portable membership and
   floating state before ordinary Engine operations. One Session convergence
@@ -751,152 +730,86 @@ the corresponding item ships; each such entry names its replacement.
   newcomers and adopts floating transitions; the requested operation then runs
   at the converged revision. No sequence, world index, fingerprint extension,
   tombstone, retention marker, or wholesale reseed is added. Only the existing
-  wire `floating` and advisory `fit_excluded` are in scope; sticky/all-desktops
-  uses KWin's existing floating mapping, while fullscreen and maximized members
-  keep their tiled allocations as native overlays. KWin carries current
-  post-removal observations and quarantines incomplete foreground frames.
-  Automatic foreground and hidden tiling send complete observations through
-  `reconcile`; the applied membership baseline and public admit/remove wire
-  commands are retired. Fresh observations keep deterministic fitting and
-  admission placement. Step-2 relocation rule (Orchestrator): a unique
-  same-workspace source relocates only when the new observation shares a
-  retained tiled or floating-exception id; disjoint and ambiguous sources seed
-  fresh. Exact overlapping relocation retains its skew/rollback fence. Step 3
-  retired the former pending-pair fresh-domain delay and send/R4 verification
-  protocol.
+  wire `floating` and advisory `fit_excluded` are in scope; fullscreen and
+  maximized members keep their tiled allocations as native overlays. Step-2
+  relocation: a unique same-workspace source relocates only when the new
+  observation shares a retained tiled or floating-exception id; disjoint and
+  ambiguous sources seed fresh. Step 3 retired the former pending-pair
+  fresh-domain delay and send/R4 verification protocol.
 - Robust difference reconciliation (user decision 2026-09-28; phase 1
   offline-verified): KWin compares complete foreground and hidden observations
-  against applied evidence through one event-driven classifier. Existing signals,
-  commands and terminal flights wake fresh observation; no idle polling. The
-  script retains its overlay slots, hidden sticky multi-home exception,
-  initial-fullscreen hold, explicit hidden empty and unreadable-domain fences,
-  echo/interactive suppression, send/R4 force and single-flight follow. Existing
-  Rust `reconcile`/`update-gaps` handles changes; the interim three-strike
-  acceptance remains. Phase 2 waits for user testing of phase 1: learn size
-  limits only from settled repeatable evidence, replan neighbours around learned
-  limits only, and leave native maximum behavior unchanged. Scope is KWin script
-  and Rust tiling; native effect unchanged. Added complexity must deliver more
-  value than it costs. Offline evidence in
+  against applied evidence through one event-driven classifier; no idle
+  polling. The script retains its overlay slots, sticky multi-home exception,
+  initial-fullscreen hold, and unreadable-domain fences. Existing Rust
+  `reconcile`/`update-gaps` handles changes; the interim three-strike
+  acceptance remains (user decision A, 2026-09-26, interim): after three
+  bounded reassertions, reconciliation accepts
+  each exact client-held rectangle as per-window applied geometry without
+  disabling the domain. Phase 1 was user-accepted; Phase 2 is parked and
+  resumes only on a genuine Ghostty/output client-held limit (see backlog).
+  Offline
+  evidence in
   [robust-difference-reconciliation](changes/archive/robust-difference-reconciliation.md).
-- Target shape (review section 6): a portable `tiler-core` Engine with
-  world/domain state behind a `LayoutPolicy` seam; `tiler-protocol` as a thin
-  codec; a Linux service crate; the KWin script as observer and actuator; the
-  native effect as renderer. Host-synchronous paths may stay in the adapter
-  where moving them would change latency or failure behavior.
-- Workspaces: the current KWin logical-workspace implementation is the
-  "native workspaces" mode of a future per-platform choice between native and
-  project-managed workspaces. Moving the workspace model and remaining
-  portable policy to core is deferred until a non-KWin host needs it.
+- KWin retains applied per-window geometry/domain/flag evidence for overlays,
+  first-admission maximize, drag fallback, drift and reply checks only, never
+  as membership authority. Changed gaps use one bounded fresh same-domain
+  `update-gaps` retry only after an exact correlated gap mismatch.
+  Relocated but previously unconverged sources still require exact membership
+  and atomic rollback. A stale pre-write snapshot replans the same command
+  once against a fresh complete observation (user decision G, 2026-09-26); a
+  second staleness logs, drops and converges; never replay after any setter
+  has run. The retained allocation owns topology over same-scope client drift.
 - Initial maximize (AR9, shipped): the effect seeds each observed window from
   committed `window()->maximizeMode()`; native transitions then update it.
-  The script epoch handoff and its endpoints are retired.
-- Effect Rust build (AR10, shipped): CMake invokes Cargo to build the workspace
-  `tiler-kwin-effect-ffi` staticlib, using serde for strict JSON parsing and
-  `tiler-core` validation gates. The bare-`rustc` build and hand-written JSON
-  parser are retired. Rust keeps group visibility and drag verdict policy;
-  the POD-only C ABI and panic containment remain.
-- Size hints (AR12, shipped offline): observed min/max hints guide minimum-aware
-  projection and evidence-backed clamp acceptance without drift/park. Per the
-  Orchestrator's option (1) decision applying the user-approved AR12 text,
-  overconstrained members are not reasserted; R4 exempts their client-held
-  geometry from native writes while fencing identity and membership.
-- Size caps (AR16, shipped offline): the 64-window and 16-domain count caps are
-  retired. The codec rejects requests above 1 MiB; the KWin adapter mirrors
-  this bound before dispatch. Separate reply, native/FFI, and field bounds remain.
-- Workspace send (step 3, user decision 2026-09-25, shipped offline; live
-  acceptance pending): Engine immediately commits planned topology after
-  complete source/target observation; KWin writes native geometry then
-  membership, follows on fresh exact arrival, and forces complete
-  source/target reconciliation on every terminal flight. Per the
-  Orchestrator's portable-flag scope, both send observations retain flagged
-  source/target survivors; only `floating` and `fit_excluded` cross the wire,
-  while fullscreen/maximized remain local retained-tile overlays. A flag-only
-  change in either domain stales the reply before native writes. No pending
-  transaction, native verified-success claim, Plan block, or setter replay.
-- Settings (AR15, unified offline; user decision 2026-09-28, option B): one
-  settings page combines border, explicit shortcut overrides, tiling gaps and
-  `workspaceMode`. Saving changed gaps requests KWin reconfigure and the
-  running controller re-reads validated gaps for debounced retained
-  `update-gaps`; the request alone does not confirm application.
-  `workspaceMode` remains startup-only with a session-restart note. Per the
-  user's 2026-09-25 decision, `shortcutProfile` is hidden until distinct
-  profiles exist post-MVP; its saved value and startup read remain untouched.
-  Storage remains in the existing `kwinrc` groups. The script KPackage still
-  needs the host-built native KCM companion for Configure; the effect need not
-  be enabled. Gap Save live re-spacing and unified-page acceptance confirmed
-  live by the user (2026-09-29).
-- Host setting conflicts (user decision 2026-09-29; offline implementation,
-  Fix confirmed live 2026-09-29, Revert/tray-indicator acceptance pending):
-  the unified settings page reads `kwinrc [Windows]` `ElectricBorderTiling`,
-  `ElectricBorderMaximize`, and `ElectricBorders` on open, showing current
-  values with short explanations. The boolean rows are always visible: Fix
-  writes `false` when on; Revert removes the local key
-  when off so the KDE 6.7.5 default `true` takes effect. The `ElectricBorders`
-  row appears only when nonzero: its sole Fix removes the local key so default
-  `0` takes effect. No prior-value journal or change ownership is tracked.
-  Explicit KConfig changes send KWin reconfigure and read back effective
-  config; a failed write or send is shown/logged, and a queued send does not
-  prove that the running compositor applied the value.
-  Startup and ordinary settings Save never change these host keys. Existing
-  shortcut Apply/Force/Revert remains the sole key-binding correction flow.
-  User decision 2026-09-29, option A: host conflicts add a warning overlay to
-  the tray icon and a top menu row, "Conflicting KDE settings...", opening the
-  existing unified Settings page. Left-click keeps opening the tray menu, and
-  snapshot loss keeps its separate NeedsAttention status. No notification or
-  direct Settings-on-icon-click. The user wants uninstall to restore defaults
-  for our overridden host settings; the route-specific mechanism without
-  tracking is still unselected, and no
-  uninstall reset is implemented. Stateless uninstall would also reset a
-  user-made value that equals our fix value.
-- Threat model (AR13, shipped offline): processes of the same user are trusted.
-  The tray has no KWin executable allowlist or `/proc`/pidfd/inode binding;
-  it runs single-instance by owning its D-Bus name with `DoNotQueue` and
-  accepts snapshots only from the current `org.kde.KWin` owner. Home Manager
-  delivers it through a graphical-session systemd user unit; dev and dogfood
-  launch it on demand with `cargo run -p plasma-auto-tiler -- tray`. The
-  Planner same-UID caller check remains. Live login and watcher acceptance
-  remain pending.
-- Tray workspace behavior (user 2026-09-29, offline implementation;
-  floating/tiled toggle confirmed live 2026-09-29, default change and
-  cross-boundary send pending): clicking the tray icon opens its menu with
-  current workspace tiling, new-workspace behavior Tiled/Floating, and
-  Settings for the existing unified page. The existing disabled status row
-  may remain. The keyless KWin script action is invoked by the tray through
-  KGlobalAccel; invoking it does not confirm application, so the menu reflects
-  fresh KWin-owned snapshots. The tray writes only `defaultTiled` (Tiled by
-  default) in `kwinrc [Script-plasma-auto-tiler-kwin]` and requests KWin
-  reconfigure;
-  only a running KWin reread/snapshot confirms its live value. All existing
-  workspaces take the saved default at new-session startup, while a live
-  default change applies only to subsequently discovered workspaces.
-  Orchestrator defaults approved by the user: per-workspace overrides are
-  session-only in the KWin backing-desktop mapping and reset on script reload;
-  shared mode toggles the backing workspace across outputs. Floating leaves
-  native windows in place and stops domain tiling/underlay management; the
-  active border stays independent. An explicit no-write Planner domain release
-  precedes fresh recursive-cut/centre-split adoption on retiling. Sends across
-  a floating boundary move native desktop membership without a Rust two-domain
-  tiling plan; only the tiled side reflows. No per-workspace history persists.
-  Evidence and residual live steps: [tray workspace toggle](changes/archive/tray-workspace-toggle.md).
+- Effect Rust build (AR10, shipped): CMake invokes Cargo to build the
+  workspace `tiler-kwin-effect-ffi` staticlib, using serde for strict JSON
+  parsing and `tiler-core` validation gates. Rust keeps group visibility and
+  drag verdict policy; the POD-only C ABI and panic containment remain.
+- Size caps (AR16, shipped offline): the 64-window and 16-domain count caps
+  are retired. The codec rejects requests above 1 MiB; the KWin adapter
+  mirrors this bound before dispatch. Separate reply, native/FFI, and field
+  bounds remain.
+- Threat model (AR13, shipped offline): processes of the same user are
+  trusted. The tray runs single-instance by owning its D-Bus name with
+  `DoNotQueue` and accepts snapshots only from the current `org.kde.KWin`
+  owner. The Planner same-UID caller check remains. Live login and watcher
+  acceptance remain pending.
 - Testing investment: build test fixtures that are sensible and valuable for
   the change at hand; avoid extensive custom harnesses that constrain later
   development.
-- Native integration boundary (user, 2026-09-24): the native layer provides
-  capabilities the project needs, with the smallest reliable native footprint.
-  Keep as much logic and policy as possible in or near the Rust core, but use
-  native integration where needed; do not exclude capabilities such as input
-  by category. Existing specific implementation choices stand until changed.
+- Size hints (AR12), workspace send (step 3), unified settings (AR15) and tray
+  workspace behavior are decided under Placement, Engine operations below,
+  and Settings above respectively.
+- Rust owns the durable portable model (logical tiling, split-tree grouping,
+  navigation, movement policy, capability-gated plans, reconciliation);
+  platform adapters retain observation, identity, permissions, actuation,
+  event ordering, acknowledgement, recovery, effects, UI, and delivery
+  authority. The core promises no uniform workspace, group, atomicity, or
+  geometry semantics where public platform APIs cannot provide them;
+  unsupported paths fail closed. KWin direct geometry remains sequential and
+  non-atomic; the adapter minimizes visible intermediate frames and records
+  applied-versus-acknowledged divergence without claiming atomicity. The
+  current KWin adapter uses one session-D-Bus `DescribePlan` route to a
+  pinned unique Planner owner, with same-UID caller checks; this selects no
+  generic cross-platform IPC abstraction. A KWin fork or patch remains
+  rejected. Retain JavaScript for discrete window add/remove management.
+  Group behavior, inactive borders, Steam-specific handling, and complete
+  keyboard-layout support remain deferred.
 
-## Native Active Border
+## Visuals: Border, Underlay and Grouping
 
-- The active-window border is an MVP requirement. Use an experimental,
-  disabled-by-default, OpenGL-only native C++ KWin effect
-  for the active-window border. Colour, width, outline radius, and gap are
-  configurable; `UseThemeColor` in `Effect-plasma-auto-tiler-active-border`
-  defaults true, migration-free: enabled retains theme highlight with
-  configured fallback, disabled selects configured colour unconditionally.
-  The native QWidget KCM controls it through the existing hot-apply/repaint
-  path.
+- Shared: no visual may show while maximized or fullscreen. Neither the border
+  nor the group visual may be visible then.
+
+- KDE active border:
+  - The active-window border is an MVP requirement. Use an experimental,
+    disabled-by-default, OpenGL-only native C++ KWin effect
+    for the active-window border. Colour, width, outline radius, and gap are
+    configurable; `UseThemeColor` in `Effect-plasma-auto-tiler-active-border`
+    defaults true, migration-free: enabled retains theme highlight with
+    configured fallback, disabled selects configured colour unconditionally.
+    The native QWidget KCM controls it through the existing hot-apply/repaint
+    path.
 - Nix delivery and exact host KWin ABI/session discovery are required for
   runtime delivery; neither is an optional enhancement. Runtime acceptance
   remains unproven.
@@ -912,8 +825,7 @@ the corresponding item ships; each such entry names its replacement.
   only if live use shows a need. KRunner is out of scope for now.
 - Effect observation seeds every window on load and addition from its committed
   native maximize mode; any maximize axis or fullscreen suppresses both
-  visuals, and native transition signals remain authoritative (Orchestrator
-  decision applying user-approved AR9: an unacknowledged Wayland maximize
+  visuals, and native transition signals remain authoritative (applying user-approved AR9: an unacknowledged Wayland maximize
   configure still renders normal, so the committed normal seed reflects that
   geometry; acknowledgement emits the observed maximize signal. Requested mode
   is never guessed; no polling, timers, or geometry heuristics).
@@ -928,14 +840,12 @@ the corresponding item ships; each such entry names its replacement.
   2026-09-28: replace the temporary Meta-held group outline with a filled
   underlay beneath its windows, extending beyond the border outer edge by a
   configurable size defaulting to the current border width. Colour (including
-  alpha) is configurable; Orchestrator default `#40808080` (translucent grey).
+  alpha) is configurable; Selected default `#40808080` (translucent grey).
   The drop-target preview colour also becomes configurable with alpha, retaining
   its `#402a82da` default. All new keys live in the existing effect group and
   hot-apply through effect reconfigure; existing keys/defaults are unchanged.
 
-### Windows active border
-
-- Orchestrator decision 2026-10-02: default-on owned per-pixel-alpha layered,
+- Windows active border (selected 2026-10-02): default-on owned per-pixel-alpha layered,
   click-through, nonactivating tool-window surface. Do not mutate foreign
   window attributes. `DWMWA_BORDER_COLOR` controls colour only and cannot
   provide KDE's configurable thickness/gap; the visible-frame thickness
@@ -950,29 +860,22 @@ the corresponding item ships; each such entry names its replacement.
   inputs are unchanged. DWM shadows can tint the composed ring; do not claim
   that DIB RGB equals final screen RGB. Owned-surface creation, alpha drawing,
    placement, hiding and teardown also carry the Windows group underlay below.
-- Theme mapping selected for user review: KDE uses the active Selection
+- Theme mapping (selected 2026-10-08, Windows settings slice): KDE uses the active Selection
   background from `KColorScheme` (desktop highlight). Windows uses the official
   [`DwmGetColorizationColor`](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmgetcolorizationcolor)
   system colourization/accent analogue, with the core availability/positive-
    alpha gate and configured fallback. The owned window flags a
    requery on `WM_DWMCOLORIZATIONCOLORCHANGED` or `WM_SETTINGCHANGE`; repaint
-   only if the resolved colour changes. Provisional, to discuss (settings slice,
-   2026-10-04): default theme/accent on with configured `#2a82da` fallback,
-   superseding the temporary 2026-10-02 yellow/theme-off development default.
-   `--active-border-theme` selects accent;
+  only if the resolved colour changes. Default theme/accent on with configured
+   `#2a82da` fallback, per the user decision 2026-10-08.
+  `--active-border-theme` selects accent;
    `--no-active-border-theme` selects configured colour.
    `--no-active-border` disables the surface.
-- Scoped machine evidence on Windows 11 build 26200, one 2560x1440 display at
-  DPI 120, covers composed owned-ring pixels, focus, real directional/workspace
-  routes, synthetic move/resize, suppression/restore, ordinary approved apps,
-  shell journeys, off and graceful/crash cleanup. Physical display/input,
-  other DPI/output arrangements and topmost/style variants remain bounded
-  follow-up checks. Evidence and limitations:
+- Scoped machine evidence passed; physical display/input, other DPI/output
+  arrangements and topmost/style variants remain bounded follow-up checks.
+  Evidence and limitations:
    `changes/archive/windows-active-border.md`.
-
-### Windows group underlay
-
-- User decision 2026-10-02, accepted for now: implement stages A/B of
+- Group underlay (user decision 2026-10-02, accepted for now):
   `changes/group-underlay-move-trigger.md` on Windows. Show for Win+Shift hold
   (both required, either order, extra modifiers allowed) OR a matching focused
   native title-bar interactive move. Win alone and resize alone do not trigger;
@@ -1007,254 +910,157 @@ the corresponding item ships; each such entry names its replacement.
   Never substitute that subject into `focused_window`, which persists retained
   focus. Native activation from an unfocused title bar remains a physical check;
   a future movement producer should reassess the need for C.
-- Scoped synthetic evidence on Windows 11 build 26200, DPI 120, covers chord
-  combinations/releases, projected footprint and native stacking, alpha blend,
-  title-bar move/drop/cancel, brief chord handoff, resize exclusion, maximise,
-  root leaf, off and graceful/crash cleanup. Physical feel, sustained chord
-  across a complete move, fullscreen/custom-frame/topmost cases and other
-  output/DPI arrangements remain follow-up checks. Evidence:
+- Scoped synthetic evidence passed; physical feel, sustained chord across a
+  complete move, fullscreen/custom-frame/topmost cases and other output/DPI
+  arrangements remain follow-up checks. Evidence:
   `changes/archive/windows-group-underlay.md`.
+- KDE group underlay trigger (A/B delivered offline 2026-10-05): hard-coded
+  Meta+Shift hold (both required, either order, extra modifiers allowed) OR a
+  matching focused-window native interactive move; this supersedes Meta-only
+  lifetime and the timed-flash fallback. Meta alone and resize alone do not
+  trigger. Shared `tiler-core::visual` policy is reached through the effect
+  FFI; no new script/Planner route or settings. The effect captures the exact
+  move window at Started and rechecks live focus plus the Rust-accepted group
+  subject on every refresh; title-bar and native modifier drags use the same
+  move arm, and finish, cancel and exact-window removal clear it without
+  clearing the chord. Existing geometry, anchor, focus/domain, root-leaf,
+  floating, fullscreen/maximize and endpoint suppression remain. Passive `EffectsHandler::mouseChanged(...)`
+  modifier state is unknown before its first signal; only the chord branch
+  waits. No polling, timed flash or new input hook. Native timing/pixels and
+  multi-output behavior remain user-owned acceptance:
+  [A/B evidence and checks](changes/group-underlay-move-trigger.md).
+- Group highlight delivery: the active `OutlinedBorderItem` is a negative-z
+  child of its target; the filled underlay parents its `ImageItem` below the
+  lowest painted group member via public stacking order and re-anchors on
+  stacking/membership/visibility changes. Rust resolves the focused leaf's
+  immediate parent group and projected members; the script forwards validated
+  IDs with engine union bounds through one additional `SetGroupHighlight`
+  payload field (no raw ID logging; 64 KiB bound). The approved writable
+  bridge is the effect-owned session D-Bus endpoint
+  `org.plasmaautotiler.ActiveBorder` (`SetGroupHighlight`/`ClearGroupHighlight`,
+  not an `/Effects` method; offline contract verified, live unverified).
+  The child inherits its window's slide translation; where the extension
+  overlaps a non-group window stacked below the anchor it may paint over that
+  window's edge (accepted); no custom scene/rendering mechanism is selected.
+  Endpoint registration failure retries on window-activation and reconfigure
+  events with no timer or polling; partial rollbacks only what was acquired.
+- Grouping here means nested split-tree structure and placement. Tabs,
+  stacked/shared groups, and compositor group behavior are excluded.
+- User decision 2026-10-07 (R-GRP-03): tabbed stacks leave deferral and become
+  the first item after the 0.1 release; closing the active tab keeps the group
+  and activates the next tab (COSMIC, Hyprland, i3, sway). Until then, stacks
+  stay refused. Grouped/tabbed windows remain deferred pending
+  compositor-owned KWin support and a live multi-window Custom Tile stability
+  proof. No tab or stack carrier, controls, or bindings are selected.
 
-### Windows mouse movement
+## Pointer, Drag and Drop
 
-- Orchestrator decision 2026-10-04, provisional, to discuss: Windows item 7
-  ships title-bar drag first; Win+drag follows. Each accepted producer is its
-  own committed unit before item 8 preview. The failed native SC_MOVE/non-client
-  initiation experiments select no product behavior. Investigate one bounded
-  project-driven Win+left movement path using the existing input and identity
-  gates and shared Engine drop geometry; retain KDE binding/placement parity.
-- Provisional, to discuss: the project-driven Win+left tiled gesture keeps the
-  real window at its source allocation while tracking the pointer; release
-  places through the shared Engine, and item 8 supplies the moving target-slot
-  preview. Native title-bar movement still follows the pointer. This selects
-  no native-loop injection or floating-window modifier-move implementation.
-- Provisional, to discuss: an unfocused Windows project-drag subject keeps the
-  current native foreground during the stationary hold and activates through
-  existing identity-gated focus authority on a valid drop. Focused gestures feed
-  the movement underlay A/B arm; distinct unfocused-subject underlay C remains
-  parked. The exact KDE focus-timing comparison remains user-testable.
-- Windows item8 target preview: separate owned filled layered surface above
-  windows, click-through/nonactivating and absent from taskbar/Alt+Tab; KDE blue
-  `#2A82DA` at alpha64. Native title movement and project Win movement share
-  Engine DragPreview/DragDrop with fresh complete size hints and exact carried
-  32px/80px group-edge prior. Source token/domain/revision is frozen at START;
-  cancellation, invalidation, self/centre/outside refusal, Finish and teardown
-  clear the surface. Physical resize/float exclusion journeys remain user checks;
-  deterministic policy/frame gates cover their no-preview rule. Evidence:
-  `changes/archive/windows-mouse-drag.md`.
+- Shared:
+  - User direction 2026-10-07 (R-DRAG-07): drag presentation follows the host
+    platform's native behavior where one exists. KDE Meta+drag keeps KWin's
+    pointer-following frame; Windows title-bar drag stays native. macOS
+    follows the same rule when it starts.
+  - User decision 2026-10-07 (R-DRAG-08): a Meta/Win client drag focuses the
+    dragged window at press on both platforms. Windows press-focus wiring is
+    pending; drop-only activation is retired. KDE timing needs a live check.
+  - User decision 2026-10-07 (R-DRAG-04): Esc keeps cancelling a drag on both
+    platforms (host KWin/Windows move convention; i3 also cancels) despite
+    7/8 references dropping at the pointer; a setting may be explored later.
+  - Tiled move drops use the existing Rust core drop resolver through the
+    synchronous `drag-drop` Plan route; cross-output moves join the
+    destination output's tiling at the drop point (no snap-back, no
+    source-scoped restore fight).
+- Windows:
+  - Item 7 (delivered; history in
+    [mouse record](changes/archive/windows-mouse-drag.md)): native title-bar
+    drag and the project-driven Win+left stationary producer are both accepted,
+    each its own committed unit. The project-driven gesture keeps the real
+    window at its source allocation while tracking the pointer; release places
+    through the shared Engine. The failed native SC_MOVE/non-client initiation
+    experiments select no product behavior; no native-loop injection or
+    floating-window modifier-move implementation is selected.
+  - Item 8 target preview: separate owned filled layered surface above
+    windows, click-through/nonactivating and absent from taskbar/Alt+Tab; KDE
+    blue `#2A82DA` at alpha64. Native title movement and project Win movement
+    share Engine DragPreview/DragDrop with fresh complete size hints and exact
+    carried 32px/80px group-edge prior. Source token/domain/revision is frozen
+    at START; cancellation, invalidation, self/centre/outside refusal, Finish
+    and teardown clear the surface. Physical resize/float exclusion journeys
+    remain user checks; deterministic policy/frame gates cover their no-preview
+    rule. Evidence: `changes/archive/windows-mouse-drag.md`.
+  - An unfocused project-drag subject keeps the current native
+    foreground during the stationary hold; current code activates through
+    existing identity-gated focus authority on a valid drop (gap: selected
+    press-focus for move drags, see R-DRAG-08 above). Distinct unfocused-subject
+    underlay C remains parked. Completed pointer-drag resize of an inactive
+    tiled window keeps focus unchanged.
+- Drag-restore markers (user decision D, option 2, 2026-09-26): on topology-change signals, a validated complete
+  desktop-ID or output-name list proves a marker's workspace/output removed if
+  absent; settle `outcome=unavailable plan=none` and drop it. A failed or
+  malformed list proves nothing. No timer, count cap, inferred departure or
+  fabricated plan.
+- Nested placement affordance: portable drag placement source-classifies
+  COSMIC group edges (32px normally, 80px only for the exact prior portable
+  `(group, edge)` hover), group interiors and window zones. Same-axis group
+  edges use first/last insertion, perpendicular edges wrap the group, group
+  interiors insert after the source predecessor. Window left/right create
+  horizontal before/after placement, top/bottom vertical before/after. The
+  middle-third center is a stack drop refused closed (stacks unselected).
+  Split-tree structure only, never tabs, stacks, shared tiles or compositor
+  groups.
+- Mid-drag workspace change (selected 2026-09-29): a native same-output
+  workspace send while Meta drag is held supersedes the Started workspace's
+  drop target. Ignore that stale drop and let complete source and destination
+  observations reflow/admit the mover normally, comparing the mover's fresh
+  native workspace with Started (a legitimate pointer-based cross-domain drag
+  remains available). The refused drop's restore reconcile binds to the
+  freshly observed destination containing the mover; the source still reflows
+  through send settlement. Confirmed live by the user (laptop, 2026-09-29);
+  see [mid-drag-destination-recovery](changes/archive/mid-drag-destination-recovery.md).
+- Interactive resize uses drop intent (user 2026-09-24): fallback
+  grabbed-edge classification from pointer and starting frame; a matching
+  native press in the later verdict takes precedence for KWin-thirds
+  classification. Retile from the oracle's final window edge on each grabbed
+  side; corner drags use both axes, ignoring other edge changes from
+  rounding, size increments, or a self-resizing client. A cancelled verdict, or a moved verdict
+  with no usable grabbed edge, no movement on grabbed edges, or lost
+  identity, routes no resize. On adapter or Planner rejection, converge to the
+  retained layout with one bounded, drag-correlated reconcile, without retry
+  or loop. Keyboard resize and other operations retain their focus rules. The modifier-resize press is passively observed
+  without grabbing or consuming input; a usable press selects KWin 6.7.5
+  thirds regardless of the 64px interior gate, otherwise the Started-pointer
+  classifier applies with a bounded fallback log. Without a matching press, a
+  start well inside follows KWin's exact thirds (including center); frame-edge
+  starts keep the nearest-edge and corner-zone rule.
+  Read the public effective modifier-resize binding; use a logged default only
+  when unavailable. The shipped route has no reliable KWin grabbed-edge signal.
+- Tiled move drops use the core drop resolver (window edge split, group edge
+  first/last or wrap, group interior insert; center or unresolved snaps back
+  through the existing restore marker) via the synchronous `drag-drop`
+  Plan route with Finish pointer capture and single-flight dispatch. A move to
+  another output joins that output's tiling at the drop point (no snap-back,
+  no restore fight); destination means the output under the pointer at
+  Finish; verify membership via existing observation, no new arrival timer or
+  retry. Preview details under item 8 above, including the carried 80px sticky
+  group-edge hover prior. Evidence:
+  `changes/archive/cross-output-drag-preview.md`.
+- Oracle verdicts route as ruled above; a floating move stays native-only; a
+  cancelled or no-change verdict makes no plan. No stock-KWin parity or atomic
+  native geometry-write claim is selected; trace-only measurement remains for
+  drag diagnosis.
+- Drag oracle (KDE): the shipped C++/moc effect shim with POD-only C ABI
+  hosts the verdict; Rust owns verdict policy with panic containment. The
+  effect passively observes the configured modifier-resize press via
+  InputEventSpy and carries it atomically with the final-geometry verdict
+  through a separate read-only session D-Bus endpoint that the script pulls
+  after drag finish. AR8 closed 2026-09-24 with the shipped integration kept;
+  no endpoint rewrite is selected.
 
-### Windows maximise
+## Delivery and Installation
 
-- Windows parity item 3 (2026-10-03): Win+M matches the KDE catalog's Meta+M.
-  Native maximize and the shortcut use the same retained-tile overlay behavior:
-  keep membership, tree position and shares, skip native geometry writes while
-  maximized, and restore the current Engine allocation on unmaximize. Siblings
-  keep their layout. Maximize never suspends the whole workspace. Both active
-  border and group underlay remain suppressed while maximized.
-- Match current KDE code, without selecting the deferred COSMIC navigation
-  policy: directional focus can leave or enter a maximized member; directional
-  movement and pointer operations refuse a maximized subject. Win+Arrow remains
-  focus, never native Snap. Workspace send/follow, select-away hiding and return
-  preserve maximize; follow and remembered focus include verified maximized
-  members. Geometry eligibility remains separate from focus eligibility.
-- First non-fullscreen, otherwise-eligible maximized admission without a tile
-  slot makes one native restore attempt, with scope, identity and proof fences;
-  it never automatically retries. Retained slots are exempt. Fullscreen wins
-  over maximize. Use official `ShowWindowAsync(SW_MAXIMIZE)` and
-  `GetWindowPlacement`/`SetWindowPlacement` with `SW_SHOWNOACTIVATE` and
-  `WPF_ASYNCWINDOWPLACEMENT` for nonactivating restore. Dispatch is distinct
-  from observed completion. Stop/crash preserve frames and maximize state;
-  existing identity-safe recovery reveals hidden members.
-- User-accepted 2026-10-03: each discrete Win+M down makes one native toggle
-  attempt; held repeats are consumed without dispatch and there is no persistent
-  attempted-state map. KDE's current map can refuse a later identical toggle
-  after a successful shortcut maximize followed by native restore. Windows live
-  proof reproduced that refusal in the initial implementation; the discrete
-  rule fixes it without retries or pending-state machinery. KDE is unchanged.
-- Scoped synthetic proof covers owned helpers and Notepad/Calculator/Paint,
-  retained slots, focus, populated/trailing sends, held-underlay suppression and
-  graceful/crash recovery. Physical maximize-button/input/feel and other
-  output/DPI arrangements remain user-owned; native system-command and
-  double-click paths are machine-proven. Evidence:
-  [Windows maximise](changes/archive/windows-maximise.md).
-
-### Windows fullscreen
-
-- Windows parity item 4 (2026-10-03): Win+F11 matches KDE Meta+F11. Managed
-  fullscreen retains membership, tree position and shares; native geometry
-  writes pause for that member, siblings keep their allocations, and exit
-  restores the current Engine allocation. Fullscreen precedes maximize and
-  suppresses both active border and group underlay. Unmanaged fullscreen
-  foreground retains the existing workspace suspension behavior.
-- Directional focus can leave or enter a verified managed fullscreen member.
-  Directional movement, pointer operations, maximize and workspace send refuse
-  a fullscreen subject, matching the current KDE wrappers. Workspace selection
-  hides/reveals fullscreen members without restoring their frames.
-- First-seen otherwise-eligible fullscreen windows without a retained slot
-  remain slotless Engine floating exceptions until their first native exit.
-  They still occupy a workspace and participate in hide/reveal and close
-  cleanup. A later fullscreen transition retains an existing tile slot.
-- Accepted for now (user 2026-10-03; a later spike may explore better UX
-  for app-owned fullscreen): Windows has no generic official fullscreen setter.
-  Win+F11 uses official Win32 style/frame APIs for borderless monitor coverage,
-  storing only the cleared frame-style bits and prior maximize state as inert
-  native window properties. Exit preserves unrelated app style changes.
-  App-owned fullscreen without that preimage refuses the project toggle;
-  never synthesize app F11 or guess a restoration state. Stop/crash preserve
-  frames and properties; the properties die with the native window. A new
-  owner applies the first-seen fullscreen hold before any later explicit exit.
-- User-accepted 2026-10-03: one attempt per discrete Win+F11 down; held repeats
-  are consumed without another dispatch, matching the Windows maximize rule.
-  Failed effects retain any usable preimage for a later explicit press;
-  there is no automatic toggle retry or persistent attempted-state map.
-- Scoped synthetic evidence covers project entry/exit and exact retained slot,
-  stable siblings, immediate foreground retention, visual suppression, born
-  hold/hide/return/native release/close and graceful frame preservation.
-  Follow-up also observes one toggle for held repeats. Exact-identity Explorer
-  restart cleared activation refusal, but shell takeover recurred and its purpose
-  remains unidentified. Ownerless helper move now independently reproduces DWM
-  cloak 0->2; unexpected maximize attribution remains open. Full focus/refusal/
-  held-underlay, retained workspace, crash/restart and approved-app fullscreen
-  journeys remain unaccepted/user-owned. Shipment is scoped, not full acceptance.
-  Physical input/display and other output/DPI arrangements remain user-owned.
-- Cloaked foreground is invisible to the compositor, even with a monitor-covering
-  frame: a fresh official DWM cloak read excludes it from the fullscreen veto.
-  Invalid/unreadable foreground facts remain fail-closed; real uncloaked unmanaged
-  fullscreen still suspends. Do not blanket-exclude ApplicationFrameWindow or
-  Explorer from foreground safety based on an unidentified shell surface.
-  Evidence and limitations: [Windows fullscreen](changes/archive/windows-fullscreen.md).
-
-### Windows float
-
-- Windows parity item 5 (2026-10-03): Win+G matches KDE Meta+G. Intentional
-  floats leave the shared Engine tree and siblings reflow. The first float
-  uses the Engine's centered 60% work-area fallback; subsequent floats reuse
-  retained geometry. Unfloat carries the live frame and uses ordinary
-  admission placement/axis, never a remembered tile slot. Both directions
-  retain the exact toggled focus; fullscreen/maximized targets refuse.
-- Directional focus/move and tiled pointer operations refuse a floating
-  subject; floats are excluded from directional targets. Native moving and
-  resizing remain free and never implicitly unfloat. Workspace send refuses
-  a focused float, while selection hides/reveals floating occupants with
-  geometry intact. The active border is independent of float membership and
-  group underlay is hidden for floats. Born-fullscreen holds remain distinct
-  from intentional float actuation.
-- Official Win32 topmost is the keep-above analogue; there is no keep-below
-  analogue. Record the original band, verify effects, and restore only a
-  project-raised band on unfloat/graceful stop. A pre-existing topmost band
-  is not cleared. Target effects retain existing scope, proof and native
-  lifetime fences. Evaluate ToggleFloat on a local Engine clone and commit
-  after target effects verify; failed effects do not strand float membership.
-  Preserve band preimages even when later frame readback is unavailable.
-- Float membership/geometry history is runtime-local and resets on restart,
-  matching KDE; no float persistence or new recovery ledger is introduced.
-  Stop/crash leave geometry in place. User-accepted 2026-10-03: a crash can
-  leave the project-raised topmost band; restart treats the current band as
-  native state, rather than inferring an old preimage. Graceful stop restores
-  the verified runtime preimage. One attempt per discrete Win+G down; held
-  repeats are consumed without dispatch or automatic effect retries.
-- Native gates and independent review pass. Live float acceptance remains
-  open: Explorer restart cleared activation refusal and the cloak-aware veto
-  fixes invisible-cover suspension. A separate ownerless helper move reproduces
-  DWM cloak 0->2, preventing admission; fixtures now fail that environment
-  precondition before launching an owner. Machine evidence proves activation,
-  precondition detection and cleanup, not float behavior. All float/helper/
-  ordinary-app and crash/restart rows, physical input/display/feel and other
-  output/DPI arrangements remain user-owned. See
-  [Windows float](changes/archive/windows-float.md).
-
-### Windows sticky float
-
-- Windows parity item 6 (2026-10-03): Win+Shift+G matches KDE Meta+Shift+G.
-  Sticky-on from tiled uses the existing Engine float placement and sibling
-  reflow; sticky-on from an ordinary float preserves its live frame. Sticky
-  floats stay visible across every managed workspace of their output, never
-  take workspace `SW_HIDE`, and do not occupy a backing workspace for
-  trailing-empty cleanup. This is managed-workspace stickiness, not Windows
-  virtual-desktop membership.
-- Win+Shift+G sticky-off honors the same-runtime origin: a formerly tiled
-  window fresh-admits on the current workspace; a formerly floating window
-  stays a normal float there. Win+G on either sticky origin clears sticky and
-  tiles on the current workspace. Both retain exact toggle focus. Fullscreen
-  and maximized targets refuse. Directional focus/move/resize and workspace
-  send exclude sticky subjects; tile navigation excludes their slotless
-  floating exceptions. Active border stays independent, group underlay stays
-  suppressed, and native pointer movement/resizing remains free.
-- Reuse float keep-above/topmost preimages, retained frames, native identity
-  and scope fences. Sticky native markers use a separate window-lifetime
-  property; every marker effect is held-process and lifetime-tag verified.
-  No recovery-ledger or file persistence is added. Graceful stop restores
-  project-raised topmost and leaves frames in place; the existing provisional
-  float crash-topmost policy also applies.
-- Accepted for now (user 2026-10-03; may be improved later): stop/crash
-  leaves the sticky marker on surviving
-  windows. The next owner consumes it into a normal float on the current
-  managed workspace, preserving the live frame and discarding prior tiled/
-  float origin. The next Win+G tiles. This simple Windows restart analogue
-  avoids preserving all-workspace visibility across owner lifetimes; KDE's
-  native-sticky adoption behavior is unchanged.
-- Native gates and independent review pass. Scoped live helper evidence proves
-  both origins, select visibility, current-workspace sticky-off, Win+G clearing,
-  focus refusal, border presence and graceful restart adoption. Ownerless move
-  cloak stayed 0; the public virtual-desktop check placed the probe on the
-  current desktop with the same ID as foreground (not a desktop-count proof).
-  Crash/watcher, held-underlay, broader overlay/refusal/send/close journeys,
-  physical ordinary-app input/display/feel and other output/DPI checks remain
-  user-owned. Receipt status remains partial. See
-  [Windows sticky float](changes/archive/windows-sticky-float.md).
-
-## Native Integration Boundary
-
-- User decision (2026-09-24; governing statement under Architecture Direction):
-  keep OS/DE-agnostic logic and policy in or near the Rust core wherever
-  possible. Supply needed OS/DE capabilities through the smallest reliable
-  native integration; no capability, including input, is excluded merely for
-  being native. Reliability is part of the test for any needed native
-  capability (Orchestrator interpretation): private KWin APIs are not
-  categorically forbidden, but their ABI churn weighs against their use.
-
-- The shipped drag oracle uses a C++/moc KWin-effect shim and POD-only C ABI.
-  Rust owns verdict policy; no Qt or KWin type crosses the ABI, and every Rust
-  callback catches panics before returning to KWin. The unified effect also
-  observes the configured modifier-resize press through a passive InputEventSpy:
-  it matches the same window and identity at drag start within a bounded age,
-  then consumes that single-use evidence with the final geometry at finish.
-  The script owns KWin-thirds grabbed-edge classification and resize routing.
-- The drag oracle retains a separate read-only session D-Bus endpoint for its
-  last verdict, hosted in the same active-border effect plugin. The KWin script
-  pulls it after interactive drag finish; the effect never pushes a verdict
-  into the script. The reply carries optional matched press position and
-  binding atomically with final geometry, cancellation, and correlation.
-  AR8 closed on 2026-09-24 at the user's request with the shipped integration
-  kept, following the Lead's recommendation; this selects no endpoint rewrite.
-
-## Settings And Distribution
-
-- User decision 2026-09-28, option B: merge all user-facing settings into one
-  page for UX. Orchestrator decision applying option B: tray Settings, KWin
-  Scripts Configure, and Desktop Effects Configure each open that same page;
-  retain both installed KCM identifiers and namespace entries with one shared
-  page implementation and two thin plugin factories. Existing script and effect
-  groups, keys, values, and defaults remain unchanged. Saving changed gaps
-  queues the existing KWin reconfigure path
-  automatically; the queued send is unconfirmed, so the controller re-reads
-  gaps on `Options.configChanged` and requests a debounced retained
-  `update-gaps`, and a session restart guarantees pickup if it cannot converge.
-  Changing `workspaceMode` on the page still requires a session restart. The
-  ineffective `tilingAlgorithm`, `automaticSplitTarget`, and `dropOutlinePreview`
-  controls remain removed; existing values are neither read nor rewritten.
-  Shortcut re-registration remains unselected: the pinned scripting surface
-  offers no unregister operation, and foreign records change only through
-  explicit settings-page Apply/Force/Revert. Existing live border updates remain
-  live.
-  Before launch, every user-facing setting must apply live; this remains a
-  mandatory launch blocker. User exceptions (2026-09-25): `workspaceMode`
-  stays startup-only for MVP and the Configure page states the restart
-  requirement clearly; `shortcutProfile` is hidden until distinct profiles
-  exist (post-MVP). Lead implementation choice: preserve the existing script
-  startup read (and its unchanged single COSMIC-style catalog); the unified KCM
-  does not read, modify, migrate, delete, or create any saved `kwinrc`
-  `shortcutProfile` value.
+- Unified Settings page: see Settings above. The script KPackage still needs
+  the host-built native KCM companion for Configure; the effect need not be
+  enabled. Existing live border updates remain live.
 - The core distribution remains the script KPackage for KDE Store and an
   identical GitHub Release artifact. Platform-native packages for the native
   effect and KCM are permitted; their formats and publication are unselected.
@@ -1375,49 +1181,18 @@ the corresponding item ships; each such entry names its replacement.
   and the selected initial first-startup fitting direction below. General
   historical-layout reconstruction remains unselected; complete observed
   membership is now incrementally adopted into retained domains as described
-  under Architecture Direction. Before launch, this and every other
+  under Engine Architecture and Convergence. Before launch, this and every other
   user-facing setting must apply live; that is a mandatory launch blocker, and
   the gap-only reload does not satisfy it.
 - Approved 2026-09-16: when the first startup domain has no usable retained
   session, Rust may use a versioned, best-effort near-layout fitting heuristic
-  to minimize unnecessary initial window movement. It must be simple,
-  comprehensible, and deterministic, with Rust retaining structural inference
-  and KWin TS retaining native observation. This selects neither exact
-  recognition nor historical-topology reconstruction, global optimization,
-  exhaustive search, broad edge-case handling, retained-topology rewrite,
-  historical-topology recovery, general existing-window adoption, or default
-  promotion. At INITIAL adoption, it attempts one straightforward deterministic
-  near-layout fit; if no valid supported layout results, it uses the existing
-  normal deterministic seed/reflow. The same attempt is selected for a
-  post-CONFIRMED-loss fresh session only, from CURRENT eligible windows.
-  Fresh-loss fitting may change grouping and does not reconstruct the old
-  topology. It selects no park/unmanaged fallback or broader activation
-  lifecycle. Existing floating, sticky, fullscreen, maximize, and
-  configured-gap behavior remains authoritative; preserving it at the current
-  eligibility or pure input boundary is implementation work, not an unselected
-  product behavior.
-  User decision 2026-09-29: replace the flat near-strip fit with one simple
-  deterministic recursive-cut fit to preserve nested layouts and screen order
-  across tiler restarts, independent of focus; do not chase rare complex
-  cases. Orchestrator defaults approved by the user: try horizontal then
-  vertical cut axes, collect all viable cuts into ordered N-ary children,
-  derive shares from observed child spans, recurse on the orthogonal axis,
-  and allow each window to cross a cut by at most the greater of configured
-  inner gap and 3% of the relevant work-area dimension. If any multi-window
-  piece cannot split, fall back to the existing normal seed/reflow. Existing
-  fit exclusions, lifecycle and canonical configured-gap projection remain
-  unchanged; a flat strip is just a one-level fit. This still selects no
-  exhaustive search or historical topology reconstruction.
-  User decision 2026-09-29, option B: eligible free-positioned overlapping
-  windows also receive a near-position fit instead of declining to the normal
-  seed spiral. Keep it simple, with no complex edge-case handling. Orchestrator
-  defaults: prefer existing tolerance-valid cuts; if a multi-window piece has
-  none on either axis, binary-split at the largest adjacent gap between sorted
-  window centres, choosing the axis with the larger gap (horizontal tie).
-  Child shares use each side's largest observed member span on that axis; recurse
-  normally. If both centre gaps are zero, decline the whole fit and keep the
-  existing seed fallback. The correlated adoption-fit summary counts centre
-  splits. Cleanly tiled layouts retain their current fit and exception rules.
+  to minimize unnecessary initial window movement (simple, comprehensible,
+  deterministic; Rust retains structural inference, KWin TS native
+  observation). The fitted rule is decided under Placement above. The same
+  attempt is selected for a post-CONFIRMED-loss fresh session only, from
+  CURRENT eligible windows. Fresh-loss fitting may change grouping and does
+  not reconstruct the old topology. It selects no park/unmanaged fallback or
+  broader activation lifecycle.
 
 ## Live KWin/Plasma Boundary
 
@@ -1470,18 +1245,6 @@ the corresponding item ships; each such entry names its replacement.
   proves exact source binding and exact restoration; otherwise the route stops
   before mutation. This authorization does not broaden access to non-project
   resources.
-- Before any further troubleshooting or product development, current project
-  processes and Rust-path IPC must emit bounded, structured, correlated
-  lifecycle and terminal logs to their existing visible KWin console, stdout,
-  or stderr/journal sinks. `just dev verbose` keeps those summaries while
-  `just dev trace` opt-in enables redacted high-volume per-window, hook, and
-  bounded structural request/reply detail, never raw native D-Bus payloads.
-  Future troubleshooting checks those logs first. The shared
-  `plasma-auto-tiler:route-diag` schema must identify component, direction or
-  stage, correlation, authority generation, revision, event/action, and
-  outcome while excluding captions, application content, secrets, raw
-  environment, native identifiers, raw D-Bus payloads, and unbounded pointer
-  steps. Log failures cannot change product behavior or fail operations.
 - The unidentified prior `plasma-auto-tiler-advisory-*` runtime-directory
   residue is preserved untouched. Do not search for, enumerate, inspect,
   identify heuristically, modify, or delete it. No stale POC2/POC3 harness
@@ -1489,9 +1252,45 @@ the corresponding item ships; each such entry names its replacement.
   authorization and exact identity or hash verification. After the resource-order
   correction, the standing authorization above resumes only for fresh bounded
   attempts that stop before resource creation or prove exact restoration with
-  no new ambiguity.
+  no new ambiguity. Procedures, preflight, and residue handling detail live in
+  [Live KWin/Plasma Testing](live-kwin-testing.md); grants and prohibitions
+  above stay authoritative here.
 
-## Window And Workspace Behavior
+## Observability
+
+- Implementation and review must include the evidence needed to diagnose
+  behavior and failures across every component.
+- Project processes and Rust-path IPC must emit bounded, structured,
+  correlated lifecycle and terminal logs for requests, significant decisions,
+  failures, recovery, and terminal outcomes to their existing visible KWin
+  console, stdout, or stderr/journal sinks. Future troubleshooting checks
+  those logs first.
+- Carry trace/correlation IDs across components and services; distinguish
+  dispatch vs acceptance vs completion vs uncertainty.
+- Normal operation shows bounded summaries; opt-in trace covers high-volume
+  detail with no frame/poll noise.
+- Redact captions, application content, secrets, raw environment, native
+  identifiers, raw native IDs, and raw native D-Bus payloads, plus unbounded
+  pointer steps. Logging failures never block or change behavior.
+- The shared `plasma-auto-tiler:route-diag` schema identifies component,
+  direction or stage, correlation, authority generation, revision, event/action,
+  and outcome within the redaction rule above.
+- `just dev verbose` keeps lifecycle summaries; `just dev trace` opt-in enables
+  redacted high-volume per-window, hook, and bounded structural request/reply
+  detail, never raw native D-Bus payloads.
+- Shortcut operations emit bounded structured diagnostics on
+  `plasmaautotiler.shortcut` (operation, stage, outcome, allowlisted
+  identity, key images, cleared count/writes only; foreign occupants
+  redacted); query with
+  `journalctl --user --no-pager -g "plasmaautotiler.shortcut op="`.
+  Operational warnings and info are enabled by default with debug-only
+  records; logging never affects behavior.
+- The fixed unauthorized reply omits caller-supplied correlation, preserving
+  the same-UID caller authorization boundary and each adapter's strict
+  correlation fence; distinct unauthorized observability is intentionally
+  not selected.
+
+## Window State: Float, Sticky, Maximize, Fullscreen
 
 - Approved 2026-09-16: background tiling is supported at startup and on window
   open or move for non-visible workspaces, without switching visibility or
@@ -1540,7 +1339,7 @@ the corresponding item ships; each such entry names its replacement.
   window was previously tiled, an ordinary float, or adopted with unknown
   origin. `Meta+Shift+G` sticky-off still honors the previous floating origin
   as described above.
-  Orchestrator clarification applying option A, 2026-09-25: `Meta+G` tiles on
+  Clarification applying user option A (2026-09-25): `Meta+G` tiles on
   the workspace where it is pressed, where native sticky-off leaves the
   window, even if its former tile belonged to another workspace. A subsequent
   `Meta+G` on a plain floating window must still tile it; moving or resizing
@@ -1592,8 +1391,7 @@ the corresponding item ships; each such entry names its replacement.
   Its first non-fullscreen observation receives normal fresh admission; any
   later fullscreen retains its tile as above. This includes startup and hidden
   domains. KWin carries the initial hold as a planner-only floating exception,
-  never intentional native floating; a window still maximized on first exit
-  receives the existing one-shot admission-time maximize clear. Borderless
+  never intentional native floating. Borderless
   output-sized windows are not inferred to be fullscreen.
 - Maximize isolation mirrors fullscreen, authorized 2026-09-14. A nonzero KWin
   `maximizeMode` (1 vertical, 2 horizontal, 3 full) is collapsed to one adapter
@@ -1607,16 +1405,6 @@ the corresponding item ships; each such entry names its replacement.
   without a connectable `maximizedChanged` remains tiled; log once and use
   fresh `maximizeMode` reads on later observations. An unseen native change
   remains unknown until a subsequent observation.
-- Admission-time maximize clearing is a deliberate, user-approved KWin-native
-  deviation from cosmic-comp parity, authorized 2026-09-14. For a non-fullscreen
-  window first observed without a retained tiled slot, the adapter calls KWin
-  `Window.setMaximize(false, false)` once before admission, then tiles the
-  restored window normally. It never retries the write. A later maximize of a
-  retained member keeps the existing isolation behavior: the leaf/share remain,
-  geometry writes are skipped, and unmaximize restores the retained allocation.
-  Fullscreen remains untouched and takes precedence. KWin session-restored
-  maximized applications therefore tile on admission while preserving the
-  selected post-admission behavior.
 - `Meta+M` toggles KWin maximize through `Window.setMaximize(bool, bool)`, never
   `maximizeMode`. Fullscreen refuses first. Post-admission maximize retains its
   tile slot and skips geometry writes; unmaximize restores its retained
@@ -1628,81 +1416,108 @@ the corresponding item ships; each such entry names its replacement.
 - KDE toggle activation (user 2026-10-05, delivered offline): each explicit
   maximize/sticky activation makes at most one native toggle attempt; no
   persistent attempted-state map or automatic retry. Exact-reference echo
-  fences, refusal gates and focus retention remain. Admission-time maximize
-  clearing retains its separate one-shot rule. Physical held-key/autorepeat
+  fences, refusal gates and focus retention remain. Only the held
+  born-fullscreen exit clear remains. Physical held-key/autorepeat
   delivery through KGlobalAccel remains user-owned acceptance. Evidence:
   [KDE follow-up](changes/archive/kde-post-windows-followups.md).
+- Windows (parity items 3-6):
+  - Maximize (Win+M matches Meta+M): retained-tile overlay; siblings keep
+    layout; never suspends the workspace. Directional focus may enter or leave
+    a maximized member; movement and pointer operations refuse it; Win+Arrow
+    stays focus, never Snap; send/follow, select-away hiding and return
+    preserve maximize. Current code makes one admission-time restore attempt
+    for a first-seen maximized window without a tile slot (gap: Q3 selects
+    no launch unmaximize with a reserved slot); retained slots exempt;
+    fullscreen wins. Stop/crash preserve
+    frames and maximize state; identity-safe recovery reveals hidden members.
+    One native toggle attempt per discrete Win+M down (the discrete rule also
+    fixes KDE's map-refusal case); held repeats consumed without dispatch.
+    Status: scoped synthetic proof passed; native system-command and
+    double-click paths machine-proven; physical input and other output/DPI
+    arrangements remain user-owned
+    ([maximise](changes/archive/windows-maximise.md)).
+  - Fullscreen (Win+F11 matches Meta+F11): managed fullscreen retains
+    membership/tree/shares, pauses geometry writes, restores the current
+    Engine allocation on exit; precedes maximize; suppresses border and
+    underlay. Unmanaged fullscreen foreground suspends the workspace.
+    Directional movement, pointer operations and maximize refuse a fullscreen
+    subject; Windows same-output single-window fullscreen workspace carry is
+    selected with implementation pending (current code refuses: gap).
+    First-seen fullscreen without a slot stays a slotless floating exception
+    until first native exit. Project toggle uses official Win32 style/frame
+    APIs with inert preimage properties; a new owner applies the first-seen
+    hold before any later explicit exit. App-owned fullscreen without that
+    preimage refuses (user 2026-10-07 R-MAX-05; a later spike explores
+    retaining state early). No synthesized app F11, no guessed restore. One
+    attempt per discrete down; held repeats consumed. Failed effects retain any
+    usable preimage for a later explicit press. Captionless
+    full-monitor windows classify as fullscreen on Windows for borderless-game
+    compatibility while KDE stays flag-based (deliberate difference, user
+    2026-10-07 R-MAX-07). Cloaked foreground reads exclude invisible covers
+    from the veto; invalid/unreadable foreground facts fail closed. Never
+    blanket-exclude ApplicationFrameWindow or Explorer from foreground safety
+    on an unidentified shell surface. Status:
+    scoped synthetic proof passed; shell-takeover purpose unidentified;
+    physical input/display and other arrangements remain user-owned
+    ([fullscreen](changes/archive/windows-fullscreen.md)).
+  - Float (Win+G matches Meta+G): intentional floats leave the Engine tree
+    and siblings reflow; first float uses the centered 60% fallback,
+    later floats reuse retained geometry. Unfloat carries the live frame with
+    ordinary admission placement, never a remembered slot. Directional
+    focus/move and tiled pointer operations refuse a floating subject; native
+    moving and resizing remain free and never implicitly unfloat; send refuses
+    a focused float while selection hide/reveal keeps geometry intact.
+    Current code holds natively overlaid floats until normal again (gap:
+    B9 selects unmaximize-then-fresh-admit instead);
+    fullscreen/maximized targets refuse. Topmost is the keep-above analogue
+    with no keep-below; record the original band, verify effects, restore only
+    a project-raised band, never clear a pre-existing band, and preserve band
+    preimages even without later readback. Evaluate on a local Engine clone
+    and commit after target effects verify; failed effects never strand
+    membership. Born-fullscreen holds stay distinct from intentional float
+    actuation. One attempt per discrete down. B9 selected behavior
+    (unmaximize-then-fresh-admit) is implementation-pending on both platforms.
+    Status: machine evidence proves activation and cleanup only; float
+    behavior, physical input/display and other arrangements remain user-owned
+    ([float](changes/archive/windows-float.md)).
+  - Sticky float (Win+Shift+G matches Meta+Shift+G): tiled-origin floats
+    first then sets visibility; float-origin preserves its frame. Sticky
+    floats stay visible across every managed workspace of their output. Same-
+    runtime sticky-off (tiled origin fresh-admits, float origin stays float);
+    Win+G on either sticky origin clears sticky and tiles. Markers are
+    window-lifetime properties; stop/crash leaves them for next-owner
+    normal-float adoption (KDE native-sticky adoption unchanged). Selected
+    direction (user 2026-10-07 R-FLT-05, 2026-10-08 R-RST-01): intentional and
+    sticky floats persist across owner restart; Windows still implements the
+    old runtime-local reset pending its handoff. Status: scoped helper
+    evidence passed; crash/watcher, physical input/display and other checks
+    remain user-owned
+    ([sticky](changes/archive/windows-sticky-float.md)).
+  - Stop/crash: hidden windows are revealed without geometry recovery (the old
+    tiling-only preview left geometry in place). Terminal is ordinary,
+    matching KDE.
 - H/V maximize is deliberately not modeled in the engine. Maximize is a
   recorded overlay state over the original layer, not a distinct topology or
   managed layer, so the engine carries no horizontal/vertical maximize concept.
-- Complete automatic per-domain observations, not an applied membership
-  baseline, drive `reconcile` for foreground and hidden tiling. The Engine
-  converges departures, arrivals, and floating transitions before projecting
-  surviving topology; explicit complete hidden empties may retire a domain.
-  KWin retains only applied per-window geometry/domain/flag evidence for
-  overlays, first-admission maximize, drag fallback, drift and reply checks,
-  never as membership authority. Incomplete foreground frames and unreadable
-  hidden domains cannot establish a departure. Changed gaps use one bounded
-  fresh same-domain `update-gaps` retry only after an exact correlated gap
-  mismatch; unrelated/malformed refusals do not retry. The redundant
-  post-convergence ID-set checks for ordinary retained reconcile and
-  update-gaps are gone; relocated but previously unconverged sources still
-  require exact membership and atomic rollback. Other operation and reply
-  fences remain where needed for changed scope or uncertain state.
-- User decision D, option 2 (2026-09-26): on existing topology-change
-  signals, a successfully validated complete desktop-ID or output-name list
-  proves a drag-restore marker's workspace or output removed if absent from
-  that list. Settle each such drag `outcome=unavailable plan=none` and drop
-  its marker; a failed or malformed list proves nothing for that axis. No
-  timer, count cap, inferred per-window departure or fabricated applied plan.
-  Ordinary later observations remain usable.
-- USER-APPROVED recoverability, 2026-09-21: "log and continue rather than hard
-  fail." A failed native geometry operation or client geometry discrepancy is
-  an operation failure, not a permanently disabled window or domain. Later
-  valid commands and fresh observations remain usable while the adapter retains
-  confirmed canonical topology where available. User decision A (2026-09-26,
-  interim): after three bounded reassertions, automatic reconciliation accepts
-  each exact client-held rectangle as per-window applied geometry evidence
-  without disabling the domain; other or later drift still reconciles. This
-  does not fabricate a native write or change canonical Rust topology. The
-  retained allocation owns topology over same-scope client drift: strict
-  `DescribePlan {"op":"reconcile"}` never derives sibling shares from a
-  client's actual rectangle. Three attempts are a KWin anti-fighting policy,
-  not a COSMIC threshold or KWin acknowledgement. Learned
-  size limits and neighbour replans are deferred. Later explicit commands
-  remain usable; no infinite retries, fabricated acknowledgement, stale
-  geometry or uncertain cross-output transfer recovery is authorized.
-  Authorization, malformed-input, owner, correlation, and stale-scope fences
-  remain fail-closed. Send/R4 uncertainty now uses the 2026-09-25
-  step-3 observation convergence below. Future
-  recovery must preserve later valid commands without fabricating success,
-  replaying setters, resetting topology, or weakening those fences. User
-  decision G (2026-09-26): a stale pre-write snapshot replans the same
-  command once against a fresh complete observation under identity,
-  correlation, owner and scope fences. A second staleness logs, drops and
-  converges; never replay after any setter has run.
-- USER-APPROVED observation-convergence step 3, decided 2026-09-25:
-  complete per-domain observations are authoritative for membership and portable
-  flags, retaining survivor topology. The user authorized retiring send/R4
-  transactions. Rust converges complete source and target observations, then
-  synchronously commits the planned send or exhausted horizontal R4 topology
-  into canonical per-domain sessions, returning both-domain geometry and the
-  native assignment. No pair survives the call and no send/R4 pending
-  ack/verify/status/cancel/abandon remains. The retired scope is the cross-call
-  public transaction protocol only; the synchronous in-call
-  propose/acknowledge/verify commit is unchanged. KWin keeps a short flight-local
-  source/target pin, including a newly allocated trailing target, and separate
-  unanswered-request and arrival deadlines. Owner/generation/correlation/flight/
-  snapshot fences discard stale replies before any setter. Send writes geometry
-  then desktop membership; R4 writes output, desktop membership and geometry,
-  exempting overconstrained members. R4's mid-transfer fence also checks
-  non-mover flags before later setters and follow. Follow once on fresh exact target arrival,
-  switching before focus without waiting for unrelated geometry; no retry or
-  setter replay on failure. Every terminal flight forces complete both-domain
-  Plan reconciliation even when applied evidence matches, quarantines unreadable
-  domains and never uses `blocksPlan`. No wire ack or native verified-success is
-  emitted for send/R4. Current Rust+KWin behavior is offline-verified only; no
-  live verification claimed. See `changes/archive/observation-convergence.md`.
+- Q3 (user 2026-10-05, scope 2026-10-07): a first-seen (born) maximized
+  window tiles with a reserved slot and keeps its maximize as an overlay; no
+  launch unmaximize, on KDE and Windows. R-MAX-03 floating-to-tiled admission
+  keeps maximize over a reserved slot with no one-shot restore. Native
+  launch/restore and session-restore no-loop acceptance remain user-owned.
+  Only a held born-fullscreen exit
+  clears once under the exact-ref hold. Fixed first exits float with no
+  writes once D5 ships (pending).
+  - KDE: R-MAX-06 and R-MAX-03 delivered offline, the latter at `29c75fe` ([record](changes/archive/kde-maximized-floating-retile-overlay.md)); Windows parity and native acceptance pending.
+- B9 (user decision 2026-10-08): an explicit unfloat of an intentionally
+  floating window that is natively maximized unmaximizes then fresh-admits
+  (COSMIC). No retained-maximize unfloat. Approved; implementation pending
+  on both platforms. The user's COSMIC R-FLT-06 observation confirmation
+  remains (not an implementation gate).
+  Analysis: [post-Windows audit](research/cross-platform-core/post-windows-audit.md),
+  [cross-WM consensus](research/reference-wm-consensus.md).
+- Observation-driven reconciliation, three-strike anti-fighting acceptance,
+  send/R4 convergence and stale-snapshot replan rules: see Engine Architecture
+  and Convergence above.
 - Permissive admission, authorized 2026-09-14: an observed normal window's
   incoming frame rectangle never decides whether it may join a tiled domain.
   Admission assigns a new complete geometry for every member and may reflow
@@ -1716,178 +1531,10 @@ the corresponding item ships; each such entry names its replacement.
   homing, and reply geometry remain validated. Offline verified in
   [mid-drag-workspace-recovery](changes/archive/mid-drag-workspace-recovery.md);
   live acceptance pending.
-- Mid-drag workspace change (Orchestrator default, 2026-09-29): a native
-  same-output workspace send while Meta drag is held supersedes the Started
-  workspace's drop target. Ignore that stale drop and let complete source and
-  destination observations reflow/admit the mover normally. Lead implementation
-  choice: compare the mover's fresh native workspace with Started, not the
-  pointer-projected destination; a legitimate pointer-based cross-domain drag
-  remains available. Lead correction after the user's live repro, 2026-09-29:
-  the refused drop's existing restore reconcile binds to the freshly observed
-  destination containing the mover, rather than waiting for the Started
-  source to become visible. The source still reflows through send settlement.
-  Confirmed live by the user (laptop, 2026-09-29); see
-  [mid-drag-destination-recovery](changes/archive/mid-drag-destination-recovery.md).
-- `workspaceMode` supports `per-output-local`, `global-unique`, and `shared`
-  through a session-local, project-owned KWin backing-desktop mapping. KWin's
-  global virtual-desktop pool is not a native COSMIC workspace-set mapping.
-  `per-output-local` and `global-unique` assign distinct backing desktops to
-  output domains; `shared` selects the same backing desktop on every output.
-  Keeps one structurally trailing empty backing desktop per relevant domain,
-  reused for `Meta+0` and `Meta+Shift+0` before creating one; an empty
-  non-final managed backing desktop is removable once invisible on every
-  output. The literal native-order trailing empty is retained. Management
-  includes adopted preexisting desktops, distinct from lifetime ownership, so
-  disable/teardown never disposes an adopted desktop. Every live
-  local/global-unique output domain, and the shared domain, keeps at least
-  two logical workspaces. Unmapped desktops remain outside management.
-  Occupied (including floating, fullscreen, and maximized), visible,
-  flight-pinned, displaced, and unmapped desktops remain protected; sticky
-  all-desktops windows do not occupy every backing desktop. Mapping and output
-  identity are session-local. Initial disconnected-output policy: displaced
-  layout preserved in separate workspace(s), never merged into a new
-  top-level split of remaining visible layout. Active-focus survivor choice:
-  disconnected-monitor active window shows its relocated workspace with focus
-  retained; surviving-monitor active window preserves current visible
-  workspace and focus with displaced workspaces reachable by normal
-  switching; no active window preserves surviving monitor view. On
-  reconnection, displaced workspaces return automatically to their original
-  monitor with then-current contents/layout, not a saved snapshot (split
-  edits, closed/new windows reflected). Relocation is the unit: an
-  explicitly moved-out window stays at its destination, never individually
-  pulled back, while a window moved into a displaced workspace returns with
-  it. User-configurable handling is deferred. Multiple-survivor destination:
-  nearest surviving monitor from already-available disconnect-time geometry,
-  no added history; fallback current primary surviving monitor then existing
-  output ordering; retains no removed geometry and never uses post-disconnect
-  frame geometry as proxy; distinct from the displacement association for
-  automatic return. Reconnect focus: active window in a returning workspace
-  shows that workspace on the reconnected monitor with focus retained;
-  active window on a surviving output preserves view/focus with no stealing;
-  other selection ordinary: reconnect selection does not consult or restore
-  prior-view history. This restricts reconnect selection policy only; separate
-  R-WS-08 history records observed hotplug changes under user decision 1.5
-  (2026-10-07, [Cross-Platform Behavior](#cross-platform-behavior)).
-  Initial scope session-local, no restart-persistent mapping or return
-  guarantee.
-- `Meta+1..9` select an existing 1-based logical workspace without creation.
-  `Meta+Shift+1..9` send only the focused tiled window to an existing
-  same-output workspace through the Rust `MoveToWorkspace` route. `0` reuses or
-  creates the trailing empty target. Step 3 (current, USER decision
-  2026-09-25, offline only, no live verification claimed): per the step-3
-  rule above, under its pin, separate deadlines, and
-  owner/generation/correlation/flight/snapshot fences; send specifics only:
-  pin includes a newly allocated trailing target until dispatch/follow
-  observation finishes; native order source/target geometry then mover
-  desktop setter; exact follow is one fresh
-  mover-absent-from-source/present-in-target proof, switch-before-focus
-  without waiting unrelated geometry, no retry/replay/fabricated rollback;
-  setter returns and signal delivery alone are not proof; stale, ambiguous,
-  missing, no-op, wrong-target, owner, scope, and hook failures do not
-  follow; unrelated async layout settling never gates confirmed follow. KWin
-  geometry and membership are non-atomic and asynchronous. The standard US
-  shifted aliases `Meta+!`
-  through `Meta+)` are registered alongside the digit sends; registration
-  preserves foreign shortcut records and does not establish physical delivery.
-- USER VISUAL/MANUAL acceptance (rapid multi-workspace move/follow use): accepted for move/follow usability and repeated same-session use across many workspaces. The supplied dev log was not analyzed and supplies no machine protocol, rendered-visibility, latency, recovery, or native-cause claim. The durable product preference is graceful, unsurprising handling of confirmed partial successes and responsiveness during rapid use; it does not authorize ignored errors, retries, queue resets, or an architecture or uncertain-recovery change.
+- Workspace mapping, hotplug policy, numbered sends and follow mechanics:
+  see Workspaces above.
 
-## Shortcuts
-
-- USER rule 2026-09-28: every HJKL directional shortcut has an arrow-key
-  alias. Grow (resize outwards) uses `Meta+Alt+Left/Down/Up/Right` alongside
-  `Meta+Alt+H/J/K/L`; the removed Custom Tile controller's legacy `insert-*`
-  reservation on those arrow chords is retired. Plasma 6.7.5 defaults those
-  chords to `kwin/Switch Window Left/Down/Up/Right`. Orchestrator decision
-  2026-09-28 under the standing 2026-09-21 approval: clear those four stock
-  bindings through the existing reversible KCM Apply/Force/Revert override;
-  do not relocate them. Project directional focus supersedes stock switching.
-- USER decision 2026-09-28: project `Meta+Left/Down/Up/Right` focus and
-  `Meta+Shift+Left/Right` move supersede the KWin 6.7.5 defaults for
-  `kwin/Window Quick Tile Left/Bottom/Top/Right` and
-  `kwin/Window to Previous/Next Screen`. Clear those six exact bindings
-  through reversible KCM Apply/Force/Revert, without relocation.
-- Approved 2026-09-21, standing until revoked: clear Grid View's `Meta+G`
-  and Krohnkite Monocle's `Meta+M` through reversible Apply/Revert overrides,
-  plus other exact project-required shortcut conflicts. The "recorded preimage"
-  and "does not authorize relocation chords" limitations are superseded by the
-  current Force/Revert contract below (durable cleared-ID list; Lock Session
-  `Meta+L` to `Meta+Esc` relocation). No broad shortcut deletion, unverified
-  actions, ownership/readback changes, or startup mutation.
-- The initial release supports standard US keyboards and preserves hardcoded
-  shifted aliases. Layout detection, omission, opt-in configuration, migration,
-  and KGlobalAccel reconciliation are deferred.
-- Non-conflicting project shortcuts register by default. Conflicting
-  Plasma-global shortcuts change only through explicit KCM Apply, Force Apply,
-  and Revert. Installation/startup never mutate global shortcuts. Ordinary
-  settings Save never mutates shortcuts. The fifteen project-required chords are
-  `Meta+L` (focus-right, relocating `ksmserver/Lock Session` `Meta+L` to
-  `Meta+Esc`), `Meta+Alt+K`, `Meta+Alt+L`, `Meta+G`, `Meta+M`, and
-  `Meta+Alt+Left/Down/Up/Right` (grow arrows, clearing the corresponding
-  `kwin/Switch Window Left/Down/Up/Right` defaults), plus
-  `Meta+Left/Down/Up/Right` (focus arrows, clearing the corresponding
-  `kwin/Window Quick Tile Left/Bottom/Top/Right` defaults) and
-  `Meta+Shift+Left/Right` (move arrows, clearing `kwin/Window to
-  Previous/Next Screen`). The sole
-  approved target-occupant exception is `Meta+Esc`: System Monitor
-  `org.kde.plasma-systemmonitor.desktop` / `_launch` may hold it and is
-  displaced without rebinding System Monitor itself; it is never writable by
-  the override. No other foreign occupier is authorized, and no per-component
-  `cleanUp()` path exists.
-- Current Force/Revert contract, Orchestrator decision 2026-09-26 applying the
-  user's 2026-09-26 Delivery 2 direction (see
-  `changes/archive/multi-output-failures.md`): Force may clear ANY holder of a
-  project-required chord after listing and confirmation, not only exact
-  compiled foreign rows. The preview lists every active holder with its found
-  keys, the exact required keys removed, and the unrelated keys kept,
-  including unknown and legacy project-owned (`kwin/plasma-auto-tiler-*`)
-  IDs; project actions, Lock Session, and the authorized System Monitor
-  `Meta+Esc` holder are exempt. A holder claiming a chord with no required key
-  in its active list (e.g. a `.desktop`-declared default) blocks Force until
-  unbound manually. Confirmed Force revalidates owner, project/lock live
-  images, and the full holder snapshot against fresh state before persist;
-  stale confirmations there fail closed with zero writes, including zero
-  cleared-list writes. After persist, each holder is re-read immediately
-  before its foreign setter and aborts on active drift with zero further
-  KGlobalAccel writes; the persisted union is retained as an
-  interruption-safe superset, so Revert may restore an action never cleared.
-  Minimal durable cleared component/action ID list (IDs only, no cosmetic
-  labels; Components+Actions in config; union by ID) at
-  `~/.config/plasma-auto-tiler/shortcut-clearedrc` is union-persisted
-  BEFORE clearing and emptied only after successful Revert, so an
-  interrupted Force stays revertible. Force preview transient labels are
-  never persisted. Stateless Revert was rejected: it would alter
-  never-cleared actions, activate default-only holders, and miss custom
-  holders (Simplicity/Resilience: smallest state that is actually correct).
-- Revert restores KDE defaults for every non-project ID in the cleared
-  list via `defaultShortcutKeys`/`setForeignShortcutKeys`: each persisted
-  ID is resolved to its fresh current tuple from `readAll` to supply the
-  current friendly labels (empty allowed) for the 4-field actionId (no
-  2-field daemon assumption); the full default key set replaces the
-  active set, so custom cleared bindings are lost, as the user accepted
-  2026-09-26. Project-owned IDs (`kwin/plasma-auto-tiler-*`, current and
-  legacy) stay cleared. Absent or duplicate IDs fail closed without
-  writing unrelated actions and retain the list for retry; other partial
-  Revert failure likewise retains the list for a later resume; an empty
-  list is a no-op success. Existing journal files
-  (`shortcut-override-journalrc`, including the kcmshell6 legacy path) are
-  ignored and untouched; no migration, Finish Apply, or Restore path
-  remains.
-- Shortcut operations emit bounded structured diagnostics on
-  `plasmaautotiler.shortcut` (operation, stage, outcome, allowlisted
-  identity, key images, cleared count/writes only; foreign occupants
-  redacted). Query with
-  `journalctl --user --no-pager -g "plasmaautotiler.shortcut op="`.
-  Operational warnings and info are enabled by default; the logging rule adds
-  debug-only records. Logging never affects behavior.
-
-## Planner Unauthorized Reply Correlation
-
-- Do not echo caller-supplied `correlation_id` in the fixed unauthorized reply
-  from `PlannerEndpoint::describe_plan`. This preserves the same-UID caller
-  authorization boundary and each adapter's strict correlation fence; distinct
-  unauthorized observability is intentionally not selected.
-
-## COSMIC Movement And Groups
+## Engine Operations and Policy
 
 - COSMIC-style tiling and directional movement are MVP. The directional path
   replaces the legacy path; there is no legacy fallback after a path is
@@ -1901,10 +1548,8 @@ the corresponding item ships; each such entry names its replacement.
 - Production uses the single `DescribePlan` engine with direct geometry and no
   Custom Tile topology authority or Legacy fallback. Disposable Custom Tile
   acceptance remains a separately gated test; tabs, stacks, shared tiles, and
-  compositor group behavior remain unselected.
-- Grouping here means nested split-tree structure and placement. `H[H[1 2] 3]`
-  is distinct from `H[1 H[2 3]]`; tabs, stacked/shared groups, and compositor
-  group behavior are excluded.
+  compositor group behavior remain unselected (see Visuals for the grouping
+  rule and tabs gate).
 - Lifecycle foundation, authorized 2026-09-09: portable `cosmic_v1` lifecycle
   plans carry policy version 1. Step 3 replaced send/R4 pending acknowledgement
   with immediate planned-topology commit and complete observation convergence;
@@ -1918,15 +1563,17 @@ the corresponding item ships; each such entry names its replacement.
   center stack drops because stacks are unselected and compositor-owned.
   Recursive collapse is retained. On a focused tiled removal, `cosmic_v1`
   removes the leaf from its source-domain MRU focus stack and selects that
-  stack's remaining top; an unfocused removal preserves focus. Send with
-  `direction=None` leaves focus in the source rather than focusing the target.
-  The portable tiled model clears focus when no source tiled stack entry
+  stack's remaining top; an unfocused removal preserves focus. Send placement
+  with `direction=None` uses ordinary admission placement; the separate
+  `follow` flag selects target focus (`follow=true`) or source fallback
+  (`follow=false`). The portable tiled model clears focus when no source tiled stack entry
   remains. Floating and sticky exceptions and fullscreen/maximize tile overlays
-  follow the current Window And Workspace Behavior rules.
+   follow the current Window State rules above.
 - Durable policy-mode direction, authorized 2026-09-09: selected policy modes
-  target strong source-evidenced behavioral parity. `cosmic_v1` may deviate
-  only for an explicit, reviewable infeasible platform capability; a missing
-  capability fails closed. Future Hyprland and other behavior belongs in a
+  target strong source-evidenced behavioral parity. `cosmic_v1` permits
+  explicitly recorded functional alternatives and host/game-safety exceptions
+  in addition to infeasible platform capabilities; a missing
+  capability fails closed with narrow refusal, logging, and later recovery intact. Future Hyprland and other behavior belongs in a
   separate versioned policy mode sharing the portable engine, not in an
   unnamed generic fallback or a platform adapter.
 - Future tiling profiles are required after MVP when adding a new tiling type,
@@ -1946,12 +1593,13 @@ the corresponding item ships; each such entry names its replacement.
   discrepancy or a required source-exact fixture that fails under shares. No
   pixel-authority migration, projector correction, numerical-policy change, or
   code/test work is selected.
-- COSMIC send-to-workspace is a portable same-output, distinct-workspace
-  lifecycle operation. It moves only the focused tiled window, recursively
-  collapses its source tree, and focuses it in the target. A validated
-  per-domain last-active leaf supplies COSMIC target admission; its absence
-  uses target `map_to_tree` root/output-geometry fallback. Empty targets are a
-  lone root. Approved 2026-09-20, updated by USER step-3 decision 2026-09-25 (current, offline only, no live verification claimed): exhausted default-Vertical
+- Workspace send and cross-output (R4) movement are portable lifecycle
+  operations committing planned topology synchronously with complete
+  observation convergence (no surviving pair, no ack/verify/pending); a send
+  moves only the focused tiled window and recursively collapses its source
+  tree, with validated last-active-leaf admission (`map_to_tree` root/output-
+  geometry fallback; empty targets are a lone root). See
+  Workspaces and Move above for bindings and targeting. Approved 2026-09-20, updated by USER step-3 decision 2026-09-25 (current, offline only, no live verification claimed): exhausted default-Vertical
   `Meta+Left`/`Meta+Right` R4 movement is the selected product behavior across
   a horizontally adjacent output into that output's currently selected logical
   workspace. Local R1/R2/R3 wins first. USER item 5 (2026-10-07) extends
@@ -1963,7 +1611,7 @@ the corresponding item ships; each such entry names its replacement.
   corresponding exhausted horizontal focus transfer with no layout or
   membership writes. R4 uses KWin 6.7.5 public
   `workspace.sendClientToScreen(window, output)` and exact desktop assignment,
-  with native write order output, then desktop membership, then source/target geometry (respecting overconstrained members). KWin keeps a short flight-local source/target pin with separate unanswered-request and arrival deadlines, stale-reply discard before any setter, prompt follow once on fresh exact mover-on-target proof, forced complete both-domain reconcile even on equal applied evidence with unreadable quarantine, and no `blocksPlan`. Timeout, stale scope, wrong output,
+  with native write order output, then desktop membership, then source/target geometry (B6 effective origin+minimum targets for overconstrained members). KWin keeps a short flight-local source/target pin with separate unanswered-request and arrival deadlines, stale-reply discard before any setter, prompt follow once on fresh exact mover-on-target proof, forced complete both-domain reconcile even on equal applied evidence with unreadable quarantine, and no `blocksPlan`. Timeout, stale scope, wrong output,
   failed write, identity loss, or partial proof converge on the next complete observations without replay, phantom, or verified-success claim.
 - The portable world Engine owns independent per-domain Sessions, outer gaps,
   seeding, and relocation behind
@@ -1973,239 +1621,6 @@ the corresponding item ships; each such entry names its replacement.
 - A KWin fork or patch is rejected. The project must operate within existing
   KDE/Plasma/KWin. The Rust-engine/direct-geometry direction above is the
   selected replacement architecture; the bounded adapter remains active only
-  until its individual replacement paths are promoted.
-- Grouped/tabbed windows remain deferred pending compositor-owned KWin support
-  and a live multi-window Custom Tile stability proof. No tab or stack carrier,
-  controls, or bindings are selected.
-- KDE active-group underlay (user 2026-09-30, A/B delivered offline
-  2026-10-05): hard-coded Meta+Shift hold (both required, either order, extra
-  modifiers allowed) OR a matching focused-window native interactive move.
-  This supersedes Meta-only lifetime and the earlier timed-flash fallback.
-  Meta alone and resize alone do not trigger; the chord works independently
-  during resize. Existing shared `tiler-core::visual` policy is reached through
-  the effect FFI; no new script/Planner route or settings.
-- The effect captures the exact move window at Started and rechecks live
-  active focus plus the Rust-accepted group subject on every visibility
-  refresh. Title-bar and native modifier drags use the same move arm; finish,
-  cancel and exact-window removal clear it without clearing the chord. Existing
-  geometry, anchor, focus/domain, root-leaf, floating, fullscreen/maximize and
-  endpoint suppression remain. Unfocused-subject resolution (C) stays parked.
-- Passive `EffectsHandler::mouseChanged(...)` modifier state is unknown before
-  its first public signal; only the chord branch waits for that observation.
-  Matching native movement does not. No polling, timed flash or new input hook.
-  Native timing/pixels and multi-output behavior remain user-owned acceptance:
-  [A/B evidence and checks](changes/group-underlay-move-trigger.md).
-- Renderer: the active `OutlinedBorderItem` is a negative-z child of its
-  target `EffectWindow::windowItem()`; KWin's public `Item::setParentItem()`
-  and `mapFromScene()` keep its geometry window-local. The target texture and
-  later-stacked windows therefore occlude it through the normal item-tree and
-  workspace stacking passes. User decision 2026-09-28: the temporary group
-  visual is a filled underlay beneath the group's windows, not an outline.
-  Orchestrator decision applying the user's requirement: use public stacking
-  order to parent its `ImageItem` below the lowest painted group member and
-  re-anchor on stacking, membership, or visibility changes. The child inherits
-  its window's slide translation; being below the windows alone does not cause
-  the slide. The underlay spans the engine-projected union expanded by border
-  gap + border width + configured extension (unset means current border width).
-  Where the extension overlaps a non-group window stacked below the anchor, it
-  may paint over that window's edge (accepted by the Orchestrator). No custom
-  scene/rendering mechanism is selected.
-- Active-group highlighting is statically delivered. Rust resolves the focused
-  leaf's immediate parent split group and recursively projected members from
-  its retained focused-domain tree; the script forwards their validated window
-  IDs with engine union bounds and bounded identity to the renderer. Per
-  Orchestrator authorization, the member IDs occupy one additional field in
-  the existing `SetGroupHighlight` payload (no raw ID logging), and the setter
-  limit matches the existing 64 KiB Planner reply bound with a plain native
-  member list. Rust also owns native-effect
-  payload parsing/validation, stream order, focus/visibility policy, and POD
-  state through a panic-contained byte/POD ABI. C++ extracts the accepted IDs
-  and owns the QObject/D-Bus boundary, native stacking/signal observation,
-  scene parenting and repaint shim. The active border stays an outline.
-- The approved writable bridge is an effect-owned session D-Bus endpoint,
-  `org.plasmaautotiler.ActiveBorder` at
-  `/org/plasmaautotiler/ActiveBorder` with interface
-  `org.plasmaautotiler.ActiveBorder1`: bounded `SetGroupHighlight(QString)`
-  and `ClearGroupHighlight()`. It is not a `/Effects` method. Its offline
-  contract is verified; KWin Script demarshalling, service ownership, modifier
-  delivery, rendering, and performance remain live-unverified.
-- User decision R/S, option 2 (2026-09-26): if the native group-highlight or
-  drag-oracle D-Bus endpoint fails to register at construction, retry on the
-  effect's existing window-activation and reconfigure events, with no timer or
-  polling. Require both name and object registration before advertising the
-  endpoint; roll back only registrations acquired by a partial attempt. When
-  input redirection was absent at construction, install the passive oracle
-  press spy on those same events. Log unavailability and recovery once per
-  endpoint or spy; neither failure disables the other endpoint.
-
-## Nested Placement Affordance
-
-- Replace the temporary outline interaction with a minimal COSMIC-like,
-  deterministic nested-placement affordance. It is a placement affordance, not
-  opacity or dimming behavior.
-- Portable drag placement source-classifies COSMIC group edges, group interiors,
-  and window zones. Group edges are 32px normally and 80px only for the exact
-  prior portable `(group, edge)` hover; stale/different-edge hover is normal.
-  Same-axis group edges use source-adapted ordered N-ary first/last insertion,
-  perpendicular edges wrap the group, and group interiors insert after the
-  source predecessor. Window left/right create horizontal before/after placement
-  and top/bottom create vertical before/after placement. The COSMIC
-  middle-third center is a stack drop, not a no-op; because stacks remain
-  unselected/compositor-owned, the portable split-tree policy refuses it closed
-  without a plan. This remains split-tree structure only, never tabs, stacks,
-  shared tiles, or compositor groups.
-
-## Tray
-
-- Use a portable Rust StatusNotifierItem carrier with the KWin backend first;
-  stay alive without a watcher or after watcher loss and register whenever a
-  live-confirmed watcher owner appears. Transient registration failure remains
-  retryable; registration is reported only after confirmation. The bridge is
-  outbound state-snapshot based,
-  reconnecting, idempotent, with no KWin executable allowlist, and has no
-  shell, input, or helper-to-KWin action route. Its Settings action opens the
-  unified page also available from both KWin Configure entries.
-- Snapshot publication requires the sender's unique D-Bus name to equal the
-  current `org.kde.KWin` name owner. Owner loss or replacement clears the old
-  snapshot; the tray remains available for the new owner's snapshot.
-- The static bridge includes freshness and ordering/generation checks,
-  idempotent notifications, and bounded watcher retry.
-- Tray ordering (user decision C4 option 2, 2026-09-27): reject and log a
-  same-generation strictly lower-revision complete snapshot without clearing
-  or refreshing the trusted snapshot or entering conflict state. The matching
-  equal-revision heartbeat may refresh it. An equal-revision different-content
-  snapshot still revokes trust; owner and generation fences remain in force.
-- Tray status (user decision 2026-09-28, option 2, for now): the production
-  KWin publisher reports `enabled=true`; a fresh authenticated snapshot shows
-  Active, while a missing or stale snapshot shows NeedsAttention. No
-  readiness-bound status.
-- Tray host-conflict indicator (user decision 2026-09-29, option A; offline,
-  live acceptance pending): KDE `OverlayIconName=dialog-warning` indicates
-  effective `kwinrc [Windows]` conflicts without changing SNI Status. The top
-  "Conflicting KDE settings..." menu row uses the normal Settings launch
-  action; icon click still opens the menu. The tray directly checks the
-  three settings-page keys against their KDE defaults and fixed values. It
-  rereads the user's `kwinrc` at startup and on a changed file mtime during
-  the existing watchdog, so Fix/Revert and user-file edits appear without a tray
-  restart, and logs one normal-level line only when the conflict state changes.
-- Tray delivery (user decision 2026-09-28, option 2): Home Manager installs a
-  systemd user unit wanted by and bound to `graphical-session.target`, using
-  the immutable store tray binary with `Restart=on-failure`, replacing XDG
-  autostart. No project supervisor. Foreground `just dev` starts
-  and owns a worktree tray, includes its stderr diagnostics in the labeled dev
-  trace, and stops only its verified instance at teardown. An already-owned
-  tray name is logged and preserved. Dogfood starts its worktree tray on
-  demand. A second instance exits successfully when the D-Bus name is taken.
-  The tray stops if its own name or connection is lost, or at session teardown;
-  the unit restarts failures but not a successful duplicate-name exit or a
-  graphical-session stop.
-  Name acquisition/loss, owner transitions and changed or refused snapshots
-  emit bounded, redacted diagnostics on stderr. The user unit captures stderr
-  in the journal, queried with
-  `journalctl --user -g "plasma-auto-tiler:route-diag component=tray-endpoint"`;
-  dev logs and on-demand terminal runs retain their own stderr sinks.
-  Dev worktree tray builds bake the absolute `kcmshell6` path when available;
-  without it, the tray still builds and Settings reports unavailable. Settings
-  launch outcomes emit fixed, redacted tray diagnostics.
-- The tray retains the unified Settings path and the workspace tiling controls
-  selected above; host-conflict warning is separate from tiling status.
-- Tray live runs claim no KWin snapshot authority, panel visual behavior,
-  session boundary, watcher-ordering/login/systemd delivery, native
-  ABI/plugin load, baseline-restoration proof, KWin Script1 identity or
-  cleanup, or update/rollback generation. Full evidence is in
-  `changes/archive/tray-carrier.md` and
-  `changes/archive/tray-managed-live-acceptance.md`.
-
-## Production Interactive Edge Drag
-
-- Production interactive drag share adjustment uses drop intent (user,
-  2026-09-24). The script captures a fallback grabbed-edge classification from
-  the pointer and starting frame at drag start; a matching native press in the
-  later verdict takes precedence for KWin-thirds classification. No reliable
-  KWin-reported grabbed-edge signal is available in the shipped route. Retile
-  from the oracle's final window edge on each grabbed side, ignoring other edge
-  changes from rounding, size increments, or a self-resizing client; corner
-  drags use both axes. A cancelled verdict makes no resize plan; a moved verdict
-  with no usable grabbed edge, no movement on grabbed edges, or lost identity
-  does not route a resize. The strict opposite-edge-fixed rule is superseded.
-- User accepted the Orchestrator's follow-up recommendations (2026-09-24): a
-  completed pointer drag may resize an inactive tiled window without changing
-  active, focused or remembered focus; keyboard resize and other operations
-  retain their focus rules. On adapter or Planner rejection, converge to the
-  retained layout with one bounded, drag-correlated reconcile, without retry
-  or loop. Without a matching native modifier-resize press, a start well
-  inside the window follows KWin's exact thirds (including its center
-  branch); starts at the frame edge retain the nearest-edge and corner-zone
-  rule.
-- User-approved 2026-09-24: the unified native effect passively observes
-  the configured modifier-resize button press without grabbing or consuming
-  input, matching it to the same window and identity at drag start and
-  carrying it atomically with the final-geometry verdict. A usable press
-  selects KWin 6.7.5 thirds regardless of the 64 px interior gate;
-  absent/unusable press evidence falls back to the Started-pointer
-  classifier, with a bounded fallback log. The effective binding is read
-  from KWin when public options are available; only an unavailable binding
-  source uses and logs the KWin source default. The unified effect and
-  existing oracle endpoint retain their identities.
-- User decision 2026-09-27, option A (shipped offline, live check pending):
-  tiled move drops use the existing Rust core drop resolver as-is through the
-  synchronous `drag-drop` Plan route (window edge split, group edge
-  first/last or wrap, group interior insert; center or unresolved snaps back
-  through the existing restore marker). Finish pointer capture and single-flight
-  dispatch remain; the 2026-09-27 cross-output and preview decisions below
-  replace option A's cross-domain refusal and no-preview restrictions.
-- User decisions 2026-09-27 (shipped offline, live check pending): a
-  tiled move to another output joins that output's tiling AT THE DROP POINT
-  through the same destination-domain core resolver, removing source-domain
-  membership. Do not snap back to the source, admit at ordinary placement or
-  let a source-scoped restore marker fight the placement. During a tiled move,
-  a separate native-effect filled translucent target-slot rectangle appears
-  above windows, hidden for center/snap-back targets and cleared at drop,
-  cancellation or refusal. Its lifetime is independent of the group
-  outline. Orchestrator choices: carry the existing exact 80px sticky group-edge
-  hover prior across preview samples into drop and derive preview from fresh
-  complete observations with size hints using the same resolver. The default
-  preview fill is #2A82DA at alpha 64. Orchestrator clarification: destination
-  means the output under the pointer at Finish even if KWin's native mover
-  output still names the source. If needed, send the mover to that output
-  before planned geometry and verify current destination membership using
-  existing observation/reconciliation; no new arrival timer or retry. Offline
-  verification and the remaining-size rationale are in
-  `changes/archive/cross-output-drag-preview.md`.
-- The drag oracle hosted in the disabled-by-default unified
-  `plasma-auto-tiler-active-border` native effect records final drag geometry;
-  after that effect's explicit enable, the production script pulls its
-  read-only session D-Bus verdict. Resize and move verdicts route as ruled
-  above, while a floating move stays native-only; a cancelled or no-change
-  verdict makes no plan. No stock-KWin
-  parity or atomic native geometry-write claim is selected. AR8 closed on
-  2026-09-24 at the user's request with the shipped oracle integration kept,
-  following the Lead's recommendation; trace-only measurement remains for
-  drag diagnosis.
-
-## Deferred Scope
-
-- The current KWin adapter uses one session-D-Bus `DescribePlan` route to a
-  pinned unique Planner owner, with same-UID caller checks. This does not
-  select a generic cross-platform IPC abstraction or prove the initially
-  resolved same-UID Planner binary against a hostile same-UID owner.
-- Rust is the selected engine language and owns the durable portable model:
-  platform-neutral deterministic core for logical tiling, ordered split-tree
-  grouping, navigation, movement policy, capability-gated plans, and
-  reconciliation. Platform adapters retain native window/output/workspace
-  observation, identity, permissions, geometry/focus actuation, event
-  ordering, acknowledgement, recovery, effects, UI, and delivery authority.
-  The core promises no uniform workspace, group, atomicity, or geometry
-  semantics where public platform APIs cannot provide them; unsupported paths
-  fail closed. The migration starts incrementally through opt-in, shadow, and
-  diagnostic modes and claims no stock-KWin parity, atomic geometry,
-  Windows/macOS delivery, IPC/service/FFI topology, runtime, or packaging
-  model. A KWin fork or patch remains rejected.
-- Durable validation prioritizes product-shaped Rust unit/integration/property
-  coverage and focused adapter contracts over lifecycle automation for
-  assertion count. KWin direct geometry remains sequential and non-atomic:
-  the adapter is signal-driven, minimizes visible intermediate frames, and
-  records applied-versus-acknowledged divergence without claiming atomicity.
-- Retain JavaScript for discrete window add/remove management. Group behavior,
-  inactive borders, Steam-specific handling, and complete keyboard-layout
-  support remain deferred.
+  until its individual replacement paths are promoted. Group trigger,
+  highlight delivery and the tabs gate live under Visuals above (including
+  user decision R/S, option 2, 2026-09-26 on endpoint retry).

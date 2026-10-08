@@ -350,7 +350,7 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
 
 ## Selected addition (USER 2026-10-07; delivery status per profile)
 
-[Item 5](../../decisions.md#cross-platform-behavior) selects R-OUT-04's
+[Item 5](../../decisions.md#move-layout-and-output-commands) selects R-OUT-04's
 explicit follow/stay output send; follow Meta/Win+Ctrl+Alt+arrows and +H/J/K/L,
 stay bindable unbound. Four-direction unique reciprocal edge-touch and
 positive-overlap selection uses FULL output rectangles; no candidate no-op,

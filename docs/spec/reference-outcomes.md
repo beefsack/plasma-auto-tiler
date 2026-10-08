@@ -869,28 +869,28 @@ Legend:
   (pins v0.56.2 / 0.9.12 / v50.0.1, 2026-09-17)
 - `D-prior` [prior-art.md](../research/prior-art.md) (2026-10-03
   inventory)
-- `D-dec-ww` [decisions.md](../decisions.md#window-and-workspace-behavior)
-  ("Window And Workspace Behavior")
+- `D-dec-ww` [decisions.md](../decisions.md)
+  (Workspaces and Window State entries; formerly one combined section)
 - `D-dec-cos`
-  [decisions.md](../decisions.md#cosmic-movement-and-groups) ("COSMIC
-  Movement And Groups")
+  [decisions.md](../decisions.md) (Move, Engine Operations and Visuals entries;
+  formerly the combined COSMIC Movement And Groups section)
 - `D-dec-x`
-  [decisions.md](../decisions.md#cross-platform-behavior)
-  ("Cross-Platform Behavior")
-- `D-dec-win` [decisions.md](../decisions.md#windows-port) ("Windows
-  Port": managed workspaces, minimums)
+  [decisions.md](../decisions.md)
+  (cross-platform behavior entries; formerly Cross-Platform Behavior)
+- `D-dec-win` [decisions.md](../decisions.md) (Windows platform sub-bullets:
+  managed workspaces, minimums)
 - `D-dec-nest`
-   [decisions.md](../decisions.md#nested-placement-affordance) ("Nested
-   Placement Affordance")
+   [decisions.md](../decisions.md#pointer-drag-and-drop) ("Pointer,
+   Drag And Drop")
 - `D-dec-drag`
-  [decisions.md](../decisions.md#production-interactive-edge-drag)
-  ("Production Interactive Edge Drag")
+  [decisions.md](../decisions.md#pointer-drag-and-drop)
+  ("Pointer, Drag And Drop")
 - `D-win-drag`
   [windows-mouse-drag.md](../changes/archive/windows-mouse-drag.md)
   (accepted same-output title/Win producers and preview; synthetic proof,
   physical checks and exact unexecuted fixtures remain explicit)
-- `D-dec-max` [decisions.md](../decisions.md#windows-maximise)
-  ("Windows maximise")
+- `D-dec-max` [decisions.md](../decisions.md#window-state-float-sticky-maximize-fullscreen)
+  ("Window State: Float, Sticky, Maximize, Fullscreen")
 - `D-place`
   [placement-correctness.md](../changes/archive/windows-placement-correctness.md#evidence-and-current-state)
   (synthetic/API proof 2026-10-03, physical feel user-owned;
@@ -3204,7 +3204,7 @@ Legend:
 |---|---|---|
 | V-INS-AXIS | New-window split axis: long-edge vs orientation-toggle vs alternate | Selected as user statement `D-dec-x` |
 | V-MOVE-PERP | Perpendicular move: COSMIC restructure vs no-op/swap | COSMIC R1 selected; foreign swap/no-op unselected (`D-dec-cos`) |
-| V-MOVE-NARY | 3+-child wrap vs flat swap; same-orientation nesting allowed | Ordered N-ary + R2b/R2c/R3 selected (`D-dec-cos`); USER 2026-10-07 item 3: global `sameAxisMove` / `core.same_axis_move`, `cosmic-wrap` default or `flat-swap` for R2c adjacent direct leaf siblings only, shares travel with windows; leaf/group rules unchanged. Shared core/KDE [delivered offline](../changes/archive/same-axis-move-setting.md); Windows wiring/native journey pending (R-MOV-03/09/10). User 2026-10-08: values take functional names with WM names in tooltips only; functional value IDs pending; breaking pre-release configs acceptable, no migration |
+| V-MOVE-NARY | 3+-child wrap vs flat swap; same-orientation nesting allowed | Ordered N-ary + R2b/R2c/R3 selected (`D-dec-cos`); global `sameAxisMove` / `core.same_axis_move`, `group-with-neighbor` default (label `Group with neighbor`, tooltip COSMIC) or `swap-with-neighbor` (label `Swap with neighbor`, tooltip i3, sway) for R2c adjacent direct leaf siblings only, shares travel with windows; leaf/group rules unchanged. Shared core/KDE behavior [delivered offline](../changes/archive/same-axis-move-setting.md); Windows wiring/native journey pending (R-MOV-03/09/10). Exact IDs selected User 2026-10-08; rename implementation pending; breaking pre-release configs acceptable, no migration |
 | V-WS-FOLLOW | Send follows focus vs leaves focus in source | `D-dec-cos` selects verified follow; USER 2026-10-07 item 2: numbered/relative follow defaults, bindable unbound stay, target resolved once in existing-order ring; shared core/KDE [delivered offline](../changes/archive/kde-workspace-send-follow-stay.md), floating-boundary follow gap repaired, item-2 native journey/Windows wiring pending (R-WS-18..20). Item 5 explicit output follow/stay [delivered offline](../changes/archive/four-direction-output-transfer.md), native journey/Windows wiring pending (R-OUT-04/07) |
 | V-WS-SHELL-ACTIVATE | Shell selection of another workspace's window: switch workspace vs pull window | KDE native configured policy (default switch); Windows option unselected (`D-alt-tab`) |
 | V-WS-ANCHOR | Target anchor: remembered-leaf vs focus-history vs root; axis by long edge | Selected rule (`D-dec-x` + `D-place` synthetic proof) |
@@ -3213,9 +3213,9 @@ Legend:
 | V-FLOAT-SNAP | Float directional move: half/quarter/maximize/transfer vs pixel move vs refusal | User 2026-10-05 selects COSMIC; KDE first half-snap delivered, later stateful transitions and Windows pending `D-float-nav` |
 | V-FLOAT-REFLOW | Float-removal survivor reflow: equalize vs ratio-preserve | Provisional, to discuss |
 | V-STICKY-SCOPE | Sticky scope: all-workspaces floating-only vs monitor-desktop | `D-ref` recommends Hyprland/COSMIC; ours selects all-ws float-only; user 2026-10-07: Windows sticky survives restart with R-RST-01 (implementation pending; KDE already retains sticky) |
-| V-MAX-MODEL | Maximize: retained-slot overlay vs layout reflow vs no state | Selected: retained-slot overlay (`D-dec-ww` KDE + `D-dec-max`); [Q3](../decisions.md#cross-platform-behavior) includes born-maximized R-MAX-06, KDE [delivered offline](../changes/archive/kde-born-maximized-overlay.md) ([adapter](../../kwin/src/plan-adapter.ts)); user 2026-10-07: Q3 also covers R-MAX-03 (stays maximized over reserved slot), KDE [delivered offline](../changes/archive/kde-maximized-floating-retile-overlay.md); native journeys TBD; Windows parity (b) pending |
+| V-MAX-MODEL | Maximize: retained-slot overlay vs layout reflow vs no state | Selected: retained-slot overlay (`D-dec-ww` KDE + `D-dec-max`); [Q3](../decisions.md#window-state-float-sticky-maximize-fullscreen) includes born-maximized R-MAX-06, KDE [delivered offline](../changes/archive/kde-born-maximized-overlay.md) ([adapter](../../kwin/src/plan-adapter.ts)); user 2026-10-07: Q3 also covers R-MAX-03 (stays maximized over reserved slot), KDE [delivered offline](../changes/archive/kde-maximized-floating-retile-overlay.md); native journeys TBD; Windows parity (b) pending |
 | V-FS-SLOT | In-place fullscreen: retain slot vs remove/reflow | Retained slot selected (`D-dec-ww`); born-fullscreen is a separate future row |
-| V-START-SEED | Startup non-fitting topology: centre-cut inference vs long-edge seed | Provisional long-edge seed, to discuss (`D-place`) |
+| V-START-SEED | Startup non-fitting topology: centre-cut inference vs long-edge seed | Selected: sequential long-edge seed, no centre inference (startup hybrid User 2026-10-08) |
 | V-START-MIN | Minimum-infeasible writes: origin+minimum vs skip vs float | B6 selected on both platforms, no setting (user 2026-10-07); KDE [delivered offline](../changes/archive/kde-minimum-origin-placement.md), native journey TBD (`D-place`; [adapter](../../kwin/src/plan-adapter.ts) `overconstrainedEffective`) |
 | V-CLOSE-FOCUS | Removal focus: source-MRU top vs spatial neighbor vs target history | `D-dec-cos` selects source-MRU top |
 | V-GROUP-STACK | Tabbed stacks: supported vs fail-closed refuse | User 2026-10-07: tabs first after 0.1; close active tab keeps group, activates next (COSMIC/Hyprland/i3/sway); until then refuse closed (`D-dec-cos`) |

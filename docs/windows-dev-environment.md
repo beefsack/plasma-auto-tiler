@@ -7,7 +7,7 @@
   **R** = verified repository inspection; **O** = upstream issue report;
   **U** = unverified on this PC; **P** = recommendation, not an adopted decision.
   Source keys are at the end. Documented commands still need PC verification.
-- **R:** [Windows decisions](decisions.md#windows-port) select this same PC as
+- **R:** [Windows decisions](decisions.md#scope-and-platform-goals) select this same PC as
   the KDE multi-output host (DP-6 and HDMI-A-2). **Settled (user 2026-09-30):**
   Windows 11 Pro x64 build 26200 dual-boots NixOS nixos-unstable; do not
   change the boot arrangement. Windows monitor IDs differ.

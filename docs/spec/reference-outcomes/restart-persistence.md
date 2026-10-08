@@ -31,8 +31,8 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then PaperWM: extension enable adopts the four free windows through the existing-window path at open position; exact 2x2 order TBD, and second-enable stability TBD (no substituted journey). `S(S-pap-ins)` + `S(S-pap-rst)`; queued.
 - Then karousel/Lazy: script enable constructs the World and re-admits the four free windows via addExistingClients as fresh columns; exact order/widths TBD, and second-enable stability TBD. `S(S-kar-ins)` + `S(S-kar-start)`; queued.
 - Then paneru: no-counterpart (the Operation inventory lists no tiling enable verb; startup matching is session restore, not enable, and is never substituted here). `S(S-pan-cmds)`.
-- Then Ours KDE: Clean/tolerance-valid recursive-cut adoption preserved; `D(D-dec-x)` provisional; exact fixture TBD
-- Then Ours Windows: Clean/tolerance-valid recursive-cut adoption preserved; `D(D-dec-x)` provisional; exact fixture TBD
+- Then Ours KDE: Clean/tolerance-valid recursive-cut adoption preserved; selected User 2026-10-08; exact fixture TBD
+- Then Ours Windows: Clean/tolerance-valid recursive-cut adoption preserved; selected User 2026-10-08; exact fixture TBD
 - Variant hook: V-START-SEED.
 
 <a id="r-start-02-scrolling-assessment-enable-over-a-cascade"></a>
@@ -58,8 +58,8 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then PaperWM: extension enable adopts the four free windows through the existing-window path; no centre-cut inference established; exact order TBD. `S(S-pap-ins)` + `S(S-pap-rst)`; queued.
 - Then karousel/Lazy: script enable re-admits the four free windows via addExistingClients as fresh columns; cascade-chain outcome TBD. `S(S-kar-ins)` + `S(S-kar-start)`; queued.
 - Then paneru: no-counterpart (no tiling enable verb; startup matching is session restore, never substituted). `S(S-pan-cmds)`.
-- Then Ours KDE: Decline centre splits to deterministic long-edge bisection chain, not guaranteed 2x2; `D(D-place)` provisional, shared KDE+Windows; exact fixture TBD
-- Then Ours Windows: Decline centre splits to deterministic long-edge bisection chain, not guaranteed 2x2; `D(D-place)` provisional, shared KDE+Windows; exact fixture TBD
+- Then Ours KDE: Decline centre splits to deterministic long-edge bisection chain, not guaranteed 2x2; selected User 2026-10-08, shared KDE+Windows; exact fixture TBD
+- Then Ours Windows: Decline centre splits to deterministic long-edge bisection chain, not guaranteed 2x2; selected User 2026-10-08, shared KDE+Windows; exact fixture TBD
 - Variant hook: V-START-SEED.
 
 <a id="r-start-03-scrolling-assessment-enable-with-infeasible-minima"></a>
@@ -223,7 +223,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then karousel/Lazy: owner-specific (no staging/Compatible/Apply model in the inspected Actions inventory); outcome TBD. `S(S-kar-acts)`.
 - Then paneru: owner-specific (no staging/Compatible/Apply model in the command inventory); outcome TBD. `S(S-pan-cmds)`.
 - Then Ours KDE: KDE selected: explicit own-action clear, native storage authoritative, no Lock relocation while disabled; live restart/physical delivery TBD [record](../../changes/kde-shortcut-conflicts.md)
-- Then Ours Windows: KDE selected: explicit own-action clear, native storage authoritative, no Lock relocation while disabled; live restart/physical delivery TBD [record](../../changes/kde-shortcut-conflicts.md)
+- Then Ours Windows: Windows Apply validates and atomically saves; Revert discards unsaved edits and reloads the saved file; Close never saves. Per-binding Keep/Disable/Rebind with the interim Win+existing-Shift limit; Compatible resets the catalog then disables 35 OS-conflicting chords with no replacements. KDE Force/foreign-holder clearing has no Windows counterpart (unsupported, TBD). Synthetic/native proof passed; physical input and other DPI/output arrangements remain user-owned [record](../../changes/archive/windows-settings.md)
 - Variant hook: V-SHORTCUT-CONFLICT.
 
 <a id="r-ctl-06-scrolling-assessment-conflict-preview-and-disable"></a>
@@ -250,7 +250,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then karousel/Lazy: owner-specific (no preview/Force/draft model in the inspected Actions inventory); outcome TBD. `S(S-kar-acts)`.
 - Then paneru: owner-specific (no preview/Force/draft model in the command inventory); outcome TBD. `S(S-pan-cmds)`.
 - Then Ours KDE: KDE selected: exact draft/owner/presence/active-image revalidation, no disabled-key holder mutation; live outcome TBD [record](../../changes/kde-shortcut-conflicts.md)
-- Then Ours Windows: KDE selected: exact draft/owner/presence/active-image revalidation, no disabled-key holder mutation; live outcome TBD [record](../../changes/kde-shortcut-conflicts.md)
+- Then Ours Windows: Windows Compatible resets the catalog then disables 35 OS-conflicting physical chords, inventing no replacements; actual rebound-chord conflicts are shown. KDE draft/Force preview and disabled-key holder mutation have no Windows counterpart (unsupported, TBD) [record](../../changes/archive/windows-settings.md)
 - Variant hook: V-SHORTCUT-CONFLICT.
 
 <a id="r-ctl-07-scrolling-assessment-revert-restores-defaults"></a>
@@ -277,7 +277,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then karousel/Lazy: owner-specific (no preimage/restore model in the inspected Actions inventory); outcome TBD. `S(S-kar-acts)`.
 - Then paneru: owner-specific (no preimage/restore model in the command inventory); outcome TBD. `S(S-pan-cmds)`.
 - Then Ours KDE: KDE selected: compiled plus discovered defaults/current holders; Revert remains default restoration, not preimage recovery; live outcome TBD [record](../../changes/kde-shortcut-conflicts.md)
-- Then Ours Windows: KDE selected: compiled plus discovered defaults/current holders; Revert remains default restoration, not preimage recovery; live outcome TBD [record](../../changes/kde-shortcut-conflicts.md)
+- Then Ours Windows: no Force/foreign-default clearing model on Windows, so this fixture is unsupported (TBD). The Windows Revert only discards unsaved edits and reloads the saved file; it never restores foreign defaults [record](../../changes/archive/windows-settings.md)
 - Variant hook: V-SHORTCUT-CONFLICT.
 
 ## New scenarios (GWT; fixtures/actions/discriminators per the approved expansion record)

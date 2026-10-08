@@ -93,7 +93,7 @@
 
 These are Orchestrator selections for autonomous implementation, not user
 decisions. Each is recorded literally "Provisional, to discuss" in
-[decisions](../../decisions.md#cross-platform-behavior), with review in backlog.
+[decisions](../../decisions.md#fixed-size-admission), with review in backlog.
 
 | ID / discriminator | Selected provisional clause / review alternative |
 |---|---|

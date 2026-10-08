@@ -6,26 +6,20 @@ Live runs are user-owned; agents do not run live cases
 ([testing](live-kwin-testing.md)). Architecture review claims must be verified
 before acting ([review](research/architecture-review/review.md)); user
 decisions of 2026-09-24 are under
-[Architecture Direction](decisions.md#architecture-direction).
+[Architecture Direction](decisions.md#engine-architecture-and-convergence).
 
 ## Open work
 
-- P0 | Exhaustive decision review | Scheduled next session, NOT started now.
-  Review every entry in [decisions](decisions.md) against
-  [principles](principles.md), against each other, and against reference-WM
-  evidence (matrix/consensus); identify redundant, superseded, conflicting,
-  unprincipled, or poorly-evidenced decisions plus stale delivery status;
-  propose removals and fixes for USER approval; consider restructuring or
-  condensing the very large decisions.md. Output a findings list for user
-  review BEFORE ANY EDIT.
-- P0 | Implement 2026-10-08 decision changes | Ordered after the review above.
+- P0 | Implement 2026-10-08 decision changes | Review completed; selections approved.
   Implement the changed selections in shared core plus KDE, with Windows
   handoff updates (items 13/8/14 plus the same-axis move setting):
   - D1 functional predicate setting values (`Width and height both fixed`
     default with COSMIC tooltip; `Width or height fixed` with Hyprland
     (Wayland) and sway tooltip; functional value IDs) plus functional rename
-    of the `sameAxisMove` `cosmic-wrap`/`flat-swap` values with WM tooltips
-    (breaking pre-release configs accepted, no migration).
+    of the `sameAxisMove` values to `group-with-neighbor` (default, label
+    `Group with neighbor`, tooltip COSMIC) and `swap-with-neighbor` (label
+    `Swap with neighbor`, tooltip i3, sway). Update core/protocol/config/UI
+    and Windows handoff; breaking pre-release configs accepted, no migration.
   - D5 born-fullscreen first exit classifies as newly admitted: fixed floats
     with no writes, otherwise tiles; prior fixed floats restore; no writes
     during fullscreen. Deliberate COSMIC deviation for game safety.
@@ -39,9 +33,26 @@ decisions of 2026-09-24 are under
     in moved members or affected views; native move only with no extra
     fullscreen size/position/focus writes. An explicit user move is not
     unwanted interference. Live checks after implementation.
+- P0 | Maximized intentional unfloat (B9 / M09) | User 2026-10-08:
+  unmaximize, then admit as a new window (COSMIC), on shared core plus KDE,
+  with Windows adapter handoff. KDE currently dispatches unfloat without
+  clearing maximize (`kwin/src/plan-adapter.ts` `requestFloat`); Windows
+  `float_toggle_refusal` still refuses. Preserve normal-to-float overlay
+  refusals and native identity/settlement fences. The user's COSMIC R-FLT-06
+  observation is confirmation, not an implementation gate.
+  [decision](decisions.md#window-state-float-sticky-maximize-fullscreen)
+- P1 | KDE Keep-preserving shortcut Apply (M13) | Project Apply must preserve
+  current assignments, including user-customized chords, for Keep bindings;
+  Authentic alone explicitly resets the canonical catalog. Current
+  `shortcutreconciler.cpp` `expectedPost` and `unifiedsettings_module.cpp`
+  `catalogPost` choose canonical posts for kept/enabled rows. Update staged
+  preset intent, preview, Apply/Force and verification consistently; preserve
+  ordinary Save isolation, explicit confirmation, foreign-holder revalidation
+  and separate Revert Shortcuts.
+  [decision](decisions.md#shortcuts-conflicts-and-presets)
 
 - P0 | Windows port | KDE-first core extraction finished at K1 (user
-  2026-09-30; K2/K3 deferred until Windows needs a shared contract, see
+  2026-09-30; K2/K3 revisit when macOS starts, see
   [extraction](research/cross-platform-core/extraction.md),
   [K2 audit](changes/archive/portable-core-k2-settings-actions.md)).
   User decisions (2026-09-30): Windows 11 x64 only; managed per-monitor
@@ -54,7 +65,7 @@ decisions of 2026-09-24 are under
   elevated (administrator) windows unmanaged by default, a user-chosen
   run-elevated option possible later; logical workspace model refined in the
   spikes; shared settings/action intent (deferred K2) and difference
-  classification (deferred K3) shaped when Windows needs them. Open: final
+  classification (deferred K3) revisited when macOS starts. Open: final
   package/update channel. Status 2026-10-02: Phase 1 lifecycle/recovery plus
   WH_KEYBOARD_LL input done and accepted on this single-display PC; Phase 2
   automatic Engine-driven tiling-only dogfood preview verified (no shortcuts,
@@ -104,7 +115,7 @@ decisions of 2026-09-24 are under
   passed; multi-monitor/mixed-DPI, gestures and games remain unaccepted.
   See [Phase 2 record](changes/archive/windows-phase2-tiling.md).
   [plan](research/windows-port/plan.md)
-  [decision](decisions.md#windows-port)
+  [decision](decisions.md#scope-and-platform-goals)
   Day-one setup and pending governance: [Windows development environment](windows-dev-environment.md).
 - P0 | Windows feature parity queue | User order (2026-10-02), each matching
   KDE behavior and bindings: (1) active window border done (`b5374ce`, native
@@ -124,9 +135,10 @@ decisions of 2026-09-24 are under
   [record](changes/archive/windows-foreground-acceptance.md)).
   (7) mouse drag move and (8) drop preview delivered same-output
   (`1b9bf7b` title-bar drag, `7dc6aa3` Win+left drag, `b68d490` preview; CI
-  green; [evidence](changes/archive/windows-mouse-drag.md)); provisional:
-  title-bar first, Win+drag keeps the source frame and moves only the
-  preview, unfocused subject activates on drop; physical feel checks
+  green; [evidence](changes/archive/windows-mouse-drag.md)); selected:
+  title-bar stays native, Win+drag keeps the source frame and moves only the
+  preview. Move-drag press-focus is selected; current drop activation is an
+  implementation gap (handoff item 7); inactive resize keeps focus. Physical feel checks
   user-owned; underlay C stays parked (needs extra machinery).
   (9) multi-output support PARKED: needs the multi-output PC for live work;
   (10) taskbar item showing workspaces PARKED on the user design discussion
@@ -137,7 +149,7 @@ decisions of 2026-09-24 are under
   LocalAppData, plain Win32 Apply/Revert UI, live gaps/visuals/Snap
   takeover, conflict list and presets (compatible disables 35 conflicting
   chords, authentic stays the default), system accent border default with
-  KDE `#2a82da` fallback (yellow removed). All provisional. Tray
+  KDE `#2a82da` fallback (yellow removed). Ratified 2026-10-08. Tray
   (Settings, Stop, shortcut-conflict warning, TaskbarCreated re-add) and
   first-run Authentic/Compatible prompt delivered (`60fd7bb`, `533f3c9`;
   [evidence](changes/archive/windows-tray-first-run.md)); tray workspace
@@ -152,7 +164,7 @@ decisions of 2026-09-24 are under
   (UI with Apply/Revert parity, including Snap takeover off; decide the final
   accent/configured border default and remove the temporary yellow default;
   per-binding OS-conflict list with compatible/authentic quick-set presets,
-  possibly offered on first run; [decision](decisions.md#cross-platform-behavior)).
+  first-run prompt ratified 2026-10-08; [decision](decisions.md#settings-tray-and-first-run)).
   Provisional choices 2-6 accepted by the user (2026-10-03).
 - P0 | Windows gaming coexistence | User (2026-10-03): (a) authentic mode
   until settings exist: our bindings must not leak to OS shortcuts (Win+G
@@ -171,14 +183,22 @@ decisions of 2026-09-24 are under
   2026-10-03 (`2c9c11c`, `bbe5b0f`, `6c4ffad`): a provably current,
   consumed Win+F11 tap still produced the Xbox prompt, also after
   reinstalling our hook last; no official-API fix found; prior art has
-  none. Needs user choice: accept the gap with KDE bindings kept;
-  user-applied Windows setting (recommended first: Settings > Gaming >
-  Xbox mode off, then recheck); project registry/policy writes or a
-  dedicated hook thread need separate authorisation. (b) user chose
+  none. User 2026-10-08 keeps Authentic ownership with the limitation
+  disclosed; Compatible/disable/rebind provide Game Bar access. Containment
+  remains parked for later test and user review, grouped with this work;
+  host-setting, registry/policy or dedicated-hook-thread alternatives remain
+  unselected and require separate authorization. (b) user chose
   documented-signal-only detection (2026-10-03); blocked until one exists.
   (c) researched; alternate Game Bar access deferred (see Future).
+  - M16 gaming-cost measurement: compare the existing 100 ms pump's
+    incremental CPU, frame-time and input cost against a without-tiler game
+    baseline, including suspended work/effects. Cost remains unmeasured;
+    suspension and nominal tick frequency are not acceptance evidence.
+    Apply the M04 bar: aim for zero; demonstrate any unavoidable residual
+    minimal and imperceivable. Physical game measurements are user-owned.
+    [principle](principles.md#gaming-compatibility)
   [record](changes/windows-gaming-coexistence.md)
-  [decision](decisions.md#cross-platform-behavior)
+  [decision](decisions.md#gaming-safety)
 - P1 | Windows placement physical acceptance | User dogfood defects
   (2026-10-03) fixed and live-API verified (`174e70b` diagnostics,
   `2c918d3` startup/minimum placement, `4a636ae` maximise/restore,
@@ -187,12 +207,14 @@ decisions of 2026-09-24 are under
   chain, not guaranteed 2x2); Windows infeasible tiles move to their origin
   at minimum size instead of staying put; maximise keeps siblings stable and
   restore reconciles promptly. Send return rule verified unchanged; the
-  original dogfood anchor is unknown. Provisional choices to review; user
+  original dogfood anchor is unknown. Choices ratified 2026-10-08; user
   to dogfood startup (both platforms), Win+M and send returns. Risk:
   minimum-sized windows can overlap or extend past the work area. User
   decision B6 (2026-10-05) makes origin+minimum the policy on both
-  platforms (KDE delivered offline `cf6ab31`); sequential seeding stays
-  provisional (consensus: follows COSMIC).
+  platforms (KDE delivered offline `cf6ab31`); clean/tolerance-valid adoption
+  plus sequential long-edge fallback is selected, without centre inference
+  or exact COSMIC parity. Retained overlay minima and bounded restore wake
+  are ratified; physical timing remains pending.
   [record](changes/archive/windows-placement-correctness.md)
 - P1 | KDE follow-ups from the Windows port | Audit 2026-10-05
   ([note](research/cross-platform-core/post-windows-audit.md)); user order
@@ -226,10 +248,10 @@ decisions of 2026-09-24 are under
   1107 Rust tests); no admission clear, later unmaximize lands in the slot,
   synchronous/repeated maximize signals settle. Native check pending in
   [record](changes/archive/kde-maximized-floating-retile-overlay.md).
-  B9 overlaid intentional unfloat:
-  provisionally unfloat and stay maximized (KDE dispatches already; settled
-  result unverified); Windows changes from refusal after the user's COSMIC
-  check of R-FLT-06. Pinned 11-WM source comparison added. B7
+  B9 overlaid intentional unfloat: user 2026-10-08 selected unmaximize then
+  fresh admission. KDE retains maximize and Windows refuses: both are gaps,
+  owned by the P0 B9 item above; COSMIC R-FLT-06 check is confirmation only.
+  Pinned 11-WM source comparison added. B7
   movement-only underlay A/B delivered offline (Meta+Shift chord or focused
   native user move; host-matched native build and all gates pass; paired
   FFI signature change; C parked); user tested A/B on the laptop
@@ -255,12 +277,12 @@ decisions of 2026-09-24 are under
   reserved slot). KDE R-MAX-03 and R-MAX-06 delivered offline, native checks
   pending ([scope record](changes/archive/kde-maximized-floating-retile-overlay.md));
   Windows parity (b) remains pending for the Windows agent.
-  (c) B9 overlaid unfloat: Windows stops
-  refusing once the user's COSMIC R-FLT-06 check settles retain vs
-  unmaximize; (d) audit finding: Windows keyboard resize and non-local
+  (c) B9 overlaid unfloat: unmaximize then fresh-admit, selected 2026-10-08;
+  remove the Windows refusal, with the user's COSMIC check as confirmation
+  only (P0 B9 item above); (d) audit finding: Windows keyboard resize and non-local
   workspace modes are unimplemented despite catalog/settings text
   (`settings.rs:769-777`, `workspace.rs:95-108`).
-  [decisions](decisions.md#cross-platform-behavior)
+  [decisions](decisions.md#window-state-float-sticky-maximize-fullscreen)
   [audit](research/cross-platform-core/post-windows-audit.md)
 - P1 | Adopt reference-consensus additions | User 2026-10-07 accepted the
   Orchestrator recommendations from the consensus Table A; items 1-5 shared
@@ -283,7 +305,7 @@ decisions of 2026-09-24 are under
   swap alternative (user 2026-10-07); R-DRAG-08 Windows Win+drag activates
   the mover at press instead of on drop (user 2026-10-07).
   Detailed selections 2026-10-07 (items 1-5 and D1 in
-  [decisions](decisions.md#cross-platform-behavior)); KDE items 1-5 delivered
+  [decisions](decisions.md#move-layout-and-output-commands)); KDE items 1-5 delivered
   offline, remaining implementation pending:
   Q2 R-SPC-04 shared core/Linux planner + KDE delivered offline under user
   decisions 2026-10-08 (normative as delivered); changed D1 predicate setting
@@ -423,7 +445,7 @@ decisions of 2026-09-24 are under
   | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; KDE Q3 delivered offline under user decisions 2026-10-08 (normative as delivered). Ordinary/sticky intent must remain distinct from automatic fixed origin and recovery authority; Windows mechanism unselected, REQ-RST-01c stays OPEN. D7 tile-override restart store pending. |
   | 9 | Fullscreen send R-MAX-09 (Windows carry; NOT the parked parity-queue multi-output foundation) | Depends on handoff item 2 follow/stay wiring only; same-output workspace carry, no cross-output claim. |
   | 10 | Float/half-snap parity (a) R-FLT-07..11 | Independent of items 1-5; reuses existing focus/move catalog rows, no new chords. |
-  | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; keep first-fullscreen-exit and B9 refusal intact. Independent of items 1-5. |
+  | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; first-fullscreen-exit is separate (D5 pending). B9 unmaximize/fresh-admit is the P0 item above. Independent of items 1-5. |
   | 12 | Non-local workspace modes parity (d) | Depends on handoff items 1/2 (ring + follow/stay) and the parked parity-queue multi-output foundation; last. |
   | 13 | Q2 fixed-size float admission R-SPC-04 | KDE/shared offline delivery under user decisions 2026-10-08 (normative as delivered); max-track observation and lifetime/origin wiring before enabling the Engine opt-in. Pending: predicate setting plus functional naming, first-fullscreen-exit, tiling-enable check, tile-override restart store. Fixed/maximize intersection coordinates with item 11. |
   | 14 | Q4 whole-workspace migration R-WS-12 | Core/KDE offline delivery under user decisions 2026-10-08 (normative as delivered); depends on item 5's parked multi-output foundation, item 1 history invalidation and item 12 for non-local runtime modes. Pending: fullscreen+maximized carry overlays (changed D8). No Windows behavior delivered. |
@@ -1249,7 +1271,7 @@ decisions of 2026-09-24 are under
       :1528 lists implemented conflicting rows only; NO Compatible-disable
       or Authentic-takeover is recorded for Alt resize chords, so preset
       treatment is TBD, not a silent keep. KDE clears stock kwin Switch
-      Window arrows through KCM Apply/Force/Revert ([shortcuts decision](decisions.md#shortcuts)
+      Window arrows through KCM Apply/Force/Revert ([shortcuts decision](decisions.md#shortcuts-conflicts-and-presets)
       2026-09-28); the Windows analogue is unselected.
     - `src/tiling_sys.rs` `keyboard_tick` :5645: add a dedicated Resize arm
       (not a `SnapOp::Move` request) constructing an ordinary single-domain
@@ -1287,7 +1309,7 @@ decisions of 2026-09-24 are under
       updated with dated offline evidence, native pending.
 
   - Item 7: press-focus R-DRAG-08. User decision 2026-10-07 (R-DRAG-08;
-    [decisions](decisions.md#cross-platform-behavior)): a Meta/Win client
+    [decisions](decisions.md#pointer-drag-and-drop)): a Meta/Win client move
     drag focuses the dragged window at press on both platforms. Windows
     changes from activate-on-drop; KDE timing needs a live check ([pending
     live checks](#pending-live-checks)).
@@ -1358,7 +1380,7 @@ decisions of 2026-09-24 are under
 
   - Item 8: restart R-RST-01 plus R-FLT-05 sticky persistence. User
     decisions 2026-10-07 (R-FLT-05, R-RST-01 float identity;
-    [decisions](decisions.md#cross-platform-behavior)): sticky floats stay
+    [decisions](decisions.md#restart-persistence)): sticky floats stay
     sticky across owner restart including Windows, delivered with the
     R-RST-01 work. KDE Q3 delivered offline 2026-10-08 under user decisions
     2026-10-08 (normative as delivered);
@@ -1375,7 +1397,7 @@ decisions of 2026-09-24 are under
       runtime store resets while settings persist without layout restore) and
       [matrix](spec/reference-outcomes/floating.md) R-FLT-05. Sticky stays
       sticky and intentional floats survive owner restart. REQ-RST-01c
-      membership/set/focus remains OPEN. KDE's selected provisional store
+      membership/set/focus remains OPEN. KDE's selected private runtime store
       is not a selected Windows storage scheme.
     - Core seams (verified 2026-10-08 at `db31234`): `core/session.rs:546`
       `exceptions` map, `core/session/world.rs:433` `is_exception` (Engine
@@ -1541,7 +1563,7 @@ decisions of 2026-09-24 are under
       native TBD.
 
   - Item 10: float/half-snap parity (a), R-FLT-07..11. User decision
-    2026-10-05 float-nav ([decisions](decisions.md#window-and-workspace-behavior));
+    2026-10-05 float-nav ([decisions](decisions.md#window-state-float-sticky-maximize-fullscreen));
     KDE delivered offline ([record](changes/archive/kde-floating-directional-navigation.md)).
     Windows parity pending; cross-platform consistency already selected.
 
@@ -1623,7 +1645,7 @@ decisions of 2026-09-24 are under
 
   - Item 11: born-max/floating-retile overlay parity (b), Q3 including
     R-MAX-03. User decisions Q3 plus Q3 scope 2026-10-07
-    ([decisions](decisions.md#cross-platform-behavior)): born-maximized
+    ([decisions](decisions.md#window-state-float-sticky-maximize-fullscreen)): born-maximized
     tiles with a reserved slot and keeps maximize as an overlay, no launch
     unmaximize, on KDE and Windows; Q3 also covers R-MAX-03
     floating-to-tiled admission, replacing the one-shot restore on both.
@@ -1640,8 +1662,8 @@ decisions of 2026-09-24 are under
       still in code) and R-MAX-06 (Ours KDE: reserved-slot overlay, no
       launch clear; Ours Windows: one admission-time clear attempt,
       retained slots/fullscreen/floating domains exempt). No launch
-      unmaximize, no one-shot retile restore. First fullscreen exit and
-      the B9 Windows refusal (until the COSMIC R-FLT-06 check) preserved;
+      unmaximize, no one-shot retile restore. First fullscreen exit is separate
+      (D5 pending); B9 unmaximize/fresh-admit is the P0 item above;
       no R-MAX-08 nav choice.
     - KDE exact (verified 2026-10-08 at `db31234`):
       `kwin/src/plan-adapter.ts:5933` `clearMaximizeAtAdmission` (skips
@@ -1658,9 +1680,8 @@ decisions of 2026-09-24 are under
       `core/boundary.rs:802-807` omits excluded frames from observed-clamp
       assessment while retaining planned geometry. No new Engine behavior
       is selected by this parity piece.
-      The implementation-status sentence at `decisions.md:571` still calls
-      R-MAX-03 one-shot; `29c75fe` and its archive record supersede that
-      KDE delivery status, not the recorded Q3 behavior decision.
+      The decisions register records KDE R-MAX-03 delivered offline at
+      `29c75fe`; Windows parity and native acceptance remain pending.
     - Windows exact (verified 2026-10-08 at `db31234`):
       `src/tiling.rs:550` `should_clear_maximize_at_admission`,
       :567 `should_admit_slotless_maximized`; callers
@@ -1672,8 +1693,9 @@ decisions of 2026-09-24 are under
       `admit_born_fullscreen` :8622. First-exit lane kept:
       `FullscreenMeta` read/write :3400-3496, `enter_fullscreen` :3520,
       `exit_fullscreen_owned` :3574, `track_fullscreen_holds` :3713.
-      B9 lane kept: `float_toggle_refusal` (`src/tiling.rs:402`) and
-      `sticky_toggle_refusal` (:418). Fixture:
+      Current overlay refusal lane: `float_toggle_refusal` (`src/tiling.rs:402`)
+      and `sticky_toggle_refusal` (:418); B9 intentional-maximized-unfloat
+      refusal is a separate implementation gap. Fixture:
       `floating_retained_max_stays_slotless_then_tiled_seeds_and_plans`
       (`src/tiling_sys.rs:17164`).
       Row assembly is `src/tiling_sys.rs:4243`, retained maxima :4423-4468;
@@ -1690,8 +1712,9 @@ decisions of 2026-09-24 are under
       the slot, settle repeated maximize/geometry signals quiet with no
       unsolicited toggles or fighting. Retire
       `should_clear_maximize_at_admission` one-shot use; keep the held
-      born-fullscreen single exit and the B9 toggle refusals byte-identical
-      in behavior. No new chord, no new setting, no R-MAX-08 change.
+      born-fullscreen single exit unchanged within this unit (D5 is separate).
+      B9 unmaximize/fresh-admit is separately owned by the P0 item; preserve
+      all unrelated overlay refusals. No new chord, setting or R-MAX-08 change.
     - Settings/input/catalog/presets: reuse current native/project maximize
       and workspace tiled/floating controls. Catalog toggles remain in
       `src/settings.rs:799-818`, workspace default :250-263, Settings UI
@@ -1712,12 +1735,12 @@ decisions of 2026-09-24 are under
       with a session-restored maximized A at a user-owned session
       boundary, no loop.
     - DoD: one-shot clear replaced by reserved-slot overlay on both legs;
-      first-fullscreen-exit and B9 refusal preserved; matrix `R-MAX-03` /
+      first-fullscreen-exit separate from pending D5 and B9; matrix `R-MAX-03` /
       `R-MAX-06` Ours Windows cells updated with dated offline evidence,
       native TBD.
 
   - Item 12: non-local workspace modes parity (d). Decisions 1.2/1.5
-    ([decisions](decisions.md#cross-platform-behavior)): local and
+    ([decisions](decisions.md#workspaces)): local and
     global-unique keep per-output history/rings, shared keeps one
     history/ring. KDE mappings delivered offline; Windows local-only
     today. Depends on handoff items 1/2 (history/ring + follow/stay) and
@@ -1811,7 +1834,7 @@ decisions of 2026-09-24 are under
     Changed D1 predicate setting plus functional naming, D5, D6 and D7 are
     pending implementation.
     [Record](changes/archive/fixed-size-admission.md),
-    [decisions](decisions.md#cross-platform-behavior),
+    [decisions](decisions.md#fixed-size-admission),
     [matrix](spec/reference-outcomes/special-windows.md#q2-fixed-size-admission-discriminators-2026-10-08).
 
     #### Item 13 behavior and reference seams
@@ -1832,7 +1855,8 @@ decisions of 2026-09-24 are under
       migration. Q3 boundary
       explicitly touched only for fixed-size birth; later fixed/maximized
       retile still uses R-MAX-03's reserved slot. Windows borderless-game
-      inference and B9 refusal remain authoritative.
+      inference stays selected; B9 unmaximize/fresh-admit is separately
+      selected and implementation-pending (P0 item above).
     - References: COSMIC @3d55cba0 `src/shell/layout/mod.rs:46-52`,
       `src/shell/element/surface.rs:565-595`, `src/shell/mod.rs:2957-3022`,
       `src/shell/workspace.rs:1440-1454,1491-1519`. Fullscreen birth/restore
@@ -2045,11 +2069,10 @@ decisions of 2026-09-24 are under
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.
-  KDE Keep/Disable list (now 124 bindings after item 5, including 32 unbound
-  stay rows) and presets delivered
-  offline
-  (`e1bb52a`, `cdd4ef4`, `96d04ab`; CI green); provisional choices in
-  decisions; integrated rebind and KDE first-run prompt deferred. KDE live
+  KDE Keep/Disable catalog and presets delivered offline
+  (`e1bb52a`, `cdd4ef4`, `96d04ab`; CI green); choices ratified 2026-10-08
+  with Keep-preserving Apply implementation pending (P1 M13 item above).
+  Integrated rebind and KDE first-run prompt deferred. KDE live
   acceptance pending: [checks](live-shortcut-override-verification.md),
   [record](changes/kde-shortcut-conflicts.md).
 - P3 | Hidden-workspace Alt+Tab option | Research complete (`580c766`,
@@ -2060,8 +2083,9 @@ decisions of 2026-09-24 are under
   is matrix row R-WS-07. Implementation deferred; no design selected.
 - P1 | Cross-platform functional specification | After the Windows tiling
   dogfood slice, define window/workspace behavior and keyboard shortcuts as
-  the single source of truth for Linux, Windows and macOS. KDE is the current
-  behavioral reference; macOS modifier mapping is decided when macOS starts.
+  the selected behavior contract for Linux, Windows and macOS, except recorded
+  exceptions. COSMIC is the reference-default yardstick; macOS modifier
+  mapping is decided when macOS starts.
   cosmic-comp (user favourite: n-ary splits, join/leave UX) is a key input.
   User proposal (2026-10-03): a reference-WM outcome matrix (action
   scenarios x input WMs such as COSMIC, Hyprland, bspwm, i3, xmonad) as the
@@ -2092,6 +2116,10 @@ decisions of 2026-09-24 are under
   clear; B6 vs KDE skip-writes; float-origin nav vs Windows refusal; KDE
   no-size-inference vs Windows containment fullscreen; B9 vs COSMIC
   source; Q3/R-MAX-03 overlap.
+  Current review 2026-10-08: all nine provisional requirements ratified;
+  B9 no-refusal sub-leg also selected. Totals: 105 NORMATIVE, 60 OPEN,
+  0 PROVISIONAL requirement rows. Platform implementation/native gaps stay
+  distinct from selected intent; Windows control cells now cite Windows evidence.
   [Cross-WM consensus analysis](research/reference-wm-consensus.md) Table A
   now lists 24 Ours-vs-strong-consensus differences with recommendations
   (see Open user decisions), plus strong-consensus predicates where Ours is
@@ -2184,7 +2212,7 @@ decisions of 2026-09-24 are under
   [drag investigation](changes/window-alignment-drag-investigation.md)
 - P1 | Navigation/movement while maximised | No suppression policy selected;
   semantics await the user's COSMIC comparison.
-  [behavior](decisions.md#window-and-workspace-behavior)
+  [behavior](decisions.md#window-state-float-sticky-maximize-fullscreen)
 - P1 | External NixOS/Home Manager delivery validation | Clean external
   install, update, rollback, and host-matching KWin ABI still unproven
   off the dev machine.
@@ -2236,15 +2264,15 @@ decisions of 2026-09-24 are under
   [OBS](research/distribution-package-feasibility/obs.md)
 - P3 | AR6/AR7 workspace model + portable policy in core | Deferred until a
   non-KWin host needs it; current KWin is the "native workspaces" mode.
-  Windows and macOS both need project-managed workspaces, so the trigger
-  arrives with either port; extraction order and gates are in the
+  Portable layout/domain relocation is shared; remaining host mapping is
+  not proven extracted. Revisit when macOS starts; candidates and gates are in the
   cross-platform audit.
   [design](changes/architecture-review-ar6-workspaces.md)
   [audit](research/cross-platform-core/extraction.md)
 - P3 | Gap-drag anchor | Deferred experimentation incl. gap-0; research complete
   (layer-shell gap surfaces first, KWin input filter fallback; needs a Rust
   split-boundary request).
-  [native boundary](decisions.md#native-integration-boundary)
+  [native boundary](decisions.md#engine-architecture-and-convergence)
 - P3 | Stale branches | Twelve stale branches need explicit user
   authorization before deletion.
   [branches](https://github.com/beefsack/plasma-auto-tiler/branches)
@@ -2302,9 +2330,9 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 ### Reference WMs (user)
 
 - B9 / R-FLT-06 on COSMIC: tiled workspace, intentionally float B, natively
-  maximize it, then toggle float off once. Record whether B stays
-  maximized over its new tile or is unmaximized then tiled. Decides B9
-  before Windows drops its refusal.
+  maximize it, then toggle float off once. Confirm the sourced
+  unmaximize-then-fresh-admit behavior selected 2026-10-08. Record the
+  actual result; this is confirmation, not a product or implementation gate.
   [row](spec/reference-outcomes/floating.md)
 
 ### Single-output laptop
@@ -2410,7 +2438,7 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   dialogs and tool windows keep the border. Red flags: border on the
   launcher, `appletPopup=0` while the launcher is active. If more shell
   surfaces still get the border, tighten further.
-  [decision](decisions.md#native-active-border)
+  [decision](decisions.md#visuals-border-underlay-and-grouping)
 - Host settings Revert and tray conflict indicator: Fix confirmed live by the
   user (2026-09-29). Remaining: Revert removes the local key and native edge
   previews return (one `op=revert setting=<key> outcome=ok reason=ok` line
@@ -2482,16 +2510,17 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   both outlines; active-border disappearance gets a fresh combined trace if
   it recurs.
   [diagnostics](changes/archive/active-border-visibility-diagnostics.md)
-  [decision](decisions.md#native-active-border)
-- Sticky adoption restart/re-enable: already-sticky window becomes a normal
-  float on the current workspace, then tiles on the next toggle.
-  [decision](decisions.md#window-and-workspace-behavior)
+  [decision](decisions.md#visuals-border-underlay-and-grouping)
+- Sticky adoption restart/re-enable: intentional sticky identity stays sticky;
+  unknown-origin native sticky adoption retains the selected sticky-off rules.
+  Verify separately from Windows' pending restart-preservation implementation.
+  [decision](decisions.md#window-state-float-sticky-maximize-fullscreen)
 - Non-visible workspace tiling: hidden startup/open/move with unchanged
   native focus/desktop and no rendered-state claim.
   [record](changes/background-tiling.md)
 - Reliability gates: fullscreen residual-cost gate plus gaming cost baseline,
-  maximize-admission clear gate (session-restored maximized app restores,
-  tiles, no re-maximize loop), work-area projection gate (resolution/scaling/
+  maximize-admission overlay gate (session-restored maximized app keeps maximize
+  over a reserved slot, native restore tiles, no loop), work-area projection gate (resolution/scaling/
   work-area change incl. fullscreen isolation and restoration).
   [investigation](changes/reliability-condition-investigation.md)
 - Custom Tile manual runtime check: separately authorized run with exact
@@ -2506,7 +2535,7 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   [carrier](changes/archive/tray-carrier.md)
 - Drag-oracle post-fix proof: rebuild/new session with committed resizes,
   8 px gaps, one planned-applied result, no immediate reconcile.
-  [decision](decisions.md#production-interactive-edge-drag)
+  [decision](decisions.md#pointer-drag-and-drop)
 - Startup adoption recursive-cut fit (user decision 2026-09-29, replaces the
   near-strip fit): user confirmed live (2026-09-29) it works really well
   restarting over a previously tiled workspace. Remaining: confirmed
@@ -2610,16 +2639,18 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   [research](research/distribution-package-feasibility/feasibility.md)
 - Gap-drag gap-0 behavior: deferred experimentation; choose whether a zero-gap
   layout exposes a drag anchor before prototyping.
-  [native boundary](decisions.md#native-integration-boundary)
+  [native boundary](decisions.md#engine-architecture-and-convergence)
 - Borderless-windowed fullscreen heuristic (born-fullscreen option 3): only
   if dogfooding shows games arriving non-fullscreen.
   [change](changes/archive/born-fullscreen-admission.md)
 - Navigation/movement while maximised: no suppression policy selected;
   semantics await the user's COSMIC comparison.
-  [decision](decisions.md#cosmic-movement-and-groups)
-- Windows Win+F11/Win+G containment (parked): accept the gap, user turns
-  off Xbox mode in Windows Settings (recommended first), or authorise
-  registry/policy writes or a dedicated hook thread.
+  [decision](decisions.md#window-state-float-sticky-maximize-fullscreen)
+- Windows Win+F11/Win+G containment (parked with Windows gaming coexistence):
+  Authentic ownership and disclosed limitation are selected 2026-10-08;
+  Compatible/disable/rebind provide Game Bar access. Later test and user review
+  owns containment and any host-setting/thread/registry/policy alternative;
+  none of those mechanisms is selected or authorized by the ratification.
   [record](changes/windows-gaming-coexistence.md)
 - Windows taskbar workspace indicator (parity 10): presentation design.
 - macOS Phase 0: host model and macOS floor, Intel support, stable signer,
@@ -2636,7 +2667,8 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   R-DRAG-04 Esc cancel kept (setting maybe later); R-GRP-03 tabs scheduled
   after 0.1; R-DRAG-07 host-native drag presentation (Windows Win+drag
   stays stationary); R-DRAG-08 focus at press. Table A rows decided
-  except R-FLT-06, which waits on the user's COSMIC B9 check;
+  including R-FLT-06 unmaximize/fresh-admit (2026-10-08); the user's COSMIC
+  B9 observation is confirmation only;
   R-FLT-09 is already planned Windows parity.
 - Live-test environments for the 508-cell matrix queue
   ([proposal](research/live-test-vms/proposal.md), revised 2026-10-07 at
@@ -2655,10 +2687,6 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   Hyprland 37 cells. COSMIC/Hyprland nested runs are GPU-heavier and their
   nested multi-output is unestablished. Not started (document only);
   implementation needs a go-ahead.
-- Review of 2026-10-03/04 autonomous provisional choices (all marked
-  "Provisional, to discuss" in [decisions](decisions.md)): mise rolling
-  versions, Windows settings/tray/presets, drag producers,
-  sequential startup seeding, KDE conflict controls.
 
 ## Known issues and risks
 
@@ -2677,4 +2705,4 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   [record](changes/archive/robust-difference-reconciliation.md)
 - Sticky pager appearance and Ghostty fullscreen-to-maximise on workspace
   return remain unconfirmed; no native cause or workaround established.
-  [behavior](decisions.md#window-and-workspace-behavior)
+  [behavior](decisions.md#window-state-float-sticky-maximize-fullscreen)

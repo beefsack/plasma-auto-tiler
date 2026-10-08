@@ -123,3 +123,14 @@ grant authorization beyond [Current Decisions](decisions.md#live-kwinplasma-boun
   delivery. Manual journeys require physical input and matching state evidence.
 - The trailing-empty workspace proof is a separate executable procedure at
   [live oscillation verification](live-oscillation-verification.md).
+
+## Preserved Residue
+
+- The unidentified prior `plasma-auto-tiler-advisory-*` runtime-directory
+  residue is preserved untouched. Do not search for, enumerate, inspect,
+  identify heuristically, modify, or delete it. No stale POC2/POC3 harness
+  or checkpoint retry is authorized; recovery requires explicit user
+  authorization and exact identity or hash verification.
+- Grants and prohibitions stay authoritative in
+  [Current Decisions](decisions.md#live-kwinplasma-boundary); this guide holds
+  procedures, preflight, and residue handling only.

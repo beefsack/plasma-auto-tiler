@@ -430,10 +430,13 @@ expansion record; outcomes are qualified legs, not second scenarios.
 
 ## Selected additions (USER 2026-10-07; delivery status per profile)
 
-[Items 3/5](../../decisions.md#cross-platform-behavior) select R-MOV-03's
-global `sameAxisMove` / `core.same_axis_move` setting (`cosmic-wrap` default,
-`flat-swap` only for adjacent direct leaf siblings in R2c, shares travel with
-windows); leaf/group rules unchanged. R-MOV-08 selects local restructure/
+[Items 3/5](../../decisions.md#move-layout-and-output-commands) select R-MOV-03's
+global `sameAxisMove` / `core.same_axis_move` setting (`group-with-neighbor`
+default, label `Group with neighbor`, tooltip COSMIC; `swap-with-neighbor`,
+label `Swap with neighbor`, tooltip i3, sway, only for adjacent direct leaf
+siblings in R2c, shares travel with windows). Exact IDs selected 2026-10-08;
+code still uses `cosmic-wrap`/`flat-swap` pending rename, no migration.
+Leaf/group rules unchanged. R-MOV-08 selects local restructure/
 swap/escape first, then all-four-direction crossing including sole root
 leaf. Adjacency uses unique reciprocal edge-touch + positive overlap on FULL
 output rectangles, horizontal too; no candidate no-op, ambiguous/unreadable

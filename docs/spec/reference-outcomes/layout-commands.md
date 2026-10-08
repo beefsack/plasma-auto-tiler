@@ -234,7 +234,7 @@ implementation record. Selected intent and doc assertions alone are never eviden
 
 ## Selected addition (USER 2026-10-07; shared core/KDE implemented offline)
 
-[Item 4](../../decisions.md#cross-platform-behavior) selects R-LAY-01:
+[Item 4](../../decisions.md#move-layout-and-output-commands) selects R-LAY-01:
 Meta+O / Win+O immediate-parent toggle including root, order/shares/focus
 preserved; sole root leaf no-op and no saved admission hint. KDE offline
 evidence is linked below; Windows adapter and KDE native journey remain pending.

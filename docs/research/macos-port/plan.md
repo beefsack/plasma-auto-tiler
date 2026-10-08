@@ -11,7 +11,7 @@ inference/plan, not source), UNKNOWN (not established).
 ## Selected policy (user-approved) vs proposals
 
 - SELECTED (user 2026-10-03, recorded in
-  [decisions](../../decisions.md#windows-port)): default to tier 2, public
+  [decisions](../../decisions.md#scope-and-platform-goals)): default to tier 2, public
   plus private APIs with SIP left enabled (AeroSpace / yabai-without-SA
   class). No Dock injection, no reduced SIP. Re-evaluate deeper tiers only
   if tier 2 cannot solve a problem well.

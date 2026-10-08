@@ -779,7 +779,7 @@ verb inventory); selected intent and doc assertions are never evidence.
 
 ## Selected additions (USER 2026-10-07; KDE items 1/2 delivered)
 
-Targets follow [items 1/2 and decision 1.5](../../decisions.md#cross-platform-behavior).
+Targets follow [items 1/2 and decision 1.5](../../decisions.md#workspaces).
 KDE R-WS-08/11 and R-WS-15..17 carry offline adapter/fixture evidence;
 the user confirmed item 1's single-output native journey on 2026-10-07
 ("worked perfectly"), without specifying individual cases or presets.
@@ -986,7 +986,7 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
 
 ## Selected addition (user-selected NORMATIVE 2026-10-08; delivery status per profile)
 
-Targets follow [workspace migration D1-D9](../../decisions.md#cross-platform-behavior)
+Targets follow [workspace migration D1-D9](../../decisions.md#workspaces)
 (User 2026-10-08 selections, REQ-WS-12a..i). KDE
 R-WS-21..26 carry offline Engine/adapter/fixture evidence; D1-D7/D9 native
 runtime outcomes are TBD (no live acceptance recorded here); D8 carry is
