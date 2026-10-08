@@ -47,10 +47,11 @@ paneru legs distinguish the native Space from virtual rows.
   North/South do). `D1`/`D2` displays keep their strips.
   `S(S-pan-swap)`.
 - Then Ours KDE: exhausted horizontal R4 into output's current workspace,
-  `L=H[X,A*]`, `R=B`, edge insertion nearest source. Unique reciprocal FULL
+  `L=H[X,A*]`, `R=B`, edge insertion nearest source. Reciprocal FULL
   rectangle selection now includes sole root leaves; work-area placement and
   commit/arrival fences retained. [Item-5 offline record](../../changes/archive/four-direction-output-transfer.md);
-  native journey pending.
+  native journey pending. User decision 2026-10-09 window-based selection
+  pending code; single-target crossing stands.
 - Then Ours Windows: local-only (corrected 2026-10-08 at `db31234`):
   single-domain directional event with `cross_output_transfer:false`
   (`crates/tiler-windows/src/tiling_sys.rs:6099/6105`); no cross actuation.
@@ -352,13 +353,16 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
 
 [Item 5](../../decisions.md#move-layout-and-output-commands) selects R-OUT-04's
 explicit follow/stay output send; follow Meta/Win+Ctrl+Alt+arrows and +H/J/K/L,
-stay bindable unbound. Four-direction unique reciprocal edge-touch and
-positive-overlap selection uses FULL output rectangles; no candidate no-op,
-ambiguous/unreadable refuse, no wrap. Destination current workspace, ordinary
+stay bindable unbound. Four-direction reciprocal edge-touch and
+positive-overlap adjacency uses FULL output rectangles; window-based selection
+(User decision 2026-10-09): shared edge containing the moving window centre
+projection, else larger window-span overlap, final left/top tie-break;
+unreadable topology refuses, no candidate no-op, no wrap. Destination current workspace, ordinary
 workspace-send admission and command follow/stay; initially tiled-subject
 eligibility, sticky excluded, floating boundaries membership-only with tiled
-sides reflowing; ordinary float transfer OPEN. Shared core/KDE delivered
-offline; Windows wiring and native journeys pending. Pinned baseline source
+sides reflowing; ordinary float transfer OPEN. Prior shared core/KDE delivery
+used the replaced refusal offline; new selection pending code.
+Windows wiring and native journeys pending. Pinned baseline source
 keys remain historical; delivery evidence is linked separately in KDE cells.
 
 ### R-OUT-07: explicit send before local exhaustion with remembered Y

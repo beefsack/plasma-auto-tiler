@@ -256,8 +256,8 @@ decisions of 2026-09-24 are under
   each through the shared Engine where possible, KDE and Windows unless
   noted ([consensus](research/reference-wm-consensus.md)):
   R-MOV-08 allow vertical move onto another output once local movement is
-  exhausted; R-LAY-01 parent split-axis toggle; R-LAY-04 workspace-local
-  layout selection; R-WS-08 previous-workspace toggle; R-WS-11 wrapping
+  exhausted; R-LAY-01 parent split-axis toggle; R-WS-08 previous-workspace
+  toggle; R-WS-11 wrapping
   next/previous workspace switch; R-WS-12 move whole workspace to another
   output; R-WS-14 send window to next/previous workspace; R-OUT-04 send
   window to output; R-MAX-09 carry fullscreen across workspace send on
@@ -270,7 +270,10 @@ decisions of 2026-09-24 are under
   R-MOV-03 setting: COSMIC wrap default, flat sibling
   swap alternative (user 2026-10-07); R-DRAG-08 Windows Win+drag activates
   the mover at press instead of on drop (user 2026-10-07).
-  R-LAY-04: research complete, awaiting user decision: [findings](research/workspace-local-layout-selection.md).
+  R-LAY-04: PARKED / OPEN by User decision 2026-10-09 until a genuine second
+  layout exists; revisit when tabbed stacks are designed after 0.1. Whether tabs
+  count as L2 remains a future decision; no active implementation.
+  [Findings](research/workspace-local-layout-selection.md).
   Detailed selections 2026-10-07 (items 1-5 and D1 in
   [decisions](decisions.md#move-layout-and-output-commands)); KDE items 1-5 delivered
   offline, remaining implementation pending:
@@ -353,9 +356,11 @@ decisions of 2026-09-24 are under
      [record](changes/archive/four-direction-output-transfer.md)):
      local restructure/swap/escape first, then cross
      all four directions, including sole root leaf (horizontal too).
-     Unique reciprocal edge-touch + positive-overlap adjacency on FULL
-     output rectangles, horizontal too; no candidate no-op, ambiguous/
-     unreadable refuse, no wrap. Explicit output-follow Meta/Win+Ctrl+Alt+
+     Reciprocal edge-touch + positive-overlap adjacency on FULL
+     output rectangles, horizontal too; no candidate no-op, unreadable
+     refuses, no wrap. User decision 2026-10-09: select by window centre
+     projection, then window-span overlap, then left/top; selection pending
+     code, prior delivery refused ambiguity. Explicit output-follow Meta/Win+Ctrl+Alt+
      arrows and +H/J/K/L; stay bindable unbound. KDE arms absent from
      `kglobalshortcutsrc`, Windows ownership unknown; COSMIC's arm collides
      with resize-shrink, niri's with item 2. Target destination current
@@ -367,6 +372,21 @@ decisions of 2026-09-24 are under
      landing nearest the source remain. Explicit send reuses item-2 follow/
      source-MRU stay, with pinned source/target current-view arrival fences.
   Bindings for other accepted additions remain to be chosen.
+- P1 | Position-based output selection for ambiguous candidates | User decision
+  2026-10-09: shared core + KDE implementation; Windows handoff update only
+  while Windows multi-output remains parked. Exhausted directional moves
+  (REQ-MOV-08/08b, R-MOV-11..13, REQ-OUT-01) and explicit output sends
+  (REQ-OUT-04, R-OUT-04/07): choose the candidate whose shared edge contains
+  the moving window centre projection; if none, larger overlap with the
+  window span along the edge; final left/top tie-break. Whole-workspace
+  migration (REQ-WS-12, R-WS-12): largest shared edge, then left/top.
+  Unreadable topology still refuses; no candidate no-op; no wrap. Replace
+  ambiguity refusal in the existing FULL-rectangle adjacency route, retaining
+  arrival/current-view/lifetime fences. Deliberate COSMIC deviation; window
+  position matches the majority, and no reference refuses ambiguity.
+  [Four-direction transfer](changes/archive/four-direction-output-transfer.md),
+  [workspace migration](changes/archive/kde-whole-workspace-output-migration.md),
+  [two-candidate migration discriminator](spec/reference-outcomes/workspaces.md#r-ws-27-two-candidate-migration-selection).
 - P1 | Windows handoff: reference-consensus additions | D1, user 2026-10-07:
   Windows agent wires each adapter piece after its KDE-side delivery.
   ### How to use this handoff
@@ -423,8 +443,8 @@ decisions of 2026-09-24 are under
 
   Q2 R-SPC-04 occupies handoff item 13 below; Q3 R-RST-01 KDE delivery is
   complete offline and updates existing item 8. Q4 R-WS-12 fills item 14.
-  Remaining Q5 reservation: R-LAY-04 owns its KDE piece; when it lands, append
-  a Windows handoff entry here in the same numbered format.
+  Q5 R-LAY-04 is PARKED / OPEN (User decision 2026-10-09) until a genuine
+  second layout exists; no KDE piece or Windows handoff implementation is active.
 
   - Source notation: `src/...` / `tests/...` below are under
     `crates/tiler-windows/`; `core/...` is `crates/tiler-core/src/`;
@@ -1020,10 +1040,13 @@ decisions of 2026-09-24 are under
        R-OUT-01/04/07. Local restructure/swap/escape wins first; exhausted
        movement crosses all four ways, sole root leaf included. Explicit send
        crosses before exhaustion. No wrapping outputs or cycling workspaces.
-     - Resolve neighbor on FULL rectangles: exact touching edge and positive
-       perpendicular overlap, UNIQUE in forward and reverse direction. Panels
-       cannot break adjacency; work areas still govern placement. No candidate
-       no-op; ambiguous/unreadable refuses, no arbitrary nearest/focused output.
+     - User decision 2026-10-09: resolve candidates on FULL rectangles with
+       exact touching edges and positive perpendicular overlap. Select by
+       shared edge containing the moving window centre projection; if none,
+       larger overlap with its span along that edge; final left/top tie-break.
+       Panels cannot break adjacency; work areas still govern placement.
+       No candidate no-op; unreadable refuses; no wrap. New selection pending
+       shared core/KDE code; prior offline delivery refused ambiguity.
        Directional R4 landing is target edge nearest source; explicit send uses
        ordinary remembered-leaf/destination-MRU/root long-edge admission into
        destination CURRENT workspace, not R4 edge insertion. Directional focus
@@ -1110,7 +1133,8 @@ decisions of 2026-09-24 are under
        `cross_output_transfer` before it exists. Failure converges both domains
        without setter replay, guessed rollback or success claims.
      - [ ] Portable: full-rect compass tests, no candidate, forward/reverse
-       ambiguity, panel gap both axes, local-first under both item-3 modes,
+       candidate selection by centre/overlap/left-top, panel gap both axes,
+       local-first under both item-3 modes,
        sole-root empty/occupied targets, directional nearest-source landing
        vs explicit remembered/MRU/root admission, same workspace on different
        outputs, follow/stay/null, floating-boundary only-tiled reflow and
@@ -1130,7 +1154,8 @@ decisions of 2026-09-24 are under
        bind `send-output-right-stay` to an unused validated Win+Ctrl+Alt+F6,
        then stay leaves source B focused with target A visible. Panel gap
        R-MOV-13 still crosses, placement respects work area. User-readable
-       ambiguous/no-candidate topology must refuse/no-op with no writes.
+       multi-candidate topology selects by centre/overlap/left-top once
+       implemented; unreadable/no-candidate must refuse/no-op with no writes.
        Floating-boundary frames stable/tiled-side reflow; source/target drift
        and lifetime failure cases belong in fixtures, not uncontrolled dogfood.
 
@@ -1138,9 +1163,11 @@ decisions of 2026-09-24 are under
        supply complete source plus adjacent output's current workspace in
        `CoreEvent.directional`, including target outer gap, and opt into
        `cross_output_transfer` only with native transfer/fence support.
-       Derive unique reciprocal edge-touch + positive-overlap neighbors in
+       Derive reciprocal edge-touch + positive-overlap candidates in
        all four directions from FULL monitor rectangles, not work areas;
-       no candidate no-op, ambiguous/unreadable refuse, no wrap. Keep domain
+       select by moving window centre projection, else larger window-span
+       overlap, then left/top (User decision 2026-10-09); no candidate no-op,
+       unreadable refuses, no wrap. Keep domain
        bounds as work areas. Local move rules and sole-leaf eligibility are
        now core-owned. Focus remains the existing horizontal policy.
      - `src/tiling_sys.rs:6173-6205` currently applies only geometry for
@@ -1175,7 +1202,7 @@ decisions of 2026-09-24 are under
        shortcut ownership is unknown, do not invent stock-holder claims.
      - Portable Linux workspace tests/clippy pass with no Windows edits.
        Port core/KDE compass, local-first, sole-leaf, full-rect panel-gap,
-       reverse ambiguity, ordinary remembered/MRU/root admission, shared
+       multi-candidate selection, ordinary remembered/MRU/root admission, shared
        desktop, follow/stay, floating-boundary and stale/lifetime fixtures;
        native Windows acceptance remains Windows-owned.
 
@@ -1974,7 +2001,9 @@ decisions of 2026-09-24 are under
     #### Item 14 behavior and shared contract
 
     - Four directional active-only, follow-only actions, all UNBOUND by default.
-      Resolve item-5 full-output-rect unique reciprocal adjacency, no wrap.
+      Resolve FULL-output-rectangle reciprocal adjacency, no wrap; choose
+      largest shared edge, then left/top (User decision 2026-10-09; new selection
+      pending shared core/KDE code, Windows handoff only while multi-output parked).
       Hidden R-WS-12 baseline has no counterpart; explicitly select its active
       leg. KDE local/global-unique requires strict native per-output desktops;
       shared/false/unreadable refuses. Windows has no KWin option: establish
@@ -2167,9 +2196,10 @@ decisions of 2026-09-24 are under
   clear; B6 vs KDE skip-writes; float-origin nav vs Windows refusal; KDE
   no-size-inference vs Windows containment fullscreen; B9 vs COSMIC
   source; Q3/R-MAX-03 overlap.
-  Current review 2026-10-08: all nine provisional requirements ratified;
-  B9 no-refusal sub-leg also selected. Totals: 105 NORMATIVE, 60 OPEN,
-  0 PROVISIONAL requirement rows. Platform implementation/native gaps stay
+  Current review 2026-10-09: all nine provisional requirements ratified;
+  B9 no-refusal sub-leg selected; R-LAY-04 parked OPEN. Totals: 104 NORMATIVE, 61 OPEN,
+  0 PROVISIONAL requirement rows; 156 scenarios including R-WS-27 with TBD
+  reference outcomes. Platform implementation/native gaps stay
   distinct from selected intent; Windows control cells now cite Windows evidence.
   [Cross-WM consensus analysis](research/reference-wm-consensus.md) Table A
   now lists 24 Ours-vs-strong-consensus differences with recommendations
@@ -2223,13 +2253,15 @@ decisions of 2026-09-24 are under
   [plan](research/macos-port/plan.md)
 - P1 | Rust toolchain tracking (recurring) | User (2026-09-30): track latest
   stable Rust pre-1.0 and fix breakage. Windows uses rustup `stable`; Linux
-  and CI get Rust from the nixpkgs pin in `devenv.yaml`, which must be bumped
+  and CI get Rust from the nixpkgs pins in `devenv.yaml` and `flake.lock`, which must be bumped
   regularly to stay close to stable. Revisit the upgrade process at 1.0.
   Checked 2026-10-04 (`4212456`, `929adf5`, `c486c59`; CI green): hosted
   Windows/macOS CI now refreshes stable (1.99.0); Linux devenv stays at
   1.98.1 and native CI flake at 1.97.1 until 1.99.0 reaches nixos-unstable
-  (now only on staging; rechecked 2026-10-07 `0e2a323`: unstable
-  `151fa4e8` still 1.98.1, 1.99.0 still latest stable). Next: recheck, then bump devenv and native flake
+  (read-only recheck 2026-10-09: devenv `e554fab7` 1.98.1; native flake
+  `54ba4bce` 1.97.1, lagging devenv; latest stable 1.99.0 dated 2026-10-01;
+  unstable HEAD `e7439b6b` dated 2026-10-08 still 1.98.1, no `1_99.nix`).
+  No bump. Next: recheck, then bump devenv and native flake
   pins; user re-enters devenv after the bump.
   [record](changes/archive/rust-toolchain-tracking-2026-10.md)
 - P1 | Tray tiling/floating workspace toggle | Shipped `e407531`; user
@@ -2294,20 +2326,10 @@ decisions of 2026-09-24 are under
   needs sender, method, and fault-stack evidence before attributing it to
   the effect or script.
   [record](changes/archive/kwin-qkeysequence-dbus-abort.md)
-- P2 | Integrated Plasma feasibility verdict | PARKED, offline verdict B
-  (2026-10-09): bounded version-coupled Custom Tile research is structurally
-  plausible, not production/runtime acceptance. Recommend retained Rust Engine
-  plus direct geometry; unsafe nested path stays stopped. Open user decisions:
-  close with this verdict or retain parked research. Any revival needs a
-  separate scope/architecture choice, fresh safety design and user-owned live
-  evidence; no live probe is prerequisite to the offline verdict.
-  [change](changes/integrated-plasma-structural-feasibility.md)
-- P2 | JavaScript workload evidence | Sustained-workload evidence before any
-  native replacement for discrete window management.
+- P2 | JavaScript workload evidence | PARKED (User decision 2026-10-09);
+  relevant only if a native replacement of KWin-script window add/remove
+  handling is proposed, requiring sustained-workload evidence then.
   [change](changes/js-workload.md)
-- P2 | Grouped-window stability proof | Multi-window Custom Tile stability
-  before selecting grouped or tabbed behavior.
-  [change](changes/grouped-windows.md)
 - P2 | Keyboard-layout support | After initial release; US keyboards only
   for MVP.
   [change](changes/shortcuts.md)
@@ -2349,7 +2371,9 @@ decisions of 2026-09-24 are under
 - P3 | Tabbed stacks (next after the 0.1 release) | User 2026-10-07: tabs are
   a feature of the most important reference tilers (COSMIC, Hyprland, i3,
   sway), so V-GROUP-STACK leaves deferral and is scheduled as the first
-  item after 0.1. User sketch: size stacked windows slightly shorter and
+  item after 0.1. User decision 2026-10-09: built in the Rust engine, with
+  their own evidence when designed; no Custom Tile stability-proof precondition.
+  User sketch: size stacked windows slightly shorter and
   draw the tab strip with machinery like the group underlay. Matrix
   inputs: R-INS-02, R-GRP-01..03 (closing the active tab keeps the group
   and activates the next tab, 4/4 references), R-DRAG-01, R-COL-06. Risk:
@@ -2676,7 +2700,9 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   escape is exhausted, including a sole window. Add a panel work-area gap:
   full rectangles still select the neighbor, tiles stay inside work areas.
   Horizontal Meta+Shift+Left/Right still works, including sole windows;
-  no candidate stays put, ambiguous topology refuses. Meta+Ctrl+Alt+arrows/
+  no candidate stays put, unreadable topology refuses. Multi-candidate
+  position-based selection (User decision 2026-10-09) awaits implementation
+  before its live check. Meta+Ctrl+Alt+arrows/
   HJKL sends before local exhaustion to the target's CURRENT workspace and
   follows the mover; rebind directional output-stay from empty defaults and
   verify source selection/MRU focus and ordinary remembered-leaf admission.
@@ -2734,7 +2760,6 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 
 ## Open user decisions
 
-- R-LAY-04 workspace-local layout selection: park until a real alternative exists (recommended), narrow to delivered tile/float mode, or choose a bounded alternative before design; [research](research/workspace-local-layout-selection.md).
 - OBS POC inputs: OBS account/project, GitHub PAT/webhook wiring, Fedora
   release, neon/Kubuntu pursuit, absent-during-upgrade policy, pacman repo
   vs AUR.

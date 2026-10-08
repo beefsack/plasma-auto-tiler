@@ -440,9 +440,13 @@ follow existing invalid handling. Windows compile default is renamed,
 settings wiring remains pending.
 Leaf/group rules unchanged. R-MOV-08 selects local restructure/
 swap/escape first, then all-four-direction crossing including sole root
-leaf. Adjacency uses unique reciprocal edge-touch + positive overlap on FULL
-output rectangles, horizontal too; no candidate no-op, ambiguous/unreadable
-refuse, no wrap. Items 3/5 shared core/KDE are delivered offline; Windows wiring
+leaf. Adjacency uses reciprocal edge-touch + positive overlap on FULL
+output rectangles, horizontal too; window-based selection (User decision
+2026-10-09): shared edge containing the moving window centre projection,
+else larger window-span overlap along the edge, final left/top tie-break;
+unreadable topology refuses, no candidate no-op, no wrap. Items 3/5 shared
+core/KDE prior delivery used the replaced refusal; new selection pending
+code. Windows wiring
 and native journeys remain pending. Delivery evidence below is offline, not a live
 observation or new reference vote.
 
@@ -535,6 +539,8 @@ observation or new reference vote.
   occupied target uses unchanged R4 edge insertion nearest the source.
   Core compass tests and production-entry/Engine fixture delivered offline;
   [record](../../changes/archive/four-direction-output-transfer.md). Native journey TBD.
+  Single-candidate fixture: crossing stands under the User decision 2026-10-09
+  window-based selection; multi-candidate tie-break pending code.
 - Then Ours Windows: same selected crossing/eligibility target;
   implementation pending, multi-output parked; exact native journey TBD.
 - Variant hook: V-R4-DIR.
@@ -559,11 +565,14 @@ observation or new reference vote.
 - Then PaperWM: verb-distinguished. Same-space `move-up` is `swap` edge no-op (sole, out-of-range returns) so A stays; explicit `move-monitor-above` carries via `switchMonitor` neighbor index (only -1 stays, no other refusal); exact U1/U2 TBD (neighbor-index order unpinned). `S(S-pap-moveverbs)` + `S(S-pap-mon)`.
 - Then karousel/Lazy: fixture-inapplicable for cross-output (single-screen profile). `S(S-kar-base)`.
 - Then paneru: crosses via the fall-through `ToNextDisplay` (no refusal/ambiguity gate); exact U1/U2 TBD (display order unrecorded). `S(S-pan-swap-peer)` + `S(S-pan-swap)` + `S(S-pan-display)`.
-- Then Ours KDE: refuses ambiguous topology, no transfer or layout writes.
-  Forward and reverse uniqueness tested offline, item 5.2;
-  [record](../../changes/archive/four-direction-output-transfer.md). Native journey TBD.
-- Then Ours Windows: same selected refusal; implementation pending,
-  multi-output parked; item 5.2.
+- Then Ours KDE: selected (User decision 2026-10-09): shared edge containing
+  the moving window centre projection, else larger window-span overlap along
+  the edge, final left/top tie-break; unreadable topology refuses, no
+  candidate no-op, no wrap. Selected rule pending code; prior offline delivery
+  used the replaced refusal ([record](../../changes/archive/four-direction-output-transfer.md)).
+  Native journey TBD.
+- Then Ours Windows: same selected window-based selection target;
+  implementation pending, multi-output parked; item 5.2.
 - Variant hook: V-R4-DIR.
 
 ### R-MOV-13: panel work-area gap with touching full output rectangles
@@ -592,7 +601,9 @@ observation or new reference vote.
   panel gap does not block. Placement still uses each desktop's work area.
   Both-axis observer tests and stacked-output production-entry/Engine fixture
   delivered offline; [record](../../changes/archive/four-direction-output-transfer.md).
-  Native journey TBD.
+  Native journey TBD. Single-neighbor fixture: crossing stands under the User
+  decision 2026-10-09 window-based selection; multi-candidate tie-break
+  pending code.
 - Then Ours Windows: same selected full-rectangle crossing;
   implementation pending, multi-output parked; item 5.2.
 - Variant hook: V-R4-DIR.

@@ -184,4 +184,11 @@ to `plasma-auto-tiler` at `59572c7`. Findings are source-only, not live tests.
   citations.
 - Unresolved: Hyprland order preservation through the algorithm switch
   stays TBD. All other R-LAY-04 cells were already sourced; no new rows
-  added, no consensus counts or decisions changed.
+  added, no consensus counts changed.
+
+## User decision 2026-10-09
+
+- PARK option A selected: R-LAY-04 parked until a genuine second layout
+  exists; revisit when tabbed stacks are designed after 0.1. Whether tabs
+  count as L2 is a future decision. REQ-LAY-04 stays a parked requirement,
+  not an implementation. Research completed.

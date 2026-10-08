@@ -232,7 +232,9 @@ implementation record. Selected intent and doc assertions alone are never eviden
   adapter op inventory; single Engine algorithm). `S(S-ours-planops)`.
 - Then Ours Windows: same missing-verb leg as Ours KDE.
   `S(S-ours-planops)`.
-- Variant hook: provisional/TBD (layout-scope hook, to discuss).
+- Variant hook: PARKED / OPEN (User decision 2026-10-09): workspace-local
+  layout selection waits for a genuine second layout; revisit with tabbed-stack
+  design after 0.1. Whether tabs count as L2 remains a future decision.
 
 ## Selected addition (USER 2026-10-07; shared core/KDE implemented offline)
 

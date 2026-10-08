@@ -1730,3 +1730,36 @@ baseline above is unchanged. Record:
 - Then Ours Windows: no-counterpart (no whole-workspace verb).
   `S(S-ours-planops)`.
 - Variant hook: NORMATIVE workspace-output migration (User 2026-10-08).
+
+<a id="r-ws-27-two-candidate-migration-selection"></a>
+### R-WS-27: two-candidate whole-workspace migration selection
+
+- Given: L `(0,1080,1920,1080)` shows active WS2 `H[A,B*]`, B's centre
+  at x=1600; U1 `(0,0,1200,1080)` and U2 `(1200,0,720,1080)` both touch
+  L's upper edge with positive overlap. U1 has the larger shared edge;
+  B's centre projects onto U2, distinguishing workspace from window targeting.
+  Full topology readable; strict local/true. Fresh reset per leg.
+- When: migrate WS2 up once.
+- Observe: selection of one candidate vs refusal; views/focus on move.
+- Then COSMIC: TBD (two-candidate selection untraced); queued.
+- Then Hyprland/Dwindle: TBD (two-candidate selection untraced); queued.
+- Then bspwm: TBD (two-candidate selection untraced); queued.
+- Then i3: TBD (two-candidate selection untraced); queued.
+- Then xmonad/Tall+Navigation2D: TBD (ownership-move counterpart absent;
+  two-candidate selection untraced); queued.
+- Then sway: TBD (two-candidate selection untraced); queued.
+- Then qtile/Columns: TBD (two-candidate selection untraced); queued.
+- Then awesome/tile: TBD (two-candidate selection untraced); queued.
+- Then niri: TBD (two-candidate selection untraced); queued.
+- Then PaperWM: TBD (two-candidate selection untraced); queued.
+- Then karousel/Lazy: TBD (two-candidate migration fixture untraced); queued.
+- Then paneru: TBD (two-candidate migration fixture untraced); queued.
+- Then Ours KDE: selected (User decision 2026-10-09): largest shared edge,
+  then left/top, so select U1 despite B projecting onto U2; unreadable topology
+  refuses, no candidate no-op, no wrap.
+  Selected rule pending code; prior offline delivery used the replaced
+  refusal. Native journey TBD.
+- Then Ours Windows: no-counterpart (no whole-workspace verb); same
+  selected largest-shared-edge then left/top target, implementation pending.
+  `S(S-ours-planops)`.
+- Variant hook: NORMATIVE workspace-output migration (User decision 2026-10-09).

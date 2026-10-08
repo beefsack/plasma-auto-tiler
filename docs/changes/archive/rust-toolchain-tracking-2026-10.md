@@ -124,3 +124,12 @@ derivation. Record their separate version baselines and host-check limits.
   The bump stays parked; no new-toolchain gates or live desktop tests ran.
   No session restart is needed. Next: recheck unstable, then follow the existing
   pin-bump procedure and host-matched native validation when eligible.
+
+## Recheck 2026-10-09 (read-only user findings)
+
+- Supplied user findings, authoritative; no repeat web research: devenv
+  nixpkgs `e554fab7` rustc 1.98.1; native CI flake nixpkgs `54ba4bce` rustc
+  1.97.1; latest stable 1.99.0 released 2026-10-01; nixos-unstable HEAD
+  `e7439b6b` (2026-10-08) still 1.98.1 with no `1_99.nix`.
+- No bump; the flake input lags devenv as fact only, no pin change. The
+  recurring backlog item stays open; no live desktop tests ran.

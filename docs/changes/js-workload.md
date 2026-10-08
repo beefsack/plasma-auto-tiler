@@ -2,8 +2,9 @@
 
 ## Goal
 
-Complete the performance and capability evidence needed before choosing a
-native replacement for discrete window add/remove management.
+Parked by User decision 2026-10-09. Performance and capability evidence becomes
+relevant only if a native replacement of KWin-script window add/remove handling
+is proposed.
 
 ## Scope And Evidence
 
@@ -16,4 +17,4 @@ native replacement for discrete window add/remove management.
 
 ## Next Action
 
-Resume the remaining evidence collection when the required runtime is available.
+Resume evidence collection only when such a native replacement is proposed.

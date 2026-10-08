@@ -9,11 +9,11 @@ authority.
 ## Scope And Evidence
 
 - Source-only API and package research is retained in
-  [structural research](../research/integrated-plasma-structural-feasibility/).
+  [structural research](../../research/integrated-plasma-structural-feasibility/).
 - The recorded scope is persistent authored topology, placement/preselection,
   drag/split/cancel, workspace/output rebinding and structural indication:
-  [ten capabilities](../research/integrated-plasma-structural-feasibility/kwin-api-surface.md#capability-verdict-map).
-  The [single-script composition](../research/integrated-plasma-structural-feasibility/package-composition.md#recommendation-for-unit-03)
+  [ten capabilities](../../research/integrated-plasma-structural-feasibility/kwin-api-surface.md#capability-verdict-map).
+  The [single-script composition](../../research/integrated-plasma-structural-feasibility/package-composition.md#recommendation-for-unit-03)
   was a proof carrier, not a production architecture or packaging selection.
 - Existing research pins KWin `45ec9a6d` (6.7.3). This verdict checks the relevant
   source at the requested `8438567a`; inspected local blobs under
@@ -22,7 +22,7 @@ authority.
 - Offline reads only. No live action, diagnostic, harness run or residue work.
   [Attempt-01 artifacts](integrated-plasma-structural-feasibility/results/) are
   inadmissible to any verdict; the
-  [staged protocol](../research/integrated-plasma-structural-feasibility/proof-protocol.md)
+  [staged protocol](../../research/integrated-plasma-structural-feasibility/proof-protocol.md)
   is unexecuted design, not safety or acceptance evidence.
 
 ## Offline Verdict - 2026-10-09
@@ -34,17 +34,17 @@ authority.
   impossibility, runtime safety, gaming compatibility or performance acceptance.
 - **Recommendation:** retain the selected portable Rust Engine and KWin direct
   geometry. Replacing Engine topology authority would revisit the approved
-  [architecture](../decisions.md#engine-architecture-and-convergence);
+  [architecture](../../decisions.md#engine-architecture-and-convergence);
   mirroring it into native trees would add the second authority explicitly
-  excluded by [Engine Operations](../decisions.md#engine-operations-and-policy).
+  excluded by [Engine Operations](../../decisions.md#engine-operations-and-policy).
   No product direction changes follow from this verdict.
-- [Simplicity](../principles.md#simplicity): native trees still require product
+- [Simplicity](../../principles.md#simplicity): native trees still require product
   admission, empty-branch, transfer and recovery policy plus version retesting;
-  they do not remove the portable policy requirement. [Resilience](../principles.md#resilience):
+  they do not remove the portable policy requirement. [Resilience](../../principles.md#resilience):
   deferred tile destruction, unacknowledged persistence and lost cross-output
   associations add failure/recovery obligations; the recorded crash-class
-  [Custom Tile findings](../live-kwin-testing.md#custom-tile-safety-findings)
-  preclude treating collapse as cleanup. [Gaming](../principles.md#gaming-compatibility):
+  [Custom Tile findings](../../live-kwin-testing.md#custom-tile-safety-findings)
+  preclude treating collapse as cleanup. [Gaming](../../principles.md#gaming-compatibility):
   post-placement overrides and built-in drag assignment have no retained proof
   of harmlessness or imperceptible cost. Neither backend gains gaming acceptance
   from source inspection.
@@ -78,7 +78,7 @@ authority.
 | Nested isolation, private bus/KGlobalAccel, parent socket, teardown and hotplug | **Moot for this offline verdict; requires live for any future reusable test route.** The historical [nested spike] did not establish these. The current [live guide] records a proven launcher shape but explicitly only checkpoint isolation proof; it does not validate this structural journey. A fresh private-environment ownership/setup/teardown proof must precede one structural case; isolated shortcuts and hotplug each need their own case. Unsafe nested path and old retries stay stopped. |
 | Gaming/noninterference and sustained cost | **Requires live if revived:** user-owned without-tiler comparison for a normal-to-fullscreen/borderless game transition, checking frames, focus, effects and physical input plus incremental frame-time/input/CPU cost. Ordinary-client success is not game acceptance. [gaming principle] |
 
-- The [old T-case matrix](../research/integrated-plasma-structural-feasibility/proof-protocol.md#11-test-matrix-mapped-to-stages)
+- The [old T-case matrix](../../research/integrated-plasma-structural-feasibility/proof-protocol.md#11-test-matrix-mapped-to-stages)
   is fully covered above: T2/T7 drag; T3a/T3b placement; T4 persistence;
   T5a/T5b empty/collapse; T6 desktop; T8 lifecycle; T9/T9b preselection.
   Its reversal invariants require authoritative before/after proof too.
@@ -119,13 +119,13 @@ authority.
 [custom-pick]: https://github.com/KDE/kwin/blob/8438567a/src/window.cpp#L3677-L3702
 [headers]: https://github.com/KDE/kwin/blob/8438567a/src/CMakeLists.txt#L478-L690
 [registration]: https://github.com/KDE/kwin/blob/8438567a/src/scripting/scripting.cpp#L693-L719
-[indicator]: ../research/integrated-plasma-structural-feasibility/kwin-api-surface.md#10-expose-read-only-structuralcurrent-window-state-to-a-separately-packaged-plasma-panel-indicator-through-a-supported-interface
-[binding research]: ../research/integrated-plasma-structural-feasibility/kwin-api-surface.md#residual-uncertainties-source-level-by-design
-[package risks]: ../research/integrated-plasma-structural-feasibility/package-composition.md#residual-risks-and-uncertainties
-[protocol]: ../research/integrated-plasma-structural-feasibility/proof-protocol.md
-[nested spike]: ../research/integrated-plasma-structural-feasibility/nested-kwin-feasibility.md#verdict
-[live guide]: ../live-kwin-testing.md
-[gaming principle]: ../principles.md#gaming-compatibility
+[indicator]: ../../research/integrated-plasma-structural-feasibility/kwin-api-surface.md#10-expose-read-only-structuralcurrent-window-state-to-a-separately-packaged-plasma-panel-indicator-through-a-supported-interface
+[binding research]: ../../research/integrated-plasma-structural-feasibility/kwin-api-surface.md#residual-uncertainties-source-level-by-design
+[package risks]: ../../research/integrated-plasma-structural-feasibility/package-composition.md#residual-risks-and-uncertainties
+[protocol]: ../../research/integrated-plasma-structural-feasibility/proof-protocol.md
+[nested spike]: ../../research/integrated-plasma-structural-feasibility/nested-kwin-feasibility.md#verdict
+[live guide]: ../../live-kwin-testing.md
+[gaming principle]: ../../principles.md#gaming-compatibility
 
 ## Delivery And Verification
 
@@ -138,10 +138,12 @@ authority.
   disposition explicit; documentation diff/link inspection and `git diff --check`.
 - Verified: local links/anchors and source logic inspected; independent review
   accepted the verdict and unplug correction; `git diff --check` clean.
-  Outcome: offline verdict delivered, item parked pending user disposition.
+  Outcome: offline verdict delivered; closed by User decision 2026-10-09
+  (see Closure below).
 
-## Next Action
+## Closure 2026-10-09
 
-- **Open user decisions:** close this feasibility item with the offline B verdict
-  under the current architecture, or retain it as parked version-coupled research.
-  Reopening production-native authority is a separate architecture decision.
+- User decision 2026-10-09: CLOSED with the offline B verdict above. Rust Engine
+  authority and direct geometry confirmed; KWin Custom Tiles not adopted as
+  layout authority. Reopen only on a material KWin change. Attempt-01 files are
+  archived evidence, not pending live checks; no live mutation was run.

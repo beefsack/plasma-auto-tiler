@@ -3448,14 +3448,17 @@ Legend:
 | V-START-MIN | Minimum-infeasible writes: origin+minimum vs skip vs float | B6 selected on both platforms, no setting (user 2026-10-07); KDE [delivered offline](../changes/archive/kde-minimum-origin-placement.md), native journey TBD (`D-place`; [adapter](../../kwin/src/plan-adapter.ts) `overconstrainedEffective`) |
 | V-CLOSE-FOCUS | Removal focus: source-MRU top vs spatial neighbor vs target history | `D-dec-cos` selects source-MRU top |
 | V-GROUP-STACK | Tabbed stacks: supported vs fail-closed refuse | User 2026-10-07: tabs first after 0.1; close active tab keeps group, activates next (COSMIC/Hyprland/i3/sway); until then refuse closed (`D-dec-cos`) |
-| V-R4-DIR | Exhausted directional move: cross-output vs no-op vs workspace cycle | USER 2026-10-07 item 5: local restructure/swap/escape first, then all-four-direction crossing including sole root leaf; unique reciprocal edge-touch + positive overlap on FULL output rectangles, horizontal too; no candidate no-op, ambiguous/unreadable refuse, no wrap. Shared core/KDE [delivered offline](../changes/archive/four-direction-output-transfer.md), work-area placement/edge landing retained; native journey/Windows wiring pending (R-MOV-08/11..13) |
+| V-R4-DIR | Exhausted directional move: cross-output vs no-op vs workspace cycle | USER 2026-10-07 item 5 as replaced by User decision 2026-10-09: local restructure/swap/escape first, then all-four-direction crossing including sole root leaf; reciprocal edge-touch + positive overlap on FULL output rectangles, horizontal too; window-based selection (shared edge containing moving window centre projection, else larger window-span overlap, final left/top tie-break); whole-workspace migration largest shared edge then left/top; unreadable topology refuses, no candidate no-op, no wrap. Prior shared core/KDE delivery used the replaced refusal ([delivered offline](../changes/archive/four-direction-output-transfer.md)); new selection pending code; work-area placement/edge landing retained; native journey/Windows wiring pending (R-MOV-08/11..13) |
 | V-DRAG-ZONE | Drop zones: edge/interior/stack mapping; centre-stack refused | `D-dec-cos` + `D-dec-nest` select split-only |
 
 ## Coverage accounting
 
-- 147 scenarios: 58 historical plus 67 expansion additions and 14
-  discriminators for USER selections 2026-10-07 (items 1-5, including 1.5).
-  New IDs: R-WS-15..20, R-MOV-09..13, R-LAY-05/06, R-OUT-07.
+- 156 scenarios: 58 historical plus 67 expansion additions (125), 14
+  discriminators for USER selections 2026-10-07 (items 1-5, including 1.5;
+  R-WS-15..20, R-MOV-09..13, R-LAY-05/06, R-OUT-07), 8 Q2 discriminators
+  R-SPC-06..13, 2 Q3 restart research discriminators, 6 Q4 migration
+  discriminators R-WS-21..26, and R-WS-27 two-candidate migration selection
+  (User decision 2026-10-09, reference outcomes TBD): 58+67+14+8+2+6+1 = 156.
   Their 196 Then bullets distinguish selected targets (with delivery evidence where available)
   from reference outcomes that were TBD at addition. Established source-fill
   legs now vote under the ordinary evidence rule; current counts are in the
@@ -3480,11 +3483,11 @@ Legend:
 - 522 historical wide-table cells at baseline `e160894` (eight references
   plus combined Ours per row) are migrated to GWT without retrospectively
   assigning the new status classes. Present form: 58 historical scenarios
-  x 14 profiles = 812 Then bullets; 155 scenarios x 14 = 2170 Then bullets
+  x 14 profiles = 812 Then bullets; 156 scenarios x 14 = 2184 Then bullets
   (+28 explicit-swap-leg bullets). Expansion record's total coverage count
   remains 1720 as baseline provenance; baseline assessed cells were not a
   uniform 125x14 grid. Baseline semantic-status totals above exclude the 22
-  decision discriminators and the later Q3/Q4 additions.
+  decision discriminators and the later Q3/Q4/R-WS-27 additions.
 - [Archived expansion record](../changes/archive/reference-matrix-expansion.md)
   holds final accounting, source/inventory/native-test queue and residual work.
 
@@ -3501,9 +3504,10 @@ plus 7 workspace scenarios, 3 minimize scenarios, 2 maximize scenarios,
 only: 125 expansion-baseline scenarios, plus 14 decision discriminators
 2026-10-07, 8 Q2 fixed-size discriminators, 2 Q3 restart research
 discriminators and 6 Q4 workspace migration discriminators 2026-10-08:
-155 scenarios total).
+156 scenarios total (R-WS-27 two-candidate migration selection added User
+decision 2026-10-09 with reference outcomes TBD).
 This index retains purpose, row-addition rule, notation,
-profiles, evidence tags/legend, variant hooks, and deferred. All 155
+profiles, evidence tags/legend, variant hooks, and deferred. All 156
 scenarios use the GWT form below; no wide-table rows remain.
 Areas follow the approved priority order; column mechanics follows, and
 minimum-size stays a supplemental file (not nested in resize).
@@ -3515,7 +3519,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Move | [move.md](reference-outcomes/move.md) | R-MOV-01..13 (13) | R-MOV-09..13 added 2026-10-07; reference source legs filled, unsupported legs TBD; KDE items 3/5 R-MOV-03/08/09..13 delivered offline; native journeys/Windows wiring pending |
 | Resize | [resize.md](reference-outcomes/resize.md) | R-RSZ-01..04 (4) | none (landed in piece B4) |
 | Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | R-LAY-01..06 (6) | R-LAY-01/05/06 KDE implemented offline; native journey/Windows wiring pending; R-LAY-05/06 reference source legs filled, unsupported legs TBD |
-| Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..26 (26) | KDE items 1/2 delivered, item 1 single-output user-confirmed, item 2 offline only; Q4 R-WS-12/21..26 implemented offline under user-selected NORMATIVE D1-D9 (User 2026-10-08; D8 carry implementation pending); native/Windows legs TBD except R-WS-25 overlay-carry source evidence |
+| Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..27 (27) | KDE items 1/2 delivered, item 1 single-output user-confirmed, item 2 offline only; Q4 R-WS-12/21..26 implemented offline under user-selected NORMATIVE D1-D9 (User 2026-10-08; D8 carry delivered offline); R-WS-27 two-candidate migration selection added User decision 2026-10-09 with reference outcomes TBD and Ours selection pending code; native/Windows legs TBD except R-WS-25 overlay-carry source evidence |
 | Minimize | [minimize.md](reference-outcomes/minimize.md) | R-MNZ-01..03 (3) | none (landed) |
 | Maximise / fullscreen | [maximize-fullscreen.md](reference-outcomes/maximize-fullscreen.md) | R-MAX-01..09 (9) | none (landed with scrolling backfill) |
 | Groups / stacks | [groups-stacks.md](reference-outcomes/groups-stacks.md) | R-GRP-01..03 (3) | none (R-GRP-02..03 landed with scrolling backfill) |

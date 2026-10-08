@@ -289,9 +289,10 @@ platform API behavior.
     `options.perOutputVirtualDesktops === true` as delivered. Shared
     mode, false or unreadable capability refuses with a reason before
     writes; never mutate native settings.
-  - D3 targeting: active workspace only, using full-output-rect unique
-    reciprocal adjacency, no output wrap, as delivered. No neighbor is
-    a no-op; ambiguous or unreadable topology refuses; follow only.
+  - D3 targeting: active workspace only, using FULL-output-rect reciprocal
+    edge-touch + positive-overlap candidates, no output wrap, follow only.
+    Largest shared edge then left/top selection (User decision 2026-10-09).
+    Unreadable topology refuses; no candidate is a no-op.
   - D4 destination: preserve backing ID, tree/order/shares, remembered
     focus and workspace tiling mode via core `relocate_domain` as
     delivered. Insert immediately after the target output's current
@@ -309,7 +310,8 @@ platform API behavior.
   - D7 floats/sticky: workspace-bound intentional/automatic floats are
     carried with class and origin preserved via native output remap,
     as delivered. Sticky all-desktops clients stay on the source and
-    are not migrated members.
+    are not migrated members. (User decision 2026-10-09: sticky stays on
+    the source output, sticky belongs to the output; COSMIC; floats carry.)
   - D8 overlays (CHANGED, decided):
     fullscreen plus maximized members are carried, matching
     Hyprland/sway/i3/niri/COSMIC and native KWin send-to-output. No
@@ -323,9 +325,11 @@ platform API behavior.
     never consults or restores it. Remove only the explicitly moved
     ID from automatic hotplug-return associations. Migrated IDs lose
     auto return.
-  - Status: core/Linux planner/KDE delivered offline
+  - Status: core/Linux planner/KDE delivered offline under the replaced
+    refusal rule
     ([record](changes/archive/kde-whole-workspace-output-migration.md),
-    [spec](spec/functional-spec.md#workspaces) REQ-WS-12a..i).
+    [spec](spec/functional-spec.md#workspaces) REQ-WS-12a..i); D3 largest-shared-edge
+    then left/top selection (User decision 2026-10-09) pending code.
     Windows changes initialize the new `maximized` field to false
     only, preserving behavior; native acceptance remains pending.
 
@@ -368,16 +372,29 @@ platform API behavior.
     - Status: shared core/protocol + KDE Meta+O/catalog/presets delivered
       offline ([record](changes/archive/parent-orientation-toggle.md));
       Windows wiring and user-owned native journey pending.
+- User decision 2026-10-09 (R-LAY-04 workspace-local layout selection):
+  PARK until a genuine second layout exists; revisit when tabbed stacks are
+  designed after 0.1. Whether tabs count as L2 is a future decision.
+  REQ-LAY-04 stays a parked requirement, not an implementation. Research
+  completed ([research](research/workspace-local-layout-selection.md)).
 - Item 5, R-MOV-08 / R-OUT-04:
     - 5.1: local restructure/swap/escape wins first; when none applies the
       window crosses. A sole root leaf also crosses with an adjacent output
       in all four directions, changing today's horizontal SingleRootLeaf
       no-cross too.
-    - 5.2: extend the existing unique + reciprocal edge-touch + positive-
-      overlap selection to all four directions, using FULL output rectangles,
-      not work areas (panel gaps cannot block). Applies to horizontal too,
-      replacing today's work-area rule. No candidate is a no-op;
-      ambiguous/unreadable topology refuses. No output wrapping.
+    - 5.2 (User decision 2026-10-09): keep reciprocal edge-touch +
+      positive-overlap adjacency on FULL output rectangles, not work areas
+      (panel gaps cannot block), in all four directions including horizontal.
+      Unreadable topology refuses; no candidate is a no-op; no output
+      wrapping. Window-based exhausted directional move (REQ-MOV-08/08b,
+      R-MOV-11..13, REQ-OUT-01) and explicit output send (REQ-OUT-04,
+      R-OUT-04/07) select the candidate whose shared edge contains the
+      projection of the moving window centre; if none, the larger overlap
+      with the window span along the edge; final left/top tie-break.
+      Whole-workspace migration (REQ-WS-12, R-WS-12) selects the largest
+      shared edge, then left/top. Deliberate COSMIC deviation: COSMIC
+      origin-distance is no better; Hyprland, i3, sway, awesome and bspwm
+      select by window position; no reference refuses.
     - 5.3: explicit send-to-output has follow and stay forms. Follow binds
       Meta/Win+Ctrl+Alt+arrows and +H/J/K/L; stay is bindable, unbound.
       COSMIC's Super+Shift+Alt arm collides with our resize-shrink; niri's
@@ -389,9 +406,10 @@ platform API behavior.
       tiled-subject eligibility, sticky excluded. Floating-workspace
       boundaries transfer membership only, reflowing only tiled sides.
       Ordinary float transfer remains a separate open item.
-    - Status: shared core/protocol + KDE four-direction moves, explicit
-      output follow/stay and native catalog/presets delivered offline
-      ([record](changes/archive/four-direction-output-transfer.md)); Windows
+    - Status: 2026-10-09 window-based selection pending code; prior shared
+      core/protocol + KDE four-direction moves, explicit output follow/stay
+      and native catalog/presets delivered offline under the replaced rule
+      ([record](changes/archive/four-direction-output-transfer.md)). Windows
   wiring and user-owned two-output native journey pending. Full rectangles
   select adjacency only; placement retains per-desktop work areas.
 ## Fixed-Size Admission
@@ -957,9 +975,10 @@ platform API behavior.
 - User decision 2026-10-07 (R-GRP-03): tabbed stacks leave deferral and become
   the first item after the 0.1 release; closing the active tab keeps the group
   and activates the next tab (COSMIC, Hyprland, i3, sway). Until then, stacks
-  stay refused. Grouped/tabbed windows remain deferred pending
-  compositor-owned KWin support and a live multi-window Custom Tile stability
-  proof. No tab or stack carrier, controls, or bindings are selected.
+  stay refused. Grouped/tabbed windows remain deferred pending Rust-engine
+  tabs with own evidence when designed. No tab or stack carrier, controls,
+  or bindings are selected. (User decision 2026-10-09: Custom Tile
+  stability-proof precondition removed; first item after 0.1 unchanged.)
 
 ## Pointer, Drag and Drop
 
@@ -1232,11 +1251,11 @@ platform API behavior.
 - Deleting or restoring preserved candidates, containers, or host artifacts
   needs explicit user authorization plus exact path and identity or hash
   verification.
-- The Custom Tile acceptance harness is an accepted static, current-session
-  read-only preflight. It strictly diagnoses KWin and KGlobalAccel ownership and
+- The Custom Tile acceptance harness is retired/archived (User decision
+  2026-10-09), not next work. It strictly diagnoses KWin and KGlobalAccel ownership and
   fails closed on stale state, collisions, drift, or provenance ambiguity; it
   performs no lifecycle or mutation. Its rollback and journal contract is for a
-  later authorized run only.
+  later authorized run only; these guards still apply if materially reopened.
 - The inert checkout carrier does not change the `authoritative_ready` verdict:
   current public KWin APIs provide no direct evaluated-memory source proof for
   the checkout controller, so `authoritative_ready` remains false. No
@@ -1556,10 +1575,13 @@ platform API behavior.
   lifecycle, permissions, and effects. On KWin, direct geometry is the
   structural actuator; Custom Tiles are not a second topology authority.
 - Production uses the single `DescribePlan` engine with direct geometry and no
-  Custom Tile topology authority or Legacy fallback. Disposable Custom Tile
-  acceptance remains a separately gated test; tabs, stacks, shared tiles, and
-  compositor group behavior remain unselected (see Visuals for the grouping
-  rule and tabs gate).
+  Custom Tile topology authority or Legacy fallback. Custom Tile production
+  research is closed (User decision 2026-10-09;
+  [archived feasibility](changes/archive/integrated-plasma-structural-feasibility.md));
+  Custom Tiles are not adopted; reopen only on a material KWin change.
+  Rust-engine tabbed stacks are selected first after 0.1 with detailed
+  carrier/design still unselected (see Visuals for the grouping rule and
+  tabs gate).
 - Lifecycle foundation, authorized 2026-09-09: portable `cosmic_v1` lifecycle
   plans carry policy version 1. Step 3 replaced send/R4 pending acknowledgement
   with immediate planned-topology commit and complete observation convergence;
@@ -1613,8 +1635,8 @@ platform API behavior.
   `Meta+Left`/`Meta+Right` R4 movement is the selected product behavior across
   a horizontally adjacent output into that output's currently selected logical
   workspace. Local R1/R2/R3 wins first. USER item 5 (2026-10-07) extends
-  crossing to all four directions and sole root leaves, selecting unique
-  reciprocal neighbors on full output rectangles; wrapping and workspace
+  crossing to all four directions and sole root leaves, selecting reciprocal
+  neighbors on full output rectangles; wrapping and workspace
   cycling remain excluded. Rust converges complete source plus target observations, then synchronously commits the planned R4 topology into the canonical per-domain sessions and returns both-domain geometry plus the native assignment; no pair survives the call. Rust retains target remembered-leaf/root edge insertion nearest the source (explicit output send instead uses ordinary admission) and the existing owner, generation, revision, correlation,
   single-flight, visibility, exception, and
   fail-closed target fences, with no acknowledgement, verification, pending, status, cancel, or abandon. The active `DescribePlan` route delivers the
