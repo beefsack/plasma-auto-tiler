@@ -395,7 +395,7 @@ platform API behavior.
   select adjacency only; placement retains per-desktop work areas.
 ## Fixed-Size Admission
 - User decisions 2026-10-08 (fixed-size admission R-SPC-04 D1-D8, outcomes
-  decided; D1 delivered offline, changed D5/D6/D7 implementation pending):
+  decided; D1/D5/D6 delivered offline, D7 implementation pending):
   - D1 predicate: COSMIC whole-vector equality default as delivered
     (both min/max vectors present, usable, nonnegative, not full-zero
     or unbounded sentinels, equal on both axes; equal partial-zero
@@ -421,18 +421,18 @@ platform API behavior.
     origin/toggle rules stand.
   - D4 born-maximized: fixed plus born-maximized uses a floating base
     under native maximize as delivered, narrowing the Q3 intersection.
-  - D5 born-fullscreen (CHANGED, decided, implementation pending):
+  - D5 born-fullscreen (CHANGED, delivered offline):
     born-fullscreen first exit classifies as newly admitted: fixed
     floats with no writes, otherwise tiles; previously fixed-floating
     restores float. No writes during fullscreen. Deliberate COSMIC
-    deviation for game safety; pending live observation after
-    implementation.
-  - D6 workspace enable (CHANGED, decided, implementation pending):
+    deviation for game safety; pending live observation.
+  - D6 workspace enable (CHANGED, delivered offline):
     enabling workspace tiling checks every window being tiled,
     including arrivals in a floating workspace: fixed stays/becomes
     untouched float, others tile. Explicit user tile overrides stay
     tiled; intentional/sticky floats keep existing rules. COSMIC
-    deviation; pending plus live check.
+    deviation; pending live check.
+  - D5/D6 status: shared core/KDE delivered offline ([record](changes/archive/fixed-size-exit-and-enable.md)); Windows adapter wiring and native/game checks pending.
   - D7 startup: startup adoption classifies as delivered (foreground
     and hidden) PLUS fixed-window user tile overrides persist across
     owner restart in the same intentional-float store, with recompute
@@ -1506,9 +1506,10 @@ platform API behavior.
   launch unmaximize, on KDE and Windows. R-MAX-03 floating-to-tiled admission
   keeps maximize over a reserved slot with no one-shot restore. Native
   launch/restore and session-restore no-loop acceptance remain user-owned.
-  Only a held born-fullscreen exit
-  clears once under the exact-ref hold. Fixed first exits float with no
-  writes once D5 ships (pending).
+  Only a non-fixed held born-fullscreen exit clears once under the exact-ref
+  hold. Fixed first exits float with no writes (D5 delivered offline).
+  D6 workspace enable leaves fixed automatic clients floating, including
+  maximized clients; explicit user tile overrides retain the Q3 slot route.
   - KDE: R-MAX-06 and R-MAX-03 delivered offline, the latter at `29c75fe` ([record](changes/archive/kde-maximized-floating-retile-overlay.md)); Windows parity and native acceptance pending.
 - B9 (user decision 2026-10-08): an explicit unfloat of an intentionally
   floating window that is natively maximized unmaximizes then fresh-admits

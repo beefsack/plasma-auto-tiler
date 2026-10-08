@@ -500,13 +500,19 @@ fn floating_fixed_without_origin_signal_stays_intentional() {
     let id = WindowId("win-f".to_owned());
     assert!(session.is_exception(&id), "floating membership");
     assert!(!session.is_automatic_fixed_float(&id), "no inferred origin");
-    // Re-tiled without a suppress signal re-admits plainly (D2): no
-    // override is inferred from hints either.
+    // Re-observed tiled without a suppress signal becomes automatic
+    // (D5/D6 fixed becomes float): no override is inferred, the
+    // automatic marker is. An explicit suppress still tiles (D3, see
+    // suppress_signal_records_override_on_retile).
     let base = session.accepted_revision();
     session
         .converge_observation(&observation(base, vec![fixed("win-f")]), None)
         .expect("retile");
-    assert!(!session.is_exception(&id), "tiled again");
+    assert!(session.is_exception(&id), "fixed stays floating");
+    assert!(
+        session.is_automatic_fixed_float(&id),
+        "fresh automatic marker"
+    );
     assert!(
         !session.has_fixed_tile_override(&id),
         "no inferred override"
@@ -788,10 +794,11 @@ fn fixed_maximized_floats_without_tile_nonfixed_maxima_unchanged() {
 }
 
 #[test]
-fn born_fullscreen_bypasses_and_exits_tiled() {
+fn born_fullscreen_holds_then_exits_fresh_fixed_floats() {
     let mut session = fixed_session();
     let base = session.accepted_revision();
-    // Born fullscreen fixed bypasses the classifier (D5).
+    // Born fullscreen holds slotless with no writes (D5): plain
+    // exception, no tiled slot, no automatic marker yet.
     let result = session
         .converge_observation(
             &observation(
@@ -810,29 +817,587 @@ fn born_fullscreen_bypasses_and_exits_tiled() {
             None,
         )
         .expect("born FS converges");
-    assert_eq!(result.admitted, 1, "born FS takes a tiled slot");
+    assert_eq!(result.admitted, 0, "born FS takes no tiled slot while held");
     assert!(
-        !session.is_exception(&WindowId("win-s".to_owned())),
-        "not floated"
+        session.is_exception(&WindowId("win-s".to_owned())),
+        "held slotless"
     );
     assert!(
         !session.is_automatic_fixed_float(&WindowId("win-s".to_owned())),
-        "no marker"
+        "no marker while held"
     );
-    // Exiting fullscreen tiles on the tiled workspace (D5).
+    // First exit is fresh admission with the CURRENT predicate (D5):
+    // fixed floats untouched automatic, no tiled slot.
     let base = session.accepted_revision();
     let result = session
         .converge_observation(&observation(base, vec![fixed("win-s")]), None)
         .expect("FS exit converges");
-    assert_eq!(
-        (result.removed, result.admitted, result.flags_adopted),
-        (0, 0, 0)
+    assert!(
+        session.is_exception(&WindowId("win-s".to_owned())),
+        "fixed exit floats"
     );
+    assert!(
+        session.is_automatic_fixed_float(&WindowId("win-s".to_owned())),
+        "automatic marker on exit"
+    );
+    assert_eq!(tiled_ids(&session), Vec::<String>::new(), "no tile taken");
+    let _ = result;
+}
+
+#[test]
+fn born_fullscreen_nonfixed_exit_tiles() {
+    let mut session = fixed_session();
+    let base = session.accepted_revision();
+    session
+        .converge_observation(
+            &observation(
+                base,
+                vec![obs(
+                    "win-n",
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    WindowSizeHints::none(),
+                )],
+            ),
+            None,
+        )
+        .expect("born FS converges");
+    assert!(session.is_exception(&WindowId("win-n".to_owned())), "held");
+    let base = session.accepted_revision();
+    session
+        .converge_observation(&observation(base, vec![plain("win-n")]), None)
+        .expect("exit converges");
     assert_eq!(
         tiled_ids(&session),
-        vec!["win-s".to_owned()],
-        "tiled on exit"
+        vec!["win-n".to_owned()],
+        "nonfixed exit tiles"
     );
+    assert!(
+        !session.is_automatic_fixed_float(&WindowId("win-n".to_owned())),
+        "no marker"
+    );
+}
+
+#[test]
+fn born_fullscreen_exit_uses_current_predicate() {
+    // One-axis-fixed born fullscreen: exits tiled under both-axes,
+    // floats under either-axis (CURRENT predicate, D5).
+    let mut both = fixed_session();
+    let base = both.accepted_revision();
+    both.converge_observation(
+        &observation(
+            base,
+            vec![obs(
+                "win-s",
+                false,
+                true,
+                false,
+                false,
+                false,
+                false,
+                one_axis_hints(),
+            )],
+        ),
+        None,
+    )
+    .expect("born holds");
+    let base = both.accepted_revision();
+    both.converge_observation(
+        &observation(
+            base,
+            vec![obs(
+                "win-s",
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                one_axis_hints(),
+            )],
+        ),
+        None,
+    )
+    .expect("exit");
+    assert_eq!(
+        tiled_ids(&both),
+        vec!["win-s".to_owned()],
+        "both-axes exit tiles one-axis"
+    );
+
+    let mut either = fixed_session();
+    either.set_fixed_size_predicate(tiler_core::size_hints::FixedSizePredicate::EitherAxis);
+    let base = either.accepted_revision();
+    either
+        .converge_observation(
+            &observation(
+                base,
+                vec![obs(
+                    "win-s",
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    one_axis_hints(),
+                )],
+            ),
+            None,
+        )
+        .expect("born holds");
+    let base = either.accepted_revision();
+    either
+        .converge_observation(
+            &observation(
+                base,
+                vec![obs(
+                    "win-s",
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    one_axis_hints(),
+                )],
+            ),
+            None,
+        )
+        .expect("exit");
+    assert!(
+        either.is_exception(&WindowId("win-s".to_owned())),
+        "either-axis exit floats one-axis"
+    );
+    assert!(
+        either.is_automatic_fixed_float(&WindowId("win-s".to_owned())),
+        "automatic under either-axis"
+    );
+}
+
+#[test]
+fn born_fullscreen_hint_change_while_held_uses_exit_hints() {
+    // Hints changing while still fullscreen must not classify: the
+    // first exit decides with its own hints.
+    let mut session = fixed_session();
+    let base = session.accepted_revision();
+    session
+        .converge_observation(
+            &observation(
+                base,
+                vec![obs(
+                    "win-s",
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    WindowSizeHints::none(),
+                )],
+            ),
+            None,
+        )
+        .expect("born holds hintless");
+    // Still fullscreen but now reporting fixed: still held, no marker.
+    let base = session.accepted_revision();
+    let result = session
+        .converge_observation(
+            &observation(
+                base,
+                vec![obs(
+                    "win-s",
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    fixed_hints(),
+                )],
+            ),
+            None,
+        )
+        .expect("fullscreen hint churn holds");
+    assert_eq!(
+        (result.removed, result.admitted, result.flags_adopted),
+        (0, 0, 0),
+        "no classification while fullscreen"
+    );
+    assert!(session.is_exception(&WindowId("win-s".to_owned())), "held");
+    assert!(
+        !session.is_automatic_fixed_float(&WindowId("win-s".to_owned())),
+        "no marker while held"
+    );
+    // Exit with fixed hints floats.
+    let base = session.accepted_revision();
+    session
+        .converge_observation(&observation(base, vec![fixed("win-s")]), None)
+        .expect("exit");
+    assert!(
+        session.is_exception(&WindowId("win-s".to_owned())),
+        "exit floats"
+    );
+    assert!(
+        session.is_automatic_fixed_float(&WindowId("win-s".to_owned())),
+        "automatic on exit"
+    );
+}
+
+#[test]
+fn born_fullscreen_predicate_switch_while_held_uses_current() {
+    // Predicate switches after birth but before exit: the exit uses
+    // the CURRENT predicate, not birth-time state.
+    let mut session = fixed_session();
+    let base = session.accepted_revision();
+    session
+        .converge_observation(
+            &observation(
+                base,
+                vec![obs(
+                    "win-s",
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    one_axis_hints(),
+                )],
+            ),
+            None,
+        )
+        .expect("born holds under both-axes");
+    session.set_fixed_size_predicate(tiler_core::size_hints::FixedSizePredicate::EitherAxis);
+    let base = session.accepted_revision();
+    session
+        .converge_observation(
+            &observation(
+                base,
+                vec![obs(
+                    "win-s",
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    one_axis_hints(),
+                )],
+            ),
+            None,
+        )
+        .expect("exit");
+    assert!(
+        session.is_exception(&WindowId("win-s".to_owned())),
+        "switched predicate floats one-axis on exit"
+    );
+    assert!(
+        session.is_automatic_fixed_float(&WindowId("win-s".to_owned())),
+        "automatic under current predicate"
+    );
+}
+
+#[test]
+fn repeated_fullscreen_exits_follow_retained_identity() {
+    // First exit classifies fresh; later fullscreen cycles keep
+    // retained identity instead of re-admitting.
+    let mut session = fixed_session();
+    let base = session.accepted_revision();
+    session
+        .converge_observation(
+            &observation(
+                base,
+                vec![obs(
+                    "win-s",
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    fixed_hints(),
+                )],
+            ),
+            None,
+        )
+        .expect("born holds");
+    let base = session.accepted_revision();
+    session
+        .converge_observation(&observation(base, vec![fixed("win-s")]), None)
+        .expect("first exit floats");
+    assert!(session.is_automatic_fixed_float(&WindowId("win-s".to_owned())));
+    // Second fullscreen cycle: rides as floating with origin, exits
+    // retained even though hints are now plain (D2: no re-admission).
+    let base = session.accepted_revision();
+    session
+        .converge_observation(
+            &observation(
+                base,
+                vec![obs(
+                    "win-s",
+                    true,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    fixed_hints(),
+                )],
+            ),
+            None,
+        )
+        .expect("second fullscreen rides");
+    let base = session.accepted_revision();
+    let result = session
+        .converge_observation(
+            &observation(
+                base,
+                vec![obs(
+                    "win-s",
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    WindowSizeHints::none(),
+                )],
+            ),
+            None,
+        )
+        .expect("second exit retains");
+    assert_eq!(
+        (result.removed, result.admitted),
+        (0, 0),
+        "no fresh admission on later exit"
+    );
+    assert!(
+        session.is_exception(&WindowId("win-s".to_owned())),
+        "retained"
+    );
+    assert!(
+        session.is_automatic_fixed_float(&WindowId("win-s".to_owned())),
+        "marker retained"
+    );
+    // Tiled windows keep their slot across later fullscreen too,
+    // even when fixed hints appear (D2: tiled hint changes never move).
+    let mut tiled = fixed_session();
+    admit_plain(&mut tiled, "win-t", "c-t");
+    let base = tiled.accepted_revision();
+    tiled
+        .converge_observation(
+            &observation(base, vec![plain("win-t"), fixed("win-f")]),
+            None,
+        )
+        .expect("admit fixed");
+    let id = WindowId("win-t".to_owned());
+    let base = tiled.accepted_revision();
+    tiled
+        .converge_observation(
+            &observation(
+                base,
+                vec![
+                    obs(
+                        "win-t",
+                        false,
+                        true,
+                        false,
+                        false,
+                        false,
+                        false,
+                        WindowSizeHints::none(),
+                    ),
+                    obs(
+                        "win-f",
+                        true,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        fixed_hints(),
+                    ),
+                ],
+            ),
+            None,
+        )
+        .expect("tiled fullscreen keeps slot");
+    assert_eq!(tiled_ids(&tiled), vec!["win-t".to_owned()]);
+    let base = tiled.accepted_revision();
+    tiled
+        .converge_observation(
+            &observation(
+                base,
+                vec![
+                    obs(
+                        "win-t",
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        fixed_hints(),
+                    ),
+                    obs(
+                        "win-f",
+                        true,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        fixed_hints(),
+                    ),
+                ],
+            ),
+            None,
+        )
+        .expect("later exit keeps tile despite fixed hints");
+    assert_eq!(tiled_ids(&tiled), vec!["win-t".to_owned()], "no re-float");
+    assert!(!tiled.is_automatic_fixed_float(&id), "no marker inferred");
+}
+
+#[test]
+fn repeated_fullscreen_hold_takes_no_slot() {
+    // Unchanged fullscreen observations never classify: direct
+    // fullscreen holds across repeats with no marker, even fixed.
+    let mut session = fixed_session();
+    let base = session.accepted_revision();
+    session
+        .converge_observation(
+            &observation(
+                base,
+                vec![obs(
+                    "win-s",
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    fixed_hints(),
+                )],
+            ),
+            None,
+        )
+        .expect("born holds");
+    let base = session.accepted_revision();
+    let result = session
+        .converge_observation(
+            &observation(
+                base,
+                vec![obs(
+                    "win-s",
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    fixed_hints(),
+                )],
+            ),
+            None,
+        )
+        .expect("repeat holds");
+    assert_eq!(
+        (result.removed, result.admitted, result.flags_adopted),
+        (0, 0, 0),
+        "repeat fullscreen is converged hold"
+    );
+    assert!(session.is_exception(&WindowId("win-s".to_owned())), "held");
+    assert!(
+        !session.is_automatic_fixed_float(&WindowId("win-s".to_owned())),
+        "still no marker before exit"
+    );
+    assert!(tiled_ids(&session).is_empty(), "no slot while held");
+}
+
+#[test]
+fn optout_exception_retile_with_fullscreen_tiles_legacy() {
+    // Without the opt-in there is no fullscreen hold: a floating
+    // exception re-observed tiled while fullscreen re-tiles exactly
+    // like before.
+    let mut session = Session::new(owner(), generation(), 0, 7, vec![domain()]).expect("session");
+    assert!(!session.fixed_size_admission(), "opt-in stays off");
+    admit_plain(&mut session, "win-a", "c-a");
+    float_intentional(&mut session, "win-a", "c-f");
+    let id = WindowId("win-a".to_owned());
+    assert!(session.is_exception(&id), "intentional floats");
+    let base = session.accepted_revision();
+    session
+        .converge_observation(
+            &observation(
+                base,
+                vec![obs(
+                    "win-a",
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    WindowSizeHints::none(),
+                )],
+            ),
+            None,
+        )
+        .expect("retile converges");
+    assert!(!session.is_exception(&id), "legacy retile tiles");
+    assert_eq!(tiled_ids(&session), vec!["win-a".to_owned()]);
+}
+
+#[test]
+fn optin_exception_retile_with_fullscreen_holds() {
+    // Same observation shape with the opt-in on holds instead: the
+    // automatic keeps floating with its marker and no tiled slot.
+    let mut session = fixed_session();
+    admit_plain(&mut session, "win-a", "c-a");
+    let base = session.accepted_revision();
+    session
+        .converge_observation(
+            &observation(base, vec![plain("win-a"), fixed("win-f")]),
+            None,
+        )
+        .expect("admit fixed");
+    let id = WindowId("win-f".to_owned());
+    assert!(session.is_automatic_fixed_float(&id));
+    let base = session.accepted_revision();
+    let result = session
+        .converge_observation(
+            &observation(
+                base,
+                vec![
+                    plain("win-a"),
+                    obs(
+                        "win-f",
+                        false,
+                        true,
+                        false,
+                        false,
+                        false,
+                        false,
+                        fixed_hints(),
+                    ),
+                ],
+            ),
+            None,
+        )
+        .expect("fullscreen holds");
+    assert_eq!(
+        (result.removed, result.admitted, result.flags_adopted),
+        (0, 0, 0),
+        "hold converges clean"
+    );
+    assert!(session.is_exception(&id), "still floating");
+    assert!(session.is_automatic_fixed_float(&id), "marker kept");
+    assert_eq!(tiled_ids(&session), vec!["win-a".to_owned()]);
 }
 
 #[test]
@@ -945,7 +1510,7 @@ fn float_intentional(session: &mut Session, window: &str, corr: &str) {
 }
 
 #[test]
-fn workspace_retile_takes_automatic_keeps_intentional() {
+fn workspace_enable_keeps_automatic_floats_others_tile() {
     let mut session = fixed_session();
     admit_plain(&mut session, "win-a", "c-a");
     admit_plain(&mut session, "win-g", "c-g");
@@ -964,8 +1529,10 @@ fn workspace_retile_takes_automatic_keeps_intentional() {
         !session.is_automatic_fixed_float(&manual),
         "intentional never automatic"
     );
-    // Enabling workspace tiling retiles the automatic float (D6) while the
-    // intentional float keeps its membership.
+    // Enabling workspace tiling checks every window (D6): the automatic
+    // float stays floating untouched (no override recorded) while the
+    // intentional float keeps its existing rule (re-tiles when observed
+    // tiled without a fixed win).
     let base = session.accepted_revision();
     let result = session
         .converge_observation(
@@ -989,16 +1556,59 @@ fn workspace_retile_takes_automatic_keeps_intentional() {
             None,
         )
         .expect("retile");
-    assert!(result.flags_adopted >= 1, "retile adopted");
-    assert!(!session.is_exception(&auto), "automatic retiled");
+    let _ = result;
+    assert!(session.is_exception(&auto), "automatic stays floating");
     assert!(
-        session.has_fixed_tile_override(&auto),
-        "retile records tile win"
+        session.is_automatic_fixed_float(&auto),
+        "automatic marker kept"
+    );
+    assert!(
+        !session.has_fixed_tile_override(&auto),
+        "no tile win recorded for automatic"
     );
     assert!(session.is_exception(&manual), "intentional keeps floating");
     assert!(
         !session.has_fixed_tile_override(&manual),
         "intentional untouched"
+    );
+    // An explicit suppress signal still tiles the automatic (D3 user
+    // override wins for the same live client).
+    let base = session.accepted_revision();
+    session
+        .converge_observation(
+            &observation(
+                base,
+                vec![
+                    plain("win-a"),
+                    obs(
+                        "win-g",
+                        true,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        WindowSizeHints::none(),
+                    ),
+                    obs(
+                        "win-f",
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        true,
+                        fixed_hints(),
+                    ),
+                ],
+            ),
+            None,
+        )
+        .expect("explicit retile");
+    assert!(!session.is_exception(&auto), "suppressed automatic tiles");
+    assert!(
+        session.has_fixed_tile_override(&auto),
+        "explicit win recorded"
     );
     assert_eq!(
         tiled_ids(&session),

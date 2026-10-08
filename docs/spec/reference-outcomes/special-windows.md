@@ -6,7 +6,7 @@ Candidates: R-SPC-01 through R-SPC-05 (transients/modals, splash/utility types, 
 
 Q2 discriminators R-SPC-06..13 cover fixed-size edge cases. D1-D8 are
 user-selected NORMATIVE (User 2026-10-08; REQ-SPC-04a..h); D1 setting delivered
-offline, changed D5/D6/D7 portions are implementation pending in Ours KDE;
+offline, D5/D6 delivered offline; D7 remains implementation pending in Ours KDE;
 [offline delivery and review record](../../changes/archive/fixed-size-admission.md).
 
 ## New scenarios (GWT; fixtures/actions/discriminators per the approved expansion record)
@@ -202,8 +202,8 @@ transient (no dialog flag) is a different fixture and is not claimed.
 - Then Ours KDE: E is an automatic float outside the tile tree. No E
   geometry, focus, stacking or keep-above writes from classification;
   exact native/game journey TBD. Implemented offline 2026-10-08 under
-  NORMATIVE D1-D8 (User 2026-10-08; D1 setting delivered, changed D5/D6/D7 portions
-  implementation pending); [real Planner fixtures](../../../kwin/tests/fixed-size-admission.test.ts),
+  NORMATIVE D1-D8 (User 2026-10-08; D1/D5/D6 delivered offline,
+  D7 implementation pending); [real Planner fixtures](../../../kwin/tests/fixed-size-admission.test.ts),
   [record](../../changes/archive/fixed-size-admission.md).
 - Then Ours Windows: tiles with its declared-hint clamp carried
   into the Engine rows (`WM_GETMINMAXINFO` per member; no
@@ -444,10 +444,11 @@ All fresh variants below reset the client and WM state independently.
 - Then paneru: TBD.
 - Then Ours KDE: fixed E floats beneath native maximize, no reserved
   tile on admission; unmaximize leaves it floating (NORMATIVE D4).
-  Non-fixed Q3 is unchanged. Later workspace retile while maximized
-  reserves a slot and native unmaximize lands there (Q3 R-MAX-03).
+  Non-fixed Q3 is unchanged. D6 workspace enable while maximized keeps a
+  fixed automatic float slotless; native unmaximize stays floating.
+  Explicit user tile overrides retain Q3 R-MAX-03's reserved-slot route.
   Implemented offline 2026-10-08; [production-entry fixtures](../../../kwin/tests/fixed-size-workspace-entry.test.ts),
-  [record](../../changes/archive/fixed-size-admission.md). Native TBD.
+  [D5/D6 record](../../changes/archive/fixed-size-exit-and-enable.md). Native TBD.
 - Then Ours Windows: TBD (same intersection; handoff only).
 - Variant hook: NORMATIVE fixed-float base vs Q3 reserved tiled base
   (User 2026-10-08).
@@ -461,9 +462,13 @@ All fresh variants below reset the client and WM state independently.
 - Given (column profiles): `COL[C1[A*]]`; same independent lifecycles,
   including the non-fixed N variant.
 - When: exit E's fullscreen natively (non-fixed variant: exit N's fullscreen natively).
+- Discriminating variant: E starts one-axis-fixed under `both-axes-fixed`;
+  while fullscreen switch to `either-axis-fixed` or change hints to both-axis
+  fixed; exit once; enter fullscreen again, lose fixed hints, exit again.
 - Observe: classify fixed hints on first normal admission vs restore
   previously recorded layer. Non-fixed N first exit tiles. During fullscreen, game state is untouched.
-  Reference outcomes for the non-fixed N variant are TBD.
+  Reference outcomes for the non-fixed N and changed-hints/predicate/repeated-exit
+  variants are TBD for every reference profile; native Ours legs remain TBD.
 - Then COSMIC: born fullscreen skips normal float/tile mapping, has no
   restore state and tiles on exit to a tiled workspace; previously
   floating E restores floating with retained geometry.
@@ -483,14 +488,14 @@ All fresh variants below reset the client and WM state independently.
   fixed floats with no writes, otherwise tiles; previously automatic
   floating restores floating. No target writes while fullscreen (NORMATIVE
   D5 CHANGED, User 2026-10-08; deliberate COSMIC deviation for game safety,
-  pending live observation). Prior tiled-exit implemented offline
-  2026-10-08, [real Planner fixtures](../../../kwin/tests/fixed-size-admission.test.ts);
-  CHANGED first-exit classification selected, implementation pending;
-  native game/restore journey TBD.
+  pending live observation). First observed exit for the exact live client
+  uses current hints/predicate, so the discriminator floats on first exit;
+  later exits retain that float even after hint loss (D2), never re-admit.
+  Implemented offline 2026-10-09, [real Planner fixtures](../../../kwin/tests/fixed-size-admission.test.ts),
+  [record](../../changes/archive/fixed-size-exit-and-enable.md); native game/restore journey TBD.
 - Then Ours Windows: TBD; current borderless-game inference stays frozen.
 - Variant hook: NORMATIVE first normal admission vs fullscreen restore
-  identity (User 2026-10-08; CHANGED first-exit classification selected,
-  implementation pending).
+  identity (User 2026-10-08; first-exit classification delivered offline).
 
 ### R-SPC-12: enable workspace tiling with an automatic fixed float
 
@@ -503,10 +508,17 @@ All fresh variants below reset the client and WM state independently.
   where a floating-to-tiled workspace action exists, including the F
   arrival variant.
 - When: enable tiling for that workspace.
+- Discriminating variants: disable tiling for an ordinary tile, give it fixed
+  hints, enable; or disable for a one-axis automatic float, switch predicate
+  to `both-axes-fixed`, enable. Control: explicit user tile override, then
+  disable/enable with fixed hints. Maximized control: fixed automatic float,
+  disable/enable while maximized, then natively unmaximize.
 - Observe: E auto-float survives vs workspace action explicitly tiles it;
   F fixed arrival stays/becomes untouched float while other arrivals tile;
   intentional C is distinguished, not silently reclassified.
-  Reference outcomes for the F arrival variant are TBD.
+  Reference outcomes for the F arrival and changed-hints/predicate/override/
+  maximized-control variants are TBD for every reference profile; native Ours
+  legs remain TBD.
 - Then COSMIC: retiles both E and C without a fixed-hint check; exact
   frames/focus TBD. `S(S-cos-fixed-workspace)`.
 - Then Hyprland/Dwindle: no workspace-mode counterpart per R-FLT-04;
@@ -533,16 +545,17 @@ All fresh variants below reset the client and WM state independently.
   float, others tile; explicit user tile overrides stay tiled;
   intentional C and sticky floats keep their existing exceptions
   (NORMATIVE D6 CHANGED, User 2026-10-08; COSMIC deviation, pending live
-  check). Prior retile implemented offline
-  2026-10-08; CHANGED check-every-window selected, implementation pending;
+  check). Current hints/predicate recheck ordinary admission pins and automatic
+  records; the variants respectively float, tile, retain the explicit tile,
+  and retain slotless float under maximize and after unmaximize.
+  Implemented offline 2026-10-09;
   [production-entry release/retile fixtures](../../../kwin/tests/fixed-size-workspace-entry.test.ts)
   and [intentional/sticky controls](../../../kwin/tests/fixed-size-admission.test.ts).
-  Native release/placement TBD.
+  [record](../../changes/archive/fixed-size-exit-and-enable.md). Native release/placement TBD.
 - Then Ours Windows: fixed E TBD (handoff only); intentional C
   preservation reuses R-FLT-04 evidence.
 - Variant hook: NORMATIVE automatic vs intentional float identity at
-  workspace enable (User 2026-10-08; CHANGED check-every-window selected,
-  implementation pending).
+  workspace enable (User 2026-10-08; check-every-window delivered offline).
 
 ### R-SPC-13: adopt an already mapped fixed client on owner startup
 

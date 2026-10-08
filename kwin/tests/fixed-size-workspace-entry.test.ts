@@ -374,7 +374,7 @@ function frameOf(win: Record<string, unknown>): { x: number; y: number; w: numbe
 }
 
 describe("fixed-size workspace entry through the real Planner", () => {
-    it("startup classifies foreground and hidden fixed clients, enable retiles foreground only", async () => {
+    it("startup classifies foreground and hidden fixed clients, enable keeps foreground floating", async () => {
         const world = fakeWorld();
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null, "entry starts");
@@ -440,8 +440,8 @@ describe("fixed-size workspace entry through the real Planner", () => {
                 mocks.logs.some((line) => line.includes("workspace-released") && line.includes("outcome=released")),
                 "release confirms",
             );
-            // Re-enable: the entry calls retile on the re-tiled domain and
-            // the resync tiles the automatic with suppression, while the
+            // Re-enable: the entry resyncs the re-tiled domain and the
+            // classifier keeps the automatic floating (D6), while the
             // hidden automatic keeps its membership.
             const beforeEnable = mocks.dbusCalls.length;
             toggleWorkspaceTiling(mocks);
@@ -458,8 +458,8 @@ describe("fixed-size workspace entry through the real Planner", () => {
                 .filter((payload) => domainOf(payload)["workspace"] === "ws-1")
                 .pop();
             assert.ok(retiled !== undefined, "foreground resync dispatches after enable");
-            assert.ok(!("floating" in wireOf(retiled, "win-b")), "enabled domain retiles the automatic");
-            assert.equal(wireOf(retiled, "win-b")["fixed_suppress"], true, "retile pins suppression");
+            assert.equal(wireOf(retiled, "win-b")["floating"], true, "enabled domain keeps the automatic floating");
+            assert.equal(wireOf(retiled, "win-b")["fixed_auto"], true);
             const hiddenAfter = mocks.dbusCalls
                 .slice(beforeEnable)
                 .map((call) => JSON.parse(call.payload) as Record<string, unknown>)
@@ -479,7 +479,7 @@ describe("fixed-size workspace entry through the real Planner", () => {
         }
     });
 
-    it("maximized fixed rides release and enable with a reserved slot and no writes", async () => {
+    it("maximized fixed rides release and enable slotless with no writes", async () => {
         const world = fakeWorld();
         const winB = world.wins[1] as Record<string, unknown>;
         winB["maximizeMode"] = 3;
@@ -507,9 +507,9 @@ describe("fixed-size workspace entry through the real Planner", () => {
                 { x: 0, y: 0, width: 1200, height: 800 },
                 "overlay frame untouched",
             );
-            // Disable and re-enable tiling while still maximized: the
-            // retiled client reserves its slot with suppression, still
-            // with no clear and no target write.
+            // Disable and re-enable tiling while still maximized: D6
+            // keeps the fixed client floating untouched with no clear
+            // and no target write.
             toggleWorkspaceTiling(mocks);
             const maxReleaseIndex = mocks.dbusCalls.length - 1;
             const maxReleaseReply = await flushAt(mocks, engine, maxReleaseIndex);
@@ -528,14 +528,16 @@ describe("fixed-size workspace entry through the real Planner", () => {
             const resyncIndex = mocks.dbusCalls.length - 1;
             const resync = payloadAt(mocks, resyncIndex);
             assert.equal(domainOf(resync)["workspace"], "ws-1", "resync targets the enabled domain");
-            assert.ok(!("floating" in wireOf(resync, "win-b")), "enable tiles beneath the overlay");
-            assert.equal(wireOf(resync, "win-b")["fixed_suppress"], true);
+            assert.equal(wireOf(resync, "win-b")["floating"], true, "enable keeps fixed floating");
+            assert.equal(wireOf(resync, "win-b")["fixed_auto"], true);
             const resyncReply = await flushAt(mocks, engine, resyncIndex);
             assert.equal(resyncReply["outcome"], "planned", `resync plans, got ${JSON.stringify(resyncReply)}`);
-            const reserved = (
-                resyncReply["desired_geometry"] as Array<Record<string, unknown>>
-            ).find((entry) => entry["window"] === "win-b");
-            assert.ok(reserved !== undefined, "retiled client reserves its slot under the overlay");
+            assert.ok(
+                !(resyncReply["desired_geometry"] as Array<Record<string, unknown>>).some(
+                    (entry) => entry["window"] === "win-b",
+                ),
+                "kept float reserves no slot under the overlay",
+            );
             flushed.count = resyncIndex + 1;
             await drainOutstanding(mocks, engine, flushed);
             assert.equal(
@@ -544,19 +546,556 @@ describe("fixed-size workspace entry through the real Planner", () => {
                 "enable never clears native maximize",
             );
             assert.equal(JSON.stringify(winB["frameGeometry"]), writesBeforeEnable, "no target write under overlay");
-            // Native unmaximize lands the client in its reserved slot.
+            // Native unmaximize keeps the fixed client floating: capture
+            // the pre-signal frame and clear count, then assert the real
+            // invariants after the drain.
+            const preUnmaxFrame = JSON.stringify(frameOf(winB));
+            const preUnmaxClears = world.maximizeClears.length;
+            const callsBeforeUnmax = mocks.dbusCalls.length;
             winB["maximizeMode"] = 0;
             for (const handler of [...(world.winMax.get(winB)?.handlers ?? [])]) {
                 handler();
             }
             runEntryDebounce(mocks);
             await drainOutstanding(mocks, engine, flushed);
+            assert.equal(
+                JSON.stringify(frameOf(winB)),
+                preUnmaxFrame,
+                "overlay frame still untouched",
+            );
+            assert.equal(world.maximizeClears.length, preUnmaxClears, "no clear around native unmaximize");
+            const unmaxPayloads = mocks.dbusCalls
+                .slice(callsBeforeUnmax)
+                .map((call) => JSON.parse(call.payload) as Record<string, unknown>)
+                .filter((payload) => domainOf(payload)["workspace"] === "ws-1");
+            const lastUnmax = unmaxPayloads.pop();
+            if (lastUnmax !== undefined) {
+                assert.equal(wireOf(lastUnmax, "win-b")["floating"], true, "unmaximized fixed stays floating");
+                assert.equal(wireOf(lastUnmax, "win-b")["fixed_auto"], true);
+            }
+        } finally {
+            handle?.stop();
+            await engine.close();
+        }
+    });
+
+    it("pinned transfer rechecks on enable after release drops core state", async () => {
+        // B1 disproof: win-b tiles ordinary (pinned), turns fixed (wire
+        // suppress), and natively moves to ws-2, where the fresh core
+        // admission tiles it with an override. Disable releases ws-2
+        // (Engine state including the override is discarded); enable
+        // then floats win-b untouched. A persisting override would tile.
+        // (ws-2 starts empty so the mixed hidden focus edge stays out of
+        // this row; hidden focus routing is covered by the Send suites.)
+        const world = fakeWorld();
+        world.wins = world.wins.slice(0, 2);
+        const winB = world.wins[1] as Record<string, unknown>;
+        winB["resizeable"] = true;
+        winB["minSize"] = null;
+        winB["maxSize"] = null;
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "entry starts");
+        const engine = EngineBridge.start();
+        const flushed = { count: 0 };
+        try {
+            fireAdded(world);
+            runEntryDebounce(mocks);
+            assert.ok(mocks.dbusCalls.length > 0, "startup dispatches");
+            flushed.count = 0;
+            await drainOutstanding(mocks, engine, flushed);
+            const admitted = mocks.dbusCalls
+                .map((call) => JSON.parse(call.payload) as Record<string, unknown>)
+                .filter((payload) => domainOf(payload)["workspace"] === "ws-1")
+                .pop();
+            assert.ok(admitted !== undefined, "foreground admits");
+            assert.ok(!("floating" in wireOf(admitted, "win-b")), "plain client tiles at startup");
+            // Fixed hints arrive, then a native desktop move carries the
+            // pinned client to ws-2 with suppress on the wire.
+            winB["resizeable"] = false;
+            winB["minSize"] = { width: 640, height: 480 };
+            winB["maxSize"] = { width: 640, height: 480 };
+            winB["desktops"] = [world.desktop2];
+            fireAdded(world);
+            runEntryDebounce(mocks);
+            await drainOutstanding(mocks, engine, flushed);
+            const moved = mocks.dbusCalls
+                .map((call) => JSON.parse(call.payload) as Record<string, unknown>)
+                .filter((payload) => domainOf(payload)["workspace"] === "ws-2")
+                .pop();
+            assert.ok(moved !== undefined, "target domain admits after move");
+            assert.ok(!("floating" in wireOf(moved, "win-b")), "moved client tiles with its pin");
+            assert.equal(wireOf(moved, "win-b")["fixed_suppress"], true, "pin rides suppress on the wire");
+            const movedReply = mocks.dbusCalls.length - 1;
+            const frameAfterMove = JSON.stringify(frameOf(winB));
+            // Disable ws-2: focus must sit on the target desktop for the
+            // scope switch, otherwise the toggle observes no snapshots.
+            // The confirmed release discards Engine state.
+            world.workspace["activeWindow"] = winB;
+            world.workspace["currentDesktopForScreen"] = (): unknown => world.desktop2;
+            toggleWorkspaceTiling(mocks);
+            const releaseIndex = mocks.dbusCalls.length - 1;
+            assert.ok(releaseIndex > movedReply, "disable dispatches release");
+            assert.equal(await flushAt(mocks, engine, releaseIndex).then((r) => r["outcome"]), "released");
+            runEntryDebounce(mocks);
+            flushed.count = releaseIndex + 1;
+            await drainOutstanding(mocks, engine, flushed);
+            const frameBeforeEnable = JSON.stringify(frameOf(winB));
+            assert.equal(frameBeforeEnable, frameAfterMove, "disable writes nothing to the tile");
+            // Enable rechecks: the released override is gone, so the
+            // fixed client floats untouched instead of re-tiling.
+            const beforeEnable = mocks.dbusCalls.length;
+            toggleWorkspaceTiling(mocks);
+            runEntryDebounce(mocks);
+            await drainOutstanding(mocks, engine, flushed);
+            const retiled = mocks.dbusCalls
+                .slice(beforeEnable)
+                .map((call) => JSON.parse(call.payload) as Record<string, unknown>)
+                .filter((payload) => domainOf(payload)["workspace"] === "ws-2")
+                .pop();
+            assert.ok(retiled !== undefined, "target resync dispatches after enable");
+            assert.equal(wireOf(retiled, "win-b")["floating"], true, "released override does not block the recheck");
+            assert.equal(wireOf(retiled, "win-b")["fixed_auto"], true);
+            assert.equal(JSON.stringify(frameOf(winB)), frameBeforeEnable, "no geometry write to the new float");
+        } finally {
+            handle?.stop();
+            await engine.close();
+        }
+    });
+
+    it("move while floating keeps omitted identity on the old enable", async () => {
+        // G3: both workspaces float when win-b (automatic, ws-1) natively
+        // moves to ws-2 losing fixed hints. No dispatch observes the move,
+        // so the adapter record stays homed on ws-1. Enabling ws-1 keys
+        // its reset on CURRENT sightings (win-b absent), so the foreign
+        // mark survives; enabling ws-2 afterwards resets by sighting and
+        // tiles the now-plain client.
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "entry starts");
+        const engine = EngineBridge.start();
+        const flushed = { count: 0 };
+        try {
+            fireAdded(world);
+            runEntryDebounce(mocks);
+            assert.ok(mocks.dbusCalls.length > 0, "startup dispatches");
+            flushed.count = 0;
+            await drainOutstanding(mocks, engine, flushed);
+            // Scope switches need focus on the target desktop.
+            // Disable both domains first (scope switches need focus on
+            // the target desktop).
+            toggleWorkspaceTiling(mocks);
+            const releaseIndex = mocks.dbusCalls.length - 1;
+            assert.equal(await flushAt(mocks, engine, releaseIndex).then((r) => r["outcome"]), "released");
+            runEntryDebounce(mocks);
+            flushed.count = releaseIndex + 1;
+            await drainOutstanding(mocks, engine, flushed);
+            world.workspace["activeWindow"] = world.wins[2];
+            world.workspace["currentDesktopForScreen"] = (): unknown => world.desktop2;
+            toggleWorkspaceTiling(mocks);
+            const releaseIndex1 = mocks.dbusCalls.length - 1;
+            assert.equal(await flushAt(mocks, engine, releaseIndex1).then((r) => r["outcome"]), "released");
+            runEntryDebounce(mocks);
+            flushed.count = releaseIndex1 + 1;
+            await drainOutstanding(mocks, engine, flushed);
+            // Move + hint loss while both float: no dispatch may observe it.
+            const winB = world.wins[1] as Record<string, unknown>;
+            const callsWhileFloating = mocks.dbusCalls.length;
+            winB["desktops"] = [world.desktop2];
+            winB["resizeable"] = true;
+            winB["minSize"] = null;
+            winB["maxSize"] = null;
+            fireAdded(world);
+            runEntryDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, callsWhileFloating, "floating observes dispatch nothing");
+            // Enable the old domain (scope and focus back on ws-1): win-b
+            // is not sighted there, then enable the new domain: its
+            // resync sees the plain client and tiles it.
+            world.workspace["activeWindow"] = world.wins[0];
+            world.workspace["currentDesktopForScreen"] = (): unknown => world.desktop;
+            const beforeOldEnable = mocks.dbusCalls.length;
+            toggleWorkspaceTiling(mocks);
+            runEntryDebounce(mocks);
+            await drainOutstanding(mocks, engine, flushed);
+            const oldResync = mocks.dbusCalls
+                .slice(beforeOldEnable)
+                .map((call) => JSON.parse(call.payload) as Record<string, unknown>)
+                .filter((payload) => domainOf(payload)["workspace"] === "ws-1")
+                .pop();
+            assert.ok(oldResync !== undefined, "old domain resync dispatches");
+            assert.ok(!("floating" in wireOf(oldResync, "win-a")), "old domain tiles its member");
+            assert.equal(
+                JSON.stringify(frameOf(winB)),
+                JSON.stringify({ x: 600, y: 0, w: 600, h: 800 }),
+                "no write across the floating move and old enable",
+            );
+            world.workspace["activeWindow"] = winB;
+            world.workspace["currentDesktopForScreen"] = (): unknown => world.desktop2;
+            // ws-2 already holds a confirmed release from its disable, so
+            // this enable resyncs directly after the sighted reset.
+            toggleWorkspaceTiling(mocks);
+            runEntryDebounce(mocks);
+            const resyncIdx = mocks.dbusCalls.length - 1;
+            const resyncReply = await flushAt(mocks, engine, resyncIdx);
+            assert.equal(resyncReply["outcome"], "planned", `new-domain resync plans, got ${JSON.stringify(resyncReply)}`);
+            flushed.count = resyncIdx + 1;
+            await drainOutstanding(mocks, engine, flushed);
+            const retiled = payloadAt(mocks, resyncIdx);
+            assert.equal(domainOf(retiled)["workspace"], "ws-2", "new-domain resync targets ws-2");
+            assert.ok(!("floating" in wireOf(retiled, "win-b")), "sighted reset re-tiles the plain client");
+            const slot = (resyncReply["desired_geometry"] as Array<Record<string, unknown>>).find(
+                (entry) => entry["window"] === "win-b",
+            );
+            assert.ok(slot !== undefined, "re-tiled client takes a slot");
             assert.deepEqual(
                 frameOf(winB),
-                reserved["rect"] as { x: number; y: number; w: number; h: number },
-                "unmaximize lands in the reserved slot",
+                slot["rect"] as { x: number; y: number; w: number; h: number },
+                "re-tiled client placed exactly once in its planned slot",
             );
-            assert.deepEqual(world.maximizeClears, [], "no clear around native unmaximize either");
+        } finally {
+            handle?.stop();
+            await engine.close();
+        }
+    });
+
+    it("enable rechecks a pinned tile that became fixed while floating", async () => {
+        // D6: win-b tiles as an ordinary client, then reports fixed hints
+        // while its workspace floats. Enable must float it untouched with
+        // no geometry write; the plain sibling keeps its slot.
+        const world = fakeWorld();
+        const winB = world.wins[1] as Record<string, unknown>;
+        winB["resizeable"] = true;
+        winB["minSize"] = null;
+        winB["maxSize"] = null;
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "entry starts");
+        const engine = EngineBridge.start();
+        const flushed = { count: 0 };
+        try {
+            fireAdded(world);
+            runEntryDebounce(mocks);
+            assert.ok(mocks.dbusCalls.length > 0, "startup dispatches");
+            const admitted = payloadAt(mocks, mocks.dbusCalls.length - 1);
+            assert.ok(!("floating" in wireOf(admitted, "win-b")), "plain client tiles at startup");
+            flushed.count = 0;
+            await drainOutstanding(mocks, engine, flushed);
+            toggleWorkspaceTiling(mocks);
+            const releaseIndex = mocks.dbusCalls.length - 1;
+            assert.equal(await flushAt(mocks, engine, releaseIndex).then((r) => r["outcome"]), "released");
+            runEntryDebounce(mocks);
+            flushed.count = releaseIndex + 1;
+            await drainOutstanding(mocks, engine, flushed);
+            // Fixed hints arrive while floating: no dispatch, no writes.
+            const frameBefore = JSON.stringify(frameOf(winB));
+            winB["resizeable"] = false;
+            winB["minSize"] = { width: 640, height: 480 };
+            winB["maxSize"] = { width: 640, height: 480 };
+            const beforeEnable = mocks.dbusCalls.length;
+            toggleWorkspaceTiling(mocks);
+            runEntryDebounce(mocks);
+            await drainOutstanding(mocks, engine, flushed);
+            assert.ok(mocks.dbusCalls.length > beforeEnable, "enable resync dispatches");
+            const retiled = mocks.dbusCalls
+                .slice(beforeEnable)
+                .map((call) => JSON.parse(call.payload) as Record<string, unknown>)
+                .filter((payload) => domainOf(payload)["workspace"] === "ws-1")
+                .pop();
+            assert.ok(retiled !== undefined, "foreground resync dispatches after enable");
+            assert.equal(wireOf(retiled, "win-b")["floating"], true, "newly fixed floats on enable");
+            assert.equal(wireOf(retiled, "win-b")["fixed_auto"], true);
+            assert.ok(!("floating" in wireOf(retiled, "win-a")), "plain sibling stays tiled");
+            assert.equal(JSON.stringify(frameOf(winB)), frameBefore, "no geometry write to the new float");
+            assert.ok(
+                mocks.logs.some((line) => line.includes("fixed-size-classification")),
+                "bounded classification diagnostic emitted",
+            );
+        } finally {
+            handle?.stop();
+            await engine.close();
+        }
+    });
+
+    it("predicate switch while floating applies to the enable recheck", async () => {
+        // One-axis win-b tiles under both-axes, the predicate switches to
+        // either-axis while floating, and enable floats it with the new
+        // predicate on the wire.
+        const world = fakeWorld();
+        const winB = world.wins[1] as Record<string, unknown>;
+        winB["minSize"] = { width: 640, height: 100 };
+        winB["maxSize"] = { width: 640, height: 480 };
+        let predicate: unknown = "both-axes-fixed";
+        const configHandlers: Array<() => void> = [];
+        const { handle, mocks } = startEntry(world, {
+            options: {
+                configChanged: {
+                    connect: (handler: () => void): void => { configHandlers.push(handler); },
+                    disconnect: (handler: () => void): void => {
+                        const index = configHandlers.indexOf(handler);
+                        if (index >= 0) { configHandlers.splice(index, 1); }
+                    },
+                },
+            },
+            readFixedSizePredicateFn: (): unknown => predicate,
+        });
+        assert.ok(handle !== null, "entry starts");
+        const engine = EngineBridge.start();
+        const flushed = { count: 0 };
+        try {
+            fireAdded(world);
+            runEntryDebounce(mocks);
+            assert.ok(mocks.dbusCalls.length > 0, "startup dispatches");
+            const admitted = payloadAt(mocks, mocks.dbusCalls.length - 1);
+            assert.ok(!("floating" in wireOf(admitted, "win-b")), "one-axis tiles by default");
+            flushed.count = 0;
+            await drainOutstanding(mocks, engine, flushed);
+            toggleWorkspaceTiling(mocks);
+            const releaseIndex = mocks.dbusCalls.length - 1;
+            assert.equal(await flushAt(mocks, engine, releaseIndex).then((r) => r["outcome"]), "released");
+            runEntryDebounce(mocks);
+            flushed.count = releaseIndex + 1;
+            await drainOutstanding(mocks, engine, flushed);
+            predicate = "either-axis-fixed";
+            for (const fire of [...configHandlers]) {
+                fire();
+            }
+            assert.ok(
+                mocks.logs.some((line) => line.includes("stage=fixed-size-predicate predicate=either-axis-fixed")),
+                "predicate reload logged",
+            );
+            const beforeEnable = mocks.dbusCalls.length;
+            toggleWorkspaceTiling(mocks);
+            runEntryDebounce(mocks);
+            await drainOutstanding(mocks, engine, flushed);
+            const retiled = mocks.dbusCalls
+                .slice(beforeEnable)
+                .map((call) => JSON.parse(call.payload) as Record<string, unknown>)
+                .filter((payload) => domainOf(payload)["workspace"] === "ws-1")
+                .pop();
+            assert.ok(retiled !== undefined, "foreground resync dispatches after enable");
+            assert.equal(retiled["fixed_size_predicate"], "either-axis-fixed");
+            assert.equal(wireOf(retiled, "win-b")["floating"], true, "one-axis floats under either-axis");
+            assert.equal(wireOf(retiled, "win-b")["fixed_auto"], true);
+        } finally {
+            handle?.stop();
+            await engine.close();
+        }
+    });
+
+    it("arrivals while floating classify fixed-float versus tile on enable", async () => {
+        // win-d (fixed) and win-e (plain) appear while ws-1 floats. The
+        // enable resync floats win-d untouched and tiles win-e.
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "entry starts");
+        const engine = EngineBridge.start();
+        const flushed = { count: 0 };
+        const addWin = (
+            id: string,
+            x: number,
+            home: Record<string, unknown>,
+            fixed: boolean,
+        ): Record<string, unknown> => {
+            const geo = fakeSignal();
+            const max = fakeSignal();
+            const win: Record<string, unknown> = {
+                normalWindow: true,
+                internalId: id,
+                resourceClass: "test-app",
+                output: world.output,
+                desktops: [home],
+                frameGeometry: { x, y: 0, width: 600, height: 800 },
+                frameGeometryChanged: geo.signal,
+                fullScreenChanged: fakeSignal().signal,
+                fullScreen: false,
+                maximizedChanged: max.signal,
+                maximizeMode: 0,
+                desktopsChanged: fakeSignal().signal,
+                onAllDesktops: false,
+                keepAbove: false,
+                keepBelow: false,
+            };
+            if (fixed) {
+                win["resizeable"] = false;
+                win["minSize"] = { width: 640, height: 480 };
+                win["maxSize"] = { width: 640, height: 480 };
+            }
+            world.winMax.set(win, max);
+            world.winGeometry.set(win, geo);
+            world.wins.push(win);
+            return win;
+        };
+        try {
+            fireAdded(world);
+            runEntryDebounce(mocks);
+            assert.ok(mocks.dbusCalls.length > 0, "startup dispatches");
+            flushed.count = 0;
+            await drainOutstanding(mocks, engine, flushed);
+            toggleWorkspaceTiling(mocks);
+            const releaseIndex = mocks.dbusCalls.length - 1;
+            assert.equal(await flushAt(mocks, engine, releaseIndex).then((r) => r["outcome"]), "released");
+            runEntryDebounce(mocks);
+            flushed.count = releaseIndex + 1;
+            await drainOutstanding(mocks, engine, flushed);
+            const callsWhileFloating = mocks.dbusCalls.length;
+            const winD = addWin("win-d", 0, world.desktop as Record<string, unknown>, true);
+            addWin("win-e", 600, world.desktop as Record<string, unknown>, false);
+            const frameBeforeD = JSON.stringify(frameOf(winD));
+            const beforeEnable = mocks.dbusCalls.length;
+            assert.equal(beforeEnable, callsWhileFloating, "no dispatch for arrivals while floating");
+            toggleWorkspaceTiling(mocks);
+            runEntryDebounce(mocks);
+            await drainOutstanding(mocks, engine, flushed);
+            const retiled = mocks.dbusCalls
+                .slice(beforeEnable)
+                .map((call) => JSON.parse(call.payload) as Record<string, unknown>)
+                .filter((payload) => domainOf(payload)["workspace"] === "ws-1")
+                .pop();
+            assert.ok(retiled !== undefined, "foreground resync dispatches after enable");
+            assert.equal(wireOf(retiled, "win-d")["floating"], true, "fixed arrival floats");
+            assert.equal(wireOf(retiled, "win-d")["fixed_auto"], true);
+            assert.ok(!("floating" in wireOf(retiled, "win-e")), "plain arrival tiles");
+            assert.equal(JSON.stringify(frameOf(winD)), frameBeforeD, "no geometry write to the fixed arrival");
+        } finally {
+            handle?.stop();
+            await engine.close();
+        }
+    });
+
+    it("explicit tile overrides survive disable and enable", async () => {
+        // Unfloat win-b (explicit override), then cycle tiling off and
+        // on: win-b stays tiled with suppression.
+        const world = fakeWorld();
+        world.workspace["activeWindow"] = world.wins[1];
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "entry starts");
+        const engine = EngineBridge.start();
+        const flushed = { count: 0 };
+        try {
+            fireAdded(world);
+            runEntryDebounce(mocks);
+            assert.ok(mocks.dbusCalls.length > 0, "startup dispatches");
+            flushed.count = 0;
+            await drainOutstanding(mocks, engine, flushed);
+            // Settle any chained follow-up before the explicit command so
+            // it cannot busy-refuse behind a stale auto flight.
+            runEntryDebounce(mocks);
+            await drainOutstanding(mocks, engine, flushed);
+            // Focus may have settled on the admitted tile; re-assert it
+            // before the explicit command.
+            world.workspace["activeWindow"] = world.wins[1];
+            handle?.requestFloat();
+            runEntryDebounce(mocks);
+            // Flush the toggle-float itself: its reply proves the commit
+            // (win-b rejoins topology). The request carries pre-apply
+            // state, so the reply is the evidence.
+            const toggleIndex = mocks.dbusCalls.length - 1;
+            const toggleReply = await flushAt(mocks, engine, toggleIndex);
+            assert.equal(toggleReply["outcome"], "planned", `unfloat plans, got ${JSON.stringify(toggleReply)}`);
+            assert.ok(
+                (toggleReply["desired_geometry"] as Array<Record<string, unknown>>).some(
+                    (entry) => entry["window"] === "win-b",
+                ),
+                "override tiles on commit",
+            );
+            flushed.count = toggleIndex + 1;
+            await drainOutstanding(mocks, engine, flushed);
+            toggleWorkspaceTiling(mocks);
+            const releaseIndex = mocks.dbusCalls.length - 1;
+            assert.equal(await flushAt(mocks, engine, releaseIndex).then((r) => r["outcome"]), "released");
+            runEntryDebounce(mocks);
+            flushed.count = releaseIndex + 1;
+            await drainOutstanding(mocks, engine, flushed);
+            const beforeEnable = mocks.dbusCalls.length;
+            toggleWorkspaceTiling(mocks);
+            runEntryDebounce(mocks);
+            await drainOutstanding(mocks, engine, flushed);
+            const retiled = mocks.dbusCalls
+                .slice(beforeEnable)
+                .map((call) => JSON.parse(call.payload) as Record<string, unknown>)
+                .filter((payload) => domainOf(payload)["workspace"] === "ws-1")
+                .pop();
+            assert.ok(retiled !== undefined, "foreground resync dispatches after enable");
+            assert.ok(!("floating" in wireOf(retiled, "win-b")), "override stays tiled across the cycle");
+            assert.equal(wireOf(retiled, "win-b")["fixed_suppress"], true);
+        } finally {
+            handle?.stop();
+            await engine.close();
+        }
+    });
+
+    it("intentional floats and sticky windows survive enable untouched", async () => {
+        // win-a floats intentional, win-c turns sticky: enable keeps both
+        // floating without origin and writes nothing to them.
+        const world = fakeWorld();
+        world.workspace["activeWindow"] = world.wins[0];
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "entry starts");
+        const engine = EngineBridge.start();
+        const flushed = { count: 0 };
+        try {
+            fireAdded(world);
+            runEntryDebounce(mocks);
+            assert.ok(mocks.dbusCalls.length > 0, "startup dispatches");
+            flushed.count = 0;
+            await drainOutstanding(mocks, engine, flushed);
+            runEntryDebounce(mocks);
+            await drainOutstanding(mocks, engine, flushed);
+            world.workspace["activeWindow"] = world.wins[0];
+            handle?.requestFloat();
+            runEntryDebounce(mocks);
+            // The toggle-float reply proves the intentional commit (win-a
+            // leaves topology with no origin); the request itself carries
+            // pre-apply state.
+            const floatIndex = mocks.dbusCalls.length - 1;
+            const floatReply = await flushAt(mocks, engine, floatIndex);
+            assert.equal(floatReply["outcome"], "planned", `float plans, got ${JSON.stringify(floatReply)}`);
+            assert.ok(
+                !(floatReply["desired_geometry"] as Array<Record<string, unknown>>).some(
+                    (entry) => entry["window"] === "win-a",
+                ),
+                "win-a leaves topology",
+            );
+            flushed.count = floatIndex + 1;
+            await drainOutstanding(mocks, engine, flushed);
+            const winA = world.wins[0] as Record<string, unknown>;
+            const winC = world.wins[2] as Record<string, unknown>;
+            winC["onAllDesktops"] = true;
+            const frameBeforeA = JSON.stringify(frameOf(winA));
+            toggleWorkspaceTiling(mocks);
+            const releaseIndex = mocks.dbusCalls.length - 1;
+            assert.equal(await flushAt(mocks, engine, releaseIndex).then((r) => r["outcome"]), "released");
+            runEntryDebounce(mocks);
+            flushed.count = releaseIndex + 1;
+            await drainOutstanding(mocks, engine, flushed);
+            const beforeEnable = mocks.dbusCalls.length;
+            toggleWorkspaceTiling(mocks);
+            runEntryDebounce(mocks);
+            await drainOutstanding(mocks, engine, flushed);
+            const foreground = mocks.dbusCalls
+                .slice(beforeEnable)
+                .map((call) => JSON.parse(call.payload) as Record<string, unknown>)
+                .filter((payload) => domainOf(payload)["workspace"] === "ws-1")
+                .pop();
+            assert.ok(foreground !== undefined, "foreground resync dispatches after enable");
+            assert.equal(wireOf(foreground, "win-a")["floating"], true, "intentional stays floating");
+            assert.ok(!("fixed_auto" in wireOf(foreground, "win-a")), "intentional gains no origin");
+            assert.equal(wireOf(foreground, "win-b")["floating"], true, "automatic stays floating");
+            assert.equal(wireOf(foreground, "win-b")["fixed_auto"], true);
+            assert.equal(JSON.stringify(frameOf(winA)), frameBeforeA, "no geometry write to the intentional float");
+            const stickyPayload = mocks.dbusCalls
+                .slice(beforeEnable)
+                .map((call) => JSON.parse(call.payload) as Record<string, unknown>)
+                .find((payload) => {
+                    try {
+                        const row = wireOf(payload, "win-c");
+                        return row["sticky"] === true;
+                    } catch (error) {
+                        void error;
+                        return false;
+                    }
+                });
+            assert.ok(stickyPayload !== undefined, "sticky window dispatches");
+            assert.equal(wireOf(stickyPayload, "win-c")["floating"], true, "sticky stays floating");
+            assert.ok(!("fixed_auto" in wireOf(stickyPayload, "win-c")), "sticky gains no origin");
         } finally {
             handle?.stop();
             await engine.close();

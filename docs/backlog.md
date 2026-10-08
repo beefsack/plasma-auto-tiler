@@ -13,13 +13,6 @@ decisions of 2026-09-24 are under
 - P0 | Implement 2026-10-08 decision changes | Review completed; selections approved.
   Implement the changed selections in shared core plus KDE, with Windows
   handoff updates (items 13/8/14 plus the same-axis move setting):
-  - D5 born-fullscreen first exit classifies as newly admitted: fixed floats
-    with no writes, otherwise tiles; prior fixed floats restore; no writes
-    during fullscreen. Deliberate COSMIC deviation for game safety.
-  - D6 workspace tiling enable checks every window being tiled including
-    arrivals while the workspace is floating: fixed stays/becomes untouched
-    float, others tile; explicit user tile overrides stay tiled;
-    intentional/sticky floats keep existing rules. COSMIC deviation.
   - D7 fixed-window user tile overrides persist across owner restart in the
     same intentional-float store with recompute fallback.
   - Migration D8 fullscreen plus maximized members are carried: no refusal
@@ -303,8 +296,9 @@ decisions of 2026-09-24 are under
   Q2 R-SPC-04 shared core/Linux planner + KDE delivered offline under user
   decisions 2026-10-08 (normative as delivered); D1 predicate setting and
   functional naming [delivered offline](changes/archive/admission-and-move-settings.md);
-  D5 first-fullscreen-exit, D6 tiling-enable check
-  and D7 tile-override store are pending implementation, then native checks;
+  D5 first-fullscreen-exit and D6 tiling-enable check
+  [delivered offline](changes/archive/fixed-size-exit-and-enable.md);
+  D7 tile-override store is pending implementation, then native checks;
   [record](changes/archive/fixed-size-admission.md). Windows Q2
   behavior remains unchanged; handoff item 13 supplies its exact wiring.
   Q3 R-RST-01 Linux planner/KDE intentional-float restart delivered offline
@@ -439,9 +433,9 @@ decisions of 2026-09-24 are under
   | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; KDE Q3 delivered offline under user decisions 2026-10-08 (normative as delivered). Ordinary/sticky intent must remain distinct from automatic fixed origin and recovery authority; Windows mechanism unselected, REQ-RST-01c stays OPEN. D7 tile-override restart store pending. |
   | 9 | Fullscreen send R-MAX-09 (Windows carry; NOT the parked parity-queue multi-output foundation) | Depends on handoff item 2 follow/stay wiring only; same-output workspace carry, no cross-output claim. |
   | 10 | Float/half-snap parity (a) R-FLT-07..11 | Independent of items 1-5; reuses existing focus/move catalog rows, no new chords. |
-  | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; first-fullscreen-exit is separate (D5 pending). B9 unmaximize/fresh-admit is the P0 item above. Independent of items 1-5. |
+  | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; first-fullscreen-exit is separate (D5 core/KDE delivered offline, Windows pending). B9 unmaximize/fresh-admit is the P0 item above. Independent of items 1-5. |
   | 12 | Non-local workspace modes parity (d) | Depends on handoff items 1/2 (ring + follow/stay) and the parked parity-queue multi-output foundation; last. |
-   | 13 | Q2 fixed-size float admission R-SPC-04 | KDE/shared offline delivery including D1 predicate setting and functional naming; Windows max-track observation, predicate/schema/UI and lifetime/origin wiring before enabling the Engine opt-in. KDE pending: first-fullscreen-exit, tiling-enable check, tile-override restart store. Fixed/maximize intersection coordinates with item 11. |
+  | 13 | Q2 fixed-size float admission R-SPC-04 | KDE/shared offline delivery including D1 predicate setting, D5 first-fullscreen-exit and D6 tiling-enable check; Windows max-track observation, predicate/schema/UI and lifetime/origin wiring before enabling the Engine opt-in. KDE pending: D7 tile-override restart store. Fixed/maximize intersection coordinates with item 11. |
   | 14 | Q4 whole-workspace migration R-WS-12 | Core/KDE offline delivery under user decisions 2026-10-08 (normative as delivered); depends on item 5's parked multi-output foundation, item 1 history invalidation and item 12 for non-local runtime modes. Pending: fullscreen+maximized carry overlays (changed D8). No Windows behavior delivered. |
 
   Q2 R-SPC-04 occupies handoff item 13 below; Q3 R-RST-01 KDE delivery is
@@ -1659,12 +1653,12 @@ decisions of 2026-09-24 are under
       launch clear; Ours Windows: one admission-time clear attempt,
       retained slots/fullscreen/floating domains exempt). No launch
       unmaximize, no one-shot retile restore. First fullscreen exit is separate
-      (D5 pending); B9 unmaximize/fresh-admit is the P0 item above;
+      (D5 core/KDE delivered offline, Windows pending); B9 unmaximize/fresh-admit is the P0 item above;
       no R-MAX-08 nav choice.
     - KDE exact (verified 2026-10-08 at `db31234`):
       `kwin/src/plan-adapter.ts:5933` `clearMaximizeAtAdmission` (skips
       fullscreen, skips attempted ids via `maximizeAdmissionAttempts`,
-      clears only the exact-ref-held born-fullscreen exit
+      clears only the non-fixed exact-ref-held born-fullscreen exit
       `heldInitialFullscreen`, echo arm/clear, observed refetch); call
       sites :5476/:5791; env `clearMaximize` :626; overlay = retained
       tile slot plus `fit_excluded` / `skip-maximized` isolation with
@@ -1731,7 +1725,9 @@ decisions of 2026-09-24 are under
       with a session-restored maximized A at a user-owned session
       boundary, no loop.
     - DoD: one-shot clear replaced by reserved-slot overlay on both legs;
-      first-fullscreen-exit separate from pending D5 and B9; matrix `R-MAX-03` /
+      first-fullscreen-exit separate (D5 Windows pending) from B9; D6 fixed
+      automatic workspace-enable exceptions stay slotless per item 13;
+      matrix `R-MAX-03` /
       `R-MAX-06` Ours Windows cells updated with dated offline evidence,
       native TBD.
 
@@ -1828,8 +1824,9 @@ decisions of 2026-09-24 are under
     are user decisions 2026-10-08 (normative as delivered).
     KDE/shared delivered offline; Windows behavior is unchanged in this delivery.
     D1 predicate setting and functional naming delivered offline
-    ([record](changes/archive/admission-and-move-settings.md)); D5, D6 and D7
-    remain pending KDE implementation. Windows predicate wiring remains pending.
+    ([record](changes/archive/admission-and-move-settings.md)); D5/D6 delivered
+    offline ([record](changes/archive/fixed-size-exit-and-enable.md)); D7
+    remains pending KDE implementation. Windows predicate and D5/D6 wiring remain pending.
     [Record](changes/archive/fixed-size-admission.md),
     [decisions](decisions.md#fixed-size-admission),
     [matrix](spec/reference-outcomes/special-windows.md#q2-fixed-size-admission-discriminators-2026-10-08).
@@ -1850,9 +1847,9 @@ decisions of 2026-09-24 are under
       Either-axis alternative is now `either-axis-fixed` (`Width or height fixed`),
       default `both-axes-fixed` (`Width and height both fixed`); both use the
       existing hint-validity guards. Breaking pre-release configs accepted, no
-      migration. Q3 boundary
-      explicitly touched only for fixed-size birth; later fixed/maximized
-      retile still uses R-MAX-03's reserved slot. Windows borderless-game
+      migration. D6 fixed/maximized workspace enable keeps the floating base
+      without a slot; explicit user tile overrides still use R-MAX-03's
+      reserved slot. Windows borderless-game
       inference stays selected; B9 unmaximize/fresh-admit is separately
       selected and implementation-pending (P0 item above).
     - References: COSMIC @3d55cba0 `src/shell/layout/mod.rs:46-52`,
@@ -1875,7 +1872,9 @@ decisions of 2026-09-24 are under
       command success, `retileAutomaticFixed`; optional `fixed_auto` and
       `fixed_suppress` wire assertions carry origin/override through domain
       release/adoption. `kwin/src/plan-adapter-entry.ts` `markTiledAndResync`
-      retiles automatic records only after confirmed release; native removal
+      resets sighted automatic and ordinary-admission pins only after confirmed release
+      so enable checks current hints/predicate; explicit user tile overrides
+      survive; current domain sightings protect omitted/moved identities. Native removal
       evicts identity, scoped/minimized absence does not. Real Planner and
       production-entry fixtures: `kwin/tests/fixed-size-admission.test.ts`,
       `kwin/tests/fixed-size-workspace-entry.test.ts`.
@@ -1900,8 +1899,18 @@ decisions of 2026-09-24 are under
       `admission_clear_eligible`, :3810 `clear_maximize_at_admission`, :8726
       `admit_slotless_maximized`, :8622 `admit_born_fullscreen`, and
       `src/product_hide.rs:825` `admit_managed_claim`. Fixed/maximized birth
-      floats without clear/slot; later workspace retile uses item 11's
-      reserved-overlay route. Never change the captionless full-monitor
+      floats without clear/slot. On the FIRST born-fullscreen exit for the
+      same lifetime, query current usable hints and apply the configured
+      predicate before maximize-clear/restore/slot side effects: fixed becomes
+      an untouched automatic float, non-fixed tiles; prior fixed floats
+      restore floating. Later fullscreen toggles retain ordinary admission
+      identity. No writes during fullscreen or to automatic fixed floats.
+      On workspace enable, check EVERY tile candidate, including arrivals
+      while floating and formerly ordinary tiles whose hints changed; reset
+      ordinary admission/automatic marks but preserve explicit user tile
+      overrides and intentional/sticky rules. Fixed stays/becomes untouched
+      float, non-fixed tiles, including under maximize; only explicit tile
+      overrides use item 11's reserved-overlay route. Never change the captionless full-monitor
       inference or app-owned fullscreen/preimage rules as part of Q2.
     - Carry live lifetime-bound origin and override through
       `src/tiling.rs:1226` `build_reconcile_event_for_floating`, :1281
@@ -1937,8 +1946,12 @@ decisions of 2026-09-24 are under
     - [ ] Portable: full hint table, opt-out unchanged behavior, fresh
       foreground/hidden startup, both hint transitions, explicit unfloat /
       sticky overrides through hide/domain adoption, ID reuse, fixed/max
-      birth and retile/native restore, born/prior-float fullscreen, automatic
-      vs intentional workspace enable, failure paths and no-write accounting.
+      birth and enable/native restore, born/prior-float fullscreen, first-exit
+      hint/predicate changes and repeated toggles, fixed/non-fixed arrivals
+      while floating, changed hints/predicate at enable, explicit tile
+      overrides vs ordinary admission pins, intentional/sticky controls,
+      failure paths and all setter no-write accounting. Both new classification
+      points must emit bounded correlated decision diagnostics.
     - [ ] Windows-only: fresh max-track/DPI/inset observations, timeout/hung
       clients, native overlay/restore and fixed borderless/exclusive games;
       user owns live checks on the Windows PC. Linux tests prove none of these.
@@ -1948,7 +1961,7 @@ decisions of 2026-09-24 are under
     - DoD: decided clauses implemented with current Windows
       rules preserved; dated Ours Windows matrix/spec evidence, no native
       claim without user testing; user decisions 2026-10-08 approved, changed
-      D1 Windows wiring and D5/D6/D7 implementation pending.
+      D1/D5/D6 Windows wiring and D7 implementation pending.
 
   - Item 14: Q4 whole-active-workspace output migration R-WS-12. The addition
     was accepted 2026-10-07; D1-D9 detail is user decisions 2026-10-08
@@ -2343,6 +2356,18 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 
 ### Single-output laptop
 
+- D5 born-fullscreen first exit incl. games (KDE offline delivered): both
+  predicates, current hints/predicate after fullscreen churn, non-fixed exit
+  tiles, prior fixed float restores, later toggles retain identity. Verify no
+  fullscreen writes and no geometry/focus/stacking/keep-above/maximize-clear
+  writes to fixed first exits; correlated classification logs.
+  [Record](changes/archive/fixed-size-exit-and-enable.md). User-owned, native TBD.
+- D6 tiling enable with fixed windows (KDE offline delivered): fixed/non-fixed
+  arrivals while floating, formerly ordinary tiles gaining fixed hints,
+  predicate changes, explicit user tile overrides, intentional/sticky floats
+  and fixed/maximized controls. Fixed automatic floats stay untouched; others
+  tile, overrides retain Q3 slots. Verify classification logs and no writes.
+  [Record](changes/archive/fixed-size-exit-and-enable.md). User-owned, native TBD.
 - KDE Q3 R-RST-01/03/04 (offline delivered, user decisions 2026-10-08): intentional
   ordinary float plus automatic fixed float and a tile; script stop/start
   preserves ordinary intent/current frame, automatic fixed identity recomputes.
@@ -2374,12 +2399,13 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   new client/ref and owner restart recompute (D7 tile-override persistence
   pending implementation). Sticky origin commands retain
   their prior semantics. Fixed born-maximized stays floating beneath native
-  maximize; float workspace -> tiled while still maximized reserves a Q3
-  slot, native unmaximize lands there. Born-fullscreen first exit classifies
-  as newly admitted after implementation (fixed floats with no writes,
+  maximize; workspace enable keeps fixed automatic floats slotless while
+  maximized, native unmaximize stays floating (explicit tile overrides use Q3).
+  Born-fullscreen first exit classifies
+  as newly admitted (fixed floats with no writes,
   otherwise tiles; prior fixed-floating fullscreen restores floating; no
   writes while fullscreen). Workspace enable checks every window being tiled
-  after implementation (fixed stays/becomes untouched float including arrivals
+  (fixed stays/becomes untouched float including arrivals
   while floating, others tile; user tile overrides stay tiled;
   intentional/sticky keep existing rules).
   Foreground/hidden startup and correlated classification/admission/terminal

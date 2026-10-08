@@ -5243,12 +5243,17 @@ function startPlanAdapterEntryOnce(
         }
         workspaceNative.handleTopologySignal();
         emitWorkspaceTiling();
-        // Q2 workspace retile (D6): see adapter retileAutomaticFixed.
-        // The following resync observation carries the retile itself.
+        // Q2 enable recheck (D6): reset by CURRENT sightings per domain,
+        // then the resync observation classifies. Omitted members keep
+        // their records; see adapter retileAutomaticFixed.
         try {
             for (const id of ids) {
                 for (const snapshot of collectReleaseSnapshots(id)) {
-                    adapter.retileAutomaticFixed(snapshot.domainOutput, snapshot.domainWorkspace);
+                    adapter.retileAutomaticFixed(
+                        snapshot.domainOutput,
+                        snapshot.domainWorkspace,
+                        snapshot.windows.map((entry) => entry.id),
+                    );
                 }
             }
         } catch (error) {

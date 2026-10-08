@@ -2866,13 +2866,11 @@ export class PlanAdapter {
                     this.heldInitialFullscreen.delete(entry.id);
                     if (heldRef === entry.ref) {
                         this.logToken(`${LOG_PREFIX}:initial-fullscreen-released window=${entry.id}`);
-                        // Born-fullscreen fixed bypass (D5): the first
-                        // normal observation tiles, so record an explicit
-                        // tile win and never auto-float this live client.
-                        const hints = this.hintSizesFor(entry.ref);
-                        if (isFixedSize(hints.minSize, hints.maxSize, this.readFixedSizePredicate())) {
-                            this.noteFixedTileOverride(entry.id, entry.ref);
-                        }
+                        // D5: born-fullscreen first exit is fresh admission.
+                        // No pin here: the classifier below floats fixed
+                        // windows automatic with the CURRENT predicate and
+                        // tiles the rest. A reused id with a different ref
+                        // already released above without inheriting.
                     }
                     changed = true;
                 }
@@ -3338,7 +3336,10 @@ export class PlanAdapter {
             if (record.kind === "auto") {
                 return "auto";
             }
-            if (record.kind === "suppress") {
+            // Ordinary "pinned" admissions ride the suppress wire shape so
+            // migration preserves the tile; only the enable seam tells
+            // them apart.
+            if (record.kind === "suppress" || record.kind === "pinned") {
                 return "suppress";
             }
             return null;
@@ -3813,17 +3814,29 @@ export class PlanAdapter {
         }
     }
 
-    // Retile automatic fixed floats homed on one domain when workspace
-    // tiling is enabled (D6): their marks convert to suppress pins (D3)
-    // so the next observation tiles them and later classification cannot
-    // re-float them, while intentional/sticky floats keep their
-    // membership. No geometry, focus, or stacking write happens here
-    // (D8): the following resync observation carries the retile.
-    retileAutomaticFixed(output: string, workspace: string): void {
-        const key = `${output}\u0000${workspace}`;
+    // D6 enable seam: reset automatic and ordinary-admission pins for
+    // the CURRENTLY SIGHTED members of one domain so the resync
+    // re-evaluates every window under CURRENT hints/predicate. Reset
+    // keys on the sighted id set from the confirming observation, never
+    // on the stored domain (refreshed only by dispatch sightings, so a
+    // move while minimized/background-omitted would otherwise reset a
+    // foreign mark or miss the new homing). Members absent from the
+    // sightings keep their records, so omitted automatic identity is
+    // never erased. Explicit tile overrides (suppress), intentional
+    // floats and sticky (recordless) survive. No writes here; the
+    // resync observation carries the outcome.
+    retileAutomaticFixed(output: string, workspace: string, sightedIds: ReadonlyArray<string>): void {
+        void output;
+        void workspace;
+        const sighted = new Set<string>();
+        for (const id of sightedIds) {
+            if (typeof id === "string") {
+                sighted.add(id);
+            }
+        }
         for (const [id, record] of [...this.fixedClients]) {
-            if (record.kind === "auto" && record.domain === key) {
-                this.fixedClients.set(id, { ref: record.ref, kind: "suppress", domain: key, reported: true });
+            if (sighted.has(id) && (record.kind === "auto" || record.kind === "pinned")) {
+                this.fixedClients.delete(id);
             }
         }
     }
@@ -3861,11 +3874,8 @@ export class PlanAdapter {
             if (prior !== undefined && prior.ref !== ref) {
                 this.fixedClients.delete(entry.id);
             }
-            // Verified native sticky adopts as intentional (D6, mirroring
-            // core): a sticky observation drops any automatic or suppress
-            // record for the same ref, rides without provenance, and is
-            // therefore kept by workspace enable. Sticky-off follows the
-            // existing previous-float rules from here on.
+            // Verified native sticky adopts as intentional (D6): any
+            // record for the same ref drops, rides without provenance.
             if (entry.sticky === true) {
                 const live = this.fixedClients.get(entry.id);
                 if (live !== undefined && live.ref === ref) {
@@ -3880,19 +3890,20 @@ export class PlanAdapter {
             const liveDomain = `${entry.output}\u0000${entry.workspace}`;
             // Retained automatic floats keep identity across hint changes
             // (D2): still floating with origin, still no writes. Refresh
-            // the homing domain from this sighting.
+            // homing. Enable reset deletes these records first, so this
+            // path never skips the D6 recheck.
             if (record !== undefined && record.kind === "auto" && record.ref === ref) {
                 record.domain = liveDomain;
                 return entry.floating === true
                     ? { ...entry, fixedAuto: true as const }
                     : { ...entry, floating: true, fixedAuto: true as const };
             }
-            // Suppress pins (explicit tile wins and pinned normals) stay
-            // tiled across hint changes (D2/D3). Refresh homing; never
-            // float from here. The wire suppression rides only on fixed
-            // hints (the only shape core could reclassify), so hintless
-            // and non-fixed rows stay byte-identical.
-            if (record !== undefined && record.kind === "suppress" && record.ref === ref) {
+            // Tile pins stay tiled across hint changes (D2/D3): explicit
+            // "suppress" wins and ordinary "pinned" admissions share this
+            // path and wire shape. Refresh homing; never float from here.
+            // Wire suppression rides only on fixed hints, so hintless and
+            // non-fixed rows stay byte-identical.
+            if (record !== undefined && (record.kind === "suppress" || record.kind === "pinned") && record.ref === ref) {
                 record.domain = liveDomain;
                 if (!isFixedSize(entry.minSize, entry.maxSize, predicate)) {
                     const { fixedAuto: _dropped, fixedSuppress: _drop2, ...rest } = entry;
@@ -3920,11 +3931,11 @@ export class PlanAdapter {
                 return entry;
             }
             if (!isFixedSize(entry.minSize, entry.maxSize, predicate)) {
-                // Pin normal first admission (D2/D3): a tiled live client
-                // seen normal records suppression for later, when hints
-                // turn fixed or a recreated session re-observes it. The
-                // wire stays byte-identical until hints are fixed.
-                this.fixedClients.set(entry.id, { ref, kind: "suppress", domain: liveDomain, reported: true });
+                // Pin ordinary first admission: a tiled live client seen
+                // normal records "pinned" for later. Distinct from explicit
+                // "suppress" wins: enable reset drops pins but keeps wins.
+                // Wire stays byte-identical until hints are fixed.
+                this.fixedClients.set(entry.id, { ref, kind: "pinned", domain: liveDomain, reported: true });
                 const { fixedAuto: _dropped, fixedSuppress: _drop2, ...rest } = entry;
                 void _dropped;
                 void _drop2;
@@ -6923,11 +6934,19 @@ export class PlanAdapter {
         for (const entry of observed.windows) {
             // Q3 includes floating-to-tiled admission: keep maximize over a
             // reserved slot. Only a held born-fullscreen exit clears once,
-            // before carriedSnapshot releases the exact-ref hold.
+            // before carriedSnapshot releases the exact-ref hold. D5: a
+            // fixed exit floats untouched with no writes, so skip the
+            // clear (and its refetch) using the CURRENT predicate.
             if (entry.fullscreen || !entry.maximized || this.maximizeAdmissionAttempts.has(entry.id)) {
                 continue;
             }
             if (this.heldInitialFullscreen.get(entry.id) !== entry.ref) {
+                continue;
+            }
+            const exitHints = this.hintSizesFor(entry.ref);
+            if (isFixedSize(exitHints.minSize, exitHints.maxSize, this.readFixedSizePredicate())) {
+                const resourceClass = isOpaqueId(entry.resourceClass) ? entry.resourceClass : "unknown";
+                this.logToken(`${LOG_PREFIX}:maximize-admission-clear window=${entry.id} resource_class=${resourceClass} outcome=skipped-fixed`);
                 continue;
             }
             this.maximizeAdmissionAttempts.add(entry.id);

@@ -879,41 +879,72 @@ impl super::Session {
             );
             flags_adopted += 1;
         }
-        // Known floating observed tiled: drop the exception and re-admit
-        // through normal placement below. An automatic fixed float
-        // re-tiled this way (workspace retile, D6) records an explicit
-        // tile win so later re-observation keeps it tiled (D3); hint
-        // changes alone never reach this flag-driven branch (D2).
+        // Known floating observed tiled. D5 first exits and D6 enable
+        // rechecks float fixed windows without explicit wins; only an
+        // observed suppress signal records a tile win (D3). The
+        // still-fullscreen hold below is opt-in only: legacy retile
+        // keeps its exact behavior with the opt-in off.
         let mut to_tile: Vec<WindowId> = Vec::new();
         for id in self.exceptions.keys() {
-            if observed.get(id).is_some_and(|entry| !entry.floating)
-                && new_exceptions.contains_key(id)
+            if observed.get(id).is_some_and(|entry| {
+                !entry.floating && (!self.fixed_admission || !entry.fullscreen)
+            }) && new_exceptions.contains_key(id)
             {
                 to_tile.push(id.clone());
             }
         }
         for id in &to_tile {
+            let entry = observed.get(id).expect("to_tile observed");
+            let suppressed = entry.fixed_suppress;
+            let overridden = self.fixed_tile_override.contains(id);
+            let was_automatic = new_automatic.contains(id);
+            let fixed_now =
+                crate::size_hints::is_fixed_size_with(entry.hints, self.fixed_predicate);
+            if self.fixed_admission && was_automatic && !suppressed && fixed_now {
+                flags_adopted += 1;
+                continue;
+            }
+            if self.fixed_admission
+                && !was_automatic
+                && !suppressed
+                && !overridden
+                && !entry.sticky
+                && fixed_now
+            {
+                new_automatic.insert(id.clone());
+                flags_adopted += 1;
+                continue;
+            }
             new_exceptions.remove(id);
-            // An automatic fixed float re-tiled here (workspace retile,
-            // D6) records an explicit tile win so later re-observation
-            // keeps it tiled (D3). An observed suppress signal records
-            // the same win for the adapter-retained live client.
-            // Intentional floats without either keep existing behavior:
-            // plain re-admit with nothing inferred from hints alone (D2).
-            let suppressed = observed.get(id).is_some_and(|entry| entry.fixed_suppress);
-            let was_automatic = new_automatic.remove(id);
-            if was_automatic || (self.fixed_admission && suppressed) {
+            new_automatic.remove(id);
+            if self.fixed_admission && suppressed {
                 new_override.insert(id.clone());
             }
             flags_adopted += 1;
         }
-        // A sticky observation on a known automatic float adopts it as
-        // intentional (sticky origin semantics unchanged): workspace
-        // retile (D6) preserves it from here on.
+        // Sticky observations adopt automatics as intentional.
         for (id, entry) in &observed {
             if entry.sticky && new_automatic.contains(*id) {
                 new_automatic.remove(*id);
             }
+        }
+        // Adapter-asserted origin on a known floating exception adopts
+        // the marker unless a tile win competes (D3).
+        for (id, entry) in &observed {
+            if !entry.floating || !entry.fixed_auto || entry.fixed_suppress || entry.sticky {
+                continue;
+            }
+            if !new_exceptions.contains_key(*id) || new_automatic.contains(*id) {
+                continue;
+            }
+            if self.fixed_tile_override.contains(*id) || new_override.contains(*id) {
+                continue;
+            }
+            if !self.fixed_admission {
+                continue;
+            }
+            new_automatic.insert((*id).clone());
+            flags_adopted += 1;
         }
         // Brand-new floating windows become exceptions directly. Known
         // floating intent stays intentional: the automatic marker is set
@@ -941,12 +972,31 @@ impl super::Session {
                 flags_adopted += 1;
             }
         }
-        // Brand-new fixed-size windows float at admission (D1): a floating
-        // exception with an automatic marker, never a tiled slot and never
-        // geometry/focus writes (D8). Born fullscreen bypasses (D5) and
-        // admits tiled below; born maximized floats under its native
-        // maximize overlay with no reserved tile (D4). Explicit user tile
-        // wins (D3) admit tiled below.
+        // Brand-new fixed windows float with an automatic marker (D1,
+        // D8). Brand-new fullscreen holds slotless without a marker so
+        // the first exit classifies fresh (D5); born maximized floats
+        // under its overlay with no reserved tile (D4).
+        // Direct fullscreen arrivals (floating=false) hold here; the
+        // synthetic adapter hold (floating+fullscreen) held above.
+        for (id, entry) in &observed {
+            if !self.fixed_admission || entry.sticky {
+                continue;
+            }
+            if self.windows.contains_key(*id)
+                || self.exceptions.contains_key(*id)
+                || new_exceptions.contains_key(*id)
+            {
+                continue;
+            }
+            if !entry.fullscreen || entry.floating {
+                continue;
+            }
+            new_exceptions.insert(
+                (*id).clone(),
+                floating_record(id, &entry.output, &entry.workspace, None),
+            );
+            flags_adopted += 1;
+        }
         for (id, entry) in &observed {
             if self.windows.contains_key(*id)
                 || self.exceptions.contains_key(*id)

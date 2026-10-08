@@ -981,10 +981,10 @@ describe("fixed-size admission through the real Planner", () => {
             mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-real-x1" });
             dispatchAdded(mocks);
             await drainOutstanding(mocks, engine, flushed);
-            // A background-domain snapshot carries no win-b row; it must not
-            // destroy the foreground automatic record. The foreign retile
-            // targets ws-9, so a nudged foreground dispatch keeps floating.
-            adapter.retileAutomaticFixed("out-1", "ws-9");
+            // A background-domain snapshot carries no win-b row; the reset
+            // keys on CURRENT sightings, so the foreign call preserves
+            // the foreground automatic record.
+            adapter.retileAutomaticFixed("out-1", "ws-9", ["win-h"]);
             mocks.observeImpl = () =>
                 makeObserved(refs, {
                     fingerprint: "fp-real-x2",
@@ -994,17 +994,18 @@ describe("fixed-size admission through the real Planner", () => {
             assert.equal(wireOf(kept, "win-b")["floating"], true, "foreign retile keeps identity");
             assert.equal(wireOf(kept, "win-b")["fixed_auto"], true);
             await drainOutstanding(mocks, engine, flushed);
-            // Retile scoped to another domain misses; retile scoped to the
-            // homed domain tiles with suppression through the real Planner.
-            adapter.retileAutomaticFixed("out-1", "ws-1");
+            // D6: enable resets by sighting, so the homed-domain call
+            // re-evaluates and fresh-classifies the still-fixed client.
+            // An explicit suppress tiles (D3, covered in the unfloat rows).
+            adapter.retileAutomaticFixed("out-1", "ws-1", ["win-a", "win-b"]);
             mocks.observeImpl = () =>
                 makeObserved(refs, {
                     fingerprint: "fp-real-x4",
                     rects: { "win-a": { x: 8, y: 0, w: 600, h: 800 } },
                 });
-            const retiled = dispatchAdded(mocks);
-            assert.ok(!("floating" in wireOf(retiled, "win-b")), "current-domain retile tiles");
-            assert.equal(wireOf(retiled, "win-b")["fixed_suppress"], true);
+            const still = dispatchAdded(mocks);
+            assert.equal(wireOf(still, "win-b")["floating"], true, "homed enable keeps floating");
+            assert.equal(wireOf(still, "win-b")["fixed_auto"], true);
             await drainOutstanding(mocks, engine, flushed);
         } finally {
             await engine.close();
@@ -1133,8 +1134,9 @@ describe("fixed-size admission through the real Planner", () => {
                 "planned",
             );
             // Workspace enable keeps the adopted sticky: it is intentional,
-            // never an automatic retile candidate.
-            adapter.retileAutomaticFixed("out-1", "ws-1");
+            // never a reset candidate (recordless, and absent from the
+            // sighted reset only if omitted - here sighted but sticky).
+            adapter.retileAutomaticFixed("out-1", "ws-1", ["win-a", "win-b"]);
             mocks.observeImpl = () =>
                 makeObserved(refs, {
                     floatingB: true,
@@ -1205,7 +1207,7 @@ describe("fixed-size admission through the real Planner", () => {
         }
     });
 
-    it("born fullscreen tiles on exit with placement, never actuated while held", async () => {
+    it("born fullscreen exits fresh with fixed floating untouched", async () => {
         const { refs, mocks } = fixedMocks();
         enableAdapter(mocks);
         const engine = EngineBridge.start();
@@ -1220,24 +1222,198 @@ describe("fixed-size admission through the real Planner", () => {
                 [],
                 "no writes while fullscreen held",
             );
-            // First normal observation tiles via the held-release pin: the
-            // tile takes its planned slot (an explicit placement write),
-            // with no keep-above, focus, or intentional-setter writes.
+            // First normal observation is fresh admission (D5): fixed
+            // floats automatic with no writes at all (no geometry,
+            // keep-above, focus, stacking, or maximize clear).
             mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-real-fs2" });
             const exit = dispatchAdded(mocks);
-            assert.ok(!("floating" in wireOf(exit, "win-b")), "born fullscreen exits tiled");
-            assert.equal(wireOf(exit, "win-b")["fixed_suppress"], true);
+            assert.equal(wireOf(exit, "win-b")["floating"], true, "fixed exit floats");
+            assert.equal(wireOf(exit, "win-b")["fixed_auto"], true);
             const reply = await flushPlan(mocks, engine, 1);
             assert.equal(reply["outcome"], "planned", `exit plans, got ${JSON.stringify(reply)}`);
-            const slot = desiredWindows(reply).find((entry) => entry["window"] === "win-b");
-            assert.ok(slot !== undefined, "exited tile rejoins the topology");
+            assert.ok(
+                !desiredWindows(reply).some((entry) => entry["window"] === "win-b"),
+                "exited float takes no slot",
+            );
             assert.deepEqual(
                 mocks.geometries.filter((write) => write.target === refs.b),
-                [{ target: refs.b, rect: slot["rect"] as { x: number; y: number; w: number; h: number } }],
-                "exit places the tile exactly once in its planned slot",
+                [],
+                "exit writes no geometry to the fixed float",
             );
             assert.deepEqual(mocks.keepAboveWrites, [], "no keep-above around fullscreen exit");
             assert.deepEqual(mocks.floatingWrites, [], "no intentional setters around fullscreen exit");
+            assert.deepEqual(mocks.maximizeClears, [], "no maximize clear for the fixed exit");
+            assert.deepEqual(mocks.desktopToggles, [], "no sticky writes around fullscreen exit");
+            const line = mocks.logs.find((entry) => entry.includes("fixed-size-classification"));
+            assert.ok(line !== undefined, "bounded classification diagnostic emitted");
+            assert.ok(!line.includes("win-"), line);
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("born fullscreen nonfixed exits tiled with placement", async () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.constraintsImpl = (): PlanWindowConstraints | null => null;
+        enableAdapter(mocks);
+        const engine = EngineBridge.start();
+        try {
+            mocks.observeImpl = () => makeObserved(refs, { fullscreenB: true, fingerprint: "fp-real-fsn1" });
+            dispatchAdded(mocks);
+            assert.equal(await flushPlan(mocks, engine, 0).then((reply) => reply["outcome"]), "planned");
+            mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-real-fsn2" });
+            const exit = dispatchAdded(mocks);
+            assert.ok(!("floating" in wireOf(exit, "win-b")), "nonfixed exit tiles");
+            const reply = await flushPlan(mocks, engine, 1);
+            assert.equal(reply["outcome"], "planned", `exit plans, got ${JSON.stringify(reply)}`);
+            assert.ok(
+                desiredWindows(reply).some((entry) => entry["window"] === "win-b"),
+                "exited tile rejoins the topology",
+            );
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("held fullscreen exit with maximize and fixed hints skips the clear", async () => {
+        // D5 maximize-clear gate: a newly fixed float on first exit gets
+        // no writes including maximize clear.
+        const { refs, mocks } = fixedMocks();
+        enableAdapter(mocks);
+        const engine = EngineBridge.start();
+        try {
+            mocks.observeImpl = () => makeObserved(refs, { fullscreenB: true, fingerprint: "fp-real-fsm1" });
+            dispatchAdded(mocks);
+            assert.equal(await flushPlan(mocks, engine, 0).then((reply) => reply["outcome"]), "planned");
+            // Exit still maximized with fixed hints: floats, no clear.
+            mocks.observeImpl = () =>
+                makeObserved(refs, { maximizedB: true, fingerprint: "fp-real-fsm2" });
+            const exit = dispatchAdded(mocks);
+            assert.equal(wireOf(exit, "win-b")["floating"], true, "fixed exit floats");
+            assert.equal(wireOf(exit, "win-b")["fixed_auto"], true);
+            const reply = await flushPlan(mocks, engine, 1);
+            assert.equal(reply["outcome"], "planned", `exit plans, got ${JSON.stringify(reply)}`);
+            assert.deepEqual(mocks.maximizeClears, [], "no maximize clear for fixed exit");
+            assert.deepEqual(
+                mocks.geometries.filter((write) => write.target === refs.b),
+                [],
+                "no geometry for fixed exit",
+            );
+            assert.deepEqual(
+                mocks.activeWrites.filter((target) => target === refs.b),
+                [],
+                "no refocus of the exiting float",
+            );
+            assert.deepEqual(mocks.keepAboveWrites, [], "no keep-above for fixed exit");
+            assert.deepEqual(mocks.desktopToggles, [], "no sticky writes for fixed exit");
+            assert.ok(
+                mocks.logs.some((line) => line.includes("outcome=skipped-fixed")),
+                "skip-fixed diagnostic logged",
+            );
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("fullscreen hint churn and predicate switch classify only at first exit", async () => {
+        // D5: hints/predicate changing while held must not classify; the
+        // first non-fullscreen observation for the same lifetime uses
+        // CURRENT state. Born hintless under both-axes, fixed hints and
+        // either-axis arrive while held: exit floats.
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let predicate: unknown = "both-axes-fixed";
+        Object.assign(mocks.env, { readFixedSizePredicate: (): unknown => predicate });
+        mocks.constraintsImpl = (target): PlanWindowConstraints | null => {
+            if (target === refs.b && (mocks as { fixedOn?: boolean }).fixedOn === true) {
+                return { resizeable: false, minSize: { ...FIXED }, maxSize: { ...FIXED } };
+            }
+            return { resizeable: true, minSize: null, maxSize: null };
+        };
+        enableAdapter(mocks);
+        const engine = EngineBridge.start();
+        try {
+            mocks.observeImpl = () => makeObserved(refs, { fullscreenB: true, fingerprint: "fp-real-fc1" });
+            const held = dispatchAdded(mocks);
+            assert.ok(!("fixed_auto" in wireOf(held, "win-b")), "hintless hold claims nothing");
+            assert.equal(await flushPlan(mocks, engine, 0).then((reply) => reply["outcome"]), "planned");
+            // Fixed hints arrive while still fullscreen: still held, still
+            // no origin and no writes.
+            (mocks as { fixedOn?: boolean }).fixedOn = true;
+            mocks.observeImpl = () => makeObserved(refs, { fullscreenB: true, fingerprint: "fp-real-fc2" });
+            const churned = dispatchAdded(mocks);
+            assert.ok(!("fixed_auto" in wireOf(churned, "win-b")), "no classification while fullscreen");
+            assert.equal(await flushPlan(mocks, engine, 1).then((reply) => reply["outcome"]), "planned");
+            assert.deepEqual(
+                mocks.geometries.filter((write) => write.target === refs.b),
+                [],
+                "no writes while held",
+            );
+            // Predicate switches to either-axis while held (one-axis would
+            // also do, but fixed hints already discriminate): exit floats
+            // with the current predicate on the wire.
+            predicate = "either-axis-fixed";
+            mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-real-fc3" });
+            const exit = dispatchAdded(mocks);
+            assert.equal(exit["fixed_size_predicate"], "either-axis-fixed");
+            assert.equal(wireOf(exit, "win-b")["floating"], true, "first exit floats");
+            assert.equal(wireOf(exit, "win-b")["fixed_auto"], true);
+            const reply = await flushPlan(mocks, engine, 2);
+            assert.equal(reply["outcome"], "planned", `exit plans, got ${JSON.stringify(reply)}`);
+            assert.ok(
+                !desiredWindows(reply).some((entry) => entry["window"] === "win-b"),
+                "exited float takes no slot",
+            );
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("later fullscreen exits keep retained identity instead of re-admitting", async () => {
+        // First exit floats the fixed born client; a second fullscreen
+        // cycle with lost hints retains the automatic (D2) with no slot
+        // and no writes: later exits are not fresh admissions.
+        const { refs, mocks } = fixedMocks();
+        enableAdapter(mocks);
+        const engine = EngineBridge.start();
+        try {
+            mocks.observeImpl = () => makeObserved(refs, { fullscreenB: true, fingerprint: "fp-real-fl1" });
+            dispatchAdded(mocks);
+            assert.equal(await flushPlan(mocks, engine, 0).then((reply) => reply["outcome"]), "planned");
+            mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-real-fl2" });
+            dispatchAdded(mocks);
+            assert.equal(await flushPlan(mocks, engine, 1).then((reply) => reply["outcome"]), "planned");
+            // Second fullscreen: rides with origin, no actuation.
+            mocks.observeImpl = () => makeObserved(refs, { fullscreenB: true, fingerprint: "fp-real-fl3" });
+            const under = dispatchAdded(mocks);
+            assert.equal(wireOf(under, "win-b")["floating"], true);
+            assert.equal(wireOf(under, "win-b")["fixed_auto"], true);
+            assert.equal(await flushPlan(mocks, engine, 2).then((reply) => reply["outcome"]), "planned");
+            // Hints are lost before the second exit: retention still
+            // floats with origin (ordinary identity, not re-admission).
+            mocks.constraintsImpl = (): PlanWindowConstraints | null => null;
+            mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-real-fl4" });
+            const restored = dispatchAdded(mocks);
+            assert.equal(wireOf(restored, "win-b")["floating"], true, "later exit retains float");
+            assert.equal(wireOf(restored, "win-b")["fixed_auto"], true);
+            const reply = await flushPlan(mocks, engine, 3);
+            assert.equal(reply["outcome"], "planned", `restore plans, got ${JSON.stringify(reply)}`);
+            assert.ok(
+                !desiredWindows(reply).some((entry) => entry["window"] === "win-b"),
+                "retained float still takes no slot",
+            );
+            assert.deepEqual(
+                mocks.geometries.filter((write) => write.target === refs.b),
+                [],
+                "no writes across the second cycle",
+            );
+            assert.deepEqual(mocks.keepAboveWrites, [], "no keep-above across the second cycle");
+            assert.deepEqual(
+                mocks.activeWrites.filter((target) => target === refs.b),
+                [],
+                "no refocus across the second cycle",
+            );
         } finally {
             await engine.close();
         }
@@ -1280,7 +1456,7 @@ describe("fixed-size admission through the real Planner", () => {
         }
     });
 
-    it("workspace enable retiles automatic on the enabled domain only", async () => {
+    it("workspace enable keeps automatic floating while explicit overrides tile", async () => {
         const { refs, mocks } = fixedMocks();
         const adapter = enableAdapter(mocks);
         const engine = EngineBridge.start();
@@ -1288,26 +1464,36 @@ describe("fixed-size admission through the real Planner", () => {
             mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-real-w1" });
             dispatchAdded(mocks);
             assert.equal(await flushPlan(mocks, engine, 0).then((reply) => reply["outcome"]), "planned");
-            adapter.retileAutomaticFixed("out-1", "ws-1");
+            // D6: enable resets by sighting; the resync re-evaluates and
+            // fresh-classifies the still-fixed client. No writes to it.
+            adapter.retileAutomaticFixed("out-1", "ws-1", ["win-a", "win-b"]);
             mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-real-w2" });
-            const retiled = dispatchAdded(mocks);
-            assert.ok(!("floating" in wireOf(retiled, "win-b")), "enabled-domain automatic retiles");
-            const reply = await flushPlan(mocks, engine, 1);
-            assert.equal(reply["outcome"], "planned", `retile plans, got ${JSON.stringify(reply)}`);
-            assert.ok(
-                desiredWindows(reply).some((entry) => entry["window"] === "win-b"),
-                "retiled client rejoins the topology",
-            );
-            // An intentional float observed floating is never automatic: the
-            // same enable keeps its membership.
-            mocks.observeImpl = () => makeObserved(refs, { floatingB: true, fingerprint: "fp-real-w3" });
-            dispatchAdded(mocks);
-            await flushPlan(mocks, engine, mocks.dbusCalls.length - 1);
-            adapter.retileAutomaticFixed("out-1", "ws-1");
-            mocks.observeImpl = () => makeObserved(refs, { floatingB: true, fingerprint: "fp-real-w4" });
             const kept = dispatchAdded(mocks);
-            assert.equal(wireOf(kept, "win-b")["floating"], true);
-            assert.ok(!("fixed_auto" in wireOf(kept, "win-b")), "intentional keeps no origin");
+            assert.equal(wireOf(kept, "win-b")["floating"], true, "enable keeps automatic floating");
+            assert.equal(wireOf(kept, "win-b")["fixed_auto"], true);
+            const reply = await flushPlan(mocks, engine, 1);
+            assert.equal(reply["outcome"], "planned", `enable plans, got ${JSON.stringify(reply)}`);
+            assert.ok(
+                !desiredWindows(reply).some((entry) => entry["window"] === "win-b"),
+                "kept float takes no slot",
+            );
+            assert.deepEqual(
+                mocks.geometries.filter((write) => write.target === refs.b),
+                [],
+                "no geometry write to the kept float",
+            );
+            // Explicit same-live-client tile overrides still tile (D3):
+            // unfloat the automatic, prove the slot, and confirm the
+            // suppress pin survives.
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.b, fingerprint: "fp-real-w3" });
+            adapter.requestFloat();
+            runDebounce(mocks);
+            const unfloat = await flushPlan(mocks, engine, mocks.dbusCalls.length - 1);
+            assert.equal(unfloat["outcome"], "planned", `unfloat plans, got ${JSON.stringify(unfloat)}`);
+            assert.ok(
+                desiredWindows(unfloat).some((entry) => entry["window"] === "win-b"),
+                "override rejoins the topology",
+            );
         } finally {
             await engine.close();
         }
@@ -1465,10 +1651,10 @@ describe("fixed-size admission through the real Planner", () => {
         }
     });
 
-    it("an automatic readmission retile scopes to its current homing", async () => {
+    it("an automatic readmission stays floating on enable homing", async () => {
         // The same live client admitted automatic on ws-1, released, and
-        // readmitted automatic on ws-2: a stale-domain retile must miss
-        // while the current-domain retile tiles with suppression.
+        // readmitted automatic on ws-2: enable calls keep it floating on
+        // its current homing (D6); explicit suppress would tile (D3).
         const { refs, mocks } = fixedMocks();
         const adapter = enableAdapter(mocks);
         const engine = EngineBridge.start();
@@ -1496,8 +1682,9 @@ describe("fixed-size admission through the real Planner", () => {
                 !desiredWindows(admit).some((entry) => entry["window"] === "win-b"),
                 "readmitted automatic takes no slot",
             );
-            // Stale-domain retile misses the transferred record.
-            adapter.retileAutomaticFixed("out-1", "ws-1");
+            // Stale-domain reset keys on sightings: ws-1 no longer sights
+            // win-b, so the transferred record survives and keeps floating.
+            adapter.retileAutomaticFixed("out-1", "ws-1", ["win-a"]);
             mocks.observeImpl = () =>
                 makeObserved(refs, {
                     domainWorkspace: "ws-2",
@@ -1510,22 +1697,79 @@ describe("fixed-size admission through the real Planner", () => {
                 await flushPlan(mocks, engine, mocks.dbusCalls.length - 1).then((reply) => reply["outcome"]),
                 "planned",
             );
-            // Current-domain retile tiles with suppression and proof.
-            adapter.retileAutomaticFixed("out-1", "ws-2");
+            // Current-domain enable resets by sighting and re-evaluates:
+            // still fixed, so it stays floating (D6).
+            adapter.retileAutomaticFixed("out-1", "ws-2", ["win-a", "win-b"]);
             mocks.observeImpl = () =>
                 makeObserved(refs, {
                     domainWorkspace: "ws-2",
                     fingerprint: "fp-real-g4",
                     rects: { "win-a": { x: 8, y: 0, w: 600, h: 800 } },
                 });
-            const retiled = dispatchAdded(mocks);
-            assert.ok(!("floating" in wireOf(retiled, "win-b")), "current retile tiles");
-            assert.equal(wireOf(retiled, "win-b")["fixed_suppress"], true);
+            const kept = dispatchAdded(mocks);
+            assert.equal(wireOf(kept, "win-b")["floating"], true, "enable keeps floating");
+            assert.equal(wireOf(kept, "win-b")["fixed_auto"], true);
             const reply = await flushPlan(mocks, engine, mocks.dbusCalls.length - 1);
-            assert.equal(reply["outcome"], "planned", `retile plans, got ${JSON.stringify(reply)}`);
+            assert.equal(reply["outcome"], "planned", `enable plans, got ${JSON.stringify(reply)}`);
             assert.ok(
-                desiredWindows(reply).some((entry) => entry["window"] === "win-b"),
-                "retiled client rejoins the topology",
+                !desiredWindows(reply).some((entry) => entry["window"] === "win-b"),
+                "kept float takes no slot",
+            );
+        } finally {
+            await engine.close();
+        }
+    });
+
+    it("enable reset preserves omitted automatic identity without fresh classification", async () => {
+        // G3: the reset keys on CURRENT sightings. A minimized (omitted)
+        // automatic is absent from the sighted set, so its record
+        // survives and the next dispatch retains it silently. A
+        // domain-keyed reset would erase it and re-emit classification.
+        const { refs, mocks } = fixedMocks();
+        const adapter = enableAdapter(mocks);
+        const engine = EngineBridge.start();
+        try {
+            mocks.observeImpl = () => makeObserved(refs, { fingerprint: "fp-real-om1" });
+            dispatchAdded(mocks);
+            assert.equal(await flushPlan(mocks, engine, 0).then((reply) => reply["outcome"]), "planned");
+            const classified = mocks.logs.filter((entry) => entry.includes("fixed-size-classification")).length;
+            assert.equal(classified, 1, "admission classifies once");
+            // Omitted from the enable sightings (minimized): preserved.
+            adapter.retileAutomaticFixed("out-1", "ws-1", ["win-a"]);
+            assert.equal(adapter.originOfFixedClient("win-b", refs.b), "auto", "omitted record kept");
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    fingerprint: "fp-real-om2",
+                    rects: { "win-a": { x: 4, y: 0, w: 600, h: 800 } },
+                });
+            const kept = dispatchAdded(mocks);
+            assert.equal(wireOf(kept, "win-b")["floating"], true, "omitted automatic retained");
+            assert.equal(wireOf(kept, "win-b")["fixed_auto"], true);
+            assert.equal(
+                mocks.logs.filter((entry) => entry.includes("fixed-size-classification")).length,
+                classified,
+                "retained marks emit no fresh classification",
+            );
+            assert.equal(
+                await flushPlan(mocks, engine, 1).then((reply) => reply["outcome"]),
+                "planned",
+            );
+            // Sighted reset does re-evaluate: same call with win-b
+            // included drops the record, and the resync fresh-classifies.
+            adapter.retileAutomaticFixed("out-1", "ws-1", ["win-a", "win-b"]);
+            assert.equal(adapter.originOfFixedClient("win-b", refs.b), null, "sighted record reset");
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    fingerprint: "fp-real-om3",
+                    rects: { "win-a": { x: 8, y: 0, w: 600, h: 800 } },
+                });
+            const fresh = dispatchAdded(mocks);
+            assert.equal(wireOf(fresh, "win-b")["floating"], true, "sighted fixed floats fresh");
+            assert.equal(wireOf(fresh, "win-b")["fixed_auto"], true);
+            assert.equal(
+                mocks.logs.filter((entry) => entry.includes("fixed-size-classification")).length,
+                classified + 1,
+                "fresh classification emits once",
             );
         } finally {
             await engine.close();

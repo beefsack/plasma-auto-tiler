@@ -2,9 +2,11 @@
 //!
 //! Drives `Planner::evaluate` (retained live-tree sessions, opt-in
 //! enabled) with complete observations: fixed windows take floating
-//! membership with no tiled geometry, born fullscreen tiles, hint churn
-//! never reclassifies, sticky-off retiles, and the diagnostic summary
-//! stays bounded with correlation and no identifiers.
+//! membership with no tiled geometry, born fullscreen exits fresh
+//! (fixed floats, nonfixed tiles), hint churn never reclassifies,
+//! sticky-off retiles with suppression, automatic stays floating on
+//! enable, and the diagnostic summary stays bounded with correlation
+//! and no identifiers.
 
 use tiler_protocol::planner_protocol::{
     FIXED_ADMISSION_PREFIX, Planner, summarize_fixed_admission,
@@ -152,7 +154,7 @@ fn fixed_floats_with_no_tiled_geometry() {
 }
 
 #[test]
-fn born_fullscreen_fixed_tiles_and_exits_tiled() {
+fn born_fullscreen_fixed_exits_floating_nonfixed_tiles() {
     let mut planner = Planner::new();
     // Born fullscreen rides the synthetic floating hold (as the adapter
     // sends it): bypasses the classifier with no automatic marker (D5).
@@ -176,6 +178,7 @@ fn born_fullscreen_fixed_tiles_and_exits_tiled() {
         !geometry_windows(&born).contains(&"win-s".to_owned()),
         "born fullscreen takes no tile while held {born}"
     );
+    // First exit is fresh admission (D5): fixed floats untouched.
     let exit = reply_value(&planner.evaluate(&reconcile_request(
         "fixed-plan-fs-2",
         "win-s",
@@ -183,8 +186,28 @@ fn born_fullscreen_fixed_tiles_and_exits_tiled() {
     )));
     assert_eq!(exit["outcome"], "planned", "{exit}");
     assert!(
-        geometry_windows(&exit).contains(&"win-s".to_owned()),
-        "exits tiled on a tiled workspace {exit}"
+        !geometry_windows(&exit).contains(&"win-s".to_owned()),
+        "fixed exits floating {exit}"
+    );
+    // Nonfixed born fullscreen exits tiled.
+    let mut planner2 = Planner::new();
+    let born2 = reply_value(&planner2.evaluate(&reconcile_request(
+        "fixed-plan-fs-3",
+        "win-n",
+        vec![entry(
+            "win-n", 0, true, true, false, false, false, None, None,
+        )],
+    )));
+    assert_eq!(born2["outcome"], "planned", "{born2}");
+    let exit2 = reply_value(&planner2.evaluate(&reconcile_request(
+        "fixed-plan-fs-4",
+        "win-n",
+        vec![plain("win-n", 0)],
+    )));
+    assert_eq!(exit2["outcome"], "planned", "{exit2}");
+    assert!(
+        geometry_windows(&exit2).contains(&"win-n".to_owned()),
+        "nonfixed exits tiled {exit2}"
     );
 }
 
@@ -267,9 +290,10 @@ fn sticky_off_retiles_fixed_while_sticky_floats_stay() {
     )));
     assert_eq!(second["outcome"], "planned", "{second}");
     assert!(!geometry_windows(&second).contains(&"win-f".to_owned()));
-    // Workspace enable retiles the automatic float (D6): win-f arrives
-    // non-floating and rejoins the tree while the sticky float keeps
-    // its membership.
+    // Workspace enable keeps the automatic float (D6): win-f arrives
+    // non-floating without suppression and stays floating, while the
+    // sticky float keeps its membership. An explicit suppress would
+    // tile (D3, see suppress_signal_tiles_without_reclassifying).
     let third = reply_value(&planner.evaluate(&reconcile_request(
         "fixed-plan-s-3",
         "win-a",
@@ -291,8 +315,8 @@ fn sticky_off_retiles_fixed_while_sticky_floats_stay() {
     )));
     assert_eq!(third["outcome"], "planned", "{third}");
     assert!(
-        geometry_windows(&third).contains(&"win-f".to_owned()),
-        "automatic retiled {third}"
+        !geometry_windows(&third).contains(&"win-f".to_owned()),
+        "automatic stays floating on enable {third}"
     );
     assert!(
         !geometry_windows(&third).contains(&"win-g".to_owned()),
