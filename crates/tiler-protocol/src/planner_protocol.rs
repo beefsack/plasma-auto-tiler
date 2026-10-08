@@ -10732,21 +10732,27 @@ mod tests {
             serde_json::json!({"op": "reconcile"}),
         );
         assert_eq!(parse_reply(&planner.evaluate(&seed))["outcome"], "planned");
-        // Fullscreen overlay refuses before any retained mutation.
-        let mut overlay = migrate_entry("win-1", false);
-        overlay["fullscreen"] = serde_json::Value::Bool(true);
-        overlay["fit_excluded"] = serde_json::Value::Bool(true);
-        let refused = parse_reply(&planner.evaluate(&migrate_request(
-            "migrate-neg-overlay",
-            "win-1",
-            vec![overlay, migrate_entry("win-2", false)],
-            "out-2",
-            "ws-1",
-            migrate_body("right"),
-        )));
-        assert_eq!(refused["outcome"], "rejected", "{refused}");
-        assert_eq!(refused["kind"], "overlay-present", "{refused}");
-        // Maximized-shaped fit-excluded (no floating/sticky/fullscreen) refuses.
+        // D8: fullscreen members carry. Verified on an isolated planner so
+        // the refusal checks below keep a pristine source slot.
+        {
+            let mut carry = Planner::new();
+            assert_eq!(parse_reply(&carry.evaluate(&seed))["outcome"], "planned");
+            let mut overlay = migrate_entry("win-1", false);
+            overlay["fullscreen"] = serde_json::Value::Bool(true);
+            overlay["fit_excluded"] = serde_json::Value::Bool(true);
+            let carried = parse_reply(&carry.evaluate(&migrate_request(
+                "migrate-carry-overlay",
+                "win-1",
+                vec![overlay, migrate_entry("win-2", false)],
+                "out-2",
+                "ws-1",
+                migrate_body("right"),
+            )));
+            assert_eq!(carried["outcome"], "planned", "{carried}");
+            assert_eq!(carried["kind"], "migrate-workspace", "{carried}");
+            assert_eq!(carried["detail"]["active_window"], "win-1", "{carried}");
+        }
+        // Maximized-shaped fit-excluded (no floating/sticky/fullscreen/maximized) refuses.
         let mut maximized = migrate_entry("win-1", false);
         maximized["fit_excluded"] = serde_json::Value::Bool(true);
         let refused = parse_reply(&planner.evaluate(&migrate_request(
@@ -10834,20 +10840,26 @@ mod tests {
         )));
         assert_eq!(refused["outcome"], "rejected", "{refused}");
         assert_eq!(refused["kind"], "unknown-domain", "{refused}");
-        // A maximized float is an overlay even though it floats: the
-        // explicit maximized flag (not the fit-excluded proxy) refuses.
-        let mut max_float = migrate_entry("win-1", true);
-        max_float["maximized"] = serde_json::Value::Bool(true);
-        let refused = parse_reply(&planner.evaluate(&migrate_request(
-            "migrate-neg-max-float",
-            "win-1",
-            vec![max_float, migrate_entry("win-2", false)],
-            "out-2",
-            "ws-1",
-            migrate_body("right"),
-        )));
-        assert_eq!(refused["outcome"], "rejected", "{refused}");
-        assert_eq!(refused["kind"], "overlay-present", "{refused}");
+        // A maximized float carries with its exception slot preserved.
+        // Verified on an isolated planner to keep the shared refusal
+        // planner pristine.
+        {
+            let mut carry = Planner::new();
+            assert_eq!(parse_reply(&carry.evaluate(&seed))["outcome"], "planned");
+            let mut max_float = migrate_entry("win-1", true);
+            max_float["maximized"] = serde_json::Value::Bool(true);
+            let carried = parse_reply(&carry.evaluate(&migrate_request(
+                "migrate-carry-max-float",
+                "win-1",
+                vec![max_float, migrate_entry("win-2", false)],
+                "out-2",
+                "ws-1",
+                migrate_body("right"),
+            )));
+            assert_eq!(carried["outcome"], "planned", "{carried}");
+            assert_eq!(carried["kind"], "migrate-workspace", "{carried}");
+            assert_eq!(carried["detail"]["floats"], 1, "{carried}");
+        }
     }
 
     #[test]

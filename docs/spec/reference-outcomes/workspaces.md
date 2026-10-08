@@ -657,7 +657,7 @@ verb inventory); selected intent and doc assertions are never evidence.
   workspace only; an independent leg with WS2 explicitly selected
   migrates with its stable backing id retained, implemented offline,
   native journey TBD; NORMATIVE D1-D9, User 2026-10-08, D8 carry
-  implementation pending). [Engine](../../../crates/tiler-core/src/engine.rs),
+  delivered offline 2026-10-09). [Engine](../../../crates/tiler-core/src/engine.rs),
   [adapter](../../../kwin/src/workspace-send-adapter.ts),
   [native map](../../../kwin/src/workspace-native.ts),
   [fixtures](../../../kwin/tests/workspace-migrate.test.ts),
@@ -665,7 +665,7 @@ verb inventory); selected intent and doc assertions are never evidence.
 - Then Ours Windows: no-counterpart (index `Select`/`Send` only; no
   whole-workspace verb). `S(S-ours-planops)`.
 - Variant hook: NORMATIVE workspace-output migration (User 2026-10-08;
-  D8 carry implementation pending).
+  D8 carry delivered offline).
 
 ### R-WS-13: select absent WS9
 
@@ -988,9 +988,9 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
 
 Targets follow [workspace migration D1-D9](../../decisions.md#workspaces)
 (User 2026-10-08 selections, REQ-WS-12a..i). KDE
-R-WS-21..26 carry offline Engine/adapter/fixture evidence; D1-D7/D9 native
+R-WS-21..26 carry offline Engine/adapter/fixture evidence; D1-D9 native
 runtime outcomes are TBD (no live acceptance recorded here); D8 carry is
-implementation pending plus live check. Ours Windows
+delivered offline 2026-10-09 with live check pending. Ours Windows
 has no whole-workspace verb. Reference overlay-carry evidence below is
 source-read at the stated pins; all other unsupported reference outcomes
 stay TBD:
@@ -1132,8 +1132,12 @@ baseline above is unchanged. Record:
   maximized migrating member, (c) a fullscreen/maximized client in
   the affected target current view. Strict local/true.
 - When: migrate right; inspect all native writes and focus.
+- Discriminating legs: make the fullscreen member active; use different output
+  work areas and delayed native re-fit. Separately enter fullscreen during a
+  member transfer, while awaiting arrival, and immediately before follow.
 - Observe: whole carry vs whole no-write refusal; extra
-  size/position/focus writes while fullscreen.
+  size/position/focus writes while fullscreen; retained maximize slot after
+  native unmaximize on the target; native fullscreen focus retention (TBD).
 - Then COSMIC: carries: `Workspace::set_output` moves the tiling plus
   floating layers, all mapped, minimized, and active fullscreen surfaces
   to the new output with no refusal gate. `S(S-cos-wsmove-fs)`;
@@ -1173,14 +1177,21 @@ baseline above is unchanged. Record:
   maximized members are carried with no refusal in moved members or
   affected views; the tiler issues only the native move with no extra
   size/position/focus writes while fullscreen. An explicit user move is not
-  unwanted interference. Prior `overlay-present` refusal implemented
-  offline; CHANGED carry selected, implementation pending plus live check.
+  unwanted interference. Delivered offline 2026-10-09: maximized overlay and
+  reserved slot retained without unmaximize, affected-view overlays allowed;
+  native re-fit geometry drift does not invalidate arrival. Immediate live
+  guards suppress overlay geometry and fullscreen focus writes. Fullscreen
+  follow logs `native-only`, not confirmed native client focus. Frozen-state
+  changes still settle/reconcile normally. Exact native focus/re-fit and
+  mid-flight mode-change outcomes remain TBD for user testing.
   [Adapter](../../../kwin/src/workspace-send-adapter.ts),
-  [fixtures](../../../kwin/tests/workspace-migrate.test.ts).
+  [fixtures](../../../kwin/tests/workspace-migrate.test.ts),
+  [Engine fixtures](../../../kwin/tests/workspace-migrate-engine-fixture.test.ts),
+  [record](../../changes/archive/migration-overlay-carry.md).
 - Then Ours Windows: no-counterpart (no whole-workspace verb).
   `S(S-ours-planops)`.
 - Variant hook: NORMATIVE overlay carry (User 2026-10-08; D8 CHANGED,
-  selected, implementation pending plus live check).
+  delivered offline, live check pending).
 
 <a id="r-ws-26-history-hotplug-invalidation"></a>
 ### R-WS-26: history invalidation and hotplug-return removal

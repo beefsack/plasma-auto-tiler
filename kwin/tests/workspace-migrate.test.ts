@@ -888,6 +888,11 @@ interface AWorld {
     outputResolves: number;
     taintTargetViewOnTransfer: boolean;
     taintMemberOnTransfer: string | null;
+    taintFullscreenOnTransfer: string | null;
+    // Frozen observation flags per member: the mock observer reports these
+    // instead of the live flags, modelling a flip that lands after the last
+    // hold observation. Live reads still see the true flags.
+    observedFlagOverride: Map<string, { fullscreen: boolean; maximized: boolean }>;
     taintOnViewSwitch: string | null;
     taintOnSourceSwitch: string | null;
     sendBackOnSourceSwitch: string | null;
@@ -976,6 +981,8 @@ function makeAWorld(): AWorld {
         outputResolves: 0,
         taintTargetViewOnTransfer: false,
         taintMemberOnTransfer: null,
+        taintFullscreenOnTransfer: null,
+        observedFlagOverride: new Map(),
         taintOnViewSwitch: null,
         taintOnSourceSwitch: null,
         sendBackOnSourceSwitch: null,
@@ -1056,6 +1063,9 @@ function mockMigrateEnv(world: AWorld): WorkspaceSendAdapterEnv {
                 // Automatic floats observe floating (ordinary observation
                 // parity); tile overrides stay tiled.
                 const floating = win.floating || win.sticky || win.fixedAuto;
+                const override = world.observedFlagOverride.get(win.id);
+                const fullscreen = override?.fullscreen ?? win.fullscreen;
+                const maximized = override?.maximized ?? win.maximized;
                 return Object.freeze({
                     id: win.id,
                     ref: win.ref,
@@ -1063,9 +1073,9 @@ function mockMigrateEnv(world: AWorld): WorkspaceSendAdapterEnv {
                     output: win.output,
                     floating,
                     sticky: win.sticky,
-                    fullscreen: win.fullscreen,
-                    maximized: win.maximized,
-                    fitExcluded: floating || win.sticky || win.fullscreen || win.maximized,
+                    fullscreen,
+                    maximized,
+                    fitExcluded: floating || win.sticky || fullscreen || maximized,
                     minimized: win.minimized,
                     transient: win.transient,
                     fixedAuto: win.fixedAuto,
@@ -1138,6 +1148,9 @@ function mockMigrateEnv(world: AWorld): WorkspaceSendAdapterEnv {
                 related.map((win) => {
                     const floating = win.floating || win.sticky || win.fixedAuto;
                     const parentId = win.transient ? (resolveParent(win) ?? null) : null;
+                    const override = world.observedFlagOverride.get(win.id);
+                    const fullscreen = override?.fullscreen ?? win.fullscreen;
+                    const maximized = override?.maximized ?? win.maximized;
                     return Object.freeze({
                         id: win.id,
                         ref: win.ref,
@@ -1147,9 +1160,9 @@ function mockMigrateEnv(world: AWorld): WorkspaceSendAdapterEnv {
                         minimized: win.minimized,
                         floating,
                         sticky: win.sticky,
-                        fullscreen: win.fullscreen,
-                        maximized: win.maximized,
-                        fitExcluded: floating || win.sticky || win.fullscreen || win.maximized,
+                        fullscreen,
+                        maximized,
+                        fitExcluded: floating || win.sticky || fullscreen || maximized,
                     });
                 }),
             );
@@ -1265,6 +1278,13 @@ function mockMigrateEnv(world: AWorld): WorkspaceSendAdapterEnv {
                     victim.maximized = true;
                 }
                 world.taintMemberOnTransfer = null;
+            }
+            if (world.taintFullscreenOnTransfer !== null) {
+                const victim = world.wins.find((entry) => entry.id === world.taintFullscreenOnTransfer);
+                if (victim !== undefined) {
+                    victim.fullscreen = true;
+                }
+                world.taintFullscreenOnTransfer = null;
             }
             return true;
         },
@@ -1543,34 +1563,10 @@ describe("migrate adapter dispatch", () => {
             { name: "mode", mutate: (world) => { world.mode = "bogus"; }, token: "mode-invalid" },
             { name: "per-output-false", mutate: (world) => { world.perOutput = false; }, token: "per-output-disabled" },
             { name: "per-output-null", mutate: (world) => { world.perOutput = null; }, token: "per-output-unreadable" },
-            {
-                name: "overlay-source",
-                mutate: (world) => { (world.wins.find((win) => win.id === "win-a") as AMWin).fullscreen = true; },
-                token: "overlay-present",
-            },
-            {
-                name: "overlay-target",
-                mutate: (world) => { (world.wins.find((win) => win.id === "win-t") as AMWin).maximized = true; },
-                token: "overlay-present",
-            },
-            {
-                name: "overlay-maxfloat",
-                mutate: (world) => {
-                    const win = world.wins.find((entry) => entry.id === "win-f") as AMWin;
-                    win.maximized = true;
-                },
-                token: "overlay-present",
-            },
-            {
-                name: "overlay-minimized",
-                mutate: (world) => {
-                    const win = world.wins.find((entry) => entry.id === "win-t") as AMWin;
-                    win.minimized = true;
-                    win.fullscreen = true;
-                },
-                token: "overlay-present",
-            },
         ];
+        // D8: fullscreen/maximized source, target, float, and minimized-view
+        // overlays carry via native remap and never refuse here; they are
+        // covered by the carry tests below.
         for (const testCase of cases) {
             const world = makeAWorld();
             testCase.mutate(world);
@@ -2106,15 +2102,190 @@ describe("migrate minimized and related natives", () => {
         assertMigrateRedacted(world);
     });
 
-    it("refuses a fullscreen transient dialog with zero native writes", () => {
+    it("carries a fullscreen transient dialog implicitly with no explicit setter", () => {
         const world = makeAWorld();
         addWin(world, "win-x", "out-1", "ws-1", { transient: true, transientFor: "win-a", fullscreen: true });
         const adapter = startMigrateAdapter(world);
-        assert.equal(adapter.requestMigrateWorkspace("right"), false);
-        assert.ok(world.logs.some((line) => line.includes("outcome=overlay-present")));
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(world.writes, 0);
-        assert.equal(world.settled.length, 0);
+        // D8: related fullscreen transients ride their parent implicitly and
+        // never refuse the migration.
+        const correlation = dispatchMigrate(world, adapter);
+        answerMigrate(world, 1, migratePlannedReply(correlation));
+        assert.deepEqual(world.transfers, ["win-a", "win-b", "win-f"]);
+        assert.ok(!world.transfers.includes("win-x"));
+        const child = world.wins.find((win) => win.id === "win-x") as AMWin;
+        assert.equal(child.output, "out-2");
+        assert.equal(world.settled.length, 1);
+    });
+
+    it("carries fullscreen members with native move only and no focus write", () => {
+        const world = makeAWorld();
+        (world.wins.find((win) => win.id === "win-a") as AMWin).fullscreen = true;
+        const adapter = startMigrateAdapter(world);
+        const correlation = dispatchMigrate(world, adapter);
+        answerMigrate(world, 1, migratePlannedReply(correlation));
+        // Fullscreen member transfers natively but takes no geometry write;
+        // the tiled sibling still takes its planned geometry.
+        assert.deepEqual(world.transfers, ["win-a", "win-b", "win-f"]);
+        assert.deepEqual(
+            world.geometries.map((entry) => entry.id).sort(),
+            ["win-b"],
+        );
+        // Fullscreen active takes no tiler focus write.
+        assert.deepEqual(world.focuses, []);
+        assert.ok(
+            world.logs.some((line) => line.includes("stage=follow") && line.includes("outcome=native-only")),
+            world.logs.join("\n"),
+        );
+        assert.ok(world.logs.some((line) => line.includes("stage=release") && line.includes("outcome=arrived")));
+        assert.equal(world.views.get("out-2"), "ws-1");
+        assert.equal(world.settled.length, 1);
+        const carried = world.logs.filter((line) => line.includes("event=overlays-carried"));
+        assert.equal(carried.length, 1, world.logs.join("\n"));
+        const carriedLine: string = carried[0] as string;
+        assert.ok(carriedLine.includes("fullscreen=1"), carriedLine);
+        assert.ok(carriedLine.includes("maximized=0"), carriedLine);
+        assert.ok(!carriedLine.includes("win-a"), carriedLine);
+        assertMigrateRedacted(world);
+    });
+
+    it("carries maximized members with slot preserved and no unmaximize", () => {
+        const world = makeAWorld();
+        (world.wins.find((win) => win.id === "win-b") as AMWin).maximized = true;
+        const adapter = startMigrateAdapter(world);
+        const correlation = dispatchMigrate(world, adapter);
+        answerMigrate(world, 1, migratePlannedReply(correlation));
+        assert.deepEqual(world.transfers, ["win-a", "win-b", "win-f"]);
+        // Maximized member skips geometry but keeps its flag and output.
+        assert.deepEqual(
+            world.geometries.map((entry) => entry.id).sort(),
+            ["win-a"],
+        );
+        const moved = world.wins.find((win) => win.id === "win-b") as AMWin;
+        assert.equal(moved.output, "out-2");
+        assert.equal(moved.maximized, true);
+        // Tiled active still focuses after verified arrival and views.
+        assert.deepEqual(world.focuses, ["win-a"]);
+        assert.equal(world.settled.length, 1);
+        assertMigrateRedacted(world);
+    });
+
+    it("carries affected-view overlays without refusal", () => {
+        for (const overlay of ["fullscreen", "maximized"] as const) {
+            const world = makeAWorld();
+            const target = world.wins.find((win) => win.id === "win-t") as AMWin;
+            if (overlay === "fullscreen") {
+                target.fullscreen = true;
+            } else {
+                target.maximized = true;
+            }
+            const adapter = startMigrateAdapter(world);
+            const correlation = dispatchMigrate(world, adapter, "right");
+            answerMigrate(world, 1, migratePlannedReply(correlation));
+            assert.deepEqual(world.transfers, ["win-a", "win-b", "win-f"], overlay);
+            assert.equal(target.output, "out-2", overlay);
+            assert.equal(target.workspace, "ws-9", overlay);
+            assert.equal(world.views.get("out-2"), "ws-1", overlay);
+            assert.equal(world.settled.length, 1, overlay);
+            assertMigrateRedacted(world);
+        }
+    });
+
+    it("skips geometry for a member that turns fullscreen during its own transfer", () => {
+        const world = makeAWorld();
+        world.taintFullscreenOnTransfer = "win-a";
+        const adapter = startMigrateAdapter(world);
+        const correlation = dispatchMigrate(world, adapter);
+        answerMigrate(world, 1, migratePlannedReply(correlation));
+        // win-a flipped live during its transfer: its geometry is skipped,
+        // while the planning-window flag change still fails the next hold.
+        assert.deepEqual(world.transfers, ["win-a"]);
+        assert.deepEqual(world.geometries, []);
+        assert.deepEqual(world.viewSwitches, []);
+        assert.deepEqual(world.focuses, []);
+        assert.ok(world.logs.some((line) => line.includes("outcome=write-failed")));
+        assert.equal(world.settled.length, 1);
+        assertMigrateRedacted(world);
+    });
+
+    it("skips deferred geometry for a member that turns fullscreen while waiting", () => {
+        const world = makeAWorld();
+        world.holdTransfer = true;
+        const adapter = startMigrateAdapter(world);
+        const correlation = dispatchMigrate(world, adapter);
+        answerMigrate(world, 1, migratePlannedReply(correlation));
+        assert.ok(world.logs.some((line) => line.includes("outcome=waiting")));
+        // Delayed arrival: win-b turns fullscreen after the last observation.
+        // The frozen observation models the planning window; live reads see
+        // the flip and skip its deferred geometry.
+        world.holdTransfer = false;
+        for (const win of world.wins) {
+            if (win.id === "win-a" || win.id === "win-b" || win.id === "win-f") {
+                win.output = "out-2";
+            }
+        }
+        (world.wins.find((win) => win.id === "win-b") as AMWin).fullscreen = true;
+        world.observedFlagOverride.set("win-b", { fullscreen: false, maximized: false });
+        const handlers = [...world.arrivalHandlers];
+        for (const handler of handlers) {
+            handler();
+        }
+        assert.deepEqual(
+            world.geometries.map((entry) => entry.id).sort(),
+            ["win-a"],
+        );
+        assert.equal(world.views.get("out-2"), "ws-1");
+        assert.deepEqual(world.focuses, ["win-a"]);
+        assert.ok(world.logs.some((line) => line.includes("outcome=arrived")));
+        assert.equal(world.settled.length, 1);
+        assertMigrateRedacted(world);
+    });
+
+    it("skips focus for an active member that turns fullscreen before focus", () => {
+        const world = makeAWorld();
+        const adapter = startMigrateAdapter(world);
+        const correlation = dispatchMigrate(world, adapter);
+        // The active flips fullscreen after dispatch; the frozen observation
+        // models the planning window while live reads see the flip.
+        (world.wins.find((win) => win.id === "win-a") as AMWin).fullscreen = true;
+        world.observedFlagOverride.set("win-a", { fullscreen: false, maximized: false });
+        answerMigrate(world, 1, migratePlannedReply(correlation));
+        // No geometry and no focus touch the live-fullscreen active; the
+        // flight still arrives on verified placement and views.
+        assert.deepEqual(
+            world.geometries.map((entry) => entry.id).sort(),
+            ["win-b"],
+        );
+        assert.equal(world.views.get("out-2"), "ws-1");
+        assert.deepEqual(world.focuses, []);
+        assert.ok(
+            world.logs.some((line) => line.includes("stage=follow") && line.includes("outcome=native-only")),
+            world.logs.join("\n"),
+        );
+        assert.ok(world.logs.some((line) => line.includes("outcome=arrived")));
+        assert.equal(world.settled.length, 1);
+        assertMigrateRedacted(world);
+    });
+
+    it("keeps initially maximized members native-only even if flags later read normal", () => {
+        const world = makeAWorld();
+        (world.wins.find((win) => win.id === "win-b") as AMWin).maximized = true;
+        const adapter = startMigrateAdapter(world);
+        const correlation = dispatchMigrate(world, adapter);
+        // Cleared natively after dispatch; the frozen observation keeps the
+        // planning window while the reserved slot stays native-only.
+        (world.wins.find((win) => win.id === "win-b") as AMWin).maximized = false;
+        world.observedFlagOverride.set("win-b", { fullscreen: false, maximized: true });
+        answerMigrate(world, 1, migratePlannedReply(correlation));
+        assert.deepEqual(world.transfers, ["win-a", "win-b", "win-f"]);
+        assert.deepEqual(
+            world.geometries.map((entry) => entry.id).sort(),
+            ["win-a"],
+        );
+        assert.equal((world.wins.find((win) => win.id === "win-b") as AMWin).output, "out-2");
+        assert.deepEqual(world.focuses, ["win-a"]);
+        assert.ok(world.logs.some((line) => line.includes("outcome=arrived")));
+        assert.equal(world.settled.length, 1);
+        assertMigrateRedacted(world);
     });
 });
 

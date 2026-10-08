@@ -692,20 +692,82 @@ describe("migrate engine fixture", () => {
         }
     });
 
-    it("refuses protected source views with zero native writes", async () => {
+    it("carries a fullscreen member with native move only and no geometry or focus writes", async () => {
         const harness = await makeHarness();
         try {
             await harness.settlePlan();
             harness.winById("m-win-1").fullScreen = true;
-            const before = harness.sendOps().length;
+            const fullBefore = harness.frameOf(harness.winById("m-win-1"));
+            const tiledBefore = harness.frameOf(harness.winById("m-win-2"));
+            // Track native writes: frameGeometry sets prove geometry writes,
+            // activeWindow sets prove focus writes. Fullscreen must take
+            // neither; the tiled sibling still takes its planned geometry.
+            let activeWrites = 0;
+            let activeValue = harness.workspace["activeWindow"];
+            Object.defineProperty(harness.workspace, "activeWindow", {
+                get: (): unknown => activeValue,
+                set: (value: unknown): void => {
+                    activeWrites += 1;
+                    activeValue = value;
+                },
+                configurable: true,
+            });
+            const frameWrites = new Map<string, number>();
+            for (const win of harness.wins) {
+                let value: unknown = win.frameGeometry as unknown;
+                let count = 0;
+                frameWrites.set(win.internalId, 0);
+                const id = win.internalId;
+                Object.defineProperty(win, "frameGeometry", {
+                    get: (): unknown => value,
+                    set: (next: unknown): void => {
+                        count += 1;
+                        frameWrites.set(id, count);
+                        value = next;
+                    },
+                    configurable: true,
+                });
+            }
             harness.handle.requestWorkspaceMigrate("right");
-            assert.deepEqual(harness.sendOps().length, before);
+            const flushed = await harness.flushOp("migrate-workspace");
+            assert.equal(flushed.reply["outcome"], "planned", JSON.stringify(flushed.reply));
+            // Both members arrive on the target with the migrated workspace.
+            for (const id of ["m-win-1", "m-win-2"]) {
+                const win = harness.winById(id);
+                assert.equal((win.output as FakeOutput).name, "out-right");
+                assert.deepEqual(
+                    win.desktops.map((desktop) => desktop.id),
+                    ["ws-1"],
+                );
+            }
+            // Fullscreen takes the native move only: frame untouched, no
+            // geometry write. The tiled sibling still tiles on the target.
+            assert.deepEqual(harness.frameOf(harness.winById("m-win-1")), fullBefore);
+            assert.equal(frameWrites.get("m-win-1"), 0);
+            assert.ok((frameWrites.get("m-win-2") ?? 0) > 0, JSON.stringify([...frameWrites]));
+            assert.notDeepEqual(harness.frameOf(harness.winById("m-win-2")), tiledBefore);
+            // Fullscreen active takes no tiler focus write, views still switch.
+            assert.equal(activeWrites, 0);
+            assert.equal((harness.workspace["activeWindow"] as FakeWindow).internalId, "m-win-1");
+            assert.equal(harness.currentByOutput.get(harness.outputs.right)?.id, "ws-1");
+            assert.equal(harness.currentByOutput.get(harness.outputs.left)?.id, "ws-9");
+            // Carried-overlay log counts classes without raw ids.
+            const carried = harness.logs.filter((line) => line.includes("event=overlays-carried"));
+            assert.equal(carried.length, 1, harness.logs.join("\n"));
+            const carriedLine: string = carried[0] as string;
+            assert.ok(carriedLine.includes("fullscreen=1"), carriedLine);
+            assert.ok(carriedLine.includes("maximized=0"), carriedLine);
+            assert.ok(!carriedLine.includes("m-win-1") && !carriedLine.includes("m-win-2"), carriedLine);
+            // Fullscreen follow records native-only: no tiler focus write,
+            // terminal arrival still verified.
+            const follow = harness.logs.filter(
+                (line) => line.includes("stage=follow") && line.includes("outcome=native-only"),
+            );
+            assert.equal(follow.length, 1, harness.logs.join("\n"));
             assert.ok(
-                harness.logs.some((line) => line.includes("component=workspace-migrate") && line.includes("outcome=overlay-present")),
+                harness.logs.some((line) => line.includes("stage=release") && line.includes("outcome=arrived")),
                 harness.logs.join("\n"),
             );
-            assert.equal((harness.winById("m-win-1").output as FakeOutput).name, "out-left");
-            assert.equal(harness.currentByOutput.get(harness.outputs.right)?.id, "ws-9");
         } finally {
             await harness.stop();
         }
@@ -951,29 +1013,106 @@ describe("migrate engine fixture", () => {
         }
     });
 
-    it("refuses a fullscreen transient dialog with zero native writes", async () => {
-        const harness = await makeHarness({
-            wins: [
-                { id: "m-win-1", output: "left", desktop: "ws-1" },
-                { id: "m-win-2", output: "left", desktop: "ws-1" },
-                { id: "m-dlg", output: "left", desktop: "ws-1", normalWindow: false, transientForId: "m-win-1" },
-                { id: "m-win-t", output: "right", desktop: "ws-9" },
-            ],
-        });
+    it("carries a maximized member with slot preserved and no unmaximize", async () => {
+        const harness = await makeHarness();
         try {
             await harness.settlePlan();
-            harness.winById("m-dlg").fullScreen = true;
-            const before = harness.sendOps().length;
+            harness.winById("m-win-2").maximizeMode = 3;
+            const maxBefore = harness.frameOf(harness.winById("m-win-2"));
             harness.handle.requestWorkspaceMigrate("right");
-            assert.deepEqual(harness.sendOps().length, before);
-            assert.ok(
-                harness.logs.some(
-                    (line) => line.includes("component=workspace-migrate") && line.includes("outcome=overlay-present"),
-                ),
-                harness.logs.join("\n"),
+            const flushed = await harness.flushOp("migrate-workspace");
+            assert.equal(flushed.reply["outcome"], "planned", JSON.stringify(flushed.reply));
+            // The maximized member keeps its overlay flag and moves natively;
+            // the reply still projects its reserved tile slot.
+            const geometry = flushed.reply["desired_geometry"] as Array<Record<string, unknown>>;
+            assert.ok(geometry.some((entry) => entry["window"] === "m-win-2"), JSON.stringify(geometry));
+            const moved = harness.winById("m-win-2");
+            assert.equal((moved.output as FakeOutput).name, "out-right");
+            assert.deepEqual(
+                moved.desktops.map((desktop) => desktop.id),
+                ["ws-1"],
             );
-            assert.equal((harness.winById("m-win-1").output as FakeOutput).name, "out-left");
-            assert.equal((harness.winById("m-dlg").output as FakeOutput).name, "out-left");
+            assert.notEqual(moved.maximizeMode, 0, "no unmaximize");
+            assert.deepEqual(harness.frameOf(moved), maxBefore, "no geometry write for maximized");
+            // The tiled active still follows after verified arrival and views.
+            assert.equal((harness.workspace["activeWindow"] as FakeWindow).internalId, "m-win-1");
+            assert.equal(harness.currentByOutput.get(harness.outputs.right)?.id, "ws-1");
+            const carried = harness.logs.filter((line) => line.includes("event=overlays-carried"));
+            assert.equal(carried.length, 1, harness.logs.join("\n"));
+            const carriedLine: string = carried[0] as string;
+            assert.ok(carriedLine.includes("maximized=1"), carriedLine);
+            assert.ok(!carriedLine.includes("m-win-2"), carriedLine);
+        } finally {
+            await harness.stop();
+        }
+    });
+
+    it("carries affected-view fullscreen and maximized without refusal", async () => {
+        for (const overlay of ["fullscreen", "maximized"] as const) {
+            const harness = await makeHarness();
+            try {
+                await harness.settlePlan();
+                const target = harness.winById("m-win-t");
+                const targetBefore = harness.frameOf(target);
+                if (overlay === "fullscreen") {
+                    target.fullScreen = true;
+                } else {
+                    target.maximizeMode = 3;
+                }
+                harness.handle.requestWorkspaceMigrate("right");
+                const flushed = await harness.flushOp("migrate-workspace");
+                assert.equal(flushed.reply["outcome"], "planned", `${overlay}: ${JSON.stringify(flushed.reply)}`);
+                // Source members move; the affected target view stays native-only.
+                for (const id of ["m-win-1", "m-win-2"]) {
+                    const win = harness.winById(id);
+                    assert.equal((win.output as FakeOutput).name, "out-right", overlay);
+                    assert.deepEqual(
+                        win.desktops.map((desktop) => desktop.id),
+                        ["ws-1"],
+                        overlay,
+                    );
+                }
+                assert.equal((target.output as FakeOutput).name, "out-right", overlay);
+                assert.deepEqual(
+                    target.desktops.map((desktop) => desktop.id),
+                    ["ws-9"],
+                    overlay,
+                );
+                assert.deepEqual(harness.frameOf(target), targetBefore, overlay);
+                assert.equal(harness.currentByOutput.get(harness.outputs.right)?.id, "ws-1", overlay);
+            } finally {
+                await harness.stop();
+            }
+        }
+    });
+
+    it("converges delayed native overlay re-fit without verifying old geometry", async () => {
+        const harness = await makeHarness();
+        try {
+            await harness.settlePlan();
+            harness.winById("m-win-1").fullScreen = true;
+            harness.deferredTransfer = true;
+            harness.handle.requestWorkspaceMigrate("right");
+            const flushed = await harness.flushOp("migrate-workspace");
+            assert.equal(flushed.reply["outcome"], "planned", JSON.stringify(flushed.reply));
+            assert.equal(harness.currentByOutput.get(harness.outputs.right)?.id, "ws-9");
+            assert.ok(harness.logs.some((line) => line.includes("outcome=waiting")));
+            // Delayed native arrival plus a native overlay re-fit that changes
+            // the fullscreen frame: arrival verifies identity/membership/output,
+            // never the old rectangle.
+            harness.deferredTransfer = false;
+            for (const pending of harness.pendingTransfers) {
+                pending.client.output = pending.output;
+                pending.client.outputSig.fire();
+            }
+            harness.winById("m-win-1").frameGeometry = { x: 1920, y: 0, width: 1920, height: 1080 };
+            harness.winById("m-win-1").desktopsSig.fire();
+            assert.equal(harness.currentByOutput.get(harness.outputs.right)?.id, "ws-1");
+            assert.equal((harness.workspace["activeWindow"] as FakeWindow).internalId, "m-win-1");
+            const refitFollow = harness.logs.filter(
+                (line) => line.includes("stage=follow") && line.includes("outcome=native-only"),
+            );
+            assert.equal(refitFollow.length, 1, harness.logs.join("\n"));
         } finally {
             await harness.stop();
         }

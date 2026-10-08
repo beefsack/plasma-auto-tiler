@@ -631,7 +631,7 @@ interface WorkspaceMigrateFlight {
     // scope is left empty).
     refillId?: string | null;
     // Whether any native setter applied yet, plus the terminal outcome for
-    // a mid-write abort (overlay-present only before the first write).
+    // a mid-write abort. The first abort wins; later calls keep it.
     wroteAny: boolean;
     writeOutcome?: string;
     // Planned-geometry members whose transfer initiated while placement
@@ -4112,10 +4112,9 @@ export class WorkspaceSendAdapter {
             this.mrefuse("desktop-cap");
             return false;
         }
-        // Whole-operation overlay refusal BEFORE ANY native write: moving
-        // members or either affected current view carry fullscreen or
-        // maximized clients (maximized floats included).
-        if (observed.protectedPresent) {
+        // Only an unexplained fit-excluded flag without
+        // floating/sticky/fullscreen/maximized origin refuses here.
+        if (migrateOverlayPresent(observed)) {
             this.mrefuse("overlay-present");
             return false;
         }
@@ -4375,6 +4374,27 @@ export class WorkspaceSendAdapter {
             geomPending: [],
         };
         this.mdiag("request", correlation, 0, "dispatch", "started");
+        try {
+            // Dispatch-time carried-overlay counts, no raw ids.
+            let fullscreen = 0;
+            let maximized = 0;
+            for (const entry of observed.sourceWindows) {
+                if (entry.sticky) {
+                    continue;
+                }
+                if (entry.fullscreen) {
+                    fullscreen += 1;
+                }
+                if (entry.maximized) {
+                    maximized += 1;
+                }
+            }
+            this.env.log(
+                `${LOG_PREFIX} component=${WORKSPACE_MIGRATE_COMPONENT} route=migrate-workspace stage=request correlation=${correlation} generation=${this.generation} revision=0 diag_seq=${String(this.nextDiagSeq())} event=overlays-carried outcome=started fullscreen=${String(fullscreen)} maximized=${String(maximized)}`,
+            );
+        } catch (error) {
+            void error;
+        }
         this.pinnedOwner = null;
         this.activationStep = 1;
         this.token += 1;
@@ -4445,12 +4465,12 @@ export class WorkspaceSendAdapter {
     }
 
     // Reply-boundary actuation: re-observe the pinned triple, exact-match
-    // the dispatch snapshot (frozen identity and membership), re-gate the
-    // whole-operation overlay rule, bind the plan, commit the session map,
-    // then transfer members with per-setter fences. Arrival, views, and the
-    // single active retain run through progressMigrate only on verified
-    // placement. Any failure settles terminal with normal recovery through
-    // onSettled; nothing is replayed and nothing implies native success.
+    // the dispatch snapshot (frozen identity and membership), bind the
+    // plan, commit the session map, then transfer members with per-setter
+    // fences. Arrival, views, and the single active retain run through
+    // progressMigrate only on verified placement. Any failure settles
+    // terminal with normal recovery through onSettled; nothing is replayed
+    // and nothing implies native success.
     private actuateMigrate(flight: number, correlation: string): void {        const migrating = this.migrate;
         const planned = migrating?.planned ?? null;
         if (migrating === null || planned === null || !this.fencesHold(flight, correlation)) {
@@ -4469,10 +4489,6 @@ export class WorkspaceSendAdapter {
         }
         if (!this.migrateModeHolds(migrating)) {
             this.settleTerminal(flight, correlation, "stale-revision", "release");
-            return;
-        }
-        if (migrateOverlayPresent(fresh)) {
-            this.settleTerminal(flight, correlation, "overlay-present", "release");
             return;
         }
         if (!migrateBindingHolds(planned, snapshot)) {
@@ -4786,10 +4802,7 @@ export class WorkspaceSendAdapter {
         return true;
     }
 
-    // Mid-write abort outcome: overlay trips before the first write refuse
-    // as overlay-present; anything later (including scope drift found by a
-    // pre-setter hold) settles as write-failed for partial recovery. The
-    // first abort wins; later calls keep it.
+    // Mid-write abort outcome: the first abort wins; later calls keep it.
     private failMigrateWrite(migrating: WorkspaceMigrateFlight, outcome?: string): false {
         if (migrating.writeOutcome === undefined) {
             migrating.writeOutcome = outcome ?? (migrating.wroteAny ? "write-failed" : "stale-revision");
@@ -4798,23 +4811,17 @@ export class WorkspaceSendAdapter {
     }
 
     // Phase A: per-member output transfer plus planned target geometry.
-    // Sticky windows are never touched (output and all-desktops stay
-    // source). Tiled members move in planned geometry order, then floats,
-    // then minimized members (transfer only: geometry and focus never
-    // touch minimized). Every member carries a live overlay guard
-    // immediately before its first setter: a member turning
-    // fullscreen/maximized refuses the whole operation, before any write
-    // when nothing moved yet, as write-failed recovery once writes began.
-    // A transfer that initiates while placement is still pending defers
-    // that member's geometry until placement verifies (never rewritten);
-    // only a refused transfer aborts.
+    // Sticky windows are never touched. Tiled members move in planned
+    // geometry order, then floats, then minimized members (transfer only).
+    // Overlay members carry via native output remap only: no size/position
+    // writes, and no focus writes while fullscreen. A transfer that
+    // initiates while placement is still pending defers that member's
+    // geometry until placement verifies; only a refused transfer aborts.
     //
     // Before EACH transfer the exact target object is re-resolved and
-    // compared to the dispatch identity (a same-id replacement refuses),
-    // and the full pre-setter hold reproves member refs, scopes, views,
-    // policy, flags, gaps, and tiling mode. Floating workspaces carry
-    // membership-only: tiled-observed members still transfer, but no tiler
-    // geometry is ever written there.
+    // compared to the dispatch identity, and the full pre-setter hold
+    // reproves member refs, scopes, views, policy, flags, gaps, and tiling
+    // mode. Floating workspaces carry membership-only.
     private writeMigrateMembers(
         flight: number,
         correlation: string,
@@ -4879,12 +4886,10 @@ export class WorkspaceSendAdapter {
                 return this.failMigrateWrite(migrating);
             }
             const ref = member.ref;
-            // Live overlay guard immediately before the first setter for
-            // this member: transients, quicktiles, and restores ride KWin
-            // transfers, so related normal clients were enumerated
-            // completely at observation and any overlay trips here.
-            if (!this.migrateMemberClean(ref, id)) {
-                return this.failMigrateWrite(migrating, migrating.wroteAny ? "write-failed" : "overlay-present");
+            // Liveness guard before the first setter: the ref must still
+            // resolve to the same live id. Overlays never refuse here.
+            if (!this.migrateMemberLive(ref, id)) {
+                return this.failMigrateWrite(migrating, migrating.wroteAny ? "write-failed" : "stale-revision");
             }
             let transferred = false;
             try {
@@ -4897,11 +4902,19 @@ export class WorkspaceSendAdapter {
                 return this.failMigrateWrite(migrating);
             }
             migrating.wroteAny = true;
-            // A member that died or was replaced by its own transfer, or
-            // turned overlaid, aborts the whole operation at once: no
-            // further writes, no views, no focus.
-            if (!this.migrateMemberClean(ref, id)) {
+            // A member that died or was replaced by its own transfer aborts
+            // the whole operation at once: no further writes, no views, no
+            // focus.
+            if (!this.migrateMemberLive(ref, id)) {
                 return this.failMigrateWrite(migrating, "write-failed");
+            }
+            // Initially overlaid members stay native-only even if flags
+            // later read normal.
+            const snapshotOverlay = migrating.snapshot.sourceWindows.some(
+                (entry) => entry.id === id && (entry.fullscreen || entry.maximized),
+            );
+            if (snapshotOverlay) {
+                continue;
             }
             const rect = geometryByWindow.get(id);
             if (rect === undefined || !geometryAllowed) {
@@ -4916,6 +4929,15 @@ export class WorkspaceSendAdapter {
                 if (!migrating.geomPending.includes(id)) {
                     migrating.geomPending.push(id);
                 }
+                continue;
+            }
+            // Immediate live overlay read before the write: a member that
+            // flipped since the hold skips geometry instead of refusing.
+            const writeLive = this.migrateLiveOverlay(ref, id);
+            if (writeLive === null) {
+                return this.failMigrateWrite(migrating, "write-failed");
+            }
+            if (writeLive.fullscreen || writeLive.maximized) {
                 continue;
             }
             let written = false;
@@ -4933,13 +4955,20 @@ export class WorkspaceSendAdapter {
     }
 
     // Read-only live member evidence for mid-write fences: the retained ref
-    // must still resolve to the identical live object in the current window
-    // list with its readable native identity and clean exception flags.
-    // Null on anything unreadable, unlisted, replaced, or overlaid.
-    private migrateMemberClean(ref: object, id: string): boolean {
+    // must still resolve to the identical live object with its readable
+    // native identity. Null on anything unreadable, unlisted, or replaced.
+    private migrateMemberLive(ref: object, id: string): boolean {
+        return this.migrateLiveOverlay(ref, id) !== null;
+    }
+
+    // Immediate live overlay flags for one member: null on unreadable or
+    // replaced identity (the caller fails the write); otherwise the live
+    // flags. Read immediately before each geometry/focus setter so a member
+    // that flipped since the hold skips the write instead of refusing.
+    private migrateLiveOverlay(ref: object, id: string): { fullscreen: boolean; maximized: boolean } | null {
         const hook = this.env.readMoverLive;
         if (typeof hook !== "function") {
-            return false;
+            return null;
         }
         let live: {
             readonly id: string;
@@ -4952,12 +4981,12 @@ export class WorkspaceSendAdapter {
             live = hook(ref);
         } catch (error) {
             void error;
-            return false;
+            return null;
         }
         if (live === null || typeof live !== "object" || live.id !== id) {
-            return false;
+            return null;
         }
-        return live.fullscreen !== true && live.maximized !== true;
+        return { fullscreen: live.fullscreen === true, maximized: live.maximized === true };
     }
 
     // Exact native placement read for one member ref: destination output
@@ -4977,10 +5006,10 @@ export class WorkspaceSendAdapter {
 
     // Deferred planned geometry for transfers that initiated while
     // placement was still pending. Runs once placement verifies, before
-    // any view write, with a full pre-setter hold plus a live overlay
-    // re-guard per member. Written ids never rewrite; any failure aborts
-    // with no further writes and no focus. Never runs on floating
-    // workspaces (membership-only there, nothing was deferred).
+    // any view write, with a full pre-setter hold plus a live re-guard per
+    // member. Overlays never defer; a member that flipped since the hold
+    // skips its write. Any failure aborts with no further writes and no
+    // focus. Never runs on floating workspaces.
     private writeMigratePendingGeometries(
         flight: number,
         correlation: string,
@@ -5010,11 +5039,18 @@ export class WorkspaceSendAdapter {
             if (ref === null || rect === undefined) {
                 return this.failMigrateWrite(migrating);
             }
-            if (!this.migrateMemberClean(ref, id)) {
-                return this.failMigrateWrite(migrating, "write-failed");
-            }
             if (!this.migrateMemberPlaced(ref, migrating.snapshot.targetOutput, migrating.snapshot.sourceWorkspace)) {
                 return this.failMigrateWrite(migrating);
+            }
+            // Immediate live overlay read before the write: a member that
+            // flipped since the hold skips geometry instead of refusing.
+            // Initially overlaid members never reach this queue.
+            const writeLive = this.migrateLiveOverlay(ref, id);
+            if (writeLive === null) {
+                return this.failMigrateWrite(migrating, "write-failed");
+            }
+            if (writeLive.fullscreen || writeLive.maximized) {
+                continue;
             }
             let written = false;
             try {
@@ -5106,7 +5142,14 @@ export class WorkspaceSendAdapter {
         }
         this.finishMigrateFocus(flight, correlation, migrating, planned);
         const outcome = migrating.followOutcome;
-        this.settleTerminal(flight, correlation, outcome === "state-confirmed" ? "arrived" : outcome, "arrival");
+        // Member/view arrival is verified; native-only follow (no tiler
+        // focus write) still counts as arrived.
+        this.settleTerminal(
+            flight,
+            correlation,
+            outcome === "state-confirmed" || outcome === "native-only" ? "arrived" : outcome,
+            "arrival",
+        );
         return "settled";
     }
 
@@ -5409,9 +5452,8 @@ export class WorkspaceSendAdapter {
     // Phase D: retain the migrated active client (tiled or float) after
     // VERIFIED arrival and views. Empty, absent, and sticky-active routes
     // carry a null active window and never reach here (output activation
-    // runs instead): no fabricated client focus ever. A mutation after
-    // geometry, after either view write, or a target-view change before
-    // focus refuses focus without setters. Runs at most once.
+    // runs instead). A fullscreen active takes no tiler focus write; follow
+    // records native-only. Runs at most once.
     private finishMigrateFocus(
         flight: number,
         correlation: string,
@@ -5470,6 +5512,23 @@ export class WorkspaceSendAdapter {
             !this.migrateMemberPlaced(active.ref, migrating.snapshot.targetOutput, migrating.snapshot.sourceWorkspace)
         ) {
             migrating.followOutcome = "arrival-unconfirmed";
+            this.mdiag("follow", migrating.correlation, planned.baseRevision, "follow", migrating.followOutcome);
+            return;
+        }
+        const snapshotFullscreen = migrating.snapshot.sourceWindows.some(
+            (entry) => entry.id === planned.activeWindow && entry.fullscreen,
+        );
+        // Immediate live read before focus: a member that turned fullscreen
+        // since the hold takes no tiler focus write. Initially fullscreen
+        // actives never reach focus either.
+        const focusLive = this.migrateLiveOverlay(active.ref, active.id);
+        if (focusLive === null) {
+            migrating.followOutcome = "arrival-unconfirmed";
+            this.mdiag("follow", migrating.correlation, planned.baseRevision, "follow", migrating.followOutcome);
+            return;
+        }
+        if (snapshotFullscreen || focusLive.fullscreen) {
+            migrating.followOutcome = "native-only";
             this.mdiag("follow", migrating.correlation, planned.baseRevision, "follow", migrating.followOutcome);
             return;
         }
@@ -5876,8 +5935,13 @@ function migrateWindowListsEqual(
         if (compareOutput && other.output !== entry.output) {
             return false;
         }
+        // Native send-to-output re-fits overlays: overlay arrival verifies
+        // identity/membership/output, never the old rectangle.
+        const eitherOverlay =
+            other.fullscreen || other.maximized || entry.fullscreen || entry.maximized;
         if (
             compareRects &&
+            !eitherOverlay &&
             (other.rect.x !== entry.rect.x ||
                 other.rect.y !== entry.rect.y ||
                 other.rect.w !== entry.rect.w ||
@@ -6006,7 +6070,7 @@ function migrateScopedHolds(
         fresh.mode !== snapshot.mode ||
         fresh.perOutput !== snapshot.perOutput ||
         fresh.sourceTiled !== snapshot.sourceTiled ||
-        fresh.protectedPresent !== false ||
+        fresh.protectedPresent !== snapshot.protectedPresent ||
         fresh.desktopCount !== snapshot.desktopCount ||
         fresh.sourceFingerprint !== snapshot.sourceFingerprint ||
         (checkTargetView && fresh.targetViewFingerprint !== snapshot.targetViewFingerprint) ||
@@ -6032,22 +6096,21 @@ function migrateScopedHolds(
     return true;
 }
 
-// Whole-operation overlay rule: any fullscreen/maximized client (maximized
-// floats included), or any maximized-shaped fit-excluded window without
-// floating/sticky/fullscreen origin, among the moving members, either
-// affected current view, or the related transient/protected set.
+// Narrow pre-dispatch guard: only an unexplained fit-excluded flag without
+// floating/sticky/fullscreen/maximized origin refuses. Fullscreen and
+// maximized members carry and never refuse here.
 function migrateOverlayPresent(observed: WorkspaceMigrateObserved): boolean {
     for (const entry of [...observed.sourceWindows, ...observed.targetViewWindows]) {
-        if (entry.fullscreen || entry.maximized || (entry.fitExcluded && !entry.floating && !entry.sticky)) {
+        if (entry.fitExcluded && !entry.floating && !entry.sticky && !entry.fullscreen && !entry.maximized) {
             return true;
         }
     }
     for (const entry of observed.relatedWindows) {
-        if (entry.fullscreen || entry.maximized || (entry.fitExcluded && !entry.floating && !entry.sticky)) {
+        if (entry.fitExcluded && !entry.floating && !entry.sticky && !entry.fullscreen && !entry.maximized) {
             return true;
         }
     }
-    return observed.protectedPresent;
+    return false;
 }
 
 function validateMigrateGeometryEntry(value: unknown): WorkspaceMigrateGeometryEntry | null {

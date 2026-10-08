@@ -281,7 +281,7 @@ platform API behavior.
       routes explicit follow/stay through that path so the default follows
       (implementation gap, not a new decision).
 - User decisions 2026-10-08 (workspace migration R-WS-12 D1-D9, outcomes
-  decided; changed D8 implementation pending):
+  decided):
   - D1 bindings: four directional active-workspace migration actions,
     bindable and UNBOUND by default, follow-only, as delivered (presets keep
     empty migration defaults; no new foreign-conflict claims).
@@ -310,13 +310,14 @@ platform API behavior.
     carried with class and origin preserved via native output remap,
     as delivered. Sticky all-desktops clients stay on the source and
     are not migrated members.
-  - D8 overlays (CHANGED, decided, implementation pending):
+  - D8 overlays (CHANGED, decided):
     fullscreen plus maximized members are carried, matching
     Hyprland/sway/i3/niri/COSMIC and native KWin send-to-output. No
     refusal in moved members or affected views; only the native move,
     with no extra size/position/focus writes while fullscreen. An
     explicit user move is not unwanted interference (for example a
-    game on the wrong output). Implementation pending plus live check.
+    game on the wrong output). Live check pending.
+    Delivery 2026-10-09: shared core/KDE carry implemented offline; Windows handoff only ([record](changes/archive/migration-overlay-carry.md)).
   - D9 history/return: out-of-source-scope previous IDs clear,
     disconnected-output history is discarded, reconnect selection
     never consults or restores it. Remove only the explicitly moved
@@ -478,7 +479,7 @@ platform API behavior.
     ([record](changes/archive/kde-intentional-float-restart.md)).
     Windows behavior unchanged; native checks remain pending.
 - User decisions 2026-10-08 (workspace migration R-WS-12 D1-D9, outcomes
-  decided; changed D8 implementation pending): see Workspaces above.
+  decided): see Workspaces above.
 
 ## Reference Matrix and Spec Authority
 

@@ -2518,17 +2518,21 @@ impl Engine {
                 message: "command target does not match the target domain",
             };
         }
-        // Overlay gate before any retained mutation: explicit fullscreen /
-        // maximized, or maximized-shaped fit-excluded without
-        // floating/sticky/fullscreen. Floats ride; sticky stays natively.
+        // D8: fullscreen/maximized members carry via native output remap
+        // (native re-fits overlays; no extra geometry/focus writes while
+        // fullscreen). Only an unexplained fit-excluded flag without
+        // floating/sticky/fullscreen/maximized origin still refuses.
+        // Floats ride; sticky stays natively.
         for entry in event.windows.iter().chain(event.target_windows.iter()) {
-            if entry.fullscreen
-                || entry.maximized
-                || (entry.fit_excluded && !entry.floating && !entry.sticky)
+            if entry.fit_excluded
+                && !entry.floating
+                && !entry.sticky
+                && !entry.fullscreen
+                && !entry.maximized
             {
                 return CoreReply::Rejected {
                     kind: "overlay-present",
-                    message: "workspace contains a fullscreen or maximized window",
+                    message: "workspace contains an unexplained fit-excluded member",
                 };
             }
         }
@@ -6387,24 +6391,46 @@ mod tests {
         engine.store_committed(source_key.clone(), seeded, 0);
         let target_domain = domain("out-2", "ws-2");
         let target_key = target_domain.key();
-        // Fullscreen overlay refuses before any mutation.
-        let overlay = migrate_event(
-            &owner,
-            &gen_id,
-            &source_domain,
-            vec![
-                carried("out-1", "ws-2", "win-1", true, true),
-                carried("out-1", "ws-2", "win-2", false, false),
-            ],
-            Some((target_domain.clone(), target_key.clone())),
-            vec![],
-            "corr-migrate-overlay",
-        );
-        match engine.handle(&overlay) {
-            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "overlay-present"),
-            other => panic!("overlay must refuse, got {other:?}"),
+        // D8: fullscreen members carry with their tiled slot preserved.
+        // Verified on an isolated engine so the refusal checks below keep a
+        // pristine source.
+        {
+            let mut carry = Engine::new();
+            carry.sync_binding(&owner, &gen_id);
+            let seeded = crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &seed_order)
+                .expect("seeds two");
+            let pre = seeded.accepted_revision();
+            carry.store_committed(source_key.clone(), seeded, 0);
+            let overlay = migrate_event(
+                &owner,
+                &gen_id,
+                &source_domain,
+                vec![
+                    carried("out-1", "ws-2", "win-1", true, true),
+                    carried("out-1", "ws-2", "win-2", false, false),
+                ],
+                Some((target_domain.clone(), target_key.clone())),
+                vec![],
+                "corr-migrate-overlay",
+            );
+            match carry.handle(&overlay) {
+                CoreReply::MigrateWorkspace(plan) => {
+                    assert_eq!(plan.members, 2);
+                    assert_eq!(plan.active_window, Some(WindowId("win-1".to_owned())));
+                    assert_eq!(plan.base_revision, pre);
+                    let moved = carry.session(&target_key).expect("moved");
+                    assert!(
+                        moved
+                            .snapshot()
+                            .windows
+                            .iter()
+                            .any(|link| link.window.0 == "win-1")
+                    );
+                }
+                other => panic!("fullscreen must carry, got {other:?}"),
+            }
         }
-        // Maximized-shaped fit-excluded (no floating/sticky/fullscreen) refuses.
+        // Maximized-shaped fit-excluded (no floating/sticky/fullscreen/maximized) refuses.
         let maximized = migrate_event(
             &owner,
             &gen_id,
@@ -7116,35 +7142,91 @@ mod tests {
             }
             other => panic!("partial must refuse, got {other:?}"),
         }
-        // A maximized float is still an overlay: the explicit maximized flag
-        // (not the fit-excluded proxy) refuses before any mutation.
-        let mut max_float = migrate_carried(("win-1", true, false));
-        max_float.maximized = true;
-        let overlay = migrate_event_for(
-            &owner,
-            &gen_id,
-            &source_domain,
-            pre_revision,
-            "win-1",
-            vec![max_float, migrate_carried(("win-2", false, false))],
-            &target_domain,
-            "corr-migrate-max-float",
-        );
-        match engine.handle(&overlay) {
-            CoreReply::Rejected { kind, message } => {
-                assert_eq!(kind, "overlay-present");
-                assert_eq!(
-                    message,
-                    "workspace contains a fullscreen or maximized window"
-                );
+        // D8: a maximized float carries with its exception slot preserved.
+        // Verified on an isolated engine so the partial refusal above keeps
+        // a pristine source for the intact-state checks below.
+        {
+            let mut carry = Engine::new();
+            carry.sync_binding(&owner, &gen_id);
+            let seeded = crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &order)
+                .expect("seeds");
+            let pre = seeded.accepted_revision();
+            carry.store_committed(source_key.clone(), seeded, 0);
+            let mut max_float = migrate_carried(("win-1", true, false));
+            max_float.maximized = true;
+            let overlay = migrate_event_for(
+                &owner,
+                &gen_id,
+                &source_domain,
+                pre,
+                "win-1",
+                vec![max_float, migrate_carried(("win-2", false, false))],
+                &target_domain,
+                "corr-migrate-max-float",
+            );
+            match carry.handle(&overlay) {
+                CoreReply::MigrateWorkspace(plan) => {
+                    assert_eq!(plan.members, 2);
+                    assert_eq!(plan.floats, 1);
+                    assert_eq!(plan.active_window, Some(WindowId("win-1".to_owned())));
+                    let moved = carry.session(&target_domain.key()).expect("moved");
+                    assert!(moved.is_exception(&WindowId("win-1".to_owned())));
+                }
+                other => panic!("maximized float must carry, got {other:?}"),
             }
-            other => panic!("maximized float must refuse, got {other:?}"),
         }
         assert!(engine.contains(&source_key), "refusals mutate nothing");
         assert!(!engine.contains(&target_domain.key()));
         let retained = engine.session(&source_key).expect("source kept");
         assert_eq!(retained.accepted_revision(), pre_revision);
         let _ = WindowId("win-1".to_owned());
+    }
+
+    #[test]
+    fn migrate_workspace_carries_maximized_tiled_with_slot() {
+        use crate::boundary::CoreReply;
+        use crate::directional::WindowId;
+        // D8: a tiled maximized member carries with its reserved tile slot
+        // preserved on the target and no unmaximize.
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out-1", "ws-2");
+        let source_key = source_domain.key();
+        let order = ["win-1", "win-2"]
+            .iter()
+            .map(|window| migrate_carried((window, false, false)))
+            .collect::<Vec<_>>();
+        let seeded =
+            crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
+        let pre_revision = seeded.accepted_revision();
+        engine.store_committed(source_key.clone(), seeded, 0);
+        let target_domain = domain("out-2", "ws-2");
+        let target_key = target_domain.key();
+        let mut maximized = migrate_carried(("win-2", false, false));
+        maximized.maximized = true;
+        maximized.fit_excluded = true;
+        let event = migrate_event_for(
+            &owner,
+            &gen_id,
+            &source_domain,
+            pre_revision,
+            "win-1",
+            vec![migrate_carried(("win-1", false, false)), maximized],
+            &target_domain,
+            "corr-migrate-max-tiled",
+        );
+        let plan = match engine.handle(&event) {
+            CoreReply::MigrateWorkspace(plan) => plan,
+            other => panic!("maximized tiled must carry, got {other:?}"),
+        };
+        assert_eq!(plan.members, 2);
+        assert_eq!(plan.floats, 0);
+        assert_eq!(plan.active_window, Some(WindowId("win-1".to_owned())));
+        let moved = engine.session(&target_key).expect("moved");
+        assert_eq!(moved.snapshot().windows.len(), 2, "reserved slot preserved");
+        assert!(!engine.contains(&source_key));
     }
 
     #[test]

@@ -10,13 +10,6 @@ decisions of 2026-09-24 are under
 
 ## Open work
 
-- P0 | Implement 2026-10-08 decision changes | Review completed; selections approved.
-  Implement the changed selections in shared core plus KDE, with Windows
-  handoff updates (items 13/8/14 plus the same-axis move setting):
-  - Migration D8 fullscreen plus maximized members are carried: no refusal
-    in moved members or affected views; native move only with no extra
-    fullscreen size/position/focus writes. An explicit user move is not
-    unwanted interference. Live checks after implementation.
 - P0 | Maximized intentional unfloat (B9 / M09) | User 2026-10-08:
   unmaximize, then admit as a new window (COSMIC), on shared core plus KDE,
   with Windows adapter handoff. KDE currently dispatches unfloat without
@@ -309,8 +302,9 @@ decisions of 2026-09-24 are under
   delivered offline under user decisions 2026-10-08 (normative as delivered):
   four unbound follow actions, strict native per-output capability, retained
   domain rekey, source refill, floats/sticky split and fullscreen+maximized
-  carry (changed D8, implementation pending). Native acceptance pending;
-  [record](changes/archive/kde-whole-workspace-output-migration.md).
+  carry (D8 delivered offline 2026-10-09). Native acceptance pending;
+  [record](changes/archive/kde-whole-workspace-output-migration.md),
+  [D8](changes/archive/migration-overlay-carry.md).
   Windows changes are compile-only `maximized: false`; item 14 wires behavior.
   KDE-side session owns shared Rust core + KDE adapter; separate Windows
   agent wires later. Correctness over non-breakage: Windows build/behavior
@@ -434,7 +428,7 @@ decisions of 2026-09-24 are under
   | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; first-fullscreen-exit is separate (D5 core/KDE delivered offline, Windows pending). B9 unmaximize/fresh-admit is the P0 item above. Independent of items 1-5. |
   | 12 | Non-local workspace modes parity (d) | Depends on handoff items 1/2 (ring + follow/stay) and the parked parity-queue multi-output foundation; last. |
   | 13 | Q2 fixed-size float admission R-SPC-04 | KDE/shared offline delivery including D1 predicate setting, D5 first-fullscreen-exit, D6 tiling-enable check and D7 tile-override restart store; Windows max-track observation, predicate/schema/UI and lifetime/origin wiring before enabling the Engine opt-in. Windows D7 persistence coordinates with item 8; fixed/maximize intersection with item 11. |
-  | 14 | Q4 whole-workspace migration R-WS-12 | Core/KDE offline delivery under user decisions 2026-10-08 (normative as delivered); depends on item 5's parked multi-output foundation, item 1 history invalidation and item 12 for non-local runtime modes. Pending: fullscreen+maximized carry overlays (changed D8). No Windows behavior delivered. |
+  | 14 | Q4 whole-workspace migration R-WS-12 | Core/KDE offline delivery including D8 overlay carry under user decisions 2026-10-08 (normative as delivered); depends on item 5's parked multi-output foundation, item 1 history invalidation and item 12 for non-local runtime modes. Windows adapter including D8 pending; no Windows behavior delivered. |
 
   Q2 R-SPC-04 occupies handoff item 13 below; Q3 R-RST-01 KDE delivery is
   complete offline and updates existing item 8. Q4 R-WS-12 fills item 14.
@@ -1979,8 +1973,8 @@ decisions of 2026-09-24 are under
   - Item 14: Q4 whole-active-workspace output migration R-WS-12. The addition
     was accepted 2026-10-07; D1-D9 detail is user decisions 2026-10-08
     (normative as delivered). Core/Linux planner/KDE delivered offline;
-    Windows behavior remains unchanged. Changed D8 carry implementation
-    pending. Depends on the parked multi-output
+    Windows behavior remains unchanged. D8 carry delivered offline in core/KDE
+    2026-10-09; Windows wiring pending. Depends on the parked multi-output
     foundation (item 5), scoped history (item 1), and item 12 for non-local
     modes. [Record](changes/archive/kde-whole-workspace-output-migration.md),
     [spec](spec/functional-spec.md#workspaces) REQ-WS-12/12a..i,
@@ -2000,22 +1994,29 @@ decisions of 2026-09-24 are under
       Source selects last remaining scoped entry, existing minimum-two/trailing
       spare converges; empty allowed. Carry workspace floats with class/origin,
       sticky stays source. Carry fullscreen plus maximized members (changed D8,
-      user 2026-10-08, implementation pending): no refusal in moved members or
+      user 2026-10-08, core/KDE delivered offline): no refusal in moved members or
       affected views; native move only with no extra fullscreen
       size/position/focus writes; an explicit user move is not unwanted
-      interference.
+      interference. Preserve maximized overlay/reserved slot, no unmaximize;
+      native re-fit owns overlay geometry on the target.
     - Shared `core/boundary.rs` `CoreCommand::MigrateWorkspace { direction }`
       and `CoreReply::MigrateWorkspace(MigrateWorkspacePlan)`; event target has
       the SAME workspace ID on a DIFFERENT output and empty `target_windows`.
       Destination's DIFFERENT current workspace remains adapter-owned, including
-      its safety gate. `core/engine.rs` `migrate_workspace_request` rekeys via
+      its currency fences (overlays are not a refusal). `core/engine.rs` `migrate_workspace_request` rekeys via
       `core/session/world.rs:251` `relocate_domain`, not per-window re-admission.
       Reply geometry/focus/active_window/member counts and postconditions mean
       retained `planned`, never native completion. Protocol `migrate-workspace`
       is codec-only; Windows calls the public Engine types directly.
     - Follow moved active client only after every member/output/membership and
       both views are verified; empty/sticky-active uses native output switching
-      without invented focus, minimized clients stay minimized. History 1.3/1.5
+      without invented focus, minimized clients stay minimized. Fullscreen
+      follow is native-only, with no focus setter or unverified focus claim.
+      Verify overlay arrival by identity/membership/output, not its old frame;
+      re-read live overlay flags before geometry/focus writes and suppress them
+      while overlaid/fullscreen respectively. Keep lifetime/currency fences and
+      reconcile mode changes; do not replay or skip a carried member.
+      History 1.3/1.5
       invalidates out-of-scope previous IDs; remove ONLY moved ID from hotplug
       return associations. Partial/uncertain native writes reconcile observed
       domains without replay, guessed rollback or false completion.
@@ -2045,14 +2046,15 @@ decisions of 2026-09-24 are under
       migration implementation. Resolve full rectangles via `all_monitors`
       :264 / `monitor_fulls` :282, bounds via `workspace_domain_for` :8540.
       Fence all windows/related natives, source/target current views, mode,
-      lifetime and overlays before the first and every later setter; verify
+      lifetime and overlay state before the first and every later setter;
+      overlay state suppresses geometry/fullscreen focus, never a carry refusal. Verify
       arrivals before geometry/view/focus completion. Protect hidden/minimized
       clients and existing product-hide/recovery authority through partial writes.
     - Compile-only edits in this delivery: `src/tiling.rs:1263/:1315`,
       `src/workspace_owner.rs:98/:115`, and native preview-test constructors
       `src/tiling_sys.rs:16719/:16927` initialize `EngineWindow.maximized` to
       false. These are NOT fresh overlay observations. Replace placeholders
-      only when the Windows adapter supplies actual migration safety evidence;
+      only when the Windows adapter supplies actual overlay observations;
       retain existing fullscreen inference and game/preimage policies.
     - Proposed Windows IDs `migrate-workspace-left/right/up/down`, defaults
       empty, follow-only, no new holder claim. Add catalog family/routing in
@@ -2083,11 +2085,11 @@ decisions of 2026-09-24 are under
     - User journey/DoD: select WS2 `H[A,V[B*,C]]` on L, R shows occupied WS3;
       bind migration right, verify same WS2/tree/shares, WS3 hidden, L last
       remaining, B focus only after arrival. Repeat empty, intentional/automatic
-      float plus sticky, fullscreen+maximized carry (D8 pending) and
+      float plus sticky, fullscreen+maximized carry (Windows D8 pending) and
       displaced-origin reconnect.
       Update Ours Windows/spec with dated offline evidence; native outcomes TBD
       until user-tested. User decisions 2026-10-08 approved; D8 carry
-      implementation pending.
+      core/KDE delivered offline, Windows adapter pending.
 
   ### Source discrepancies to preserve and report
 
@@ -2623,10 +2625,13 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   Observe delayed member arrival and both views before focus; empty uses native
   output switch without client focus. Check intentional/automatic float remap
   across work areas/scales, sticky source, minimized/transient clients, member
-  removal and partial-write reconciliation. Fresh fullscreen/maximized members
-  are carried after implementation (changed D8): native move only with no extra
+  removal and partial-write reconciliation. D8 migration with fullscreen/maximized
+  members (delivered offline): native move only with no extra
   fullscreen size/position/focus writes; an explicit user move is not unwanted
-  interference. Previous invalidation and reconnect forget only moved ID.
+  interference. Check native fullscreen focus retention (no tiler focus write),
+  native re-fit across work areas/scales, preserved maximize slot after unmaximize
+  on the target, affected-view overlays and mid-flight mode changes. Previous
+  invalidation and reconnect forget only moved ID.
   [Record](changes/archive/kde-whole-workspace-output-migration.md),
   [live guide](live-kwin-testing.md). User-owned; native outcomes remain TBD.
 - KDE item 5 R-MOV-08/R-OUT-04 (offline delivered, needs two outputs): stack
