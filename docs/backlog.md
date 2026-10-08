@@ -10,6 +10,36 @@ decisions of 2026-09-24 are under
 
 ## Open work
 
+- P0 | Exhaustive decision review | Scheduled next session, NOT started now.
+  Review every entry in [decisions](decisions.md) against
+  [principles](principles.md), against each other, and against reference-WM
+  evidence (matrix/consensus); identify redundant, superseded, conflicting,
+  unprincipled, or poorly-evidenced decisions plus stale delivery status;
+  propose removals and fixes for USER approval; consider restructuring or
+  condensing the very large decisions.md. Output a findings list for user
+  review BEFORE ANY EDIT.
+- P0 | Implement 2026-10-08 decision changes | Ordered after the review above.
+  Implement the changed selections in shared core plus KDE, with Windows
+  handoff updates (items 13/8/14 plus the same-axis move setting):
+  - D1 functional predicate setting values (`Width and height both fixed`
+    default with COSMIC tooltip; `Width or height fixed` with Hyprland
+    (Wayland) and sway tooltip; functional value IDs) plus functional rename
+    of the `sameAxisMove` `cosmic-wrap`/`flat-swap` values with WM tooltips
+    (breaking pre-release configs accepted, no migration).
+  - D5 born-fullscreen first exit classifies as newly admitted: fixed floats
+    with no writes, otherwise tiles; prior fixed floats restore; no writes
+    during fullscreen. Deliberate COSMIC deviation for game safety.
+  - D6 workspace tiling enable checks every window being tiled including
+    arrivals while the workspace is floating: fixed stays/becomes untouched
+    float, others tile; explicit user tile overrides stay tiled;
+    intentional/sticky floats keep existing rules. COSMIC deviation.
+  - D7 fixed-window user tile overrides persist across owner restart in the
+    same intentional-float store with recompute fallback.
+  - Migration D8 fullscreen plus maximized members are carried: no refusal
+    in moved members or affected views; native move only with no extra
+    fullscreen size/position/focus writes. An explicit user move is not
+    unwanted interference. Live checks after implementation.
+
 - P0 | Windows port | KDE-first core extraction finished at K1 (user
   2026-09-30; K2/K3 deferred until Windows needs a shared contract, see
   [extraction](research/cross-platform-core/extraction.md),
@@ -205,6 +235,7 @@ decisions of 2026-09-24 are under
   FFI signature change; C parked); user tested A/B on the laptop
   (2026-10-05): all good; PC remap checks later. Next: B8 after user acceptance of the existing KDE
   shortcut controls. Core extraction: no new move until macOS starts.
+  Shared restart store in core (float intent, tile overrides, possibly positions); platforms supply window identity and storage location (user 2026-10-08).
 - P1 | Directional focus/move from floating windows | Partial delivery
   (user decision 2026-10-05, rows R-FLT-07..11): KDE COSMIC float/sticky-only
   top-left-axis focus and explicit four-direction half-snaps delivered offline;
@@ -254,21 +285,23 @@ decisions of 2026-09-24 are under
   Detailed selections 2026-10-07 (items 1-5 and D1 in
   [decisions](decisions.md#cross-platform-behavior)); KDE items 1-5 delivered
   offline, remaining implementation pending:
-  Q2 R-SPC-04 shared core/Linux planner + KDE delivered offline under
-  autonomous PROVISIONAL D1-D8 (2026-10-08), pending user review and native
-  checks; [record](changes/archive/fixed-size-admission.md). Windows Q2
+  Q2 R-SPC-04 shared core/Linux planner + KDE delivered offline under user
+  decisions 2026-10-08 (normative as delivered); changed D1 predicate setting
+  plus functional naming, D5 first-fullscreen-exit, D6 tiling-enable check
+  and D7 tile-override store are pending implementation, then native checks;
+  [record](changes/archive/fixed-size-admission.md). Windows Q2
   behavior remains unchanged; handoff item 13 supplies its exact wiring.
   Q3 R-RST-01 Linux planner/KDE intentional-float restart delivered offline
-  under autonomous PROVISIONAL D1-D4 (2026-10-08): private session-scoped
-  membership store, current-frame adoption, native-success settlement and
-  diagnosed-empty availability fallback. Native acceptance and user review
-  remain pending; [record](changes/archive/kde-intentional-float-restart.md).
+  under user decisions 2026-10-08 (normative as delivered): private
+  session-scoped membership store, current-frame adoption, native-success
+  settlement and diagnosed-empty availability fallback. Native acceptance
+  remains pending; [record](changes/archive/kde-intentional-float-restart.md).
   Windows behavior remains unchanged; handoff item 8 carries its design seams.
   Q4 R-WS-12 core/Linux planner + KDE whole-active-workspace output migration
-  delivered offline under autonomous PROVISIONAL D1-D9 (2026-10-08): four
-  unbound follow actions, strict native per-output capability, retained domain
-  rekey, source refill, floats/sticky split and whole-overlay refusal. Native
-  acceptance and user review pending;
+  delivered offline under user decisions 2026-10-08 (normative as delivered):
+  four unbound follow actions, strict native per-output capability, retained
+  domain rekey, source refill, floats/sticky split and fullscreen+maximized
+  carry (changed D8, implementation pending). Native acceptance pending;
   [record](changes/archive/kde-whole-workspace-output-migration.md).
   Windows changes are compile-only `maximized: false`; item 14 wires behavior.
   KDE-side session owns shared Rust core + KDE adapter; separate Windows
@@ -311,7 +344,10 @@ decisions of 2026-09-24 are under
      missing defaults to wrap. Apply to subsequent moves without tree
      rebuilding; KDE settings UI control. Flat-swap replaces R2c only for
      adjacent direct leaf siblings; shares travel with windows. Leaf/group
-     rules unchanged; discriminating TBD rows before broadening.
+     rules unchanged; discriminating TBD rows before broadening. User
+     2026-10-08: setting and both values take functional names with WM
+     tooltips (functional value IDs); breaking pre-release configs accepted,
+     no migration; implementation pending.
   4. R-LAY-01 (shared core + KDE delivered offline; native journey pending;
      [record](changes/archive/parent-orientation-toggle.md)):
      Meta+O / Win+O immediate-parent axis toggle including root,
@@ -384,13 +420,13 @@ decisions of 2026-09-24 are under
   | 5 | Parked parity-queue multi-output foundation, then handoff item 5 | Per-monitor current-view observation, membership/geometry/visibility/recovery fences first; user live checks need the other Windows PC. Offline topology/Engine tests can precede that. |
   | 6 | Keyboard resize R-RSZ-01 (parity d) | Independent; needs fresh Alt-capable trigger plus dedicated resize intent. No dependency on items 1-5 except shared modifier routing. |
   | 7 | Press-focus R-DRAG-08 | Independent of items 1-5; touches Win-drag arm only. Keep R-DRAG-07 stationary-source/moving-preview split intact. |
-  | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; KDE Q3 delivered offline under PROVISIONAL D1-D4. Ordinary/sticky intent must remain distinct from automatic fixed origin and recovery authority; Windows mechanism unselected, REQ-RST-01c stays OPEN. |
+  | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; KDE Q3 delivered offline under user decisions 2026-10-08 (normative as delivered). Ordinary/sticky intent must remain distinct from automatic fixed origin and recovery authority; Windows mechanism unselected, REQ-RST-01c stays OPEN. D7 tile-override restart store pending. |
   | 9 | Fullscreen send R-MAX-09 (Windows carry; NOT the parked parity-queue multi-output foundation) | Depends on handoff item 2 follow/stay wiring only; same-output workspace carry, no cross-output claim. |
   | 10 | Float/half-snap parity (a) R-FLT-07..11 | Independent of items 1-5; reuses existing focus/move catalog rows, no new chords. |
   | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; keep first-fullscreen-exit and B9 refusal intact. Independent of items 1-5. |
   | 12 | Non-local workspace modes parity (d) | Depends on handoff items 1/2 (ring + follow/stay) and the parked parity-queue multi-output foundation; last. |
-  | 13 | Q2 fixed-size float admission R-SPC-04 | KDE/shared offline delivery under autonomous PROVISIONAL D1-D8; max-track observation and lifetime/origin wiring before enabling the Engine opt-in. Fixed/maximize intersection coordinates with item 11. |
-  | 14 | Q4 whole-workspace migration R-WS-12 | Core/KDE offline delivery under autonomous PROVISIONAL D1-D9; depends on item 5's parked multi-output foundation, item 1 history invalidation and item 12 for non-local runtime modes. No Windows behavior delivered. |
+  | 13 | Q2 fixed-size float admission R-SPC-04 | KDE/shared offline delivery under user decisions 2026-10-08 (normative as delivered); max-track observation and lifetime/origin wiring before enabling the Engine opt-in. Pending: predicate setting plus functional naming, first-fullscreen-exit, tiling-enable check, tile-override restart store. Fixed/maximize intersection coordinates with item 11. |
+  | 14 | Q4 whole-workspace migration R-WS-12 | Core/KDE offline delivery under user decisions 2026-10-08 (normative as delivered); depends on item 5's parked multi-output foundation, item 1 history invalidation and item 12 for non-local runtime modes. Pending: fullscreen+maximized carry overlays (changed D8). No Windows behavior delivered. |
 
   Q2 R-SPC-04 occupies handoff item 13 below; Q3 R-RST-01 KDE delivery is
   complete offline and updates existing item 8. Q4 R-WS-12 fills item 14.
@@ -1324,9 +1360,11 @@ decisions of 2026-09-24 are under
     decisions 2026-10-07 (R-FLT-05, R-RST-01 float identity;
     [decisions](decisions.md#cross-platform-behavior)): sticky floats stay
     sticky across owner restart including Windows, delivered with the
-    R-RST-01 work. KDE Q3 delivered offline 2026-10-08 under autonomous
-    PROVISIONAL D1-D4; [record](changes/archive/kde-intentional-float-restart.md).
-    Windows code/behavior unchanged in that delivery.
+    R-RST-01 work. KDE Q3 delivered offline 2026-10-08 under user decisions
+    2026-10-08 (normative as delivered);
+    [record](changes/archive/kde-intentional-float-restart.md).
+    Windows code/behavior unchanged in that delivery. D7 tile-override
+    restart store pending.
 
     #### Item 8 behavior and reference seams
 
@@ -1354,7 +1392,7 @@ decisions of 2026-09-24 are under
       geometry/focus/stacking/pre-sticky history or automatic fixed origin.
       No effect dependency or new shared adapter extraction. These are KDE
       implementation seams, not instructions to port D-Bus/file storage to Win.
-    - KDE design handoff (PROVISIONAL D1-D4, user review pending): recovered
+    - KDE design handoff (user decisions 2026-10-08, delivered offline; D7 tile-override store pending): recovered
       ordinary floats retain the live frame with no hydration writes. Only
       settled explicit intent is durable; scoped/hidden/minimized absence
       does not clear it. Missing state is empty; corrupt/unreadable/mismatched
@@ -1768,22 +1806,30 @@ decisions of 2026-09-24 are under
 
   - Item 13: Q2 fixed-size float admission R-SPC-04. User accepted the
     ordinary fixed-size admission addition 2026-10-07; exact D1-D8 edges
-    are autonomous PROVISIONAL choices 2026-10-08, not user decisions.
-    KDE/shared delivered offline; Windows behavior is frozen in this delivery.
+    are user decisions 2026-10-08 (normative as delivered).
+    KDE/shared delivered offline; Windows behavior is unchanged in this delivery.
+    Changed D1 predicate setting plus functional naming, D5, D6 and D7 are
+    pending implementation.
     [Record](changes/archive/fixed-size-admission.md),
-    [provisional clauses](decisions.md#cross-platform-behavior),
+    [decisions](decisions.md#cross-platform-behavior),
     [matrix](spec/reference-outcomes/special-windows.md#q2-fixed-size-admission-discriminators-2026-10-08).
 
     #### Item 13 behavior and reference seams
 
     - Normative addition: REQ-SPC-04 floats ordinary fixed-size clients.
-      PROVISIONAL edges REQ-SPC-04a..h: equal usable whole vectors including
+      Decided edges (user 2026-10-08) REQ-SPC-04a..h: equal usable whole vectors including
       partial-zero; missing/full-zero/sentinel excluded; admission-only hint
       status; same-live-client user tile overrides; fixed-floating base under
-      native maximize; born-fullscreen exit tiled vs prior-float restore;
-      workspace enable retiles automatic only; startup/restart recomputes;
+      native maximize; born-fullscreen first exit classifies as newly admitted
+      (fixed floats with no writes, otherwise tiles; prior fixed floats
+      restore); workspace enable checks every window being tiled (fixed stays
+      untouched float, others tile; user tile overrides stay tiled);
+      startup/restart adoption plus tile-override persistence in the same
+      intentional-float store with recompute fallback;
       membership-only automatic admission with zero native target writes.
-      Either-axis alternative remains reviewable, no setting now. Q3 boundary
+      Either-axis alternative is now the `Width or height fixed` setting value
+      (functional IDs pending); breaking pre-release configs accepted, no
+      migration. Q3 boundary
       explicitly touched only for fixed-size birth; later fixed/maximized
       retile still uses R-MAX-03's reserved slot. Windows borderless-game
       inference and B9 refusal remain authoritative.
@@ -1846,10 +1892,15 @@ decisions of 2026-09-24 are under
       intentional floating flag or fixed hints alone.
     - Same live client keeps explicit tile/sticky intent through hide/show,
       scope changes and domain release; native lifetime replacement clears
-      it. Workspace enable retiles automatic only, intentional/sticky stay.
-      Restart recomputes absent authoritative identity; do not add tile
-      override persistence or fold R-RST-01 into this piece.
-    - No new shortcut, setting, preset or hook. Automatic membership must
+      it. Workspace enable checks every window being tiled (fixed stays
+      untouched float, others tile); intentional/sticky stay under existing
+      rules, user tile overrides stay tiled. Restart recomputes absent
+      authoritative identity with fallback; D7 tile-override persistence in
+      the same intentional-float store is pending (do not fold the rest of
+      R-RST-01 into this piece).
+    - No new shortcut, preset or hook. New functional predicate setting
+      values per D1 are selected (functional names, IDs pending; breaking
+      pre-release configs accepted, no migration). Automatic membership must
       emit bounded correlated decision evidence and cause no game geometry,
       focus, stacking/keep-above or effects/input interference. Do not call
       the explicit-float placement/focus path for automatic admission.
@@ -1861,14 +1912,19 @@ decisions of 2026-09-24 are under
     - [ ] Windows-only: fresh max-track/DPI/inset observations, timeout/hung
       clients, native overlay/restore and fixed borderless/exclusive games;
       user owns live checks on the Windows PC. Linux tests prove none of these.
-    - DoD: selected provisional clauses implemented with current Windows
+    - [ ] Windows-only: predicate setting values with functional names plus
+      `sameAxisMove` functional rename (functional value IDs pending);
+      setting/schema/UI/live wiring; user owns live checks.
+    - DoD: decided clauses implemented with current Windows
       rules preserved; dated Ours Windows matrix/spec evidence, no native
-      claim without user testing; user review of D1-D8 remains tracked.
+      claim without user testing; user decisions 2026-10-08 approved, changed
+      D1/D5/D6/D7 implementation pending.
 
   - Item 14: Q4 whole-active-workspace output migration R-WS-12. The addition
-    was accepted 2026-10-07; D1-D9 detail is autonomous PROVISIONAL selection
-    2026-10-08, not a user decision. Core/Linux planner/KDE delivered offline;
-    Windows behavior remains unchanged. Depends on the parked multi-output
+    was accepted 2026-10-07; D1-D9 detail is user decisions 2026-10-08
+    (normative as delivered). Core/Linux planner/KDE delivered offline;
+    Windows behavior remains unchanged. Changed D8 carry implementation
+    pending. Depends on the parked multi-output
     foundation (item 5), scoped history (item 1), and item 12 for non-local
     modes. [Record](changes/archive/kde-whole-workspace-output-migration.md),
     [spec](spec/functional-spec.md#workspaces) REQ-WS-12/12a..i,
@@ -1887,8 +1943,11 @@ decisions of 2026-09-24 are under
       insert after target current and show migrated, prior target stays hidden.
       Source selects last remaining scoped entry, existing minimum-two/trailing
       spare converges; empty allowed. Carry workspace floats with class/origin,
-      sticky stays source. Refuse whole before any write for fullscreen/maximized
-      moved members or affected current views (COSMIC carry deviation, reviewable).
+      sticky stays source. Carry fullscreen plus maximized members (changed D8,
+      user 2026-10-08, implementation pending): no refusal in moved members or
+      affected views; native move only with no extra fullscreen
+      size/position/focus writes; an explicit user move is not unwanted
+      interference.
     - Shared `core/boundary.rs` `CoreCommand::MigrateWorkspace { direction }`
       and `CoreReply::MigrateWorkspace(MigrateWorkspacePlan)`; event target has
       the SAME workspace ID on a DIFFERENT output and empty `target_windows`.
@@ -1957,19 +2016,22 @@ decisions of 2026-09-24 are under
       adapter architecture; no core extraction is selected.
     - [ ] Portable: retained unequal-share/nested tree, floats/origins, sticky
       active and minimized/null focus, empty lifecycle, insert-after-current,
-      scoped modes/history/return siblings, all-direction adjacency, overlay
-      no-write refusal, stale revision/ref replacement/removal/partial-arrival
+      scoped modes/history/return siblings, all-direction adjacency,
+      fullscreen+maximized carry with no extra overlay writes, stale
+      revision/ref replacement/removal/partial-arrival
       recovery; actual Engine reply extraction and unbound rebind/preset tests.
     - [ ] Windows-only: whole-member physical output transfer, mixed DPI/work
       areas, native arrival/view/focus timing, hidden/minimized/transient lifetime
-      and no-write game/overlay refusal, owned-window recovery after partial
+      and carried-overlay native-move-only writes, owned-window recovery after partial
       writes. User owns live journeys on the two-output PC.
     - User journey/DoD: select WS2 `H[A,V[B*,C]]` on L, R shows occupied WS3;
       bind migration right, verify same WS2/tree/shares, WS3 hidden, L last
       remaining, B focus only after arrival. Repeat empty, intentional/automatic
-      float plus sticky, overlay refusals and displaced-origin reconnect.
+      float plus sticky, fullscreen+maximized carry (D8 pending) and
+      displaced-origin reconnect.
       Update Ours Windows/spec with dated offline evidence; native outcomes TBD
-      until user-tested. D1-D9 review remains pending.
+      until user-tested. User decisions 2026-10-08 approved; D8 carry
+      implementation pending.
 
   ### Source discrepancies to preserve and report
 
@@ -2247,7 +2309,7 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 
 ### Single-output laptop
 
-- KDE Q3 R-RST-01/03/04 (offline delivered, D1-D4 PROVISIONAL): intentional
+- KDE Q3 R-RST-01/03/04 (offline delivered, user decisions 2026-10-08): intentional
   ordinary float plus automatic fixed float and a tile; script stop/start
   preserves ordinary intent/current frame, automatic fixed identity recomputes.
   Move/resize the intentional float while stopped; restart must not write its
@@ -2261,19 +2323,24 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   persistence claim. Physical startup-time sends and separate storage ACK
   tokens also need verification. [Record](changes/archive/kde-intentional-float-restart.md),
   [live guide](live-kwin-testing.md). No Q3 live result claimed.
-- KDE Q2 R-SPC-04/06..13 (offline delivered, D1-D8 PROVISIONAL): open a
+- KDE Q2 R-SPC-04/06..13 (offline delivered, user decisions 2026-10-08): open a
   fixed-size ordinary client beside a tile; record unchanged incoming frame,
   focus and stacking, including a fixed borderless game. Check single-axis
   clients tile, equal partial-zero clients float, unset/full-zero/sentinel
   hints do not auto-float. Gain/lose fixed hints after admission without
   changing float identity. Meta+G tiles an automatic float and stays tiled
   through minimize/restore, workspace/output observation and domain re-adoption;
-  new client/ref and owner restart recompute. Sticky origin commands retain
+  new client/ref and owner restart recompute (D7 tile-override persistence
+  pending implementation). Sticky origin commands retain
   their prior semantics. Fixed born-maximized stays floating beneath native
   maximize; float workspace -> tiled while still maximized reserves a Q3
-  slot, native unmaximize lands there. Born-fullscreen exits tiled, prior
-  fixed-floating fullscreen restores floating; no writes while fullscreen.
-  Workspace enable retiles automatic only; intentional/sticky controls stay.
+  slot, native unmaximize lands there. Born-fullscreen first exit classifies
+  as newly admitted after implementation (fixed floats with no writes,
+  otherwise tiles; prior fixed-floating fullscreen restores floating; no
+  writes while fullscreen). Workspace enable checks every window being tiled
+  after implementation (fixed stays/becomes untouched float including arrivals
+  while floating, others tile; user tile overrides stay tiled;
+  intentional/sticky keep existing rules).
   Foreground/hidden startup and correlated classification/admission/terminal
   logs need native verification. [Record](changes/archive/fixed-size-admission.md),
   [live guide](live-kwin-testing.md). No Q2 live result claimed.
@@ -2458,7 +2525,7 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 
 ### Multi-output PC
 
-- KDE Q4 R-WS-12/R-WS-21..26 (offline delivered, D1-D9 PROVISIONAL): rebind
+- KDE Q4 R-WS-12/R-WS-21..26 (offline delivered, user decisions 2026-10-08): rebind
   the four empty-default migration actions; local/global-unique with native
   `perOutputVirtualDesktops` on migrates, off/unreadable/shared refuses before
   writes with exact reason. Select active WS2 with nested unequal-share tree,
@@ -2467,8 +2534,9 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   Observe delayed member arrival and both views before focus; empty uses native
   output switch without client focus. Check intentional/automatic float remap
   across work areas/scales, sticky source, minimized/transient clients, member
-  removal and partial-write reconciliation. Fresh fullscreen/maximized member,
-  source-view and target-view legs must refuse with zero writes/focus/game
+  removal and partial-write reconciliation. Fresh fullscreen/maximized members
+  are carried after implementation (changed D8): native move only with no extra
+  fullscreen size/position/focus writes; an explicit user move is not unwanted
   interference. Previous invalidation and reconnect forget only moved ID.
   [Record](changes/archive/kde-whole-workspace-output-migration.md),
   [live guide](live-kwin-testing.md). User-owned; native outcomes remain TBD.
@@ -2591,40 +2659,6 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   "Provisional, to discuss" in [decisions](decisions.md)): mise rolling
   versions, Windows settings/tray/presets, drag producers,
   sequential startup seeding, KDE conflict controls.
-- Review of 2026-10-08 autonomous provisional choices (all marked
-  "Provisional, to discuss" in [decisions](decisions.md), not user decisions):
-  Q2 D1 whole-vector equality incl. partial-zero and sentinel exclusions,
-  no resizeable inference; either-axis Hyprland-Wayland/sway alternative
-  reviewable, setting deferred. D2 admission-only hints; D3 same-live-client
-  tile/sticky overrides; D4 fixed-floating base under maximize explicitly
-  touches the Q3 boundary, non-fixed Q3 and R-MAX-03 retile unchanged;
-  D5 born-fullscreen tiled exit vs prior-float restore; D6 workspace enable
-  retiles automatic only; D7 startup/restart recompute without tile-override
-  persistence; D8 membership-only no geometry/focus/stacking/keep-above writes.
-  Shared/KDE delivered offline, native checks/Windows item 13 pending;
-  [record](changes/archive/fixed-size-admission.md).
-  Q3 D1 private versioned/atomic/nofollow runtime membership store, bus ID +
-  KWin owner namespace; architecture boundary: planner gains a session-scoped runtime store.
-  This narrowly relaxes the service's no-persistence rule for intent only;
-  effect stays optional. D2 membership-only current-frame adoption, no stored
-  geometry/focus/stacking/pre-sticky history, unchanged sticky semantics.
-  D3 explicit intent persists after native success, verified-close/complete
-  inventory cleanup and separate storage ACK; no atomicity claim. D4 diagnosed
-  availability fallback: missing empty, corrupt/unreadable/mismatched state
-  degrades empty and can lose intent on restart; failed writes keep local/native
-  state until the next settled full update, no hold/retry scheduler or ledger.
-  KDE delivered offline; native checks and Windows item 8 pending;
-  [record](changes/archive/kde-intentional-float-restart.md).
-  Q4 D1 four unbound directional follow actions and empty presets; D2 strict
-  local/global-unique native capability gate; D3 active-only FULL-rect adjacency;
-  D4 retained backing/tree/order/shares/focus/mode, insert-after-current/show;
-  D5 last-remaining source refill, existing minimum-two/trailing spare, empty
-  allowed; D6 verified arrival/views before focus, empty native output switch;
-  D7 workspace floats carry class/origin, sticky stays; D8 whole no-write overlay
-  refusal (reviewable COSMIC deviation); D9 history 1.3/1.5 and remove only moved
-  ID from hotplug return, correlated partial/uncertain terminals. Shared/KDE
-  delivered offline; native checks and Windows item 14 pending;
-  [record](changes/archive/kde-whole-workspace-output-migration.md).
 
 ## Known issues and risks
 

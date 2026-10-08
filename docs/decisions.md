@@ -426,139 +426,136 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
       ([record](changes/archive/four-direction-output-transfer.md)); Windows
       wiring and user-owned two-output native journey pending. Full rectangles
       select adjacency only; placement retains per-desktop work areas.
-- Provisional, to discuss (2026-10-08, fixed-size admission D1 hints):
-  autonomous Orchestrator selection, not a user decision. Fixed iff both
-  min/max vectors are present, usable, nonnegative, not full-zero or
-  unbounded sentinels, and equal on both axes; equal partial-zero vectors
-  count (COSMIC). No inference from `resizeable`. No either-axis setting now;
-  Hyprland-Wayland/sway's either-axis alternative remains reviewable.
-- Provisional, to discuss (2026-10-08, fixed-size admission D2 hint changes):
-  classification is admission-only in both directions. Later hint changes
-  keep existing projection/clamp semantics without changing float identity.
-- Provisional, to discuss (2026-10-08, fixed-size admission D3 user override):
-  user tile/sticky-off-to-tile commands win for the same live client across
-  hide/show, cross-domain observation and workspace re-adoption. A genuinely
-  new client classifies again. Existing sticky origin/toggle rules stand.
-- Provisional, to discuss (2026-10-08, fixed-size admission D4 maximize):
-  fixed-size admission uses a floating base under native maximize (COSMIC
-  floats fixed clients before maximizing). Q3 and R-SPC-04 both say follow
-  COSMIC; this interpretation touches Q3 only at the fixed-size intersection.
-  Non-fixed born-maximized Q3 and R-MAX-03 stay unchanged. An automatic fixed
-  float later retiled while maximized follows Q3's reserved-slot overlay.
-- Provisional, to discuss (2026-10-08, fixed-size admission D5 fullscreen):
-  born-fullscreen fixed clients exit tiled on a tiled workspace (COSMIC);
-  previously fixed-floating clients restore floating. No automatic writes
-  while fullscreen. Windows borderless-game inference remains unchanged.
-- Provisional, to discuss (2026-10-08, fixed-size admission D6 workspace enable):
-  enabling workspace tiling retiles automatic fixed floats (COSMIC);
-  intentional/sticky floats keep existing rules. Automatic origin is distinct
-  from explicit float intent, without changing the workspace mode model.
-- Provisional, to discuss (2026-10-08, fixed-size admission D7 startup):
-  startup adoption classifies as admission, foreground and hidden. Restart
-  recomputes absent authoritative override identity; Q2 adds no tile-override
-  persistence. Accepted R-RST-01 float identity work remains separate.
-- Provisional, to discuss (2026-10-08, fixed-size admission D8 no-touch):
-  automatic classification is membership-only: no geometry, focus, stacking
-  or keep-above writes to the admitted client. Explicit user commands keep
-  existing behavior. Gaming Compatibility wins over reference placement.
-  D1-D8 shared core/Linux planner and KDE delivered offline;
-  [record](changes/archive/fixed-size-admission.md). Windows changes are
-  compile-only false-field plumbing, not behavior delivery; native checks
-  and review of every autonomous provisional choice remain pending in
-  [backlog](backlog.md#open-user-decisions).
-- Provisional, to discuss (2026-10-08, intentional-float restart D1 storage):
-  autonomous Orchestrator selection, not a user decision. KDE stores settled
-  intentional membership in a Rust-owned private runtime file under
-  `$XDG_RUNTIME_DIR`, with a 0700 directory, 0600 file, atomic replacement,
-  version and bounds checks, and no symlink following. Namespace is session
-  bus ID plus the current KWin unique owner; keys are live client internalId.
-  A new KWin/login never adopts an old namespace. Review flag: architecture
-  boundary: planner gains a session-scoped runtime store. This narrowly relaxes
-  the existing service's no-persistence boundary for float intent only; the
-  effect stays optional and no core extraction is selected.
-- Provisional, to discuss (2026-10-08, intentional-float restart D2 geometry):
-  restore membership only, preserving the current live frame, including
-  native movement while the owner was stopped. Store no geometry, focus,
-  stacking or pre-sticky history; hydration writes none of those states to
-  recovered floats. KDE native sticky adoption and un-stick semantics stay
-  unchanged. Automatic fixed floats recompute under Q2 D7; neither automatic
-  origin nor tile overrides gain persistence.
-- Provisional, to discuss (2026-10-08, intentional-float restart D3 settlement):
-  persist explicit float/unfloat intent only after successful native
-  application, reusing Q2's commit-after-success point without new command
-  staging. Confirmed adopted-sticky-off ordinary intent also persists. Clear
-  on settled unfloat and verified close; prune only a complete live inventory,
-  never scoped, hidden or minimized absence. Send the full settled membership
-  through methods on the existing service; log storage acknowledgement
-  separately from planned-applied. No atomic native/store commit is claimed.
-- Provisional, to discuss (2026-10-08, intentional-float restart D4 availability):
-  diagnosed availability fallback, not hold/retry. A missing store is empty;
-  unreadable, corrupt or namespace-mismatched state emits a normal-level
-  bounded degraded reason/count summary, then proceeds with no markers as
-  before this change. The next successful full membership write replaces it.
-  Write failure retains local intent and native state; the next settled
-  membership update rewrites the full set. No recovery scheduler, retry ledger
-  or unresolved-client hold is selected. Intent can be lost on restart when
-  storage is degraded; this tradeoff remains for user review.
-  D1-D4 Linux planner/KDE delivered offline;
-  [record](changes/archive/kde-intentional-float-restart.md). Windows behavior
-  remains unchanged; handoff item 8 retains sticky/ordinary marker work and
-  undecided post-restart un-stick outcomes. Native checks and all four choices,
-  including the architecture boundary, remain pending in
-  [backlog](backlog.md#open-user-decisions).
-- Provisional, to discuss (2026-10-08, workspace migration D1 bindings):
-  autonomous Orchestrator selection, not a user decision. Four directional
-  active-workspace migration actions are bindable and UNBOUND by default,
-  follow-only. KDE catalog has 128 bindings (92 bound, 36 unbound); both
-  presets retain empty migration defaults. No new foreign-conflict claims.
-- Provisional, to discuss (2026-10-08, workspace migration D2 capability):
-  KDE supports local/global-unique only with strict
-  `options.perOutputVirtualDesktops === true`. Shared mode, false or unreadable
-  capability refuses with a reason before writes. Never mutate native settings.
-  KDE global-unique is not COSMIC Global; native separability is an additional
-  capability gate for this command, not a revision of existing mode semantics.
-- Provisional, to discuss (2026-10-08, workspace migration D3 targeting):
-  move the active workspace in four directions using item-5 full-output-rect
-  unique reciprocal adjacency, without output wrap; no neighbor is a no-op,
-  ambiguous/unreadable topology refuses. Follow only. The hidden R-WS-12
-  baseline has no counterpart; its independent explicitly selected active leg
-  is supported. No hidden-ID targeting, stay or next/previous-output verb.
-- Provisional, to discuss (2026-10-08, workspace migration D4 destination):
-  preserve backing ID, tree/order/shares, remembered focus and workspace tiling
-  mode using core `relocate_domain`, rather than repeated window sends. Insert
-  immediately after the target output's current workspace and show the moved
-  workspace; the previous target workspace stays listed and hidden.
-- Provisional, to discuss (2026-10-08, workspace migration D5 source/empty):
-  source selects its last remaining scoped workspace. Existing minimum-two and
-  trailing-empty lifecycle converges the inventory. Empty migration is allowed
-  and retains its backing ID; native lifecycle timing remains for user testing.
-- Provisional, to discuss (2026-10-08, workspace migration D6 focus):
-  retain the moved active client only after all member arrivals and both view
-  changes are verified. Empty/sticky-active migration uses native output
-  switching with no fabricated client activation; minimized clients are not
-  unminimized or explicitly focused. Native output/focus timing remains TBD.
-- Provisional, to discuss (2026-10-08, workspace migration D7 floats/sticky):
-  carry workspace-bound intentional/automatic floats with class and origin
-  preserved via native output remap. Sticky all-desktops clients stay on the
-  source and are not migrated members. Native float geometry remains TBD.
-- Provisional, to discuss (2026-10-08, workspace migration D8 game safety):
-  refuse the whole command before any write when moving members or affected
-  current views contain fullscreen/maximized clients; never skip a member to
-  split the workspace. Reviewable deviation: COSMIC carries these states.
-  Gaming Compatibility wins; native/game refusal evidence remains pending.
-- Provisional, to discuss (2026-10-08, workspace migration D9 history/return):
-  apply existing history decisions 1.3/1.5: out-of-source-scope previous IDs
-  clear, disconnected-output history is discarded, reconnect selection never
-  consults/restores it. Remove only the explicitly moved ID from automatic
-  hotplug-return associations, retaining siblings. Native writes are not
-  atomic: Engine `planned` is a retained rekey, not native completion; log
-  correlated refusal, partial/uncertain, verified arrival and reconciliation.
-  D1-D9 core/Linux planner/KDE delivered offline;
-  [record](changes/archive/kde-whole-workspace-output-migration.md),
-  [spec](spec/functional-spec.md#workspaces) REQ-WS-12a..i. Windows changes
-  initialize the new `maximized` field to false only, preserving behavior;
-  handoff item 14 retains actual adapter work. Native acceptance and review of
-  all nine autonomous choices remain in [backlog](backlog.md#open-user-decisions).
+- User decision 2026-10-08 (functional naming rule): settings and
+  their values use functional names; reference WMs are named only in the
+  tooltip, not in the setting or value name. Value IDs are functional;
+  exact IDs pending.
+- User decisions 2026-10-08 (fixed-size admission R-SPC-04 D1-D8, outcomes
+  decided; changed D1/D5/D6/D7 implementation pending):
+  - D1 predicate: COSMIC whole-vector equality default as delivered
+    (both min/max vectors present, usable, nonnegative, not full-zero
+    or unbounded sentinels, equal on both axes; equal partial-zero
+    counts; no inference from `resizeable`). New setting values are
+    functionally named `Width and height both fixed` (default, tooltip
+    names COSMIC) and `Width or height fixed` (tooltip names Hyprland
+    on Wayland and sway); functional value IDs pending. Existing
+    `sameAxisMove` `cosmic-wrap`/`flat-swap` values are renamed
+    functionally with WM tooltips; breaking configs is acceptable
+    pre-release (dogfooding correctness priority), no migration,
+    pending.
+  - D2 hint changes: admission-only in both directions as delivered;
+    keep reacting to windows resizing themselves to avoid
+    gaps/overlaps. No new hint-signal work requested.
+  - D3 user override: explicit tile/sticky-off-to-tile wins for the
+    same live client (hide/show, cross-domain observation, workspace
+    re-adoption); no setting. A new client classifies again; sticky
+    origin/toggle rules stand.
+  - D4 born-maximized: fixed plus born-maximized uses a floating base
+    under native maximize as delivered, narrowing the Q3 intersection.
+  - D5 born-fullscreen (CHANGED, decided, implementation pending):
+    born-fullscreen first exit classifies as newly admitted: fixed
+    floats with no writes, otherwise tiles; previously fixed-floating
+    restores float. No writes during fullscreen. Deliberate COSMIC
+    deviation for game safety; pending live observation after
+    implementation.
+  - D6 workspace enable (CHANGED, decided, implementation pending):
+    enabling workspace tiling checks every window being tiled,
+    including arrivals in a floating workspace: fixed stays/becomes
+    untouched float, others tile. Explicit user tile overrides stay
+    tiled; intentional/sticky floats keep existing rules. COSMIC
+    deviation; pending plus live check.
+  - D7 startup: startup adoption classifies as delivered (foreground
+    and hidden) PLUS fixed-window user tile overrides persist across
+    owner restart in the same intentional-float store, with recompute
+    fallback if unavailable; pending.
+  - D8 no-touch: automatic fixed floats are membership-only: no
+    geometry, focus, stacking or keep-above writes. Manual floats
+    retain keep-above because intentional floats stay above windowed
+    games.
+  - Status: shared core/Linux planner and KDE delivered offline
+    ([record](changes/archive/fixed-size-admission.md)). Windows
+    changes are compile-only false-field plumbing, not behavior
+    delivery; native checks of every user-selected choice remain
+    pending.
+- User decisions 2026-10-08 (intentional-float restart R-RST-01 D1-D4,
+  outcomes decided, delivered offline; native checks pending):
+  - D1 storage: Rust planner-owned private runtime store under
+    `$XDG_RUNTIME_DIR` with session-bus plus KWin-owner namespace as
+    delivered (0700 dir, 0600 file, atomic replace, version and bounds
+    checks, no symlink following; new KWin/login never adopts old
+    namespace). Accepted architecture boundary change: relaxes the
+    planner no-persistence boundary for this store only.
+  - D2 geometry: membership-only restore, preserving the current live
+    frame including native movement while the owner was stopped, as
+    delivered. Store no geometry, focus, stacking or pre-sticky
+    history; hydration writes none of those. Shared core restart store
+    (float intent, tile overrides, possibly positions; platforms
+    supply identity plus location) is reconsidered when macOS starts;
+    deferred.
+  - D3 settlement: persist explicit float/unfloat intent only after
+    successful native application as delivered (confirmed
+    adopted-sticky-off ordinary intent also persists). Clear on
+    settled unfloat and verified close; prune only on a complete live
+    inventory, never on scoped, hidden or minimized absence.
+  - D4 availability: degraded store handling is diagnosed
+    availability fallback as delivered: missing reads as empty;
+    unreadable, corrupt or namespace-mismatched state emits a
+    bounded degraded reason/count summary then proceeds empty; no
+    hold or retry. Write failure keeps local intent and native state;
+    the next settled membership update rewrites the full set.
+  - Status: Linux planner/KDE delivered offline
+    ([record](changes/archive/kde-intentional-float-restart.md)).
+    Windows behavior unchanged; native checks remain pending.
+- User decisions 2026-10-08 (workspace migration R-WS-12 D1-D9, outcomes
+  decided; changed D8 implementation pending):
+  - D1 bindings: four directional active-workspace migration actions,
+    bindable and UNBOUND by default, follow-only, as delivered (KDE
+    catalog 128 bindings: 92 bound, 36 unbound; presets keep empty
+    migration defaults; no new foreign-conflict claims).
+  - D2 capability: local/global-unique only with strict
+    `options.perOutputVirtualDesktops === true` as delivered. Shared
+    mode, false or unreadable capability refuses with a reason before
+    writes; never mutate native settings.
+  - D3 targeting: active workspace only, using full-output-rect unique
+    reciprocal adjacency, no output wrap, as delivered. No neighbor is
+    a no-op; ambiguous or unreadable topology refuses; follow only.
+  - D4 destination: preserve backing ID, tree/order/shares, remembered
+    focus and workspace tiling mode via core `relocate_domain` as
+    delivered. Insert immediately after the target output's current
+    workspace and show the moved workspace; the previous target
+    workspace stays listed and hidden.
+  - D5 source/empty: source selects its last remaining scoped
+    workspace (COSMIC); empty migration allowed and retains its
+    backing ID, as delivered. Native lifecycle timing remains for
+    user testing.
+  - D6 focus: retain the moved active client only after all member
+    arrivals and both view changes are verified, as delivered.
+    Empty/sticky-active migration uses native output switching with
+    no fabricated client activation; minimized clients are not
+    unminimized or explicitly focused.
+  - D7 floats/sticky: workspace-bound intentional/automatic floats are
+    carried with class and origin preserved via native output remap,
+    as delivered. Sticky all-desktops clients stay on the source and
+    are not migrated members.
+  - D8 overlays (CHANGED, decided, implementation pending):
+    fullscreen plus maximized members are carried, matching
+    Hyprland/sway/i3/niri/COSMIC and native KWin send-to-output. No
+    refusal in moved members or affected views; only the native move,
+    with no extra size/position/focus writes while fullscreen. An
+    explicit user move is not unwanted interference (for example a
+    game on the wrong output). Implementation pending plus live
+    check.
+  - D9 history/return: history decisions 1.3/1.5 invalidation as
+    delivered: out-of-source-scope previous IDs clear,
+    disconnected-output history is discarded, reconnect selection
+    never consults or restores it. Remove only the explicitly moved
+    ID from automatic hotplug-return associations. Migrated IDs lose
+    auto return.
+  - Status: core/Linux planner/KDE delivered offline
+    ([record](changes/archive/kde-whole-workspace-output-migration.md),
+    [spec](spec/functional-spec.md#workspaces) REQ-WS-12a..i).
+    Windows changes initialize the new `maximized` field to false
+    only, preserving behavior; native acceptance remains pending.
 - User decision 2026-10-07 (functional spec format): keep
   [the functional spec](spec/functional-spec.md) as a single file; revisit
   splitting if it grows much larger. Requirements are normative only where a

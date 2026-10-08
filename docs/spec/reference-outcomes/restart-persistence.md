@@ -295,7 +295,7 @@ Restart journeys (config reload is not owner restart):
 - awesome: `awesome.restart()` re-execs, saving order and floating state (`S(S-awe-ctl)`).
 - PaperWM/karousel: disable+enable the extension/script with the host session retained (`S(S-pap-rst)` + `S(S-kar-start)`).
 - paneru: orderly daemon exit/relaunch; AppExit saves the state and startup loads it for grace-windowed matching (`S(S-pan-rst)`).
-- Ours KDE: script stop/start, with a fresh observation and intentional-float id set (`S(S-ours-kde-rst)` baseline); Q3 hydrates settled membership from the same-bus/KWin runtime store before first planning, with PROVISIONAL diagnosed-empty behavior for degraded storage. [Offline record](../../changes/archive/kde-intentional-float-restart.md).
+- Ours KDE: script stop/start, with a fresh observation and intentional-float id set (`S(S-ours-kde-rst)` baseline); Q3 hydrates settled membership from the same-bus/KWin runtime store before first planning, with NORMATIVE diagnosed-empty behavior for degraded storage (User 2026-10-08). [Offline record](../../changes/archive/kde-intentional-float-restart.md).
 - Ours Windows: orderly `tile` stop/start; standalone `restore` is a separate journey (`S(S-ours-win-rst)`).
 
 ### R-RST-01: orderly owner restart with apps kept alive
@@ -313,7 +313,7 @@ Restart journeys (config reload is not owner restart):
 - Observe: layout/ratios/workspaces/float/focus recovered vs fresh adoption.
 - Observe (degraded-store variant): diagnosed-empty startup vs blocked/retried
   startup; separate storage acknowledgement after the next settled membership
-  update. Ours KDE follows PROVISIONAL D4 below; reference and Windows store
+  update. Ours KDE follows NORMATIVE D4 below (User 2026-10-08); reference and Windows store
   failure counterparts/outcomes remain TBD, not votes against recovery.
 - Then COSMIC: no client-preserving re-exec contract found at pin (persist covers pinned workspaces only); whether an orderly restart keeps apps alive with layout is TBD. `S(S-cos-persist)`; queued.
 - Then Hyprland/Dwindle: no-counterpart for this owner restart with clients alive (no re-exec verb in the dispatcher inventory; reload keeps the live tree only and exit stops the compositor). `S(S-hyp-reload)` + `S(S-hyp-shortcut)`.
@@ -327,9 +327,10 @@ Restart journeys (config reload is not owner restart):
 - Then PaperWM: controlled disable+enable stages SaveState and re-adds existing windows with prevSpace layout restored where present; exact widths, F placement and B selection TBD. `S(S-pap-rst)`; queued.
 - Then karousel/Lazy: no layout restore exists (live-only Grid state); script disable+enable re-admits existing windows via addClient as fresh columns; exact order/widths/focus TBD. `S(S-kar-rst)` + `S(S-kar-start)`; queued.
 - Then paneru: startup windows match SessionRestore within grace from the durable state file; exact strips/widths, F handling and focus TBD. `S(S-pan-rst)`; queued.
-- Then Ours KDE: freshly re-observes/adopts windows and hydrates settled intentional F before first planning; F keeps ordinary-float identity and its current frame with no hydration geometry/stacking/focus writes (PROVISIONAL Q3 D1-D4). Implemented offline 2026-10-08 with [real Planner/entry fixtures](../../../kwin/tests/float-intent.test.ts) and [private store/bus fixtures](../../../crates/plasma-auto-tiler/src/float_intent_store.rs). Missing store is empty; corrupt/unreadable/mismatched reads are diagnosed and proceed empty, so degraded restart can lose F intent. Native sticky/overlay flags remain observed; layout/ratios/workspace set/native focus recovery remain TBD. [Record](../../changes/archive/kde-intentional-float-restart.md); native journey queued.
+- Then Ours KDE: freshly re-observes/adopts windows and hydrates settled intentional F before first planning; F keeps ordinary-float identity and its current frame with no hydration geometry/stacking/focus writes (NORMATIVE Q3 D1-D4, User 2026-10-08; fixed-window user tile overrides persist, selected, implementation pending). Implemented offline 2026-10-08 for intentional membership only with [real Planner/entry fixtures](../../../kwin/tests/float-intent.test.ts) and [private store/bus fixtures](../../../crates/plasma-auto-tiler/src/float_intent_store.rs); tile-override persistence is not covered by those fixtures. Missing store is empty; corrupt/unreadable/mismatched reads are diagnosed and proceed empty, so degraded restart can lose F intent. Native sticky/overlay flags remain observed; layout/ratios/workspace set/native focus recovery remain TBD. [Record](../../changes/archive/kde-intentional-float-restart.md); native journey queued.
 - Then Ours Windows: freshly observes/adopts windows; intentional F loses its ordinary-float status because its runtime store resets. Settings persist but do not restore the layout; restored memberships and native focus TBD. `S(S-ours-win-rst)`; queued.
-- Variant hook: provisional/TBD (restart recovery hook, to discuss).
+- Variant hook: NORMATIVE restart recovery (User 2026-10-08; fixed-window
+  tile-override persistence implementation pending).
 
 ### R-RST-02: end session, restore session and apps
 
@@ -351,7 +352,7 @@ Restart journeys (config reload is not owner restart):
 - Then PaperWM: SaveState covers controlled restarts only; ended-session topology recovery TBD (session wiring untraced at pin). `S(S-pap-rst)`; queued.
 - Then karousel/Lazy: Actions plus live Grid cover the running session only; post-session app and layout recovery TBD (session wiring untraced at pin). `S(S-kar-rst)`; queued.
 - Then paneru: strip/column metadata persists in the state file; cross-session window-identity rematch, host-zoom state and resulting layout are TBD. Host zoom remains an applicable host-owned state. `S(S-pan-rst)`; queued.
-- Then Ours KDE: host-maximized members classify as tile exceptions while settings/gaps restore at startup; windows freshly re-admit and host-max restore is TBD. Q3 intentional markers cannot cross a new bus/KWin namespace (PROVISIONAL D1), verified offline; actual logout/session-manager journey remains TBD. `S(S-ours-kde-rst)` baseline; [store fixtures](../../../crates/plasma-auto-tiler/src/float_intent_store.rs); queued.
+- Then Ours KDE: host-maximized members classify as tile exceptions while settings/gaps restore at startup; windows freshly re-admit and host-max restore is TBD. Q3 intentional markers cannot cross a new bus/KWin namespace (NORMATIVE D1, User 2026-10-08), verified offline; actual logout/session-manager journey remains TBD. `S(S-ours-kde-rst)` baseline; [store fixtures](../../../crates/plasma-auto-tiler/src/float_intent_store.rs); queued.
 - Then Ours Windows: the settings file carries gaps/preset durably while the ledger is runtime with explicit standalone restore; restart freshly observes and host-max restore is TBD. `S(S-ours-win-rst)`; queued.
 - Variant hook: provisional/TBD (session restore hook, to discuss).
 
@@ -395,13 +396,14 @@ Restart journeys (config reload is not owner restart):
 - Then paneru: daemon exit/relaunch has a counterpart; F's drift outcome
   TBD. `S(S-pan-rst)`.
 - Then Ours KDE: intentional F's identity and current moved/resized live frame
-  survive through membership-only adoption (PROVISIONAL Q3 D2); no hydration
+  survive through membership-only adoption (NORMATIVE Q3 D2, User 2026-10-08); no hydration
   geometry, stacking or focus writes to F. Implemented offline with counted
   setters and real Planner [entry fixtures](../../../kwin/tests/float-intent.test.ts).
   Native stopped-owner journey remains TBD; degraded store follows D4.
 - Then Ours Windows: intentional identity retention is selected by R-RST-01;
   stopped-owner drift outcome TBD. Windows handoff item 8; behavior unchanged.
-- Variant hook: PROVISIONAL Q3 D2 membership-only adoption selected for KDE;
+- Variant hook: NORMATIVE Q3 D2 membership-only adoption selected for KDE
+  (User 2026-10-08);
   saved float geometry restoration is a review alternative, not a setting.
 
 ### R-RST-04: distinguish intentional and automatic fixed floats on restart
@@ -438,12 +440,15 @@ Restart journeys (config reload is not owner restart):
 - Then PaperWM: distinct origin fixture and recovery TBD.
 - Then karousel/Lazy: distinct origin fixture and recovery TBD.
 - Then paneru: distinct origin fixture and recovery TBD.
-- Then Ours KDE: selected R-RST-01 preserves intentional E; Q2 PROVISIONAL
-  D7 recomputes automatic F from current hints, so F is newly tiled here.
+- Then Ours KDE: selected R-RST-01 preserves intentional E; Q2 NORMATIVE
+  D7 (User 2026-10-08) recomputes automatic F from current hints, so F is newly tiled here.
   Implemented offline with real Planner [two-owner hint-loss fixtures](../../../kwin/tests/float-intent.test.ts),
-  under PROVISIONAL Q3 D1-D4; E takes no slot and receives no hydration writes.
-  Native journey TBD; neither automatic origin nor Q2 tile overrides persists.
+  under NORMATIVE Q3 D1-D4; E takes no slot and receives no hydration writes.
+  Native journey TBD; automatic origin is recomputed, not persisted; fixed-window
+  Q2 tile overrides persist, implementation pending.
 - Then Ours Windows: combined origin fixture and recovery TBD (handoff items
   8 and 13); fixed-size admission wiring is pending and behavior unchanged.
-- Variant hook: intentional membership vs recomputed automatic origin;
+- Variant hook: NORMATIVE intentional membership vs recomputed automatic
+  origin (User 2026-10-08; selected, tile-override persistence
+  implementation pending);
   existing R-RST-01 and Q2 D7 intent, not a new hint-classification decision.

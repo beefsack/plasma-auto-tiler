@@ -4,8 +4,9 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 Candidates: R-SPC-01 through R-SPC-05 (transients/modals, splash/utility types, PiP, fixed-size admission, app-owned resize/hint changes). No existing special rows to backfill (0 existing rows, 0 cells). PiP is app/flags-specific with no universal native type; no profile invents one.
 
-Q2 discriminators R-SPC-06..13 cover fixed-size edge cases. Autonomous
-Orchestrator clauses D1-D8 are PROVISIONAL, not user decisions;
+Q2 discriminators R-SPC-06..13 cover fixed-size edge cases. D1-D8 are
+user-selected NORMATIVE (User 2026-10-08; REQ-SPC-04a..h); changed D1/D5/D6/D7
+portions are implementation pending in Ours KDE;
 [offline delivery and review record](../../changes/archive/fixed-size-admission.md).
 
 ## New scenarios (GWT; fixtures/actions/discriminators per the approved expansion record)
@@ -201,13 +202,18 @@ transient (no dialog flag) is a different fixture and is not claimed.
 - Then Ours KDE: E is an automatic float outside the tile tree. No E
   geometry, focus, stacking or keep-above writes from classification;
   exact native/game journey TBD. Implemented offline 2026-10-08 under
-  PROVISIONAL D1-D8; [real Planner fixtures](../../../kwin/tests/fixed-size-admission.test.ts),
+  NORMATIVE D1-D8 (User 2026-10-08; changed D1/D5/D6/D7 portions
+  implementation pending); [real Planner fixtures](../../../kwin/tests/fixed-size-admission.test.ts),
   [record](../../changes/archive/fixed-size-admission.md).
 - Then Ours Windows: tiles with its declared-hint clamp carried
   into the Engine rows (`WM_GETMINMAXINFO` per member; no
   fixed-size exclusion). `S(S-ours-spc-win)`.
-- Variant hook: PROVISIONAL D1/D8; either-axis alternative reviewable,
-  no setting in this delivery.
+- Variant hook: NORMATIVE D1/D8 (User 2026-10-08; selected,
+  setting implementation pending). Whole-vector default
+  with functionally named values (`Width and height both fixed` default,
+  tooltip COSMIC; `Width or height fixed`, tooltip Hyprland on Wayland and
+  sway); functional value IDs pending. Existing sameAxisMove values get
+  functional names with WM tooltips; no config migration.
 
 ### R-SPC-05: app-owned resize and minimum-hint change on a tile
 
@@ -261,8 +267,8 @@ transient (no dialog flag) is a different fixture and is not claimed.
 ## Q2 fixed-size admission discriminators (2026-10-08)
 
 R-SPC-04's 640x480 fixture is reused for ordinary fixed admission. Its
-focus/frame-neutral automatic admission is PROVISIONAL D8; COSMIC's
-floating placement/focus is not evidence for our Gaming Compatibility fence.
+focus/frame-neutral automatic admission is NORMATIVE D8 (User 2026-10-08);
+COSMIC's floating placement/focus is not evidence for our Gaming Compatibility fence.
 Native game geometry/focus/stacking must remain untouched by automatic
 classification. Existing sticky origin/toggle rules reuse R-FLT-02/05 and
 R-RST-01; transient/dialog eligibility reuses R-SPC-01, not new type gates.
@@ -292,13 +298,15 @@ All fresh variants below reset the client and WM state independently.
 - Then PaperWM: TBD.
 - Then karousel/Lazy: TBD (native resizeable mapping untraced).
 - Then paneru: TBD.
-- Then Ours KDE: tiles in both variants (PROVISIONAL D1, whole-vector
-  equality, no either-axis setting). Implemented offline 2026-10-08;
+- Then Ours KDE: tiles in both variants (NORMATIVE D1, whole-vector
+  equality; new either-axis values selected, implementation pending).
+  Implemented offline 2026-10-08;
   [predicate/Planner fixtures](../../../kwin/tests/fixed-size-admission.test.ts),
   [record](../../changes/archive/fixed-size-admission.md). Native TBD.
 - Then Ours Windows: TBD (handoff only; behavior frozen).
-- Variant hook: PROVISIONAL whole-size default; either-axis setting deferred
-  as a reviewable alternative.
+- Variant hook: NORMATIVE whole-size default (User 2026-10-08);
+  either-axis values selected with functional names, IDs pending,
+  implementation pending.
 
 ### R-SPC-07: admit with unset, zero or equal partial-zero hints
 
@@ -329,12 +337,13 @@ All fresh variants below reset the client and WM state independently.
 - Then karousel/Lazy: TBD.
 - Then paneru: TBD.
 - Then Ours KDE: missing/full-zero/sentinel do not auto-float; equal
-  partial-zero vectors do (PROVISIONAL D1, no resizeable inference).
+  partial-zero vectors do (NORMATIVE D1, no resizeable inference).
   Implemented offline 2026-10-08; [shared predicate fixtures](../../../crates/tiler-core/tests/fixed_size_admission.rs),
   [KDE fixtures](../../../kwin/tests/fixed-size-admission.test.ts).
   Native hint representation remains TBD.
 - Then Ours Windows: TBD (max-track extraction not wired).
-- Variant hook: whole-size equality vs meaningful-bound normalization.
+- Variant hook: NORMATIVE whole-size equality vs meaningful-bound
+  normalization (User 2026-10-08).
 
 ### R-SPC-08: gain or lose fixed hints after admission
 
@@ -364,11 +373,13 @@ All fresh variants below reset the client and WM state independently.
 - Then paneru: TBD.
 - Then Ours KDE: tiled B stays tiled after becoming fixed; automatic
   fixed float stays floating after becoming resizable. Existing hint
-  projection/clamp continues (PROVISIONAL D2). Implemented offline
+  projection/clamp continues (NORMATIVE D2); react to self-resize to avoid
+  gaps/overlaps, no new hint-signal work. Implemented offline
   2026-10-08 with real Planner [fixtures](../../../kwin/tests/fixed-size-admission.test.ts);
   native exact frames/focus TBD.
 - Then Ours Windows: TBD (handoff only; behavior frozen).
-- Variant hook: admission-only vs dynamic classification.
+- Variant hook: NORMATIVE admission-only vs dynamic classification
+  (User 2026-10-08).
 
 ### R-SPC-09: explicitly tile an automatically admitted fixed float
 
@@ -398,11 +409,12 @@ All fresh variants below reset the client and WM state independently.
 - Then Ours KDE: explicit tile wins for the same live client, including
   sticky Meta+G; ordinary observation does not re-float it. Exact-ref
   suppression survives omitted/scoped/released observations; new refs
-  classify again (PROVISIONAL D3). Implemented offline 2026-10-08,
+  classify again (NORMATIVE D3, no setting). Implemented offline 2026-10-08,
   [real Planner and sticky fixtures](../../../kwin/tests/fixed-size-admission.test.ts).
   Physical hide/show/domain reassignment TBD.
 - Then Ours Windows: TBD (handoff only; behavior frozen).
-- Variant hook: explicit intent vs automatic fixed classification.
+- Variant hook: NORMATIVE explicit intent vs automatic fixed
+  classification (User 2026-10-08).
 
 ### R-SPC-10: admit fixed and maximized, then unmaximize
 
@@ -427,23 +439,27 @@ All fresh variants below reset the client and WM state independently.
 - Then karousel/Lazy: TBD.
 - Then paneru: TBD.
 - Then Ours KDE: fixed E floats beneath native maximize, no reserved
-  tile on admission; unmaximize leaves it floating (PROVISIONAL D4).
+  tile on admission; unmaximize leaves it floating (NORMATIVE D4).
   Non-fixed Q3 is unchanged. Later workspace retile while maximized
   reserves a slot and native unmaximize lands there (Q3 R-MAX-03).
   Implemented offline 2026-10-08; [production-entry fixtures](../../../kwin/tests/fixed-size-workspace-entry.test.ts),
   [record](../../changes/archive/fixed-size-admission.md). Native TBD.
 - Then Ours Windows: TBD (same intersection; handoff only).
-- Variant hook: fixed-float base vs Q3 reserved tiled base.
+- Variant hook: NORMATIVE fixed-float base vs Q3 reserved tiled base
+  (User 2026-10-08).
 
 ### R-SPC-11: fixed client exits fullscreen, born or previously floating
 
 - Given (tree profiles): `H[A*]`; E ordinary min=max 640x480,
   born fullscreen. Fresh variant: E first admits fixed-floating, then
-  enters fullscreen. Workspace remains tiled; no sticky/maximize/rules.
-- Given (column profiles): `COL[C1[A*]]`; same independent lifecycles.
-- When: exit E's fullscreen natively.
+  enters fullscreen. Non-fixed variant: N ordinary resizable, born
+  fullscreen on a tiled workspace. Workspace remains tiled; no sticky/maximize/rules.
+- Given (column profiles): `COL[C1[A*]]`; same independent lifecycles,
+  including the non-fixed N variant.
+- When: exit E's fullscreen natively (non-fixed variant: exit N's fullscreen natively).
 - Observe: classify fixed hints on first normal admission vs restore
-  previously recorded layer. During fullscreen, game state is untouched.
+  previously recorded layer. Non-fixed N first exit tiles. During fullscreen, game state is untouched.
+  Reference outcomes for the non-fixed N variant are TBD.
 - Then COSMIC: born fullscreen skips normal float/tile mapping, has no
   restore state and tiles on exit to a tiled workspace; previously
   floating E restores floating with retained geometry.
@@ -459,24 +475,34 @@ All fresh variants below reset the client and WM state independently.
 - Then PaperWM: TBD.
 - Then karousel/Lazy: TBD.
 - Then paneru: TBD.
-- Then Ours KDE: born fullscreen has no automatic fixed origin and
-  exits tiled on the tiled workspace; previously automatic floating
-  restores floating. No target writes while fullscreen (PROVISIONAL D5).
-  Implemented offline 2026-10-08, [real Planner fixtures](../../../kwin/tests/fixed-size-admission.test.ts);
+- Then Ours KDE: born-fullscreen first exit classifies as newly admitted:
+  fixed floats with no writes, otherwise tiles; previously automatic
+  floating restores floating. No target writes while fullscreen (NORMATIVE
+  D5 CHANGED, User 2026-10-08; deliberate COSMIC deviation for game safety,
+  pending live observation). Prior tiled-exit implemented offline
+  2026-10-08, [real Planner fixtures](../../../kwin/tests/fixed-size-admission.test.ts);
+  CHANGED first-exit classification selected, implementation pending;
   native game/restore journey TBD.
 - Then Ours Windows: TBD; current borderless-game inference stays frozen.
-- Variant hook: first normal admission vs fullscreen restore identity.
+- Variant hook: NORMATIVE first normal admission vs fullscreen restore
+  identity (User 2026-10-08; CHANGED first-exit classification selected,
+  implementation pending).
 
 ### R-SPC-12: enable workspace tiling with an automatic fixed float
 
 - Given (tree profiles): workspace floating-only with ordinary fixed E
   (min=max 640x480), no explicit per-window override. Separate intentional
-  float C is a control; no sticky/fullscreen/maximize/rules.
+  float C is a control; no sticky/fullscreen/maximize/rules. Arrival
+  variant: ordinary fixed F arrives while the workspace is floating, then
+  tiling is enabled for that workspace.
 - Given (column profiles): same free-floating clients on a workspace
-  where a floating-to-tiled workspace action exists.
+  where a floating-to-tiled workspace action exists, including the F
+  arrival variant.
 - When: enable tiling for that workspace.
 - Observe: E auto-float survives vs workspace action explicitly tiles it;
+  F fixed arrival stays/becomes untouched float while other arrivals tile;
   intentional C is distinguished, not silently reclassified.
+  Reference outcomes for the F arrival variant are TBD.
 - Then COSMIC: retiles both E and C without a fixed-hint check; exact
   frames/focus TBD. `S(S-cos-fixed-workspace)`.
 - Then Hyprland/Dwindle: no workspace-mode counterpart per R-FLT-04;
@@ -498,26 +524,36 @@ All fresh variants below reset the client and WM state independently.
 - Then karousel/Lazy: no workspace-mode counterpart; outcome TBD.
   `S(S-kar-acts)`.
 - Then paneru: no workspace-mode counterpart; outcome TBD. `S(S-pan-cmds)`.
-- Then Ours KDE: confirmed workspace enable retiles automatic E;
+- Then Ours KDE: enabling workspace tiling checks every window being
+  tiled including arrivals while floating: fixed stays/becomes untouched
+  float, others tile; explicit user tile overrides stay tiled;
   intentional C and sticky floats keep their existing exceptions
-  (PROVISIONAL D6 for automatic origin). Implemented offline
-  2026-10-08; [production-entry release/retile fixtures](../../../kwin/tests/fixed-size-workspace-entry.test.ts)
+  (NORMATIVE D6 CHANGED, User 2026-10-08; COSMIC deviation, pending live
+  check). Prior retile implemented offline
+  2026-10-08; CHANGED check-every-window selected, implementation pending;
+  [production-entry release/retile fixtures](../../../kwin/tests/fixed-size-workspace-entry.test.ts)
   and [intentional/sticky controls](../../../kwin/tests/fixed-size-admission.test.ts).
   Native release/placement TBD.
 - Then Ours Windows: fixed E TBD (handoff only); intentional C
   preservation reuses R-FLT-04 evidence.
-- Variant hook: automatic vs intentional float identity at workspace enable.
+- Variant hook: NORMATIVE automatic vs intentional float identity at
+  workspace enable (User 2026-10-08; CHANGED check-every-window selected,
+  implementation pending).
 
 ### R-SPC-13: adopt an already mapped fixed client on owner startup
 
 - Given (tree profiles): tiler owner stopped, A ordinary and E ordinary
   min=max 640x480 already mapped on a tiled-designated workspace. Fresh
   restart variant: E was explicitly tiled before this owner stop.
+  Unavailable-store variant: the intentional-float store is missing or
+  unreadable at restart, so the tile override falls back to recompute.
 - Given (column profiles): same already mapped A/E with native owner
-  startup/restart where supported; no H/V tree is asserted.
+  startup/restart where supported; no H/V tree is asserted, including the
+  explicit-tile and unavailable-store variants.
 - When: start the tiler owner with the clients still alive.
 - Observe: fixed classification at adoption vs open-only classification;
   previous explicit tile override vs recomputed automatic identity.
+  Reference outcomes for the unavailable-store variant are TBD.
 - Then COSMIC: exact owner-adoption counterpart/outcome TBD; ordinary
   compositor map is not evidence for this script-owner journey.
 - Then Hyprland/Dwindle: TBD.
@@ -532,11 +568,14 @@ All fresh variants below reset the client and WM state independently.
 - Then karousel/Lazy: TBD.
 - Then paneru: TBD.
 - Then Ours KDE: startup foreground/hidden adoption floats fixed E;
-  owner restart recomputes absent authoritative override identity, so
-  the earlier runtime-only tile win is not persisted (PROVISIONAL D7).
-  Implemented offline 2026-10-08; [startup entry fixtures](../../../kwin/tests/fixed-size-workspace-entry.test.ts)
+  fixed-window user tile overrides persist across owner restart in the
+  same intentional-float store, recompute fallback if unavailable
+  (NORMATIVE D7, User 2026-10-08; persistence selected, implementation pending).
+  Startup classification implemented offline 2026-10-08;
+  [startup entry fixtures](../../../kwin/tests/fixed-size-workspace-entry.test.ts)
   and [restart fixtures](../../../kwin/tests/fixed-size-admission.test.ts).
   Native owner journey TBD; R-RST-01 float identity work stays separate.
 - Then Ours Windows: TBD (handoff only; behavior frozen).
-- Variant hook: admission/adoption scope; explicit identity persistence is
-  separately selected by R-RST-01, mechanism unselected.
+- Variant hook: NORMATIVE admission/adoption scope (User 2026-10-08);
+  explicit identity persistence is separately selected by R-RST-01,
+  tile-override persistence selected, implementation pending.

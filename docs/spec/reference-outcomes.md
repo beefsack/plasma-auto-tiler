@@ -2155,6 +2155,36 @@ Legend:
   column-held flags so the window arrives Normal; FIXME documents the loss)
   @ed22699d99462f61ab171472d3ea67e844ea580d
   (window-send strips overlay state, column-send retains it)
+- `S-hyp-wsmove-fs` Hyprland:src/state/workspace/PlacementController.cpp:301-329
+  (whole-workspace monitor reassignment; floating reposition plus fullscreen
+  setBox to the new monitor box) and :316-317 (fullscreen branch)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (carries fullscreen; maximized members move as members with no separate
+  gate traced; no refusal)
+- `S-sway-wsmove-fs` sway:sway/tree/workspace.c:1131-1161
+  (workspace_move_to_output detach/attach with source refill, no overlay
+  gate) + sway/tree/arrange.c:310-316 (fullscreen container set to output
+  geometry on arrange)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (fullscreen carry; no maximize state claimed)
+- `S-i3-wsmove-fs` i3:src/workspace.c:1115-1136
+  (workspace_move_to_output detach/attach with floating coordinate fix, no
+  overlay gate) and :446-457 (workspace_show CF_OUTPUT fullscreen handling)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (fullscreen carry; no maximize state claimed)
+- `S-nir-wsmove` niri:src/layout/mod.rs:3452-3525
+  (move_workspace_to_output_by_id whole-workspace remove/insert, activation
+  only when moved-active, no overlay gate) +
+  src/layout/workspace.rs:508-535 (set_output re-enters all windows on the
+  new output)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (members carried with the workspace; no overlay-specific refusal traced)
+- `S-cos-wsmove-fs` cosmic-comp:src/shell/workspace.rs:589-635
+  (Workspace::set_output moves tiling plus floating layers, all mapped,
+  minimized, and active fullscreen surfaces to the new output)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (carries mapped plus fullscreen; maximized moves as a mapped member, no
+  separate gate claimed)
 - `S-pap-acts` PaperWM:keybindings.js:191-238 (switch/move-as-swap verbs) +
   :240-344 (scratch/slurp/barf/maximize-width/fullscreen/focus-mode/
   open-position; no orientation/rotate/mirror/master/layout-select/
@@ -3174,7 +3204,7 @@ Legend:
 |---|---|---|
 | V-INS-AXIS | New-window split axis: long-edge vs orientation-toggle vs alternate | Selected as user statement `D-dec-x` |
 | V-MOVE-PERP | Perpendicular move: COSMIC restructure vs no-op/swap | COSMIC R1 selected; foreign swap/no-op unselected (`D-dec-cos`) |
-| V-MOVE-NARY | 3+-child wrap vs flat swap; same-orientation nesting allowed | Ordered N-ary + R2b/R2c/R3 selected (`D-dec-cos`); USER 2026-10-07 item 3: global `sameAxisMove` / `core.same_axis_move`, `cosmic-wrap` default or `flat-swap` for R2c adjacent direct leaf siblings only, shares travel with windows; leaf/group rules unchanged. Shared core/KDE [delivered offline](../changes/archive/same-axis-move-setting.md); Windows wiring/native journey pending (R-MOV-03/09/10) |
+| V-MOVE-NARY | 3+-child wrap vs flat swap; same-orientation nesting allowed | Ordered N-ary + R2b/R2c/R3 selected (`D-dec-cos`); USER 2026-10-07 item 3: global `sameAxisMove` / `core.same_axis_move`, `cosmic-wrap` default or `flat-swap` for R2c adjacent direct leaf siblings only, shares travel with windows; leaf/group rules unchanged. Shared core/KDE [delivered offline](../changes/archive/same-axis-move-setting.md); Windows wiring/native journey pending (R-MOV-03/09/10). User 2026-10-08: values take functional names with WM names in tooltips only; functional value IDs pending; breaking pre-release configs acceptable, no migration |
 | V-WS-FOLLOW | Send follows focus vs leaves focus in source | `D-dec-cos` selects verified follow; USER 2026-10-07 item 2: numbered/relative follow defaults, bindable unbound stay, target resolved once in existing-order ring; shared core/KDE [delivered offline](../changes/archive/kde-workspace-send-follow-stay.md), floating-boundary follow gap repaired, item-2 native journey/Windows wiring pending (R-WS-18..20). Item 5 explicit output follow/stay [delivered offline](../changes/archive/four-direction-output-transfer.md), native journey/Windows wiring pending (R-OUT-04/07) |
 | V-WS-SHELL-ACTIVATE | Shell selection of another workspace's window: switch workspace vs pull window | KDE native configured policy (default switch); Windows option unselected (`D-alt-tab`) |
 | V-WS-ANCHOR | Target anchor: remembered-leaf vs focus-history vs root; axis by long edge | Selected rule (`D-dec-x` + `D-place` synthetic proof) |
@@ -3200,11 +3230,16 @@ Legend:
   Their 196 Then bullets distinguish selected targets (with delivery evidence where available)
   from TBD reference outcomes; they do not add reference-consensus votes.
   Eight Q2 discriminators R-SPC-06..13 added 2026-10-08 contribute 112 Then
-  bullets; autonomous D1-D8 are PROVISIONAL, KDE is implemented offline,
+  bullets; D1-D8 are user-selected NORMATIVE
+  (User 2026-10-08; changed D1/D5/D6/D7 portions
+  implementation pending), KDE is implemented offline,
   unsupported reference/native outcomes stay TBD and no consensus is recomputed.
   Six Q4 migration discriminators R-WS-21..26 added 2026-10-08 contribute 84
-  Then bullets; D1-D9 are autonomous PROVISIONAL choices, KDE is implemented
-  offline, and native/unsupported reference outcomes remain TBD.
+  Then bullets; D1-D9 are user-selected NORMATIVE
+  (User 2026-10-08; D8 carry implementation pending
+  plus live check), KDE is implemented
+  offline, and native/unsupported reference outcomes remain TBD except the
+  R-WS-25 overlay-carry source evidence added 2026-10-08.
 - Baseline expansion accounting: 1198 coverage cells: 67x14 new, 58x4 scrolling assessments,
   and 2x14 explicit-swap legs. Mutually exclusive semantic status totals:
   evidenced 372, partial 237, TBD-only 224, qualified-only 328, mixed 37.
@@ -3247,7 +3282,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Move | [move.md](reference-outcomes/move.md) | R-MOV-01..13 (13) | R-MOV-09..13 added 2026-10-07; reference outcomes TBD; KDE items 3/5 R-MOV-03/08/09..13 delivered offline; native journeys/Windows wiring pending |
 | Resize | [resize.md](reference-outcomes/resize.md) | R-RSZ-01..04 (4) | none (landed in piece B4) |
 | Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | R-LAY-01..06 (6) | R-LAY-01/05/06 KDE implemented offline; native journey/Windows wiring pending; R-LAY-05/06 reference outcomes TBD |
-| Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..26 (26) | KDE items 1/2 delivered, item 1 single-output user-confirmed, item 2 offline only; Q4 R-WS-12/21..26 implemented offline under autonomous PROVISIONAL D1-D9; native/Windows/unsupported reference legs TBD |
+| Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..26 (26) | KDE items 1/2 delivered, item 1 single-output user-confirmed, item 2 offline only; Q4 R-WS-12/21..26 implemented offline under user-selected NORMATIVE D1-D9 (User 2026-10-08; D8 carry implementation pending); native/Windows legs TBD except R-WS-25 overlay-carry source evidence |
 | Minimize | [minimize.md](reference-outcomes/minimize.md) | R-MNZ-01..03 (3) | none (landed) |
 | Maximise / fullscreen | [maximize-fullscreen.md](reference-outcomes/maximize-fullscreen.md) | R-MAX-01..09 (9) | none (landed with scrolling backfill) |
 | Groups / stacks | [groups-stacks.md](reference-outcomes/groups-stacks.md) | R-GRP-01..03 (3) | none (R-GRP-02..03 landed with scrolling backfill) |
@@ -3255,9 +3290,9 @@ minimum-size stays a supplemental file (not nested in resize).
 | Close / reflow | [close.md](reference-outcomes/close.md) | R-CLOSE-01..05 (5) | none (R-CLOSE-03..05 landed with scrolling backfill) |
 | Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..07 (7) | R-OUT-07 added 2026-10-07; reference outcomes TBD; KDE item 5 R-OUT-01/04/07 delivered offline; native journey/Windows wiring pending |
 | Mouse | [mouse.md](reference-outcomes/mouse.md) | R-DRAG-01..08 + R-MOU-01..03 (11) | none (R-MOU-01..03 landed with scrolling backfill) |
-| Special windows | [special-windows.md](reference-outcomes/special-windows.md) | R-SPC-01..13 (13) | R-SPC-04/06..13 KDE implemented offline under autonomous PROVISIONAL D1-D8; native, Windows wiring and unsupported reference outcomes TBD |
+| Special windows | [special-windows.md](reference-outcomes/special-windows.md) | R-SPC-01..13 (13) | R-SPC-04/06..13 KDE implemented offline under user-selected NORMATIVE D1-D8 (User 2026-10-08; changed D1/D5/D6/D7 portions implementation pending); native, Windows wiring and unsupported reference outcomes TBD |
 | Activation | [activation.md](reference-outcomes/activation.md) | R-ACT-01..02 (2) | none (landed; no backfill: no prior rows) |
-| Restart / persistence | [restart-persistence.md](reference-outcomes/restart-persistence.md) | R-START-01..03 + R-CTL-01..07 + R-RST-01..04 (14) | Q3 KDE intentional membership implemented offline under PROVISIONAL D1-D4; R-RST-03/04 cover frame drift and automatic-vs-intent origin; native, Windows and unsupported reference legs TBD |
+| Restart / persistence | [restart-persistence.md](reference-outcomes/restart-persistence.md) | R-START-01..03 + R-CTL-01..07 + R-RST-01..04 (14) | Q3 KDE intentional membership implemented offline under user-selected NORMATIVE D1-D4 (User 2026-10-08; fixed-window tile-override persistence pending); R-RST-03/04 cover frame drift and automatic-vs-intent origin; native, Windows and unsupported reference legs TBD |
 | Column mechanics | [column-mechanics.md](reference-outcomes/column-mechanics.md) | R-COL-01..10 (10) | none (landed) |
 | Minimum-size (supplemental) | [minimum-size.md](reference-outcomes/minimum-size.md) | R-MIN-01..03 (3) | none (piece B4; R-MNZ icon-minimize is separate) |
 

@@ -321,8 +321,8 @@ acceptance):
 - `plasma-auto-tiler:workspace:workspace-previous-no-op:already-there` and
   `plasma-auto-tiler:workspace:workspace-relative-no-op:already-there`.
 
-Whole-workspace output migration (R-WS-12, follow-only, offline verified;
-native journey pending):
+Whole-workspace output migration (R-WS-12, follow-only, current
+offline-delivered baseline verified; native journey pending):
 
 - `plasma-auto-tiler:route-diag component=workspace-migrate stage=entry correlation=<correlation> generation=<generation> revision=0 diag_seq=-1 event=workspace-migrate outcome=<outcome> follow=not-reached gate=pre-commit phase=entry reason=<reason> req_ord=-1 inflight_stage=<stage>`:
   entry outcomes `invalid-direction`, `disabled`, `busy-send`,
@@ -345,6 +345,10 @@ native journey pending):
   `focus-mismatch`, `mode-unreadable`, `mode-mismatch`,
   `correlation-invalid`, `payload-invalid`, `request-over-cap`,
   `timeout`, `in-flight`.
+- The `overlay-present` refusal above is the current offline-delivered
+  baseline and is still implemented. User decision D8 2026-10-08 selects
+  fullscreen+maximized carry instead; implementation pending, so no carry
+  trace is claimed here.
 - `plasma-auto-tiler:workspace:workspace-migrate-refused:<shared-mode|unknown-output|unknown-workspace|out-of-scope|target-current|duplicate-target>`,
   `plasma-auto-tiler:workspace:workspace-previous-invalidated:migrated`,
   `plasma-auto-tiler:workspace:workspace-migrate-undisplaced`, and

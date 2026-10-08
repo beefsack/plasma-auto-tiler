@@ -656,14 +656,16 @@ verb inventory); selected intent and doc assertions are never evidence.
   fixture: the four directional follow-only verbs act on the active
   workspace only; an independent leg with WS2 explicitly selected
   migrates with its stable backing id retained, implemented offline,
-  native journey TBD). [Engine](../../../crates/tiler-core/src/engine.rs),
+  native journey TBD; NORMATIVE D1-D9, User 2026-10-08, D8 carry
+  implementation pending). [Engine](../../../crates/tiler-core/src/engine.rs),
   [adapter](../../../kwin/src/workspace-send-adapter.ts),
   [native map](../../../kwin/src/workspace-native.ts),
   [fixtures](../../../kwin/tests/workspace-migrate.test.ts),
   [record](../../changes/archive/kde-whole-workspace-output-migration.md).
 - Then Ours Windows: no-counterpart (index `Select`/`Send` only; no
   whole-workspace verb). `S(S-ours-planops)`.
-- Variant hook: provisional/TBD (workspace-output hook, to discuss).
+- Variant hook: NORMATIVE workspace-output migration (User 2026-10-08;
+  D8 carry implementation pending).
 
 ### R-WS-13: select absent WS9
 
@@ -982,14 +984,17 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   implementation pending; exact source lifecycle/native focus TBD.
 - Variant hook: V-WS-FOLLOW.
 
-## Selected addition (PROVISIONAL autonomous 2026-10-08; delivery status per profile)
+## Selected addition (user-selected NORMATIVE 2026-10-08; delivery status per profile)
 
 Targets follow [workspace migration D1-D9](../../decisions.md#cross-platform-behavior)
-(2026-10-08 provisional Orchestrator choices, not user decisions). KDE
-R-WS-21..26 carry offline Engine/adapter/fixture evidence; every native
-runtime outcome is TBD (no live acceptance recorded here). Ours Windows
-has no whole-workspace verb. All other reference outcomes below are TBD:
-no new reference source was read for these fixtures. The hidden R-WS-12
+(User 2026-10-08 selections, REQ-WS-12a..i). KDE
+R-WS-21..26 carry offline Engine/adapter/fixture evidence; D1-D7/D9 native
+runtime outcomes are TBD (no live acceptance recorded here); D8 carry is
+implementation pending plus live check. Ours Windows
+has no whole-workspace verb. Reference overlay-carry evidence below is
+source-read at the stated pins; all other unsupported reference outcomes
+stay TBD:
+no new reference source was read for those fixtures. The hidden R-WS-12
 baseline above is unchanged. Record:
 [Q4](../../changes/archive/kde-whole-workspace-output-migration.md).
 
@@ -1017,12 +1022,12 @@ baseline above is unchanged. Record:
 - Then Ours KDE: local/global-unique with strict-true flag migrate;
   shared refuses `mode-shared`, false refuses `per-output-disabled`,
   unreadable refuses `per-output-unreadable`; never writes the
-  setting. Implemented offline, native journey TBD.
+  setting. Implemented offline (NORMATIVE D2, User 2026-10-08), native journey TBD.
   [Observer](../../../kwin/src/plan-adapter-entry.ts),
   [fixtures](../../../kwin/tests/workspace-migrate.test.ts).
 - Then Ours Windows: no-counterpart (no whole-workspace verb).
   `S(S-ours-planops)`.
-- Variant hook: provisional/TBD (workspace-output hook, to discuss).
+- Variant hook: NORMATIVE workspace-output migration (User 2026-10-08).
 
 <a id="r-ws-22-active-migrate-layout-retained"></a>
 ### R-WS-22: explicitly selected active leg migrates with layout retained
@@ -1049,13 +1054,14 @@ baseline above is unchanged. Record:
   focus/tiling mode retained via `relocate_domain`; inserts after the
   target current and shows the migrated workspace; the prior target
   stays hidden; moved active client refocused after verified arrival
-  and views. Implemented offline, native journey TBD.
+  and views. Implemented offline (NORMATIVE D3/D4/D6, User 2026-10-08),
+  native journey TBD.
   [Engine](../../../crates/tiler-core/src/engine.rs),
   [native map](../../../kwin/src/workspace-native.ts),
   [engine fixtures](../../../kwin/tests/workspace-migrate-engine-fixture.test.ts).
 - Then Ours Windows: no-counterpart (no whole-workspace verb).
   `S(S-ours-planops)`.
-- Variant hook: provisional/TBD (workspace-output hook, to discuss).
+- Variant hook: NORMATIVE workspace-output migration (User 2026-10-08).
 
 <a id="r-ws-23-source-refill-empty-migrate"></a>
 ### R-WS-23: source refill and empty migration
@@ -1081,12 +1087,12 @@ baseline above is unchanged. Record:
 - Then Ours KDE: source shows the last remaining scoped entry;
   existing minimum-two/trailing-spare lifecycle converges on topology
   signals; empty migrates under the same id with no fabricated focus.
-  Implemented offline, native lifecycle/focus TBD.
+  Implemented offline (NORMATIVE D5, User 2026-10-08), native lifecycle/focus TBD.
   [Native map](../../../kwin/src/workspace-native.ts),
   [fixtures](../../../kwin/tests/workspace-migrate.test.ts).
 - Then Ours Windows: no-counterpart (no whole-workspace verb).
   `S(S-ours-planops)`.
-- Variant hook: provisional/TBD (workspace-output hook, to discuss).
+- Variant hook: NORMATIVE workspace-output migration (User 2026-10-08).
 
 <a id="r-ws-24-float-carry-sticky-stay"></a>
 ### R-WS-24: float carry and sticky stay
@@ -1111,41 +1117,70 @@ baseline above is unchanged. Record:
 - Then paneru: TBD.
 - Then Ours KDE: F carries with class/origin preserved via native
   output remap (never fresh-tiled); S stays on the source and is
-  never a member. Implemented offline, native geometry TBD.
+  never a member. Implemented offline (NORMATIVE D7, User 2026-10-08),
+  native geometry TBD.
   [Adapter](../../../kwin/src/workspace-send-adapter.ts),
   [engine fixtures](../../../kwin/tests/workspace-migrate-engine-fixture.test.ts).
 - Then Ours Windows: no-counterpart (no whole-workspace verb).
   `S(S-ours-planops)`.
-- Variant hook: provisional/TBD (workspace-output hook, to discuss).
+- Variant hook: NORMATIVE workspace-output migration (User 2026-10-08).
 
 <a id="r-ws-25-overlay-refusal"></a>
-### R-WS-25: overlay refusal (fullscreen/maximized)
+### R-WS-25: overlay carry (fullscreen/maximized)
 
 - Given: fresh legs with (a) a fullscreen migrating member, (b) a
   maximized migrating member, (c) a fullscreen/maximized client in
   the affected target current view. Strict local/true.
 - When: migrate right; inspect all native writes and focus.
-- Observe: whole no-write refusal vs partial carry.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
-- Then Ours KDE: whole command refuses `overlay-present` before any
-  native write on any leg; carrying overlays (COSMIC precedent) needs
-  native/game evidence first. Implemented offline, native/game
-  journey TBD. [Adapter](../../../kwin/src/workspace-send-adapter.ts),
+- Observe: whole carry vs whole no-write refusal; extra
+  size/position/focus writes while fullscreen.
+- Then COSMIC: carries: `Workspace::set_output` moves the tiling plus
+  floating layers, all mapped, minimized, and active fullscreen surfaces
+  to the new output with no refusal gate. `S(S-cos-wsmove-fs)`;
+  maximized moves as a mapped member (no separate gate claimed).
+- Then Hyprland/Dwindle: carries: the workspace move reassigns every
+  member window to the new monitor, repositions floating windows and
+  resizes fullscreen windows to the new monitor box with no refusal gate.
+  `S(S-hyp-wsmove-fs)`; maximized members move as members (no separate
+  gate traced).
+- Then bspwm: TBD (no workspace-mode counterpart per R-FLT-04; fixed
+  overlay-carry outcome untraced here).
+- Then i3: carries fullscreen: `workspace_move_to_output` detaches and
+  attaches the whole workspace with floating coordinate fix and no overlay
+  gate; `workspace_show` manages CF_OUTPUT fullscreen state.
+  `S(S-i3-wsmove-fs)`; no maximize state exists so no maximize claim.
+- Then xmonad/Tall+Navigation2D: TBD (no workspace-ownership move verb;
+  no maximize state in this profile).
+- Then sway: carries fullscreen: `workspace_move_to_output` detaches and
+  attaches the whole workspace with source refill and no overlay gate;
+  arrange sets the fullscreen container to the output geometry.
+  `S(S-sway-wsmove-fs)`; no maximize state claimed.
+- Then qtile/Columns: TBD (view-ownership reassignment path untraced for
+  overlay members here).
+- Then awesome/tile: TBD (view-ownership reassignment path untraced for
+  overlay members here).
+- Then niri: carries as workspace members: `move_workspace_to_output_by_id`
+  removes/inserts the whole workspace with activation only when
+  moved-active and no overlay gate; `set_output` re-enters all windows on
+  the new output. `S(S-nir-wsmove)`; fullscreen/maximized move as members
+  (no overlay-specific branch traced).
+- Then PaperWM: TBD (whole-space choreography untraced for overlay
+  members here).
+- Then karousel/Lazy: TBD (single-screen profile has no second output;
+  overlay-carry outcome untraced here).
+- Then paneru: TBD (no whole-strip or Space move counterpart).
+- Then Ours KDE: NORMATIVE D8 CHANGED (User 2026-10-08): fullscreen plus
+  maximized members are carried with no refusal in moved members or
+  affected views; the tiler issues only the native move with no extra
+  size/position/focus writes while fullscreen. An explicit user move is not
+  unwanted interference. Prior `overlay-present` refusal implemented
+  offline; CHANGED carry selected, implementation pending plus live check.
+  [Adapter](../../../kwin/src/workspace-send-adapter.ts),
   [fixtures](../../../kwin/tests/workspace-migrate.test.ts).
 - Then Ours Windows: no-counterpart (no whole-workspace verb).
   `S(S-ours-planops)`.
-- Variant hook: provisional/TBD (workspace-output hook, to discuss).
+- Variant hook: NORMATIVE overlay carry (User 2026-10-08; D8 CHANGED,
+  selected, implementation pending plus live check).
 
 <a id="r-ws-26-history-hotplug-invalidation"></a>
 ### R-WS-26: history invalidation and hotplug-return removal
@@ -1173,10 +1208,10 @@ baseline above is unchanged. Record:
   hotplug-return associations (siblings kept); the Engine `planned`
   reply is a retained rekey, and completion reports only verified
   arrival/views/focus with correlated partial/uncertain/recovery
-  terminals. Implemented offline, native/hotplug TBD.
+  terminals. Implemented offline (NORMATIVE D9, User 2026-10-08), native/hotplug TBD.
   [Native map](../../../kwin/src/workspace-native.ts),
   [adapter](../../../kwin/src/workspace-send-adapter.ts),
   [fixtures](../../../kwin/tests/workspace-migrate.test.ts).
 - Then Ours Windows: no-counterpart (no whole-workspace verb).
   `S(S-ours-planops)`.
-- Variant hook: provisional/TBD (workspace-output hook, to discuss).
+- Variant hook: NORMATIVE workspace-output migration (User 2026-10-08).

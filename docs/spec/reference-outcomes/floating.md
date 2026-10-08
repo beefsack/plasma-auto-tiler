@@ -226,7 +226,7 @@ Column legs below use separately stated column Givens with the same identities a
   untraced). `S(S-kar-acts)`; queued.
 - Then paneru: TBD (host sticky journey plus restart carry both
   untraced). `S(S-pan-cmds)`; queued.
-- Then Ours KDE: source adopts surviving native sticky as unknown-origin sticky float; Q3 leaves this behavior and un-stick semantics unchanged. Confirmed adopted-sticky-off ordinary intent now survives the next owner restart through membership-only persistence (PROVISIONAL D1-D4), covered by [offline fixtures](../../../kwin/tests/float-intent.test.ts). `S(S-ours-sticky-restart)` + `D(D-sticky)` baseline; exact native restart/visibility journey TBD
+- Then Ours KDE: source adopts surviving native sticky as unknown-origin sticky float; Q3 leaves this behavior and un-stick semantics unchanged. Confirmed adopted-sticky-off ordinary intent now survives the next owner restart through membership-only persistence (user decisions 2026-10-08, delivered offline; D7 tile-override persistence pending), covered by [offline fixtures](../../../kwin/tests/float-intent.test.ts). `S(S-ours-sticky-restart)` + `D(D-sticky)` baseline; exact native restart/visibility journey TBD
 - Then Ours Windows: consumes surviving project marker into normal float on current managed workspace, discarding origin; `S(S-ours-sticky-restart)` + `D(D-sticky)`; exact restart/visibility journey TBD
 - Variant hook: V-STICKY-SCOPE.
 
