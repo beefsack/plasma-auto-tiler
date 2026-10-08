@@ -456,18 +456,18 @@ observation or new reference vote.
 - When: move B right once.
 - Observe: flat identity order, shares travelling with windows vs slots,
   focus, and absence of new wrap group.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: `H[A,H[B,C],D]` via the len>2 fork (next leaf C; new group with B first, no `add_window` in the fork path so the new group keeps equal halves); focus stays B (Done, no ShiftFocus). Shares from the Given 1/10-4/10: root `remove_window` redistributes B's 2/10 proportionally over A/group/D (1:3:4), so root `[1.25,3.75,5]/10` with the new group split equally (B=C=1.875/10); exact pixels TBD (output width unrecorded; i32 `round` plus overflow-to-last). `S(S-cos-move)` + `S(S-cos-newgroup)` + `S(S-cos-sizes)`.
+- Then Hyprland/Dwindle: exact N-ary start has no ordinary default-ratio binary form (ratio 1 yields halves); a binary rectangle embedding holding the same rectangles is conceivable per index conventions but unrecorded in this row, so exact outcome TBD (focal anchor, ratios, geometry recalc). Policy: remove+reinsert at the 1px focal with silent source refocus and monitor fallback. `S(S-hyp-move)`.
+- Then bspwm: B swaps east with C (immediate east wins by boundary distance); same-desktop swap retains focus on B; exact frames TBD without the binary embedding. `S(S-bsp-move-target)`.
+- Then i3: `H[A,C,B*,D]`: flat sibling swap with C; shares travel with windows (list-position exchange, no percent rewrite: B keeps 2/10, C keeps 3/10); focus stays B. `S(S-i3-move)`.
+- Then xmonad/Tall+Navigation2D: exact flat unequal-share 4-child H has no ordinary Tall binary form (nmaster=1, frac=1/2 master/stack, no quarters let alone 1/10-4/10); exact outcome TBD. Analogous policy only: stack-order swap vs same-layer directional `windowSwap` (miss no-op). `S(S-xmo-layout)` + `S(S-xmo-nav)`.
+- Then sway: `H[A,C,B*,D]`: flat sibling swap with C via `list_swap` (no fraction reset in the swap branch, shares travel); focus stays B. `S(S-sway-move)`.
+- Then qtile/Columns: exact N-ary unequal-share start has no ordinary Columns form (default num_columns=2, so the third window stacks in-column rather than opening a third column; widths unset in this row); exact outcome TBD. Policy: `shuffle_right` carries B into the adjacent column (new column at a shared-column edge; sole-column sole-window no-op only); focus stays B. `S(S-qti-shuffle)`.
+- Then awesome/tile: exact flat unequal-share start has no ordinary tile form (nmaster=1 master plus one stack column, not flat quarters); exact outcome TBD. Policy: geometric swap-or-miss with no nested wrap (tile-projection miss is no-op); focus retained (no focus write). `S(S-awe-swap)` + `S(S-awe-tile)`.
+- Then niri: TBD; no column fixture is Given in this row (do not manufacture columns). Widths are arbitrarily settable (`set_column_width` proportion/fixed/adjust), so 1/10 shares are not categorically impossible; the TBD is the missing column fixture and unset widths, not the presets. `S(S-nir-move)` + `S(S-nir-base)` + `S(S-nir-resize)`.
+- Then PaperWM: in the strip projection (columns in order) the registered `move-right` is same-space `swap`, exchanging B/C with edge return; no column fixture is Given in this row so the projection is qualified, not a native leg. `move_to` scrolls the viewport, not membership. Exact fixture outcome TBD. `S(S-pap-moveverbs)` + `S(S-pap-mon)` + `S(S-pap-move)`.
+- Then karousel/Lazy: TBD; no column fixture is Given in this row. Manual widths are arbitrary (host resize feeds width delta, not restricted to presets), so 1/10 shares are not categorically impossible; the TBD is the missing fixture and unset widths. `S(S-kar-move)` + `S(S-kar-base)` + `S(S-kar-manual-width)`.
+- Then paneru: in the strip projection of the tree leg (four `Single` columns in order) B swaps east with C (East resolves to the right neighbour deterministically); no column fixture is Given in this row so the projection is qualified, not a native leg. Shares TBD (WidthRatio mapping unrecorded); focus stays B (no focus write in the swap path). `S(S-pan-swap-peer)` + `S(S-pan-swap)`.
 - Then Ours KDE: `H[A,C,B*,D]` with shares 1/10, 3/10, 2/10,
   4/10; focus B, no wrap. Delivered offline, item 3.2; core strict-apply
   and session tests exercise unequal-share right and left swaps;
@@ -487,18 +487,18 @@ observation or new reference vote.
 - When: move B right once.
 - Observe: unchanged leaf/group rule vs broadening swapping to whole groups;
   target child/index, topology, shares and focus.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: `H[A,H[B,V[C,D]],E]` via the len>2 fork (next is the V group but len!=2, so wrap not enter; B first, V order preserved); focus stays B (Done); shares TBD. `S(S-cos-move)` + `S(S-cos-newgroup)`.
+- Then Hyprland/Dwindle: nested `H[A,B,V,E]` has no ordinary default-ratio binary form (ratio 1 halves only); a binary rectangle embedding holding the same rectangles is conceivable per index conventions but unrecorded in this row, so exact outcome TBD (1px-east focal at V's west edge/C-D boundary; ratios, geometry recalc). Policy: remove+reinsert at the focal. `S(S-hyp-move)`.
+- Then bspwm: B swaps east with the east leaf (C or D by boundary distance then history rank); same-desktop swap retains focus on B; exact child/frames TBD (shares/history unrecorded). `S(S-bsp-move-target)`.
+- Then i3: B enters the V group via the bordering-branch descend (`con_descend_direction` picks V's last-focused child); exact index TBD (V's remembered child unrecorded); focus stays B. `S(S-i3-move)`.
+- Then xmonad/Tall+Navigation2D: fixture-inapplicable (flat Tall has no nested V group). `S(S-xmo-layout)`.
+- Then sway: B enters V via perpendicular reparent to the focus-inactive child; exact index TBD (V focus history unrecorded); focus stays B. `S(S-sway-move)`.
+- Then qtile/Columns: TBD; exact nested fixture has no established Columns counterpart in this row (no column Given; never manufacture H/V ancestry). Policy: `shuffle_right` carries into the adjacent column. `S(S-qti-shuffle)`.
+- Then awesome/tile: nested `H[A,B,V,E]` has no tile counterpart (flat tiled-client list, no nesting levels); exact outcome TBD. Policy: geometric swap-or-miss (miss no-op); focus retained. `S(S-awe-swap)` + `S(S-awe-tile)`.
+- Then niri: fixture-inapplicable; ordered columns have no nested H/V group to enter. `S(S-nir-move)`.
+- Then PaperWM: fixture-inapplicable; column/row membership has no nested H ancestor. `S(S-pap-move)`.
+- Then karousel/Lazy: fixture-inapplicable; Grid/Column membership has no nested H ancestor. `S(S-kar-move)`.
+- Then paneru: fixture-inapplicable; the strip/column model has no nested V group (`Single`/`Stack`/`Tabs` only). `S(S-pan-model)`.
 - Then Ours KDE: existing R2c group-neighbor wrap unchanged under both modes:
   `H[A,H[B,V[C,D]],E]`, focus B. With root shares `[1,2,3,4]` and V shares
   `[1,1]`, root becomes `[1,5,4]`, new H gets `[1,1]`, V stays `[1,1]`.
@@ -518,18 +518,18 @@ observation or new reference vote.
 - When: move A up; repeat mirrored directions from fresh fixtures.
 - Observe: sole-root crossing vs no-cross gate; target current workspace,
   source membership and target admission (exact unspecified target TBD).
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: sole A has no parent, so `move_current_node` returns `MoveFurther`; at default `Vertical`, Up first attempts `MoveToPreviousWorkspace`. From the first workspace this fails and propagates to `MoveToOutput(Up)`, which selects U on full-output overlap plus nearest origin distance and transfers with follow. From a later workspace it moves to the same output's previous workspace instead. Source workspace index is unspecified, so cross-vs-local remains TBD. Mirrored Left/Right map directly to `MoveToOutput` and cross given adjacency; Down first attempts `MoveToNextWorkspace` and may land same-output. Exact admission TBD (destination contents unrecorded). `S(S-cos-move)` + `S(S-cos-move-out)`.
+- Then Hyprland/Dwindle: crosses to U via the monitor fallback (1px-up focal lands in U; containing-else-nearest query, fallback default true, `assignToSpace` to U's active workspace); exact admission TBD (U contents unrecorded). `S(S-hyp-move)`.
+- Then bspwm: TBD without destination contents (north swap needs a leaf target; empty U has none, occupied swaps); policy is boundary distance then history rank, same-desktop retain vs cross-monitor follow. `S(S-bsp-move-target)`.
+- Then i3: crosses to U via the output-directed fallback with mover follow (sole-workspace and workspace-level no-swap paths both fall back; `workspace_show` follows). `S(S-i3-move)` + `S(S-i3-outmove)`.
+- Then xmonad/Tall+Navigation2D: profile move is `windowSwap` U (same-layer; `windowToScreen` is the separate carry verb, not exercised). Tiled candidates span all visible screens: with U occupied it swaps stack positions across screens with mover focus retained; with U empty there is no candidate so the miss is a no-op (wrap False). U contents unrecorded, so swap-vs-noop TBD plus target geometry TBD. `S(S-xmo-nav)` + `S(S-xmo-out)` + `S(S-xmo-scope)`.
+- Then sway: crosses to the output above via the directional attach path (workspace-level no-swap falls to next-output attach to the active workspace). `S(S-sway-move)` + `S(S-sway-outmove)`.
+- Then qtile/Columns: sole A stays (single-window column: `shuffle_up` in-column edge no-op; mirrored `shuffle_left` sole-column sole-window no-op and `shuffle_down` edge no-op; no cross-screen carry in Columns). `S(S-qti-shuffle)`.
+- Then awesome/tile: crosses to U via `swap.global_bydirection` (local miss then screen cross); empty-vs-exchange TBD (U contents unrecorded); focus retained on the mover (no focus write; global re-activates mover). `S(S-awe-swap)` + `S(S-awe-focus)`.
+- Then niri: sole/first A, so `move_up` returns false and A stays. `S(S-nir-move)`.
+- Then PaperWM: verb-distinguished. Same-space `move-up` is `swap` edge no-op (sole row/col, out-of-range returns) so A stays; explicit `move-monitor-above` carries via `switchMonitor` (neighbor index; -1 stays) to U with focus. Mirrored same-space legs stay all dirs; monitor-carry crosses given a neighbor in any direction. `S(S-pap-moveverbs)` + `S(S-pap-mon)`.
+- Then karousel/Lazy: fixture-inapplicable for cross-output (single-screen profile). `S(S-kar-base)`.
+- Then paneru: up (North) crosses via the no-peer fall-through to `ToNextDisplay` (`Single` has no stack neighbour); mirrored South same by the min.y gate; East/West stay (no display fall-through for E/W). `S(S-pan-swap-peer)` + `S(S-pan-swap)` + `S(S-pan-display)`.
 - Then Ours KDE: A crosses to U's current workspace; sole root is eligible
   in all four directions, source becomes empty. Empty target becomes sole A;
   occupied target uses unchanged R4 edge insertion nearest the source.
@@ -547,18 +547,18 @@ observation or new reference vote.
 - When: move A up once.
 - Observe: ambiguity refusal vs selecting a candidate by focus/geometry;
   membership/layout writes.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: Up first attempts the previous workspace at default `Vertical`, as in R-MOV-11. Only from the first workspace does failure propagate to `MoveToOutput`; that branch selects one upper output without an ambiguity refusal (`next_output` keeps minimum origin distance, ties keep the first enumerated) and follows. Cross-vs-local TBD (source index unspecified); on crossing, exact U1/U2 and admission TBD (enumeration and contents unrecorded). `S(S-cos-move)` + `S(S-cos-move-out)`.
+- Then Hyprland/Dwindle: selects one upper output via containing-else-nearest (no refusal branch in the move path); exact U1/U2 TBD at the shared-edge tie (focal x=960 on the boundary; half-open containment unestablished). `S(S-hyp-move)`.
+- Then bspwm: selects by boundary distance then history with no ambiguity gate; exact target/no-op TBD (upper workspace contents unrecorded; empty has no leaf). `S(S-bsp-move-target)`.
+- Then i3: selects the closest output (no refusal; NULL only when none); exact U1/U2 TBD (both y=0 tie, output list order unrecorded). `S(S-i3-move)` + `S(S-i3-outmove)`.
+- Then xmonad/Tall+Navigation2D: profile move is `windowSwap` U (same-layer; `windowToScreen` is the separate carry verb, not exercised). Selection is tiled line/side plus center distance with stack-order tie preference, no refusal branch: hit swaps stack positions across screens with mover focus retained, miss is a no-op. Exact candidate TBD (two-candidate geometry plus both workspaces' contents unrecorded). `S(S-xmo-nav)` + `S(S-xmo-out)` + `S(S-xmo-scope)`.
+- Then sway: selects the adjacent output (no refusal; NULL only when none); exact U1/U2 TBD (center x=960 on the U1/U2 boundary; wlroots tie unestablished). `S(S-sway-move)` + `S(S-sway-outmove)`.
+- Then qtile/Columns: sole A stays (`shuffle_up` edge no-op; no cross-screen carry). `S(S-qti-shuffle)`.
+- Then awesome/tile: selects via `swap.global_bydirection` (no refusal); exact U1/U2 TBD (nearest by client geometries; destination contents unrecorded). `S(S-awe-swap)` + `S(S-awe-focus)`.
+- Then niri: sole/first A, so `move_up` returns false and A stays. `S(S-nir-move)`.
+- Then PaperWM: verb-distinguished. Same-space `move-up` is `swap` edge no-op (sole, out-of-range returns) so A stays; explicit `move-monitor-above` carries via `switchMonitor` neighbor index (only -1 stays, no other refusal); exact U1/U2 TBD (neighbor-index order unpinned). `S(S-pap-moveverbs)` + `S(S-pap-mon)`.
+- Then karousel/Lazy: fixture-inapplicable for cross-output (single-screen profile). `S(S-kar-base)`.
+- Then paneru: crosses via the fall-through `ToNextDisplay` (no refusal/ambiguity gate); exact U1/U2 TBD (display order unrecorded). `S(S-pan-swap-peer)` + `S(S-pan-swap)` + `S(S-pan-display)`.
 - Then Ours KDE: refuses ambiguous topology, no transfer or layout writes.
   Forward and reverse uniqueness tested offline, item 5.2;
   [record](../../changes/archive/four-direction-output-transfer.md). Native journey TBD.
@@ -576,18 +576,18 @@ observation or new reference vote.
   right full/work area `(1920,0,1920,1080)` holds sole A*.
 - When: move A up; fresh horizontal leg move A left.
 - Observe: full-output adjacency vs work-area-gap rejection, both axes.
-- Then COSMIC: TBD.
-- Then Hyprland/Dwindle: TBD.
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then COSMIC: Left crosses directly with follow; Up first attempts the same output's previous workspace at default `Vertical` and crosses only when that fails from the first workspace. Up cross-vs-local remains TBD (source index unspecified). When reached, `next_output` selects on full output `geometry()`, so the 40px work-area gap does not block either output-transfer branch. Exact admission TBD (destination contents unrecorded). `S(S-cos-move)` + `S(S-cos-move-out)`.
+- Then Hyprland/Dwindle: crosses in both legs via containing-else-nearest on full monitor boxes (focal still in the target; the query ignores reserved); the 40px work-area gap does not block. Exact admission TBD. `S(S-hyp-move)`.
+- Then bspwm: TBD without destination contents (window-geometry selector has no work-area adjacency gate; the gap only shifts distance); policy is boundary distance then history. `S(S-bsp-move-target)`.
+- Then i3: crosses in both legs via closest-output on full output rects (overlap check on output rects; panel/work-area does not change rects). `S(S-i3-move)` + `S(S-i3-outmove)`.
+- Then xmonad/Tall+Navigation2D: profile move is `windowSwap` in both legs (same-layer; `windowToScreen` is the separate carry verb, not exercised). No work-area-gap rejection branch in the pinned nav source: occupied targets swap stack positions across screens with mover focus retained, empty targets miss as no-op. Contents unrecorded, so swap-vs-noop TBD per leg plus target geometry TBD. `S(S-xmo-nav)` + `S(S-xmo-out)` + `S(S-xmo-scope)`.
+- Then sway: crosses in both legs via the adjacent output (layout boxes are full outputs; the work-area gap does not remove adjacency). `S(S-sway-move)` + `S(S-sway-outmove)`.
+- Then qtile/Columns: stays in both legs (sole edge no-ops; local Columns only). `S(S-qti-shuffle)`.
+- Then awesome/tile: crosses in both legs via `swap.global_bydirection` (screen geometries are full; the work-area gap does not remove the next screen). `S(S-awe-swap)` + `S(S-awe-focus)`.
+- Then niri: stays in both legs (first/sole edge returns false). `S(S-nir-move)`.
+- Then PaperWM: verb-distinguished. Same-space `move-up`/`move-left` are `swap` edge no-ops (sole, out-of-range returns) so A stays both legs; explicit `move-monitor-above`/`move-monitor-left` carry via `switchMonitor` neighbor index (display topology, not work-area; -1 stays) so both legs cross. `S(S-pap-moveverbs)` + `S(S-pap-mon)`.
+- Then karousel/Lazy: fixture-inapplicable for cross-output (single-screen profile). `S(S-kar-base)`.
+- Then paneru: up crosses via the North fall-through (bounds min.y gate; the work-area gap does not change min.y); left stays (West has no display fall-through). `S(S-pan-swap-peer)` + `S(S-pan-swap)` + `S(S-pan-display)`.
 - Then Ours KDE: crosses in both legs using FULL rectangles for selection;
   panel gap does not block. Placement still uses each desktop's work area.
   Both-axis observer tests and stacked-output production-entry/Engine fixture
