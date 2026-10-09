@@ -79,10 +79,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   keep frame-widths (layout reads live frames); reopened B is fresh
   at selected+1 RIGHT with activate-on-show (no old-slot store).
   `S(S-pap-close)` + `S(S-pap-ins)` + `S(S-pap-resize)`.
-- Then karousel/Lazy: survivors keep their manually resized widths;
-  reopened B is a new column after last-focused (no old-slot store);
-  KWin-side focus TBD. `S(S-kar-manual-width)` + `S(S-kar-close)` +
-  `S(S-kar-ins)`; queued.
+- Then karousel/Lazy: close runs the host KWin path (no close verb in the Actions inventory); B's removal destroys C2 with the last-focused fixup falling to C1, survivors keep their manually resized widths (reposition only, no old-slot store). Reopened B is a new column after the last-focused column at open time (C3 once C is focused, so at the end) with width from its preferredWidth clamped into [min,max]; reopened focus TBD (fixture states no protocol selecting the X11-manage vs Wayland-add fork). `S(S-kar-manual-width)` + `S(S-kar-close)` + `S(S-kar-ins)` + `S(S-kar-min)` + `S(S-kar-fltanchor)` + `S(S-kwin-manage)` + `S(S-kwin-add)`; focus TBD (F: missing protocol selecting the newcomer activation fork).
 - Then paneru: exact ratios prepared via `SetWidth`; survivors keep
   per-window ratios; reopened B is fresh at rule-index/overlap/end;
   focus TBD. `S(S-pan-close)` + `S(S-pan-ins)` +
@@ -202,9 +199,7 @@ is the observation-driven proposal, never the native verb.
   untouched; focus returns to B's column. `S(S-nir-close)`.
 - Then PaperWM: `removeFloating` splices `_floating` with tiled columns
   untouched; shell focus fallback TBD. `S(S-pap-close)`; queued.
-- Then karousel/Lazy: floats live outside grid columns so tiles are
-  untouched; exact focus TBD (no traced float-close focus write).
-  `S(S-kar-float)` + `S(S-kar-close)`; queued.
+- Then karousel/Lazy: floats live outside grid columns so tiles are untouched; `Floating.destroy` ignores the close passFocus, so the script writes no focus on the float-close path (the tiled anchor stays at B's column); the host close runs `activateNextWindow` into the MRU focus-chain usable pick (history A,B,F minus removed F, so B) through the reasonable-policy `requestFocus` gates. `S(S-kar-float)` + `S(S-kar-close)` + `S(S-kar-fltanchor)` + `S(S-kwin-close)` + `S(S-kwin-scriptact)`.
 - Then paneru: entity despawned and stripped with A/B columns
   untouched; exact focus TBD (nearest-center, geometry-dependent).
   `S(S-pan-close)`; queued.

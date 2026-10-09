@@ -59,10 +59,7 @@ Column legs below use separately stated column Givens with the same identities a
 - Then PaperWM: no-counterpart (ordinary B tiles on admission; only
   non-tileable windows enter the floating list, so the toggle has no
   faithful subject). `S(S-pap-float)`.
-- Then karousel/Lazy: B flips to `Floating` state (no keepAbove at the
-  shipped default; height capped by the toggle-time limit); survivors
-  keep their column widths. Unfloat re-tiles via grid admission;
-  position and focus TBD. `S(S-kar-float)`; position queued.
+- Then karousel/Lazy: B flips to `Floating` (no keepAbove at the shipped default; height capped by the toggle-time limit); C2 is destroyed with the last-focused fixup falling to C1, survivors keep widths (reposition only, so no reflow). Unfloat re-tiles into a new column after the last-focused column (C1, so between A and C) with width from B's preferredWidth clamped into [min,max]; neither leg issues a script focus write, so KWin focus stays B. `S(S-kar-float)` + `S(S-kar-acts)` + `S(S-kar-ins)` + `S(S-kar-close)` + `S(S-kar-min)` + `S(S-kar-fltanchor)`.
 - Then paneru: `Manage` toggles B to `Unmanaged::Floating` (native
   frame; survivors TBD); unfloat re-inserts at the remembered strip
   index (`PreviousManagedStrip`); focus TBD. `S(S-pan-flt)` +
@@ -108,9 +105,7 @@ Column legs below use separately stated column Givens with the same identities a
   stuck window stays visible across the switch rides host `stick()`
   semantics, untraced at pin: visibility TBD (host). `S(S-pap-float)` +
   `S(S-pap-ins)` + `S(S-pap-layout)`; visibility queued (host).
-- Then karousel/Lazy: TBD (no sticky verb in the script actions; host
-  KWin `onAllDesktops` is the applicable journey, untraced).
-  `S(S-kar-acts)`; host journey queued.
+- Then karousel/Lazy: sticky-on floats B via the host `desktopsChanged` path (0 desktops fails the exactly-1 gate, so `floatClient`; no sticky verb exists in the Actions/definition inventory); B stays visible across the KWin-native switch via retained host `onAllDesktops` (empty reads on every desktop; the switch only re-arranges with no float mover); sticky-off writes the current desktop (WS2) via `setOnAllDesktops(false)` and B remains there floating (Floating owns no desktop mover, so no auto re-tile). `S(S-kar-acts)` + `S(S-kar-float)` + `S(S-kar-ws)` + `S(S-kwin-sticky)` + `S(S-kwin-switch)`.
 - Then paneru: TBD (no sticky verb in `Operation`; host macOS
   all-desktops assignment is the applicable journey, untraced).
   `S(S-pan-cmds)`; host journey queued.
@@ -235,8 +230,7 @@ Column legs below use separately stated column Givens with the same identities a
   across disable/enable, untraced at pin: visibility/origin TBD (host).
   `S(S-pap-float)` + `S(S-pap-rst)` + `S(S-pap-readopt)`; visibility
   queued (host).
-- Then karousel/Lazy: TBD (host sticky journey plus restart carry both
-  untraced). `S(S-kar-acts)`; queued.
+- Then karousel/Lazy: sticky preparation has no script verb (host `setOnAllDesktops`); the owner restart re-admits via `addExistingClients` fresh (shapeability plus rules plus exactly-1 desktop/activity gates); script destroy writes no desktops, so the host sticky list is retained and B re-admits as ordinary `Floating` (0 desktops fails the gate, no sticky state in script); B stays visible on the selected WS2 via the retained host assignment with no script-remembered origin. `S(S-kar-acts)` + `S(S-kar-readmit)` + `S(S-kar-float)` + `S(S-kwin-sticky)`.
 - Then paneru: TBD (host sticky journey plus restart carry both
   untraced). `S(S-pan-cmds)`; queued.
 - Then Ours KDE: source adopts surviving native sticky as unknown-origin sticky float; Q3 leaves this behavior and un-stick semantics unchanged. Confirmed adopted-sticky-off ordinary intent now survives the next owner restart through membership-only persistence (user decisions 2026-10-08, delivered offline; D7 tile-override persistence pending), covered by [offline fixtures](../../../kwin/tests/float-intent.test.ts). `S(S-ours-sticky-restart)` + `D(D-sticky)` baseline; exact native restart/visibility journey TBD
@@ -585,9 +579,7 @@ applicable unknowns are queued, evidenced absent verbs are not.
   `raise()` is not a dialog raise path); the F/G stacking journey rides
   host Meta stacking, untraced at pin: stacking TBD (host).
   `S(S-pap-float)` + `S(S-pap-acts)`; stacking queued (host).
-- Then karousel/Lazy: TBD (script inventory has no raise/lower verb;
-  host KWin activation stacking journey untraced). `S(S-kar-acts)` +
-  `S(S-kar-float)`; queued.
+- Then karousel/Lazy: TBD (the complete Actions/definition inventory lists no raise/lower verb, so neither step has a script path; host raise rides KWin `activateWindow` raise per `S(S-kwin-scriptact)` but the step producer selecting activation vs another raise path is unstated for this profile, and no lower path is selected). `S(S-kar-acts)` + `S(S-kar-float)` + `S(S-kwin-scriptact)`; producer TBD (F: missing step raise/lower producer selecting the host path).
 - Then paneru: TBD (`RaiseFloating` focuses the last-floating window and
   raises the other visible floats within the tier, so it does not settle
   raising an arbitrary F; AX raise couples with app-frontmost per the
@@ -675,12 +667,7 @@ applicable unknowns are queued, evidenced absent verbs are not.
   `selectedWindow` and activates it; focus returns to the tile, not F.
   Float z-order is unwritten by the switch: TBD (host). `S(S-pap-float)`
   + `S(S-pap-wssel)` + `S(S-pap-layout)`; visibility queued (host).
-- Then karousel/Lazy: F hidden while away (KWin desktops own windows;
-  karousel manages tiled columns only and never moves floats across
-  desktops); frame retained (no float-frame write path on desktop
-  switch; `Floating` writes keepAbove only at toggle time, off by
-  default); return focus TBD (KWin-native). `S(S-kar-ws)` +
-  `S(S-kar-float)`; focus queued.
+- Then karousel/Lazy: F hidden while away (KWin desktops own windows; Floating subscribes to tile/frameGeometry only, so a float never transfers grids on the switch that only re-arranges); frame retained (no float-frame write on the switch path; keepAbove written only at toggle time, off by default); return focuses F via the native switch MRU chain (shipped ClickToFocus is reasonable with `NextFocusPrefersMouse` false, so no mouse contest; WS1 MRU is F). `S(S-kar-ws)` + `S(S-kar-float)` + `S(S-kar-fltanchor)` + `S(S-kwin-switch)`.
 - Then paneru: F hidden while away (floats filtered by workspace
   membership); frame TBD (native, untraced); focus returns via the
   per-workspace focus history plus remembered-position restore guard.
@@ -762,9 +749,7 @@ applicable unknowns are queued, evidenced absent verbs are not.
 - Then PaperWM: TBD (no float pointer-move/resize path in PaperWM;
   dialog frames are Meta-owned; host GNOME grab journey untraced).
   `S(S-pap-float)`; host journey queued.
-- Then karousel/Lazy: TBD (no float pointer path in the script; KWin
-  native move/resize is the host journey, untraced). `S(S-kar-float)`;
-  host journey queued.
+- Then karousel/Lazy: no script pointer path either leg (Floating subscribes to tile/frameGeometry only; the Tiled interactive-move/resize handlers never engage a Floating client; no pointer verb in the Actions inventory), so tiles are untouched and the script writes no focus; the host `moveResize` translates F freely with the fixture run away from edges and sibling frames (so no snap zone engages) and the press retains the already-focused F. `S(S-kar-float)` + `S(S-kar-ptr)` + `S(S-kar-acts)` + `S(S-kwin-moveresize)`.
 - Then paneru: TBD (no pointer path in `Operation`; macOS host drag is
   the applicable journey, untraced). `S(S-pan-flt)`; host journey queued.
 - Then Ours KDE: project route refused (`NotTiled` for float resize

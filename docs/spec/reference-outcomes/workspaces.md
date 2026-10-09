@@ -45,9 +45,14 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   inactive spaces is a different journey, not the shipped-send outcome;
   no send-and-stay counterpart exists in the registered inventory.
   `S(S-pap-take)` + `S(S-pap-ins)` + `S(S-pap-space)`.
-- Then karousel/Lazy: the column moves grids and appends after the
-  target's last column (after sole C); focus stays TBD. `S(S-kar-ws)`;
-  focus queued.
+- Then karousel/Lazy: shipped `column-move-to-desktop-{}` stays on the
+  source (no desktop-switch verb exists; desktops/switching are
+  KWin-native): the whole column moves grids via `moveToGrid` and
+  appends after the target's last column (after sole C); source drops
+  the column with left-else-right `lastFocusedColumn` fixup and an
+  Immediate request that focuses source survivor A through the script
+  path (raise, on-current-desktop so no switch, reasonable-policy
+  `requestFocus` takes focus). `S(S-kar-ws)` + `S(S-kwin-scriptact)`.
 - Then paneru: `VirtualMoveNumber` carries the focused window to the
   indexed row under the `MoveFocus` Follow/Stay policy; target column
   position stays TBD. `S(S-pan-ws)`; target position queued.
@@ -106,12 +111,15 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   fresh-insertion no-steal on inactive spaces is a different journey.
   Viewport keeps B visible via minimal `ensuredX`/`ensureViewport` scroll
   under DEFAULT. `S(S-pap-ins)` + `S(S-pap-take)` + `S(S-pap-view)`.
-- Then karousel/Lazy: B's column re-admits after the explicitly focused
-  A (last-focused, else last); removal refreshes `lastFocusedColumn`,
-  and the cross-desktop `moveToGrid` passes Immediate focus (the target
-  column's window-to-focus is focused) because the moved column was
-  focused, else no pass. KWin-delivered focus and viewport stay TBD.
-  `S(S-kar-ins)` + `S(S-kar-ws)`; delivered-focus/viewport queued.
+- Then karousel/Lazy: B's column re-admits after the target's last
+  column (WS1 retains C then A, so after A: `[C,A,B]`); source WS2 is emptied with
+  `lastFocusedColumn` nulled and no focus request (no survivor column,
+  so the Immediate pass has no recipient). Focus stays B (no karousel
+  focus write on this leg; the desktops reassignment itself activates
+  nothing). Viewport scrolls to A's column on WS1 via
+  `autoAdjustScroll`, using synchronous minimal-scroll to keep that
+  column visible. `S(S-kar-ins)` + `S(S-kar-ws)` +
+  `S(S-kar-scroll)` + `S(S-kwin-scriptact)`.
 - Then paneru: B re-inserts at the remembered strip index for A, else
   the config insertion index, overlap, or end; arrival focus follows the
   `VirtualMoveNumber` verb's `MoveFocus` policy (Follow carries focus to
@@ -209,9 +217,16 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   (`Main.activateWindow`, ordinary convention). `S(S-pap-ins)` +
   `S(S-pap-float)` + `S(S-pap-minimize)` + `S(S-pap-space)` +
   `S(S-pap-take)`.
-- Then karousel/Lazy: B's column admits after the last-focused (else
-  last) column with `lastFocusedColumn` fixup on removal; the float
-  leg stays TBD. `S(S-kar-ins)` + `S(S-kar-ws)`; float leg queued.
+- Then karousel/Lazy: floating C keeps host focus unchanged (the
+  state flip issues no focus write; active stays C until the
+  scenario's explicit native select, which resolves B via the MRU
+  chain). The explicit verb appends B's column after the target's last
+  column (sole D, so after D); the last-focused variant belongs to the
+  separate Tiled `desktopsChanged` mover, not this verb. The send
+  focuses source survivor A through the script path. The exactly-1
+  desktop/activity gate holds for B, else float. `S(S-kar-ins)` +
+  `S(S-kar-ws)` + `S(S-kar-float)` + `S(S-kwin-scriptact)` +
+  `S(S-kwin-switch)`.
 - Then paneru: B admits at the insertion-index/overlap/end policy
   with no remembered-leaf anchor; the unmanaged-float leg stays TBD.
   `S(S-pan-ins)`; float leg queued.
@@ -258,12 +273,13 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   WS1 select has no extension write, so focus stays TBD (host).
   `S(S-pap-ins)` + `S(S-pap-float)` + `S(S-pap-space)` + `S(S-pap-wssel)`;
   focus queued (host).
-- Then karousel/Lazy: forward B opens a new column sole on the target
-  desktop (appended after the last column); floating is a separate client
-  state with float/toggle transitions, and the column verbs take a column
-  argument that a floating B is not in. Whether the float state carries
-  across desktops is untraced, so retained-vs-fresh stays TBD.
-  `S(S-kar-ins)` + `S(S-kar-float)`; carry queued.
+- Then karousel/Lazy: forward tiled B opens a new column sole on the
+  target desktop (appended after the last column) with source fixup and
+  source-survivor focus as in R-WS-01. The floating return is a
+  tiled-only no-op: `doIfTiledFocused` gates floats out, so no verb
+  runs, no `desktops` write is issued, and B remains on WS2 floating
+  with focus unchanged. Floating owns no desktop mover. `S(S-kar-ins)` +
+  `S(S-kar-float)` + `S(S-kar-ws)`.
 - Then paneru: forward B moves via `VirtualMoveNumber` to the indexed row;
   floating B is `Unmanaged::Floating`, outside tiling, with its own
   focus-history record. Whether the virtual move carries the unmanaged
@@ -497,11 +513,17 @@ verb inventory); selected intent and doc assertions are never evidence.
 - Then PaperWM: the space retains `selectedWindow` (B), but native
   `workspace.activate` carries no focus target, so the GNOME-side
   restore on return stays TBD. `S(S-pap-space)`; return-focus queued.
-- Then karousel/Lazy: mixed (the switch and its focus are
-  owner-specific: Plasma performs both while karousel only re-arranges
-  and tracks activation with a per-grid `lastFocusedColumn`; whether
-  the viewport returns to the saved offset stays TBD). `S(S-kar-ws)`;
-  viewport queued.
+- Then karousel/Lazy: mixed (the switch itself is KWin-native;
+  karousel only re-arranges and tracks activation per-grid). Native
+  select runs `setCurrent` into visibility plus
+  `activateWindowOnDesktop`: shipped ClickToFocus is reasonable and
+  `NextFocusPrefersMouse` is false, so the MRU focus-chain decides
+  with no mouse contest on the single output. WS1 MRU is B (A-then-B
+  history), so the return focuses B with membership unchanged;
+  karousel records it in `lastFocusedColumn` and scrolls to B's column,
+  already contained in the both-visible view, so the minimal scroll is
+  a no-op and the viewport is unchanged. `S(S-kar-ws)` +
+  `S(S-kwin-switch)`.
 - Then paneru: refocuses the restored strip's remembered window with
   a restore guard (a never-focused strip falls back to the column
   closest to the display centre); the strip keeps its saved origin.
@@ -833,9 +855,14 @@ verb inventory); selected intent and doc assertions are never evidence.
   RIGHT default) as selectedWindow plus `Main.activateWindow`, so both
   legs follow; no stay variant exists in the registered inventory.
   `S(S-pap-space)` + `S(S-pap-take)` + `S(S-pap-ins)`.
-- Then karousel/Lazy: resolves to the adjacent desktop with an edge
-  stop and moves the whole column C2 (appended after the target's
-  last column); follow stays TBD. `S(S-kar-ws)`; follow queued.
+- Then karousel/Lazy: each leg resolves to the adjacent desktop with
+  an edge stop (past either end returns, never wraps) and moves the
+  whole column C2, appended after the target's last column. `moveToGrid`
+  passes Immediate to the source survivor (A on WS2), which takes focus
+  through the script path; no target focus and no desktop switch are
+  issued, so the follow and stay runs are identical (stay on the source
+  with A focused; single verb, no follow flag). `S(S-kar-ws)` +
+  `S(S-kwin-scriptact)`.
 - Then paneru: South moves with the len-greater-than-one gate and
   North stops at index 0, each carrying the `MoveFocus`
   Follow/Stay policy. `S(S-pan-ws)`.
@@ -1155,11 +1182,14 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   the open-position index (exact position TBD per the R-WS-14 precedent);
   whether E exists as a GNOME space stays TBD. `S(S-pap-space)` +
   `S(S-pap-take)` + `S(S-pap-ins)`; position/E-applicability queued.
-- Then karousel/Lazy: `columnMoveToNextDesktop` steps to the adjacent desktop
-  with an edge stop and moves the whole column C2, appended after the
-  target's last column; source A survives. KWin-side follow and viewport
-  stay TBD; E-as-desktop existence is KWin-owned, TBD. `S(S-kar-ws)`;
-  follow/viewport queued.
+- Then karousel/Lazy: `columnMoveToNextDesktop` steps to the adjacent
+  desktop with an edge stop (no wrap); desktops are explicit-only with
+  no auto-spare and no empty auto-removal, so the fixture-count E
+  persists and B fills it sole, appended after E's last (empty target).
+  Source A survives with the removal fixup and takes focus through the
+  script path; no switch and no target focus are issued, so follow and
+  stay runs are identical (stay with A). `S(S-kar-ws)` +
+  `S(S-kwin-scriptact)` + `S(S-kwin-desktops)`.
 - Then paneru: South relative move carries the `MoveFocus` Follow/Stay policy
   under the len-greater-than-one gate; at the last row South auto-creates
   only with `create_workspace_automatically` on (shipped default off),
@@ -1298,12 +1328,15 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   stops at the end (no move). Exact insert position and E-applicability
   stay TBD. `S(S-pap-space)` + `S(S-pap-take)` + `S(S-pap-ins)`;
   position/removal queued.
-- Then karousel/Lazy: next steps to the adjacent desktop when one exists
-  (whole sole-window column appended after the target's last column) with
-  an edge stop at the actual last; previous from the first stops (no move).
-  E-as-desktop existence is KWin-owned (TBD); emptied-grid retention and
-  KWin-side follow/viewport stay TBD. `S(S-kar-ws)`; follow/viewport
-  queued.
+- Then karousel/Lazy: next moves the whole sole-window column to the
+  adjacent desktop, appended after the target's last (E sole when E is
+  the target); the emptied source drops its last column with
+  `lastFocusedColumn` nulled and no focus request, and the emptied
+  desktop is retained (removal is explicit-only; karousel destroys
+  Desktop objects only on KWin removal). Focus stays B with no karousel
+  write. Previous from the first stops at the edge (no move, focus
+  unchanged). E persists as in R-WS-18. `S(S-kar-ws)` +
+  `S(S-kwin-scriptact)` + `S(S-kwin-desktops)`.
 - Then paneru: both legs are no-moves (South relative move needs
   len-greater-than-one, but the sole-B strip has length one; North stops
   at index 0). `S(S-pan-ws)`.

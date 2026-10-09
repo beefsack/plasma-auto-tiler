@@ -72,8 +72,8 @@ claims. Ours KDE and Ours Windows cite separate adapter keys.
 - Then karousel/Lazy: B enters `TiledMinimized` (B is the sole window of
   C2, so its removal empties and destroys C2 via `onColumnRemoved`); focus
   passes Immediate (B is the last-focused client) to the left column A
-  (left-else-right `columnToFocus` via `getWindowToFocus`); exact reflow
-  frames TBD. `S(S-kar-minimize)`; queued.
+  (left-else-right `columnToFocus` via `getWindowToFocus`); survivors keep
+  widths (reposition only, so no reflow). `S(S-kar-minimize)`.
 - Then paneru: B is marked `Unmanaged::Minimized` (off screen per the
   on-screen check) with strip removal plus remembered
   `PreviousManagedStrip` and nearest-center `give_away_focus` on the
@@ -124,8 +124,11 @@ claims. Ours KDE and Ours Windows cite separate adapter keys.
   native focus delivery TBD (host). `S(S-pap-minimize)` + `S(S-pap-ins)`;
   slot queued (host).
 - Then karousel/Lazy: unminimize constructs a new `Tiled` in a fresh column
-  after the last-focused (else last) column, not the old slot; exact column
-  and focus TBD. `S(S-kar-minimize)`; queued.
+  after the last-focused column (C1 once MNZ-01 refocused A, so between A
+  and C), not the old slot, with width from B's preferredWidth clamped
+  into [min,max]; the re-tile passes no focus and host unminimize issues
+  no activation (`setMinimized` emits only), so KWin focus stays A. `S(S-kar-minimize)` +
+  `S(S-kar-ins)` + `S(S-kar-min)` + `S(S-kwin-min)`.
 - Then paneru: the `Minimized` mark is removed and
   `window_managed_trigger` reinserts at the remembered
   `PreviousManagedStrip` index (old slot) when that workspace/virtual-strip
@@ -166,8 +169,11 @@ claims. Ours KDE and Ours Windows cite separate adapter keys.
   empty-column splice plus GNOME cleanup TBD. `S(S-pap-minimize)`; queued.
 - Then karousel/Lazy: same `TiledMinimized` path as R-MNZ-01 (A is the
   sole window of the sole column C1, so C1 is destroyed; being the last
-  column, the focus target is null); occupancy and native focus TBD.
-  `S(S-kar-minimize)`; queued.
+  column, the focus target is null, so the script writes no focus and the
+  grid sits empty with the desktop object retained: no desktop-removal
+  path in the traced source, and desktops are explicit-only with no empty
+  auto-removal). Host minimize issues no refocus, so KWin active stays the
+  minimized A with no fallback. `S(S-kar-minimize)` + `S(S-kar-ws)` + `S(S-kwin-min)` + `S(S-kwin-desktops)`.
 - Then paneru: same Minimized-mark plus strip-remove path as R-MNZ-01;
   sole-row strip emptiness/reaping and focus TBD.
   `S(S-pan-minimize)`; queued.

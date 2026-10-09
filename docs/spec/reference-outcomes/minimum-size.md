@@ -43,9 +43,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   client minima, so no member floats, skips, or is refused by policy and
   no alternative arrangement is searched. Exact native frames/focus TBD.
   `S(S-pap-spc)` + `S(S-pap-ins)` + `S(S-pap-layout)`; frames queued.
-- Then karousel/Lazy: column width clamps to the client minimum
-  (`getMinWidth`, capped at the tiling width); exact newcomer admission
-  TBD. `S(S-kar-min)`; admission queued.
+- Then karousel/Lazy: ordinary resizable C tiles (no minimum-driven float, skip, or alternative-arrangement search); new column after the last-focused column (C1 under the A* focus, so between A and B); column width from C's preferredWidth clamped into [min,max] with the minimum capped at the tiling width; survivors keep widths; newcomer focus TBD (fixture states no protocol selecting the X11-manage vs Wayland-add fork). `S(S-kar-min)` + `S(S-kar-ins)` + `S(S-kar-fltanchor)` + `S(S-kwin-manage)` + `S(S-kwin-add)`; focus TBD (F: missing protocol selecting the newcomer activation fork).
 - Then paneru: TBD (minimum handling untraced). `S(S-pan-model)`; queued.
 - Then Ours KDE: Shared projection reallocates within the selected tree, without alternative-arrangement search; overconstrained members keep slots and writable members use tile origin with each extent at least its declared minimum (B6). Offline newcomer journey verified; exact native fixture/result TBD. Code: [adapter](../../../kwin/src/plan-adapter.ts) `overconstrainedEffective`, `writeGeometries`; [real-engine fixtures](../../../kwin/tests/workspace-send-engine-fixture.test.ts). Automatic victim/return policy unselected, `D(D-min-games)`.
 - Then Ours Windows: Shared projection reallocates within the selected tree, without alternative-arrangement search; overconstrained members keep slots; Windows uses origin+minimum. Exact fixture/result TBD; automatic victim/return policy unselected, `D(D-min-games)`.
@@ -87,8 +85,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   live frames, so restored widths follow whatever the native responses
   settled during the shrink: recovery TBD. Exact native frames/focus TBD
   (live-only). `S(S-pap-layout)`; recovery queued.
-- Then karousel/Lazy: column widths stay clamped to client minima via
-  `setWidth`; exact shrink/grow frames TBD. `S(S-kar-min)`; frames queued.
+- Then karousel/Lazy: shrink rewrites no column widths by policy (`updateWidth` re-snaps to the closest preferredWidth clamped into [min,max]; no reflow clamp and no float intent); the strip absorbs the shrink via scroll; focus unwritten (stays); grow-back re-snaps from the then-live preferredWidths. `S(S-kar-min)` + `S(S-kar-scroll)`.
 - Then paneru: TBD (minimum handling untraced). `S(S-pan-model)`; queued.
 - Then Ours KDE: Same shared minimum projection; writable shrink-infeasible members use origin+minimum (B6), neither auto-floats. Offline shrink/grow recovery verified; exact native journey TBD. Code: [adapter](../../../kwin/src/plan-adapter.ts) `effectiveTargetFor`, `writeGeometries`; [real-engine fixtures](../../../kwin/tests/workspace-send-engine-fixture.test.ts). A hint-only change on KDE is not an independent dispatch trigger, `D(D-min-games)`.
 - Then Ours Windows: Same shared minimum projection; current Windows origin+minimum, neither auto-floats. Exact shrink/grow journey TBD, `D(D-min-games)`.
@@ -128,9 +125,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   column (no automatic float); overflow stays with the client. Exact
   sole-leaf native frame TBD. `S(S-pap-spc)` + `S(S-pap-ins)` +
   `S(S-pap-layout)`; frame queued.
-- Then karousel/Lazy: width clamps to the client minimum capped at the
-  tiling width (`getMinWidth`); exact sole-leaf frame TBD. `S(S-kar-min)`;
-  frame queued.
+- Then karousel/Lazy: ordinary resizable A tiles as the sole column at the start of the empty grid (no minimum-driven automatic float; the minimum caps at the tiling width, so the column takes 1080); overflow stays with the client; newcomer focus TBD (fixture states no protocol selecting the X11-manage vs Wayland-add fork). `S(S-kar-min)` + `S(S-kar-ins)` + `S(S-kwin-manage)` + `S(S-kwin-add)`; focus TBD (F: missing protocol selecting the newcomer activation fork).
 - Then paneru: TBD (minimum handling untraced). `S(S-pan-model)`; queued.
 - Then Ours KDE: Core projects the sole leaf and flags its violated minimum; writable KDE raises the violated extent at tile origin (B6), allowing overflow. Offline oversized sole-leaf/offset-domain journey settles quietly. Code: [adapter](../../../kwin/src/plan-adapter.ts) `overconstrainedEffective`, `writeGeometries`; [real-engine fixtures](../../../kwin/tests/workspace-send-engine-fixture.test.ts). Floating cannot make this minimum fit the work area; exact native journey TBD, `D(D-min-games)`.
 - Then Ours Windows: Core projects the sole leaf and flags its violated minimum; writable Windows raises width at tile origin. Floating cannot make this minimum fit the work area; exact native journey TBD, `D(D-min-games)`.

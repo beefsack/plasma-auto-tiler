@@ -49,9 +49,7 @@ off, append admission (`S(S-pan-base)`).
   maximized/fullscreen tiles stay in the scrolling layout. Settled
   widths, newcomer focus and viewport stay TBD. `S(S-nir-ins)`; queued.
 - Then PaperWM: D opens as a new column at selected+1 (between B and C) under the shipped RIGHT default, activated on show with inactive-space no-steal; existing columns keep widths (no rescale) and the viewport keeps D visible via minimal ensuredX scroll under DEFAULT. `S(S-pap-ins)` + `S(S-pap-layout)` + `S(S-pap-view)`.
-- Then karousel/Lazy: new column after the last-focused column (else
-  the last), window appended at the bottom. KWin-side focus, settled
-  widths and viewport stay TBD. `S(S-kar-ins)`; queued.
+- Then karousel/Lazy: new column after the last-focused column (B's C2 column under the B* tiled focus, so between B and C), window appended at the bottom; existing columns keep widths (newcomer width from its preferred width clamped into [min,max]; `columnsSetX` repositions only); newcomer focus TBD (fixture states no protocol, X11 user-time/startup/session, Wayland token/app-id/transient-serial, or FSP/rules inputs selecting the host activation fork); viewport is a deterministic conditional (Lazy minimal scroll toward the last-focused column: moves only if the newcomer is accepted and not contained); exact settled widths TBD (fixture states no newcomer frame/min/max inputs for the clamp). `S(S-kar-ins)` + `S(S-kar-fltanchor)` + `S(S-kar-scroll)` + `S(S-kar-min)` + `S(S-kwin-manage)` + `S(S-kwin-add)`.
 - Then paneru: reinsertion at the remembered strip index, else the
   active strip at the configured insertion index, else overlap/end,
   then reshuffle. Focus stays TBD. `S(S-pan-ins)`; queued.

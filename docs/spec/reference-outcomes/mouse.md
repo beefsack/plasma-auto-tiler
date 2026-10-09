@@ -82,10 +82,11 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   peers keep widths (no 1/n rescale), then the drop activates. A
   floating N never enters the PaperWM move grab. `S(S-pap-grab)` +
   `S(S-pap-grabzone)` + `S(S-pap-layout)`.
-- Then karousel/Lazy: a tiled N untiles under shipped
-  `untileOnDrag=true`, so no index insert occurs; N's unspecified
-  initial layer and resulting share outcome remain TBD.
-  `S(S-kar-ptr)`; queued.
+- Then karousel/Lazy: a tiled N untiles at session start under shipped
+  `untileOnDrag=true` via `floatClient` (height-capped float), so no
+  bar-index insert occurs; A/B/C keep widths with reposition only (no
+  1/n rescale); the script writes no focus on the float path.
+  `S(S-kar-ptr)` + `S(S-kar-float)` + `S(S-kar-close)`.
 - Then paneru: pointer drag is the host macOS journey (no engine
   drag model). `S(S-pan-mouse)`; queued.
 - Then Ours KDE: TBD (between-child drop not checked here)
@@ -126,9 +127,12 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   Scroll-phase moves clones only; source removal and reflow start
   at `beginDnD`. Click delivery TBD (host Mutter grab semantics).
   `S(S-pap-grab)` + `S(S-pap-grabzone)`; queued.
-- Then karousel/Lazy: move/resize session hooks fire for any host
-  producer, so both funnel to untile-or-snap-back; host initiation
-  TBD. `S(S-kar-ptr)`; queued.
+- Then karousel/Lazy: the move/resize session hooks carry no producer
+  branch, so both producers funnel identically to untile-or-snap-back
+  under shipped `untileOnDrag=true` (float via `floatClient`, else the
+  `moving` retile-back on finish); the script writes no click and holds
+  no drop topology; host session start/finish rides the KWin interactive
+  move/resize signals. `S(S-kar-ptr)` + `S(S-kwin-moveresize)`.
 - Then paneru: pointer drag is the host macOS journey (no engine
   drag model). `S(S-pan-mouse)`; queued.
 - Then Ours KDE: same resolver selected `D(D-dec-drag)`
@@ -206,8 +210,14 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then PaperWM: DnD never begins, so B stays in place; end always
   activates B. `S(S-pap-grab)`.
 - Then karousel/Lazy: a started move session untiles immediately even
-  without geometry motion; whether the host starts that session on a
-  zero-move press/release is TBD. `S(S-kar-ptr)`; queued.
+  without geometry motion (no script threshold), so a started session
+  floats B with no slot restore; Mod+Left starts that session immediately
+  via the host Move path so zero-move floats B, while title-bar press only
+  arms a delayed start after `startDragTime` so a quick zero-move
+  press/release starts no session and B stays tiled. Title-bar hold
+  duration vs the delay is unrecorded, so that branch stays TBD.
+  `S(S-kar-ptr)` + `S(S-kwin-moveresize)`; title-bar hold TBD (F:
+  press-hold duration vs `startDragTime` unrecorded).
 - Then paneru: host click marks held and reshuffles on release;
   topology effect TBD. `S(S-pan-mouse)`; queued.
 - Then Ours KDE: no-change verdict makes no plan `D(D-dec-drag)`
@@ -249,8 +259,11 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   unrecorded; leaving all zones keeps the last acquired zone).
   `S(S-pap-grab)` + `S(S-pap-grabzone)` +
   `S(S-pap-ins)`; queued.
-- Then karousel/Lazy: untile at grab start means no restoration;
-  off-area drop frame TBD. `S(S-kar-ptr)`; queued.
+- Then karousel/Lazy: untile at grab start leaves no restoration path,
+  so the drop stays a host-positioned float (no zone/admission fallback
+  in script); there is no script drop preview to clear.
+  `S(S-kar-ptr)` + `S(S-kar-float)` +
+  `S(S-kwin-moveresize)`.
 - Then paneru: pointer drag is the host macOS journey. `S(S-pan-mouse)`;
   queued.
 - Then Ours KDE: unresolved target snaps back `D(D-dec-drag)`
@@ -508,8 +521,14 @@ paths; selected intent and doc assertions are never evidence.
   the drop inserts at the R zone and activates; WS3 switcher leg has
   no counterpart (minimaps hide during DnD). `S(S-pap-grab)`.
 - Then karousel/Lazy: cross-output leg fixture-inapplicable
-  (single-screen scope, `S(S-kar-single)`); switcher-target drop
-  journey TBD. Queued.
+  (single-screen scope, `S(S-kar-single)`); a switcher-target drop holds
+  no grid-insertion branch in script (B already floated at session start
+  under shipped `untileOnDrag=true`; TabBox accept only activates per the
+  host path), so B stays floating with no column insert; no pointer-drop
+  commit path exists in the host TabBox (outside press closes/aborts,
+  accept only activates via the keyboard paths), so no switcher gesture
+  commits a column drop (no counterpart for that target).
+  `S(S-kar-single)` + `S(S-kar-ptr)` + `S(S-kwin-tabbox)`.
 - Then paneru: pointer drag is the host macOS journey (no engine
   drag model; MouseDragged forwards to Lua only); display verbs are
   keyboard-only. `S(S-pan-mouse)`; queued.

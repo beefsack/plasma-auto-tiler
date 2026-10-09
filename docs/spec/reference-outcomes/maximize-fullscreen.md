@@ -48,9 +48,10 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   hinted frames follow the width arithmetic; native convergence timing TBD
   (live-only). `S(S-pap-widthmax)` + `S(S-pap-layout)`; timing queued.
 - Then karousel/Lazy: native maximize keeps B's column membership with
-  `skipArrange` set (siblings keep their slots, B is never arranged);
-  restore clears the flag through the same change handler. Exact hinted
-  frames/convergence TBD. `S(S-kar-maxfs)`; geometry queued.
+  `skipArrange` set (siblings keep their slots and widths, B is never arranged;
+  layering follows the shipped `tiledKeepBelow` default with no keepAbove write);
+  restore clears the flag through the same change handler, revealing the retained
+  slot; the maximized frame covers the work area. Convergence timing TBD (client ack at runtime). `S(S-kar-maxfs)`; timing TBD (live-only).
 - Then paneru: no-counterpart for a paneru-native `B:max` leg (no verb in
   `Operation`, no zoom/maximize AX read); a host-zoomed window is an
   owner-specific journey with sibling/restore behavior TBD.
@@ -260,8 +261,11 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   fresh-window branch (newcomer focus). `S(S-pap-widthmax)` +
   `S(S-pap-ins)` + `S(S-pap-layout)`.
 - Then karousel/Lazy: tiling admission force-unmaximizes A into an
-  ordinary column (no overlay, no slotless hold); a later native
-  restore is moot; admission focus TBD. `S(S-kar-maxfs)`; focus queued.
+  ordinary column after C1 (no overlay, no slotless hold; B keeps its width);
+  a later native restore is moot; admission focus TBD (fixture states no
+  protocol selecting the X11-manage vs Wayland-add fork). `S(S-kar-maxfs)` +
+  `S(S-kar-ins)` + `S(S-kar-min)` + `S(S-kwin-manage)` + `S(S-kwin-add)`;
+  focus TBD (F: missing protocol selecting the newcomer activation fork).
 - Then paneru: no-counterpart for a paneru-native maximized-admission
   leg (no verb or model path); a host-zoomed first-seen window is
   owner-specific with admission/restore behavior TBD.
@@ -397,9 +401,9 @@ rectangles where geometry is load-bearing.
   unchanged. `S(S-pap-widthmax)` + `S(S-pap-focus)` + `S(S-pap-swap)`.
 - Then karousel/Lazy: focus left lands on A and restores B to tiled via
   `restoreToTiled` (overlay cleared by the focus change itself); the
-  subsequent move reorders A with B already normal. Exact post-move
-  order TBD. `S(S-kar-focus)` + `S(S-kar-maxfs)` + `S(S-kar-move)`;
-  order queued.
+  subsequent move right merges A into C2 as a shared column `[B,A]` with
+  focus staying A (moves pass no focus).
+  `S(S-kar-focus)` + `S(S-kar-maxfs)` + `S(S-kar-move)`.
 - Then paneru: no-counterpart for a paneru-native maximize leg (no verb in
   `Operation`, no zoom/maximize AX read); a host-zoomed window is an
   owner-specific external journey with focus/swap behavior TBD.
@@ -493,9 +497,7 @@ rectangles where geometry is load-bearing.
   TBD (host). `S(S-pap-widthmax)` + `S(S-pap-take)` + `S(S-pap-ins)` +
   `S(S-pap-layout)` + `S(S-pap-unmov)` + `S(S-pap-fsframe)`; overlay
   queued (host).
-- Then karousel/Lazy: the column transfers grids via `moveWindowToGrid`;
-  whether the native KWin maximized/fullscreen client state travels
-  with it TBD. `S(S-kar-ws)` + `S(S-kar-maxfs)`; carry queued.
+- Then karousel/Lazy: the column transfers after the target grid's last column via `Column.moveToGrid` (desktops reassigned; no maximize/fullscreen clear on the path, so `skipArrange` and the overlay travel: carried in both legs); source reflows via `Grid.onColumnRemoved`; no desktop switch is issued (stay); the B-focused Immediate pass refocuses source-grid A through the script path (raise, on-current-desktop, reasonable-policy `requestFocus`). `S(S-kar-ws)` + `S(S-kar-maxfs)` + `S(S-kar-close)` + `S(S-kwin-scriptact)`.
 - Then paneru: max leg no-counterpart for a paneru-native preparation
   (same inventory gap as R-MAX-08) with the host-zoom journey
   owner-specific and TBD;

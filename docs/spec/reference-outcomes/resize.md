@@ -66,9 +66,7 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   Neighbor columns keep their widths (per-column targetWidth, no rescale);
   layout re-ensures placement after the frame write. `S(S-pap-resize)` +
   `S(S-pap-layout)`.
-- Then karousel/Lazy: contextual increase selects the next larger
-  preset/visible-space width and recenters; decrease uses separate
-  offscreen terms. Step, neighbor effect and reversal TBD. `S(S-kar-resize)`.
+- Then karousel/Lazy: contextual increase picks the smallest strictly greater width among visible-space slack plus presets and writes it as preferredWidth with recenter; decrease runs the separate offscreen-terms path over presets (so shrink is not the inverse of grow); neighbor widths are untouched (independent columns, reposition only); focus unwritten. Exact step TBD (fixture records but does not state viewport width). `S(S-kar-resize)` + `S(S-kar-min)` + `S(S-kar-scroll)` + `S(S-kar-base)`; step TBD (F: missing viewport width).
 - Then paneru: `Resize(Grow)`/`Resize(Shrink)` cycle the focused width
   through presets; neighbor allocation TBD. `S(S-pan-resize)`; queued.
 - Then Ours KDE: Outwards moves the shared boundary by 12px (press 0, then

@@ -61,8 +61,7 @@ assertions are never evidence.
 - Then PaperWM: run 1 B, run 2 A. `switchLeft` takes the left column's
   topmost (`sortWindows` last), i.e. last-activated member.
   `S(S-pap-focus)`.
-- Then karousel/Lazy: focuses the left column's focus-taker; exact
-  member TBD. `S(S-kar-focus)`; member queued.
+- Then karousel/Lazy: run 1 B, run 2 A. `focusLeft` takes the left column's `getWindowToFocus` (focus-taker else first); each history run's last C1 focus writes that column's focus-taker (B after A,B,C; A after B,A,C), retained across the C focus. `S(S-kar-focus)` + `S(S-kar-fltanchor)`.
 - Then paneru: TBD (directional `Focus` traversal untraced).
   `S(S-pan-cmds)`; traversal queued.
 - Then Ours KDE: A in both runs. Perpendicular V descends to its first

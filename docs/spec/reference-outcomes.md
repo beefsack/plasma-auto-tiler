@@ -1467,7 +1467,9 @@ Legend:
   focus, null on the last column)
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
 - `S-kar-manual-width` karousel:src/lib/world/clientState/Tiled.ts:88-101,144-152
-  (host interactive resize feeds width delta to the column) and
+  (host interactive resize feeds width delta to the column) and :162-171
+  (non-interactive external geometry re-asserts via rate-limited
+  `onFrameGeometryChanged`) and
   src/lib/layout/Column.ts:101-114,143-162 (arbitrary width clamped to
   size hints, stored as preferred width; optional neighbor redistribution)
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
@@ -1785,7 +1787,11 @@ Legend:
   src/lib/layout/Window.ts:8-24 (maximized/fullscreen newcomers skip
   arrange instead of fighting the user) and
   src/lib/layout/Column.ts:14,267-272 (stacked display exists behind
-  `toggleStacked`, off unless `stackColumnsByDefault`)
+  `toggleStacked`, off unless `stackColumnsByDefault`) and
+  src/lib/layout/Grid.ts:97-107 (`columnsSetX` repositions from the new
+  column onward without writing widths) and
+  src/lib/world/ClientWrapper.ts:24 (`preferredWidth` from the client
+  frame width at wrap)
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
   (new-column position leg; KWin-side focus, viewport, and settled widths
   stay TBD)
@@ -1942,9 +1948,12 @@ Legend:
   signal inventory behind `S(S-pap-grab)`)
 - `S-kar-focus` karousel:src/lib/keyBindings/Actions.ts:6-60
   (`focusLeft/Right/Up/Down/Next/Previous/Start/End`, tiled-only
-  dispatch via `doIfTiledFocused` in definition.ts:10-53)
+  dispatch via `doIfTiledFocused` in definition.ts:10-53) and
+  src/lib/layout/Column.ts:198-211 (`getFocusTaker` retained per column,
+  `getWindowToFocus` focus-taker else first)
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
-  (focus-verb inventory; in-column member stays TBD)
+  (focus-verb inventory; left-column member follows the per-column
+  focus-taker)
 - `S-pan-cmds` paneru:src/types/commands.rs:220-275 (`Operation`:
   directional `Focus`, `FocusOrVirtual`, `FocusManaged/Unmanaged`,
   `RaiseFloating`; no next/previous cycle pair, no parent verb)
@@ -2305,8 +2314,9 @@ Legend:
   prefer-floating rule) and src/lib/world/ClientManager.ts:72-82
   (`findTransientFor` tracks the transient link without changing state)
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
-  (transient/modal exclusion plus shapeability gate; KWin kind-flag
-  mapping and focus stay TBD)
+  (transient/modal exclusion plus shapeability gate; type/kind
+  resolution via pinned KWin `normalWindow`/`resizeable` per
+  `S(S-kwin-resizeable)`)
 - `S-kwin-resizeable` kwin:src/window.h:546 (`resizeable` scripting
   property reads `isResizable`) + src/xdgshellwindow.cpp:628-644
   (`minSize` expands to an enforced minimum, absent `maxSize` maps to
@@ -2314,17 +2324,27 @@ Legend:
   inequality `min.w<max.w || min.h<max.h`, modulo fullscreen/special/
   forced-size gates) + src/x11window.cpp:3050-3058 (`minSize`/`maxSize`
   pass ICCCM hints through with rules only) and :3446-3472 (same
-  either-axis inequality plus unmanaged/NET/motif gates) @8438567a
+  either-axis inequality plus unmanaged/NET/motif gates) +
+  src/utils/xcbutils.h:932-972 (`hasMinSize`/`hasMaxSize` gates; absent
+  max maps to `INT_MAX` clamped to >=1; absent min falls back to base
+  size, absent base to 0,0) @8438567a
   (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
   KDE/kwin@8438567a provenance; karousel `resizeable` resolves here)
+  Raw sources: [window.h](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/window.h),
+  [xdgshellwindow.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/xdgshellwindow.cpp),
+  [x11window.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/x11window.cpp),
+  [xcbutils.h](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/utils/xcbutils.h).
 - `S-kwin-tabbox` kwin:src/tabbox/tabbox.cpp:87-97 (`checkDesktop`:
   `AllDesktopsClients` lists every desktop, default
   `OnlyCurrentDesktopClients` lists the current desktop only) and
   :157-169 (`clientToAddToList` requires the desktop/activity/
   application/minimized/screen checks plus `wantsTabFocus` and
   `!skipSwitcher()`) and :256-267 (ctor: default config
-  current-desktop-only, alternative config all-desktops) and :992-1005
-  (`accept` runs `Workspace::activateWindow`) +
+  current-desktop-only, alternative config all-desktops) and :592-606
+  (outside pointer press closes/aborts, no drop commit) and :631-644
+  (`Enter`/`Space` accept via the keyboard path) and :992-1005
+  (`accept` runs `Workspace::activateWindow`) and :1006-1014
+  (`modifiersReleased` accepts via the keyboard release path) +
   src/tabbox/tabboxconfig.h:47-51 (desktop-mode enum) and :260-263
   (default mode current-desktop-only) + src/activation.cpp:294-324
   (`activateWindow`: raise, then off-desktop windows follow
@@ -2366,6 +2386,94 @@ Legend:
   [activation.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/activation.cpp),
   [events.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/events.cpp),
   [kwinoptions_settings.kcfg](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/kcms/options/kwinoptions_settings.kcfg).
+- `S-kwin-manage` kwin:src/x11window.cpp:813 (`readUserTimeMapTimestamp`
+  user-time/startup/session inputs) and :824-830 (manage allow fork incl
+  session) and :836-837 (off-desktop switch on allow) and :851-866
+  (restack-under-active on deny; `requestFocus` on allow+current vs
+  `demandAttention`) and :4116-4130 (timestamp source: user time with
+  startup-id override) and :4257-4330 (`allowWindowActivation` FSP/
+  timestamp fork) @8438567a
+  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
+  KDE/kwin@8438567a provenance; X11 newcomer activation leg; karousel
+  focus-taker follows only on KWin focus)
+  Raw sources: [x11window.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/x11window.cpp).
+- `S-kwin-add` kwin:src/workspace.cpp:930-951 (`addWaylandWindow`
+  `shouldActivate` incl `mayActivate`-token, FSP-Low and no-active
+  branches, plus activate vs `demandAttention`/restack) +
+  src/activation.cpp:578-614 (`mayActivate` token/app-id/
+  transient-serial/rules legs) + src/xdgactivationv1.cpp:104-125
+  (token activate path) @8438567a
+  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
+  KDE/kwin@8438567a provenance; Wayland newcomer activation leg)
+  Raw sources: [workspace.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/workspace.cpp),
+  [activation.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/activation.cpp),
+  [xdgactivationv1.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/xdgactivationv1.cpp).
+- `S-kwin-winorder` kwin:src/workspace.h:210 (`windows()` returns
+  `m_windows`) + src/scripting/workspace_wrapper.cpp:505-522 (scripting
+  `Workspace.windows` reads `workspace()->windows()` with count/at
+  index) + src/workspace.cpp:856-857 (managed X11 append at manage) and
+  :868-869 (unmanaged append) and :926-927 (Wayland append at add)
+  @8438567a
+  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
+  KDE/kwin@8438567a provenance; script-visible window order is KWin
+  manage/creation order, not focus order)
+  Raw sources: [workspace.h](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/workspace.h),
+  [workspace_wrapper.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/scripting/workspace_wrapper.cpp),
+  [workspace.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/workspace.cpp).
+- `S-kwin-scriptact` kwin:src/scripting/workspace_wrapper.cpp:260-262
+  (`setActiveWindow` calls `activateWindow(window)` with the default
+  `force=false`) + src/workspace.h:170 (default `force=false`) +
+  src/activation.cpp:294-341 (`activateWindow`: raise, off-desktop policy
+  switch, `focusPolicyIsReasonable` gate) + :366-409 (`requestFocus`:
+  modal redirect, splash/shown/`wantsInput` gates, `takeFocus` plus
+  `setActiveWindow`) + src/options.h:316-318 (`focusPolicyIsReasonable`
+  is ClickToFocus/FocusFollowsMouse) + src/options.cpp:35-36
+  (`ClickToFocus` default, `nextFocusPrefersMouse` false) @8438567a
+  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
+  KDE/kwin@8438567a provenance; script focus path, not newcomer admission)
+  Raw sources: [workspace_wrapper.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/scripting/workspace_wrapper.cpp),
+  [workspace.h](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/workspace.h),
+  [activation.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/activation.cpp),
+  [options.h](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/options.h),
+  [options.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/options.cpp).
+- `S-kwin-switch` kwin:src/virtualdesktops.cpp:567-600 (`setCurrent`
+  writes current plus emits) + src/workspace.cpp:1039-1042
+  (`slotCurrentDesktopChanged` runs visibility plus activation) +
+  :1092-1116 (`activateWindowOnDesktop`/`findWindowToActivateOnDesktop`:
+  reasonable-policy MRU focus-chain, `NextFocusPrefersMouse` mouse branch
+  else chain) + :2416-2420 (`scheduleRearrange` is a separate strut timer,
+  not focus delivery) + src/focuschain.cpp:37-60 (`getForActivation`
+  MRU shown window on desktop/output) +
+  src/kcms/options/kwinoptions_settings.kcfg:92-104 (shipped
+  `ClickToFocus` plus `NextFocusPrefersMouse` false) @8438567a
+  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
+  KDE/kwin@8438567a provenance; native desktop-switch activation leg)
+  Raw sources: [virtualdesktops.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/virtualdesktops.cpp),
+  [workspace.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/workspace.cpp),
+  [focuschain.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/focuschain.cpp),
+  [kwinoptions_settings.kcfg](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/kcms/options/kwinoptions_settings.kcfg).
+- `S-kwin-desktops` kwin:src/virtualdesktops.cpp:449-530
+  (`createVirtualDesktop`/`removeVirtualDesktop` explicit only,
+  last-desktop protected) + :603-651 (`setCount` explicit resize only) +
+  karousel:src/lib/world/DesktopManager.ts:79-112 (`updateDesktops`/
+  `removeKwinDesktop`/`destroyDesktop` destroy only KWin-removed
+  desktops) @8438567a for kwin (pinned via /tmp/opencode/kwin-8438567
+  export, raw KDE/kwin@8438567a provenance),
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b for karousel
+  (no auto-spare, no empty auto-removal; emptied desktops retained)
+  Raw sources: [virtualdesktops.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/virtualdesktops.cpp).
+- `S-kwin-sticky` kwin:src/window.cpp:697-809 (`setDesktops` writes the list with rules check plus transient/modal propagation and `desktopsChanged`; `setOnAllDesktops(true)` writes empty, false writes the current desktop; `isOnDesktop` is true for empty) @8438567a
+  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw KDE/kwin@8438567a provenance; sticky assignment/visibility leg)
+  Raw sources: [window.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/window.cpp).
+- `S-kwin-close` kwin:src/activation.cpp:433-480 (`activateNextWindow`: no-op unless the closed window was active, else MRU focus-chain `nextForDesktop` plus `requestFocus`, desktop fallback) + src/focuschain.cpp:247-270 (`isUsableFocusCandidate` shown/on-current checks; `nextForDesktop` MRU usable pick) + src/workspace.cpp:955-961 (`removeWaylandWindow` activates-next before remove) + src/x11window.cpp:218/`destroyWindow` (X11 release/destroy activates-next before remove) @8438567a
+  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw KDE/kwin@8438567a provenance; native close refocus leg)
+  Raw sources: [activation.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/activation.cpp), [focuschain.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/focuschain.cpp), [workspace.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/workspace.cpp), [x11window.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/x11window.cpp).
+- `S-kwin-min` kwin:src/window.cpp:848-866 (`setMinimized` writes the flag with rules/minimizable gates and emits only; no focus call) + src/activation.cpp:294-341 (`activateWindow` unminimizes as one step of activation; unminimize alone issues no activation) @8438567a
+  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw KDE/kwin@8438567a provenance; native minimize/unminimize focus leg)
+  Raw sources: [window.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/window.cpp), [activation.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/activation.cpp).
+- `S-kwin-moveresize` kwin:src/window.cpp:775 (`moveResize` writes the geometry via `setMoveResizeGeometry`/`moveResizeInternal`) + :1039-1086 (interactive move/resize session start/finish signals) + :1116-1139 (`startDelayed`/`stopDelayed`: title-bar press arms a `startDragTime` timer, release stops it) + :2066-2092 (`MouseMove` press path starts the session immediately) + :2566-2575 (`endInteractiveMoveResize` finishes on release) + :2764-2797 (decoration press arms the delay, release finishes only if started) + src/input.cpp:680-692 (`MoveResizeInputFilter` release ends the session) + :1295-1324 (`Meta+Left` resolves to the Move path via `commandAll`) + src/kcms/options/kwinoptions_settings.kcfg:152-164,203-218,291-315 (shipped title-bar Raise/ActivateAndRaise plus `Meta`+`Move` defaults) @8438567a
+  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw KDE/kwin@8438567a provenance; native float pointer translation plus title-bar-delayed vs modifier-immediate gesture legs)
+  Raw sources: [window.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/window.cpp), [input.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/input.cpp), [kwinoptions_settings.kcfg](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/kcms/options/kwinoptions_settings.kcfg).
 - `S-kar-admit` karousel:src/lib/world/ClientManager.ts:30-56
   (`addClient` evaluates the shapeability gates once at add) and
   :158-176 (`toggleFloatingClient`: float-to-tile requires `canTileEver`,
@@ -2698,9 +2806,18 @@ Legend:
   is a different journey, not the shipped-send outcome)
 - `S-kar-acts` karousel:src/lib/keyBindings/Actions.ts:6-60 (focus verbs) +
   :86-175 (window/column move verbs) + :176-260 (`windowToggleFloating`
-  per-window only, column move/stacked/width/preset verbs; no
-  rotate/mirror/master/orientation/layout-select/workspace-toggle verb)
+  per-window only, column move/stacked/width/preset verbs) + :252-544
+  (scroll/screen-switch/tail/desktop-move verbs) +
+  src/lib/keyBindings/definition.ts:12-313 (shipped binds are
+  focus/move/toggle-floating/column/width/scroll/screen/tail/num-column
+  binds only) + src/main/main.ts:1-11 (entry constructs the World;
+  enable/disable is the script lifecycle)
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (full definition/Actions inventory carries no close/restart/reload/
+  persist/session/first-run/preset/prompt/settings-race/tray/
+  workspace-default/staging/Save/Apply/Force/preview/draft/
+  preimage/restore/switcher verb; no rotate/mirror/master/orientation/
+  layout-select/workspace-toggle verb)
 - `S-kar-switcher` karousel:src/lib/keyBindings/definition.ts:12-60
   (shipped focus binds move within the grid; no switcher/listing bind) +
   src/lib/world/clientState/Tiled.ts:222-246 (`skipSwitcher` KWin
@@ -3035,16 +3152,43 @@ Legend:
   (workspace add/remove is GNOME-owned; loop variants are column-level;
   monitor reassignment re-keys no model so columns/selection carry; stack
   walk inputs are live tab/switch order with host neighbor/index remainder)
-- `S-kar-ws` karousel:src/lib/keyBindings/Actions.ts:469-504
+- `S-kar-ws` karousel:src/lib/keyBindings/Actions.ts:453-467
+  (`columnMoveToDesktop` moves the whole column via `moveToGrid` after
+  the target's last column, no desktop switch) + :469-504
   (`columnMoveToNextDesktop`/`columnMoveToPreviousDesktop` stop at the
-  desktop ends) + src/lib/layout/Column.ts:20-31 (`moveToGrid`
-  cross-desktop transfer) + src/lib/layout/Grid.ts:150-170
+  desktop ends) + src/lib/keyBindings/definition.ts:299-311
+  (`column-move-to-desktop-{}`/`tail-move-to-desktop-{}` bindings,
+  tiled-only via `doIfTiledFocused`) + src/lib/layout/Column.ts:20-31
+  (`moveToGrid` cross-desktop transfer: Immediate pass when focused else
+  None, then client desktops reassigned) + src/lib/layout/Grid.ts:150-170
   (`onColumnAdded` appends, `onColumnRemoved` refreshes
-  `lastFocusedColumn`) + src/lib/workspace.ts:27-29 (desktop switch
-  only re-arranges) + `S(S-kar-acts)` (no desktop-switch, history, or
-  select verb in the inventory)
+  `lastFocusedColumn`) + :161-185 (left-else-right focus column,
+  Immediate/OnUnfocus/None pass, `autoAdjustScroll`) + :195-202
+  (`onColumnFocused` tracks `lastFocusedColumn` and scrolls to the
+  column) + :82-95 (`getLastFocusedColumn`/`getLastFocusedWindow`
+  null-guards) + src/lib/layout/Column.ts:297-329 (`onWindowRemoved`
+  above-else-below candidate with Immediate/OnUnfocus pass, focus-taker
+  bridge) + src/lib/layout/Window.ts:62-69 (`focus` requests the passer
+  when KWin has not focused) + src/lib/world/FocusPassing.ts:1-51
+  (Immediate/OnUnfocus/None, 200ms expiry) +
+  src/lib/world/World.ts:124-131 (`doIfTiledFocused` gates floats out) +
+  src/lib/world/DesktopManager.ts:40-49 (`getDesktopInCurrentActivity`
+  plus exactly-1 desktop/activity gate, else float) + :65-67 (grids keyed
+  activity|desktop) + src/lib/world/clientState/Tiled.ts:35-45
+  (`desktopsChanged`/`activitiesChanged` grid mover) + :211-220
+  (`moveWindowToGrid` fresh column at last-focused else last, OnUnfocus
+  when focused else None) + src/lib/world/clientState/Floating.ts:40-62
+  (tileChanged/frameGeometryChanged only, no desktop mover) +
+  src/lib/world/ClientManager.ts:181-188 (`onClientFocused` leaves
+  `lastFocusedColumn` when no tiled window resolves) +
+  src/lib/layout/Desktop.ts:90-103 (`autoAdjustScroll`/`scrollToColumn`
+  to the last-focused column) + src/lib/workspace.ts:27-29 (desktop
+  switch only re-arranges) + `S(S-kar-acts)` (no desktop-switch, history,
+  or select verb in the inventory)
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
-  (desktops and their switching are KWin-native)
+  (desktops and their switching are KWin-native; KWin-side activation,
+  switch focus, and desktop inventory/removal stay host-owned per
+  `S(S-kwin-scriptact)` + `S(S-kwin-switch)` + `S(S-kwin-desktops)`)
 - `S-pan-ws` paneru:src/ecs/workspace.rs:882-1000 (switch: North stops,
   South steps or auto-creates, `First`/`Last` jump, `VirtualNumber`
   spawns the absent strip) and :1040-1120 (relative move with

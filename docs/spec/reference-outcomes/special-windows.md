@@ -65,9 +65,9 @@ transient (no dialog flag) is a different fixture and is not claimed.
 - Then PaperWM: D floats above (`add_filter` rejects transients;
   `make_above` so it is not hidden); takes focus. Wayland fence
   enforcement TBD. `S(S-pap-spc)`; queued.
-- Then karousel/Lazy: D floats (transient fails `shouldTile`;
-  modal fails it too). Placement and KWin-side focus TBD.
-  `S(S-kar-spc)`; queued.
+- Then karousel/Lazy: D floats in both legs (transient fails `shouldTile`;
+  modal fails it too); the transient link is tracked via `findTransientFor` without changing state. Admission constructs Floating with no height cap or placement write, so the native frame is retained; the script writes no focus and imposes no modal fence (no branch). D is not special (`isSpecialWindow` excludes Dialog) and takes tab focus (`wantsTabFocus` covers Dialog given `wantsInput`), so the generic X11 manage fork applies (non-special branch with tab-focus eligibility); the Wayland leg follows the add fork. Exact focus TBD (fixture: activation timestamp/token selecting the fork unstated).
+  `S(S-kar-spc)` + `S(S-kar-float)` + `S(S-kwin-manage)` + `S(S-kwin-add)`.
 - Then paneru: management is role-gated (non-standard roles skipped
   unless forced); D's dialog/transient role outcome untraced. TBD;
   queued.
@@ -132,8 +132,7 @@ transient (no dialog flag) is a different fixture and is not claimed.
   `NORMAL_ALL` type membership for splash/utility: TBD (host: Mutter
   tab-list type filter untraced). `S(S-pap-spc)` + `S(S-pap-fltanchor)` +
   `S(S-pap-switcher)`; focus/switcher queued (host).
-- Then karousel/Lazy: TBD (KWin kind-flag mapping for
-  splash/utility against the shapeability gate untraced). Queued.
+- Then karousel/Lazy: X11 splash and utility both float (managed types whose `windowType` is not Normal, so `shouldTile` fails the `normalWindow` gate and `addClient` constructs Floating with the native frame retained and no script focus write); Wayland-native typed legs are fixture-inapplicable (xdg/PlasmaShell roles carry no splash/utility counterpart, mapping only Desktop/Dock/OSD/Notification/Tooltip/Critical/AppletPopup/Normal). Splash is special, so it skips both the X11 manage focus branch (`requestFocus`) and the attention branch (`demandAttention` requires non-special): no steal, no attention. Utility is not special, so the generic fork applies: no `requestFocus` (`wantsTabFocus` requires Normal/Dialog/AppletPopup) with `demandAttention` on the deny branch. Both are excluded from the host switcher list (`wantsTabFocus` false for Splash/Utility). Exact utility attention TBD (fixture: activation timestamp selecting the allow/deny fork unstated). `S(S-kar-spc)` + `S(S-kar-float)` + `S(S-kwin-manage)` + `S(S-kwin-add)` + `S(S-kwin-tabbox)`.
 - Then paneru: role-gated management; splash/utility role outcome
   untraced. TBD; queued.
 - Then Ours KDE: TBD (same `normalWindow` type-eligibility gap as
@@ -199,9 +198,9 @@ transient (no dialog flag) is a different fixture and is not claimed.
   `compute_open_floating`). `S(S-nir-spc)`.
 - Then PaperWM: E tiles (Normal type passes `add_filter`; no
   fixed-size exclusion). `S(S-pap-spc)`.
-- Then karousel/Lazy: floats as untileable under the shapeability
-  gate; the KWin resizeable-flag mapping for fixed-size clients
-  stays TBD. `S(S-kar-spc)`; queued.
+- Then karousel/Lazy: E floats as untileable under the shapeability
+  gate (both-axes min==max keeps KWin `isResizable` false under either-axis strict inequality on both backends, given an otherwise moveable ordinary client, so `canTileEver` fails and `addClient` constructs Floating).
+  `S(S-kar-spc)` + `S(S-kwin-resizeable)`.
 - Then paneru: fixed-size admission path untraced. TBD; queued.
 - Then Ours KDE: E is an automatic float outside the tile tree. No E
   geometry, focus, stacking or keep-above writes from classification;
@@ -256,8 +255,7 @@ transient (no dialog flag) is a different fixture and is not claimed.
 - Then niri: width clamped to min/max; reflow TBD. `S(S-nir-min)`;
   queued.
 - Then PaperWM: allocation policy tile-authoritative. A tiled B's app-owned resize or minimum-hint raise has no hint branch (no minima consult); `size-changed` queues a column relayout which recomputes targets from preferredWidth/client frame (not guaranteed to overwrite a preferredWidth the client keeps asserting) with no re-float. Recomputed targets settle natively X11-sync/Wayland-async (post-request re-read, actuals feed layout): exact native frames TBD (live: client settle timing). `S(S-pap-appresize)` + `S(S-pap-layout)`; frames queued (live).
-- Then karousel/Lazy: width clamped to size hints; reflow TBD.
-  `S(S-kar-manual-width)`; queued.
+- Then karousel/Lazy: app-owned geometry on tiled B feeds the column width path (`frameGeometryChanged` outside interactive resize re-asserts via rate-limited `onFrameGeometryChanged` into `setWidth` clamped into [min,max] and stored as preferred, with relayout and no re-float); a bare minimum-hint raise with no geometry change has no path (only `captionChanged` re-evaluates tiling for caption-follow rules; no size-hint watcher). Exact native frames TBD (live: client settle timing). `S(S-kar-manual-width)` + `S(S-kar-min)` + `S(S-kar-admit)`.
 - Then paneru: hint path untraced. TBD; queued.
 - Then Ours KDE: Engine allocation stays authoritative (geometry
   applied from the tree). Host hint reaction TBD.
@@ -378,10 +376,10 @@ All fresh variants below reset the client and WM state independently.
 - Then karousel/Lazy: Wayland absent, (0,0), both partial-zero and the
   height-absent guard tile (enforced-minimum vs `INT_MAX` mapping keeps
   strict inequality); Wayland sentinel floats (min==max). X11
-  present-value (0,0), partial-zero and sentinel legs float (raw hint
-  equality, no inequality); X11 absent and guard-height representation
-  stays TBD (NET SizeHints defaults outside the pinned KWin files; no
-  positive inference). `S(S-kar-spc)` + `S(S-kwin-resizeable)`.
+  absent tiles (absent max maps to `INT_MAX`, absent min falls back to base size and absent base to 0,0, so strict inequality holds); X11
+  present-value (0,0) and both partial-zero legs tile (present max values clamp to >=1, so 0<1 keeps either-axis inequality); X11
+  sentinel floats (both axes positive and equal); the X11 height-absent guard tiles (width min==max=640 holds but height min falls back to 0 against `INT_MAX`, so either-axis inequality holds).
+  `S(S-kar-spc)` + `S(S-kwin-resizeable)`.
 - Then paneru: no fixed-size admission counterpart for any hint variant
   (same rule-gated admission; AX exposes no min/max hint equality).
   `S(S-pan-admit)`.
@@ -591,10 +589,11 @@ All fresh variants below reset the client and WM state independently.
   `S(S-pap-widthmax)` + `S(S-pap-layout)`; frames queued (live).
 - Then karousel/Lazy: E floats as untileable under the shapeability gate
   (both-axes min==max keeps `isResizable` false); gates evaluate once at
-  `addClient` with no size-hint watcher, so born-maximized stays floating
+  `addClient` with no size-hint watcher and Floating owns no maximize
+  watcher, so born-maximized stays floating
   and native unmaximize leaves it floating. Exact native maximize
-  frames/focus TBD. `S(S-kar-spc)` + `S(S-kwin-resizeable)` +
-  `S(S-kar-admit)`.
+  frames/focus TBD (client timing, live-only). `S(S-kar-spc)` + `S(S-kwin-resizeable)` +
+  `S(S-kar-admit)` + `S(S-kar-maxfs)`.
 - Then paneru: no fixed-size admission counterpart (role-gated admission
   with no size predicate; float is rule-assigned) and no maximize verb,
   so the combined fixed+maximize/unmaximize outcome TBD (no built-in
@@ -707,14 +706,13 @@ All fresh variants below reset the client and WM state independently.
   (no fixed-size exclusion); repeated exits restore the saved frame again.
   Exact native frames TBD (live: client settle timing). `S(S-pap-spc)` +
   `S(S-pap-fsframe)` + `S(S-pap-layout)`; frames queued (live).
-- Then karousel/Lazy: non-fixed N born-fullscreen tiles (fullscreen is
-  shapeable) and exit restores tiled; E born exits floating via
-  untileable-after-exit while prior floating stays floating. Predicate
+- Then karousel/Lazy: non-fixed N born-fullscreen admits Tiled only when the fullscreen state has not materialized at add (flag/geometry unset at add given the Tiled.ts:166 timing race, so `shouldTile` passes); materialized fullscreen fails `shouldTile` and admits Floating despite fullscreen counting as shapeable in `canTileEver`. A Tiled-admitted N stays tiled across native exit (exit-time `canTileEver` passes); a Floating-admitted N stays floating (Floating owns no fullscreen watcher). E born exits floating via
+  untileable-after-exit while prior floating stays floating. Tile-vs-float at add TBD (live: fullscreen state timing at admission). Predicate
   switch is product-only (KWin either-axis strict inequality hardcoded, no
   both/either setting); hint changes have no watcher (only caption-follow
   re-evaluates) but the exit check reads current shapeability, so a hint
   change takes effect at exit; repeated exits re-evaluate at each exit.
-  Exact frames/focus TBD. `S(S-kar-spc)` + `S(S-kwin-resizeable)` +
+  Exact frames/focus TBD (client timing, live-only). `S(S-kar-spc)` + `S(S-kwin-resizeable)` +
   `S(S-kar-maxfs)` + `S(S-kar-admit)`.
 - Then paneru: non-fixed N follows the same role-gated admission as E (no
   size predicate; float is rule-assigned) with fullscreen as a host AX
@@ -801,10 +799,9 @@ All fresh variants below reset the client and WM state independently.
   changed-hints/predicate, override, and maximized legs share the absence:
   no-counterpart with no applicable journey.
   `S(S-pap-acts)`.
-- Then karousel/Lazy: no workspace-mode counterpart (no toggle verb in the
-  Actions inventory; `windowToggleFloating` is per-window only); F-arrival,
-  changed-hints/predicate, override, and maximized legs share the absence.
-  Outcome TBD. `S(S-kar-acts)`.
+- Then karousel/Lazy: no-counterpart for the workspace enable (no workspace-mode toggle verb in the full Actions/definition inventory; `windowToggleFloating` is per-window only); F-arrival,
+  changed-hints/predicate, override, and maximized legs share the absence;
+  no applicable reference journey. `S(S-kar-acts)`.
 - Then paneru: no workspace-mode counterpart; F-arrival,
   changed-hints/predicate, override, and maximized legs share the absence.
   Outcome TBD. `S(S-pan-cmds)`.
@@ -905,13 +902,14 @@ All fresh variants below reset the client and WM state independently.
   no-counterpart. Exact widths need A's live frame, unstated in the fixture: TBD (fixture: A's live frame).
   Selection is the host tab-list head: TBD (host: tab-list order policy untraced). `S(S-pap-rst)` +
   `S(S-pap-spc)` + `S(S-pap-layout)`; widths queued (fixture), focus queued (host).
-- Then karousel/Lazy: script enable adopts existing clients in workspace
-  order via `addClient` with live-only Grid state (no persisted layout);
-  fixed E re-admits floating via the shapeability gate, so an explicit
-  tile override is lost. Re-floated E is Floating and closed E is absent.
+- Then karousel/Lazy: script enable adopts existing clients in `Workspace.windows`
+  order via `addExistingClients` into `addClient` with live-only Grid state (no persisted layout);
+  fixed E re-admits floating via the shapeability gate (both-axes min==max keeps `isResizable` false), so an explicit
+  tile override is lost (no tile-override store; re-admission reclassifies from current host flags). Re-floated E is Floating and closed E is absent.
   Store-fault/ID/omission variants have no counterpart (no store at all).
-  Exact order/widths/focus TBD. `S(S-kar-start)` + `S(S-kar-rst)` +
-  `S(S-kar-spc)` + `S(S-kar-admit)`.
+  Each Tiled opens after the last-focused column else the last with `preferredWidth` clamped into [min,max]; no script focus write on this path.
+  Exact order TBD (fixture: creation/manage order and A's live frame unstated). Exact widths TBD (fixture: A's live frame value unstated; width wraps the live frame). Exact focus TBD (fixture: pre-startup focus state unstated; admission focuses only an already-focused window). `S(S-kar-start)` + `S(S-kar-rst)` +
+  `S(S-kar-spc)` + `S(S-kar-admit)` + `S(S-kar-ins)` + `S(S-kar-min)` + `S(S-kwin-resizeable)` + `S(S-kwin-winorder)`.
 - Then paneru: startup windows match SessionRestore within grace; fixed E
   has no size predicate so it follows role-gated admission (float only if
   rule-assigned). Closed E is absent from matching. Store-fault/ID/omission

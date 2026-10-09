@@ -172,9 +172,12 @@ evidence.
   falls to the stack-topmost surviving neighbour (not MRU
   guaranteed), while exact native A/C focus is TBD (host shell
   focus fallback). `S(S-pap-close)`; queued.
-- Then karousel/Lazy: TBD (shared-column member removal plus focus-taker
-  fixup untraced; stacked vs visible heights per explicit variant).
-  `S(S-kar-grpmove)`; queued.
+- Then karousel/Lazy: the column is retained as `[A,C]` (member splice,
+  no tab bar to update); focus falls to the above neighbour A via the
+  focus-taker fixup (not MRU C), with a script `Immediate` focus write
+  through the host activation path; visible heights redistribute while
+  the stacked variant keeps overlapping arrange. `S(S-kar-grpmove)` +
+  `S(S-kwin-scriptact)`.
 - Then paneru: TBD (Stack/Tabs member removal plus active-index/focus
   fixup untraced). `S(S-pan-model)` + `S(S-pan-cmds)`; queued.
 - Then Ours KDE: fixture-inapplicable (no tab/stack carrier in the Engine
