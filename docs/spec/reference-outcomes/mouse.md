@@ -436,8 +436,11 @@ paths; selected intent and doc assertions are never evidence.
   `S(S-cos-resize)`; share queued.
 - Then Hyprland/Dwindle: bare-edge drag starts no resize under
   shipped `resize_on_border=false` (falls to the click-focus path);
-  enabled variant begins an MBIND_RESIZE drag with min/max clamp;
-  tiled share outcome TBD. `S(S-hyp-edgeresize)`; queued.
+  enabled variant begins an MBIND_RESIZE drag whose tiled motion
+  dispatches pixel deltas to the shared split (float-only min/max
+  clamp); tiled share outcome TBD (F: work-area/parent-box dimensions
+  unrecorded, so the 100px-to-ratio scale is unspecified).
+  `S(S-hyp-edgeresize)` + `S(S-hyp-resize)`; queued.
 - Then bspwm: `pointer_modifier=Mod4` resize_side/corner grab adjusts the fence
   split_ratio by dx/fence-width clamped to [0,1] with reflow; 100px
   moves the shared fence by 100/fence-width. `S(S-bsp-ptrresize)`.
@@ -502,7 +505,9 @@ paths; selected intent and doc assertions are never evidence.
 - Then Hyprland/Dwindle: tiled-origin drag floats at pick-up, a
   middle crossing reassigns to that monitor's active workspace, and
   the drop re-tiles via fresh admission with mover focus; exact
-  insert position and switcher target TBD. `S(S-hyp-drag)` +
+  C-edge insert position TBD (F: hover pixel and drop point unrecorded).
+  The WS3 switcher leg has no counterpart in the traced drop path
+  (decoration/group/re-tile only). `S(S-hyp-drag)` +
   `S(S-hyp-dragend)`; queued.
 - Then bspwm: cross-output leg transfers with no float/cancel branch in the tiled path (same-monitor hover swaps; any R hover falls to the monitor-point branch), so B transfers to R's shown desk at its focus with follow focusing B (sole C anchors the insert); the hidden-WS3 switcher/overview leg has no counterpart (no overview/switcher drop target in source; acquisition is managed-window hover or monitor-point only). `S(S-bsp-drag)` + `S(S-bsp-switcher)`.
 - Then i3: cross-output leg inserts B beside C on R through the same

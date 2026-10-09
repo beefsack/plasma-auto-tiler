@@ -38,8 +38,7 @@ transient (no dialog flag) is a different fixture and is not claimed.
   modal focus fence; dialog and modal flags recorded separately.
 - Then COSMIC: D floats (Wayland parent branch; X11 dialog-or-modal
   branch). Placement is cascade, not parent-relative (arrival with no position reuses last geometry else spawn_order cascade); newcomer takes focus on the active workspace, and a later parent focus request succeeds with no modal fence (modal only feeds the X11 dialog branch; no fence branch in focus validity). Dialog vs modal recorded separately: Wayland modal has no branch, X11 modal floats via the same dialog branch. `S(S-cos-admit)` + `S(S-cos-floatpos)` + `S(S-cos-mapfocus)` + `S(S-cos-modal)`.
-- Then Hyprland/Dwindle: D floats (parent/transient/modal all
-  suggest float). Placement and fence TBD. `S(S-hyp-spc)`; queued.
+- Then Hyprland/Dwindle: D floats (X11 dialog/transient/modal/parent/fixed-size suggest float; Wayland parent or either-dim fixed-size suggests float with the modal flag recorded separately but not floating on its own). Placement centers in the work area, not parent-relative (X11 requested geometry or rule position excepted). Newcomer D takes focus (DIALOG keeps initial focus; no-focus rule/silent/grab excepted). A later parent-focus request succeeds with no fence for non-modal D, while a Wayland modal child fences parent focus under shipped `modal_parent_blocking=true` (X11 has no modal fence). `S(S-hyp-spc)` + `S(S-hyp-newfocus)`.
 - Then bspwm: D floats centered (transient rule plus dialog-type
   center); no modal mechanism exists so no fence.
   `S(S-bsp-spc)`.
@@ -96,9 +95,7 @@ transient (no dialog flag) is a different fixture and is not claimed.
   excluded from `is_dialog`); Wayland-native typed legs are
   fixture-inapplicable (xdg has no splash/utility type counterpart).
   Newcomer takes focus on the active workspace; the external switcher lists every tracked toplevel with no workspace/visibility filter and activation forwards to the toplevel, so admitted splash/utility are listed when tracked. `S(S-cos-admit)` + `S(S-cos-mapfocus)` + `S(S-lch-altab)` + `S(S-pop-toplevel)` + `S(S-cos-topact)`.
-- Then Hyprland/Dwindle: both float (SPLASH and UTILITY atoms) and
-  neither takes initial focus (non-DIALOG float atoms suggest no
-  initial focus). Switcher presence TBD. `S(S-hyp-spc)`; queued.
+- Then Hyprland/Dwindle: X11 splash and utility both float (SPLASH and UTILITY atoms) with neither taking initial focus (non-DIALOG float atoms suggest no initial focus); Wayland-native typed legs are fixture-inapplicable (no splash/utility type counterpart; float only via parent or fixed size). Switcher leg is a no-counterpart (no native Alt+Tab/listing verb in the inventory; cycle is same-workspace and the shipped launcher is external). `S(S-hyp-spc)` + `S(S-hyp-switcher)`.
 - Then bspwm: Splash tiles as ordinary with newcomer focus (no splash branch in the type/transient/fixed legs); utility tiles without focus (`focus=false`); switcher leg no-counterpart (no native switcher/listing verb in this profile, so presence never runs); `S(S-bsp-spc)` + `S(S-bsp-switcher)` + `S(S-bsp-insert)`.
 - Then i3: both float (DIALOG/UTILITY/TOOLBAR/NOTIFICATION/SPLASH
   plus MODAL branch) with visible-workspace newcomer focus.
@@ -763,10 +760,11 @@ All fresh variants below reset the client and WM state independently.
   (tiles anyway, with no intentional/automatic distinction to preserve C); maximized control tiles then re-overlays maximized with
   the layer retargeted, and restore reveals the retained slot.
   `S(S-cos-fixed-workspace)` + `S(S-cos-fixed-maximize)`.
-- Then Hyprland/Dwindle: no workspace-mode counterpart per R-FLT-04;
-  F-arrival, changed-hints/predicate, override, and maximized legs share
-  the absence (no workspace action to enable; conditional legs never run).
-  Outcome TBD. `S(S-hyp-float)`.
+- Then Hyprland/Dwindle: no workspace-mode counterpart per R-FLT-04
+  (no workspace tiling toggle; float is per-window, so enable/F-arrival,
+  changed-hints/predicate, override, and maximized legs never run with no
+  applicable journey).
+  `S(S-hyp-float)`.
 - Then bspwm: No workspace-mode counterpart per R-FLT-04 (no workspace tiling toggle; float is per-window, so enable/F-arrival, changed-hints/predicate, override, and maximized legs never run); `S(S-bsp-layout)`.
 - Then i3: no workspace-mode counterpart per R-FLT-04; F-arrival,
   changed-hints/predicate, override, and maximized legs share the absence.
@@ -849,9 +847,9 @@ All fresh variants below reset the client and WM state independently.
   `S(S-cos-persist)`.
 - Then Hyprland/Dwindle: no-counterpart for this owner restart with
   clients alive (no re-exec verb in the dispatcher inventory; reload keeps
-  the live tree only and exit stops the compositor). Outcome TBD, including
-  re-float/close and store-fault/ID/omission variants (no dump or store
-  in inventory). `S(S-hyp-reload)` + `S(S-hyp-shortcut)`.
+  the live tree only and exit stops the compositor; no dump or store
+  in inventory, so re-float/close and store-fault/ID/omission variants never run).
+  `S(S-hyp-reload)` + `S(S-hyp-shortcut)`.
 - Then bspwm: owner `wm -r` dumps full state and re-execs restoring it
   (ratios, WS membership, float frames, sticky/state/lastState, focus
   history/stack round-trip); fixed E stays floating and explicitly tiled E

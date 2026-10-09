@@ -134,9 +134,13 @@ is the observation-driven proposal, never the native verb.
   empties are removed; trailing empty ensured); focus none (fixup finds
   no mapped target). `S(S-cos-rem)` + `S(S-cos-send)` +
   `S(S-cos-focusfix)`.
-- Then Hyprland/Dwindle: A removed with sibling promotion and recalc
-  (sole node erased); empty-workspace retention and exact focus TBD.
-  `S(S-hyp-close)`; queued.
+- Then Hyprland/Dwindle: A removed (sole node erased; no recalc on
+  the last-node path, recalc only with sibling promotion);
+  WS1 retained as shown empty (empty-close runs only for special
+  workspaces; no ordinary empty-destroy path); focus none (no tiled
+  closest/first candidate and empty tiled/floating fallbacks, so the
+  empty-workspace refocus finds no visible target).
+  `S(S-hyp-close)`.
 - Then bspwm: desktop retained as shown empty (desktops removed only by
   explicit `desktop -r`); removal unlinks with sibling promotion and
   drops history; focus none (sole removal clears the desktop focus, and
@@ -187,9 +191,11 @@ is the observation-driven proposal, never the native verb.
 - Then COSMIC: F removed from the floating layer (floats unmap outside
   the tiling tree, so tiles keep allocations); focus B via MRU fixup.
   `S(S-cos-flttoggle)` + `S(S-cos-focusfix)`.
-- Then Hyprland/Dwindle: floating target removed with recalc; tiles
-  refill without F; refocus via `getNextCandidate`; exact target TBD.
-  `S(S-hyp-close)` + `S(S-hyp-float)`; queued.
+- Then Hyprland/Dwindle: F removed from the floating set only (float
+  data erased, tiled nodes untouched with no tiled recalc); focus none
+  (the floating/history-reverse branch has no closing-window exclusion
+  so it returns closing F itself, and focusing that unmapped candidate
+  clears to none). `S(S-hyp-close)` + `S(S-hyp-float)`.
 - Then bspwm: F unlinked with no tiling-space effect (floats use none);
   focus B via history MRU guess. `S(S-bsp-float)` + `S(S-bsp-close)`.
 - Then i3: floating wrapper detached with tiling percents untouched;

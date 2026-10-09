@@ -274,7 +274,7 @@ Legend:
   @3d55cba06c9cf6f27609cdefb520f7857dba20af for cosmic-comp
 - `S-hyp-moveswap`
   Hyprland:src/config/shared/actions/ConfigActions.cpp:549-563
-  (`moveInDirection` delegates to layout) and :565-583
+  (`moveInDirection` refuses when fullscreen, else delegates to layout) and :565-583
   (`swapInDirection` errors with no target) @19fb395d45314960e6f79f17994a84094f1cd4f6
 - `S-hyp-movews`
   Hyprland:src/config/shared/actions/ConfigActions.cpp:380-437
@@ -283,8 +283,8 @@ Legend:
   src/state/workspace/Resolver.cpp:324-331 (numeric `0` is an invalid
   workspace ID) +
   src/desktop/state/GlobalWindowController.cpp:38-80 (transfer: float
-  monitor-relative retain, `group_on_movetoworkspace=false` gate, `newTarget`
-  re-admission) + src/layout/target/Target.cpp:20-35
+  monitor-relative retain, `group_on_movetoworkspace=false` gate, fullscreen
+  internal-mode save/clear plus re-apply after `newTarget` re-admission) + src/layout/target/Target.cpp:20-35
   (`assignToSpace` had-space move path) + src/layout/space/Space.cpp:50-59 +
   src/layout/algorithm/Algorithm.cpp:62-78 (move vs add dispatch) +
   src/layout/algorithm/tiled/dwindle/DwindleAlgorithm.cpp:67-107,262-266
@@ -315,14 +315,20 @@ Legend:
   `binds:window_direction_monitor_fallback` crosses monitors) and :85
   (the ordering cursor is the override focal while a move sets it) and
   :262-266 (`movedTarget` carries the focal as that override) and
-  :213-229 (`force_split=0` orders the mover by that focal half) +
+  :213-229 (`force_split=0` orders the mover by that focal half) and
+  :650-665 (`getClosestNode` is distance-only over mapped targets with
+  strict-less replacement, no history/MRU read) +
   src/state/MonitorQueryCore.cpp:64-66,99-131 (vec-only query returns the
   containing else nearest monitor, so a single-output off-edge focal resolves
-  to the same monitor) +
+  to the same monitor; containment is half-open per pinned hyprutils
+  `src/math/Box.cpp:6,43-45` existing pin `95983ee` from Hyprland
+  `flake.lock` at `19fb395d`, `>=0.14.0` satisfied at pin) +
   src/config/values/ConfigValues.cpp:626-627 (fallback defaults true)
   @19fb395d45314960e6f79f17994a84094f1cd4f6
 - `S-hyp-newfocus`
-  Hyprland:src/desktop/view/window/Window.cpp:1481-1520 (ordinary newcomer
+  Hyprland:src/desktop/view/window/Window.cpp:1156-1167 (initial map takes
+  the focus monitor with no cursor branch; static rule-monitor override
+  follows at :1240-1268) and :1481-1520 (ordinary newcomer
   takes focus unless no-focus rule/state, layer grab, or workspace/monitor
   silent) and :1553-1559 (silent restores the previous focus)
   @19fb395d45314960e6f79f17994a84094f1cd4f6
@@ -964,7 +970,10 @@ Legend:
   routes to `setFullscreenMode`, pending when unmapped, echo swallow) and
   :1498-1545 (map applies requested FS and replaces existing workspace FS)
   + src/desktop/view/window/WindowFullscreenPolicy.cpp:29-47,58-64
-  (pending request store/consume; maximize-echo guard)
+  (pending request store/consume; maximize-echo guard) +
+  src/config/values/ConfigValues.cpp:587-588
+  (`misc:on_focus_under_fullscreen` defaults 2 `exit_fullscreen`: a
+  newcomer map clears the covering fullscreen/maximized window)
   @19fb395d45314960e6f79f17994a84094f1cd4f6
 - `S-bsp-min` bspwm:src/tree.c:101-134,150-170 and src/window.c:699-701
   @e11eff4cb3333216ad03c815609a4ed79e08929c
@@ -1181,12 +1190,18 @@ Legend:
 - `S-hyp-close`
   Hyprland:src/layout/algorithm/tiled/dwindle/DwindleAlgorithm.cpp:268-310
   (live-tree removal: sibling promotion + recalc; last-node erase) +
-  src/desktop/view/window/Window.cpp:1668-1703 (unmap removes group
+  src/desktop/view/window/Window.cpp:1668-1713 (unmap removes group
   membership and layout target, then refocuses only if the closed window
-  was focused: grouped next else `focus_on_close` cursor/next/MRU branch) +
+  was focused: grouped next else `focus_on_close` cursor/next/MRU branch;
+  no candidate on an emptied workspace runs the pointer refocus) +
+  src/desktop/view/window/Window.cpp:485-527 (empty-close runs only for
+  special workspaces via `misc:close_special_on_empty`; no ordinary
+  empty-destroy path) +
   src/layout/algorithm/Algorithm.cpp:231-261 (`getNextCandidate`: tiled
   closest-node else tiled-back/float-back; floating/MRU mode uses reverse
-  window history) +
+  window history with no closing-window exclusion) +
+  src/desktop/state/FocusState.cpp:130-155 (focusing the unmapped
+  self-candidate clears to none) +
   src/layout/algorithm/tiled/dwindle/DwindleAlgorithm.cpp:481-491
   (tiled next is closest node by old middle, else first) +
   src/config/values/ConfigValues.cpp:383-384 (`input:focus_on_close`
@@ -1249,11 +1264,25 @@ Legend:
   (`general:resize_on_border` defaults false, grab extend 15) +
   src/managers/input/InputManager.cpp:880-895 (border click begins
   an MBIND_RESIZE drag only when enabled) +
-  src/layout/supplementary/DragController.cpp:27-29,432-446
-  (resize modes with min/max clamp)
+  src/layout/supplementary/DragController.cpp:27-29,432-476
+  (resize modes; float min/max clamp, tiled pixel deltas to resizeTarget)
   @19fb395d45314960e6f79f17994a84094f1cd4f6
   (bare edge starts no resize at shipped default; enabled-variant
   share outcome TBD)
+- `S-hyp-monlife`
+  Hyprland:src/state/workspace/LifecyclePolicy.cpp:95-120 (disconnect moves
+  workspaces to the first remaining monitor with return-address record plus
+  remembered active) and :39-93 (reconnect returns same-address workspaces
+  with remembered-active activation, else default/recovery) +
+  src/state/workspace/LifecyclePolicyAdapter.cpp:143-158 (move via
+  placementController whole-workspace reassignment, activate via
+  changeWorkspace) +
+  src/state/workspace/PlacementController.cpp:301-329 (whole-ws reassignment:
+  float reposition, FS setBox, pin stays) +
+  src/output/Monitor.cpp:378-456,471-473 (disconnect path: migration call,
+  cursor warp to backup, monitor refocus)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (evacuation with return affinity; focused node needs fixture history)
 - `S-hyp-wsrule`
   Hyprland:src/config/shared/workspace/WorkspaceRule.hpp:11-45
   (workspace rule fields: monitor/persistent/gaps/border/layout, no
@@ -2012,8 +2041,32 @@ Legend:
   Hyprland:src/config/shared/actions/ConfigActions.cpp:440-530
   (`moveFocus`: directional query, group-cycle, monitor fallback,
   full-size stay) and :1736-1785 (`cycleNext` verb plus workspace
-  cycle) @19fb395d45314960e6f79f17994a84094f1cd4f6
-  (focus verbs; tie metric and cycle order stay TBD)
+  cycle; previous runs the same verb with the direction bool flipped;
+  no float filter unless an only-flag is passed) +
+  src/config/shared/actions/ConfigActions.hpp:50-61 and :84 (focus inventory:
+  directional, window, current/last, urgent/last, monitor, cycle; no
+  parent/child container verb) +
+  src/desktop/state/WindowQuery.cpp:146-207 (tiled intersect walk with
+  history vs shared-length tie select) and :100-125 (directional search skips
+  non-allowed candidates while a non-layout-managed covering fullscreen exists)
+  and :277-313 (cycle availability
+  gate: same-workspace unless visible, mapped, float-filtered) +
+  src/desktop/state/WindowQuery.hpp:21-27 (`SWindowCycleOptions`
+  defaults `visible=false`) +
+  src/desktop/state/WindowState.cpp:14-20 (window list is view-create
+  order) + src/config/values/ConfigValues.cpp:621
+  (`binds:focus_preferred_method` defaults 0 history) and :623
+  (`binds:movefocus_cycles_fullscreen` defaults false) +
+  src/config/shared/actions/ConfigActions.cpp:104-138
+  (`tryMoveFocusToMonitor`: active-workspace focus candidate with cursor
+  warp, else monitor-middle warp) +
+  src/state/MonitorQueryCore.cpp:133-194 (`directionLookup`: STICKS
+  edge-touch plus longest-overlap selection) +
+  src/workspace/HLWorkspace.cpp:134-144 (`getFocusCandidate`:
+  last-focused else top-left else first)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (focus verbs plus tie/cycle/order/fullscreen-gate legs plus
+  cross-output focus-target legs)
 - `S-bsp-cycle` bspwm:doc/bspwm.1.asciidoc:52 (`CYCLE_DIR` next|prev)
   and :82-116 (NODE_SEL incl `first_ancestor` and PATH `parent`/`first`/
   `second` jumps) and :412-414 (`node -f` focus verb) and
@@ -2279,7 +2332,7 @@ Legend:
   (keyboard pixel resize plus fork handle and fork-drag delta; dragged
   share needs geometry; no local or workspace-wide equalize verb)
 - `S-hyp-resize`
-  Hyprland:src/layout/algorithm/tiled/dwindle/DwindleAlgorithm.cpp:312-360
+  Hyprland:src/layout/algorithm/tiled/dwindle/DwindleAlgorithm.cpp:312-399
   (`resizeTarget` pixel delta plus edge/smart-resizing path) +
   src/config/shared/actions/ConfigActions.cpp:670-683 (pixel `resize`
   dispatcher) + src/config/shared/actions/ConfigActions.hpp:39-111
@@ -2294,9 +2347,14 @@ Legend:
   (`layoutmsg` inventory: togglesplit/swapsplit/rotatesplit/movetoroot/
   preselect/splitratio only) and :749-767 (`splitratio` adjusts the
   single `CURRENT_NODE` parent split by delta or exact value clamped
-  0.1-1.9, not the whole workspace)
+  0.1-1.9, not the whole workspace) +
+  src/layout/LayoutManager.hpp:80 (keyboard `resize` lands with default
+  corner `CORNER_NONE`) + src/config/values/ConfigValues.cpp:766
+  (`dwindle:smart_resizing` defaults true)
   @19fb395d45314960e6f79f17994a84094f1cd4f6
-  (pixel-delta step; neighbor scope and reversal stay TBD; no local or
+  (keyboard pixel-delta step via the CORNER_NONE smart path:
+  side-by-side/inner-parent scope, pair-only, reversible absent the
+  0.1-1.9 clamp; exact shares need parent-box geometry; no local or
   workspace-wide equalize verb)
 - `S-bsp-resize` bspwm:doc/bspwm.1.asciidoc:439-442 (`-z` pixel handle)
   and :454-458 (`-E`/`-B`) + src/messages.c:432-447 (`-z` dispatch) and
@@ -2441,10 +2499,16 @@ Legend:
   no initial focus) and :84-96 (`suggestsFloat`: modal, transient,
   role, override-redirect, parent, or min==max fixed size) +
   src/desktop/view/window/WaylandBackend.cpp:25-42 (parent or either-dim
-  fixed size suggests float; modal flag)
+  fixed size suggests float; modal flag; no splash/utility type branch) +
+  src/layout/algorithm/floating/default/DefaultFloatingAlgorithm.cpp:20-45,91-100
+  (new floats center in the work area with no parent-relative branch; X11
+  requested geometry or rule position excepted) +
+  src/desktop/state/FocusState.cpp:89-93 (Wayland modal-child parent-focus
+  refusal) + src/config/values/ConfigValues.cpp:193
+  (`general:modal_parent_blocking` defaults true)
   @19fb395d45314960e6f79f17994a84094f1cd4f6
-  (transient/modal/type/fixed-size float legs plus focus
-  remainders; placement and fence stay TBD)
+  (transient/modal/type/fixed-size float legs plus centered placement and the
+  Wayland modal fence; newcomer focus is `S(S-hyp-newfocus)`)
 - `S-bsp-spc` bspwm:src/rule.c:230-253 (DIALOG floats centered;
   TOOLBAR/UTILITY set no-focus; DOCK/DESKTOP/NOTIFICATION unmanaged) and
   :276-289 (transient floats) and :291-299 (min==max fixed size floats)
@@ -2795,9 +2859,15 @@ Legend:
   src/layout/supplementary/WorkspaceAlgoMatcher.cpp:30-35 (registered tiled
   algorithms: dwindle/master/scrolling/monocle) and :106-142
   (`tiledAlgoForWorkspace` prefers a workspace rule's layout override;
-  `updateWorkspaceLayouts` switches a workspace's tiled algorithm on mismatch)
+  `updateWorkspaceLayouts` switches a workspace's tiled algorithm on mismatch) +
+  src/layout/algorithm/Algorithm.cpp:196-221 (`updateTiledAlgo` re-admits
+  existing tiled targets in order with focus restore) +
+  src/layout/algorithm/tiled/master/MasterAlgorithm.cpp:46-82 (admission
+  placement) and src/config/values/ConfigValues.cpp:784-786 (shipped
+  master defaults: `new_status=slave`, `new_on_top=false`,
+  `new_on_active=none`, so re-admits append in order)
   @19fb395d45314960e6f79f17994a84094f1cd4f6
-  (per-workspace ownership sourced; order preservation through the switch TBD)
+  (per-workspace ownership plus order-preserving switch legs)
 - `S-bsp-type` bspwm:doc/bspwm.1.asciidoc:442-443 (`node -y/--type` sets or
   cycles the splitting type of the selected node) + src/tree.c:193-203
   (`set_type` flips `split_type` with constraint rebuild, no focus write)
@@ -3104,20 +3174,34 @@ Legend:
   follow focuses the mover, silent refocuses the source) and :1016-1083
   (`changeWorkspace`, cross-monitor focuses the focus candidate) and
   :1107-1117 (`moveToMonitor` whole-workspace verb) +
+  src/state/workspace/PlacementController.cpp:259-295 (`moveWorkspaceToMonitor`
+  gap plug: non-active moves change neither view; an active-leg move plugs the
+  source with the first enumerated remaining non-special workspace, else creates
+  the first free number, via `changeWorkspace`) and :302-361 (carryFocus
+  destination activation swaps the destination active directly with no
+  window-focus write) +
   src/output/Monitor.cpp:1398-1423 (workspace switch: remembered feeds
   focus only when floating, else the fullscreen cover; `follow_mouse=1`
   pointer-hit wins before the focus candidate; pointer fixture
   unspecified) + src/state/workspace/Resolver.cpp:181-205 (`prev` is
   MRU-history previous, `next` is numeric+1) +
   src/desktop/history/WorkspaceHistoryTracker.cpp:40-110 (MRU timeline
-  track plus previous lookup) + src/workspace/HLWorkspace.cpp:122-135
+  track plus previous lookup; `gc` runs inside the previous lookups and keeps
+  the second-position entry while pruning older dead ones) +
+  src/workspace/HLWorkspace.cpp:122-135
   (`getLastFocusedWindow`/`rememberFocusedWindow`) +
   src/workspace/HLWorkspace.cpp:134-143 (`getFocusCandidate` prefers
   last-focused, else top-left, else first; `follow_mouse=0` variant) +
+  src/workspace/RegularWorkspace.cpp:36-53 (persistent self-hold, rule-set) +
+  src/state/workspace/State.cpp:60 (destroy erases the weak state entry) +
+  src/desktop/DesktopTypes.hpp:25-31 (state/history refs are weak; windows
+  hold strong workspace refs; monitors hold the active workspace) +
   src/config/values/ConfigValues.cpp:380 (`input:follow_mouse`
   default 1) + src/config/values/ConfigValues.cpp:615 (`workspace_back_and_forth`
   default 0 off) @19fb395d45314960e6f79f17994a84094f1cd4f6
-  (numbered IDs are stable; empty-object destruction untraced)
+  (numbered IDs stable, duplicates refused, no renumber path; empty lifetime is
+  refcount with those holds plus the persistent self-hold only, no ordinary
+  empty-destroy verb per `S(S-hyp-close)`)
 - `S-hyp-wskeys` Hyprland:example/hyprland.lua:277-278 (mainMod+n
   workspace focus, mainMod+SHIFT+n `window.move({workspace=i})` with
   follow absent) + src/config/lua/bindings/LuaBindingsDispatchers.cpp:813-818
@@ -3874,13 +3958,15 @@ Legend:
   (free float pointer move/resize; hint clamp is `S(S-sway-min)`)
 - `S-hyp-raise`
   Hyprland:src/config/shared/actions/ConfigActions.cpp:755-769
-  (`alterZOrder` top/bottom) + src/desktop/view/window/Window.cpp:833,
+  (`alterZOrder` top/bottom) + src/desktop/state/WindowState.cpp:43-70
+  (`raise`/`lower` reorder via `moveToZ` with no focus write) +
+  src/desktop/view/window/Window.cpp:833,
   1001,1462,1908 (raise on float-toggle/activate) +
   src/managers/input/InputManager.cpp:924 (raise on float click) +
   src/config/lua/bindings/LuaBindingsDispatchers.cpp:608-613 (Lua-only
   `bringToTop`/`alter_zorder`; no keybind dispatcher)
   @19fb395d45314960e6f79f17994a84094f1cd4f6
-  (raise on focus/press; lower is Lua-only)
+  (raise on focus/press; lower is Lua-only with no focus write)
 - `S-hyp-fltdrag`
   Hyprland:src/layout/supplementary/DragController.cpp:135-157 (tiled
   pick-up branch skipped for floats) and :401-430 (float position/size
@@ -4410,9 +4496,12 @@ Legend:
 - `S-hyp-winws` Hyprland:src/desktop/view/window/Window.cpp:1270-1287
   (static `workspace` rule resolves the target workspace) and :1358-1404
   (`silent` keeps the current workspace: no `changeWorkspace`, special-workspace
-  forces silent) and :1507-1513 (silent skips newcomer focus)
-  @19fb395d45314960e6f79f17994a84094f1cd4f6
-  (routing plus no-switch/no-focus legs; Dwindle anchor on the target stays TBD)
+  forces silent) and :1507-1513 (silent skips newcomer focus) and :1184-1192
+  (`HL_INITIAL_WORKSPACE_TOKEN` env routes the newcomer to the token workspace) +
+  src/config/supplementary/executor/Executor.cpp:166 (`HL_INITIAL_WORKSPACE_TOKEN`
+  env issued for spawned processes) @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (routing plus no-switch/no-focus legs; executor env-token routing covered;
+  Dwindle anchor on the target stays TBD)
 - `S-bsp-wsroute` bspwm:src/rule.c:120-129 (`make_rule_consequence`
   defaults; `follow` off via calloc) and :405-406 (`desktop` consequence)
   and src/window.c:105-112 (desktop target resolves monitor/desktop/focus)

@@ -39,9 +39,11 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
 - Then COSMIC: pixel step moves the shared boundary (Outwards grows A,
   Inwards shrinks A, symmetric); only the two adjacent shares change;
   pair/leaf minima gate and clamp one-sided. `S(S-cos-resize)`.
-- Then Hyprland/Dwindle: declared 10px delta dispatched to the target;
-  neighbor selection and reversibility TBD.
-  `S(S-hyp-resize)`; queued.
+- Then Hyprland/Dwindle: the declared +10px delta grows A through the
+  shared H split (corner-NONE smart path selects the side-by-side
+  parent; only the pair changes) and -10px negates it, so reversible
+  absent clamping.
+  `S(S-hyp-resize)`.
 - Then bspwm: Relative `-z` handle moves the fence share: `right 10 0` from A finds the east fence via `find_fence` and shifts `split_ratio` by `dx/fence-width` clamped to [0,1] with reflow (only the fenced split changes); `right -10 0` negates it, so reversible absent clamping; `S(S-bsp-resize)` + `S(S-bsp-ptrresize)`.
 - Then i3: grows/shrinks by the explicit 10px against the
   tiling participant found by climbing to the matching orientation;
@@ -101,8 +103,11 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   Edge-targeted verb absence is not a no-op.
 - Then COSMIC: no-op (no matching-edge ancestor at the outer edge; tree and
   focus unchanged). `S(S-cos-resize)`.
-- Then Hyprland/Dwindle: TBD (edge/smart-resizing distribution untraced).
-  `S(S-hyp-resize)`; queued.
+- Then Hyprland/Dwindle: no edge no-op: the outward delta moves the
+  shared H split through the same corner-NONE smart path (no separate
+  edge verb; edge position feeds only the full-span DISPLAY gates),
+  clamped 0.1-1.9.
+  `S(S-hyp-resize)`.
 - Then bspwm: No-op: the outer-edge `left` handle finds no west fence via `find_fence`, so `resize_client` returns false with tree and focus unchanged and no redistribution or overflow; `S(S-bsp-resize)` + `S(S-bsp-ptrresize)`.
 - Then i3: no-op (no second container in that direction; command errors,
   tree and focus unchanged). `S(S-i3-resize)`.
@@ -146,8 +151,9 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
 - Observe: nearest split vs ancestor redistribution; which ratio changes.
 - Then COSMIC: inner H split moves (nearest matching-edge-axis ancestor
   wins); outer shares unchanged. `S(S-cos-resize)`.
-- Then Hyprland/Dwindle: TBD (inner/outer distribution untraced).
-  `S(S-hyp-resize)`; queued.
+- Then Hyprland/Dwindle: inner H split moves (corner-NONE smart walk
+  selects the side-by-side inner parent first; outer shares unchanged).
+  `S(S-hyp-resize)`.
 - Then bspwm: Inner split moves: `right` from A finds the first east fence (the inner H parent) via `find_fence`, shifting only its `split_ratio` with reflow; the outer share stays unchanged; `S(S-bsp-resize)` + `S(S-bsp-ptrresize)`.
 - Then i3: inner H participant pair moves (find climbs to the first
   matching orientation); outer percent unchanged. `S(S-i3-resize)`.

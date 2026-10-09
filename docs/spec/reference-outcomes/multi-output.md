@@ -150,8 +150,7 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
   nearest origin distance, activates L and focuses its MRU-last target
   (sole X), with no layout or membership write.
   `S(S-cos-tilefocus)` + `S(S-cos-focus-fallback)` + `S(S-cos-move-out)`.
-- Then Hyprland/Dwindle: crosses to L via the monitor fallback; exact
-  focus target TBD. `S(S-hyp-focus)`; queued.
+- Then Hyprland/Dwindle: crosses to X on L: the west query admits cross-monitor X under default-true fallback (full-height western overlap, no same-workspace competitor), else the monitor fallback selects L by STICKS longest-intersect with focus candidate X (sole window). No local wrap or stay. `S(S-hyp-focus)`.
 - Then bspwm: focuses X on L (west search spans all monitors'
   focused desktops; X is the sole western candidate).
   `S(S-bsp-flt-focus)` + `S(S-bsp-move-target)`.
@@ -272,9 +271,7 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
 - Then COSMIC: lands on the focused output L (admission defaults to
   the seat active output) with newcomer focus. `S(S-cos-out)` +
   `S(S-cos-mapfocus)`.
-- Then Hyprland/Dwindle: exact output routing TBD (cursor vs active
-  monitor at map untraced); inventory inspected: `S(S-hyp-newfocus)`
-  (no established routing leg); queued.
+- Then Hyprland/Dwindle: lands on focused L (initial map takes the focus monitor with no cursor branch absent rules; the pointer on R plays no role) with newcomer focus; source view unchanged. `S(S-hyp-newfocus)`.
 - Then bspwm: lands on the focused desktop L with newcomer focus
   (ordinary admission anchors at the desktop focus). `S(S-bsp-insert)`.
 - Then i3: lands on the focused workspace with newcomer focus
@@ -331,8 +328,7 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
   stays TBD (L: frame-driven fixup timing plus client ack unobserved).
   `S(S-cos-outremove)` + `S(S-cos-focusfix)`; node queued (F), visuals
   queued (L).
-- Then Hyprland/Dwindle: evacuation and return TBD (monitor-removal
-  workspace migration untraced). TBD; queued.
+- Then Hyprland/Dwindle: disconnect moves R's workspaces to L (first remaining monitor; return address recorded, active remembered) via whole-workspace reassignment (float reposition, FS setBox, pin stays); reconnect returns them to the same address with the remembered active reactivated (return affinity, not fresh reassignment). Exact focused node TBD (F: R/L contents and focus history unstated). `S(S-hyp-monlife)`; queued.
 - Then bspwm: retains R's monitor/desktops in place at shipped
   `remove_unplugged_monitors=false` (no evacuation: L keeps showing its
   current desktop, and the removal path writes no focus so R/L focus

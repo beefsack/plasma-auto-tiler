@@ -40,8 +40,10 @@ assertions are never evidence.
 - Then COSMIC: A in both runs. Equal geometric distances select the first
   minimum (A) in child order; history is not consulted on this branch.
   `S(S-cos-tilefocus)`.
-- Then Hyprland/Dwindle: selects geometrically via the directional query;
-  exact A-vs-B TBD. `S(S-hyp-focus)`; tie metric queued.
+- Then Hyprland/Dwindle: run 1 B, run 2 A. Both candidates tie on
+  equal intersect length, so the shipped history method
+  (`focus_preferred_method=0`) picks the more recent history entry (B
+  after A,B,C; A after B,A,C). `S(S-hyp-focus)`.
 - Then bspwm: run 1 B, run 2 A. Equal boundary distance, history rank
   breaks the tie. `S(S-bsp-flt-focus)`.
 - Then i3: run 1 B, run 2 A. Sibling V group plus focus-descend inside
@@ -144,9 +146,12 @@ assertions are never evidence.
 - Then COSMIC: no-counterpart (shipped `Focus` verbs are
   directional plus In/Out only; the switcher is an external System
   command). `S(S-cos-focuskeys)` + `S(S-cos-sysact)`.
-- Then Hyprland/Dwindle: TBD (previous invocation, order, wrap and float
-  inclusion). `cyclenext` exists via `cycleNext`; previous invocation
-  untraced. `S(S-hyp-focus)`; queued.
+- Then Hyprland/Dwindle: next C from B, previous back to B
+  (reversible); edge next-from-C wraps to A and previous-from-A wraps to
+  C (two-sided wrap in creation order A,B,C on the same workspace);
+  ordinary F is in-cycle (no float filter on this path) while hidden
+  windows are excluded (mapped gate). Previous runs the same verb with
+  the direction bool flipped. `S(S-hyp-focus)`.
 - Then bspwm: TBD (F: the flat 3-child H fixture records no binary
   embedding, and the two ordered embeddings diverge on the B-origin
   legs: bare `next|prev` walks every node in order with match-all, so
@@ -200,8 +205,10 @@ assertions are never evidence.
   leaf-only/no-counterpart. Does not duplicate tab stepping.
 - Then COSMIC: parent focuses the V group container; child returns to
   B (remembered member, else first child). `S(S-cos-tilefocus)`.
-- Then Hyprland/Dwindle: TBD (container-focus inventory untraced; a
-  missing search term is not absence evidence). Queued.
+- Then Hyprland/Dwindle: no-counterpart (focus verbs are directional,
+  cycle, window, last/urgent and monitor only, with window-only targets;
+  no parent/child container verb in the dispatcher or Lua focus
+  inventory). `S(S-hyp-focus)` + `S(S-hyp-switcher)`.
 - Then bspwm: TBD (F: the parent leg resolves deterministically to the
   V container (`@/parent` PATH jump or unqualified `first_ancestor`
   selects V; focusing it stores the container with X input cleared to

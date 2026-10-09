@@ -97,7 +97,7 @@ Column legs below use separately stated column Givens with the same identities a
   active workspace, not the origin, and appends focus; stays on top via
   the sticky-first hit order plus the focus-path raise.
   `S(S-cos-sticky)` + `S(S-cos-sticky-layer)` + `D(D-ref)`
-- Then Hyprland/Dwindle: Refused no-op: tiled B fails the float-only pin guard (warning, no state change, no auto-float); B stays tiled on its workspace, sticky-off N/A; floating-pin cross-WS visibility TBD for a floating subject; `S(S-hyp-pin)`
+- Then Hyprland/Dwindle: Refused no-op: tiled B fails the float-only pin guard (warning, no state change, no auto-float); B stays tiled on its workspace and is not visible on WS2 after the switch (windows belong to workspace spaces; the switch shows the target space); sticky-off on the never-pinned B hits the same guard with no state change, so the off placement leg never runs; `S(S-hyp-pin)` + `S(S-hyp-ws)`
 - Then bspwm: Sticky sets on tiled B with no float-only guard; B follows the monitor's focused desktop across the switch via the focus-path sticky transfer with target-show/source-hide; sticky-off clears in place; `S(S-bsp-sticky)` + `S(S-bsp-state)`
 - Then i3: Sticky sets on tiled B with no float-only guard, but the push moves only floating stickies, so tiled B stays on its workspace and is not visible after the switch; sticky-off clears the flag in place; `S(S-i3-sticky)`; exact native journey TBD
 - Then xmonad/Tall+Navigation2D: no-counterpart (no sticky verb in the core/contrib profile; float is per-window with no all-workspace floating-only sticky verb, so sticky-on/switch/sticky-off has no applicable journey); `S(S-xmo-float)`
@@ -142,7 +142,7 @@ Column legs below use separately stated column Givens with the same identities a
 - Observe (column leg): survivor widths (stable vs rescaled).
 
 - Then COSMIC: B/C become 60/40 at 1152/768, ratio preserved; `UT(2026-08-22)` + [Test C](../../cosmic-move-conformance.md#follow-up-manual-observations-tests-a-c)
-- Then Hyprland/Dwindle: Flat 3-child start has no ordinary binary form; exact N-ary widths TBD. Policy: float A out via sibling promotion + recalc (survivors refill the work area); exact B/C widths TBD (ratio vs equalize not established); `S(S-hyp-float)`
+- Then Hyprland/Dwindle: Flat 3-child start has no ordinary binary form; exact N-ary widths TBD. Policy: float A out via sibling promotion + recalc (survivors refill the work area); exact B/C widths TBD (F: binary embedding of the flat 50/30/20 start plus output geometry unrecorded, so ratio-preserve vs equalize is not established); `S(S-hyp-float)`
 - Then bspwm: TBD (binary embedding of the flat 3-child start unevidenced; float-out refill follows per-node ratios, ratio-vs-equalize for this fixture not established); `S(S-bsp-float)` + `S(S-bsp-bal)`
 - Then i3: B/C become 60/40 via percent normalization after A detaches; `S(S-i3-flt-toggle)`; exact client pixels (borders/deco) TBD
 - Then xmonad/Tall+Navigation2D: Exact 50/30/20 flat-H fixture has no Tall counterpart (Tall splits master/stack at `frac` 1/2, stack splits equally; per-slot ratios live nowhere). Analogous policy only: float A out via tiling exclusion + Tall recalc over the `S(S-xmo-arrange)` tiled-only input; refresh restacks floats first-on-top and `tileWindow` applies survivor allocations. Exact B/C widths TBD (F: flat shares have no Tall pixel basis; asserting a 960/960 projection would read H identity order as Tall stack order, unevidenced). `S(S-xmo-float)` + `S(S-xmo-layout)` + `S(S-xmo-arrange)`; queued.
@@ -186,7 +186,7 @@ Column legs below use separately stated column Givens with the same identities a
   move/open/re-enable legs are conditional on an established toggle.
 
 - Then COSMIC: Disable moves every tiled window to floating (last-geometry else cascade frames; maximized ones unmaximized then re-overlaid as Floating); move A is an unspecified pointer/semantic move while floating-only, outcome TBD; D admits floating while floating-only; re-enable fresh-admits every floater (intentional C included) sequentially at focus-MRU long-edge anchors, re-overlaying maxima as Tiling; `S(S-cos-wstile)` + `S(S-cos-last)` + `S(S-cos-axis)`; exact frames/focus TBD
-- Then Hyprland/Dwindle: Unsupported action parameter here: no workspace tiling flag/toggle in source (float is per-window dispatch); move/open/re-enable outcomes TBD (no built-in equivalent for the workspace toggle); `S(S-hyp-float)`
+- Then Hyprland/Dwindle: Unsupported action parameter here: no workspace tiling flag/toggle in source (float is per-window dispatch; workspace rules carry monitor/persistent/gaps/border/layout with no tiling/floating default), so the toggle has no built-in equivalent and the conditional move/open/re-enable legs never run; `S(S-hyp-float)` + `S(S-hyp-wsrule)`
 - Then bspwm: Unsupported action parameter here: no workspace tiling flag in source (desktop layout tiled/monocle only; float is per-window), so the toggle has no built-in equivalent and the conditional move/open/re-enable legs never run; `S(S-bsp-layout)` + `S(S-bsp-float)`
 - Then i3: Unsupported action parameter here: no workspace tiling flag/toggle in source (float is per-window); move/open/re-enable outcomes TBD (no built-in equivalent for the workspace toggle); `S(S-i3-wsmode)`
 - Then xmonad/Tall+Navigation2D: Unsupported action parameter here: no workspace tiling flag/toggle in source (float per-window; layout always tiles plus floating layer, so the toggle has no built-in equivalent and the conditional move/open/re-enable legs never run); `S(S-xmo-float)` + `S(S-xmo-layout)`
@@ -225,7 +225,7 @@ Column legs below use separately stated column Givens with the same identities a
 - Observe (column leg): B sticky-visible vs ordinary float; remembered origin.
 
 - Then COSMIC: Pinned source persists only pinned-workspace config (output match, tiling flag, id/name; no window/sticky/float carry-over in the traced path); compositor/owner restart differs from script restart; `S(S-cos-persist)`; exact B visibility/origin journey TBD (live: owner-restart execution unobserved)
-- Then Hyprland/Dwindle: TBD (no owner-restart persistence source at this pin; in-memory pin/float carry-over unevidenced)
+- Then Hyprland/Dwindle: No-counterpart for the owner-restart step in the dispatcher inventory (exit stops the compositor; reload re-applies config on the live tree with no re-exec, layout dump or window store), so the restart leg never runs and B's sticky/float visibility and remembered origin never resolve; `S(S-hyp-reload)` + `S(S-hyp-shortcut)`
 - Then bspwm: Sticky floating B persists: owner `wm -r` dumps full state (monitors/desktops/nodes incl sticky, client state/lastState, focus history, stacking) and re-execs restoring it; `wm -l` loads the same image; B stays sticky floating with its node kept, visible on the selected WS2 via the focus-path sticky follow (transfer plus target-show/source-hide); `S(S-bsp-restore)` + `S(S-bsp-state)`
 - Then i3: Sticky re-established from serialized layout or state hints, then pushed to the visible workspace, so B stays sticky-visible; `S(S-i3-sticky)`; exact restart/visibility journey and origin placement TBD
 - Then xmonad/Tall+Navigation2D: Restart preserves the windowset including the floating map (`StateFile` carries the whole `StackSet`; `restart prog True` resumes; resume-only `readStateFile` removes the file after reading), so B's float carries as an ordinary float with its stored `RationalRect`; sticky cross-workspace visibility has no counterpart here (no sticky verb in this profile). After restart Tall rendering is recalculated over the `S(S-xmo-arrange)` tiled-only input, floats restack first-on-top, `tileWindow` applies allocations, and `setTopFocus` actuates stack focus; selecting WS2 views it with B hidden on WS1. `S(S-xmo-restart)` + `S(S-xmo-float)` + `S(S-xmo-arrange)` + `S(S-xmo-topfocus)`
@@ -268,7 +268,7 @@ Column legs below use separately stated column Givens with the same identities a
   slot/frame/focus.
 
 - Then COSMIC: Toggle unmaximizes B first, then the floating occupant fresh-admits to tiling at focus MRU (maximize not retained); `S(S-cos-flttoggle)` + `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-focusfix)`; settled frame/focus and native journey TBD
-- Then Hyprland/Dwindle: No refusal: toggle runs `changeFloatingMode`, which temporarily clears FS then re-applies it, flipping float while retaining maximized (tiled maximized at the work area); settled frame/focus TBD; `S(S-hyp-float)` + `S(S-hyp-fs)`
+- Then Hyprland/Dwindle: No refusal: toggle runs `changeFloatingMode`, which temporarily clears FS then re-applies it, flipping float while retaining maximized (tiled maximized at the work area); focus stays B (no focus write on the toggle path); exact settled frame TBD (F: work-area geometry unrecorded for the exact settled frame; L: client ack/visuals); `S(S-hyp-float)` + `S(S-hyp-fs)`
 - Then bspwm: no-counterpart (no maximize state in source: monocle is layout, maximize flags are client hints not tree state, so the maximized precondition has no subject and the toggle leg never runs); `S(S-bsp-layout)` + `S(S-bsp-admit)`
 - Then i3: No refusal: `floating disable` on already-floating B proceeds (only internal-workspace guard), inserting after the tiling-focused descendant; maximize is derived-only so no maximize interplay; settled frame/focus TBD; `S(S-i3-flt-toggle)` + `S(S-i3-max)`
 - Then xmonad/Tall+Navigation2D: no-counterpart for the maximized precondition (no maximize state in source: `Full` is a workspace layout rendering focus fullscreen, maximize flags are not tree state); toggle path is float/`sink` only with stack retained; `S(S-xmo-layout)` + `S(S-xmo-float)`
@@ -559,11 +559,8 @@ applicable unknowns are queued, evidenced absent verbs are not.
   binding exists, and the traced client-request handlers expose no lower
   path; free pointer drag is not this leg (stays R-DRAG-01).
   `S(S-cos-raise)`.
-- Then Hyprland/Dwindle: focusing or pressing F raises it (float-toggle,
-  desktop-state activate, click and drag paths all raise floating
-  windows); lower runs only through the Lua `alter_zorder bottom` path,
-  not a shipped keybind verb, so the lower leg stays TBD.
-  `S(S-hyp-raise)`; lower queued.
+- Then Hyprland/Dwindle: Focusing or pressing F raises it to the top of the window order (float-toggle, activate and click paths raise floating windows); lower runs only through the Lua `alter_zorder bottom` path (no shipped keybind verb), moving F to the bottom with no focus write, so focus stays F and tiling is untouched; settled order is F on top after step 1 and F at the bottom after step 2.
+  `S(S-hyp-raise)` + `S(S-hyp-float)`.
 - Then bspwm: focusing F restacks it above (focused nodes take the
   above-limit branch; floats participate unless `auto_raise` is held
   false during pointer motion); lower is a qualified no-counterpart leg

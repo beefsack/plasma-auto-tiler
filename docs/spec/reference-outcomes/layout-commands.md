@@ -200,8 +200,9 @@ implementation record. Selected intent and doc assertions alone are never eviden
 - Then Hyprland/Dwindle: L1 dwindle (global default), L2 master (a
   registered tiled algorithm) via a workspace rule carrying the layout
   override; the rule selects WS2's tiled algorithm per workspace while WS1
-  keeps dwindle. Order preservation through the algorithm switch TBD.
-  `S(S-hyp-layout)`; order queued.
+  keeps dwindle. Order preserved through the switch (existing tiled
+  targets re-admit in order and append under shipped master defaults).
+  `S(S-hyp-layout)`.
 - Then bspwm: L1 tiled, L2 monocle; `desktop -l` is per-desktop, so WS2
   shows monocle while WS1 stays tiled with A/B order preserved.
   `S(S-bsp-desklay)` + `S(S-bsp-layout)`.

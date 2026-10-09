@@ -150,7 +150,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Observe (column leg): reuse of the existing empty vs another creation; focus.
 
 - Then COSMIC: Reuses the existing trailing empty (B lands sole; refresh then ensures a fresh trailing empty); `SendToLastWorkspace` leaves focus (falls back to A), `MoveToLastWorkspace` follows with B; numeric `0` is a separate binding (index 9), not the trailing-empty action; `S(S-cos-send)` + `S(S-cos-focusfix)`
-- Then Hyprland/Dwindle: Unsupported action parameter here: no trailing-empty shortcut exists in source (workspaces are explicit find-or-create; numeric `0` is an invalid workspace ID, so the `0` target has no valid counterpart); outcome TBD (no built-in equivalent for the trailing-empty parameter); `S(S-hyp-movews)`
+- Then Hyprland/Dwindle: Unsupported action parameter here: no trailing-empty shortcut exists in source (workspaces are explicit find-or-create; numeric `0` is an invalid workspace ID, so the `0` send resolves invalid and the move errors with no transfer: tree and focus unchanged). The only empty-related resolver is first-empty `empty`, never trailing-empty. `S(S-hyp-movews)` + `S(S-hyp-ws)`
 - Then bspwm: Unsupported action parameter here: no trailing-empty shortcut in source (desktops are explicit-only with explicit `desktop -r` removal), so the trailing-empty/`0` send has no built-in equivalent and never runs (no applicable journey); `S(S-bsp-send)` + `S(S-bsp-ws)`
 - Then i3: Unsupported action parameter here: no trailing-empty shortcut in source (`move to workspace number` targets explicit workspaces); outcome TBD (no built-in equivalent for the trailing-empty parameter); `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: Unsupported action parameter here: no trailing-empty shortcut in source (workspaces explicit; `shiftWin` to a non-member tag returns the input unchanged, so the trailing-empty/`0` send never runs); `S(S-xmo-shift)`
@@ -567,10 +567,15 @@ verb inventory); selected intent and doc assertions are never evidence.
 - Then COSMIC: removed (non-active non-last empties are removed while
   a trailing empty is ensured, so the middle collapses out).
   `S(S-cos-send)`.
-- Then Hyprland/Dwindle: numbered IDs never renumber, but whether the
-  emptied middle object is destroyed vs retained stays TBD
-  (persistent-rule ownership untraced). `S(S-hyp-ws)`; destruction
-  queued.
+- Then Hyprland/Dwindle: removed. Numbered IDs never renumber (duplicates
+  refused, no renumber path); no ordinary empty-destroy verb exists (only
+  special close-on-empty), and empty lifetime is refcount: the state list and
+  history entries hold weak refs, member windows hold strong refs, the monitor
+  holds the active workspace, and only a persistent rule self-holds. The
+  fixture carries no persistent rule, so once B leaves and the switch away
+  drops the monitor hold, the emptied middle is destroyed (retained while
+  active-empty via the monitor hold); the freed number is reusable via
+  find-or-create. `S(S-hyp-ws)` + `S(S-hyp-close)`
 - Then bspwm: retained (desktops persist until the explicit
   `desktop -r`; emptiness never auto-removes). `S(S-bsp-ws)`.
 - Then i3: removed (the empty non-visible old workspace is closed on
@@ -712,8 +717,14 @@ verb inventory); selected intent and doc assertions are never evidence.
   focuses is unspecified). `S(S-cos-ws)` + `S(S-cos-wsmig)`;
   focus queued.
 - Then Hyprland/Dwindle: whole-workspace reassignment via
-  `moveToMonitor`; displaced destination view and focus stay TBD.
-  `S(S-hyp-ws)`; displaced-view queued.
+  `moveToMonitor`: WS2 was never active on L, so the source gap-plug is
+  skipped (L keeps showing WS1) and the carryFocus activation is skipped too
+  (R keeps showing WS3 with WS2 present hidden); members carry with floating
+  reposition and fullscreen setBox (no pinned members in the fixture; the
+  pinned branch self-assigns on this non-active leg since the plug workspace
+  is the mover itself). Focus
+  unchanged (no focus write anywhere in the non-active path).
+  `S(S-hyp-ws)` + `S(S-hyp-wsmove-fs)`
 - Then bspwm: whole-desktop reassignment via `desktop -m MONITOR` (`transfer_desktop` unlink/append-insert; the hidden WS2 move leaves L showing WS1 and R showing WS3 with WS2 present hidden, no focus write on either follow leg since the moved desktop was not active); `S(S-bsp-ws)`
 - Then i3: whole-workspace detach/attach via the matched-window form
   `[workspace="^WS2$"] move workspace to output R` (criteria targeting
@@ -1011,12 +1022,13 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
 - Then COSMIC: no-counterpart (no history-toggle verb exists; `LastWorkspace`
   targets the last index `len-1`, not the last-viewed workspace).
   `S(S-cos-ws)`.
-- Then Hyprland/Dwindle: previous is timeline-next after W; dead-workspace
-  entries are pruned by `gc`, and numeric targets resolve via find-or-create
-  (recreation path). Whether E itself is destroyed vs retained is untraced
-  (persistent-rule ownership), so the outcome is conditional: E retained
-  shows E, E destroyed+pruned falls through to the next-older entry;
-  exact E survival and gc timing stay TBD. `S(S-hyp-ws)`; E-survival queued.
+- Then Hyprland/Dwindle: recreates E. Previous is timeline-next after W (both
+  the `=1` global and the `=2` same-monitor scans agree here); `gc` runs on
+  the lookup and keeps the second-position entry, so E's dead entry still
+  resolves via its stored target (E is destroyed once inactive: weak
+  state/history refs, no windows left, monitor hold dropped, and no persistent
+  rule in the fixture), and find-or-create recreates the freed number and
+  switches to it: recreation, not invalidation. `S(S-hyp-ws)`
 - Then bspwm: E survives (desktops persist until the explicit `desktop -r`;
   emptiness never auto-removes), and `last` shows the surviving E.
   `S(S-bsp-ws)` + `S(S-bsp-wsretain)`.
@@ -1075,13 +1087,17 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
 - Then COSMIC: no-counterpart (no history-toggle verb exists; `LastWorkspace`
   targets the last index `len-1`, not the last-viewed workspace).
   `S(S-cos-ws)`.
-- Then Hyprland/Dwindle: D shown on L fires workspace.active and records it
-  on the single global timeline (monitor-focus also re-tracks); first
-  previous from D goes timeline-next, which is WS2 (both the `=1` global
-  and `=2` same-monitor scans agree here). No previous-ID invalidation
-  exists (entries persist; dead ones are pruned by `gc`). Reconnect return
-  scope and the exact second toggle stay TBD. `S(S-hyp-ws)`;
-  return/second queued.
+- Then Hyprland/Dwindle: D shown on L (premise input) fronts the single
+  global timeline via the workspace-active record (monitor-focus re-tracks the
+  same entry); first previous from D goes timeline-next, WS2 (the `=1` global
+  and `=2` same-monitor scans agree here). Disconnect evacuates R's workspaces
+  to the first remaining monitor with return-address records plus remembered
+  active; reconnect moves returning D back to R and activates it via the
+  remembered entry, never consulting the History tracker, while L keeps WS2.
+  No previous-ID invalidation exists (entries persist, so nothing clears when
+  D returns to R). Second previous on L targets D on R (both scans agree on
+  the stale-tagged entry) and switches monitor focus back to R/D.
+  `S(S-hyp-ws)` + `S(S-hyp-monlife)`
 - Then bspwm: shipped defaults retain the disconnected monitor and its
   desktops (`remove-unplugged`/`remove-disabled` default false; same-id
   return reuses them), so D never shows on L and the displacement has no
@@ -1227,11 +1243,11 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   B fills E (sole), source collapses to A, next spare ensured. Follow goes
   with B, stay leaves focus. Exact frames TBD. `S(S-cos-ws)` +
   `S(S-cos-send)` + `S(S-cos-newgroup)`; frames queued.
-- Then Hyprland/Dwindle: plain previous resolves to the MRU-history previous,
-  never an ordinal wrap, so no wrap to E occurs here; the fresh fixture
-  carries no history past WS1, leaving the exact no-history target TBD
-  (likely no-op). Follow/silent focus per the move path stays as
-  established. `S(S-hyp-ws)` + `S(S-hyp-movews)`; no-history target queued.
+- Then Hyprland/Dwindle: no wrap occurs: plain previous resolves to the
+  MRU-history previous, never an ordinal target, and the fresh fixture carries
+  no history past WS1, so the target resolves invalid and the send errors with
+  no transfer (tree and focus unchanged). Follow/silent focus never applies
+  (no move runs). `S(S-hyp-ws)` + `S(S-hyp-movews)`
 - Then bspwm: the desktop list is circular, so previous from the first wraps
   to the last desktop E; `transfer_node` fills the empty E sole with
   source sibling promotion (empty focus/root takes root, no split; source collapses to A); `--follow` keeps focus on B, otherwise stays.
@@ -1298,13 +1314,14 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   `S(S-cos-wssingle)` + `S(S-cos-ws)` + `S(S-cos-send)` +
   `S(S-cos-focusfix)`; chord queued (F: invoked chord direction
   unrecorded; exact next-leg outcome TBD; primary F).
-- Then Hyprland/Dwindle: next targets numeric+1 via find-or-create (fills E
-  when E is numeric+1, else creates); follow focuses the mover, silent
-  refocuses the source. Numbered IDs never renumber but emptied-source
-  object destruction is untraced, so source retention stays TBD; exact
-  frames TBD. Previous from the first follows the MRU-history rule (never
-  an ordinal wrap), exact target TBD. `S(S-hyp-ws)` + `S(S-hyp-movews)`;
-  retention/frames queued.
+- Then Hyprland/Dwindle: next targets numeric+1 via find-or-create (no trailing-empty semantic exists); whether that slot is the fixture E or a newly created workspace stays TBD (F: E's own number unstated, so E-vs-created identity is not established). B lands sole with no anchor contest when the target is empty.
+  Empty-source focus is established: follow focuses the mover, silent refocuses
+  the emptied source to none via the first-window fallback. Numbered IDs never
+  renumber; emptied-source survival is refcount (weak state/history refs, no
+  persistent rule in the fixture): follow switches away so the source is
+  destroyed, silent keeps it active-empty retained. Previous from the first
+  follows the MRU-history rule with no history here, so no transfer occurs
+  (never an ordinal wrap). `S(S-hyp-ws)` + `S(S-hyp-movews)`
 - Then bspwm: emptied source retained either leg (desktops persist until the
   explicit `desktop -r`); `transfer_node` fills the empty E sole
   with source sibling promotion (empty focus/root takes root, no split); `--follow` keeps focus on B, otherwise the send stays on the (emptied)
@@ -1391,9 +1408,15 @@ baseline above is unchanged. Record:
   inventory; the active WS2 migrates via `MigrateWorkspaceToOutput`
   (activates there, switches output); refusal legs have no counterpart.
   `S(S-cos-ws)`.
-- Then Hyprland/Dwindle: no mode gate exists; whole-workspace
-  reassignment via `moveToMonitor`; displaced destination view and focus
-  stay TBD. `S(S-hyp-ws)`; displaced-view queued.
+- Then Hyprland/Dwindle: no mode gate exists (the move path takes workspace
+  plus monitor directly, with no mode or per-output check); whole-workspace
+  reassignment via `moveToMonitor`. With L focused (B* focused there) the
+  destination activates: R shows the moved WS2 with WS3 hidden, and the source
+  gap-plugs with no window-focus write, so the focused window object stays B.
+  The fixture names no other L workspace, so the plug finds nothing remaining
+  and creates the first free number (taken: moved WS2 plus WS3; created 1),
+  which L shows. Refusal legs have no counterpart (nothing to refuse through).
+  `S(S-hyp-ws)` + `S(S-hyp-wsmove-fs)` + `S(S-hyp-pinstay)`
 - Then bspwm: no mode gate exists; whole-desktop reassignment via
   `desktop -m MONITOR`; both branches resolve the source through the
   focus fallback (NULL desk is transient: history-last-else-head is
@@ -1469,11 +1492,16 @@ baseline above is unchanged. Record:
   (fixture-focused; the SwitchOutput leg focuses the target
   focus-stack last). `S(S-cos-ws)` + `S(S-cos-wsmig)` +
   `S(S-cos-wsmove-fs)`.
-- Then Hyprland/Dwindle: the workspace object is reassigned to R
-  (`m_monitor`); members keep the workspace with floating reposition
-  and fullscreen setBox; pinned members stay behind; target order,
-  displaced view and moved focus stay TBD. `S(S-hyp-ws)` +
-  `S(S-hyp-wsmove-fs)` + `S(S-hyp-pinstay)`; order/view queued.
+- Then Hyprland/Dwindle: the same workspace object is reassigned to R
+  (`m_monitor`): backing id retained; members keep the workspace with floating
+  reposition and fullscreen setBox, so the tiling tree, split shares (no ratio
+  writes, geometry refits only), remembered focus (the tracker travels with the
+  object; B remembered), and tiling mode carry. The fixture names no other L
+  workspace beyond WS1, so the source plug selects WS1 and L shows it. No
+  reorder occurs (in-place reassignment; the retained creation order is the
+  target order); R shows the moved WS2 with WS3/WS4 hidden, and the move
+  writes no window focus (B retains object focus). `S(S-hyp-ws)` +
+  `S(S-hyp-wsmove-fs)` + `S(S-hyp-pinstay)`
 - Then bspwm: the desktop object is reassigned via transfer
   (unlink/insert, tree retained); the source always resolves through
   the focus fallback (NULL desk transient: history-last-else-head shown
@@ -1548,10 +1576,16 @@ baseline above is unchanged. Record:
   falls back to last with Active state; a fresh empty is added only if
   the set emptied); the empty E migrates identically (no emptiness gate
   among the traced migrate refusals). `S(S-cos-wsmig)`.
-- Then Hyprland/Dwindle: numbered IDs never renumber, but whether the
-  emptied source object is destroyed vs retained stays TBD
-  (persistent-rule ownership untraced); empty-E migration likewise TBD.
-  `S(S-hyp-ws)`; retention/empty-migration queued.
+- Then Hyprland/Dwindle: source refills, never removes: the active-leg move
+  gap-plugs L via `changeWorkspace`; numbered IDs never renumber and no
+  ordinary empty-destroy verb exists (refcount only: weak state/history refs,
+  no persistent rule in the fixture). The empty E migrates identically (the
+  move path has no window-count gate). Leg 1 leaves two remaining candidates
+  (WS1, E), so which one the first-enumerated plug selects stays TBD (F:
+  creation order genuinely unstated, proven by the two-candidate state-vector
+  enumeration). Leg 2's plug creates the first free number, whose value stays
+  TBD (F: E's own number and the full number inventory unstated). `S(S-hyp-ws)`
+  + `S(S-hyp-wsmove-fs)`; plug-pick queued.
 - Then bspwm: retained (desktops persist until the explicit
   `desktop -r`); both legs resolve the source through the focus
   fallback: history-last-else-head is shown with focus memory (the
@@ -1786,10 +1820,20 @@ baseline above is unchanged. Record:
   `S(S-cos-ws)`.
 - Then Hyprland/Dwindle: single global MRU timeline (entries persist;
   dead ones pruned by `gc`); the monitor-move path references no
-  history tracker (verified absent in PlacementController.cpp), so
-  timeline fronting on moves stays TBD, as do reconnect return scope
-  and the exact second toggle. `S(S-hyp-ws)`; fronting/return/second
-  queued.
+  history tracker and the lifecycle adapter performs no activation outside
+  `changeWorkspace`. With L focused through the select, the migrate carries
+  focus to R (hence the refocus-L step, which only schedules a deferred
+  re-track): the first previous is a proven event-loop race (L) between that
+  deferred track and the invocation -- deferred-first switches cross-monitor
+  to WS2 on R, invocation-first finds the untracked plug and errors to a
+  no-op. Reconnect (premise mapping input) returns WS2 to the origin and
+  erases only WS2's return entry (sibling entries return-or-persist
+  independently); remembered-active/default selection never consults the
+  History tracker. No previous-ID clearing exists (stale monitor tags persist)
+  and no planned/completed reporting exists in the move/lifecycle paths. The
+  exact post-return activation stays TBD (F: the origin's remembered value
+  unstated). `S(S-hyp-ws)` + `S(S-hyp-monlife)`; first-previous race and
+  activation queued.
 - Then bspwm: transfer drops the moved desktop's history entries and
   adds none for it, so the first `last` after migration skips WS2 to
   the next-older entry (fixture history unstated, so the exact target
@@ -1863,12 +1907,14 @@ baseline above is unchanged. Record:
   identity/focus queued.
 - Then Hyprland/Dwindle: selects U1 via `movecurrentworkspacetomonitor
   up` (directional monitor query: edge-stick within 2px plus longest
-  shared x-intersection, U1 1200 vs U2 720; no refusal branch). This
+  shared x-intersection, U1 1200 vs U2 720; longest wins with no ambiguity
+  refusal, a no-candidate direction errors instead). This
   matches the project's largest-edge leg here; source equal-edge ties
-  retain the first enumerated, not an established left/top rule.
-  Displaced destination view and exact focus stay TBD.
-  `S(S-hyp-ws)` + `S(S-hyp-mondir)`;
-  view/focus queued.
+  retain the first enumerated, not an established left/top rule. With L
+  focused (B* focused there) the destination activates (U1 shows the moved
+  WS2) and the source gap-plugs a freshly created first-free-numbered
+  workspace (no other L workspace in the fixture); the move writes no window
+  focus, so B retains object focus. `S(S-hyp-ws)` + `S(S-hyp-mondir)`
 - Then bspwm: selects one upper output via `desktop -m north`
   (`MONITOR_SEL` DIR; `nearest_monitor` keeps minimum boundary
   distance, no ambiguity gate); exact U1/U2 TBD (both qualify under

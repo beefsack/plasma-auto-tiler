@@ -234,7 +234,7 @@ ancestry claims. Ours cells cite the Engine move rules at `9241c94`
   regardless of the remembered child C, yielding `V[B,A*,C]` (sole-child
   root collapse via the single-child flatten); focus stays A (`Done`).
   `S(S-cos-move)`.
-- Then Hyprland/Dwindle: TBD; reinsert anchor unresolved. `S(S-hyp-move)`.
+- Then Hyprland/Dwindle: A enters the V group at the focal-hit leaf, not the remembered child: the 1px-right focal lands inside V with no single-window partner override (neighbor is a group node), and the override focal resolves via closest-node distance with no MRU anchor, so A splits the focal-hit leaf; no whole-group swap or beside-wrap; focus stays A (non-silent); exact B-vs-C leaf TBD (F: A's mid-height vs the B/C divider plus admission order unrecorded, so remembered-C vs geometric leaf is not established). `S(S-hyp-move)` + `S(S-hyp-ins)`; leaf queued.
 - Then bspwm: A swaps with leaf C, not the whole V group; C wins the
   equal-distance tie by history, and focus stays A. `S(S-bsp-move-target)`.
 - Then i3: A enters the V group; exact index (remembered C vs edge) TBD.
@@ -282,7 +282,7 @@ ancestry claims. Ours cells cite the Engine move rules at `9241c94`
   orientation-mismatch fork (new Horizontal group beside the inner H),
   yielding `V[H[A,B*],C]` after single-child flatten; focus stays B
   (`Done`). `S(S-cos-move)`.
-- Then Hyprland/Dwindle: TBD; reinsert anchor unresolved. `S(S-hyp-move)`.
+- Then Hyprland/Dwindle: B escapes the inner H and splits C: the 1px-down focal lands inside C (no single-window partner override on the side-by-side parent), so removal promotes A and B re-admits at C's node; no swap or group carry; focus stays B (non-silent). `S(S-hyp-move)` + `S(S-hyp-ins)`.
 - Then bspwm: B swaps with the south leaf C, yielding `V[H[A,C],B*]`;
   focus stays B. `S(S-bsp-move-target)`.
 - Then i3: B escapes H to the outer V with R1 continuation, focus stays B.
@@ -594,7 +594,7 @@ observation or new reference vote.
 - Observe: ambiguity refusal vs selecting a candidate by focus/geometry;
   membership/layout writes.
 - Then COSMIC: Up first attempts the previous workspace at default `Vertical`, as in R-MOV-11. Only from the first workspace does failure propagate to `MoveToOutput`; that branch selects one upper output without an ambiguity refusal (`next_output` keeps minimum origin distance, ties keep the first enumerated) and follows. Cross-vs-local TBD (source index unspecified); on crossing, exact U1/U2 and admission TBD (enumeration and contents unrecorded). `S(S-cos-move)` + `S(S-cos-move-out)`.
-- Then Hyprland/Dwindle: selects one upper output via containing-else-nearest (no refusal branch in the move path); exact U1/U2 TBD at the shared-edge tie (focal x=960 on the boundary; half-open containment unestablished). `S(S-hyp-move)`.
+- Then Hyprland/Dwindle: selects U2 via containing-else-nearest (no refusal branch in the move path): the 1px-up focal is (960,1079) from the sole-A box (0,1080,1920,1080), contained only by U2 under pinned half-open containment (U1 [0,960) excludes the seam x=960), so monitor order is moot. Exact admission TBD (F: U2 contents unrecorded). `S(S-hyp-move)`; queued.
 - Then bspwm: selects by boundary distance then history with no ambiguity gate; exact target/no-op TBD (upper workspace contents unrecorded; empty has no leaf). `S(S-bsp-move-target)`.
 - Then i3: selects the closest output (no refusal; NULL only when none); exact U1/U2 TBD (both y=0 tie, output list order unrecorded). `S(S-i3-move)` + `S(S-i3-outmove)`.
 - Then xmonad/Tall+Navigation2D: profile move is `windowSwap` U (same-layer; `windowToScreen` is the separate carry verb, not exercised). Selection is tiled line/side plus center distance with stack-order tie preference, no refusal branch: hit swaps stack positions across screens with mover focus retained, miss is a no-op. Exact candidate TBD (two-candidate geometry plus both workspaces' contents unrecorded). `S(S-xmo-nav)` + `S(S-xmo-out)` + `S(S-xmo-scope)`.
