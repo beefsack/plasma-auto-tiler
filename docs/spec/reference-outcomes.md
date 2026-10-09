@@ -363,6 +363,12 @@ Legend:
   newcomer second child under `second_child`) and src/window.c:74-82,166
   (ordinary admission anchors at the desktop focus) and :210-222
   (ordinary newcomer takes focus) @e11eff4cb3333216ad03c815609a4ed79e08929c
+- `S-bsp-fltanchor` bspwm:src/tree.c:1945-1961 (`set_floating` keeps the tree
+  slot vacant in place with no focus write) + src/window.c:162-166 (ordinary
+  newcomers skip the floating/fullscreen vacant mark and insert at the desktop
+  focus) @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (float-focus anchor and newcomer-layer legs; split and focus stay
+  `S(S-bsp-insert)`)
 - `S-bsp-xfer` bspwm:src/tree.c:1629-1652 (`transfer_node` unlinks with
   sibling promotion and inserts at the destination focus) and
   src/messages.c:180-186,255-261 (`-d`/`-s` with `--follow` dispatch)
@@ -374,8 +380,8 @@ Legend:
 - `S-bsp-layout` bspwm:doc/bspwm.1.asciidoc:350-360 (floating/fullscreen
   are per-window states) and :505 (desktop layout is tiled/monocle only)
   @e11eff4
-- `S-xmo-ins` xmonad:src/XMonad/StackSet.hs:484-486 (`insertUp`
-  above focus) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+- `S-xmo-ins` xmonad:src/XMonad/StackSet.hs:472-486 (`insertUp`
+  above the focused element with newcomer focus) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
 - `S-xmo-shift` xmonad:src/XMonad/StackSet.hs:572-585 (`shiftWin`
   via `insertUp`/`delete'`) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
 - `S-sway-default` sway:config.in:142-151 (shipped default
@@ -576,6 +582,12 @@ Legend:
   (`_ClientList.add_client` insert at current, newcomer focused) + libqtile/group.py:226-244
   (`add` float-rule match, tiled layouts admit, newcomer focused when stealable)
   @83c697a5621306c3586efca31867efcfa0482e2d
+- `S-qti-fltanchor` qtile:libqtile/group.py:199-206 (float focus blurs the
+  tiled layouts and focuses the floating layout instead of moving any tiled
+  current) + libqtile/layout/columns.py:216-221 (`focus` matches tiled column
+  members only, so a floating focus leaves `current` at the last tiled focus)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (float-focus anchor leg; admission and newcomer focus stay `S(S-qti-add)`)
 - `S-qti-focus` qtile:libqtile/layout/columns.py:142-144 (wrap defaults) and :385-450
   (`left`/`right` column step, `up`/`down` in-column step, `next`/`previous`; tiled columns only)
   @83c697a5621306c3586efca31867efcfa0482e2d
@@ -1650,9 +1662,18 @@ Legend:
   active pending fullscreen; pending maximized/fullscreen tiles open in
   the scrolling layout; plain floats go to the floating layer) and
   src/handlers/xdg_shell.rs:1107-1116 (`open_on_workspace` rule routes the
-  target monitor) @ed22699d99462f61ab171472d3ea67e844ea580d
+  target monitor)   @ed22699d99462f61ab171472d3ea67e844ea580d
   (position and routing-mechanism legs; viewport, settled widths, and
   smart-activation remainder stay TBD)
+- `S-nir-fltanchor` niri:src/layout/workspace.rs:1868-1878 (`activate_window`
+  float-vs-scrolling dispatch: float focus sets the floating-active flag
+  without touching the scrolling active column) + src/handlers/compositor.rs:150-176
+  (map computes the newcomer's own floating state and defaults to `Smart`
+  activation) + src/layout/mod.rs:509-519 (`ActivateWindow`, `Smart` default)
+  + src/niri.rs:1292-1300 (keyboard focus derives from the layout active
+  window) @ed22699d99462f61ab171472d3ea67e844ea580d
+  (float-focus anchor and newcomer-focus legs; column position stays
+  `S(S-nir-ins)`)
 - `S-nir-wsopen` niri:src/handlers/xdg_shell.rs:1105-1123 (rule resolves
   the target monitor) and :1167-1174 (rule resolves the named workspace,
   else the active one) and src/handlers/compositor.rs:152-221 (activation
@@ -1676,6 +1697,14 @@ Legend:
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
   (position, routing, newcomer-state, and focus legs; settled frames and
   overlay remainder stay TBD)
+- `S-pap-fltanchor` PaperWM:tiling.js:879-881 (`getWindows` reduces the column
+  strips only) + :1032-1044 (`isFloating`/`addFloating` hold floats in a
+  separate `_floating` list) + :4676-4679 (`focus_handler` returns before any
+  selection/viewport write for windows outside the column strip) + :3927-3945
+  (`add_filter` admits Normal non-transient windows only)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (float-focus anchor and newcomer-layer legs; position and activation stay
+  `S(S-pap-ins)`)
 - `S-kar-ins` karousel:src/lib/world/clientState/Tiled.ts:8-17 (ordinary
   admission opens a new column after the last-focused column, else the
   last column, appending the window at the bottom) and
@@ -1689,6 +1718,16 @@ Legend:
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
   (new-column position leg; KWin-side focus, viewport, and settled widths
   stay TBD)
+- `S-kar-fltanchor` karousel:src/lib/layout/Grid.ts:16 (null init) + :165-166
+  (removal fixup) + :195-202 (`onColumnFocused` is the only other writer of
+  `lastFocusedColumn`) + src/lib/world/ClientManager.ts:181-188
+  (`onClientFocused` returns unless `findTiledWindow` resolves a tiled window)
+  + src/lib/layout/Window.ts:75-85 (`onFocused` forwards to
+  `column.onWindowFocused`) + src/lib/layout/Column.ts:327-329
+  (column focus bridge)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (float-focus anchor leg; new-column position and focus remainder stay
+  `S(S-kar-ins)`)
 - `S-pan-ins` paneru:src/ecs/triggers.rs:1064-1145 (`spawn_window_trigger`
   spawns the managed entity and emits the spawn event) and :771-879
   (`window_managed_trigger`: re-inserts at the remembered previous strip
@@ -1696,6 +1735,18 @@ Legend:
   `insertion()` index, else at the visually overlapped column, else at the
   end, then reshuffles) @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
   (insertion-position policy; focus outcome stays TBD)
+- `S-pan-fresh` paneru:src/ecs/triggers.rs:1220-1228 (`apply_window_positions`
+  fresh-`Added<Window>` path) + :1258-1270 (rule-floating windows leave the
+  strip as `Unmanaged::Floating`) + :1282-1304 (rule `insertion()` index, else
+  after-focus, else append) + :1309-1324 (`dont_focus` keeps focus, else
+  synthesize `WindowFocused` for the newcomer) + src/ecs.rs:857-866
+  (`insertion()`/`dont_focus()` default to unset/false absent a matching rule)
+  + src/ecs/params.rs:310-312 (`focused()` returns the focused entity
+  regardless of managed state) + src/ecs/layout.rs:419-431 (`index_of`
+  misses for entities outside the strip)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (fresh-admission anchor and focus legs under shipped defaults; widths and
+  reshuffle are out of scope for the anchor/focus Observe)
 - `S-pan-model` paneru:src/ecs/layout.rs:196-203 (`StackItem` distinguishes
   single windows from app-native tabs) and :256-265 (`Column::Stack` is
   ordered top-to-bottom, `Column::Tabs` holds native tabs, `Fullscren` is

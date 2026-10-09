@@ -58,4 +58,12 @@ Workers use muse-spark, one active at a time. The Lead owns this note.
   independent verification checked all eight and actively excluded internal
   normalization, single-target resets, and out-of-profile BSP verbs.
   No material rule contradiction. Latest integrity/whitespace checks pass.
-- Next group: R-INS-05 inactive or floating admission anchor.
+- R-INS-05 accepted: reference TBD cells 9 -> 2; overall 1,025 -> 1,018.
+  Eight cells updated, seven resolved. Independent actual-source verification
+  confirmed floating-anchor paths, including bspwm longest-side wrapping of
+  vacant F, xmonad stack retention, niri focus, and paneru unmanaged-float miss.
+  Initial fill added geometry placeholders outside this row's Observe; removed
+  them rather than expanding scope. Corrected qtile conditional admission,
+  citation coverage, and a duplicated PaperWM prefix. Latest checks pass.
+- R-INS-05 residuals: Hyprland unspecified pointer target; karousel host focus.
+  No material approved-rule contradiction. Next candidate R-WS-07 switcher.

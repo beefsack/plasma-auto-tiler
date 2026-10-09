@@ -164,16 +164,16 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   target; newcomer layer and focus.
 - Then COSMIC: C tiles at the last-active tile (float focus is not in the tiling tree, so B anchors), newcomer focused. `S(S-cos-last)` + `S(S-cos-mapfocus)`.
 - Then Hyprland/Dwindle: float focus excluded from the active-tiled candidate, but the anchor is the pointer-hit window under shipped follow_mouse else the active tile - pointer unstated here, so B vs pointer-hit TBD; newcomer tiles focused. `S(S-hyp-ins)` + `S(S-hyp-newfocus)` + `S(S-hyp-defaults)`.
-- Then bspwm: TBD. Desktop-focus anchor `S(S-bsp-insert)` does not settle float-focus anchoring; TBD.
+- Then bspwm: C splits the focused float F at its own tree slot - floats stay vacant in place with the slot kept, `manage_window` anchors at the desktop focus with no float exclusion, and `insert_node` wraps F plus the newcomer with C as second child under the shipped polarity; C tiles (ordinary, no float/fullscreen/hidden state) and takes focus. `S(S-bsp-insert)` + `S(S-bsp-ins)` + `S(S-bsp-fltanchor)`.
 - Then i3: C tiles at the tiling-focused descendant (float focus excluded), newcomer focused. `S(S-i3-ins)`.
-- Then xmonad/Tall+Navigation2D: TBD. Manage path `S(S-xmo-admit)` does not settle float-focus anchoring; TBD.
+- Then xmonad/Tall+Navigation2D: C inserts above the focused float F via `insertUp` with newcomer focus - `manage` has no float-focus exclusion and F stays in both the stack and the floating map; C tiles (ordinary resizable, neither fixed-size nor transient). `S(S-xmo-admit)` + `S(S-xmo-ins)` + `S(S-xmo-float)`.
 - Then sway: C tiles at the focus-inactive tiling anchor (float focus excluded), newcomer focused. `S(S-sway-ins)`.
-- Then qtile/Columns: TBD. `S(S-qti-add)` covers the tiled admit path; float-focus anchor TBD.
-- Then awesome/tile: TBD. `S(S-awe-tile)` + `S(S-awe-manage)` cover the tiled arrange path; float-focus anchor TBD.
-- Then niri: TBD.
-- Then PaperWM: TBD.
-- Then karousel/Lazy: TBD.
-- Then paneru: TBD.
+- Then qtile/Columns: ordinary C admits to the tiled path (no float-rule match) at the current tiled position - a new column opens only while the focused column is non-empty below `num_columns`, otherwise C inserts at current pushing later clients after; focusing float F only blurs the tiled layouts without moving `Columns.current`, so the eligible anchor stays the last tiled current (B); C tiles with newcomer focus. `S(S-qti-add)` + `S(S-qti-fltanchor)`.
+- Then awesome/tile: C appends last in global client order regardless of F's focus - `manage` pushes the newcomer at the end (anchor-independent) while the tile partition excludes the float F; C tiles (ordinary) with newcomer focus via the shipped global rule. `S(S-awe-tile)` + `S(S-awe-manage)`.
+- Then niri: ordinary C (no floating rule, normal sizing) takes the workspace Auto scrolling branch into a new column after the scrolling-active column - focusing float F only sets the floating-active flag and never moves the scrolling active column, so the anchor stays B; under the fixture's Smart activation (no pending fullscreen) the new column activates, the floating layer deactivates, and keyboard focus follows the layout active window to C; C tiles in the scrolling layer. `S(S-nir-ins)` + `S(S-nir-fltanchor)`.
+- Then PaperWM: C inserts tiled at selected+1 under the shipped RIGHT default - ordinary C passes the Normal-only admit filter, and the focused float lives in the separate floating list with focusing it returning before any selection write, so the selected anchor stays B; newcomer activated on show. `S(S-pap-ins)` + `S(S-pap-fltanchor)`.
+- Then karousel/Lazy: C opens a new column after the last-focused column - `lastFocusedColumn` is written only by the tiled column-focus path, so focusing float F leaves it at B's column; KWin-side newcomer focus TBD. `S(S-kar-ins)` + `S(S-kar-fltanchor)`.
+- Then paneru: fresh C stays managed in the active strip and appends at the end - no rule index or `dont_focus` applies under the shipped defaults, and the focused ordinary float is unmanaged outside the strip so the after-focus lookup misses; newcomer focus is synthesized. `S(S-pan-fresh)` + `S(S-pan-base)`.
 - Then Ours KDE: no eligible tile focus (float holds an exception, not a tile leaf), so C wraps the whole root old/new via the fallback, desired focus newcomer. `S(S-ours-ins)` + `S(S-ours-admit)` + `S(S-ours-flt-target)`; native activation TBD.
 - Then Ours Windows: same fallback root-wrap as Ours KDE via the shared Engine. `S(S-ours-admit)` + `S(S-ours-flt-target)` + `S(S-ours-ins)`; native activation TBD.
 - Variant hook: provisional/TBD (no suitable existing hook; do not reuse
