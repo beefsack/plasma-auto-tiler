@@ -1741,19 +1741,70 @@ baseline above is unchanged. Record:
   Full topology readable; strict local/true. Fresh reset per leg.
 - When: migrate WS2 up once.
 - Observe: selection of one candidate vs refusal; views/focus on move.
-- Then COSMIC: TBD (two-candidate selection untraced); queued.
-- Then Hyprland/Dwindle: TBD (two-candidate selection untraced); queued.
-- Then bspwm: TBD (two-candidate selection untraced); queued.
-- Then i3: TBD (two-candidate selection untraced); queued.
-- Then xmonad/Tall+Navigation2D: TBD (ownership-move counterpart absent;
-  two-candidate selection untraced); queued.
-- Then sway: TBD (two-candidate selection untraced); queued.
-- Then qtile/Columns: TBD (two-candidate selection untraced); queued.
-- Then awesome/tile: TBD (two-candidate selection untraced); queued.
-- Then niri: TBD (two-candidate selection untraced); queued.
-- Then PaperWM: TBD (two-candidate selection untraced); queued.
-- Then karousel/Lazy: TBD (two-candidate migration fixture untraced); queued.
-- Then paneru: TBD (two-candidate migration fixture untraced); queued.
+- Then COSMIC: selects one upper output without ambiguity refusal via
+  `MigrateWorkspaceToOutput(Up)` (`next_output` keeps minimum origin
+  distance, ties keep the first enumerated); exact U1/U2 TBD
+  (enumeration unrecorded; both overlap with equal 1080 distance). It
+  activates there and switches output; exact focused window and target
+  views stay TBD. `S(S-cos-ws)` + `S(S-cos-move-out)`;
+  identity/focus queued.
+- Then Hyprland/Dwindle: selects U1 via `movecurrentworkspacetomonitor
+  up` (directional monitor query: edge-stick within 2px plus longest
+  shared x-intersection, U1 1200 vs U2 720; no refusal branch). This
+  matches the project's largest-edge leg here; source equal-edge ties
+  retain the first enumerated, not an established left/top rule.
+  Displaced destination view and exact focus stay TBD.
+  `S(S-hyp-ws)` + `S(S-hyp-mondir)`;
+  view/focus queued.
+- Then bspwm: selects one upper output via `desktop -m north`
+  (`MONITOR_SEL` DIR; `nearest_monitor` keeps minimum boundary
+  distance, no ambiguity gate); exact U1/U2 TBD (both qualify under
+  HIGH tightness with distance 1; monitor list order unrecorded).
+  Follow/stay flag fixture-unstated, so destination focus stays TBD;
+  transfer drops the moved desktop's history entries. `S(S-bsp-ws)` +
+  `S(S-out07-bsp-mon)` + `S(S-bsp-mondir)` + `S(S-bsp-wsstay)` +
+  `S(S-bsp-wshist)`; identity/focus queued.
+- Then i3: no-counterpart (no directional whole-workspace verb exists:
+  `move workspace to output` takes explicit output names only; the
+  directed-output path is window-only and `tree_move` refuses
+  workspaces). Unsupported outcome TBD. `S(S-i3-ws)` + `S(S-i3-wsdir)`.
+- Then xmonad/Tall+Navigation2D: no-counterpart (no workspace-ownership
+  move verb exists; `shift`/`shiftWin` take explicit tags only, and no
+  directional workspace verb exists in the profiled inventory).
+  Unsupported outcome TBD. `S(S-xmo-ws)` + `S(S-xmo-ctl)`.
+- Then sway: selects the adjacent output via `move workspace to output
+  up` (`output_in_direction` tries the wlroots adjacent output, else
+  the farthest-opposite fallback; NULL only when none); exact U1/U2
+  TBD (wlroots tie-break untraced; the ref point is the workspace
+  centre x=960, not B's centre). Moved focus and L-shown entry stay
+  TBD. `S(S-sway-ws)` + `S(S-sway-wsdir)`; identity/views queued.
+- Then qtile/Columns: no-counterpart (no output-directional
+  whole-group verb exists: `toscreen` takes an explicit screen while
+  `next/prev_group` resolve relatively among groups). Unsupported
+  outcome TBD. `S(S-qti-ws)` + `S(S-qti-wsdef)`.
+- Then awesome/tile: no-counterpart (no directional whole-tag
+  migration verb exists: `tag.screen` takes an explicit screen, and
+  `get_next_in_direction` drives view-only `focus_bydirection`, never
+  a tag move). Unsupported outcome TBD. `S(S-awe-ws)` +
+  `S(S-awe-wsdir)`.
+- Then niri: selects one upper output via `MoveWorkspaceToMonitorUp`
+  (`output_up_of`: full-width vertical-strip overlap plus minimum
+  centre-y distance, no refusal); exact U1/U2 TBD (both overlap with
+  equal 1080 centre-y distance; output order unrecorded). Moved-active
+  activation switches the active monitor; exact focused window and
+  views stay TBD. `S(S-nir-ws)` + `S(S-nir-outdir)`;
+  identity/focus queued.
+- Then PaperWM: directional verb via `move-space-monitor-above`
+  (`moveToMonitor` UP with swap fallback when it is the monitor's
+  last space); exact U1/U2 TBD (GNOME `get_monitor_neighbor_index`
+  untraced; -1 stays). Exact views and focus stay TBD.
+  `S(S-pap-space)`; identity/views queued.
+- Then karousel/Lazy: fixture-inapplicable (single-screen profile has
+  no second output to receive WS2). `S(S-kar-single)`.
+- Then paneru: no-counterpart (`ToNextDisplay` moves the focused
+  window only, never a whole strip or Space; `VirtualMove` is
+  strip-relative). Unsupported outcome TBD. `S(S-pan-cmds)` +
+  `S(S-pan-display)`.
 - Then Ours KDE: selected (User decision 2026-10-09): largest shared edge,
   then left/top, so select U1 despite B projecting onto U2; unreadable topology
   refuses, no candidate no-op, no wrap.

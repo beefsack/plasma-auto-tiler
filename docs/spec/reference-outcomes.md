@@ -2485,6 +2485,18 @@ Legend:
   (workspace block: follow absent so silent is false, shipped move
   follows; `follow=false` stays; the :826-829 analog is the monitor
   block) @19fb395d45314960e6f79f17994a84094f1cd4f6
+- `S-hyp-mondir` Hyprland directional monitor resolution for workspace moves:
+  Hyprland:src/config/lua/bindings/LuaBindingsDispatchers.cpp:1193-1213
+  (`moveworkspacetomonitor`/`movecurrentworkspacetomonitor` resolve the
+  monitor string through `configString`) +
+  src/state/MonitorQueryCore.cpp:133-195 (`directionLookup`: Up needs
+  edge-stick of the reference top against the candidate bottom, then keeps
+  the longest shared x-intersection) and :196-205 (`fromConfigString` maps
+  direction words through that lookup) + src/macros.hpp:37 (`STICKS`
+  within 2px) + src/helpers/MiscFunctions.cpp:109 (`isDirection` words)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (directional whole-workspace target resolution; displaced views and exact
+  focus are separate TBD legs per `S(S-hyp-ws)`)
 - `S-bsp-ws` bspwm:doc/bspwm.1.asciidoc:52 (`CYCLE_DIR` next|prev) and
   :215 (DESKTOP_SEL grammar) and :233-234 (`last` is the previously
   focused desktop) and :418-422 (`node -d/-m` desktop/monitor send with
@@ -2514,6 +2526,15 @@ Legend:
   (transfer drops the moved desktop's entries and adds none for it)
   @e11eff4cb3333216ad03c815609a4ed79e08929c
   (the migrated desktop leaves the `last` history walk)
+- `S-bsp-mondir` bspwm directional monitor resolution for desktop moves:
+  bspwm:src/monitor.c:408-427 (`nearest_monitor`: keeps the minimum
+  `boundary_distance` among direction-side monitors matching the
+  selectors, no ambiguity gate) + src/geometry.c:49-71
+  (`boundary_distance` per-direction edge gap) and :72-155 (`on_dir_side`:
+  HIGH tightness plus a shared x/y range) + src/settings.c:108 (default
+  HIGH tightness) @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (directional whole-desktop target resolution; list order untraced, so a
+  distance tie keeps the first enumerated)
 - `S-i3-ws` i3:src/workspace.c:131-160 (`workspace_get` creates on
   demand) and :438-505 (`workspace_show` records the previous name,
   focuses the descended remembered focus, closes the empty old
@@ -2526,6 +2547,14 @@ Legend:
   and :293-296 (relative move-to-workspace) and :375-433 (relative and
   whole-workspace move grammar)
   @903bcd518df32b0e055b17f5da3f988a0187fd3d
+- `S-i3-wsdir` i3 whole-workspace output grammar is name-only:
+  i3:parser-specs/commands.spec:445-453 (`MOVE_WORKSPACE_TO_OUTPUT_WORD`
+  takes `output = word` only, no direction) + src/commands.c:1023-1115
+  (`user_output_names_find_next` matches explicit names cyclically) +
+  src/move.c:206-253 (`move_to_output_directed` is the window-only
+  directed path) and :266-269 (`tree_move` refuses `CT_WORKSPACE`)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (no directional whole-workspace verb; window moves never substitute)
 - `S-i3-stickyshow` i3:src/workspace.c:562-567 (`workspace_show` tail
   pushes floating sticky windows to the now-visible workspace after
   focusing) + `S(S-i3-sticky)` push filter (tiling cons skipped)
@@ -2554,6 +2583,13 @@ Legend:
   (`move to workspace` next/prev/number/back_and_forth) and :630-665
   (`move workspace to output` acts on the handler-context active
   workspace) @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+- `S-sway-wsdir` sway directional resolution for workspace moves:
+  sway:sway/commands/move.c:27-80 (`output_in_direction`: up/down/left/
+  right resolve through the wlroots adjacent output, else the
+  farthest-opposite fallback, else a name/id lookup; NULL only when
+  none) @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (wlroots `wlr_output_layout_adjacent_output` is outside the pinned
+  source, so a two-candidate tie-break stays TBD)
 - `S-sway-stickypull` sway:sway/input/seat.c:1209-1221 (seat
   workspace-focus change moves sticky floaters to the newly focused
   workspace; the move path writes raw focus only, never this path)
@@ -2593,6 +2629,14 @@ Legend:
   `tag.delete` only) + static tags 1-9 per `S(S-awe-default)` and
   tag-switch refocus per `S(S-awe-hist)`
   @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+- `S-awe-wsdir` awesome directional screen lookup is view-only:
+  awesome:lib/awful/screen.lua:134-155 (`get_next_in_direction`) and
+  :156-171 (`focus_bydirection` moves the pointer plus screen focus,
+  never a tag) + lib/gears/geometry.lua:95-168 (`is_in_direction` plus
+  edge distance plus `get_in_direction`)
+  @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+  (no directional whole-tag migration verb; `tag.screen` per `S(S-awe-ws)`
+  takes an explicit screen)
 - `S-nir-ws` niri:src/layout/monitor.rs:442-495 (activate stores the
   previous id) and :650-679 (`clean_up_workspaces` drops empty
   non-active non-trailing workspaces) and :721-745 (`insert_workspace`
@@ -2626,6 +2670,15 @@ Legend:
   first; the active steps to the previous entry; switch cleared, cleanup
   runs) @ed22699d99462f61ab171472d3ea67e844ea580d
   (source refill after a workspace leaves is the previous entry)
+- `S-nir-outdir` niri directional output resolution for workspace moves:
+  niri:src/niri.rs:3658-3672 (`output_up_of`: full-width vertical-strip
+  overlap plus minimum centre-y distance) and :3721-3724 (`output_up`
+  from the active output) + src/input/mod.rs:2101-2108
+  (`MoveWorkspaceToMonitorUp` dispatch) + niri-ipc/src/lib.rs:781-783
+  (directional workspace-move verbs)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (output order untraced, so an equal-distance tie keeps the first
+  enumerated)
 - `S-pap-space` PaperWM:tiling.js:1096-1127 (`switchLinear` column loop)
   and :2865-2925 (`selectSequenceSpace`: adjacent steps stop at the
   ends, `move` takes the window first) and :3034-3070
