@@ -114,8 +114,14 @@ transient (no dialog flag) is a different fixture and is not claimed.
 - Then qtile/Columns: both float (utility/splash/dialog in shipped
   rules; unplaced floats center) with stealable focus. Switcher
   presence TBD. `S(S-qti-spc)`; queued.
-- Then awesome/tile: both implicitly float (non-normal type).
-  Focus and switcher presence TBD. `S(S-awe-float)`; queued.
+- Then awesome/tile: both implicitly float (non-normal type) admitted
+   on the selected tags with rule placement; splash takes no focus
+   (splash fails the global rule's focus filter, so no newcomer
+   activate) while utility takes newcomer focus via the shipped global
+   rule; both appear in the programmatic `menu.clients` list (unfiltered
+   iterate) while the tasklist shows current tags only and no shipped key
+   lists clients (`Mod+Tab` is `history.previous`).
+   `S(S-awe-float)` + `S(S-awe-manage)` + `S(S-awe-focus)` + `S(S-awe-switcher)`.
 - Then niri: parentless resizable splash/utility tiles as ordinary
   columns (`compute_open_floating` is exhaustive over explicit rule,
   parent, and fixed height; `Match` carries no window-type field;
@@ -438,9 +444,7 @@ All fresh variants below reset the client and WM state independently.
   (hint refresh updates stored hints with no tiled promotion; only
   floating increments relayout). Frames and focus TBD (client timing,
   live-only). `S(S-qti-min)`.
-- Then awesome/tile: implicit floating turns on/off respectively unless
-  explicitly overridden; exact resulting frames/focus TBD.
-  `S(S-awe-fixed-dynamic)`.
+- Then awesome/tile: dynamic classification (not admission-only): tiled B gaining min=max 640x480 turns implicit floating on, and automatic fixed float B losing its maximum hints turns implicit floating off, respectively, unless an explicit `floating` state overrides it (hint signals recompute implicit float; `property::size_hints` watched, explicit wins). Frames and focus TBD (L: client timing, live-only). `S(S-awe-fixed-dynamic)`.
 - Then niri: tiled B stays tiled; automatic float stays floating
   (`compute_open_floating` runs at the four open callsites only; later
   status changes only via the plain tile-move toggle). Frames and focus
@@ -501,8 +505,7 @@ All fresh variants below reset the client and WM state independently.
   state with tile-frame retain and layout re-add; float rules are
   evaluated at admission, not re-applied on observation). Exact
   frames/focus TBD (client timing, live-only). `S(S-qti-float)`.
-- Then awesome/tile: explicit floating=false overrides implicit fixed
-  status; exact sticky-command equivalent TBD. `S(S-awe-fixed-dynamic)`.
+- Then awesome/tile: explicit `floating=false` overrides the implicit fixed status and survives observation (explicit wins; hint signals recompute implicit only); sticky variant uses the same explicit tile path with sticky retained (sticky is orthogonal with no float-only guard, so F stays sticky-tiled). Exact frames/focus TBD (L: client timing, live-only). `S(S-awe-fixed-dynamic)` + `S(S-awe-sticky)` + `S(S-awe-float)`.
 - Then niri: explicit tile survives observation (plain tile-move toggle;
   `compute_open_floating` runs at open only). Exact frames/focus TBD
   (client timing, live-only). `S(S-nir-flttoggle)` + `S(S-nir-fixed-open)`.
@@ -787,7 +790,7 @@ All fresh variants below reset the client and WM state independently.
   maximized-and-implicitly-floating across the switch, and
   restore-then-unmaximize keeps fixed E floating while non-fixed rejoins
   tiled order. Intentional C stays explicitly floating throughout. Exact
-  frames/focus TBD. `S(S-awe-layout)` + `S(S-awe-float)` + `S(S-awe-tile)`
+  frames/focus TBD (L: client timing and live placement, not in the recalc path). `S(S-awe-layout)` + `S(S-awe-float)` + `S(S-awe-tile)`
   + `S(S-awe-fixed-dynamic)` + `S(S-awe-fs)`.
 - Then niri: no workspace-mode counterpart; F-arrival,
   changed-hints/predicate, override, and maximized legs share the absence
@@ -886,7 +889,7 @@ All fresh variants below reset the client and WM state independently.
   re-manage while explicit `floating=false` persists as a property.
   Re-floated E restores as floating and closed E is absent. Store-fault/ID/
   v1 variants have no counterpart (order+floating only, no tile store).
-  Exact frames/focus TBD. `S(S-awe-ctl)` + `S(S-awe-float)` +
+  Exact frames/focus TBD (L: live placement and client settlement, not in the order/floating store). `S(S-awe-ctl)` + `S(S-awe-float)` +
   `S(S-awe-fixed-dynamic)`.
 - Then niri: no-counterpart for this owner restart with layout recovery
   (Quit exits and LoadConfigFile reloads config only; no layout dump or

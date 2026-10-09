@@ -162,9 +162,7 @@ assertions are never evidence.
   same legs. `S(S-sway-focusnext)` + `S(S-sway-focus)`.
 - Then qtile/Columns: next C, previous B; edges wrap C-to-A and A-to-C
   across columns; F excluded from these tiled verbs. `S(S-qti-focus)`.
-- Then awesome/tile: index cycle via `client.next` (`gmath.cycle`
-  wraps, which covers the edge leg once order is known); exact order
-  and float-variant step TBD. `S(S-awe-cycle)`; order queued.
+- Then awesome/tile: Given-prepared native tiled order A,B,C (A master, B/C stacked per the row Given; manage prepends newcomers first but no admission runs in this row, so the prepared order controls while focus history A,C,B only selects B* focus) cycled by index via `client.next` over visible clients with the focus filter (`focus.byidx(1)`/`(-1)`; shipped index keys): next C from B, previous back to B (reversible); edge next-from-C wraps to A and previous-from-A wraps to C via `gmath.cycle`; ordinary float F passes `focus.filter` (normal focusable, not desktop/dock/splash) so the same verbs include F (in-cycle, not excluded). `S(S-awe-cycle)` + `S(S-awe-tile)` + `S(S-awe-manage)` + `S(S-awe-focus)` + `S(S-awe-keys)` + `S(S-awe-hist)`.
 - Then niri: no-counterpart for a plain spatial next/previous pair
   (directional column/window verbs plus MRU `FocusWindowPrevious`
   only). `S(S-nir-actions)`.

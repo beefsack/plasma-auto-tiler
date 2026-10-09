@@ -752,14 +752,17 @@ Legend:
   gap_single_client, fill expand, mwfact 0.5, nmaster 1, ncol 1) +
   awesome:lib/awful/screen.lua:529-560 (tiled_clients ordered top-to-bottom;
   float/fullscreen/maximized excluded) + awesome:lib/awful/client.lua:219-251
-  (client.tiled/visible over the unstacked get: insertion order, float/fullscreen/max excluded) + awesome:objects/client.c:2202 (manage appends the
-  newcomer at the end) + :3084-3116 (unstacked get walks globalconf.clients in
+  (client.tiled/visible over the unstacked get: newest-first global order, float/fullscreen/max excluded) + awesome:objects/client.c:2202 (manage
+  prepends the newcomer at the front via client_array_push) +
+  awesome:common/array.h:110-122 (array_push splices at index 0, i.e. prepend;
+  array_append is the separate end-insert) + awesome:objects/client.c:3084-3116 (unstacked get walks globalconf.clients in
   order) + :3269-3304 (swap exchanges positions)
   @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
-  (tile order is global-client insertion order with the newcomer last; stacking order differs)
+  (tile order is global-client order with the newcomer first, i.e. reverse admission; stacking order differs)
 - `S-awe-focus` awesome:lib/awful/client/focus.lua:171-190
   (bydirection over visible plus filter geometries via get_in_direction; miss
-  changes nothing) + :202-229 (global_bydirection crosses screens on miss) +
+  changes nothing) + :76-90 (focus.filter excludes desktop/dock/splash plus
+  unfocusable) + :202-229 (global_bydirection crosses screens on miss) +
   awesome:lib/gears/geometry.lua:149-169 (nearest in-direction rect, nil when
   none) + awesome:lib/awful/screen.lua:164-171 (no next screen is no-op) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
   (no float exclusion in the walk; shipped keys bind index focus only, see S-awe-keys)
@@ -770,15 +773,22 @@ Legend:
   (occlusion geometry is load-bearing here)
 - `S-awe-swap` awesome:lib/awful/client.lua:308-323
   (swap.bydirection same-screen geometric swap; miss no-op) + :342-369
-  (global cross-screen move/swap) + :385-391 (swap.byidx index primitive) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
-  (swap exchanges positions with no focus write; settled frames follow tile recalc)
+  (global cross-screen move/swap) + :385-391 (swap.byidx index primitive) + :653-674
+  (`move_to_screen` sets screen plus screen focus with activate, no tag write) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+  (local swap exchanges positions with no focus write; the global path invokes
+  global focus and screen-transfer activation; settled frames follow tile recalc)
 - `S-awe-tag` awesome:lib/awful/client.lua:577-587
   (move_to_tag sets screen plus tags with no view switch; focused mover emits
   activate raise) + :609-629 (toggle_tag same-screen only) +
   awesome:lib/awful/tag.lua:1637-1651 (view_only explicit tag switch) +
   awesome:lib/awful/client.lua:186-210 (jump_to switches to first tag and
   focuses; sticky covered) + awesome:lib/awful/client/urgent.lua:53-59
-  (urgent.jumpto) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+  (urgent.jumpto) + awesome:lib/awful/permissions/init.lua:167-219
+  (activate sets focus only when visible, else urgent with raise) +
+  awesome:lib/awful/permissions/init.lua:310-330 (`request::tag`
+  default handler retags to the screen selected tags) +
+  awesome:lib/awful/tag.lua:1813-1836 (screen-consistency strip plus
+  `request::tag`) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
 - `S-awe-layout` awesome:lib/awful/layout/init.lua:115-123
   (get returns the tag layout, floating fallback) + :177-180 (set is per-tag)
   @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f (no workspace tiling flag; layout is always set per tag)
@@ -789,7 +799,10 @@ Legend:
   transient/sticky/selected-tags admission) +
   awesome:lib/awful/client.lua:1887-1901 (startup no_offscreen plus
   focus-history add) + awesome:lib/awful/layout/init.lua:354-375 (arrange on
-  tagged/untagged/layout signals) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+  tagged/untagged/layout signals) +
+  awesome:lib/ruled/client.lua:662-664 (global-rule `focus` truthy emits
+  `request::activate "rules"` with raise outside startup, so the ordinary
+  newcomer takes focus) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
 - `S-awe-float` awesome:lib/awful/client.lua:973-1003
   (explicit over implicit float incl type/fullscreen/max/fixed-size) +
   :837-853 (set_floating restores floating_geometry; no focus write) +
@@ -821,7 +834,10 @@ Legend:
   non-sticky history then sticky fallback) +
   awesome:lib/awful/client.lua:1902 (unmanage deletes history) +
   awesome:lib/awful/permissions/init.lua:809-814 (refocus hooks on
-  unmanage/tag/hide/minimize/sticky) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+  unmanage/tag/hide/minimize/sticky) +
+  awesome:objects/tag.c:376,394 (tag/untag reban synchronously) +
+  awesome:banning.c:30-43 (reban unfocuses the hidden client) +
+  awesome:objects/client.c:1778-1785 (ban unfocus clears focus) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
 - `S-awe-sticky` awesome:lib/awful/placement.lua:949-979
   (sticky reads on every selected tag) +
   awesome:lib/awful/permissions/init.lua:94-116 (focus prefers non-sticky,
@@ -880,6 +896,25 @@ Legend:
   @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
   (no first-run/preset/staging/Force/Disable/Revert/preimage model in the inspected
   inventory; tag layouts recreated from rc on restart)
+- `S-awe-rst` awesome:awesome.c:117-141 (atexit reparents in stack order
+  keeping stacking intact, then saves client order to the root property) +
+  :167-199 (restore_client_order permutes the scanned set into the saved
+  order) + :200-265 (startup scan manages mapped X windows in query-tree
+  order, then restores the saved order) + :880-885 (scan runs before the
+  startup signal with no post-scan refocus) + awesome:ewmh.c:434-456
+  (desktop index retags through `request::tag`) + :524-544 (desktop
+  written from live tag state) + :599-613 (desktop re-read at manage) +
+  awesome:objects/tag.c:375 (tag writes desktop) + :395 (untag writes
+  desktop) + awesome:objects/client.c:2268-2280 (manage emits
+  `request::manage` with the startup context) +
+  awesome:lib/ruled/client.lua:677-683 (rules apply on manage) +
+  awesome:lib/awful/tag.lua:315-334 (tag.new selects the first tag) +
+  awesome:objects/client.h:259-292 (client_raise appends on top) +
+  awesome:objects/client.c:3395-3412 (raise no-op at stack top) +
+  :3422-3436 (lower no-op at stack bottom) + awesome:stack.c:44-62
+  (stack push/append ends) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+  (scan-last visible manage takes rule-focus; query-tree listing direction
+  is server behavior outside the pinned source)
 - `S-cos-min` cosmic-comp:src/shell/layout/tiling/mod.rs:2998-3128
   (position/allocation pass with no minimum consult; maximized/fullscreen
   skipped, otherwise unconditional `set_geometry` plus configure)
@@ -1992,7 +2027,7 @@ Legend:
 - `S-awe-cycle` awesome:lib/awful/client.lua:256-290 (`client.next`
   index cycle via `gmath.cycle` over visible clients with the focus
   filter) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
-  (cycle verb and wrap; exact order stays TBD)
+  (cycle verb and wrap; order via S-awe-tile+S-awe-manage)
 - `S-nir-focus` niri:src/layout/scrolling.rs:1581-1600
   (`focus_left`/`focus_right` edge booleans) and
   src/layout/workspace.rs:938-990 (tiling/floating dispatch,
@@ -3204,7 +3239,9 @@ Legend:
   viewprev wrap) and :1637-1660 (`view_only` selects plus history
   update) and :607-645 (`set_screen` moves the tag plus all member
   clients, restoring old-screen history) and :409-485 (explicit
-  `tag.delete` only) + static tags 1-9 per `S(S-awe-default)` and
+  `tag.delete` only) and :1913-1948 (screen `removed` default: `request::screen`
+  salvage chance, `removal-pending` plus `request::tag`, fallback delete into
+  the first tag of a remaining screen, history cleared; no affinity store) + static tags 1-9 per `S(S-awe-default)` and
   tag-switch refocus per `S(S-awe-hist)`
   @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
 - `S-awe-wsdir` awesome directional screen lookup is view-only:
@@ -3482,8 +3519,10 @@ Legend:
   (`client_set_minimized`: `ICONIC` unmap plus `NORMAL` remap, `banning`
   update, `property::minimized` signal) and ewmh.c:402-409
   (`_NET_WM_STATE_HIDDEN` ADD/REMOVE/TOGGLE drives the same setter) and
-  lib/awful/permissions/init.lua:809-814 (refocus hooks on
-  unmanage/tag/hide/minimize/sticky) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+   lib/awful/permissions/init.lua:809-814 (refocus hooks on
+  unmanage/tag/hide/minimize/sticky) and lib/awful/layout/init.lua:343-352
+  (property::minimized/fullscreen/maximized/floating arrange hooks)
+  @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
   (native request path plus unmap/ban with retained client order)
 - `S-nir-mininv` niri:src/protocols/foreign_toplevel.rs:574-575
   (`SetMinimized`/`UnsetMinimized` explicit no-ops) and

@@ -115,8 +115,10 @@ claims. Ours KDE and Ours Windows cite separate adapter keys.
   re-admits B at the focused (`cc`) column position per `add_client`
   (shipped `insert_position` 0), not the old slot; focus TBD.
   `S(S-qti-minimize)`; queued.
-- Then awesome/tile: B remaps `NORMAL` at its retained client order;
-  focus TBD. `S(S-awe-minimize)`; focus queued.
+- Then awesome/tile: B remaps `NORMAL` at its retained client order
+   with tile recalc via arrange; the delayed history check no-ops while
+   the MNZ-01 refocus C stays visible-focused, so focus stays C.
+   `S(S-awe-minimize)` + `S(S-awe-hist)`.
 - Then niri: no-counterpart. `S(S-nir-mininv)`.
 - Then PaperWM: marked B leaves the scratch layer via `unmakeScratch`
   (scratch frame saved, float cleared, `unstick`) into workspace
@@ -172,8 +174,11 @@ claims. Ours KDE and Ours Windows cite separate adapter keys.
   never empties this way). `S(S-sway-mininv)`.
 - Then qtile/Columns: A hides as `MINIMIZED`; occupancy and focus TBD.
   `S(S-qti-minimize)`; queued.
-- Then awesome/tile: A unmaps (`ICONIC`), order kept; occupancy and
-  focus TBD. `S(S-awe-minimize)`; queued.
+- Then awesome/tile: A unmaps (`ICONIC`) with client order, tags and
+   screen kept (the setter touches none); the workspace/tag is retained
+   with no cleanup path; the delayed history check finds no visible
+   candidate and writes no focus, so focus is none.
+   `S(S-awe-minimize)` + `S(S-awe-hist)`.
 - Then niri: no-counterpart. `S(S-nir-mininv)`.
 - Then PaperWM: same stick-to-scratch path as R-MNZ-01; sole-space
   empty-column splice plus GNOME cleanup TBD. `S(S-pap-minimize)`; queued.

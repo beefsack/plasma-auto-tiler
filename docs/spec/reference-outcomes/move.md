@@ -69,7 +69,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then xmonad/Tall+Navigation2D: `H[A,V[C,B]]` is Tall's projected geometry for StackSet `[A,C,B*]` (`nmaster=1`, `frac=1/2`: master A takes the left half via `splitHorizontallyBy`, stack C/B takes the right half split equally via `splitVertically`), not a structural tree; `windowSwap` U `False` from B selects C by tiled line/side geometry (C sits above sharing the x-range while A spans full height and fails the above test), and `swap` exchanges stack positions retaining mover focus (StackSet `[A,B*,C]`, projected `H[A,V[B*,C]]`). `S(S-xmo-layout)` + `S(S-xmo-nav)` + `S(S-xmo-out)`
 - Then sway: `H[A,V[B*,C]]`: in-parent leaf swap with C; focus stays B; `S(S-sway-move)`
 - Then qtile/Columns: Column-embedding analogue: B below C in one column, shuffle_up swaps B above C with focus retained; exact frames TBD; `S(S-qti-shuffle)`
-- Then awesome/tile: Tile-projected start for order [A,C,B] (master A, stack C/B); geometric swap up selects C, yielding order [A,B,C] projected `H[A,V[B*,C]]` with mover focus retained (no focus write); exact pixel frames TBD; `S(S-awe-swap)` + `S(S-awe-tile)`
+- Then awesome/tile: Tile-projected start for order [A,C,B] (master A, stack C/B); geometric swap up selects C by strict-origin halfplanes with nearest geometric rect (C above sharing the x-range at distance 0 beats full-height A), yielding order [A,B,C] projected `H[A,V[B*,C]]` with mover focus retained (swap exchanges list positions with no focus write). `S(S-awe-swap)` + `S(S-awe-tile)` + `S(S-awe-geodir)`
 - Then niri: B swaps with C and the active index follows B, so B stays
   focused. `S(S-nir-move)`.
 - Then PaperWM: registered `move-up` binds same-space `swap`; B swaps above C in place within C2 with the selection staying on B (no focus write on the swap path), followed by layout and forced viewport. `S(S-pap-moveverbs)` + `S(S-pap-swap)`.
@@ -146,7 +146,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then xmonad/Tall+Navigation2D: fixture-inapplicable for the exact foreign Given (F: nested `H[H[A,B],C]` has no Tall counterpart - no nesting levels, flat master/stack only, no escape primitive - so the native Tall projection of the fixture is unrecorded and the exact outcome stays TBD). Conditional analogue only: in native Tall order `[A,B,C]` (A master left half, B/C right column) `windowSwap` R `False` from B has no right candidate under tiled hybrid line/side with wrap False, so the analogue miss is no-op with tree/focus unchanged; `S(S-xmo-layout)` + `S(S-xmo-nav)` + `S(S-xmo-out)`
 - Then sway: `H[H[A],B*,C]`: B promoted out of the inner H into C's outer sibling list immediately before C; single-child `H[A]` wrapper persists (empty-only reap, redundant-pair squash only); focus stays B; `S(S-sway-move)` + `S(S-sway-cleanup)`
 - Then qtile/Columns: No nesting in Columns: shuffle_right carries B into C's column (a shared-column edge creates a new column instead); focus stays B; exact order/frames TBD; `S(S-qti-shuffle)`
-- Then awesome/tile: Nested `H[H[A,B],C]` has no tile counterpart (flat tiled-client list, no nesting levels); exact outcome TBD. Policy: geometric swap-or-miss with no flat escape; focus retained; `S(S-awe-swap)` + `S(S-awe-tile)`
+- Then awesome/tile: fixture-inapplicable; nested `H[H[A,B],C]` has no tile counterpart (flat tiled-client list, no nesting levels and no escape primitive), so this Given has no applicable tile journey. `S(S-awe-swap)` + `S(S-awe-tile)`
 - Then niri: fixture-inapplicable; ordered columns have no nested H
   ancestor to escape. `S(S-nir-move)`.
 - Then PaperWM: fixture-inapplicable; column/row membership has no nested
@@ -537,7 +537,7 @@ observation or new reference vote.
 - Then xmonad/Tall+Navigation2D: fixture-inapplicable (flat Tall has no nested V group). `S(S-xmo-layout)`.
 - Then sway: B enters V via perpendicular reparent to the focus-inactive child; exact index TBD (V focus history unrecorded); focus stays B. `S(S-sway-move)`.
 - Then qtile/Columns: TBD; exact nested fixture has no established Columns counterpart in this row (no column Given; never manufacture H/V ancestry). Policy: `shuffle_right` carries into the adjacent column. `S(S-qti-shuffle)`.
-- Then awesome/tile: nested `H[A,B,V,E]` has no tile counterpart (flat tiled-client list, no nesting levels); exact outcome TBD. Policy: geometric swap-or-miss (miss no-op); focus retained. `S(S-awe-swap)` + `S(S-awe-tile)`.
+- Then awesome/tile: fixture-inapplicable; nested `H[A,B,V,E]` has no tile counterpart (flat tiled-client list, no nesting levels and no group-enter primitive), so this Given has no applicable tile journey. `S(S-awe-swap)` + `S(S-awe-tile)`.
 - Then niri: fixture-inapplicable; ordered columns have no nested H/V group to enter. `S(S-nir-move)`.
 - Then PaperWM: fixture-inapplicable; column/row membership has no nested H ancestor. `S(S-pap-move)`.
 - Then karousel/Lazy: fixture-inapplicable; Grid/Column membership has no nested H ancestor. `S(S-kar-move)`.

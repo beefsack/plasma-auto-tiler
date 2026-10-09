@@ -31,7 +31,7 @@ paneru legs distinguish the native Space from virtual rows.
 - Then xmonad/Tall+Navigation2D: Exact occupied-target crossing TBD (Tall target geometry unrecorded); analogous policy only: profile move is same-layer `windowSwap` (geometric target via `navigableWindows`; `swap` exchanges stack positions retaining mover focus, miss is no-op with wrap False); cross-screen carry via the separate `windowToScreen` (`W.shift`) verb is not exercised here; exact L split/frames TBD; `S(S-xmo-out)` + `S(S-xmo-nav)` + `S(S-xmo-layout)`
 - Then sway: Crosses to L: workspace-level H has no left swap, so the next-output attach moves A to L's active workspace at TAIL (nodes `[X,A]`, splith embedding `H[X,A]` under default `workspace_layout`); R collapses to sole B; focus stays on the mover A on L (no workspace-switch call in this path); `S(S-sway-move)` + `S(S-sway-outmove)`; exact L wrapper if L has non-default `workspace_layout` TBD (no custom rules here)
 - Then qtile/Columns: No-op: leftmost sole-column A has no adjacent column and no shared column to split, so shuffle_left returns with tree and focus unchanged; no directional cross-screen carry in Columns (screen placement is togroup/toscreen, not exercised here); `S(S-qti-shuffle)` + `S(S-qti-group)`
-- Then awesome/tile: Profile directional move is `swap.global_bydirection` (local `swap.bydirection` miss then screen cross; single-output miss is no-op). From A west local misses (A leftmost), global crosses to L: A/X screen exchange with tile recalc on both screens (L becomes A sole full tile, R admits X into A's slot); mover focus retained (swap has no focus write; global re-activates mover); exact R order/frames and tag-visibility journey TBD; `S(S-awe-swap)` + `S(S-awe-focus)` + `S(S-awe-tile)`
+- Then awesome/tile: Profile directional move is `swap.global_bydirection` (local `swap.bydirection` miss then screen cross; single-output miss is no-op). From A west local misses (A leftmost under strict-origin geometry), global crosses to L: `focus.global_bydirection` activates the encountered L peer X first, then A/X screen exchange via `move_to_screen` (no tag write, so the mover re-activate emits while mistagged and writes nothing), followed by delayed screen-consistency retag landing A on L's selected tag and X on R's selected tag (`permissions.tag` via `to_selected_tags`); tile recalc on both screens over retained global order (X at its retained position; exact R order/pixel frames TBD (F: global insertion order and work area unrecorded)). Focus ends on X. `S(S-awe-swap)` + `S(S-awe-focus)` + `S(S-awe-tile)`
 - Then niri: stays (`move_left` reorders strip columns and returns
   false at index 0; A is already first, so no reorder and no cross;
   crossing needs the separate `MoveColumnToMonitor*` verb, an
@@ -355,8 +355,7 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
   TBD. `S(S-sway-evac)`; queued.
 - Then qtile/Columns: evacuation and return TBD (screen-removal
   group migration untraced). TBD; queued.
-- Then awesome/tile: evacuation and return TBD (screen-removal
-  client migration untraced). TBD; queued.
+- Then awesome/tile: evacuates R clients to L's first tag via the shipped-default screen-removed fallback (tags emit `request::screen` with no rc handler, then `removal-pending` plus `request::tag`, then `delete` into the first tag of a remaining screen; history cleared); exact evacuated focus stays TBD (F: R-side focused client unstated, and the fallback path writes no focus). Reconnect creates fresh per-screen tags with no identity/affinity store (fresh reassignment, not return affinity). `S(S-awe-ws)`; focus queued.
 - Then niri: evacuation and return TBD (monitor-removal workspace
   ownership untraced). TBD; queued.
 - Then PaperWM: evacuation and return TBD (host GNOME Shell/Mutter output
@@ -458,10 +457,9 @@ keys remain historical; delivery evidence is linked separately in KDE cells.
   empties, so the column drops. Exact frames TBD. `S(S-qti-group)` +
   `S(S-qti-add)` + `S(S-qti-remove)`.
 - Then awesome/tile: carries via `move_to_tag` (screen plus tags set, no
-  view switch; tile recalc on both screens; local B never gates);
-  focused mover emits activate raise, so focus stays A (view never
-  follows; no stay/follow split). Exact tag order/frames and
-  tag-visibility journey TBD. `S(S-awe-tag)` + `S(S-awe-tile)`.
+  view switch; tile recalc on both screens over retained global order with no remembered-Y anchor; local B never gates);
+  focused mover emits activate raise and stays visible on the destination tag, so focus stays A (view never
+  follows; no stay/follow split). Exact tag order/pixel frames stay TBD (F: global insertion order and work area unrecorded). `S(S-awe-tag)` + `S(S-awe-tile)`.
 - Then niri: carries via `MoveWindowToMonitorRight` (`move_to_output`
   remove/insert into R's active workspace plus `focus_output`; always
   follows, no stay variant; local B never gates); target admits as a new
