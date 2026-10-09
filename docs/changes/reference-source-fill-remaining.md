@@ -53,4 +53,9 @@ Workers use muse-spark, one active at a time. The Lead owns this note.
 - Minimize residuals: host focus/frames and sole-workspace cleanup remain;
   qtile refocus bookkeeping and PaperWM selected-window-derived exact
   reinsertion are not yet exhaustively traced, not declared live-only.
-- Latest citation/invariant/whitespace checks pass; next group R-RSZ-04.
+- R-RSZ-04 accepted: reference TBD cells 8 -> 0; overall 1,033 -> 1,025.
+  Eight exhaustive equalize inventories establish no in-profile counterpart;
+  independent verification checked all eight and actively excluded internal
+  normalization, single-target resets, and out-of-profile BSP verbs.
+  No material rule contradiction. Latest integrity/whitespace checks pass.
+- Next group: R-INS-05 inactive or floating admission anchor.

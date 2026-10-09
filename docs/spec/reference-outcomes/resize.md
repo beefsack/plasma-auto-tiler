@@ -194,25 +194,70 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   equal leaf area.
 - Observe: equal sibling shares vs recursive tree balance, preserved ratios
   or missing command.
-- Then COSMIC: TBD (equalize-verb inventory untraced; a missing search term
-  is not absence evidence). `S(S-cos-resize)`; queued.
-- Then Hyprland/Dwindle: TBD (per-split deltas only; no equalize verb
-  evidenced). `S(S-hyp-resize)`; queued.
+- Then COSMIC: no-counterpart (no equalize/balance verb in the action,
+  binding, or tiling inventories: the shortcut Action inventory carries
+  only `Resizing` for resize plus magnification `ZoomIn`/`ZoomOut`, the
+  shipped keybindings bind only `Resizing(Outwards/Inwards)`, and the
+  tiling layout exposes only edge-walk `possible_resizes`,
+  `resize_request`, and pixel `resize`; admission `equal_sizing` is an
+  automatic new-window split, not a user verb; neither a local nor a
+  workspace-wide equalize exists). `S(S-cos-resize)`.
+- Then Hyprland/Dwindle: no-counterpart (no equalize/balance verb in the
+  action, dispatcher, or Dwindle inventories: the window action
+  declarations and dispatched names carry only pixel `resize`, the
+  Dwindle path is per-split pixel `resizeTarget`, and the Dwindle
+  `layoutmsg` inventory is togglesplit/swapsplit/rotatesplit/movetoroot/
+  preselect/splitratio only; `splitratio` adjusts the single
+  `CURRENT_NODE` parent split by delta or exact value, not the whole
+  workspace, so it is not an equalize counterpart).
+  `S(S-hyp-resize)`.
 - Then bspwm: leg `-E` resets every split ratio to the configured 0.5, so
   A stays 0.5 and the inner pair splits evenly: 0.5/0.25/0.25. Fresh leg
   `-B` rebalances by leaf count (outer 1/3, inner 1/2): exact thirds.
   `S(S-bsp-resize)` + `S(S-bsp-bal)` + `S(S-bsp-ins)` (default ratio).
-- Then i3: TBD (no equalize verb evidenced). `S(S-i3-resize)`; queued.
-- Then xmonad/Tall+Navigation2D: TBD (no equalize verb evidenced).
-  `S(S-xmo-resize)`; queued.
-- Then sway: TBD (no equalize verb evidenced). `S(S-sway-resize)`; queued.
+- Then i3: no-counterpart (no equalize/balance verb in the command
+  inventory: `INITIAL` lists move/exec/layout/focus/split/`resize`/swap
+  and others with no equalize form, and the `RESIZE` grammar is
+  grow/shrink/set only; grow/shrink moves one tiling pair by px/ppt and
+  `resize set` writes an exact width/height on the single focused
+  container, neither equalizes all siblings nor balances the tree).
+  `S(S-i3-resize)`.
+- Then xmonad/Tall+Navigation2D: no-counterpart (no equalize verb in the
+  profile: core `Tall` handles only `Shrink`/`Expand`/`IncMasterN` with
+  keys for focus/swap/shrink/expand/master-count/sink only; contrib
+  `BinarySpacePartition` `Balance`/`Equalize` messages exist but are
+  out of this Tall+Navigation2D profile, so the binary-embedded Given
+  has no applicable equalize leg). `S(S-xmo-resize)`.
+- Then sway: no-counterpart (no equalize/balance verb in the command
+  inventory: the runtime table carries layout/move/`resize`/split/swap
+  and others with no equalize form, and `resize` dispatches only
+  set/grow/shrink; grow/shrink moves one resize-parent pair and `resize
+  set` writes an exact size on the single focused container; arrange
+  `normalize` only re-sums fractions to 1.0 internally, it is not a user
+  verb). `S(S-sway-resize)`.
 - Then qtile/Columns: `normalize()` sets every column width (and in-column
   heights) to 100: exact thirds on the column Given. `S(S-qti-resize)`.
-- Then awesome/tile: TBD (no equalize verb evidenced). `S(S-awe-resize)`;
-  queued.
-- Then niri: TBD (no equalize verb evidenced). `S(S-nir-resize)`; queued.
-- Then PaperWM: TBD (no equalize verb evidenced). `S(S-pap-resize)`;
-  queued.
+- Then awesome/tile: no-counterpart (no equalize verb in the tag, key,
+  layout, or client inventories: `incmwfact`/`setmwfact` step or set the
+  single master factor, `incnmaster`/`incncol` change counts, and
+  `setwfact`/`incwfact` write one client's window factor with the rest
+  rescaled; none writes equal shares to all clients).
+  `S(S-awe-resize)`.
+- Then niri: no-counterpart (no equalize/balance verb in the Action or
+  scrolling inventories: the width actions are per-column/per-window
+  preset-cycle, set/adjust proportion/fixed, single-window height reset,
+  single-column maximize/expand, and viewport centering; `SetColumnWidth`
+  /`SetWindowWidth` target one column or window, `ResetWindowHeight`
+  restores automatic height only, `ExpandColumnToAvailableWidth` grows
+  only the focused column, and `CenterVisibleColumns` recenters without
+  equalizing widths). `S(S-nir-resize)`.
+- Then PaperWM: no-counterpart (no equalize/balance verb in the
+  registered action or tiling inventories: the registered actions are
+  w/h inc/dec plus per-window width/height cycling plus
+  center/slurp/barf/maximize only; `resizeWInc`/`resizeWDec` step one
+  window by 10% and width cycling moves one window through presets via
+  `findNext`/`findPrev`; none equalizes the whole space).
+  `S(S-pap-resize)`.
 - Then karousel/Lazy: `columnsWidthEqualize` gives the visible columns
   equal shares via `fillSpace` (min/max-clamped; no limiting hints here).
   All three columns are visible in this Given, so the visible scope is the

@@ -1929,15 +1929,41 @@ Legend:
   matching-edge-axis ancestor) and :2514-2600 (pixel `resize` with
   pair/leaf minima) + data/keybindings.ron:91-92 (`Resizing`
   Outwards/Inwards) + src/input/mod.rs:895-900 (tiling resize-fork
-  handle between tiles keeps keyboard focus on grab)
-  @3d55cba06c9cf6f27609cdefb520f7857dba20af
-  (keyboard pixel resize plus fork handle; dragged share TBD)
+  handle between tiles keeps keyboard focus on grab) +
+  cosmic-settings-daemon:config/src/shortcuts/action.rs:8-151 (Action
+  inventory at pin: only `Resizing` for resize plus magnification
+  `ZoomIn`/`ZoomOut`; no equalize/balance) +
+  src/config/key_bindings.rs:6-25 (`Action`/`PrivateAction`: internal
+  `Resizing` only) + src/shell/layout/tiling/mod.rs:219-244
+  (`add_window` admission `equal_sizing`, not a user verb) +
+  data/keybindings.ron:83-92 (tiling-adjacent bindings:
+  orientation/stacking/tiling/floating/swap/maximize/fullscreen/Resizing
+  only)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af for cosmic-comp,
+  @e37160f14d1e7ee428f973cd2848b4e95f83dfe1 for the daemon path
+  (pin from cosmic-comp `Cargo.lock`)
+  (keyboard pixel resize plus fork handle; dragged share TBD; no local
+  or workspace-wide equalize verb)
 - `S-hyp-resize`
   Hyprland:src/layout/algorithm/tiled/dwindle/DwindleAlgorithm.cpp:312-360
   (`resizeTarget` pixel delta plus edge/smart-resizing path) +
   src/config/shared/actions/ConfigActions.cpp:670-683 (pixel `resize`
-  dispatcher) @19fb395d45314960e6f79f17994a84094f1cd4f6
-  (pixel-delta step; neighbor scope and reversal stay TBD)
+  dispatcher) + src/config/shared/actions/ConfigActions.hpp:39-111
+  (window/workspace action declarations at pin: close/kill/signal/
+  float/pseudo/pin/fullscreen/move/swap/focus/center/cycle/tag/pass/
+  set_prop/group/workspace/monitor/special/exec/submap/dpms verbs plus
+  pixel `resize`; no equalize/balance) +
+  src/config/lua/bindings/LuaBindingsDispatchers.cpp:1298-1360
+  (dispatched names at pin; window table carries `resize` only, no
+  equalize name) +
+  src/layout/algorithm/tiled/dwindle/DwindleAlgorithm.cpp:681-769
+  (`layoutmsg` inventory: togglesplit/swapsplit/rotatesplit/movetoroot/
+  preselect/splitratio only) and :749-767 (`splitratio` adjusts the
+  single `CURRENT_NODE` parent split by delta or exact value clamped
+  0.1-1.9, not the whole workspace)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (pixel-delta step; neighbor scope and reversal stay TBD; no local or
+  workspace-wide equalize verb)
 - `S-bsp-resize` bspwm:doc/bspwm.1.asciidoc:439-442 (`-z` pixel handle)
   and :454-458 (`-E`/`-B`) + src/messages.c:432-447 (`-z` dispatch) and
   :557-569 (`-E`/`-B` dispatch to `equalize_tree`/`balance_tree`) +
@@ -1948,16 +1974,41 @@ Legend:
 - `S-i3-resize` i3:src/commands.c:451-467 (tiling-direction participants)
   and :544-581 (`resize grow|shrink`, shrink negates) and
   src/resize.c:72-144 (climb to the first matching orientation) and
-  parser-specs/commands.spec:280-311 (grammar, default 10px/ppt)
+  parser-specs/commands.spec:280-311 (grammar, default 10px/ppt) and
+  parser-specs/commands.spec:12-48 (`INITIAL` command inventory at pin:
+  move/exec/layout/focus/split/`resize`/swap and others; no
+  equalize/balance/normalize command) and src/commands.c:623-670
+  (`cmd_resize_set` writes an exact width/height on the single focused
+  container via `resize_set_tiling`, not all siblings) and :590-621
+  (`resize_set_tiling` per-target delta)
   @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (pair-step grow/shrink plus single-container exact set; no local or
+  tree-wide equalize verb)
 - `S-sway-resize` sway:sway/commands/resize.c:45-64 (resize-parent climb)
   and :237-280 (tiled adjust, default 10/ppt, unchanged error) and
-  :554-576 (grow/shrink dispatch)
+  :554-576 (grow/shrink dispatch) and sway/commands.c:114-143 (runtime
+  command table at pin: layout/move/`resize`/split/swap and others; no
+  equalize/balance verb) and sway/commands/resize.c:412-470
+  (`cmd_resize_set` writes an exact size on the single focused container,
+  not all siblings) and sway/tree/arrange.c:48-52,133-137 (width/height
+  fraction `normalize` re-sums to 1.0 internally, not a user verb)
   @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (pair-step grow/shrink plus single-container exact set; no local or
+  workspace-wide equalize verb)
 - `S-xmo-resize` xmonad:src/XMonad/Layout.hs:77-78 (`Shrink`/`Expand`
   move `frac` by `delta` 3/100) and src/XMonad/Config.hs:211-212
-  (`mod-h`/`mod-l`) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
-  (frac-only; no edge-targeted verb)
+  (`mod-h`/`mod-l`) and src/XMonad/Layout.hs:41-78 (`Resize`
+  `Shrink`/`Expand` plus `IncMasterN` messages only) and
+  src/XMonad/Config.hs:188-227 (key inventory at pin:
+  spawn/kill/NextLayout/refresh/focus/swap/shrink/expand/sink/IncMasterN/
+  quit/restart only; no equalize verb) and
+  xmonad-contrib:XMonad/Layout/BinarySpacePartition.hs:107-122
+  (`Balance` retiles, `Equalize` tunes ratios; out of this
+  Tall+Navigation2D profile) and :465-476 (`equalize`/`balancedTree`
+  implementations) and :774-775 (`Equalize`/`Balance` dispatch)
+  @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+  (frac-only; no edge-targeted verb; no in-profile equalize verb)
+  (contrib path @5097a457e7a409bc9a7584dc5aa82b34c69d6dda)
 - `S-qti-resize` qtile:libqtile/layout/columns.py:134 (`grow_amount` 10)
   and :309-310 (width weights project proportionally to work-area pixels)
   and :509-561 (directional grows move width/height from the neighbor) and
@@ -1965,9 +2016,18 @@ Legend:
   @83c697a5621306c3586efca31867efcfa0482e2d
 - `S-awe-resize` awesome:lib/awful/tag.lua:760-770 (`incmwfact`
   master-factor step) + awesomerc.lua:311-313 (`mod-l` +0.05 / `mod-h`
-  -0.05) + lib/awful/layout/suit/tile.lua:232-310 (mwfact partition)
+  -0.05) + lib/awful/layout/suit/tile.lua:232-310 (mwfact partition) +
+  lib/awful/tag.lua:753-756 (`setmwfact` sets the single master factor)
+  and :1395-1413 (`incnmaster` changes the master count) and :1515-1530
+  (`incncol` changes the column count) + awesomerc.lua:315-321
+  (`mod-Shift-h/l` master count, `mod-Ctrl-h/l` column count) +
+  lib/awful/client.lua:1155-1171 (`normalize` helper re-sums ratios) and
+  :1257-1300 (`setwfact` writes one client's window factor) and
+  :1322-1345 (`incwfact` steps one client's factor with renormalization)
   @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
-  (no edge-targeted verb)
+  (no edge-targeted verb; master-factor/count/column and per-client
+  factor verbs adjust one share or count, never equal shares to all
+  clients)
 - `S-nir-resize` niri:src/layout/scrolling.rs:4927-4973 (preset-cycle
   index plus preset apply) and :4990-5022 (`set_column_width`
   proportion/fixed/adjust) + src/layout/mod.rs:3020 (`toggle_width`) +
@@ -1975,15 +2035,33 @@ Legend:
   niri-ipc/src/lib.rs:715-761 (width-action inventory: preset, maximize,
   set/adjust; no edge-targeted verb) +
   resources/default-config.kdl:556-558,589-590 (`Mod+R`/`Mod+Shift+R`
-  binds) @ed22699d99462f61ab171472d3ea67e844ea580d
-  (columns independent; no edge-targeted counterpart)
+  binds) + niri-ipc/src/lib.rs:194-770 (Action inventory at pin: focus/
+  move/consume/expel/swap/center/preset/set/maximize/expand verbs; no
+  equalize/balance) and :675-767 (per-column/per-window width verbs:
+  `SetWindowWidth`/`SetWindowHeight` single target, `ResetWindowHeight`
+  automatic height only, `SetColumnWidth` single column,
+  `ExpandColumnToAvailableWidth` focused column only) +
+  src/layout/scrolling.rs:2630-2670 (`toggle_width`/`set_window_width`
+  per-column) and :2700-2720 (`reset_window_height` single window) and
+  :2265-2290 (`center_visible_columns` viewport centering, no width
+  equalization) and :2772-2810 (`expand_column_to_available_width`
+  focused-column growth only)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (columns independent; no edge-targeted counterpart; no local or
+  workspace-wide equalize verb)
 - `S-pap-resize` PaperWM:tiling.js:4873-4912 (`resizeWInc`/`resizeWDec`
   10% step) and :4937-4960 (width cycle direction) + lib.js:11-40
   (`findNext`/`findPrev` wrap at the preset ends) +
   keybindings.js:270-291 (registered action inventory: w/h inc/dec plus
-  width/height cycling; no edge-targeted verb)
+  width/height cycling; no edge-targeted verb) +
+  keybindings.js:270-313 (registered action inventory at pin: resize-h/w
+  inc/dec plus width/height cycling plus center/slurp/barf/maximize; no
+  equalize/balance) and tiling.js:4832-4871 (`resizeHInc`/`resizeHDec`
+  per-window step) and :4929-4970 (per-window width cycling through
+  presets)
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
-  (grid-snapped step; neighbor reflow TBD; no edge counterpart)
+  (grid-snapped step; neighbor reflow TBD; no edge counterpart; no local
+  or space-wide equalize verb)
 - `S-kar-resize` karousel:src/lib/keyBindings/Actions.ts:160-175
   (height actions) and :203-247 (column width increase/decrease/cycle plus
   `columnsWidthEqualize` via `fillSpace`; no edge-targeted verb) +
