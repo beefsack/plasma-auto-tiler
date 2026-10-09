@@ -1653,6 +1653,17 @@ Legend:
   target monitor) @ed22699d99462f61ab171472d3ea67e844ea580d
   (position and routing-mechanism legs; viewport, settled widths, and
   smart-activation remainder stay TBD)
+- `S-nir-wsopen` niri:src/handlers/xdg_shell.rs:1105-1123 (rule resolves
+  the target monitor) and :1167-1174 (rule resolves the named workspace,
+  else the active one) and src/handlers/compositor.rs:152-221 (activation
+  decision plus `AddWindowTarget::Workspace` map path) and
+  src/layout/monitor.rs:494-520,577-620 (workspace-target resolve; `Smart`
+  never activates the workspace) and src/layout/mod.rs:1002-1062
+  (workspace-target dispatch; `Smart` never switches monitors) and
+  src/tests/window_opening.rs:164-215 (open-on-workspace snapshot powerset)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (inactive-target routing plus no-switch legs; column-position leg is
+  `S(S-nir-ins)`)
 - `S-pap-ins` PaperWM:tiling.js:3994-4008 (fresh windows redirect to the
   selected space) and :4048-4055 + :4105-4120 (winprop `spaceIndex` moves
   the window to that space and re-inserts it there) and :4155 (`addWindow`
@@ -3479,6 +3490,69 @@ Legend:
   (settings-only durability with fresh observation on restart;
   intentional floats reset because the float store is session-local;
   native focus and host-max restore untraced)
+- `S-cos-wsroute` cosmic-comp:src/shell/mod.rs:2907-2945 (pending
+  activation `Workspace(handle)` selects the target space, else the
+  seat-active space) and src/wayland/handlers/xdg_activation.rs:62-68,95-105
+  (workspace-handle token creation) @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (launch routing leg; anchor/focus/switch legs are `S(S-cos-last)` +
+  `S(S-cos-axis)` + `S(S-cos-mapfocus)`)
+- `S-hyp-winws` Hyprland:src/desktop/view/window/Window.cpp:1270-1287
+  (static `workspace` rule resolves the target workspace) and :1358-1404
+  (`silent` keeps the current workspace: no `changeWorkspace`, special-workspace
+  forces silent) and :1507-1513 (silent skips newcomer focus)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (routing plus no-switch/no-focus legs; Dwindle anchor on the target stays TBD)
+- `S-bsp-wsroute` bspwm:src/rule.c:120-129 (`make_rule_consequence`
+  defaults; `follow` off via calloc) and :405-406 (`desktop` consequence)
+  and src/window.c:105-112 (desktop target resolves monitor/desktop/focus)
+  and :205-219 (inactive target hidden, activated-not-focused without `follow`)
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (rule routing plus no-switch/no-steal legs; position leg is `S(S-bsp-insert)`)
+- `S-i3-assign` i3:src/manage.c:289-316 (workspace/number assignment opens
+  at `con_descend_tiling_focused` on the assigned workspace, urgency when
+  invisible) and :428-442 (invisible or cross-output target takes no focus)
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (routing plus urgency/no-steal legs; order leg is `S(S-i3-ins)`)
+- `S-xmo-doshift` xmonad:src/XMonad/ManageHook.hs:124-125 (`doShift`
+  moves the window via `W.shiftWin`) and src/XMonad/Config.hs:93-96
+  (shipped core `manageHook` is MPlayer-only, so the fixture rule is custom)
+  @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+  (rule combinator plus shipped-hook qualifier; shift/anchor legs are
+  `S(S-xmo-shift)` + `S(S-xmo-admit)`)
+- `S-sway-assign` sway:sway/commands/assign.c:9-62 (`assign` criteria to
+  workspace/number/output) and sway/tree/view.c:628-665 (`select_workspace`
+  resolves the assign target, creating it if needed) and :696-714
+  (`should_focus` false across workspaces) @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (routing plus no-focus leg; sibling-anchor leg is `S(S-sway-ins)`)
+- `S-qti-dgroup` qtile:libqtile/config.py:754-756 (`Group.matches`
+  assigns matched windows) + libqtile/dgroups.py:148-162 (matching rule
+  moves the client via `togroup`) + libqtile/backend/x11/window.py:1967-1987
+  (`togroup` hides/removes/adds, switches only when `switch_group=true`)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (routing plus no-switch legs; position leg is `S(S-qti-add)`)
+- `S-awe-wsroute` awesome:awesomerc.lua:467-479 (shipped global rule: focus
+  filter, no `switch_to_tags`) + :514-516 (tag routing is opt-in per rule) +
+  lib/awful/permissions/init.lua:167-218 (`activate` focuses only when
+  visible, marks urgent plus optional tag switch otherwise) and :311-329
+  (`tag` handler assigns rule tags) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+  (routing plus no-focus/no-switch legs; order leg is `S(S-awe-tile)`)
+- `S-kar-wsroute` karousel:src/lib/rules/WindowRuleEnforcer.ts:10-45
+  (plugin window rules cover tile/float/caption matching only, no
+  desktop target) and src/lib/world/DesktopManager.ts:44-49
+  (`getDesktopForClient` tiles native single-desktop clients on their
+  desktop's grid) and src/lib/world/Clients.ts:21-30 (`makeTileable`
+  pins multi-desktop newcomers to the current desktop)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (no plugin launch-rule route; native target-grid admission is
+  `S(S-kar-ins)`; target focus/no-steal/switch stay TBD; cross-output
+  leg is `S(S-kar-single)`)
+- `S-pan-spawn` paneru:src/ecs/triggers.rs:1277-1305 (fresh spawn inserts
+  into the active strip at the config `insertion()` index or after focus,
+  then focuses unless `dont_focus`) and src/ecs.rs:857-867 (`insertion()`
+  is a strip index, not a workspace selector)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (no workspace-targeted launch rule; remembered-strip path in
+  `window_managed_trigger` is re-manage only)
 
 ## Variant hooks (selected status where decided; otherwise provisional)
 

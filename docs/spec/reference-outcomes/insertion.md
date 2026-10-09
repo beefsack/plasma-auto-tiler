@@ -220,19 +220,18 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   inactive-workspace admission per profile TBD at pin (live-test leg).
 - Observe: target-local anchor vs global focus; target admission without
   stealing source focus or switching output.
-- Then COSMIC: TBD (routing plus inactive-workspace admission TBD at pin).
-- Then Hyprland/Dwindle: TBD (routing TBD at pin).
-- Then bspwm: TBD.
-- Then i3: TBD.
-- Then xmonad/Tall+Navigation2D: TBD.
-- Then sway: TBD.
-- Then qtile/Columns: TBD.
-- Then awesome/tile: TBD.
-- Then niri: routing-mechanism leg only - an `open_on_workspace` rule can target the destination (`S(S-nir-ins)`); anchor, focus-steal, and output-switch TBD.
-- Then PaperWM: routing and no-steal legs - winprop `spaceIndex` re-inserts there, and inactive-space inserts only ensure the viewport without stealing focus (`S(S-pap-ins)`); target-local anchor TBD.
-- Then karousel/Lazy: TBD (single-screen profile; cross-output leg
-  applicability TBD).
-- Then paneru: TBD.
+- Then COSMIC: D routes to WS2 via the fixture-declared workspace-target activation token and admits at the target MRU anchor (C), D after C on C's long-edge split; source focus stays A with an urgent mark on WS2 and no workspace/output switch; exact nested embedding and frames TBD (genuinely require the unknown target geometry). `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-mapfocus)` + `S(S-cos-wsroute)`.
+- Then Hyprland/Dwindle: a fixture-declared silent `workspace` windowrule routes D to WS2 with no workspace switch and no newcomer focus (source focus stays A); the target anchor falls to `getClosestNode` for the mouse-on-L point (PWORKSPACE is inactive, so the mouse-hit and same-workspace active branches do not apply), leaving D before/after C and exact geometry TBD. `S(S-hyp-ins)` + `S(S-hyp-newfocus)` + `S(S-hyp-winws)`.
+- Then bspwm: a fixture-declared `desktop=WS2` rule routes D to WS2 at the desktop focus C, inserted as second child at the anchor (D after C); the inactive target is hidden (no switch) and activated-not-focused under the shipped follow-off default, so source focus stays A. `S(S-bsp-insert)` + `S(S-bsp-ins)` + `S(S-bsp-wsroute)`.
+- Then i3: a fixture-declared `assign` (workspace or number) routes D to WS2 at the tiling-focused descendant C, opened after focus (D after C); the invisible target marks urgency with no focus steal (source focus stays A) and no workspace switch in the manage path. `S(S-i3-ins)` + `S(S-i3-assign)`.
+- Then xmonad/Tall+Navigation2D: under a fixture-declared custom `doShift WS2` (shipped core `manageHook` is MPlayer-only), D shifts to WS2 and inserts above the target focus C via `insertUp` (D above C, newcomer current on that stack); `onWorkspace` restores the current view, so no workspace switch and visible focus stays A. `S(S-xmo-admit)` + `S(S-xmo-shift)` + `S(S-xmo-doshift)`.
+- Then sway: a fixture-declared `assign` routes D to WS2 (created if needed); admission anchors after the target focus-inactive node C with the ordinary sibling policy, but the newcomer takes no focus on the inactive workspace and no workspace switch occurs in the map path, so source focus stays A. `S(S-sway-ins)` + `S(S-sway-assign)`.
+- Then qtile/Columns: a fixture-declared Group `matches` rule assigns D to the WS2 group via `togroup` without `switch_group` (stays, no screen switch); Columns opens a new column if below `num_columns=2`, otherwise inserts in the current column at `insert_position=0`, making D current in that group while visible focus stays A; exact embedding TBD because this row does not declare column membership or setup order. `S(S-qti-add)` + `S(S-qti-dgroup)`.
+- Then awesome/tile: a fixture-declared ruled tag routes D to the WS2 tag where it appends last (D after C); activation only focuses when visible, so the inactive D takes no focus (urgent instead) and nothing switches tags under the shipped rule (`switch_to_tags` opt-in, unset); visible focus stays A. `S(S-awe-tile)` + `S(S-awe-manage)` + `S(S-awe-wsroute)`.
+- Then niri: a fixture-declared `open_on_workspace` rule resolves the target monitor and named workspace at initial configure and maps D there as a new column after the fixture-declared active C; under the shipped `Smart` activation the inactive workspace is not activated (no switch) and visible focus stays A while D activates within the target workspace. `S(S-nir-ins)` + `S(S-nir-wsopen)`.
+- Then PaperWM: a fixture-declared winprop `spaceIndex` moves D to WS2 and re-inserts it there via the existing-window path, landing after the fixture-declared selected C under the shipped RIGHT default; inactive-space inserts only ensure the viewport without stealing focus or switching, so source focus stays A. `S(S-pap-ins)`.
+- Then karousel/Lazy: cross-output leg fixture-inapplicable under the single-screen scope (`S(S-kar-single)`); workspace leg has no plugin launch-rule route (window rules cover tile/float/caption only), while a native single-desktop D tiles on the WS2 grid after the last-focused column per the ordinary admission path; target focus, no-steal, and switch TBD. `S(S-kar-single)` + `S(S-kar-ins)` + `S(S-kar-wsroute)`.
+- Then paneru: no-counterpart - fresh spawn admits only into the active strip at the config `insertion()` index or after focus, with no workspace-targeted launch rule in the inspected spawn/config inventory (remembered-strip re-insert is a re-manage path, not fresh routing); anchor/focus/switch have no fresh-routing leg. `S(S-pan-ins)` + `S(S-pan-spawn)`.
 - Then Ours KDE: TBD.
 - Then Ours Windows: TBD.
 - Variant hook: provisional/TBD (contrast rule-targeted routing with

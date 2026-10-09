@@ -1,0 +1,46 @@
+# Remaining reference source fills
+
+## Goal and scope
+
+Reduce TBD reference cells in the reference-outcomes index and area files
+using pinned source evidence and the existing citation conventions.
+Documentation only; no live testing, source-checkout changes, or stash changes.
+Unsupported or runtime-dependent outcomes remain TBD with their reason.
+Approved project rules remain unchanged; material contradictions are reported.
+
+## Acceptance and approach
+
+- Recount TBD cells and triage source-determinable groups by expected value.
+- Trace each selected group to the matrix's pinned revisions.
+- Obtain an independent source re-verification sample from a separate Worker.
+- Inspect diffs and citation/count integrity; commit and push each accepted group.
+- Stop at live-only residuals or context handover, with exact remaining groups.
+
+## Bounded units
+
+1. Inventory and source-feasibility triage.
+2. Descending-value source-fill groups, each followed by independent verification.
+3. Final counts, residual classification, and handover.
+
+Workers use muse-spark, one active at a time. The Lead owns this note.
+
+## Evidence and outcome
+
+- Initial tree clean at e0e0963; main tracks origin/main.
+- Three user stashes present and reserved.
+- Triage: 1,050/1,896 reference cells contain TBD (179 bare unknowns);
+  Ours 169/316 and index variant rows 20 are counted separately.
+- Largest requested groups mostly retain live/host-dependent legs after prior
+  fills. Ranked candidates: R-INS-07, R-MNZ-01..03, R-RSZ-04, R-INS-05,
+  R-WS-07, R-ACT-01..02, remaining move/focus/insertion/group inventories.
+- Count command: `python3 /tmp/opencode/tbd-count-20261009.py`.
+- R-INS-07 accepted: reference TBD cells 12 -> 4; overall 1,050 -> 1,042.
+  Twelve reference cells updated; eight fully resolved, four partial.
+  Independent verification sampled COSMIC/bspwm/xmonad/awesome/qtile and
+  negative routing inventories, then niri/PaperWM completion. Reviewer found
+  an undeclared qtile column-membership assumption; removed it and retained
+  exact embedding TBD. No rule contradiction. Citation, identity, Ours,
+  table-column, unchanged-rule, and whitespace checks pass at latest diff.
+- R-INS-07 residuals: COSMIC unknown geometry, Hyprland pointer/geometry,
+  qtile undeclared columns, karousel host focus/switch. No live claim.
+- Next bounded fill: R-MNZ-01..03 minimize/restore inventory and semantics.
