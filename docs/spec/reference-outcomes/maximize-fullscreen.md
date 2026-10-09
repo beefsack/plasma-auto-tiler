@@ -94,10 +94,14 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   set; focusing A restores B to tiled via `restoreToTiled`, so the
   focus-B step finds a normal window and the explicit exit is moot.
   `S(S-kar-maxfs)` + `S(S-kar-focus)`.
-- Then paneru: native fullscreen pins a `Fullscren` strip with a restore
-  marker; West focus on that space raises the last column top instead of
-  traversing; the exit journey TBD. `S(S-pan-model)` +
-  `S(S-pan-fsfocus)`; exit queued.
+- Then paneru: native fullscreen removes B from the original strip with
+  no reserved column and pins a `Fullscren` strip carrying the restore
+  marker (original strip plus index). West focus on that space raises the
+  original strip's last column top (A); East focus from off-strip A enters
+  the   fullscreen strip's first top (B). The host destroys the native space on
+  exit and `SpaceDestroyed` reinserts B at the marker index with a reshuffle, despawning the
+  fullscreen strip; the exit issues no focus write, so focus stays B.
+  `S(S-pan-model)` + `S(S-pan-fsfocus)`.
 - Then Ours KDE: Retained slot overlay; focus may enter/leave; `D(D-dec-ww)` KDE + `D(D-fs)` Windows scoped proof; physical focus sequence pending
 - Then Ours Windows: Retained slot overlay; focus may enter/leave; `D(D-dec-ww)` KDE + `D(D-fs)` Windows scoped proof; physical focus sequence pending
 - Variant hook: V-FS-SLOT.

@@ -113,7 +113,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then niri: owner-specific (no first-run/preset/prompt writer in the full Action inventory); outcome TBD. `S(S-nir-acts)`.
 - Then PaperWM: owner-specific fixture with no counterpart (no first-run/preset/prompt writer in the registered action inventory or the prefs settings UI pages); no applicable reference journey. `S(S-pap-acts)`.
 - Then karousel/Lazy: no-counterpart (the full Actions/definition inventory lists no first-run/preset/prompt writer); no applicable reference journey. `S(S-kar-acts)`.
-- Then paneru: owner-specific (no first-run/preset/prompt Operation in the command inventory); outcome TBD. `S(S-pan-cmds)`.
+- Then paneru: owner-specific (no first-run/preset/prompt Operation in the command inventory); no applicable reference journey. `S(S-pan-cmds)`.
 - Then Ours KDE: KDE first-run TBD
 - Then Ours Windows: authentic default offered, compatible saves 35 disabled rows; existing-file startup skips prompt; synthetic/native proof [tray record](../../changes/archive/windows-tray-first-run.md)
 - Variant hook: V-FIRST-RUN.
@@ -140,7 +140,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then niri: owner-specific (no prompt/settings-race path in the full Action inventory); outcome TBD. `S(S-nir-acts)`.
 - Then PaperWM: owner-specific fixture with no counterpart (no prompt/settings-race path in the registered action inventory or the prefs settings UI pages); no applicable reference journey. `S(S-pap-acts)`.
 - Then karousel/Lazy: no-counterpart (the full Actions/definition inventory lists no prompt/settings-race path); no applicable reference journey. `S(S-kar-acts)`.
-- Then paneru: owner-specific (no prompt/settings-race Operation in the command inventory); outcome TBD. `S(S-pan-cmds)`.
+- Then paneru: owner-specific (no prompt/settings-race Operation in the command inventory); no applicable reference journey. `S(S-pan-cmds)`.
 - Then Ours KDE: Windows: discard stale choice, load authoritative file, bytes unchanged; same record; other platforms TBD
 - Then Ours Windows: Windows: discard stale choice, load authoritative file, bytes unchanged; same record; other platforms TBD
 - Variant hook: V-FIRST-RUN.
@@ -194,7 +194,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then niri: owner-specific (no workspace floating toggle or mode exists to hold the default; `ToggleWindowFloating` is per-window only); outcome TBD. `S(S-nir-float)`.
 - Then PaperWM: owner-specific fixture with no counterpart (no floating workspace mode and no workspace toggle in the registered action inventory to hold the default); no applicable reference journey. `S(S-pap-acts)`.
 - Then karousel/Lazy: no-counterpart (the full Actions/definition inventory lists no workspace tiling flag or floating-default writer; `windowToggleFloating` is per-window only); no applicable reference journey. `S(S-kar-acts)`.
-- Then paneru: owner-specific (no floating workspace mode; `Manage` is per-window); outcome TBD. `S(S-pan-cmds)`.
+- Then paneru: owner-specific (no floating workspace mode; `Manage` is per-window); no applicable reference journey. `S(S-pan-cmds)`.
 - Then Ours KDE: selected `D(D-dec-ww)`, default live proof TBD
 - Then Ours Windows: tray/UI file readbacks, owner adoption, existing tiled/new floating checks and saved-default startup native proof [record](../../changes/archive/windows-workspace-tiling.md); physical restart journey TBD
 - Variant hook: V-WS-TILING.
@@ -221,7 +221,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then niri: owner-specific (no Keep/Authentic/Compatible staging/Save/Apply/Force model in the full Action inventory); outcome TBD. `S(S-nir-acts)`.
 - Then PaperWM: owner-specific fixture with no counterpart (the prefs keybindings page edits bindings but neither it nor the registered action inventory defines any Keep/Authentic/Compatible staging/Save/Apply/Force model); no applicable reference journey. `S(S-pap-acts)`.
 - Then karousel/Lazy: no-counterpart (the full Actions/definition inventory lists no Keep/Authentic/Compatible staging/Save/Apply/Force verb); no applicable reference journey. `S(S-kar-acts)`.
-- Then paneru: owner-specific (no Keep/Authentic/Compatible staging/Save/Apply/Force model in the command inventory); outcome TBD. `S(S-pan-cmds)`.
+- Then paneru: owner-specific (no Keep/Authentic/Compatible staging/Save/Apply/Force model in the command inventory); no applicable reference journey. `S(S-pan-cmds)`.
 - Then Ours KDE: KDE selected: explicit own-action clear, native storage authoritative, no Lock relocation while disabled; live restart/physical delivery TBD [record](../../changes/kde-shortcut-conflicts.md)
 - Then Ours Windows: Windows Apply validates and atomically saves; Revert discards unsaved edits and reloads the saved file; Close never saves. Per-binding Keep/Disable/Rebind with the interim Win+existing-Shift limit; Compatible resets the catalog then disables 35 OS-conflicting chords with no replacements. KDE Force/foreign-holder clearing has no Windows counterpart (unsupported, TBD). Synthetic/native proof passed; physical input and other DPI/output arrangements remain user-owned [record](../../changes/archive/windows-settings.md)
 - Variant hook: V-SHORTCUT-CONFLICT.
@@ -248,7 +248,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then niri: owner-specific (no Keep/Authentic/preview/Force/draft model in the full Action inventory); outcome TBD. `S(S-nir-acts)`.
 - Then PaperWM: owner-specific fixture with no counterpart (the prefs keybindings page edits bindings but neither it nor the registered action inventory defines any Keep/Authentic/preview/Force/draft model); no applicable reference journey. `S(S-pap-acts)`.
 - Then karousel/Lazy: no-counterpart (the full Actions/definition inventory lists no Keep/Authentic/preview/Force/draft verb); no applicable reference journey. `S(S-kar-acts)`.
-- Then paneru: owner-specific (no Keep/Authentic/preview/Force/draft model in the command inventory); outcome TBD. `S(S-pan-cmds)`.
+- Then paneru: owner-specific (no Keep/Authentic/preview/Force/draft model in the command inventory); no applicable reference journey. `S(S-pan-cmds)`.
 - Then Ours KDE: KDE selected: exact draft/owner/presence/active-image revalidation, no disabled-key holder mutation; live outcome TBD [record](../../changes/kde-shortcut-conflicts.md)
 - Then Ours Windows: Windows Compatible resets the catalog then disables 35 OS-conflicting physical chords, inventing no replacements; actual rebound-chord conflicts are shown. KDE draft/Force preview and disabled-key holder mutation have no Windows counterpart (unsupported, TBD) [record](../../changes/archive/windows-settings.md)
 - Variant hook: V-SHORTCUT-CONFLICT.
@@ -275,7 +275,7 @@ Column Given bullets are separate fixtures, never H/V ancestry claims. R-START-0
 - Then niri: owner-specific (no preimage/restore model in the full Action inventory); outcome TBD. `S(S-nir-acts)`.
 - Then PaperWM: owner-specific fixture with no counterpart (neither the registered action inventory nor the prefs settings UI pages define any preimage/restore model); no applicable reference journey. `S(S-pap-acts)`.
 - Then karousel/Lazy: no-counterpart (the full Actions/definition inventory lists no preimage/automatic-restore or separate Revert verb); no applicable reference journey. `S(S-kar-acts)`.
-- Then paneru: owner-specific (no preimage/restore model in the command inventory); outcome TBD. `S(S-pan-cmds)`.
+- Then paneru: owner-specific (no preimage/restore model in the command inventory); no applicable reference journey. `S(S-pan-cmds)`.
 - Then Ours KDE: KDE selected: compiled plus discovered defaults/current holders; Revert remains default restoration, not preimage recovery; live outcome TBD [record](../../changes/kde-shortcut-conflicts.md)
 - Then Ours Windows: no Force/foreign-default clearing model on Windows, so this fixture is unsupported (TBD). The Windows Revert only discards unsaved edits and reloads the saved file; it never restores foreign defaults [record](../../changes/archive/windows-settings.md)
 - Variant hook: V-SHORTCUT-CONFLICT.
@@ -326,7 +326,7 @@ Restart journeys (config reload is not owner restart):
 - Then niri: no-counterpart for this owner restart with layout recovery (Quit exits and LoadConfigFile reloads config only; no layout dump or re-exec verb). `S(S-nir-rst)`.
 - Then PaperWM: controlled disable+enable stages SaveState (monitors/spaces/targetX plus stacking, no float member) and re-adds via prevSpace restore where present else the `xz_comparator` pass; re-adoption re-floats only above-or-minimized windows via `makeScratch` while everything else re-tiles through `add_filter`. The fixture leaves F's float mechanism unstated (above-flag vs minimized-scratch vs list-only float) and the branch reads live host flags: F placement TBD (fixture: record F's above/minimized host flags at stop). Widths per column layout; selection is the host tab-list head: selection TBD (host: tab-list order policy untraced). `S(S-pap-rst)` + `S(S-pap-readopt)` + `S(S-pap-layout)` + `S(S-pap-view)`; F placement queued (fixture), selection queued (host).
 - Then karousel/Lazy: orderly owner restart is script disable+enable with the host session retained (no keyboard restart verb in the full Actions/definition inventory; live-only Grid state with no layout dump or store). Existing windows re-admit fresh via `addExistingClients` into `addClient` in `Workspace.windows` order (KWin manage/creation order): the 70/30 tile topology is lost (fresh columns after the last-focused column else the last) while widths re-derive from the live frames (70/30 per fixture) via `preferredWidth` clamped into [min,max]; WS1/WS2 membership follows the KWin desktops through the exactly-1 desktop/activity gate (0/multi desktops or activities float); ordinary float F re-tiles (still shapeable, with no durable intent store, so prior float origin leaves no trace). Focus stays B (B is the KWin active window and admission focuses only an already-focused window, so no steal). Exact order TBD (fixture: creation/manage order unstated). `S(S-kar-rst)` + `S(S-kar-readmit)` + `S(S-kar-ins)` + `S(S-kar-min)` + `S(S-kar-ws)` + `S(S-kar-acts)` + `S(S-kwin-winorder)`.
-- Then paneru: startup windows match SessionRestore within grace from the durable state file; exact strips/widths, F handling and focus TBD. `S(S-pan-rst)`; queued.
+- Then paneru: orderly daemon exit/relaunch saves the state (periodic plus AppExit atomic saves; version-gated load) and startup matches live windows against SessionRestore within the configured grace (enabled by default, 2000ms): hard window_id/pid/bundle matches restore into their saved workspace/virtual-strip/column positions in saved order with Unmanaged cleared, unique title/bundle/identifier/role/subrole fallbacks match only when no hard key collides, and unmatched windows take the fresh path. Widths are not persisted and re-derive from the live OS frames at spawn, so exact widths TBD (fixture: live-frame values after relaunch unstated; runtime: AX settle timing, live-only). Ordinary floating F is absent from the saved strips (extract saves strip columns only; floating drops strip membership), so an unmatched no-rule F freshly tiles. Restore writes no focus; focus TBD (host: post-relaunch active window). `S(S-pan-rst)` + `S(S-pan-admit)` + `S(S-pan-fresh)` + `S(S-pan-flt)`; focus queued (host), widths queued (fixture+live).
 - Then Ours KDE: freshly re-observes/adopts windows and hydrates settled intentional F before first planning; F keeps ordinary-float identity and its current frame with no hydration geometry/stacking/focus writes (NORMATIVE Q3 D1-D4, User 2026-10-08). Fixed-window tile overrides also persist membership in the same store (D7 delivered offline 2026-10-09). [Real Planner/entry fixtures](../../../kwin/tests/float-intent.test.ts) and [private store/bus fixtures](../../../crates/plasma-auto-tiler/src/float_intent_store.rs) cover success-only persistence, clear and fallback. Missing store is empty; corrupt/unreadable/mismatched reads are diagnosed and proceed empty, so degraded restart can lose intent and fixed clients recompute to untouched floats. Native sticky/overlay flags remain observed; layout/ratios/workspace set/native focus recovery remain TBD. [Q3 record](../../changes/archive/kde-intentional-float-restart.md), [D7 record](../../changes/archive/fixed-window-tile-override-restart.md); native journey queued.
 - Then Ours Windows: freshly observes/adopts windows; intentional F loses its ordinary-float status because its runtime store resets. Settings persist but do not restore the layout; restored memberships and native focus TBD. `S(S-ours-win-rst)`; queued.
 - Variant hook: NORMATIVE restart recovery (User 2026-10-08; fixed-window
@@ -548,9 +548,10 @@ Restart journeys (config reload is not owner restart):
   `S(S-kar-readmit)` + `S(S-kar-spc)` + `S(S-kwin-resizeable)`.
 - Then paneru: distinct fixed origin has no counterpart (role-gated
   admission with no size predicate; float is rule-assigned; AX exposes no
-  min/max hint equality), so the E/F origin fixture is inapplicable here;
-  recovery TBD with no applicable journey. The staged versioned state
-  carries no tile-override member; T/N discriminator legs TBD.
+  min/max hint equality), so the E/F origin fixture is inapplicable here
+  with no applicable journey. The staged versioned state
+  carries no tile-override member; T/N discriminator legs share the absence
+  with no applicable journey.
   `S(S-pan-admit)` + `S(S-pan-rst)`.
 - Then Ours KDE: selected R-RST-01 preserves intentional E; Q2 NORMATIVE
   D7 (User 2026-10-08) recomputes automatic F from current hints, so F is newly tiled here.

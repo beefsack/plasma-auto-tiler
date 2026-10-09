@@ -54,8 +54,10 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   path (raise, on-current-desktop so no switch, reasonable-policy
   `requestFocus` takes focus). `S(S-kar-ws)` + `S(S-kwin-scriptact)`.
 - Then paneru: `VirtualMoveNumber` carries the focused window to the
-  indexed row under the `MoveFocus` Follow/Stay policy; target column
-  position stays TBD. `S(S-pan-ws)`; target position queued.
+  indexed row under the `MoveFocus` Follow/Stay policy, appending B after
+  sole C (strip-end append with `insert_windows_mid_strip` off, not
+  after-focus). Follow switches the view and focuses B; Stay keeps the
+  source view and refocuses A. `S(S-pan-ws)`.
 - Then Ours KDE: source collapses; target admits at remembered-leaf/focus-history/root
   identically for follow/stay. Numbered follow defaults unchanged; explicit
   stay is registered unbound, preserves source selection and applies source
@@ -227,9 +229,11 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   desktop/activity gate holds for B, else float. `S(S-kar-ins)` +
   `S(S-kar-ws)` + `S(S-kar-float)` + `S(S-kwin-scriptact)` +
   `S(S-kwin-switch)`.
-- Then paneru: B admits at the insertion-index/overlap/end policy
-  with no remembered-leaf anchor; the unmanaged-float leg stays TBD.
-  `S(S-pan-ins)`; float leg queued.
+- Then paneru: floated C leaves the WS2 strip via the Floating path
+  (strip membership dropped), leaving sole D; B appends after D with no
+  remembered-leaf anchor (strip-end append with `insert_windows_mid_strip`
+  off). Follow switches the view and focuses B; Stay keeps the source view
+  and refocuses A. `S(S-pan-ws)` + `S(S-pan-flt)`.
 - Then Ours KDE: Valid focus-history after invalid remembered leaf, then genuine no-focus root; selected `D(D-dec-x)`; scenario result TBD
 - Then Ours Windows: Valid focus-history after invalid remembered leaf, then genuine no-focus root; selected `D(D-dec-x)`; scenario result TBD
 - Variant hook: V-WS-ANCHOR.
@@ -280,11 +284,15 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   runs, no `desktops` write is issued, and B remains on WS2 floating
   with focus unchanged. Floating owns no desktop mover. `S(S-kar-ins)` +
   `S(S-kar-float)` + `S(S-kar-ws)`.
-- Then paneru: forward B moves via `VirtualMoveNumber` to the indexed row;
-  floating B is `Unmanaged::Floating`, outside tiling, with its own
-  focus-history record. Whether the virtual move carries the unmanaged
-  float or fresh-admits it tiled is untraced, so retained-vs-fresh and
-  focus stay TBD. `S(S-pan-ws)` + `S(S-pan-flt)`; carry queued.
+- Then paneru: forward B moves via `VirtualMoveNumber` to the indexed row
+  (B sole); floating B there leaves the strip via the Floating path, so WS2
+  is empty. The return re-inserts B into WS1 after A (strip-end append) but
+  retains `Unmanaged::Floating` (the virtual-move path never clears
+  `Unmanaged`; only `Manage`/re-manage does), so B is strip-resident but
+  still floating with its float frame kept (no resize runs in the move
+  path), focusing B. The emptied source forces the Follow path, so
+  the Stay run also switches the view and focuses B. `S(S-pan-ws)` +
+  `S(S-pan-flt)`.
 - Then Ours KDE: TBD (explicit send applies to focused tiled windows `D(D-dec-cos)`; floated roundtrip untested)
 - Then Ours Windows: TBD (explicit send applies to focused tiled windows `D(D-dec-cos)`; floated roundtrip untested)
 - Variant hook: V-FLOAT-GEO.
@@ -1190,12 +1198,15 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   script path; no switch and no target focus are issued, so follow and
   stay runs are identical (stay with A). `S(S-kar-ws)` +
   `S(S-kwin-scriptact)` + `S(S-kwin-desktops)`.
-- Then paneru: South relative move carries the `MoveFocus` Follow/Stay policy
-  under the len-greater-than-one gate; at the last row South auto-creates
-  only with `create_workspace_automatically` on (shipped default off),
-  else stays. Whether E exists as a virtual row (trailing-empty/model
-  applicability) stays TBD, so the exact target stays TBD. `S(S-pan-ws)`;
-  target queued.
+- Then paneru: South relative move passes the len-greater-than-one gate
+  (source holds A and B) and targets the next virtual index under the
+  `MoveFocus` Follow/Stay policy; a missing target row is created by the
+  move path (the auto-create gate sits on the switch path only), so B lands
+  sole on the next row whether or not a row pre-exists there, and the source
+  collapses to A. Follow switches the view and focuses B; Stay keeps the
+  source view and refocuses A. E has no virtual-row counterpart at shipped
+  defaults (no trailing concept; auto-create and reaping default off), and
+  no spare lifecycle runs. `S(S-pan-ws)`.
 - Then Ours KDE: selected B fills existing E; normal lifecycle supplies
   next empty; source A survives. Follow goes with B, stay preserves source
   view with focused-removal MRU. Implemented offline (item 2.2), native journey
@@ -1904,7 +1915,8 @@ baseline above is unchanged. Record:
   no second output to receive WS2). `S(S-kar-single)`.
 - Then paneru: no-counterpart (`ToNextDisplay` moves the focused
   window only, never a whole strip or Space; `VirtualMove` is
-  strip-relative). Unsupported outcome TBD. `S(S-pan-cmds)` +
+  strip-relative). Unsupported outcome established: no whole-strip/Space
+  migration verb exists. `S(S-pan-cmds)` +
   `S(S-pan-display)`.
 - Then Ours KDE: selected (User decision 2026-10-09): largest shared edge,
   then left/top, so select U1 despite B projecting onto U2; unreadable topology

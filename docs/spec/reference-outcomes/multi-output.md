@@ -174,9 +174,9 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
   `S(S-pap-focus)` + `S(S-pap-mon)`.
 - Then karousel/Lazy: fixture-inapplicable (single-screen profile).
   `S(S-kar-single)`.
-- Then paneru: TBD (directional `Focus` traversal across displays
-  untraced); inventory inspected: `S(S-pan-cmds)` (no established
-  outcome leg); queued.
+- Then paneru: A retained (first-column A has no western peer for
+  `Focus(West)`; West never falls through to another display, only
+  North/South do); focus unchanged. `S(S-pan-focus)`.
 - Then Ours KDE: crosses to X on L (Engine cross-output proposal
   selects the adjacent output domain's last-focused tiled leaf, and
   sole X is that leaf; actuated via `setActive`).
@@ -292,9 +292,11 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
   windows redirect there) and activates on show. `S(S-pap-ins)`.
 - Then karousel/Lazy: fixture-inapplicable (single-screen profile;
   no second output). `S(S-kar-single)`.
-- Then paneru: exact display routing TBD (active-strip insertion
-  vs target display's selected strip); inventory inspected: `S(S-pan-ins)`
-  (no established routing leg); queued.
+- Then paneru: C lands on the focused display D1's active strip after A
+  (strip-end append: no rule insertion index under shipped defaults, and
+  after-focus at the strip end appends); newcomer C focused (`dont_focus`
+  false default); the pointer on D2 plays no role in routing.
+  `S(S-pan-spawn)` + `S(S-pan-fresh)`.
 - Then Ours KDE: admission anchor and newcomer desired focus are
   sourced; output routing plus native activation TBD.
   `S(S-ours-admit)` + `S(S-ours-out)`; queued.

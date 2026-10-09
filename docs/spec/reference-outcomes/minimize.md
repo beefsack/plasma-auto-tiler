@@ -75,10 +75,11 @@ claims. Ours KDE and Ours Windows cite separate adapter keys.
   (left-else-right `columnToFocus` via `getWindowToFocus`); survivors keep
   widths (reposition only, so no reflow). `S(S-kar-minimize)`.
 - Then paneru: B is marked `Unmanaged::Minimized` (off screen per the
-  on-screen check) with strip removal plus remembered
-  `PreviousManagedStrip` and nearest-center `give_away_focus` on the
-  active strip; exact reflow and focus target TBD.
-  `S(S-pan-minimize)`; queued.
+  on-screen check), leaving the strip with its index remembered as
+  `PreviousManagedStrip` while survivors keep their widths (no
+  cross-column rescale); refocus runs nearest-center `give_away_focus`
+  on the active strip, exact target TBD (F: missing frame/display
+  geometry). `S(S-pan-minimize)` + `S(S-pan-stripwidth)`.
 - Then Ours KDE: TBD (`observeNative` has no minimized filter, so the
   minimized frame read decides between stale-frame observation and
   fail-closed whole-domain null; Engine effect TBD). `S(S-ours-minkde)`;
@@ -133,8 +134,10 @@ claims. Ours KDE and Ours Windows cite separate adapter keys.
   `window_managed_trigger` reinserts at the remembered
   `PreviousManagedStrip` index (old slot) when that workspace/virtual-strip
   still exists and no `index` insertion rule overrides (none under shipped
-  defaults); otherwise the active-strip overlap/end fallback applies; focus
-  TBD. `S(S-pan-minimize)`; queued.
+  defaults); otherwise the active-strip overlap/end fallback applies. The
+  restore issues no focus write, so focus stays at the R-MNZ-01 target,
+  exact identity TBD with it (F: same missing geometry).
+  `S(S-pan-minimize)`.
 - Then Ours KDE: TBD (re-observation over the restored frame; slot
   TBD). `S(S-ours-minkde)`; queued.
 - Then Ours Windows: B is observed eligible again over its kept slot;
@@ -175,8 +178,11 @@ claims. Ours KDE and Ours Windows cite separate adapter keys.
   auto-removal). Host minimize issues no refocus, so KWin active stays the
   minimized A with no fallback. `S(S-kar-minimize)` + `S(S-kar-ws)` + `S(S-kwin-min)` + `S(S-kwin-desktops)`.
 - Then paneru: same Minimized-mark plus strip-remove path as R-MNZ-01;
-  sole-row strip emptiness/reaping and focus TBD.
-  `S(S-pan-minimize)`; queued.
+  the emptied sole row is retained (virtual reaping spares index 0, and
+  no activation runs a reap here). `give_away_focus` finds no neighbour
+  so paneru issues no refocus; which window the host focuses instead is
+  TBD (host). `S(S-pan-minimize)` + `S(S-pan-ws)`; focus queued (H:
+  opaque host minimize-focus journey).
 - Then Ours KDE: TBD (sole minimize's native active-window value and
   Engine occupancy/focus unestablished; a null active window makes
   observation fail closed). `S(S-ours-minkde)`; queued.

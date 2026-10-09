@@ -68,9 +68,7 @@ transient (no dialog flag) is a different fixture and is not claimed.
 - Then karousel/Lazy: D floats in both legs (transient fails `shouldTile`;
   modal fails it too); the transient link is tracked via `findTransientFor` without changing state. Admission constructs Floating with no height cap or placement write, so the native frame is retained; the script writes no focus and imposes no modal fence (no branch). D is not special (`isSpecialWindow` excludes Dialog) and takes tab focus (`wantsTabFocus` covers Dialog given `wantsInput`), so the generic X11 manage fork applies (non-special branch with tab-focus eligibility); the Wayland leg follows the add fork. Exact focus TBD (fixture: activation timestamp/token selecting the fork unstated).
   `S(S-kar-spc)` + `S(S-kar-float)` + `S(S-kwin-manage)` + `S(S-kwin-add)`.
-- Then paneru: management is role-gated (non-standard roles skipped
-  unless forced); D's dialog/transient role outcome untraced. TBD;
-  queued.
+- Then paneru: role-gated management with no transient/parent/modal branch: a D reporting the standard subrole (or AXWindow plus floating subrole) is managed as ordinary through the fresh path (rule float check, rule insertion index else after-focus else append, `dont_focus` keep else synthesized `WindowFocused`); a D reporting any other dialog/transient subrole is skipped unless a title/bundle rule forces management, spawning no entity and taking no focus write. The modal flag is inert in both legs; no parent-relative placement or modal fence exists. `S(S-pan-spc)` + `S(S-pan-admit)` + `S(S-pan-fresh)`.
 - Then Ours KDE: TBD (observer gates on KWin `normalWindow`; the
   dialog-type eligibility mapping is untraced with no pinned KWin
   source in-repo, so no admission outcome is claimed).
@@ -133,8 +131,8 @@ transient (no dialog flag) is a different fixture and is not claimed.
   tab-list type filter untraced). `S(S-pap-spc)` + `S(S-pap-fltanchor)` +
   `S(S-pap-switcher)`; focus/switcher queued (host).
 - Then karousel/Lazy: X11 splash and utility both float (managed types whose `windowType` is not Normal, so `shouldTile` fails the `normalWindow` gate and `addClient` constructs Floating with the native frame retained and no script focus write); Wayland-native typed legs are fixture-inapplicable (xdg/PlasmaShell roles carry no splash/utility counterpart, mapping only Desktop/Dock/OSD/Notification/Tooltip/Critical/AppletPopup/Normal). Splash is special, so it skips both the X11 manage focus branch (`requestFocus`) and the attention branch (`demandAttention` requires non-special): no steal, no attention. Utility is not special, so the generic fork applies: no `requestFocus` (`wantsTabFocus` requires Normal/Dialog/AppletPopup) with `demandAttention` on the deny branch. Both are excluded from the host switcher list (`wantsTabFocus` false for Splash/Utility). Exact utility attention TBD (fixture: activation timestamp selecting the allow/deny fork unstated). `S(S-kar-spc)` + `S(S-kar-float)` + `S(S-kwin-manage)` + `S(S-kwin-add)` + `S(S-kwin-tabbox)`.
-- Then paneru: role-gated management; splash/utility role outcome
-  untraced. TBD; queued.
+- Then paneru: role-gated management with no splash/utility branch: a U
+  reporting the standard subrole (or AXWindow plus floating subrole) is managed as ordinary through the fresh path in both legs; any other typed subrole is skipped unless a title/bundle rule forces management. Skipped windows spawn no entity and take no focus write; paneru offers no switcher entry (no cross-strip listing op; listing and activation are host-owned). `S(S-pan-spc)` + `S(S-pan-admit)` + `S(S-pan-fresh)` + `S(S-pan-switcher)`.
 - Then Ours KDE: TBD (same `normalWindow` type-eligibility gap as
   R-SPC-01). `S(S-ours-spc-kde)`; queued.
 - Then Ours Windows: utility is toolwindow-excluded from tile
@@ -201,7 +199,7 @@ transient (no dialog flag) is a different fixture and is not claimed.
 - Then karousel/Lazy: E floats as untileable under the shapeability
   gate (both-axes min==max keeps KWin `isResizable` false under either-axis strict inequality on both backends, given an otherwise moveable ordinary client, so `canTileEver` fails and `addClient` constructs Floating).
   `S(S-kar-spc)` + `S(S-kwin-resizeable)`.
-- Then paneru: fixed-size admission path untraced. TBD; queued.
+- Then paneru: no fixed-size admission counterpart (role-gated admission with no size predicate; float is rule-assigned); E follows the ordinary role-gated path with no fixed-float leg. `S(S-pan-admit)`.
 - Then Ours KDE: E is an automatic float outside the tile tree. No E
   geometry, focus, stacking or keep-above writes from classification;
   exact native/game journey TBD. Implemented offline 2026-10-08 under
@@ -256,7 +254,7 @@ transient (no dialog flag) is a different fixture and is not claimed.
   queued.
 - Then PaperWM: allocation policy tile-authoritative. A tiled B's app-owned resize or minimum-hint raise has no hint branch (no minima consult); `size-changed` queues a column relayout which recomputes targets from preferredWidth/client frame (not guaranteed to overwrite a preferredWidth the client keeps asserting) with no re-float. Recomputed targets settle natively X11-sync/Wayland-async (post-request re-read, actuals feed layout): exact native frames TBD (live: client settle timing). `S(S-pap-appresize)` + `S(S-pap-layout)`; frames queued (live).
 - Then karousel/Lazy: app-owned geometry on tiled B feeds the column width path (`frameGeometryChanged` outside interactive resize re-asserts via rate-limited `onFrameGeometryChanged` into `setWidth` clamped into [min,max] and stored as preferred, with relayout and no re-float); a bare minimum-hint raise with no geometry change has no path (only `captionChanged` re-evaluates tiling for caption-follow rules; no size-hint watcher). Exact native frames TBD (live: client settle timing). `S(S-kar-manual-width)` + `S(S-kar-min)` + `S(S-kar-admit)`.
-- Then paneru: hint path untraced. TBD; queued.
+- Then paneru: app-owned geometry is observed, not refused: the live frame is re-read into Bounds through the moved/resized update path (managed strips nudged, floating windows leave the strip alone, own-resize echoes skipped in flight) with no re-float or admission reclassification; a bare minimum-hint raise with no geometry change has no path (AX exposes no min/max hint equality; float is rule-assigned). `S(S-pan-admit)`.
 - Then Ours KDE: Engine allocation stays authoritative (geometry
   applied from the tree). Host hint reaction TBD.
   `S(S-ours-spc-kde)` + `S(S-ours-admit)`; queued.
@@ -595,9 +593,10 @@ All fresh variants below reset the client and WM state independently.
   frames/focus TBD (client timing, live-only). `S(S-kar-spc)` + `S(S-kwin-resizeable)` +
   `S(S-kar-admit)` + `S(S-kar-maxfs)`.
 - Then paneru: no fixed-size admission counterpart (role-gated admission
-  with no size predicate; float is rule-assigned) and no maximize verb,
-  so the combined fixed+maximize/unmaximize outcome TBD (no built-in
-  equivalent). `S(S-pan-admit)` + `S(S-pan-cmds)`.
+  with no size predicate; float is rule-assigned) and no maximize verb
+  (AX observes fullscreen only; host zoom is not read), so the combined
+  fixed+maximize/unmaximize legs have no built-in equivalent with no
+  applicable journey. `S(S-pan-admit)` + `S(S-pan-cmds)` + `S(S-pan-axfs)`.
 - Then Ours KDE: fixed E floats beneath native maximize, no reserved
   tile on admission; unmaximize leaves it floating (NORMATIVE D4).
   Non-fixed Q3 is unchanged. D6 workspace enable while maximized keeps a
@@ -802,9 +801,10 @@ All fresh variants below reset the client and WM state independently.
 - Then karousel/Lazy: no-counterpart for the workspace enable (no workspace-mode toggle verb in the full Actions/definition inventory; `windowToggleFloating` is per-window only); F-arrival,
   changed-hints/predicate, override, and maximized legs share the absence;
   no applicable reference journey. `S(S-kar-acts)`.
-- Then paneru: no workspace-mode counterpart; F-arrival,
-  changed-hints/predicate, override, and maximized legs share the absence.
-  Outcome TBD. `S(S-pan-cmds)`.
+- Then paneru: no workspace-mode counterpart (no workspace tiling flag; `Manage` is per-window) and no size predicate for the fixed members; F-arrival,
+  changed-hints/predicate, override, and maximized legs share the absence
+  with no applicable journey.
+  `S(S-pan-cmds)` + `S(S-pan-admit)`.
 - Then Ours KDE: enabling workspace tiling checks every window being
   tiled including arrivals while floating: fixed stays/becomes untouched
   float, others tile; explicit user tile overrides stay tiled;
@@ -910,11 +910,9 @@ All fresh variants below reset the client and WM state independently.
   Each Tiled opens after the last-focused column else the last with `preferredWidth` clamped into [min,max]; no script focus write on this path.
   Exact order TBD (fixture: creation/manage order and A's live frame unstated). Exact widths TBD (fixture: A's live frame value unstated; width wraps the live frame). Exact focus TBD (fixture: pre-startup focus state unstated; admission focuses only an already-focused window). `S(S-kar-start)` + `S(S-kar-rst)` +
   `S(S-kar-spc)` + `S(S-kar-admit)` + `S(S-kar-ins)` + `S(S-kar-min)` + `S(S-kwin-resizeable)` + `S(S-kwin-winorder)`.
-- Then paneru: startup windows match SessionRestore within grace; fixed E
-  has no size predicate so it follows role-gated admission (float only if
-  rule-assigned). Closed E is absent from matching. Store-fault/ID/omission
-  variants have no counterpart beyond grace-windowed matching. Exact
-  strips/widths/focus TBD. `S(S-pan-rst)` + `S(S-pan-admit)`.
+- Then paneru: startup windows match SessionRestore within grace (hard window_id/pid/bundle match, else unique title/bundle/identifier/role/subrole fallback with hard-collision guard and ambiguous skip); fixed E
+  has no size predicate so a matched E restores into its saved strip position in saved order with Unmanaged cleared while an unmatched E follows role-gated fresh admission (float only if
+  rule-assigned). Widths are not persisted and re-derive from the live OS frames, so exact widths TBD (fixture: live-frame values unstated; runtime: AX settle timing, live-only). Closed E is absent from matching (ignored-missing). Missing/corrupt/version-mismatched state files all load as absent, so matching falls back to fresh admission; stored-ID mismatches resolve through the fallback/ambiguous/ignored gates with no further counterpart. Restore writes no focus; focus TBD (host: post-restart active window). `S(S-pan-rst)` + `S(S-pan-admit)` + `S(S-pan-fresh)`; focus queued (host), widths queued (fixture+live).
 - Then Ours KDE: startup foreground/hidden adoption floats fixed E;
   fixed-window user tile overrides persist across owner restart in the
   same intentional-float store, recompute fallback if missing/degraded/unmatched

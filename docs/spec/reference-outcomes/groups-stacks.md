@@ -121,9 +121,11 @@ evidence.
   focus-taker update); then leaves via `windowMoveRight` (shared-column
   window to a new own column, source retains `[A,C]`). Visible heights
   apply at shipped defaults (stacked display off). `S(S-kar-grpmove)`.
-- Then paneru: TBD (`Swap` peer and Stack/Tabs join/leave outcome
-  untraced; directional `Focus`/`Swap` inventory does not settle
-  membership/order). `S(S-pan-cmds)` + `S(S-pan-model)`; queued.
+- Then paneru: joins via `Stack(true)` on focused B into the left column
+  appended last as `Stack[A,C,B]` with B staying focused (no focus write);
+  then leaves via `Stack(false)` to a new own column right of the retained
+  `Stack[A,C]` with B staying focused; each step reshuffles around B.
+  `S(S-pan-stack)` + `S(S-pan-colops)`.
 - Then Ours KDE: fixture-inapplicable (no tab/stack carrier in the Engine
   `Node` model and no semantic join/leave verb in any Engine layer, so
   neither leg has a faithful start). `S(S-ours-grp)`.
@@ -178,8 +180,10 @@ evidence.
   through the host activation path; visible heights redistribute while
   the stacked variant keeps overlapping arrange. `S(S-kar-grpmove)` +
   `S(S-kwin-scriptact)`.
-- Then paneru: TBD (Stack/Tabs member removal plus active-index/focus
-  fixup untraced). `S(S-pan-model)` + `S(S-pan-cmds)`; queued.
+- Then paneru: the all-visible Stack column is retained as `[A,C]`
+  (member splice, no tab bar to update); focus falls to A (the sole
+  remaining column top under the nearest-center give-away with a single
+  candidate, not MRU C). `S(S-pan-model)` + `S(S-pan-close)`.
 - Then Ours KDE: fixture-inapplicable (no tab/stack carrier in the Engine
   `Node` model, so the `S` start has no counterpart; ordinary close stays
   R-CLOSE). `S(S-ours-grp)`.

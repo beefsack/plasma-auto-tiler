@@ -37,7 +37,9 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then PaperWM: registered `move-down` binds same-space `swap`; B is the sole row of C3, so the down step is out-of-range and returns with B staying (no model or selection change). `S(S-pap-moveverbs)` + `S(S-pap-swap)`.
 - Then karousel/Lazy: B is the sole window, so `windowMoveDown` is a
   no-op and B stays. `S(S-kar-move)`.
-- Then paneru: TBD; south peer resolution untraced. `S(S-pan-move)`.
+- Then paneru: B stays (Single-column B has no South peer; single output,
+  so no display fall-through); tree and focus unchanged.
+  `S(S-pan-swap-peer)` + `S(S-pan-swap)`.
 - Then Ours KDE: `V[H[A,C],B]` R1 via shared Engine; selected `D(D-dec-cos)`
 - Then Ours Windows: `V[H[A,C],B]` R1 via shared Engine; selected `D(D-dec-cos)`
 - Variant hook: V-MOVE-PERP.
@@ -188,7 +190,9 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then PaperWM: registered `move-left` binds same-space `swap`; A is the first column, so the left step is out-of-range and returns with A staying. `S(S-pap-moveverbs)` + `S(S-pap-swap)`.
 - Then karousel/Lazy: no left column on the single-window path, so the
   move returns without acting and A stays. `S(S-kar-move)`.
-- Then paneru: TBD; west peer resolution untraced. `S(S-pan-move)`.
+- Then paneru: A stays (first-column A has no West peer; West/East never
+  cross displays); tree and focus unchanged. `S(S-pan-swap-peer)` +
+  `S(S-pan-swap)`.
 - Then Ours KDE: Local R1/R2/R3 first; no adjacent output in this fixture means
   no-op. Exhausted R4 otherwise crosses in all four directions, never cycles
   workspaces; [item-5 offline record](../../changes/archive/four-direction-output-transfer.md).
@@ -247,7 +251,10 @@ ancestry claims. Ours cells cite the Engine move rules at `9241c94`
   `S(S-pap-moveverbs)` + `S(S-pap-swap)` + `S(S-pap-move)`.
 - Then karousel/Lazy: A joins C2 at the bottom via the single-window path.
   `S(S-kar-move)`.
-- Then paneru: TBD; east peer resolution untraced. `S(S-pan-move)`.
+- Then paneru: C1 moves after C2 (East resolves to the right neighbour B,
+  top of the B/C stack via at-or-last); columns exchange with focus staying
+  on A (no focus write in the swap path). `S(S-pan-swap-peer)` +
+  `S(S-pan-swap)`.
 - Then Ours KDE: A leaves the root and enters V at index 1; tree
   `V[B,A*,C]`, focus A. `S(S-ours-move)`.
 - Then Ours Windows: same `V[B,A*,C]` insert as Ours KDE via the shared
@@ -340,7 +347,11 @@ ancestry claims. Ours cells cite the Engine move rules at `9241c94`
 - Then PaperWM: verb-distinguished. Same-space `move-up` is `swap` edge no-op (A is the first row of C1, out-of-range returns) so A stays in L; explicit `move-monitor-above` carries via `switchMonitor` neighbor index (-1 stays) to U with focus. `S(S-pap-moveverbs)` + `S(S-pap-mon)`.
 - Then karousel/Lazy: fixture-inapplicable for cross-output (single-screen
   profile). `S(S-kar-base)`.
-- Then paneru: TBD; up-crossing peer resolution untraced. `S(S-pan-move)`.
+- Then paneru: A has no North peer (stack-top, nothing above), so the
+  no-peer fall-through carries A to U via `ToNextDisplay` (Follow): A appends
+  after X on U's selected strip with width-ratio preserved and the mouse
+  warped; focus stays A; source collapses to B. `S(S-pan-swap-peer)` +
+  `S(S-pan-swap)` + `S(S-pan-display)`.
 - Then Ours KDE: A crosses up after local exhaustion; source becomes B,
   destination `V[X,A*]` places A nearest the source. Full-rectangle adjacency,
   work-area placement and arrival/follow fences delivered offline;
@@ -390,7 +401,9 @@ expansion record; outcomes are qualified legs, not second scenarios.
 - Then karousel/Lazy: no-counterpart (window/column moves in
   `S(S-kar-move)` plus the focus verbs in `S(S-kar-focus)` list no swap
   verb).
-- Then paneru: TBD; south peer resolution untraced. `S(S-pan-move)`.
+- Then paneru: B stays (Single-column B has no South peer; single output,
+  so no display fall-through); tree and focus unchanged.
+  `S(S-pan-swap-peer)` + `S(S-pan-swap)`.
 - Then Ours KDE: no-counterpart (every `MoveOperation` is directional;
   exchange occurs only as R2a inside a directional move).
   `S(S-ours-move)`.
@@ -425,7 +438,9 @@ expansion record; outcomes are qualified legs, not second scenarios.
 - Then PaperWM: the registered `move-right` IS the swap verb (same-space `swap`); columns C2/C3 exchange (order A,C,B,D) with the selection staying on B, followed by layout and forced viewport. `S(S-pap-moveverbs)` + `S(S-pap-swap)`.
 - Then karousel/Lazy: no-counterpart (same verb inventories list no swap
   verb). `S(S-kar-move)` + `S(S-kar-focus)`.
-- Then paneru: TBD; east peer resolution untraced. `S(S-pan-move)`.
+- Then paneru: B swaps east with C (columns C2/C3 exchange, order A,C,B,D);
+  focus stays B (no focus write in the swap path). `S(S-pan-swap-peer)` +
+  `S(S-pan-swap)`.
 - Then Ours KDE: no-counterpart (same directional-only operation
   inventory). `S(S-ours-move)`.
 - Then Ours Windows: no-counterpart; no standalone swap verb in the shared

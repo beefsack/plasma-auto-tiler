@@ -127,8 +127,12 @@ sandboxed route exposes the workspace-level marker only.
   `SwitchToOtherDesktop`. The row fixes no message timestamp, and
   karousel itself contributes no request route beyond observing
   host `windowActivated`). `S(S-kwin-act)`; queued.
-- Then paneru: TBD (no activation/urgency request path traced).
-  Queued.
+- Then paneru: TBD (no activation/urgency request path in the pinned
+  source: the `Operation` inventory carries no request/mark verb and
+  cross-strip listing/activation is macOS-owned, so whether hidden B's
+  request switches to WS1 with B focused vs marks vs denies rides
+  opaque host WindowServer/AppKit policy). `S(S-pan-cmds)` +
+  `S(S-pan-switcher)`; queued (host).
 - Then Ours KDE: TBD (Engine `sync_focus_from_window` covers
   ordinary activation of a known window; unsolicited
   cross-workspace request routing, switch vs marker, untraced;
@@ -220,7 +224,13 @@ sandboxed route exposes the workspace-level marker only.
   `demandAttention(false)`. Karousel itself contributes no
   mark/clear path and only observes host `windowActivated`.
   `S(S-kwin-act)`.
-- Then paneru: TBD (no urgency mark/clear path traced). Queued.
+- Then paneru: TBD (no urgency mark/clear path in the pinned source:
+  no mark/clear verb in the `Operation` inventory and no
+  activation-request/urgency-mark event in the `Event` window
+  inventory; user focus follows only via the guarded host
+  `WindowFocused` path with frontmost/app-reported guards, but whether
+  a marker exists to clear rides opaque host policy). `S(S-pan-cmds)` +
+  `S(S-pan-focusobs)`; queued (host).
 - Then Ours KDE: TBD (the Engine resyncs focus on ordinary
   activation of a known window; the KDE observer exposes no
   attention/urgency signal and the adapter actuates `setActive`

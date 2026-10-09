@@ -62,8 +62,9 @@ assertions are never evidence.
   topmost (`sortWindows` last), i.e. last-activated member.
   `S(S-pap-focus)`.
 - Then karousel/Lazy: run 1 B, run 2 A. `focusLeft` takes the left column's `getWindowToFocus` (focus-taker else first); each history run's last C1 focus writes that column's focus-taker (B after A,B,C; A after B,A,C), retained across the C focus. `S(S-kar-focus)` + `S(S-kar-fltanchor)`.
-- Then paneru: TBD (directional `Focus` traversal untraced).
-  `S(S-pan-cmds)`; traversal queued.
+- Then paneru: A in both runs. `Focus` West from C takes the left column's
+  position-matched member (A); the path consults strip order only, never
+  history. `S(S-pan-focus)` + `S(S-pan-swap-peer)` + `S(S-pan-cmds)`.
 - Then Ours KDE: A in both runs. Perpendicular V descends to its first
   child; the Engine dispatches focus to A and the adapter calls
   `setActive`. `S(S-ours-focus)`.
@@ -106,7 +107,9 @@ assertions are never evidence.
   first column). `S(S-pap-focus)`.
 - Then karousel/Lazy: A retained (no left column returns without
   acting). `S(S-kar-focus)`.
-- Then paneru: TBD (edge behavior untraced). `S(S-pan-cmds)`; queued.
+- Then paneru: A retained (no west peer at the strip edge; West never
+  crosses displays, and this leg has a single output). `S(S-pan-focus)` +
+  `S(S-pan-cmds)`.
 - Then Ours KDE: A retained (`Edge`, no focus write on one output).
   `S(S-ours-focus)`.
 - Then Ours Windows: same Edge-retain leg as Ours KDE via the shared
@@ -211,8 +214,9 @@ assertions are never evidence.
   parent verb). `S(S-pap-focus)`.
 - Then karousel/Lazy: no-counterpart (column/window focus verbs only;
   no parent verb). `S(S-kar-focus)`.
-- Then paneru: TBD (Stack/Column parent-focus outcome untraced).
-  `S(S-pan-model)`; queued.
+- Then paneru: no-counterpart (no parent-focus verb in the `Operation`
+  inventory; containers are never focus targets). `S(S-pan-cmds)` +
+  `S(S-pan-model)`.
 - Then Ours KDE: no-counterpart (leaf-only focus model: `Focused`
   leaf or `Edge`; containers are never focus targets).
   `S(S-ours-focus)`.

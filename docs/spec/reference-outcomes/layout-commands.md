@@ -369,9 +369,9 @@ Reference WM pins and outcomes are unchanged.
   in the Actions inventory); ordinary admission opens a new column after
   the last-focused column with end-insert, newcomer width from its preferred width clamped into [min,max], existing widths stable; newcomer focus TBD (fixture states no protocol, X11 user-time/startup/session, Wayland token/app-id/transient-serial, or FSP/rules inputs selecting the host activation fork); viewport is a deterministic conditional (Lazy minimal scroll toward the last-focused column); exact settled widths TBD (fixture states no newcomer frame/min/max inputs for the clamp). `S(S-kar-acts)` + `S(S-kar-ins)` + `S(S-kar-fltanchor)` + `S(S-kar-scroll)` + `S(S-kar-min)` + `S(S-kwin-manage)` + `S(S-kwin-add)`.
 - Then paneru: no-counterpart for the toggle (no orientation verb in the
-  `Operation` inventory); ordinary admission follows the strip
-  insertion-position policy (focus outcome TBD per the cited leg).
-  `S(S-pan-cmds)` + `S(S-pan-ins)`.
+  `Operation` inventory; nothing written, no saved hint); ordinary admission
+  takes the fresh path with B appended after A as a new Single column and
+  focus synthesized to B. `S(S-pan-cmds)` + `S(S-pan-fresh)` + `S(S-pan-base)`.
 - Then Ours KDE: offline tested toggle no-op, no pending plan or saved hint;
   subsequent wide-area admission uses unchanged horizontal long-edge rule.
   Core wide fixture gives `H[A,B*]` (newcomer desired focus); exact native

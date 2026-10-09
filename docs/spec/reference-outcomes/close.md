@@ -36,7 +36,9 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then karousel/Lazy: B's column destroyed; A,C keep order and widths;
   focus A (left neighbor). `S(S-kar-close)`.
 - Then paneru: entity despawned and stripped with order preserved;
-  focus via nearest-center (exact target TBD without geometry).
+  focus via nearest-center (exact target TBD without geometry: F -
+  fixture gives 0.5W columns with VP recorded but no viewport
+  origin/column centers selecting the A-vs-C pick).
   `S(S-pan-close)`; queued.
 - Then Ours KDE: Leaf removed, C selected as source-MRU top; `D(D-dec-cos)`
 - Then Ours Windows: Leaf removed, C selected as source-MRU top; `D(D-dec-cos)`
@@ -81,9 +83,13 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   `S(S-pap-close)` + `S(S-pap-ins)` + `S(S-pap-resize)`.
 - Then karousel/Lazy: close runs the host KWin path (no close verb in the Actions inventory); B's removal destroys C2 with the last-focused fixup falling to C1, survivors keep their manually resized widths (reposition only, no old-slot store). Reopened B is a new column after the last-focused column at open time (C3 once C is focused, so at the end) with width from its preferredWidth clamped into [min,max]; reopened focus TBD (fixture states no protocol selecting the X11-manage vs Wayland-add fork). `S(S-kar-manual-width)` + `S(S-kar-close)` + `S(S-kar-ins)` + `S(S-kar-min)` + `S(S-kar-fltanchor)` + `S(S-kwin-manage)` + `S(S-kwin-add)`; focus TBD (F: missing protocol selecting the newcomer activation fork).
 - Then paneru: exact ratios prepared via `SetWidth`; survivors keep
-  per-window ratios; reopened B is fresh at rule-index/overlap/end;
-  focus TBD. `S(S-pan-close)` + `S(S-pan-ins)` +
-  `S(S-pan-setwidth)`; queued.
+  per-window ratios; reopened B is fresh at rule-index/after-focus/end
+  (no custom rules under shipped defaults, so no rule index; C focused
+  last so after-focus appends); policy synthesizes `WindowFocused` for
+  the newcomer, but reopened focus TBD (host remainder: physical
+  acceptance rides the guarded host `WindowFocused` follow path with
+  frontmost/app-reported guards). `S(S-pan-close)` + `S(S-pan-ins)` +
+  `S(S-pan-fresh)` + `S(S-pan-focusobs)` + `S(S-pan-setwidth)`; queued.
 - Then Ours KDE: TBD (close/reopen ratio memory and focus not checked here)
 - Then Ours Windows: TBD (close/reopen ratio memory and focus not checked here)
 - Variant hook: V-CLOSE-FOCUS.
@@ -157,7 +163,12 @@ is the observation-driven proposal, never the native verb.
 - Then karousel/Lazy: last column destroyed, grid empty, desktop
   retained; focus none (no column to focus). `S(S-kar-close)`.
 - Then paneru: row 0 retained (orphan reaping spares it); entity
-  despawned and stripped; exact focus TBD. `S(S-pan-close)`; queued.
+  despawned and stripped; WM writes no focus (no neighbor for
+  `give_away_focus`); observed focus TBD (host remainder: host decides
+  focus after close - whether another app/Space or none - and paneru
+  follows only if the host reports `WindowFocused` via the guarded
+  follow path; second Space occupied as context, not a proven handoff).
+  `S(S-pan-close)` + `S(S-pan-focusobs)`; queued.
 - Then Ours KDE: Engine collapses the domain to empty with desired
   focus none; adapter retires applied scope at the remove-empty
   boundary; native focus journey TBD. `S(S-ours-close)`; queued.
@@ -201,8 +212,9 @@ is the observation-driven proposal, never the native verb.
   untouched; shell focus fallback TBD. `S(S-pap-close)`; queued.
 - Then karousel/Lazy: floats live outside grid columns so tiles are untouched; `Floating.destroy` ignores the close passFocus, so the script writes no focus on the float-close path (the tiled anchor stays at B's column); the host close runs `activateNextWindow` into the MRU focus-chain usable pick (history A,B,F minus removed F, so B) through the reasonable-policy `requestFocus` gates. `S(S-kar-float)` + `S(S-kar-close)` + `S(S-kar-fltanchor)` + `S(S-kwin-close)` + `S(S-kwin-scriptact)`.
 - Then paneru: entity despawned and stripped with A/B columns
-  untouched; exact focus TBD (nearest-center, geometry-dependent).
-  `S(S-pan-close)`; queued.
+  untouched; exact focus TBD (nearest-center, geometry-dependent: F -
+  fixture gives no column centers/viewport origin selecting the A-vs-B
+  pick). `S(S-pan-close)`; queued.
 - Then Ours KDE: Engine drops the float exception with the tree
   untouched and preserves B focus; adapter native journey TBD.
   `S(S-ours-close)` + `S(S-ours-flt-target)`; queued.

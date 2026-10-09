@@ -1973,9 +1973,11 @@ Legend:
 - `S-pan-fsfocus` paneru:src/commands.rs:292-318 (West focus on a native-
   fullscreen space raises the last column top instead of traversing) +
   src/ecs/workspace.rs:267-287 (native fullscreen pins a `Fullscren`
-  strip with a restore marker)
+  strip with a restore marker) and :400-453 (`SpaceDestroyed` reinserts
+  the fullscreen window at the marker index with reshuffle and despawns
+  the strip; no focus write)
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
-  (fullscreen focus branch; exit journey untraced)
+  (fullscreen focus branch plus exit restore)
 - `S-pan-mouse` paneru:src/ecs/mouse.rs:100-180 (`mouse_moved_trigger`
   focuses the window under the cursor when FFM is enabled, 50ms
   throttle; interaction-tested) and :207-253 (`mouse_down_trigger`
@@ -1987,6 +1989,15 @@ Legend:
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
   (hover focus plus click reshuffle plus modifier resize; host
   click-focus and pointer-drag journeys stay TBD)
+- `S-pan-focusobs` paneru:src/ecs/triggers.rs:230-312
+  (`window_focused_trigger` host-follow path: frontmost guard,
+  app-reported window wins, Hidden unhide re-trigger, restore-guard
+  absorb, already-focused short-circuit) + src/events.rs:52-113
+  (`Event` window inventory: `WindowFocused` host-follow only, no
+  activation-request/urgency-mark event)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (host-observed focus follow with guards; activation/urgency marker
+  policy stays host-owned)
 - `S-ours-focus` plasma-auto-tiler:crates/tiler-core/src/directional.rs:50-64
   (axis/step for direction) and :1068-1135 (`descend_focus_target`
   plus `plan_focus`: matching-axis climb, same-axis edge child else
@@ -2500,17 +2511,21 @@ Legend:
 - `S-pan-spc` paneru:src/manager/windows.rs:230-262 (AXUnknown and
   non-real role/subrole windows ignored; forced-manage rule override)
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
-  (role-gated management; transient/dialog/splash outcomes stay TBD)
+  (role-gated management; non-standard dialog/transient/splash subroles
+  skipped unless forced; no transient/parent/modal branch)
 - `S-pan-admit` paneru:src/manager/windows.rs:291-301 (`is_real` is
   standard-subrole or window-role plus floating-subrole; no size
   predicate) + src/ecs.rs:838-856 (`WindowProperties::floating` is
   rule-configured, never hint-derived) + src/ecs/triggers.rs:1472
   (non-resizable/minimum-width surfaces only as a runtime resize-failure
-  observation, never an admission classifier)
+  observation, never an admission classifier) + src/ecs/systems.rs:786-895
+  (`window_resized_update_frame`/`window_moved_update_frame`: live frame
+  re-read into Bounds/Position with strip nudge, floating leave-alone,
+  own-echo skip; no re-float or reclassification)
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
   (no fixed-size admission counterpart: AX exposes no min/max hint
   equality, so fixed-hint fixtures cannot classify; rule-assigned float
-  only)
+  only; app-owned geometry observed with no re-float)
 - `S-ours-spc-kde` KDE observer gate at this HEAD:
   plasma-auto-tiler:kwin/src/plan-adapter-entry.ts:781 (non-`normalWindow`
   snapshots skipped before observation) + kwin/src/kwin-globals.d.ts:131
@@ -3193,10 +3208,16 @@ Legend:
   South steps or auto-creates, `First`/`Last` jump, `VirtualNumber`
   spawns the absent strip) and :1040-1120 (relative move with
   `MoveFocus` Follow/Stay; South needs len>1, North stops at 0) and
-  :125-141 (`PreviousStripPosition` plus remembered-window restore
-  guard) and :1120-1145 (center-column fallback for never-focused
-  strips) and :1351-1390 (empty-row reaping, never index 0) +
-  src/config.rs:815-819 (`reap_empty_workspaces` defaults off) +
+  :660-835 (`handle_virtual_window_moves`: tab-group carry, mid-strip
+  gate else strip-end append, missing-row creation, empty-source Follow,
+  Follow/Stay focus) and :125-141 (`PreviousStripPosition` plus
+  remembered-window restore guard) and :1120-1145 (center-column fallback
+  for never-focused strips) and :1144-1300 (`show_active_workspace` parks
+  other strips and restores the remembered strip focus with a raise) and
+  :1351-1383 (empty-row reaping, never
+  index 0) + src/ecs/layout.rs:970-981 (`tab_group` single-window
+  passthrough) + src/config.rs:815-819 (`reap_empty_workspaces` defaults
+  off) + src/config.rs:860-866 (`insert_windows_mid_strip` defaults off) +
   src/config.rs:868-872 (`create_virtual_workspace_automatically`
   defaults off) + `S(S-pan-cmds)` (no history verb; `Virtual` is directional)
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
@@ -3380,8 +3401,8 @@ Legend:
   `PreviousManagedStrip` index, else active-strip overlap/end) and :990-1040
   (`give_away_focus`: nearest-center neighbor, else any other column) and
   src/ecs.rs:857-859 (`WindowProperties.insertion`: rule `index` override,
-  None under shipped defaults) and src/types/state.rs:126 (on-screen check
-  excludes minimized) and src/types/commands.rs:220-275 (`Operation`
+  None under shipped defaults) and src/ecs/state.rs:587-589
+  (Minimized/Hidden never on screen) and src/types/commands.rs:220-275 (`Operation`
   inventory at pin lists no minimize verb) @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
   (minimize-mark path; old-slot restore only same-workspace without an
   insertion override; strip reflow and focus target stay TBD)
@@ -3580,6 +3601,33 @@ Legend:
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
   (detection/grouping plus newcomer focus; width stability and tab
   selection remainders stay TBD)
+- `S-pan-stripwidth` paneru strip width policy:
+  paneru:src/ecs/layout.rs:293-301 (`Column::width` is the widest member
+  frame) and :923-939 (`column_positions` accumulates member widths with
+  no cross-column rescale) + src/ecs/triggers.rs:1115-1116 (newcomer
+  `WidthRatio` from its OS frame width) and :1194-1215 (no-rule windows
+  keep that ratio; rule widths apply only with a matching rule)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (newcomer takes its own frame width; existing columns keep widths;
+  exact pixels need the newcomer frame)
+- `S-pan-focus` paneru directional focus traversal:
+  paneru:src/commands.rs:279-398 (`command_move_focus`: East/West strip
+  neighbours via `get_window_in_direction`, North/South inside a `Stack`
+  column only, no wrap; off-strip focus enters from the directional edge;
+  N/S display fall-through only; `reshuffle_around` the target) and
+  :135-175 (peer resolution per `S(S-pan-swap-peer)`) +
+  src/ecs/focus.rs:310-345 (focus exposes via `reshuffle_around`;
+  `auto_center` off by default per `S(S-pan-colops)`)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (strip-order traversal with no history consult; settled offsets stay TBD)
+- `S-pan-stack` paneru stack join/leave focus:
+  paneru:src/commands.rs:1422-1459 (`stack_windows_handler`: the focused
+  window merges left/splits right with no focus write, then reshuffles
+  around it) + src/ecs/layout.rs:702-746 (`stack` appends the mover last;
+  leftmost no-op) and :758-806 (`unstack` restores the mover to an
+  adjacent own column right of the survivors)
+  @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (membership/order plus focus-retention legs)
 
 - `S-bsp-stack` bspwm:src/stack.c:135-187 (`limit_above`/`limit_below`
   plus `stack`: focused nodes take the above branch with `window_above`,
@@ -3735,10 +3783,16 @@ Legend:
   membership) and :458-500 (`RaiseFloating` focuses last-floating and
   raises others in-tier; AX raise needs app-frontmost) +
   src/types/commands.rs:220-280 (`Manage` toggle plus `FocusUnmanaged`/
-  `FocusManaged`/`RaiseFloating`/`FloatingLayer`) + src/ecs/triggers.rs:359-360
-  (per-workspace focus-history record)
+  `FocusManaged`/`RaiseFloating`/`FloatingLayer`) + src/commands.rs:1002-1051
+  (`Manage` toggles `Unmanaged::Floating` on the focused window with no
+  focus write; unfloat placement rides `window_managed_trigger` per
+  `S(S-pan-ins)`) + src/ecs/triggers.rs:359-360
+  (per-workspace focus-history record) and :600-670
+  (`window_unmanaged_trigger`: floating drops strip membership, closing
+  the column gap)
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
-  (float model and raise semantics; arbitrary-F raise untraced)
+  (float model, toggle and raise semantics; arbitrary-F raise and lower
+  have no verb path)
 - `S-ours-fltrefuse` shared Engine float refusal:
   plasma-auto-tiler:crates/tiler-core/src/session/ops/resize.rs:102-104
   (keyboard resize refuses exceptions as `NotTiled`) and :454-456
@@ -4085,11 +4139,17 @@ Legend:
   (live-only Grid state; disable+enable recovery untraced)
 - `S-pan-rst` paneru:src/ecs/restore.rs:28-60 (`SessionRestore` state
   plus grace timer) and :371-400 (`matches_startup_restore_state`
-  gated on `restore_enabled`) + src/config.rs:690-712
+  gated on `restore_enabled`) + :246-287 (planner hard match plus
+  unique title/bundle/identifier/role/subrole fallback with hard-collision
+  guard plus ambiguous skip) + :482-561 (consumed-entity `Unmanaged`
+  clear plus saved-strip rebuild with display remap) + src/config.rs:690-712
   (`restore_enabled` defaults true, grace default 2000ms) +
   src/ecs/triggers.rs:1064-1152 (`spawn_window_trigger` startup
   matching against the restore resource) + src/ecs/state.rs:26,301-323
   (`state.json` atomic save, version-gated load and XDG state path) and
+  :83-96 (`SavedWindow` identity only: window_id/pid/psn/bundle/title/
+  identifier/role/subrole; no frame/focus/float member) and
+  :197-248 (extract saves strip columns only) and
   :799-826 (periodic and AppExit saves) + src/ecs.rs:175,792
   (periodic save registration and startup load)
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269

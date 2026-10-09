@@ -60,10 +60,14 @@ Column legs below use separately stated column Givens with the same identities a
   non-tileable windows enter the floating list, so the toggle has no
   faithful subject). `S(S-pap-float)`.
 - Then karousel/Lazy: B flips to `Floating` (no keepAbove at the shipped default; height capped by the toggle-time limit); C2 is destroyed with the last-focused fixup falling to C1, survivors keep widths (reposition only, so no reflow). Unfloat re-tiles into a new column after the last-focused column (C1, so between A and C) with width from B's preferredWidth clamped into [min,max]; neither leg issues a script focus write, so KWin focus stays B. `S(S-kar-float)` + `S(S-kar-acts)` + `S(S-kar-ins)` + `S(S-kar-close)` + `S(S-kar-min)` + `S(S-kar-fltanchor)`.
-- Then paneru: `Manage` toggles B to `Unmanaged::Floating` (native
-  frame; survivors TBD); unfloat re-inserts at the remembered strip
-  index (`PreviousManagedStrip`); focus TBD. `S(S-pan-flt)` +
-  `S(S-pan-ins)`; focus queued.
+- Then paneru: `Manage` toggles B to `Unmanaged::Floating`, dropping
+  B's strip membership and closing the column gap while survivors keep
+  their widths (no cross-column rescale); unfloat removes the mark and
+  re-inserts into the active strip at the visually overlapped column,
+  else at the end (floats record no `PreviousManagedStrip`, and no rule
+  insertion applies under shipped defaults). Neither leg issues a focus
+  write, so focus stays B. `S(S-pan-flt)` + `S(S-pan-ins)` +
+  `S(S-pan-stripwidth)`.
 - Then Ours KDE: leaves tree, siblings reflow; first float centered 60%, then retained frame; unfloat fresh admission, focus retained; `D(D-dec-ww)`
 - Then Ours Windows: same leaves-tree/reflow/frame/admission/focus leg as KDE (`D(D-dec-ww)` shared), plus keep-above preimages; behavior rows user-owned `D(D-float)`
 - Variant hook: V-FLOAT-GEO.
@@ -145,8 +149,9 @@ Column legs below use separately stated column Givens with the same identities a
   state/action variant assessed in R-FLT-02. `S(S-pap-float)`.
 - Then karousel/Lazy: B/C keep independent column widths 576/384
   (removal shifts positions, not survivor widths). `S(S-kar-float)`.
-- Then paneru: TBD (column-removal width path untraced).
-  `S(S-pan-model)`; queued.
+- Then paneru: B/C keep their independent widths 576/384 (floating A
+  out drops its column with no survivor rescale). `S(S-pan-flt)` +
+  `S(S-pan-stripwidth)`.
 - Then Ours KDE: TBD (Engine removal reflow not checked here)
 - Then Ours Windows: TBD (Engine removal reflow not checked here)
 - Variant hook: V-FLOAT-REFLOW.
@@ -328,8 +333,8 @@ Column legs below use separately stated column Givens with the same identities a
 - Then karousel/Lazy: A. Focus verbs dispatch tiled-only
   (`doIfTiledFocused`); the left column's single window takes focus.
   `S(S-kar-focus)`.
-- Then paneru: TBD (directional `Focus` traversal from a tiled subject
-  with a floating present untraced). `S(S-pan-cmds)`; queued.
+- Then paneru: A; F is off-strip so never a strip peer for the West
+  step. `S(S-pan-cmds)` + `S(S-pan-focus)` + `S(S-pan-flt)`.
 - Then Ours KDE: KDE/Windows: A; ordinary/sticky F has no tile leaf, hence never a target; unchanged, KDE regression `D(D-float-nav)` + `S(S-ours-flt-target)`
 - Then Ours Windows: KDE/Windows: A; ordinary/sticky F has no tile leaf, hence never a target; unchanged, KDE regression `D(D-float-nav)` + `S(S-ours-flt-target)`
 - Variant hook: V-FLOAT-FOCUS.
@@ -369,8 +374,9 @@ Column legs below use separately stated column Givens with the same identities a
   tiled selection. `S(S-pap-float)`; selection queued.
 - Then karousel/Lazy: F retained. Focus verbs dispatch tiled-only, so a
   float-origin step is a no-op. `S(S-kar-focus)`.
-- Then paneru: TBD (directional `Focus` from an unmanaged subject
-  untraced). `S(S-pan-cmds)`; queued.
+- Then paneru: F retained; float-origin focus searches visible floats
+  only, and with no other float there is no target and no tile
+  fallback. `S(S-pan-cmds)` + `S(S-pan-flt)`.
 - Then Ours KDE: F retained, no local float or adjacent output, tiles excluded; ordinary/sticky same; offline `D(D-float-nav)`, live TBD
 - Then Ours Windows: existing `focus-refused-floating` / `focus-refused-sticky`; parity pending; `S(S-ours-flt-subject)`
 - Variant hook: V-FLOAT-FOCUS.
@@ -412,8 +418,9 @@ Column legs below use separately stated column Givens with the same identities a
 - Then karousel/Lazy: F retained. Float-origin focus is a tiled-only
   no-op, so neither the nearer tile nor G is targeted.
   `S(S-kar-focus)`.
-- Then paneru: TBD (directional `Focus` float-to-float search untraced).
-  `S(S-pan-cmds)`; queued.
+- Then paneru: G by the float cone search (F center 650 vs G center
+  1950, positive-delta nearest); tiles excluded. `S(S-pan-cmds)` +
+  `S(S-pan-flt)`.
 - Then Ours KDE: G by top-left x delta; ordinary/sticky share candidates, nearer B excluded; offline `D(D-float-nav)`, live TBD
 - Then Ours Windows: F retained, existing subject refusal; parity pending; `S(S-ours-flt-subject)`
 - Variant hook: V-FLOAT-FOCUS.
@@ -458,8 +465,10 @@ Column legs below use separately stated column Givens with the same identities a
 - Then karousel/Lazy: F retained floating. Semantic moves dispatch
   tiled-only (`doIfTiledFocused`); no snap state exists.
   `S(S-kar-move)` + `S(S-kar-focus)`.
-- Then paneru: TBD (`Swap` same-strip exchange inventoried; float-subject
-  result untraced). `S(S-pan-move)`; queued.
+- Then paneru: F stays floating at its frame; the focused float has no
+  strip index so the same-strip exchange finds no peer, and East never
+  falls through to another display. `S(S-pan-move)` + `S(S-pan-swap)` +
+  `S(S-pan-swap-peer)` + `S(S-pan-flt)`.
 - Then Ours KDE: right-half `(1280,0,1280,1440)`, remains floating/focused, sticky same; signal/reconcile retention regression `D(D-float-nav)`, live TBD
 - Then Ours Windows: existing `move-refused-floating` / `move-refused-sticky`; parity pending; `S(S-ours-flt-subject)`
 - Variant hook: V-FLOAT-SNAP.
@@ -497,8 +506,9 @@ Column legs below use separately stated column Givens with the same identities a
   `S(S-pap-float)` + `S(S-pap-moveverbs)`.
 - Then karousel/Lazy: both legs no-op, stays floating. Tiled-only move
   verbs never engage; no snap state exists. `S(S-kar-move)`.
-- Then paneru: TBD (same swap inventory as R-FLT-10; snap state
-  untraced). `S(S-pan-move)`; queued.
+- Then paneru: both legs no-op, stays floating; same missing-peer path
+  as R-FLT-10 with no snap state in the swap path. `S(S-pan-move)` +
+  `S(S-pan-swap)` + `S(S-pan-swap-peer)` + `S(S-pan-flt)`.
 - Then Ours KDE: top half `(0,0,2560,720)`, remains floating/focused, sticky same; stateless subset tested `D(D-float-nav)`; stateful transitions deferred, live TBD
 - Then Ours Windows: implementation pending
 - Variant hook: V-FLOAT-SNAP.
@@ -580,10 +590,11 @@ applicable unknowns are queued, evidenced absent verbs are not.
   host Meta stacking, untraced at pin: stacking TBD (host).
   `S(S-pap-float)` + `S(S-pap-acts)`; stacking queued (host).
 - Then karousel/Lazy: TBD (the complete Actions/definition inventory lists no raise/lower verb, so neither step has a script path; host raise rides KWin `activateWindow` raise per `S(S-kwin-scriptact)` but the step producer selecting activation vs another raise path is unstated for this profile, and no lower path is selected). `S(S-kar-acts)` + `S(S-kar-float)` + `S(S-kwin-scriptact)`; producer TBD (F: missing step raise/lower producer selecting the host path).
-- Then paneru: TBD (`RaiseFloating` focuses the last-floating window and
-  raises the other visible floats within the tier, so it does not settle
-  raising an arbitrary F; AX raise couples with app-frontmost per the
-  deliberate comment; no lower verb). `S(S-pan-flt)`; queued.
+- Then paneru: no-counterpart - `RaiseFloating` focuses the
+  last-floating window while raising the other visible floats, so
+  raising an arbitrary F has no verb path (AX raise further couples with
+  app-frontmost per the deliberate comment), and the `Operation`
+  inventory lists no lower verb. `S(S-pan-flt)` + `S(S-pan-cmds)`.
 - Then Ours KDE: activating F dispatches exactly one `setActive` and the
   adapter keeps project floats keep-above; relative F/G order is host
   stacking and TBD. Lower has no path (unfloat only restores the prior
@@ -668,10 +679,12 @@ applicable unknowns are queued, evidenced absent verbs are not.
   Float z-order is unwritten by the switch: TBD (host). `S(S-pap-float)`
   + `S(S-pap-wssel)` + `S(S-pap-layout)`; visibility queued (host).
 - Then karousel/Lazy: F hidden while away (KWin desktops own windows; Floating subscribes to tile/frameGeometry only, so a float never transfers grids on the switch that only re-arranges); frame retained (no float-frame write on the switch path; keepAbove written only at toggle time, off by default); return focuses F via the native switch MRU chain (shipped ClickToFocus is reasonable with `NextFocusPrefersMouse` false, so no mouse contest; WS1 MRU is F). `S(S-kar-ws)` + `S(S-kar-float)` + `S(S-kar-fltanchor)` + `S(S-kwin-switch)`.
-- Then paneru: F hidden while away (floats filtered by workspace
-  membership); frame TBD (native, untraced); focus returns via the
-  per-workspace focus history plus remembered-position restore guard.
-  `S(S-pan-flt)` + `S(S-pan-ws)`; frame queued.
+- Then paneru: F stays visible while away (virtual-row switches park
+  strips only; the off-strip float keeps its native-space membership, so
+  no hide runs); frame retained (no switch-time float write). Z-order TBD
+  (host; return raises the restored managed window with its strip). On return focus goes to the strip's restored managed
+  window, not F (only strip members can hold the remembered restore
+  focus). `S(S-pan-flt)` + `S(S-pan-ws)`.
 - Then Ours KDE: visibility, frame/order and return focus TBD (adapter
   writes desktop membership, but the native select journey is untraced).
   `S(S-ours-ws)`; native journey queued.

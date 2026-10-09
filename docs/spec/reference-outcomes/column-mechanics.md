@@ -50,9 +50,7 @@ off, append admission (`S(S-pan-base)`).
   widths, newcomer focus and viewport stay TBD. `S(S-nir-ins)`; queued.
 - Then PaperWM: D opens as a new column at selected+1 (between B and C) under the shipped RIGHT default, activated on show with inactive-space no-steal; existing columns keep widths (no rescale) and the viewport keeps D visible via minimal ensuredX scroll under DEFAULT. `S(S-pap-ins)` + `S(S-pap-layout)` + `S(S-pap-view)`.
 - Then karousel/Lazy: new column after the last-focused column (B's C2 column under the B* tiled focus, so between B and C), window appended at the bottom; existing columns keep widths (newcomer width from its preferred width clamped into [min,max]; `columnsSetX` repositions only); newcomer focus TBD (fixture states no protocol, X11 user-time/startup/session, Wayland token/app-id/transient-serial, or FSP/rules inputs selecting the host activation fork); viewport is a deterministic conditional (Lazy minimal scroll toward the last-focused column: moves only if the newcomer is accepted and not contained); exact settled widths TBD (fixture states no newcomer frame/min/max inputs for the clamp). `S(S-kar-ins)` + `S(S-kar-fltanchor)` + `S(S-kar-scroll)` + `S(S-kar-min)` + `S(S-kwin-manage)` + `S(S-kwin-add)`.
-- Then paneru: reinsertion at the remembered strip index, else the
-  active strip at the configured insertion index, else overlap/end,
-  then reshuffle. Focus stays TBD. `S(S-pan-ins)`; queued.
+- Then paneru: ordinary D takes the fresh path as a new Single column at index 2 between B and C (no rule index under shipped defaults; focused B at index 1 of 3, so the after-focus slot hits); newcomer focus is synthesized to D; existing columns keep widths with no rescale; the viewport reshuffles minimally toward D with no centering. `S(S-pan-fresh)` + `S(S-pan-base)` + `S(S-pan-stripwidth)` + `S(S-pan-colops)`.
 - Then Ours KDE: no-counterpart: Engine has no column/strip admission;
   `Node` is Leaf or split-axis Group only. `S(S-ours-planops)` +
   `S(S-ours-grp)`.
@@ -144,7 +142,10 @@ off, append admission (`S(S-pan-base)`).
   focus-taker fixup. `S(S-kar-grpmove)`.
 - Then paneru: `Stack(true)` merges B's column into the left neighbor;
   `Stack(false)` splits B back to an adjacent own column. Visible
-  split-vs-tabbed allocation stays TBD. `S(S-pan-colops)`; queued.
+  allocation is a split display (on this non-tabbed fixture neither
+  path enters the `tabbed_stacks` branch; tabbed display needs the
+  separate `ToggleTabbedDisplay` verb, off by default); focus is retained on both steps (neither path writes focus).
+  `S(S-pan-colops)` + `S(S-pan-stack)`.
 - Then Ours KDE: no-counterpart: directional move only, no
   consume/expel or tab carrier. `S(S-ours-move)` + `S(S-ours-grp)`.
 - Then Ours Windows: no-counterpart: same Engine; no consume/expel
@@ -318,9 +319,12 @@ off, append admission (`S(S-pan-base)`).
 - Then karousel/Lazy: `columnMoveToDesktop` moves the whole column
   object to the target grid appended after its last column.
   `S(S-kar-ws)`.
-- Then paneru: virtual-row move carries the window's tab group,
-  appending (or the mid-strip slot under the named option); stack
-  atomicity and follow focus stay TBD. `S(S-pan-colops)` + `S(S-pan-ws)`; queued.
+- Then paneru: virtual-row move carries only the window's native tab group
+  (`tab_group`, else the single window), appending (or the mid-strip slot
+  under the named option, off by default); visible-Stack mates stay behind,
+  so whole-column transfer is not atomic (a native Tabs group moves together).
+  Follow focus stays TBD (fixture states no `MoveFocus` Follow/Stay input
+  selecting the follow fork). `S(S-pan-colops)` + `S(S-pan-ws)`.
 - Then Ours KDE: no-counterpart: Engine send is same-output,
   single-window only. `S(S-ours-ws)`.
 - Then Ours Windows: no-counterpart: same Engine boundary; index-only
@@ -360,8 +364,9 @@ off, append admission (`S(S-pan-base)`).
 - Then karousel/Lazy: `gridScrollLeft/Right` shift the viewport by the
   200px manual step with no focus call; clamped unless forced.
   `S(S-kar-scroll)`.
-- Then paneru: TBD (no manual-scroll path traced; strip motion is
-  focus/reshuffle-driven). Queued.
+- Then paneru: no-counterpart - no manual-scroll verb in the `Operation`
+  inventory; strip motion is focus/reshuffle-driven only. `S(S-pan-cmds)` +
+  `S(S-pan-colops)`.
 - Then Ours KDE: fixture-inapplicable: no strip viewport.
   `S(S-ours-planops)`.
 - Then Ours Windows: fixture-inapplicable: no strip viewport.
@@ -399,8 +404,10 @@ off, append admission (`S(S-pan-base)`).
 - Then karousel/Lazy: no-counterpart: desktops are KWin-native; no
   virtual rows. `S(S-kar-ws)`.
 - Then paneru: `VirtualMove` carries A's tab group to VW2, appending
-  (or the mid-strip slot under the named option); absent-row spawn
-  and reaping per config. Follow focus stays TBD. `S(S-pan-colops)` + `S(S-pan-ws)`; queued.
+  (or the mid-strip slot under the named option, off by default); absent-row spawn
+  and reaping per config. Follow focus stays TBD (fixture states no `MoveFocus`
+  Follow/Stay input selecting the follow fork, including the empty-source
+  Stay-becomes-Follow branch). `S(S-pan-colops)` + `S(S-pan-ws)`.
 - Then Ours KDE: no-counterpart: Engine workspaces have no row
   subdivision. `S(S-ours-ws)`.
 - Then Ours Windows: no-counterpart: index-only workspaces, no rows.
@@ -438,7 +445,9 @@ off, append admission (`S(S-pan-base)`).
   app-tab nesting. `S(S-kar-spc)`.
 - Then paneru: same-app same-frame newcomer groups with the hidden
   leader via `convert_to_tabs` and takes focus; strays refold.
-  Width stability and selecting B stay TBD. `S(S-pan-tabs)` + `S(S-pan-colops)`; queued.
+  Width stability and selecting B stay TBD (both ride the host app's tab
+  creation/settlement timing and frames with no public macOS source).
+  `S(S-pan-tabs)` + `S(S-pan-colops)`.
 - Then Ours KDE: no-counterpart: per-window observation; no tab
   nesting. `S(S-ours-spc-kde)` + `S(S-ours-grp)`.
 - Then Ours Windows: no-counterpart: per-window admission gates; no

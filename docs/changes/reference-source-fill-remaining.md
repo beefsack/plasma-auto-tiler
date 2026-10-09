@@ -4,9 +4,10 @@
 
 Triage all remaining reference TBD cells by WM to select high-yield,
 context-bounded source passes. The initial triage classified existing evidence;
-the counts and ledgers now include the completed PaperWM and karousel source
+the counts and ledgers now include the completed PaperWM, karousel and paneru source
 passes recorded in [PaperWM's outcome note](archive/paperwm-reference-source-fill.md)
-and [karousel's outcome note](archive/karousel-reference-source-fill.md). No scenarios
+and [karousel's outcome note](archive/karousel-reference-source-fill.md), plus
+[paneru's outcome note](archive/paneru-reference-source-fill.md). No scenarios
 were tightened. Documentation only; no live
 testing, cloning, new source pins, source-checkout changes, or stash changes.
 Ours is counted separately and is out of scope for reference source tracing.
@@ -33,7 +34,8 @@ Workers use muse-spark, one active at a time. The Lead owns this note.
 
 - Initial triage baseline: `f4ad288`, 2026-10-09, committed as `abf7f26`.
   All 1,006 TBD reference cells out of 1,896 classified; triage alone closed
-  zero cells. Current: **927 reference TBD**, after 42 PaperWM and 37 karousel closures.
+  zero cells. Current: **876 reference TBD**, after 42 PaperWM, 37 karousel
+  and 51 paneru closures.
   **Ours: 169 TBD**, excluded.
 - Twelve reference profiles, as pinned in the [matrix index](../spec/reference-outcomes.md#wm-profiles-and-config-assumptions).
   KWin is not a separate column. Karousel's host KWin is already pinned at
@@ -87,8 +89,8 @@ Workers use muse-spark, one active at a time. The Lead owns this note.
 | niri | 64 | 41 | 0 | 6 | 5 | 12 |
 | PaperWM | 61 | 0 | 38 | 14 | 9 | 0 |
 | karousel/Lazy | 36 | 0 | 1 | 27 | 8 | 0 |
-| paneru | 92 | 57 | 18 | 3 | 1 | 13 |
-| **Total references** | **927** | **378** | **59** | **210** | **108** | **172** |
+| paneru | 41 | 0 | 28 | 9 | 4 | 0 |
+| **Total references** | **876** | **321** | **69** | **216** | **111** | **159** |
 
 ## Not-attempted by area
 
@@ -99,27 +101,27 @@ AWE=awesome/tile, NIR=niri, PAP=PaperWM, KAR=karousel/Lazy, PAN=paneru.
 
 | Area file | COS | HYP | BSP | I3 | XMO | SWY | QTI | AWE | NIR | PAP | KAR | PAN | Total |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| activation.md | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 2 |
-| close.md | 1 | 2 | 2 | 0 | 5 | 0 | 0 | 0 | 1 | 0 | 0 | 4 | 15 |
-| column-mechanics.md | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 3 | 0 | 0 | 6 | 11 |
-| floating.md | 3 | 4 | 4 | 1 | 3 | 0 | 5 | 4 | 2 | 0 | 0 | 8 | 34 |
-| focus.md | 0 | 3 | 2 | 0 | 1 | 0 | 1 | 1 | 1 | 0 | 0 | 3 | 12 |
-| groups-stacks.md | 1 | 0 | 0 | 1 | 0 | 1 | 0 | 0 | 1 | 0 | 0 | 2 | 6 |
-| insertion.md | 3 | 2 | 4 | 2 | 3 | 2 | 4 | 4 | 6 | 0 | 0 | 4 | 34 |
-| layout-commands.md | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 3 |
-| maximize-fullscreen.md | 4 | 5 | 4 | 2 | 5 | 2 | 5 | 5 | 1 | 0 | 0 | 1 | 34 |
-| minimize.md | 2 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 0 | 0 | 3 | 10 |
-| minimum-size.md | 3 | 2 | 3 | 0 | 3 | 0 | 3 | 3 | 3 | 0 | 0 | 3 | 23 |
-| mouse.md | 3 | 2 | 4 | 0 | 6 | 1 | 0 | 5 | 9 | 0 | 0 | 2 | 32 |
-| move.md | 5 | 3 | 3 | 1 | 6 | 1 | 2 | 1 | 0 | 0 | 0 | 6 | 28 |
-| multi-output.md | 2 | 3 | 2 | 2 | 3 | 2 | 3 | 3 | 3 | 0 | 0 | 2 | 25 |
-| resize.md | 0 | 3 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 7 |
-| restart-persistence.md | 5 | 1 | 1 | 0 | 1 | 0 | 2 | 2 | 1 | 0 | 0 | 1 | 14 |
-| special-windows.md | 6 | 2 | 3 | 1 | 2 | 1 | 2 | 5 | 4 | 0 | 0 | 4 | 30 |
-| workspaces.md | 3 | 11 | 7 | 3 | 3 | 2 | 5 | 15 | 5 | 0 | 0 | 4 | 58 |
-| **Total** | **41** | **44** | **42** | **13** | **41** | **12** | **37** | **50** | **41** | **0** | **0** | **57** | **378** |
+| activation.md | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| close.md | 1 | 2 | 2 | 0 | 5 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 11 |
+| column-mechanics.md | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 3 | 0 | 0 | 0 | 5 |
+| floating.md | 3 | 4 | 4 | 1 | 3 | 0 | 5 | 4 | 2 | 0 | 0 | 0 | 26 |
+| focus.md | 0 | 3 | 2 | 0 | 1 | 0 | 1 | 1 | 1 | 0 | 0 | 0 | 9 |
+| groups-stacks.md | 1 | 0 | 0 | 1 | 0 | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 4 |
+| insertion.md | 3 | 2 | 4 | 2 | 3 | 2 | 4 | 4 | 6 | 0 | 0 | 0 | 30 |
+| layout-commands.md | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 2 |
+| maximize-fullscreen.md | 4 | 5 | 4 | 2 | 5 | 2 | 5 | 5 | 1 | 0 | 0 | 0 | 33 |
+| minimize.md | 2 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 0 | 0 | 0 | 7 |
+| minimum-size.md | 3 | 2 | 3 | 0 | 3 | 0 | 3 | 3 | 3 | 0 | 0 | 0 | 20 |
+| mouse.md | 3 | 2 | 4 | 0 | 6 | 1 | 0 | 5 | 9 | 0 | 0 | 0 | 30 |
+| move.md | 5 | 3 | 3 | 1 | 6 | 1 | 2 | 1 | 0 | 0 | 0 | 0 | 22 |
+| multi-output.md | 2 | 3 | 2 | 2 | 3 | 2 | 3 | 3 | 3 | 0 | 0 | 0 | 23 |
+| resize.md | 0 | 3 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 |
+| restart-persistence.md | 5 | 1 | 1 | 0 | 1 | 0 | 2 | 2 | 1 | 0 | 0 | 0 | 13 |
+| special-windows.md | 6 | 2 | 3 | 1 | 2 | 1 | 2 | 5 | 4 | 0 | 0 | 0 | 26 |
+| workspaces.md | 3 | 11 | 7 | 3 | 3 | 2 | 5 | 15 | 5 | 0 | 0 | 0 | 54 |
+| **Total** | **41** | **44** | **42** | **13** | **41** | **12** | **37** | **50** | **41** | **0** | **0** | **0** | **321** |
 
-Duplicate remaining N cells occur only in paneru MOV-01. PaperWM MOV-01/03
+No duplicate remaining N cells. PaperWM MOV-01/03 and paneru MOV-01
 main and explicit-swap cells are now closed. Both Hyprland MOV-01/03 legs
 are F, not N.
 
@@ -130,13 +132,13 @@ source legs that could be unlocked, not guaranteed whole-cell completion.
 GNOME Shell includes its `org.gnome.shell.app-switcher` schema; Shell/Mutter
 are grouped because several PaperWM cells span both. Their union is now 38
 (17 existing plus 21 reclassified after extension tracing). The other primary
-H cells are sway 2, paneru 18 and karousel 1: total 59.
+H cells are sway 2, paneru 28 and karousel 1: total 69.
 
 | External codebase/platform | Cells | WMs | Missing policy | Suggested revision approach, no pin performed |
 |---|---:|---|---|---|
 | GNOME Shell/Mutter, including app-switcher schema | 38 | PaperWM | Workspace lifecycle/session wiring, activation/urgency/refocus, native move/resize, sticky/float/overlay visibility and stacking, startup stacking/tab-list policy, type/fence behavior, hotplug and output-neighbor tie order | Select a PaperWM-compatible GNOME release; record exact paired Shell/Mutter distro revisions/patches and deployed build; freeze `current-workspace-only` value/schema. |
 | wlroots | 2 | sway | Adjacent-output equal-distance tie selection | Read sway `1652c54b` dependency/build declarations; pin the exact compatible deployed wlroots revision, not unrelated latest. |
-| macOS proprietary host platform | 18 | paneru | WindowServer/native window policy (16), menu bar/NSStatusItem (1), native switcher (1) | No public implementation source to pin. Record macOS build, SDK and documented AX/CoreGraphics/AppKit contracts; opaque host policy still needs later observation. A new source pin cannot promise these closures. |
+| macOS proprietary host platform | 28 | paneru | WindowServer/native window policy (26), menu bar/NSStatusItem (1), native switcher (1) | No public implementation source to pin. Record macOS build, SDK and documented AX/CoreGraphics/AppKit contracts; opaque host policy still needs later observation. A new source pin cannot promise these closures. |
 | Plasma session manager (ksmserver), plus app session participation | 1 | karousel | Post-session restored app set/order, rematching and layout recovery; karousel's fresh adoption is traced | Select the deployed Plasma-compatible ksmserver revision and app/session restore inputs; KWin `8438567a` is already pinned and is not this missing dependency. |
 
 Primary H cell ledger (IDs below retain their `R-` prefix):
@@ -156,6 +158,11 @@ Primary H cell ledger (IDs below retain their `R-` prefix):
 - macOS WindowServer/native policy/paneru: R-CLOSE-05; R-FLT-02/05/06/14;
   R-MAX-01/04/06/08/09; R-DRAG-08; R-MOU-01; R-MOV-12; R-OUT-06;
   R-RST-02; R-SPC-11. Menu bar: R-CTL-03. Switcher: R-WS-07.
+- Newly primary H/paneru (10): R-ACT-01/02; R-CLOSE-02/03;
+  R-COL-10; R-FLT-13; R-INS-06; R-MNZ-03; R-RST-01; R-SPC-13.
+  WM policy legs are traced; remaining macOS activation/urgency, native
+  tabs/Space, stacking, close/minimize and restart focus policy is opaque.
+  R-RST-01/SPC-13 retain secondary live-frame fixture and settlement limits.
 - Plasma session manager/karousel: R-RST-02 (startup re-adoption traced;
   session-restored app participation/order and rematching remain unpinned).
 - Secondary host limits are excluded from primary unlock counts. PaperWM's
@@ -165,7 +172,7 @@ Primary H cell ledger (IDs below retain their `R-` prefix):
 
 ## Fixture-gap aggregate
 
-**210 cells across 75 scenario rows.** This ledger identifies wording to
+**216 cells across 80 scenario rows.** This ledger identifies wording to
 tighten in Given, When or the profile; it does not edit scenarios or choose
 the missing values. Counts include two HYP explicit-swap extras. The existing
 profile defaults remain fixed; projection entries ask how a foreign fixture
@@ -174,9 +181,12 @@ maps to that profile, not permission to change defaults.
 | Area / row (cells) | WMs | Missing input(s) |
 |---|---|---|
 | activation.md / R-ACT-01 (1) | KAR | Activation request timestamp (stale/zero vs unknown) selecting the allowWindowActivation fork. |
-| close.md / R-CLOSE-01 (3) | HYP, QTI, AWE | Flat H[A,B,C] projection: HYP binary embedding + output geometry for collapse widths; QTI Columns embedding (num_columns=2, third stacks in-column); AWE master/stack projection + list order + work-area shares. |
+| close.md / R-CLOSE-01 (4) | HYP, QTI, AWE, PAN | Flat H[A,B,C] projection: HYP binary embedding + output geometry for collapse widths; QTI Columns embedding (num_columns=2, third stacks in-column); AWE master/stack projection + list order + work-area shares. PAN: viewport origin and column centers selecting nearest-center A vs C refocus. |
 | close.md / R-CLOSE-02 (5) | HYP, BSP, QTI, AWE, KAR | 50/30/20 start: HYP binary + output width + pointer half for reopened B; BSP binary holding shares; QTI Columns + manual width mapping; AWE master/stack/windowfact mapping. KAR: newcomer protocol selecting X11-manage vs Wayland-add activation. |
+| close.md / R-CLOSE-04 (1) | PAN | Column centers and viewport origin selecting nearest-center A vs B after float close. |
 | column-mechanics.md / R-COL-01 (1) | KAR | Newcomer activation protocol/timestamp/token inputs and preferred frame/min/max for exact widths. |
+| column-mechanics.md / R-COL-07 (1) | PAN | MoveFocus Follow/Stay input selecting follow focus for virtual-row transfer. |
+| column-mechanics.md / R-COL-09 (1) | PAN | MoveFocus Follow/Stay input, including empty-source Stay-becomes-Follow branch. |
 | floating.md / R-FLT-01 (2) | COS, HYP | COS: B prior float geometry or output/work-area geometry for cascade/center fallback. HYP: binary embedding + B float size/output geometry + pointer for unfloat anchor. |
 | floating.md / R-FLT-03 (3) | BSP, QTI, AWE | Flat 50/30/20 projection: BSP binary for ratio-vs-equalize; QTI Columns 960/576/384 mapping; AWE 1920px tile mapping under nmaster=1, mwfact=0.5 and equal stack shares. |
 | floating.md / R-FLT-04 (1) | COS | Move-A parameters (pointer path/semantic target) + workspace/output geometry. |
@@ -200,6 +210,8 @@ maps to that profile, not permission to change defaults.
 | maximize-fullscreen.md / R-MAX-01 (1) | HYP | Binary embedding of H[A,B*,C,D] + output geometry. |
 | maximize-fullscreen.md / R-MAX-06 (1) | KAR | Newcomer protocol selecting X11-manage vs Wayland-add activation. |
 | maximize-fullscreen.md / R-MAX-07 (6) | COS, HYP, QTI, AWE, I3, SWY | COS/HYP/QTI/AWE: monitor/work-area geometry. I3: captionless type + fullscreen atom/override-redirect. SWY: protocol path + xdg-fullscreen vs Xwayland type/override state. |
+| minimize.md / R-MNZ-01 (1) | PAN | Frame/display geometry selecting nearest-center refocus target. |
+| minimize.md / R-MNZ-02 (1) | PAN | Same geometry as MNZ-01 selecting the retained focus identity after old-slot restore. |
 | minimum-size.md / R-MIN-01 (2) | HYP, KAR | HYP: pointer for Dwindle admission anchor. KAR: newcomer protocol selecting X11-manage vs Wayland-add activation. |
 | minimum-size.md / R-MIN-03 (1) | KAR | Newcomer protocol selecting X11-manage vs Wayland-add activation. |
 | mouse.md / R-DRAG-01 (5) | HYP, I3, SWY, QTI, PAP | HYP: release geometry. I3: center pixel/band + Shift swap state. SWY: center band (swap/tabify/30% split). QTI: hover pixel + drop-side geometry. PAP: pointer y selecting the within-column row. |
@@ -269,31 +281,31 @@ All IDs have prefix `R-`; none of these U/L entries are duplicated swap cells.
 | niri | CTL-01..07; START-01..03; SPC-12..13 | FLT-06; RST-03..04; SPC-08..09 |
 | PaperWM | None (all 8 closed) | MAX-01; MIN-01..03; SPC-05/08..11 |
 | karousel | None (all 8 closed) | FLT-06; MAX-01; RST-04; SPC-05/08..11 |
-| paneru | FLT-12; INS-08; CTL-01..02/04..07; RST-04; SPC-04/10/12; WS-27 | RST-03 |
+| paneru | None (all 13 closed) | RST-03; MIN-01..03 |
 
 ## Ranked per-WM passes and expected yield
 
 Rank by unfinished source-candidate count N, then N+U for ties. These are
 triage candidate pools, not measured completion forecasts. N+U is the
 upper candidate yield for a pass also closing unsupported statements;
-39 remaining N cells have recorded secondary fixture/host/live limitations.
-There are 339 N cells without those recorded secondary barriers. Further tracing
+38 remaining N cells have recorded secondary fixture/host/live limitations.
+There are 283 N cells without those recorded secondary barriers. Further tracing
 can discover additional limits, so neither number guarantees closure.
 
 | Rank | WM | Source candidates N | Cheap U | N+U ceiling | N with F/H/L secondary |
 |---|---|---:|---:|---:|---:|
-| 1 | paneru | 57 | 13 | 70 | 1 |
-| 2 | awesome | 50 | 12 | 62 | 1 |
-| 3 | Hyprland | 44 | 17 | 61 | 7 |
-| 4 | bspwm | 42 | 20 | 62 | 3 |
-| 5 | xmonad | 41 | 23 | 64 | 6 |
-| 6 | niri | 41 | 12 | 53 | 4 |
-| 7 | COSMIC | 41 | 8 | 49 | 12 |
-| 8 | qtile | 37 | 21 | 58 | 0 |
-| 9 | i3 | 13 | 22 | 35 | 3 |
-| 10 | sway | 12 | 24 | 36 | 2 |
+| 1 | awesome | 50 | 12 | 62 | 1 |
+| 2 | Hyprland | 44 | 17 | 61 | 7 |
+| 3 | bspwm | 42 | 20 | 62 | 3 |
+| 4 | xmonad | 41 | 23 | 64 | 6 |
+| 5 | niri | 41 | 12 | 53 | 4 |
+| 6 | COSMIC | 41 | 8 | 49 | 12 |
+| 7 | qtile | 37 | 21 | 58 | 0 |
+| 8 | i3 | 13 | 22 | 35 | 3 |
+| 9 | sway | 12 | 24 | 36 | 2 |
 | Complete | PaperWM | 0 | 0 | 0 | 0 |
 | Complete | karousel | 0 | 0 | 0 | 0 |
+| Complete | paneru | 0 | 0 | 0 | 0 |
 
 Context-sized area splits are given in the N table. The completed PaperWM
 pass used navigation/admission, window states, workspaces/output, mouse/groups,
@@ -331,6 +343,22 @@ and persistence/special-window slices; U cells were evaluated with their area.
   sticky, close/minimize, move/resize, new-window activation and window order.
   No live testing, source-checkout changes or stash changes were performed.
 
+## paneru source-pass outcome
+
+- All **57 N + 13 U attempted**, with independent source verification of
+  every slice after corrections. **38 N + 13 U closed (51 cells)**;
+  **19 N reclassified: 10 H, 6 F, 3 L**. No N/U candidates remain.
+- New H: R-ACT-01/02; R-CLOSE-02/03; R-COL-10; R-FLT-13;
+  R-INS-06; R-MNZ-03; R-RST-01; R-SPC-13. New F: R-CLOSE-01/04;
+  R-COL-07/09; R-MNZ-01/02. New L: R-MIN-01/02/03.
+- Existing H18/F3/L1 cells were unchanged. Current paneru residual is
+  **41: H28/F9/L4**. macOS host implementation is not public; no new source
+  pin can resolve its opaque policy. Secondary limits remain named in cells.
+- Other profiles, scenarios and approved rules were preserved; no material
+  approved-rule contradictions. No code changes, live testing, source-checkout
+  changes or stash changes. The archived paneru note records corrections
+  and accepted independent evidence.
+
 ## Verification and next action
 
 - Initial triage independent occurrence-aware recount: 1,896 reference cells, 1,006 TBD;
@@ -348,12 +376,14 @@ and persistence/special-window slices; U cells were evaluated with their area.
   twelve `reference-triage-<WM>.json` files, `reference-triage-aggregate.json`
   and `reference-triage-spot-check.json`. These are session artifacts, not
   repository dependencies; the durable classification ledgers are above.
-- Current aggregates: 1,896 reference cells, 927 TBD; N378/H59/F210/L108/U172.
-  Area N totals sum to 378; fixture ledger sums to 210 across 75 rows.
-  The PaperWM and karousel outcomes and independent verification are recorded
+- Current aggregates: 1,896 reference cells, 876 TBD; N321/H69/F216/L111/U159.
+  Area N totals sum to 321; fixture ledger sums to 216 across 80 rows.
+  The PaperWM, karousel and paneru outcomes and independent verification are recorded
   above and in their archived notes; final occurrence-aware and diff-scope
   checks accompany each pass.
 - Exact next action for PaperWM: none. Host-source pinning, fixture inputs
   and live-only observations remain user-owned; another WM pass is separate.
 - Exact next action for karousel: none. Its remaining session-manager source,
+  fixture inputs and live-only observations remain user-owned.
+- Exact next action for paneru: none. Its remaining opaque macOS host policy,
   fixture inputs and live-only observations remain user-owned.

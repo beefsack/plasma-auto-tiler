@@ -218,8 +218,11 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   duration vs the delay is unrecorded, so that branch stays TBD.
   `S(S-kar-ptr)` + `S(S-kwin-moveresize)`; title-bar hold TBD (F:
   press-hold duration vs `startDragTime` unrecorded).
-- Then paneru: host click marks held and reshuffles on release;
-  topology effect TBD. `S(S-pan-mouse)`; queued.
+- Then paneru: press marks held with no membership/order/share write
+  and release runs only the click reshuffle around B; no layout drag
+  model exists (no preview to clear); no membership/order/share change
+  and no preview residue on this zero-move press/release (strip-offset
+  pixels outside this Observe). `S(S-pan-mouse)`.
 - Then Ours KDE: no-change verdict makes no plan `D(D-dec-drag)`
 - Then Ours Windows: synthetic title/Win zero-move preserves all frames without mutation or preview residue on a three-window fixture; exact row TBD `D(D-win-drag)`
 - Variant hook: V-DRAG-ZONE.
@@ -464,9 +467,11 @@ paths; selected intent and doc assertions are never evidence.
 - Then karousel/Lazy: edge drag writes the dragged column width via
   onUserResizeWidth while the neighbor keeps its width under shipped
   `resizeNeighborColumn=false`. `S(S-kar-ptr)`.
-- Then paneru: modifier-hold move resizes the window width by 5x the
-  pointer delta; managed-column sibling shares TBD. `S(S-pan-mouse)`;
-  queued.
+- Then paneru: modifier-hold move resizes the grabbed window width by
+  5x the pointer delta with a frame-only write and no sibling-share
+  step, so the sibling keeps its width; conditional on the grab (if A
+  grabbed then A gains 500px for the 100px drag with B unchanged, and
+  vice versa); no clamp step in the traced path. `S(S-pan-mouse)`.
 - Then Ours KDE: pointer-resize verb exists in the adapter inventory
   but proves no share outcome; host journey TBD. `S(S-ours-mou)`;
   queued.

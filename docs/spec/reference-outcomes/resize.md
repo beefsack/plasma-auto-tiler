@@ -67,8 +67,11 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   layout re-ensures placement after the frame write. `S(S-pap-resize)` +
   `S(S-pap-layout)`.
 - Then karousel/Lazy: contextual increase picks the smallest strictly greater width among visible-space slack plus presets and writes it as preferredWidth with recenter; decrease runs the separate offscreen-terms path over presets (so shrink is not the inverse of grow); neighbor widths are untouched (independent columns, reposition only); focus unwritten. Exact step TBD (fixture records but does not state viewport width). `S(S-kar-resize)` + `S(S-kar-min)` + `S(S-kar-scroll)` + `S(S-kar-base)`; step TBD (F: missing viewport width).
-- Then paneru: `Resize(Grow)`/`Resize(Shrink)` cycle the focused width
-  through presets; neighbor allocation TBD. `S(S-pan-resize)`; queued.
+- Then paneru: `Resize(Grow)` steps the focused width to the next preset
+  above (0.5W to 0.66667 at shipped defaults) and `Resize(Shrink)`
+  returns it; neighbours are untouched (only the focused window plus
+  stacked siblings resize, then reshuffle repositions). `S(S-pan-resize)`
+  + `S(S-pan-base)`.
 - Then Ours KDE: Outwards moves the shared boundary by 12px (press 0, then
   14/16/18/20 on repeat) from B's share into A's; only adjacent shares
   change; Inwards reverses it; minima refuse or clamp. The KDE adapter
