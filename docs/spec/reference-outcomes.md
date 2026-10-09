@@ -439,12 +439,16 @@ Legend:
 - `S-sway-move` sway:sway/commands/move.c:112-166
   (`container_move_to_container_from_direction`: same-parent same-workspace
   sibling swap, cousin promotion, parallel/perpendicular reparent) and
+  :168-197 (`container_move_to_workspace_from_direction`: parallel flat
+  insert else perpendicular focus-inactive recursion) and
   :301-415 (`container_move_in_direction`: lone-workspace force-wrap,
   singleton-child workspace-level fallback mirroring i3, promotion insert;
   off-edge falls through to next-output) and :672-711
   (`cmd_move_in_direction`: floating movers shift the frame by 10px default,
   retaining floating) and sway/commands/swap.c:37-63
   (`swap container with id|con_id|mark` is a separate explicit-target verb)
+  and sway/input/seat.c:1412-1433 (`seat_get_active_tiling_child`: MRU
+  child whose parent matches, selecting the perpendicular-reparent target)
   @1652c54b73f67df17b7b4ab0b0f7048204aa8104
   (semantic `move <direction>` keeps focus on the mover)
 - `S-sway-cleanup` sway:sway/tree/container.c:525-555
@@ -513,7 +517,10 @@ Legend:
   search among workspace floats only, wrap to furthest opposite) and
   :473-479 (floating subjects use float search, tiled use tile search)
   and sway/commands/focus_wrapping.c:6-19 + sway/config.c:274
-  (default `WRAP_YES`) @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (default `WRAP_YES`) and sway/tree/output.c:316-331
+  (`output_get_in_direction` adjacent-only, NULL when none, so the
+  fullscreen drop is fenced on a single output)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
 - `S-sway-full` sway:sway/tree/container.c:1200-1232
   (workspace-fullscreen sets `ws->fullscreen` and focuses, tree retained)
   and :1260-1341 (disable clears mode; `container_set_fullscreen` swaps
@@ -593,6 +600,8 @@ Legend:
   bindings/compositor/client paths, no seatop path) and :267-285
   (compositor helper is VT-switch only) and :287-315 (pointer-keysym
   helper maps mouse-keys keysyms/motion only) +
+  sway/input/cursor.c:39-123 (`node_at_coords`: scene hit then
+  output-layout fallback, spanning all outputs) +
   sway/input/cursor.c:206-230 (key press only drives hide-when-typing) +
   sway/input/seatop_move_tiling.c:459-465 (impl is button/pointer-motion/
   tablet-tip/unref/end only)
@@ -2562,10 +2571,17 @@ Legend:
   @e11eff4cb3333216ad03c815609a4ed79e08929c
   (type/transient/fixed-size admission legs; placement stays TBD; switcher is `S-bsp-switcher`)
 - `S-sway-spc` sway:sway/desktop/xdg_shell.c:229-235 (`wants_floating`:
-  either-dimension min==max or parent) and sway/desktop/xwayland.c:308-340
+  either-dimension min==max or parent, no modal branch) and sway/desktop/xwayland.c:308-340
   (modal, DIALOG/UTILITY/TOOLBAR/SPLASH, or fixed size floats)
+  and sway/tree/container.c:864-908,910-931 (admission floats center
+  on the workspace/output at default half-width/three-quarter-height,
+  not parent-relative) and sway/tree/view.c:696-730,944-955
+  (`should_focus`: ordinary newcomer takes focus on the active workspace)
+  and sway/tree/view.c:1168-1194 (focus validity lists only
+  sticky/tab/fullscreen/transient fences, no modal branch)
   @1652c54b73f67df17b7b4ab0b0f7048204aa8104
-  (backend-split float legs; placement and modal fence stay TBD)
+  (backend-split float legs with centered placement, newcomer focus,
+  and no modal fence)
 - `S-qti-spc` qtile:libqtile/layout/floating.py:14-30 (shipped
   `default_float_rules`: utility/notification/toolbar/splash/dialog
   plus fixed-size/ratio; transient match is doc-only, not default) and
@@ -3378,7 +3394,13 @@ Legend:
   (switch incl create plus back_and_forth) and sway/commands/move.c:419-480
   (`move to workspace` next/prev/number/back_and_forth) and :630-665
   (`move workspace to output` acts on the handler-context active
-  workspace) @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  workspace) and :664-666 (focus to the moved workspace's focus-inactive
+  node) + sway/commands.c:182-199 (handler workspace from the matched
+  container) and :240-300 (criteria loop sets handler context per match)
+  + sway/criteria.c:453-471,514-524 (workspace-regex match over all
+  outputs incl hidden) + sway/input/seat.c:1098-1110 (per-seat
+  `prev_workspace_name` recorded on workspace change only)
+  @1652c54b73f67df17b7b4ab0b0f7048204aa8104
 - `S-sway-wsdir` sway directional resolution for workspace moves:
   sway:sway/commands/move.c:27-80 (`output_in_direction`: up/down/left/
   right resolve through the wlroots adjacent output, else the
@@ -4418,12 +4440,19 @@ Legend:
   @e11eff4cb3333216ad03c815609a4ed79e08929c
   (default retains disconnected monitor/desktops; same-id return
   reuses them; named removal variant migrates, not destroys)
-- `S-sway-evac` sway output-removal evacuation:
+- `S-sway-evac` sway output-removal evacuation and return:
   sway:sway/tree/output.c:205-257 (`output_evacuate` migrates each
   workspace to the highest-available else fallback output, destroying
-  empties) and :258-280 (`output_destroy` guards)
+  empties; sticky-only empties evacuate stickies first) and :258-280
+  (`output_destroy` guards) and :31-57 (`restore_workspaces` moves back
+  workspaces whose highest-available is the new output, plus
+  fallback-output workspaces; history never consulted)
+  + sway/input/seat.c:234-330 (`handle_seat_node_destroy`: destroyed-empty
+  refocus via sibling/workspace/last-known fallback, visible-only guard)
   @1652c54b73f67df17b7b4ab0b0f7048204aa8104
-  (evacuation destination policy; focus and reconnect affinity stay TBD)
+  (evacuation destination plus priority return affinity; evacuate/restore
+  issue no `seat_set_focus` themselves, destroyed-empty focus via the
+  seat destroy-listener; history never consulted)
 - `S-cos-act` cosmic-comp:src/state.rs:167 (`not_sandboxed` is
   true with no security context, panel excepted) +
   src/wayland/handlers/xdg_activation.rs:33-70 (such clients get

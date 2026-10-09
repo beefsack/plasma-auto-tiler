@@ -47,9 +47,12 @@ transient (no dialog flag) is a different fixture and is not claimed.
 - Then xmonad/Tall+Navigation2D: D floats at its managed native
   geometry with newcomer focus; the modal flag is inert (no branch),
   so the modal leg matches. `S(S-xmo-float)`.
-- Then sway: xdg D floats (parent branch); xwayland D floats
-  (modal/dialog branch). Placement and fence TBD.
-  `S(S-sway-spc)`; queued.
+- Then sway: xdg D floats (parent branch; modal adds no branch); xwayland D floats
+  (modal/dialog branch); modal leg matches. Placement centers on the
+  workspace/output (default half-width/three-quarter-height centered frame,
+  not parent-relative); newcomer D takes focus on the active workspace; a later
+  parent-focus request succeeds with no modal fence.
+  `S(S-sway-spc)` + `S(S-sway-float)` + `S(S-sway-ins)`.
 - Then qtile/Columns: D floats (dialog type matches shipped rules)
   centered on A (transient placement) with stealable focus; the
   modal flag is inert (no branch). `S(S-qti-spc)`.
@@ -571,7 +574,7 @@ All fresh variants below reset the client and WM state independently.
   counterpart. `S(S-xmo-float)` + `S(S-xmo-layout)`.
 - Then sway: E floats (xdg either-axis min==max; xwayland fixed branch);
   no maximize verb exists (request only schedules a configure), so the
-  born-maximized/unmaximize legs have no counterpart. Client ack TBD.
+  born-maximized/unmaximize legs have no counterpart and never run.
   `S(S-sway-spc)` + `S(S-sway-max)`.
 - Then qtile/Columns: E admits floating via the fixed-size rule;
   maximize is a floating-layer state at work-area size. Maximize entered
@@ -784,9 +787,7 @@ All fresh variants below reset the client and WM state independently.
   Outcome TBD. `S(S-i3-wsmode)`.
 - Then xmonad/Tall+Navigation2D: no workspace-mode counterpart per
   R-FLT-04 (no workspace tiling toggle in source; float is per-window, so enable/F-arrival, changed-hints/predicate, override, and maximized legs never run). `S(S-xmo-layout)`.
-- Then sway: no workspace-mode counterpart per R-FLT-04; F-arrival,
-  changed-hints/predicate, override, and maximized legs share the absence.
-  Outcome TBD. `S(S-sway-wsmode)`.
+- Then sway: no workspace-mode counterpart per R-FLT-04 (no workspace tiling toggle; float is per-window, so enable/F-arrival, changed-hints/predicate, override, and maximized legs never run with no applicable journey). `S(S-sway-wsmode)`.
 - Then qtile/Columns: no workspace-mode counterpart per R-FLT-04;
   F-arrival, changed-hints/predicate, override, and maximized legs share
   the absence (no workspace tiling toggle; static groups with one global
@@ -887,8 +888,8 @@ All fresh variants below reset the client and WM state independently.
   `S(S-xmo-restart)` + `S(S-xmo-float)`.
 - Then sway: no-counterpart for this owner restart with clients alive
   (command inventory carries `reload` and `exit` with no restart verb;
-  reload is in-place config only). Outcome TBD, including re-float/close
-  and store-fault/ID/omission variants. `S(S-sway-reload)`.
+  reload is in-place config only), so re-float/close and
+  store-fault/ID/omission variants never run with no applicable journey. `S(S-sway-reload)`.
 - Then qtile/Columns: X11-only restart: groups/layouts/screens restore while widths reset
   and windows re-admit in X server query-tree/stacking order (state carries no per-window float); fixed E
   re-admits floating via the fixed-size rule, so an explicit tile override

@@ -15,7 +15,8 @@ and [karousel's outcome note](archive/karousel-reference-source-fill.md), plus
 [bspwm's outcome note](archive/bspwm-reference-source-fill.md) and
 [Hyprland's outcome note](archive/hyprland-reference-source-fill.md) and
 [qtile's outcome note](archive/qtile-reference-source-fill.md) and
-[niri's outcome note](archive/niri-reference-source-fill.md). No scenarios
+[niri's outcome note](archive/niri-reference-source-fill.md) and
+[sway's outcome note](archive/sway-reference-source-fill.md). No scenarios
 were tightened. Documentation only; no live
 testing, cloning, new source pins, source-checkout changes, or stash changes.
 Ours is counted separately and is out of scope for reference source tracing.
@@ -42,9 +43,9 @@ Workers use muse-spark, one active at a time. The Lead owns this note.
 
 - Initial triage baseline: `f4ad288`, 2026-10-09, committed as `abf7f26`.
   All 1,006 TBD reference cells out of 1,896 classified; triage alone closed
-  zero cells. Current: **579 reference TBD**, after 42 PaperWM, 37 karousel,
+  zero cells. Current: **549 reference TBD**, after 42 PaperWM, 37 karousel,
   51 paneru, 29 COSMIC, 48 xmonad, 36 awesome, 53 bspwm, 44 Hyprland,
-  43 qtile and 44 niri closures.
+  43 qtile, 44 niri and 30 sway closures.
   **Ours: 169 TBD**, excluded.
 - Twelve reference profiles, as pinned in the [matrix index](../spec/reference-outcomes.md#wm-profiles-and-config-assumptions).
   KWin is not a separate column. Karousel's host KWin is already pinned at
@@ -94,14 +95,14 @@ Workers use muse-spark, one active at a time. The Lead owns this note.
 | bspwm | 37 | 0 | 1 | 27 | 9 | 0 |
 | i3 | 66 | 13 | 0 | 13 | 18 | 22 |
 | xmonad/Tall+Navigation2D | 27 | 0 | 1 | 18 | 8 | 0 |
-| sway | 71 | 12 | 2 | 16 | 17 | 24 |
+| sway | 41 | 0 | 3 | 21 | 17 | 0 |
 | qtile/Columns | 48 | 0 | 1 | 34 | 13 | 0 |
 | awesome/tile | 53 | 0 | 1 | 36 | 16 | 0 |
 | niri | 20 | 0 | 1 | 12 | 7 | 0 |
 | PaperWM | 61 | 0 | 38 | 14 | 9 | 0 |
 | karousel/Lazy | 36 | 0 | 1 | 27 | 8 | 0 |
 | paneru | 41 | 0 | 28 | 9 | 4 | 0 |
-| **Total references** | **579** | **25** | **76** | **292** | **140** | **46** |
+| **Total references** | **549** | **13** | **77** | **297** | **140** | **22** |
 
 ## Not-attempted by area
 
@@ -117,20 +118,20 @@ AWE=awesome/tile, NIR=niri, PAP=PaperWM, KAR=karousel/Lazy, PAN=paneru.
 | column-mechanics.md | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | floating.md | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
 | focus.md | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| groups-stacks.md | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| insertion.md | 0 | 0 | 0 | 2 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| groups-stacks.md | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| insertion.md | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
 | layout-commands.md | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| maximize-fullscreen.md | 0 | 0 | 0 | 2 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| maximize-fullscreen.md | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
 | minimize.md | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | minimum-size.md | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mouse.md | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| move.md | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| multi-output.md | 0 | 0 | 0 | 2 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| mouse.md | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| move.md | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| multi-output.md | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
 | resize.md | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | restart-persistence.md | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| special-windows.md | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| workspaces.md | 0 | 0 | 0 | 3 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 5 |
-| **Total** | **0** | **0** | **0** | **13** | **0** | **12** | **0** | **0** | **0** | **0** | **0** | **0** | **25** |
+| special-windows.md | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| workspaces.md | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
+| **Total** | **0** | **0** | **0** | **13** | **0** | **0** | **0** | **0** | **0** | **0** | **0** | **0** | **13** |
 
 No duplicate remaining N cells. PaperWM MOV-01/03 and paneru MOV-01
 main and explicit-swap cells are now closed. Both Hyprland MOV-01/03 legs
@@ -143,8 +144,8 @@ source legs that could be unlocked, not guaranteed whole-cell completion.
 GNOME Shell includes its `org.gnome.shell.app-switcher` schema; Shell/Mutter
 are grouped because several PaperWM cells span both. Their union is now 38
 (17 existing plus 21 reclassified after extension tracing). The other primary
-H cells are sway 2, paneru 28, karousel 1, COSMIC 1, xmonad 1, awesome 1, bspwm 1, Hyprland 1, qtile 1 and niri 1:
-total 76.
+H cells are sway 3, paneru 28, karousel 1, COSMIC 1, xmonad 1, awesome 1, bspwm 1, Hyprland 1, qtile 1 and niri 1:
+total 77.
 
 | External codebase/platform | Cells | WMs | Missing policy | Suggested revision approach, no pin performed |
 |---|---:|---|---|---|
@@ -159,6 +160,7 @@ total 76.
 | External session manager (identity not recorded), plus app session participation | 1 | Hyprland | Post-login app relaunch set/order and restored flags; config reload has no window/layout store or session identity rematching | Identify and pin the deployed session manager and session/app restore inputs; Hyprland freshly admits clients, with maximum/fullscreen requiring fresh client requests. |
 | External session manager (identity not recorded), plus app session participation | 1 | qtile | Post-login app relaunch set/order and restored flags; QtileState covers in-place X11 re-exec, not cross-session app recovery | Identify and pin the deployed session manager and session/app restore inputs; qtile freshly admits clients from new flags, with no per-window layout/intent store. |
 | External session manager (identity not recorded), plus app session participation | 1 | niri | Post-login app relaunch set/order and restored flags; niri-session launches the compositor and startup commands fresh-spawn, with no app/layout recovery store | Identify and pin the deployed session manager and session/app restore inputs; niri freshly admits clients, with native maximum/fullscreen requiring new client flags. |
+| External session manager (identity not recorded), plus app session participation | 1 | sway | Post-login app relaunch set/order and flags; reload is config-only with no layout recovery store | Identify and pin the deployed session manager and session/app restore inputs; sway freshly admits clients, with fullscreen requiring fresh flags. |
 
 Primary H cell ledger (IDs below retain their `R-` prefix):
 
@@ -205,6 +207,9 @@ Primary H cell ledger (IDs below retain their `R-` prefix):
 - External session manager/niri: R-RST-02 (config-only reload and fresh
   startup commands/admission traced; session app relaunch outside the pin,
   with secondary per-app flags/order limits).
+- External session manager/sway: R-RST-02 (config-only reload and fresh
+  admission traced; session app relaunch outside the pin, with secondary
+  per-app flags/order limits).
 - Secondary host limits are excluded from primary unlock counts. PaperWM's
   newly F cells R-WS-12/22, R-RST-01 and R-SPC-03/13 retain host
   qualifications; R-DRAG-04 retains host Esc-interception uncertainty.
@@ -214,7 +219,7 @@ Primary H cell ledger (IDs below retain their `R-` prefix):
 
 ## Fixture-gap aggregate
 
-**292 cells across 92 scenario rows.** This ledger identifies wording to
+**297 cells across 92 scenario rows.** This ledger identifies wording to
 tighten in Given, When or the profile; it does not edit scenarios or choose
 the missing values. Counts include two HYP explicit-swap extras. The existing
 profile defaults remain fixed; projection entries ask how a foreign fixture
@@ -270,7 +275,7 @@ maps to that profile, not permission to change defaults.
 | mouse.md / R-DRAG-07 (5) | HYP, I3, SWY, QTI, NIR | HYP: drop point. I3/SWY: edge of A + pixel/branch. QTI: drop + pause-point pixels. NIR: pause rest position/duration selecting edge auto-scroll and final insert mapping. |
 | mouse.md / R-DRAG-08 (4) | HYP, I3, SWY, QTI | HYP: drop edge. I3: release pixel + DT branch. SWY: release pixel + drop branch. QTI: edge/side for drop-side focus. |
 | mouse.md / R-MOU-02 (3) | COS, HYP, NIR | Work-area/output pixel geometry for the 100px fork-resize share delta. HYP: enabled resize parent-box dimensions; shipped bare-edge resize is off. NIR: work-area width fixing the 0.5W pixel base. |
-| mouse.md / R-MOU-03 (5) | COS, HYP, QTI, AWE, NIR | COS: C-edge hover pixel and WS3 switcher-target/drop geometry. HYP: hover/drop pixel for fresh tile admission; WS3 switcher drop has no counterpart. QTI: hovered window/edge target + cross-output drop geometry. AWE: hovered client/index for tiled hover-swap; WS3 switcher drop target has no counterpart. NIR: overview-toggle step and WS3 membership/geometry selecting a rendered workspace target. |
+| mouse.md / R-MOU-03 (6) | COS, HYP, QTI, AWE, NIR, SWY | COS: C-edge hover pixel and WS3 switcher-target/drop geometry. HYP: hover/drop pixel for fresh tile admission; WS3 switcher drop has no counterpart. QTI: hovered window/edge target + cross-output drop geometry. AWE: hovered client/index for tiled hover-swap; WS3 switcher drop target has no counterpart. NIR: overview-toggle step and WS3 membership/geometry selecting a rendered workspace target. SWY: C-edge hover/drop pixel selecting split/insert vs swap; switcher drop has no counterpart. |
 | move.md / R-MOV-01 (5) | HYP x2, QTI, AWE, XMO | HYP main: binary H[A,C,B*] + output geometry for focal anchor/ratios; swap: embedding for target existence. QTI/AWE: Columns/tile projection of COL[C1[A],C2[C],C3[B*]]. XMO main: native Tall projection of the foreign flat triple (conditional analogue is not the exact Given). |
 | move.md / R-MOV-03 (5) | HYP x2, QTI, AWE, XMO | HYP main: binary H[A,B*,C,D] + geometry; swap: embedding for target existence. QTI/AWE: four single-window-column projection. XMO main: native Tall projection, not assumed H identity order. |
 | move.md / R-MOV-04 (3) | HYP, QTI, XMO | HYP: geometry for focal y-half at square tie. QTI: Columns counterpart of H[H[A,B*],C]. XMO: native Tall projection of the nested-H fixture. |
@@ -281,10 +286,10 @@ maps to that profile, not permission to change defaults.
 | move.md / R-MOV-11 (5) | COS, HYP, BSP, XMO, AWE | COS: source workspace index + destination contents. HYP: U contents. BSP/XMO/AWE: U contents/focus for empty vs swap; XMO target geometry. |
 | move.md / R-MOV-12 (6) | COS, HYP, BSP, I3, XMO, AWE | COS: source index + output order + destination contents. HYP: U2 contents for admission (half-open containment deterministically selects U2). BSP: U1/U2 contents. I3: output order for y=0 tie. XMO: U1/U2 contents + geometry. AWE: contents + enumeration order. |
 | move.md / R-MOV-13 (4) | COS, HYP, XMO, BSP | COS: source index + destination contents. HYP: target contents. XMO: per-leg contents + target geometry. BSP: U contents/focus selecting occupied-swap vs empty-no-op. |
-| multi-output.md / R-OUT-01 (4) | HYP, BSP, XMO, AWE | HYP: L work area/X geometry + alignment + drop half. BSP: L/X geometry. XMO: L/R Tall window and output geometry. AWE: initial global client order and work areas for post-exchange order/frames. |
+| multi-output.md / R-OUT-01 (5) | HYP, BSP, XMO, AWE, SWY | HYP: L work area/X geometry + alignment + drop half. BSP: L/X geometry. XMO: L/R Tall window and output geometry. AWE: initial global client order and work areas for post-exchange order/frames. SWY: L output aspect selecting geometry-following default layout and target split shape (profile config fixed). |
 | multi-output.md / R-OUT-02 (4) | HYP, BSP, XMO, AWE | HYP: arrangement/adjacency + alignment. BSP: L/X geometry + alignment. XMO: output geometry for cross/local selection. AWE: tile projection of V[A,B]. |
 | multi-output.md / R-OUT-07 (3) | COS, HYP, AWE | COS: work area + decoration sizes. HYP: cursor + L work area. AWE: initial global client order and work area for retained-order admission frames. |
-| multi-output.md / R-OUT-06 (5) | COS, HYP, AWE, QTI, NIR | COS: L's workspace contents/focus history selecting exact post-evacuation node; secondary frame/client settlement. HYP: R/L contents/focus history selecting evacuated focus (return affinity traced). AWE: remaining-screen focus history selecting evacuated focus. QTI: R/L contents/focus history and group numbering selecting exact focus/fresh reconnect assignment; no evacuation merge or return-affinity store. NIR: R/L contents/focus history selecting exact focused node; distinct-workspace evacuation and preferred-output return affinity traced. |
+| multi-output.md / R-OUT-06 (6) | COS, HYP, AWE, QTI, NIR, SWY | COS: L's workspace contents/focus history selecting exact post-evacuation node; secondary frame/client settlement. HYP: R/L contents/focus history selecting evacuated focus (return affinity traced). AWE: remaining-screen focus history selecting evacuated focus. QTI: R/L contents/focus history and group numbering selecting exact focus/fresh reconnect assignment; no evacuation merge or return-affinity store. NIR: R/L contents/focus history selecting exact focused node; distinct-workspace evacuation and preferred-output return affinity traced. SWY: R/L contents and seat focus stack/history selecting evacuation/reconnect focus, including destroyed-empty listeners; priority return affinity traced. |
 | resize.md / R-RSZ-01 (1) | KAR | Recorded but unstated viewport width selecting contextual grow/shrink step. |
 | restart-persistence.md / R-RST-01 (4) | PAP, KAR, AWE, QTI | PAP: F float mechanism, above-flag, minimized-scratch or list-only; secondary host tab-list selection. KAR: creation/manage order selecting fresh column adoption. AWE: pre-restart stacking/admission order and whether B focus raised it, selecting last-visible rule-focus in startup scan. QTI: pre-restart stacking/admission order selecting last stealable startup focus in X11 QueryTree scan; Wayland has no restart journey. |
 | restart-persistence.md / R-RST-03 (2) | PAP, KAR | PAP: F float mechanism, above-flag, minimized-scratch or list-only. KAR: creation/manage order, moved F frame width and pre-adoption focus state. |
@@ -303,9 +308,9 @@ maps to that profile, not permission to change defaults.
 | workspaces.md / R-WS-05 (2) | HYP, AWE | Window/output/work-area geometry for forward/return frames. |
 | workspaces.md / R-WS-06 (3) | COS, HYP, AWE | COS: WS1 rectangles/output for float frame/clamp. HYP: WS2 contents + A geometry + cursor half. AWE: work areas for retained-frame floating send and tile-return frames. |
 | workspaces.md / R-WS-09 (1) | HYP | Return pointer position for focus. |
-| workspaces.md / R-WS-12 (4) | COS, PAP, AWE, QTI | COS: WS2 contents/focus history selecting moved-active focus. PAP: live stack/tab order selecting displaced views/focus; secondary host neighbor/index policy. AWE: whether C is the previously focused client on R, selecting final focus while the moved tag stays hidden. QTI: current screen/current-window history for layout_all focus after toscreen view-ownership reassignment. |
+| workspaces.md / R-WS-12 (5) | COS, PAP, AWE, QTI, SWY | COS: WS2 contents/focus history selecting moved-active focus. PAP: live stack/tab order selecting displaced views/focus; secondary host neighbor/index policy. AWE: whether C is the previously focused client on R, selecting final focus while the moved tag stays hidden. QTI: current screen/current-window history for layout_all focus after toscreen view-ownership reassignment. SWY: WS2/WS3 contents and seat focus history selecting moved focus and displaced views; criteria reaches hidden WS2. |
 | workspaces.md / R-WS-15 (3) | HYP, BSP, PAP | HYP: arrival pointer. BSP: visit/focus history. PAP: MRU visit sequence. |
-| workspaces.md / R-WS-17 (3) | BSP, AWE, QTI | BSP: visit history for last-walk targets in removal variant. AWE: remaining-screen client focus history after disconnect/previous. QTI: group numbering/assignment selecting fresh reconnect mapping and second previous toggle. |
+| workspaces.md / R-WS-17 (4) | BSP, AWE, QTI, SWY | BSP: visit history for last-walk targets in removal variant. AWE: remaining-screen client focus history after disconnect/previous. QTI: group numbering/assignment selecting fresh reconnect mapping and second previous toggle. SWY: pre-disconnect global seat focus/previous chain; the per-L WS1 record does not fix sway's single global history. |
 | workspaces.md / R-WS-18 (2) | COS, HYP | COS: geometry. HYP: geometry + E numeric ID/position. |
 | workspaces.md / R-WS-19 (1) | COS | Post-transfer window/output geometry. |
 | workspaces.md / R-WS-20 (2) | COS, HYP | COS: invoked relative-send chord direction selecting the shipped Vertical layout branch. HYP: E's numeric ID selecting E-vs-created numeric+1 target; ordinal trailing position does not fix that ID. |
@@ -329,7 +334,7 @@ All IDs have prefix `R-`; none of these U/L entries are duplicated swap cells.
 | bspwm | None (all 20 closed) | MAX-04; MIN-02; DRAG-08; RST-03..04; SPC-08..09/11; WS-25 |
 | i3 | FLT-04; INS-06; MAX-01/03..04; CTL-01..07; RST-02; START-01..03; SPC-10/12..13; WS-03/06/27 | FLT-01..03/06/11; MAX-05; MIN-01..03; DRAG-05; OUT-07; RST-03..04; SPC-08..09/11; WS-18..19 |
 | xmonad | None (all 23 closed) | MIN-01..03; MAX-05; RST-03..04; SPC-08..09 |
-| sway | FLT-04..05; INS-06; MAX-01/03..04; CTL-01..07; RST-02..03; START-01..03; SPC-10/12..13; WS-03/06/12 | FLT-01..03/06/11; MAX-05; MIN-01..03; DRAG-05; OUT-07; RST-04; SPC-08..09/11; WS-18..19 |
+| sway | None (22 U closed; 1 H and 1 F reclassified) | FLT-01..03/06/11; MAX-05; MIN-01..03; DRAG-05; OUT-07; RST-04; SPC-08..09/11; WS-18..19 |
 | qtile | None (all 21 closed) | MAX-04..06; MIN-01..03; RST-03..04; SPC-08..11; WS-25 |
 | awesome | None (all 12 closed) | FLT-02/05..06; MAX-04; MIN-01..03; RST-03..04; SPC-08..13; WS-25 |
 | niri | None (all 12 closed) | FLT-06; MAX-01; MIN-02; RST-03..04; SPC-08..09 |
@@ -342,14 +347,14 @@ All IDs have prefix `R-`; none of these U/L entries are duplicated swap cells.
 Rank by unfinished source-candidate count N, then N+U for ties. These are
 triage candidate pools, not measured completion forecasts. N+U is the
 upper candidate yield for a pass also closing unsupported statements;
-5 remaining N cells have recorded secondary fixture/host/live limitations.
-There are 20 N cells without those recorded secondary barriers. Further tracing
+3 remaining N cells have recorded secondary fixture/host/live limitations.
+There are 10 N cells without those recorded secondary barriers. Further tracing
 can discover additional limits, so neither number guarantees closure.
 
 | Rank | WM | Source candidates N | Cheap U | N+U ceiling | N with F/H/L secondary |
 |---|---|---:|---:|---:|---:|
 | 1 | i3 | 13 | 22 | 35 | 3 |
-| 2 | sway | 12 | 24 | 36 | 2 |
+| Complete | sway | 0 | 0 | 0 | 0 |
 | Complete | niri | 0 | 0 | 0 | 0 |
 | Complete | qtile | 0 | 0 | 0 | 0 |
 | Complete | Hyprland | 0 | 0 | 0 | 0 |
@@ -548,6 +553,22 @@ and persistence/special-window slices; U cells were evaluated with their area.
   corrected verification are recorded in [niri's archived note](archive/niri-reference-source-fill.md).
 - No scenario/code/source-checkout/stash changes or live testing.
 
+## sway source-pass outcome
+
+- All **12 N + 24 U attempted**, with independent source verification of
+  three slices and corrected-policy/comparison audits. **8 N + 22 U closed
+  (30 cells)**; **6 reclassified: 1 H, 5 F**. No sway N/U remain.
+- New H: R-RST-02. New F: R-OUT-01/06; R-MOU-03; R-WS-12/17.
+  Existing H2/F16/L17 unchanged. Residual **41: H3/F21/L17**.
+- Criteria-targeted whole-workspace moves reach hidden WS2; active-only
+  unsupported wording was corrected. Hotplug focus includes destroy listeners;
+  per-L history does not fix sway's global seat history. Empty-source relative
+  send focus resolves to the workspace node without an extra fixture gap.
+- Approved rules unchanged. Nine independently verified comparisons and
+  rejected traces/corrections are recorded in
+  [sway's archived note](archive/sway-reference-source-fill.md).
+- No scenario/code/source-checkout/stash changes or live testing.
+
 ## Verification and next action
 
 - Initial triage independent occurrence-aware recount: 1,896 reference cells, 1,006 TBD;
@@ -565,10 +586,10 @@ and persistence/special-window slices; U cells were evaluated with their area.
   twelve `reference-triage-<WM>.json` files, `reference-triage-aggregate.json`
   and `reference-triage-spot-check.json`. These are session artifacts, not
   repository dependencies; the durable classification ledgers are above.
-- Current aggregates: 1,896 reference cells, 579 TBD; N25/H76/F292/L140/U46.
-  Area N totals sum to 25; fixture ledger sums to 292 across 92 rows.
+- Current aggregates: 1,896 reference cells, 549 TBD; N13/H77/F297/L140/U22.
+  Area N totals sum to 13; fixture ledger sums to 297 across 92 rows.
   The PaperWM, karousel, paneru, COSMIC, xmonad, awesome, bspwm, Hyprland, qtile and niri outcomes and independent verification are recorded
-  above and in their archived notes; final occurrence-aware and diff-scope
+  above and in their archived notes, plus sway; final occurrence-aware and diff-scope
   checks accompany each pass.
 - Exact next action for PaperWM: none. Host-source pinning, fixture inputs
   and live-only observations remain user-owned; another WM pass is separate.
@@ -635,3 +656,8 @@ and persistence/special-window slices; U cells were evaluated with their area.
   links reconcile. Full index text outside niri legend blocks is preserved.
   Source pin/clean checkout, three stash object identities, scenarios,
   profiles and approved rules preserved.
+- Exact next action for sway source fill: none; no N/U areas remain.
+  Integrated verification covers exact candidate/exclusion scope, multiline
+  preservation, all WM counts/partitions, N-area sums, fixture membership,
+  sway ledgers, nine comparison rows, pinned ranges, local links, clean pins
+  and three stash object identities. Only i3 N13/U22 remain for source filling.

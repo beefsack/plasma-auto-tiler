@@ -241,7 +241,7 @@ ancestry claims. Ours cells cite the Engine move rules at `9241c94`
   `S(S-i3-move)`.
 - Then xmonad/Tall+Navigation2D: fixture-inapplicable (flat Tall has no
   nested V group). `S(S-xmo-layout)`.
-- Then sway: A enters the V group; exact index TBD. `S(S-sway-move)`.
+- Then sway: A enters the V group at index 1 before the remembered C as `V[B,A*,C]` (perpendicular reparent to the MRU active child C; not a whole-group swap or beside-wrap); focus stays A. `S(S-sway-move)`.
 - Then qtile/Columns: under `COL[C1[A*],C2[B,C]]` sole A carries into C2 via `shuffle_right` (join at C2's current, no whole-neighbor swap or beside-wrap; no focus write, so focus stays A); exact row inside C2 TBD (F: C2's stored current is unrecorded and `insert_position=0` inserts at current). `S(S-qti-shuffle)` + `S(S-qti-add)`.
 - Then awesome/tile: tile projection (master A, stack B/C) swaps A with B
   geometrically, focus retained. `S(S-awe-swap)` + `S(S-awe-tile)`.

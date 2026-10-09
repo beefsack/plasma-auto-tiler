@@ -29,7 +29,7 @@ paneru legs distinguish the native Space from virtual rows.
 - Then bspwm: Crosses to L via configured `-s west --follow`: the west-neighbor search spans all monitors' focused desktops, so X qualifies; cross-monitor node swap puts A sole on L and X in A's R slot (`L=A`, `R=H[X,B]`), `--follow` focuses A on L; exact L split/frames TBD (monitor/X geometry unrecorded); `S(S-bsp-flt-focus)` + `S(S-bsp-flt-swap)`
 - Then i3: Crosses to L: workspace-level H has no left swap, so `move_to_output_directed` attaches A to L's visible workspace at TAIL (nodes `[X,A]`, splith embedding `H[X,A]` under default `workspace_layout`); R collapses to sole B; mover-focused follow via `workspace_show` focuses A on L; `S(S-i3-move)` + `S(S-i3-outmove)`; exact L wrapper if L has non-default `workspace_layout` TBD (no custom rules here)
 - Then xmonad/Tall+Navigation2D: Exact occupied-target crossing TBD (Tall target geometry unrecorded); analogous policy only: profile move is same-layer `windowSwap` (geometric target via `navigableWindows`; `swap` exchanges stack positions retaining mover focus, miss is no-op with wrap False); cross-screen carry via the separate `windowToScreen` (`W.shift`) verb is not exercised here; exact L split/frames TBD; `S(S-xmo-out)` + `S(S-xmo-nav)` + `S(S-xmo-layout)`
-- Then sway: Crosses to L: workspace-level H has no left swap, so the next-output attach moves A to L's active workspace at TAIL (nodes `[X,A]`, splith embedding `H[X,A]` under default `workspace_layout`); R collapses to sole B; focus stays on the mover A on L (no workspace-switch call in this path); `S(S-sway-move)` + `S(S-sway-outmove)`; exact L wrapper if L has non-default `workspace_layout` TBD (no custom rules here)
+- Then sway: Crosses to L: workspace-level H has no left swap, so the next-output attach moves A to L's active workspace at TAIL (nodes `[X,A]`) via `container_move_to_workspace_from_direction` (parallel-LEFT flat insert else perpendicular focus-inactive recursion); R collapses to sole B; focus stays on the mover A on L (no workspace-switch call in this path); `S(S-sway-move)` + `S(S-sway-outmove)` + `S(S-sway-wsdefault)`; exact L wrapper stays TBD (F: L output geometry/aspect unrecorded, so the geometry-following default layout and the workspace layout parallelism branch are unspecified; shipped defaults with no custom rules here)
 - Then qtile/Columns: No-op: leftmost sole-column A has no adjacent column and no shared column to split, so shuffle_left returns with tree and focus unchanged; no directional cross-screen carry in Columns (screen placement is togroup/toscreen, not exercised here); `S(S-qti-shuffle)` + `S(S-qti-group)`
 - Then awesome/tile: Profile directional move is `swap.global_bydirection` (local `swap.bydirection` miss then screen cross; single-output miss is no-op). From A west local misses (A leftmost under strict-origin geometry), global crosses to L: `focus.global_bydirection` activates the encountered L peer X first, then A/X screen exchange via `move_to_screen` (no tag write, so the mover re-activate emits while mistagged and writes nothing), followed by delayed screen-consistency retag landing A on L's selected tag and X on R's selected tag (`permissions.tag` via `to_selected_tags`); tile recalc on both screens over retained global order (X at its retained position; exact R order/pixel frames TBD (F: global insertion order and work area unrecorded)). Focus ends on X. `S(S-awe-swap)` + `S(S-awe-focus)` + `S(S-awe-tile)`
 - Then niri: stays (`move_left` reorders strip columns and returns
@@ -353,9 +353,18 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
   return affinity). Focus stays with the retained current workspace,
   actuated via `setTopFocus` (`peek`, else root).
   `S(S-xmo-rescreen)` + `S(S-xmo-topfocus)`.
-- Then sway: workspaces evacuate to the highest-available else
-  fallback output (empties destroyed); focus and reconnect affinity
-  TBD. `S(S-sway-evac)`; queued.
+- Then sway: disconnect evacuates each workspace to its output-priority
+  highest-available else output-order fallback (`root->outputs`
+  items[0] else noop fallback), destroying empties (sticky-only empties
+  evacuate stickies first); evacuate/restore issue no `seat_set_focus`
+  themselves, but destroyed-empty focus is decided by the seat
+  destroy-listener (sibling/workspace/last-known fallback, visible-only
+  guard). Reconnect restores via the same priority affinity (workspaces
+  whose highest-available is the new output move back, plus
+  fallback-output workspaces), never consulting previous-workspace
+  history. Exact evacuated and post-reconnect focus stays TBD (F: R/L
+  contents and seat focus stack/history unstated).
+  `S(S-sway-evac)`; focus queued.
 - Then qtile/Columns: no evacuation merge in source: on host output removal the `screen_change` hook runs `reconfigure_screens`, which re-keys the remaining outputs and `hide`s groups whose screen left (contents retained, never merged into L; L keeps showing its group), with no focus retarget in the removal path (retained-`current_window` `layout_all` only). Reconnect re-runs the same assignment (`get_available_group` config-order scan, affinity-gated, no identity/affinity store), so the return mapping is fresh assignment, not stored return affinity. Exact evacuated focus and return identity stay TBD (F: R/L contents, focus history and group numbering unstated). `S(S-qti-screen)` + `S(S-qti-ws)`; focus/identity queued.
 - Then awesome/tile: evacuates R clients to L's first tag via the shipped-default screen-removed fallback (tags emit `request::screen` with no rc handler, then `removal-pending` plus `request::tag`, then `delete` into the first tag of a remaining screen; history cleared); exact evacuated focus stays TBD (F: R-side focused client unstated, and the fallback path writes no focus). Reconnect creates fresh per-screen tags with no identity/affinity store (fresh reassignment, not return affinity). `S(S-awe-ws)`; focus queued.
 - Then niri: disconnect moves R's workspaces to L before the trailing

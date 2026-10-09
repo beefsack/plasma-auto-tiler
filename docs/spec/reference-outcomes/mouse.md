@@ -551,9 +551,20 @@ paths; selected intent and doc assertions are never evidence.
 - Then xmonad/Tall+Navigation2D: cross-output drop journey untraced
   (pointer path writes raw frames plus shiftMaster; no drop-branch
   model in this profile). `S(S-xmo-mouse)`; queued.
-- Then sway: same-output finalize mechanics (edge split+insert,
-  centre swap) apply at any found target; cross-output target walk
-  and switcher journey TBD. `S(S-sway-tdrop)`; queued.
+- Then sway: tiled B uses the tiled producer only (modifier+left anywhere
+  incl client, titlebar left without modifier; floating uses the separate
+  floating-move producer): press focuses first, modifier begins immediately
+  while titlebar waits the output-scaled 9px threshold; the source stays
+  attached with indicator-only preview. At any found target the same
+  finalize branches run (titlebar tabbed split+indexed insert, 30px/30%
+  edge split+insert, centre `container_swap`, empty-workspace add;
+  layer-surface NULL aborts; no float/cancel branch, no key-press revert).
+  Cross-output targets resolve through the same cursor-coords lookup
+  spanning all outputs with no output clamp in the traced targeting path;
+  the exact C-edge branch stays TBD (F: C-edge hover pixel and drop point
+  unrecorded). The WS3 switcher/overview leg has no counterpart (no
+  switcher drop target in source; the seatop handles button/motion only).
+  `S(S-sway-tdrop)` + `S(S-sway-switcher)`; edge queued.
 - Then qtile/Columns: tiled cross-output outcome TBD (tiled mod-drag
   swaps with the hovered window while only the float branch carries
   across screens). `S(S-qti-drag)`; queued.

@@ -99,9 +99,7 @@ evidence.
 - Then xmonad/Tall+Navigation2D: no-counterpart (core layouts Tall,
   Mirror Tall, Full only; no tab-toggle/join/leave verb in this profile).
   `S(S-xmo-layout)` + `S(S-xmo-core-nav)`.
-- Then sway: TBD (tabbed parent plus directional `move` inventory sourced,
-  but join order/active and the sequential leave outcome are untraced).
-  `S(S-sway-layout)` + `S(S-sway-move)`; queued.
+- Then sway: joins via `move left` into the tabbed parent appended last as `S[A,C,B*]` with B active (parallel reparent to length, not a swap; no focus write, so focus stays B); then leaves via `move right` promoting B after the group to a new tile right as `H[S[A,C],B*]` with focus staying B (group retained as `[A,C]`, no dissolve; single-child wrappers persist, empty-only reap). `S(S-sway-layout)` + `S(S-sway-move)` + `S(S-sway-cleanup)`.
 - Then qtile/Columns: no-counterpart (layouts are Columns plus Max only;
   `toggle_split` flips split/unsplit with no tab-step/join verb, so
   neither leg has a faithful start). `S(S-qti-split)` + `S(S-qti-default)`.

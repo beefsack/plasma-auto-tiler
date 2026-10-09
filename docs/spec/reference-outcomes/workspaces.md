@@ -155,7 +155,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then bspwm: Unsupported action parameter here: no trailing-empty shortcut in source (desktops are explicit-only with explicit `desktop -r` removal), so the trailing-empty/`0` send has no built-in equivalent and never runs (no applicable journey); `S(S-bsp-send)` + `S(S-bsp-ws)`
 - Then i3: Unsupported action parameter here: no trailing-empty shortcut in source (`move to workspace number` targets explicit workspaces); outcome TBD (no built-in equivalent for the trailing-empty parameter); `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: Unsupported action parameter here: no trailing-empty shortcut in source (workspaces explicit; `shiftWin` to a non-member tag returns the input unchanged, so the trailing-empty/`0` send never runs); `S(S-xmo-shift)`
-- Then sway: Unsupported action parameter here: no trailing-empty shortcut in source (`move to workspace number` targets explicit workspaces, no `0` branch); outcome TBD (no built-in equivalent for the trailing-empty parameter); `S(S-sway-movews)`
+- Then sway: Unsupported action parameter here: no trailing-empty shortcut in source (`move to workspace number` targets explicit workspaces with find-or-create; `0` names explicit workspace `0`, never the trailing empty), so the trailing-empty send has no applicable journey and never votes here; the explicit-`0` input instead creates workspace `0` and moves B there sole via the ordinary number path (different target, out of scope for reuse). `S(S-sway-movews)`
 - Then qtile/Columns: Unsupported action parameter here: no trailing-empty shortcut in source (groups are explicit 1-9; `togroup` takes explicit names only and an unknown group raises before any hide/remove/add, so the `0`/trailing-empty send never runs and tree and focus stay unchanged); `S(S-qti-group)`
 - Then awesome/tile: no-applicable-journey: tags are explicit per-screen (1-9, recreated per screen) with explicit `view_only`, and the shipped numrow inventory binds view/move/toggle only with no trailing-empty shortcut or `0` target in source; the `0` send has no applicable tile journey, so tree and focus stay unchanged; `S(S-awe-tag)` + `S(S-awe-keys)` + `S(S-awe-ws)`
 - Then niri: no-counterpart (no trailing-empty shortcut exists;
@@ -331,7 +331,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then bspwm: no-counterpart (no workspace floating mode exists in source: float is per-window and desktop layout is tiled/monocle only, so the forward send to a floating workspace never runs and the return leg is conditional on that unestablished forward); `S(S-bsp-float)` + `S(S-bsp-layout)`
 - Then i3: Forward TBD: no workspace floating mode exists in source to map `WS2 floating` onto (float is per-window); arrival dispatch for that parameter unevidenced, so the return leg is conditional on an unestablished forward; `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: no workspace-mode counterpart (no workspace floating mode in source: float is per-window with layout Tall/Mirror/Full plus floating layer only, so the forward/return send never runs); `S(S-xmo-float)` + `S(S-xmo-layout)`
-- Then sway: Forward TBD: no workspace floating mode exists in source to map `WS2 floating` onto (float is per-window; `workspace_layout` default/stacked/tabbed only); arrival dispatch for that parameter unevidenced, so the return leg is conditional on an unestablished forward; `S(S-sway-wsmode)`
+- Then sway: No workspace-mode counterpart in source (no workspace floating mode exists: float is per-window; `workspace_layout` default/stacked/tabbed only), so the forward send to a floating workspace never runs and the return leg, conditional on that unestablished forward, never runs either; no applicable journey. `S(S-sway-wsmode)`
 - Then qtile/Columns: no-counterpart (no workspace floating mode exists in source: float is per-window and Columns always tiles plus a floating layer, so the `WS2 floating` target has no faithful start and no floating-workspace transfer journey ever runs; an ordinary `togroup` would admit B tiled via the ordinary anchor, which substitutes a different target and never votes here); `S(S-qti-wstoggle)` + `S(S-qti-group)`
 - Then awesome/tile: WS2 floating reads as the shipped floating layout on that tag (layout is per-tag via `layout.set`); forward B arrives unarranged (floating arrange no-op, incoming geometry kept); return re-admits via tile partition over retained global order; no view switch either leg; exact pixel frames TBD (F: work area unrecorded); `S(S-awe-tag)` + `S(S-awe-layout)` + `S(S-awe-float)`
 - Then niri: fixture-inapplicable (no workspace floating mode exists to
@@ -740,12 +740,17 @@ verb inventory); selected intent and doc assertions are never evidence.
   fixture (no workspace-ownership move verb exists); independently,
   `greedyView` reassigns display/view with a hidden swap, never an
   ownership vote. `S(S-xmo-ws)`.
-- Then sway: mixed (the fixture verb `move workspace to output` acts on
-  the handler-context active workspace only, so the hidden WS2 has
-  no-counterpart on this fixture; an independent leg with WS2
-  explicitly selected detaches/attaches with source refill, while the
-  displaced-view/focus remainder stays TBD). `S(S-sway-ws)`;
-  displaced-view queued.
+- Then sway: whole-workspace move via the criteria-targeted form
+  `[workspace="WS2"] move workspace to output R` (matched-window
+  targeting iterates WS2's containers over all outputs incl hidden, so
+  handler workspace resolves to hidden WS2; the bare current-workspace
+  invocation never substitutes): detaches/attaches the same workspace
+  object via `workspace_move_to_output` (source refilled with a fresh
+  workspace when last, displaced consider-destroyed only if
+  empty/non-active/unreferenced) and focuses the moved workspace's
+  focus-inactive node. Exact focus node and displaced views stay TBD
+  (F: WS2/WS3 contents and focus history unstated). `S(S-sway-ws)`;
+  focus/views queued.
 - Then qtile/Columns: shared group/view-ownership reassignment via
   `toscreen` on R (a swap runs only when the group already had a
   screen; WS3 is unscreened and hidden, so R takes WS2 while WS3 hides
@@ -1118,12 +1123,19 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   `S(S-i3-ws)`.
 - Then xmonad/Tall+Navigation2D: no-counterpart (no back-and-forth or
   previous-workspace verb in the profiled key inventory). `S(S-xmo-ctl)`.
-- Then sway: output removal evacuates each workspace to the
-  highest-available else fallback output (destroying empties); showing D
-  on L records WS2 in the per-seat previous; first previous on L selects
-  WS2 with seat focus-inactive focus. Reconnect affinity and the exact
-  second toggle stay TBD. `S(S-sway-evac)` + `S(S-sway-ws)`;
-  return/second queued.
+- Then sway: output removal evacuates each workspace to the priority
+  highest-available else fallback output (destroying empties); evacuate
+  and restore issue no seat focus/previous write themselves
+  (destroyed-empty focus refocuses via the seat destroy-listener;
+  inventoried occupied workspaces survive), so the displacement itself
+  records nothing and reconnect returns D to R via the same priority
+  affinity without consulting previous-workspace history. Sway keeps a
+  single per-seat previous (change-only) with global name lookup and no
+  out-of-scope clear (stale names recreate). First/second previous
+  targets stay TBD (F: pre-disconnect global seat focus and previous
+  chain unstated; the Given per-L previous WS1 does not fix sway's
+  single global history). `S(S-sway-evac)` + `S(S-sway-ws)`;
+  targets queued.
 - Then qtile/Columns: previous is per-screen, so R-side state lives on the
   removed screen object while L's own record (WS1) survives intact; first
   previous on L selects WS1 with the group's remembered `current_window`.
@@ -1351,10 +1363,12 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   the profiled core+Navigation2D inventory; relative shift needs CycleWS).
   `S(S-xmo-ctl)`.
 - Then sway: next/previous resolve via the wrap fallback through the same
-  no-follow path (both runs stay); attachment is after the target focus.
-  The emptied source is spared while active and destroyed once empty and
-  non-active. Exact empty-source focus TBD. `S(S-sway-movews)` +
-  `S(S-sway-ws)` + `S(S-sway-wsretain)`; focus queued.
+  no-follow path (both runs stay: mover focus restored to the source
+  inactive, no switch); attachment is after the target focus (empty E
+  takes B sole). The emptied source is spared while active (or
+  seat/focus-inactive referenced) and destroyed once empty and
+  non-active, leaving focus on the emptied source workspace node.
+  `S(S-sway-movews)` + `S(S-sway-ws)` + `S(S-sway-wsretain)`.
 - Then qtile/Columns: no-counterpart (`togroup` takes explicit group
   names only; next/previous are view verbs that transfer nothing).
   `S(S-qti-ws)`.
