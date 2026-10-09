@@ -2273,6 +2273,13 @@ decisions of 2026-09-24 are under
   Linux/macOS session: FancyWM core submodules, niri/sway/river/awesome/dwm
   source analysis (web-only now). Keep it updated as projects are studied.
   [Evidence](changes/archive/prior-art-catalogue.md).
+- P1 | Non-native tiler host-interaction research | User 2026-10-09: after
+  the reference-matrix per-WM source-fill passes finish. Study tilers that run
+  on top of a host WM (KWin scripts, GNOME extensions, Windows and macOS
+  tilers): host interaction, keybind capture, custom rendering, workspaces,
+  window control hooks/APIs, and user reception (polished/native-feeling vs
+  janky/unreliable). Output: lessons for how we interact with each host.
+  Builds on the [prior-art catalogue](research/prior-art.md).
 - P1 | Cross-platform dev environment (mise) | Delivered 2026-10-03
   (`4e95150`, `fda206b`, CI green incl. hosted Windows/macOS install
   checks): root `mise.toml` (Rust stable, just, jq, gh, ripgrep; yq on
@@ -2825,6 +2832,15 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   [host builder](changes/archive/host-matched-native-development-builds.md)
 
 ## Open user decisions
+
+- COSMIC-vs-rule comparisons from the COSMIC source-fill (`21300f7`), no
+  recorded deviation covers them: MOV-08 (Up tries previous workspace before
+  output), MAX-08 focus/move and MAX-09 (Windows maximize policy vs COSMIC),
+  CTL-04 (pinned workspace overrides survive restart), WS-20 (sole-window
+  next send), SPC-07 (equal sentinel hints float), OUT-06 (disconnect of the
+  focused output). REQ-MAX-08 OPEN and REQ-MAX-09 wording are inconsistent
+  with the Windows maximize policy text.
+  [record](changes/archive/cosmic-reference-source-fill.md)
 
 - OBS POC inputs: OBS account/project, GitHub PAT/webhook wiring, Fedora
   release, neon/Kubuntu pursuit, absent-during-upgrade policy, pacman repo
