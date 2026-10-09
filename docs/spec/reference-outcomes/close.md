@@ -232,10 +232,17 @@ is the observation-driven proposal, never the native verb.
 - When: close B with the profile's verb from the inventory above. No
   native restore action is available after destruction.
 - Observe: overlay cleanup, remaining tile allocation and focus.
-- Then COSMIC: max leg removes B from the tree and A refills; full leg
-  already removed B during preparation, so A keeps its full allocation.
-  Overlay cleanup/focus TBD. `S(S-cos-rem)` + `S(S-cos-maxpolicy)` +
-  `S(S-cos-fsreq)`; queued.
+- Then COSMIC: max leg first clears the overlay via `unmaximize_request`
+  (floating unmap plus tiling recalc), then removes B with single-child
+  group flatten (A orphaned to root; `remove_window` proportional
+  redistribution applies only to len>2) and A refills full width.
+  Full leg already
+  unmapped B into a `Fullscreen` target during preparation (A already
+  full), so close drops the fullscreen surface with its saved tiling
+  restore discarded and the tree keeps A full. Both legs focus A via MRU
+  fixup (B dropped from focus sets). Exact pixel frames TBD (F: output
+  and work-area geometry unrecorded). `S(S-cos-rem)` + `S(S-cos-maxpolicy)` +
+  `S(S-cos-fsreq)` + `S(S-cos-fsrestore)` + `S(S-cos-focusfix)`.
 - Then Hyprland/Dwindle: unmap removes the layout target and group
   membership, refocusing since B was focused; max/full mode dies with
   B; A refills; focus A. `S(S-hyp-close)` + `S(S-hyp-fs)`.

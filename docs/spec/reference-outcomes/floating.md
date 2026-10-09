@@ -88,7 +88,15 @@ Column legs below use separately stated column Givens with the same identities a
 
 - Observe (column leg): visibility across the switch; off placement.
 
-- Then COSMIC: Sticky moves to the output-set layer (separate from per-workspace layers), tiled subjects float first; un-sticky restores the remembered Tiling/Floating layer at the active workspace, not the origin, and appends focus; stays on top; `S(S-cos-sticky)` + `D(D-ref)`; exact cross-switch visibility journey TBD
+- Then COSMIC: B stays visible across the switch on the same output:
+  sticky lives in the output-set `sticky_layer`, the switch flips only
+  the set active index, and the sticky stage renders/hit-tests independent
+  of the active workspace (sticky before workspace windows) with sticky
+  keyboard focus staying valid across the switch. Tiled subjects float
+  first; un-sticky restores the remembered Tiling/Floating layer at the
+  active workspace, not the origin, and appends focus; stays on top via
+  the sticky-first hit order plus the focus-path raise.
+  `S(S-cos-sticky)` + `S(S-cos-sticky-layer)` + `D(D-ref)`
 - Then Hyprland/Dwindle: Refused no-op: tiled B fails the float-only pin guard (warning, no state change, no auto-float); B stays tiled on its workspace, sticky-off N/A; floating-pin cross-WS visibility TBD for a floating subject; `S(S-hyp-pin)`
 - Then bspwm: Sticky sets on tiled B with no float-only guard; B follows the monitor's focused desktop across the switch; sticky-off clears in place; exact visibility journey TBD; `S(S-bsp-sticky)` + `S(S-bsp-state)`
 - Then i3: Sticky sets on tiled B with no float-only guard, but the push moves only floating stickies, so tiled B stays on its workspace and is not visible after the switch; sticky-off clears the flag in place; `S(S-i3-sticky)`; exact native journey TBD
@@ -216,7 +224,7 @@ Column legs below use separately stated column Givens with the same identities a
 
 - Observe (column leg): B sticky-visible vs ordinary float; remembered origin.
 
-- Then COSMIC: Pinned source persists only pinned-workspace config, no window/sticky carry-over established there; compositor/owner restart differs from script restart; `S(S-cos-persist)`; exact B visibility/origin journey TBD
+- Then COSMIC: Pinned source persists only pinned-workspace config (output match, tiling flag, id/name; no window/sticky/float carry-over in the traced path); compositor/owner restart differs from script restart; `S(S-cos-persist)`; exact B visibility/origin journey TBD (live: owner-restart execution unobserved)
 - Then Hyprland/Dwindle: TBD (no owner-restart persistence source at this pin; in-memory pin/float carry-over unevidenced)
 - Then bspwm: Sticky floating B persists: owner `wm -r` dumps full state (monitors/desktops/nodes incl sticky, client state/lastState, focus history, stacking) and re-execs restoring it; `wm -l` loads the same image; B stays sticky floating with its node kept, visible on the selected WS2 via live sticky scope; exact restart/visibility journey TBD; `S(S-bsp-restore)` + `S(S-bsp-state)`
 - Then i3: Sticky re-established from serialized layout or state hints, then pushed to the visible workspace, so B stays sticky-visible; `S(S-i3-sticky)`; exact restart/visibility journey and origin placement TBD
@@ -543,10 +551,14 @@ applicable unknowns are queued, evidenced absent verbs are not.
   centre-join stays R-DRAG-01 and never substitutes.
 - Observe: z-order change vs focus-only; tile/float layer boundary;
   settled stacking order after each step.
-- Then COSMIC: focusing F raises it (focused sticky and ordinary
-  floaters are raised via the focus path); explicit lower TBD (no lower
-  verb traced; a missing search term is not absence proof).
-  `S(S-cos-raise)`; lower queued.
+- Then COSMIC: focusing F raises it to the top (focused sticky and
+  ordinary floaters are raised via the focus path). Explicit lower is a
+  qualified no-counterpart leg: the pinned `Action` inventory lists no
+  raise/lower verb (stacking-adjacent verbs are the `ToggleStacking`
+  tile/stack convert and the `SwapWindow` overview grab only), no lower
+  binding exists, and the traced client-request handlers expose no lower
+  path; free pointer drag is not this leg (stays R-DRAG-01).
+  `S(S-cos-raise)`.
 - Then Hyprland/Dwindle: focusing or pressing F raises it (float-toggle,
   desktop-state activate, click and drag paths all raise floating
   windows); lower runs only through the Lua `alter_zorder bottom` path,

@@ -144,9 +144,12 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
   via the adapter `focus` op (`S(S-ours-focus)` + `S(S-ours-out)`).
 - Observe: cross-output target and focus history vs local wrap or stay.
   Compare geometry with target workspace MRU.
-- Then COSMIC: falls through to workspace/output navigation; exact
-  branch (workspace step vs output switch) TBD under the shipped
-  layout. `S(S-cos-tilefocus)` + `S(S-cos-focus-fallback)`; queued.
+- Then COSMIC: crosses to X on L: leftmost A exhausts the tiling walk
+  (None), and under the shipped Vertical workspace layout the fallback
+  runs `SwitchOutput(Left)`; `next_output` keeps the y-overlapping L by
+  nearest origin distance, activates L and focuses its MRU-last target
+  (sole X), with no layout or membership write.
+  `S(S-cos-tilefocus)` + `S(S-cos-focus-fallback)` + `S(S-cos-move-out)`.
 - Then Hyprland/Dwindle: crosses to L via the monitor fallback; exact
   focus target TBD. `S(S-hyp-focus)`; queued.
 - Then bspwm: focuses X on L (west search spans all monitors'
@@ -315,8 +318,18 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
   output. No agent hotplug; user host only.
 - Observe: window/workspace evacuation, destination and focus; return
   affinity vs fresh reassignment on reconnect.
-- Then COSMIC: evacuation destination and return affinity TBD
-  (output add/remove workspace ownership untraced). TBD; queued.
+- Then COSMIC: occupied workspaces evacuate to the first remaining
+  output L (occupied sets are kept: `can_auto_remove` needs empty plus no
+  token/pin); L keeps showing its current occupied workspace, and the
+  seat sync writes active-output L with focused-output cleared while the
+  frame fixup retargets keyboard focus to L's shown-workspace MRU-last
+  entry (exact node F TBD: L's contents/focus history unstated, so the MRU-last focused node is unspecified; primary F). Reconnect
+  restores return affinity via the workspace `output_stack`
+  (`prefers_output` reclaims same-edid/connector sets into a fresh set
+  showing the first reclaimed entry). Settled client-visible rendering
+  stays TBD (L: frame-driven fixup timing plus client ack unobserved).
+  `S(S-cos-outremove)` + `S(S-cos-focusfix)`; node queued (F), visuals
+  queued (L).
 - Then Hyprland/Dwindle: evacuation and return TBD (monitor-removal
   workspace migration untraced). TBD; queued.
 - Then bspwm: retains R's monitor/desktops at shipped

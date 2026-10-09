@@ -37,8 +37,7 @@ transient (no dialog flag) is a different fixture and is not claimed.
 - Observe: transient float vs tile, parent-relative placement, and
   modal focus fence; dialog and modal flags recorded separately.
 - Then COSMIC: D floats (Wayland parent branch; X11 dialog-or-modal
-  branch). Placement and any modal fence TBD. `S(S-cos-admit)`;
-  queued.
+  branch). Placement is cascade, not parent-relative (arrival with no position reuses last geometry else spawn_order cascade); newcomer takes focus on the active workspace, and a later parent focus request succeeds with no modal fence (modal only feeds the X11 dialog branch; no fence branch in focus validity). Dialog vs modal recorded separately: Wayland modal has no branch, X11 modal floats via the same dialog branch. `S(S-cos-admit)` + `S(S-cos-floatpos)` + `S(S-cos-mapfocus)` + `S(S-cos-modal)`.
 - Then Hyprland/Dwindle: D floats (parent/transient/modal all
   suggest float). Placement and fence TBD. `S(S-hyp-spc)`; queued.
 - Then bspwm: D floats centered (transient rule plus dialog-type
@@ -96,7 +95,7 @@ transient (no dialog flag) is a different fixture and is not claimed.
 - Then COSMIC: X11 splash floats while X11 utility tiles (Utility
   excluded from `is_dialog`); Wayland-native typed legs are
   fixture-inapplicable (xdg has no splash/utility type counterpart).
-  Focus and switcher TBD. `S(S-cos-admit)`; queued.
+  Newcomer takes focus on the active workspace; the external switcher lists every tracked toplevel with no workspace/visibility filter and activation forwards to the toplevel, so admitted splash/utility are listed when tracked. `S(S-cos-admit)` + `S(S-cos-mapfocus)` + `S(S-lch-altab)` + `S(S-pop-toplevel)` + `S(S-cos-topact)`.
 - Then Hyprland/Dwindle: both float (SPLASH and UTILITY atoms) and
   neither takes initial focus (non-DIALOG float atoms suggest no
   initial focus). Switcher presence TBD. `S(S-hyp-spc)`; queued.
@@ -336,9 +335,20 @@ All fresh variants below reset the client and WM state independently.
 - When: open E with one hint variant.
 - Observe: absence/zero/sentinel normalization vs raw equality.
 - Then COSMIC: Wayland unset/(0,0) do not satisfy the fixed branch;
-  both partial-zero variants and the sentinel do and float. X11 absent
-  does not match; present-zero and sentinel X11-native handling TBD
-  (optional-hint mapping not pinned). `S(S-cos-fixed-hints)`.
+  both partial-zero variants, the sentinel and the width-640/absent-height
+  guard do and float (guard height 0 travels in the (w,h) tuple, kept by the
+  full-zero-only filter, equal on both axes). X11 absent does not match
+  (flag unset yields None); present-zero, both partial-zero and sentinel
+  float (flag set yields Some with whole-tuple equality) via the existing-pin
+  chain: cosmic-comp `Cargo.lock` pins smithay e3d461a
+  (`src/xwayland/xwm/surface.rs:1141-1175` getters, `:1648-1656` normal-hints
+  update) and `x11rb` 0.13.2 (`src/properties.rs:257-259` option fields,
+  `:348-349` flag-gated parse, `:667-678` `parse_with_flag`; checksum
+  `9993aa5b` in lockfile, pins reused, no new revision). The X11
+  absent-height guard encoding stays TBD (F: P_MIN_SIZE/P_MAX_SIZE govern the
+  whole (w,h) tuple, so "width 640 plus height absent" has no distinct wire
+  value in evidence; whether the harness sends (640,0) or omits the flag is
+  unstated). `S(S-cos-fixed-hints)`; X11 guard queued (fixture; primary F).
 - Then Hyprland/Dwindle: unset and zero/partial-zero variants do not
   satisfy the fixed branch on either backend; the sentinel floats on
   both (no sentinel branch; Wayland minima>1 with either-axis equality,
@@ -471,9 +481,8 @@ All fresh variants below reset the client and WM state independently.
 - When: explicitly tile F; observe again with identical hints. KDE
   sticky variant uses Meta+G, not origin-preserving Meta+Shift+G.
 - Observe: user override survives observation vs immediate re-float.
-- Then COSMIC: ordinary fixed F tiles directly without a hint check;
-  sticky command equivalence and later reclassification TBD.
-  `S(S-cos-fixed-toggle)`.
+- Then COSMIC: ordinary fixed F tiles directly without a hint check
+  (explicit floating toggle maps directly without hint reclassification; fixed classification runs once at map with no hint-change path, so observation does not re-float it). Sticky occupants have no explicit-tile counterpart: `toggle_floating_window` touches workspace tiling/floating layers only with no sticky branch, and the shipped keybinding inventory carries no `ToggleSticky` binding, so Super+G refuses with sticky preserved. `S(S-cos-fixed-toggle)` + `S(S-cos-sticky)` + `S(S-cos-raise)`.
 - Then Hyprland/Dwindle: explicit tile survives observation (toggle via
   `changeFloatingMode` with no refusal branch; `suggestsFloat` applies at
   initial map only). Exact frames/focus TBD (client timing, live-only).
@@ -532,7 +541,7 @@ All fresh variants below reset the client and WM state independently.
 - Observe: floating base vs reserved tiled slot beneath maximize;
   no launch unmaximize or focus/geometry claim is inferred.
 - Then COSMIC: fixed E admits floating, then maximizes with original
-  layer Floating; unmaximize returns to that layer. Exact frame/focus TBD.
+  layer Floating; unmaximize returns to that layer with no reserved tiled slot beneath maximize.
   `S(S-cos-fixed-admission)` + `S(S-cos-fixed-maximize)`.
 - Then Hyprland/Dwindle: fixed E admits floating at map (`suggestsFloat`
   min==max applied at initial map); born-maximized applies as
@@ -757,9 +766,9 @@ All fresh variants below reset the client and WM state independently.
   (enable maps every ordinary floater); disable/give-fixed/enable still
   tiles with fixed ignored; predicate switch is product-only (whole-size
   equality, no setting); explicit override is moot in the cited path
-  (tiles anyway); maximized control tiles then re-overlays maximized with
-  the layer retargeted, and restore reveals the retained slot. Exact
-  frames/focus TBD. `S(S-cos-fixed-workspace)` + `S(S-cos-fixed-maximize)`.
+  (tiles anyway, with no intentional/automatic distinction to preserve C); maximized control tiles then re-overlays maximized with
+  the layer retargeted, and restore reveals the retained slot.
+  `S(S-cos-fixed-workspace)` + `S(S-cos-fixed-maximize)`.
 - Then Hyprland/Dwindle: no workspace-mode counterpart per R-FLT-04;
   F-arrival, changed-hints/predicate, override, and maximized legs share
   the absence (no workspace action to enable; conditional legs never run).
@@ -842,10 +851,10 @@ All fresh variants below reset the client and WM state independently.
 - Observe: fixed classification at adoption vs open-only classification;
   previous explicit tile override vs recomputed automatic identity.
   Reference outcomes for the unavailable-store variant are TBD.
-- Then COSMIC: exact owner-adoption counterpart/outcome TBD; ordinary
-  compositor map is not evidence for this script-owner journey.
+- Then COSMIC: no-counterpart for this script-owner startup adoption in the inspected compositor inventory; ordinary
+  compositor map is not evidence for this owner journey.
   Store-fault/ID/omission variants have no counterpart in the
-  pinned-workspace persistence inventory (orderly persist only).
+  traced pinned-workspace persistence inventory (orderly persist of output match/tiling flag/id/name only, no window/store-fault path); no applicable reference journey.
   `S(S-cos-persist)`.
 - Then Hyprland/Dwindle: no-counterpart for this owner restart with
   clients alive (no re-exec verb in the dispatcher inventory; reload keeps

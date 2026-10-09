@@ -135,7 +135,7 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
 - Fixture-equivalence qualifier: the landscape-work-area fixture does NOT
   establish B at 1200x600, so first-leg reuse below is policy-branch only;
   pixel dimensions stay TBD and are never re-voted here.
-- Then COSMIC: C splits B's long edge after B, focused (axis follows B's actual frame); legs 2-3 TBD. `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-mapfocus)`.
+- Then COSMIC: C splits B's long edge after B, focused (axis follows B's actual frame); D then splits C's long edge after C with newcomer focus, and E splits D's long edge after D the same way (anchor is focus MRU each leg, so the fixed pointer is irrelevant). Exact axes follow each anchor's realized frame and pixel frames TBD (F: anchor frames plus output dimensions unrecorded). `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-mapfocus)`.
 - Then Hyprland/Dwindle: C splits B's long-edge axis, focused; newcomer side follows the pointer half under follow_mouse (pointer outside eligible windows, side TBD); legs 2-3 TBD. `S(S-hyp-ins)` + `S(S-hyp-newfocus)`.
 - Then bspwm: C splits B's long edge as second child after B, focused (axis follows B's actual frame); legs 2-3 TBD. `S(S-bsp-ins)` + `S(S-bsp-insert)`.
 - Then i3: flat `H[A,B,C*]`, C after B, focused; legs 2-3 TBD. `S(S-i3-ins)`.
@@ -192,7 +192,17 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   and focus paths).
 - Observe: overlay retained, cleared, or covering a newly admitted window;
   newcomer focus/visibility and underlying layout.
-- Then COSMIC: TBD (both legs; overlay admission/render/focus unresolved). `B:max` preparable via `S(S-cos-maxpolicy)`.
+- Then COSMIC: `B:max` leg - opening C first unmaximizes B back to its
+  tiling slot, then C fresh-maps at the MRU anchor B splitting B's long
+  edge after B with newcomer focus. Fresh `B:full` leg - B stays a
+  retained fullscreen target (no exit path in admission); C admits at
+  the last-active tile A (fullscreen B is not in the tiling tree, so
+  the anchor skips it), splitting A's long edge after A with newcomer
+  focus while B's fullscreen cover is retained. Exact axes/frames TBD
+  (F: anchor frames plus output and work-area geometry unrecorded).
+  `S(S-cos-maxpolicy)` + `S(S-cos-admit)` + `S(S-cos-last)` +
+  `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-mapfocus)` +
+  `S(S-cos-fsreq)`.
 - Then Hyprland/Dwindle: TBD (both legs; born-max `S(S-hyp-bornmax)` is not open-over-existing-max).
 - Then bspwm: `B:max` leg no-counterpart (no maximize in the state inventory; `S(S-bsp-fs)`); fresh `B:full` leg applicable but TBD.
 - Then i3: `B:max` leg no-counterpart (no maximize verb; `S(S-i3-max)`); fresh `B:full` leg applicable via `S(S-i3-fs)` but TBD.
@@ -254,7 +264,10 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   automatic chain.
 - Observe: explicit direction overrides auto axis vs unsupported;
   consumed one-shot vs persistent direction on the next admission.
-- Then COSMIC: TBD (no preselection verb evidenced; drop-zone `S(S-cos-drop)` is a different path, not absence proof).
+- Then COSMIC: no-counterpart (no split-direction preselect verb in the
+  inspected inventory; `ToggleOrientation`/`Orientation` flip the
+  existing parent axis only, and the pointer/drop-zone path is not this
+  leg). `S(S-cos-pre)`.
 - Then Hyprland/Dwindle: preselect forces the next admission axis and newcomer side, then resets under the shipped default. `S(S-hyp-pre)` + `S(S-hyp-defaults)`.
 - Then bspwm: `-p DIR` preselects the splitting area with `~` cancel (manual insertion mode). `S(S-bsp-pre)`; consumption and geometry TBD.
 - Then i3: `split vertical` sets VERT orientation. `S(S-i3-split)`; override and persistence TBD.

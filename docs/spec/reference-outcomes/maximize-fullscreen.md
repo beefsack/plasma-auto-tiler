@@ -25,7 +25,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   and convergence delay; distinguish sourced membership policy from the
   original fixture's load-bearing settled geometry.
 
-- Then COSMIC: Maximize records original geometry+layer and overlays the work area; B stays in the tiling tree so siblings keep allocation with no reflow; restore dispatches by layer and restores original geometry/layer, revealing the retained slot; Super+M distinct from F11; `S(S-cos-maxtoggle)` + `S(S-cos-maxpolicy)` + `S(S-cos-bornmax)` + `D(D-cosmic-kb)`; exact native frames/focus/timing TBD
+- Then COSMIC: Maximize records original geometry+layer and overlays the work area; B stays in the tiling tree so siblings keep allocation with no reflow; restore dispatches by layer and restores original geometry/layer, revealing the retained slot; project focus stays B (no focus write either leg); Super+M distinct from F11; `S(S-cos-maxtoggle)` + `S(S-cos-maxpolicy)` + `S(S-cos-bornmax)` + `D(D-cosmic-kb)`; exact native frames, client-ack visuals and timing TBD (L)
 - Then Hyprland/Dwindle: Flat 4-child start has no ordinary binary form; exact N-ary frames TBD. Policy: internal `FSMODE_MAXIMIZED` covers the work area (siblings stay in tree but obscured/blocked); restore to `NONE` lets recalc reveal retained slots; exact frames/focus TBD; `S(S-hyp-fs)`
 - Then bspwm: Unsupported action parameter here: no maximize command/state in source (monocle is a desktop layout, maximize flags are not tree state); maximize/restore outcomes TBD (no built-in equivalent); `S(S-bsp-layout)` + `S(S-bsp-admit)`
 - Then i3: Unsupported action parameter here: no maximize command/state in source (maximize is a derived client hint only); maximize/restore outcomes TBD (no built-in equivalent); `S(S-i3-max)`
@@ -207,7 +207,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Observe (column leg): native exit attempt vs refusal of app-owned fullscreen;
   slot/geometry after exit.
 
-- Then COSMIC: Project toggle dispatches on focus kind: Element enters fullscreen_request with restore captured from its layer, Fullscreen exits via unfullscreen_request with old-slot remap; client-initiated fullscreen (Wayland/X11) routes to the same shell request, so a mapped client fullscreen carries a restore entry; no refusal branch in pinned dispatch; `S(S-cos-fsact)` + `S(S-cos-fsreq)` + `S(S-cos-fsrestore)`; app-specific completion and settled slot/geometry TBD
+- Then COSMIC: Project toggle dispatches on focus kind: Element enters fullscreen_request with restore captured from its layer, Fullscreen exits via unfullscreen_request with old-slot remap; client-initiated fullscreen (Wayland/X11) routes to the same shell request, so a mapped client fullscreen carries a restore entry; no refusal branch in pinned dispatch; `S(S-cos-fsact)` + `S(S-cos-fsreq)` + `S(S-cos-fsrestore)`; app-specific completion and settled slot/geometry TBD (L: client ack timing)
 - Then Hyprland/Dwindle: No refusal branch: client fullscreen maps via the same `setFullscreenMode` path (mapped immediate, unmapped pending); project toggle exits via `NONE` when FS else enters, tree retained; app-specific completion/slot TBD; `S(S-hyp-fs)`
 - Then bspwm: No refusal branch: app EWMH ADD maps via the same set_state with last_state remembered (honored both ways by default); project `node -t ~fullscreen` toggles FULLSCREEN back to last_state (same-state no-op only); EWMH REMOVE/TOGGLE converge on the same restore; slot retained vacant in place, tree kept; app-specific completion/settled geometry TBD; `S(S-bsp-fs)` + `S(S-bsp-admit)`
 - Then i3: No refusal: client FULLSCREEN messages and the `fullscreen` command converge on the same mode toggle; tree retained, exit via mode clear plus recalc; app-specific completion/slot TBD; `S(S-i3-fs)`
@@ -361,10 +361,16 @@ rectangles where geometry is load-bearing.
 - Observe: whether the overlay fences focus (B retained vs sibling
   access); what the move acts on (hidden-tree move, refusal, overlay
   clearing) and the actual focused mover.
-- Then COSMIC: TBD (whether `Focus(Left)` traversal skips or lands on
-  the maximized node, and the `move_current_node` result, are untraced;
-  the overlay retains B's slot per preparation).
-  `S(S-cos-maxtoggle)` + `S(S-cos-maxpolicy)`; queued.
+- Then COSMIC: Focus left is fenced: the tiled maximized B early-returns
+  `FocusResult::None` with no traversal, and the Left fallback requests an
+  output switch that finds no next output on the single output, so focus
+  stays B. Move right then unmaximizes B first (tiling-origin maxima) and
+  dispatches the now-ordinary mover through the floating-then-tiling move
+  path; at `H[A,B*,C]` the same-axis middle move takes the ordinary
+  len-3 fork branch (new Vertical group over C plus B, B first), settling
+  at `H[A,H[B*,C]]` with focus staying B (`Done`, no focus write).
+  `S(S-cos-maxmove)` + `S(S-cos-maxpolicy)` + `S(S-cos-focus-fallback)` +
+  `S(S-cos-move)`.
 - Then Hyprland/Dwindle: TBD (`movefocus` has fullscreen-gated branches
   under shipped `movefocus_cycles_fullscreen`/`on_focus_under_fullscreen`
   defaults, and the move-while-maximized result is untraced;
@@ -448,10 +454,18 @@ rectangles where geometry is load-bearing.
   R4 cross-output writes `setDesktops`).
 - Observe: whether the overlay state is carried to WS2 or restored
   before transfer; source slot/reflow, target overlay, and follow.
-- Then COSMIC: transfer runs the workspace send path (`MoveToWorkspace`
-  follows, `SendToWorkspace` does not); maximize/fullscreen carry,
-  source slot, and target overlay TBD. `S(S-cos-send)` +
-  `S(S-cos-maxtoggle)`; carry queued.
+- Then COSMIC: Max leg - B's Element focus routes to `move_element`,
+  whose `unmap_element` unmaximizes B first (overlay cleared, source
+  reflows) carrying only `was_maximized` in restore data; on the tiled WS2
+  the mover fresh-maps to tiling after other maxima are unmaximized, with
+  no mover re-maximize (overlay not carried). Full leg - B's Fullscreen
+  focus routes to `move_window`, which takes the fullscreen surface with
+  its restore (tiling slot state dropped) and re-maps it fullscreen on WS2
+  (overlay carried). `MoveToWorkspace` follows, `SendToWorkspace` does not.
+  Exact target admission slot/geometry TBD (F: WS2 tile geometry plus
+  target focus history unrecorded) and native ack/focus visuals TBD (L).
+  `S(S-cos-send)` + `S(S-cos-sendoverlay)`; slot
+  queued (F), visuals queued (L).
 - Then Hyprland/Dwindle: transfer runs the move-to-workspace path
   (silent source-refocus vs follow switch); whether `FSMODE_MAXIMIZED`
   or fullscreen travels with the window object TBD. `S(S-hyp-movews)` +

@@ -94,8 +94,11 @@ claims. Ours KDE and Ours Windows cite separate adapter keys.
 - Given: the actual minimized state from R-MNZ-01 (same identities).
 - When: native restore (unminimize) B.
 - Observe: slot restoration; focus.
-- Then COSMIC: B remaps from the stored tiling state (old slot); focus
-  TBD. `S(S-cos-minimize)`; focus queued.
+- Then COSMIC: B remaps from the stored tiling state (old slot via
+  `remap` with the saved state; `was_maximized` re-overlays when set);
+  restore performs no focus write (tiling branch returns no focus target
+  and the caller sets none), so the pre-restore MRU focus C stays valid
+  and B returns unfocused. `S(S-cos-minimize)` + `S(S-cos-focusfix)`.
 - Then Hyprland/Dwindle: no-counterpart (nothing minimized to restore;
   backend `setMinimized` is echo-only/no-op and no unminimize path exists
   in the pinned inventory). `S(S-hyp-mininv)`.
@@ -150,8 +153,12 @@ claims. Ours KDE and Ours Windows cite separate adapter keys.
   column; paneru uses virtual rows (A on VW1, C on VW2).
 - When: native minimize A on WS1 (same paths as R-MNZ-01).
 - Observe: workspace occupancy/cleanup; focus fallback.
-- Then COSMIC: A is stored in `minimized_windows`; the tiling layer
-  holds nothing. Cleanup and focus TBD. `S(S-cos-minimize)`; queued.
+- Then COSMIC: A is stored in `minimized_windows` as tiling restore
+  state with the tiling layer emptied; the workspace is retained, not
+  cleaned up (`is_empty` is false while any minimized entry exists, and
+  only trailing-empty handling applies). Keyboard focus resolves to none:
+  the minimized filter leaves no unminimized MRU target and no mapped or
+  fullscreen fallback exists. `S(S-cos-minimize)` + `S(S-cos-focusfix)`.
 - Then Hyprland/Dwindle: no-counterpart (request dropped as in R-MNZ-01;
   WS1 never empties this way). `S(S-hyp-mininv)`.
 - Then bspwm: no-counterpart (same missing request path and verb).

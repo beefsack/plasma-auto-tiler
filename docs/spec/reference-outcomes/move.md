@@ -230,7 +230,10 @@ ancestry claims. Ours cells cite the Engine move rules at `9241c94`
 - Observe: enter nested neighbor at remembered child vs swap whole
   neighbor, wrap beside it, or geometric leaf swap. Keep group history
   explicit.
-- Then COSMIC: TBD; nested entry target unresolved. `S(S-cos-move)`.
+- Then COSMIC: A enters the V group at the geometric middle index 1
+  regardless of the remembered child C, yielding `V[B,A*,C]` (sole-child
+  root collapse via the single-child flatten); focus stays A (`Done`).
+  `S(S-cos-move)`.
 - Then Hyprland/Dwindle: TBD; reinsert anchor unresolved. `S(S-hyp-move)`.
 - Then bspwm: A swaps with leaf C, not the whole V group; C wins the
   equal-distance tie by history, and focus stays A. `S(S-bsp-move-target)`.
@@ -275,7 +278,10 @@ ancestry claims. Ours cells cite the Engine move rules at `9241c94`
   tile projection; Ours Engine `plan_move` Down.
 - Observe: escape across an orthogonal parent vs move into C, swap, or
   carry group. R-MOV-04 already covers same-axis escape.
-- Then COSMIC: TBD; orthogonal escape outcome unresolved. `S(S-cos-move)`.
+- Then COSMIC: B wraps with the perpendicular parent via the R1
+  orientation-mismatch fork (new Horizontal group beside the inner H),
+  yielding `V[H[A,B*],C]` after single-child flatten; focus stays B
+  (`Done`). `S(S-cos-move)`.
 - Then Hyprland/Dwindle: TBD; reinsert anchor unresolved. `S(S-hyp-move)`.
 - Then bspwm: B swaps with the south leaf C, yielding `V[H[A,C],B*]`;
   focus stays B. `S(S-bsp-move-target)`.
@@ -326,7 +332,13 @@ ancestry claims. Ours cells cite the Engine move rules at `9241c94`
   Explicit output-transfer verbs are not this leg (R-OUT-04 covers those).
 - Observe: exhausted vertical move crosses output vs stays/restructures
   locally. Ours item 5 extends R4 to Up/Down after local exhaustion.
-- Then COSMIC: TBD; vertical output fallback unresolved. `S(S-cos-move)`.
+- Then COSMIC: A has no in-tree move (V edge), so `move_current_node`
+  returns `MoveFurther`; at default `Vertical` Up first attempts
+  `MoveToPreviousWorkspace` and only from the first workspace falls to
+  `MoveToOutput(Up)`, which selects U on full-output overlap plus
+  nearest origin distance and transfers with follow. Cross-vs-local TBD
+  (F: source workspace index unspecified) and exact admission TBD (F:
+  destination contents unrecorded). `S(S-cos-move)` + `S(S-cos-move-out)`.
 - Then Hyprland/Dwindle: crosses to U via the monitor fallback.
   `S(S-hyp-move)`.
 - Then bspwm: A swaps north with X across outputs, yielding `U=A*` and
@@ -379,7 +391,8 @@ expansion record; outcomes are qualified legs, not second scenarios.
   `Swap(South)`; COSMIC/PaperWM swap inventory unresolved; niri,
   karousel, and Ours have no standalone swap verb (see Thens).
 - Observe: swap exchanges vs no-op. Same fixture as R-MOV-01, fresh run.
-- Then COSMIC: TBD; swap-verb inventory unresolved.
+- Then COSMIC: no-counterpart (`SwapWindow` is an overview grab with no
+  directional target form; directional chords are `Move`). `S(S-cos-swap)`.
 - Then Hyprland/Dwindle: TBD; flat triple has no ordinary binary swap
   target. `S(S-hyp-moveswap)`.
 - Then bspwm: no south target in a single row, so no swap; tree and focus
@@ -417,7 +430,8 @@ expansion record; outcomes are qualified legs, not second scenarios.
   right direction; i3/sway name C, xmonad and
   awesome use the flat-four projections below.
 - Observe: swap exchanges vs no-op. Same fixture as R-MOV-03, fresh run.
-- Then COSMIC: TBD; swap-verb inventory unresolved.
+- Then COSMIC: no-counterpart (same overview-only `SwapWindow`; no
+  directional form). `S(S-cos-swap)`.
 - Then Hyprland/Dwindle: TBD; flat four-child start has no ordinary
   binary swap target. `S(S-hyp-moveswap)`.
 - Then bspwm: B swaps east with C, focus stays B. `S(S-bsp-swap)` +

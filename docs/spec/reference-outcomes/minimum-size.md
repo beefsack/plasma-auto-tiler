@@ -26,7 +26,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Observe (column leg): newcomer vs existing member infeasibility; clamp, skip, overlap
   or reflow; focus.
 
-- Then COSMIC: Traced allocation/cropping without minimum enforcement; fixed-size admission floats separately; admission maps once at the resolved MRU anchor, no alternative search; `S(S-cos-min)` + `S(S-cos-last)`; exact native fixture TBD
+- Then COSMIC: Traced allocation/cropping without minimum enforcement; fixed-size admission floats separately; admission maps once at the resolved MRU anchor (axis follows the anchor's realized long edge), no alternative search; `S(S-cos-min)` + `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-admit)`; exact axis/frames TBD (F: anchor realized frames plus output dimensions unrecorded; L: client settle timing)
 - Then Hyprland/Dwindle: Tiled limits off by default; opt-in clamp/recenter may overlap/overflow, not auto-float; `S(S-hyp-min)`; exact fixture TBD
 - Then bspwm: Hints default off `S(S-bsp-hint)`; opt-in clamps every leaf on reflow, including existing members `S(S-bsp-min)`; exact fixture/fence wiring TBD
 - Then i3: Traced tiled render without minimum clamping; fixed-size min==max admits floating while ordinary resizable tiles; float min/max clamp is float-only; exact fixture frames/native response TBD; `S(S-i3-min)`
@@ -74,7 +74,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 - Observe (column leg): infeasible members; clamp, overlap, focus and recovery on grow.
 
-- Then COSMIC: Same traced allocation/cropping `S(S-cos-min)`; native shrink/grow/focus TBD
+- Then COSMIC: Deterministic re-allocation with no minimum consult: equal-share `H[A,B]` (gap 8) allocates 606/606 at 1220 and 536/536 at 1080, infeasible against the 600 minima but with no clamp, float, skip, or refocus branch in the shrink path; grow-back re-runs the same allocation restoring 606/606 at compositor level. Whether native clients overflow, clamp, or misrender in response is client-side: exact settled frames TBD (L). `S(S-cos-min)` + `S(S-cos-add)` + `S(S-cos-flttoggle)`; settle queued (L)
 - Then Hyprland/Dwindle: Same tiled clamp setting `S(S-hyp-min)`; default unclamped, opt-in recentered clamp; exact shrink/grow/focus TBD
 - Then bspwm: Same per-leaf hint clamp when enabled `S(S-bsp-min)`; off by default; exact recovery/fence TBD
 - Then i3: Same unclamped tiled allocation (float clamp float-only); exact shrink/grow frames/focus/float intent TBD (native response not in allocation source); `S(S-i3-min)`
@@ -120,7 +120,8 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 - Observe (column leg): tile/flag vs automatic float; overflow with no siblings.
 
-- Then COSMIC: Same tile allocation/cropping; fixed-size exception not oversized-min policy; `S(S-cos-min)`; native sole-leaf result TBD
+- Then COSMIC: Same tile allocation/cropping (ordinary resizable A tiles; fixed-size min==max exception is not an oversized-min policy); exact sole-leaf native frame TBD (F: output/work-area dimensions unrecorded for this leg; L: client settle timing)
+  `S(S-cos-min)` + `S(S-cos-admit)`; frame queued (F+L)
 - Then Hyprland/Dwindle: Same default-unclamped/opt-in-clamped tiling `S(S-hyp-min)`; native sole-leaf result TBD
 - Then bspwm: Default hints off; honored hints grow leaf at origin `S(S-bsp-min)`; native exact frame TBD
 - Then i3: Ordinary resizable A tiles unclamped even when its minimum exceeds the work area (fixed-size exception is min==max, not oversized-min); float clamp float-only; exact sole-leaf native frame TBD; `S(S-i3-min)`

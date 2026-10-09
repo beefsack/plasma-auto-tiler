@@ -119,7 +119,14 @@ Legend:
 
 - `S-cos-fixed-hints` cosmic-comp:src/shell/layout/mod.rs:17-55 +
   src/shell/element/surface.rs:565-595 (whole-size equality; Wayland drops
-  only full-zero, X11 delegates optional hints) @3d55cba0
+  only full-zero, X11 delegates optional hints) + smithay:src/xwayland/xwm/surface.rs:1141-1175
+  (existing pin e3d461a from cosmic-comp `Cargo.lock`: `min`/`max_size`
+  return the `normal_hints` option fields; update at :1648-1656) +
+  x11rb:src/properties.rs:257-259,348-349,667-678 (existing pin 0.13.2
+  from cosmic-comp `Cargo.lock`, checksum `9993aa5b`: WM_NORMAL_HINTS
+  `min_size`/`max_size` are flag-gated options; pins reused, no new
+  revision selected) @3d55cba0 for cosmic-comp
+  (smithay/x11rb pins reused from cosmic-comp `Cargo.lock`)
 - `S-cos-fixed-admission` cosmic-comp:src/shell/mod.rs:2957-3041
   (fullscreen first; float/tile before sticky/maximize; native focus target)
   @3d55cba0
@@ -146,7 +153,12 @@ Legend:
 - `S-cos-add` cosmic-comp:src/shell/layout/tiling/mod.rs:219-244
   (`add_window`) @3d55cba0
 - `S-cos-rem` cosmic-comp:src/shell/layout/tiling/mod.rs:255-282
-  (`remove_window`) @3d55cba0
+  (`remove_window` proportional redistribution) and :1446-1490
+  (`unmap_internal`: len>2 `remove_window`, len==2 group dissolve with the
+  survivor orphaned) and src/shell/workspace.rs:648-688 (`unmap_element`:
+  maximized overlay cleared first, focus sets dropped, then tiling unmap)
+  and :1002-1030 (`unmaximize_request` floating unmap plus tiling recalc)
+  @3d55cba0
 - `S-cos-last` cosmic-comp:src/shell/layout/tiling/mod.rs:417-433
   (`last_active` resolved at admission, then `map_to_tree`) and :2826-2845
   (`last_active_window` matches the MRU-first focus entry present in the
@@ -204,6 +216,13 @@ Legend:
   changes keyboard focus unless the pointer is grabbed) + `S(S-cos-dragstart)`
   (Super+Left press focuses the move target)
   @3d55cba06c9cf6f27609cdefb520f7857dba20af
+- `S-cos-hoverfocus` cosmic-comp:src/input/mod.rs:494-586 (hover focus
+  only when `focus_follows_cursor` is set, with scheduled delayed focus
+  via the pointer-focus state) + cosmic-comp-config/src/lib.rs:97-101,144-146
+  (`focus_follows_cursor` defaults false, delay default 250ms)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af for compositor paths,
+  @3d55cba0 for config
+  (shipped hover retains focus; enabled variant focuses after the delay)
 - `S-cos-ctl-tile` cosmic-comp:cosmic-comp-config/src/lib.rs:88-95
   (`autotile` + `TileBehavior` Global/PerWorkspace) +
   src/shell/mod.rs:1468-1512 (`update_autotile[_behavior]` sets
@@ -861,8 +880,10 @@ Legend:
   @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
   (no first-run/preset/staging/Force/Disable/Revert/preimage model in the inspected
   inventory; tag layouts recreated from rc on restart)
-- `S-cos-min` cosmic-comp:src/shell/layout/tiling/mod.rs:3119-3128,3183-3185
-  and src/shell/layout/mod.rs:46-52 @3d55cba06c9cf6f27609cdefb520f7857dba20af
+- `S-cos-min` cosmic-comp:src/shell/layout/tiling/mod.rs:2998-3128
+  (position/allocation pass with no minimum consult; maximized/fullscreen
+  skipped, otherwise unconditional `set_geometry` plus configure)
+  and src/shell/layout/mod.rs:17-55 @3d55cba06c9cf6f27609cdefb520f7857dba20af
   (tile allocation/cropping without minimum enforcement; fixed-size admission floats)
 - `S-cos-bornmax` cosmic-comp:src/shell/mod.rs:3001-3022,4461-4500
   and src/shell/workspace.rs:1002-1043 @3d55cba06c9cf6f27609cdefb520f7857dba20af
@@ -1089,8 +1110,15 @@ Legend:
   live acceptance pending; Windows and stateful snap transitions pending)
 - `S-cos-sticky-layer` cosmic-comp:src/shell/mod.rs:4769-4800,4834-4849
   and src/shell/workspace.rs:418-471
+  and src/shell/focus/order.rs:419-422 (sticky stage renders independent
+  of the active workspace) and src/input/mod.rs:2883-2915 (sticky
+  hit-tested before workspace windows) and src/shell/focus/mod.rs:700-716
+  (sticky keyboard focus stays valid across workspace switches) and
+  src/shell/mod.rs:525-553 (workspace switch flips only the set active
+  index, sticky layer untouched)
   @3d55cba06c9cf6f27609cdefb520f7857dba20af
-  (sticky windows use a separate floating layer; pinned denotes workspaces)
+  (sticky windows use a separate output-set floating layer, visible across
+  switches on the same output; pinned denotes workspaces)
 - `S-hyp-flt-focus` Hyprland:src/desktop/state/WindowQuery.cpp:23-46,67-99,130-207,209-256
   and src/config/shared/actions/ConfigActions.cpp:476-526
   @19fb395d45314960e6f79f17994a84094f1cd4f6
@@ -1607,6 +1635,19 @@ Legend:
   non-last empties removed) and
   src/shell/layout/floating/mod.rs:474-476 (arrival with no position
   reuses last geometry loc, else cascade) @3d55cba0
+- `S-cos-sendoverlay` cosmic-comp:src/shell/mod.rs:3302-3310
+  (`move_current`: Element focus routes to `move_element`, Fullscreen focus
+  to `move_window`) and :3337-3360 (`move_window` takes the fullscreen
+  surface with its restore and drops tiling slot state) and :3495-3502
+  (fullscreen carried to the target via `map_fullscreen`) and
+  src/shell/workspace.rs:648-653 (`unmap_element` unmaximizes first, so a
+  maximized mover travels with `was_maximized` in restore data) and
+  src/shell/mod.rs:3587-3603 (tiled target unmaximizes other maxima then
+  fresh-maps the mover with no mover re-maximize; tiling-disabled target
+  maps floating and re-maximizes when `was_maximized`)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (workspace-send overlay carry: fullscreen travels, tiling-target
+  maximize does not)
 - `S-out07-cos-dirwrap` cosmic-comp:src/shell/layout/tiling/mod.rs:563-585
   (output-send direction branch: wraps the target root with the newcomer
   in a Vertical group for Left/Right, newcomer at index 0 for Right/Down
@@ -1644,7 +1685,20 @@ Legend:
   appends the target to the focus stack) and :288-345 (`update_active`
   collects the focused windows, then raises focused sticky and ordinary
   floaters) and :479-481 (`raise_with_children` calls
-  `space.raise_element(focused, true)`) @3d55cba0
+  `space.raise_element(focused, true)`) and src/input/mod.rs:2883-2889
+  (sticky hit-tested before workspace windows on the focus path) and
+  src/input/actions.rs:978-987 (`ToggleStacking` calls
+  `toggle_stacking_focused`, a
+  tile/stack convert per `S(S-cos-stack)`, not a z-order lower) and cosmic-comp:data/keybindings.ron:83-92
+  (stacking/float/maximize/fullscreen/orientation bindings only, no lower
+  binding) + cosmic-settings-daemon:config/src/shortcuts/action.rs:8-151
+  (pinned `Action` inventory: Move/SwapWindow/Fullscreen/Maximize plus
+  `ToggleStacking` stack-convert only; no raise/lower verb) and
+  src/wayland/handlers/xdg_shell/mod.rs:265-304 (client unmaximize/fullscreen
+  requests only, no lower request path)
+  @3d55cba0 for cosmic-comp,
+  @e37160f14d1e7ee428f973cd2848b4e95f83dfe1 for the daemon path
+  (focus raises; explicit native lower has no producer)
 - `S-cos-restore` cosmic-comp:src/shell/layout/tiling/mod.rs:1309-1340
   (`unmap` saves `RestoreTilingState`: parent/sibling/orientation/idx/sizes)
   and :438-540 (`remap` restores the old slot from that state, sibling
@@ -1652,6 +1706,12 @@ Legend:
 - `S-cos-maxtoggle` cosmic-comp:src/shell/mod.rs:4353-4367
   (`maximize_toggle`: maximized unmaximizes, fullscreen is a no-op,
   otherwise a new `maximize_request`) @3d55cba0
+- `S-cos-maxmove` cosmic-comp:src/shell/mod.rs:4140-4143 (tiled maximized
+  focus returns `FocusResult::None`: no traversal, overlay fences) and
+  :4239-4253 (move unmaximizes tiling-origin maxima first, then dispatches
+  the mover through floating-then-tiling `move_current_element`)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (focus/move while maximized: fence plus unmaximize-first dispatch)
 - `S-cos-fsreq` cosmic-comp:src/shell/workspace.rs:1255-1282
   (`map_fullscreen` at output geometry with focus append) and
   src/shell/mod.rs:4891-5021 (`fullscreen_request` sticky/tiling/floating
@@ -1666,7 +1726,16 @@ Legend:
   Tiling/Floating layer at the active workspace, appends focus) @3d55cba0
 - `S-cos-persist` cosmic-comp:src/shell/mod.rs:853-864 (only
   pinned-workspace config carried into a new session) and :1511-1524
-  (`persist` writes pinned workspaces only) @3d55cba0
+  (`persist` writes pinned workspaces only) and :867-935 (`add_output`
+  restore: backup-set restore else fresh set, pinned shells recreated via
+  `create_workspace_from_pinned`, `prefers_output` reclaim) and
+  src/shell/workspace.rs:455-471 (`to_pinned` carries output
+  match/tiling flag/id/name only, no window/sticky/float state) and
+  src/input/actions.rs:162-166 (`Action::Terminate` stops to the login
+  manager, no re-exec verb) + cosmic-settings-daemon:config/src/shortcuts/action.rs:8-151
+  (`Action` inventory carries `Terminate` with no restart/re-exec verb)
+  @3d55cba0 for cosmic-comp,
+  @e37160f14d1e7ee428f973cd2848b4e95f83dfe1 for the daemon path
 - `S-cos-native-unmax` cosmic-comp:src/wayland/handlers/xdg_shell/mod.rs:265-276
   (Wayland client unmaximize routes to `shell.unmaximize_request`, or clears
   the pending flag) and src/xwayland.rs:1135-1146 (X11 same) and
@@ -1684,6 +1753,14 @@ Legend:
   floating; otherwise tiling) and src/xwayland.rs:812-823 (X11 flags from
   protocol state, including `is_fullscreen`) and
   src/shell/layout/mod.rs:17-44 (dialog is parent/window-type checks) @3d55cba0
+- `S-cos-floatpos` cosmic-comp:src/shell/layout/floating/mod.rs:474-476
+  (arrival with no position reuses last geometry loc, else cascade) and
+  :486-604 (cascade from spawn_order with down/side offsets, new-column
+  fallback, centered fallback; no parent-relative branch) @3d55cba0
+- `S-cos-modal` cosmic-comp:src/shell/layout/mod.rs:17-44 (modal only feeds
+  the X11 is_dialog branch; Wayland is parent-only with no modal branch) and
+  src/shell/focus/mod.rs:684-737 (focus validity covers sticky/focus-stack/
+  mapped/fullscreen only, no modal fence branch) @3d55cba0
 - `S-cos-maxpolicy` cosmic-comp:src/shell/mod.rs:4461-4500 (`maximize_request`
   records original geometry+layer and overlays the work area; no-op if already
   maximized) and :4502-4544 (`unmaximize_request` dispatches sticky/workspace,
@@ -2023,14 +2100,30 @@ Legend:
   (`Action::Move` maps `MoveFurther` to previous/next-workspace at default
   `Vertical` else `MoveToOutput`, propagate true) and :613-660
   (`MoveToOutput` via `next_output` plus `move_current` with follow) and
-  :436-470 (`MoveToPreviousWorkspace` Err plus propagate falls to
-  `MoveToOutput`) and src/shell/mod.rs:2273-2300 (`next_output` full-geometry
+  :436-510 (`MoveToPreviousWorkspace` attempt plus Err-propagate fallback
+  to `MoveToOutput`) and src/shell/mod.rs:2273-2300 (`next_output` full-geometry
   overlap plus nearest origin distance, no refusal) and :3164-3200
   (`move_current` to the target output active workspace) and
-  cosmic-comp-config/src/workspace.rs:48-53 (default `Vertical`)
+  cosmic-comp-config/src/workspace.rs:40-45 (default `Vertical`)
   @3d55cba06c9cf6f27609cdefb520f7857dba20af for compositor paths,
   @3d55cba0 for config
   (exhausted-move output callchain; enumeration order unrecorded)
+- `S-cos-swap` cosmic-comp:src/input/actions.rs:883-902
+  (`Action::SwapWindow` opens an overview `SwapWindowGrab` for the focused
+  node descriptor, no directional target form) +
+  data/keybindings.ron:87 (`SwapWindow` bound Super+x; directional chords
+  bind `Move`, :19-26) @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (overview-grab swap inventory only; directional swap has no counterpart)
+- `S-cos-pre` cosmic-comp:src/input/actions.rs:962-976
+  (`ToggleOrientation`/`Orientation` dispatch to `update_orientation` on the
+  focused parent group) + src/shell/layout/tiling/mod.rs:2089-2130
+  (`update_orientation` flips the existing parent axis with proportional
+  rescale, no focus write) + data/keybindings.ron:83 (Super+o
+  `ToggleOrientation`; no preselect binding in :83-92) +
+  src/config/key_bindings.rs:6-25 (`Action`/`PrivateAction` carry internal
+  `Resizing` only) @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (existing-axis toggle inventory only; one-shot admission preselect has no
+  counterpart)
 - `S-bsp-move-target` bspwm:src/tree.c:1124-1149 (directional candidates
   are leaves on all monitors' shown desktops; distance then history rank)
   and :1489-1620 (leaf exchange, same-desktop focus retention and
@@ -2101,12 +2194,14 @@ Legend:
   (`add_window` admission `equal_sizing`, not a user verb) +
   data/keybindings.ron:83-92 (tiling-adjacent bindings:
   orientation/stacking/tiling/floating/swap/maximize/fullscreen/Resizing
-  only)
+  only) + src/shell/layout/tiling/grabs/resize.rs:385-437 (fork-drag
+  rounded axis delta accumulates into the ancestor pair with the same
+  360/240 minima)
   @3d55cba06c9cf6f27609cdefb520f7857dba20af for cosmic-comp,
   @e37160f14d1e7ee428f973cd2848b4e95f83dfe1 for the daemon path
   (pin from cosmic-comp `Cargo.lock`)
-  (keyboard pixel resize plus fork handle; dragged share TBD; no local
-  or workspace-wide equalize verb)
+  (keyboard pixel resize plus fork handle and fork-drag delta; dragged
+  share needs geometry; no local or workspace-wide equalize verb)
 - `S-hyp-resize`
   Hyprland:src/layout/algorithm/tiled/dwindle/DwindleAlgorithm.cpp:312-360
   (`resizeTarget` pixel delta plus edge/smart-resizing path) +
@@ -2879,7 +2974,9 @@ Legend:
   mapping with follow vs stay, plus Last variants) and :348-530
   (`MoveTo`/`SendToNextWorkspace` active+1 and `MoveTo`/
   `SendToPreviousWorkspace` active-1, wraparound cycle else output
-  fallback) and :684-740 (`MigrateWorkspaceToOutput` migrates the active
+  fallback) and :35-42 (`propagate_by_default`: shortcut-path propagate
+  true only for `Focus`/`Move`, so relative sends carry propagate=false)
+  and :684-740 (`MigrateWorkspaceToOutput` migrates the active
   workspace, activates it there, then switches output; Next/Previous
   migrate actions are deprecated no-ops) and :1142-1200
   (`to_next_workspace`/`to_previous_workspace` wrap-or-stay) +
@@ -2897,6 +2994,18 @@ Legend:
   and :713-728 (`post_remove_workspace`: an emptied set gains one fresh
   workspace, else the active falls to the last entry with Active state)
   @3d55cba06c9cf6f27609cdefb520f7857dba20af
+- `S-cos-outremove` cosmic-comp:src/shell/mod.rs:937-1029
+  (`remove_output`: layer close, first-remaining output takes all kept
+  workspaces via `set_output` plus `refresh`, empty/token/pin-gated
+  `can_auto_remove` drops, sticky/minimized layers merge; backup set
+  only when no outputs remain) and :867-935 (`add_output`: backup-set
+  restore else fresh set, `prefers_output` workspaces reclaimed) and
+  src/shell/workspace.rs:498-500 (`can_auto_remove`: empty plus no
+  token/pin) and :589-645 (`set_output` carries tiling/floating layers
+  plus `output_stack` return affinity)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (evacuation destination plus return affinity; exact focus node needs
+  fixture history, settled visuals live)
 - `S-cos-wskeys` cosmic-comp:data/keybindings.ron:38-47
   (Super+Shift+1..9 `MoveToWorkspace`, Super+Shift+0
   `MoveToLastWorkspace`; no `SendToWorkspace` binding) and :57-64
@@ -3251,9 +3360,14 @@ Legend:
   src/shell/layout/tiling/mod.rs:1414-1445 (`unmap_window_internal` with the
   minimizing flag removes the node and reflows siblings) and
   src/shell/focus/mod.rs:108-137 (`is_minimized` filter plus last
-  unminimized MRU pick) @3d55cba0
+  unminimized MRU pick) and src/shell/workspace.rs:502-540
+  (`refresh_focus_stack` retains minimized members) and :1538-1543
+  (`is_empty` false while any minimized entry exists) and
+  src/shell/mod.rs:4411-4458 (`unminimize_request`: workspace tiling/floating
+  branches set no focus) and src/shell/focus/mod.rs:771-790 (no unminimized
+  MRU/mapped/fullscreen target resolves to none) @3d55cba0
   (tiling unmap/reflow plus stored restore slot; focus leg via the MRU
-  skip-minimized filter)
+  skip-minimized filter; sole-minimize retention with focus none)
 - `S-hyp-mininv` Hyprland:src/config/shared/actions/ConfigActions.cpp:200-1824
   (dispatcher inventory at pin lists no minimize action) and
   src/config/shared/actions/ConfigActions.hpp:39-111 (window/workspace
@@ -3435,7 +3549,7 @@ Legend:
   src/shell/layout/tiling/mod.rs:1507-1560 (`move_current_node`
   stack-internal branch plus `MoveOut` reinsert as a new tile beside
   the group) @3d55cba06c9cf6f27609cdefb520f7857dba20af
-  (leave/reorder legs; semantic join from outside into a stack untraced)
+  (leave/reorder legs; outside-into-stack join per `S(S-cos-move)`)
 - `S-cos-grpclose` cosmic-comp:src/shell/element/stack.rs:241-271
   (`remove_window`: active index clamped with `fetch_min`, single-member
   dissolve path) and :273-305 (`remove_idx` same index fixup)

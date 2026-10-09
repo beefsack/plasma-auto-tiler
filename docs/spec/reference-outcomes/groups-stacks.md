@@ -78,11 +78,12 @@ evidence.
   profile). A missing verb is not a no-op.
 - Observe: join vs swap, actual post-join membership/order/active tab;
   one right operation as a new tile vs reorder vs dissolve.
-- Then COSMIC: join TBD (no semantic join verb traced; drag `WindowStack`
-  is not this leg); conditionally, one Right move from the actual
-  post-join B reorders when a neighbor exists (`Handled`) else leaves via
-  `MoveOut` with the survivor index clamped. `S(S-cos-grpmove)`; join
-  queued, leave conditional on post-join index.
+- Then COSMIC: joins via directional `Move` left: the root len-2
+  stack-neighbor branch appends B last into the stack as `S[A,C,B*]`
+  with B activated, mover focus follows the stack (`ShiftFocus`); then
+  one Right `handle_move` from the joined B removes the last tab via
+  `MoveOut` (survivor active clamps to C) and reinserts B as a new tile
+  right of the group. `S(S-cos-move)` + `S(S-cos-grpmove)`.
 - Then Hyprland/Dwindle: joins via `moveIntoGroup left` to `G[A,B*,C]`
   (B after current A per `insert_after_current`, B made current and
   focused); then leaves via `moveOutOfGroup right` to a new tile right of

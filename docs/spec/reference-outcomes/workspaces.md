@@ -697,9 +697,12 @@ verb inventory); selected intent and doc assertions are never evidence.
 - Then COSMIC: mixed (the fixture verb `MigrateWorkspaceToOutput`
   moves the active workspace only, so the hidden WS2 has
   no-counterpart on this fixture; an independent leg with WS2
-  explicitly selected migrates, activates, and switches output, while
-  the displaced-view remainder stays TBD). `S(S-cos-ws)`;
-  displaced-view queued.
+  explicitly selected migrates after R's active, activates and switches
+  output there (L keeps showing WS1, R shows the migrated WS2), while
+  the moved-active focus node stays TBD (F: WS2 contents/focus history
+  unstated, so which retained focus-stack entry the SwitchOutput path
+  focuses is unspecified). `S(S-cos-ws)` + `S(S-cos-wsmig)`;
+  focus queued.
 - Then Hyprland/Dwindle: whole-workspace reassignment via
   `moveToMonitor`; displaced destination view and focus stay TBD.
   `S(S-hyp-ws)`; displaced-view queued.
@@ -1285,14 +1288,25 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   repeat each from fresh fixtures with stay instead of follow.
 - Observe: source emptiness vs target/spare resolution and follow/stay;
   record source retention/removal and exact empty-source focus separately.
-- Then COSMIC: next leg refuses (single-window source to the adjacent
-  trailing empty: `InvalidWorkspaceIndex` before any transfer, both follow
-  and stay runs; source unchanged; post-refusal output-move vs wrap
-  fallback TBD). Previous leg proceeds (non-adjacent wrap to the
-  pre-transfer E, fills it, next spare ensured; follow with B, stay keeps
-  the active emptied source). Emptied-source removal timing and exact
-  frames stay TBD. `S(S-cos-wssingle)` + `S(S-cos-ws)` + `S(S-cos-send)`;
-  fallback/timing/frames queued.
+- Then COSMIC: next leg never transfers on a Left/Right-inferred chord
+  (early return under the shipped Vertical layout before any move) and
+  refuses with `InvalidWorkspaceIndex` on an Up/Down-inferred chord
+  (single-window source to the adjacent trailing empty, before any
+  transfer, both follow and stay runs; source unchanged, focus stays B);
+  the shipped shortcut path carries propagate=false for these verbs, so
+  no output-move fallback runs, and with the shipped default
+  wraparound=true the refused Up/Down chord falls back to an index-1
+  send (follow with B to WS1, stay keeps the emptied source active).
+  Previous leg proceeds on an Up/Down-inferred chord (non-adjacent wrap to the
+  pre-transfer E, fills it sole; follow activates E with focus B, stay keeps
+  the active emptied source with eventual keyboard focus none via the fixup
+  path).
+  Post-transfer cleanup converges via refresh `ensure_last_empty`: the
+  emptied source is retained while active and dropped once non-active
+  non-last empty, with the next spare ensured.
+  `S(S-cos-wssingle)` + `S(S-cos-ws)` + `S(S-cos-send)` +
+  `S(S-cos-focusfix)`; chord queued (F: invoked chord direction
+  unrecorded; exact next-leg outcome TBD; primary F).
 - Then Hyprland/Dwindle: next targets numeric+1 via find-or-create (fills E
   when E is numeric+1, else creates); follow focuses the mover, silent
   refocuses the source. Numbered IDs never renumber but emptied-source
@@ -1457,12 +1471,16 @@ baseline above is unchanged. Record:
 - When: migrate WS2 right.
 - Observe: backing id retained; tree/order/shares/remembered
   focus/tiling mode; target order and shown view; moved active focus.
-- Then COSMIC: the same workspace object moves between sets (removed
-  from the source, inserted after R's active) with `set_output`
-  carrying tiling plus floating layers; it activates there and switches
-  output, so tree/order is retained as the same object; moved-active
-  focus and share remainder stay TBD. `S(S-cos-ws)` +
-  `S(S-cos-wsmove-fs)`; focus queued.
+- Then COSMIC: the same workspace object moves between sets (same
+  handle/backing id retained; removed from the source, inserted after
+  R's active, so R order becomes WS3, WS2, WS4) with `set_output`
+  carrying tiling plus floating layers and `tiling_enabled` untouched;
+  it activates there and switches output (L keeps showing WS1, R shows
+  the migrated WS2), so tree/order/shares and tiling mode carry as the
+  same object and the moved-active focus resolves to retained B
+  (fixture-focused; the SwitchOutput leg focuses the target
+  focus-stack last). `S(S-cos-ws)` + `S(S-cos-wsmig)` +
+  `S(S-cos-wsmove-fs)`.
 - Then Hyprland/Dwindle: the workspace object is reassigned to R
   (`m_monitor`); members keep the workspace with floating reposition
   and fullscreen setBox; pinned members stay behind; target order,

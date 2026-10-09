@@ -371,8 +371,10 @@ paths; selected intent and doc assertions are never evidence.
   R-DRAG-08.
 - Then COSMIC: click presses focus B and deliver to the client unless
   Super-held (compositor consumes) or on the resize fork (focus kept);
-  hover-focus relationship beyond the press path TBD.
-  `S(S-cos-dragpress)`; hover queued.
+  hover at the shipped default (`focus_follows_cursor=false`) retains A
+  with no scheduled focus; the explicit enabled variant schedules B after
+  the configured delay (default 250ms) via the pointer-focus state.
+  `S(S-cos-dragpress)` + `S(S-cos-hoverfocus)`.
 - Then Hyprland/Dwindle: hover focuses B under shipped
   `input:follow_mouse=1` (FFM reason); plain press refocuses B with
   raise (CLICK reason, unless `follow_mouse=3`). `S(S-hyp-follow)` +
@@ -428,9 +430,13 @@ paths; selected intent and doc assertions are never evidence.
   grabs only where the profile requires one); release.
 - Observe: ratio/share change vs frame-only/no resize, sibling clamp
   and ratio retention. Float drag/resize stays R-FLT-14.
-- Then COSMIC: tiling resize fork exists between tiles and the pixel
-  resize path adjusts the nearest matching-edge-axis ancestor;
-  dragged share outcome TBD. `S(S-cos-resize)`; queued.
+- Then COSMIC: bare-edge press reaches the tiling resize fork (gap
+  handle keeps keyboard focus) and motion adjusts the nearest
+  matching-edge-axis ancestor pair by the rounded pointer delta with the
+  360px vertical (240px horizontal) pair minima; the exact 100px share
+  outcome stays TBD (F: fixed work-area/output geometry and shared-edge
+  press pixel unrecorded, so the 50/50 pixel base is unspecified).
+  `S(S-cos-resize)`; share queued.
 - Then Hyprland/Dwindle: bare-edge drag starts no resize under
   shipped `resize_on_border=false` (falls to the click-focus path);
   enabled variant begins an MBIND_RESIZE drag with min/max clamp;
@@ -490,10 +496,12 @@ paths; selected intent and doc assertions are never evidence.
 - Observe: cross-output insertion/follow vs float/cancel;
   hidden-workspace hover-switch/drop vs unavailable target. Two
   explicit targets, not a generic off-area drop (R-DRAG-06).
-- Then COSMIC: drop lands in the cursor output's space and focuses the
-  dropped window; overview-switcher target journey TBD (tiling grabs
-  open overview mode but no switcher drop branch is traced).
-  `S(S-cos-dragframe)` + `S(S-cos-drop)`; queued.
+- Then COSMIC: drop lands in the cursor output's active space and focuses the
+  dropped window (tiling grabs open overview mode); the exact C-edge
+  insert position and the WS3 switcher/overview-target journey stay TBD
+  (F: C-edge hover pixel and switcher-target geometry/drop point
+  unrecorded, so which `drop_window` zone branch runs is unspecified).
+  `S(S-cos-dragframe)` + `S(S-cos-drop)`; switcher queued.
 - Then Hyprland/Dwindle: tiled-origin drag floats at pick-up, a
   middle crossing reassigns to that monitor's active workspace, and
   the drop re-tiles via fresh admission with mover focus; exact
