@@ -2760,11 +2760,29 @@ Legend:
   skip-minimized filter)
 - `S-hyp-mininv` Hyprland:src/config/shared/actions/ConfigActions.cpp:200-1824
   (dispatcher inventory at pin lists no minimize action) and
-  src/desktop/view/window/X11Backend.cpp:196-201 (`requestsMinimize`
-  consumed at commit) and :381-383 (`setMinimized` echoes to the surface)
-  and src/desktop/view/window/WaylandBackend.cpp:366 (`setMinimized`
-  no-op) @19fb395d45314960e6f79f17994a84094f1cd4f6
-  (request consumed/echoed; layout/tree effect untraced)
+  src/config/shared/actions/ConfigActions.hpp:39-111 (window/workspace
+  action declarations at pin: close/kill/signal/float/pseudo/pin/fullscreen/
+  move/swap/focus/center/cycle/tag/pass/send_key/swap_next/alter_zorder/
+  set_prop/group/workspace/monitor/special/exec/exit/reload/submap/dpms verbs;
+  no minimize) and
+  src/config/lua/bindings/LuaBindingsDispatchers.cpp:1298-1360
+  (dispatched names at pin; no minimize name) and
+  src/desktop/view/window/WindowBackend.hpp:74-90 (`SBackendStateRequest`
+  carries optional minimized) and :131 (`setMinimized` backend virtual) and
+  :144 (single `stateRequest` signal) and
+  src/desktop/view/window/X11Backend.cpp:190-204 (commit builds the request
+  from `requestsMinimize`, then resets; sole emission site with
+  WaylandBackend.cpp:183-190) and src/desktop/view/window/Window.cpp:140
+  (sole `stateRequest` listener) and :839-841 (`onUpdateState` handles
+  fullscreen/maximize only, minimized dropped; no layout path consults
+  minimized) and src/desktop/view/window/X11Backend.cpp:381-383
+  (`setMinimized` echoes the flag to the X11 surface only) and
+  src/desktop/view/window/WaylandBackend.cpp:366 (`setMinimized` no-op) and
+  src/xwayland/XSurface.cpp:238-241 (surface flag plus state echo, no layout
+  call) and src/protocols/ForeignToplevelWlr.cpp:85-108 (set/unset minimized
+  emit event/ipc only, no layout call) @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (native minimize requests consumed and dropped with no tiling effect;
+  window stays tiled; no minimize verb)
 - `S-bsp-mininv` bspwm:src/events.c:40-80 (`handle_event` dispatch) and
   :301-330 (`client_message` handles `_NET_WM_STATE`/`_NET_ACTIVE_WINDOW`/
   `_NET_CURRENT_DESKTOP` only; no `WM_CHANGE_STATE`/iconic branch) and
@@ -2781,29 +2799,58 @@ Legend:
   (native minimize request refused; window stays tiled)
 - `S-xmo-mininv` xmonad:src/XMonad/Config.hs:188-227 (key inventory:
   spawn/kill/NextLayout/refresh/focus/swap/shrink/expand/sink/IncMasterN/
-  quit/restart only; no minimize verb) and src/XMonad/Main.hs:432-438
+  quit/restart only; no minimize verb) and :119-120 (`handleEventHook`
+  default-true) and src/XMonad/Main.hs:267-271 plus :405-419 (event
+  dispatch runs the config hook then the default handler; `PropertyEvent`
+  handles `WM_NAME` only; `ClientMessage` handles `XMONAD_RESTART` only,
+  else broadcasts; no iconify branch) and :432-438
   (startup scan notes `WM_STATE` iconified only) and
-  xmonad-contrib:XMonad/Hooks/EwmhDesktops.hs:765 (advertises
-  `_NET_WM_STATE_HIDDEN`, no runtime minimize handling traced) and
-  src/XMonad/Operations.hs:278-290 (`hide` internal unmap primitive)
+  src/XMonad/Operations.hs:107-119 (`manage`: fixed-size/transient float
+  via `insertUp` plus `float`, else `insertUp`; no minimize branch) and
+  xmonad-contrib:XMonad/Hooks/EwmhDesktops.hs:595-640
+  (`ewmhDesktopsEventHook'`: close/current-desktop/wm-desktop/active-window
+  only, else `mempty`) and :354-388 (only `_NET_WM_STATE_ABOVE/BELOW`
+  `ClientMessage` handling) and :765 (advertises `_NET_WM_STATE_HIDDEN`,
+  no minimize handling) and :679-709 (`fullscreenEventHook'`: fullscreen
+  atom only) and XMonad/Actions/Navigation2D.hs (focus/swap actions only,
+  no event hook in the profile) and
+  src/XMonad/Operations.hs:278-290 (`hide`/`reveal` internal unmap/map
+  primitives, never a minimize vote per the matrix header) and
+  xmonad-contrib:XMonad/Actions/Minimize.hs:1-60 plus
+  XMonad/Layout/Minimize.hs:1-60 (minimize/maximize actions plus layout
+  modifier exist in contrib but are out of this Tall+Navigation2D profile)
   @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
-  (runtime request path untraced)
+  (no iconify request handling in profile; no minimize counterpart)
   (contrib path @5097a457e7a409bc9a7584dc5aa82b34c69d6dda)
 - `S-sway-mininv` sway:sway/commands.c:114-143 (alphabetized runtime command
   table: layout/split/move/swap/scratchpad and others; no minimize verb)
   and sway/commands/scratchpad.c (separate scratchpad path) and
-  sway/desktop/xwayland.c:622-634 (`handle_request_minimize` echoes the
-  protocol flag only) @1652c54b73f67df17b7b4ab0b0f7048204aa8104
-  (request echoed; tree effect untraced)
+  sway/desktop/xwayland.c:622-634 (sole minimize listener:
+  `handle_request_minimize` echoes the protocol flag via
+  `wlr_xwayland_surface_set_minimized` when unfocused only, clearing it when
+  focused) and :287-288 (activate clears minimized) and
+  sway/tree/view.c:1149-1180 (`view_is_visible`: destroying/workspace/
+  sticky/tab checks only, no minimized consult; container never detaches on
+  the minimize path) @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (focused minimize request cleared to unminimized with no container detach;
+  window stays tiled; no minimize verb)
 - `S-qti-minimize` qtile:libqtile/backend/x11/window.py:1802-1816
   (`minimized` setter via `toggle_minimize` into `MINIMIZED`) and
   :1890-1926 (`_reconfigure_floating`: `MINIMIZED` sets `IconicState` plus
   `hide()`, else-branch clears via `floating=false`) and :2110-2116
   (`WM_CHANGE_STATE` iconic honored under `auto_minimize`) and
   libqtile/resources/default_config.py:207 (`auto_minimize=true` shipped)
-  and libqtile/backend/base/float_states.py (`MINIMIZED` enum member)
+  and libqtile/backend/base/float_states.py (`MINIMIZED` enum member) and
+  libqtile/group.py:304-332 (`mark_floating`: True removes from
+  `tiled_windows`/layouts into the floating layout, False re-adds via
+  `add_client`) and libqtile/layout/columns.py:224-225 (`cc` is the current
+  column) and :132-152 (shipped-relevant defaults: `insert_position` 0 at
+  current, `fair` off, `align` right) and :266-288 (`add_client` admits at
+  the focused `cc` position, `remove` drops the emptied column) and
+  libqtile/resources/default_config.py:102 (`Columns` with shipped defaults)
   @83c697a5621306c3586efca31867efcfa0482e2d
-  (native request path plus hide path; slot/refocus stay TBD)
+  (native request path plus hide and allocation paths; restore re-admits at
+  the focused position, not the old slot; refocus stays TBD)
 - `S-awe-minimize` awesome:objects/client.c:2554-2614
   (`client_set_minimized`: `ICONIC` unmap plus `NORMAL` remap, `banning`
   update, `property::minimized` signal) and ewmh.c:402-409
@@ -2817,22 +2864,51 @@ Legend:
   verb) @ed22699d99462f61ab171472d3ea67e844ea580d
 - `S-pap-minimize` PaperWM:tiling.js:4720-4738 (`minimizeHandler`: tiled
   mark plus move to the scratch layer; unminimize via `unmakeScratch`) and
-  :3487-3511 (`notify::minimized` wiring)
-  @8bf6dd264f60d6c0c402b63df7b424b888959a48
-  (scratch-layer path; reflow/position stay TBD)
+  :3487-3511 (`notify::minimized` wiring) and :411-412 (workspace
+  `window-removed`/`window-added` wired to `remove_handler`/`add_handler`)
+  and :3950-3966 (`remove_handler`: `space.removeWindow` on workspace exit,
+  so `stick()` removes from the space synchronously) and :3972-3984
+  (`add_handler`: `unstick` re-enters via `insertWindow` existing path) and
+  :981-1030 (`removeWindow`: column splice with empty-column drop, neighbor
+  selection, relayout) and :4155 (`insertWindow` re-adds via `addWindow` at
+  `getOpenWindowPositionIndex`) and :4262-4280
+  (`getOpenWindowPositionIndex`: shipped RIGHT default inserts after the
+  selected window, not the old slot) and scratch.js:62-110 (`makeScratch`:
+  float plus above plus `stick()`) and :137-145 (`unmakeScratch`: float
+  cleared with unstick) @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (scratch-layer path with synchronous removal and indexed reinsertion;
+  widths/position/focus stay TBD)
 - `S-kar-minimize` karousel:src/lib/world/ClientManager.ts:84-96
-  (`minimizeClient`: `Tiled` to `TiledMinimized` with focus passing) and
+  (`minimizeClient`: `Tiled` to `TiledMinimized`, Immediate focus pass when
+  the client is the last-focused one) and :182
+  (`onClientFocused` records `lastFocusedClient`) and
   src/lib/world/Clients.ts:16-28 (`canTileNow` excludes minimized;
   `makeTileable` unminimizes) and
-  src/lib/world/clientState/TiledMinimized.ts (minimizedChanged retile)
+  src/lib/world/clientState/TiledMinimized.ts (minimizedChanged retile) and
+  src/lib/layout/Window.ts:134-136 (`destroy` forwards to
+  `column.onWindowRemoved`) and src/lib/layout/Column.ts:297-325
+  (`onWindowRemoved`: above-else-below focus candidate, last-window destroy)
+  and :205-211 (`getWindowToFocus`: focus-taker else first window) and
+  src/lib/layout/Grid.ts:161-185 (`onColumnRemoved`: left-else-right focus
+  column, null on the last column) and
+  src/lib/world/clientState/Tiled.ts:8-16 (re-tile builds a fresh column
+  after the last-focused, else last, column: not the old slot)
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
-  (minimized state path; reflow/position stay TBD)
+  (minimized state path with directed focus pass and fresh-column restore;
+  reflow frames stay TBD)
 - `S-pan-minimize` paneru:src/ecs/triggers.rs:544-559 (`WindowMinimized`
   inserts `Unmanaged::Minimized`; `WindowDeminimized` removes it) and
-  src/types/state.rs:126 (on-screen check excludes minimized) and
-  src/types/commands.rs:220-275 (`Operation` inventory at pin lists no
-  minimize verb) @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
-  (minimize-mark path; strip position stays TBD)
+  :727-772 (`remember_managed_strip` plus `window_minimized_trigger`:
+  strip removal with remembered index and active-strip `give_away_focus`)
+  and :773-860 (`window_managed_trigger`: reinsert at the remembered
+  `PreviousManagedStrip` index, else active-strip overlap/end) and :990-1040
+  (`give_away_focus`: nearest-center neighbor, else any other column) and
+  src/ecs.rs:857-859 (`WindowProperties.insertion`: rule `index` override,
+  None under shipped defaults) and src/types/state.rs:126 (on-screen check
+  excludes minimized) and src/types/commands.rs:220-275 (`Operation`
+  inventory at pin lists no minimize verb) @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (minimize-mark path; old-slot restore only same-workspace without an
+  insertion override; strip reflow and focus target stay TBD)
 - `S-ours-minkde` KDE production observer at this HEAD:
   plasma-auto-tiler:kwin/src/entry.ts:19 (production uses
   `startPlanAdapterEntry`; one bounded DescribePlan adapter owns

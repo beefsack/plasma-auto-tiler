@@ -43,4 +43,14 @@ Workers use muse-spark, one active at a time. The Lead owns this note.
   table-column, unchanged-rule, and whitespace checks pass at latest diff.
 - R-INS-07 residuals: COSMIC unknown geometry, Hyprland pointer/geometry,
   qtile undeclared columns, karousel host focus/switch. No live claim.
-- Next bounded fill: R-MNZ-01..03 minimize/restore inventory and semantics.
+- R-MNZ-01..03 accepted: reference TBD cells 25 -> 16 (rows 7 -> 4,
+  9 -> 6, 9 -> 6); overall 1,042 -> 1,033. Twenty cells updated,
+  nine resolved through exhaustive Hyprland/sway/xmonad request and verb
+  inventories. Independent verification confirmed these paths and sampled
+  qtile/PaperWM/karousel/paneru removal and reinsertion. First partial fill
+  resolved no full cells; reviewer-directed deeper traces established the
+  nine completions. No material rule contradiction or new consensus vote.
+- Minimize residuals: host focus/frames and sole-workspace cleanup remain;
+  qtile refocus bookkeeping and PaperWM selected-window-derived exact
+  reinsertion are not yet exhaustively traced, not declared live-only.
+- Latest citation/invariant/whitespace checks pass; next group R-RSZ-04.
