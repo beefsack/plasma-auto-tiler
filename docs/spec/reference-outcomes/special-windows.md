@@ -106,8 +106,7 @@ transient (no dialog flag) is a different fixture and is not claimed.
   plus MODAL branch) with visible-workspace newcomer focus.
   Switcher presence TBD. `S(S-i3-min)`; queued.
 - Then xmonad/Tall+Navigation2D: both tile as ordinary newcomers
-  with focus (no type branch; only fixed/transient float).
-  Switcher presence TBD. `S(S-xmo-float)`; queued.
+  with focus (no type branch; only fixed/transient float); switcher leg no-counterpart (no native Alt+Tab/cross-workspace listing verb in this profile: core mod+Tab is same-stack `focusDown`, `dmenu_run`/`gmrun` are external launchers with no traced switcher activation, and Navigation2D stays on the same layer, so presence never runs). `S(S-xmo-float)` + `S(S-xmo-switcher)`.
 - Then sway: xwayland U floats (DIALOG/UTILITY/TOOLBAR/SPLASH and
   modal branches); xdg typed legs are fixture-inapplicable (xdg has
   no window-type counterpart; only parent/fixed-size float). Focus
@@ -361,10 +360,7 @@ All fresh variants below reset the client and WM state independently.
 - Then i3: absent, (0,0), both partial-zero and the height-absent guard
   tile (max_width>0 and max_height>0 gate fails); the sentinel floats
   (both axes positive and equal). `S(S-i3-min)`.
-- Then xmonad/Tall+Navigation2D: absent tiles (`Nothing`); (0,0), both
-  partial-zero and sentinel float (whole-tuple `Just` equality, no zero
-  guard); the height-absent guard stays TBD (absent-height `Maybe`
-  representation not pinned). `S(S-xmo-float)`.
+- Then xmonad/Tall+Navigation2D: absent tiles (`Nothing` fails the whole-pair `sh_min_size==sh_max_size` gate); (0,0), both partial-zero and sentinel float (`Just` whole-pair equality, no zero/sentinel guard). The height-absent guard stays TBD (F: width-640/height-absent has no distinct evidenced X11 wire encoding - `P_MIN_SIZE`/`P_MAX_SIZE` govern the whole (w,h) pair - and the harness sending is unstated; no new pin per scope). `S(S-xmo-float)`; queued.
 - Then sway: xdg unset/zero/partial-zero and the height-absent guard fail
   (both minima nonzero gate); xdg sentinel floats. Xwayland unset/zero/
   partial-zero and the guard fail (both minima>0 gate); Xwayland
@@ -665,13 +661,7 @@ All fresh variants below reset the client and WM state independently.
   exit layer; repeated exits clear the mode to the same saved layer. Exact
   frames/focus TBD (client timing, live-only). `S(S-i3-min)` +
   `S(S-i3-admit)` + `S(S-i3-fs)` + `S(S-i3-fixed-runtime)`.
-- Then xmonad/Tall+Navigation2D: non-fixed N admits tiled (no manage float
-  cause) then `doFullFloat`, exit `doSink` stays tiled; E born/prior land
-  tiled as before (sink clears the map, no re-float). Predicate switch is
-  product-only (whole-tuple equality, no setting); hint changes have no
-  post-manage path (manage once; later only manual float/sink); repeated
-  exits sink again. Exact frames TBD. `S(S-xmo-float)` + `S(S-xmo-ewmh)` +
-  `S(S-xmo-admit)`.
+- Then xmonad/Tall+Navigation2D: non-fixed N admits tiled (no manage float cause) then `doFullFloat` fullscreen float via the event hook, exit `doSink` stays tiled; E born/prior land tiled on exit (sink clears the map, no re-float on later observation). Predicate switch is product-only (whole-pair equality, no setting); hint changes have no post-manage path (`manage` once; later only manual float/sink); repeated exits sink again. `S(S-xmo-float)` + `S(S-xmo-ewmh)` + `S(S-xmo-admit)`
 - Then sway: non-fixed N maps fullscreen on a tiled container and exit
   clears the mode staying tiled; E born/prior retain floating as before.
   Predicate switch is product-only (xdg/xwayland either-axis hardcoded);
@@ -780,8 +770,7 @@ All fresh variants below reset the client and WM state independently.
   changed-hints/predicate, override, and maximized legs share the absence.
   Outcome TBD. `S(S-i3-wsmode)`.
 - Then xmonad/Tall+Navigation2D: no workspace-mode counterpart per
-  R-FLT-04; F-arrival, changed-hints/predicate, override, and maximized
-  legs share the absence. Outcome TBD. `S(S-xmo-layout)`.
+  R-FLT-04 (no workspace tiling toggle in source; float is per-window, so enable/F-arrival, changed-hints/predicate, override, and maximized legs never run). `S(S-xmo-layout)`.
 - Then sway: no workspace-mode counterpart per R-FLT-04; F-arrival,
   changed-hints/predicate, override, and maximized legs share the absence.
   Outcome TBD. `S(S-sway-wsmode)`.

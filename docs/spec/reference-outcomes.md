@@ -1423,7 +1423,9 @@ Legend:
   `tile`/`splitVertically`) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
   (flat two-pane tiling; no N-ary H/V tree, no tab stacks, no maximize state)
 - `S-xmo-float` xmonad:src/XMonad/StackSet.hs:527-532 (`float`/`sink`
-  floating map only, stack retained) and src/XMonad/Operations.hs:107-119
+  floating map only, stack retained) and src/XMonad/Operations.hs:93-99
+  (`isFixedSizeOrTransient`: `isJust` whole-pair `sh_min_size==sh_max_size`
+  equality, no zero/sentinel guard) and :107-119
   (`manage` fixed-size/transient float via `insertUp`+`float`, else `insertUp`)
   and :719-753 (`floatLocation`: managed native geometry plus size hints;
   error fallback is full-screen `RationalRect 0 0 1 1`; unmanaged centering
@@ -1432,7 +1434,10 @@ Legend:
   @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
 - `S-xmo-restart` xmonad:src/XMonad/Operations.hs:646-712 (`StateFile` carries
   the whole `StackSet` including the floating map; `writeStateToFile`/
-  `readStateFile`; `restart prog True` resumes with the current window state)
+  `readStateFile` resume-only: file removed after reading; `restart prog True` resumes with the current window state)
+  + src/XMonad/Main.hs:220-248 (startup: serialized state resumed only from an
+  existing file, else `initialWinset`; live top-level scan drops gone windows
+  via `W.delete` and freshly admits new ones via `manage`)
   @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
   (owner restart preserves floats as ordinary floats; no sticky concept;
   layout ratio round-trips: src/XMonad/Layout.hs:56-63 `Tall`
@@ -1446,16 +1451,18 @@ Legend:
   `hybridOf lineNavigation sideNavigation`, `floatNavigation`
   `centerNavigation`, `screenNavigation` `lineNavigation`,
   `layoutNavigation`/`unmappedWindowRect` empty) and :570-600 (`actOnLayer`
-  `thisLayer` same-layer operation; `navigableWindows` partitions
+  `thisLayer` same-layer operation across all visible screens; `navigableWindows`
+  covers every visible screen via `sortedScreens` :940-954, partitions
   floating/tiled by the `floating` map, unmapped windows skipped) and
   :663-711 (`doTiledNavigation`/`doFloatNavigation`/`doScreenNavigation`
   via `runNav`; miss returns the input unchanged, i.e. no-op) and :713-751,
-  :752-816, :818-855 (line/side/center algorithms: directional edge overlap
-  plus center distance, stack-order tie preference) and :523-534
+  :752-816, :818-855 (tiled hybrid line/side plus float-center/screen-line
+  algorithms: directional edge overlap plus distance, stack-order tie preference) and :523-534
   (`windowToScreen` moves via `W.shift`, `screenGo` focuses via `W.view`;
   separate verbs from `windowSwap`)
   @5097a457e7a409bc9a7584dc5aa82b34c69d6dda
-  (tiled/float separate layers via `thisLayer`; profile wrap False)
+  (tiled/float separate layers across all visible screens via `thisLayer`; profile wrap False;
+  `windowSwap` empty-workspace branch is no-op with no screen fallback, unlike `windowGo`)
 - `S-xmo-close` xmonad:src/XMonad/StackSet.hs:336-339 (`filter`
   focus moves down else up, order preserved) and :511-532 (`delete` is
   `sink` plus `delete'`; `float`/`sink` are floating-map writes only)
@@ -1463,11 +1470,15 @@ Legend:
   `killWindow`/`kill`) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
   (close removes from the stack with positional down-else-up refocus, no
   MRU rule; Tall reflows unconditionally via recalc)
+- `S-xmo-topfocus` xmonad:src/XMonad/Operations.hs:217 (`windows` refresh ends in `setTopFocus`) and :391-392 (`setTopFocus`: X focus to `peek`, else root) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+  (every refresh actuates StackSet focus; an emptied stack focuses root, i.e. focus none)
+- `S-xmo-arrange` xmonad:src/XMonad/Operations.hs:183-221 (Tall arrange input filters out floating-map members; floats restacked first-on-top via `restackWindows`; allocations applied via `tileWindow`; visibility via `reveal`/`hide`; refresh ends in `setTopFocus`) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+  (floats never consume tile shares; floats render above tiles; allocation writes are unconditional `moveResizeWindow`, native ack untraced)
 - `S-xmo-ws` xmonad:src/XMonad/StackSet.hs:134-164 (workspace zipper:
   current/visible/hidden lists; `Workspace` is tag/layout/`Maybe` stack,
   so closing the last window empties the stack without removing the
   workspace) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
-  (static-workspace retention; empty-stack focus stays TBD)
+  (static-workspace retention; empty-stack X focus per `S(S-xmo-topfocus)`)
 - `S-sway-wsretain` sway:sway/tree/workspace.c:314-331
   (`workspace_consider_destroy` spares output-active and seat-focused
   workspaces; other empties are destroyed)
@@ -1563,7 +1574,9 @@ Legend:
   check; `mouseResizeWindow` resizes via `applySizeHintsContents` plus `float`
   on motion/release; no key-cancel branch) and src/XMonad/Config.hs:246-256
   (`mod-button1` focus + move + `shiftMaster`; `mod-button3` focus +
-  resize + `shiftMaster`) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+  resize + `shiftMaster`) and src/XMonad/Main.hs:330-344 (button-release
+  ends dragging via `done`; motion routes to the drag closure; no key path)
+  @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
   (any release floats, even zero-move; raw frames retained off-workarea;
   hints can shape extents; no zones, preview, or restore)
 - `S-xmo-ffm` xmonad:src/XMonad/Config.hs:173-174
@@ -1574,11 +1587,13 @@ Legend:
   (shipped hover-focus plus click-focuses policies)
 - `S-xmo-out` xmonad-contrib:XMonad/Actions/Navigation2D.hs:511-534
   (`windowSwap` same-layer stack-position swap via `swap` :856-898
-  retaining mover focus; `windowToScreen` moves via `W.shift`; `screenGo`
-  focuses via `W.view`; empty-workspace branch is no-op)
+  retaining mover focus, cross-screen when the directional candidate is on
+  another visible screen; `windowToScreen` moves via `W.shift`; `screenGo`
+  focuses via `W.view`; `windowSwap` empty-workspace branch is no-op with no
+  screen fallback)
   @5097a457e7a409bc9a7584dc5aa82b34c69d6dda
-  (profile cross-output move is `windowSwap`; `windowToScreen` is the
-  separate carry verb, not exercised here)
+  (profile directional move is `windowSwap` within the same layer across all
+  visible screens; `windowToScreen` is the separate carry verb, not exercised here)
 - `S-xmo-ctl` xmonad:src/XMonad/Config.hs:188-227 (key inventory:
   spawn/kill/NextLayout/refresh/focus/swap/shrink/expand/sink/IncMasterN/
   quit/restart only; no first-run/preset/prompt/tray/staging/Force/Disable/
@@ -1594,6 +1609,8 @@ Legend:
   (no native Alt+Tab/cross-workspace listing verb in this profile)
 - `S-xmo-ewmh` xmonad-contrib:XMonad/Hooks/EwmhDesktops.hs:107-112,664-680
   (`ewmh`, `ewmhFullscreen`, `fullscreenEventHook` ClientMessage add/remove/toggle)
+  and :682-709 (add/remove/toggle dispatch via `fullscreenHooks` with `_NET_WM_STATE`
+  property converged via `chWstate`)
   and :143 (`fullscreenHooks` defaults) + XMonad/Hooks/ManageHelpers.hs:289-290,329-330
   (`doFullFloat` fullscreen float `RationalRect 0 0 1 1`, `doSink`)
   @5097a457e7a409bc9a7584dc5aa82b34c69d6dda
@@ -4030,13 +4047,23 @@ Legend:
 - `S-xmo-scope` xmonad cross-screen scope and shift focus:
   xmonad-contrib:XMonad/Actions/Navigation2D.hs:587-612
   (`navigableWindows` covers all visible screens via `sortedScreens`,
-  so `windowGo` directional candidates include other screens) +
+  so `windowGo` directional candidates include other screens; `windowSwap`
+  candidates share the same cross-screen scope within the same layer) +
   xmonad:src/XMonad/StackSet.hs:566-584 (`shift`/`shiftWin` leave the
   moved window as the focused element on the target stack with no view
-  change; source refocus after `delete'` untraced here)
+  change; source refocus after `delete'` per `S(S-xmo-close)`)
   @5097a457e7a409bc9a7584dc5aa82b34c69d6dda for Navigation2D,
   @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7 for StackSet
-  (cross-screen focus and carry established; source refocus stays TBD)
+  (cross-screen focus and carry established; source refocus per close policy)
+- `S-xmo-rescreen` xmonad:src/XMonad/Operations.hs:349-357 (`getCleanedScreenInfo`
+  via `nubScreens`/`getScreenInfo`: screen-rect list construction, duplicates plus
+  contained rects removed) and :361-371 (`rescreen`:
+  positional workspace-to-screen reassignment retaining stacks, no
+  window migration; current workspace kept) and src/XMonad/Main.hs:250-254,406
+  (event-loop `xrrUpdateConfiguration` plus root `ConfigureEvent` to
+  `rescreen`) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+  (hotplug path plus screen-list construction source-traced; per-cell screen
+  enumeration/geometry is F and live delivery timing is L, never generic H)
 - `S-i3-outfocus` i3 directional focus output fallback:
   i3:src/tree.c:469-502 (`get_tree_next_workspace` returns the visible
   workspace on the directional output) and :593-634 (`tree_next` shows

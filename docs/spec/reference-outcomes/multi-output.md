@@ -218,9 +218,10 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
   L, same default wrapper/follow as the R-OUT-01 crossing.
   `S(S-i3-move)` + `S(S-i3-outmove)`.
 - Then xmonad/Tall+Navigation2D: carries via `windowToScreen`
-  (`W.shift` leaves A as the focused element on L's stack with no
-  view switch); source refocus after `delete'` TBD. `S(S-xmo-scope)`;
-  queued.
+  (`shiftWin`: `insertUp` A above L target focus X, so L order `[A*,X]`
+  with A the focused element there; source `delete'` is `filter (/=A)`,
+  so source refocuses positionally down to sole B); no view switch
+  (stay-like; no follow variant). `S(S-xmo-scope)` + `S(S-xmo-close)`.
 - Then sway: carries A to L's active workspace at TAIL; focus stays
   on the mover A on L, same default wrapper/follow as the R-OUT-01
   crossing. `S(S-sway-move)` + `S(S-sway-outmove)`.
@@ -339,8 +340,16 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
   before removing R, not destruction. `S(S-bsp-monrm)`; queued.
 - Then i3: evacuation and return TBD (output-destroy workspace
   migration untraced). TBD; queued.
-- Then xmonad/Tall+Navigation2D: evacuation and return TBD
-  (static screen zipper; plug-event migration untraced). TBD; queued.
+- Then xmonad/Tall+Navigation2D: no window/workspace migration in
+  source: root `ConfigureEvent` runs `rescreen`, which reassigns the
+  retained workspaces (stacks intact) across the new screen rects
+  positionally via `getCleanedScreenInfo`/`nubScreens` and keeps the
+  current workspace; the disconnected screen's workspaces become hidden
+  with contents retained, never merged into L; reconnect reassigns
+  positionally with no identity/affinity store (fresh reassignment, not
+  return affinity). Focus stays with the retained current workspace,
+  actuated via `setTopFocus` (`peek`, else root).
+  `S(S-xmo-rescreen)` + `S(S-xmo-topfocus)`.
 - Then sway: workspaces evacuate to the highest-available else
   fallback output (empties destroyed); focus and reconnect affinity
   TBD. `S(S-sway-evac)`; queued.
@@ -430,8 +439,7 @@ keys remain historical; delivery evidence is linked separately in KDE cells.
   `windowSwap`, so local B never gates); A becomes the focused element
   on R's stack with no view switch (stay-like; no follow variant).
   Anchor is above target focus (Y's slot only when Y is target focus;
-  no remembered-Y store). Source collapses to sole B. Exact Tall frames
-  TBD (flat master/stack, no H counterpart). `S(S-xmo-scope)` +
+  no remembered-Y store). Source collapses to sole B. `S(S-xmo-scope)` +
   `S(S-xmo-shift)`.
 - Then sway: carries via `move container to output right` to R's active
   workspace (adjacent output only; explicit send, so local B never

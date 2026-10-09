@@ -25,7 +25,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Hyprland/Dwindle: Flat 3-child start has no ordinary binary form (default ratio 1 yields halves, not thirds); exact N-ary collapse TBD. Policy: live-tree removal promotes the sibling and recalcs; closed-focused refocus defaults to spatial `next` (closest node by old middle, else first/back fallback), not MRU C; cursor/MRU modes only via explicit `focus_on_close=1/2`; `S(S-hyp-close)`
 - Then bspwm: Survivors `[A,C]` keep order with sibling promotion + arrange; focus C (history MRU via the focus guess, coinciding with MRU here, not a spatial rule); close asks the client (delete/kill), removal unlinks + drops history; exact frames TBD; `S(S-bsp-close)`
 - Then i3: Survivors `[A,C]` keep nodes order with percent rescale; focus C (second in the focus stack via `con_next_focused`, coinciding with MRU here, not a spatial rule); `S(S-i3-close)`
-- Then xmonad/Tall+Navigation2D: Exact flat 3-child H has no Tall counterpart (flat N-ary H vs master/stack two-pane); analogous policy only: close removes B via `delete` (`sink` + `delete'`/`filter`, focus down else up, so C; positional, not MRU); survivors `[A,C]` keep stack order and refill via Tall recalc; exact frames TBD; `S(S-xmo-close)` + `S(S-xmo-layout)`
+- Then xmonad/Tall+Navigation2D: Exact flat 3-child H has no Tall counterpart (flat N-ary H vs master/stack two-pane); analogous policy only: close removes B via `delete` (`sink` + `delete'`/`filter`, order preserved, focus down else up, so C under the projected `[A,B*,C]` order; positional, not MRU); survivors `[A,C]` keep stack order and refill via unconditional Tall recalc; `S(S-xmo-close)` + `S(S-xmo-layout)`
 - Then sway: Survivors `[A,C]` keep order with fraction renormalize; focus C (focus-inactive view of the parent in MRU order, coinciding with MRU here, not a spatial rule); unmap detaches + reaps + rearranges; `S(S-sway-close)`
 - Then qtile/Columns: Flat 3-child start has no ordinary Columns form (default num_columns=2, third window stacks in-column); exact collapse/focus TBD. Policy: tiled close unlinks with sibling promotion, drops emptied columns with width-share redistribute, and refocuses positionally via the layout return (shipped focus_previous_on_window_remove=false, so no MRU previous_win); `S(S-qti-close)`
 - Then awesome/tile: Flat 3-child start has no ordinary tile form (master plus one vertical stack column, not flat thirds); exact frames TBD. Policy: survivors `[A,C]` keep order and refill via stateless tile recalc (no old-slot store); focus C via history MRU (unmanage deletes B, delayed refocus takes top visible non-sticky history, else sticky fallback, else first visible); `S(S-awe-hist)` + `S(S-awe-tile)`
@@ -70,7 +70,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then Hyprland/Dwindle: Flat 3-child start has no ordinary binary form; exact survivor widths and reopened frames TBD. Policy: close promotes sibling + recalc (ratios live on ancestors, no old-slot store); reopened B fresh-admits via the Dwindle anchor with newcomer focus, before/after by pointer half; `S(S-hyp-close)` + `S(S-hyp-ins)` + `S(S-hyp-newfocus)`
 - Then bspwm: Survivors refill via sibling promotion + arrange (ratios live on ancestors, no old-slot store; exact 50/30/20 widths TBD without the binary embedding); reopened B fresh-inserts at the desktop focus after C with newcomer focus; `S(S-bsp-close)` + `S(S-bsp-insert)`
 - Then i3: Survivors rescale proportionally via percent fix; reopened B fresh-admits after focused C with newcomer focus, no old-slot store; `S(S-i3-close)` + `S(S-i3-ins)`
-- Then xmonad/Tall+Navigation2D: Exact 50/30/20 flat-H fixture has no Tall counterpart (Tall splits master/stack at `frac`, stack splits equally); analogous policy only: survivors refill via removal + Tall recalc (no old-slot store; ratios live in `frac`/`nmaster`, not per-slot); reopened B fresh-admits via `insertUp` above focused C with newcomer focus; exact widths/frames TBD; `S(S-xmo-close)` + `S(S-xmo-ins)` + `S(S-xmo-layout)`
+- Then xmonad/Tall+Navigation2D: Exact 50/30/20 flat-H fixture has no Tall counterpart (Tall splits master/stack at `frac`, stack splits equally; per-slot ratios live nowhere - shares derive from `frac`/`nmaster` only); analogous policy only: survivors refill via removal + Tall recalc to `frac` shares with no old-slot store; reopened B fresh-admits via `insertUp` above focused C with newcomer focus; exact survivor widths/reopened pixel frames TBD (F: work-area geometry unrecorded, so Tall shares have no pixel basis); `S(S-xmo-close)` + `S(S-xmo-ins)` + `S(S-xmo-layout)`; queued.
 - Then sway: Survivors rescale proportionally via fraction renormalize; reopened B fresh-admits after focused C via the focus-inactive anchor with newcomer focus, no old-slot store; `S(S-sway-close)` + `S(S-sway-ins)`
 - Then qtile/Columns: Same non-ordinary start; exact survivor widths and reopened frames TBD. Policy: close redistributes the removed height/width share across survivors (no old-slot store); reopened B fresh-admits at the focused position with newcomer focus; `S(S-qti-close)` + `S(S-qti-add)`
 - Then awesome/tile: Same non-ordinary start; survivors refill via tile recalc with no old-slot/ratio store (shares live in master/stack plus windowfact, not per-slot); reopened B is fresh manage admission appending last with newcomer focus; exact survivor widths/reopened frames TBD; `S(S-awe-tile)` + `S(S-awe-manage)` + `S(S-awe-hist)`
@@ -144,9 +144,7 @@ is the observation-driven proposal, never the native verb.
 - Then i3: WS1 retained (only invisible empty workspaces auto-close);
   A detached; focus falls to the empty workspace (no window focus).
   `S(S-i3-close)` + `S(S-i3-wsretain)`.
-- Then xmonad/Tall+Navigation2D: workspace retained with an empty stack
-  (static workspace zipper); A removed via `delete`; empty-stack focus
-  TBD. `S(S-xmo-close)` + `S(S-xmo-ws)`; queued.
+- Then xmonad/Tall+Navigation2D: workspace retained with the stack emptied to `Nothing` (static workspace zipper; `filter` on the sole window yields `Nothing` while the workspace entry persists); A removed via `delete` through `unmanage`; refresh ends in `setTopFocus`, and `peek` on the empty stack is `Nothing`, so X focus falls to root (focus none). `S(S-xmo-close)` + `S(S-xmo-ws)` + `S(S-xmo-topfocus)`.
 - Then sway: WS1 retained (`consider_destroy` spares the output-active
   workspace); focus falls to the empty workspace. `S(S-sway-close)` +
   `S(S-sway-wsretain)`.
@@ -196,8 +194,7 @@ is the observation-driven proposal, never the native verb.
 - Then i3: floating wrapper detached with tiling percents untouched;
   focus B (focus-stack next). `S(S-i3-close)`.
 - Then xmonad/Tall+Navigation2D: `delete` sinks the float and drops it
-  from the stack; tiles refill via Tall recalc; exact focus TBD.
-  `S(S-xmo-close)`; queued.
+  from the stack; the Tall arrange input excludes floating-map members, so A/B tile allocations are unaffected (recalc runs over the unchanged tiled set); stack order preserved; exact focus TBD (F: positional down-else-up needs F's stack slot, and the fixture states no admission order placing F in the stack). `S(S-xmo-close)` + `S(S-xmo-arrange)`; queued.
 - Then sway: F detached from the floating list with tiling fractions
   untouched; focus B (focus-inactive tiling view). `S(S-sway-close)`.
 - Then qtile/Columns: F removed from the group outside Columns;
@@ -252,10 +249,7 @@ is the observation-driven proposal, never the native verb.
 - Then i3: max leg no-counterpart (no maximize verb); full leg: mode
   flag dies with the con, tree detaches with percent fix, A refills,
   focus A. `S(S-i3-max)` + `S(S-i3-close)`.
-- Then xmonad/Tall+Navigation2D: max leg no-counterpart (flat Tall, no
-  maximize state); full leg applicable (float-based EWMH fullscreen):
-  `delete` removes, A refills, exact focus TBD. `S(S-xmo-layout)` +
-  `S(S-xmo-close)` + `S(S-xmo-ewmh)`; queued.
+- Then xmonad/Tall+Navigation2D: max leg no-counterpart (flat Tall/Mirror/Full only, no maximize state); full leg applicable (float-based EWMH fullscreen, `RationalRect 0 0 1 1` via the ClientMessage event path; admission itself tiles): `kill` destroys B and `unmanage`/`delete` removes it from stack and float map with no restore state stored; A refills full via single-window Tall and focus is A (sole survivor, direction-independent). `S(S-xmo-layout)` + `S(S-xmo-close)` + `S(S-xmo-ewmh)`.
 - Then sway: max leg no-counterpart (no maximize verb); full leg
   applicable but `ws->fullscreen` clearing on destroy untraced.
   `S(S-sway-max)` + `S(S-sway-close)` + `S(S-sway-full)`; queued.

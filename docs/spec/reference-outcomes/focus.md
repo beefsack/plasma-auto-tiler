@@ -153,8 +153,10 @@ assertions are never evidence.
 - Then i3: next C, previous B; edges wrap C-to-A and A-to-C; F excluded
   from the tiled walk. `S(S-i3-focusnext)` + `S(S-i3-flt-focus)`.
 - Then xmonad/Tall+Navigation2D: stack-order cycle (next C, previous
-  back to B; documented wrapping covers the edge leg); float-variant
-  stack position TBD. `S(S-xmo-core-nav)`; float leg queued.
+  back to B; documented wrapping covers the edge leg); float-variant F
+  stays in the Stack (`float`/`sink` are floating-map writes only), so
+  the same `focusDown`/`focusUp` cycle includes F (in-cycle, not
+  excluded). `S(S-xmo-core-nav)` + `S(S-xmo-float)`.
 - Then sway: next C, then previous back to B (reversible); edge leg
   next-from-C wraps to A and previous-from-A wraps to C; F excluded,
   same legs. `S(S-sway-focusnext)` + `S(S-sway-focus)`.
