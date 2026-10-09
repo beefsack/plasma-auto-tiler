@@ -51,7 +51,7 @@ paneru legs distinguish the native Space from virtual rows.
   rectangle selection now includes sole root leaves; work-area placement and
   commit/arrival fences retained. [Item-5 offline record](../../changes/archive/four-direction-output-transfer.md);
   native journey pending. User decision 2026-10-09 window-based selection
-  pending code; single-target crossing stands.
+  delivered offline ([selection record](../../changes/archive/position-based-output-selection.md)); single-target crossing stands.
 - Then Ours Windows: local-only (corrected 2026-10-08 at `db31234`):
   single-domain directional event with `cross_output_transfer:false`
   (`crates/tiler-windows/src/tiling_sys.rs:6099/6105`); no cross actuation.
@@ -360,8 +360,9 @@ projection, else larger window-span overlap, final left/top tie-break;
 unreadable topology refuses, no candidate no-op, no wrap. Destination current workspace, ordinary
 workspace-send admission and command follow/stay; initially tiled-subject
 eligibility, sticky excluded, floating boundaries membership-only with tiled
-sides reflowing; ordinary float transfer OPEN. Prior shared core/KDE delivery
-used the replaced refusal offline; new selection pending code.
+sides reflowing; ordinary float transfer OPEN. Shared core/KDE selection
+delivered offline 2026-10-09 with a real-Engine non-left/top send fixture
+([record](../../changes/archive/position-based-output-selection.md)).
 Windows wiring and native journeys pending. Pinned baseline source
 keys remain historical; delivery evidence is linked separately in KDE cells.
 

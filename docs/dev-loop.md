@@ -263,8 +263,11 @@ prove live callbacks.
 
 Output move/send (item 5, offline verified; two-output native journey pending):
 
-- `plasma-auto-tiler:plan:output-send-refused-ambiguous`: forward or reverse
-  adjacency is not unique; zero transfer writes. Unreadable topology reports
+- Multiple readable adjacent outputs now select by window-centre projection,
+  else span overlap, then left/top; reverse multiplicity is accepted.
+  `plasma-auto-tiler:plan:output-send-refused-ambiguous` is a retained refusal
+  token for unreadable mover selection evidence, not candidate multiplicity;
+  zero transfer writes. Unreadable topology reports
   `event=output-send outcome=scope-invalid reason=topology-unreadable`.
 - `plasma-auto-tiler:plan:busy-refused kind=output-send`: existing plan/send
   flight holds the route; no second dispatch.

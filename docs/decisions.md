@@ -325,11 +325,11 @@ platform API behavior.
     never consults or restores it. Remove only the explicitly moved
     ID from automatic hotplug-return associations. Migrated IDs lose
     auto return.
-  - Status: core/Linux planner/KDE delivered offline under the replaced
-    refusal rule
+  - Status: core/Linux planner/KDE delivered offline
     ([record](changes/archive/kde-whole-workspace-output-migration.md),
     [spec](spec/functional-spec.md#workspaces) REQ-WS-12a..i); D3 largest-shared-edge
-    then left/top selection (User decision 2026-10-09) pending code.
+    then left/top selection (User decision 2026-10-09) delivered offline
+    ([selection record](changes/archive/position-based-output-selection.md)).
     Windows changes initialize the new `maximized` field to false
     only, preserving behavior; native acceptance remains pending.
 
@@ -395,6 +395,12 @@ platform API behavior.
       shared edge, then left/top. Deliberate COSMIC deviation: COSMIC
       origin-distance is no better; Hyprland, i3, sway, awesome and bspwm
       select by window position; no reference refuses.
+      Technical convention: Left/Right project onto y, Up/Down onto x;
+      shared edges are half-open [start,end), with exact half-pixel centres.
+      Multiple centre-containing edges tie directly by left/top; span overlap
+      is used only when no edge contains the centre. Left/top means ascending
+      x, then y; equal positions use stable output identity. Reverse candidate
+      multiplicity is valid; the resolved pair still touches reciprocally.
     - 5.3: explicit send-to-output has follow and stay forms. Follow binds
       Meta/Win+Ctrl+Alt+arrows and +H/J/K/L; stay is bindable, unbound.
       COSMIC's Super+Shift+Alt arm collides with our resize-shrink; niri's
@@ -406,9 +412,10 @@ platform API behavior.
       tiled-subject eligibility, sticky excluded. Floating-workspace
       boundaries transfer membership only, reflowing only tiled sides.
       Ordinary float transfer remains a separate open item.
-    - Status: 2026-10-09 window-based selection pending code; prior shared
-      core/protocol + KDE four-direction moves, explicit output follow/stay
-      and native catalog/presets delivered offline under the replaced rule
+    - Status: shared core/KDE window-based selection delivered offline
+      2026-10-09 ([selection record](changes/archive/position-based-output-selection.md));
+      core/protocol four-direction moves, explicit output follow/stay
+      and native catalog/presets delivered offline
       ([record](changes/archive/four-direction-output-transfer.md)). Windows
   wiring and user-owned two-output native journey pending. Full rectangles
   select adjacency only; placement retains per-desktop work areas.

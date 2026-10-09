@@ -444,9 +444,9 @@ leaf. Adjacency uses reciprocal edge-touch + positive overlap on FULL
 output rectangles, horizontal too; window-based selection (User decision
 2026-10-09): shared edge containing the moving window centre projection,
 else larger window-span overlap along the edge, final left/top tie-break;
-unreadable topology refuses, no candidate no-op, no wrap. Items 3/5 shared
-core/KDE prior delivery used the replaced refusal; new selection pending
-code. Windows wiring
+unreadable topology refuses, no candidate no-op, no wrap. Shared core/KDE
+selection delivered offline 2026-10-09
+([record](../../changes/archive/position-based-output-selection.md)). Windows wiring
 and native journeys remain pending. Delivery evidence below is offline, not a live
 observation or new reference vote.
 
@@ -540,7 +540,8 @@ observation or new reference vote.
   Core compass tests and production-entry/Engine fixture delivered offline;
   [record](../../changes/archive/four-direction-output-transfer.md). Native journey TBD.
   Single-candidate fixture: crossing stands under the User decision 2026-10-09
-  window-based selection; multi-candidate tie-break pending code.
+  window-based selection; multi-candidate selection now delivered offline
+  ([selection record](../../changes/archive/position-based-output-selection.md)).
 - Then Ours Windows: same selected crossing/eligibility target;
   implementation pending, multi-output parked; exact native journey TBD.
 - Variant hook: V-R4-DIR.
@@ -568,12 +569,30 @@ observation or new reference vote.
 - Then Ours KDE: selected (User decision 2026-10-09): shared edge containing
   the moving window centre projection, else larger window-span overlap along
   the edge, final left/top tie-break; unreadable topology refuses, no
-  candidate no-op, no wrap. Selected rule pending code; prior offline delivery
-  used the replaced refusal ([record](../../changes/archive/four-direction-output-transfer.md)).
+  candidate no-op, no wrap. Implemented offline 2026-10-09: four-direction
+  two-candidate observer tests, mirrored shared selector tests and real-Engine
+  non-left/top R4 crossing. Pinned dispatch target survives mover relocation;
+  delayed arrival follows once; removal refuses and reconciles.
+  [Record](../../changes/archive/position-based-output-selection.md).
   Native journey TBD.
 - Then Ours Windows: same selected window-based selection target;
   implementation pending, multi-output parked; item 5.2.
 - Variant hook: V-R4-DIR.
+
+#### R-MOV-12 technical selection discriminators (fresh legs)
+
+All rows move sole A up after local exhaustion; full topology is readable.
+Intervals below are shared FULL edges on the x axis. These are offline Ours
+KDE/core sub-legs, not reference votes; reference/native outcomes remain TBD.
+
+| Given | When | Ours KDE/core offline outcome (2026-10-09) |
+| --- | --- | --- |
+| Original U1/U2 edges [0,960), [960,1920); A x=860, width=200, centre=960 | Move up once | U2: half-open containment puts the seam in the right edge |
+| Source x-span [0,1600); upper edges [0,400), [1200,1600); A x=300, width=1100, centre=850 | Move up once | U2: centre in gap; window overlap 200 beats 100 |
+| Source x-span [0,1600); overlapping upper edges [0,1200), [400,1600); A x=900, width=400, centre=1100 | Move up once | U1: both contain centre; left/top wins directly despite U2's larger span overlap |
+
+Evidence: `position_based_output_selection.rs`, `plan-directional.test.ts`;
+odd extents retain exact half-pixel centres, Left/Right mirror onto y.
 
 ### R-MOV-13: panel work-area gap with touching full output rectangles
 
@@ -602,8 +621,8 @@ observation or new reference vote.
   Both-axis observer tests and stacked-output production-entry/Engine fixture
   delivered offline; [record](../../changes/archive/four-direction-output-transfer.md).
   Native journey TBD. Single-neighbor fixture: crossing stands under the User
-  decision 2026-10-09 window-based selection; multi-candidate tie-break
-  pending code.
+  decision 2026-10-09 window-based selection; multi-candidate selection
+  delivered offline ([selection record](../../changes/archive/position-based-output-selection.md)).
 - Then Ours Windows: same selected full-rectangle crossing;
   implementation pending, multi-output parked; item 5.2.
 - Variant hook: V-R4-DIR.

@@ -711,9 +711,10 @@ function readOutputTopology(liveWorkspace: unknown): OutputTopologyEntry[] | nul
 }
 
 // Unique reciprocal exact edge-touch selection on FULL output rectangles in
-// the commanded direction. Returns the single adjacent entry, null for a
-// confirmed no-candidate condition, or "ambiguous" for refusal. No output
-// wrapping.
+// the commanded direction. FOCUS-ONLY legacy: returns the single adjacent
+// entry, null for a confirmed no-candidate condition, or "ambiguous" for
+// refusal. Focus navigation keeps this policy unchanged. Moves, sends, and
+// migration use the position-based selectors below. No output wrapping.
 function selectAdjacentOutput(
     entries: ReadonlyArray<OutputTopologyEntry>,
     source: OutputTopologyEntry,
@@ -775,6 +776,148 @@ function selectAdjacentOutput(
     return target;
 }
 
+// Shared FULL-rectangle candidate helper for the 2026-10-09 position-based
+// selectors (moves/sends/migration). Lists every exact edge-touch candidate
+// with positive overlap plus its shared edge interval. Deterministic
+// left/top/name order. Mirrors tiler-core::output_selection.
+function listPositionCandidates(
+    entries: ReadonlyArray<OutputTopologyEntry>,
+    source: OutputTopologyEntry,
+    direction: string,
+): Array<{ entry: OutputTopologyEntry; edgeStart: number; edgeEnd: number }> {
+    const overlapY = (a: { y: number; h: number }, b: { y: number; h: number }): number =>
+        Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    const overlapX = (a: { x: number; w: number }, b: { x: number; w: number }): number =>
+        Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const out: Array<{ entry: OutputTopologyEntry; edgeStart: number; edgeEnd: number }> = [];
+    for (const entry of entries) {
+        if (entry.name === source.name) {
+            continue;
+        }
+        let touched = false;
+        if (direction === "left") {
+            touched = entry.bounds.x + entry.bounds.w === source.bounds.x && overlapY(entry.bounds, source.bounds) > 0;
+        } else if (direction === "right") {
+            touched = source.bounds.x + source.bounds.w === entry.bounds.x && overlapY(entry.bounds, source.bounds) > 0;
+        } else if (direction === "up") {
+            touched = entry.bounds.y + entry.bounds.h === source.bounds.y && overlapX(entry.bounds, source.bounds) > 0;
+        } else if (direction === "down") {
+            touched = source.bounds.y + source.bounds.h === entry.bounds.y && overlapX(entry.bounds, source.bounds) > 0;
+        }
+        if (!touched) {
+            continue;
+        }
+        let start = 0;
+        let end = 0;
+        if (direction === "left" || direction === "right") {
+            start = Math.max(source.bounds.y, entry.bounds.y);
+            end = Math.min(source.bounds.y + source.bounds.h, entry.bounds.y + entry.bounds.h);
+        } else {
+            start = Math.max(source.bounds.x, entry.bounds.x);
+            end = Math.min(source.bounds.x + source.bounds.w, entry.bounds.x + entry.bounds.w);
+        }
+        if (!(end - start > 0)) {
+            continue;
+        }
+        out.push({ entry, edgeStart: start, edgeEnd: end });
+    }
+    out.sort((a, b) => {
+        if (a.entry.bounds.x !== b.entry.bounds.x) {
+            return a.entry.bounds.x - b.entry.bounds.x;
+        }
+        if (a.entry.bounds.y !== b.entry.bounds.y) {
+            return a.entry.bounds.y - b.entry.bounds.y;
+        }
+        return a.entry.name < b.entry.name ? -1 : a.entry.name > b.entry.name ? 1 : 0;
+    });
+    return out;
+}
+
+// Windowed selection for exhausted moves and explicit sends: shared edge
+// containing the moving window centre projection wins (horizontal uses y,
+// vertical uses x, half-open [start, end) in doubled coordinates so odd
+// extents keep exact .5 centres); else largest window-span overlap with the
+// shared edge; final left/top/name. Null mover rect refuses ("ambiguous").
+// Candidates already guarantee forward edge-touch, so no second check.
+function selectWindowedAdjacentOutput(
+    entries: ReadonlyArray<OutputTopologyEntry>,
+    source: OutputTopologyEntry,
+    direction: string,
+    mover: { x: number; y: number; w: number; h: number } | null,
+): OutputTopologyEntry | null | "ambiguous" {
+    if (mover === null || !(mover.w > 0 && mover.h > 0)) {
+        return "ambiguous";
+    }
+    const candidates = listPositionCandidates(entries, source, direction);
+    if (candidates.length === 0) {
+        return null;
+    }
+    const horizontal = direction === "left" || direction === "right";
+    const overlapWith = (c: { edgeStart: number; edgeEnd: number }): number => {
+        if (horizontal) {
+            return Math.max(0, Math.min(mover.y + mover.h, c.edgeEnd) - Math.max(mover.y, c.edgeStart));
+        }
+        return Math.max(0, Math.min(mover.x + mover.w, c.edgeEnd) - Math.max(mover.x, c.edgeStart));
+    };
+    const centred = (c: { edgeStart: number; edgeEnd: number }): boolean => {
+        const doubled = horizontal ? 2 * mover.y + mover.h : 2 * mover.x + mover.w;
+        return 2 * c.edgeStart <= doubled && doubled < 2 * c.edgeEnd;
+    };
+    const ranked = [...candidates].sort((a, b) => {
+        const centreDiff = Number(centred(b)) - Number(centred(a));
+        if (centreDiff !== 0) {
+            return centreDiff;
+        }
+        // Literal contract tie-break: span overlap ranks only when neither
+        // shared edge contains the centre. Two containing edges skip
+        // straight to left/top/name.
+        if (centred(a) && centred(b)) {
+            // fall through to left/top/name below
+        } else {
+            const diff = overlapWith(b) - overlapWith(a);
+            if (diff !== 0) {
+                return diff;
+            }
+        }
+        if (a.entry.bounds.x !== b.entry.bounds.x) {
+            return a.entry.bounds.x - b.entry.bounds.x;
+        }
+        if (a.entry.bounds.y !== b.entry.bounds.y) {
+            return a.entry.bounds.y - b.entry.bounds.y;
+        }
+        return a.entry.name < b.entry.name ? -1 : a.entry.name > b.entry.name ? 1 : 0;
+    });
+    return (ranked[0] as { entry: OutputTopologyEntry }).entry;
+}
+
+// Migration selection: largest shared edge, then left/top/name. Never uses
+// window position. Candidates already guarantee forward edge-touch. Never
+// ambiguous: empty is no-target, otherwise the ranked head wins.
+function selectMigrationAdjacentOutput(
+    entries: ReadonlyArray<OutputTopologyEntry>,
+    source: OutputTopologyEntry,
+    direction: string,
+): OutputTopologyEntry | null {
+    const candidates = listPositionCandidates(entries, source, direction);
+    if (candidates.length === 0) {
+        return null;
+    }
+    const ranked = [...candidates].sort((a, b) => {
+        const diff = b.edgeEnd - b.edgeStart - (a.edgeEnd - a.edgeStart);
+        if (diff !== 0) {
+            return diff;
+        }
+        if (a.entry.bounds.x !== b.entry.bounds.x) {
+            return a.entry.bounds.x - b.entry.bounds.x;
+        }
+        if (a.entry.bounds.y !== b.entry.bounds.y) {
+            return a.entry.bounds.y - b.entry.bounds.y;
+        }
+        return a.entry.name < b.entry.name ? -1 : a.entry.name > b.entry.name ? 1 : 0;
+    });
+    return (ranked[0] as { entry: OutputTopologyEntry }).entry;
+}
+
 // STRICT TRUE live native perOutputVirtualDesktops gate for whole-workspace
 // migration only (R-WS-12): true passes, false refuses, anything unreadable
 // refuses. Existing mode behavior is untouched and no native option/config
@@ -827,8 +970,8 @@ export type MigrateWorkspaceObservation =
 // output's current workspace as a FULL normal-client view INCLUDING sticky
 // (sticky rides with sticky/fit-excluded flags and stays homed on the
 // source), plus the adjacent target output's FULL current view for the
-// affected-view overlay gate and the drift fence. Selection reuses the
-// FULL-output-rectangle unique reciprocal edge-touch rule (panel gaps
+// affected-view overlay gate and the drift fence. Selection ranks FULL
+// output rectangles by largest shared edge, then left/top (panel gaps
 // cannot break adjacency): a confirmed no-candidate condition is
 // `no-target` (quiet no-op), ambiguous or unreadable evidence is `invalid`
 // and must refuse before any mutation. No output wrapping. Carried domain
@@ -921,12 +1064,12 @@ export function observeMigrateWorkspace(
         if (sourceEntry.workspace !== expectedSourceView) {
             return invalid;
         }
-        const selected = selectAdjacentOutput(topology, sourceEntry, direction);
+        // Whole-workspace migration ranks by largest shared FULL edge, then
+        // left/top/name, never window position. No candidate is no-target;
+        // unreadable topology refuses.
+        const selected = selectMigrationAdjacentOutput(topology, sourceEntry, direction);
         if (selected === null) {
             return noTarget;
-        }
-        if (selected === "ambiguous") {
-            return invalid;
         }
         if (pinned !== undefined && selected.name !== pinned.targetOutput) {
             return invalid;
@@ -2965,10 +3108,12 @@ function observeNative(
 // in workspace id), bounded max two domains. Reuses only
 // documented/project-used public properties: `screens`,
 // `currentDesktopForScreen`, Output `geometry`, `clientArea`, `windowList`,
-// `window.output.name`, `window.desktops`, `activeWindow`. Unique reciprocal
-// exact edge-touch with positive overlap on FULL output rectangles selects
-// the neighbor (panel gaps cannot block selection); carried domain bounds
-// stay per-desktop WORK AREAS exactly as before (never tiled under panels).
+// `window.output.name`, `window.desktops`, `activeWindow`. Moves rank
+// multiple FULL-rectangle edge-touch candidates positionally (mover-centre
+// projection, then span overlap, then left/top); focus keeps the legacy
+// unique reciprocal rule (panel gaps cannot block selection); carried domain
+// bounds stay per-desktop WORK AREAS exactly as before (never tiled under
+// panels).
 // Distinct workspace ids are allowed. The typed outcome keeps local
 // behavior for a confirmed no-adjacent condition only (`no-target`);
 // ambiguous, partial, or unreadable evidence is `invalid` and must refuse
@@ -2981,7 +3126,8 @@ export function observeDirectionalDomain(
     direction: string,
     reportEligibility?: EligibilityReporter,
     owners?: Map<string, object>,
-    pinnedSource?: { readonly output: string; readonly workspace: string },
+    pinnedSource?: { readonly output: string; readonly workspace: string; readonly targetOutput?: string },
+    forMove?: boolean,
 ): DirectionalObservation {
     const invalid: DirectionalObservation = { status: "invalid", observed: null };
     const noTarget: DirectionalObservation = { status: "no-target", observed: null };
@@ -2996,6 +3142,13 @@ export function observeDirectionalDomain(
         // unpinned via the active domain below.
         const pinned = pinnedSource !== undefined;
         if (pinned && (!isOpaqueId(pinnedSource.output) || !isOpaqueId(pinnedSource.workspace))) {
+            return invalid;
+        }
+        // Pinned R4 re-observation must name the dispatch-selected target:
+        // without it the fence cannot verify the same pair and must refuse
+        // rather than re-rank (re-ranking could pick another output after a
+        // partial transfer).
+        if (pinned && !isOpaqueId(pinnedSource.targetOutput)) {
             return invalid;
         }
         // Shared window-list read for both scope collections below.
@@ -3194,10 +3347,35 @@ export function observeDirectionalDomain(
         if (sourceEntry.workspace !== domainWorkspace) {
             return invalid;
         }
-        // Unique reciprocal exact edge-touch with positive overlap on FULL
-        // output rectangles in the commanded direction. No candidate is
-        // no-target (local behavior); ambiguous evidence is invalid.
-        const selected = selectAdjacentOutput(entries, sourceEntry, direction);
+        // Focus keeps the legacy unique reciprocal policy; moves (exhausted
+        // directional crossing, all four directions) rank multiple FULL-rect
+        // candidates by window-centre projection, then window-span overlap,
+        // then left/top. No candidate is no-target (local behavior);
+        // ambiguous/unreadable evidence is invalid.
+        // Pinned R4 re-observation verifies the dispatch-selected target is
+        // still a live edge-touching candidate and returns that same pair.
+        // It never re-ranks: the mover sits on the target mid-flight, so its
+        // relocated frame must not select. A changed or removed target
+        // refuses here; existing fences and recovery own the terminal.
+        let selected: OutputTopologyEntry | null | "ambiguous";
+        if (forMove === false) {
+            selected = selectAdjacentOutput(entries, sourceEntry, direction);
+        } else if (!pinned) {
+            let moverRect: { x: number; y: number; w: number; h: number } | null = null;
+            for (const entry of sourceWindowsFull) {
+                if (entry.id === sourceFocusedId) {
+                    moverRect = { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h };
+                    break;
+                }
+            }
+            selected = selectWindowedAdjacentOutput(entries, sourceEntry, direction, moverRect);
+        } else {
+            const pinnedTarget = (pinnedSource as { targetOutput?: unknown }).targetOutput as string;
+            const match = listPositionCandidates(entries, sourceEntry, direction).find(
+                (candidate) => candidate.entry.name === pinnedTarget,
+            );
+            selected = match === undefined ? "ambiguous" : match.entry;
+        }
         if (selected === null) {
             return noTarget;
         }
@@ -3386,6 +3564,7 @@ export function observeDirectionalDomain(
                         reportEligibility,
                         owners,
                         pinnedSource,
+                        forMove,
                     );
                     if (fresh.status !== "ready" || fresh.observed === null) {
                         return false;
@@ -3461,9 +3640,10 @@ export function observeDirectionalDomain(
 // state only, mirroring observeSendTarget enumeration and eligibility
 // (normal windows only, per-output membership or sticky, normalized native
 // ids, quantized frame extents, per-desktop work areas for carried bounds).
-// Selection uses FULL output rectangles (panel gaps cannot block) with the
-// same unique reciprocal edge-touch + positive overlap rule as directional;
-// carried domain bounds stay per-desktop work areas like workspace send.
+// Selection uses FULL output rectangles (panel gaps cannot block): the
+// entry resolves the target with the same windowed rule as directional
+// moves before probing here; carried domain bounds stay per-desktop work
+// areas like workspace send.
 // Null fail-closed on ambiguous/unreadable topology (the adapter refuses) or
 // missing candidates (the entry no-ops before dispatch).
 export function observeOutputSendTarget(
@@ -4483,7 +4663,7 @@ function startPlanAdapterEntryOnce(
             }
             return Object.freeze(out);
         },
-        observeDirectional: (direction, pinnedSource?) => {
+        observeDirectional: (direction, pinnedSource?, forMove?) => {
             const outcome = observeDirectionalDomain(
                 liveWorkspace,
                 nativeIds,
@@ -4493,6 +4673,7 @@ function startPlanAdapterEntryOnce(
                 reportEligibility,
                 nativeOwners,
                 pinnedSource,
+                forMove,
             );
             if (outcome.status !== "ready" || outcome.observed === null) {
                 return outcome;
@@ -6631,7 +6812,17 @@ function startPlanAdapterEntryOnce(
                 }
                 return;
             }
-            const selected = selectAdjacentOutput(topology, sourceEntry, direction);
+            // Explicit sends rank like exhausted moves: shared edge containing
+            // the moving window centre projection, then window-span overlap,
+            // then left/top. The mover frame must read; unreadable refuses.
+            let moverRect: { x: number; y: number; w: number; h: number } | null = null;
+            if (activeMoverForSource !== null) {
+                const frame = readFrameRect(activeMoverForSource);
+                if (typeof frame !== "string") {
+                    moverRect = { x: frame.x, y: frame.y, w: frame.w, h: frame.h };
+                }
+            }
+            const selected = selectWindowedAdjacentOutput(topology, sourceEntry, direction, moverRect);
             if (selected === null) {
                 // No candidate is a no-op: log the quiet no-target outcome
                 // with no write and no flight.

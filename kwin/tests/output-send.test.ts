@@ -1333,18 +1333,22 @@ describe("output-send entry route", () => {
         handle?.stop();
     });
 
-    it("refuses ambiguous topology before any write", () => {
+    it("selects the mover-centred candidate, not left/top (position-based)", () => {
         const world = makeEntryWorld(false);
-        // A third output touching the same right edge makes selection
-        // ambiguous: the send refuses with no dispatch and no move.
-        const out3 = { name: "out-3", geometry: { x: 800, y: 0, width: 800, height: 600 } };
+        // Split the right side: out-2 keeps the top half, out-3 takes the
+        // bottom half. The mover sits low, so its centre projection selects
+        // out-3 even though left/top would pick out-2.
+        const out2 = world.outputs[1] as Record<string, unknown>;
+        out2["geometry"] = { x: 800, y: 0, width: 800, height: 300 };
+        const out3 = { name: "out-3", geometry: { x: 800, y: 300, width: 800, height: 300 } };
         (world.workspace["screens"] as object[]).push(out3);
-        const moverBefore = (world.wins[1] as Record<string, unknown>)["output"];
+        const mover = world.wins[1] as Record<string, unknown>;
+        mover["frameGeometry"] = { x: 120, y: 400, width: 100, height: 80 };
         const { handle, mocks } = startEntryWorld(world);
         handle?.requestSendToOutput("right", true);
-        assert.equal(sendOpCalls(mocks, "send-to-output").length, 0);
-        assert.equal((world.wins[1] as Record<string, unknown>)["output"], moverBefore);
-        assert.ok(mocks.logs.some((line) => line.includes("output-send-refused-ambiguous")));
+        const sends = sendOpCalls(mocks, "send-to-output");
+        assert.equal(sends.length, 1);
+        assert.equal((sends[0]?.payload["target_domain"] as Record<string, unknown>)["output"], "out-3");
         handle?.stop();
     });
 

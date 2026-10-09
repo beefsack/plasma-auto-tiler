@@ -657,7 +657,8 @@ export interface PlanAdapterEnv {
     // {@link PlanObserved} (treated as ready) or null (treated as invalid).
     readonly observeDirectional?: (
         direction: PlanDirection,
-        pinnedSource?: { readonly output: string; readonly workspace: string },
+        pinnedSource?: { readonly output: string; readonly workspace: string; readonly targetOutput?: string },
+        forMove?: boolean,
     ) => DirectionalObservation | PlanObserved | null;
     readonly clearMaximize: (target: object) => MaximizeClearOutcome;
     readonly setMaximize?: (target: object, maximized: boolean) => NativeStateWriteOutcome;
@@ -2562,7 +2563,7 @@ export class PlanAdapter {
         }
         let raw: DirectionalObservation | PlanObserved | null = null;
         try {
-            raw = hook(direction);
+            raw = hook(direction, undefined, forMove);
         } catch (error) {
             void error;
             return { kind: "invalid" };
@@ -10190,11 +10191,21 @@ export class PlanAdapter {
         }
         let raw: DirectionalObservation | PlanObserved | null = null;
         try {
+            const domains = snapshot?.domains;
+            const targetOutput =
+                snapshot !== null && domains !== undefined && domains.length === 2
+                    ? (domains[1] as PlanDomain).output
+                    : undefined;
             raw = hook(
                 direction,
                 snapshot === null
                     ? undefined
-                    : { output: snapshot.domainOutput, workspace: snapshot.domainWorkspace },
+                    : {
+                          output: snapshot.domainOutput,
+                          workspace: snapshot.domainWorkspace,
+                          ...(targetOutput === undefined ? {} : { targetOutput }),
+                      },
+                true,
             );
         } catch (error) {
             void error;

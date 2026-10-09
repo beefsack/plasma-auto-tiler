@@ -1072,12 +1072,15 @@ pub fn plan_move_with_capabilities(
     if !sole_leaf && !root_edge {
         return gate(local, capabilities);
     }
-    // Four-direction cross (item 5.2): the adapter owns output topology and
-    // resolves the candidate; the core crosses the named adjacent output in
-    // the requested direction on FULL output rectangles (panel gaps never
-    // block: geometry selection is adapter-side, never work-area gated
-    // here). No candidate is a no-op; ambiguous or unreadable topology
-    // refuses fail-closed; outputs never wrap.
+    // Four-direction cross (item 5.2, 2026-10-09 selection): the adapter owns
+    // output topology and resolves the candidate over FULL rectangles
+    // (panel gaps never block: geometry selection is adapter-side, never
+    // work-area gated here). Multiple candidates rank adapter-side by
+    // window-centre projection, then span overlap, then left/top
+    // (migration: largest shared edge); the core crosses the named adjacent
+    // output in the requested direction. No candidate is a no-op;
+    // non-reciprocal or unreadable topology refuses fail-closed; outputs
+    // never wrap.
     let Some(target_id) = validated.source.adjacent.get(&intent.direction) else {
         return MoveOutcome::Noop {
             reason: NoopReason::NoAdjacentOutput,
@@ -1093,9 +1096,10 @@ pub fn plan_move_with_capabilities(
             "output adjacency references an output missing from the snapshot",
         );
     };
-    // Ambiguous topology refuses: the cross target must name the source back
-    // on the opposite side (unique reciprocal adjacency). A one-sided or
-    // mismatched edge cannot identify the crossing unambiguously.
+    // Reciprocity existence (not uniqueness): the cross target must name
+    // the source back on the opposite side. A one-sided or mismatched edge
+    // refuses; a target touched by two sources stays valid forward (valid
+    // reverse ambiguity accepted, resolved adapter-side).
     if target.adjacent.get(&opposite_direction(intent.direction)) != Some(&validated.source.id) {
         return rejected(
             RejectionKind::MalformedTopology,

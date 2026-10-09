@@ -196,7 +196,7 @@ interface HarnessOpts {
     readonly options?: unknown;
     readonly wins?: Array<{
         id: string;
-        output: "left" | "right";
+        output: "left" | "right" | "right-small" | "right-tall";
         desktop: string;
         sticky?: boolean;
         minimized?: boolean;
@@ -206,13 +206,17 @@ interface HarnessOpts {
         maxSize?: { width: number; height: number };
     }>;
     readonly activeId?: string;
+    // Split the right half into small-top/tall-bottom candidates: migration
+    // must pick the largest shared edge (tall bottom, non-top) without
+    // consulting window position.
+    readonly splitRight?: boolean;
 }
 
 interface Harness {
     readonly bridge: EngineBridge;
     readonly workspace: Record<string, unknown>;
-    readonly outputs: { left: FakeOutput; right: FakeOutput };
-    readonly desktops: { source: FakeDesktop; target: FakeDesktop };
+    readonly outputs: { left: FakeOutput; right: FakeOutput; rightSmall?: FakeOutput };
+    readonly desktops: { source: FakeDesktop; target: FakeDesktop; small?: FakeDesktop };
     readonly wins: FakeWindow[];
     readonly currentByOutput: Map<FakeOutput, FakeDesktop>;
     readonly dbusCalls: Array<{ method: string; payload: string }>;
@@ -237,6 +241,9 @@ interface Harness {
 async function makeHarness(opts: HarnessOpts = {}): Promise<Harness> {
     // Side-by-side outputs with FULL rectangles touching at x=1920 for
     // right-adjacency selection while carried work areas stay panel-free.
+    // splitRight halves the east column: out-right-small (300px edge) on top
+    // plus out-right (780px edge) below; migration must pick the tall
+    // non-top candidate by largest shared edge.
     const left: FakeOutput = {
         name: "out-left",
         geometry: { x: 0, y: 0, width: 1920, height: 1080 },
@@ -244,18 +251,39 @@ async function makeHarness(opts: HarnessOpts = {}): Promise<Harness> {
         model: "d",
         serialNumber: "s-left",
     };
-    const right: FakeOutput = {
-        name: "out-right",
-        geometry: { x: 1920, y: 0, width: 1920, height: 1080 },
-        manufacturer: "m",
-        model: "d",
-        serialNumber: "s-right",
-    };
+    const right: FakeOutput =
+        opts.splitRight === true
+            ? {
+                  name: "out-right",
+                  geometry: { x: 1920, y: 300, width: 1920, height: 780 },
+                  manufacturer: "m",
+                  model: "d",
+                  serialNumber: "s-right",
+              }
+            : {
+                  name: "out-right",
+                  geometry: { x: 1920, y: 0, width: 1920, height: 1080 },
+                  manufacturer: "m",
+                  model: "d",
+                  serialNumber: "s-right",
+              };
+    const rightSmall: FakeOutput | null =
+        opts.splitRight === true
+            ? {
+                  name: "out-right-small",
+                  geometry: { x: 1920, y: 0, width: 1920, height: 300 },
+                  manufacturer: "m",
+                  model: "d",
+                  serialNumber: "s-right-small",
+              }
+            : null;
     const wsSource: FakeDesktop = { id: "ws-1", x11DesktopNumber: 1 };
     const wsTarget: FakeDesktop = { id: "ws-9", x11DesktopNumber: 2 };
+    const wsSmall: FakeDesktop = { id: "ws-8", x11DesktopNumber: 3 };
     const currentByOutput = new Map<FakeOutput, FakeDesktop>([
         [left, wsSource],
         [right, wsTarget],
+        ...(rightSmall !== null ? [[rightSmall, wsSmall] as const] : []),
     ]);
     const mkWin = (
         output: FakeOutput,
@@ -299,15 +327,27 @@ async function makeHarness(opts: HarnessOpts = {}): Promise<Harness> {
             outputSig,
         };
     };
-    const spec = opts.wins ?? [
-        { id: "m-win-1", output: "left" as const, desktop: "ws-1" },
-        { id: "m-win-2", output: "left" as const, desktop: "ws-1" },
-        { id: "m-win-t", output: "right" as const, desktop: "ws-9" },
-    ];
+    const spec =
+        opts.wins ??
+        (opts.splitRight === true
+            ? [
+                  { id: "m-win-1", output: "left" as const, desktop: "ws-1" },
+                  { id: "m-win-2", output: "left" as const, desktop: "ws-1" },
+                  { id: "m-win-s", output: "right-small" as const, desktop: "ws-8" },
+                  { id: "m-win-t", output: "right" as const, desktop: "ws-9" },
+              ]
+            : [
+                  { id: "m-win-1", output: "left" as const, desktop: "ws-1" },
+                  { id: "m-win-2", output: "left" as const, desktop: "ws-1" },
+                  { id: "m-win-t", output: "right" as const, desktop: "ws-9" },
+              ]);
     const wins: FakeWindow[] = spec.map((entry) => {
+        const outputFor =
+            entry.output === "left" ? left : entry.output === "right-small" && rightSmall !== null ? rightSmall : right;
+        const desktopFor = entry.desktop === "ws-1" ? wsSource : entry.desktop === "ws-8" ? wsSmall : wsTarget;
         const win = mkWin(
-            entry.output === "left" ? left : right,
-            entry.desktop === "ws-1" ? wsSource : wsTarget,
+            outputFor,
+            desktopFor,
             entry.id,
             { x: 20, y: 20, width: 400, height: 300 },
             entry.sticky === true,
@@ -346,15 +386,25 @@ async function makeHarness(opts: HarnessOpts = {}): Promise<Harness> {
     const workspace: Record<string, unknown> = {
         activeWindow: wins.find((win) => win.internalId === activeId) ?? null,
         activeScreen: left,
-        screens: [left, right],
-        desktops: [wsSource, wsTarget],
+        screens: rightSmall !== null ? [left, rightSmall, right] : [left, right],
+        desktops: rightSmall !== null ? [wsSource, wsSmall, wsTarget] : [wsSource, wsTarget],
         currentDesktopForScreen: (output: object): object => currentByOutput.get(output as FakeOutput) ?? wsSource,
         currentDesktop: wsSource,
         setCurrentDesktopForScreen: (desktop: object, output: object): void => {
             currentByOutput.set(output as FakeOutput, desktop as FakeDesktop);
         },
-        clientArea: (_kind: number, output: object, _desktop: object): object =>
-            output === left ? { x: 0, y: 0, w: 1920, h: 1040 } : { x: 1920, y: 0, w: 1920, h: 1040 },
+        clientArea: (_kind: number, output: object, _desktop: object): object => {
+            if (output === left) {
+                return { x: 0, y: 0, w: 1920, h: 1040 };
+            }
+            if (rightSmall !== null && output === rightSmall) {
+                return { x: 1920, y: 0, w: 1920, h: 260 };
+            }
+            if (rightSmall !== null) {
+                return { x: 1920, y: 340, w: 1920, h: 740 };
+            }
+            return { x: 1920, y: 0, w: 1920, h: 1040 };
+        },
         windowList: (): object[] => [...wins],
         sendClientToScreen: (client: object, output: object): void => {
             const win = client as FakeWindow;
@@ -398,8 +448,8 @@ async function makeHarness(opts: HarnessOpts = {}): Promise<Harness> {
     const harness: Harness = {
         bridge,
         workspace,
-        outputs: { left, right },
-        desktops: { source: wsSource, target: wsTarget },
+        outputs: rightSmall !== null ? { left, right, rightSmall } : { left, right },
+        desktops: rightSmall !== null ? { source: wsSource, target: wsTarget, small: wsSmall } : { source: wsSource, target: wsTarget },
         wins,
         currentByOutput,
         dbusCalls,
@@ -613,6 +663,51 @@ describe("migrate engine fixture", () => {
             assert.ok(answered.length > 0);
             const lastReply = JSON.parse(answered[answered.length - 1]?.[1] as string) as Record<string, unknown>;
             assert.equal(lastReply["outcome"], "planned", JSON.stringify(lastReply));
+        } finally {
+            await harness.stop();
+        }
+    });
+
+    it("migrates to the largest shared edge with the real Engine (non-top target)", async () => {
+        // Multi-candidate integration: production observeMigrateWorkspace
+        // ranks two FULL right candidates by largest shared edge (780px tall
+        // bottom vs 300px small top), selecting out-right without consulting
+        // window position. The resolved pair rides a real Planner::evaluate.
+        const harness = await makeHarness({ splitRight: true });
+        try {
+            await harness.settlePlan();
+            const smallBefore = harness.frameOf(harness.winById("m-win-s"));
+            const targetBefore = harness.frameOf(harness.winById("m-win-t"));
+            harness.handle.requestWorkspaceMigrate("right");
+            const flushed = await harness.flushOp("migrate-workspace");
+            assert.equal(flushed.reply["outcome"], "planned", JSON.stringify(flushed.reply));
+            assert.equal(flushed.reply["kind"], "migrate-workspace");
+            const body = flushed.body;
+            assert.deepEqual((body["target_domain"] as Record<string, unknown>)["output"], "out-right", "largest edge selects the tall non-top target");
+            assert.deepEqual((body["target_domain"] as Record<string, unknown>)["workspace"], "ws-1");
+            for (const id of ["m-win-1", "m-win-2"]) {
+                const win = harness.winById(id);
+                assert.equal((win.output as FakeOutput).name, "out-right");
+                assert.deepEqual(
+                    win.desktops.map((desktop) => desktop.id),
+                    ["ws-1"],
+                );
+                const frame = harness.frameOf(win);
+                assert.ok(frame.x >= 1920 && frame.w > 0 && frame.h > 0, JSON.stringify(frame));
+            }
+            // Unchosen small candidate untouched: output, membership, geometry.
+            const small = harness.winById("m-win-s");
+            assert.equal((small.output as FakeOutput).name, "out-right-small");
+            assert.deepEqual(
+                small.desktops.map((desktop) => desktop.id),
+                ["ws-8"],
+            );
+            assert.deepEqual(harness.frameOf(small), smallBefore);
+            // Prior tall view window stays native-only on its workspace.
+            const target = harness.winById("m-win-t");
+            assert.deepEqual(harness.frameOf(target), targetBefore);
+            assert.equal(harness.currentByOutput.get(harness.outputs.right)?.id, "ws-1");
+            assert.equal((harness.workspace["activeWindow"] as FakeWindow).internalId, "m-win-1");
         } finally {
             await harness.stop();
         }

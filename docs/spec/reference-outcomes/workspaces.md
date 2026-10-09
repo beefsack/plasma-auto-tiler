@@ -1757,8 +1757,9 @@ baseline above is unchanged. Record:
 - Then Ours KDE: selected (User decision 2026-10-09): largest shared edge,
   then left/top, so select U1 despite B projecting onto U2; unreadable topology
   refuses, no candidate no-op, no wrap.
-  Selected rule pending code; prior offline delivery used the replaced
-  refusal. Native journey TBD.
+  Implemented offline 2026-10-09: shared selector and KDE largest-edge/equal-edge
+  regressions, real-Engine multi-candidate migration. Native journey TBD.
+  [Record](../../changes/archive/position-based-output-selection.md).
 - Then Ours Windows: no-counterpart (no whole-workspace verb); same
   selected largest-shared-edge then left/top target, implementation pending.
   `S(S-ours-planops)`.

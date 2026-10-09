@@ -1499,6 +1499,357 @@ describe("plan adapter R4 immediate transfer (lean, no wire protocol)", () => {
         assertNoWireProtocol(mocks);
         void native;
     });
+
+    describe("pinned dispatch target with two right candidates (production observation)", () => {
+        // The dispatch mover sits low, selecting out-3 through the
+        // production FULL-rectangle observation (not left/top out-2). Every
+        // pinned fence below must keep that dispatch-selected out-3 pair:
+        // re-ranking mid-flight would resolve out-2 after the transfer
+        // already moved the window to out-3 (partial transfer defect).
+        interface ThreeWorld {
+            surface: Record<string, unknown> & { screens: object[] };
+            out1: { name: string; geometry: object };
+            out2: { name: string; geometry: object };
+            out3: { name: string; geometry: object };
+            wsA: { id: string };
+            wsB: { id: string };
+            wsC: { id: string };
+            currents: Map<object, object>;
+            areas: Map<object, object>;
+        }
+
+        function threeWorld(r: { a: object; b: object; x: object }): ThreeWorld {
+            const out1 = { name: "out-1", geometry: { x: 0, y: 0, width: 800, height: 1200 } };
+            const out2 = { name: "out-2", geometry: { x: 800, y: 0, width: 800, height: 600 } };
+            const out3 = { name: "out-3", geometry: { x: 800, y: 600, width: 800, height: 600 } };
+            const wsA = { id: "ws-a" };
+            const wsB = { id: "ws-b" };
+            const wsC = { id: "ws-c" };
+            Object.assign(r.a, {
+                normalWindow: true,
+                output: out1,
+                onAllDesktops: false,
+                desktops: [wsA],
+                internalId: "win-a",
+                frameGeometry: { x: 100, y: 900, width: 200, height: 100 },
+                fullScreen: false,
+                maximizeMode: 0,
+                resourceClass: "app",
+            });
+            Object.assign(r.x, {
+                normalWindow: true,
+                output: out3,
+                onAllDesktops: false,
+                desktops: [wsC],
+                internalId: "win-t",
+                frameGeometry: { x: 900, y: 700, width: 100, height: 80 },
+                fullScreen: false,
+                maximizeMode: 0,
+                resourceClass: "app",
+            });
+            Object.assign(r.b, {
+                normalWindow: true,
+                output: out2,
+                onAllDesktops: false,
+                desktops: [wsB],
+                internalId: "win-b",
+                frameGeometry: { x: 900, y: 100, width: 100, height: 80 },
+                fullScreen: false,
+                maximizeMode: 0,
+                resourceClass: "app",
+            });
+            const currents = new Map<object, object>([
+                [out1, wsA],
+                [out2, wsB],
+                [out3, wsC],
+            ]);
+            const areas = new Map<object, object>([
+                [out1, { x: 0, y: 0, w: 800, h: 1200 }],
+                [out2, { x: 800, y: 0, w: 800, h: 600 }],
+                [out3, { x: 800, y: 600, w: 800, h: 600 }],
+            ]);
+            const surface = {
+                activeWindow: r.a,
+                screens: [out1, out2, out3],
+                desktops: [wsA, wsB, wsC],
+                currentDesktopForScreen: (screen: object): object => currents.get(screen) ?? wsA,
+                clientArea: (_kind: number, screen: object, _desktop: object): object =>
+                    areas.get(screen) ?? { x: 0, y: 0, w: 800, h: 600 },
+                windowList: (): object[] => [r.a, r.x, r.b],
+            } as Record<string, unknown> & { screens: object[] };
+            return { surface, out1, out2, out3, wsA, wsB, wsC, currents, areas };
+        }
+
+        function mocks3(r: { a: object; b: object; x: object }, world: ThreeWorld): {
+            mocks: Mocks;
+            seenHook: Array<{ direction: unknown; targetOutput: unknown; forMove: unknown }>;
+            outputHandlers: Array<(old: unknown) => void>;
+            desktopsHandlers: Array<() => void>;
+            transfers: Array<{ mover: object; output: object }>;
+            memberships: Array<{ mover: object; refs: ReadonlyArray<object> }>;
+            auto: { update: boolean };
+        } {
+            const mocks = mockEnv(r);
+            const seenHook: Array<{ direction: unknown; targetOutput: unknown; forMove: unknown }> = [];
+            const outputHandlers: Array<(old: unknown) => void> = [];
+            const desktopsHandlers: Array<() => void> = [];
+            const transfers: Array<{ mover: object; output: object }> = [];
+            const memberships: Array<{ mover: object; refs: ReadonlyArray<object> }> = [];
+            const auto = { update: true };
+            const cache = new Map<string, string>();
+            const floating = new Set<string>();
+            const activeRef: { current: object | null } = { current: r.b };
+            const env = mocks.env as unknown as Record<string, unknown>;
+            env["observeDirectional"] = (
+                direction: PlanDirection,
+                pinnedSource?: { readonly output: string; readonly workspace: string; readonly targetOutput?: string },
+                forMove?: boolean,
+            ): DirectionalObservation | PlanObserved | null => {
+                seenHook.push({ direction, targetOutput: pinnedSource?.targetOutput, forMove });
+                return observeDirectionalDomain(
+                    world.surface,
+                    cache,
+                    floating,
+                    { innerGap: 4, outerGap: 8 },
+                    direction as string,
+                    undefined,
+                    undefined,
+                    pinnedSource,
+                    forMove,
+                );
+            };
+            env["resolveOutput"] = (name: string): object | null =>
+                name === "out-1" ? world.out1 : name === "out-2" ? world.out2 : name === "out-3" ? world.out3 : null;
+            env["resolveDesktop"] = (workspace: string): object | null =>
+                workspace === "ws-a" ? world.wsA : workspace === "ws-b" ? world.wsB : workspace === "ws-c" ? world.wsC : null;
+            env["sendClientToScreen"] = (mover: object, output: object): boolean => {
+                transfers.push({ mover, output });
+                mocks.events.push("transfer");
+                if (mover !== r.a || (output !== world.out1 && output !== world.out2 && output !== world.out3)) {
+                    return false;
+                }
+                if (auto.update) {
+                    (r.a as Record<string, unknown>)["output"] = output;
+                }
+                return true;
+            };
+            env["setDesktops"] = (mover: object, refs: ReadonlyArray<object>): boolean => {
+                memberships.push({ mover, refs });
+                mocks.events.push("membership");
+                if (mover !== r.a || refs.length !== 1) {
+                    return false;
+                }
+                if (auto.update) {
+                    (r.a as Record<string, unknown>)["desktops"] = [...refs];
+                }
+                return true;
+            };
+            env["readOutputName"] = (ref: object): string | null => {
+                const output = (ref as Record<string, unknown>)["output"] as { name?: unknown } | undefined;
+                return typeof output?.name === "string" ? output.name : null;
+            };
+            env["readDesktopIds"] = (ref: object): ReadonlyArray<string> | null => {
+                const desktops = (ref as Record<string, unknown>)["desktops"] as Array<{ id?: unknown }> | undefined;
+                if (!Array.isArray(desktops)) {
+                    return null;
+                }
+                const ids: string[] = [];
+                for (const entry of desktops) {
+                    if (typeof entry?.id !== "string") {
+                        return null;
+                    }
+                    ids.push(entry.id);
+                }
+                return ids;
+            };
+            env["readGeometry"] = (ref: object): { x: number; y: number; w: number; h: number } | null => {
+                const rect = (ref as Record<string, unknown>)["frameGeometry"] as
+                    | { x: number; y: number; width?: number; w?: number; height?: number; h?: number }
+                    | undefined;
+                if (rect === undefined || typeof rect.x !== "number" || typeof rect.y !== "number") {
+                    return null;
+                }
+                const w = rect.w ?? rect.width;
+                const h = rect.h ?? rect.height;
+                if (typeof w !== "number" || typeof h !== "number") {
+                    return null;
+                }
+                return { x: rect.x, y: rect.y, w, h };
+            };
+            env["subscribeMoverOutput"] = (mover: object, handler: (old: unknown) => void): (() => void) | null => {
+                if (mover !== r.a) {
+                    return null;
+                }
+                outputHandlers.push(handler);
+                return (): void => {};
+            };
+            env["subscribeMoverDesktops"] = (mover: object, handler: () => void): (() => void) | null => {
+                if (mover !== r.a) {
+                    return null;
+                }
+                desktopsHandlers.push(handler);
+                return (): void => {};
+            };
+            env["subscribeWindowGeometry"] = (): (() => void) | null => (): void => {};
+            const baseSetGeometry = mocks.env.setGeometry;
+            (env as { setGeometry: PlanAdapterEnv["setGeometry"] })["setGeometry"] = (target, rect): boolean => {
+                (target as Record<string, unknown>)["frameGeometry"] = { x: rect.x, y: rect.y, width: rect.w, height: rect.h };
+                mocks.events.push("geometry");
+                return baseSetGeometry(target, rect);
+            };
+            mocks.activeImpl = (): object | null => activeRef.current;
+            (env as { setActive: PlanAdapterEnv["setActive"] })["setActive"] = (target): boolean => {
+                mocks.events.push("setActive");
+                mocks.actives.push(target);
+                activeRef.current = target;
+                return true;
+            };
+            return { mocks, seenHook, outputHandlers, desktopsHandlers, transfers, memberships, auto };
+        }
+
+        function replyOut3(correlation: string): string {
+            return JSON.stringify({
+                v: 1,
+                correlation_id: correlation,
+                outcome: "planned",
+                base_revision: 2,
+                detail: { kind: "move", rule: "R4", capability: "CrossOutputTransfer", direction: "right" },
+                desired_geometry: [
+                    { window: "win-a", leaf: "leaf-a", output: "out-3", workspace: "ws-c", rect: { x: 810, y: 610, w: 380, h: 580 } },
+                    { window: "win-t", leaf: "leaf-t", output: "out-3", workspace: "ws-c", rect: { x: 1200, y: 610, w: 380, h: 580 } },
+                ],
+                desired_focus: { domain_output: "out-3", domain_workspace: "ws-c", leaf: "leaf-a" },
+                operation: {
+                    op: "move",
+                    rule: "R4",
+                    capability: "CrossOutputTransfer",
+                    direction: "right",
+                    window: "win-a",
+                    leaf: "leaf-a",
+                    source_output: "out-1",
+                    source_workspace: "ws-a",
+                    target_output: "out-3",
+                    target_workspace: "ws-c",
+                    source_root_child_index: 0,
+                    target: "occupied",
+                },
+                preconditions: [
+                    "focused-leaf-occupied-by-focused-window",
+                    "source-root-membership-and-adjacent-same-workspace-output",
+                    "adapter-must-verify-postconditions",
+                ],
+            });
+        }
+
+        it("keeps the non-left/top dispatch target across pinned fences with full transfer and one follow", () => {
+            const r = refs();
+            const world = threeWorld(r);
+            const h = mocks3(r, world);
+            const adapter = enable(h.mocks);
+            adapter.requestMove("right");
+            assert.equal(h.mocks.dbusCalls.length, 1);
+            const body = payload(h.mocks, 0);
+            assert.equal((body["domains"] as Array<Record<string, unknown>>)[1]?.["output"], "out-3");
+            assert.equal((body["command"] as Record<string, unknown>)["cross_output_transfer"], true);
+            const correlation = body["correlation_id"] as string;
+            h.mocks.callbacks[0]?.(replyOut3(correlation));
+            assert.equal(h.transfers.length, 1);
+            assert.equal((h.transfers[0]?.output as { name: string }).name, "out-3");
+            assert.equal(h.memberships.length, 1);
+            assert.equal(h.mocks.geometries.length, 2);
+            const order = h.mocks.events.filter((entry) => entry === "transfer" || entry === "membership" || entry === "geometry");
+            assert.deepEqual(order, ["transfer", "membership", "geometry", "geometry"]);
+            assert.equal(h.mocks.actives.length, 1);
+            assert.equal(h.mocks.actives[0], r.a);
+            assert.equal(adapter.isR4InFlight, false);
+            assert.equal(adapter.isInFlight, false);
+            // Every pinned fence carried the dispatch-selected target: no
+            // mid-flight re-rank to left/top out-2.
+            const pinned = h.seenHook.filter((entry) => entry.targetOutput !== undefined);
+            assert.ok(pinned.length > 0, "pinned fences ran");
+            for (const entry of pinned) {
+                assert.equal(entry.targetOutput, "out-3");
+            }
+            assertNoWireProtocol(h.mocks);
+            assertCorrelated(h.mocks, correlation, "r4-transfer-started");
+            assertCorrelated(h.mocks, correlation, "r4-native-written");
+            assertCorrelated(h.mocks, correlation, "r4-followed");
+            assertCorrelated(h.mocks, correlation, "arrived");
+        });
+
+        it("follows exactly once after delayed arrival on the pinned target", () => {
+            const r = refs();
+            const world = threeWorld(r);
+            const h = mocks3(r, world);
+            h.auto.update = false;
+            const adapter = enable(h.mocks);
+            adapter.requestMove("right");
+            const correlation = payload(h.mocks, 0)["correlation_id"] as string;
+            h.mocks.callbacks[0]?.(replyOut3(correlation));
+            assert.equal(adapter.isR4InFlight, true);
+            assert.equal(h.mocks.actives.length, 0);
+            (r.a as Record<string, unknown>)["output"] = world.out3;
+            for (const handler of h.outputHandlers) {
+                handler(world.out1);
+            }
+            assert.equal(h.mocks.actives.length, 0);
+            (r.a as Record<string, unknown>)["desktops"] = [world.wsC];
+            for (const handler of h.desktopsHandlers) {
+                handler();
+            }
+            assert.equal(h.mocks.actives.length, 1);
+            assert.equal(h.mocks.actives[0], r.a);
+            assert.equal(adapter.isR4InFlight, false);
+            assert.equal(adapter.isInFlight, false);
+            for (const handler of h.outputHandlers) {
+                handler(world.out1);
+            }
+            for (const handler of h.desktopsHandlers) {
+                handler();
+            }
+            assert.equal(h.mocks.actives.length, 1);
+            assertCorrelated(h.mocks, correlation, "r4-arrival-waiting");
+            assertCorrelated(h.mocks, correlation, "arrived");
+            assertNoWireProtocol(h.mocks);
+        });
+
+        it("refuses with existing recovery when the pinned target is removed reentrantly during transfer", () => {
+            const r = refs();
+            const world = threeWorld(r);
+            const h = mocks3(r, world);
+            const env = h.mocks.env as unknown as Record<string, unknown>;
+            const baseTransfer = env["sendClientToScreen"] as (mover: object, output: object) => boolean;
+            (env as { sendClientToScreen: (mover: object, output: object) => boolean })["sendClientToScreen"] = (
+                mover,
+                output,
+            ): boolean => {
+                const ok = baseTransfer(mover, output);
+                // Reentrant topology change inside the transfer setter: the
+                // dispatch-selected out-3 leaves the screens before the
+                // inter-setter fence runs.
+                const at = world.surface.screens.indexOf(world.out3);
+                if (at >= 0) {
+                    world.surface.screens.splice(at, 1);
+                }
+                return ok;
+            };
+            const adapter = enable(h.mocks);
+            adapter.requestMove("right");
+            const correlation = payload(h.mocks, 0)["correlation_id"] as string;
+            h.mocks.callbacks[0]?.(replyOut3(correlation));
+            assert.equal(h.transfers.length, 1, "transfer initiated once");
+            assert.equal(h.memberships.length, 0, "no membership for a removed target");
+            assert.equal(h.mocks.geometries.length, 0, "no geometry for a removed target");
+            assert.equal(h.mocks.actives.length, 0, "no follow for a removed target");
+            assert.equal(adapter.isR4InFlight, false);
+            assert.equal(adapter.isInFlight, false);
+            assert.ok(h.mocks.logs.some((line) => line.includes(correlation) && line.includes("stale-scope")));
+            assertNoWireProtocol(h.mocks);
+            const before = h.mocks.dbusCalls.length;
+            fireDebounce(h.mocks);
+            assert.ok(h.mocks.dbusCalls.length > before, "terminal forces source+target reconcile");
+        });
+    });
 });
 
 describe("directional target overlay bounds", () => {
@@ -1631,7 +1982,7 @@ describe("observeDirectionalDomain (active route observation)", () => {
         assert.equal(observed.observed, null);
     });
 
-    it("reports invalid on ambiguous adjacency", () => {
+    it("selects left/top among identical right candidates (position-based)", () => {
         const observed = observeDirectionalDomain(
             fakeWorkspace({ ambiguous: true }),
             new Map(),
@@ -1639,7 +1990,8 @@ describe("observeDirectionalDomain (active route observation)", () => {
             { innerGap: 4, outerGap: 8 },
             "right",
         );
-        assert.equal(observed.status, "invalid");
+        assert.equal(observed.status, "ready");
+        assert.equal(observed.observed?.domains?.[1]?.output, "out-2");
     });
 
     it("reports invalid on unreadable FULL output rectangle", () => {
@@ -1787,10 +2139,10 @@ describe("observeDirectionalDomain (active route observation)", () => {
         assert.equal(left.status, "no-target");
     });
 
-    it("refuses when the reverse side touches two sources (reverse ambiguity)", () => {
+    it("accepts valid reverse ambiguity (forward pair still resolves)", () => {
         // Forward selection from out-1 finds exactly one right candidate
-        // (out-2), but out-2's left edge touches both out-1 and out-0, so
-        // the reverse resolution is ambiguous and refuses.
+        // (out-2); out-2's left edge also touches out-0, but the forward
+        // pair is reciprocal so it resolves instead of refusing.
         const wsA = { id: "ws-a" };
         const out1 = { name: "out-1", geometry: { x: 0, y: 0, width: 800, height: 600 } };
         const out0 = { name: "out-0", geometry: { x: 0, y: 600, width: 800, height: 600 } };
@@ -1815,7 +2167,8 @@ describe("observeDirectionalDomain (active route observation)", () => {
             windowList: (): object[] => [winA],
         };
         const observed = observeDirectionalDomain(workspace, new Map(), new Set(), { innerGap: 4, outerGap: 8 }, "right");
-        assert.equal(observed.status, "invalid");
+        assert.equal(observed.status, "ready");
+        assert.equal(observed.observed?.domains?.[1]?.output, "out-2");
     });
 
     it("refuses duplicate output names fail-closed", () => {
@@ -1994,5 +2347,370 @@ describe("entry-to-adapter directional route (production style)", () => {
         assert.ok(Number.isInteger(sentFp));
         handle?.stop();
         void logs;
+    });
+});
+
+describe("position-based FULL-rectangle selection (2026-10-09)", () => {
+    function posWorkspace(
+        screens: Array<{ name: string; geometry: object }>,
+        winFrame: object,
+        activeOutput: object,
+    ): unknown {
+        const wsA = { id: "ws-a" };
+        const wsB = { id: "ws-b" };
+        const winA = {
+            normalWindow: true,
+            output: activeOutput,
+            onAllDesktops: false,
+            desktops: [wsA],
+            internalId: "a",
+            frameGeometry: winFrame,
+            fullScreen: false,
+            maximizeMode: 0,
+            resourceClass: "app",
+        };
+        return {
+            activeWindow: winA,
+            screens,
+            desktops: [wsA, wsB],
+            currentDesktopForScreen: (screen: object): object => (screen === screens[0] ? wsA : wsB),
+            clientArea: (): object => ({ x: 0, y: 0, w: 800, h: 600 }),
+            windowList: (): object[] => [winA],
+        };
+    }
+
+    it("centre precedence up selects the left or right candidate", () => {
+        const src = { name: "src", geometry: { x: 0, y: 600, width: 1600, height: 600 } };
+        const left = { name: "out-l", geometry: { x: 0, y: 0, width: 800, height: 600 } };
+        const right = { name: "out-r", geometry: { x: 800, y: 0, width: 800, height: 600 } };
+        const screens = [src, left, right];
+        const leftSeen = observeDirectionalDomain(
+            posWorkspace(screens, { x: 100, y: 700, width: 200, height: 200 }, src),
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "up",
+        );
+        assert.equal(leftSeen.status, "ready");
+        assert.equal(leftSeen.observed?.domains?.[1]?.output, "out-l");
+        const rightSeen = observeDirectionalDomain(
+            posWorkspace(screens, { x: 1100, y: 700, width: 200, height: 200 }, src),
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "up",
+        );
+        assert.equal(rightSeen.status, "ready");
+        assert.equal(rightSeen.observed?.domains?.[1]?.output, "out-r");
+    });
+
+    it("centre precedence left and down select across two candidates", () => {
+        // Left: two candidates west of the source; centre y decides.
+        const src = { name: "src", geometry: { x: 800, y: 0, width: 800, height: 1200 } };
+        const northWest = { name: "nw", geometry: { x: 0, y: 0, width: 800, height: 600 } };
+        const southWest = { name: "sw", geometry: { x: 0, y: 600, width: 800, height: 600 } };
+        const west = [src, northWest, southWest];
+        const northSeen = observeDirectionalDomain(
+            posWorkspace(west, { x: 900, y: 100, width: 200, height: 100 }, src),
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "left",
+        );
+        assert.equal(northSeen.status, "ready");
+        assert.equal(northSeen.observed?.domains?.[1]?.output, "nw");
+        const southSeen = observeDirectionalDomain(
+            posWorkspace(west, { x: 900, y: 900, width: 200, height: 100 }, src),
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "left",
+        );
+        assert.equal(southSeen.status, "ready");
+        assert.equal(southSeen.observed?.domains?.[1]?.output, "sw");
+        // Down: two candidates below a wide source; centre x decides.
+        const wide = { name: "wide", geometry: { x: 0, y: 0, width: 1600, height: 600 } };
+        const downL = { name: "down-l", geometry: { x: 0, y: 600, width: 800, height: 600 } };
+        const downR = { name: "down-r", geometry: { x: 800, y: 600, width: 800, height: 600 } };
+        const down = [wide, downL, downR];
+        const westSeen = observeDirectionalDomain(
+            posWorkspace(down, { x: 100, y: 100, width: 200, height: 100 }, wide),
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "down",
+        );
+        assert.equal(westSeen.status, "ready");
+        assert.equal(westSeen.observed?.domains?.[1]?.output, "down-l");
+        const eastSeen = observeDirectionalDomain(
+            posWorkspace(down, { x: 1100, y: 100, width: 200, height: 100 }, wide),
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "down",
+        );
+        assert.equal(eastSeen.status, "ready");
+        assert.equal(eastSeen.observed?.domains?.[1]?.output, "down-r");
+    });
+
+    it("half-open seam belongs to the upper shared edge", () => {
+        const src = { name: "src", geometry: { x: 0, y: 600, width: 1600, height: 600 } };
+        const left = { name: "out-l", geometry: { x: 0, y: 0, width: 800, height: 600 } };
+        const right = { name: "out-r", geometry: { x: 800, y: 0, width: 800, height: 600 } };
+        const screens = [src, left, right];
+        // Centre x=800 exactly: excluded from [0,800), included in [800,1600).
+        const seen = observeDirectionalDomain(
+            posWorkspace(screens, { x: 700, y: 700, width: 200, height: 200 }, src),
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "up",
+        );
+        assert.equal(seen.status, "ready");
+        assert.equal(seen.observed?.domains?.[1]?.output, "out-r");
+    });
+
+    it("odd window extents keep their exact half-unit centre", () => {
+        const src = { name: "src", geometry: { x: 0, y: 0, width: 800, height: 1200 } };
+        const top = { name: "out-t", geometry: { x: 800, y: 0, width: 800, height: 700 } };
+        const bottom = { name: "out-b", geometry: { x: 800, y: 700, width: 800, height: 500 } };
+        const screens = [src, top, bottom];
+        // h=101 at y=700 centres on 750.5, inside [700,1200).
+        const seen = observeDirectionalDomain(
+            posWorkspace(screens, { x: 100, y: 700, width: 100, height: 101 }, src),
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "right",
+        );
+        assert.equal(seen.status, "ready");
+        assert.equal(seen.observed?.domains?.[1]?.output, "out-b");
+    });
+
+    it("overlap fallback selects the larger window-span overlap", () => {
+        const src = { name: "src", geometry: { x: 0, y: 600, width: 1600, height: 600 } };
+        const narrowL = { name: "nl", geometry: { x: 0, y: 0, width: 400, height: 600 } };
+        const narrowR = { name: "nr", geometry: { x: 1200, y: 0, width: 400, height: 600 } };
+        const screens = [src, narrowL, narrowR];
+        // Span [300,1400) overlaps nl 100 vs nr 200.
+        const seen = observeDirectionalDomain(
+            posWorkspace(screens, { x: 300, y: 700, width: 1100, height: 200 }, src),
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "up",
+        );
+        assert.equal(seen.status, "ready");
+        assert.equal(seen.observed?.domains?.[1]?.output, "nr");
+    });
+
+    it("two containing edges skip overlap straight to left/top", () => {
+        const src = { name: "src", geometry: { x: 0, y: 600, width: 1600, height: 600 } };
+        // Overlapping rectangles above: shared edges [0,1200) and [400,1600).
+        // Centre x=1100 sits in both; the later edge overlaps the window span
+        // more (400 vs 300) but left/top still picks "a".
+        const a = { name: "a", geometry: { x: 0, y: 0, width: 1200, height: 600 } };
+        const b = { name: "b", geometry: { x: 400, y: 0, width: 1200, height: 600 } };
+        const screens = [src, a, b];
+        const seen = observeDirectionalDomain(
+            posWorkspace(screens, { x: 900, y: 700, width: 400, height: 100 }, src),
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "up",
+        );
+        assert.equal(seen.status, "ready");
+        assert.equal(seen.observed?.domains?.[1]?.output, "a");
+    });
+
+    it("deterministic left/top breaks overlap ties", () => {
+        const src = { name: "src", geometry: { x: 0, y: 600, width: 1600, height: 600 } };
+        const left = { name: "out-l", geometry: { x: 0, y: 0, width: 400, height: 600 } };
+        const right = { name: "out-r", geometry: { x: 1200, y: 0, width: 400, height: 600 } };
+        const screens = [src, left, right];
+        const seen = observeDirectionalDomain(
+            posWorkspace(screens, { x: 0, y: 700, width: 1600, height: 100 }, src),
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "up",
+        );
+        assert.equal(seen.status, "ready");
+        assert.equal(seen.observed?.domains?.[1]?.output, "out-l");
+    });
+
+    it("focus keeps the legacy refusal on forward ambiguity", () => {
+        const src = { name: "src", geometry: { x: 0, y: 0, width: 800, height: 1200 } };
+        const top = { name: "out-t", geometry: { x: 800, y: 0, width: 800, height: 600 } };
+        const bottom = { name: "out-b", geometry: { x: 800, y: 600, width: 800, height: 600 } };
+        const wsA = { id: "ws-a" };
+        const wsB = { id: "ws-b" };
+        const winA = {
+            normalWindow: true,
+            output: src,
+            onAllDesktops: false,
+            desktops: [wsA],
+            internalId: "a",
+            frameGeometry: { x: 100, y: 100, width: 200, height: 100 },
+            fullScreen: false,
+            maximizeMode: 0,
+            resourceClass: "app",
+        };
+        const workspace = {
+            activeWindow: winA,
+            screens: [src, top, bottom],
+            desktops: [wsA, wsB],
+            currentDesktopForScreen: (screen: object): object => (screen === src ? wsA : wsB),
+            clientArea: (): object => ({ x: 0, y: 0, w: 800, h: 600 }),
+            windowList: (): object[] => [winA],
+        };
+        const refused = observeDirectionalDomain(
+            workspace,
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "right",
+            undefined,
+            undefined,
+            undefined,
+            false,
+        );
+        assert.equal(refused.status, "invalid");
+        const selected = observeDirectionalDomain(
+            workspace,
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "right",
+        );
+        assert.equal(selected.status, "ready");
+        assert.equal(selected.observed?.domains?.[1]?.output, "out-t");
+    });
+
+    it("pinned re-observation keeps the dispatch target without re-ranking", () => {
+        // Three outputs right of nothing: src with out-2 above and out-3
+        // below. The dispatch mover sits low, selecting out-3 (non-left/top).
+        // Mid-flight the still-active mover sits on out-3; the pinned fence
+        // must return the same out-3 pair, not re-rank to left/top out-2.
+        const src = { name: "out-1", geometry: { x: 0, y: 0, width: 800, height: 1200 } };
+        const out2 = { name: "out-2", geometry: { x: 800, y: 0, width: 800, height: 600 } };
+        const out3 = { name: "out-3", geometry: { x: 800, y: 600, width: 800, height: 600 } };
+        const wsA = { id: "ws-a" };
+        const wsB = { id: "ws-b" };
+        const wsC = { id: "ws-c" };
+        const winS = {
+            normalWindow: true,
+            output: src,
+            onAllDesktops: false,
+            desktops: [wsA],
+            internalId: "s",
+            frameGeometry: { x: 100, y: 900, width: 200, height: 100 },
+            fullScreen: false,
+            maximizeMode: 0,
+            resourceClass: "app",
+        };
+        const winT = {
+            normalWindow: true,
+            output: out3,
+            onAllDesktops: false,
+            desktops: [wsC],
+            internalId: "t",
+            frameGeometry: { x: 900, y: 700, width: 100, height: 80 },
+            fullScreen: false,
+            maximizeMode: 0,
+            resourceClass: "app",
+        };
+        const currents = new Map<object, object>([
+            [src, wsA],
+            [out2, wsB],
+            [out3, wsC],
+        ]);
+        const areas = new Map<object, object>([
+            [src, { x: 0, y: 0, w: 800, h: 1200 }],
+            [out2, { x: 800, y: 0, w: 800, h: 600 }],
+            [out3, { x: 800, y: 600, w: 800, h: 600 }],
+        ]);
+        const midFlight = {
+            activeWindow: winT,
+            screens: [src, out2, out3],
+            desktops: [wsA, wsB, wsC],
+            currentDesktopForScreen: (screen: object): object => currents.get(screen) ?? wsA,
+            clientArea: (_kind: number, screen: object, _desktop: object): object => areas.get(screen) ?? { x: 0, y: 0, w: 800, h: 600 },
+            windowList: (): object[] => [winS, winT],
+        };
+        const pin = { output: "out-1", workspace: "ws-a", targetOutput: "out-3" };
+        const kept = observeDirectionalDomain(
+            midFlight,
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "right",
+            undefined,
+            undefined,
+            pin,
+            true,
+        );
+        assert.equal(kept.status, "ready");
+        assert.equal(kept.observed?.domains?.[1]?.output, "out-3");
+        // Removed target refuses instead of silently switching to out-2.
+        const removed = observeDirectionalDomain(
+            { ...midFlight, screens: [src, out2] },
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "right",
+            undefined,
+            undefined,
+            pin,
+            true,
+        );
+        assert.equal(removed.status, "invalid");
+        // Moved target (no longer edge-touching) refuses the same way.
+        const movedOut3 = { name: "out-3", geometry: { x: 900, y: 600, width: 800, height: 600 } };
+        const movedCurrents = new Map<object, object>([
+            [src, wsA],
+            [out2, wsB],
+            [movedOut3, wsC],
+        ]);
+        const movedAreas = new Map<object, object>([
+            [src, { x: 0, y: 0, w: 800, h: 1200 }],
+            [out2, { x: 800, y: 0, w: 800, h: 600 }],
+            [movedOut3, { x: 900, y: 600, w: 800, h: 600 }],
+        ]);
+        const movedWinT = { ...winT, output: movedOut3 };
+        const moved = observeDirectionalDomain(
+            {
+                activeWindow: movedWinT,
+                screens: [src, out2, movedOut3],
+                desktops: [wsA, wsB, wsC],
+                currentDesktopForScreen: (screen: object): object => movedCurrents.get(screen) ?? wsA,
+                clientArea: (_kind: number, screen: object, _desktop: object): object =>
+                    movedAreas.get(screen) ?? { x: 0, y: 0, w: 800, h: 600 },
+                windowList: (): object[] => [winS, movedWinT],
+            },
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "right",
+            undefined,
+            undefined,
+            pin,
+            true,
+        );
+        assert.equal(moved.status, "invalid");
+        // A pinned call without the dispatch target refuses fail-closed
+        // instead of re-ranking.
+        const untargeted = observeDirectionalDomain(
+            midFlight,
+            new Map(),
+            new Set(),
+            { innerGap: 4, outerGap: 8 },
+            "right",
+            undefined,
+            undefined,
+            { output: "out-1", workspace: "ws-a" },
+            true,
+        );
+        assert.equal(untargeted.status, "invalid");
     });
 });

@@ -359,8 +359,8 @@ decisions of 2026-09-24 are under
      Reciprocal edge-touch + positive-overlap adjacency on FULL
      output rectangles, horizontal too; no candidate no-op, unreadable
      refuses, no wrap. User decision 2026-10-09: select by window centre
-     projection, then window-span overlap, then left/top; selection pending
-     code, prior delivery refused ambiguity. Explicit output-follow Meta/Win+Ctrl+Alt+
+     projection, then window-span overlap, then left/top; selection delivered
+     offline ([record](changes/archive/position-based-output-selection.md)). Explicit output-follow Meta/Win+Ctrl+Alt+
      arrows and +H/J/K/L; stay bindable unbound. KDE arms absent from
      `kglobalshortcutsrc`, Windows ownership unknown; COSMIC's arm collides
      with resize-shrink, niri's with item 2. Target destination current
@@ -373,7 +373,7 @@ decisions of 2026-09-24 are under
      source-MRU stay, with pinned source/target current-view arrival fences.
   Bindings for other accepted additions remain to be chosen.
 - P1 | Position-based output selection for ambiguous candidates | User decision
-  2026-10-09: shared core + KDE implementation; Windows handoff update only
+  2026-10-09: shared core + KDE delivered offline; Windows handoff item 16 only
   while Windows multi-output remains parked. Exhausted directional moves
   (REQ-MOV-08/08b, R-MOV-11..13, REQ-OUT-01) and explicit output sends
   (REQ-OUT-04, R-OUT-04/07): choose the candidate whose shared edge contains
@@ -387,6 +387,9 @@ decisions of 2026-09-24 are under
   [Four-direction transfer](changes/archive/four-direction-output-transfer.md),
   [workspace migration](changes/archive/kde-whole-workspace-output-migration.md),
   [two-candidate migration discriminator](spec/reference-outcomes/workspaces.md#r-ws-27-two-candidate-migration-selection).
+  [Delivery](changes/archive/position-based-output-selection.md): 1258 KWin / 1288
+  Rust tests, real-Engine move/send/migration fixtures and all offline gates pass.
+  Remaining: user-owned two-candidate live check below and parked Windows wiring.
 - P1 | Windows handoff: reference-consensus additions | D1, user 2026-10-07:
   Windows agent wires each adapter piece after its KDE-side delivery.
   ### How to use this handoff
@@ -440,6 +443,7 @@ decisions of 2026-09-24 are under
   | 13 | Q2 fixed-size float admission R-SPC-04 | KDE/shared offline delivery including D1 predicate setting, D5 first-fullscreen-exit, D6 tiling-enable check and D7 tile-override restart store; Windows max-track observation, predicate/schema/UI and lifetime/origin wiring before enabling the Engine opt-in. Windows D7 persistence coordinates with item 8; fixed/maximize intersection with item 11. |
   | 14 | Q4 whole-workspace migration R-WS-12 | Core/KDE offline delivery including D8 overlay carry under user decisions 2026-10-08 (normative as delivered); depends on item 5's parked multi-output foundation, item 1 history invalidation and item 12 for non-local runtime modes. Windows adapter including D8 pending; no Windows behavior delivered. |
   | 15 | B9 / M09 maximized intentional unfloat R-FLT-06 | KDE/shared-core offline evidence delivered; replace Windows maximize refusal only for ordinary floating-to-tiled toggle, clear/observe before fresh admission. Coordinate fixed tile overrides with items 8/13; independent of Q3 item 11 overlay retention. |
+  | 16 | Position-based output selection | Shared core/KDE delivered offline 2026-10-09; Windows handoff only. Wire with item 5's parked multi-output foundation and item 14 migration, preserving arrival/current-view/lifetime fences. |
 
   Q2 R-SPC-04 occupies handoff item 13 below; Q3 R-RST-01 KDE delivery is
   complete offline and updates existing item 8. Q4 R-WS-12 fills item 14.
@@ -1045,8 +1049,8 @@ decisions of 2026-09-24 are under
        shared edge containing the moving window centre projection; if none,
        larger overlap with its span along that edge; final left/top tie-break.
        Panels cannot break adjacency; work areas still govern placement.
-       No candidate no-op; unreadable refuses; no wrap. New selection pending
-       shared core/KDE code; prior offline delivery refused ambiguity.
+       No candidate no-op; unreadable refuses; no wrap. Shared core/KDE selection
+       delivered offline; item 16 supplies the shared selector and fence details.
        Directional R4 landing is target edge nearest source; explicit send uses
        ordinary remembered-leaf/destination-MRU/root long-edge admission into
        destination CURRENT workspace, not R4 edge insertion. Directional focus
@@ -2002,8 +2006,8 @@ decisions of 2026-09-24 are under
 
     - Four directional active-only, follow-only actions, all UNBOUND by default.
       Resolve FULL-output-rectangle reciprocal adjacency, no wrap; choose
-      largest shared edge, then left/top (User decision 2026-10-09; new selection
-      pending shared core/KDE code, Windows handoff only while multi-output parked).
+      largest shared edge, then left/top (User decision 2026-10-09; selection
+      delivered offline in core/KDE, Windows item 16 only while multi-output parked).
       Hidden R-WS-12 baseline has no counterpart; explicitly select its active
       leg. KDE local/global-unique requires strict native per-output desktops;
       shared/false/unreadable refuses. Windows has no KWin option: establish
@@ -2135,6 +2139,54 @@ decisions of 2026-09-24 are under
       stuck state and later-press recovery, exact-ref/focus/fullscreen races,
       fixed override after subsequent observation/restart. Update Windows
       REQ-FLT-06/06b and Ours cell with offline evidence; native journey TBD.
+
+  - Item 16: position-based output selection (User 2026-10-09). Shared core/KDE
+    delivered offline; Windows runtime unchanged, multi-output stays PARKED.
+    Implement with items 5/14 when their multi-output foundation is resumed.
+    [Record](changes/archive/position-based-output-selection.md),
+    [spec](spec/functional-spec.md#move) REQ-MOV-08/08b,
+    [output](spec/functional-spec.md#output) REQ-OUT-01/04,
+    [workspaces](spec/functional-spec.md#workspaces) REQ-WS-12/12c.
+    - Reuse `tiler_core::output_selection` (`OutputEntry`, `Candidate`,
+      `candidates_in_direction`, `select_for_window`, `select_for_migration`).
+      Supply complete, readable FULL monitor topology with unique stable IDs
+      and a matching source entry. `Err(UnreadableTopology)` refuses;
+      `Ok(None)` is a no-op. No candidate skipping, output wrap or origin-distance
+      fallback. Existing item-5 monitor/event sites remain the wiring seams.
+    - Exhausted moves and explicit output sends use the moving window's native
+      frame in the same coordinates as FULL monitor rectangles. Left/Right
+      project y, Up/Down x; half-open shared intervals [start,end) and doubled
+      centres preserve odd-extent halves. A containing edge wins; multiple
+      containing edges tie directly by left/top. Only if none contains the
+      centre, maximize window-span overlap; final x, then y, then stable ID.
+      Migration uses largest shared-edge length, then the same tie-break,
+      never the focused window. Deliberate COSMIC origin-distance deviation.
+    - Keep full rectangles for selection only; domain bounds/placement stay
+      work-area based. Present the selected reciprocal pair to the Engine;
+      reverse multiplicity must not refuse. Local move rules still win,
+      R4 lands nearest the source, send uses ordinary admission and follow/stay.
+      Migration carries workspace floats, keeps sticky windows on source.
+    - Pin both dispatch source and chosen target through every native transfer,
+      membership, geometry, arrival and follow/stay check. Never re-rank after
+      relocating the mover; it now has a target frame. Re-read topology and
+      verify the pinned candidate still touches, retaining current-view,
+      domain/gap/mode/member/lifetime fences and partial-transfer reconciliation.
+      KDE mirrors: `observeDirectionalDomain` and `r4RawFresh` carry
+      `pinnedSource.targetOutput`; `requestOutputSend` ranks by frame;
+      `observeMigrateWorkspace` ranks by shared-edge length. Focus navigation
+      retains its existing policy.
+    - [ ] Portable: all four directions/two candidates, centre precedence,
+      seam/odd extent, overlap fallback, left/top/identity ties, multiple
+      containing edges, reverse multiplicity, unreadable other output/source
+      mismatch, no candidate, migration largest-edge/equal-edge and no window
+      dependency. Core tests: `position_based_output_selection.rs`.
+    - [ ] Adapter/real Engine: non-left/top move and send, non-top largest-edge
+      migration, FULL-vs-work-area placement, exact native arrival/follow/stay,
+      delayed arrival and chosen-target removal/drift mid-flight. Port the
+      `output-send-engine-fixture.test.ts`, `workspace-migrate-engine-fixture.test.ts`
+      and `plan-directional.test.ts` discriminators to Windows's existing harness.
+      Linux portable tests prove no Windows native behavior. User owns live checks
+      on the multi-output PC; update Windows matrix/spec only with actual evidence.
 
   ### Source discrepancies to preserve and report
 
@@ -2406,6 +2458,20 @@ Unprioritised ideas; not scheduled.
 
 Items below retain their stated pending scope; dated user confirmations are
 recorded separately from unexercised legs. Reference-WM checks test other compositors.
+
+- KDE two-candidate output move/send/migration (offline delivered 2026-10-09):
+  use one wide source and two outputs touching the requested edge. Exhaust local
+  moves, then cross with Meta+Shift+arrow; explicit Meta+Ctrl+Alt+arrow sends
+  before exhaustion. Place the mover so its centre projects onto each candidate
+  in fresh legs, then in a gap to check overlap and left/top ties; rebind stay
+  and verify source view/focus. With unequal shared edges, bind whole-workspace
+  migration and verify the largest edge wins even when the focused window
+  projects onto the smaller candidate. Check work-area placement, chosen-target
+  native arrival and no replay, float carry/sticky stay on migration. User-owned;
+  native evidence pending, Windows multi-output parked.
+  [Record](changes/archive/position-based-output-selection.md),
+  [R-MOV-12](spec/reference-outcomes/move.md#r-mov-12-exhausted-up-move-with-two-candidate-outputs-above),
+  [R-WS-27](spec/reference-outcomes/workspaces.md#r-ws-27-two-candidate-migration-selection).
 
 ### Reference WMs (user)
 

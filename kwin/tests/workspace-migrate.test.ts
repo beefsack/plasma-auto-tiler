@@ -526,7 +526,7 @@ describe("migrate observer", () => {
         assert.equal((nullSeen.observed as WorkspaceMigrateObserved).focusedId, "");
     });
 
-    it("no-ops on no candidate and refuses ambiguous or unreadable topology", () => {
+    it("no-ops on no candidate and refuses unreadable topology", () => {
         const solo = obsWorld({
             outputs: [{ name: "out-1", geometry: { x: 0, y: 0, width: 1920, height: 1080 } }],
             currents: { "out-1": "ws-1" },
@@ -537,7 +537,14 @@ describe("migrate observer", () => {
             observeMigrateWorkspace(solo.workspace, new Map(), new Set(), GAPS, "right", OBS_POLICY).status,
             "no-target",
         );
-        const ambiguous = obsWorld({
+        assert.equal(
+            observeMigrateWorkspace(solo.workspace, new Map(), new Set(), GAPS, "sideways", OBS_POLICY).status,
+            "invalid",
+        );
+    });
+
+    it("selects the largest shared edge among right candidates (migration rule)", () => {
+        const two = obsWorld({
             outputs: [
                 { name: "out-1", geometry: { x: 0, y: 0, width: 1920, height: 1080 } },
                 { name: "out-2", geometry: { x: 1920, y: 0, width: 1920, height: 540 } },
@@ -548,14 +555,11 @@ describe("migrate observer", () => {
             wins: [{ internalId: "win-a", desktopIds: ["ws-1"], outputName: "out-1" }],
             activeId: "win-a",
         });
-        assert.equal(
-            observeMigrateWorkspace(ambiguous.workspace, new Map(), new Set(), GAPS, "right", OBS_POLICY).status,
-            "invalid",
-        );
-        assert.equal(
-            observeMigrateWorkspace(solo.workspace, new Map(), new Set(), GAPS, "sideways", OBS_POLICY).status,
-            "invalid",
-        );
+        // Equal 540px shared edges tie left/top: out-2 wins. Window position
+        // is never consulted for migration.
+        const seen = observeMigrateWorkspace(two.workspace, new Map(), new Set(), GAPS, "right", OBS_POLICY);
+        assert.equal(seen.status, "ready");
+        assert.equal((seen.observed as WorkspaceMigrateObserved).targetOutput, "out-2");
     });
 
     it("trips the protected tripwire on overlays including minimized views", () => {

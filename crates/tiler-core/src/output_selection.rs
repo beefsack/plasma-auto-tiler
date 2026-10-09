@@ -1,0 +1,323 @@
+//! Position-based FULL-rectangle output candidate selection (2026-10-09).
+//!
+//! Pure, platform-neutral selector over adapter-normalized integer FULL
+//! output rectangles. Adapters own topology reads; this module only ranks
+//! presented rectangles so Rust and KDE share one rule. The protocol
+//! presents the adapter-resolved pair; no wire change is involved.
+//!
+//! - Candidates: exact edge-touch with positive perpendicular overlap on
+//!   FULL rectangles (panel gaps never block). No wrap.
+//! - Windowed moves/sends (exhausted directional moves all four directions,
+//!   explicit output sends): the candidate whose shared edge contains the
+//!   moving window centre projection wins; else the largest overlap of the
+//!   moving window span with the shared edge; final left/top (smallest `x`,
+//!   then smallest `y`, then smallest output id for determinism).
+//! - Whole-workspace migration: largest shared edge, then left/top. Never
+//!   uses window position.
+//! - Ordinary choices fixed here: horizontal projection uses `y`, vertical
+//!   uses `x`; centre containment is half-open `[start, end)` evaluated in
+//!   doubled coordinates so odd extents keep their exact `.5` centre; the
+//!   tertiary tie is the stable output id.
+//! - Reverse uniqueness is intentionally NOT required: candidates only need
+//!   forward edge-touch. A target touched by two sources on its opposite
+//!   side is still a valid forward target (valid reverse ambiguity
+//!   accepted); the adapter resolves the forward pair before presenting it.
+
+use crate::directional::{Direction, OutputId};
+use crate::geometry::Rect;
+
+/// One FULL-rectangle output for selection. Callers must present validated
+/// topology: every rect positive with representable edges. Unvalidated input
+/// fails as [`SelectionError::UnreadableTopology`], never as silent skip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputEntry {
+    pub id: OutputId,
+    pub rect: Rect,
+}
+
+/// Validated candidate with its shared edge against the source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Candidate {
+    pub id: OutputId,
+    pub rect: Rect,
+    /// Shared edge interval along the edge axis: `[start, end)` in device
+    /// units. For left/right this is a `y` interval, for up/down an `x`
+    /// interval. Length is always positive.
+    pub edge_start: i32,
+    pub edge_end: i32,
+}
+
+/// Selection failure: some presented rectangle is unreadable
+/// (non-positive extent or overflowing edge). Distinct from "no candidate",
+/// which is `Ok(None)` / `Ok(vec![])` and a caller-side no-op.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionError {
+    UnreadableTopology,
+}
+
+fn valid_rect(rect: &Rect) -> bool {
+    rect.w > 0
+        && rect.h > 0
+        && rect.x.checked_add(rect.w).is_some()
+        && rect.y.checked_add(rect.h).is_some()
+}
+
+fn overlap(a_start: i32, a_len: i32, b_start: i32, b_len: i32) -> i64 {
+    let a_end = i64::from(a_start) + i64::from(a_len);
+    let b_end = i64::from(b_start) + i64::from(b_len);
+    let start = (i64::from(a_start)).max(i64::from(b_start));
+    let end = a_end.min(b_end);
+    end - start
+}
+
+/// Edge-touch candidates in `direction` from `source` over FULL rects.
+///
+/// Returns candidates in deterministic left/top/id order. `Err` when the
+/// source, or any entry in `all` (candidate or not), is unreadable, when
+/// output ids repeat, or when the `all` entry matching the source id carries
+/// a different rect: callers refuse fail-closed. Empty `Ok` means no
+/// candidate (caller-side no-op).
+pub fn candidates_in_direction(
+    source: &OutputEntry,
+    direction: Direction,
+    all: &[OutputEntry],
+) -> Result<Vec<Candidate>, SelectionError> {
+    if !valid_rect(&source.rect) {
+        return Err(SelectionError::UnreadableTopology);
+    }
+    let mut seen_source = false;
+    let mut seen_ids = std::collections::HashSet::new();
+    for entry in all {
+        if !valid_rect(&entry.rect) {
+            return Err(SelectionError::UnreadableTopology);
+        }
+        if !seen_ids.insert(entry.id.clone()) {
+            return Err(SelectionError::UnreadableTopology);
+        }
+        if entry.id == source.id {
+            if entry.rect != source.rect {
+                return Err(SelectionError::UnreadableTopology);
+            }
+            seen_source = true;
+        }
+    }
+    if !seen_source {
+        return Err(SelectionError::UnreadableTopology);
+    }
+    let mut out = Vec::new();
+    for entry in all {
+        if entry.id == source.id {
+            continue;
+        }
+        let touches = match direction {
+            Direction::Left => entry.rect.x.checked_add(entry.rect.w) == Some(source.rect.x),
+            Direction::Right => source.rect.x.checked_add(source.rect.w) == Some(entry.rect.x),
+            Direction::Up => entry.rect.y.checked_add(entry.rect.h) == Some(source.rect.y),
+            Direction::Down => source.rect.y.checked_add(source.rect.h) == Some(entry.rect.y),
+        };
+        if !touches {
+            continue;
+        }
+        let (start, end): (i64, i64) = match direction {
+            Direction::Left | Direction::Right => {
+                let s = i64::from(source.rect.y.max(entry.rect.y));
+                let e = (i64::from(source.rect.y) + i64::from(source.rect.h))
+                    .min(i64::from(entry.rect.y) + i64::from(entry.rect.h));
+                (s, e)
+            }
+            Direction::Up | Direction::Down => {
+                let s = i64::from(source.rect.x.max(entry.rect.x));
+                let e = (i64::from(source.rect.x) + i64::from(source.rect.w))
+                    .min(i64::from(entry.rect.x) + i64::from(entry.rect.w));
+                (s, e)
+            }
+        };
+        if end - start <= 0 {
+            continue;
+        }
+        let Ok(start_i32) = i32::try_from(start) else {
+            return Err(SelectionError::UnreadableTopology);
+        };
+        let len = end - start;
+        let Ok(len_i32) = i32::try_from(len) else {
+            return Err(SelectionError::UnreadableTopology);
+        };
+        let Some(edge_end) = start_i32.checked_add(len_i32) else {
+            return Err(SelectionError::UnreadableTopology);
+        };
+        out.push(Candidate {
+            id: entry.id.clone(),
+            rect: entry.rect,
+            edge_start: start_i32,
+            edge_end,
+        });
+    }
+    out.sort_by(|a, b| {
+        a.rect
+            .x
+            .cmp(&b.rect.x)
+            .then(a.rect.y.cmp(&b.rect.y))
+            .then(a.id.0.cmp(&b.id.0))
+    });
+    Ok(out)
+}
+
+fn centre_contained(window: &Rect, edge_start: i32, edge_end: i32, horizontal: bool) -> bool {
+    // Doubled centre keeps odd-extent `.5` exact under half-open containment.
+    let doubled = if horizontal {
+        i64::from(window.y)
+            .checked_mul(2)
+            .and_then(|v| v.checked_add(i64::from(window.h)))
+    } else {
+        i64::from(window.x)
+            .checked_mul(2)
+            .and_then(|v| v.checked_add(i64::from(window.w)))
+    };
+    let Some(doubled) = doubled else {
+        return false;
+    };
+    doubled >= i64::from(edge_start) * 2 && doubled < i64::from(edge_end) * 2
+}
+
+fn window_edge_overlap(window: &Rect, candidate: &Candidate, horizontal: bool) -> i64 {
+    if horizontal {
+        overlap(
+            window.y,
+            window.h,
+            candidate.edge_start,
+            candidate.edge_end - candidate.edge_start,
+        )
+        .max(0)
+    } else {
+        overlap(
+            window.x,
+            window.w,
+            candidate.edge_start,
+            candidate.edge_end - candidate.edge_start,
+        )
+        .max(0)
+    }
+}
+
+/// Windowed selection for exhausted moves and explicit sends.
+///
+/// `window` is the moving window frame rect (FULL-coordinate space).
+/// `Err` on any unreadable topology (including `window`); `Ok(None)` when
+/// no candidate touches (caller-side no-op).
+pub fn select_for_window(
+    direction: Direction,
+    source: &OutputEntry,
+    window: &Rect,
+    all: &[OutputEntry],
+) -> Result<Option<Candidate>, SelectionError> {
+    if !valid_rect(window) {
+        return Err(SelectionError::UnreadableTopology);
+    }
+    let candidates = candidates_in_direction(source, direction, all)?;
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    let horizontal = matches!(direction, Direction::Left | Direction::Right);
+    // Literal contract ranking: centre containment first; span overlap only
+    // when neither shared edge contains the centre; then deterministic
+    // left/top/id. Two containing edges (overlapping/mirrored rectangles)
+    // skip overlap straight to left/top/id.
+    let mut ranked = candidates;
+    ranked.sort_by(|a, b| {
+        let a_centred = centre_contained(window, a.edge_start, a.edge_end, horizontal);
+        let b_centred = centre_contained(window, b.edge_start, b.edge_end, horizontal);
+        b_centred
+            .cmp(&a_centred)
+            .then_with(|| {
+                if a_centred && b_centred {
+                    std::cmp::Ordering::Equal
+                } else {
+                    window_edge_overlap(window, b, horizontal)
+                        .cmp(&window_edge_overlap(window, a, horizontal))
+                }
+            })
+            .then(a.rect.x.cmp(&b.rect.x))
+            .then(a.rect.y.cmp(&b.rect.y))
+            .then(a.id.0.cmp(&b.id.0))
+    });
+    Ok(ranked.into_iter().next())
+}
+
+/// Migration selection for whole-workspace moves: largest shared edge,
+/// then left/top/id. Never uses window position.
+pub fn select_for_migration(
+    direction: Direction,
+    source: &OutputEntry,
+    all: &[OutputEntry],
+) -> Result<Option<Candidate>, SelectionError> {
+    let mut candidates = candidates_in_direction(source, direction, all)?;
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    candidates.sort_by(|a, b| {
+        let a_len = i64::from(a.edge_end) - i64::from(a.edge_start);
+        let b_len = i64::from(b.edge_end) - i64::from(b.edge_start);
+        b_len
+            .cmp(&a_len)
+            .then(a.rect.x.cmp(&b.rect.x))
+            .then(a.rect.y.cmp(&b.rect.y))
+            .then(a.id.0.cmp(&b.id.0))
+    });
+    Ok(candidates.into_iter().next())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(id: &str, x: i32, y: i32, w: i32, h: i32) -> OutputEntry {
+        OutputEntry {
+            id: OutputId(id.to_owned()),
+            rect: Rect { x, y, w, h },
+        }
+    }
+
+    #[test]
+    fn no_candidate_without_touch() {
+        let source = entry("s", 0, 0, 800, 600);
+        let far = entry("f", 900, 0, 800, 600);
+        assert!(
+            candidates_in_direction(&source, Direction::Right, &[source.clone(), far])
+                .expect("readable")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn unreadable_source_refuses() {
+        let source = entry("s", 0, 0, 0, 600);
+        let next = entry("n", 0, 0, 800, 600);
+        let all = vec![source.clone(), next];
+        assert_eq!(
+            candidates_in_direction(&source, Direction::Right, &all),
+            Err(SelectionError::UnreadableTopology)
+        );
+    }
+
+    #[test]
+    fn unreadable_non_source_refuses() {
+        let source = entry("s", 0, 0, 800, 600);
+        let bad = entry("bad", 800, 0, 0, 600);
+        let all = vec![source.clone(), bad];
+        assert_eq!(
+            candidates_in_direction(&source, Direction::Right, &all),
+            Err(SelectionError::UnreadableTopology)
+        );
+    }
+
+    #[test]
+    fn duplicate_ids_refuse() {
+        let source = entry("s", 0, 0, 800, 600);
+        let dup = entry("s", 800, 0, 800, 600);
+        let all = vec![source.clone(), dup];
+        assert_eq!(
+            candidates_in_direction(&source, Direction::Right, &all),
+            Err(SelectionError::UnreadableTopology)
+        );
+    }
+}

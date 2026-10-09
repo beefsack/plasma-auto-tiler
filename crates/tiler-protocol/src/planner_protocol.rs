@@ -1408,11 +1408,14 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
             }
         }
         // Two-domain reciprocity: source names target on one cardinal side
-        // and the target names source back on the opposite side. Unique
-        // reciprocal edge-touch selection over FULL output rectangles is
-        // adapter-owned (item 5.2); the core only admits the resolved pair
-        // and refuses ambiguous (non-reciprocal) topology fail-closed.
-        // Single-domain payloads carry no adjacency requirement.
+        // and the target names source back on the opposite side. Position-
+        // based FULL-rectangle selection over multiple candidates is
+        // adapter-owned (2026-10-09: window-centre, then span overlap, then
+        // left/top; migration largest edge); the core only admits the
+        // resolved reciprocal pair and refuses non-reciprocal topology
+        // fail-closed. Valid reverse ambiguity (target touched by two
+        // sources) stays accepted. Single-domain payloads carry no adjacency
+        // requirement.
         if parsed.len() == 2 {
             let (source_domain, _) = &parsed[0];
             let (target_domain, _) = &parsed[1];
