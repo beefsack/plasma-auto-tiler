@@ -2325,6 +2325,32 @@ Legend:
   [tabboxconfig.h](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/tabbox/tabboxconfig.h),
   [activation.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/activation.cpp),
   [options.h](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/options.h).
+- `S-kwin-act` kwin:src/netinfo.cpp:149-177
+  (`RootInfo::changeActiveWindow`: tool-source requests
+  force-activate; app-source requests activate only under
+  `allowWindowActivation`, else `demandAttention`) +
+  src/x11window.cpp:4257-4330 (`allowWindowActivation`: shipped FSP
+  Low compares the request timestamp against the active window's
+  user time; stale/zero fail to `demandAttention`, unknown
+  activates) and :4249-4254 (`updateUrgency`: hint urgency marks via
+  `demandAttention`) + src/window.cpp:679-691 (`demandAttention`
+  refuses while active and otherwise only sets the flag) +
+  src/activation.cpp:250-253 (`setActiveWindow` clears with
+  `demandAttention(false)`) and :294-321 (`activateWindow` follows
+  `activationDesktopPolicy` off-desktop) + src/events.cpp:313-315
+  (`WM2Urgency` notify drives `updateUrgency`) +
+  src/kcms/options/kwinoptions_settings.kcfg:128-132 (shipped FSP
+  default Low=1) and :43-49 (shipped `SwitchToOtherDesktop`)
+  @8438567a
+  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
+  KDE/kwin@8438567a provenance; app-request outcome forks on the
+  message timestamp; hint marks without focusing; activation clears)
+  Raw sources: [netinfo.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/netinfo.cpp),
+  [x11window.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/x11window.cpp),
+  [window.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/window.cpp),
+  [activation.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/activation.cpp),
+  [events.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/events.cpp),
+  [kwinoptions_settings.kcfg](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/kcms/options/kwinoptions_settings.kcfg).
 - `S-kar-admit` karousel:src/lib/world/ClientManager.ts:30-56
   (`addClient` evaluates the shapeability gates once at add) and
   :158-176 (`toggleFloatingClient`: float-to-tile requires `canTileEver`,
@@ -3655,10 +3681,23 @@ Legend:
   (`activate_surface` switches to the element workspace) and
   :255-262 (focuses the element) + src/shell/mod.rs:542-546
   (workspace activation removes `Urgent` from both sides;
-  same-workspace focus clear untraced)
+  same-workspace focus clear per `S(S-cos-actclear)`)
   @3d55cba06c9cf6f27609cdefb520f7857dba20af
   (ordinary requests switch and focus; sandboxed serial-less marks
   only with stale-serial denial)
+- `S-cos-actclear` cosmic-comp:src/shell/mod.rs:541-546
+  (workspace switch removes `Urgent` from both sides only when
+  `self.active != idx`) +
+  src/wayland/handlers/xdg_activation.rs:124-130 (`UrgentOnly`
+  adds workspace-level `WState::Urgent`) +
+  src/shell/focus/mod.rs:198-220 (`set_focus` appends the focus
+  stack and updates active with no `Urgent` removal) and :288-329
+  (`update_active` writes activation flags only) + exhaustive
+  `WState::Urgent` removal inventory (removals only at
+  src/shell/mod.rs:544-545)
+  @3d55cba06c9cf6f27609cdefb520f7857dba20af
+  (same-workspace focus retains the workspace-level marker; only a
+  workspace switch clears it)
 - `S-hyp-act`
   Hyprland:src/desktop/view/window/Window.cpp:813-825 (`activate`
   always sets the urgent hint but focuses only under
@@ -3699,21 +3738,47 @@ Legend:
 - `S-qti-act` qtile:libqtile/backend/x11/window.py:615-621 (hint
   urgency sets the flag off-focus) and :658-666 (`urgent` property
   plus demands-attention setter) and :1305-1312 (focus path resets
-  the flag and strips the state atom)
+  the flag and strips the state atom) and :2102-2108
+  (`_NET_ACTIVE_WINDOW`: pager source activates, app source goes to
+  `activate_by_config`) + libqtile/backend/base/window.py:594-610
+  (`activate` pulls the group via `set_group` and focuses) and
+  :611-632 (`activate_by_config`: shipped `smart` activates only
+  same-screen requesters, else marks urgent) +
+  libqtile/resources/default_config.py:197 (shipped
+  `focus_on_window_activation = "smart"`) + libqtile/group.py:158-165
+  (hidden groups carry `screen = None` via `hide`)
   @83c697a5621306c3586efca31867efcfa0482e2d
-  (marker without steal; focus clears)
+  (app-source hidden-group requests mark without switching; pager
+  source activates; marker without steal; focus clears)
 - `S-awe-act` awesome:lib/awful/permissions/init.lua:167-178
-  (`request::activate` filter gate) + :333-340 (`request::urgent`
-  handler sets `c.urgent` off-focus)
+  (`request::activate` filter gate) + :197-212 (with empty `ewmh`/
+  generic filters invisible clients skip focus and `raise` marks
+  `c.urgent` without switching tags) + :333-340 (`request::urgent`
+  handler sets `c.urgent` off-focus) + :576-583 (sole shipped
+  `add_activate_filter` is `mouse_enter`-scoped) +
+  awesome:ewmh.c:497-513 (`_NET_ACTIVE_WINDOW` emits
+  `request::activate` context `ewmh` with `raise=true`) +
+  awesome:objects/client.c:1841-1873 (`client_focus_update` clears
+  the urgent flag on focus) + objects/client.h:316-321
+  (`isvisible` needs selected tags, unhidden, unminimized) +
+  awesome:lib/awful/client/urgent.lua:103-107 (`focus` drops the
+  urgent-stack entry)
   @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
-  (filter plus marker sourced; hidden-tag switch and focus-clear TBD)
+  (hidden-tag requests mark without switching; marker without steal;
+  focus clears)
 - `S-xmo-act` xmonad-contrib:XMonad/Hooks/EwmhDesktops.hs:226-259
   (default `doFocus` activate hook focuses immediately, switching
   workspace if necessary; `doAskUrgent` marking is opt-in via
-  `setEwmhActivateHook`)
-  @5097a457e7a409bc9a7584dc5aa82b34c69d6dda
-  (default request switches and focuses; urgency handling untraced
-  beyond the opt-in hook)
+  `setEwmhActivateHook`) + :138-143 (`ewmh` default
+  `activateHook = doFocus`) +
+  xmonad-contrib:XMonad/Hooks/UrgencyHook.hs:574-579 (`doAskUrgent`
+  opt-in marker via `askUrgent`) + xmonad:src/XMonad/Operations.hs:423-434
+  (core focus path reads `WMHints` for input-focus only) with zero
+  urgency handling in core (`rg -i urgent src/` hits nothing)
+  @5097a457e7a409bc9a7584dc5aa82b34c69d6dda for contrib paths,
+  @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7 for core
+  (default request switches and focuses; no native urgency
+  mark/clear in this profile beyond the opt-in hook)
 - `S-nir-act` niri:src/handlers/mod.rs:766-804 (`token_created`:
   serial-less tokens get the `UrgentOnlyMarker`; invalid serials
   are denied unless the debug flag is set) and :806-835

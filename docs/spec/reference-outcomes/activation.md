@@ -24,15 +24,24 @@ Hyprland `CWindow::activate` reached both by the X11
 bspwm `_NET_ACTIVE_WINDOW` client message plus hint-urgency flags; i3
 `_NET_ACTIVE_WINDOW`/configure handlers plus urgency client messages;
 xmonad EwmhDesktops `_NET_ACTIVE_WINDOW` via the default `doFocus`
-activate hook (`doAskUrgent` is an opt-in alternative; native hint
-handling untraced); sway xdg-activation plus `focus_on_window_activation`
+activate hook (core reads `WMHints` for input-focus only with no
+urgency handling; `doAskUrgent` marking is opt-in via
+`setEwmhActivateHook` plus `UrgencyHook` wiring, absent from this
+profile); sway xdg-activation plus `focus_on_window_activation`
 policy (tokens from a focus-less client mark urgent); qtile X11
-urgency hints plus focus-time clear; awesome `request::activate`
-filter plus `request::urgent` handler; niri `request_activation`
+`_NET_ACTIVE_WINDOW` dispatch via `activate_by_config` (shipped
+`smart` marks off-screen requesters urgent) plus hint urgency and
+focus-time clear; awesome `request::activate`
+filter (no shipped `ewmh` filter; hidden-tag requests mark urgent
+without switching) plus `request::urgent` handler and focus-time
+clear; niri `request_activation`
 plus `on-xdg-activate` rules (serial-less tokens mark only;
 invalid-serial tokens are denied unless the debug flag is set);
-PaperWM/karousel/paneru have no traced activation/urgency handler at
-the pins (host journeys only). Ordinary unsandboxed COSMIC clients
+PaperWM/paneru have no traced activation/urgency handler at
+the pins (host journeys only); karousel pinned code only observes
+host `windowActivated`, so its legs resolve via host KWin
+`S(S-kwin-act)` where the host mechanism is deterministic, else
+stay TBD with the host fork named. Ordinary unsandboxed COSMIC clients
 take the privileged branch to Workspace tokens; the declared
 sandboxed route exposes the workspace-level marker only.
 
@@ -86,11 +95,22 @@ sandboxed route exposes the workspace-level marker only.
   `view_request_urgent`; the shipped `focus_on_window_activation=urgent`
   marks without focusing.
   `S(S-sway-act)`.
-- Then qtile/Columns: TBD (native activation-request routing for a
-  hidden-group window untraced; hint handling belongs to R-ACT-02).
-  Queued.
-- Then awesome/tile: TBD (the `request::activate` filter outcome for
-  a hidden-tag B, switch vs marker, untraced). Queued.
+- Then qtile/Columns: urgency mark only; stays on the shown group
+  with A focused at shipped default. An app-source
+  `_NET_ACTIVE_WINDOW` message reaches `activate_by_config`, and the
+  shipped `focus_on_window_activation="smart"` marks requesters
+  whose group screen is not the current screen urgent instead of
+  switching to their group (pager-source requests bypass to
+  `activate` and are not this leg).
+  `S(S-qti-act)`.
+- Then awesome/tile: urgency mark only; stays on the shown tag with
+  A focused at shipped default. `_NET_ACTIVE_WINDOW` emits
+  `request::activate` context `ewmh` with `raise=true`; no shipped
+  `ewmh`/generic filter claims the request (the sole shipped filter
+  is `mouse_enter`-scoped), the hidden-tag B fails `isvisible` so
+  focus is skipped, and the raise branch sets `c.urgent` without
+  switching tags.
+  `S(S-awe-act)`.
 - Then niri: urgency-only marker; no switch or focus at shipped
   default. With no `on-xdg-activate` rule in the shipped config, a
   serial-less token takes the `UrgentOnlyMarker` branch and only
@@ -99,9 +119,13 @@ sandboxed route exposes the workspace-level marker only.
   `S(S-nir-act)`.
 - Then PaperWM: TBD (Shell/extension activation journey for a
   hidden-space window untraced). Queued.
-- Then karousel/Lazy: TBD (host KWin activation journey and
-  focus-passer behavior for a hidden-desktop window untraced).
-  Queued.
+- Then karousel/Lazy: TBD (host KWin `RootInfo::changeActiveWindow`
+  forks on the request timestamp at shipped defaults: stale/zero
+  timestamps fail `allowWindowActivation` to `demandAttention`
+  (marker only); an unknown timestamp activates under shipped
+  `SwitchToOtherDesktop`. The row fixes no message timestamp, and
+  karousel itself contributes no request route beyond observing
+  host `windowActivated`). `S(S-kwin-act)`; queued.
 - Then paneru: TBD (no activation/urgency request path traced).
   Queued.
 - Then Ours KDE: TBD (Engine `sync_focus_from_window` covers
@@ -131,9 +155,13 @@ sandboxed route exposes the workspace-level marker only.
   implies a sourced clear.
 - Observe: focus stolen vs attention marker only/ignored while
   unfocused; marker cleared on focus vs retained.
-- Then COSMIC: WS1 marked without stealing focus; same-workspace
-  focus clear TBD. The declared route exposes the workspace-level
-  marker only. `S(S-cos-act)`; queued.
+- Then COSMIC: WS1 marked without stealing focus; focusing B on
+  the same workspace retains the workspace-level `Urgent` marker
+  (no focus-time clear). The serial-less route adds
+  `WState::Urgent`; `set_focus`/`update_active` write focus state
+  only, and the sole `Urgent` removal runs on workspace switch
+  (`self.active != idx`).
+  `S(S-cos-act)` + `S(S-cos-actclear)`.
 - Then Hyprland/Dwindle: B marked urgent without stealing focus;
   focusing B clears the hint. `activate()` marks unconditionally
   while focus stays gated, and taking focus strips the urgent bit.
@@ -147,8 +175,16 @@ sandboxed route exposes the workspace-level marker only.
   messages and hidden-requester policy set urgency; the focus path
   resets leaf urgency.
   `S(S-i3-act)`.
-- Then xmonad/Tall+Navigation2D: TBD (native hint mark/clear
-  untraced; `doAskUrgent` is an opt-in alternative). Queued.
+- Then xmonad/Tall+Navigation2D: no native urgency marker is set;
+  user focus is ordinary focus with nothing to clear. Core reads
+  `WMHints` for input-focus only with no urgency handling anywhere
+  in `src/XMonad`; the profiled `ewmh` composite maps
+  `_NET_ACTIVE_WINDOW` to the default `doFocus` focus hook
+  (activation focus, not a marker substitute), and `doAskUrgent`
+  marking is opt-in via `setEwmhActivateHook` plus `UrgencyHook`
+  wiring absent from this profile, so the native mark leg has no
+  counterpart here.
+  `S(S-xmo-act)`.
 - Then sway: B marked urgent without stealing focus; focusing B
   clears it (immediately, or via the `urgent_timeout` timer when
   the focus arrives with a workspace switch). Shipped
@@ -160,16 +196,24 @@ sandboxed route exposes the workspace-level marker only.
   Hint updates set the flag off-focus; the focus path resets it.
   `S(S-qti-act)`.
 - Then awesome/tile: B marked urgent without stealing focus;
-  clearing on focus TBD. The `request::urgent` handler sets
-  `c.urgent` off-focus; no focus-time clear traced.
-  `S(S-awe-act)`; queued.
+  focusing B clears it. The `request::urgent` handler sets
+  `c.urgent` off-focus; taking focus runs `client_focus_update`,
+  which clears the urgent flag (EWMH), and the `focus` signal drops
+  B from the urgent stack.
+  `S(S-awe-act)`.
 - Then niri: B marked urgent without stealing focus; focusing B
   clears it. `set_urgent` refuses while focused, and taking focus
   resets the flag.
   `S(S-nir-act)`.
 - Then PaperWM: TBD (no urgency mark/clear path traced). Queued.
-- Then karousel/Lazy: TBD (no urgency mark/clear path traced).
-  Queued.
+- Then karousel/Lazy: B marked urgent without stealing focus;
+  focusing B clears it, via host KWin. A hint-urgency property
+  notify runs `updateUrgency` into `demandAttention`, which only
+  sets the flag (refused while active, never focuses); taking focus
+  runs host `setActiveWindow`, which calls
+  `demandAttention(false)`. Karousel itself contributes no
+  mark/clear path and only observes host `windowActivated`.
+  `S(S-kwin-act)`.
 - Then paneru: TBD (no urgency mark/clear path traced). Queued.
 - Then Ours KDE: TBD (the Engine resyncs focus on ordinary
   activation of a known window; the KDE observer exposes no
