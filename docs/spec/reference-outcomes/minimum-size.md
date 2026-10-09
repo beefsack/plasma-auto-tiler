@@ -36,7 +36,13 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then awesome/tile: Ordinary resizable C tiles with size-hint shaping only (tile arrange applies hints without minimum-infeasibility float/skip, no alternative-arrangement search); fixed-size min==max floats implicitly instead; exact fixture frames/native response TBD; `S(S-awe-tile)` + `S(S-awe-float)`
 - Then niri: column width resolves with min/max clamp (`S(S-nir-min)`);
   exact newcomer admission/focus TBD; queued.
-- Then PaperWM: TBD (minimum handling untraced). `S(S-pap-base)`; queued.
+- Then PaperWM: ordinary resizable C tiles unconditionally. `add_filter`
+  has no fixed-size or minimum branch (Normal non-transient passes), so C
+  admits as a new column at selected+1 RIGHT; the column layout sizes from
+  the frame/preferredWidth with only a work-area clamp and never consults
+  client minima, so no member floats, skips, or is refused by policy and
+  no alternative arrangement is searched. Exact native frames/focus TBD.
+  `S(S-pap-spc)` + `S(S-pap-ins)` + `S(S-pap-layout)`; frames queued.
 - Then karousel/Lazy: column width clamps to the client minimum
   (`getMinWidth`, capped at the tiling width); exact newcomer admission
   TBD. `S(S-kar-min)`; admission queued.
@@ -74,7 +80,13 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then qtile/Columns: Same unclamped tiled allocation on shrink (no reflow clamp in the Columns path; hint clamp is float-only via respect_hints=true); exact shrink/grow frames, focus, and float intent TBD; `S(S-qti-min)`
 - Then awesome/tile: Same hint-shaped tiled allocation on shrink (no reflow clamp or float intent in the tile path); exact shrink/grow frames, focus, and float intent TBD (native response not in allocation source); `S(S-awe-tile)`
 - Then niri: TBD (shrink clamp/reflow untraced). `S(S-nir-min)`; queued.
-- Then PaperWM: TBD (minimum handling untraced). `S(S-pap-base)`; queued.
+- Then PaperWM: shrink rewrites no column widths. The layout keeps sizing
+  each column from live frames with only the work-area clamp and no client
+  minimum consult, so neither member floats, skips, or is refused by
+  policy; focus unwritten. Grow-back re-runs the same sizing from the then
+  live frames, so restored widths follow whatever the native responses
+  settled during the shrink: recovery TBD. Exact native frames/focus TBD
+  (live-only). `S(S-pap-layout)`; recovery queued.
 - Then karousel/Lazy: column widths stay clamped to client minima via
   `setWidth`; exact shrink/grow frames TBD. `S(S-kar-min)`; frames queued.
 - Then paneru: TBD (minimum handling untraced). `S(S-pan-model)`; queued.
@@ -110,7 +122,12 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then awesome/tile: Ordinary resizable A tiles with hint shaping even when its minimum exceeds the work area (fixed-size exception is min==max, not oversized-min); exact sole-leaf native frame TBD; `S(S-awe-float)` + `S(S-awe-tile)`
 - Then niri: TBD (sole-leaf oversized-minimum result untraced).
   `S(S-nir-min)`; queued.
-- Then PaperWM: TBD (minimum handling untraced). `S(S-pap-base)`; queued.
+- Then PaperWM: ordinary resizable A tiles even when its minimum exceeds
+  the viewport. Admission has no minimum or fixed-size branch and the
+  layout applies only the work-area clamp, so A opens as a sole tiled
+  column (no automatic float); overflow stays with the client. Exact
+  sole-leaf native frame TBD. `S(S-pap-spc)` + `S(S-pap-ins)` +
+  `S(S-pap-layout)`; frame queued.
 - Then karousel/Lazy: width clamps to the client minimum capped at the
   tiling width (`getMinWidth`); exact sole-leaf frame TBD. `S(S-kar-min)`;
   frame queued.

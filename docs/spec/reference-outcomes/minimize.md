@@ -64,9 +64,11 @@ claims. Ours KDE and Ours Windows cite separate adapter keys.
   Action verb). `S(S-nir-mininv)`.
 - Then PaperWM: B leaves the space tiling when `stick()` emits workspace
   `window-removed` into `remove_handler` and `space.removeWindow` (column
-  spliced with empty-column drop and space relayout plus neighbor
-  selection); the tiled mark is kept; exact sibling widths and GNOME focus
-  TBD. `S(S-pap-minimize)`; queued.
+  spliced with empty-column drop and space relayout plus topmost-neighbor
+  selection); the tiled mark is kept (`_tiled_on_minimize`); sibling
+  columns keep their widths (per-column layout, no rescale). GNOME focus
+  pick TBD (host). `S(S-pap-minimize)` + `S(S-pap-layout)`; focus queued
+  (host).
 - Then karousel/Lazy: B enters `TiledMinimized` (B is the sole window of
   C2, so its removal empties and destroys C2 via `onColumnRemoved`); focus
   passes Immediate (B is the last-focused client) to the left column A
@@ -113,10 +115,14 @@ claims. Ours KDE and Ours Windows cite separate adapter keys.
   focus TBD. `S(S-awe-minimize)`; focus queued.
 - Then niri: no-counterpart. `S(S-nir-mininv)`.
 - Then PaperWM: marked B leaves the scratch layer via `unmakeScratch`
-  (float cleared, `unstick`) into workspace `window-added` handling, which
-  re-inserts after the selected window per `getOpenWindowPositionIndex`
-  (shipped RIGHT default), not the old slot; exact position and focus TBD.
-  `S(S-pap-minimize)`; queued.
+  (scratch frame saved, float cleared, `unstick`) into workspace
+  `window-added` handling, which re-inserts after the then-selected window
+  per `getOpenWindowPositionIndex` (shipped RIGHT default), not the old
+  slot; focus is requested for B on the active space via the
+  existing-window branch. The live selection follows the host focus pick
+  from R-MNZ-01, so the exact slot rides host state: slot TBD (host);
+  native focus delivery TBD (host). `S(S-pap-minimize)` + `S(S-pap-ins)`;
+  slot queued (host).
 - Then karousel/Lazy: unminimize constructs a new `Tiled` in a fresh column
   after the last-focused (else last) column, not the old slot; exact column
   and focus TBD. `S(S-kar-minimize)`; queued.

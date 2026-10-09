@@ -117,8 +117,9 @@ sandboxed route exposes the workspace-level marker only.
   sets urgent; invalid-serial tokens are denied instead (separate
   no-op leg unless the debug flag is set).
   `S(S-nir-act)`.
-- Then PaperWM: TBD (Shell/extension activation journey for a
-  hidden-space window untraced). Queued.
+- Then PaperWM: TBD (no activation-request route exists in the pinned
+  extension inventory; hidden-space request routing plus workspace-switch
+  and focus ride host GNOME Shell/Mutter). `S(S-pap-acts)`; queued (host).
 - Then karousel/Lazy: TBD (host KWin `RootInfo::changeActiveWindow`
   forks on the request timestamp at shipped defaults: stale/zero
   timestamps fail `allowWindowActivation` to `demandAttention`
@@ -205,7 +206,12 @@ sandboxed route exposes the workspace-level marker only.
   clears it. `set_urgent` refuses while focused, and taking focus
   resets the flag.
   `S(S-nir-act)`.
-- Then PaperWM: TBD (no urgency mark/clear path traced). Queued.
+- Then PaperWM: TBD (no urgency mark/clear path exists in the pinned
+  extension source: keyword sweep finds no urgency handling across
+  `tiling.js`/`keybindings.js`/`navigator.js`/`liveAltTab.js`/`scratch.js`/
+  `settings.js`/`workspace.js`/`extension.js`/`prefs.js`, and the closed
+  registered action inventory lists no mark/clear verb; host Shell/Mutter
+  mark/clear behavior stays untraced). `S(S-pap-acts)`; queued (host).
 - Then karousel/Lazy: B marked urgent without stealing focus;
   focusing B clears it, via host KWin. A hint-urgency property
   notify runs `updateUrgency` into `demandAttention`, which only

@@ -255,9 +255,14 @@ is the observation-driven proposal, never the native verb.
   maximized/fullscreen flag dies with B so no restore exists; surviving
   column A keeps its independent width (no refill rescale); focus A.
   `S(S-nir-close)` + `S(S-nir-maxfs)`.
-- Then PaperWM: `removeWindow` path regardless of state (width
-  conversion moot after destruction); exact allocation/focus TBD.
-  `S(S-pap-close)`; queued.
+- Then PaperWM: `removeWindow` path regardless of state (no
+  maximized/fullscreen branch; width conversion moot after destruction):
+  the max leg closes the width-maximized tile like an ordinary tile and
+  the full leg closes with the flag dying with B; column spliced with
+  empty-column drop and relayout, surviving column A keeping its width,
+  selection to the topmost neighbor. Shell focus fallback TBD (host).
+  `S(S-pap-close)` + `S(S-pap-layout)` + `S(S-pap-widthmax)`; focus queued
+  (host).
 - Then karousel/Lazy: column removal path with left-focus; the window
   state dies with B so no restore exists; surviving column A keeps its
   width; A focused as sole survivor. `S(S-kar-close)`.

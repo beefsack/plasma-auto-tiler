@@ -37,11 +37,14 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   target workspace as a new column after C (the sole target column is
   active). `S(S-nir-wskeys)` + `S(S-nir-ws)`.
 - Then PaperWM: Shipped `move-down/up-workspace` (Super+Ctrl+PageDown/Up)
-  and `take-window` (Super+t) follow: drop into the selected space
-  plus `Main.activateWindow` (tiling.js:5528-5555 at 8bf6dd2);
-  fresh-insertion no-steal on inactive spaces (`S-pap-ins`) is a
-  different journey, not the shipped-send outcome; send-and-stay
-  alternate TBD. `S(S-pap-take)` + `S(S-pap-ins)`.
+  and `take-window` (Super+t) follow: take removes B via
+  `space.removeWindow` (column splice, source collapses to A) and steps
+  to the adjacent space with an end stop; the drop inserts at the open
+  position (selected+1 under the shipped RIGHT default) as selectedWindow
+  plus `Main.activateWindow`, so B follows; fresh-insertion no-steal on
+  inactive spaces is a different journey, not the shipped-send outcome;
+  no send-and-stay counterpart exists in the registered inventory.
+  `S(S-pap-take)` + `S(S-pap-ins)` + `S(S-pap-space)`.
 - Then karousel/Lazy: the column moves grids and appends after the
   target's last column (after sole C); focus stays TBD. `S(S-kar-ws)`;
   focus queued.
@@ -101,8 +104,8 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   take path the drop finalizes with selectedWindow plus
   `Main.activateWindow`, so the return follows with B, while the
   fresh-insertion no-steal on inactive spaces is a different journey.
-  Viewport is ensured minimal with the exact offset TBD.
-  `S(S-pap-ins)` + `S(S-pap-take)`; offset queued.
+  Viewport keeps B visible via minimal `ensuredX`/`ensureViewport` scroll
+  under DEFAULT. `S(S-pap-ins)` + `S(S-pap-take)` + `S(S-pap-view)`.
 - Then karousel/Lazy: B's column re-admits after the explicitly focused
   A (last-focused, else last); removal refreshes `lastFocusedColumn`,
   and the cross-desktop `moveToGrid` passes Immediate focus (the target
@@ -197,8 +200,15 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   is untraced, so the exact anchor stays TBD. `S(S-nir-ws)` +
   `S(S-nir-ins)`; anchor queued.
 - Then PaperWM: anchoring is open-position index only, so no
-  remembered-leaf memory exists to invalidate; the float path stays
-  TBD. `S(S-pap-ins)`; float leg queued.
+  remembered-leaf memory exists to invalidate; floated C leaves tiling via
+  the scratch path (`toggle-scratch` → `stick()` fires workspace
+  window-removed → `remove_handler` runs `space.removeWindow`
+  synchronously) with neighbor selection (`sortWindows` topmost pick),
+  leaving sole D as the live selectedWindow, so B admits after D at
+  selected+1 and follows via the shipped take completion
+  (`Main.activateWindow`, ordinary convention). `S(S-pap-ins)` +
+  `S(S-pap-float)` + `S(S-pap-minimize)` + `S(S-pap-space)` +
+  `S(S-pap-take)`.
 - Then karousel/Lazy: B's column admits after the last-focused (else
   last) column with `lastFocusedColumn` fixup on removal; the float
   leg stays TBD. `S(S-kar-ins)` + `S(S-kar-ws)`; float leg queued.
@@ -238,13 +248,16 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   remove/add path (never fresh-tiled on arrival) and sole A is
   unchanged; `focus=true` (default) follows with B, `focus=false`
   stays. `S(S-nir-ws)`.
-- Then PaperWM: forward B admits sole on WS2 (fresh windows redirect to the
-  selected space at the open position); floating B itself lives in the
-  per-space `_floating` list (non-tileable admission floats plus
-  `make_above`), and `removeWindow` dispatches floats to `removeFloating`.
-  Whether the cross-space take re-inserts B floating or fresh-tiled is
-  untraced, so retained-vs-fresh stays TBD. `S(S-pap-ins)` +
-  `S(S-pap-float)`; carry queued.
+- Then PaperWM: forward B admits sole on WS2; ordinary float maps to
+  toggle-scratch (`stick()` plus above plus float flag), so B is stuck on
+  all workspaces and already present on WS1: in this journey no take of B
+  runs (scratch focus returns without any selection write, so the tiled
+  selection is untouched and the shipped selection-verbs take that
+  selection, not B) and no fresh-tiled admission occurs (retained scratch;
+  dialog `_floating` floats are a different scope). Return-focus on the
+  WS1 select has no extension write, so focus stays TBD (host).
+  `S(S-pap-ins)` + `S(S-pap-float)` + `S(S-pap-space)` + `S(S-pap-wssel)`;
+  focus queued (host).
 - Then karousel/Lazy: forward B opens a new column sole on the target
   desktop (appended after the last column); floating is a separate client
   state with float/toggle transitions, and the column verbs take a column
@@ -694,10 +707,20 @@ verb inventory); selected intent and doc assertions are never evidence.
   resolves the hidden WS2; hidden move inserts after R's active entry
   with no activation, so displaced WS3 stays shown; the active-workspace
   variant activates the target). `S(S-nir-ws)`.
-- Then PaperWM: whole-space reassignment choreography via
-  `move-space-monitor` (swap fallback when it is the monitor's last
-  space); hidden-workspace applicability stays TBD. `S(S-pap-space)`;
-  hidden-applicability queued.
+- Then PaperWM: hidden WS2 has no-counterpart on this fixture (whole-space
+  verbs take no space argument; they walk the live stack from the
+  active/selected space only). Independent active leg (WS2 explicitly
+  selected): `move-space-monitor` runs the stack dance (`selectStackSpace`
+  DOWN over `[activeSpace, ...stack-minus-shown]` with wrap, navigator
+  finish activating the selected space with its retained selectedWindow,
+  `switchMonitor` to the neighbor; `lteSpaces` notify-and-stay; last-on
+  monitor swap fallback; `-1` neighbor stays) and reassigns the same space
+  object via `setMonitors`/`setMonitor` (no column rewrite, so
+  columns/order/shares/selection carry). Exact displaced views and focus
+  hinge on the unstated live stack/tab order (stack seeded from `mru()`:
+  active plus `NORMAL_ALL` tab-list plus index order) and the unpinned host
+  neighbor/index order, so they stay TBD. `S(S-pap-space)` + `S(S-pap-mon)`
+  + `S(S-pap-wssel)`; views/focus queued (fixture + host).
 - Then karousel/Lazy: fixture-inapplicable (single-screen profile has
   no second output to receive WS2). `S(S-kar-base)`.
 - Then paneru: no-counterpart (`ToNextDisplay` moves the focused
@@ -804,10 +827,12 @@ verb inventory); selected intent and doc assertions are never evidence.
   ends (same-index is a no-op, never a wrap); Smart follow activates
   the target when the mover was active (`focus=false` stays).
   `S(S-nir-ws)`.
-- Then PaperWM: resolves to the adjacent space with take-window and
-  stops at the ends; drop completes with insert plus `Main.activateWindow`
-  (follow per take finalization), insert position stays TBD.
-  `S(S-pap-space)` + `S(S-pap-take)`; position queued.
+- Then PaperWM: resolves to the adjacent space via `selectSequenceSpace`
+  with take-first and stops at the ends (out-of-range return, no wrap);
+  the drop inserts at the open position (selected+1 under the shipped
+  RIGHT default) as selectedWindow plus `Main.activateWindow`, so both
+  legs follow; no stay variant exists in the registered inventory.
+  `S(S-pap-space)` + `S(S-pap-take)` + `S(S-pap-ins)`.
 - Then karousel/Lazy: resolves to the adjacent desktop with an edge
   stop and moves the whole column C2 (appended after the target's
   last column); follow stays TBD. `S(S-kar-ws)`; follow queued.
@@ -1359,10 +1384,12 @@ baseline above is unchanged. Record:
   `MoveWorkspaceToMonitorByRef` (explicit output-plus-reference
   resolution; the moved-active variant activates the target).
   `S(S-nir-ws)`.
-- Then PaperWM: no mode gate exists; whole-space reassignment
-  choreography via `move-space-monitor` (swap fallback when it is the
-  monitor's last space); exact views stay TBD. `S(S-pap-space)`; views
-  queued.
+- Then PaperWM: no mode/shared/per-output gate exists in the registered
+  inventory; the active WS2 migrates via `move-space-monitor` (swap
+  fallback when it is the monitor's last space; `-1` neighbor stays with
+  no move; fewer-or-equal spaces than monitors notifies and stays);
+  refusal legs have no counterpart and write no setting. `S(S-pap-space)` +
+  `S(S-pap-mon)`.
 - Then karousel/Lazy: fixture-inapplicable (single-screen profile has
   no second output to receive WS2). `S(S-kar-single)`.
 - Then paneru: no-counterpart (`ToNextDisplay` moves the focused
@@ -1429,9 +1456,18 @@ baseline above is unchanged. Record:
   inserts after R's active entry; members retained via `set_output`
   re-entry; focus resolves to the moved workspace's active window (B).
   `S(S-nir-wsmove)` + `S(S-nir-ws)`.
-- Then PaperWM: `move-space-monitor` choreography (swap fallback when
-  the monitor's last space); layout carry and exact views/focus stay
-  TBD. `S(S-pap-space)`; carry/views queued.
+- Then PaperWM: the same space object migrates (spaces keyed by workspace;
+  `setMonitors`/`setMonitor` reassign the monitor with geometry/layout but
+  no column rewrite), so backing id, columns/order/shares, retained
+  `selectedWindow` and focus mode carry; the dance is `selectStackSpace`
+  DOWN with wrap plus navigator finish (retained-tile activation) plus
+  `switchMonitor` (`lteSpaces` notify-and-stay; last-on-monitor swap
+  fallback; `-1` stays). Target order follows GNOME index ownership
+  (`_getOrderedSpaces` workspace-index order) and shown views/moved-active
+  focus follow the live stack (WS2 fronted by the explicit select; older
+  entries from the unstated tab order), so target order, views and focus
+  stay TBD. `S(S-pap-space)` + `S(S-pap-mon)` + `S(S-pap-wssel)`;
+  order/views/focus queued (fixture + host).
 - Then karousel/Lazy: fixture-inapplicable (single-screen profile has
   no second output). `S(S-kar-single)`.
 - Then paneru: no-counterpart (`ToNextDisplay` moves the focused
@@ -1574,9 +1610,20 @@ baseline above is unchanged. Record:
   `set_output` re-enters all windows); no-counterpart for the sticky
   leg (no sticky state or verb in the profiled `Action` inventory).
   `S(S-nir-wsmove)` + `S(S-nir-ws)` + `S(S-nir-acts)`.
-- Then PaperWM: TBD (the `move-space-monitor` choreography is untraced
-  for per-space `_floating` carry and scratch/stuck stay here).
-  `S(S-pap-space)` + `S(S-pap-float)`; carry/stay queued.
+- Then PaperWM: the automatic fixed-size premise is unsupported here
+  (`add_filter` admits Normal non-transient windows only with no
+  fixed-size branch, so a fixed-size Normal window tiles as an ordinary
+  member, never `_floating`); the intentional leg maps to toggle-scratch
+  (stuck on all workspaces, never a space member: the move dance writes
+  no stuck state and `insertWindow` early-returns for on-all-workspaces
+  windows, so S stays and is not a migrated member with its flag
+  untouched). Tiled members (A, plus fixed-size-as-tiled) carry as
+  same-space members via `setMonitors`/`setMonitor`. Native float-frame
+  carry across monitors has no extension frame write in the path (layout
+  skips `unMovable`, floats are only shown, scratch geometry moves only
+  on toggle), so float output/frames plus stuck visibility stay TBD
+  (host). `S(S-pap-space)` + `S(S-pap-float)` + `S(S-pap-unmov)`;
+  frames/visibility queued (host).
 - Then karousel/Lazy: fixture-inapplicable (single-screen profile has
   no second output). `S(S-kar-single)`.
 - Then paneru: no-counterpart (window-only move verb; unmanaged floats
@@ -1644,9 +1691,12 @@ baseline above is unchanged. Record:
   moved-active and no overlay gate; `set_output` re-enters all windows on
   the new output. `S(S-nir-wsmove)`; fullscreen/maximized move as members
   (no overlay-specific branch traced).
-- Then PaperWM: TBD (whole-space choreography untraced for overlay
-  members here; layout skips placement for fullscreen/maximized).
-  `S(S-pap-space)` + `S(S-pap-unmov)`; overlay-carry queued.
+- Then PaperWM: fullscreen/maximized members migrate as space members (no
+  overlay gate in `move-space-monitor`/`swapMonitor`; layout skips
+  placement via `unMovable`, leaving frames alone); no extra
+  size/position writes run in the path, but native fullscreen focus
+  retention rides host activation and stays TBD (host). `S(S-pap-space)` +
+  `S(S-pap-unmov)`; focus queued (host).
 - Then karousel/Lazy: fixture-inapplicable (single-screen profile has
   no second output; overlay membership is otherwise kept with arrange
   skipped). `S(S-kar-single)` + `S(S-kar-maxfs)`.

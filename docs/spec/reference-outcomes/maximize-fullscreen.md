@@ -40,10 +40,13 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   previously-floating window. Exact hinted frames/convergence TBD.
   `S(S-nir-maxfs)`; geometry queued.
 - Then PaperWM: native maximize converts to full-width maximize at the
-  shipped default (unmaximize plus width-maximize with `unmaximizedRect`
-  memory); siblings reflow. Native restore has no maximized flag left to
-  clear; only the width toggle restores the saved width. Exact hinted
-  frames/convergence TBD. `S(S-pap-widthmax)`; geometry queued.
+  shipped default (`maximize-within-tiling` true: unmaximize, restore the
+  last layout frame, then width toggle to 1.00 of the work area with
+  `unmaximizedRect` memory); B stays tiled and wide while siblings keep
+  their widths with viewport scroll. Native restore has no maximized flag
+  left to clear; only the width toggle restores the saved width. Exact
+  hinted frames follow the width arithmetic; native convergence timing TBD
+  (live-only). `S(S-pap-widthmax)` + `S(S-pap-layout)`; timing queued.
 - Then karousel/Lazy: native maximize keeps B's column membership with
   `skipArrange` set (siblings keep their slots, B is never arranged);
   restore clears the flag through the same change handler. Exact hinted
@@ -251,8 +254,11 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   B's column is retained; later native restore clears the flag.
   `S(S-nir-maxfs)`.
 - Then PaperWM: admission converts native-maximized A to width-maximize
-  (unmaximize plus width toggle at the open position); later native
-  restore is moot. Admission focus TBD. `S(S-pap-widthmax)`; focus queued.
+  (unmaximize plus width toggle) at the open position selected+1 RIGHT;
+  later native restore is moot (no flag left). B keeps its width
+  (per-column layout, no rescale). A activates on show via the
+  fresh-window branch (newcomer focus). `S(S-pap-widthmax)` +
+  `S(S-pap-ins)` + `S(S-pap-layout)`.
 - Then karousel/Lazy: tiling admission force-unmaximizes A into an
   ordinary column (no overlay, no slotless hold); a later native
   restore is moot; admission focus TBD. `S(S-kar-maxfs)`; focus queued.
@@ -476,10 +482,17 @@ rectangles where geometry is load-bearing.
   `focus` flag. Column-send would retain instead and is not this leg.
   `S(S-nir-ws)` + `S(S-nir-wscarry)` + `S(S-nir-acts)`.
 - Then PaperWM: max leg converts to width-maximize (no overlay), so
-  `takeWindow` transfers an ordinary width-maximized window with
-  width-carry TBD; full leg transfers via `takeWindow` with
-  fullscreen-carry TBD. `S(S-pap-widthmax)` + `S(S-pap-take)` +
-  `S(S-pap-acts)`; carry queued.
+  `takeWindow` transfers an ordinary wide window: removed from the source
+  space, re-inserted on WS2 at selected+1 RIGHT with its frame width
+  carried (column layout reads the frame), then follow-activated per the
+  shipped completion. Full leg: the take path writes no fullscreen state
+  (removal plus existing+dropping re-insert keep the flag; layout skips
+  unMovable placement and position updates skip fullscreen), so the frame
+  is untouched by the extension; whether the native fullscreen overlay
+  survives the transfer rides host Mutter state, untraced at pin: overlay
+  TBD (host). `S(S-pap-widthmax)` + `S(S-pap-take)` + `S(S-pap-ins)` +
+  `S(S-pap-layout)` + `S(S-pap-unmov)` + `S(S-pap-fsframe)`; overlay
+  queued (host).
 - Then karousel/Lazy: the column transfers grids via `moveWindowToGrid`;
   whether the native KWin maximized/fullscreen client state travels
   with it TBD. `S(S-kar-ws)` + `S(S-kar-maxfs)`; carry queued.

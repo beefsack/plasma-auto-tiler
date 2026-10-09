@@ -63,7 +63,9 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   independent, no neighbor share is taken. `S(S-nir-resize)`.
 - Then PaperWM: width snaps to a 10%-of-available-width grid and steps;
   Inc/Dec reverse only on that grid (0.5W can be off-grid after margins).
-  Neighbor reflow TBD. `S(S-pap-resize)`; queued.
+  Neighbor columns keep their widths (per-column targetWidth, no rescale);
+  layout re-ensures placement after the frame write. `S(S-pap-resize)` +
+  `S(S-pap-layout)`.
 - Then karousel/Lazy: contextual increase selects the next larger
   preset/visible-space width and recenters; decrease uses separate
   offscreen terms. Step, neighbor effect and reversal TBD. `S(S-kar-resize)`.

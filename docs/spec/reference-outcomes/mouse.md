@@ -32,9 +32,14 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   pointer path carries no consume/join (consume/expel is a separate
   keyboard Action). Exact insert column TBD. `S(S-nir-drag)` +
   `S(S-nir-consume)`; queued.
-- Then PaperWM: centre resolves to a within-column or column DnD
-  zone, never a join (slurp/barf are separate); exact row TBD.
-  `S(S-pap-grab)` + `S(S-pap-slurp)`; queued.
+- Then PaperWM: centre x lands in the column body, so
+  `selectDndZone` yields only a within-column `[j,i]` or column
+  `[j]` insert committed via `addWindow` with activation; the grab
+  path invokes no slurp/barf/join verb. The emptied source column
+  splices away at removal, so no source-slot restore. Exact `[j,i]`
+  row TBD (pointer y unrecorded). `S(S-pap-grab)` +
+  `S(S-pap-grabzone)` + `S(S-pap-slurp)` + `S(S-pap-close)` +
+  `S(S-pap-layout)`; queued.
 - Then karousel/Lazy: pointer drag untiles B to float under shipped
   `untileOnDrag=true`, so no column join or source-slot restoration
   occurs. `S(S-kar-ptr)`.
@@ -71,8 +76,12 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then awesome/tile: No between-child bar/index mapping in source: bar/gap hover hits no tiled client, so move_handler swaps nothing and N stays (no flat insert, no 1/n share; shares are master/stack plus windowfact); exact bar pixel/N start/focus TBD; `S(S-awe-drag)` + `S(S-awe-tile)`
 - Then niri: drop re-inserts N at the pointer insert position;
   exact index and shares TBD. `S(S-nir-drag)`; queued.
-- Then PaperWM: the bar resolves to a column DnD zone inserting a
-  new column at that index; mover share TBD. `S(S-pap-grab)`; queued.
+- Then PaperWM: the bar maps to the `[j]` column zone, so the
+  drop inserts a new tiled-N column at the zone index via
+  `addWindow`; the mover column takes the mover frame width while
+  peers keep widths (no 1/n rescale), then the drop activates. A
+  floating N never enters the PaperWM move grab. `S(S-pap-grab)` +
+  `S(S-pap-grabzone)` + `S(S-pap-layout)`.
 - Then karousel/Lazy: a tiled N untiles under shipped
   `untileOnDrag=true`, so no index insert occurs; N's unspecified
   initial layer and resulting share outcome remain TBD.
@@ -110,8 +119,13 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   MoveGrab; the client path also permits horizontal viewport scrolling,
   unlike Mod+Left. Top-edge drop parity/click delivery remain TBD.
   `S(S-nir-drag)` + `S(S-nir-clientgrab)`; queued.
-- Then PaperWM: both producers enter the shared MOVING grab with the
-  same DnD zones; click TBD. `S(S-pap-grab)`; queued.
+- Then PaperWM: title-bar and Mod+Left presses both arrive as
+  `MOVING` and construct the same `MoveGrab` with the same DnD
+  zones; `begin` connects button-release/touch/motion/monitor
+  signals only, so any client-click delivery rides the host grab.
+  Scroll-phase moves clones only; source removal and reflow start
+  at `beginDnD`. Click delivery TBD (host Mutter grab semantics).
+  `S(S-pap-grab)` + `S(S-pap-grabzone)`; queued.
 - Then karousel/Lazy: move/resize session hooks fire for any host
   producer, so both funnel to untile-or-snap-back; host initiation
   TBD. `S(S-kar-ptr)`; queued.
@@ -147,9 +161,15 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   (motion/button/axis/frame only), so Esc cannot cancel; release
   commits via interactive_move_end. Exact topology TBD (hover/drop
   point unspecified). `S(S-nir-drag)`; queued.
-- Then PaperWM: MoveGrab ends on button release only, so Esc cannot
-  cancel; release commits via end(). Exact branch TBD. `S(S-pap-grab)`;
-  queued.
+- Then PaperWM: `MoveGrab` connects button-release/touch-end/
+  motion/monitor signals only, with no extension key path (the
+  navigator Esc destroys the keyboard dispatcher, never the drag),
+  so the extension offers no cancel; whether the host intercepts
+  Esc before release is unpinned. Absent host interception,
+  release runs the normal `end()` (zone drop, scratch-temp, or
+  in-space restore) with zone actors destroyed. Which `end()`
+  branch runs TBD (hover/drop point unrecorded).
+  `S(S-pap-grab)` + `S(S-pap-grabzone)`; queued.
 - Then karousel/Lazy: host KWin move-session cancel untraced in the
   profile source (karousel finish only retiles). Queued.
 - Then paneru: pointer drag is the host macOS journey. `S(S-pan-mouse)`;
@@ -220,9 +240,15 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then niri: the grab survives off-output pointer positions and the
   end re-inserts at the last tracked output (no restore path);
   exact placement TBD. `S(S-nir-drag)`; queued.
-- Then PaperWM: off-zone release moves the frame out and temporarily
-  makes B scratch; animation completion unmakes scratch, so final
-  re-admission/restoration remains TBD. `S(S-pap-grab)`; queued.
+- Then PaperWM: with no zone acquired, the no-target `end()`
+  branch moves the frame out and scratch-temps B then unmakes
+  scratch on animation completion (float/above/sticky cleared),
+  re-entering via window-added as an existing insert at the
+  open-position index; zone actors destroyed, never a source-slot
+  restore or off-area parking. Which branch runs TBD (pointer path
+  unrecorded; leaving all zones keeps the last acquired zone).
+  `S(S-pap-grab)` + `S(S-pap-grabzone)` +
+  `S(S-pap-ins)`; queued.
 - Then karousel/Lazy: untile at grab start means no restoration;
   off-area drop frame TBD. `S(S-kar-ptr)`; queued.
 - Then paneru: pointer drag is the host macOS journey. `S(S-pan-mouse)`;
@@ -256,8 +282,10 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then awesome/tile: Retained allocation mid-hold: tiled mouse.move never writes the source frame, it only swaps on hover via move_handler (siblings reflow only on swap via recalc); no target-slot preview/scale/indicator in the tiled path (snap placeholder is floating aerosnap only); final placement is the hover-swap, exact position TBD; `S(S-awe-drag)` + `S(S-awe-tile)`
 - Then niri: the tile is removed and pinned to the cursor during the
   move; zone preview and final placement TBD. `S(S-nir-drag)`; queued.
-- Then PaperWM: the clone follows the pointer with DnD zone actors
-  as preview; final placement TBD. `S(S-pap-grab)`; queued.
+- Then PaperWM: mid-hold the clone tracks the pointer
+  (pointer-minus-offset) while `tile-preview` zone actors mark the
+  target slot; the source leaves the strip only at `beginDnD`.
+  `S(S-pap-grab)` + `S(S-pap-grabzone)`.
 - Then karousel/Lazy: the host frame follows mid-hold while karousel
   untiles at session start (shipped default); release is outside the
   pause fixture. `S(S-kar-ptr)`; queued.
@@ -413,9 +441,13 @@ paths; selected intent and doc assertions are never evidence.
 - Then niri: Mod+Right and valid client edge-resize requests open an
   interactive resize; dragged width/neighbor outcome TBD.
   `S(S-nir-ptr)` + `S(S-nir-clientgrab)`; queued.
-- Then PaperWM: RESIZING_* grabs construct a marker ResizeGrab whose
-  end is a no-op (native Mutter resize proceeds, re-tiled after);
-  share outcome TBD. `S(S-pap-grab)`; queued.
+- Then PaperWM: `RESIZING_*` builds a marker `ResizeGrab` whose
+  `end` is a no-op; `resizeHandler` ignores the grabbed window
+  mid-grab and re-tiles from the new frame after, with per-column
+  widths from live frames. Whether the edge press starts a native
+  resize at all, and its amounts, ride the host. Share outcome TBD
+  (host Mutter resize journey). `S(S-pap-grab)` +
+  `S(S-pap-grabzone)` + `S(S-pap-layout)`; queued.
 - Then karousel/Lazy: edge drag writes the dragged column width via
   onUserResizeWidth while the neighbor keeps its width under shipped
   `resizeNeighborColumn=false`. `S(S-kar-ptr)`.

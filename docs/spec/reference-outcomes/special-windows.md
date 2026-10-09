@@ -126,8 +126,12 @@ transient (no dialog flag) is a different fixture and is not claimed.
   xwayland-satellite translates typed X11 windows to native). Smart
   focus applies. Switcher presence TBD. `S(S-nir-spc)`; queued.
 - Then PaperWM: both float (`add_filter` admits Normal only) with
-  `make_above`. Focus and switcher presence TBD. `S(S-pap-spc)`;
-  queued.
+  `make_above`. The rejected path shows without extension activation, so
+  focus follows host activation policy: focus TBD (host: GNOME activation
+  policy for shown floats untraced). Switcher presence follows host
+  `NORMAL_ALL` type membership for splash/utility: TBD (host: Mutter
+  tab-list type filter untraced). `S(S-pap-spc)` + `S(S-pap-fltanchor)` +
+  `S(S-pap-switcher)`; focus/switcher queued (host).
 - Then karousel/Lazy: TBD (KWin kind-flag mapping for
   splash/utility against the shapeability gate untraced). Queued.
 - Then paneru: role-gated management; splash/utility role outcome
@@ -160,7 +164,7 @@ transient (no dialog flag) is a different fixture and is not claimed.
 - Then niri: shipped Firefox PiP app-id/title rule floats
   (`open-floating true`); every other app TBD (no native PiP type).
   `S(S-nir-spc)`; queued.
-- Then PaperWM: TBD (no PiP branch traced). Queued.
+- Then PaperWM: no PiP branch exists in `add_filter`, `insertWindow`, or the registered action inventory, so an ordinary Normal non-transient client would tile as a fresh column at the open-position index with widths per column layout - but the scenario's required pre-act record (toolkit, app, version, actual flags and rules) is omitted, so whether this app's PiP client satisfies that antecedent is unestablished: admission TBD (fixture: record toolkit, app, version, actual flags and rules before acting). App-specific stay-on-top beyond the tiled branch's `unmake_above` TBD (host/live: app above-flag behavior untraced). `S(S-pap-spc)` + `S(S-pap-ins)` + `S(S-pap-layout)` + `S(S-pap-acts)`; admission queued (fixture), stay-on-top queued (host).
 - Then karousel/Lazy: TBD (no PiP branch traced). Queued.
 - Then paneru: TBD (no PiP branch traced). Queued.
 - Then Ours KDE: TBD (no PiP type or rule in the observer or the
@@ -251,7 +255,7 @@ transient (no dialog flag) is a different fixture and is not claimed.
   `S(S-awe-hint)` + `S(S-awe-tile)`.
 - Then niri: width clamped to min/max; reflow TBD. `S(S-nir-min)`;
   queued.
-- Then PaperWM: app-resize reaction path untraced. TBD; queued.
+- Then PaperWM: allocation policy tile-authoritative. A tiled B's app-owned resize or minimum-hint raise has no hint branch (no minima consult); `size-changed` queues a column relayout which recomputes targets from preferredWidth/client frame (not guaranteed to overwrite a preferredWidth the client keeps asserting) with no re-float. Recomputed targets settle natively X11-sync/Wayland-async (post-request re-read, actuals feed layout): exact native frames TBD (live: client settle timing). `S(S-pap-appresize)` + `S(S-pap-layout)`; frames queued (live).
 - Then karousel/Lazy: width clamped to size hints; reflow TBD.
   `S(S-kar-manual-width)`; queued.
 - Then paneru: hint path untraced. TBD; queued.
@@ -576,9 +580,15 @@ All fresh variants below reset the client and WM state independently.
   maximized from floating). Exact frames TBD.
   `S(S-nir-spc)` + `S(S-nir-fixed-open)` + `S(S-nir-maxfs)`.
 - Then PaperWM: E tiles (Normal non-transient admission; no fixed-size
-  branch); native maximize converts to width-maximize with
-  `unmaximizedRect` memory; native restore is moot (no maximized flag
-  left). Exact frames TBD. `S(S-pap-spc)` + `S(S-pap-widthmax)`.
+  branch). Born-maximized admission hits the `maximized-horizontally`
+  handler (:3514-3526), which unmaximizes BOTH first - clearing the native
+  flag - then width-toggles with `unmaximizedRect` memory at the shipped
+  100 percent; with no native maximized flag left, a native restore has
+  nothing to clear: moot. `unmaximizedRect` restores only via a second
+  width-toggle (:4794-4830 uses `move_resize_frame` only and never sets a
+  native maximize flag; no native toggle-off path is claimed). Exact
+  native frames TBD (live: client settle timing). `S(S-pap-spc)` +
+  `S(S-pap-widthmax)` + `S(S-pap-layout)`; frames queued (live).
 - Then karousel/Lazy: E floats as untileable under the shapeability gate
   (both-axes min==max keeps `isResizable` false); gates evaluate once at
   `addClient` with no size-hint watcher, so born-maximized stays floating
@@ -690,10 +700,13 @@ All fresh variants below reset the client and WM state independently.
   memory. Exact frames TBD. `S(S-nir-spc)` + `S(S-nir-fixed-open)` +
   `S(S-nir-maxfs)`.
 - Then PaperWM: non-fixed N is honored fullscreen and exit restores the
-  saved tiled frame to tiled, same as born-fixed E; the prior-floating
-  fixed leg still has no faithful start. Hint changes have no branch (no
-  fixed-size exclusion); repeated exits restore the saved frame again.
-  Exact frames TBD. `S(S-pap-spc)` + `S(S-pap-fsframe)`.
+  saved tiled frame to tiled, same as born-fixed E (fixed tiles: no
+  fixed-size exclusion, then the same fullscreen memory); the prior-floating
+  fixed leg still has no faithful start (no fixed float exists to begin
+  with: fixture-inapplicable for that leg). Hint changes have no branch
+  (no fixed-size exclusion); repeated exits restore the saved frame again.
+  Exact native frames TBD (live: client settle timing). `S(S-pap-spc)` +
+  `S(S-pap-fsframe)` + `S(S-pap-layout)`; frames queued (live).
 - Then karousel/Lazy: non-fixed N born-fullscreen tiles (fullscreen is
   shapeable) and exit restores tiled; E born exits floating via
   untileable-after-exit while prior floating stays floating. Predicate
@@ -784,9 +797,10 @@ All fresh variants below reset the client and WM state independently.
 - Then niri: no workspace-mode counterpart; F-arrival,
   changed-hints/predicate, override, and maximized legs share the absence
   (per-window toggle only). Outcome TBD. `S(S-nir-float)`.
-- Then PaperWM: no workspace-mode counterpart; F-arrival,
-  changed-hints/predicate, override, and maximized legs share the absence.
-  Outcome TBD. `S(S-pap-acts)`.
+- Then PaperWM: no workspace-mode counterpart (no workspace tiling toggle in the registered action inventory); F-arrival,
+  changed-hints/predicate, override, and maximized legs share the absence:
+  no-counterpart with no applicable journey.
+  `S(S-pap-acts)`.
 - Then karousel/Lazy: no workspace-mode counterpart (no toggle verb in the
   Actions inventory; `windowToggleFloating` is per-window only); F-arrival,
   changed-hints/predicate, override, and maximized legs share the absence.
@@ -883,12 +897,14 @@ All fresh variants below reset the client and WM state independently.
   (Quit exits and LoadConfigFile reloads config only; no layout dump or
   re-exec verb). Outcome TBD, including re-float/close and store-fault/ID/
   omission variants (no store in inventory). `S(S-nir-rst)`.
-- Then PaperWM: controlled disable+enable stages SaveState and re-adds
+- Then PaperWM: adoption classification determined: controlled disable+enable stages SaveState and re-adds
   existing windows with prevSpace layout restored; fixed E tiles (no
-  fixed-size branch) and explicitly tiled E stays tiled. Closed E is
-  absent. Store-fault/ID/omission variants have no counterpart (SaveState
-  covers monitors/spaces/widths only). Exact widths/focus TBD.
-  `S(S-pap-rst)` + `S(S-pap-spc)`.
+  fixed-size branch, so the pre-stop explicit tile is moot) and stays tiled. Closed E is
+  absent (dead pruned). Store-fault/ID/omission variants have no
+  counterpart (SaveState covers monitors/spaces/widths only):
+  no-counterpart. Exact widths need A's live frame, unstated in the fixture: TBD (fixture: A's live frame).
+  Selection is the host tab-list head: TBD (host: tab-list order policy untraced). `S(S-pap-rst)` +
+  `S(S-pap-spc)` + `S(S-pap-layout)`; widths queued (fixture), focus queued (host).
 - Then karousel/Lazy: script enable adopts existing clients in workspace
   order via `addClient` with live-only Grid state (no persisted layout);
   fixed E re-admits floating via the shapeability gate, so an explicit

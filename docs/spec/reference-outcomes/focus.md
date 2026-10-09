@@ -164,8 +164,7 @@ assertions are never evidence.
 - Then niri: no-counterpart for a plain spatial next/previous pair
   (directional column/window verbs plus MRU `FocusWindowPrevious`
   only). `S(S-nir-actions)`.
-- Then PaperWM: TBD (cycle-verb inventory untraced; `switch` verbs in
-  `S(S-pap-focus)` are directional only). Queued.
+- Then PaperWM: registered `switch-next`/`switch-previous` (Super+period/comma) walk the linear column/row order: next C from B, previous back to B (reversible); edge next-from-C/previous-from-A stay (getWindow returns false out of range, no selection write; loop variants are separate unbound verbs); ordinary F lives in the separate floating list and is excluded. `S(S-pap-cycle)` + `S(S-pap-float)`.
 - Then karousel/Lazy: next C, previous B; edges stay C and A respectively
   (no wrap); tiled-only verbs exclude F. `S(S-kar-focus)`.
 - Then paneru: no-counterpart for a next/previous cycle pair

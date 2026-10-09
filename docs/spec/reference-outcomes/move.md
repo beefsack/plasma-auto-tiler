@@ -34,7 +34,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then awesome/tile: Flat 3-child start has no ordinary tile form (master plus one vertical stack column, not flat thirds); exact outcome TBD. Policy: semantic move is geometric swap.bydirection with no R1 restructure (miss is no-op); `S(S-awe-swap)` + `S(S-awe-tile)`
 - Then niri: B is the sole tile, so `move_down` returns false and B stays.
   `S(S-nir-move)`.
-- Then PaperWM: TBD; down-move verb inventory unresolved. `S(S-pap-move)`.
+- Then PaperWM: registered `move-down` binds same-space `swap`; B is the sole row of C3, so the down step is out-of-range and returns with B staying (no model or selection change). `S(S-pap-moveverbs)` + `S(S-pap-swap)`.
 - Then karousel/Lazy: B is the sole window, so `windowMoveDown` is a
   no-op and B stays. `S(S-kar-move)`.
 - Then paneru: TBD; south peer resolution untraced. `S(S-pan-move)`.
@@ -70,7 +70,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then awesome/tile: Tile-projected start for order [A,C,B] (master A, stack C/B); geometric swap up selects C, yielding order [A,B,C] projected `H[A,V[B*,C]]` with mover focus retained (no focus write); exact pixel frames TBD; `S(S-awe-swap)` + `S(S-awe-tile)`
 - Then niri: B swaps with C and the active index follows B, so B stays
   focused. `S(S-nir-move)`.
-- Then PaperWM: TBD; up-move verb inventory unresolved. `S(S-pap-move)`.
+- Then PaperWM: registered `move-up` binds same-space `swap`; B swaps above C in place within C2 with the selection staying on B (no focus write on the swap path), followed by layout and forced viewport. `S(S-pap-moveverbs)` + `S(S-pap-swap)`.
 - Then karousel/Lazy: B swaps above C with no focus write, so focus stays
   B. `S(S-kar-move)`.
 - Then paneru: B swaps with C above in the same strip. `S(S-pan-move)`.
@@ -106,8 +106,10 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then qtile/Columns: Flat 4-child start has no ordinary Columns form; exact outcome TBD. Policy: shuffle_right carries B into the adjacent column (new column at a shared-column edge, no-op only for a sole-column sole window); focus stays B; `S(S-qti-shuffle)`
 - Then awesome/tile: Flat 4-child start has no ordinary tile form (1 master plus 3 in one column); exact outcome TBD. Policy: geometric swap-or-miss with no nested wrap/insert; focus retained; `S(S-awe-swap)` + `S(S-awe-tile)`
 - Then niri: C2 moves after C3, B stays focused. `S(S-nir-move)`.
-- Then PaperWM: TBD; right-move verb inventory unresolved.
-  `S(S-pap-move)`.
+- Then PaperWM: registered `move-right` binds same-space `swap`;
+  columns C2/C3 exchange (order A,C,B,D) with the selection staying on B
+  (no focus write on the swap path), followed by layout and forced viewport.
+  `S(S-pap-moveverbs)` + `S(S-pap-swap)`.
 - Then karousel/Lazy: single-window B joins C3 at the bottom via the
   single-window path. `S(S-kar-move)`.
 - Then paneru: B swaps east with C in the same strip. `S(S-pan-move)`.
@@ -183,8 +185,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then awesome/tile: No-op: bydirection miss leaves tree and focus unchanged, and global_bydirection finds no next screen on a single output; `S(S-awe-focus)`
 - Then niri: index 0 `move_left` returns false, so A stays.
   `S(S-nir-move)`.
-- Then PaperWM: TBD; left-move verb inventory unresolved.
-  `S(S-pap-move)`.
+- Then PaperWM: registered `move-left` binds same-space `swap`; A is the first column, so the left step is out-of-range and returns with A staying. `S(S-pap-moveverbs)` + `S(S-pap-swap)`.
 - Then karousel/Lazy: no left column on the single-window path, so the
   move returns without acting and A stays. `S(S-kar-move)`.
 - Then paneru: TBD; west peer resolution untraced. `S(S-pan-move)`.
@@ -239,8 +240,11 @@ ancestry claims. Ours cells cite the Engine move rules at `9241c94`
 - Then awesome/tile: tile projection (master A, stack B/C) swaps A with B
   geometrically, focus retained. `S(S-awe-swap)` + `S(S-awe-tile)`.
 - Then niri: C1 moves after C2, A stays focused. `S(S-nir-move)`.
-- Then PaperWM: TBD; native directional-right move inventory unresolved.
-  `move_to` scrolls the viewport, not membership. `S(S-pap-move)`.
+- Then PaperWM: registered move-right binds same-space `swap`
+  (`move_to` is viewport-only, not membership); A swaps columns with C2
+  (order [B,C],[A]) with the selection staying on A, followed by layout
+  and forced viewport - no join into C2 (that is the separate slurp verb).
+  `S(S-pap-moveverbs)` + `S(S-pap-swap)` + `S(S-pap-move)`.
 - Then karousel/Lazy: A joins C2 at the bottom via the single-window path.
   `S(S-kar-move)`.
 - Then paneru: TBD; east peer resolution untraced. `S(S-pan-move)`.
@@ -333,7 +337,7 @@ ancestry claims. Ours cells cite the Engine move rules at `9241c94`
   `S(S-awe-swap)`.
 - Then niri: A is first in C1, so `move_up` returns false and A stays.
   `S(S-nir-move)`.
-- Then PaperWM: TBD; up-move verb inventory unresolved. `S(S-pap-move)`.
+- Then PaperWM: verb-distinguished. Same-space `move-up` is `swap` edge no-op (A is the first row of C1, out-of-range returns) so A stays in L; explicit `move-monitor-above` carries via `switchMonitor` neighbor index (-1 stays) to U with focus. `S(S-pap-moveverbs)` + `S(S-pap-mon)`.
 - Then karousel/Lazy: fixture-inapplicable for cross-output (single-screen
   profile). `S(S-kar-base)`.
 - Then paneru: TBD; up-crossing peer resolution untraced. `S(S-pan-move)`.
@@ -382,7 +386,7 @@ expansion record; outcomes are qualified legs, not second scenarios.
   projection, so the miss is a no-op. `S(S-awe-swap)` + `S(S-awe-tile)`.
 - Then niri: no-counterpart (move/consume verbs in `S(S-nir-move)` plus
   the focus-verb inventory in `S(S-nir-actions)` list no swap verb).
-- Then PaperWM: TBD; swap-verb inventory unresolved. `S(S-pap-move)`.
+- Then PaperWM: the registered `move-down` IS the swap verb (same-space `swap`); sole-row B has no down neighbor, so the swap is an edge no-op and B stays. `S(S-pap-moveverbs)` + `S(S-pap-swap)`.
 - Then karousel/Lazy: no-counterpart (window/column moves in
   `S(S-kar-move)` plus the focus verbs in `S(S-kar-focus)` list no swap
   verb).
@@ -418,7 +422,7 @@ expansion record; outcomes are qualified legs, not second scenarios.
   projection, so the miss is a no-op. `S(S-awe-swap)` + `S(S-awe-tile)`.
 - Then niri: no-counterpart (same verb inventories as the R-MOV-01 swap
   leg list no swap verb). `S(S-nir-move)` + `S(S-nir-actions)`.
-- Then PaperWM: TBD; swap-verb inventory unresolved. `S(S-pap-move)`.
+- Then PaperWM: the registered `move-right` IS the swap verb (same-space `swap`); columns C2/C3 exchange (order A,C,B,D) with the selection staying on B, followed by layout and forced viewport. `S(S-pap-moveverbs)` + `S(S-pap-swap)`.
 - Then karousel/Lazy: no-counterpart (same verb inventories list no swap
   verb). `S(S-kar-move)` + `S(S-kar-focus)`.
 - Then paneru: TBD; east peer resolution untraced. `S(S-pan-move)`.

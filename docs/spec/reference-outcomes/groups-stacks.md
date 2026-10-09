@@ -114,8 +114,8 @@ evidence.
   appended last (directional RIGHT consumes `space[1][0]`, emptied column
   removed); then `barf` expels B to a new column at the open position.
   Shipped RIGHT `slurp(B)` from the right column is a no-op (no right
-  neighbor) and never substitutes. Selection after each step TBD.
-  `S(S-pap-slurp)`; selection queued.
+  neighbor) and never substitutes. Selection retained on both steps
+  (neither path writes `selectedWindow`). `S(S-pap-slurp)`.
 - Then karousel/Lazy: joins via `windowMoveLeft` (single-window C2 into
   existing C1 appended last with B staying focused via `onWindowAdded`
   focus-taker update); then leaves via `windowMoveRight` (shared-column
@@ -167,8 +167,11 @@ evidence.
 - Then niri: TBD (tabbed-column member removal plus active-index/focus
   fixup untraced; column dissolve vs retain on this fixture unresolved).
   `S(S-nir-consume)`; queued.
-- Then PaperWM: TBD (column member removal plus selection fixup untraced).
-  `S(S-pap-slurp)`; queued.
+- Then PaperWM: the column is retained as `[A,C]` (member splice;
+  no tab bar to update, no tabbed display); extension selection
+  falls to the stack-topmost surviving neighbour (not MRU
+  guaranteed), while exact native A/C focus is TBD (host shell
+  focus fallback). `S(S-pap-close)`; queued.
 - Then karousel/Lazy: TBD (shared-column member removal plus focus-taker
   fixup untraced; stacked vs visible heights per explicit variant).
   `S(S-kar-grpmove)`; queued.

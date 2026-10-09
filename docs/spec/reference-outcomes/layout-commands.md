@@ -362,8 +362,9 @@ Reference WM pins and outcomes are unchanged.
 - Then PaperWM: no-counterpart for the toggle (no orientation verb in
   the registered inventory); ordinary admission inserts B RIGHT of A
   (selected+1 under the shipped RIGHT default) with the newcomer
-  activating on the active space (settled frames TBD per the cited leg).
-  `S(S-pap-acts)` + `S(S-pap-ins)`.
+  activating on the active space; A keeps its width per the column layout
+  and the viewport keeps B visible.
+  `S(S-pap-acts)` + `S(S-pap-ins)` + `S(S-pap-layout)` + `S(S-pap-view)`.
 - Then karousel/Lazy: no-counterpart for the toggle (no orientation verb
   in the Actions inventory); ordinary admission opens a new column after
   the last-focused column with end-insert (KWin-side focus, viewport and

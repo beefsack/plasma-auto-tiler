@@ -98,10 +98,16 @@ Column legs below use separately stated column Givens with the same identities a
 - Then niri: no-counterpart (no sticky verb in the full `Action`
   inventory and no sticky state in the layout model).
   `S(S-nir-acts)`.
-- Then PaperWM: scratch makes B stuck (visible on all spaces) plus above
-  plus floating; unmake restores unstick/un-above with the scratch frame
-  kept. Re-tile placement after off TBD. `S(S-pap-float)`; placement
-  queued.
+- Then PaperWM: scratch makes B stuck plus above plus floating
+  (`makeScratch` float flag plus above plus `stick`, which synchronously
+  removes B from the space tiling); unmake saves the scratch frame and
+  restores unstick/un-above with float cleared. The unstick re-enters
+  through the existing-window path and re-tiles B as a new column at
+  selected+1 under the shipped RIGHT default; existing columns keep
+  widths and activation follows the existing-window branch. Whether the
+  stuck window stays visible across the switch rides host `stick()`
+  semantics, untraced at pin: visibility TBD (host). `S(S-pap-float)` +
+  `S(S-pap-ins)` + `S(S-pap-layout)`; visibility queued (host).
 - Then karousel/Lazy: TBD (no sticky verb in the script actions; host
   KWin `onAllDesktops` is the applicable journey, untraced).
   `S(S-kar-acts)`; host journey queued.
@@ -220,8 +226,15 @@ Column legs below use separately stated column Givens with the same identities a
 - Then awesome/tile: Sticky roundtrips via _NET_WM_STATE (set echoes the atom to the window; startup re-manage re-reads it; sticky reads on every selected tag); only floating otherwise registered persistent; visibility journey/remembered origin/WS2-select focus TBD (live-only); `S(S-awe-sticky)` + `S(S-awe-ctl)` + `S(S-awe-float)`
 - Then niri: no-counterpart (no sticky verb, so no sticky restart
   subject). `S(S-nir-acts)`.
-- Then PaperWM: TBD (scratch-stuck B exists, but disable/enable state
-  carry for the stuck flag is untraced). `S(S-pap-float)`; queued.
+- Then PaperWM: `SaveState` stages monitors/spaces/targetX only with no
+  float or stuck member, so the stuck flag itself is not carried; on
+  re-adoption above-or-minimized windows re-float via `makeScratch` while
+  everything else re-tiles. Scratch-stuck B (above via `make_above`)
+  re-scratches through that branch. Whether B is visible on the selected
+  WS2 and which origin it retains ride host above/stick persistence
+  across disable/enable, untraced at pin: visibility/origin TBD (host).
+  `S(S-pap-float)` + `S(S-pap-rst)` + `S(S-pap-readopt)`; visibility
+  queued (host).
 - Then karousel/Lazy: TBD (host sticky journey plus restart carry both
   untraced). `S(S-kar-acts)`; queued.
 - Then paneru: TBD (host sticky journey plus restart carry both
@@ -439,8 +452,15 @@ Column legs below use separately stated column Givens with the same identities a
 - Then niri: F.x 1000->1050, stays floating. Active-float
   `move_right` steps the float position by 50px; no snap state.
   `S(S-nir-ptr)` + `S(S-nir-move)`.
-- Then PaperWM: TBD (`swap` exchanges tiled model positions; the float
-  position leg is untraced). `S(S-pap-swap)`; queued.
+- Then PaperWM: F stays floating at its frame. The move-right verb binds
+  same-space `swap` with no window argument, so it exchanges the
+  remembered tiled selection's model positions instead of F (float focus
+  leaves `selectedWindow` unchanged); selection unchanged with relayout
+  plus viewport ensure. The swap path exchanges positions plus relayout
+  only, with no snap member in the traced verb path (move verbs bind
+  `swap` only). The exact tiled pair follows the live remembered
+  selection. `S(S-pap-swap)` + `S(S-pap-float)` +
+  `S(S-pap-moveverbs)`.
 - Then karousel/Lazy: F retained floating. Semantic moves dispatch
   tiled-only (`doIfTiledFocused`); no snap state exists.
   `S(S-kar-move)` + `S(S-kar-focus)`.
@@ -475,8 +495,12 @@ Column legs below use separately stated column Givens with the same identities a
 - Then awesome/tile: Both legs geometric swap-or-miss with no snap state in source; settled frames and second-leg partner TBD; `S(S-awe-swap)`
 - Then niri: (1050,500) then (1050,450), stays floating. Both legs step
   50px with no snap state. `S(S-nir-ptr)`.
-- Then PaperWM: TBD (same model-position inventory as R-FLT-10; snap
-  state untraced). `S(S-pap-swap)`; queued.
+- Then PaperWM: both legs run the same selection-based `swap` as R-FLT-10
+  (the up leg swaps the remembered selection's row), so F stays floating
+  at its frame through both steps; the swap path exchanges positions plus
+  relayout only, with no snap member in the traced verb path. Exact pairs
+  follow the live remembered selection. `S(S-pap-swap)` +
+  `S(S-pap-float)` + `S(S-pap-moveverbs)`.
 - Then karousel/Lazy: both legs no-op, stays floating. Tiled-only move
   verbs never engage; no snap state exists. `S(S-kar-move)`.
 - Then paneru: TBD (same swap inventory as R-FLT-10; snap state
@@ -557,8 +581,10 @@ applicable unknowns are queued, evidenced absent verbs are not.
 - Then PaperWM: ordinary non-sticky app floats have no counterpart;
   scratch is a separate sticky float variant. Dialog-float variant:
   admission marks above, but raising F relative to G and explicit lower
-  are TBD; tiled selection's `raise()` is not a dialog raise path.
-  `S(S-pap-float)`; dialog stacking queued.
+  have no verb in the registered action inventory (tiled selection's
+  `raise()` is not a dialog raise path); the F/G stacking journey rides
+  host Meta stacking, untraced at pin: stacking TBD (host).
+  `S(S-pap-float)` + `S(S-pap-acts)`; stacking queued (host).
 - Then karousel/Lazy: TBD (script inventory has no raise/lower verb;
   host KWin activation stacking journey untraced). `S(S-kar-acts)` +
   `S(S-kar-float)`; queued.
@@ -641,10 +667,14 @@ applicable unknowns are queued, evidenced absent verbs are not.
   space); frame retained (float position kept in the space; switch never
   writes it); return focus TBD (per-space active restoration untraced).
   `S(S-nir-ws)`; focus queued.
-- Then PaperWM: F hidden while away (per-space `_floating` list; spaces
-  show/hide with selection); frame retained (float frames are never
-  placed by the layout); return focus TBD (per-space selection restore
-  vs `activateWithFocus` policy untraced). `S(S-pap-float)`; focus queued.
+- Then PaperWM: F stays on WS1 (the switch moves the tiled `getWindows()`
+  only; floats are never moved or re-parented) with its frame retained
+  (floats are never placed by the column layout). Hidden/shown across the
+  switch rides host workspace membership, untraced at pin: visibility TBD
+  (host). On return the switch accept falls back to the retained tiled
+  `selectedWindow` and activates it; focus returns to the tile, not F.
+  Float z-order is unwritten by the switch: TBD (host). `S(S-pap-float)`
+  + `S(S-pap-wssel)` + `S(S-pap-layout)`; visibility queued (host).
 - Then karousel/Lazy: F hidden while away (KWin desktops own windows;
   karousel manages tiled columns only and never moves floats across
   desktops); frame retained (no float-frame write path on desktop

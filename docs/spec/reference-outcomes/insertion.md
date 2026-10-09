@@ -33,7 +33,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then qtile/Columns: Columns admits C into the focused column at the current position (insert_position=0 inserts at current, pushing B after) with newcomer focus; under the two-column default (num_columns=2, align right, split) C stacks with B vertically: projected `H[A,V[C*,B]]`; exact pixel frames TBD; `S(S-qti-default)` + `S(S-qti-add)`
 - Then awesome/tile: Tile appends C last in tiled-client order (manage push) with newcomer focus (global rule); order [A,B,C] puts A master with B/C in the stack column (nmaster=1, mwfact 0.5), no geometry-driven axis; exact pixel frames TBD; `S(S-awe-tile)` + `S(S-awe-manage)`
 - Then niri: C opens as a new column right after the active column; existing widths TBD (stable vs rescaled); focus and viewport TBD. `S(S-nir-ins)`.
-- Then PaperWM: C inserts at selected+1 under the shipped RIGHT default, activated on show; existing widths TBD (stable vs rescaled); viewport TBD. `S(S-pap-ins)`.
+- Then PaperWM: C inserts as a new column at selected+1 (after B) under the shipped RIGHT default, activated on show; existing columns keep widths (per-column targetWidth, no rescale), C takes its own frame/preferred width; viewport keeps C visible via minimal ensuredX scroll under DEFAULT. `S(S-pap-ins)` + `S(S-pap-layout)` + `S(S-pap-view)`.
 - Then karousel/Lazy: C opens a new column after the last-focused column, appended at the bottom; existing widths TBD (stable vs rescaled); focus and viewport TBD. `S(S-kar-ins)`.
 - Then paneru: C lands per the `window_managed` insertion policy (rule index, overlap column, or end); existing widths TBD (stable vs rescaled); focus and viewport TBD. `S(S-pan-ins)`.
 - Then Ours KDE: Long-edge split at focused leaf; `D(D-dec-x)` (user statement); order TBD
@@ -70,7 +70,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then qtile/Columns: No tab-stack join in this profile (split/unsplit columns only): C ordinary-admits at the focused position with newcomer focus, not as a tab; exact order/frames TBD; `S(S-qti-add)`
 - Then awesome/tile: No tab-stack join in this profile: C ordinary-admits appending last in tiled order with newcomer focus, not as a tab; exact frames TBD; `S(S-awe-tile)` + `S(S-awe-manage)`
 - Then niri: C does not join as a tab - ordinary open always wraps a new column. `S(S-nir-ins)`; active-tab and focus TBD.
-- Then PaperWM: TBD (no tabbed-display column evidenced at pin; applicability unresolved).
+- Then PaperWM: fixture-inapplicable - no tabbed-display column in this profile (columns always show all windows vertically, no tabbed/stacked display verb); ordinary open creates a new column per the insertion path. `S(S-pap-acts)` + `S(S-pap-ins)`.
 - Then karousel/Lazy: C does not join as a tab - ordinary open creates a new column (stacked display exists behind `toggleStacked`, off by default). `S(S-kar-ins)`; active-tab and focus TBD.
 - Then paneru: fixture-inapplicable - `Stack` is ordered visible stacking while `Tabs` holds app-native tabs, so the S fixture has no counterpart here; native-tab nesting stays under R-COL-10. `S(S-pan-model)`.
 - Then Ours KDE: TBD (stacks unselected)
@@ -111,7 +111,7 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
 - Then qtile/Columns: A tiles, focused. `S(S-qti-add)` under `S(S-qti-default)`.
 - Then awesome/tile: A tiles full tag, focused. `S(S-awe-tile)` + `S(S-awe-manage)`.
 - Then niri: A opens a new column at index 0 at the default column width. `S(S-nir-base)` + `S(S-nir-ins)`; activation/focus TBD.
-- Then PaperWM: A inserts as a new column at selected+1 under the shipped RIGHT default, activated on show. `S(S-pap-base)` + `S(S-pap-ins)`; settled width TBD.
+- Then PaperWM: A inserts as a new column at index 0 (empty space, no selection, RIGHT default), activated on show; width from its own frame/preferredWidth per the column layout, single column centered one-shot. `S(S-pap-base)` + `S(S-pap-ins)` + `S(S-pap-layout)`.
 - Then karousel/Lazy: A opens a new column at the start of the empty grid, width from the client preferred width. `S(S-kar-base)` + `S(S-kar-ins)`; KWin-side focus TBD.
 - Then paneru: A lands in the active strip per the `insertion()` index path, then reshuffles. `S(S-pan-base)` + `S(S-pan-ins)`; width and focus TBD.
 - Then Ours KDE: A is the single new leaf with full-work-area geometry applied via the admit geometry plan; newcomer is the desired focus leaf. `S(S-ours-ins)` + `S(S-ours-admit)`; native activation TBD.
@@ -144,7 +144,7 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
 - Then qtile/Columns: C joins the focused column at the current position pushing B after, focused; legs 2-3 TBD. `S(S-qti-default)` + `S(S-qti-add)`.
 - Then awesome/tile: C appended last (`[A,B,C]`, A master, B/C stacked), focused; legs 2-3 TBD. `S(S-awe-tile)` + `S(S-awe-manage)`.
 - Then niri: TBD (all three legs; links R-COL-01 rather than duplicating its chain).
-- Then PaperWM: TBD (all three legs; links R-COL-01).
+- Then PaperWM: each leg inserts at selected+1 under the shipped RIGHT default with the newcomer activated on show (selection follows the newcomer, so D follows C and E follows D); existing columns keep widths per the column layout and each newcomer is kept visible; the anchor is the selected window, so the fixed pointer is irrelevant. `S(S-pap-ins)` + `S(S-pap-layout)` + `S(S-pap-view)`.
 - Then karousel/Lazy: TBD (all three legs; links R-COL-01).
 - Then paneru: TBD (all three legs; links R-COL-01).
 - Then Ours KDE: leg-1 topology per `S(S-ours-ins)` (focused-leaf wrap old/new, admission-axis split, equal shares), newcomer desired focus; legs 2-3 TBD.
@@ -201,7 +201,7 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
 - Then qtile/Columns: TBD (both legs; `B:max` preparable as a maximized float state per `S(S-qti-fs)`).
 - Then awesome/tile: TBD (both legs; `B:max` preparable as a boolean property per `S(S-awe-fs)`).
 - Then niri: TBD (both legs; pending-maximized tiles open in the scrolling layout per `S(S-nir-ins)`).
-- Then PaperWM: TBD (both legs; maximized/born-fullscreen admission per `S(S-pap-ins)`, open-over-existing-max TBD).
+- Then PaperWM: `B:max` leg - at shipped defaults native maximize converts to width-maximize, so B stays tiled and wide; C inserts at selected+1 and activates on show with B retaining its width. Fresh `B:full` leg - C inserts tiled at selected+1 and is selected/activated while B's fullscreen state is retained (no exit path in admission). `S(S-pap-ins)` + `S(S-pap-widthmax)` + `S(S-pap-layout)` + `S(S-pap-fsframe)`.
 - Then karousel/Lazy: TBD (both legs; maximized newcomers skip arrange per `S(S-kar-ins)`).
 - Then paneru: TBD (both legs; `Fullscren` is a column kind per `S(S-pan-model)`, native preparation requires confirmation).
 - Then Ours KDE: TBD (both legs; overlay-unfloat `S(S-ours-overlay-unfloat)` covers toggle refusal, not admission over an overlay).
@@ -263,7 +263,7 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
 - Then qtile/Columns: TBD (verb inventory TBD; `toggle_split` is a different concept per `S(S-qti-split)`).
 - Then awesome/tile: TBD (verb inventory TBD in the shipped layout sources).
 - Then niri: TBD (insertion-index model per `S(S-nir-ins)`, not a direction preselect).
-- Then PaperWM: TBD (open-position index model per `S(S-pap-ins)`, not a direction preselect).
+- Then PaperWM: no-counterpart for the split-direction preselect (open-position index model, no direction-preselect verb in the registered inventory); C then D insert at selected+1 each under the shipped RIGHT default with ordinary activation. `S(S-pap-ins)` + `S(S-pap-acts)`.
 - Then karousel/Lazy: TBD (column model only, no preselect evidenced).
 - Then paneru: TBD (insertion-index model per `S(S-pan-ins)`, not a direction preselect).
 - Then Ours KDE: TBD (no preselection concept evidenced at `9241c94`; not claimed absent).

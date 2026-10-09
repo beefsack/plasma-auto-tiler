@@ -335,9 +335,9 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
   client migration untraced). TBD; queued.
 - Then niri: evacuation and return TBD (monitor-removal workspace
   ownership untraced). TBD; queued.
-- Then PaperWM: evacuation and return TBD (window hotplug journey
-  untraced; the GNOME workspace add/remove mirror alone establishes
-  no window outcome). TBD; queued.
+- Then PaperWM: evacuation and return TBD (host GNOME Shell/Mutter output
+  removal owns window/workspace migration; `workspacesChanged` only mirrors
+  add/remove and establishes no window outcome). TBD; queued (host).
 - Then karousel/Lazy: fixture-inapplicable (single-screen profile;
   no hotplug counterpart). `S(S-kar-single)`.
 - Then paneru: TBD (macOS display disconnect is host-owned;
@@ -448,11 +448,13 @@ keys remain historical; delivery evidence is linked separately in KDE cells.
   (viewport unrecorded). `S(S-nir-mon)` + `S(S-nir-ins)` +
   `S(S-nir-close)`.
 - Then PaperWM: carries via `switchMonitor` with window carry (removes
-  from the source space, `change_workspace` to R's space,
+  from the source space, `change_workspace` to R's space with
+  `add_handler` re-inserting the existing window at the open position,
   `activateWithFocus`; always follows, no stay-with-window variant;
   local B never gates, not the whole-space `moveToMonitor` fallback).
-  Exact column position TBD (native order untraced). `S(S-pap-mon)` +
-  `S(S-pap-moveverbs)`.
+  The open position is selected+1 under the shipped RIGHT default, so
+  remembered Y is ignored (no memory store). `S(S-pap-mon)` +
+  `S(S-pap-moveverbs)` + `S(S-pap-ins)`.
 - Then karousel/Lazy: fixture-inapplicable (single-screen profile; no
   output verb, never a transfer vote). `S(S-kar-single)`.
 - Then paneru: carries via `window nextdisplay` / `nextdisplaysend`

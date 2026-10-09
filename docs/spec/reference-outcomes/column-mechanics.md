@@ -48,9 +48,7 @@ off, append admission (`S(S-pan-base)`).
 - Then niri: new column at active+1, activated when told; pending
   maximized/fullscreen tiles stay in the scrolling layout. Settled
   widths, newcomer focus and viewport stay TBD. `S(S-nir-ins)`; queued.
-- Then PaperWM: new window at selected+1 under the shipped RIGHT
-  default, activated on show; inactive-space inserts never steal focus.
-  Settled widths and viewport stay TBD. `S(S-pap-ins)`; queued.
+- Then PaperWM: D opens as a new column at selected+1 (between B and C) under the shipped RIGHT default, activated on show with inactive-space no-steal; existing columns keep widths (no rescale) and the viewport keeps D visible via minimal ensuredX scroll under DEFAULT. `S(S-pap-ins)` + `S(S-pap-layout)` + `S(S-pap-view)`.
 - Then karousel/Lazy: new column after the last-focused column (else
   the last), window appended at the bottom. KWin-side focus, settled
   widths and viewport stay TBD. `S(S-kar-ins)`; queued.
@@ -93,8 +91,9 @@ off, append admission (`S(S-pan-base)`).
   with `SwitchPresetColumnWidth(Back)`, wrapping at the ends;
   columns independent. `S(S-nir-resize)` + `S(S-nir-base)`.
 - Then PaperWM: 10% grid step plus width-cycle direction with
-  registered forward/backward verbs, wrapping on exhaust.
-  Neighbor reflow stays TBD. `S(S-pap-resize)`; queued.
+  registered forward/backward verbs, wrapping on exhaust;
+  neighbor columns keep their widths (per-column targetWidth, no rescale).
+  `S(S-pap-resize)` + `S(S-pap-layout)`.
 - Then karousel/Lazy: forward steps to the next strictly greater
   preset and wraps to the first on exhaust; reverse mirrors. Shipped
   presets 50%/100%. `S(S-kar-cycle)`.
@@ -137,8 +136,11 @@ off, append admission (`S(S-pan-base)`).
   case) without activating inactive B; expel opens a new adjacent
   column. `S(S-nir-consume)`.
 - Then PaperWM: `slurp` consumes the directional neighbor per
-  `open-window-position`, emptied columns removed; `barf` expels to
-  a new column. Selection stays TBD. `S(S-pap-slurp)`; queued.
+  `open-window-position` (RIGHT: B joins C1 at BOTTOM with an equal-height
+  pass, emptied C2 removed); `barf` expels to a new column at the
+  directional open position. Selection stays on the focused window on
+  both steps (neither path writes selectedWindow; slurp skips ensure,
+  barf re-ensures the same selection). `S(S-pap-slurp)` + `S(S-pap-view)`.
 - Then karousel/Lazy: sole-window B joins the left column at the
   bottom; shared-column B expels to a new adjacent column, with
   focus-taker fixup. `S(S-kar-grpmove)`.
@@ -309,9 +311,12 @@ off, append admission (`S(S-pan-base)`).
 - Then niri: `MoveColumnToWorkspace` carries the whole column and
   keeps Maximized while dropping fullscreen. Target column position
   stays TBD. `S(S-nir-wscarry)`; queued.
-- Then PaperWM: `takeWindow` carries a window across spaces; a
-  whole-column verb and overlay-state carry stay TBD. `S(S-pap-take)`;
-  queued.
+- Then PaperWM: single-window `takeWindow` only (no whole-column verb
+  in the registered inventory): B transfers and reinserts at the target
+  open position (selected+1 RIGHT, after the single occupied column)
+  with shipped completion follow; C stays. No overlay in this fixture;
+  overlay carry follows the ordinary existing-window admission leg.
+  `S(S-pap-take)` + `S(S-pap-acts)` + `S(S-pap-ins)`.
 - Then karousel/Lazy: `columnMoveToDesktop` moves the whole column
   object to the target grid appended after its last column.
   `S(S-kar-ws)`.
@@ -351,7 +356,9 @@ off, append admission (`S(S-pan-base)`).
   queued.
 - Then PaperWM: swipe moves the view but reselects the swipe target,
   and background scroll only switches focus during grab/navigation.
-  Keyboard scroll-step inventory stays TBD. `S(S-pap-view)`; queued.
+  Keyboard drift-left/right move the view but also reselect - no
+  focus-preserving keyboard scroll-step verb in the registered inventory.
+  `S(S-pap-view)` + `S(S-pap-scroll)`.
 - Then karousel/Lazy: `gridScrollLeft/Right` shift the viewport by the
   200px manual step with no focus call; clamped unless forced.
   `S(S-kar-scroll)`.

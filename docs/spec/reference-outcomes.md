@@ -1766,8 +1766,8 @@ Legend:
   windows activate on actor show) and :4241-4247 (inserts landing on an
   inactive space only ensure the viewport, never steal focus)
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
-  (position, routing, newcomer-state, and focus legs; settled frames and
-  overlay remainder stay TBD)
+  (position, routing, newcomer-state, and focus legs; settled widths
+  per `S(S-pap-layout)`, viewport per `S(S-pap-view)`)
 - `S-pap-fltanchor` PaperWM:tiling.js:879-881 (`getWindows` reduces the column
   strips only) + :1032-1044 (`isFloating`/`addFloating` hold floats in a
   separate `_floating` list) + :4676-4679 (`focus_handler` returns before any
@@ -1909,7 +1909,8 @@ Legend:
   left/right column step, `sortWindows` topmost pick, up/down rows,
   `ensureViewport`) and :5562-5570 (`sortWindows` stacking order)
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
-  (directional switch incl MRU-topmost member pick; cycle verbs TBD)
+  (directional switch incl stack-topmost member pick; linear cycle verbs
+  are `S(S-pap-cycle)`)
 - `S-pap-focusmode` PaperWM:tiling.js:36-37 (`FocusModes` DEFAULT 0,
   CENTER 1, EDGE 2) and :266 (`focusMode` DEFAULT) and :4577-4594
   (`getDefaultFocusMode` falls back to DEFAULT)
@@ -1926,6 +1927,19 @@ Legend:
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
   (pointer DnD zone model with minimaps hidden; resize grabs are
   native-Mutter journeys)
+- `S-pap-grabzone` PaperWM:grab.js:213-338 (`selectDndZone` yields
+  `[j]` column or `[j,i]` row targets only, never a join; a null
+  hover clears nothing, so the last acquired zone stands) and
+  :360-435 (`motion` tracks the clone to the pointer in DnD, clone-only
+  scroll-phase otherwise) and :590-640 (`tile-preview` zone actors,
+  null early-returns) and :115-127 + :184 (button-release/touch-end/
+  motion/monitor end signals only, no extension key path) and
+  :658-665 (`ResizeGrab.end` no-op marker) +
+  tiling.js:2218-2219 (display grab-op begin/end signals) and
+  :3692-3693 (`resizeHandler` ignores the grabbed window mid-grab)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (DnD zone shapes, clone tracking, preview actors, and the release-only
+  signal inventory behind `S(S-pap-grab)`)
 - `S-kar-focus` karousel:src/lib/keyBindings/Actions.ts:6-60
   (`focusLeft/Right/Up/Down/Next/Previous/Start/End`, tiled-only
   dispatch via `doIfTiledFocused` in definition.ts:10-53)
@@ -2020,7 +2034,8 @@ Legend:
   not membership reorder) and :5228-5260 (`slurp` join) and :3490 (`barf`
   expel path) and :1129-1200 (`switch` directional focus, not a move)
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
-  (column/row model and viewport/join paths; native directional inventory TBD)
+  (column/row model and viewport/join paths; registered directional verbs
+  bind same-space swap per `S(S-pap-moveverbs)`)
 - `S-kar-move` karousel:src/lib/keyBindings/Actions.ts:86-160
   (`windowMoveLeft/Right` shared-vs-single column paths,
   `windowMoveUp/Down` in-column step, `windowMoveNext/Previous`)
@@ -2188,8 +2203,8 @@ Legend:
   per-window step) and :4929-4970 (per-window width cycling through
   presets)
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
-  (grid-snapped step; neighbor reflow TBD; no edge counterpart; no local
-  or space-wide equalize verb)
+  (grid-snapped step; neighbor columns keep widths per `S(S-pap-layout)`;
+  no edge counterpart; no local or space-wide equalize verb)
 - `S-kar-resize` karousel:src/lib/keyBindings/Actions.ts:160-175
   (height actions) and :203-247 (column width increase/decrease/cycle plus
   `columnsWidthEqualize` via `fillSpace`; no edge-targeted verb) +
@@ -2611,7 +2626,10 @@ Legend:
 - `S-pap-acts` PaperWM:keybindings.js:191-238 (switch/move-as-swap verbs) +
   :240-344 (scratch/slurp/barf/maximize-width/fullscreen/focus-mode/
   open-position; no orientation/rotate/mirror/master/layout-select/
-  workspace-float verb) @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  workspace-float verb) + prefs.js:18-69 (settings UI pages
+  general/workspaces/keybindings/winprops/advanced/about: binding editing
+  only, no first-run/preset/prompt, settings-race, Keep/staging/Force/
+  draft, or preimage writers) @8bf6dd264f60d6c0c402b63df7b424b888959a48
 - `S-pap-switcher` PaperWM:keybindings.js:93-99 (`live-alt-tab` /
   `live-alt-tab-backward` / scratch variants registration) +
   liveAltTab.js:43-61 (`_getWindowList`: `NORMAL_ALL` tab list minus
@@ -2648,6 +2666,16 @@ Legend:
   frame plus tiled width)
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
   (native fullscreen frame memory; entry itself is the Meta API flag)
+- `S-pap-appresize` PaperWM:tiling.js:3665-3675 (`addResizeHandler` wires
+  `size-changed` through a `RESIZE`-phase `later_add` into `resizeHandler`)
+  and :3686-3783 (`resizeHandler`: nulls `_targetWidth/_targetHeight`,
+  tiled windows queue a column relayout while non-tiled windows take
+  `nonTiledSizeHandler`; no minima/hint branch) and :616-624 (post-request
+  frame re-read: X11 sync converges, Wayland async may not, actuals feed
+  layout) @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (app-owned resize/hint reaction is tile-authoritative relayout recomputed
+  from preferredWidth/client frame; exact native settlement is client-timing
+  per `S(S-pap-layout)`)
 - `S-pap-swap` PaperWM:tiling.js:1063-1094 (`swap` exchanges model
   positions with the directional neighbor, then layouts with no
   unmaximize branch; selection unchanged)
@@ -2663,8 +2691,10 @@ Legend:
   (Super+Ctrl+Page_Down/Up move defaults) and :173-175 (Super+t take
   default)
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
-  (cross-space transfer verb; overlay-state carry untraced; shipped
-  completion follows; legacy inactive-space no-steal per `S(S-pap-ins)`
+  (single-window cross-space transfer verb; no whole-column verb;
+  extension overlay carry follows the existing-window admission leg;
+  native overlay survival stays TBD where stated;
+  shipped completion follows; legacy inactive-space no-steal per `S(S-pap-ins)`
   is a different journey, not the shipped-send outcome)
 - `S-kar-acts` karousel:src/lib/keyBindings/Actions.ts:6-60 (focus verbs) +
   :86-175 (window/column move verbs) + :176-260 (`windowToggleFloating`
@@ -2991,12 +3021,20 @@ Legend:
   add/remove) and :462-487 (`activate`/`activateWithFocus` call native
   activate with or without a focus target) and :900-912
   (`selectedWindow` retention) and :2576-2620 (`moveToMonitor` whole-
-  space choreography with swap fallback) and :3281-3300 (MRU ordering)
-  and :5361-5366 (`previous-workspace` / move-previous exports) +
+  space choreography with swap fallback) and :3281-3308 (`mru()`
+  live-computed: active plus `NORMAL_ALL` tab-list plus index order;
+  `stack` fronted on every workspace switch) and :2427-2438
+  (`setMonitors` monitor-map write plus `_updateMonitor`) and :1986-2012
+  (`Space.setMonitor` monitor reassignment with geometry) and :2042-2043
+  (layout plus `monitor-changed`, no column rewrite) and :2761-2780
+  (`_getOrderedSpaces` workspace-index order) and :5361-5366
+  (`previous-workspace` / move-previous exports) +
   keybindings.js:153-154 (`previous-workspace` registrations) and
   :153-173 (workspace switch/move actions)
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
-  (workspace add/remove is GNOME-owned; loop variants are column-level)
+  (workspace add/remove is GNOME-owned; loop variants are column-level;
+  monitor reassignment re-keys no model so columns/selection carry; stack
+  walk inputs are live tab/switch order with host neighbor/index remainder)
 - `S-kar-ws` karousel:src/lib/keyBindings/Actions.ts:469-504
   (`columnMoveToNextDesktop`/`columnMoveToPreviousDesktop` stop at the
   desktop ends) + src/lib/layout/Column.ts:20-31 (`moveToGrid`
@@ -3170,7 +3208,8 @@ Legend:
   float plus above plus `stick()`) and :137-145 (`unmakeScratch`: float
   cleared with unstick) @8bf6dd264f60d6c0c402b63df7b424b888959a48
   (scratch-layer path with synchronous removal and indexed reinsertion;
-  widths/position/focus stay TBD)
+  settled widths per `S(S-pap-layout)`, exact slot follows the live
+  selection, focus stays TBD where stated)
 - `S-kar-minimize` karousel:src/lib/world/ClientManager.ts:84-96
   (`minimizeClient`: `Tiled` to `TiledMinimized`, Immediate focus pass when
   the client is the last-focused one) and :182
@@ -3264,7 +3303,8 @@ Legend:
   RIGHT `slurp(B)` from the right column has no right neighbor) and
   :5317-5359 (`barf` expels the named or bottom window to a new column
   at the directional open position) @8bf6dd264f60d6c0c402b63df7b424b888959a48
-  (membership legs; selection TBD where stated)
+  (membership legs; selection retained on both steps - neither path
+  writes selectedWindow)
 - `S-kar-grpmove` karousel:src/lib/keyBindings/Actions.ts:22-36
   (`focusUp`/`focusDown` member step via above/below window) and :90-120
   (`windowMoveLeft` single-window joins the left column, shared-column
@@ -3311,7 +3351,46 @@ Legend:
   registrations)
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
   (one-shot center plus minimal/mode scroll plus reselecting swipe;
-  keyboard scroll-step inventory remains TBD)
+  keyboard step inventory is `S(S-pap-scroll)`)
+- `S-pap-layout` PaperWM per-column width policy:
+  PaperWM:tiling.js:724-740 (selected column from the selected window's
+  tiledWidth/frame, other columns max of members, work-area clamp;
+  widths independent per column) and :576-599 (`layoutColumnSimple`
+  preferredWidth px/% override plus resizable targets) and :801-804
+  (single-column one-shot center)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (existing columns keep widths, newcomer from frame/preferredWidth;
+  no cross-column rescale)
+- `S-pap-cycle` PaperWM linear next/previous cycle verbs:
+  PaperWM:tiling.js:1096-1123 (`switchLinear` column/row walk with loop
+  wrap, `getWindow` plus `ensureViewport`) and :883-891 (`getWindow`
+  false out of range) + keybindings.js:191-194 (`switch-next`/
+  `switch-previous` registration; :204-207 loop variants) +
+  schemas/org.gnome.shell.extensions.paperwm.gschema.xml:212-219
+  (shipped Super+period/comma) and :247-254 (loop variants unbound)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (model-order cycle with stay-at-edge under the bound verbs; floats
+  excluded per `S(S-pap-float)`)
+- `S-pap-scroll` PaperWM keyboard scroll-step inventory:
+  PaperWM:tiling.js:1264-1290 (`drift` moves the view but reselects via
+  `findTargetWindow` plus `ensureViewport`) + keybindings.js:201-202
+  (`drift-left`/`drift-right` registration) +
+  schemas/org.gnome.shell.extensions.paperwm.gschema.xml:229-236
+  (shipped Super+bracketleft/bracketright)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (no focus-preserving keyboard scroll-step verb; drift reselects)
+- `S-pap-wssel` PaperWM workspace-switch float handling and return focus:
+  PaperWM:tiling.js:2723-2729 (`switchWorkspace` moves the tiled
+  `getWindows()` only; floats stay on their workspace) and :1036-1044
+  (`addFloating` holds floats in the per-space `_floating` list with the
+  clone parented to the space actor) + navigator.js:455-456 (switch accept
+  falls back to the retained tiled `selectedWindow`; floats never hold
+  selection) and :463-472 (selected window with focus runs
+  `focus_handler`, else `Main.activateWindow`)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (switch moves tiles only; accept activates the retained tile; float
+  frames retained per `S(S-pap-layout)`; workspace visibility and float
+  stacking stay host-side)
 - `S-kar-scroll` karousel viewport, focus-scroll and manual scroll:
   karousel:src/lib/layout/Desktop.ts:61-80 (`scrollIntoView` minimal)
   and :83-104 (`scrollCenterRange`/`scrollCenterVisible` Centered/Grouped
@@ -3583,7 +3662,7 @@ Legend:
   (`move-left` binds same-space `swap`, not cross-monitor transfer)
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
   (window carry vs whole-space move vs same-space swap distinguished;
-  exact column position stays TBD)
+  carry target position per `S(S-pap-ins)` open-position index)
 - `S-pap-moveverbs` PaperWM:keybindings.js:101-112
   (`move-monitor-*` bind `switchMonitor` with carry true) and :114-124
   (`switch-monitor-*` carry false) and :230-237 (`move-left/right/up/down`
@@ -3826,15 +3905,18 @@ Legend:
   (quit plus config reload only; restart recovery untraced)
 - `S-pap-rst` PaperWM:tiling.js:3829-3900 (`SaveState` update/prepare
   for controlled restarts: monitors, spaces, targetX plus stacking) and
-  :2045-2060 (`addAll` restores the prevSpace layout where present on
-  shell restarts) and :3979-4021 (`insertWindow` re-adds with
-  `existing: true`) + extension.js:57-80 (disable/enable lifecycle)
+  :2050-2131 (`addAll`: prevSpace columns restored verbatim where present
+  with dead pruned, else workspace windows appended in `xz_comparator`
+  order - x buckets plus stacking tiebreak; newcomers at `length`;
+  selection is the host `NORMAL` tab-list head among indexed windows) and
+  :3979-4021 (`insertWindow` re-adds with `existing: true`) +
+  extension.js:57-80 (disable/enable lifecycle)
   @8bf6dd264f60d6c0c402b63df7b424b888959a48
-  (controlled-restart staging plus existing adoption; exact
-  order/widths/focus untraced; enable path reuses one module-level
-  `SaveState` (:93-102), disable saves via `prepare` (:207-228), and
-  enable re-adds through `spaces.init` plus `addAll(prevSpace)`
-  (:154-199, :389-395))
+  (controlled-restart staging plus existing adoption with comparator order
+  and tab-list selection; settled widths per `S(S-pap-layout)`, viewport
+  per `S(S-pap-view)`; enable path reuses one module-level `SaveState`
+  (:93-102), disable saves via `prepare` (:207-228), and enable re-adds
+  through `spaces.init` plus `addAll(prevSpace)` (:154-199, :389-395))
 - `S-pap-readopt` PaperWM:tiling.js:3831-3835 (`SaveState` holds
   prevMonitors/prevSpaces/prevTargetX only, no float member) and
   :2115-2123 (`addAll`: above-or-minimized windows re-float via
