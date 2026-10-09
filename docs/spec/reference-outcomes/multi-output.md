@@ -79,7 +79,7 @@ paneru legs distinguish the native Space from virtual rows.
 - Then i3: No cross: perpendicular LEFT finds no HORIZ parent, so the workspace force-wraps to H and A inserts above its V parent (`H[A,V[B]]`, lone `V[B]` wrapper persists); focus stays A; `S(S-i3-move)` + `S(S-i3-outmove)`
 - Then xmonad/Tall+Navigation2D: Exact perpendicular `V` fixture has no active-Tall counterpart (no nested V; Tall is fixed master/stack side-by-side, `Mirror Tall` not assumed in this profile); analogous policy only: no local-wrap primitive exists (selection is purely geometric line/side/center, never tree-orientation), so a qualifying western X still swaps rather than wrapping locally; exact cross-vs-local TBD (output/monitor geometry unrecorded); `S(S-xmo-out)` + `S(S-xmo-nav)`
 - Then sway: No cross: perpendicular LEFT finds no HORIZ parent, so the workspace force-wraps to H and A inserts above its V parent (`H[A,V[B]]`, lone `V[B]` wrapper persists); focus stays A; `S(S-sway-move)` + `S(S-sway-outmove)`
-- Then qtile/Columns: No cross: shuffle_left on the single column carrying A above B prepends a new column holding A (local split into two columns), never crossing screens; exact frames and drop-side focus TBD; `S(S-qti-shuffle)`
+- Then qtile/Columns: No cross: `shuffle_left` on the single column carrying A above B prepends a new column holding A (local split into `COL[C0[A*],C1[B]]` at equal `initial_ratio` widths, focus staying A via `layout_all`), never crossing screens. `S(S-qti-shuffle)` + `S(S-qti-colwidth)`
 - Then awesome/tile: Exact `V[A,B]` fixture has no ordinary tile counterpart (tile with 2 clients is side-by-side master/stack, not top/bottom V); exact axes/frames TBD. Policy: no local-wrap primitive (move is geometric swap only); west local from A misses, so profile `swap.global_bydirection` crosses to L (A/X screen exchange, focus retained on A) rather than wrapping locally; `S(S-awe-swap)` + `S(S-awe-focus)` + `S(S-awe-tile)`
 - Then niri: stays (`move_left` is strip-local column reorder with
   edge-false; single-column fixture has no reorder and no monitor
@@ -351,8 +351,7 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
 - Then sway: workspaces evacuate to the highest-available else
   fallback output (empties destroyed); focus and reconnect affinity
   TBD. `S(S-sway-evac)`; queued.
-- Then qtile/Columns: evacuation and return TBD (screen-removal
-  group migration untraced). TBD; queued.
+- Then qtile/Columns: no evacuation merge in source: on host output removal the `screen_change` hook runs `reconfigure_screens`, which re-keys the remaining outputs and `hide`s groups whose screen left (contents retained, never merged into L; L keeps showing its group), with no focus retarget in the removal path (retained-`current_window` `layout_all` only). Reconnect re-runs the same assignment (`get_available_group` config-order scan, affinity-gated, no identity/affinity store), so the return mapping is fresh assignment, not stored return affinity. Exact evacuated focus and return identity stay TBD (F: R/L contents, focus history and group numbering unstated). `S(S-qti-screen)` + `S(S-qti-ws)`; focus/identity queued.
 - Then awesome/tile: evacuates R clients to L's first tag via the shipped-default screen-removed fallback (tags emit `request::screen` with no rc handler, then `removal-pending` plus `request::tag`, then `delete` into the first tag of a remaining screen; history cleared); exact evacuated focus stays TBD (F: R-side focused client unstated, and the fallback path writes no focus). Reconnect creates fresh per-screen tags with no identity/affinity store (fresh reassignment, not return affinity). `S(S-awe-ws)`; focus queued.
 - Then niri: evacuation and return TBD (monitor-removal workspace
   ownership untraced). TBD; queued.
@@ -451,7 +450,7 @@ keys remain historical; delivery evidence is linked separately in KDE cells.
   focused; `insert_position` 0 puts A above Y when Y is current).
   Shipped follow (`switch_group=True`) switches via `toscreen` with mover
   focus; stay keeps the source view with source refocus (B). Source C1
-  empties, so the column drops. Exact frames TBD. `S(S-qti-group)` +
+  empties, so the column drops. `S(S-qti-group)` +
   `S(S-qti-add)` + `S(S-qti-remove)`.
 - Then awesome/tile: carries via `move_to_tag` (screen plus tags set, no
   view switch; tile recalc on both screens over retained global order with no remembered-Y anchor; local B never gates);

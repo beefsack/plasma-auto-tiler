@@ -52,9 +52,10 @@ assertions are never evidence.
   master/stack, no nested V group; no counterpart). `S(S-xmo-layout)`.
 - Then sway: run 1 B, run 2 A. Sibling V group plus focus-inactive view
   inside it. `S(S-sway-focus)`.
-- Then qtile/Columns: selects the left column's current window via
-  `left()`; exact run-to-member mapping TBD (column-current tracking
-  across histories untraced). `S(S-qti-focus)`; mapping queued.
+- Then qtile/Columns: run 1 B, run 2 A. `left()` steps to C1 and focuses
+  its stored current; each history run's last C1 focus writes that stored
+  current via tiled `focus` (B after A,B,C; A after B,A,C), retained across
+  the trailing C focus. `S(S-qti-focus)` + `S(S-qti-current)`.
 - Then awesome/tile: fixture-inapplicable (shipped `nmaster=1` tile
   partitions one master plus stack columns, so two left candidates
   plus a right full-height C has no counterpart). `S(S-awe-tile)`.

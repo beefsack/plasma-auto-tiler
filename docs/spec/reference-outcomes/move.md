@@ -68,7 +68,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then i3: `H[A,V[B*,C]]`: in-parent leaf swap with C; focus stays B; `S(S-i3-move)`
 - Then xmonad/Tall+Navigation2D: `H[A,V[C,B]]` is Tall's projected geometry for StackSet `[A,C,B*]` (`nmaster=1`, `frac=1/2`: master A takes the left half via `splitHorizontallyBy`, stack C/B takes the right half split equally via `splitVertically`), not a structural tree; `windowSwap` U `False` from B selects C by tiled line/side geometry (C sits above sharing the x-range while A spans full height and fails the above test), and `swap` exchanges stack positions retaining mover focus (StackSet `[A,B*,C]`, projected `H[A,V[B*,C]]`). `S(S-xmo-layout)` + `S(S-xmo-nav)` + `S(S-xmo-out)`
 - Then sway: `H[A,V[B*,C]]`: in-parent leaf swap with C; focus stays B; `S(S-sway-move)`
-- Then qtile/Columns: Column-embedding analogue: B below C in one column, shuffle_up swaps B above C with focus retained; exact frames TBD; `S(S-qti-shuffle)`
+- Then qtile/Columns: Column-embedding analogue: B below C in one column, shuffle_up swaps B above C with focus retained (no focus write on the shuffle_up path); `S(S-qti-shuffle)`
 - Then awesome/tile: Tile-projected start for order [A,C,B] (master A, stack C/B); geometric swap up selects C by strict-origin halfplanes with nearest geometric rect (C above sharing the x-range at distance 0 beats full-height A), yielding order [A,B,C] projected `H[A,V[B*,C]]` with mover focus retained (swap exchanges list positions with no focus write). `S(S-awe-swap)` + `S(S-awe-tile)` + `S(S-awe-geodir)`
 - Then niri: B swaps with C and the active index follows B, so B stays
   focused. `S(S-nir-move)`.
@@ -242,8 +242,7 @@ ancestry claims. Ours cells cite the Engine move rules at `9241c94`
 - Then xmonad/Tall+Navigation2D: fixture-inapplicable (flat Tall has no
   nested V group). `S(S-xmo-layout)`.
 - Then sway: A enters the V group; exact index TBD. `S(S-sway-move)`.
-- Then qtile/Columns: under `COL[C1[A*],C2[B,C]]` A carries into C2;
-  exact row TBD. `S(S-qti-shuffle)`.
+- Then qtile/Columns: under `COL[C1[A*],C2[B,C]]` sole A carries into C2 via `shuffle_right` (join at C2's current, no whole-neighbor swap or beside-wrap; no focus write, so focus stays A); exact row inside C2 TBD (F: C2's stored current is unrecorded and `insert_position=0` inserts at current). `S(S-qti-shuffle)` + `S(S-qti-add)`.
 - Then awesome/tile: tile projection (master A, stack B/C) swaps A with B
   geometrically, focus retained. `S(S-awe-swap)` + `S(S-awe-tile)`.
 - Then niri: C1 moves after C2, A stays focused. `S(S-nir-move)`.

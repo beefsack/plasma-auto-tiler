@@ -106,9 +106,14 @@ transient (no dialog flag) is a different fixture and is not claimed.
   modal branches); xdg typed legs are fixture-inapplicable (xdg has
   no window-type counterpart; only parent/fixed-size float). Focus
   and switcher TBD. `S(S-sway-spc)`; queued.
-- Then qtile/Columns: both float (utility/splash/dialog in shipped
-  rules; unplaced floats center) with stealable focus. Switcher
-  presence TBD. `S(S-qti-spc)`; queued.
+- Then qtile/Columns: X11/XWayland U legs both float (utility/splash/dialog in shipped
+  rules; unplaced floats center) with stealable focus on X11 (notification-only
+  exclusion, so splash/utility take focus); Wayland-native xdg U legs are
+  fixture-inapplicable (xdg returns normal/dialog only, no splash/utility counterpart).
+  Switcher leg is a no-counterpart
+  (no native Alt+Tab/cross-group listing verb in the inventory; bar widgets
+  show the current group only, toscreen pulls with no listing).
+  `S(S-qti-spc)` + `S(S-qti-switcher)`.
 - Then awesome/tile: both implicitly float (non-normal type) admitted
    on the selected tags with rule placement; splash takes no focus
    (splash fails the global rule's focus filter, so no newcomer
@@ -776,7 +781,10 @@ All fresh variants below reset the client and WM state independently.
   Outcome TBD. `S(S-sway-wsmode)`.
 - Then qtile/Columns: no workspace-mode counterpart per R-FLT-04;
   F-arrival, changed-hints/predicate, override, and maximized legs share
-  the absence. Outcome TBD. `S(S-qti-float)`.
+  the absence (no workspace tiling toggle; static groups with one global
+  floating_layout, float is per-window, so enable/F-arrival,
+  changed-hints/predicate, override, and maximized legs never run with no
+  applicable journey). `S(S-qti-float)` + `S(S-qti-wsdef)`.
 - Then awesome/tile: per-tag layout switch (floating<->tile, no global
   flag): F arrival admitted under the floating layout keeps geometry
   (`c.floating` unset), then re-tile recalc floats fixed F (excluded from
@@ -873,12 +881,13 @@ All fresh variants below reset the client and WM state independently.
   (command inventory carries `reload` and `exit` with no restart verb;
   reload is in-place config only). Outcome TBD, including re-float/close
   and store-fault/ID/omission variants. `S(S-sway-reload)`.
-- Then qtile/Columns: groups/layouts/screens restore while widths reset
-  and windows re-admit (state carries no per-window float); fixed E
+- Then qtile/Columns: X11-only restart: groups/layouts/screens restore while widths reset
+  and windows re-admit in X server query-tree/stacking order (state carries no per-window float); fixed E
   re-admits floating via the fixed-size rule, so an explicit tile override
-  is lost (re-float moot) and closed E is absent. Store-fault/ID/omission
+  is lost (re-float moot) and closed E is absent. Wayland has no restart journey.
+  Store-fault/ID/omission
   variants have no counterpart (groups/layouts/screens/scratchpads only,
-  no tile store). Exact placement/focus TBD. `S(S-qti-state)` +
+  no tile store). `S(S-qti-state)` + `S(S-qti-rstadmit)` +
   `S(S-qti-reload)` + `S(S-qti-spc)`.
 - Then awesome/tile: client order and floating state restore with tags
   recreated (shares recalculate); fixed E recomputes to implicit float on

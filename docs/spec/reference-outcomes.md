@@ -633,6 +633,32 @@ Legend:
   sole-column sole window no-op; `shuffle_up`/`shuffle_down` reorder in-column only)
   + :173-191 (`swap` exchanges two clients with heights)
   @83c697a5621306c3586efca31867efcfa0482e2d
+- `S-qti-current` qtile:libqtile/group.py:186-208 (`focus` sets the group
+  current and routes tiled focus into each layout) + libqtile/layout/columns.py:216-225
+  (`focus` records the column current and the in-column current) + libqtile/layout/base.py:238-243
+  (`focus` marks the collection current)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (tiled focus-tracking leg; `left()` then reads the stored column current)
+- `S-qti-colwidth` qtile:libqtile/layout/columns.py:227-235 (`get_ratio_widths`
+  equal widths via `initial_ratio`) + :237-264 (`add_column`
+  equal widths via `initial_ratio`; `remove_column` width redistribution)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+- `S-qti-colmode` qtile:libqtile/layout/columns.py:34-57 (`toggle_split`
+  flag flip; `_Column.add_client`/`remove` equal height-share handling) and :290-336
+  (`configure` split shows all members by height shares, stacked shows the current
+  window only; every column shares the group width, no viewport)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+- `S-qti-maxfloat` qtile:libqtile/backend/x11/window.py:1917-1926
+  (`_reconfigure_floating` moves maximize/fullscreen to the floating layer via
+  `mark_floating`) + libqtile/backend/wayland/window.py:770-780 (same floating-layer move)
+  + libqtile/backend/x11/window.py:1290-1328 (`focus` restacks via `check_stacking`)
+  + libqtile/backend/x11/core.py:944-952 (`check_stacking` re-layers a previously
+  focused fullscreen window via `change_layer`) + libqtile/backend/x11/window.py:973-1007
+  (`change_layer` layer/stack reorder) + libqtile/backend/wayland/window.py:634-641
+  (`get_new_layer` maps maximized/fullscreen to `LAYER_MAX`/`LAYER_FULLSCREEN`)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (maximize leaves the tiled layout; fullscreen keeps its tiled slot per `S(S-qti-fsslot)`;
+  final X11 cover is focus-driven restack with no shared order, Wayland cover is per-state reparent layers)
 - `S-qti-remove` qtile:libqtile/layout/columns.py:278-288
   (`remove` drops emptied columns, returns current) + libqtile/layout/base.py:317-330
   (`_ClientList.remove` positional current adjust) + libqtile/group.py:246-302
@@ -718,6 +744,18 @@ Legend:
   scratchpads only) + libqtile/backend/base/core.py:23 (restart supported by
   default) and libqtile/backend/wayland/core.py:242 (Wayland opts out)
   @83c697a5621306c3586efca31867efcfa0482e2d
+- `S-qti-rstadmit` qtile:libqtile/backend/x11/core.py:251-289 (startup scan
+  in `query_tree` order with `manage`) and :476-486 (stacking order from
+  the X server) + libqtile/backend/x11/window.py:1681-1686 (`Window` init
+  calls `set_group`) and :1928-1943 (`set_group` reads `_NET_WM_DESKTOP`
+  with transient fallback, hides off-current) + libqtile/core/manager.py:796-819
+  (`manage` re-admits to the bound/current group) and :162-173,189-193
+  (state-file `apply` then layout show) + libqtile/core/state.py:42-59
+  (`apply` restores group/layout/screen assignment) +
+  libqtile/group.py:226-244 (per-window float-rule match with stealable
+  focus) + libqtile/layout/floating.py:14-30 (shipped type/fixed-size rules)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (X11-only restart admission; Wayland has no restart journey per `S(S-qti-state)`)
 - `S-qti-min` qtile:libqtile/backend/x11/window.py:553-564 (fixed-size is
   min==max only) and :805-815 (`place` `respect_hints` defaults false) and
   :860-889 (hint clamp only when requested) +
@@ -2525,10 +2563,14 @@ Legend:
   :169-204 (unplaced floats center; transients center on the parent at
   :180-184) + libqtile/group.py:226-244 (`add` floats on rule match,
   focuses when stealable) + libqtile/backend/x11/window.py:1232-1233
-  (`can_steal_focus`, notification excluded; no modal branch anywhere)
+  (`can_steal_focus`, notification excluded; no modal branch anywhere) +
+  libqtile/backend/wayland/window.py:627-628 (`get_wm_type` delegates to
+  the view) + libqtile/backend/wayland/qw/xdg-view.c:303-310 (xdg returns
+  normal/dialog only) and libqtile/backend/wayland/qw/xwayland-view.c:396-430
+  (XWayland preserves utility/splash/dialog types)
   @83c697a5621306c3586efca31867efcfa0482e2d
   (type/fixed-size float legs with parent centering and stealable focus;
-  modal flag inert; switcher stays TBD)
+  modal flag inert; switcher separate per `S(S-qti-switcher)`)
 - `S-nir-spc` niri:src/window/mod.rs:377-396 (`compute_open_floating`:
   explicit rule, parent, or fixed positive height min==max floats) +
   src/handlers/compositor.rs:150-175,203-228 (passes the boolean to
@@ -3349,6 +3391,21 @@ Legend:
   (mod+shift+n `togroup(i.name, switch_group=True)`: shipped send
   follows; commented `togroup(i.name)` stays alternate)
   @83c697a5621306c3586efca31867efcfa0482e2d
+- `S-qti-screen` qtile:libqtile/core/manager.py:389-400
+  (`get_available_group` config-order scan, screen-affinity gated, no
+  identity store) and :448-513 (`_process_screens` re-keys outputs to
+  screens) and :516-533 (`reconfigure_screens` re-runs the assignment
+  and `hide`s groups whose screen left, contents retained) and :177-178
+  (shipped `reconfigure_screens` subscribes the hook) +
+  libqtile/config.py:578-623 (`set_group` same-group early return,
+  cross-screen swap, else assign-plus-hide) +
+  libqtile/resources/default_config.py:199 (shipped default on) +
+  libqtile/backend/x11/core.py:831-832 (`ScreenChangeNotify` fires
+  `screen_change`) and libqtile/backend/wayland/core.py:379-380
+  (output change fires `screen_change`)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (host output removal never merges groups; reconnect is fresh
+  config-order assignment, not stored return affinity)
 - `S-awe-ws` awesome:lib/awful/tag.lua:489-532 (`tag.history.update`
   per-screen MRU) and :534-566 (`history.restore` defaults to the
   previous-set toggle) and :1569-1586 (`viewidx` cycles, so viewnext/
@@ -3630,7 +3687,65 @@ Legend:
   libqtile/resources/default_config.py:102 (`Columns` with shipped defaults)
   @83c697a5621306c3586efca31867efcfa0482e2d
   (native request path plus hide and allocation paths; restore re-admits at
-  the focused position, not the old slot; refocus stays TBD)
+  the focused position, not the old slot; restore focuses through the layout when current)
+- `S-qti-nosticky` qtile:libqtile/layout/columns.py:204-508 (exposed
+  Columns command inventory: directional focus, shuffles, grows, normalize,
+  swap-column, toggle_split; no sticky verb) + libqtile/backend/x11/window.py:2213-2234
+  (window toggles: enable/disable floating, toggle_maximize, toggle_fullscreen;
+  no sticky verb) + libqtile/group.py:186-332 (group focus/add/
+  remove/mark_floating carry no sticky flag) + libqtile/backend/x11/xcbq.py:98
+  (`_NET_WM_STATE_STICKY` atom string only, wired to no window verb)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (no sticky verb or all-workspace flag in source; float stays per-window
+  per `S(S-qti-float)`)
+- `S-qti-wstoggle` qtile:libqtile/group.py:226-244 (`add` admits tiled
+  layouts plus a floating layer, no workspace mode branch) and :304-332
+  (`mark_floating` per-window layer move) + libqtile/layout/columns.py:204-508
+  (exposed inventory carries no workspace tiling flag or toggle) +
+  libqtile/resources/default_config.py:75-103 (static groups 1-9, shipped
+  `layouts = [Columns(...), Max()]`) and :184-196 (global `floating_layout`
+  rules plus `auto_fullscreen`, no per-group tiling default)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (Columns always tiles plus a floating layer; float is per-window)
+- `S-qti-snap` qtile:libqtile/layout/columns.py:452-506 (`shuffle_left`/
+  `shuffle_right` carry the tiled `cc.cw` across columns or split a shared
+  edge column with sole-column sole-window no-op; `shuffle_up`/`shuffle_down`
+  reorder in-column only) + libqtile/backend/x11/window.py:2240-2250
+  (unbound tiled `set_position`: floating explicit tweak else swap with the
+  window under the pointer) and :2203-2205 (shipped `set_position_floating`
+  explicit-coordinate tweak) + libqtile/backend/wayland/window.py:841-857
+  (same swap policy) and :837-839 (same explicit tweak)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (no directional float-move or half/quarter snap verb or state in the cited paths)
+- `S-qti-fsslot` qtile:libqtile/group.py:304-332 (`mark_floating` removes
+  maximized windows from `tiled_windows`/layouts but skips removal while
+  fullscreen, so fullscreen keeps its tiled slot) + libqtile/backend/base/window.py:262-285
+  (`maximized` float state at work-area size with save) and :305-323
+  (`_set_fullscreen` save on entry, restore on exit) and :340-361
+  (`save_float_state`/`restore_float_state` geometry plus saved state with no
+  rule re-match) + libqtile/group.py:231-232 (`auto_fullscreen` admission) +
+  libqtile/backend/x11/window.py:636-654 (`update_state` syncs urgent/fullscreen
+  only) and :2083-2101 (client `_NET_WM_STATE` echoed to the property only) +
+  libqtile/backend/wayland/window.py:432-433 (native `handle_request_maximize`
+  drives the maximized state) + libqtile/backend/x11/window.py:2221-2236
+  (`toggle_maximize`/`toggle_fullscreen`) + libqtile/resources/default_config.py:47-55
+  (`Mod+f` fullscreen, `Mod+t` floating)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (maximize leaves the tiling, fullscreen keeps its slot; X11 native maximize
+  is echo-only while the Wayland request drives the state)
+- `S-qti-minfocus` qtile:libqtile/backend/wayland/window.py:746-756
+  (`minimized` setter into `MINIMIZED`, restore via `floating=false`) and
+  :762-786 (`_reconfigure_floating`: `MINIMIZED` hides, else places) and
+  :376-437 (native minimize/maximize/fullscreen request callbacks drive the
+  state with no `auto_minimize` gate) + libqtile/backend/x11/window.py:1802-1816
+  (same setter shape) and :1890-1926 (same hide/restore shape) and :2110-2116
+  (`WM_CHANGE_STATE` iconic honored under `auto_minimize`) +
+  libqtile/resources/default_config.py:207 (`auto_minimize=true` shipped) +
+  libqtile/group.py:304-332 (True removes into the floating layout, False
+  re-adds at the focused `cc`; current retained, restore focuses through the
+  layout when current; hide retains membership with no workspace cleanup verb)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (minimize/restore carry no refocus write beyond the layout focus)
 - `S-awe-minimize` awesome:objects/client.c:2554-2614
   (`client_set_minimized`: `ICONIC` unmap plus `NORMAL` remap, `banning`
   update, `property::minimized` signal) and ewmh.c:402-409

@@ -123,9 +123,11 @@ off, append admission (`S(S-pan-base)`).
   only, no consume/expel verb. `S(S-xmo-nav)`.
 - Then sway: no-counterpart: same-parent swap/reparent only, no
   consume/expel verb. `S(S-sway-move)`.
-- Then qtile/Columns: directional shuffle carries B across columns
-  or splits a shared-edge column; sole-column sole-window no-op.
-  Allocation and width recovery stay TBD. `S(S-qti-shuffle)`; queued.
+- Then qtile/Columns: no-counterpart: no consume/expel verb in the
+  Columns command inventory (directional focus, shuffle carry, grow,
+  swap-column, `toggle_split` display flip, normalize/reset only);
+  As-Given `shuffle_left` from `A*` acts on C1's current A and is a
+  leftmost sole-window no-op. `S(S-qti-shuffle)`.
 - Then awesome/tile: no-counterpart: geometric position swap only, no
   consume/expel verb. `S(S-awe-swap)`.
 - Then niri: left consume joins B into the left column (single-tile
@@ -259,9 +261,13 @@ off, append admission (`S(S-pan-base)`).
   columns in this profile. `S(S-xmo-layout)`.
 - Then sway: fixture-inapplicable: parent tabbed/stacked splits exist
   but the strip column fixture has no counterpart. `S(S-sway-layout)`.
-- Then qtile/Columns: `toggle_split` flips the current column
-  between all-visible split and single-visible stacked; selecting C
-  in stacked mode stays TBD. `S(S-qti-split)` + `S(S-qti-focus)`; queued.
+- Then qtile/Columns: `toggle_split` flips C2 between all-visible split
+  and single-visible stacked (display-only: membership and height shares
+  retained, only the `split` flag flips; stacked shows the current window
+  full-height, the rest hidden). Selecting C runs the in-column step
+  (`down()` from B under shipped `wrap_focus_stacks=true`); `next()`/
+  `previous()` hop columns in stacked mode instead.
+  `S(S-qti-split)` + `S(S-qti-focus)` + `S(S-qti-colmode)`.
 - Then awesome/tile: fixture-inapplicable: tile partition only, no
   tabbed display. `S(S-awe-tile)`.
 - Then niri: `ToggleColumnTabbedDisplay` flips Normal/Tabbed with

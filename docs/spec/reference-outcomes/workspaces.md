@@ -29,7 +29,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then i3: Shipped `move container to workspace number N` (Mod1+Shift+n, no-follow, stays on WS1): source collapses to sole A; target C,B with B after focused C; focus stays A; alternate independent `workspace` command switches instead; `S(S-i3-wskeys)` + `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: Shipped mod-shift-[1..9] `W.shift` stays (source view unchanged): shiftWin inserts above target focus via insertUp; alternate composition `W.greedyView . W.shift` views after the shift; `S(S-xmo-wskeys)` + `S(S-xmo-shift)`
 - Then sway: Shipped `move container to workspace number N` ($mod+Shift+n, no-follow, stays on WS1): source collapses to sole A; target C,B with B after focus-inactive C; mover focus restored to source inactive (A); alternate independent `workspace` command switches instead; `S(S-sway-wskeys)` + `S(S-sway-movews)` + `S(S-sway-switch)`
-- Then qtile/Columns: Shipped `togroup(i.name, switch_group=True)` (mod+shift+n) follows with mover focus: togroup removes B from the source (empty column dropped) and group.add admits it at the target Columns anchor; alternate `switch_group=False` stays; exact target order/frames TBD; `S(S-qti-wskeys)` + `S(S-qti-group)` + `S(S-qti-add)` + `S(S-qti-remove)`
+- Then qtile/Columns: Shipped `togroup(i.name, switch_group=True)` (mod+shift+n) follows with mover focus: `togroup` hides B, `remove`s it from the source (emptied C2 dropped, source collapses to sole A with positional refocus to A) and `group.add` admits B into a new second column on the target (single-column target under shipped `num_columns=2` right-align, so `COL[C1[C],C2[B*]]`) with newcomer focus; `switch_group=True` then pulls the target via `toscreen`. Alternate `switch_group=False` (commented shipped form) stays on the source with A refocused. `S(S-qti-wskeys)` + `S(S-qti-group)` + `S(S-qti-add)` + `S(S-qti-remove)`
 - Then awesome/tile: Shipped mod+Shift+numrow `move_to_tag` stays (sets screen plus tags with no view switch): source reflows via tile recalc with history refocus to A (non-sticky-first MRU via the delayed tagged/untagged refocus; the pre-move activate emits while B is still visible); target keeps B's retained global-client position (move_to_tag reinserts nothing, tile is stateless recalc); alternate `tag:view_only()` after the move switches; exact pixel frames TBD (F: work area unrecorded); `S(S-awe-keys)` + `S(S-awe-tag)` + `S(S-awe-hist)` + `S(S-awe-tile)`
 - Then niri: Shipped `move-column-to-workspace N` (Mod+Ctrl+N,
   column granularity) with `focus=true` (default) follows with B via
@@ -99,7 +99,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then i3: `move container to workspace` (no-follow both legs, stays on source): B returns into the surviving single-child parent after A (tall `V[A,B]`, wide `H[A,B]`), old-slot coincidence via parent persistence, not MRU fresh-map; return leaves focus on the now-empty WS2; `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: Return inserts above live WS1 focus A via `insertUp` (target-stack order `[B,A]`, B focused there; no follow - `shiftWin` never changes the current view; no old-slot store anywhere in `StackSet`); Tall is fixed master/stack (no long-edge axis, no MRU/history anchor), so the tall `V`/wide `H` fixture distinction is inapplicable and no axis applies. `S(S-xmo-shift)` + `S(S-xmo-layout)`
 - Then sway: `move container to workspace` (no-follow both legs, stays on source): B returns into the surviving single-child parent after focus-inactive A (tall `V[A,B]`, wide `H[A,B]`), old-slot coincidence via parent persistence, not MRU fresh-map; axis from the surviving parent layout, not geometry; return leaves focus on the now-empty WS2; `S(S-sway-movews)` + `S(S-sway-cleanup)`
-- Then qtile/Columns: Return is fresh admission at live target focus (insert_position=0), no old-slot restore; Columns has no long-edge axis (in-column vertical stack, width-shared columns), so the tall/wide axis distinction is inapplicable; exact order/frames TBD; `S(S-qti-group)` + `S(S-qti-add)`
+- Then qtile/Columns: Return is fresh admission at live target focus (`insert_position=0` inserts B above current A in A's column, so C2 holds `[B*,A]` with newcomer focus), no old-slot restore; Columns has no long-edge axis (in-column vertical stack, width-shared columns), so the tall/wide axis distinction is inapplicable and there is no viewport to restore. `S(S-qti-group)` + `S(S-qti-add)` + `S(S-qti-colmode)`
 - Then awesome/tile: Both legs no-follow (move_to_tag sets screen plus tags with no view switch); return keeps B's retained global-client position via move_to_tag (no reinsertion, no old-slot store; tile is stateless recalc); tall/wide long-edge distinction inapplicable (fixed master/stack partition); source view unchanged either leg; exact pixel frames TBD (F: work area unrecorded); `S(S-awe-tag)` + `S(S-awe-tile)`
 - Then niri: B re-admits after the explicitly focused A with Smart
   follow, and every column activation animates the view to B's column
@@ -155,7 +155,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then i3: Unsupported action parameter here: no trailing-empty shortcut in source (`move to workspace number` targets explicit workspaces); outcome TBD (no built-in equivalent for the trailing-empty parameter); `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: Unsupported action parameter here: no trailing-empty shortcut in source (workspaces explicit; `shiftWin` to a non-member tag returns the input unchanged, so the trailing-empty/`0` send never runs); `S(S-xmo-shift)`
 - Then sway: Unsupported action parameter here: no trailing-empty shortcut in source (`move to workspace number` targets explicit workspaces, no `0` branch); outcome TBD (no built-in equivalent for the trailing-empty parameter); `S(S-sway-movews)`
-- Then qtile/Columns: Unsupported action parameter here: no trailing-empty shortcut in source (groups are explicit 1-9; an unknown group raises); outcome TBD (no built-in equivalent); `S(S-qti-group)`
+- Then qtile/Columns: Unsupported action parameter here: no trailing-empty shortcut in source (groups are explicit 1-9; `togroup` takes explicit names only and an unknown group raises before any hide/remove/add, so the `0`/trailing-empty send never runs and tree and focus stay unchanged); `S(S-qti-group)`
 - Then awesome/tile: no-applicable-journey: tags are explicit per-screen (1-9, recreated per screen) with explicit `view_only`, and the shipped numrow inventory binds view/move/toggle only with no trailing-empty shortcut or `0` target in source; the `0` send has no applicable tile journey, so tree and focus stay unchanged; `S(S-awe-tag)` + `S(S-awe-keys)` + `S(S-awe-ws)`
 - Then niri: no-counterpart (no trailing-empty shortcut exists;
   indices address existing workspaces only and cleanup keeps the
@@ -269,7 +269,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then i3: `move container to workspace` (no-follow both legs): forward B sole on WS2; floated B transfers as a floating wrapper to WS1 (float retained, no fresh tiling; sole A unchanged); return stays on the now-empty WS2; `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: Forward B sole on WS2 (tiled full); floated B transfers retaining float (`shiftWin` runs `delete'`, which preserves the floating-map entry verbatim, so no fresh tiling occurs and B keeps its float frame while sole A keeps its full tile allocation); each arrival is `insertUp` above target focus with B current on that stack and source view unchanged (no follow); X focus follows `setTopFocus` on the current peek (forward leg X focus is source survivor A; the return leg empties WS2 so refresh focuses root until the final select views WS1 with B, focusing B); B renders above the tile (arrange restacks floats first-on-top). `S(S-xmo-shift)` + `S(S-xmo-float)` + `S(S-xmo-arrange)` + `S(S-xmo-topfocus)`
 - Then sway: `move container to workspace` (no-follow both legs): forward B sole on WS2; floated B transfers as floating to WS1 (float retained, no fresh tiling; coordinate fix only on output change, same-output leg performs no rewrite; sole A unchanged); return stays on the now-empty WS2; `S(S-sway-movews)`
-- Then qtile/Columns: Floated B transfers retaining float (removed from the floating list, re-added floating via the float state path, never fresh-tiled; sole A unchanged); the shipped binding follows via switch_group=True; exact frames TBD; `S(S-qti-group)` + `S(S-qti-float)`
+- Then qtile/Columns: Floated B transfers retaining float (`togroup` `remove` takes the floating path and target `add` re-admits into the floating list from the retained float state, never fresh-tiled; sole A unchanged); the shipped binding follows via `switch_group=True` with mover focus through `toscreen`. The move path writes no resize, only a screen-x offset. `S(S-qti-group)` + `S(S-qti-float)`
 - Then awesome/tile: Forward B sole on WS2 (single tile takes the work area; exact pixels TBD (F: work area unrecorded)); floated B transfers retaining float (persistent client property, no fresh tiling; sole A unchanged); no view switch either leg (move_to_tag never switches); the forward send-leg banning clears the hidden mover and the delayed check refocuses the shown source to A, while after the explicit WS2 refocus the floated B keeps focus (no write on the float path); the return send's banning clears focus again with the emptied source offering no visible candidate, so the check writes nothing; the final WS1 select refocuses the now-visible B via history (newest visible); `S(S-awe-tag)` + `S(S-awe-float)` + `S(S-awe-hist)`
 - Then niri: B transfers with its floating state carried through the
   remove/add path (never fresh-tiled on arrival) and sole A is
@@ -329,7 +329,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then i3: Forward TBD: no workspace floating mode exists in source to map `WS2 floating` onto (float is per-window); arrival dispatch for that parameter unevidenced, so the return leg is conditional on an unestablished forward; `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: no workspace-mode counterpart (no workspace floating mode in source: float is per-window with layout Tall/Mirror/Full plus floating layer only, so the forward/return send never runs); `S(S-xmo-float)` + `S(S-xmo-layout)`
 - Then sway: Forward TBD: no workspace floating mode exists in source to map `WS2 floating` onto (float is per-window; `workspace_layout` default/stacked/tabbed only); arrival dispatch for that parameter unevidenced, so the return leg is conditional on an unestablished forward; `S(S-sway-wsmode)`
-- Then qtile/Columns: Forward TBD: no workspace floating mode exists in source (float is per-window; Columns always tiles plus a floating layer), so a tiled B admits tiled via the ordinary anchor; the return leg is likewise ordinary togroup; exact frames TBD; `S(S-qti-group)` + `S(S-qti-float)` + `S(S-qti-add)`
+- Then qtile/Columns: no-counterpart (no workspace floating mode exists in source: float is per-window and Columns always tiles plus a floating layer, so the `WS2 floating` target has no faithful start and no floating-workspace transfer journey ever runs; an ordinary `togroup` would admit B tiled via the ordinary anchor, which substitutes a different target and never votes here); `S(S-qti-wstoggle)` + `S(S-qti-group)`
 - Then awesome/tile: WS2 floating reads as the shipped floating layout on that tag (layout is per-tag via `layout.set`); forward B arrives unarranged (floating arrange no-op, incoming geometry kept); return re-admits via tile partition over retained global order; no view switch either leg; exact pixel frames TBD (F: work area unrecorded); `S(S-awe-tag)` + `S(S-awe-layout)` + `S(S-awe-float)`
 - Then niri: fixture-inapplicable (no workspace floating mode exists to
   construct WS2 with; `ToggleWindowFloating` is per-window only and
@@ -745,8 +745,11 @@ verb inventory); selected intent and doc assertions are never evidence.
   displaced-view queued.
 - Then qtile/Columns: shared group/view-ownership reassignment via
   `toscreen` on R (a swap runs only when the group already had a
-  screen; WS3 is unscreened and hidden; this is view ownership, not a
-  container-tree move, and is labeled as such); focus stays TBD.
+  screen; WS3 is unscreened and hidden, so R takes WS2 while WS3 hides
+  and L keeps showing WS1; this is view ownership, not a
+  container-tree move, and is labeled as such); exact focus stays TBD
+  (F: current-screen/current-window history unstated, and the
+  `set_group`/`toscreen` path writes no focus beyond `layout_all`).
   `S(S-qti-ws)`; focus queued.
 - Then awesome/tile: shared tag/view-ownership reassignment via
   `tag.screen` (moves the tag plus all member clients with screen plus tags rewritten; the moved tag was hidden, so no old-screen history restore runs and L keeps showing WS1; labeled as view ownership, not a tree move); destination selection untouched so R keeps showing WS3 with the unselected WS2 present; exact focus stays TBD (F: client inventory and initial focus unstated, and the move path writes no focus). `S(S-awe-ws)`.
@@ -1121,7 +1124,11 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
 - Then qtile/Columns: previous is per-screen, so R-side state lives on the
   removed screen object while L's own record (WS1) survives intact; first
   previous on L selects WS1 with the group's remembered `current_window`.
-  Disconnect migration and reconnect return scope stay TBD. `S(S-qti-ws)`;
+  Disconnect hides R-shown groups with contents retained (no merge into L)
+  via the `screen_change`/`reconfigure_screens` path, and reconnect assigns
+  the first config-order available group with no identity/affinity store;
+  exact return mapping and the second toggle stay TBD (F: group
+  numbering/assignment unstated). `S(S-qti-ws)` + `S(S-qti-screen)`;
   return/second queued.
 - Then awesome/tile: disconnect evacuates via the shipped-default removed fallback, not `tag.screen`: D is deleted with its members into L's first tag and R-side history is cleared (L history untouched); the first previous on L restores the Given WS1 set via `history.restore`; reconnect mints fresh per-screen tags with no return of D (no affinity store); the second previous toggles back to WS2. Exact refocus targets stay TBD (F: WS1/WS2 focus histories unstated, read by the selection-change path). `S(S-awe-ws)` + `S(S-awe-hist)`.
 - Then niri: displaced workspaces insert before the trailing empty on L
@@ -1681,9 +1688,10 @@ baseline above is unchanged. Record:
   floating S). `S(S-sway-wsmove-fs)` + `S(S-sway-sticky)` +
   `S(S-sway-stickypull)`.
 - Then qtile/Columns: F carries (`set_screen` pushes floats via
-  `to_screen` and shows them); the sticky leg stays TBD (no sticky
-  state/verb traced in the profiled group/window inventory).
-  `S(S-qti-ws)`; sticky queued.
+  `to_screen` and shows them); no-counterpart for the sticky leg (no
+  sticky state or verb exists in the profiled group/window inventory,
+  so sticky stay-vs-carry never runs).
+  `S(S-qti-ws)` + `S(S-qti-nosticky)`.
 - Then awesome/tile: F carries (`tag.screen` moves all member clients;
   float is a persistent property); S carries as a member too
   (`set_screen` rewrites screen plus tags for every tagged client with
@@ -1939,8 +1947,9 @@ baseline above is unchanged. Record:
   TBD. `S(S-sway-ws)` + `S(S-sway-wsdir)`; identity/views queued.
 - Then qtile/Columns: no-counterpart (no output-directional
   whole-group verb exists: `toscreen` takes an explicit screen while
-  `next/prev_group` resolve relatively among groups). Unsupported
-  outcome TBD. `S(S-qti-ws)` + `S(S-qti-wsdef)`.
+  `next/prev_group` resolve relatively among groups, so the up-migration
+  selection never runs and views and focus stay unchanged).
+  `S(S-qti-ws)` + `S(S-qti-wsdef)`.
 - Then awesome/tile: no-applicable-journey (no directional whole-tag
   migration verb exists: `tag.screen` takes an explicit screen, and
   `get_next_in_direction` drives view-only `screen.focus_bydirection`, never

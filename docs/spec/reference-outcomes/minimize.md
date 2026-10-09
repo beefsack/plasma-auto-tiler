@@ -52,10 +52,7 @@ claims. Ours KDE and Ours Windows cite separate adapter keys.
   neither visibility nor arrange consults the flag; B stays tiled; no
   minimize verb in the command table, scratchpad separate).
   `S(S-sway-mininv)`.
-- Then qtile/Columns: B leaves the Columns allocation (`mark_floating`
-  removes from `tiled_windows`/layouts into the floating layout) and hides
-  (`IconicState`) as `MINIMIZED` float under shipped `auto_minimize`;
-  reflow geometry and refocus TBD. `S(S-qti-minimize)`; queued.
+- Then qtile/Columns: B leaves the Columns allocation into the floating layout via mark_floating and hides as MINIMIZED/IconicState under shipped auto_minimize (X11 iconic request) and the Wayland minimize request path; survivors refill through the column drop with no group refocus (mark_floating focuses the floating layout when current), so group current stays B; `S(S-qti-minimize)` + `S(S-qti-minfocus)`
 - Then awesome/tile: B is banned (excluded) from the arrangement
   (`ICONIC`) keeping client order; HIDDEN request maps to the same
   setter. Refocus follows history (C). `S(S-awe-minimize)` +
@@ -111,10 +108,7 @@ claims. Ours KDE and Ours Windows cite separate adapter keys.
   `S(S-xmo-mininv)`.
 - Then sway: no-counterpart (nothing minimized to restore; no unminimize
   verb, scratchpad separate). `S(S-sway-mininv)`.
-- Then qtile/Columns: restore via `minimized=false` into `floating=false`
-  re-admits B at the focused (`cc`) column position per `add_client`
-  (shipped `insert_position` 0), not the old slot; focus TBD.
-  `S(S-qti-minimize)`; queued.
+- Then qtile/Columns: restore via minimized=false into floating=false re-admits B at the focused cc position per add_client (shipped insert_position 0), not the old slot; the path focuses B through the layout when B is current; `S(S-qti-minimize)` + `S(S-qti-minfocus)`
 - Then awesome/tile: B remaps `NORMAL` at its retained client order
    with tile recalc via arrange; the delayed history check no-ops while
    the MNZ-01 refocus C stays visible-focused, so focus stays C.
@@ -172,8 +166,7 @@ claims. Ours KDE and Ours Windows cite separate adapter keys.
   `S(S-xmo-mininv)`.
 - Then sway: no-counterpart (focused request cleared as in R-MNZ-01; WS1
   never empties this way). `S(S-sway-mininv)`.
-- Then qtile/Columns: A hides as `MINIMIZED`; occupancy and focus TBD.
-  `S(S-qti-minimize)`; queued.
+- Then qtile/Columns: A hides as MINIMIZED with group membership retained (hide only, no workspace cleanup verb in the cited path); no group refocus runs (layout focus retained when current), so current stays A; `S(S-qti-minimize)` + `S(S-qti-minfocus)`
 - Then awesome/tile: A unmaps (`ICONIC`) with client order, tags and
    screen kept (the setter touches none); the workspace/tag is retained
    with no cleanup path; the delayed history check finds no visible
