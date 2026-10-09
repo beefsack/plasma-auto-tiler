@@ -522,6 +522,12 @@ Legend:
   @1652c54b73f67df17b7b4ab0b0f7048204aa8104
   (binding definition/removal only; no staging/Compatible/Apply/Force/
   Disable/Revert or preimage model in the inspected command inventory)
+- `S-sway-switcher` sway:config.in:19 (`$menu wmenu-run`) and :74
+  (`$mod+d exec $menu` external launcher; no Tab switcher bind) +
+  sway/commands/focus.c:380-470 (`focus` inventory: directional/next/prev/
+  output/tiling/floating/mode_toggle/parent/child single-targets; no
+  listing verb) @1652c54b73f67df17b7b4ab0b0f7048204aa8104
+  (no native Alt+Tab/listing verb; the shipped menu is an external launcher)
 - `S-sway-tray` sway:sway/commands/bar.c:31-34
   (`tray_bindcode`/`tray_bindsym`/`tray_output`/`tray_padding` registration) +
   sway/commands/bar/tray_output.c:8-27 + sway/commands/bar/tray_padding.c:8-33
@@ -697,6 +703,18 @@ Legend:
   libqtile/resources/default_config.py:13-59 (static key list; reload/shutdown
   bound, no restart binding, no first-run/preset/staging verbs)
   @83c697a5621306c3586efca31867efcfa0482e2d
+- `S-qti-switcher` qtile:libqtile/resources/default_config.py:18-59
+  (shipped keys: mod+Tab `next_layout`, mod+space layout-local `next`;
+  no Alt+Tab listing) and :126-132 (shipped bar shows `WindowName`
+  current-focus display only) + libqtile/group.py:363-382 (`toscreen`
+  pulls a group with no listing) and :443-483 (`next/prev_window`
+  cycle the current group only) + libqtile/widget/tasklist.py:29-36,
+  windowtabs.py:6-12, windowname.py:7-10 (TaskList/WindowTabs/WindowName
+  display the current group only)
+  @83c697a5621306c3586efca31867efcfa0482e2d
+  (no native Alt+Tab/cross-group listing verb or binding; widgets are
+  current-group display, not a switcher; `toscreen` is a switch primitive
+  with no listing)
 - `S-qti-tray` qtile:libqtile/widget/systray.py:68-104 (bar-hosted Systray,
   `supported_backends` x11 only; hosts client icons, no owner icon lifecycle)
   @83c697a5621306c3586efca31867efcfa0482e2d
@@ -798,6 +816,18 @@ Legend:
   (shipped focus/swap by index only plus urgent.jumpto; no directional
   binding, no switcher listing) + :323-326 (layout inc rotation) + :331-385
   (numrow view/move_to_tag/toggle_tag with no view switch on move) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+- `S-awe-switcher` awesome:lib/awful/menu.lua:524-583 (`menu.clients`
+  lists every client via unfiltered `client_iterate`, activation runs
+  `tags.viewmore` plus `activate raise`) +
+  lib/awful/client.lua:1497-1512 (`client.iterate` over all screens with
+  no tag filter) + awesomerc.lua:175-184 (shipped tasklist shows
+  `currenttags` only; `client_list` exposed on right-click, no
+  shipped-key switcher) and :266-285 (shipped mod+Tab is
+  `history.previous`, not a listing; byidx focus/swap cycle visible
+  clients) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
+  (native all-client list plus tag-view activation exist as a programmatic/
+  mouse menu, not a shipped-key Alt+Tab switcher; shipped keys list and
+  focus visible clients only)
 - `S-awe-drag` awesome:lib/awful/layout/init.lua:400-420
   (move_handler tiled mouse.move swap with hovered tiled current_client plus
   screen follow) + lib/awful/mouse/client.lua:21-34 (move guard
@@ -910,6 +940,15 @@ Legend:
   (project toggle and EWMH converge; no refusal branch)
 - `S-bsp-ctl` bspwm:src/messages.c:287-358 (node `-t` state incl `~` alternate, `-g` flags hidden/sticky/private/locked/marked only) and :1250-1327 (wm `-d` dump/`-l` load/`-a` add-monitor/`-O` reorder/`-o` adopt-orphans/`-g` status/`-h` history/`-r` restart only) @e11eff4cb3333216ad03c815609a4ed79e08929c
   (no preset/tray/binding-staging model in the inspected inventory)
+- `S-bsp-switcher` bspwm:examples/sxhkdrc:11 (`dmenu_run` external program
+  launcher) and :66-82 (shipped focus verbs: directional, path-jump,
+  `{next,prev}.local` current-desktop cycle, `{prev,next}.local` desktop
+  step, `last` node/desktop toggle, `older/newer` history; no Alt+Tab
+  listing) + doc/bspwm.1.asciidoc:82-107 (`NODE_SEL` incl
+  `CYCLE_DIR`/local/last/newest/older/newer, no cross-desktop listing
+  selector) @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (no native switcher/listing verb; last/history verbs are single-targets,
+  not a B listing; `bspc query` lists have no traced switcher activation)
 - `S-i3-min` i3:src/render.c:43-124 (tiled `render_con` allocation
   with size-hint ignore note, no minimum clamp) and
   src/manage.c:461-474,528-533 (fixed-size min==max admission floats) and
@@ -1154,6 +1193,22 @@ Legend:
   actions); tray/first-run search hits only xwayland tray atoms and
   unrelated `compatible` strings, not owner controls
   @19fb395d45314960e6f79f17994a84094f1cd4f6
+- `S-hyp-switcher`
+  Hyprland:src/config/lua/bindings/LuaBindingsDispatchers.cpp:930-951
+  (`hl.dsp.window.cycle_next`) + src/desktop/state/WindowQuery.hpp:21-27
+  (`SWindowCycleOptions` defaults `visible=false`) +
+  src/desktop/state/WindowQuery.cpp:260-317 (same-workspace match when
+  `visible=false`) + src/config/shared/actions/ConfigActions.cpp:70-100
+  (`switchToWindow` focus path, no listing UI) and :606-630
+  (`focusCurrentOrLast`/`focusUrgentOrLast` history single-targets) +
+  src/config/lua/bindings/LuaBindingsDispatchers.cpp:1091-1145
+  (`hl.dsp.focus` inventory: direction/monitor/workspace/window-selector/
+  urgent_or_last/last) + example/hyprland.lua:31-33,263
+  (`menu = "hyprlauncher"` external launcher, no Tab switcher bind)
+  @19fb395d45314960e6f79f17994a84094f1cd4f6
+  (no native Alt+Tab/listing verb; cycle is same-workspace by default;
+  last/urgent are history single-targets, not a B listing; the shipped
+  example launcher is external)
 - `S-bsp-flt-focus` bspwm:src/query.c:583-584,
   src/tree.c:1124-1149,2250-2261, src/geometry.c:49-154 and
   src/settings.c:108 @e11eff4cb3333216ad03c815609a4ed79e08929c
@@ -1323,6 +1378,14 @@ Legend:
   @903bcd518df32b0e055b17f5da3f988a0187fd3d
   (binding definition only; no staging/Compatible/Apply/Force/Disable/Revert
   or preimage model in the inspected command/config inventory)
+- `S-i3-switcher` i3:etc/config:62-68 (`dmenu_run` launcher plus a
+  commented-out `rofi` alternate, both external) +
+  parser-specs/commands.spec:189-213 (`FOCUS` inventory: directional,
+  output, tiling/floating/mode_toggle, parent/child, workspace; no listing
+  verb) + workspace number/move binds per `S(S-i3-wskeys)`
+  @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  (no native Alt+Tab/listing verb; launchers are external; focus verbs are
+  single-targets and workspace number/next/prev switch views without listing)
 - `S-xmo-core-nav` xmonad:src/XMonad/Config.hs:185-215
   @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
   (default core navigation is stack focus/swap with no directional core verb; directional scenarios in this profile use contrib Navigation2D, see S-xmo-nav)
@@ -1491,6 +1554,14 @@ Legend:
   quit/restart only; no first-run/preset/prompt/tray/staging/Force/Disable/
   Revert/preimage verbs) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
   (owner-specific control outcomes have no counterpart here)
+- `S-xmo-switcher` xmonad:src/XMonad/Config.hs:189 (`dmenu_run`/`gmrun`
+  external launchers) and :199-205 (mod+Tab `focusDown` / mod+Shift+Tab
+  `focusUp`: same-stack cycle, not a listing) and :230-235 (mod-[1..9]
+  `greedyView`, mod-shift-[1..9] `shift`; view/switch verbs without
+  listing) + xmonad-contrib per `S(S-xmo-nav)` (Navigation2D
+  `windowGo`/`windowSwap` stay on the same layer)
+  @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
+  (no native Alt+Tab/cross-workspace listing verb in this profile)
 - `S-xmo-ewmh` xmonad-contrib:XMonad/Hooks/EwmhDesktops.hs:107-112,664-680
   (`ewmh`, `ewmhFullscreen`, `fullscreenEventHook` ClientMessage add/remove/toggle)
   and :143 (`fullscreenHooks` defaults) + XMonad/Hooks/ManageHelpers.hs:289-290,329-330
@@ -1865,6 +1936,12 @@ Legend:
   `RaiseFloating`; no next/previous cycle pair, no parent verb)
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
   (focus-verb inventory; traversal stays TBD)
+- `S-pan-switcher` paneru:src/types/commands.rs:277-281
+  (`ToggleFloatingLayer`: Alt-tab flips only the active workspace's
+  floating/tiled tiers and focuses the tier's last-focused window; no
+  cross-strip listing) @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
+  (no native cross-virtual-strip switcher/listing op; macOS owns
+  listing and activation)
 - `S-pan-axfs` paneru:src/util.rs:193-197 (AX `AXFullScreen`
   observation; no zoom/maximize AX attribute read in the inspected
   surface)
@@ -2225,6 +2302,29 @@ Legend:
   either-axis inequality plus unmanaged/NET/motif gates) @8438567a
   (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
   KDE/kwin@8438567a provenance; karousel `resizeable` resolves here)
+- `S-kwin-tabbox` kwin:src/tabbox/tabbox.cpp:87-97 (`checkDesktop`:
+  `AllDesktopsClients` lists every desktop, default
+  `OnlyCurrentDesktopClients` lists the current desktop only) and
+  :157-169 (`clientToAddToList` requires the desktop/activity/
+  application/minimized/screen checks plus `wantsTabFocus` and
+  `!skipSwitcher()`) and :256-267 (ctor: default config
+  current-desktop-only, alternative config all-desktops) and :992-1005
+  (`accept` runs `Workspace::activateWindow`) +
+  src/tabbox/tabboxconfig.h:47-51 (desktop-mode enum) and :260-263
+  (default mode current-desktop-only) + src/activation.cpp:294-324
+  (`activateWindow`: raise, then off-desktop windows follow
+  `activationDesktopPolicy`: `SwitchToOtherDesktop` switches to the
+  window's desktop with membership unchanged, `BringToCurrentDesktop`
+  pulls into the current desktop, `DoNothing`) +
+  src/options.h:321-326 (policy enum) and :821-823 (default
+  `SwitchToOtherDesktop`) @8438567a
+  (pinned KWin source via /tmp/opencode/kwin-8438567 export, raw
+  KDE/kwin@8438567a provenance; TabBox listing/activation policy
+  resolves here)
+  Raw sources: [tabbox.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/tabbox/tabbox.cpp),
+  [tabboxconfig.h](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/tabbox/tabboxconfig.h),
+  [activation.cpp](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/activation.cpp),
+  [options.h](https://raw.githubusercontent.com/KDE/kwin/8438567a/src/options.h).
 - `S-kar-admit` karousel:src/lib/world/ClientManager.ts:30-56
   (`addClient` evaluates the shapeability gates once at add) and
   :158-176 (`toggleFloatingClient`: float-to-tile requires `canTileEver`,
@@ -2486,6 +2586,21 @@ Legend:
   :240-344 (scratch/slurp/barf/maximize-width/fullscreen/focus-mode/
   open-position; no orientation/rotate/mirror/master/layout-select/
   workspace-float verb) @8bf6dd264f60d6c0c402b63df7b424b888959a48
+- `S-pap-switcher` PaperWM:keybindings.js:93-99 (`live-alt-tab` /
+  `live-alt-tab-backward` / scratch variants registration) +
+  liveAltTab.js:43-61 (`_getWindowList`: `NORMAL_ALL` tab list minus
+  scratch, narrowed to the active workspace only when the external GNOME
+  `current-workspace-only` setting asks) and :146-190 (accept runs the
+  shell popup `_finish` then `focus_handler` with no take/move; the
+  workspace-switch effect rides the unpinned shell activation path) +
+  schemas/org.gnome.shell.extensions.paperwm.gschema.xml:12-28
+  (shipped Alt+Tab/Super+Tab defaults) + tiling.js:4597-4680
+  (`focus_handler` is space-local: viewport/reorder within the window's
+  own space, no cross-space move)
+  @8bf6dd264f60d6c0c402b63df7b424b888959a48
+  (native live-alt-tab list verb exists; workspace scope follows the
+  external GNOME setting with no pinned default; membership unchanged,
+  workspace-switch effect on the unpinned shell path stays TBD)
 - `S-pap-unmov` PaperWM:tiling.js:1391-1398 (layout skips placement while
   easing and for fullscreen/maximized windows: `unMovable` returns early,
   leaving the frame alone)
@@ -2530,6 +2645,15 @@ Legend:
   per-window only, column move/stacked/width/preset verbs; no
   rotate/mirror/master/orientation/layout-select/workspace-toggle verb)
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+- `S-kar-switcher` karousel:src/lib/keyBindings/definition.ts:12-60
+  (shipped focus binds move within the grid; no switcher/listing bind) +
+  src/lib/world/clientState/Tiled.ts:222-246 (`skipSwitcher` KWin
+  switcher-exclusion flag, written and restored around tiling) +
+  src/lib/config/definition.ts:145-150 (`skipSwitcher` default false)
+  @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
+  (no switcher verb in the Actions inventory; KWin owns listing and
+  activation; karousel only opts windows out via `skipSwitcher`,
+  default included)
 - `S-kar-maxfs` karousel:src/lib/world/clientState/Tiled.ts:66-70
   (`maximizedAboutToChange` observed) and :174-184 (`fullScreenChanged`
   observed; untileable-after-exit floats) and :222-242 (tiling admission
@@ -2805,6 +2929,20 @@ Legend:
   (window-only variants are commented alternates, not shipped binds) +
   `focus=false` stays per `S(S-nir-ws)`
   @ed22699d99462f61ab171472d3ea67e844ea580d
+- `S-nir-mru` niri:src/ui/mru.rs:577-607 (MRU collect walks every
+  workspace's windows, stamps output/workspace flags, sorts by focus
+  timestamp, default scope All) and :826-830 (scope filter: All passes
+  everything) + niri-config/src/recent_windows.rs:47-57,221-252
+  (`recent_windows` defaults on with Alt+Tab/Mod+Tab and Alt+grave
+  binds) + src/niri.rs:1090-1118 (`focus_window` via `activate_window`;
+  `confirm_mru` focuses the confirmed selection) +
+  src/layout/mod.rs:1553-1587 (`activate_window` switches to the
+  window's workspace; no window move) and
+  src/layout/scrolling.rs:1465-1476 (column/position activation)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (native MRU switcher: default All scope lists every workspace's
+  windows; confirm switches to the selection's workspace with
+  membership unchanged)
 - `S-nir-wsremove` niri:src/layout/monitor.rs:696-719
   (`remove_workspace_by_idx`: removing the last spawns a bottom spare
   first; the active steps to the previous entry; switch cleared, cleanup

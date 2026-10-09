@@ -323,24 +323,42 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   unchanged vs pull into WS2.
 
 - Then COSMIC: B listed: the Alt+Tab empty-query search appends every compositor-published toplevel with no workspace/visibility filter; selecting B calls `manager.activate`, and the compositor unminimizes B, switches to WS1 via `shell.activate`, and focuses B with membership unchanged (never pulled into WS2; sticky windows focus in place); `S(S-cos-sysact)` + `S(S-cos-syscmd)` + `S(S-lch-altab)` + `S(S-pop-toplevel)` + `S(S-cos-topact)`; exact switcher visuals/key-repeat timing TBD
-- Then Hyprland/Dwindle: TBD (no Alt+Tab switcher/listing source established at this pin; membership/focus effect unevidenced)
-- Then bspwm: TBD (no switcher/listing source at this pin; membership/focus effect unevidenced)
-- Then i3: TBD (no Alt+Tab switcher/listing source established at this pin; membership/focus effect unevidenced)
-- Then xmonad/Tall+Navigation2D: TBD (no Alt+Tab switcher/listing source at this pin; membership/focus effect unevidenced)
-- Then sway: TBD (no Alt+Tab switcher/listing source established at this pin; switcher is external, membership/focus effect unevidenced)
-- Then qtile/Columns: TBD (no Alt+Tab switcher/listing in the shipped key inventory at this pin; membership/focus effect unevidenced); `S(S-qti-keys)`
-- Then awesome/tile: TBD (no Alt+Tab switcher/listing in the shipped key inventory at this pin; jump_to/urgent.jumpto switch-to-tag path unevidenced for switcher listing); `S(S-awe-keys)` + `S(S-awe-tag)`
+- Then Hyprland/Dwindle: no-counterpart (no Alt+Tab/listing verb in the dispatcher inventory: `cycle_next` cycles the same workspace by default, `focus last`/`urgent_or_last` are history single-targets, and the shipped example binds an external `hyprlauncher` menu). `S(S-hyp-switcher)`
+- Then bspwm: no-counterpart (no Alt+Tab/listing verb in source or the shipped sxhkdrc: `super+Tab` toggles the last desktop, `grave` the last node, `o/i` walk history single-targets, and `{next,prev}.local` cycles the current desktop only; `dmenu_run` is an external program launcher and `bspc query` lists have no traced switcher activation). `S(S-bsp-switcher)`
+- Then i3: no-counterpart (no Alt+Tab/listing verb in the FOCUS command inventory or shipped config: `dmenu_run` plus a commented `rofi` alternate are external launchers, and focus verbs are directional/output/mode/parent-child single-targets while workspace number/next/prev switch views without listing). `S(S-i3-switcher)`
+- Then xmonad/Tall+Navigation2D: no-counterpart (no Alt+Tab/cross-workspace listing verb in this profile: core mod+Tab is same-stack `focusDown`, `dmenu_run`/`gmrun` are external launchers, and Navigation2D `windowGo`/`windowSwap` stay on the same layer). `S(S-xmo-switcher)`
+- Then sway: no-counterpart (no Alt+Tab/listing verb in the focus command inventory or shipped config: `$menu wmenu-run` is an external launcher, and focus verbs are directional/output/mode/parent-child single-targets with no listing). `S(S-sway-switcher)`
+- Then qtile/Columns: no-counterpart (no Alt+Tab/listing verb in the shipped keys: mod+Tab switches layouts, mod+space and `next/prev_window` cycle the current group only, and the bar `WindowName`/`TaskList`/`WindowTabs` widgets display the current group only; `toscreen` pulls a group with no listing). `S(S-qti-switcher)`
+- Then awesome/tile: B is listed by the native `awful.menu.clients` inventory (unfiltered `client.iterate` over all screens with no tag filter, exposed as `client_list` on the shipped tasklist right-click; the shipped mod+Tab key is history-previous, not a listing, and the tasklist shows current tags only); activation views B's tags via `viewmore` with membership unchanged (no tag write to B) plus `activate raise`. `S(S-awe-switcher)`
 - Then niri: B is listed in the default All scope (the MRU UI collects
-  every workspace's windows); activation
-  switch/focus stays TBD. `S(S-nir-ws)`; activation queued.
-- Then PaperWM: owner-specific (the GNOME switcher owns listing and
-  activation; no switcher verb in the PaperWM inventory).
-  `S(S-pap-acts)`.
+  every workspace's windows sorted by focus timestamp; Alt+Tab/Mod+Tab
+  binds ship by default with `recent_windows` on); confirming B runs
+  `activate_window`, which switches to WS1 and focuses B with membership
+  unchanged (no window move in the path). `S(S-nir-mru)`
+- Then PaperWM: B is listed by the native `live-alt-tab` verb (shipped
+  Alt+Tab/Super+Tab defaults; `_getWindowList` uses `NORMAL_ALL` minus
+  scratch) when the external GNOME `current-workspace-only` setting is
+  off, and omitted when it is on (no pinned GNOME default traced); the
+  accept path runs the shell popup `_finish` then `focus_handler` with
+  no take/move, so membership is unchanged, while the workspace-switch
+  effect rides the unpinned shell activation path and stays TBD.
+  `S(S-pap-switcher)`; switch queued.
 - Then karousel/Lazy: owner-specific (the KWin switcher owns listing
-  and activation; no switcher verb in the Actions inventory).
-  `S(S-kar-acts)`.
+  and activation; no switcher verb in the Actions inventory, whose focus
+  verbs stay on the current grid). Under the row's all-desktops KDE
+  switcher (the alternative TabBox mode `AllDesktopsClients` lists every
+  desktop; the shipped default lists the current desktop only, so B is
+  omitted there; karousel `skipSwitcher` defaults false so B is not
+  excluded), B is listed; accept runs `Workspace::activateWindow`,
+  default `SwitchToOtherDesktop` switches to WS1 with membership
+  unchanged, alternative `BringToCurrentDesktop` pulls B into the current
+  desktop. `S(S-kwin-tabbox)` + `S(S-kar-acts)` +
+  `S(S-kar-switcher)`.
 - Then paneru: owner-specific (the macOS switcher owns listing and
-  activation; no switcher op exists). `S(S-pan-cmds)`.
+  activation; no cross-strip listing op exists: `ToggleFloatingLayer`
+  flips only the active workspace's floating/tiled tiers); B
+  listing/activation TBD (no host switcher source traced).
+  `S(S-pan-cmds)` + `S(S-pan-switcher)`.
 - Then Ours KDE: Per the KDE source, native filter permits B; TabBox activation follows configured policy, default switch to WS1, alternative bring-to-current; exact user-version live outcome TBD; `D(D-alt-tab)`
 - Then Ours Windows: Current `SW_HIDE`: B omitted; future inclusion/activation policy TBD; `D(D-alt-tab)`
 - Variant hook: V-WS-SHELL-ACTIVATE.

@@ -66,4 +66,16 @@ Workers use muse-spark, one active at a time. The Lead owns this note.
   them rather than expanding scope. Corrected qtile conditional admission,
   citation coverage, and a duplicated PaperWM prefix. Latest checks pass.
 - R-INS-05 residuals: Hyprland unspecified pointer target; karousel host focus.
-  No material approved-rule contradiction. Next candidate R-WS-07 switcher.
+  No material approved-rule contradiction.
+- R-WS-07 accepted: reference TBD cells 9 -> 3; overall 1,018 -> 1,012.
+  Eleven cells updated. Eight prior TBDs resolved; two formerly bare
+  owner-specific cells now explicitly retain unsupported PaperWM shell-switch
+  and paneru host listing/activation TBDs. PaperWM has native live-alt-tab
+  (correcting prior absence claim); listing depends on unpinned GNOME setting.
+  Independent source verification sampled all inventories/listing paths and
+  traced karousel's native all-desktops listing/activation at KWin 8438567a.
+  New KWin key links raw pinned sources. No new approved-rule contradiction.
+- R-WS-07 residuals: pre-existing COSMIC visuals/timing, PaperWM unpinned shell
+  activation, paneru host listing/activation. Source-defined KWin policy is
+  complete for this Observe; no extra physical-journey requirement added.
+- Next candidate: R-ACT-01..02 activation/urgency.
