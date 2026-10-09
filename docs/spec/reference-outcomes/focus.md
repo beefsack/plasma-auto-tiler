@@ -147,9 +147,17 @@ assertions are never evidence.
 - Then Hyprland/Dwindle: TBD (previous invocation, order, wrap and float
   inclusion). `cyclenext` exists via `cycleNext`; previous invocation
   untraced. `S(S-hyp-focus)`; queued.
-- Then bspwm: TBD (binary embedding and internal-node matching).
-  In-order next/previous walk and desktop wrap are sourced, but not this
-  fixture's focus sequence. `S(S-bsp-cycle)`; queued.
+- Then bspwm: TBD (F: the flat 3-child H fixture records no binary
+  embedding, and the two ordered embeddings diverge on the B-origin
+  legs: bare `next|prev` walks every node in order with match-all, so
+  from B the first hit is the adjacent internal (E1 `H[A,H[B,C]]` gives
+  next X/prev root; E2 `H[H[A,B],C]` gives next root/prev X); focusing
+  it stores the container with X input cleared to root. Reversibility
+  holds either way (prev/next are inverse walks), single-desktop edge
+  legs land on extrema leaves (next-from-C wraps to A,
+  previous-from-A wraps to C), and the ordinary float F stays in-tree
+  so the walk includes it (in-cycle); only the B-origin internal
+  endpoints need the unrecorded embedding). `S(S-bsp-cycle)`; queued.
 - Then i3: next C, previous B; edges wrap C-to-A and A-to-C; F excluded
   from the tiled walk. `S(S-i3-focusnext)` + `S(S-i3-flt-focus)`.
 - Then xmonad/Tall+Navigation2D: stack-order cycle (next C, previous
@@ -194,9 +202,13 @@ assertions are never evidence.
   B (remembered member, else first child). `S(S-cos-tilefocus)`.
 - Then Hyprland/Dwindle: TBD (container-focus inventory untraced; a
   missing search term is not absence evidence). Queued.
-- Then bspwm: TBD (parent-traversal outcome untraced; the
-  `first_ancestor` selector alone does not settle focus scope).
-  `S(S-bsp-flt-focus)`; queued.
+- Then bspwm: TBD (F: the parent leg resolves deterministically to the
+  V container (`@/parent` PATH jump or unqualified `first_ancestor`
+  selects V; focusing it stores the container with X input cleared to
+  root), but the row states no `first`/`second` PATH selector for the
+  focus-child leg, so returning to A vs B has no fixture-selected
+  branch and the source keeps no per-container remembered child).
+  `S(S-bsp-cycle)`; queued.
 - Then i3: parent focuses V (`level_up`); child returns to B
   (`level_down` to the focused descendant). `S(S-i3-focuslvl)`.
 - Then xmonad/Tall+Navigation2D: no-counterpart (flat Tall, no

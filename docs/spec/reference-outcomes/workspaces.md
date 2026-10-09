@@ -95,7 +95,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 - Then COSMIC: Returns at A (target MRU): tall `V[A,B]` stacked, wide `H[A,B]` side-by-side, B after A, no old-slot restore; `SendToWorkspace` stays on WS2 (kept because active, not as trailing empty) with focus none, `MoveToWorkspace` follows to WS1 with B; `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-send)` + `S(S-cos-focusfix)`
 - Then Hyprland/Dwindle: No remembered-leaf anchor in source (not MRU/slot restore): the target holds C and A (B's departure leaves both), so the return anchor is C vs A TBD (cursor closest-node; sends carry no focal, and the mover itself is excluded from anchor candidacy); only if A is selected does the given box resolve the axis (tall 1268x1364 portrait so `V`, wide 2544x678 landscape so `H`); order TBD (cursor half); follow switches workspace and focuses mover, silent refocuses the source; `S(S-hyp-movews)`
-- Then bspwm: Return inserts at WS1 focus A (explicit selection), splitting A's long edge with B second child after A: tall `V[A,B]`, wide `H[A,B]`; no old-slot restore (fresh split); shipped `node -d` without `--follow` stays on the source, `--follow` focuses B; exact frames TBD; `S(S-bsp-xfer)` + `S(S-bsp-insert)`
+- Then bspwm: Return inserts at WS1 focus A (explicit selection) via `transfer_node` at `dd->focus`: source unlinks with sibling promotion, then `insert_node` splits A's long edge with B second child after A: tall `V[A,B]`, wide `H[A,B]`; no old-slot restore (fresh split); shipped `node -d` without `--follow` stays on the source, `--follow` focuses B; `S(S-bsp-xfer)` + `S(S-bsp-insert)`
 - Then i3: `move container to workspace` (no-follow both legs, stays on source): B returns into the surviving single-child parent after A (tall `V[A,B]`, wide `H[A,B]`), old-slot coincidence via parent persistence, not MRU fresh-map; return leaves focus on the now-empty WS2; `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: Return inserts above live WS1 focus A via `insertUp` (target-stack order `[B,A]`, B focused there; no follow - `shiftWin` never changes the current view; no old-slot store anywhere in `StackSet`); Tall is fixed master/stack (no long-edge axis, no MRU/history anchor), so the tall `V`/wide `H` fixture distinction is inapplicable and no axis applies. `S(S-xmo-shift)` + `S(S-xmo-layout)`
 - Then sway: `move container to workspace` (no-follow both legs, stays on source): B returns into the surviving single-child parent after focus-inactive A (tall `V[A,B]`, wide `H[A,B]`), old-slot coincidence via parent persistence, not MRU fresh-map; axis from the surviving parent layout, not geometry; return leaves focus on the now-empty WS2; `S(S-sway-movews)` + `S(S-sway-cleanup)`
@@ -151,7 +151,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 - Then COSMIC: Reuses the existing trailing empty (B lands sole; refresh then ensures a fresh trailing empty); `SendToLastWorkspace` leaves focus (falls back to A), `MoveToLastWorkspace` follows with B; numeric `0` is a separate binding (index 9), not the trailing-empty action; `S(S-cos-send)` + `S(S-cos-focusfix)`
 - Then Hyprland/Dwindle: Unsupported action parameter here: no trailing-empty shortcut exists in source (workspaces are explicit find-or-create; numeric `0` is an invalid workspace ID, so the `0` target has no valid counterpart); outcome TBD (no built-in equivalent for the trailing-empty parameter); `S(S-hyp-movews)`
-- Then bspwm: Unsupported action parameter here: no trailing-empty shortcut in source (desktops are explicit); outcome TBD (no built-in equivalent); `S(S-bsp-send)`
+- Then bspwm: Unsupported action parameter here: no trailing-empty shortcut in source (desktops are explicit-only with explicit `desktop -r` removal), so the trailing-empty/`0` send has no built-in equivalent and never runs (no applicable journey); `S(S-bsp-send)` + `S(S-bsp-ws)`
 - Then i3: Unsupported action parameter here: no trailing-empty shortcut in source (`move to workspace number` targets explicit workspaces); outcome TBD (no built-in equivalent for the trailing-empty parameter); `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: Unsupported action parameter here: no trailing-empty shortcut in source (workspaces explicit; `shiftWin` to a non-member tag returns the input unchanged, so the trailing-empty/`0` send never runs); `S(S-xmo-shift)`
 - Then sway: Unsupported action parameter here: no trailing-empty shortcut in source (`move to workspace number` targets explicit workspaces, no `0` branch); outcome TBD (no built-in equivalent for the trailing-empty parameter); `S(S-sway-movews)`
@@ -194,10 +194,18 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then bspwm: no remembered-leaf/history anchor exists in source; floated C
   keeps its tree slot vacant in place with no focus write (so the live WS2
   focus stays C, now floating) and leaves the tiling space geometrically.
-  Arrival inserts at that live focus via `transfer_node`; the split of a
-  tiled newcomer against the floated-leaf anchor is unevidenced here, so
-  axis/order/frames stay TBD. `S(S-bsp-xfer)` + `S(S-bsp-state)` +
-  `S(S-bsp-float)`; split queued.
+  Arrival inserts at that live focus via `transfer_node` (source unlink
+  with sibling promotion, insert at `dd->focus`); `insert_node` wraps the
+  vacant C first and B second (shipped `SECOND_CHILD` polarity) with the
+  longest-side axis read from C's saved rectangle, then
+  `propagate_flags_upward` leaves the new parent occupied (vacant needs
+  both children vacant); `apply_layout` gives both children of a
+  vacant split the full rectangle, so B takes C's full prior slot with D
+  unchanged and the recorded axis is geometrically inert while C stays
+  floating. Exact axis value stays TBD (F: C's saved rectangle/output
+  geometry unrecorded). Shipped `node -d` without `--follow` stays on the
+  source, `--follow` follows; `S(S-bsp-xfer)` + `S(S-bsp-state)` +
+  `S(S-bsp-float)` + `S(S-bsp-insert)`
 - Then i3: `move container to workspace` (no-follow): floated C sits in the WS2 floating list (floating-target fallback), so the anchor is sole D with B after D; source collapses; focus stays A; `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: Floated C stays in the stack with focus retained (`float` is a floating-map write only); B arrives via `shiftWin` as `insertUp` above live WS2 focus C (order `[B,C,D]`, B focused there; no floating-leaf split, Tall has no splits, and no history/remembered-leaf anchor exists in source); source collapses to A with source view unchanged (no follow); C remains floating. `S(S-xmo-shift)` + `S(S-xmo-float)`
 - Then sway: `move container to workspace` (no-follow): the workspace destination resolves via focus-inactive tiling only, so floated C never anchors; B lands after sole D; source collapses; focus stays A; `S(S-sway-movews)`
@@ -257,7 +265,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 - Then COSMIC: Floating B transfers; fresh tiled admission at A (splits A's long edge, B after A), float not retained; `SendToWorkspace` + select focuses A (WS1 MRU; B admitted unfocused), `MoveToWorkspace` focuses B; `S(S-cos-send)` + `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-focusfix)`
 - Then Hyprland/Dwindle: Forward B takes a full-work-area tile box on empty WS2 (sole tiled tile, not maximized mode); floated B transfers retaining float state at monitor-relative position (never fresh-tiled on arrival); the floated return makes no new tiling admission, so no anchor/axis/order applies: sole A stays the unchanged tiled tile; follow/silent focus per `S(S-hyp-movews)`; exact frames TBD; `S(S-hyp-movews)`
-- Then bspwm: Forward B sole on WS2; floated B transfers retaining float (node moves with client state, no fresh tiling; sole A unchanged); shipped send without `--follow` stays on the source, `--follow` keeps focus on B; exact frames TBD; `S(S-bsp-xfer)` + `S(S-bsp-float)`
+- Then bspwm: Forward B sole on WS2 (empty destination focus NULL takes root); floated B transfers retaining float (node moves with client state via `transfer_node`, no fresh tiling; sole A unchanged); shipped send without `--follow` stays on the source, `--follow` keeps focus on B; `S(S-bsp-xfer)` + `S(S-bsp-float)`
 - Then i3: `move container to workspace` (no-follow both legs): forward B sole on WS2; floated B transfers as a floating wrapper to WS1 (float retained, no fresh tiling; sole A unchanged); return stays on the now-empty WS2; `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: Forward B sole on WS2 (tiled full); floated B transfers retaining float (`shiftWin` runs `delete'`, which preserves the floating-map entry verbatim, so no fresh tiling occurs and B keeps its float frame while sole A keeps its full tile allocation); each arrival is `insertUp` above target focus with B current on that stack and source view unchanged (no follow); X focus follows `setTopFocus` on the current peek (forward leg X focus is source survivor A; the return leg empties WS2 so refresh focuses root until the final select views WS1 with B, focusing B); B renders above the tile (arrange restacks floats first-on-top). `S(S-xmo-shift)` + `S(S-xmo-float)` + `S(S-xmo-arrange)` + `S(S-xmo-topfocus)`
 - Then sway: `move container to workspace` (no-follow both legs): forward B sole on WS2; floated B transfers as floating to WS1 (float retained, no fresh tiling; coordinate fix only on output change, same-output leg performs no rewrite; sole A unchanged); return stays on the now-empty WS2; `S(S-sway-movews)`
@@ -317,7 +325,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 - Then COSMIC: Forward B arrives floating reusing its last tiled origin with clamped size (exact frame TBD); source reflows; return is fresh tiled admission at A (B after A); `SendToWorkspace` leaves focus (source-MRU fallback each leg), `MoveToWorkspace` follows with B; `S(S-cos-send)` + `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-focusfix)`
 - Then Hyprland/Dwindle: Forward TBD: no workspace floating mode exists in source to map `WS2 floating` onto (arrival dispatch is per-window by the mover's own float state, which this fixture never changes), so no floating arrival is recorded; return anchor is sole A (A geometry unrecorded, so axis TBD), B before/after A TBD (cursor half); exact frames TBD; `S(S-hyp-movews)`
-- Then bspwm: Forward TBD: no workspace floating mode exists in source (float is per-window; desktop layout tiled/monocle only), so the return leg is conditional on an unestablished forward; `S(S-bsp-float)` + `S(S-bsp-layout)`
+- Then bspwm: no-counterpart (no workspace floating mode exists in source: float is per-window and desktop layout is tiled/monocle only, so the forward send to a floating workspace never runs and the return leg is conditional on that unestablished forward); `S(S-bsp-float)` + `S(S-bsp-layout)`
 - Then i3: Forward TBD: no workspace floating mode exists in source to map `WS2 floating` onto (float is per-window); arrival dispatch for that parameter unevidenced, so the return leg is conditional on an unestablished forward; `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: no workspace-mode counterpart (no workspace floating mode in source: float is per-window with layout Tall/Mirror/Full plus floating layer only, so the forward/return send never runs); `S(S-xmo-float)` + `S(S-xmo-layout)`
 - Then sway: Forward TBD: no workspace floating mode exists in source to map `WS2 floating` onto (float is per-window; `workspace_layout` default/stacked/tabbed only); arrival dispatch for that parameter unevidenced, so the return leg is conditional on an unestablished forward; `S(S-sway-wsmode)`
@@ -706,9 +714,7 @@ verb inventory); selected intent and doc assertions are never evidence.
 - Then Hyprland/Dwindle: whole-workspace reassignment via
   `moveToMonitor`; displaced destination view and focus stay TBD.
   `S(S-hyp-ws)`; displaced-view queued.
-- Then bspwm: whole-desktop reassignment via `desktop -m MONITOR`
-  (`--follow` keeps the desktop focused); the displaced source view
-  stays TBD. `S(S-bsp-ws)`; displaced-view queued.
+- Then bspwm: whole-desktop reassignment via `desktop -m MONITOR` (`transfer_desktop` unlink/append-insert; the hidden WS2 move leaves L showing WS1 and R showing WS3 with WS2 present hidden, no focus write on either follow leg since the moved desktop was not active); `S(S-bsp-ws)`
 - Then i3: whole-workspace detach/attach via the matched-window form
   `[workspace="^WS2$"] move workspace to output R` (criteria targeting
   iterates matched windows' workspaces; the bare
@@ -1149,12 +1155,11 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   anchor contest). Exact E-vs-created identity and frames stay TBD.
   `S(S-hyp-ws)` + `S(S-hyp-movews)`; identity/frames queued.
 - Then bspwm: E is an explicit desktop; unflagged `node -d next` resolves
-  the relative desktop, transfers with sibling promotion at the source,
-  and inserts at the WS2/E destination focus; `--follow` keeps focus on B,
-  otherwise the send stays on the source. Desktops are retained (no spare
-  lifecycle). Split axis derives from the anchor rectangle's long edge;
-  exact anchor geometry/frames TBD. `S(S-bsp-ws)` + `S(S-bsp-xfer)` +
-  `S(S-bsp-insert)`; frames queued.
+  the relative desktop, transfers with sibling promotion at the source
+  via `transfer_node`, and B fills the empty E sole (empty focus/root takes root, no split; source collapses to A); `--follow` keeps focus on B,
+  otherwise the send stays on the source. Desktops are retained (explicit
+  `desktop -r` only, no spare lifecycle). `S(S-bsp-ws)` + `S(S-bsp-xfer)` +
+  `S(S-bsp-insert)`
 - Then i3: `move to workspace next` resolves via the same no-follow path
   (both the follow and stay runs stay: mover focus restored to the source);
   B attaches after the E target focus. No spare is created (creation is
@@ -1228,10 +1233,10 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   (likely no-op). Follow/silent focus per the move path stays as
   established. `S(S-hyp-ws)` + `S(S-hyp-movews)`; no-history target queued.
 - Then bspwm: the desktop list is circular, so previous from the first wraps
-  to the last desktop E; transfer inserts at the E destination focus with
-  source sibling promotion; `--follow` keeps focus on B, otherwise stays.
-  Desktops are retained. Exact anchor geometry/frames TBD. `S(S-bsp-ws)` +
-  `S(S-bsp-xfer)` + `S(S-bsp-insert)`; frames queued.
+  to the last desktop E; `transfer_node` fills the empty E sole with
+  source sibling promotion (empty focus/root takes root, no split; source collapses to A); `--follow` keeps focus on B, otherwise stays.
+  Desktops are retained (explicit `desktop -r` only). `S(S-bsp-ws)` +
+  `S(S-bsp-xfer)` + `S(S-bsp-insert)`
 - Then i3: `move to workspace prev` wraps via the first/last fallback to the
   pre-transfer E through the same no-follow path (both runs stay); B attaches
   after the E target focus; no spare is created; source A survives. Exact
@@ -1301,10 +1306,10 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   an ordinal wrap), exact target TBD. `S(S-hyp-ws)` + `S(S-hyp-movews)`;
   retention/frames queued.
 - Then bspwm: emptied source retained either leg (desktops persist until the
-  explicit `desktop -r`); transfer inserts at the destination focus;
-  `--follow` keeps focus on B, otherwise the send stays on the (emptied)
-  source. Exact empty-source focused node and frames TBD. `S(S-bsp-ws)` +
-  `S(S-bsp-xfer)` + `S(S-bsp-wsretain)`; focus/frames queued.
+  explicit `desktop -r`); `transfer_node` fills the empty E sole
+  with source sibling promotion (empty focus/root takes root, no split); `--follow` keeps focus on B, otherwise the send stays on the (emptied)
+  source with empty-source focus none. `S(S-bsp-ws)` +
+  `S(S-bsp-xfer)` + `S(S-bsp-wsretain)`
 - Then i3: next/previous resolve via the wrap fallback through the same
   no-follow path (both runs stay; mover focus restored to the source);
   attachment is after the target focus. The emptied source is retained

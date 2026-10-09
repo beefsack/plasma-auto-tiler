@@ -42,8 +42,7 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
 - Then Hyprland/Dwindle: declared 10px delta dispatched to the target;
   neighbor selection and reversibility TBD.
   `S(S-hyp-resize)`; queued.
-- Then bspwm: pixel `-z` resize handle exists; neighbor allocation and
-  reversibility TBD. `S(S-bsp-resize)`; queued.
+- Then bspwm: Relative `-z` handle moves the fence share: `right 10 0` from A finds the east fence via `find_fence` and shifts `split_ratio` by `dx/fence-width` clamped to [0,1] with reflow (only the fenced split changes); `right -10 0` negates it, so reversible absent clamping; `S(S-bsp-resize)` + `S(S-bsp-ptrresize)`.
 - Then i3: grows/shrinks by the explicit 10px against the
   tiling participant found by climbing to the matching orientation;
   shrink is the negated grow, so reversible. `S(S-i3-resize)`.
@@ -104,8 +103,7 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   focus unchanged). `S(S-cos-resize)`.
 - Then Hyprland/Dwindle: TBD (edge/smart-resizing distribution untraced).
   `S(S-hyp-resize)`; queued.
-- Then bspwm: TBD (outer-edge `-z` outcome untraced). `S(S-bsp-resize)`;
-  queued.
+- Then bspwm: No-op: the outer-edge `left` handle finds no west fence via `find_fence`, so `resize_client` returns false with tree and focus unchanged and no redistribution or overflow; `S(S-bsp-resize)` + `S(S-bsp-ptrresize)`.
 - Then i3: no-op (no second container in that direction; command errors,
   tree and focus unchanged). `S(S-i3-resize)`.
 - Then xmonad/Tall+Navigation2D: no-counterpart (no edge-targeted verb;
@@ -150,8 +148,7 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   wins); outer shares unchanged. `S(S-cos-resize)`.
 - Then Hyprland/Dwindle: TBD (inner/outer distribution untraced).
   `S(S-hyp-resize)`; queued.
-- Then bspwm: TBD (which split ratio changes untraced). `S(S-bsp-resize)`;
-  queued.
+- Then bspwm: Inner split moves: `right` from A finds the first east fence (the inner H parent) via `find_fence`, shifting only its `split_ratio` with reflow; the outer share stays unchanged; `S(S-bsp-resize)` + `S(S-bsp-ptrresize)`.
 - Then i3: inner H participant pair moves (find climbs to the first
   matching orientation); outer percent unchanged. `S(S-i3-resize)`.
 - Then xmonad/Tall+Navigation2D: fixture-inapplicable (flat Tall has no

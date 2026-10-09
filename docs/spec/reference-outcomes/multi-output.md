@@ -333,11 +333,13 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
   queued (L).
 - Then Hyprland/Dwindle: evacuation and return TBD (monitor-removal
   workspace migration untraced). TBD; queued.
-- Then bspwm: retains R's monitor/desktops at shipped
-  `remove_unplugged_monitors=false`; reconnect with the same RandR
-  identity reuses that monitor. Focus/visibility while disconnected
-  TBD. Named remove-unplugged=true variant merges desktops into L
-  before removing R, not destruction. `S(S-bsp-monrm)`; queued.
+- Then bspwm: retains R's monitor/desktops in place at shipped
+  `remove_unplugged_monitors=false` (no evacuation: L keeps showing its
+  current desktop, and the removal path writes no focus so R/L focus
+  objects stay); reconnect with the same RandR identity reuses that
+  monitor via `update_root` (return affinity, not fresh reassignment).
+  Named remove-unplugged=true variant merges desktops into L
+  before removing R, not destruction. `S(S-bsp-monrm)`.
 - Then i3: evacuation and return TBD (output-destroy workspace
   migration untraced). TBD; queued.
 - Then xmonad/Tall+Navigation2D: no window/workspace migration in
@@ -425,8 +427,7 @@ keys remain historical; delivery evidence is linked separately in KDE cells.
   swap; local B never gates); anchor is destination focus Y with A as
   second child under the longest-side axis (tall Y gives HORIZONTAL
   `(Y,A)`). Unflagged stays on the source; `--follow` focuses A on R.
-  Exact pixel frames TBD (work area and native response unrecorded). `S(S-bsp-send)` +
-  `S(S-bsp-xfer)` + `S(S-bsp-insert)` + `S(S-out07-bsp-mon)`.
+  `S(S-bsp-send)` + `S(S-bsp-xfer)` + `S(S-bsp-insert)` + `S(S-out07-bsp-mon)`.
 - Then i3: carries A to R's visible workspace via `move_to_output_directed`
   (closest east output; explicit send, so local B never gates); RIGHT
   attaches at HEAD (`[A,X,Y]`, focus TAIL) with mover-focused follow via

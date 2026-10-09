@@ -99,9 +99,7 @@ transient (no dialog flag) is a different fixture and is not claimed.
 - Then Hyprland/Dwindle: both float (SPLASH and UTILITY atoms) and
   neither takes initial focus (non-DIALOG float atoms suggest no
   initial focus). Switcher presence TBD. `S(S-hyp-spc)`; queued.
-- Then bspwm: splash tiles as ordinary with newcomer focus (no
-  splash branch); utility tiles without focus (`focus=false`).
-  Switcher presence TBD. `S(S-bsp-spc)`; queued.
+- Then bspwm: Splash tiles as ordinary with newcomer focus (no splash branch in the type/transient/fixed legs); utility tiles without focus (`focus=false`); switcher leg no-counterpart (no native switcher/listing verb in this profile, so presence never runs); `S(S-bsp-spc)` + `S(S-bsp-switcher)` + `S(S-bsp-insert)`.
 - Then i3: both float (DIALOG/UTILITY/TOOLBAR/NOTIFICATION/SPLASH
   plus MODAL branch) with visible-workspace newcomer focus.
   Switcher presence TBD. `S(S-i3-min)`; queued.
@@ -361,8 +359,11 @@ All fresh variants below reset the client and WM state independently.
   both (Wayland min<=1 gate, X11 min>0 gate). `S(S-hyp-fixed-hints)`.
 - Then bspwm: absent tiles (flag gate fails); (0,0), both partial-zero
   and sentinel float (raw whole-size equality, no zero/sentinel guard);
-  the height-absent guard stays TBD (absent-height xcb representation
-  not pinned; no equality-positive inference). `S(S-bsp-spc)`.
+  the width-640/height-absent guard stays TBD (F: `P_MIN_SIZE`/`P_MAX_SIZE` govern
+  the whole (w,h) tuple in the cited `_apply_hints` path, so it has no
+  distinct evidenced wire value and the harness sending is unstated (sends
+  (640,0) floats per the partial-zero leg, omits flags tiles per the absent
+  leg)). `S(S-bsp-spc)`.
 - Then i3: absent, (0,0), both partial-zero and the height-absent guard
   tile (max_width>0 and max_height>0 gate fails); the sentinel floats
   (both axes positive and equal). `S(S-i3-min)`.
@@ -551,7 +552,7 @@ All fresh variants below reset the client and WM state independently.
 - Then bspwm: E floats (min==max hints rule); no maximize command/state
   exists (desktop layout tiled/monocle only; maximize flags are not tree
   state), so the born-maximized/unmaximize legs have no counterpart.
-  Client ack TBD. `S(S-bsp-spc)` + `S(S-bsp-layout)` + `S(S-bsp-admit)`.
+  `S(S-bsp-spc)` + `S(S-bsp-layout)` + `S(S-bsp-admit)`.
 - Then i3: E floats (min==max branch); no maximize verb/state exists
   (maximize is derived-only), so the born-maximized/unmaximize legs have
   no counterpart. Client ack TBD. `S(S-i3-min)` + `S(S-i3-max)`.
@@ -766,9 +767,7 @@ All fresh variants below reset the client and WM state independently.
   F-arrival, changed-hints/predicate, override, and maximized legs share
   the absence (no workspace action to enable; conditional legs never run).
   Outcome TBD. `S(S-hyp-float)`.
-- Then bspwm: no workspace-mode counterpart per R-FLT-04; F-arrival,
-  changed-hints/predicate, override, and maximized legs share the absence.
-  Outcome TBD. `S(S-bsp-layout)`.
+- Then bspwm: No workspace-mode counterpart per R-FLT-04 (no workspace tiling toggle; float is per-window, so enable/F-arrival, changed-hints/predicate, override, and maximized legs never run); `S(S-bsp-layout)`.
 - Then i3: no workspace-mode counterpart per R-FLT-04; F-arrival,
   changed-hints/predicate, override, and maximized legs share the absence.
   Outcome TBD. `S(S-i3-wsmode)`.
@@ -859,8 +858,7 @@ All fresh variants below reset the client and WM state independently.
   stays tiled as dumped state. Re-floated E restores as floating and closed
   E is absent (dump reflects live state). Store-fault (missing/unreadable/
   corrupt/v1/mismatched) and complete-vs-partial omission variants have no
-  counterpart in the dump/load inventory (orderly fields only). Exact
-  restart/visibility journey TBD. `S(S-bsp-restore)`.
+  counterpart in the dump/load inventory (orderly fields only). `S(S-bsp-restore)`.
 - Then i3: restart carries the layout file and re-execs (percents, focused
   flag/activation, floating geometry round-trip); fixed E stays floating
   and explicitly tiled E stays tiled. Re-floated E restores as floating and

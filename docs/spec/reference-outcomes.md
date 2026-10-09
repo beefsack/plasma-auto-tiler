@@ -388,14 +388,20 @@ Legend:
   focus) @e11eff4cb3333216ad03c815609a4ed79e08929c
   (float-focus anchor and newcomer-layer legs; split and focus stay
   `S(S-bsp-insert)`)
-- `S-bsp-xfer` bspwm:src/tree.c:1629-1652 (`transfer_node` unlinks with
-  sibling promotion and inserts at the destination focus) and
-  src/messages.c:180-186,255-261 (`-d`/`-s` with `--follow` dispatch)
+- `S-bsp-xfer` bspwm:src/tree.c:1629-1652 (`transfer_node` unlinks then
+  inserts at `dd->focus` with follow-gated source/destination focus) and
+  :1337-1405 (`unlink_node` sibling promotion) and :291-310
+  (`insert_node` empty focus/root takes root sole; otherwise automatic
+  longest-side second-child split) and
+  src/messages.c:171-261 (`-d`/`-m`/`-n`/`-s` with `--follow` dispatch;
+  `-d`/`-m` insert at `dd->focus`)
   @e11eff4cb3333216ad03c815609a4ed79e08929c
 - `S-bsp-state` bspwm:src/tree.c:1945-1982 (`set_floating`/`set_fullscreen`
   toggle vacant in place: tree slot kept, no focus write) and :2151-2184
   (`set_sticky` has no float-only guard; off-desktop sticky transfers to
-  the focused desktop) @e11eff4cb3333216ad03c815609a4ed79e08929c
+  the focused desktop) and :520-536 (`transfer_sticky_nodes` moves sticky
+  subtrees to the target desktop) and :588-598 (desktop-switch
+  focus-path sticky follow) @e11eff4cb3333216ad03c815609a4ed79e08929c
 - `S-bsp-layout` bspwm:doc/bspwm.1.asciidoc:350-360 (floating/fullscreen
   are per-window states) and :505 (desktop layout is tiled/monocle only)
   @e11eff4
@@ -962,7 +968,7 @@ Legend:
   @19fb395d45314960e6f79f17994a84094f1cd4f6
 - `S-bsp-min` bspwm:src/tree.c:101-134,150-170 and src/window.c:699-701
   @e11eff4cb3333216ad03c815609a4ed79e08929c
-  (opt-in leaf size-hint clamp on every reflow; constraint-fence wiring TBD)
+  (opt-in leaf `apply_size_hints` minimum clamp on every reflow; internal fence clamp is 32-based constraint minima when the sum fits, not hint-driven)
 - `S-bsp-admit` bspwm:src/rule.c:256-293 and src/tree.c:787-795
   @e11eff4cb3333216ad03c815609a4ed79e08929c
   (fullscreen state/fixed-size floating admission; maximum flags not admission state)
@@ -976,11 +982,18 @@ Legend:
 - `S-bsp-drag` bspwm:src/window.c:487-545 (`move_client` tiled hover-swap vs float move, cross-monitor transfer) and src/pointer.c:58-68 (buttons grabbed with the modifier) and :248-307 (ACTION_MOVE grab/track, button-release end only) and src/events.c:40-89 (`handle_event` switch has no key-press cancel branch) @e11eff4cb3333216ad03c815609a4ed79e08929c
   (pointer drag swaps on hover; no zones/cancel/preview)
 - `S-bsp-ptrfocus` bspwm:src/settings.h:54 (`FOCUS_FOLLOWS_POINTER`
-  defaults false) and :57 (`CLICK_TO_FOCUS` defaults button1) and
+  defaults false) and :57-58 (`CLICK_TO_FOCUS` defaults button1,
+  `SWALLOW_FIRST_CLICK` defaults false) and
   doc/bspwm.1.asciidoc:759-772 (`click_to_focus`, `focus_follows_pointer`,
-  `pointer_follows_focus` settings)
+  `pointer_follows_focus` settings) and src/window.c:200 (client enter
+  mask subscribed only while `focus_follows_pointer`) and
+  src/events.c:375-398 (`button_press` ACTION_FOCUS plus replay) and
+  :425-472 (`motion_notify` motion focus with the unintentional-motion
+  filter) and src/messages.c:1753-1771 (setting toggle rewires enter
+  masks and the motion recorder)
   @e11eff4cb3333216ad03c815609a4ed79e08929c
-  (shipped hover stays unfocused while button1 click focuses)
+  (shipped hover stays unfocused while button1 click focuses and
+  replays; enabled hover focuses on motion with no scheduled delay)
 - `S-bsp-ptrresize` bspwm:src/pointer.c:259-307 (`track_pointer`
   motion drives `resize_client` with pointer deltas) and
   src/settings.h:30 (`pointer_modifier` defaults Mod4) and
@@ -988,12 +1001,12 @@ Legend:
   by dx/fence-width clamped to [0,1] with reflow)
   @e11eff4cb3333216ad03c815609a4ed79e08929c
   (modifier resize_side/corner grab moves the shared fence share)
-- `S-bsp-restore` bspwm:src/query.c:38-67 (`query_state` dump incl history/stack) and :116-183 (node/client dump incl sticky/state) and src/restore.c:111-162 (restart replaces monitors, restores history/stack) and :345-409 (node sticky restore) and :436-474 (client state restore) and src/bspwm.c:154-156 (startup `-s` restore) and :275-326 (restart dump + re-exec) and src/messages.c:1250-1263,1317-1320 (`-d`/`-l`/`-r` verbs) @e11eff4cb3333216ad03c815609a4ed79e08929c
+- `S-bsp-restore` bspwm:src/query.c:38-67 (`query_state` dump incl history/stack) and :116-183 (node/client dump incl sticky/state) and src/restore.c:111-162 (restart replaces monitors, restores history/stack) and :345-409 (node sticky restore) and :436-474 (client state restore) and :188-192 (regenerate call site) and src/tree.c:2285-2293 (`regenerate_ids_in` skips client leaves, so dumped X window IDs persist) and src/window.c:44-82 (`schedule_window`/`manage_window` fresh admit via rules) and :428-447 (`adopt_orphans` manual scan only) and src/bspwm.c:154-156 (startup `-s` restore) and :275-326 (restart dump + re-exec) and src/messages.c:1250-1263,1317-1320 (`-d`/`-l`/`-r` verbs) @e11eff4cb3333216ad03c815609a4ed79e08929c
   (restart persists sticky/state/focus; dump fields round-trip:
-  query.c:107 `focusedNodeId`, :124 `splitRatio`, :179 `floatingRectangle`,
-  :57 history; restore.c:320-322, :361, :364, :464-466, :178-179)
-- `S-bsp-fs` bspwm:src/messages.c:287-318 (`node -t --state` incl `~` alternate) and src/tree.c:1889-1943 (`set_state` last_state memory, vacant in place) and :1963-1987 (`set_fullscreen`) and src/events.c:474-490 (EWMH fullscreen ADD/REMOVE/TOGGLE with ignore gates) and src/settings.h:60 (default 0, honored both ways) @e11eff4cb3333216ad03c815609a4ed79e08929c
-  (project toggle and EWMH converge; no refusal branch)
+  query.c:107 `focusedNodeId`, :122 node `id` (live X window for client leaves), :124 `splitRatio`, :179 `floatingRectangle`,
+  :57 history; restore.c:320-322, :359 node `id`, :361, :364, :464-466, :188-192)
+- `S-bsp-fs` bspwm:src/messages.c:287-318 (`node -t --state` incl `~` alternate) and src/tree.c:1889-1943 (`set_state` last_state memory, vacant in place) and :1963-1987 (`set_fullscreen`) and :1989-2004 (`neutralize_occluding_windows` clears a covered fullscreen to last_state on focus) and src/stack.c:123-133 (fullscreen outranks tiled in `stack_level`) and src/events.c:474-490 (EWMH fullscreen ADD/REMOVE/TOGGLE with ignore gates) and src/settings.h:60 (default 0, honored both ways) @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (project toggle and EWMH converge; newcomer focus clears covered fullscreen; no refusal branch)
 - `S-bsp-ctl` bspwm:src/messages.c:287-358 (node `-t` state incl `~` alternate, `-g` flags hidden/sticky/private/locked/marked only) and :1250-1327 (wm `-d` dump/`-l` load/`-a` add-monitor/`-O` reorder/`-o` adopt-orphans/`-g` status/`-h` history/`-r` restart only) @e11eff4cb3333216ad03c815609a4ed79e08929c
   (no preset/tray/binding-staging model in the inspected inventory)
 - `S-bsp-switcher` bspwm:examples/sxhkdrc:11 (`dmenu_run` external program
@@ -1969,10 +1982,14 @@ Legend:
 - `S-bsp-pre` bspwm:doc/bspwm.1.asciidoc:431-434 (`node -p DIR` preselects
   the splitting area, `-o` its ratio: manual insertion mode) and
   src/messages.c:359-382 (verb parsing plus `~` cancel) and
-  src/tree.c:215-223 (`presel_dir` stores the split direction)
+  src/tree.c:215-223 (`presel_dir` stores the split direction) and
+  :410-447 (`insert_node` preselect branch: stored direction overrides the
+  automatic axis, WEST/EAST vertical plus NORTH/SOUTH horizontal with the
+  stored ratio, then `cancel_presel`) and :237-251 (`cancel_presel`
+  one-shot cancel)
   @e11eff4cb3333216ad03c815609a4ed79e08929c
-  (verb and manual-mode legs; consumption and exact fixture geometry stay
-  TBD)
+  (verb, manual-mode, override and one-shot-consumption legs; exact
+  fixture geometry stays TBD)
 - `S-i3-split` i3:parser-specs/commands.spec:254-257 (`split
   v|h|t|vertical|horizontal|toggle` into `cmd_split`) and
   src/commands.c:1174-1200 (`cmd_split` via `tree_split` VERT/HORIZ, `t`
@@ -1998,12 +2015,19 @@ Legend:
   cycle) @19fb395d45314960e6f79f17994a84094f1cd4f6
   (focus verbs; tie metric and cycle order stay TBD)
 - `S-bsp-cycle` bspwm:doc/bspwm.1.asciidoc:52 (`CYCLE_DIR` next|prev)
-  and :82-116 (NODE_SEL incl `first_ancestor`) and :412-414 (`node -f`
-  focus verb) and src/tree.c:891-930 (in-order `next_node`/
-  `prev_node` walk) and :1729-1780 (`find_closest_node` desktop-wrap
-  loop) @e11eff4cb3333216ad03c815609a4ed79e08929c
-  (cycle selector/walk inventory; binary embedding and internal-node
-  matching stay TBD)
+  and :82-116 (NODE_SEL incl `first_ancestor` and PATH `parent`/`first`/
+  `second` jumps) and :412-414 (`node -f` focus verb) and
+  src/tree.c:891-930 (in-order `next_node`/`prev_node` walk over all
+  nodes incl internals) and :859-880 (`first/second_extrema` resolve to
+  leaves) and :1108-1122 (`find_first_ancestor` climbs to the first
+  matching parent) and :811-820 (`is_focusable` admits containers with a
+  shown client leaf) and :1729-1780 (`find_closest_node` desktop-wrap
+  loop) and src/query.c:1070-1223 (empty selector matches any non-NULL
+  node, internals included) and src/window.c:925-941 (focusing a
+  client-less container clears X input to root)
+  @e11eff4cb3333216ad03c815609a4ed79e08929c
+  (bare next/prev walks every node with match-all; container focus
+  stores the internal and clears X input; wrap lands on extrema leaves)
 - `S-i3-focusnext` i3:parser-specs/commands.spec:185-201 (`focus`
   direction/next|prev/sibling/parent|child grammar) and
   src/commands.c:1292-1340 (`cmd_focus_direction` auto-direction via
@@ -2277,10 +2301,12 @@ Legend:
 - `S-bsp-resize` bspwm:doc/bspwm.1.asciidoc:439-442 (`-z` pixel handle)
   and :454-458 (`-E`/`-B`) + src/messages.c:432-447 (`-z` dispatch) and
   :557-569 (`-E`/`-B` dispatch to `equalize_tree`/`balance_tree`) +
-  src/tree.c:1258-1283 (equalize/balance) + src/settings.h:44
+  src/tree.c:1258-1283 (equalize/balance) + src/window.c:547-590
+  (`resize_client` fence share move with reflow) + src/tree.c:1003-1025
+  (`find_fence` climb to the first matching parent) + src/settings.h:44
   (shipped `SPLIT_RATIO` 0.5)
   @e11eff4cb3333216ad03c815609a4ed79e08929c
-  (pixel-handle neighbor/reversal TBD; root equalize/balance evidenced)
+  (pixel-handle fence-share move with reflow; root equalize/balance evidenced)
 - `S-i3-resize` i3:src/commands.c:451-467 (tiling-direction participants)
   and :544-581 (`resize grow|shrink`, shrink negates) and
   src/resize.c:72-144 (climb to the first matching orientation) and
@@ -2423,7 +2449,7 @@ Legend:
   TOOLBAR/UTILITY set no-focus; DOCK/DESKTOP/NOTIFICATION unmanaged) and
   :276-289 (transient floats) and :291-299 (min==max fixed size floats)
   @e11eff4cb3333216ad03c815609a4ed79e08929c
-  (type/transient/fixed-size admission legs; placement and switcher stay TBD)
+  (type/transient/fixed-size admission legs; placement stays TBD; switcher is `S-bsp-switcher`)
 - `S-sway-spc` sway:sway/desktop/xdg_shell.c:229-235 (`wants_floating`:
   either-dimension min==max or parent) and sway/desktop/xwayland.c:308-340
   (modal, DIALOG/UTILITY/TOOLBAR/SPLASH, or fixed size floats)
@@ -3115,11 +3141,17 @@ Legend:
   focused desktop) and :418-422 (`node -d/-m` desktop/monitor send with
   `--follow`) and :486-512 (`desktop -f/-a/-m/-s/-l`, whole-desktop move
   via `-m`) and :514 (explicit `desktop -r` removal) +
-  src/desktop.c:39-74 (`activate_desktop` show/hide) and :270-274
-  (circular desktop list, so next/prev wrap) and :182-235 (desktop
+  src/desktop.c:39-74 (`activate_desktop` show/hide) and :75-110
+  (`find_closest_desktop` monitor-crossing wrap) and :167-181
+  (`transfer_desktop` sticky-count/unlink/insert head) and :270-274
+  (tail-append desktop insert) and :182-235 (desktop
   transfer with follow) and :336-360 (explicit removal only) +
-  src/messages.c:656-666 (`desktop -f` focus plus absent-selector
-  failure) and src/types.h:283-293 (`desktop_t.focus` memory) +
+  src/messages.c:656-803 (`desktop -f/-a/-m/-s/-b/-l/-n/-r` verbs plus
+  absent-selector failure and explicit-only removal) and
+  src/monitor.c:459-558 (RandR wired tracking with
+  `remove_disabled`/`remove_unplugged` gates) and src/settings.h:67-69
+  (`REMOVE_DISABLED`/`REMOVE_UNPLUGGED`/`MERGE_OVERLAPPING` default
+  false) and src/types.h:283-293 (`desktop_t.focus` memory) +
   `S(S-bsp-close)` (focus_node history fallback)
   @e11eff4 for the doc path,
   @e11eff4cb3333216ad03c815609a4ed79e08929c for src
@@ -3803,8 +3835,13 @@ Legend:
   plus `stack`: focused nodes take the above branch with `window_above`,
   unfocused the below branch; floats participate unless `auto_raise` is
   held false) and src/events.c:455,471 (pointer-motion hold-false, restore
-  true) @e11eff4cb3333216ad03c815609a4ed79e08929c
-  (raise-on-focus stacking; no project lower verb in the inspected inventory)
+  true) and src/rule.c:256-265 (`_apply_window_state` maps
+  `_NET_WM_STATE_BELOW` to `LAYER_BELOW`) and src/messages.c:271-279
+  (`node -l/--layer` sets the stacking layer) and
+  doc/bspwm.1.asciidoc:469 (`-l` sets the stacking layer) @e11eff4
+  for the doc path, @e11eff4cb3333216ad03c815609a4ed79e08929c for src
+  (raise-on-focus stacking; no project same-layer order-lower verb:
+  BELOW is a persistent stacking layer, not this leg's order-lower)
 - `S-bsp-fltptr` bspwm:src/window.c:487-545 (`move_client` float branch
   writes `floating_rectangle` x/y) and :547-630 (`resize_client` float
   branch grows w/h with hints applied and writes the rectangle) and

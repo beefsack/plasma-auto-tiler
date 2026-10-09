@@ -23,7 +23,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 
 - Then COSMIC: Survivors `[A,C]` keep order, proportional rescale; focus C (MRU top via fixup); `S(S-cos-rem)` + `S(S-cos-focusfix)`
 - Then Hyprland/Dwindle: Flat 3-child start has no ordinary binary form (default ratio 1 yields halves, not thirds); exact N-ary collapse TBD. Policy: live-tree removal promotes the sibling and recalcs; closed-focused refocus defaults to spatial `next` (closest node by old middle, else first/back fallback), not MRU C; cursor/MRU modes only via explicit `focus_on_close=1/2`; `S(S-hyp-close)`
-- Then bspwm: Survivors `[A,C]` keep order with sibling promotion + arrange; focus C (history MRU via the focus guess, coinciding with MRU here, not a spatial rule); close asks the client (delete/kill), removal unlinks + drops history; exact frames TBD; `S(S-bsp-close)`
+- Then bspwm: Survivors `[A,C]` keep order with sibling promotion + arrange (either binary embedding of the flat triple converges here: the middle leaf's brother promotes into its place); focus C (history MRU via the focus guess, coinciding with MRU here, not a spatial rule); close asks the client (delete/kill), removal unlinks + drops history; the unrecorded embedding is immaterial to this collapse/focus Observe. `S(S-bsp-close)`
 - Then i3: Survivors `[A,C]` keep nodes order with percent rescale; focus C (second in the focus stack via `con_next_focused`, coinciding with MRU here, not a spatial rule); `S(S-i3-close)`
 - Then xmonad/Tall+Navigation2D: Exact flat 3-child H has no Tall counterpart (flat N-ary H vs master/stack two-pane); analogous policy only: close removes B via `delete` (`sink` + `delete'`/`filter`, order preserved, focus down else up, so C under the projected `[A,B*,C]` order; positional, not MRU); survivors `[A,C]` keep stack order and refill via unconditional Tall recalc; `S(S-xmo-close)` + `S(S-xmo-layout)`
 - Then sway: Survivors `[A,C]` keep order with fraction renormalize; focus C (focus-inactive view of the parent in MRU order, coinciding with MRU here, not a spatial rule); unmap detaches + reaps + rearranges; `S(S-sway-close)`
@@ -139,8 +139,9 @@ is the observation-driven proposal, never the native verb.
   `S(S-hyp-close)`; queued.
 - Then bspwm: desktop retained as shown empty (desktops removed only by
   explicit `desktop -r`); removal unlinks with sibling promotion and
-  drops history; exact focus TBD. `S(S-bsp-close)` +
-  `S(S-bsp-wsretain)`; queued.
+  drops history; focus none (sole removal clears the desktop focus, and
+  the shown-desktop guess finds no surviving focusable leaf, clearing X
+  input to root). `S(S-bsp-close)` + `S(S-bsp-wsretain)`.
 - Then i3: WS1 retained (only invisible empty workspaces auto-close);
   A detached; focus falls to the empty workspace (no window focus).
   `S(S-i3-close)` + `S(S-i3-wsretain)`.
