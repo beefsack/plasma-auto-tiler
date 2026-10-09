@@ -34,11 +34,12 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then qtile/Columns: Maximized is a floating-layer state at work-area size: B is removed from the tiling via mark_floating (survivors refill with no retained-slot overlay) and restore re-adds via fresh admission at the focused cc position with saved geometry/state; focus stays B on both legs; exact maximized/restored pixel frames TBD (F: work-area/output geometry plus gap/column projection unrecorded; L: convergence/client-ack timing); `S(S-qti-fs)` + `S(S-qti-fsslot)`
 - Then awesome/tile: Maximized leaves the tiling (excluded like floats; survivors refill via stateless recalc, no retained-slot overlay); restore re-includes B at its retained global order position via recalc; the boolean flip is synchronous with raise and no attempted-state fence, so focus stays B and placement maximize/restore covers/restores the work-area frame; `S(S-awe-fs)` + `S(S-awe-tile)`
 - Then niri: client maximize routes into `set_maximized(true)`, setting
-  the column pending-maximized flag with the strip kept (no add/remove;
-  configure maps Maximized to working-area size); restore routes into
+  the column pending-maximized flag with the strip kept (single-tile
+  fixture columns need no extract; siblings keep independent widths;
+  configure offers the working-area size); restore routes into
   `set_maximized(false)`, an idempotent clear that floats only a
-  previously-floating window. Exact hinted frames/convergence TBD.
-  `S(S-nir-maxfs)`; geometry queued.
+  previously-floating window. Exact hinted frames and convergence timing
+  TBD (live-only). `S(S-nir-maxfs)`; geometry queued (live).
 - Then PaperWM: native maximize converts to full-width maximize at the
   shipped default (`maximize-within-tiling` true: unmaximize, restore the
   last layout frame, then width toggle to 1.00 of the work area with

@@ -45,9 +45,12 @@ off, append admission (`S(S-pan-base)`).
   stays in the current column. `S(S-qti-add)`.
 - Then awesome/tile: fixture-inapplicable: master/stack partition in
   insertion order, no strip. `S(S-awe-tile)`.
-- Then niri: new column at active+1, activated when told; pending
-  maximized/fullscreen tiles stay in the scrolling layout. Settled
-  widths, newcomer focus and viewport stay TBD. `S(S-nir-ins)`; queued.
+- Then niri: D opens as a new column at active+1 (after B) at the default
+  width with existing widths kept (no rescale); pending
+  maximized/fullscreen tiles stay in the scrolling layout. Under Smart
+  with no pending fullscreen D activates and takes focus, and the view
+  animates to D with the minimal fit under shipped `Never`.
+  `S(S-nir-ins)` + `S(S-nir-base)` + `S(S-nir-view)`.
 - Then PaperWM: D opens as a new column at selected+1 (between B and C) under the shipped RIGHT default, activated on show with inactive-space no-steal; existing columns keep widths (no rescale) and the viewport keeps D visible via minimal ensuredX scroll under DEFAULT. `S(S-pap-ins)` + `S(S-pap-layout)` + `S(S-pap-view)`.
 - Then karousel/Lazy: new column after the last-focused column (B's C2 column under the B* tiled focus, so between B and C), window appended at the bottom; existing columns keep widths (newcomer width from its preferred width clamped into [min,max]; `columnsSetX` repositions only); newcomer focus TBD (fixture states no protocol, X11 user-time/startup/session, Wayland token/app-id/transient-serial, or FSP/rules inputs selecting the host activation fork); viewport is a deterministic conditional (Lazy minimal scroll toward the last-focused column: moves only if the newcomer is accepted and not contained); exact settled widths TBD (fixture states no newcomer frame/min/max inputs for the clamp). `S(S-kar-ins)` + `S(S-kar-fltanchor)` + `S(S-kar-scroll)` + `S(S-kar-min)` + `S(S-kwin-manage)` + `S(S-kwin-add)`.
 - Then paneru: ordinary D takes the fresh path as a new Single column at index 2 between B and C (no rule index under shipped defaults; focused B at index 1 of 3, so the after-focus slot hits); newcomer focus is synthesized to D; existing columns keep widths with no rescale; the viewport reshuffles minimally toward D with no centering. `S(S-pan-fresh)` + `S(S-pan-base)` + `S(S-pan-stripwidth)` + `S(S-pan-colops)`.
@@ -313,9 +316,10 @@ off, append admission (`S(S-pan-base)`).
   per-window `togroup` transfer; reuse R-WS-01. `S(S-qti-group)`.
 - Then awesome/tile: column-atomic leg fixture-inapplicable:
   per-client tag move; reuse R-WS-01. `S(S-awe-tag)`.
-- Then niri: `MoveColumnToWorkspace` carries the whole column and
-  keeps Maximized while dropping fullscreen. Target column position
-  stays TBD. `S(S-nir-wscarry)`; queued.
+- Then niri: `MoveColumnToWorkspace` carries the whole column object with
+  membership and widths kept, landing after the target workspace's active
+  column (index 1 after the sole column here); it keeps Maximized while
+  dropping fullscreen. `S(S-nir-wscarry)`.
 - Then PaperWM: single-window `takeWindow` only (no whole-column verb
   in the registered inventory): B transfers and reinserts at the target
   open position (selected+1 RIGHT, after the single occupied column)
@@ -359,9 +363,14 @@ off, append admission (`S(S-pan-base)`).
   width, no viewport to scroll. `S(S-qti-resize)`.
 - Then awesome/tile: fixture-inapplicable: no strip viewport.
   `S(S-awe-tile)`.
-- Then niri: touchpad gesture scrolls the view without changing focus.
-  A keyboard scroll-step verb inventory stays TBD. `S(S-nir-view)`;
-  queued.
+- Then niri: the touchpad gesture moves the view with no focus write
+  during the motion; at the end it snaps to the closest column boundary,
+  extends to the furthest column toward the gesture direction and
+  activates that column, clamped to the first/last column so the view
+  never rests beyond the strip. The full `Action` inventory carries no
+  keyboard scroll-step verb (`CenterColumn`/`CenterWindow`/
+  `CenterVisibleColumns` one-shots only).
+  `S(S-nir-view)` + `S(S-nir-acts)`.
 - Then PaperWM: swipe moves the view but reselects the swipe target,
   and background scroll only switches focus during grab/navigation.
   Keyboard drift-left/right move the view but also reselect - no

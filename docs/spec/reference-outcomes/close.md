@@ -75,8 +75,9 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then qtile/Columns: Same non-ordinary start; exact survivor widths and reopened frames TBD. Policy: close redistributes the removed height/width share across survivors (no old-slot store); reopened B fresh-admits at the focused position with newcomer focus; `S(S-qti-close)` + `S(S-qti-add)`
 - Then awesome/tile: Same non-ordinary start; survivors refill via tile recalc with no old-slot/ratio store (shares live in master/stack plus windowfact, not per-slot); reopened B is fresh manage admission appending last with newcomer focus; exact survivor widths/reopened frames TBD; `S(S-awe-tile)` + `S(S-awe-manage)` + `S(S-awe-hist)`
 - Then niri: survivors keep 0.5/0.2W with no rescale; reopened B is a
-  fresh column after active (no old-slot store); reopened focus TBD.
-  `S(S-nir-close)` + `S(S-nir-ins)`; queued.
+  fresh column after the active C at the default width (no old-slot store)
+  and takes focus under Smart (no pending fullscreen to fence it).
+  `S(S-nir-close)` + `S(S-nir-ins)`.
 - Then PaperWM: 50/30/20 prepared via the `resizeW` grid; survivors
   keep frame-widths (layout reads live frames); reopened B is fresh
   at selected+1 RIGHT with activate-on-show (no old-slot store).

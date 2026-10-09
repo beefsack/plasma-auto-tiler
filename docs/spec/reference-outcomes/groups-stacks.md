@@ -167,9 +167,10 @@ evidence.
   plus Max only). `S(S-qti-split)` + `S(S-qti-default)`.
 - Then awesome/tile: fixture-inapplicable (no stack/tab group primitive).
   `S(S-awe-default)` + `S(S-awe-layout)`.
-- Then niri: TBD (tabbed-column member removal plus active-index/focus
-  fixup untraced; column dissolve vs retain on this fixture unresolved).
-  `S(S-nir-consume)`; queued.
+- Then niri: the column is retained as `[A,C]` (multi-member removal never
+  dissolves a column); the active index stays to take the next member, so
+  C becomes active with focus to C (positional next, MRU C coinciding
+  here); Tabbed display retained. `S(S-nir-consume)` + `S(S-nir-close)`.
 - Then PaperWM: the column is retained as `[A,C]` (member splice;
   no tab bar to update, no tabbed display); extension selection
   falls to the stack-topmost surviving neighbour (not MRU

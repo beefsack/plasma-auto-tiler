@@ -28,9 +28,16 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then sway: No COSMIC stack join: content-centre (outside 30% edge bands, not a titlebar) runs centre `container_swap` with the hovered target (titlebar hover instead tabifies via `container_split` L_TABBED + indexed insert); needs enabled `tiling_drag` (shipped enabled, threshold 9) with >1 tiling view, else NULL abort; self/descendant-centre NULL aborts with indicator destroy and no mutation; swap preserves mover focus on the same workspace; `S(S-sway-tdrag)` + `S(S-sway-tdrop)`; exact centre pixel and native preview TBD
 - Then qtile/Columns: No stack join: pointer over C runs the explicit set_position swap (B/C exchange places with heights, no centre/edge distinction); shipped Mod+Button1 instead runs set_position_floating (floating tweak, not the tiled swap); exact hover pixel and drop-side focus TBD; `S(S-qti-drag)` + `S(S-qti-tweak)`
 - Then awesome/tile: No centre-stack mapping in source (no stack/tab join verb; shipped layouts floating plus tile variants/fair/spiral/max/magnifier/corner per `S(S-awe-default)`, layout per-tag per `S(S-awe-layout)`; tiled set excludes float/max/full per `S(S-awe-tile)`): tiled mouse.move over C swaps B/C global-client positions via move_handler with tile recalc settling frames (centre-vs-edge not distinguished, no zone check in the path; swap writes no focus); a floating B would move its frame via the floating geometry path instead; shipped Mod4+Button1 client move and titlebar Button1 move share the same activate-with-mouse_move path; no source-slot placeholder/restore in the tiled path (snap placeholder is floating aerosnap only); column leg runs the same swap with no column-join verb. `S(S-awe-drag)` + `S(S-awe-swap)` + `S(S-awe-tile)` + `S(S-awe-layout)` + `S(S-awe-default)`
-- Then niri: drop re-inserts at the pointer insert position; the
-  pointer path carries no consume/join (consume/expel is a separate
-  keyboard Action). Exact insert column TBD. `S(S-nir-drag)` +
+- Then niri: the drop re-inserts B at the pointer insert position,
+  which resolves to a new-column split or an in-column member-add by
+  pointer geometry (`scrolling_insert_position`: `NewColumn` when the
+  column gap is nearest, else `InColumn` committed via
+  `add_tile_to_column`); no swap and no float-out (scrolling B stays
+  scrolling), and the removed tile is not restored to its source
+  slot. The pointer path carries no consume/expel verb (separate
+  keyboard Action). Exact branch stays TBD (F: centre pixel and
+  tile/work-area geometry unrecorded, so the gap-vs-tile distance
+  comparison is unspecified). `S(S-nir-drag)` +
   `S(S-nir-consume)`; queued.
 - Then PaperWM: centre x lands in the column body, so
   `selectDndZone` yields only a within-column `[j,i]` or column
@@ -74,8 +81,14 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then sway: No between-child bar mapping as such: a titlebar hover inserts flat at the computed bar index via `split_titlebar`/`split_border` (`H[A,N,B,C]` shape when bars are the hover); content hover resolves via nearest-edge into edge split+insert vs centre swap, orientation from the edge direction; the mover adopts a sibling share (finalize copies sibling fractions); `S(S-sway-tdrag)` + `S(S-sway-tdrop)`; exact bar pixel, N start state and frames TBD (drop geometry unspecified)
 - Then qtile/Columns: No between-child bar/index mapping in source: a bar hover hits no window, so set_position swaps nothing and N stays; shipped Mod+Button1 instead tweaks N's frame on the floating path; exact outcome TBD (producer, N float state, and bar pixel unspecified); `S(S-qti-drag)` + `S(S-qti-tweak)`
 - Then awesome/tile: No between-child bar/index mapping in source: bar/gap hover hits no tiled client, so move_handler swaps nothing and N stays (no flat insert, no 1/n share; shares are master/stack plus windowfact); exact bar pixel/N start/focus TBD; `S(S-awe-drag)` + `S(S-awe-tile)`
-- Then niri: drop re-inserts N at the pointer insert position;
-  exact index and shares TBD. `S(S-nir-drag)`; queued.
+- Then niri: for a scrolling N, the drop re-inserts at the pointer
+  insert position (flat new column at the bar gap when the gap is
+  nearest; no nesting); N keeps its dragged width and peers keep
+  their widths (no 1/n rescale). A floating N instead stays floating
+  (`InsertPosition::Floating`, layer preserved). N's start state is
+  unrecorded, so the flat-vs-float outcome and mover share stay TBD
+  (F: N tiled vs floating unstated; bar pixel unrecorded).
+  `S(S-nir-drag)`; queued.
 - Then PaperWM: the bar maps to the `[j]` column zone, so the
   drop inserts a new tiled-N column at the zone index via
   `addWindow`; the mover column takes the mover frame width while
@@ -116,10 +129,16 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then sway: Both producers start the same tiled drag under settled-enabled `tiling_drag` (modifier+left anywhere incl client; titlebar left without modifier; code defaults enabled/threshold 9, unlike the i3 modifier-only default): press focuses first via the generic click-focus path with no client button forwarded before the grab, then modifier begins immediately while titlebar waits for the output-scaled 9px threshold; the grabbed source stays attached with indicator-only preview (detach only at finalize; siblings do not reflow mid-hold); A's top edge is a 30px/30% edge split Up (the outer layout-border walk may take a layout parent instead); `S(S-sway-tdrag)` + `S(S-sway-tdrop)`; exact edge pixel/parent-band and native frames TBD
 - Then qtile/Columns: Producers differ: shipped Mod+Button1/Button3 are floating tweaks (frame write plus closest-screen transfer, never the tiled set_position swap); a bare title-bar drag has no counterpart in the shipped bindings; cross-producer same-topology TBD (title-bar leg unevidenced); `S(S-qti-tweak)` + `S(S-qti-drag)`
 - Then awesome/tile: Both producers share the same tiled move path (shipped Mod4+Button1 client move and titlebar Button1 move both activate with the mouse_move action); press activates B (focus plus raise via permissions.activate; ordinary focusable B passes while the move guard excludes fullscreen/maximized/desktop/splash/dock); source stays mapped mid-hold with siblings reflowing only on hover-swap via recalc (no placeholder/scale/preview in the tiled path; snap placeholder is floating aerosnap only); A's top edge hovers A, so the drop swaps B/A with the mover retained; no client click delivery on either producer path and no reflow before the hover-swap; column leg runs the same shared path. `S(S-awe-drag)` + `S(S-awe-swap)`
-- Then niri: Mod+Left and valid client titlebar move requests use
-  MoveGrab; the client path also permits horizontal viewport scrolling,
-  unlike Mod+Left. Top-edge drop parity/click delivery remain TBD.
-  `S(S-nir-drag)` + `S(S-nir-clientgrab)`; queued.
+- Then niri: both producers use MoveGrab ending in the same
+  pointer-insert drop (same topology and mover); the titlebar leg's
+  initiating press is client-delivered (the move request is
+  serial-qualified on a same-client press), while the Mod+Left press
+  is consumed compositor-side (grab with `Focus::Clear`, motion with
+  no client focus); neither path delivers a completed client click
+  during the move, and the source stays mapped until the move starts
+  with survivors refilling after removal. The client path also
+  permits horizontal viewport scrolling, unlike Mod+Left.
+  `S(S-nir-drag)` + `S(S-nir-clientgrab)`.
 - Then PaperWM: title-bar and Mod+Left presses both arrive as
   `MOVING` and construct the same `MoveGrab` with the same DnD
   zones; `begin` connects button-release/touch/motion/monitor
@@ -205,8 +224,9 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then qtile/Columns: No mutation: with the pointer still over B's own frame set_position skips self and finds no other hit, so no swap occurs; a zero-delta floating tweak rewrites the same frame; no threshold pickup, placeholder, or indicator residue path in source; `S(S-qti-drag)` + `S(S-qti-tweak)`
 - Then awesome/tile: No mutation on zero-move: pointer still over B's own frame gives no other hovered tiled client, so move_handler swaps nothing (self guarded); floating path rewrites the same frame; grab ends on release with no threshold pickup/placeholder/preview residue in source; `S(S-awe-drag)`
 - Then niri: the 8px gesture threshold is never reached, so the tile
-  is never removed; release only activates B. Preview TBD.
-  `S(S-nir-drag)`; queued.
+  is never removed and release only activates B; no topology change
+  and no preview residue (the insert hint exists only while moving).
+  `S(S-nir-drag)`.
 - Then PaperWM: DnD never begins, so B stays in place; end always
   activates B. `S(S-pap-grab)`.
 - Then karousel/Lazy: a started move session untiles immediately even
@@ -251,8 +271,10 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then qtile/Columns: No off-area placement via set_position (panel hover hits no tiled window, so no swap; tiled B never leaves the layout mid-hold); floating tweak_float transfers across screens by closest-screen only, never parks on panels; which branch runs TBD (producer and panel geometry unrecorded); no preview residue path; `S(S-qti-drag)` + `S(S-qti-tweak)`
 - Then awesome/tile: No off-area placement via the tiled path: panel/taskbar hover hits no tiled client so no swap occurs and tiled B never leaves the layout mid-hold (screen follow only on actual screen change); which branch runs TBD (panel geometry/containment unrecorded); no preview residue path; `S(S-awe-drag)`
 - Then niri: the grab survives off-output pointer positions and the
-  end re-inserts at the last tracked output (no restore path);
-  exact placement TBD. `S(S-nir-drag)`; queued.
+  end re-inserts at the last tracked output (no restore path and no
+  off-area parking: a panel hover still resolves to a work-area insert
+  position); the insert hint clears when the grab ends.
+  `S(S-nir-drag)`.
 - Then PaperWM: with no zone acquired, the no-target `end()`
   branch moves the frame out and scratch-temps B then unmakes
   scratch on animation completion (float/above/sticky cleared),
@@ -297,7 +319,12 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then qtile/Columns: Shipped producer follows the pointer by floating tweak (frame writes on motion, then closest-screen transfer only; no slot preview, scale, or indicator in source); explicit set_position swaps only at invocation with no mid-hold preview either; exact pixels and final placement TBD; `S(S-qti-tweak)` + `S(S-qti-drag)`
 - Then awesome/tile: Retained allocation mid-hold: tiled mouse.move never writes the source frame, it only swaps on hover via move_handler with siblings reflowing only on swap via recalc; the traced tiled path carries no target-slot preview, scale, indicator, or placeholder (snap placeholder is floating aerosnap only), so none is produced; the pause changes nothing and the release commits the same hover-swap over A; column leg retains allocation the same way. `S(S-awe-drag)` + `S(S-awe-tile)`
 - Then niri: the tile is removed and pinned to the cursor during the
-  move; zone preview and final placement TBD. `S(S-nir-drag)`; queued.
+  move (absolute delta keeps it under the pointer); the insert hint
+  marks the target slot while moving, and the drop re-inserts at the
+  pointer insert position. Whether a pause leaves that placement
+  unchanged stays TBD (F: pause rest position and duration
+  unrecorded; per-frame edge view-scroll runs during the move and can
+  shift the viewport and insert mapping). `S(S-nir-drag)`; queued.
 - Then PaperWM: mid-hold the clone tracks the pointer
   (pointer-minus-offset) while `tile-preview` zone actors mark the
   target slot; the source leaves the strip only at `beginDnD`.
@@ -333,8 +360,11 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then sway: Press focuses B first via the generic click-focus path (titlebar press selects the inactive view; client press focuses the container), then the drag begins with pointer focus cleared; mid-hold retains B's seat focus (no focus write in the motion path); drop-side focus follows the branch taken - non-swap inserts keep seat focus, centre `container_swap` preserves the mover focus on the same workspace via `swap_focus`; diverges from the i3 modifier-no-focus path; `S(S-sway-tdrag)` + `S(S-sway-tdrop)`; exact press-vs-drop focus and dragged-group visuals TBD (edge pixel and branch unspecified)
 - Then qtile/Columns: Press focuses B first via follow_mouse_focus=true (shipped; bring_front_click=false, only Mod+Button2 bring_to_front bound); mid-hold retains B; drop-side focus TBD (Columns swap writes no focus; exact branch/edge unspecified); `S(S-qti-tweak)` + `S(S-qti-drag)`
 - Then awesome/tile: Press activates B (focus plus raise via permissions.activate; ordinary focusable B passes while the move guard excludes fullscreen/maximized/desktop/splash/dock, both Mod4+client and titlebar producers); mid-hold retains B (no focus write in move_handler or the local swap path); drop-side focus stays B after the swap (swap exchanges positions with no focus write; global re-activation runs only on cross-screen per the global path, and this single-screen fixture stays local); no tag write on the swap path, so no screen-consistency strip/retag or delayed tagged/untagged refocus engages; dragged-group visuals have no counterpart in source; column leg keeps press-vs-drop focus the same way. `S(S-awe-drag)` + `S(S-awe-swap)`
-- Then niri: Mod+Left press activates B before the grab; drop-side
-  focus TBD. `S(S-nir-drag)`; queued.
+- Then niri: Mod+Left press activates B before the grab, and the drop
+  re-inserts with activation so the mover is active after the drop.
+  The moving tile renders with an alpha dip while moving; no
+  dragged-group visual in the path.
+  `S(S-nir-drag)` + `S(S-nir-ptr)`.
 - Then PaperWM: grab begin does not focus; the drop end activates;
   press-focus journey TBD (GNOME default untraced at pin).
   `S(S-pap-grab)`; queued.
@@ -461,7 +491,10 @@ paths; selected intent and doc assertions are never evidence.
   mouse_resize_handler, which moves master_width_factor to the
   pointer x; master and stack reflow. `S(S-awe-tresize)`.
 - Then niri: Mod+Right and valid client edge-resize requests open an
-  interactive resize; dragged width/neighbor outcome TBD.
+  interactive resize that writes the dragged column width (`SetFixed`
+  from the pointer delta; neighbors keep their widths); the exact
+  100px share outcome stays TBD (F: fixed work-area width unrecorded,
+  so the 0.5W pixel base is unspecified).
   `S(S-nir-ptr)` + `S(S-nir-clientgrab)`; queued.
 - Then PaperWM: `RESIZING_*` builds a marker `ResizeGrab` whose
   `end` is a no-op; `resizeHandler` ignores the grabbed window
@@ -527,8 +560,13 @@ paths; selected intent and doc assertions are never evidence.
 - Then awesome/tile: tiled move follows the screen under the pointer (`move_handler` sets screen on screen change, then swaps with the hovered tiled `current_client`; no focus write in the swap path, press-activated B retained); insertion is hover-swap, not index insert; exact hovered index TBD (F: pointer unrecorded). WS3 switcher/overview leg has no counterpart (no overview/switcher drop target in the shipped key/mouse inventory; mod+Tab is history-previous only).
   `S(S-awe-drag)` + `S(S-awe-keys)`; hover queued (F: pointer unrecorded).
 - Then niri: the moving tile tracks output changes with output focus
-  and drops at the pointer insert position on R; exact column index
-  and switcher target TBD. `S(S-nir-drag)`; queued.
+  and drops at the pointer insert position on R with activation
+  (insertion with follow, no float/cancel). The hidden-WS3
+  switcher/overview drop stays TBD (F: no hover-switch in the move
+  path - the target resolves only at drop via the output's rendered
+  workspaces or a newly created slot; reaching hidden WS3 needs an
+  overview toggle mid-grab whose step, WS3 monitor membership and
+  target geometry are unrecorded). `S(S-nir-drag)`; queued.
 - Then PaperWM: DnD zones span all spaces and entering R begins DnD;
   the drop inserts at the R zone and activates; WS3 switcher leg has
   no counterpart (minimaps hide during DnD). `S(S-pap-grab)`.

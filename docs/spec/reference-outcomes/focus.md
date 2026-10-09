@@ -59,8 +59,10 @@ assertions are never evidence.
 - Then awesome/tile: fixture-inapplicable (shipped `nmaster=1` tile
   partitions one master plus stack columns, so two left candidates
   plus a right full-height C has no counterpart). `S(S-awe-tile)`.
-- Then niri: activates the left column via `focus_left`; member
-  selection inside C1 TBD. `S(S-nir-focus)`; member queued.
+- Then niri: run 1 B, run 2 A. `focus_left` steps to C1 and takes its
+  stored current: each history run's last C1 focus writes that stored
+  member via activation (B after A,B,C; A after B,A,C), retained across
+  the trailing C focus. `S(S-nir-focus)`.
 - Then PaperWM: run 1 B, run 2 A. `switchLeft` takes the left column's
   topmost (`sortWindows` last), i.e. last-activated member.
   `S(S-pap-focus)`.

@@ -356,10 +356,12 @@ Reference WM pins and outcomes are unchanged.
   tile order (`[A,B]`, B last) under the shipped manage focus-filter.
   `S(S-awe-tile)` + `S(S-awe-keys)` + `S(S-awe-manage)`.
 - Then niri: no-counterpart for the toggle (no orientation verb in the
-  full Action inventory); ordinary admission wraps B in a new column
-  after the active column per the scrolling admission path (settled
-  widths/viewport/smart-activation remainder TBD per the cited admission
-  leg). `S(S-nir-acts)` + `S(S-nir-ins)`.
+  full Action inventory; nothing saved, later admission unaffected);
+  ordinary admission wraps B in a new column after the active A at the
+  default width with no rescale, activating under Smart (no pending
+  fullscreen) with focus to B and the view animating minimal-fit under
+  shipped `Never`. `S(S-nir-acts)` + `S(S-nir-ins)` + `S(S-nir-base)` +
+  `S(S-nir-view)`.
 - Then PaperWM: no-counterpart for the toggle (no orientation verb in
   the registered inventory); ordinary admission inserts B RIGHT of A
   (selected+1 under the shipped RIGHT default) with the newcomer

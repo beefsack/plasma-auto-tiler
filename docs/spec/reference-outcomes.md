@@ -1602,7 +1602,9 @@ Legend:
   drops a sole-tile column whole) and :1074-1160
   (`remove_tile_by_idx` active-index fixup to next else previous) and
   :1192-1276 (`remove_column_by_idx` activates the clamped next column)
-  and src/layout/workspace.rs:783-797 (floating vs scrolling dispatch
+  and :826-831 (activating a different column resets
+  `activate_prev_column_on_removal`) and :1052-1058 (`add_column`
+  records the pre-add view offset for previous-column restore) and src/layout/workspace.rs:783-797 (floating vs scrolling dispatch
   plus focus-flag update) and src/layout/floating.rs:515-552 (float
   removal, active falls to topmost) and src/layout/monitor.rs:650-670
   (cleanup spares the active workspace)
@@ -1943,10 +1945,12 @@ Legend:
   src/layout/workspace.rs:636-676 (Auto target: no focus steal from an
   active pending fullscreen; pending maximized/fullscreen tiles open in
   the scrolling layout; plain floats go to the floating layer) and
+  :820-831 (`resolve_default_width`: no rule falls back to the configured
+  default column width) and
   src/handlers/xdg_shell.rs:1107-1116 (`open_on_workspace` rule routes the
   target monitor)   @ed22699d99462f61ab171472d3ea67e844ea580d
-  (position and routing-mechanism legs; viewport, settled widths, and
-  smart-activation remainder stay TBD)
+  (position, default-width, routing, Smart-activation and focus-scroll
+  policy legs)
 - `S-nir-fltanchor` niri:src/layout/workspace.rs:1868-1878 (`activate_window`
   float-vs-scrolling dispatch: float focus sets the floating-active flag
   without touching the scrolling active column) + src/handlers/compositor.rs:150-176
@@ -1957,7 +1961,9 @@ Legend:
   (float-focus anchor and newcomer-focus legs; column position stays
   `S(S-nir-ins)`)
 - `S-nir-wsopen` niri:src/handlers/xdg_shell.rs:1105-1123 (rule resolves
-  the target monitor) and :1167-1174 (rule resolves the named workspace,
+  the target monitor) and :1125-1157 (`open_on_output`/fullscreen/
+  parent/active-monitor precedence; no-rule default is the active
+  monitor) and :1167-1174 (rule resolves the named workspace,
   else the active one) and src/handlers/compositor.rs:152-221 (activation
   decision plus `AddWindowTarget::Workspace` map path) and
   src/layout/monitor.rs:494-520,577-620 (workspace-target resolve; `Smart`
@@ -1965,8 +1971,8 @@ Legend:
   (workspace-target dispatch; `Smart` never switches monitors) and
   src/tests/window_opening.rs:164-215 (open-on-workspace snapshot powerset)
   @ed22699d99462f61ab171472d3ea67e844ea580d
-  (inactive-target routing plus no-switch legs; column-position leg is
-  `S(S-nir-ins)`)
+  (default plus inactive-target routing plus no-switch legs;
+  column-position leg is `S(S-nir-ins)`)
 - `S-pap-ins` PaperWM:tiling.js:3994-4008 (fresh windows redirect to the
   selected space) and :4048-4055 + :4105-4120 (winprop `spaceIndex` moves
   the window to that space and re-inserts it there) and :4155 (`addWindow`
@@ -2144,11 +2150,14 @@ Legend:
   filter) @0a5e50cf7ee214fae47159e0e976ab4a78d2ed4f
   (cycle verb and wrap; order via S-awe-tile+S-awe-manage)
 - `S-nir-focus` niri:src/layout/scrolling.rs:1581-1600
-  (`focus_left`/`focus_right` edge booleans) and
+  (`focus_left`/`focus_right` edge booleans) and :1465-1476
+  (`activate_window` sets the column member then activates the column) and
+  :4411-4426 (`activate_idx` stored member plus column `activate_window`) and
   src/layout/workspace.rs:938-990 (tiling/floating dispatch,
   first/last, `LeftOrLast`/`RightOrFirst` wrap variants)
   @ed22699d99462f61ab171472d3ea67e844ea580d
-  (column focus verbs and edge policy; in-column member stays TBD)
+  (column focus verbs and edge policy; left/right steps preserve the
+  target column's stored member)
 - `S-nir-actions` niri:niri-ipc/src/lib.rs:322-390 (`FocusWindow`,
   `FocusWindowInColumn`, `FocusWindowPrevious`, `FocusColumnLeft/Right/
   First/Last/LeftOrLast/RightOrFirst`, `FocusWindowUp/Down` variants;
@@ -2858,9 +2867,14 @@ Legend:
   @9241c94
   (verb inventory only, never behavior: gesture verbs exist on both
   platforms while every host click/hover/share/drop outcome stays TBD)
-- `S-nir-min` niri:src/layout/scrolling.rs:4589-4620 (tile width clamped
-  to min/max) @ed22699d99462f61ab171472d3ea67e844ea580d
-  (admission/focus remainder TBD)
+- `S-nir-min` niri:src/layout/scrolling.rs:4572-4620 (column width
+  resolves with min/max clamp) and :4621-4645 (tile-height bounds from
+  the working height and multi-window minimum sizes) and :1278-1354
+  (`update_window` re-runs the clamp on hint or resize updates and
+  shifts neighbors with widths kept; no focus write) and :4100-4111
+  (`update_config` re-resolves sizes on viewport config updates)
+  @ed22699d99462f61ab171472d3ea67e844ea580d
+  (width/height clamp plus reactive and resize re-resolve legs)
 - `S-kar-min` karousel:src/lib/layout/Column.ts:79-102 (`getMinWidth`/
   `getMaxWidth` clamp in `setWidth`)
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
@@ -2962,16 +2976,20 @@ Legend:
 - `S-nir-acts` niri:niri-ipc/src/lib.rs:194-946 (full `Action` enum:
   column/window focus, moves, consume/expel, width presets, tabbed display,
   float/floating-focus, workspace moves; no orientation/rotate/mirror/
-  master/layout-select verb)
+  master/layout-select/scroll-step/split-preselect verb)
   @ed22699d99462f61ab171472d3ea67e844ea580d
 - `S-nir-maxfs` niri:src/layout/workspace.rs:1288-1351
   (`set_fullscreen`/`toggle_fullscreen` with floating-restore memory) and
   :1353-1416 (`set_maximized`/`toggle_maximized` from the column pending
   flag, idempotent clear, unmaximize-into-floating) and :649-669
   (pending-maximized/fullscreen tiles open in the scrolling layout; new
-  focus is fenced only against active fullscreen) and :896-905
+  focus is fenced only against active fullscreen) and :644-648
+  (`add_tile` seeds `restore_to_floating` from the computed floating
+  boolean at admission) and :896-905
   (configure maps Fullscreen to view size, Maximized to working-area
-  size) + src/handlers/xdg_shell.rs:466-477,550-559,696,770 and
+  size) + src/layout/scrolling.rs:2869-2929 (`set_fullscreen`/
+  `set_maximized` set the column pending flags, extracting a multi-tile
+  column first; entry writes only the target column) + src/handlers/xdg_shell.rs:466-477,550-559,696,770 and
   src/handlers/mod.rs:551-591 (client maximize/fullscreen requests route
   into the same setters, mapped and unmapped) + src/input/mod.rs:1690-1700
   (`MaximizeColumn` is full-width, `MaximizeWindowToEdges` drives the
@@ -2994,9 +3012,16 @@ Legend:
 - `S-nir-wscarry` niri:src/layout/tests.rs:3708-3725
   (`MoveColumnToWorkspace` keeps the column Maximized after transfer and
   unfullscreen) and :3728-3750 (`MoveWindowToWorkspace` drops the
-  column-held flags so the window arrives Normal; FIXME documents the loss)
+  column-held flags so the window arrives Normal; FIXME documents the loss) and
+  src/layout/monitor.rs:920-972 (`move_column_to_workspace` moves the
+  whole active column object, landing via target `add_column`) and
+  src/layout/scrolling.rs:999-1015 (`add_column`: index defaults to
+  active+1, 0 on an empty strip) and src/layout/workspace.rs:753-768
+  (`add_column` inserts at the target default index, active+1 or 0 when
+  empty)
   @ed22699d99462f61ab171472d3ea67e844ea580d
-  (window-send strips overlay state, column-send retains it)
+  (column-send retains overlay and lands after the target active;
+  window-send strips to Normal)
 - `S-hyp-wsmove-fs` Hyprland:src/state/workspace/PlacementController.cpp:301-329
   (whole-workspace monitor reassignment; floating reposition plus fullscreen
   setBox to the new monitor box) and :316-317 (fullscreen branch)
@@ -3426,25 +3451,39 @@ Legend:
   (no directional whole-tag migration verb; `tag.screen` per `S(S-awe-ws)`
   takes an explicit screen)
 - `S-nir-ws` niri:src/layout/monitor.rs:442-495 (activate stores the
-  previous id) and :650-679 (`clean_up_workspaces` drops empty
+  previous id; remove/insert/append/cleanup write no previous id, only
+  activate writes at :455 plus gesture :2074-2076 with save/restore at
+  :1261-1264/:1287-1290) and :547-621 (`add_column`/`add_tile` insert the
+  next empty bottom spare plus top spare under the option, activate only
+  when asked) and :650-679 (`clean_up_workspaces` drops empty
   non-active non-trailing workspaces) and :721-745 (`insert_workspace`
   clamps past the trailing empty, activates only when asked) and
-  :800-900 (`move_to_workspace` up/down clamp plus follow activation) and
-  :960-1010 (switch up/down clamp at the ends) and :1002-1030
+  :750-785 (`append_workspaces` inserts before the trailing empty,
+  keeps empty focus, clears the switch) and :800-900 (`move_to_workspace`
+  up/down clamp plus follow activation; cleanup only when no switch
+  animation) and :920-972 (`move_column_to_workspace` moves the whole
+  active column object, landing via target `add_column`) and :960-1010
+  (switch up/down clamp at the ends) and :1002-1030
   (`previous_workspace_idx`, `switch_workspace_previous`,
   `switch_workspace_auto_back_and_forth`, out-of-range switch clamps
-  to last) + src/layout/mod.rs:2145-2169 (relative-move dispatch,
-  `focus=true` Smart else No) and :2324-2344 (keyboard focus resolves
-  to the active workspace's active window) and :3452-3520
-  (`move_workspace_to_output_by_id` whole-workspace remove/insert,
-  activation only when moved-active) + src/input/mod.rs:1329-1366
+  to last) and :293-351 (`Monitor::new` trailing empty plus
+  `ws_id_to_activate` select) + src/layout/mod.rs:353
+  (`last_active_workspace_id` stored on monitor removal) and :760-876
+  (`add_output` moves preferred workspaces back plus stored last-active
+  restore) and :878-944 (`remove_output` stores last-active, preferred
+  fallback to primary, `append_workspaces` distribute) and :2145-2169
+  (relative-move dispatch, `focus=true` Smart else No) and :2324-2344
+  (keyboard focus resolves to the active workspace's active window) and
+  :3452-3520 (`move_workspace_to_output_by_id` whole-workspace
+  remove/insert, activation only when moved-active) + src/layout/workspace.rs:49-55
+  (each workspace owns its scrolling state, floating space, and active
+  flag) and :479-486 (`find_preferred_output` via `original_outputs`)
+  and :508-535 (`set_output` preserves `original_outputs`) + src/input/mod.rs:1329-1366
   (`MoveWindowToWorkspace` reference plus `focus` Smart/No) and
   :1437-1460 (`MoveColumnToWorkspace` reference plus `focus`) and
   :2134-2155 (`MoveWorkspaceToMonitorByRef` resolves hidden workspaces
   by reference) + niri-config/src/binds.rs:227-243 (`focus` defaults
-  true) + src/layout/workspace.rs:49-55 (each workspace owns its scrolling
-  state, floating space, and active flag) +
-  src/input/mod.rs:1536 (`FocusWorkspacePrevious` binding) +
+  true) + src/input/mod.rs:1536 (`FocusWorkspacePrevious` binding) +
   src/ui/mru.rs:584-592 (MRU UI lists every workspace's windows)
   @ed22699d99462f61ab171472d3ea67e844ea580d
 - `S-nir-wskeys` niri:resources/default-config.kdl:528-536
@@ -3456,7 +3495,8 @@ Legend:
 - `S-nir-mru` niri:src/ui/mru.rs:577-607 (MRU collect walks every
   workspace's windows, stamps output/workspace flags, sorts by focus
   timestamp, default scope All) and :826-830 (scope filter: All passes
-  everything) + niri-config/src/recent_windows.rs:47-57,221-252
+  everything) + src/layout/workspace.rs:451-466 (`windows()` iterates
+  scrolling-plus-floating tiles) + niri-config/src/recent_windows.rs:47-57,221-252
   (`recent_windows` defaults on with Alt+Tab/Mod+Tab and Alt+grave
   binds) + src/niri.rs:1090-1118 (`focus_window` via `activate_window`;
   `confirm_mru` focuses the confirmed selection) +
@@ -3900,12 +3940,17 @@ Legend:
   (`center_column`/`center_window` one-shot, active-column only) +
   src/layout/workspace.rs:1182-1196 (center dispatch incl floating) +
   src/input/mod.rs:1666-1680 (`CenterColumn` dispatch) and :3386-3406
-  (touchpad gesture scrolls the view) + niri-ipc/src/lib.rs:448-460
+  (touchpad gesture scrolls the view) +
+  src/layout/scrolling.rs:3101-3127 (gesture update writes only the view
+  offset, no focus write) and :3203-3528 (gesture end snaps to the closest
+  column boundary, extends furthest toward the gesture direction, writes
+  the active column and clamps to the first/last column) +
+  niri-ipc/src/lib.rs:448-472
   (`ToggleColumnTabbedDisplay`/`SetColumnDisplay`/`CenterColumn`/
-  `CenterWindow` actions)
+  `CenterWindow`/`CenterVisibleColumns` actions)
   @ed22699d99462f61ab171472d3ea67e844ea580d
-  (policy plus one-shot center plus gesture scroll; keyboard scroll-step
-  inventory and settled offsets stay TBD)
+  (policy plus one-shot centers plus touchpad gesture scroll: view-only
+  during, snap-activate with strip clamp at end)
 - `S-pap-view` PaperWM viewport, center and gesture scroll:
   PaperWM:tiling.js:4291-4355 (`ensuredX`: neighbor/minimal,
   CENTER/EDGE/wide/edge-margin branches) and :5055-5081
@@ -4113,25 +4158,41 @@ Legend:
   (valid same-client move request starts MoveGrab with viewport
   scrolling enabled) and :184-309 (client edge-resize request)
   @ed22699d99462f61ab171472d3ea67e844ea580d
-  (client titlebar/edge producers exist, separate from modifier grabs)
+  (client titlebar/edge producers exist, separate from modifier grabs;
+  move requests are serial-qualified on a same-client press)
 - `S-nir-drag` niri:src/input/move_grab.rs:82-117 (release runs
   `activate_window` when still recognizing else `interactive_move_end`;
   no key path in the pointer-grab impl) and :183-219 (8px gesture
   threshold before the move begins) and :221-260 (moving tile tracks
-  the output with focus) + src/layout/mod.rs:3824-3884
+  the output with focus; off-output positions keep the grab alive;
+  absolute delta pins the tile to the cursor) + src/layout/mod.rs:3824-3884
   (`interactive_move_begin`) and :3885-4060 (update removes the tile
-  and reinserts at the pointer insert position) and :4112-4210
-  (end re-inserts or re-activates)
+  and tracks its moving state) and :4078-4095
+  (output change focuses the new output) and :4112-4330
+  (end resolves Existing/NewAt workspace and commits
+  NewColumn/InColumn/Floating with `ActivateWindow::Yes`,
+  or re-activates) and :2869-2930 (insert hint shown only while
+  Moving, cleared otherwise) and :2621-2665 (per-frame edge
+  view-scroll runs during the move) and :4020-4030 (alpha dip while
+  moving) + src/layout/scrolling.rs:836-901 (insert branch by pointer
+  geometry) + src/layout/monitor.rs:1595-1641 (drop workspace resolve
+  over rendered geos, else NewAt)
   @ed22699d99462f61ab171472d3ea67e844ea580d
-  (pointer move/remove/reinsert path; drop zones and exact index TBD)
+  (pointer move/remove/reinsert path with insert-hint preview;
+  insert branch and workspace resolve by pointer geometry;
+  no keyboard consume/expel call; InColumn commits a member-add)
 - `S-nir-ptr` niri:src/input/mod.rs:2929 (Mod+Left activates plus move
   grab) and :2964-3020 (Mod+Right edge resize grab; floats skip the
   double-click gesture) + src/input/move_grab.rs:173-260 (motion delta;
   floating skips tiled viewport adjustment) + src/layout/mod.rs:3824-3900
-  (interactive move update) + src/layout/floating.rs:1106-1168
+  (interactive move update) and :2384-2391 (`resize_edges_under`) +
+  src/layout/scrolling.rs:3559-3655 (scrolling interactive resize
+  begin/update: dragged column width `SetFixed` from the delta,
+  neighbors untouched) + src/layout/floating.rs:1106-1168
   (interactive resize writes fixed sizes from deltas) and :948-962
   (directional 50px steps) @ed22699d99462f61ab171472d3ea67e844ea580d
-  (float pointer move/resize with activation raise)
+  (pointer move/resize with activation raise; scrolling resize writes
+  the dragged column width)
 - `S-xmo-restack` xmonad:src/XMonad/Operations.hs:197-204 (`restackWindows`
   with floats-first `flt ++ rs` order) and :212-218 (`W.peek` border plus
   `setTopFocus`) @284dd52c9c957cab6b6e5cc7580f2a63dafa00a7
@@ -4516,9 +4577,21 @@ Legend:
   (in-place layout-file restart; fresh-login session wiring untraced)
 - `S-nir-rst` niri:niri-ipc/src/lib.rs:196-204 (`Quit` exits) and
   :936-947 (`LoadConfigFile` reloads the current/new config file only;
-  no layout dump or re-exec verb in the full `Action` enum)
+  no layout dump or re-exec verb in the full `Action` enum) +
+  src/cli.rs:22-31 (`--session` imports environment to systemd/D-Bus and runs
+  D-Bus services, main-instance only) + src/main.rs:73-96 (`--session` TTY env
+  handling with `XDG_CURRENT_DESKTOP`/`XDG_SESSION_TYPE` set) and :224-243
+  (session environment import plus D-Bus/a11y start) and :257 (config-file
+  watcher setup, reload vs restart) and :168-169 + :260-267
+  (`spawn_at_startup`/`spawn_sh_at_startup` taken from config and spawned fresh
+  at startup, plus the CLI command) + resources/niri-session (session launcher
+  starts niri.service/niri.target with env import and single-instance guard
+  only) + resources/niri.service:14 (`ExecStart=niri --session`) +
+  niri-config/src/lib.rs:73 (`spawn_at_startup` config field, fresh-spawn only,
+  no layout store)
   @ed22699d99462f61ab171472d3ea67e844ea580d
-  (quit plus config reload only; restart recovery untraced)
+  (quit plus config reload only; startup fresh-spawns with no layout restore;
+  session-manager app restore untraced, H)
 - `S-pap-rst` PaperWM:tiling.js:3829-3900 (`SaveState` update/prepare
   for controlled restarts: monitors, spaces, targetX plus stacking) and
   :2050-2131 (`addAll`: prevSpace columns restored verbatim where present

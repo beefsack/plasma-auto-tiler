@@ -53,9 +53,13 @@ Column legs below use separately stated column Givens with the same identities a
 - Then qtile/Columns: Float removes B from the layouts via mark_floating (survivors refill through the column drop); unfloat re-adds via add_client at the focused cc position (fresh admission, no old-slot restore); unplaced floats center per the generic floating placement rule; focus stays B via layout focus when current (mark_floating focuses when current); `S(S-qti-float)` + `S(S-qti-add)` + `S(S-qti-remove)`
 - Then awesome/tile: Float excludes B from tiled_clients (survivors refill via stateless recalc over retained global order); floating frame restores stored floating_geometry; unfloat re-includes B at its retained order position via recalc (no old-slot store in source); focus stays B (set_floating writes no focus); `S(S-awe-float)` + `S(S-awe-tile)`
 - Then niri: B leaves its column (survivors A,C keep their independent
-  column widths); float frame lands near B's tile position plus the
-  (50,50) offset clamped to the work area. Unfloat position, focus and
-  viewport TBD. `S(S-nir-float)`; position queued.
+  column widths; refocusing B resets `activate_prev_column_on_removal`,
+  so removal activates clamped-next C); float frame lands near B's tile
+  position plus the (50,50) offset clamped to the work area (no offset
+  under `Always` centering). Unfloat re-admits B as a new trailing column
+  after the active C (active+1), activates B, and deactivates the floating
+  layer, so focus follows B. `S(S-nir-float)` + `S(S-nir-flttoggle)` +
+  `S(S-nir-close)` + `S(S-nir-ins)` + `S(S-nir-fltanchor)`.
 - Then PaperWM: no-counterpart (ordinary B tiles on admission; only
   non-tileable windows enter the floating list, so the toggle has no
   faithful subject). `S(S-pap-float)`.
@@ -677,9 +681,12 @@ applicable unknowns are queued, evidenced absent verbs are not.
   no-op); focus returns to F (MRU history top with visible fallback on
   tag switch). `S(S-awe-sticky)` + `S(S-awe-float)` + `S(S-awe-hist)`.
 - Then niri: F hidden while away (each workspace owns its floating
-  space); frame retained (float position kept in the space; switch never
-  writes it); return focus TBD (per-space active restoration untraced).
-  `S(S-nir-ws)`; focus queued.
+  space; the switch only flips the active index and never writes tiles,
+  positions, order, or per-space active state); frame and z-order retained
+  for the same reason; on return focus follows the restored per-space
+  active window back to F (floating-active flag plus floating active id
+  retained; keyboard focus derives from the layout active window).
+  `S(S-nir-ws)` + `S(S-nir-fltanchor)`.
 - Then PaperWM: F stays on WS1 (the switch moves the tiled `getWindows()`
   only; floats are never moved or re-parented) with its frame retained
   (floats are never placed by the column layout). Hidden/shown across the

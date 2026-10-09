@@ -102,10 +102,11 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then qtile/Columns: Return is fresh admission at live target focus (`insert_position=0` inserts B above current A in A's column, so C2 holds `[B*,A]` with newcomer focus), no old-slot restore; Columns has no long-edge axis (in-column vertical stack, width-shared columns), so the tall/wide axis distinction is inapplicable and there is no viewport to restore. `S(S-qti-group)` + `S(S-qti-add)` + `S(S-qti-colmode)`
 - Then awesome/tile: Both legs no-follow (move_to_tag sets screen plus tags with no view switch); return keeps B's retained global-client position via move_to_tag (no reinsertion, no old-slot store; tile is stateless recalc); tall/wide long-edge distinction inapplicable (fixed master/stack partition); source view unchanged either leg; exact pixel frames TBD (F: work area unrecorded); `S(S-awe-tag)` + `S(S-awe-tile)`
 - Then niri: B re-admits after the explicitly focused A with Smart
-  follow, and every column activation animates the view to B's column
-  (centered vs minimal fit per the focus-scroll policy); the exact
-  scrolled offset stays TBD. `S(S-nir-ins)` + `S(S-nir-ws)` +
-  `S(S-nir-view)`; offset queued.
+  follow (mover-active follows with focus B; `focus=false` stays); every
+  column activation animates the view to B's column with the minimal fit
+  under shipped `Never` (centered only under Always/OnOverflow per the
+  focus-scroll policy). `S(S-nir-ins)` + `S(S-nir-ws)` + `S(S-nir-view)` +
+  `S(S-nir-base)` + `S(S-nir-wskeys)`.
 - Then PaperWM: B re-inserts after the explicitly focused A at the open
   position (selected+1 RIGHT at the shipped default); via the shipped
   take path the drop finalizes with selectedWindow plus
@@ -213,10 +214,12 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then awesome/tile: No remembered-leaf/history admission anchor in source (tile recalc over live tiled order); floated C leaves the tiled set; B admits via the ordinary path with no view switch; exact order/frames TBD; `S(S-awe-tag)` + `S(S-awe-float)` + `S(S-awe-tile)`
 - Then niri: floated C leaves the strip into WS2's own floating space
   (each workspace owns its scrolling state, floating space, and active
-  flag), and B admits through the ordinary column path at active+1 with
-  no leaf memory to invalidate. Which column is active after floating C
-  is untraced, so the exact anchor stays TBD. `S(S-nir-ws)` +
-  `S(S-nir-ins)`; anchor queued.
+  flag); floating C via the plain tile-move toggle drops its sole-tile
+  column whole with survivor D activating (clamped next), so B admits
+  through the ordinary column path at active+1 after sole D with no leaf
+  memory to invalidate. Shipped column send follows with Smart
+  (`focus=false` stays). `S(S-nir-ws)` + `S(S-nir-ins)` +
+  `S(S-nir-close)` + `S(S-nir-flttoggle)` + `S(S-nir-wskeys)`.
 - Then PaperWM: anchoring is open-position index only, so no
   remembered-leaf memory exists to invalidate; floated C leaves tiling via
   the scratch path (`toggle-scratch` → `stick()` fires workspace
@@ -1133,9 +1136,13 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
 - Then awesome/tile: disconnect evacuates via the shipped-default removed fallback, not `tag.screen`: D is deleted with its members into L's first tag and R-side history is cleared (L history untouched); the first previous on L restores the Given WS1 set via `history.restore`; reconnect mints fresh per-screen tags with no return of D (no affinity store); the second previous toggles back to WS2. Exact refocus targets stay TBD (F: WS1/WS2 focus histories unstated, read by the selection-change path). `S(S-awe-ws)` + `S(S-awe-hist)`.
 - Then niri: displaced workspaces insert before the trailing empty on L
   (`append_workspaces`); showing D on L records WS2 in L's per-monitor
-  previous id, so the first previous on L selects WS2. Reconnect return
-  scope and the exact second toggle stay TBD. `S(S-nir-ws)`;
-  return/second queued.
+  previous id, so the first previous on L selects WS2. Reconnect returns
+  D to R by preferred-output affinity (`original_outputs`) with the
+  stored last-active workspace reactivated, never consulting history;
+  remove/insert/append/cleanup write no previous id (only activate
+  writes), so L's previous still names the departed D, which resolves to
+  no entry on L and the second previous on L is a no-op staying on WS2.
+  `S(S-nir-ws)`.
 - Then PaperWM: owner-specific (GNOME owns outputs and workspace add/remove;
   PaperWM only mirrors via `workspacesChanged`); the MRU is live-computed,
   so there is no recorded previous ID to invalidate. Native displacement
@@ -1202,8 +1209,8 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
 - Then niri: down resolves to `min(active+1, len-1)`, which is E; B fills E
   (sole) and filling the last workspace inserts the next empty bottom spare;
   source A survives. Smart follow activates the target when the mover was
-  active (`focus=false` stays). Settled widths TBD. `S(S-nir-ws)` +
-  `S(S-nir-ins)`; widths queued.
+  active (`focus=false` stays). `S(S-nir-ws)` + `S(S-nir-ins)` +
+  `S(S-nir-wscarry)`.
 - Then PaperWM: `moveDownSpace` takes the selected window first and steps to
   the adjacent space with an end stop; the drop completes with insert plus
   `Main.activateWindow` (follow per take finalization). Target insert is
@@ -1354,11 +1361,12 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
 - Then awesome/tile: no-applicable-journey (no relative-send verb exists: `move_to_tag` takes an explicit tag only, shipped numrow binds view/move/toggle by index only, and directional `swap.bydirection` is same-screen only; the relative send has no applicable tile journey, so tree and focus stay unchanged). `S(S-awe-tag)` + `S(S-awe-keys)` + `S(S-awe-swap)`.
 - Then niri: next fills E (sole) with the next empty bottom spare; with
   Smart follow the target activates and the emptied source (non-active,
-  non-trailing) is removed at cleanup, while `focus=false` stay keeps the
-  active emptied source spared. Cleanup is skipped while a switch animation
-  runs, so exact removal timing and empty-source focus stay TBD. Previous
-  from the first is a same-index no-op (never wraps). `S(S-nir-ws)` +
-  `S(S-nir-ins)`; timing/focus queued.
+  non-trailing) is removed at eventual cleanup (cleanup gated on no
+  switch animation), while `focus=false` stay keeps the active emptied
+  source spared. Follow focuses B via the active workspace's active
+  window; stay leaves the emptied active source with focus none (no
+  active window). Previous from the first is a same-index no-op (never
+  wraps). `S(S-nir-ws)` + `S(S-nir-ins)`.
 - Then PaperWM: next fills E when present (take-first, open-position
   insert, `Main.activateWindow` follow); the emptied source's column
   splices with space removal GNOME-owned, TBD. Previous from the first

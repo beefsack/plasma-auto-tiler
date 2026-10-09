@@ -123,10 +123,13 @@ transient (no dialog flag) is a different fixture and is not claimed.
    lists clients (`Mod+Tab` is `history.previous`).
    `S(S-awe-float)` + `S(S-awe-manage)` + `S(S-awe-focus)` + `S(S-awe-switcher)`.
 - Then niri: parentless resizable splash/utility tiles as ordinary
-  columns (`compute_open_floating` is exhaustive over explicit rule,
-  parent, and fixed height; `Match` carries no window-type field;
-  xwayland-satellite translates typed X11 windows to native). Smart
-  focus applies. Switcher presence TBD. `S(S-nir-spc)`; queued.
+  columns (the open float predicate is exhaustive over explicit rule,
+  parent, and fixed height; `Match` carries no window-type field, so the
+  bare type cannot float them); Smart activation applies, so the newcomer
+  takes focus with keyboard following the layout active window; admitted
+  U is listed in the MRU UI, which iterates every workspace's
+  scrolling-plus-floating windows with no type filter. `S(S-nir-spc)` +
+  `S(S-nir-ins)` + `S(S-nir-fltanchor)` + `S(S-nir-mru)`.
 - Then PaperWM: both float (`add_filter` admits Normal only) with
   `make_above`. The rejected path shows without extension activation, so
   focus follows host activation policy: focus TBD (host: GNOME activation
@@ -254,8 +257,12 @@ transient (no dialog flag) is a different fixture and is not claimed.
   updater watches it and arrange listens for `size_hints_honor`, so
   no immediate reflow). Later arrange hint-shaping is the qualifier.
   `S(S-awe-hint)` + `S(S-awe-tile)`.
-- Then niri: width clamped to min/max; reflow TBD. `S(S-nir-min)`;
-  queued.
+- Then niri: a tiled B's app-owned resize or minimum-hint raise re-runs
+  the column width resolve with min/max clamp on the window update path;
+  neighbors shift position with widths kept (no rescale); neither leg
+  re-floats (open-only classification; the toggle is a plain tile move)
+  and no focus is written. `S(S-nir-min)` + `S(S-nir-fixed-open)` +
+  `S(S-nir-flttoggle)`.
 - Then PaperWM: allocation policy tile-authoritative. A tiled B's app-owned resize or minimum-hint raise has no hint branch (no minima consult); `size-changed` queues a column relayout which recomputes targets from preferredWidth/client frame (not guaranteed to overwrite a preferredWidth the client keeps asserting) with no re-float. Recomputed targets settle natively X11-sync/Wayland-async (post-request re-read, actuals feed layout): exact native frames TBD (live: client settle timing). `S(S-pap-appresize)` + `S(S-pap-layout)`; frames queued (live).
 - Then karousel/Lazy: app-owned geometry on tiled B feeds the column width path (`frameGeometryChanged` outside interactive resize re-asserts via rate-limited `onFrameGeometryChanged` into `setWidth` clamped into [min,max] and stored as preferred, with relayout and no re-float); a bare minimum-hint raise with no geometry change has no path (only `captionChanged` re-evaluates tiling for caption-follow rules; no size-hint watcher). Exact native frames TBD (live: client settle timing). `S(S-kar-manual-width)` + `S(S-kar-min)` + `S(S-kar-admit)`.
 - Then paneru: app-owned geometry is observed, not refused: the live frame is re-read into Bounds through the moved/resized update path (managed strips nudged, floating windows leave the strip alone, own-resize echoes skipped in flight) with no re-float or admission reclassification; a bare minimum-hint raise with no geometry change has no path (AX exposes no min/max hint equality; float is rule-assigned). `S(S-pan-admit)`.
@@ -580,12 +587,12 @@ All fresh variants below reset the client and WM state independently.
   unmaximize clears maximized but fixed keeps implicit float, so it stays
   floating. Exact frames/focus TBD (client timing, live-only).
   `S(S-awe-fixed-dynamic)` + `S(S-awe-float)` + `S(S-awe-fs)`.
-- Then niri: fixed height floats via `compute_open_floating`, but a
-  pending-maximized tile opens in the scrolling layout; so born-maximized
-  E admits as a scrolling maximized column; native restore clears the flag
-  and lands tiled (restore-to-floating only when a normal tile was
-  maximized from floating). Exact frames TBD.
-  `S(S-nir-spc)` + `S(S-nir-fixed-open)` + `S(S-nir-maxfs)`.
+- Then niri: fixed height computes floating, but a pending-maximized tile
+  opens in the scrolling layout, so born-maximized E admits as a scrolling
+  maximized column; native restore clears the flag and floats E (the floating computation seeds restore-to-floating
+  at admission, so the seeded memory -- not a from-floating journey --
+  drives the exit). `S(S-nir-spc)` + `S(S-nir-fixed-open)` +
+  `S(S-nir-maxfs)`.
 - Then PaperWM: E tiles (Normal non-transient admission; no fixed-size
   branch). Born-maximized admission hits the `maximized-horizontally`
   handler (:3514-3526), which unmaximizes BOTH first - clearing the native
@@ -695,13 +702,14 @@ All fresh variants below reset the client and WM state independently.
   state. Exact frames/focus TBD (client timing, live-only).
   `S(S-awe-fixed-dynamic)` + `S(S-awe-float)` + `S(S-awe-fs)`.
 - Then niri: non-fixed N opens scrolling fullscreen (no fixed float) and
-  exit lands tiled; E born opens scrolling fullscreen exiting tiled while
-  prior floating restores floating, as before. Predicate switch is
-  product-only (height-only predicate hardcoded); hint changes have no
-  open-path caller (open only; later plain toggle), so exits follow
-  `restore_to_floating` memory, not current hints; repeated exits replay
-  memory. Exact frames TBD. `S(S-nir-spc)` + `S(S-nir-fixed-open)` +
-  `S(S-nir-maxfs)`.
+  exit lands tiled; fixed E born fullscreen opens scrolling fullscreen
+  the same way but exits floating, as does prior floating E: the fixed
+  computation seeds restore-to-floating at admission, so exits follow
+  that memory, not current hints. Predicate switch is product-only
+  (height-only predicate hardcoded); hint changes have no open-path
+  caller, so mid-fullscreen changes never alter an exit; repeated exits
+  replay the same memory; fullscreen entry writes only the target column.
+  `S(S-nir-spc)` + `S(S-nir-fixed-open)` + `S(S-nir-maxfs)`.
 - Then PaperWM: non-fixed N is honored fullscreen and exit restores the
   saved tiled frame to tiled, same as born-fixed E (fixed tiles: no
   fixed-size exclusion, then the same fullscreen memory); the prior-floating
@@ -797,9 +805,9 @@ All fresh variants below reset the client and WM state independently.
   tiled order. Intentional C stays explicitly floating throughout. Exact
   frames/focus TBD (L: client timing and live placement, not in the recalc path). `S(S-awe-layout)` + `S(S-awe-float)` + `S(S-awe-tile)`
   + `S(S-awe-fixed-dynamic)` + `S(S-awe-fs)`.
-- Then niri: no workspace-mode counterpart; F-arrival,
-  changed-hints/predicate, override, and maximized legs share the absence
-  (per-window toggle only). Outcome TBD. `S(S-nir-float)`.
+- Then niri: no workspace-mode counterpart (per-window toggle only);
+  F-arrival, changed-hints/predicate, override, and maximized legs share
+  the absence: no applicable journey. `S(S-nir-float)`.
 - Then PaperWM: no workspace-mode counterpart (no workspace tiling toggle in the registered action inventory); F-arrival,
   changed-hints/predicate, override, and maximized legs share the absence:
   no-counterpart with no applicable journey.
@@ -897,9 +905,10 @@ All fresh variants below reset the client and WM state independently.
   Exact frames/focus TBD (L: live placement and client settlement, not in the order/floating store). `S(S-awe-ctl)` + `S(S-awe-float)` +
   `S(S-awe-fixed-dynamic)`.
 - Then niri: no-counterpart for this owner restart with layout recovery
-  (Quit exits and LoadConfigFile reloads config only; no layout dump or
-  re-exec verb). Outcome TBD, including re-float/close and store-fault/ID/
-  omission variants (no store in inventory). `S(S-nir-rst)`.
+  (Quit exits and LoadConfigFile reloads config only; no layout dump,
+  re-exec verb, or store in inventory); re-float/close and
+  store-fault/ID/omission variants share the absence: no applicable
+  journey. `S(S-nir-rst)`.
 - Then PaperWM: adoption classification determined: controlled disable+enable stages SaveState and re-adds
   existing windows with prevSpace layout restored; fixed E tiles (no
   fixed-size branch, so the pre-stop explicit tile is moot) and stays tiled. Closed E is

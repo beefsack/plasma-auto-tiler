@@ -34,8 +34,13 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then sway: Ordinary resizable C tiles unclamped even when minima exceed shares: tiled arrange fraction-normalizes with no client-hint consult (10px zeroing only, `MIN_SANE` 100x60 gap reservation only); fixed-size min==max admits floating instead (xdg parent/fixed-size; xwayland modal/dialog/utility/toolbar/splash/fixed-size at map, runtime hints urgency-only); float clamp is config min/max plus client hints on floating resize only; exact fixture frames/native response TBD; `S(S-sway-min)` + `S(S-sway-max)`
 - Then qtile/Columns: Ordinary resizable C tiles unclamped even when minima exceed shares (tiled place runs with respect_hints=false, so no client-hint consult in the Columns path and no float, skip, overlap, or alternative search); fixed-size min==max admits floating instead; any native client overflow/clamp settlement beyond the allocation stays TBD (L: client-side settlement, not in the tile path); `S(S-qti-min)` + `S(S-qti-float)`
 - Then awesome/tile: Ordinary resizable C tiles prepending first (order `[C*,A,B]`, C master, A/B stacked; displayed start `H[A*,B]` implies prepared order `[A,B]`; newcomer focus via the shipped global rule) with size-hint shaping only (tile arrange applies hints without minimum-infeasibility float/skip, no alternative-arrangement search); fixed-size min==max floats implicitly instead; tile allocations on the 1080x300 area (shipped gap 0; the fixture gap 8 has no branch in the cited tile path) are C `(0,0,540,300)`, A `(540,0,540,150)`, B `(540,150,540,150)` before border/hint shaping, all satisfying the declared minima; any native client overflow/clamp settlement beyond the allocation stays TBD (L: client-side settlement, not in the tile path). `S(S-awe-tile)` + `S(S-awe-manage)` + `S(S-awe-float)`
-- Then niri: column width resolves with min/max clamp (`S(S-nir-min)`);
-  exact newcomer admission/focus TBD; queued.
+- Then niri: C tiles as a new column right after the active A at the
+  default width clamped to its min/max; A/B keep their independent widths
+  (no rescale, no float, no skip, no overlap, no alternative-arrangement
+  search: the open float predicate is rule/parent/fixed-height only);
+  Smart activation applies (no pending fullscreen to fence it), so C
+  activates and keyboard focus follows it. `S(S-nir-min)` +
+  `S(S-nir-ins)` + `S(S-nir-spc)` + `S(S-nir-fltanchor)`.
 - Then PaperWM: ordinary resizable C tiles unconditionally. `add_filter`
   has no fixed-size or minimum branch (Normal non-transient passes), so C
   admits as a new column at selected+1 RIGHT; the column layout sizes from
@@ -82,7 +87,13 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then sway: Same unclamped tiled allocation on shrink (fraction renormalize, 10px zeroing only; float clamp float-only including client hints on floating resize); exact shrink/grow frames/focus/float intent TBD (native response not in allocation source); `S(S-sway-min)`
 - Then qtile/Columns: Same unclamped tiled allocation on shrink and grow-back (no reflow clamp in the Columns path; hint clamp is float-only); no float intent and no focus write run on either leg; exact native shrink/grow client frames and grow-back settlement stay TBD (L: native response not in the tile path); `S(S-qti-min)`
 - Then awesome/tile: Same hint-shaped tiled allocation on shrink (no reflow clamp or float intent in the tile path; pure `do_tile` recompute with no focus write, so focus is retained); tile-allocation widths are 610/610 at inner width 1220 and 540/540 at 1080 (`mwfact` 1/2; heights follow the work-area height); grow-back re-runs the same allocation; exact native shrink/grow client frames and grow-back settlement stay TBD (L: native response not in the tile path). `S(S-awe-tile)`
-- Then niri: TBD (shrink clamp/reflow untraced). `S(S-nir-min)`; queued.
+- Then niri: shrink re-resolves the stored column widths with the same
+  min/max clamp (widths rise to the 600 minima; heights follow the
+  unchanged working height); both columns stay side by side with no
+  float, skip, overlap, or refocus branch, and neighbors keep widths;
+  grow-back re-runs the same resolve restoring shares. Exact native
+  shrink/grow frames and grow-back settlement TBD (live-only).
+  `S(S-nir-min)`; settle queued (live).
 - Then PaperWM: shrink rewrites no column widths. The layout keeps sizing
   each column from live frames with only the work-area clamp and no client
   minimum consult, so neither member floats, skips, or is refused by
@@ -129,8 +140,12 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then sway: Ordinary resizable A tiles unclamped even when its minimum exceeds the work area (fixed-size exception is min==max, not oversized-min; xwayland type/modal branches likewise admission-only); float clamp float-only; exact sole-leaf native frame TBD; `S(S-sway-min)` + `S(S-sway-max)`
 - Then qtile/Columns: Ordinary resizable A tiles unclamped even when its minimum exceeds the work area (the fixed-size float exception is min==max, not oversized-min), so overflow stays with the client with no automatic float; exact sole-leaf native client frame TBD (L: client-side settlement); `S(S-qti-min)` + `S(S-qti-float)`
 - Then awesome/tile: Ordinary resizable A tiles unconditionally even when its minimum exceeds the work area (sole entry takes the full `(0,0,1080,600)` rect; the fixed-size float exception is min==max only (transient affects tags/screen per `S(S-awe-manage)`, not implicit float), not an oversized-min policy); hint shaping only, so overflow stays with the client; newcomer focus via the shipped global rule; exact sole-leaf native client frame TBD (L: client-side settlement). `S(S-awe-float)` + `S(S-awe-tile)` + `S(S-awe-manage)`
-- Then niri: TBD (sole-leaf oversized-minimum result untraced).
-  `S(S-nir-min)`; queued.
+- Then niri: A tiles as the sole column (ordinary admission; min-width
+  alone never floats: the open predicate is rule/parent/fixed-height
+  only); its width resolves from the default and clamps up to the 1200
+  minimum, so the column overflows the 1080 viewport with the excess kept
+  by the client (no automatic float, no skip); Smart activation applies.
+  `S(S-nir-min)` + `S(S-nir-ins)` + `S(S-nir-spc)`.
 - Then PaperWM: ordinary resizable A tiles even when its minimum exceeds
   the viewport. Admission has no minimum or fixed-size branch and the
   layout applies only the work-area clamp, so A opens as a sole tiled

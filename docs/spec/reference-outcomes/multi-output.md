@@ -286,9 +286,14 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
 - Then awesome/tile: lands on the selected tags (focused screen L)
   with newcomer focus (manage rule focus plus raise).
   `S(S-awe-manage)`.
-- Then niri: exact output routing TBD (`open_on_workspace` rule
-  routes, default output untraced); inventory inspected: `S(S-nir-ins)`
-  (no established routing leg); queued.
+- Then niri: lands on the focused output L (no-rule default is the active
+  monitor; `open_on_workspace`, `open_on_output`, fullscreen-request and
+  parent legs precede in that order); ordinary C admits as a new column
+  after the active column at the default width with existing widths kept,
+  and under Smart with no pending fullscreen it activates with focus to
+  C with the view animating minimal-fit under shipped `Never`. Pointer
+  on R plays no role. `S(S-nir-ins)` + `S(S-nir-base)` +
+  `S(S-nir-wsopen)` + `S(S-nir-view)`.
 - Then PaperWM: lands on the selected space (focused L; fresh
   windows redirect there) and activates on show. `S(S-pap-ins)`.
 - Then karousel/Lazy: fixture-inapplicable (single-screen profile;
@@ -353,8 +358,14 @@ offline); workspace send still refuses cross-output (`S(S-ours-out)` pinned base
   TBD. `S(S-sway-evac)`; queued.
 - Then qtile/Columns: no evacuation merge in source: on host output removal the `screen_change` hook runs `reconfigure_screens`, which re-keys the remaining outputs and `hide`s groups whose screen left (contents retained, never merged into L; L keeps showing its group), with no focus retarget in the removal path (retained-`current_window` `layout_all` only). Reconnect re-runs the same assignment (`get_available_group` config-order scan, affinity-gated, no identity/affinity store), so the return mapping is fresh assignment, not stored return affinity. Exact evacuated focus and return identity stay TBD (F: R/L contents, focus history and group numbering unstated). `S(S-qti-screen)` + `S(S-qti-ws)`; focus/identity queued.
 - Then awesome/tile: evacuates R clients to L's first tag via the shipped-default screen-removed fallback (tags emit `request::screen` with no rc handler, then `removal-pending` plus `request::tag`, then `delete` into the first tag of a remaining screen; history cleared); exact evacuated focus stays TBD (F: R-side focused client unstated, and the fallback path writes no focus). Reconnect creates fresh per-screen tags with no identity/affinity store (fresh reassignment, not return affinity). `S(S-awe-ws)`; focus queued.
-- Then niri: evacuation and return TBD (monitor-removal workspace
-  ownership untraced). TBD; queued.
+- Then niri: disconnect moves R's workspaces to L before the trailing
+  empty (`append_workspaces`) by preferred-output fallback to the primary
+  (no remaining preferred when R is gone); L keeps showing its current
+  workspace and focus resolves to L's active window. Reconnect returns
+  workspaces to R by preferred-output affinity with the stored
+  last-active workspace reactivated (return affinity, not fresh
+  assignment). Exact focused node stays TBD (F: R/L contents and focus
+  history unstated). `S(S-nir-ws)`; node queued (F).
 - Then PaperWM: evacuation and return TBD (host GNOME Shell/Mutter output
   removal owns window/workspace migration; `workspacesChanged` only mirrors
   add/remove and establishes no window outcome). TBD; queued (host).
@@ -461,9 +472,8 @@ keys remain historical; delivery evidence is linked separately in KDE cells.
   follows, no stay variant; local B never gates); target admits as a new
   column after active (`active+1`; after Y when Y is active, so
   active-relative, not a remembered-Y store). Column leg: source C1
-  sole-tile column drops whole (B remains, focus B). Exact widths TBD
-  (viewport unrecorded). `S(S-nir-mon)` + `S(S-nir-ins)` +
-  `S(S-nir-close)`.
+  sole-tile column drops whole (B remains, focus B). `S(S-nir-mon)` +
+  `S(S-nir-ins)` + `S(S-nir-close)`.
 - Then PaperWM: carries via `switchMonitor` with window carry (removes
   from the source space, `change_workspace` to R's space with
   `add_handler` re-inserting the existing window at the open position,
