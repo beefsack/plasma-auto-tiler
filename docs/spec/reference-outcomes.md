@@ -1968,7 +1968,14 @@ Legend:
   crates/tiler-windows/src/tiling_sys.rs:4,21 (Windows retains the shared
   `tiler_core::engine::Engine` as layout) @9241c94
   (Engine desired-focus plus both adapters' admit application; adapter-side
-  physical focus confirmation and exact frames stay TBD sub-legs)
+  physical focus confirmation and exact frames stay TBD sub-legs).
+  D05 float-focus leg: the retained Engine convergence route anchors at the
+  prior tiled focus (a focused ordinary float holds an exception, never a
+  tile leaf; same B via the evolving tiled focus), proven offline by
+  `crates/tiler-core/tests/session_float_focus_admission.rs` (convergence
+  fixture) plus the `float-focus-admission` KWin wire characterization,
+  under the unchanged admission policy; native observation/activation
+  journey pending (live TBD, user-owned).
 - `S-nir-ins` niri:src/layout/scrolling.rs:903-923 (`add_tile` always wraps
   the tile in a new column) and :999-1017 (`add_column`: index defaults to
   active+1, 0 on an empty strip; the new column activates when told to) and

@@ -91,8 +91,8 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   acceptance rides the guarded host `WindowFocused` follow path with
   frontmost/app-reported guards). `S(S-pan-close)` + `S(S-pan-ins)` +
   `S(S-pan-fresh)` + `S(S-pan-focusobs)` + `S(S-pan-setwidth)`; queued.
-- Then Ours KDE: TBD (close/reopen ratio memory and focus not checked here)
-- Then Ours Windows: TBD (close/reopen ratio memory and focus not checked here)
+- Then Ours KDE: reopened B is fresh admission at focused C (after C, old slot not restored) with newcomer focus; survivor rescale TBD (manual-ratio leg unproven here). `S(S-ours-close)` + `S(S-ours-ins)` + `S(S-ours-admit)`; proven offline for fresh admission/order/desired focus only (`session_float_focus_admission` shared fixture); native journey pending (live TBD).
+- Then Ours Windows: same fresh-admission leg as Ours KDE via the shared Engine; survivor rescale likewise TBD. `S(S-ours-close)` + `S(S-ours-ins)` + `S(S-ours-admit)`; proven offline for fresh admission/order/desired focus only (shared fixture); native journey pending (live TBD).
 - Variant hook: V-CLOSE-FOCUS.
 
 

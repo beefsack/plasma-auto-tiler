@@ -831,6 +831,11 @@ platform API behavior.
 
 - R-INS-03: first admission fills the work area as a single tile and natively activates the newcomer (User 2026-10-10, 0.1 triage D04).
 - R-INS-05: admission with an ordinary float focused anchors at the nearest tiling neighbor (B, prior tiled focus in the fixture), using ordinary long-edge admission instead of root-wrap (User 2026-10-10, 0.1 triage D05).
+  Verification-only with unchanged admission policy (Orchestrator 2026-10-11):
+  the existing shared Engine convergence route already retains tiled focus B
+  while an ordinary float is focused. Keep the offline geometry/focus and KDE
+  wire fixtures; native observation/activation acceptance remains user-owned.
+  [Evidence](changes/archive/triage-batch1-kde-shared.md).
 - R-OUT-05: opening with two occupied outputs routes to the focused output and focuses the newcomer, not by pointer (User 2026-10-10, 0.1 triage D06).
 - R-CLOSE-02: a reopened client is fresh admission at current focus, never old-slot restoration (User 2026-10-10, 0.1 triage D07).
 - Shared:

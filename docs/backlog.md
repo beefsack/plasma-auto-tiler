@@ -44,14 +44,16 @@ decisions of 2026-09-24 are under
   ([candidate lessons](research/non-native-tiler-host-interaction.md#candidate-lessons-for-this-project),
   [cross-cutting findings](research/non-native-tiler-host-interaction.md#cross-cutting-findings),
   [evidence](changes/archive/non-native-tiler-host-interaction.md)).
-- P1 | 0.1 triage decisions - batch 1 implementation (KDE/shared) | User
+- P1 | 0.1 triage decisions - batch 1 verification (KDE/shared) | User
   2026-10-10 approved the 15 units above, exactly recommendation (a) in
   [triage](research/release-0.1-triage.md#user-decisions-2026-10-10).
-  - Implementation: D05 / REQ-INS-05. Shared `world.rs` focus resolution
-    supplies no tiled anchor when an ordinary float is focused; `session.rs`
-    `insert_tiled` root-wraps. Use the nearest tiling neighbor (B, prior tiled
-    focus in R-INS-05) for ordinary long-edge admission. Add the discriminating
-    shared/KDE fixture and then native acceptance; shared repair serves Windows.
+  - D05 / REQ-INS-05: verification-only (Orchestrator 2026-10-11). The existing
+    shared Engine convergence route retains prior tiled focus B while an
+    ordinary float is focused; newcomer admission splits B's long edge rather
+    than root-wrapping. Shared geometry/focus and KDE PlanAdapter wire fixtures
+    prove this offline under unchanged admission policy; native observation/
+    activation acceptance remains user-owned in Pending live checks.
+    [Evidence](changes/archive/triage-batch1-kde-shared.md).
   - Observe-first, contingent implementation: D06 / REQ-OUT-05 currently
     admits on the newcomer's observed native output, with no focused-output
     override; verify focused output + newcomer activation. D17 / REQ-WS-09
@@ -59,10 +61,11 @@ decisions of 2026-09-24 are under
     remembered B on return. Implement only if these native outcomes mismatch.
   - Verification-only: D02, D04, D07, D08, D11, D14 (both rows), D15, D18,
     D19, D20, D21, D24. Existing mechanisms/defaults match; exact native
-    journeys remain pending in Pending live checks. D07 also needs a proving
-    fresh-reopen fixture, not a new restore policy. D18 has no setting; D20
-    needs raise-order proof, not a lower action.
-  - Windows: D05 shares the core gap; D14's keyboard trigger gap is already
+    journeys remain pending in Pending live checks. D07's shared close/refocus/
+    fresh-reopen fixture now proves fresh admission offline with no old-slot
+    restoration; exact native ratio/order/focus evidence remains pending.
+    D18 has no setting; D20 needs raise-order proof, not a lower action.
+  - Windows: D05 shares the proven Engine route; D14's keyboard trigger gap is already
     handoff item 6 (include R-RSZ-02/03 acceptance there). D02's owned-dialog
     exclusion is the approved divergence; D17 remembered focus and D19 hide/
     reveal are already wired. No new Windows-specific handoff item warranted.
@@ -2642,16 +2645,17 @@ Items below retain their stated pending scope; dated user confirmations are
 recorded separately from unexercised legs. Reference-WM checks test other compositors.
 
 - 0.1 triage batch 1 (User 2026-10-10; user-owned KDE checks, no Proposal B
-  classification approved). These are verification-only except D05 after its
-  shared repair and D06/D17 observe-first; record actual outcomes in existing
+  classification approved). These are verification-only, with D06/D17
+  observe-first; record actual outcomes in existing
   [reference scenarios](spec/reference-outcomes.md), leaving unsupported legs TBD.
   - D02 / R-SPC-01: open transient/modeless and modal dialog legs; dialog stays
     floating, tiles untouched. Record native type mapping and parent-focus/
     modal fence results separately; those request outcomes remain unselected.
   - D04 / R-INS-03: open the first ordinary window on an empty shown workspace;
     full work-area tile and real native newcomer focus, not just desired focus.
-  - D05 / R-INS-05 (after implementation): focus an ordinary float after B was
-    the tiled focus; open a newcomer. Anchor at tiling neighbor B, not root-wrap.
+  - D05 / R-INS-05 (offline-proven, native live pending): focus an ordinary float
+    after B was the tiled focus; open a newcomer. Anchor at tiling neighbor B
+    using its long edge, not root-wrap; verify real native newcomer activation.
   - D06 / R-OUT-05 (two outputs, observe-first): occupy both, focus one with
     pointer on the other; open a newcomer. Focused-output arrival and newcomer
     activation required; record native mapping before designing any reroute.
