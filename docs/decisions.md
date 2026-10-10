@@ -1,6 +1,7 @@
 # Current Decisions
 
-Only active, user-approved product and project choices are recorded here.
+Active, user-approved choices are recorded here. Explicitly flagged tentative
+orchestrator clauses are pending user review, not user-approved current rules.
 Historical implementation detail is recoverable in Git history.
 
 ## Scope and Platform Goals
@@ -68,6 +69,12 @@ platform API behavior.
 - Windows package/update channel (user 2026-10-10): deferred to Windows
   release planning, then decided from a short research refresh under the
   existing most-obvious-and-unsurprising criterion.
+- Tentative Orchestrator 2026-10-11, pending user review: remaining 13 0.1
+  triage units and Proposal B (original 39 must-pass / 12 known-issue-allowed /
+  2 Windows-release, plus must-pass N1-N4) are recorded in
+  [tentative triage decisions](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
+  They are PROVISIONAL, distinct from the user-approved batch 1; native evidence
+  and implementation gaps remain separate.
 
 ## Development Environment
 
@@ -103,6 +110,11 @@ platform API behavior.
 
 ## Settings, Tray and First-Run
 
+- Tentative Orchestrator 2026-10-11, pending user review: defaults-only in
+  0.1 for D03, D09, D10, D12, D13, D27; defer their already-proposed functional
+  settings/options/WM tooltips to P2 `0.1 triage settings follow-up` after 0.1.
+  This keeps release scope small while honoring meaningful alternatives later.
+  [Tentative scope](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
 - Shared:
   - Apply/Force/Revert is the only correction flow; ordinary Save never
     mutates shortcuts or host keys, and installation/startup never mutates
@@ -200,6 +212,12 @@ platform API behavior.
 
 ## Workspaces
 
+- Tentative Orchestrator 2026-10-11, pending user review: D16(a) retains float
+  on transfer, taking the 7/8 cross-family majority over COSMIC fresh-readmit
+  for classification continuity and predictable roundtrips. Existing tiled-only
+  send eligibility is an implementation gap against this tentative target;
+  floating-workspace boundary sends are a distinct approved journey.
+  [D16](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
 - R-CLOSE-03: closing the sole window retains the shown workspace empty, with no focused client (User 2026-10-10, 0.1 triage D08).
 - R-WS-09: workspace return restores remembered focus (User 2026-10-10, 0.1 triage D17).
 - R-WS-02: returning B inserts after remembered target anchor A; no before/after setting (User 2026-10-10, 0.1 triage D18).
@@ -438,6 +456,9 @@ platform API behavior.
 
 ## Move, Layout and Output Commands
 
+- Tentative Orchestrator 2026-10-11, pending user review: D09 Geometric middle,
+  D10 Wrap, D12 Extract to same axis and D13 Wrap locally are the 0.1 defaults;
+  their settings are post-0.1. [Tentative defaults](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
 - R-MOV-01: perpendicular flat-triple move restructures via COSMIC R1, changing root orientation to V[H[A,C],B] in the fixture rather than refusing (User 2026-10-10, 0.1 triage D11).
 - R-RSZ-02/03: outward work-area-edge resize is a no-op; nested resize adjusts adjacent shares at the nearest matching-edge-axis split (User 2026-10-10, 0.1 triage D14).
 - Delivery coordination (user 2026-10-07; [implementation order and Windows
@@ -588,6 +609,13 @@ platform API behavior.
     delivery; native checks of every user-selected choice remain
     pending.
 ## Restart Persistence
+- Tentative Orchestrator 2026-10-11, pending user review: D25(a) re-observes
+  membership, keeps the host-owned set and restores only provable focus.
+  D26(a) restores owned gaps/settings/intent and re-observes host set/membership/
+  maximize; D26(b) permits a listed known limitation if nontrivial. Cross-login
+  intent restoration already exceeds approved D1 lifetime below; disclose that
+  leg under tentative (b), without expanding the namespace or selecting layout
+  restoration. [D25/D26](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
 - User decisions 2026-10-08 (intentional-float restart R-RST-01 D1-D4,
   outcomes decided, delivered offline; native checks pending):
   - D1 storage: Rust planner-owned private runtime store under
@@ -626,10 +654,15 @@ platform API behavior.
   never authorizes writes or recovery ownership; written after native
   success, removed on unfloat/sticky-off/re-float; unreadable means no
   intent, logged. No separate store file and no recovery-ledger change.
-  REQ-RST-01c membership/set/focus and post-restart un-stick stay OPEN/TBD.
+  REQ-RST-01c membership/set/focus is now PROVISIONAL tentative D25 pending
+  user review; post-restart un-stick remains TBD.
 
 ## Reference Matrix and Spec Authority
 
+- Tentative Orchestrator clauses dated 2026-10-11 are PROVISIONAL pending user
+  review, not NORMATIVE selections. Their defaults-only settings schedule is a
+  tentative deferral of meaningful alternatives, not a permanent exemption.
+  [Triage authority](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
 - User direction 2026-10-03: the [reference-WM outcome matrix](spec/reference-outcomes.md)
   records minimal action sequences and per-WM outcomes as the evidence source of
   truth feeding the cross-platform functional specification. Existing selections
@@ -839,6 +872,14 @@ platform API behavior.
 
 ## Placement, Minimums and Startup Adoption
 
+- Tentative Orchestrator 2026-10-11, pending user review: D03 uses After
+  focused, reapplying admission policy per chained leg (legs 2-3 live-pending).
+  D01(a) admits behind an overlay without forcing its clear; fullscreen remains
+  shown/focused with no overlay writes or focus steal. Close removes the overlay
+  member and refills/focuses survivors; native cleanup is a joint live leg.
+  Maximized admission uses ordinary newcomer focus and native stacking for
+  visibility while retaining the overlay flag/slot.
+  [D01/D03](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
 - R-INS-03: first admission fills the work area as a single tile and natively activates the newcomer (User 2026-10-10, 0.1 triage D04).
 - R-INS-05: admission with an ordinary float focused anchors at the nearest tiling neighbor (B, prior tiled focus in the fixture), using ordinary long-edge admission instead of root-wrap (User 2026-10-10, 0.1 triage D05).
   Verification-only with unchanged admission policy (Orchestrator 2026-10-11):
@@ -1510,6 +1551,15 @@ platform API behavior.
 
 ## Window State: Float, Sticky, Maximize, Fullscreen
 
+- Tentative Orchestrator 2026-10-11, pending user review: D22(a) ratio-preserved
+  float-out reflow follows COSMIC-observed behavior, with thin I/S one-family
+  corroboration disclosed. D23(a) releases minimized allocation with stored
+  old-slot/no-focus-steal restore; sole minimize retains workspace, focus none.
+  Windows retains allocation, an observed divergence from this tentative target.
+  D27 Switch and focus defaults to urgency-only while fullscreen/game-focused;
+  its setting is deferred. D28(a) lists KDE fullscreen-send refusal as a 0.1
+  known issue pending observation, without altering approved Windows carry.
+  [D22/D23/D27/D28](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
 - R-SPC-01: transient dialogs float rather than tile; Windows owned-dialog exclusion remains an intentional divergence, with parent-focus/modal legs TBD (User 2026-10-10, 0.1 triage D02).
 - R-FLT-13: ordinary floats hide while their workspace is not shown and retain their frame across the switch (User 2026-10-10, 0.1 triage D19).
 - R-FLT-12: focusing an overlapping float raises it; no project lower verb for now (User 2026-10-10, 0.1 triage D20).

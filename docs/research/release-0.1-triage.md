@@ -1,7 +1,8 @@
-# Release 0.1 triage - batch 1 decided, remaining proposals pending
+# Release 0.1 triage - batch 1 approved, remaining decisions tentative
 
-Status: 15 decision units approved by User 2026-10-10; 13 units and Proposal B
-await approval. Original proposal base HEAD `4281e73`, report commit `27a97c4`.
+Status: 15 units approved by User 2026-10-10; remaining 13 units, settings scope
+and Proposal B tentative Orchestrator 2026-10-11, pending user review.
+Original proposal base HEAD `4281e73`, report commit `27a97c4`.
 No live tests run. Rules: 0.1-relevant = touches must-pass core KDE journey
 ([decisions](../decisions.md#scope-and-platform-goals)) AND current KDE
 undefined/refusal/no-op/inconsistent/surprising; post-0.1 = niche,
@@ -14,7 +15,9 @@ Gaming safety wins; overlap last resort; simplicity. TBD never invented.
 
 Original proposal counts: 60/60 then-OPEN rows covered (32 relevant / 28
 post-0.1); 28 decision units (D01-D27 + separate D28 MAX-09); 53/53 then-pending
-checks (proposed M39 / K12 / W2). Batch 1 promotes 16 rows, leaving 44 OPEN.
+checks (proposed M39 / K12 / W2). Batch 1 promoted 16 rows, leaving 44 OPEN.
+Tentative decisions move 16 of those to PROVISIONAL and split out KDE D28 as
+REQ-MAX-09b: current spec 121 NORMATIVE / 17 PROVISIONAL / 28 OPEN.
 
 ## User decisions 2026-10-10
 
@@ -33,6 +36,54 @@ checks (proposed M39 / K12 / W2). Batch 1 promotes 16 rows, leaving 44 OPEN.
   53-check inventory and are not classified by this unapproved proposal.
 - Open meta-question to raise with D03: do new settings (D03, D09, D10, D12,
   D13, D27) ship in 0.1, or ship defaults-only with settings later?
+
+## Tentative orchestrator decisions 2026-10-11 (pending user review)
+
+Tentative only, distinct from approved batch 1 above. No selection is
+approved until user review. No implementation is authorized by this section.
+Historical proposals A1/A2/A3/B and reference evidence below are preserved
+unchanged; source observations are not marked as approved.
+
+- D01 (a) tile behind overlay with explicit focus/visibility: maximize overlay
+  retained with no forced clear, structural admission behind the overlay;
+  C gets ordinary newcomer focus, with visibility governed by native stacking
+  while B's maximize flag/reserved slot remain retained. In the fullscreen leg,
+  fullscreen remains shown/focused with no overlay writes or focus steal.
+  CLOSE-05 (a) removal with survivor refill/focus; joint native-cleanup live
+  leg for both states.
+- D03 default After focused. INS-04 (a) reapply the current policy each leg;
+  legs 2-3 via the user live route.
+- D09 default Geometric middle. D10 default Wrap. D12 default Extract to same
+  axis. D13 default Wrap locally.
+- D16 (a) retain float on transfer: 7/8 majority exception over COSMIC
+  fresh-readmit for continuity/predictability; native host float roundtrip is
+  the live leg.
+- D22 (a) ratio-preserved reflow; disclosed thin basis: COSMIC observed plus
+  I/S one family.
+- D23 (a) minimize releases allocation and reflows with a stored restore slot;
+  restore to the old slot with no focus steal; sole-workspace minimize retains
+  the workspace with focus none. Windows retains allocation: observed
+  divergence, tentative shared parity target, not user-approved.
+- D25 (a) re-observe membership, keep the host-owned set, restore focus only
+  where provable.
+- D26 (a) restore owned gaps/settings/intent and re-observe host
+  set/membership/max; fallback (b) is a listed known limitation if the full
+  leg proves nontrivial. Cross-login disclosure: approved REQ-RST-01d
+  session-scoped store prohibits new-login/KWin hydration, so cross-login
+  intent cannot currently restore; no implicit namespace expansion. Tentative
+  fallback (b) applies to that leg unless the user authorizes a later design.
+  Settings/gaps and host re-observe legs verify.
+- D27 default Switch and focus; fullscreen/game-focused urgency-only guard.
+- D28 (a) keep the KDE fullscreen-send refusal as a listed 0.1 known issue
+  pending the G-D2 native observation; no carry selected.
+- Meta defaults-only 0.1: six settings (D03, D09, D10, D12, D13, D27) deferred
+  to P2 `0.1 triage settings follow-up`; existing names/options/tooltips
+  unchanged. Small-scope reason: defaults-only keeps 0.1 small; meaningful
+  alternatives are still honored post-0.1.
+- Proposal B tentatively adopted as the original 53-check classification
+  M39/K12/W2 plus N1-N4 as M checks. With distinct N1-N4 additions the
+  inventory is 57 checks => M43/K12/W2. Batch-1 verification extras remain
+  outside that original inventory and are not classified here.
 
 Reference key: C = COSMIC, H = Hyprland, B = bspwm, I = i3, X = xmonad,
 S = sway, Q = qtile, A = awesome; `ev` = evidenced profiles, `fam` = families.
@@ -430,5 +481,5 @@ action rows. Thin/disclosed: FLT-03 (COSMIC-observed, 1-family source),
 MNZ-02 (2/2ev scoped), MNZ-03 (COSMIC source-proven, no multi tally),
 INS-07b (0/8, post). Surprises: WS-05 COSMIC-outlier (majority exception);
 MNZ-01 direction corrected (release, not retain); OUT-02 COSMIC-observed
-wrap (not cross); RST-02 consensus C audit-only supersedes stale spec label
-(unrelated RST-02 spec label remains unchanged).
+wrap (not cross); RST-02 consensus C audit-only, with the new tentative clause
+recorded separately from reference evidence.
