@@ -375,7 +375,7 @@ describe("plan adapter route identity and request shape", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = enableAdapter(mocks);
-        const classes = ["floating", "sticky", "fullscreen", "maximized"] as const;
+        const classes = ["floating", "sticky", "fullscreen"] as const;
         classes.forEach((cls, index) => {
             mocks.observeImpl = () => makeObserved(refs, { [cls]: { "win-a": true } });
             adapter.requestFocus("left");
@@ -392,10 +392,25 @@ describe("plan adapter route identity and request shape", () => {
             );
             mocks.callbacks[index]?.(rejectedReply(payload["correlation_id"] as string, "snapshot-invalid"));
         });
+        // G-06 (REQ-MAX-08): a maximized FOCUSED window fences focus with no
+        // dispatch; the maximized flag stays local snapshot semantics for
+        // sibling overlays alongside the portable fit exclusion.
+        mocks.observeImpl = () => makeObserved(refs, { maximized: { "win-a": true } });
+        adapter.requestFocus("left");
+        assert.equal(mocks.dbusCalls.length, classes.length, "fenced maximized focus dispatches nothing");
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:focus-refused-maximize"));
+        mocks.observeImpl = () => makeObserved(refs, { maximized: { "win-b": true } });
+        adapter.requestFocus("left");
+        const overlay = plannerPayload(mocks, classes.length);
+        const overlayWindows = overlay["windows"] as Array<Record<string, unknown>>;
+        const sibling = overlayWindows.find((entry) => entry["window"] === "win-b") as Record<string, unknown>;
+        assert.equal("maximized" in sibling, false, "sibling overlay keeps maximized local to the snapshot");
+        assert.equal(sibling["fit_excluded"], true);
+        mocks.callbacks[classes.length]?.(rejectedReply(overlay["correlation_id"] as string, "snapshot-invalid"));
         // Clean tiled members omit the marker entirely.
         mocks.observeImpl = () => makeObserved(refs, {});
         adapter.requestFocus("left");
-        const clean = plannerPayload(mocks, classes.length)["windows"] as Array<Record<string, unknown>>;
+        const clean = plannerPayload(mocks, classes.length + 1)["windows"] as Array<Record<string, unknown>>;
         assert.deepEqual(clean[0], {
             window: "win-a",
             output: "out-1",
@@ -4635,7 +4650,11 @@ describe("plan entry live observation and shortcuts", () => {
         assert.equal(winCMax.handlers.length, 0, "stop detaches added-window subscription");
     });
 
-    it("collapses maximize modes 1 and 2 to the same isolation as mode 3", () => {
+    it("collapses maximize modes 1 and 2 to the same unmaximize-first move as mode 3", () => {
+        // G-06 (REQ-MAX-08): every nonzero maximize mode takes the same
+        // unmaximize-first path (one native clear, then the ordinary move
+        // once settlement is observed clear). The fake world settles
+        // synchronously, so each mode clears once and dispatches.
         for (const mode of [1, 2, 3]) {
             const world = fakeWorld();
             (world.wins[0] as Record<string, unknown>)["maximizeMode"] = mode;
@@ -4645,10 +4664,13 @@ describe("plan entry live observation and shortcuts", () => {
                 callback: () => void;
             };
             move.callback();
-            assert.equal(mocks.dbusCalls.length, 0, `mode ${String(mode)} never dispatches`);
+            assert.equal(world.maximizeClears.length, 1, `mode ${String(mode)} clears once before moving`);
+            assert.equal(mocks.dbusCalls.length, 1, `mode ${String(mode)} continues the ordinary move`);
             assert.ok(
-                mocks.logs.some((line) => line === "plasma-auto-tiler:plan:move-refused-maximize"),
-                `mode ${String(mode)} refused with the maximize token`,
+                mocks.logs.some(
+                    (line) => line.includes("move-maximize-clear") && line.includes("outcome=observed-cleared"),
+                ),
+                `mode ${String(mode)} moves only after observed clear`,
             );
             handle?.stop();
         }
@@ -4661,6 +4683,7 @@ describe("plan entry live observation and shortcuts", () => {
         };
         move.callback();
         assert.equal(mocks.dbusCalls.length, 1, "mode 0 dispatches normally");
+        assert.deepEqual(world.maximizeClears, [], "mode 0 never clears");
         handle?.stop();
     });
 
@@ -4716,10 +4739,16 @@ describe("plan entry live observation and shortcuts", () => {
             callback: () => void;
         };
         move.callback();
-        assert.equal(mocks.dbusCalls.length, 0, "fresh maximizeMode read still isolates the maximized window");
+        // G-06 (REQ-MAX-08): the fresh-read maximized mover clears once
+        // before moving; the fake world settles synchronously, so the
+        // ordinary move follows in the same invocation.
+        assert.equal(world.maximizeClears.length, 1, "fresh-read maximized mover clears once before moving");
+        assert.equal(mocks.dbusCalls.length, 1, "observed-clear continues the ordinary move");
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:move-refused-maximize"),
-            "maximized window refused from the fresh read",
+            mocks.logs.some(
+                (line) => line.includes("move-maximize-clear") && line.includes("outcome=observed-cleared"),
+            ),
+            "maximized move proceeds only after observed clear",
         );
         handle?.stop();
     });
@@ -7201,9 +7230,11 @@ describe("plan adapter maximize isolation", () => {
 
     it("tiled admission never clears across later floating visits", () => {
         // R-MAX-03/R-MAX-06 share one overlay rule now: a maximized window
-        // first seen on any domain keeps its maximize over a reserved slot,
-        // so a refused directional move captures nothing to clear and later
-        // floating visits plus the first admission retile issue no clear.
+        // first seen on any domain keeps its maximize over a reserved slot.
+        // G-06 (REQ-MAX-08) adds the directional move leg: a maximized move
+        // attempts exactly one native clear first and, unconfirmed here,
+        // moves nothing; later floating visits plus the first admission
+        // retile issue no clear.
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         let tiled = true;
@@ -7217,18 +7248,24 @@ describe("plan adapter maximize isolation", () => {
             });
         const adapter = enableAdapter(mocks);
         adapter.requestMove("left");
-        assert.equal(mocks.dbusCalls.length, 0, "refused move captures tiled-first with no dispatch");
-        assert.equal(mocks.maximizeClears.length, 0, "refused move clears nothing");
+        assert.equal(mocks.dbusCalls.length, 0, "unconfirmed clear moves nothing");
+        assert.equal(mocks.maximizeClears.length, 1, "maximized move attempts exactly one native clear first");
+        assert.ok(
+            mocks.logs.some(
+                (line) => line.includes("move-refused-maximize-clear") && line.includes("cause=still-maximized"),
+            ),
+            "unconfirmed clear refuses narrowly with no structural move",
+        );
         tiled = false;
         fire(mocks, "added");
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, 0, "floating visit dispatches nothing");
-        assert.equal(mocks.maximizeClears.length, 0, "floating visit clears nothing");
+        assert.equal(mocks.maximizeClears.length, 1, "floating visit issues no further clear");
         tiled = true;
         fire(mocks, "added");
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, 1, "first admission dispatches to reserve the slot");
-        assert.equal(mocks.maximizeClears.length, 0, "tiled-first retile issues no clear");
+        assert.equal(mocks.maximizeClears.length, 1, "tiled-first retile issues no further clear");
         const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
         mocks.callbacks[0]?.(
             plannedReply(
@@ -7248,7 +7285,7 @@ describe("plan adapter maximize isolation", () => {
         tiled = true;
         fire(mocks, "maximize");
         runDebounce(mocks);
-        assert.equal(mocks.maximizeClears.length, 0, "return to tile never clears a tiled-first origin");
+        assert.equal(mocks.maximizeClears.length, 1, "return to tile never clears a tiled-first origin");
         assert.equal(mocks.dbusCalls.length, callsAfterAdmit, "return to tile stays quiet");
         assert.equal(adapter.isEnabled, true);
     });
@@ -7545,7 +7582,11 @@ describe("plan adapter maximize isolation", () => {
         assert.equal(mocks.dbusCalls.length, callsAfterAdmit, "already tiled overlay keeps its slot without dispatch");
     });
 
-    it("refuses directional move/resize/pointer-resize on a maximized focused window with no dispatch", () => {
+    it("unmaximize-first directional move on a maximized focused window; resize/pointer-resize still refuse", () => {
+        // G-06 (REQ-MAX-08): directional move of a maximized window
+        // unmaximizes first (one native attempt; unconfirmed here, so no
+        // structural move), while resize and pointer-resize keep their
+        // maximized refusals with no dispatch.
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = twoWindowBaseline(mocks, refs);
@@ -7561,7 +7602,14 @@ describe("plan adapter maximize isolation", () => {
         assert.equal(adapter.requestPointerResize("win-b", "left", 600), false);
         assert.equal(mocks.dbusCalls.length, callsBefore);
         assert.equal(mocks.geometries.length, 0);
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:move-refused-maximize"));
+        assert.equal(mocks.maximizeClears.length, 1, "maximized move attempts exactly one native clear first");
+        assert.ok(
+            mocks.logs.some(
+                (line) => line.includes("move-refused-maximize-clear") && line.includes("cause=still-maximized"),
+            ),
+            "unconfirmed clear refuses narrowly with no structural move",
+        );
+        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:move-refused-maximize"));
         assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:resize-refused-maximize"));
         assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-maximize"));
     });

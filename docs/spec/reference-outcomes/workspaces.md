@@ -1667,10 +1667,15 @@ baseline above is unchanged. Record:
   signals; empty migrates under the same id with no fabricated focus.
   Implemented offline (NORMATIVE D5, User 2026-10-08), native lifecycle/focus TBD.
   G-37 User 2026-10-10 keeps this as the default and selects an MRU setting
-  using item-1.2 per-output history, falling back to last remaining with no
-  eligible entry; exact eligibility defined during implementation. Shared
-  core/KDE setting and MRU implementation pending; destination insertion
-  unchanged. [Discriminating variants](../reference-outcomes.md#2026-10-10-reference-comparison-discriminators).
+  using the pre-mutation item-1.2 per-output previous stable ID, eligible
+  only while live in the remaining source-output scoped ring (surviving
+  empties valid; migrated/removed/out-of-scope excluded). Without an eligible
+  entry use last remaining; a still-scoped live current view is kept in both
+  modes. Shared selector/KDE KCM/live setting/MRU delivered offline 2026-10-10;
+  destination insertion and history invalidation unchanged.
+  [Production-entry real-Engine default/MRU fixtures](../../../kwin/tests/g06-g37-entry-discrimination.test.ts),
+  [eligibility/config fixtures](../../../kwin/tests/migration-source-refill.test.ts).
+  [Discriminating variants](../reference-outcomes.md#2026-10-10-reference-comparison-discriminators).
   [Native map](../../../kwin/src/workspace-native.ts),
   [fixtures](../../../kwin/tests/workspace-migrate.test.ts).
 - Then Ours Windows: no-counterpart (no whole-workspace verb).

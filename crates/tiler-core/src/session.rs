@@ -626,6 +626,12 @@ pub struct Session {
     /// windows. Admission-only: changing it never reclassifies retained
     /// windows, only subsequent admissions.
     fixed_predicate: crate::size_hints::FixedSizePredicate,
+    /// Opt-in G-06 maximized directional focus fence (REQ-MAX-08). Off by
+    /// default so Windows carriers keep exact current behavior; the Linux
+    /// planner route enables it. When on, directional focus with a
+    /// maximized (non-fullscreen) focused subject refuses as `Unchanged`
+    /// with no plan and no pending. Cloned verbatim like `fixed_admission`.
+    maximized_focus_fence: bool,
     /// Classifier-created automatic fixed floats (membership only, D8).
     /// Intentional floats (toggle-float, sticky) never land here (D6).
     automatic_fixed: BTreeSet<WindowId>,
@@ -720,6 +726,7 @@ impl Session {
             retained_float_geometry: BTreeMap::new(),
             fixed_admission: false,
             fixed_predicate: crate::size_hints::FixedSizePredicate::BothAxes,
+            maximized_focus_fence: false,
             automatic_fixed: BTreeSet::new(),
             fixed_tile_override: BTreeSet::new(),
             canonical_pair_target_restore: BTreeMap::new(),
@@ -1051,6 +1058,7 @@ impl Session {
         // re-adoption never loses an explicit user tile win (D3).
         pair.fixed_admission = source.fixed_admission;
         pair.fixed_predicate = source.fixed_predicate;
+        pair.maximized_focus_fence = source.maximized_focus_fence;
         pair.automatic_fixed = source.automatic_fixed.clone();
         pair.fixed_tile_override = source.fixed_tile_override.clone();
         if let Some(target) = target {
@@ -1224,6 +1232,8 @@ impl Session {
         target.fixed_admission = self.fixed_admission;
         source.fixed_predicate = self.fixed_predicate;
         target.fixed_predicate = self.fixed_predicate;
+        source.maximized_focus_fence = self.maximized_focus_fence;
+        target.maximized_focus_fence = self.maximized_focus_fence;
         for id in &self.automatic_fixed {
             if source.windows.contains_key(id) || source.exceptions.contains_key(id) {
                 source.automatic_fixed.insert(id.clone());

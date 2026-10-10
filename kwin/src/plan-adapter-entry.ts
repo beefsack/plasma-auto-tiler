@@ -25,6 +25,7 @@
 // shortcut-failed line and one bounded plan-ready startup line.
 
 import { DomainGaps, readDomainGaps } from "./domain-gap";
+import { readMigrationSourceRefillValue } from "./migration-source-refill";
 import { SameAxisMove, readSameAxisMoveValue } from "./same-axis-move";
 import {
     FixedSizePredicate,
@@ -124,6 +125,7 @@ export interface PlanEntryOverrides {
     readonly readOuterGapFn?: () => unknown;
     readonly readSameAxisMoveFn?: () => unknown;
     readonly readFixedSizePredicateFn?: () => unknown;
+    readonly readMigrationSourceRefillFn?: () => unknown;
     readonly options?: unknown;
     // Workspace tiling menu state: invoked whenever the tray snapshot
     // (scope, tiled, default) changes so entry.ts can bump the publisher
@@ -2082,8 +2084,18 @@ export function observeSendTarget(
                 const activeId = internNativeId(cache, activeNative, activeRef, owners);
                 for (const entry of sourceWindows) {
                     if (entry.id === activeId) {
-                        // Tiled-only mover; exceptions keep "" / null and refuse downstream.
-                        if (entry.fullscreen || entry.maximized || entry.floating || entry.sticky || entry.fitExcluded) {
+                        // Tiled-only mover; maximized movers carry under G-D2
+                        // (REQ-MAX-09) with native state untouched, while
+                        // fullscreen/floating/sticky keep "" / null and
+                        // refuse downstream (fullscreen stays observe-first).
+                        // An otherwise unexplained fit exclusion (fitExcluded
+                        // without a maximized overlay) also refuses.
+                        if (
+                            entry.fullscreen ||
+                            entry.floating ||
+                            entry.sticky ||
+                            (entry.fitExcluded && !entry.maximized)
+                        ) {
                             break;
                         }
                         focusedId = entry.id;
@@ -3937,9 +3949,19 @@ export function observeOutputSendTarget(
                 const activeId = internNativeId(cache, activeNative, activeRef, owners);
                 for (const entry of sourceWindows) {
                     if (entry.id === activeId) {
-                        // Tiled-only mover; sticky and intentional floats keep
-                        // "" / null and refuse downstream as non-tiled-focus.
-                        if (entry.fullscreen || entry.maximized || entry.floating || entry.sticky || entry.fitExcluded) {
+                        // Tiled-only mover; maximized movers carry under G-D2
+                        // (REQ-MAX-09) with native state untouched, while
+                        // fullscreen, sticky and intentional floats keep
+                        // "" / null and refuse downstream as non-tiled-focus
+                        // (fullscreen stays observe-first). An otherwise
+                        // unexplained fit exclusion (fitExcluded without a
+                        // maximized overlay) also refuses.
+                        if (
+                            entry.fullscreen ||
+                            entry.floating ||
+                            entry.sticky ||
+                            (entry.fitExcluded && !entry.maximized)
+                        ) {
                             break;
                         }
                         focusedId = entry.id;
@@ -4444,6 +4466,10 @@ function startPlanAdapterEntryOnce(
     let fixedSizePredicate: FixedSizePredicate = readFixedSizePredicateValue(
         overrides.readFixedSizePredicateFn,
     );
+    // R-WS-12 G-37 migration source refill: the workspace-native map
+    // commit reads it per migration from the entry-pushed value (startup via
+    // the env closure below, then only on the KWin Options `configChanged`
+    // signal). No destination, history, or lifecycle work on change.
     // Startup-consumed settings snapshot: workspaceMode and shortcutProfile
     // are never re-read for behavior. A configChanged drift against this
     // snapshot is logged restart-required, never adopted here.
@@ -5367,6 +5393,7 @@ function startPlanAdapterEntryOnce(
         getWorkspace: () => liveWorkspace,
         readWorkspaceMode: () => readWorkspaceModeValue(overrides.readWorkspaceModeFn),
         readTilingDefault: () => readTilingDefaultValue(overrides.readTilingDefaultFn),
+        readMigrationSourceRefill: () => readMigrationSourceRefillValue(overrides.readMigrationSourceRefillFn),
         log,
     });
     workspaceNative.enable();
@@ -9008,6 +9035,25 @@ function startPlanAdapterEntryOnce(
                             fixedSizePredicate = reread;
                             try {
                                 log(`plasma-auto-tiler:plan:config-reloaded stage=fixed-size-predicate predicate=${reread}`);
+                            } catch (error) {
+                                void error;
+                            }
+                        }
+                    } catch (error) {
+                        void error;
+                    }
+                    // R-WS-12 G-37 live refill: re-read the migration source
+                    // refill for subsequent migrations only. No destination,
+                    // history, or lifecycle work; the map commit reads the
+                    // pushed value per migration.
+                    try {
+                        if (
+                            workspaceNative.setMigrationSourceRefill(
+                                readMigrationSourceRefillValue(overrides.readMigrationSourceRefillFn),
+                            )
+                        ) {
+                            try {
+                                log(`plasma-auto-tiler:plan:config-reloaded stage=migration-source-refill refill=${workspaceNative.getMigrationSourceRefill()}`);
                             } catch (error) {
                                 void error;
                             }

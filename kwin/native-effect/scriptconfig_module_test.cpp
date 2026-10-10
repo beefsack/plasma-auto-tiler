@@ -60,6 +60,11 @@ QComboBox *fixedSizePredicateCombo(KWin::ScriptConfigModule &module)
     return module.widget()->findChild<QComboBox *>(QStringLiteral("fixedSizePredicateCombo"));
 }
 
+QComboBox *migrationSourceRefillCombo(KWin::ScriptConfigModule &module)
+{
+    return module.widget()->findChild<QComboBox *>(QStringLiteral("migrationSourceRefillCombo"));
+}
+
 QComboBox *shortcutProfileCombo(KWin::ScriptConfigModule &module)
 {
     return module.widget()->findChild<QComboBox *>(QStringLiteral("shortcutProfileCombo"));
@@ -114,6 +119,19 @@ QString otherFixedSizePredicate(const QString &current)
         return QStringLiteral("both-axes-fixed");
     }
     return QStringLiteral("either-axis-fixed");
+}
+
+QString storedMigrationSourceRefill()
+{
+    return scriptGroup().readEntry(QStringLiteral("migrationSourceRefill"), QStringLiteral("last-remaining-workspace"));
+}
+
+QString otherMigrationSourceRefill(const QString &current)
+{
+    if (current == QStringLiteral("most-recently-used-workspace")) {
+        return QStringLiteral("last-remaining-workspace");
+    }
+    return QStringLiteral("most-recently-used-workspace");
 }
 
 QString storedShortcutProfile()
@@ -760,6 +778,76 @@ void fixedSizePredicateContractDefaultsValidatesAndPersists()
     }
 }
 
+void migrationSourceRefillContractDefaultsValidatesAndPersists()
+{
+    // Invalid stored values normalize to the last-remaining-workspace default.
+    {
+        KConfigGroup group = scriptGroup();
+        group.writeEntry(QStringLiteral("migrationSourceRefill"), QStringLiteral("bogus"));
+        group.sync();
+    }
+    {
+        KWin::ScriptConfigModule module(nullptr, KPluginMetaData());
+        QComboBox *combo = migrationSourceRefillCombo(module);
+        CHECK(combo != nullptr);
+        module.load();
+        if (combo) {
+            CHECK(combo->currentData().toString() == QStringLiteral("last-remaining-workspace"));
+        }
+    }
+    // Missing keys stay missing through load and default back.
+    {
+        KConfigGroup group = scriptGroup();
+        group.deleteEntry(QStringLiteral("migrationSourceRefill"));
+        group.sync();
+    }
+    {
+        CountingScriptModule module(nullptr, KPluginMetaData());
+        QComboBox *combo = migrationSourceRefillCombo(module);
+        CHECK(combo != nullptr);
+        module.load();
+        if (combo) {
+            CHECK(combo->currentData().toString() == QStringLiteral("last-remaining-workspace"));
+        }
+        module.scriptSucceed = true;
+        module.save();
+        CHECK(!scriptGroup().hasKey(QStringLiteral("migrationSourceRefill")));
+        CHECK(module.scriptCalls == 0);
+        CHECK(!module.isScriptRestartRequired());
+    }
+    // A refill change persists, sends one live reconfigure, and never
+    // requires a session restart.
+    {
+        CountingScriptModule module(nullptr, KPluginMetaData());
+        module.load();
+        QComboBox *combo = migrationSourceRefillCombo(module);
+        CHECK(combo != nullptr);
+        if (!combo) {
+            return;
+        }
+        const QString target = otherMigrationSourceRefill(storedMigrationSourceRefill());
+        const int index = combo->findData(target);
+        CHECK(index >= 0);
+        combo->setCurrentIndex(index);
+        CHECK(module.needsSave());
+        module.scriptSucceed = true;
+        module.save();
+        CHECK(storedMigrationSourceRefill() == target);
+        CHECK(module.scriptCalls == 1);
+        CHECK(!module.isScriptRestartRequired());
+        CHECK(module.scriptStatusText().contains(QStringLiteral("unconfirmed")));
+        CHECK(module.scriptStatusText().contains(QStringLiteral("migration source")));
+        CHECK(!containsAppliedClaim(module.scriptStatusText()));
+        CHECK(!module.needsSave());
+        module.save();
+        CHECK(module.scriptCalls == 1);
+        module.defaults();
+        CHECK(combo->currentData().toString() == QStringLiteral("last-remaining-workspace"));
+        module.save();
+        CHECK(storedMigrationSourceRefill() == QStringLiteral("last-remaining-workspace"));
+    }
+}
+
 void unsupportedControlsAreAbsentAndLegacyValuesUntouched()
 {
     KConfigGroup group = scriptGroup();
@@ -1392,6 +1480,7 @@ int main(int argc, char **argv)
         combinedGapAndSameAxisMoveSaveFailureMentionsBothKeys();
         sameAxisMoveContractDefaultsValidatesAndPersists();
         fixedSizePredicateContractDefaultsValidatesAndPersists();
+        migrationSourceRefillContractDefaultsValidatesAndPersists();
         startupRestartLogEnumeratesOnlyChangedKeys();
         startupOnlySaveDisablesSendWithRestartMessage();
         hiddenShortcutProfileIsAbsentAndPreservedUntouched();

@@ -405,15 +405,14 @@ All fresh variants below reset the client and WM state independently.
 - Then paneru: no fixed-size admission counterpart for any hint variant
   (same rule-gated admission; AX exposes no min/max hint equality).
   `S(S-pan-admit)`.
-- Then Ours KDE: missing/full-zero/sentinel do not auto-float; equal
-  partial-zero vectors currently do (implementation gap against G-05,
-  User 2026-10-10; no resizeable inference).
-  Implemented offline 2026-10-08; [shared predicate fixtures](../../../crates/tiler-core/tests/fixed_size_admission.rs),
+- Then Ours KDE: missing/full-zero/sentinel do not auto-float; zero is unset
+  per axis, so equal (640,0)/(0,480) tiles under `both-axes-fixed` and floats
+  under `either-axis-fixed` via its genuinely fixed nonzero axis.
+  G-05 delivered offline 2026-10-10; [shared predicate fixtures](../../../crates/tiler-core/tests/fixed_size_admission.rs),
   [KDE fixtures](../../../kwin/tests/fixed-size-admission.test.ts).
-  Selected G-05 target: zero is unset per axis, so equal (640,0)/(0,480)
-  tiles under `both-axes-fixed` and floats under `either-axis-fixed` via its
-  genuinely fixed nonzero axis. Shared predicate/KDE implementation pending;
-  deliberate COSMIC raw-equality deviation for consistent zero handling.
+  Real-Planner fixtures verify both orientations/modes and no retained-client
+  reclassification after a setting change; native representation remains TBD.
+  Deliberate COSMIC raw-equality deviation for consistent zero handling.
   G-01 retains full-zero/sentinel guards; sentinel rejection is deliberate
   KDE host adaptation (KWin marker means no limit; ten references including
   COSMIC float raw-equal sentinels). The width-fixed/height-absent

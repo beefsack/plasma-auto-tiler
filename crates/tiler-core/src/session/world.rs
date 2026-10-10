@@ -454,6 +454,21 @@ impl super::Session {
         self.fixed_admission = enabled;
     }
 
+    /// Whether the opt-in G-06 maximized directional focus fence is
+    /// enabled (REQ-MAX-08). Off by default; the Linux planner route
+    /// enables it while Windows keeps exact current behavior.
+    #[must_use]
+    pub fn maximized_focus_fence(&self) -> bool {
+        self.maximized_focus_fence
+    }
+
+    /// Enable or disable the opt-in G-06 maximized directional focus
+    /// fence. Never touches topology, shares, membership, focus, or
+    /// revision.
+    pub fn set_maximized_focus_fence(&mut self, enabled: bool) {
+        self.maximized_focus_fence = enabled;
+    }
+
     /// Current R-SPC-04 D1 fixed-size admission predicate. Both-axes
     /// default (current delivered behavior).
     #[must_use]

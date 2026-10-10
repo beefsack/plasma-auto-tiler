@@ -38,6 +38,7 @@ const SCRIPT_SETTINGS = {
     shortcutProfile: { type: "Enum", defaultValue: "cosmic" },
     sameAxisMove: { type: "Enum", defaultValue: "group-with-neighbor" },
     fixedSizePredicate: { type: "Enum", defaultValue: "both-axes-fixed" },
+    migrationSourceRefill: { type: "Enum", defaultValue: "last-remaining-workspace" },
     innerGap: { type: "Int", defaultValue: "8" },
     outerGap: { type: "Int", defaultValue: "8" },
 } as const;
@@ -120,7 +121,7 @@ describe("native KCM static contract", () => {
         assert.match(unifiedHeader, /::Ui::UnifiedSettings m_ui/);
         // Thin factories carry no widget or reconfigure internals.
         for (const factory of [effectFactory, scriptFactory]) {
-            assert.doesNotMatch(factory, /workspaceModeCombo|sameAxisMoveCombo|fixedSizePredicateCombo|innerGapSpinBox|outerGapSpinBox/);
+            assert.doesNotMatch(factory, /workspaceModeCombo|sameAxisMoveCombo|fixedSizePredicateCombo|migrationSourceRefillCombo|innerGapSpinBox|outerGapSpinBox/);
             assert.doesNotMatch(factory, /requestEffectReconfigure|requestScriptReconfigure/);
             assert.doesNotMatch(factory, /Script-plasma-auto-tiler-kwin/);
         }
@@ -142,6 +143,7 @@ describe("native KCM static contract", () => {
             "workspaceModeCombo",
             "sameAxisMoveCombo",
             "fixedSizePredicateCombo",
+            "migrationSourceRefillCombo",
             "innerGapSpinBox",
             "outerGapSpinBox",
             "shortcutApplyButton",
@@ -188,7 +190,7 @@ describe("native KCM static contract", () => {
         }
     });
 
-    it("keeps the five supported script keys and defaults identical between schema and the unified script KCM", () => {
+    it("keeps the six supported script keys and defaults identical between schema and the unified script KCM", () => {
         // defaultTiled is schema-only (tray persist + script readConfig for
         // newly discovered workspaces); the unified KCM intentionally owns
         // only workspaceMode/innerGap/outerGap, so it is asserted separately.
@@ -222,6 +224,7 @@ describe("native KCM static contract", () => {
         assert.match(unified, /workspaceModeCombo->findData\(QStringLiteral\("per-output-local"\)\)/);
         assert.match(unified, /sameAxisMoveCombo->findData\(QStringLiteral\("group-with-neighbor"\)\)/);
         assert.match(unified, /fixedSizePredicateCombo->findData\(QStringLiteral\("both-axes-fixed"\)\)/);
+        assert.match(unified, /migrationSourceRefillCombo->findData\(QStringLiteral\("last-remaining-workspace"\)\)/);
         assert.doesNotMatch(unified, /shortcutProfileCombo/);
         assert.doesNotMatch(unified, /readEntry\(QStringLiteral\("shortcutProfile"\)/);
         assert.doesNotMatch(unified, /writeEntry\(QStringLiteral\("shortcutProfile"\)/);
@@ -230,7 +233,7 @@ describe("native KCM static contract", () => {
         assert.match(unified, /innerGapSpinBox->setValue\((8|kGapDefault)\)/);
         assert.match(unified, /outerGapSpinBox->setValue\((8|kGapDefault)\)/);
         for (const factory of [effectFactory, scriptFactory]) {
-            assert.doesNotMatch(factory, /workspaceModeCombo|shortcutProfileCombo|sameAxisMoveCombo|fixedSizePredicateCombo|innerGapSpinBox|outerGapSpinBox/);
+            assert.doesNotMatch(factory, /workspaceModeCombo|shortcutProfileCombo|sameAxisMoveCombo|fixedSizePredicateCombo|migrationSourceRefillCombo|innerGapSpinBox|outerGapSpinBox/);
             assert.doesNotMatch(factory, /Script-plasma-auto-tiler-kwin/);
         }
     });
@@ -246,6 +249,9 @@ describe("native KCM static contract", () => {
         assert.match(unified, /readFixedSizePredicate\(group\)/);
         assert.match(unified, /select\(m_ui\.fixedSizePredicateCombo, fixedSizePredicate, QStringLiteral\("both-axes-fixed"\)\)/);
         assert.match(unified, /writeEntry\(QStringLiteral\("fixedSizePredicate"\)/);
+        assert.match(unified, /readMigrationSourceRefill\(group\)/);
+        assert.match(unified, /select\(m_ui\.migrationSourceRefillCombo, migrationSourceRefill, QStringLiteral\("last-remaining-workspace"\)\)/);
+        assert.match(unified, /writeEntry\(QStringLiteral\("migrationSourceRefill"\)/);
         assert.doesNotMatch(unified, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview/);
     });
 
@@ -319,6 +325,7 @@ describe("native KCM static contract", () => {
             ["label_workspaceMode", "workspaceModeCombo"],
             ["label_sameAxisMove", "sameAxisMoveCombo"],
             ["label_fixedSizePredicate", "fixedSizePredicateCombo"],
+            ["label_migrationSourceRefill", "migrationSourceRefillCombo"],
             ["label_innerGap", "innerGapSpinBox"],
             ["label_outerGap", "outerGapSpinBox"],
         ]) {
@@ -366,7 +373,7 @@ describe("native KCM static contract", () => {
         assert.match(unifiedHeader, /isScriptRestartRequired/);
         assert.match(unifiedHeader, /isGapReconfigurePending/);
         assert.match(unified, /m_gapReconfigurePending/);
-        assert.match(unified, /const bool liveChanged = gapChanged \|\| sameAxisMoveChanged \|\| fixedPredicateChanged/);
+        assert.match(unified, /const bool liveChanged = gapChanged \|\| sameAxisMoveChanged \|\| fixedPredicateChanged \|\| refillChanged/);
         assert.match(unified, /if \(liveChanged \|\| scriptRetryArmed\)/);
         assert.match(unified, /if \(!widgetsChanged\)/);
         assert.match(unified, /This retry saved nothing/);

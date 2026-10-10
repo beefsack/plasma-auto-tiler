@@ -102,6 +102,10 @@ pub struct Engine {
     /// Windows carriers (`Engine::new`) keep exact current behavior; the
     /// Linux planner route enables it.
     fixed_size_admission: bool,
+    /// Opt-in G-06 maximized directional focus fence (REQ-MAX-08). Off by
+    /// default so Windows carriers keep exact current behavior; the Linux
+    /// planner route enables it.
+    maximized_focus_fence: bool,
     /// R-SPC-04 D1 fixed-size admission predicate. Both-axes default
     /// (current delivered behavior). Changing it never reclassifies
     /// retained windows, only subsequent admissions.
@@ -375,6 +379,7 @@ impl Default for Engine {
             converged_this_op: false,
             fixed_size_admission: false,
             fixed_size_predicate: crate::size_hints::FixedSizePredicate::BothAxes,
+            maximized_focus_fence: false,
             last_fixed_admission: None,
             last_migration: None,
         }
@@ -541,6 +546,22 @@ impl Engine {
         }
     }
 
+    /// Whether the opt-in G-06 maximized directional focus fence is enabled.
+    #[must_use]
+    pub fn maximized_focus_fence(&self) -> bool {
+        self.maximized_focus_fence
+    }
+
+    /// Enable or disable the opt-in G-06 maximized directional focus fence
+    /// (REQ-MAX-08). Propagates to every retained session on store; fresh
+    /// sessions adopt it at creation. Never touches topology or revision.
+    pub fn set_maximized_focus_fence(&mut self, enabled: bool) {
+        self.maximized_focus_fence = enabled;
+        for session in self.sessions.values_mut() {
+            session.set_maximized_focus_fence(enabled);
+        }
+    }
+
     /// Current R-SPC-04 D1 fixed-size admission predicate. Both-axes
     /// default (current delivered behavior).
     #[must_use]
@@ -580,6 +601,7 @@ impl Engine {
     fn adopt_fixed_admission(&self, session: &mut Session) {
         session.set_fixed_size_admission(self.fixed_size_admission);
         session.set_fixed_size_predicate(self.fixed_size_predicate);
+        session.set_maximized_focus_fence(self.maximized_focus_fence);
     }
 
     /// Predicate-selected candidate check for the retained Engine setting.

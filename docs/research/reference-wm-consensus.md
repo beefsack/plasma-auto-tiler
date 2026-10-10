@@ -46,10 +46,11 @@ Match vocabulary per platform (KDE / Windows): yes, no, partial, unknown
 (A/B/U/C/W).
 
 Ground truth applied (user, not reopened): B6 minimum-infeasible is
-origin+minimum on BOTH platforms (KDE skip is the gap). Q3 born-maximized is
-reserved slot + maximize overlay (selected). B9 overlaid unfloat stays
-maximized (provisional, pending COSMIC live R-FLT-06); refusal sub-leg 4/4
-no-refusal aligns B9, contradicts current Windows refusal; KDE allows it.
+origin+minimum on BOTH platforms (KDE delivered offline). Q3 born-maximized is
+reserved slot + maximize overlay (selected). B9 overlaid intentional unfloat
+unmaximizes then fresh-admits (User 2026-10-08; KDE/shared delivered offline);
+refusal sub-leg 4/4 no-refusal aligns B9, contradicts current Windows refusal.
+COSMIC confirmation and KDE native timing remain pending, not decision gates.
 KDE float focus + half-snap delivered and live-accepted at 9de7274.
 Stateful quarter-snap stays deferred.
 

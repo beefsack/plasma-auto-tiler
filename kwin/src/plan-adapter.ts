@@ -1205,13 +1205,16 @@ function meaningfulMinExtent(value: unknown): number | null {
 // Q2 fixed-size float admission predicate (D1), mirroring core
 // `is_fixed_size_with`: min and max must BOTH be present with usable
 // nonnegative vector sizes (0..=16384); the entire (0,0) vector does not
-// count; equal partial-zero vectors such as (640,0) or (0,480) do count.
-// Unset bounds, negative values, unbounded sentinels, and out-of-contract
-// values never count. The resizeable flag alone never counts. The final
-// equality is predicate-selected: `both-axes-fixed` (default) needs both
-// axes equal, `either-axis-fixed` needs either axis equal. Total over all
-// inputs. The third `predicate` parameter defaults to the delivered
-// both-axes behavior so legacy callers stay byte-identical.
+// count; zero is unset per axis (G-05): a fixed axis needs equal NONZERO
+// bounds, so equal partial-zero vectors such as (640,0) or (0,480) pin
+// nothing under `both-axes-fixed` but pin via their nonzero axis under
+// `either-axis-fixed`. Unset bounds, negative values, unbounded sentinels,
+// and out-of-contract values never count. The resizeable flag alone never
+// counts. The final equality is predicate-selected: `both-axes-fixed`
+// (default) needs a nonzero-equal pin on both axes, `either-axis-fixed`
+// on either axis. Total over all inputs. The third `predicate` parameter
+// defaults to the delivered both-axes behavior so legacy callers stay
+// byte-identical.
 export function isFixedSize(
     minSize: { readonly w: unknown; readonly h: unknown } | null | undefined,
     maxSize: { readonly w: unknown; readonly h: unknown } | null | undefined,
@@ -1238,9 +1241,9 @@ export function isFixedSize(
         return false;
     }
     if (normalizeFixedSizePredicate(predicate) === FIXED_SIZE_PREDICATE_EITHER) {
-        return minW === maxW || minH === maxH;
+        return (minW === maxW && minW !== 0) || (minH === maxH && minH !== 0);
     }
-    return minW === maxW && minH === maxH;
+    return minW === maxW && minW !== 0 && minH === maxH && minH !== 0;
 }
 
 // Effective native target for an overconstrained tile: planned origin with
@@ -2637,6 +2640,18 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:focus-refused-workspace-floating`);
             return;
         }
+        // G-06 maximized directional focus fence (REQ-MAX-08): directional
+        // focus is fenced while the focused tiled window is maximized
+        // (no-op; leave via unmaximize or Alt+Tab). Fullscreen stays
+        // exempt: it carries no geometry write. Mirrors the shared-core
+        // opt-in fence; this local fence avoids a wasted dispatch.
+        if (
+            this.windowIsMaximized(observed, observed.focusedId) &&
+            !this.windowIsFullscreen(observed, observed.focusedId)
+        ) {
+            this.logToken(`${LOG_PREFIX}:focus-refused-maximize`);
+            return;
+        }
         const snapshot = this.carriedSnapshot(observed);
         this.noteObservation(snapshot.fingerprint);
         this.dispatch({
@@ -2660,8 +2675,16 @@ export class PlanAdapter {
     private requestFloatFocus(observed: PlanObserved, crossEligible: boolean, direction: PlanDirection): void {
         // Ineligible subjects refuse immediately: no local actuation and no
         // cross dispatch, even on a miss that would otherwise fall through.
-        if (floatSubjectEntry(observed) === null) {
+        const subjectEntry = floatSubjectEntry(observed);
+        if (subjectEntry === null) {
             this.logToken(`${LOG_PREFIX}:focus-refused-floating`);
+            return;
+        }
+        // G-06 fence for the floating origin (REQ-MAX-08): a maximized
+        // float subject fences directional focus like a maximized tile.
+        // Fullscreen stays exempt here as on the tile-origin path.
+        if (subjectEntry.maximized === true && subjectEntry.fullscreen !== true) {
+            this.logToken(`${LOG_PREFIX}:focus-refused-maximize`);
             return;
         }
         const target = selectFloatFocusTarget(observed, direction);
@@ -4210,6 +4233,131 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:move-refused-observe`);
             return;
         }
+        // Fullscreen precedence (both origins): a fullscreen subject is
+        // never cleared or moved.
+        if (this.windowIsFullscreen(observed, observed.focusedId)) {
+            this.logToken(`${LOG_PREFIX}:move-refused-fullscreen`);
+            return;
+        }
+        // G-06 maximized directional move (REQ-MAX-08): unmaximize first
+        // with exactly one native clear, before ordinary tiled/float
+        // routing, for a maximized focused window on either origin. No
+        // clear for non-maximized subjects, for fullscreen (above), or for
+        // a float-ineligible subject (unmanaged: the established float
+        // route refuses it unchanged below). After a confirmed clear the
+        // move routes via a FRESH directional observation, never carried
+        // pre-clear topology: floats take the established half-snap,
+        // tiles take the ordinary planner move. Reuses the B9
+        // intentional-unfloat discipline (exact-reference echo fence, one
+        // attempt, identity/focus/fullscreen/domain/busy guards, no
+        // speculative delayed intent or retry). An unconfirmed clear
+        // refuses narrowly with no structural move; a later press can
+        // retry. Focus is unchanged by this command.
+        if (this.windowIsMaximized(observed, observed.focusedId)) {
+            if (observed.activeExcluded && floatSubjectEntry(observed) === null) {
+                this.requestFloatMove(observed, direction);
+                return;
+            }
+            if (!observed.activeExcluded && !this.isTiledDomain(observed.domainOutput, observed.domainWorkspace)) {
+                this.logToken(`${LOG_PREFIX}:move-refused-workspace-floating`);
+                return;
+            }
+            const windowId = observed.focusedId;
+            const mover = observed.windows.find((entry) => entry.id === windowId);
+            const nativeRef = mover?.ref;
+            const resourceClass =
+                mover !== undefined && isOpaqueId(mover.resourceClass) ? mover.resourceClass : "unknown";
+            if (nativeRef === undefined) {
+                this.logToken(`${LOG_PREFIX}:move-refused-maximize-clear window=${windowId} resource_class=${resourceClass} cause=observe-missing recovery=retry-on-next-press`);
+                return;
+            }
+            this.logToken(`${LOG_PREFIX}:move-maximize-clear window=${windowId} resource_class=${resourceClass} outcome=issued`);
+            this.maximizeAdmissionEcho = nativeRef;
+            this.logToken(`${LOG_PREFIX}:maximize-admission-echo-armed`);
+            let outcome: MaximizeClearOutcome = "threw";
+            try {
+                outcome = this.env.clearMaximize(nativeRef);
+            } catch (error) {
+                void error;
+            }
+            this.logToken(`${LOG_PREFIX}:move-maximize-clear window=${windowId} resource_class=${resourceClass} outcome=${outcome}`);
+            if (this.maximizeAdmissionEcho !== null) {
+                this.maximizeAdmissionEcho = null;
+                this.logToken(`${LOG_PREFIX}:maximize-admission-echo-cleared-no-signal`);
+            }
+            if (outcome !== "invoked") {
+                this.logToken(`${LOG_PREFIX}:move-refused-maximize-clear window=${windowId} resource_class=${resourceClass} cause=native-write-${outcome} recovery=retry-on-next-press`);
+                return;
+            }
+            // Fresh directional routing: a stale pre-clear topology must
+            // never drive a transfer if outputs/views changed synchronously.
+            const reroll = this.readDirectional(direction, true);
+            if (reroll.kind === "invalid") {
+                this.logToken(`${LOG_PREFIX}:move-maximize-clear window=${windowId} resource_class=${resourceClass} outcome=directional-raced`);
+                this.logToken(`${LOG_PREFIX}:move-refused-maximize-clear window=${windowId} resource_class=${resourceClass} cause=directional-raced recovery=retry-on-next-press`);
+                return;
+            }
+            let liveObserved: PlanObserved | null = null;
+            try {
+                liveObserved = reroll.kind === "ready" ? reroll.observed : this.freshObserved();
+            } catch (error) {
+                void error;
+                liveObserved = null;
+            }
+            const current = liveObserved?.windows.find((entry) => entry.id === windowId);
+            const settled =
+                current !== undefined && current.ref === nativeRef && !current.maximized ? current : undefined;
+            if (liveObserved === null || settled === undefined) {
+                const seen =
+                    liveObserved === null
+                        ? "observed-missing"
+                        : current === undefined || current.ref !== nativeRef
+                          ? "observed-absent"
+                          : "observed-maximized";
+                const cause =
+                    liveObserved === null
+                        ? "observe-missing"
+                        : current === undefined || current.ref !== nativeRef
+                          ? "identity-raced"
+                          : "still-maximized";
+                this.logToken(`${LOG_PREFIX}:move-maximize-clear window=${windowId} resource_class=${resourceClass} outcome=${seen}`);
+                this.logToken(`${LOG_PREFIX}:move-refused-maximize-clear window=${windowId} resource_class=${resourceClass} cause=${cause} recovery=retry-on-next-press`);
+                return;
+            }
+            if (
+                liveObserved.domainOutput !== observed.domainOutput ||
+                liveObserved.domainWorkspace !== observed.domainWorkspace
+            ) {
+                this.logToken(`${LOG_PREFIX}:move-maximize-clear window=${windowId} resource_class=${resourceClass} outcome=domain-raced`);
+                this.logToken(`${LOG_PREFIX}:move-refused-maximize-clear window=${windowId} resource_class=${resourceClass} cause=domain-raced recovery=retry-on-next-press`);
+                return;
+            }
+            if (settled.fullscreen || liveObserved.focusedId !== windowId) {
+                const seen = settled.fullscreen ? "observed-fullscreen" : "observed-focus-raced";
+                const cause = settled.fullscreen ? "fullscreen-raced" : "focus-raced";
+                this.logToken(`${LOG_PREFIX}:move-maximize-clear window=${windowId} resource_class=${resourceClass} outcome=${seen}`);
+                this.logToken(`${LOG_PREFIX}:move-refused-maximize-clear window=${windowId} resource_class=${resourceClass} cause=${cause} recovery=retry-on-next-press`);
+                return;
+            }
+            if (this.r4Flight !== null || this.inFlight) {
+                this.logToken(`${LOG_PREFIX}:busy-refused kind=move`);
+                return;
+            }
+            this.logToken(`${LOG_PREFIX}:move-maximize-clear window=${windowId} resource_class=${resourceClass} outcome=observed-cleared`);
+            // Route on the fresh observation: a cleared float takes the
+            // established half-snap with all its guards; a cleared tile
+            // takes the ordinary planner move below.
+            if (liveObserved.activeExcluded) {
+                this.requestFloatMove(liveObserved, direction);
+                return;
+            }
+            if (!this.isTiledDomain(liveObserved.domainOutput, liveObserved.domainWorkspace)) {
+                this.logToken(`${LOG_PREFIX}:move-refused-workspace-floating`);
+                return;
+            }
+            this.dispatchMove(liveObserved, direction);
+            return;
+        }
         if (observed.activeExcluded) {
             this.requestFloatMove(observed, direction);
             return;
@@ -4218,14 +4366,12 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:move-refused-workspace-floating`);
             return;
         }
-        if (this.windowIsFullscreen(observed, observed.focusedId)) {
-            this.logToken(`${LOG_PREFIX}:move-refused-fullscreen`);
-            return;
-        }
-        if (this.windowIsMaximized(observed, observed.focusedId)) {
-            this.logToken(`${LOG_PREFIX}:move-refused-maximize`);
-            return;
-        }
+        this.dispatchMove(observed, direction);
+    }
+
+    // Ordinary tiled planner-move dispatch shared by the direct path and
+    // the G-06 post-clear path (which supplies its fresh observation).
+    private dispatchMove(observed: PlanObserved, direction: PlanDirection): void {
         const snapshot = this.carriedSnapshot(observed);
         this.noteObservation(snapshot.fingerprint);
         if (KWIN_TRACE_ENABLED && typeof this.env.readWindowConstraints === "function") {
@@ -7323,6 +7469,13 @@ export class PlanAdapter {
             rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
             ...(entry.floating === true ? { floating: true } : {}),
             ...(entry.fullscreen === true ? { fullscreen: true } : {}),
+            // Native maximized stays local snapshot semantics (never rides
+            // the wire): the Engine admission leg fail-closes on maximized
+            // entries, and the born-maximized overlay admission depends on
+            // ordinary-tile admission plus local overlay isolation. The
+            // shared-core G-06 focus fence therefore enforces through the
+            // adapter-local fence on this route; the Engine opt-in covers
+            // carriers that observe maximized directly (Windows handoff).
             ...(entry.sticky === true ? { sticky: true } : {}),
             ...(entry.fixedAuto === true ? { fixed_auto: true } : {}),
             ...(entry.fixedSuppress === true ? { fixed_suppress: true } : {}),

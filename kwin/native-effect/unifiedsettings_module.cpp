@@ -72,6 +72,33 @@ QString readFixedSizePredicate(const KConfigGroup &group)
     return QStringLiteral("both-axes-fixed");
 }
 
+QString readMigrationSourceRefill(const KConfigGroup &group)
+{
+    const QString value = group.readEntry(QStringLiteral("migrationSourceRefill"), QStringLiteral("last-remaining-workspace"));
+    if (value == QStringLiteral("last-remaining-workspace") || value == QStringLiteral("most-recently-used-workspace")) {
+        return value;
+    }
+    return QStringLiteral("last-remaining-workspace");
+}
+
+QStringList liveChangedNames(bool gapChanged, bool sameAxisMoveChanged, bool fixedPredicateChanged, bool refillChanged)
+{
+    QStringList names;
+    if (gapChanged) {
+        names.append(QStringLiteral("gaps"));
+    }
+    if (sameAxisMoveChanged) {
+        names.append(QStringLiteral("same-axis move"));
+    }
+    if (fixedPredicateChanged) {
+        names.append(QStringLiteral("fixed-size predicate"));
+    }
+    if (refillChanged) {
+        names.append(QStringLiteral("migration source refill"));
+    }
+    return names;
+}
+
 void logScriptConfig(const char *operation, const char *stage, const char *outcome, const QString &detail)
 {
     QString bounded = detail;
@@ -131,11 +158,18 @@ UnifiedSettingsModule::UnifiedSettingsModule(QObject *parent, const KPluginMetaD
     m_ui.fixedSizePredicateCombo->addItem(i18n("Width or height fixed"), QStringLiteral("either-axis-fixed"));
     m_ui.fixedSizePredicateCombo->setItemData(1, i18n("Hyprland (Wayland), sway"), Qt::ToolTipRole);
 
+    m_ui.migrationSourceRefillCombo->addItem(i18n("Last remaining workspace"), QStringLiteral("last-remaining-workspace"));
+    m_ui.migrationSourceRefillCombo->setItemData(0, i18n("COSMIC"), Qt::ToolTipRole);
+    m_ui.migrationSourceRefillCombo->addItem(i18n("Most recently used workspace"), QStringLiteral("most-recently-used-workspace"));
+    m_ui.migrationSourceRefillCombo->setItemData(1, i18n("bspwm, i3, awesome"), Qt::ToolTipRole);
+
     connect(m_ui.workspaceModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             &UnifiedSettingsModule::updateScriptState);
     connect(m_ui.sameAxisMoveCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             &UnifiedSettingsModule::updateScriptState);
     connect(m_ui.fixedSizePredicateCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &UnifiedSettingsModule::updateScriptState);
+    connect(m_ui.migrationSourceRefillCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             &UnifiedSettingsModule::updateScriptState);
     connect(m_ui.innerGapSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this,
             &UnifiedSettingsModule::updateScriptState);
@@ -1104,6 +1138,7 @@ QVariantMap UnifiedSettingsModule::currentScriptValues() const
         {QStringLiteral("workspaceMode"), m_ui.workspaceModeCombo->currentData()},
         {QStringLiteral("sameAxisMove"), m_ui.sameAxisMoveCombo->currentData()},
         {QStringLiteral("fixedSizePredicate"), m_ui.fixedSizePredicateCombo->currentData()},
+        {QStringLiteral("migrationSourceRefill"), m_ui.migrationSourceRefillCombo->currentData()},
         {QStringLiteral("innerGap"), m_ui.innerGapSpinBox->value()},
         {QStringLiteral("outerGap"), m_ui.outerGapSpinBox->value()},
     };
@@ -1116,6 +1151,7 @@ void UnifiedSettingsModule::updateScriptState()
         {QStringLiteral("workspaceMode"), QStringLiteral("per-output-local")},
         {QStringLiteral("sameAxisMove"), QStringLiteral("group-with-neighbor")},
         {QStringLiteral("fixedSizePredicate"), QStringLiteral("both-axes-fixed")},
+        {QStringLiteral("migrationSourceRefill"), QStringLiteral("last-remaining-workspace")},
         {QStringLiteral("innerGap"), kGapDefault},
         {QStringLiteral("outerGap"), kGapDefault},
     };
@@ -1168,6 +1204,7 @@ void UnifiedSettingsModule::load()
     const QString workspaceMode = group.readEntry(QStringLiteral("workspaceMode"), QStringLiteral("per-output-local"));
     const QString sameAxisMove = readSameAxisMove(group);
     const QString fixedSizePredicate = readFixedSizePredicate(group);
+    const QString migrationSourceRefill = readMigrationSourceRefill(group);
     const int innerGap = readBoundedGap(group, QStringLiteral("innerGap"));
     const int outerGap = readBoundedGap(group, QStringLiteral("outerGap"));
     m_loadedInnerGapRawValid = isBoundedGapRawValid(group, QStringLiteral("innerGap"));
@@ -1175,12 +1212,14 @@ void UnifiedSettingsModule::load()
     select(m_ui.workspaceModeCombo, workspaceMode, QStringLiteral("per-output-local"));
     select(m_ui.sameAxisMoveCombo, sameAxisMove, QStringLiteral("group-with-neighbor"));
     select(m_ui.fixedSizePredicateCombo, fixedSizePredicate, QStringLiteral("both-axes-fixed"));
+    select(m_ui.migrationSourceRefillCombo, migrationSourceRefill, QStringLiteral("last-remaining-workspace"));
     m_ui.innerGapSpinBox->setValue(innerGap);
     m_ui.outerGapSpinBox->setValue(outerGap);
     m_loadedScriptValues = {
         {QStringLiteral("workspaceMode"), workspaceMode},
         {QStringLiteral("sameAxisMove"), sameAxisMove},
         {QStringLiteral("fixedSizePredicate"), fixedSizePredicate},
+        {QStringLiteral("migrationSourceRefill"), migrationSourceRefill},
         {QStringLiteral("innerGap"), innerGap},
         {QStringLiteral("outerGap"), outerGap},
     };
@@ -1213,6 +1252,8 @@ void UnifiedSettingsModule::save()
         != m_loadedScriptValues.value(QStringLiteral("sameAxisMove"));
     const bool fixedPredicateChanged = current.value(QStringLiteral("fixedSizePredicate"))
         != m_loadedScriptValues.value(QStringLiteral("fixedSizePredicate"));
+    const bool refillChanged = current.value(QStringLiteral("migrationSourceRefill"))
+        != m_loadedScriptValues.value(QStringLiteral("migrationSourceRefill"));
     const bool startupConsumedChanged = workspaceModeChanged;
     const bool scriptRetryArmed = m_gapReconfigurePending;
 
@@ -1226,7 +1267,7 @@ void UnifiedSettingsModule::save()
         updateScriptState();
     } else {
     // This module owns exactly workspaceMode, sameAxisMove,
-    // fixedSizePredicate, innerGap, and outerGap. Any other key in this
+    // fixedSizePredicate, migrationSourceRefill, innerGap, and outerGap. Any other key in this
     // group (including the hidden shortcutProfile) is never read here
     // beyond the group open and is never written; there is no migration. A
     // pure retry save (pending request, unchanged widgets) skips
@@ -1246,6 +1287,10 @@ void UnifiedSettingsModule::save()
         if (fixedPredicateChanged) {
             group.writeEntry(QStringLiteral("fixedSizePredicate"), current.value(QStringLiteral("fixedSizePredicate")).toString());
             written.append(QStringLiteral("fixedSizePredicate"));
+        }
+        if (refillChanged) {
+            group.writeEntry(QStringLiteral("migrationSourceRefill"), current.value(QStringLiteral("migrationSourceRefill")).toString());
+            written.append(QStringLiteral("migrationSourceRefill"));
         }
         if (!m_loadedInnerGapRawValid
             || current.value(QStringLiteral("innerGap")) != m_loadedScriptValues.value(QStringLiteral("innerGap"))) {
@@ -1272,12 +1317,14 @@ void UnifiedSettingsModule::save()
         logScriptConfig("save", "startup", "restart-required",
                         QStringLiteral("keys=%1").arg(startupWritten.join(QStringLiteral(","))));
     }
-    // Changed gaps, same-axis moves, and fixed-size predicates request one
+    // Changed gaps, same-axis moves, fixed-size predicates, and migration
+    // source refills request one
     // typed KWin reconfigure after persistence whose pickup is the running
     // controller's Options configChanged live re-read (gaps re-resolve,
     // same-axis applies to subsequent moves with no tree rebuild,
     // fixed-size predicate applies to subsequent admissions with no
-    // reclassification).
+    // reclassification, source refill applies to subsequent migrations with
+    // no destination/history/lifecycle work).
     // KWin's reconfigure is Q_NOREPLY, so a queued send never proves the
     // running script reread kwinrc. Success reports sent-but-unconfirmed and
     // clears any pending retry; failure arms a retry on the next save (an
@@ -1287,10 +1334,12 @@ void UnifiedSettingsModule::save()
     // was saved by the retry. A queued send never clears a pending
     // session-restart requirement for the startup-consumed setting
     // (workspaceMode) and never claims the running tiler applied saved values.
-    // Same-axis move and fixed-size predicate changes never set the restart
-    // requirement: they apply to subsequent moves/admissions after the live
+    // Same-axis move, fixed-size predicate, and migration source refill
+    // changes never set the restart
+    // requirement: they apply to subsequent moves/admissions/migrations after the live
     // re-read.
-    const bool liveChanged = gapChanged || sameAxisMoveChanged || fixedPredicateChanged;
+    const bool liveChanged = gapChanged || sameAxisMoveChanged || fixedPredicateChanged || refillChanged;
+    const QString liveNames = liveChangedNames(gapChanged, sameAxisMoveChanged, fixedPredicateChanged, refillChanged).join(QStringLiteral(", "));
     if (liveChanged || scriptRetryArmed) {
         if (requestScriptReconfigure()) {
             m_gapReconfigurePending = false;
@@ -1307,7 +1356,12 @@ void UnifiedSettingsModule::save()
                         "settings are unchanged. Restart the session to guarantee pickup.");
                 }
             } else if (m_scriptRestartRequired) {
-                if (fixedPredicateChanged) {
+                if (refillChanged) {
+                    m_scriptStatus = QStringLiteral(
+                        "Settings saved to kwinrc. Reconfigure request sent for live settings including %1; "
+                        "application unconfirmed. Session restart remains required for workspace mode. Restart the "
+                        "session to guarantee pickup.").arg(liveNames);
+                } else if (fixedPredicateChanged) {
                     m_scriptStatus = QStringLiteral(
                         "Settings saved to kwinrc. Reconfigure request sent for live settings including fixed-size predicate; "
                         "application unconfirmed. Session restart remains required for workspace mode. Restart the "
@@ -1328,6 +1382,10 @@ void UnifiedSettingsModule::save()
                         "application unconfirmed. Session restart remains required for workspace mode. Restart the "
                         "session to guarantee pickup.");
                 }
+            } else if (refillChanged) {
+                m_scriptStatus = QStringLiteral(
+                    "Live settings including %1 saved to kwinrc. Reconfigure request sent; application unconfirmed. Restart the "
+                    "session to guarantee pickup.").arg(liveNames);
             } else if (fixedPredicateChanged) {
                 m_scriptStatus = QStringLiteral(
                     "Live settings including fixed-size predicate saved to kwinrc. Reconfigure request sent; application unconfirmed. Restart the "
@@ -1361,7 +1419,12 @@ void UnifiedSettingsModule::save()
                         "nothing; the request will retry on the next save. Restart the session to guarantee pickup.");
                 }
             } else if (m_scriptRestartRequired) {
-                if (fixedPredicateChanged) {
+                if (refillChanged) {
+                    m_scriptStatus = QStringLiteral(
+                        "Settings saved to kwinrc. Reconfigure request failed; pickup of "
+                        "live settings including %1 is unconfirmed. The request will retry on the next save. Session restart remains required for "
+                        "workspace mode.").arg(liveNames);
+                } else if (fixedPredicateChanged) {
                     m_scriptStatus = QStringLiteral(
                         "Settings saved to kwinrc. Reconfigure request failed; pickup of "
                         "live settings including fixed-size predicate is unconfirmed. The request will retry on the next save. Session restart remains required for "
@@ -1382,6 +1445,10 @@ void UnifiedSettingsModule::save()
                         "startup gap values. The request will retry on the next save. Session restart remains required for "
                         "workspace mode.");
                 }
+            } else if (refillChanged) {
+                m_scriptStatus = QStringLiteral(
+                    "Live settings including %1 saved to kwinrc. Reconfigure request failed; pickup of live settings "
+                    "is unconfirmed. The request will retry on the next save; restart the session to guarantee pickup.").arg(liveNames);
             } else if (fixedPredicateChanged) {
                 m_scriptStatus = QStringLiteral(
                     "Live settings including fixed-size predicate saved to kwinrc. Reconfigure request failed; pickup of live settings "
@@ -1430,6 +1497,7 @@ void UnifiedSettingsModule::defaults()
     m_ui.workspaceModeCombo->setCurrentIndex(m_ui.workspaceModeCombo->findData(QStringLiteral("per-output-local")));
     m_ui.sameAxisMoveCombo->setCurrentIndex(m_ui.sameAxisMoveCombo->findData(QStringLiteral("group-with-neighbor")));
     m_ui.fixedSizePredicateCombo->setCurrentIndex(m_ui.fixedSizePredicateCombo->findData(QStringLiteral("both-axes-fixed")));
+    m_ui.migrationSourceRefillCombo->setCurrentIndex(m_ui.migrationSourceRefillCombo->findData(QStringLiteral("last-remaining-workspace")));
     m_ui.innerGapSpinBox->setValue(kGapDefault);
     m_ui.outerGapSpinBox->setValue(kGapDefault);
     // Defaults restage Keep for the shortcut draft with no preview;

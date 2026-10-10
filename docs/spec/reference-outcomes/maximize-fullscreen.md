@@ -410,11 +410,15 @@ rectangles where geometry is load-bearing.
   `Operation`, no zoom/maximize AX read); a host-zoomed window is an
   owner-specific external journey with focus/swap behavior TBD.
   `S(S-pan-cmds)` + `S(S-pan-model)` + `S(S-pan-axfs)`; host journey queued.
-- Then Ours KDE: current-code gap against G-06 (User 2026-10-10): focus left is exempt from overlay isolation (no geometry
-  write) so the Engine plan lands on A and the adapter actuates it; move
-  A right plans R2c `WrapNeighbor` against B, applied as `H[H[A*,B],C]`
-  with B untouched carrying its applied rect. `S(S-ours-focus)` +
-  `S(S-ours-move)` + `S(S-ours-ovref)`.
+- Then Ours KDE: G-06 delivered offline 2026-10-10: directional focus keeps
+  maximized B (no dispatch/activation). Move right clears maximize once,
+  then performs the ordinary move only after observed clear with fresh
+  direction/reference/focus/domain guards. Unconfirmed clear refuses/logs
+  without a structural move or delayed retry. Eligible maximized floats
+  continue into their ordinary half-snap after clear; fullscreen precedence
+  unchanged. [Production-entry real-Engine discriminator](../../../kwin/tests/g06-g37-entry-discrimination.test.ts),
+  [race/refusal fixtures](../../../kwin/tests/plan-maximized-focus-move.test.ts).
+  Native timing/visuals remain TBD.
 - Then Ours Windows: current-code gap against G-06 (User 2026-10-10): same shared-Engine journey as KDE (focus to A,
   R2c wrap with B retained); the snap overlay refusal only fires for an
   overlaid focused mover, so A moves normally. `S(S-ours-focus)` +
@@ -422,8 +426,8 @@ rectangles where geometry is load-bearing.
 - Selected target (REQ-MAX-08 NORMATIVE, G-06 User 2026-10-10): on both
   platforms focus left keeps maximized B (no-op); move right then unmaximizes
   B before the ordinary move. Leave the focus fence via unmaximize or Alt+Tab.
-  KDE/shared core if applicable and Windows implementation pending; native
-  journey TBD. The current-code Thens above are gaps, not selected outcomes.
+  KDE/shared opt-in focus fence delivered offline; Windows implementation
+  pending and its current-code Then remains a gap. Native journey TBD.
   Existing maximized-subject pointer refusals remain unchanged.
 
 ### R-MAX-09: send a maximized/fullscreen window to another workspace
@@ -512,11 +516,14 @@ rectangles where geometry is load-bearing.
   full leg transfers via `VirtualMoveNumber` under the Follow/Stay policy
   with `Fullscren`-marker carry TBD. `S(S-pan-cmds)` + `S(S-pan-model)` +
   `S(S-pan-axfs)` + `S(S-pan-ws)`; carry queued.
-- Then Ours KDE: same-output native desktop-send outcome, source reflow,
-  overlay carry and follow TBD; host moves reach the desktops observer,
-  while the cited Engine delivery path covers R4 cross-output sends.
-  `S(S-ours-ws)` + `S(S-ours-send-boundary)`; carry queued.
-  G-D2 User 2026-10-10 selects maximized arrival carry, implementation pending;
+- Then Ours KDE: G-D2 maximized arrival carry delivered offline 2026-10-10:
+  maximized tiled movers pass the same-/cross-output send observers and
+  flag-stable arrival fences, native membership/output transfer leaves
+  maximize untouched, and geometry skips the overlay. Follow/stay keep
+  their established view/focus rules. [Real-Planner follow and native-mock stay fixtures](../../../kwin/tests/workspace-send-maximized-carry.test.ts),
+  [cross-output carry/race fixtures](../../../kwin/tests/output-send.test.ts).
+  Actual native maximize preservation on arrival, source reflow and later
+  restore into the target slot remain user-owned checks;
   fullscreen remains observe-first (currently refuses fullscreen sends),
   separate from whole-workspace output migration D8.
 - Then Ours Windows: a tiled maximized B sends through the retained
@@ -527,5 +534,5 @@ rectangles where geometry is load-bearing.
   target (deliberate COSMIC/niri deviation: sending relocates the whole window
   and its state, unlike an in-layout move). The selected fullscreen carry
   from Table A 2026-10-07 is unchanged and still an implementation gap.
-- Variant hook: provisional/TBD (no suitable existing hook; send hooks
-  cover ordinary/float transfer, not overlay-state carry).
+- Variant hook: NORMATIVE maximized carry (G-D2 User 2026-10-10);
+  fullscreen KDE native policy remains observe-first/TBD.

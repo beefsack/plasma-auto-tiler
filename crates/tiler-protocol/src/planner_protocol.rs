@@ -2439,6 +2439,9 @@ impl Planner {
     pub fn new() -> Self {
         let mut planner = Self::default();
         planner.engine.set_fixed_size_admission(true);
+        // G-06 maximized directional focus fence (REQ-MAX-08): Linux route
+        // only. Windows carriers keep `Engine::new` defaults (fence off).
+        planner.engine.set_maximized_focus_fence(true);
         planner
     }
 

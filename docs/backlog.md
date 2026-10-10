@@ -2196,8 +2196,16 @@ decisions of 2026-09-24 are under
     equal partial-zero hints (640,0) and (0,480) are not fixed under
     `both-axes-fixed`, but their genuinely fixed nonzero axis makes them fixed
     under `either-axis-fixed`. Keep full-zero and unbounded-sentinel guards.
-    Shared-core predicate + KDE delivery pending; Windows must wire the
+    Shared-core predicate + KDE delivered offline 2026-10-10; Windows must wire the
     corrected predicate with item 13's max-track/schema/UI/opt-in work.
+    Exact seams: `core/size_hints.rs` `fixed_size_reason_with` /
+    `is_fixed_size_with` now require equal nonzero bounds per axis;
+    `kwin/src/plan-adapter.ts` `isFixedSize` mirrors it. No signature/wire
+    change or Windows predicate copy. Reuse item 13's bounded hint observation
+    and `Engine::set_fixed_size_admission` opt-in plus
+    `Engine::set_fixed_size_predicate`; do not rebuild retained classifications.
+    Port `fixed_size_admission.rs` partial-zero/admissions-only cases and
+    `kwin/tests/fixed-size-admission.test.ts` real-Planner discriminators.
     Acceptance: positive fixed, both partial-zero orientations, full-zero,
     missing, sentinel and subsequent-admission/no-reclassification controls;
     native hints/no-touch checks pending on each platform.
@@ -2207,8 +2215,30 @@ decisions of 2026-09-24 are under
     directional focus no-ops while the focused window is maximized (leave via
     unmaximize or Alt+Tab); directional move unmaximizes first, then moves.
     Replace Windows focus-permit/movement-refusal, retaining pointer refusals
-    and fullscreen policy. Shared-core work if applicable + KDE pending;
-    Windows adapter wiring pending. Acceptance: focused-max focus in all
+    and fullscreen policy. Shared opt-in focus fence + KDE delivered offline
+    2026-10-10; Windows adapter wiring pending. Exact seams:
+    - `core/engine.rs` `set_maximized_focus_fence` propagates to retained/fresh
+      sessions; default OFF preserves Windows. `core/session/ops/focus.rs`
+      fences local/cross-output focus for a maximized non-fullscreen origin.
+      Enable only with fresh observed flags; KDE wire still omits maximize
+      for born-maximized admission and uses its local fence instead.
+    - `src/tiling_sys.rs` directional origin overlay gate near `SnapOp::Move`
+      / `overlay_refusal_for` (currently :5980-6000) must fence focus from
+      the maximized origin and replace move-refusal with one nonactivating
+      `restore_zoom_placement` attempt (:3303). Dispatch only after observed
+      clear and fresh same-lifetime/focus/domain checks; async `dispatched`
+      is not observed completion. Keep fullscreen/gaming/suspension fences.
+      `build_reconcile_event_for_floating` / command assignment (:6082-6111)
+      currently omit overlay flags; opt-in alone does not replace this guard.
+    - Keep focus TO a maximized target valid from an ordinary origin; do not
+      blanket-reject `revalidate`'s `allow_maximized` focus path (:3249).
+      Coordinate ordinary float half-snaps with item 10's pending routing.
+    - KDE reference: `PlanAdapter.requestFocus`, `requestFloatFocus`,
+      `requestMove` and `dispatchMove`; one clear, exact-reference echo,
+      fresh directional reread, no delayed intent/retry. Port
+      `maximized_focus_send.rs`, `plan-maximized-focus-move.test.ts` and
+      `g06-g37-entry-discrimination.test.ts` (real retained Engine).
+    Acceptance: focused-max focus in all
     directions; fresh isolated maximized mover clears before ordinary move;
     ordinary navigation and pointer/fullscreen controls unchanged. Native
     focus/state/geometry timing checks pending on both platforms.
@@ -2220,22 +2250,59 @@ decisions of 2026-09-24 are under
     COSMIC) / `most-recently-used-workspace` (`Most recently used workspace`,
     tooltip bspwm, i3, awesome). Additive schema-v1 field, missing=default,
     no migration; live changes affect subsequent migrations. MRU uses item
-    1.2 per-output history; define exact eligibility during implementation,
-    fall back to last remaining without an eligible entry. Keep scoped
+    1.2 per-output previous stable ID snapshotted before map mutation; it is
+    eligible only while live in the remaining source-output scoped ring,
+    excluding the migrated ID. Surviving empties qualify; missing, removed,
+    migrated or out-of-scope entries fall back to last remaining. Preserve
+    a still-scoped live source current view in both modes. Keep scoped
     invalidation, destination insertion and empty migration unchanged.
-    Shared-core/KDE setting and MRU implementation pending; Windows config,
+    Shared-core/KDE setting and MRU delivered offline 2026-10-10; Windows config,
     settings UI and runtime wiring pending with the parked multi-output
-    foundation. Acceptance: MRU differs from last-remaining, no eligible
+    foundation. Exact seams:
+    - `core/output_selection.rs` `MigrationSourceRefill::{LastRemaining,
+      MostRecentlyUsed}`, `parse_wire` / `as_wire_str` and pure
+      `select_migration_source_refill(mode, previous, remaining_scope)`;
+      caller owns live scope/history invalidation, selector creates nothing.
+    - KDE `kwin/src/migration-source-refill.ts` mirrors selection;
+      `WorkspaceNativeAdapter.commitWorkspaceMigration` snapshots history
+      before rekey and chooses source refill after scoped invalidation;
+      entry `configChanged` calls `setMigrationSourceRefill` for live reread.
+      KCM `unifiedsettings_module.cpp` / `.ui` owns the functional labels,
+      WM tooltips, defaults and typed reconfigure, application unconfirmed.
+    - Windows `src/settings.rs` `CoreSettings` / `Default` /
+      `validate_settings`: ADD the version-1 string field and exact-token
+      validation (not delivered here); `src/settings_ui.rs` needs control
+      and Apply/Revert. Adopt through `apply_live_settings` into item 14's
+      future migration route using item 1's per-output observed history.
+      No Windows source/schema changes in this delivery.
+    - Port core selector cases, `migration-source-refill.test.ts` and
+      production-entry real-Engine `g06-g37-entry-discrimination.test.ts`.
+    Acceptance: MRU differs from last-remaining, no eligible
     entry fallback, migrated/removed entry exclusion, output-local history,
     default/invalid/live settings, retained moved workspace state; native
     journeys pending on both platforms.
 
   - Item 20: G-D2 maximized workspace-send carry (User 2026-10-10,
     REQ-MAX-09 maximize leg). Keep maximize on arrival: Windows existing
-    policy, cross-platform target; KDE carry pending. Deliberate COSMIC/niri
+    policy, cross-platform target; KDE carry delivered offline 2026-10-10.
+    Deliberate COSMIC/niri
     deviation: a send relocates the whole window/state, unlike in-layout move.
     Verify Windows retained-overlay send/follow and send-and-stay through
     ordinary send integration; do not replace it with item 18's unmax-move.
+    Exact seams: `src/tiling_sys.rs` `workspace_do_send` retains the
+    pre-dispatch `is_zoomed_now` check and post-plan `send_flags_stable`
+    overlay check before `workspaces.assign` (:10718-10737/:10885-10945).
+    Keep source/target allocations and geometry overlay skip; item 2 adds
+    follow/stay without restoring the mover. Native-boundary sends use
+    `workspace_do_send_native`. KDE reference:
+    `observeSendTarget` / `observeOutputSendTarget` and same-output
+    `workspace-send-adapter-entry.ts` observer admit maximize while refusing
+    fullscreen/float/sticky/independent fit exclusions;
+    `WorkspaceSendAdapter.crossOutputMoverLive` / `apply` require flag-stable
+    arrival and skip overlay geometry. Port
+    `workspace-send-maximized-carry.test.ts` follow/stay and `output-send.test.ts`
+    cross-output carry/flag races. Actual KDE native maximize carry is pending
+    observation; no restore/remaximize workaround was inferred offline.
     Fullscreen stays item 9/Table A 2026-10-07; KDE fullscreen observe-first
     and whole-workspace D8 carry remain distinct. Acceptance: maximize on
     arrival, source reflow/target slot and follow/stay, native unmaximize on
@@ -2407,25 +2474,30 @@ decisions of 2026-09-24 are under
   [bounds fix](changes/archive/multi-output-domain-bounds.md)
   [phase 2 parked](changes/learned-size-limits.md)
   [drag investigation](changes/window-alignment-drag-investigation.md)
-- P1 | Reference comparison decisions 2026-10-10 | Implement the selected
-  changes in shared core + KDE; Windows adapter work is handoff items 17-20.
+- P1 | Reference comparison decisions 2026-10-10 | Shared core + KDE delivered
+  offline; Windows adapter work is handoff items 17-20.
   [Review decisions](research/reference-rule-comparison-review.md#user-decisions-2026-10-10),
   [spec](spec/functional-spec.md), [decision record](decisions.md).
   - G-05 REQ-SPC-04a: shared predicate zero-unset-per-axis plus KDE wiring;
     equal partial-zero tiles under both-axes, floats under either-axis via
     the nonzero fixed axis. Preserve other guards/admission-only scope.
   - G-06 REQ-MAX-08: directional focus fence while focused-maximized;
-    directional move unmaximizes first, then moves. KDE + shared core if
-    applicable; pointer/fullscreen rules unchanged.
+    directional move makes one clear attempt then moves only after observed
+    clear with fresh directional/reference/focus/domain guards; eligible
+    floats half-snap. Shared opt-in focus fence; pointer/fullscreen unchanged.
   - G-37 REQ-WS-12d/e: functional source-refill setting (last remaining default
     / MRU), shared core + KDE KCM/live config. Use item-1.2 per-output history;
-    define exact eligibility during implementation and fall back to last
-    remaining when no eligible entry exists. Destination insertion unchanged.
+    previous stable ID must remain live in the source scoped ring excluding
+    the migrated ID (surviving empty valid), otherwise last remaining.
+    Destination insertion and history invalidation unchanged.
   - G-D2 REQ-MAX-09 maximize leg: KDE maximized-send carry keeps maximize on
     arrival; coordinate core only where required. Fullscreen Table A remains
     unchanged, KDE fullscreen observe-first retained.
-  - Status: implementation pending; G-01..04/G-07 are retained rules, no
-    implementation change. Pending live checks below follow delivery.
+  - Status: delivered offline 2026-10-10, independent fence review clean;
+    1307 KWin / 1304 Rust / 1152 portable / 33 native checks and all gates
+    pass. [Delivery](changes/archive/reference-comparison-implementation.md).
+    G-01..04/G-07 retained. Next: user-owned native checks below and Windows
+    wiring; KDE arrival maximize preservation remains live-unobserved.
 - P1 | External NixOS/Home Manager delivery validation | Clean external
   install, update, rollback, and host-matching KWin ABI still unproven
   off the dev machine.
@@ -2544,8 +2616,8 @@ Unprioritised ideas; not scheduled.
 Items below retain their stated pending scope; dated user confirmations are
 recorded separately from unexercised legs. Reference-WM checks test other compositors.
 
-- Reference comparison decisions 2026-10-10 (implementation pending,
-  user-owned KDE and Windows checks after their respective delivery):
+- Reference comparison decisions 2026-10-10 (shared/core KDE delivered offline,
+  Windows wiring pending; user-owned checks):
   - G-05: freshly admit (640,0) and (0,480) equal partial-zero hints under
     both predicates: tile for both-axes, untouched automatic float for
     either-axis. Full-zero/unbounded sentinel still tile; fully positive
@@ -2553,16 +2625,24 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   - G-06: maximize focused B among tiles, press each directional focus chord:
     no-op until unmaximize/Alt+Tab. In fresh maximized-B legs, directional
     move clears maximize first and then performs the ordinary move; record
-    native clear/move timing. Existing pointer/fullscreen controls unchanged.
+    native clear/move timing for horizontal/vertical/partial maximize, synchronous
+    and delayed native notifications. Unconfirmed clear must log refusal,
+    without a delayed structural move; a later press retries. Repeat with an
+    eligible maximized float (clear then half-snap). Existing pointer/fullscreen
+    controls unchanged.
   - G-37 (multi-output): visit surviving WS1 then active WS2 on L, with a
     distinct trailing E; migrate WS2 to R. Default shows last remaining E;
     MRU shows eligible WS1. Clear/invalidate history and repeat: MRU falls
     back to last remaining. Check each output's independent history, live
-    settings pickup, empty migrations and unchanged destination insertion.
+    settings pickup (KCM labels/tooltips/Save/Defaults/Revert), empty migrations
+    and unchanged destination insertion. Surviving empty previous qualifies;
+    removed/migrated/out-of-scope previous does not, with no recreation.
   - G-D2: send maximized B to another occupied workspace with follow and
     stay; it arrives maximized, unmaximizing there restores its target slot.
-    Windows existing maximize policy is verification; KDE carry awaits
-    implementation. Fullscreen is the separate Table A Windows carry check;
+    Test numbered/relative and same-/cross-output paths. Windows existing
+    maximize policy is verification; KDE native membership/output setters
+    leave maximize untouched offline, real compositor carry remains unobserved.
+    Fullscreen is the separate Table A Windows carry check;
     KDE native fullscreen send remains observe-first.
 
 - KDE two-candidate output move/send/migration (offline delivered 2026-10-09):
@@ -2650,7 +2730,7 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   focus and stacking, including a fixed borderless game. Check single-axis
   clients tile by default and float under `either-axis-fixed`; equal partial-zero
   clients tile by default and float via their nonzero axis under `either-axis-fixed`
-  after G-05 delivery (pending); unset/full-zero/sentinel
+   after G-05 delivery (offline complete); unset/full-zero/sentinel
   hints do not auto-float. Gain/lose fixed hints after admission without
   changing float identity. Meta+G tiles an automatic float and stays tiled
   through minimize/restore, workspace/output observation and domain re-adoption;

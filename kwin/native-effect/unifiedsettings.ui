@@ -335,11 +335,24 @@
          </property>
         </widget>
        </item>
-        <item row="2" column="1">
-        <widget class="QComboBox" name="fixedSizePredicateCombo"/>
-       </item>
-        <item row="3" column="0">
-         <widget class="QLabel" name="label_innerGap">
+         <item row="2" column="1">
+         <widget class="QComboBox" name="fixedSizePredicateCombo"/>
+        </item>
+         <item row="3" column="0">
+          <widget class="QLabel" name="label_migrationSourceRefill">
+           <property name="buddy">
+            <cstring>migrationSourceRefillCombo</cstring>
+           </property>
+          <property name="text">
+           <string>Source workspace after migration:</string>
+          </property>
+         </widget>
+        </item>
+         <item row="3" column="1">
+         <widget class="QComboBox" name="migrationSourceRefillCombo"/>
+        </item>
+         <item row="4" column="0">
+          <widget class="QLabel" name="label_innerGap">
           <property name="buddy">
            <cstring>innerGapSpinBox</cstring>
           </property>
@@ -348,8 +361,8 @@
          </property>
         </widget>
        </item>
-        <item row="3" column="1">
-        <widget class="QSpinBox" name="innerGapSpinBox">
+         <item row="4" column="1">
+         <widget class="QSpinBox" name="innerGapSpinBox">
         <property name="minimum">
          <number>0</number>
         </property>
@@ -364,8 +377,8 @@
         </property>
        </widget>
       </item>
-        <item row="4" column="0">
-         <widget class="QLabel" name="label_outerGap">
+         <item row="5" column="0">
+          <widget class="QLabel" name="label_outerGap">
           <property name="buddy">
            <cstring>outerGapSpinBox</cstring>
           </property>
@@ -374,8 +387,8 @@
          </property>
         </widget>
        </item>
-        <item row="4" column="1">
-        <widget class="QSpinBox" name="outerGapSpinBox">
+         <item row="5" column="1">
+         <widget class="QSpinBox" name="outerGapSpinBox">
         <property name="minimum">
          <number>0</number>
         </property>

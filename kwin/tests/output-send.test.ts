@@ -123,12 +123,17 @@ function mockAdapter(world: AdapterWorld): AdapterMocks {
         if (targetOutput === "out-1") {
             const wins = world.wins.filter((win) => win.output === "out-1" && win.desktops.includes("ws-a"));
             const mover = wins.find((win) => win.id === world.activeId) ?? null;
+            // Mirrors the production observer gate: maximized movers carry
+            // (G-D2), fullscreen/floating/sticky and otherwise unexplained
+            // fit exclusions refuse.
+            const fitExcluded =
+                mover !== null && (mover.floating || mover.sticky || mover.fullscreen || mover.maximized);
             const tiled =
                 mover !== null &&
                 !mover.floating &&
                 !mover.sticky &&
                 !mover.fullscreen &&
-                !mover.maximized;
+                (!fitExcluded || mover.maximized);
             return {
                 sourceOutput: "out-1",
                 sourceWorkspace: "ws-a",
@@ -173,6 +178,12 @@ function mockAdapter(world: AdapterWorld): AdapterMocks {
             .filter((win) => win.output === targetOutput && (win.desktops.includes(targetWorkspace) || win.sticky))
             .map(toObservedWindow);
         const focused = active;
+        // Mirrors the production observer gate (see the same-output probe
+        // above): maximized movers carry, everything else exceptional
+        // refuses.
+        const focusedFitExcluded =
+            focused !== null &&
+            (focused.floating || focused.sticky || focused.fullscreen || focused.maximized);
         const moverTiled =
             focused !== null &&
             focused.output === sourceOutput &&
@@ -180,7 +191,7 @@ function mockAdapter(world: AdapterWorld): AdapterMocks {
             !focused.floating &&
             !focused.sticky &&
             !focused.fullscreen &&
-            !focused.maximized;
+            (!focusedFitExcluded || focused.maximized);
         const sourceIds = sourceWindows.map((entry) => entry.id).sort().join(",");
         const targetIds = targetWindows.map((entry) => entry.id).sort().join(",");
         return {
@@ -447,6 +458,129 @@ describe("output-send adapter (explicit send-to-output)", () => {
         assert.equal(mocks.switches.length, 0);
         assert.equal(mocks.focuses.length, 1);
         assert.equal(mocks.focuses[0], survivor.ref);
+        assert.equal(adapter.isInFlight, false);
+    });
+
+    it("carries a maximized mover cross-output with follow and no overlay geometry write", () => {
+        // G-D2 (REQ-MAX-09): the maximized mover transfers with its native
+        // state untouched (no unmaximize/remaximize, no geometry write to
+        // the overlay) and arrives maximized; numbered ordinals stay
+        // diagnostic-only.
+        const world = makeAdapterWorld();
+        const mover = world.wins.find((win) => win.id === "win-2") as FakeWin;
+        mover.maximized = true;
+        const moverBefore = { ...mover.rect };
+        const mocks = mockAdapter(world);
+        const adapter = enableAdapter(mocks);
+        assert.equal(adapter.requestSendToOutput("out-2", "ws-b", true, 2), true);
+        const body = sendPayload(mocks, 0);
+        assert.equal((body["command"] as Record<string, unknown>)["follow"], true);
+        mocks.callbacks[0]?.(
+            plannedOutputReply(body["correlation_id"] as string, {
+                follow: true,
+                focusLeaf: "leaf-win-2",
+                focusOutput: "out-2",
+                focusWorkspace: "ws-b",
+            }),
+        );
+        assert.equal(mocks.transfers.length, 1, "output transfer runs once");
+        assert.equal(mover.output, "out-2");
+        assert.deepEqual(mover.desktops, ["ws-b"], "mover membership lands on the target");
+        assert.equal(mover.maximized, true, "no gratuitous unmaximize/remaximize");
+        assert.deepEqual(mover.rect, moverBefore, "arrival keeps the native frame: no overlay geometry write");
+        assert.ok(
+            !mocks.geometries.some((entry) => entry.target === mover.ref),
+            "geometry writes skip the overlaid mover",
+        );
+        assert.equal(mocks.switches.length, 0, "cross-output follow never switches desktops");
+        assert.equal(mocks.focuses.length, 1);
+        assert.equal(mocks.focuses[0], mover.ref, "follow focuses the carried mover");
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.settled.length, 1);
+    });
+
+    it("fails a mid-flight maximize change with no membership write", () => {
+        // Flag-stability fence: a mover maximized after dispatch (snapshot
+        // ordinary) fails closed at the reply-boundary scope fence before
+        // any setter.
+        const world = makeAdapterWorld();
+        const mocks = mockAdapter(world);
+        const adapter = enableAdapter(mocks);
+        assert.equal(adapter.requestSendToOutput("out-2", "ws-b", true), true);
+        const body = sendPayload(mocks, 0);
+        const mover = world.wins.find((win) => win.id === "win-2") as FakeWin;
+        mover.maximized = true;
+        mocks.callbacks[0]?.(
+            plannedOutputReply(body["correlation_id"] as string, {
+                follow: true,
+                focusLeaf: "leaf-win-2",
+                focusOutput: "out-2",
+                focusWorkspace: "ws-b",
+            }),
+        );
+        assert.deepEqual(
+            mover.desktops,
+            ["ws-a"],
+            "unstable mover never receives the membership write",
+        );
+        assert.deepEqual(mocks.transfers, [], "no output transfer after the flag change");
+        assert.deepEqual(mocks.focuses, [], "no follow after a failed write");
+        assert.ok(
+            mocks.logs.some((line) => line.includes("outcome=stale-revision")),
+            "scope fence settles terminal without follow",
+        );
+        assert.equal(adapter.isInFlight, false);
+    });
+
+    it("refuses the membership write when maximize flips mid-transfer", () => {
+        // Live-mover stability fence (`crossOutputMoverLive`): a maximize
+        // change landing between the output transfer and the membership
+        // write refuses the membership with no geometry and no follow.
+        const world = makeAdapterWorld();
+        const mocks = mockAdapter(world);
+        const adapter = enableAdapter(mocks);
+        assert.equal(adapter.requestSendToOutput("out-2", "ws-b", true), true);
+        const body = sendPayload(mocks, 0);
+        const mover = world.wins.find((win) => win.id === "win-2") as FakeWin;
+        const rawTransfer = mocks.env.sendClientToScreen?.bind(mocks.env);
+        assert.ok(rawTransfer !== undefined, "transfer hook present");
+        (mocks.env as unknown as { sendClientToScreen: unknown }).sendClientToScreen = (
+            target: object,
+            output: object,
+        ): boolean => {
+            const applied = rawTransfer === undefined ? false : (rawTransfer(target, output) ?? false);
+            mover.maximized = true;
+            return applied;
+        };
+        mocks.callbacks[0]?.(
+            plannedOutputReply(body["correlation_id"] as string, {
+                follow: true,
+                focusLeaf: "leaf-win-2",
+                focusOutput: "out-2",
+                focusWorkspace: "ws-b",
+            }),
+        );
+        assert.deepEqual(mover.desktops, ["ws-a"], "unstable mover keeps source membership");
+        assert.deepEqual(mocks.geometries, [], "no geometry after the refused membership");
+        assert.deepEqual(mocks.focuses, [], "no follow after a failed write");
+        assert.ok(
+            mocks.logs.some((line) => line.includes("outcome=stale-revision")),
+            "scope fence settles terminal without follow",
+        );
+        assert.equal(adapter.isInFlight, false);
+    });
+
+    it("refuses a fullscreen mover cross-output with no dispatch", () => {
+        // Fullscreen stays observe-first: the observer admits no mover, so
+        // the request refuses before any flight.
+        const world = makeAdapterWorld();
+        const mover = world.wins.find((win) => win.id === "win-2") as FakeWin;
+        mover.fullscreen = true;
+        const mocks = mockAdapter(world);
+        const adapter = enableAdapter(mocks);
+        assert.equal(adapter.requestSendToOutput("out-2", "ws-b", true), false);
+        assert.equal(mocks.dbusCalls.length, 0, "refused fullscreen send dispatches nothing");
+        assert.deepEqual(mover.desktops, ["ws-a"], "nothing moves");
         assert.equal(adapter.isInFlight, false);
     });
 

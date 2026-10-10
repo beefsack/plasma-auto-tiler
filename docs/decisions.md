@@ -320,13 +320,17 @@ platform API behavior.
     `core.migration_source_refill`, additive settings schema version 1,
     missing defaults to `last-remaining-workspace`, no migration. Apply
     changes live to subsequent migrations. MRU uses per-output history
-    from item 1.2, not a global-history model; define exact eligibility
-    during implementation and fall back to last remaining when no eligible
-    entry exists. History invalidation in 1.3/1.5 still applies. Destination
+    from item 1.2, not a global-history model. Snapshot the previous stable
+    ID before map mutation; it is eligible only if live and still assigned
+    to the source output's remaining scoped ring, excluding the migrated ID.
+    Surviving empties qualify; missing, removed, migrated or out-of-scope
+    entries fall back to last remaining. Preserve a still-scoped live source
+    current view in both modes. History invalidation in 1.3/1.5 still applies. Destination
     insertion in D4 is unchanged. Empty migration remains allowed and retains
     its backing ID; native lifecycle timing remains for user testing.
-    Status: last-remaining default delivered offline; new setting/MRU shared
-    core + KDE implementation and Windows handoff pending (REQ-WS-12d/e).
+    Status: shared selector + KDE setting/KCM/live reread and MRU delivered
+    offline ([record](changes/archive/reference-comparison-implementation.md));
+    Windows schema/UI/runtime remain handoff item 19; native checks pending.
   - D6 focus: retain the moved active client only after all member
     arrivals and both view changes are verified, as delivered.
     Empty/sticky-active migration uses native output switching with
@@ -446,7 +450,7 @@ platform API behavior.
   select adjacency only; placement retains per-desktop work areas.
 ## Fixed-Size Admission
 - User decisions 2026-10-08 and 2026-10-10 (fixed-size admission R-SPC-04
-  D1-D8; D1 per-axis zero change pending, D5/D6/D7 delivered offline,
+  D1-D8; D1 per-axis zero and D5/D6/D7 delivered offline,
   native checks pending):
   - D1 predicate: both min/max vectors present, usable and nonnegative;
     retain full-zero and unbounded-sentinel guards, no inference from
@@ -471,7 +475,7 @@ platform API behavior.
     see item 3 under Move, Layout and Output Commands (canonical).
     Breaking configs is acceptable
     pre-release (dogfooding correctness priority), no migration.
-    Status: D1 setting delivered offline ([record](changes/archive/admission-and-move-settings.md)); G-05 shared-core predicate/KDE change pending; Windows predicate/schema/UI and per-axis-zero wiring remain handoff-only.
+    Status: D1 setting delivered offline ([record](changes/archive/admission-and-move-settings.md)); G-05 shared-core predicate/KDE delivered offline ([record](changes/archive/reference-comparison-implementation.md)); Windows predicate/schema/UI and per-axis-zero wiring remain handoff-only.
   - D2 hint changes: admission-only in both directions as delivered;
     keep reacting to windows resizing themselves to avoid
     gaps/overlaps. No new hint-signal work requested.
@@ -1494,7 +1498,17 @@ platform API behavior.
   leave via unmaximize or Alt+Tab. Directional move of a maximized window
   unmaximizes it first, then moves. Existing maximized-subject pointer
   refusals remain; this decision changes directional commands only.
-  Status: KDE and shared core if applicable pending; Windows adapter handoff pending.
+  KDE move makes one native clear attempt with the existing exact-reference
+  echo fence. Only observed clear continues the ordinary move in that
+  invocation (including eligible float half-snaps); there is no delayed move
+  or automatic retry. Reobserve directional topology and validate the same
+  reference, focus and source domain; failed/unconfirmed clear or a race
+  logs a narrow refusal without a structural move. A later press can retry.
+  Fullscreen precedence is unchanged. KDE's maximized flag remains local
+  to preserve born-maximized admission; the adapter enforces its focus fence.
+  The shared Engine focus fence is opt-in for direct flag observers, default
+  off for Windows until handoff item 18 is wired.
+  Status: shared-core/KDE delivered offline ([record](changes/archive/reference-comparison-implementation.md)); Windows adapter wiring and native timing checks pending.
 - Maximized workspace sends (G-D2, User 2026-10-10; REQ-MAX-09 maximize
   leg): sending a maximized window to another workspace keeps it maximized
   on arrival, cross-platform. Deliberate COSMIC/niri deviation (they
@@ -1503,7 +1517,10 @@ platform API behavior.
   selected in Table A 2026-10-07 is unchanged, including the separate KDE
   fullscreen observe-first status; whole-workspace output migration D8
   remains its own carried-overlay rule.
-  Status: existing Windows maximize policy; KDE maximize carry pending; KDE fullscreen native send still observe-first (currently refuses fullscreen sends).
+  KDE allows flag-stable maximized tiled sends through native membership/
+  output transfer, without unmaximize/remaximize or overlay geometry writes.
+  Existing arrival/current-view/lifetime/follow/stay fences still apply.
+  Status: KDE maximize carry delivered offline ([record](changes/archive/reference-comparison-implementation.md)); real native maximize preservation on arrival pending observation. Existing Windows maximize policy remains; KDE fullscreen native send still observe-first (currently refuses fullscreen sends).
 - Windows (parity items 3-6):
   - Maximize (Win+M matches Meta+M): retained-tile overlay; siblings keep
     layout; never suspends the workspace. Directional focus is a no-op while

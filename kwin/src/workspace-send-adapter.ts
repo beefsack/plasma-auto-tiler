@@ -2872,7 +2872,21 @@ export class WorkspaceSendAdapter {
         ) {
             return false;
         }
-        if (live.floating || live.sticky || live.fullscreen || live.maximized) {
+        if (live.floating || live.sticky || live.fullscreen) {
+            return false;
+        }
+        // G-D2 maximized carry (REQ-MAX-09): a maximized mover travels
+        // with its native state untouched, but only when flag-stable
+        // against the dispatch snapshot; a mid-flight maximize change
+        // fails closed. Fullscreen/floating/sticky never carry here.
+        let snapshotMaximized: boolean | null = null;
+        for (const entry of [...pending.snapshot.sourceWindows, ...pending.snapshot.targetWindows]) {
+            if (entry.id === pending.moverId) {
+                snapshotMaximized = entry.maximized;
+                break;
+            }
+        }
+        if (snapshotMaximized === null || live.maximized !== snapshotMaximized) {
             return false;
         }
         return true;
@@ -3739,7 +3753,21 @@ export class WorkspaceSendAdapter {
             if (moverSeen === undefined) {
                 return false;
             }
-            if (moverSeen.fullscreen || moverSeen.maximized || moverSeen.floating === true || moverSeen.sticky === true) {
+            // G-D2 maximized carry (REQ-MAX-09): a homed mover must
+            // flag-match its dispatch snapshot entry; fullscreen, floating
+            // and sticky never carry, while a stable maximized flag travels
+            // with the window (geometry writes already skip overlays).
+            let snapshotMover: WorkspaceSendSnapshotWindow | null = null;
+            for (const entry of [...snapshot.sourceWindows, ...snapshot.targetWindows]) {
+                if (entry.id === pending.moverId) {
+                    snapshotMover = entry;
+                    break;
+                }
+            }
+            if (snapshotMover === null || !flagsEqual(moverSeen, snapshotMover)) {
+                return false;
+            }
+            if (moverSeen.fullscreen || moverSeen.floating === true || moverSeen.sticky === true) {
                 return false;
             }
             // A homed mover must be the dispatch-retained live object: a

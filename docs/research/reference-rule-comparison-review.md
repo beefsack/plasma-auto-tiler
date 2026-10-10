@@ -43,7 +43,8 @@ formal comparison entries; [matrix](../spec/reference-outcomes.md);
 All eight MATERIAL groups and both RECORD DRIFT entries are decided;
 the 35 NOT MATERIAL groups are unchanged. Current rules are integrated by
 behaviour area in [decisions](../decisions.md) and the [spec](../spec/functional-spec.md);
-changed behaviour is pending under [P1 implementation and Windows handoff](../backlog.md).
+shared-core/KDE changes are [delivered offline](../changes/archive/reference-comparison-implementation.md);
+Windows wiring and native checks remain under [P1 delivery and Windows handoff](../backlog.md).
 
 | ID | Selected outcome |
 | --- | --- |
@@ -51,11 +52,11 @@ changed behaviour is pending under [P1 implementation and Windows handoff](../ba
 | G-02 | KEEP relocated active workspace visible/focus retained on disconnect (deliberate COSMIC/6-reference deviation: focus continuity); KEEP nearest-surviving destination (deliberate COSMIC first-remaining deviation: spatial proximity, only discriminating with 3+ outputs). |
 | G-03 | KEEP sole-window send-next filling trailing empty (deliberate COSMIC deviation: predictable send; COSMIC refuses, six references fill). |
 | G-04 | KEEP migrated remembered-workspace history invalidation, no setting or recreation. Majority retention comes from global-history models deliberately excluded by item-1.2 per-output history; COSMIC has no history verb. |
-| G-05 | CHANGE zero to unset per axis: equal (640,0)/(0,480) is not fixed under `both-axes-fixed`, but the nonzero fixed axis qualifies under `either-axis-fixed`. Deliberate COSMIC deviation for consistent zero handling (raw-equality COSMIC floats; 5/8 non-scrolling plus PaperWM/karousel tile). Shared-core/KDE implementation and Windows handoff pending. |
-| G-06 / G-D1 | CHANGE both platforms to COSMIC: directional focus no-ops while focused-maximized (leave via unmaximize or Alt+Tab); directional move unmaximizes first then moves. REQ-MAX-08 NORMATIVE; Windows parity text replaced, G-D1 resolved. Existing pointer refusals unchanged; KDE/shared-core if applicable and Windows implementation pending. |
+| G-05 | CHANGE zero to unset per axis: equal (640,0)/(0,480) is not fixed under `both-axes-fixed`, but the nonzero fixed axis qualifies under `either-axis-fixed`. Deliberate COSMIC deviation for consistent zero handling (raw-equality COSMIC floats; 5/8 non-scrolling plus PaperWM/karousel tile). Shared-core/KDE delivered offline; Windows handoff pending. |
+| G-06 / G-D1 | CHANGE both platforms to COSMIC: directional focus no-ops while focused-maximized (leave via unmaximize or Alt+Tab); directional move unmaximizes first then moves. REQ-MAX-08 NORMATIVE; Windows parity text replaced, G-D1 resolved. Existing pointer refusals unchanged; shared opt-in focus fence/KDE delivered offline (one clear attempt, observed-clear same-invocation continuation with fresh guards); Windows implementation pending. |
 | G-07 | KEEP override reset on restart; COSMIC agrees for unpinned workspaces, persisting only pins we lack. ADD Future pinned/persistent workspaces: empty-surviving with monitor affinity, pinned tiling override survives restart, grouped with shared restart store; stale comparison backlog link fixed. |
-| G-37 | KEEP COSMIC last-remaining default; ADD `Source workspace after migration`: `Last remaining workspace` (default, tooltip COSMIC) / `Most recently used workspace` (tooltip bspwm, i3, awesome). KDE `migrationSourceRefill` / Windows `core.migration_source_refill`, functional IDs `last-remaining-workspace` / `most-recently-used-workspace`. MRU uses item-1.2 per-output history, exact eligibility defined during implementation, last-remaining fallback without eligible history; destination insertion unchanged. REQ-WS-12d cross-refers to source rule REQ-WS-12e. Shared-core/KDE and Windows implementation pending. |
-| G-D2 | SELECT cross-platform maximized workspace send keeps maximize on arrival (existing Windows policy; Hyprland/qtile/awesome agree). Deliberate COSMIC/niri deviation: sending relocates the whole window/state, unlike an in-layout move. KDE maximize carry pending; fullscreen Table A 2026-10-07 and KDE fullscreen observe-first unchanged. |
+| G-37 | KEEP COSMIC last-remaining default; ADD `Source workspace after migration`: `Last remaining workspace` (default, tooltip COSMIC) / `Most recently used workspace` (tooltip bspwm, i3, awesome). KDE `migrationSourceRefill` / Windows `core.migration_source_refill`, functional IDs `last-remaining-workspace` / `most-recently-used-workspace`. MRU uses pre-mutation item-1.2 per-output previous stable ID, eligible while live in the remaining source scoped ring (surviving empty valid, migrated/removed/out-of-scope excluded), otherwise last remaining; preserve a still-scoped live current view. Destination/invalidation unchanged. REQ-WS-12d cross-refers to REQ-WS-12e. Shared selector/KDE KCM/live setting delivered offline; Windows schema/UI/runtime pending. |
+| G-D2 | SELECT cross-platform maximized workspace send keeps maximize on arrival (existing Windows policy; Hyprland/qtile/awesome agree). Deliberate COSMIC/niri deviation: sending relocates the whole window/state, unlike an in-layout move. KDE flag-stable native carry delivered offline without restore/remaximize or overlay geometry writes; real native arrival preservation pending. Fullscreen Table A 2026-10-07 and KDE fullscreen observe-first unchanged. |
 
 ## MATERIAL (impact order)
 
@@ -335,8 +336,8 @@ the last remaining scoped entry, with normal spare maintenance.
 
 | ID | Review-baseline inconsistency | Resolution 2026-10-10 |
 |----|---------------|--------------|
-| G-D1 | [REQ-MAX-08](../spec/functional-spec.md) (:219) OPEN/unselected vs [decisions](../decisions.md) :1458-1461 Windows text (focus permit, maximized-move refusal) + backlog:1678 "no R-MAX-08 nav choice" | Resolved by G-06: NORMATIVE COSMIC focus fence/unmaximize-before-move on both platforms; implementation gaps queued, prior Windows parity text replaced. |
-| G-D2 | [REQ-MAX-09](../spec/functional-spec.md) (:220) maximize-unresolved vs [decisions](../decisions.md) :1461-1462 Windows maximize preservation; Table A separately accepts Windows fullscreen carry | Resolved: cross-platform maximize preservation selected with deliberate COSMIC/niri deviation; KDE maximize implementation pending. Fullscreen Table A and KDE fullscreen observe-first remain separate and unchanged. Linked behavior: G-22. |
+| G-D1 | [REQ-MAX-08](../spec/functional-spec.md) (:219) OPEN/unselected vs [decisions](../decisions.md) :1458-1461 Windows text (focus permit, maximized-move refusal) + backlog:1678 "no R-MAX-08 nav choice" | Resolved by G-06: NORMATIVE COSMIC focus fence/unmaximize-before-move on both platforms; shared/KDE delivered offline, Windows gap queued, prior Windows parity text replaced. |
+| G-D2 | [REQ-MAX-09](../spec/functional-spec.md) (:220) maximize-unresolved vs [decisions](../decisions.md) :1461-1462 Windows maximize preservation; Table A separately accepts Windows fullscreen carry | Resolved: cross-platform maximize preservation selected with deliberate COSMIC/niri deviation; KDE delivered offline, native arrival preservation pending. Fullscreen Table A and KDE fullscreen observe-first remain separate and unchanged. Linked behavior: G-22. |
 
 ## Ledger (87 entries, unambiguous)
 

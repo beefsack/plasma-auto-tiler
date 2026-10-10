@@ -17,6 +17,12 @@
 // Signals are attached by the production entry and routed here as one
 // synchronous cleanup per event. No timers, no second topology authority.
 
+import {
+    MIGRATION_SOURCE_REFILL_DEFAULT,
+    normalizeMigrationSourceRefill,
+    selectMigrationSourceRefill,
+    type MigrationSourceRefill,
+} from "./migration-source-refill";
 import { decodeList } from "./qml-list";
 
 export type WorkspaceMode = "per-output-local" | "global-unique" | "shared";
@@ -648,6 +654,7 @@ export interface WorkspaceNativeEnv {
     readonly getWorkspace: () => unknown;
     readonly readWorkspaceMode: () => unknown;
     readonly readTilingDefault?: () => unknown;
+    readonly readMigrationSourceRefill?: () => unknown;
     readonly log: (message: string) => void;
 }
 
@@ -671,6 +678,11 @@ export class WorkspaceNativeAdapter {
     // id. Only the default persists; overrides reset on script reload.
     private defaultTiled = DEFAULT_TILED;
     private readonly tiledById = new Map<string, boolean>();
+    // R-WS-12 G-37 source-refill selection for subsequent migrations only.
+    // Resolved at enable, re-resolved only through setMigrationSourceRefill
+    // on the entry-owned Options configChanged reload. Never consulted by
+    // destination insertion, history invalidation, or lifecycle maintenance.
+    private migrationSourceRefill: MigrationSourceRefill = MIGRATION_SOURCE_REFILL_DEFAULT;
     // Session-local output-displacement mapping only, no restart persistence.
     // Origin output key -> displaced workspace ids plus chosen survivor key.
     // Workspace relocation is the unit: return moves whole workspaces with
@@ -758,6 +770,19 @@ export class WorkspaceNativeAdapter {
         this.tiledById.set(id, tiled);
     }
 
+    getMigrationSourceRefill(): MigrationSourceRefill {
+        return this.migrationSourceRefill;
+    }
+
+    setMigrationSourceRefill(value: unknown): boolean {
+        const parsed = normalizeMigrationSourceRefill(value);
+        if (parsed === this.migrationSourceRefill) {
+            return false;
+        }
+        this.migrationSourceRefill = parsed;
+        return true;
+    }
+
     // Active scope for the tray menu and toggle. Null when unreadable.
     currentScopeId(): string | null {
         if (!this.enabled) {
@@ -798,6 +823,16 @@ export class WorkspaceNativeAdapter {
         } catch (error) {
             void error;
             this.defaultTiled = DEFAULT_TILED;
+        }
+        try {
+            const reader = this.env.readMigrationSourceRefill;
+            this.migrationSourceRefill =
+                reader === undefined
+                    ? MIGRATION_SOURCE_REFILL_DEFAULT
+                    : normalizeMigrationSourceRefill(reader());
+        } catch (error) {
+            void error;
+            this.migrationSourceRefill = MIGRATION_SOURCE_REFILL_DEFAULT;
         }
         this.resetMappingState();
         this.pruneTrackedToLive();
@@ -1282,7 +1317,9 @@ export class WorkspaceNativeAdapter {
     // migrated id are invalidated out of the source scope, and exactly that
     // id is dropped from the displaced-by-origin auto-return lists (siblings
     // untouched). Returns the source refill id (live source current when it
-    // is still scoped, else the last remaining scoped id, else null when the
+    // is still scoped, else the G-37 setting selection: the remembered
+    // previous id under most-recently-used-workspace when it survives among
+    // the remaining scope, else the last remaining scoped id; null when the
     // source scope is empty) or null when refused. Map-only: native views
     // are written by the caller, lifecycle trailing/minimums converge on the
     // next topology signal.
@@ -1343,6 +1380,12 @@ export class WorkspaceNativeAdapter {
             this.logToken("workspace-migrate-refused:duplicate-target");
             return null;
         }
+        // G-37: snapshot the remembered item-1.2 previous id BEFORE the
+        // mapping mutation below. Eligibility is membership in the
+        // post-mutation remaining scoped ring (live, still assigned the
+        // source, surviving empties valid); the existing 1.3/1.5
+        // invalidation below is unchanged.
+        const previousBefore = this.previousByOutput.get(sourceKey);
         const keptSource = sourceList.filter((id) => id !== workspaceId);
         if (this.mode === "global-unique") {
             this.unassignGlobal(workspaceId);
@@ -1391,10 +1434,15 @@ export class WorkspaceNativeAdapter {
         this.validatePreviousEntries();
         const ring = this.scopedRingIds(sourceKey, live).filter((id) => id !== workspaceId);
         const liveSourceCurrent = this.currentOnOutput(sourceOutput);
+        // G-37 source refill: a still-scoped live current view is kept in
+        // both modes. Otherwise the most-recently-used value refills the
+        // snapshotted previous id when it survives among the remaining
+        // scope, else the last remaining scoped id refills (the default).
+        // Never recreates: null only when nothing remains.
         const refillId =
             liveSourceCurrent !== null && ring.includes(liveSourceCurrent.id)
                 ? liveSourceCurrent.id
-                : (ring[ring.length - 1] ?? null);
+                : selectMigrationSourceRefill(this.migrationSourceRefill, previousBefore, ring);
         this.logToken("workspace-migrate-completed");
         return { refillId };
     }

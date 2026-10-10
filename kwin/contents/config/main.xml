@@ -43,6 +43,14 @@
                 <choice name="either-axis-fixed" value="either-axis-fixed"/>
             </choices>
         </entry>
+        <entry name="migrationSourceRefill" type="Enum">
+            <label>Source workspace after migration</label>
+            <default>last-remaining-workspace</default>
+            <choices>
+                <choice name="last-remaining-workspace" value="last-remaining-workspace"/>
+                <choice name="most-recently-used-workspace" value="most-recently-used-workspace"/>
+            </choices>
+        </entry>
         <entry name="innerGap" type="Int">
             <label>Gap between tiled windows</label>
             <default>8</default>

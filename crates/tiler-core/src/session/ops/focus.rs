@@ -91,6 +91,22 @@ impl super::super::Session {
         if window != &focused_window {
             return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
         }
+        // G-06 maximized directional focus fence (REQ-MAX-08): with the
+        // Linux-route opt-in on, directional focus is fenced while the
+        // focused tiled window is maximized (no-op `Unchanged`, no plan and
+        // no pending; leave via unmaximize or Alt+Tab). Fullscreen keeps
+        // its enter/leave behavior. Off by default so Windows carriers
+        // keep exact current behavior.
+        if self.maximized_focus_fence
+            && let Some(entry) = session_observation
+                .windows
+                .iter()
+                .find(|w| w.window == focused_window)
+            && entry.maximized
+            && !entry.fullscreen
+        {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        }
         let Some(tree) = self.trees.get(domain).cloned().flatten() else {
             return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
         };
@@ -426,6 +442,18 @@ impl super::super::Session {
             }
             Some(focused_leaf)
         };
+        // G-06 fence applies to cross-output focus from either origin:
+        // a maximized (non-fullscreen) subject never crosses either.
+        if self.maximized_focus_fence
+            && let Some(entry) = session_observation
+                .windows
+                .iter()
+                .find(|e| e.window == *window)
+            && entry.maximized
+            && !entry.fullscreen
+        {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        }
         let focused_window = window.clone();
         // Adjacent output in D; exactly one domain must own that output id
         // (ambiguity fails closed).

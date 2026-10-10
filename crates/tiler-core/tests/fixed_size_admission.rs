@@ -364,19 +364,15 @@ fn nonfixed_hint_variants_tile() {
 }
 
 #[test]
-fn partial_zero_vectors_float() {
-    for (name, hints) in [
+fn partial_zero_vectors_tile_under_both_axes_and_float_under_either_axis() {
+    use tiler_core::size_hints::FixedSizePredicate;
+    // G-05: zero is unset per axis. Both transposed equal partial-zero
+    // vectors pin nothing under `both-axes-fixed` (tile) but pin via their
+    // nonzero axis under `either-axis-fixed` (float). Full-zero and the
+    // unbounded sentinel stay tiled under both predicates.
+    let partials = [
         (
-            "w-zero",
-            WindowSizeHints {
-                min_w: Some(0),
-                min_h: Some(480),
-                max_w: Some(0),
-                max_h: Some(480),
-            },
-        ),
-        (
-            "h-zero",
+            "w-fixed",
             WindowSizeHints {
                 min_w: Some(640),
                 min_h: Some(0),
@@ -384,10 +380,20 @@ fn partial_zero_vectors_float() {
                 max_h: Some(0),
             },
         ),
-    ] {
-        let mut session = fixed_session();
-        let base = session.accepted_revision();
-        session
+        (
+            "h-fixed",
+            WindowSizeHints {
+                min_w: Some(0),
+                min_h: Some(480),
+                max_w: Some(0),
+                max_h: Some(480),
+            },
+        ),
+    ];
+    for (name, hints) in partials {
+        let mut both = fixed_session();
+        let base = both.accepted_revision();
+        let result = both
             .converge_observation(
                 &observation(
                     base,
@@ -397,17 +403,129 @@ fn partial_zero_vectors_float() {
                 ),
                 None,
             )
-            .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+            .unwrap_or_else(|e| panic!("{name} both-axes: {e:?}"));
+        assert_eq!(result.admitted, 1, "{name} tiles under both-axes");
         assert!(
-            session.is_automatic_fixed_float(&WindowId("win-p".to_owned())),
-            "{name} floats"
+            !both.is_automatic_fixed_float(&WindowId("win-p".to_owned())),
+            "{name} not automatic under both-axes"
         );
         assert_eq!(
-            tiled_ids(&session),
+            tiled_ids(&both),
+            vec!["win-p".to_owned()],
+            "{name} keeps a slot under both-axes"
+        );
+
+        let mut either = fixed_session();
+        either.set_fixed_size_predicate(FixedSizePredicate::EitherAxis);
+        let base = either.accepted_revision();
+        either
+            .converge_observation(
+                &observation(
+                    base,
+                    vec![obs(
+                        "win-p", false, false, false, false, false, false, hints,
+                    )],
+                ),
+                None,
+            )
+            .unwrap_or_else(|e| panic!("{name} either-axis: {e:?}"));
+        assert!(
+            either.is_automatic_fixed_float(&WindowId("win-p".to_owned())),
+            "{name} floats under either-axis"
+        );
+        assert_eq!(
+            tiled_ids(&either),
             Vec::<String>::new(),
-            "{name} takes no slot"
+            "{name} takes no slot under either-axis"
         );
     }
+    // Guards unchanged: full-zero and sentinel tile under either-axis too.
+    for (name, hints) in [
+        (
+            "full-zero",
+            WindowSizeHints {
+                min_w: Some(0),
+                min_h: Some(0),
+                max_w: Some(0),
+                max_h: Some(0),
+            },
+        ),
+        (
+            "sentinel",
+            WindowSizeHints {
+                min_w: Some(640),
+                min_h: Some(480),
+                max_w: Some(i32::MAX),
+                max_h: Some(i32::MAX),
+            },
+        ),
+    ] {
+        let mut either = fixed_session();
+        either.set_fixed_size_predicate(FixedSizePredicate::EitherAxis);
+        let base = either.accepted_revision();
+        either
+            .converge_observation(
+                &observation(
+                    base,
+                    vec![obs(
+                        "win-p", false, false, false, false, false, false, hints,
+                    )],
+                ),
+                None,
+            )
+            .unwrap_or_else(|e| panic!("{name} either-axis: {e:?}"));
+        assert!(
+            !either.is_automatic_fixed_float(&WindowId("win-p".to_owned())),
+            "{name} still tiles under either-axis"
+        );
+    }
+}
+
+#[test]
+fn partial_zero_predicate_switch_never_reclassifies_retained_tile() {
+    use tiler_core::size_hints::FixedSizePredicate;
+    // Admissions-only (D1): a partial-zero client admitted tiled under
+    // `both-axes-fixed` stays tiled after the switch to `either-axis-fixed`.
+    let hints = WindowSizeHints {
+        min_w: Some(640),
+        min_h: Some(0),
+        max_w: Some(640),
+        max_h: Some(0),
+    };
+    let mut session = fixed_session();
+    let base = session.accepted_revision();
+    session
+        .converge_observation(
+            &observation(
+                base,
+                vec![obs(
+                    "win-p", false, false, false, false, false, false, hints,
+                )],
+            ),
+            None,
+        )
+        .expect("partial-zero tiles by default");
+    assert_eq!(tiled_ids(&session), vec!["win-p".to_owned()]);
+    session.set_fixed_size_predicate(FixedSizePredicate::EitherAxis);
+    let base = session.accepted_revision();
+    let result = session
+        .converge_observation(
+            &observation(
+                base,
+                vec![obs(
+                    "win-p", false, false, false, false, false, false, hints,
+                )],
+            ),
+            None,
+        )
+        .expect("switch converges");
+    assert_eq!(
+        (result.removed, result.admitted, result.flags_adopted),
+        (0, 0, 0),
+        "switch changes nothing retained"
+    );
+    assert_eq!(tiled_ids(&session), vec!["win-p".to_owned()]);
+    assert!(!session.is_automatic_fixed_float(&WindowId("win-p".to_owned())));
 }
 
 #[test]

@@ -18,10 +18,12 @@ import {
 } from "../src/plan-adapter";
 
 describe("fixed-size admission predicate", () => {
-    it("floats only both-axes equal usable vectors by default", () => {
+    it("floats only both-axes nonzero-equal usable vectors by default", () => {
         assert.equal(isFixedSize({ w: 640, h: 480 }, { w: 640, h: 480 }), true);
-        assert.equal(isFixedSize({ w: 640, h: 0 }, { w: 640, h: 0 }), true);
-        assert.equal(isFixedSize({ w: 0, h: 480 }, { w: 0, h: 480 }), true);
+        // G-05: zero is unset per axis, so equal partial-zero vectors pin
+        // nothing under both-axes-fixed (each tiles by default).
+        assert.equal(isFixedSize({ w: 640, h: 0 }, { w: 640, h: 0 }), false);
+        assert.equal(isFixedSize({ w: 0, h: 480 }, { w: 0, h: 480 }), false);
         assert.equal(isFixedSize({ w: 16384, h: 16384 }, { w: 16384, h: 16384 }), true);
         assert.equal(isFixedSize({ w: 640, h: 480 }, null), false);
         assert.equal(isFixedSize(null, { w: 640, h: 480 }), false);
@@ -70,6 +72,24 @@ describe("fixed-size admission predicate", () => {
         );
         assert.equal(
             isFixedSize({ w: 0, h: 0 }, { w: 0, h: 0 }, "either-axis-fixed"),
+            false,
+        );
+        // G-05: both transposed partial-zero vectors pin via their nonzero
+        // axis under either-axis-fixed; full-zero and sentinel stay tiled.
+        assert.equal(
+            isFixedSize({ w: 640, h: 0 }, { w: 640, h: 0 }, "either-axis-fixed"),
+            true,
+        );
+        assert.equal(
+            isFixedSize({ w: 0, h: 480 }, { w: 0, h: 480 }, "either-axis-fixed"),
+            true,
+        );
+        assert.equal(
+            isFixedSize({ w: 640, h: 0 }, { w: 640, h: 0 }, "both-axes-fixed"),
+            false,
+        );
+        assert.equal(
+            isFixedSize({ w: 0, h: 480 }, { w: 0, h: 480 }, "both-axes-fixed"),
             false,
         );
     });
@@ -1973,6 +1993,103 @@ describe("fixed-size admission through the real Planner", () => {
     });
 });
 
+const PARTIAL_ZERO_VECTORS = [
+    { min: { w: 640, h: 0 }, max: { w: 640, h: 0 } },
+    { min: { w: 0, h: 480 }, max: { w: 0, h: 480 } },
+] as const;
+
+function partialZeroMocks(vector: { min: { w: number; h: number }; max: { w: number; h: number } }): {
+    refs: { a: object; b: object };
+    mocks: Mocks;
+} {
+    const refs = makeRefs();
+    const mocks = mockEnv(refs);
+    mocks.constraintsImpl = (target): PlanWindowConstraints | null => {
+        if (target === refs.b) {
+            return { resizeable: false, minSize: { ...vector.min }, maxSize: { ...vector.max } };
+        }
+        return { resizeable: true, minSize: null, maxSize: null };
+    };
+    return { refs, mocks };
+}
+
+describe("G-05 partial-zero admission through the real Planner", () => {
+    it("tiles both partial-zero vectors by default and floats each under either-axis with no writes", async () => {
+        for (const vector of PARTIAL_ZERO_VECTORS) {
+            const label = `min/max=(${vector.min.w},${vector.min.h})`;
+            // Default both-axes-fixed: the partial-zero client tiles with a slot.
+            {
+                const { refs, mocks } = partialZeroMocks(vector);
+                enableAdapter(mocks);
+                const engine = EngineBridge.start();
+                try {
+                    mocks.observeImpl = () => makeObserved(refs, { fingerprint: `fp-g05-both-${vector.min.w}x${vector.min.h}` });
+                    const payload = dispatchAdded(mocks);
+                    assert.ok(!("floating" in wireOf(payload, "win-b")), `${label} tiles by default`);
+                    const reply = await flushPlan(mocks, engine, 0);
+                    assert.equal(reply["outcome"], "planned", `${label} plans, got ${JSON.stringify(reply)}`);
+                    assert.ok(
+                        desiredWindows(reply).some((entry) => entry["window"] === "win-b"),
+                        `${label} keeps a tiled slot by default`,
+                    );
+                } finally {
+                    await engine.close();
+                }
+            }
+            // Either-axis-fixed: the same vector floats via its nonzero axis
+            // with no automatic writes to the float.
+            {
+                const { refs, mocks } = partialZeroMocks(vector);
+                Object.assign(mocks.env, { readFixedSizePredicate: () => "either-axis-fixed" });
+                enableAdapter(mocks);
+                const engine = EngineBridge.start();
+                try {
+                    mocks.observeImpl = () => makeObserved(refs, { fingerprint: `fp-g05-either-${vector.min.w}x${vector.min.h}` });
+                    const payload = dispatchAdded(mocks);
+                    assert.equal(payload["fixed_size_predicate"], "either-axis-fixed");
+                    assert.equal(wireOf(payload, "win-b")["floating"], true, `${label} floats under either-axis`);
+                    assert.equal(wireOf(payload, "win-b")["fixed_auto"], true, `${label} carries automatic identity`);
+                    const reply = await flushPlan(mocks, engine, 0);
+                    assert.equal(reply["outcome"], "planned", `${label} plans, got ${JSON.stringify(reply)}`);
+                    assert.ok(
+                        !desiredWindows(reply).some((entry) => entry["window"] === "win-b"),
+                        `${label} float takes no slot`,
+                    );
+                    assert.deepEqual(
+                        mocks.geometries.filter((write) => write.target === refs.b),
+                        [],
+                        `${label} sees no geometry write`,
+                    );
+                    assert.deepEqual(mocks.keepAboveWrites, [], `${label} sees no keep-above write`);
+                    assert.deepEqual(mocks.floatingWrites, [], `${label} calls no intentional setters`);
+                } finally {
+                    await engine.close();
+                }
+            }
+        }
+    });
+
+    it("a live predicate switch never re-floats the retained partial-zero tile", () => {
+        for (const vector of PARTIAL_ZERO_VECTORS) {
+            const label = `min/max=(${vector.min.w},${vector.min.h})`;
+            const { refs, mocks } = partialZeroMocks(vector);
+            let predicate: unknown = "both-axes-fixed";
+            Object.assign(mocks.env, { readFixedSizePredicate: (): unknown => predicate });
+            enableAdapter(mocks);
+            mocks.observeImpl = () => makeObserved(refs, { fingerprint: `fp-g05-live-${vector.min.w}x${vector.min.h}-1` });
+            const before = dispatchAdded(mocks);
+            assert.ok(!("floating" in wireOf(before, "win-b")), `${label} tiles before the switch`);
+            fireTimeout(mocks);
+            predicate = "either-axis-fixed";
+            mocks.observeImpl = () => makeObserved(refs, { fingerprint: `fp-g05-live-${vector.min.w}x${vector.min.h}-2` });
+            const after = dispatchAdded(mocks);
+            assert.equal(after["fixed_size_predicate"], "either-axis-fixed");
+            assert.ok(!("floating" in wireOf(after, "win-b")), `${label} switch never re-floats the retained client`);
+            assert.equal(wireOf(after, "win-b")["fixed_suppress"], true, `${label} retained tile carries suppression`);
+            assert.ok(!("fixed_auto" in wireOf(after, "win-b")), `${label} retained tile is not automatic`);
+        }
+    });
+});
 const ONE_AXIS_MIN = { w: 640, h: 100 };
 const ONE_AXIS_MAX = { w: 640, h: 480 };
 

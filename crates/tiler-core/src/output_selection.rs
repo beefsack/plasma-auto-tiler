@@ -23,7 +23,7 @@
 //!   side is still a valid forward target (valid reverse ambiguity
 //!   accepted); the adapter resolves the forward pair before presenting it.
 
-use crate::directional::{Direction, OutputId};
+use crate::directional::{Direction, OutputId, WorkspaceId};
 use crate::geometry::Rect;
 
 /// One FULL-rectangle output for selection. Callers must present validated
@@ -266,6 +266,76 @@ pub fn select_for_migration(
     Ok(candidates.into_iter().next())
 }
 
+/// R-WS-12 G-37 migration source-refill setting (decisions 2026-10-10 D5).
+///
+/// One global setting with two validated values: `last-remaining-workspace`
+/// (default, COSMIC: the last remaining scoped workspace refills the source)
+/// and `most-recently-used-workspace` (bspwm/i3/awesome: the remembered
+/// item-1.2 per-output previous workspace refills the source when eligible).
+/// The wire tokens are `last-remaining-workspace` and
+/// `most-recently-used-workspace`; a missing settings field decodes to the
+/// default. Anything else refuses at the settings boundary, never here.
+/// Destination insertion (D4) is unchanged by this setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum MigrationSourceRefill {
+    /// Last remaining workspace (default).
+    #[default]
+    LastRemaining,
+    /// Most recently used remaining workspace (item-1.2 history with
+    /// last-remaining fallback).
+    MostRecentlyUsed,
+}
+
+impl MigrationSourceRefill {
+    /// Wire token for this value (`last-remaining-workspace` /
+    /// `most-recently-used-workspace`).
+    #[must_use]
+    pub const fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::LastRemaining => "last-remaining-workspace",
+            Self::MostRecentlyUsed => "most-recently-used-workspace",
+        }
+    }
+
+    /// Validated parse of a wire token. `None` for anything else, including
+    /// empty strings: callers refuse fail-closed.
+    #[must_use]
+    pub fn parse_wire(value: &str) -> Option<Self> {
+        match value {
+            "last-remaining-workspace" => Some(Self::LastRemaining),
+            "most-recently-used-workspace" => Some(Self::MostRecentlyUsed),
+            _ => None,
+        }
+    }
+}
+
+/// Pure G-37 source-refill selector over one source output scope.
+///
+/// `remaining_in_scope_order` is the remaining source-output scoped backing
+/// ids in scoped order AFTER excluding the migrated id; `previous` is the
+/// item-1.2 remembered previous stable id snapshotted before the migration
+/// mutates mappings. Eligibility is the smallest rule: under
+/// [`MigrationSourceRefill::MostRecentlyUsed`], the remembered id refills
+/// when it is still a member of the remaining scope (live, still assigned
+/// the source, surviving empties valid); otherwise the last remaining id
+/// refills, exactly as under [`MigrationSourceRefill::LastRemaining`].
+/// Never recreates or reinterprets ordinals: `None` only when nothing
+/// remains. History invalidation (items 1.3/1.5) stays with the caller.
+#[must_use]
+pub fn select_migration_source_refill(
+    refill: MigrationSourceRefill,
+    previous: Option<&WorkspaceId>,
+    remaining_in_scope_order: &[WorkspaceId],
+) -> Option<WorkspaceId> {
+    if refill == MigrationSourceRefill::MostRecentlyUsed
+        && let Some(remembered) = previous
+        && remaining_in_scope_order.contains(remembered)
+    {
+        return Some(remembered.clone());
+    }
+    remaining_in_scope_order.last().cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,6 +388,122 @@ mod tests {
         assert_eq!(
             candidates_in_direction(&source, Direction::Right, &all),
             Err(SelectionError::UnreadableTopology)
+        );
+    }
+
+    fn workspace(id: &str) -> WorkspaceId {
+        WorkspaceId(id.to_owned())
+    }
+
+    #[test]
+    fn migration_refill_wire_roundtrips_with_last_remaining_default() {
+        assert_eq!(
+            MigrationSourceRefill::default(),
+            MigrationSourceRefill::LastRemaining
+        );
+        assert_eq!(
+            MigrationSourceRefill::LastRemaining.as_wire_str(),
+            "last-remaining-workspace"
+        );
+        assert_eq!(
+            MigrationSourceRefill::MostRecentlyUsed.as_wire_str(),
+            "most-recently-used-workspace"
+        );
+        assert_eq!(
+            MigrationSourceRefill::parse_wire("last-remaining-workspace"),
+            Some(MigrationSourceRefill::LastRemaining)
+        );
+        assert_eq!(
+            MigrationSourceRefill::parse_wire("most-recently-used-workspace"),
+            Some(MigrationSourceRefill::MostRecentlyUsed)
+        );
+        for invalid in ["", "mru", "last-remaining", "most-recently-used", "COSMIC"] {
+            assert_eq!(
+                MigrationSourceRefill::parse_wire(invalid),
+                None,
+                "{invalid:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn migration_refill_mru_prefers_eligible_previous_over_trailing_empty() {
+        let remaining = vec![workspace("ws-1"), workspace("ws-e")];
+        assert_eq!(
+            select_migration_source_refill(
+                MigrationSourceRefill::MostRecentlyUsed,
+                Some(&workspace("ws-1")),
+                &remaining,
+            ),
+            Some(workspace("ws-1"))
+        );
+        assert_eq!(
+            select_migration_source_refill(
+                MigrationSourceRefill::LastRemaining,
+                Some(&workspace("ws-1")),
+                &remaining,
+            ),
+            Some(workspace("ws-e"))
+        );
+    }
+
+    #[test]
+    fn migration_refill_mru_falls_back_without_eligible_previous() {
+        let remaining = vec![workspace("ws-1"), workspace("ws-e")];
+        // No history.
+        assert_eq!(
+            select_migration_source_refill(
+                MigrationSourceRefill::MostRecentlyUsed,
+                None,
+                &remaining
+            ),
+            Some(workspace("ws-e"))
+        );
+        // Remembered id is the migrated one (excluded from remaining).
+        assert_eq!(
+            select_migration_source_refill(
+                MigrationSourceRefill::MostRecentlyUsed,
+                Some(&workspace("ws-2")),
+                &remaining,
+            ),
+            Some(workspace("ws-e"))
+        );
+        // Remembered id moved out of scope or was removed.
+        assert_eq!(
+            select_migration_source_refill(
+                MigrationSourceRefill::MostRecentlyUsed,
+                Some(&workspace("ws-gone")),
+                &remaining,
+            ),
+            Some(workspace("ws-e"))
+        );
+        // Nothing remains: no recreation.
+        assert_eq!(
+            select_migration_source_refill(
+                MigrationSourceRefill::MostRecentlyUsed,
+                Some(&workspace("ws-1")),
+                &[],
+            ),
+            None
+        );
+        assert_eq!(
+            select_migration_source_refill(MigrationSourceRefill::LastRemaining, None, &[]),
+            None
+        );
+    }
+
+    #[test]
+    fn migration_refill_mru_accepts_surviving_empty_previous() {
+        // The remembered empty workspace survives in scope, so it refills
+        // even though it holds no windows.
+        let remaining = vec![workspace("ws-empty"), workspace("ws-e")];
+        assert_eq!(
+            select_migration_source_refill(
+                MigrationSourceRefill::MostRecentlyUsed,
+                Some(&workspace("ws-empty")),
+                &remaining,
+            ),
+            Some(workspace("ws-empty"))
         );
     }
 }

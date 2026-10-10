@@ -159,11 +159,13 @@ fn meaningful(value: Option<i32>) -> Option<i32> {
 
 /// Keep only usable fixed-size hint values: nonnegative and in-bound.
 ///
-/// Unlike [`meaningful`], zero is usable here: an equal partial-zero vector
-/// such as min=max=(640,0) still pins its nonzero axis. Negative,
-/// unbounded-sentinel (`i32::MAX`), and out-of-bound values behave as
-/// absent. Uses the raw optional per-bound input, never the
-/// `meaningful_*` helpers, so partial-zero vectors are not lost.
+/// Unlike [`meaningful`], zero is usable here so the whole-vector guards can
+/// distinguish full-zero from partial-zero: an equal partial-zero vector
+/// such as min=max=(640,0) passes this guard but still pins nothing, because
+/// zero is unset per axis (G-05). Negative, unbounded-sentinel (`i32::MAX`),
+/// and out-of-bound values behave as absent. Uses the raw optional per-bound
+/// input, never the `meaningful_*` helpers, so partial-zero vectors are not
+/// lost.
 fn usable_fixed_bound(value: Option<i32>) -> Option<i32> {
     match value {
         Some(v) if (0..=GEOMETRY_BOUND).contains(&v) => Some(v),
@@ -211,9 +213,10 @@ impl FixedSizePredicate {
 ///
 /// Default-predicate compatibility wrapper over [`is_fixed_size_with`]:
 /// fixed iff min and max are BOTH present with usable nonnegative vector
-/// sizes on BOTH axes and equal on BOTH axes: `min_w == max_w` and
-/// `min_h == max_h`. The entire (0,0) vector does not count; equal
-/// partial-zero vectors such as (640,0) or (0,480) do count. Unset bounds,
+/// sizes on BOTH axes, the vector is not entirely (0,0), and BOTH axes are
+/// equal with NONZERO bounds (`min_w == max_w != 0` and
+/// `min_h == max_h != 0`). Zero is unset per axis (G-05): equal
+/// partial-zero vectors such as (640,0) or (0,480) do NOT count. Unset bounds,
 /// negative values, unbounded sentinels, and out-of-contract (out of
 /// [`GEOMETRY_BOUND`]) values never count. The `resizeable` flag alone
 /// never counts. The either-axis form lives in
@@ -227,8 +230,9 @@ pub fn is_fixed_size(hints: WindowSizeHints) -> bool {
 ///
 /// Validity guards are identical under both values (negative, missing,
 /// sentinel, out-of-range, and full-zero all tile); only the final equality
-/// differs: [`FixedSizePredicate::BothAxes`] needs equality on both axes,
-/// [`FixedSizePredicate::EitherAxis`] on either axis.
+/// differs: [`FixedSizePredicate::BothAxes`] needs a nonzero-equal pin on
+/// both axes, [`FixedSizePredicate::EitherAxis`] on either axis. Zero is
+/// unset per axis (G-05).
 #[must_use]
 pub fn is_fixed_size_with(hints: WindowSizeHints, predicate: FixedSizePredicate) -> bool {
     fixed_size_reason_with(hints, predicate) == "fixed-equal"
@@ -283,15 +287,16 @@ pub fn fixed_size_reason_with(
     {
         return "not-fixed-zero";
     }
-    // Equal on BOTH axes counts, including equal partial-zero vectors
-    // such as (640,0) or (0,480). Unequal vectors tile. The either-axis
-    // predicate keeps every guard above and only relaxes this final
-    // equality to either axis.
-    let both = hints.min_w == hints.max_w && hints.min_h == hints.max_h;
-    let either = hints.min_w == hints.max_w || hints.min_h == hints.max_h;
+    // Equal NONZERO pins on the fixed axes count (G-05: zero is unset per
+    // axis). min=max=(640,0) pins nothing under both-axes (the height pin
+    // is zero-unset), but its nonzero width pin counts under either-axis.
+    // The either-axis predicate keeps every guard above and only relaxes
+    // this final equality to either nonzero-equal axis.
+    let width_fixed = hints.min_w == hints.max_w && hints.min_w != Some(0);
+    let height_fixed = hints.min_h == hints.max_h && hints.min_h != Some(0);
     let fixed = match predicate {
-        FixedSizePredicate::BothAxes => both,
-        FixedSizePredicate::EitherAxis => either,
+        FixedSizePredicate::BothAxes => width_fixed && height_fixed,
+        FixedSizePredicate::EitherAxis => width_fixed || height_fixed,
     };
     if fixed {
         return "fixed-equal";
@@ -744,10 +749,40 @@ mod tests {
             fixed_size_reason(fixed(Some(640), Some(480), Some(640), Some(480))),
             "fixed-equal"
         );
-        // Equal partial-zero vectors count (each zero axis retained raw,
-        // never stripped by the meaningful helpers).
-        assert!(is_fixed_size(fixed(Some(640), Some(0), Some(640), Some(0))));
-        assert!(is_fixed_size(fixed(Some(0), Some(480), Some(0), Some(480))));
+        // Equal partial-zero vectors pin nothing: zero is unset per axis
+        // (G-05). Not fixed under both-axes; the nonzero axis pins under
+        // either-axis.
+        assert!(!is_fixed_size(fixed(
+            Some(640),
+            Some(0),
+            Some(640),
+            Some(0)
+        )));
+        assert!(!is_fixed_size(fixed(
+            Some(0),
+            Some(480),
+            Some(0),
+            Some(480)
+        )));
+        assert_eq!(
+            fixed_size_reason(fixed(Some(640), Some(0), Some(640), Some(0))),
+            "not-fixed-unequal"
+        );
+        assert!(is_fixed_size_with(
+            fixed(Some(640), Some(0), Some(640), Some(0)),
+            FixedSizePredicate::EitherAxis
+        ));
+        assert!(is_fixed_size_with(
+            fixed(Some(0), Some(480), Some(0), Some(480)),
+            FixedSizePredicate::EitherAxis
+        ));
+        assert_eq!(
+            fixed_size_reason_with(
+                fixed(Some(640), Some(0), Some(640), Some(0)),
+                FixedSizePredicate::EitherAxis
+            ),
+            "fixed-equal"
+        );
         // Only one bound set: tiles.
         assert!(!is_fixed_size(fixed(Some(640), Some(480), None, None)));
         assert_eq!(

@@ -1034,8 +1034,11 @@ describe("workspace production entry routing and handoff", () => {
         const focusedOverlay = observeSendTarget(world.workspace, new Map(), "ws-2", new Set());
         assert.ok(focusedOverlay !== null);
         assert.ok(focusedOverlay.sourceWindows.some((entry) => entry.id === "win-b"), "focused overlay stays observed");
-        assert.equal(focusedOverlay.focusedId, "");
-        assert.equal(focusedOverlay.moverRef, null);
+        // G-D2 (REQ-MAX-09 maximize leg): a focused maximized window is the
+        // send mover with its state carried; fullscreen movers stay refused
+        // observe-first (covered by the fullscreen send path).
+        assert.equal(focusedOverlay.focusedId, "win-b", "maximized mover admitted for carry");
+        assert.equal(focusedOverlay.moverRef, b, "maximized mover ref rides for the membership write");
     });
 
     it("matches desktop membership by validated id, not wrapper identity", () => {
