@@ -1337,6 +1337,32 @@ platform API behavior.
 - At the start of the next orchestrator session, the user creates the OBS
   account/project, GitHub-to-OBS token and AUR account. Packaging prep (spec,
   PKGBUILD, OBS service files) may proceed offline before then.
+- Tentative Lead 2026-10-11, pending user review: offline packaging uses
+  `plasma-auto-tiler` for core and `plasma-auto-tiler-native-effect` for the
+  effect plus both native KCMs, with recipes under `packaging/`. Release
+  archives include the tagged-SHA JS bundle and vendored Rust crates; distro
+  builds consume them without Node or network access. User units install
+  inertly, with the tray explicitly enabled by the user. Native dependencies
+  do not pin the KWin package version; KWin's versioned factory IID rejects
+  different-version effects before instantiation. SONAME changes and
+  same-version distro ABI patches still need transaction/rebuild validation.
+  [Preparation and evidence](changes/archive/release-0.1-offline-packaging.md).
+- Open product question from the split: without the companion, core tiles but
+  Settings/Configure and its Revert actions are unavailable. Recommendation:
+  move the KWin-independent KCMs into core or a non-effect settings companion,
+  leaving only the effect ABI-bound. Not approved or implemented. Ubuntu's
+  core-only package builds offline; its native companion remains blocked by
+  ECM 6.24 below 6.26, and neon provisioning remains unresolved.
+- Offline preparation does not complete OBS delivery: the guarded post-release
+  tag webhook exists, but `trigger_services` cannot update the stable
+  package's pinned source URL/checksum. Keep `OBS_TOKEN` unset until that
+  automated handoff is resolved. The source-service template currently needs
+  a manual source commit after release; it is not an approved replacement
+  for tag-only automated delivery. No accounts or release tags were created.
+- Publishing prerequisite: confirm project-wide first-party licensing and
+  complete the vendored-crate inventory. Package license labels tentatively
+  follow the existing KPlugin GPL-2.0-or-later declarations; Rust manifests
+  have no license field and the repository has no project-wide LICENSE.
 - Nix-first current-host delivery is selected. The repository flake statically
   exports `packages.default`, `packages.kwin-script`,
   `packages.native-effect`, and `packages.tray`, plus

@@ -1,0 +1,38 @@
+pkgbase = plasma-auto-tiler
+	pkgdesc = COSMIC-style automatic tiling for KWin (core: script, planner, tray)
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/beefsack/plasma-auto-tiler
+	arch = x86_64
+	license = GPL-2.0-or-later
+	makedepends = cmake
+	makedepends = gcc
+	makedepends = rust
+	makedepends = extra-cmake-modules
+	makedepends = kwin
+	makedepends = qt6-base
+	makedepends = kconfig
+	makedepends = kcoreaddons
+	makedepends = kcmutils
+	makedepends = ki18n
+	makedepends = kwidgetsaddons
+	makedepends = kcolorscheme
+	makedepends = hicolor-icon-theme
+	makedepends = vulkan-headers
+	source = https://github.com/beefsack/plasma-auto-tiler/releases/download/v0.1.0/plasma-auto-tiler-0.1.0.tar.gz
+	sha256sums = SKIP
+
+pkgname = plasma-auto-tiler
+	pkgdesc = COSMIC-style automatic tiling for KWin; press Revert in Settings before removing
+	install = plasma-auto-tiler.install
+	depends = kwin
+	depends = hicolor-icon-theme
+	optdepends = kconfig: kwriteconfig6/kreadconfig6 used by enable/disable paths
+	optdepends = kcmutils: kcmshell6 used by the tray Settings action
+	optdepends = plasma-auto-tiler-native-effect: ABI-matched effect and settings pages
+
+pkgname = plasma-auto-tiler-native-effect
+	pkgdesc = Plasma Auto Tiler native KWin effect and settings pages (optional, ABI-bound)
+	install = plasma-auto-tiler-native-effect.install
+	depends = plasma-auto-tiler=0.1.0-1
+	depends = kwin

@@ -1,0 +1,108 @@
+# Tentative 0.1 offline-preparation recipe, AUR-only scope (no OBS pacman
+# repo). Not yet published to the AUR; see docs/installation.md for status,
+# blockers, and the KWin-upgrade policy. Arch package names verified against
+# Arch:Extra (x86_64) in October 2026.
+#
+# Source contract: the source tarball is the immutable GitHub Release asset
+# produced by release.yml (scripts/build-source-archive.sh). It already
+# contains the prebuilt KWin bundle and vendored Rust crates, so the build
+# never runs npm and never touches the network. A VCS checkout would lack
+# both and must not be substituted here.
+# Maintainer: Plasma Auto Tiler Contributors (tentative; replace with the
+# publishing maintainer at release time)
+pkgbase=plasma-auto-tiler
+pkgname=(plasma-auto-tiler plasma-auto-tiler-native-effect)
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='COSMIC-style automatic tiling for KWin (core: script, planner, tray)'
+arch=(x86_64)
+url='https://github.com/beefsack/plasma-auto-tiler'
+license=(GPL-2.0-or-later)
+# No release exists yet, so no digest can be pinned. At release time
+# packaging/bump-version.sh fills this from the published .sha256 sidecar;
+# until then the checksum stays SKIP and the prepare() VERSION assertion
+# below is the fail-closed identity check.
+source=("https://github.com/beefsack/plasma-auto-tiler/releases/download/v$pkgver/plasma-auto-tiler-$pkgver.tar.gz")
+sha256sums=(SKIP)
+# KWin headers ship in the main kwin package on Arch (no -dev split).
+# The rust package provides both rustc and cargo.
+# KWin's CMake config needs Vulkan headers (runtime alone is insufficient).
+makedepends=(cmake gcc rust extra-cmake-modules kwin qt6-base
+             kconfig kcoreaddons kcmutils ki18n kwidgetsaddons kcolorscheme
+             hicolor-icon-theme vulkan-headers)
+
+prepare() {
+  cd "$pkgbase-$pkgver"
+  # Fail closed: the recipe version must match the immutable release tarball.
+  [[ "$(cat VERSION)" == "$pkgver" ]] || exit 1
+  grep -Eq '^[0-9a-f]{40}([0-9a-f]{24})?$' SOURCE_REV || exit 1
+  grep -Fq "$(cat SOURCE_REV)" kwin/contents/code/main.js || exit 1
+  test -d vendor || exit 1
+}
+
+build() {
+  cd "$pkgbase-$pkgver"
+  # Offline Rust core build, exactly per scripts/build-source-archive.sh.
+  # (The --config directory value carries inner double quotes: cargo's CLI
+  # expression parser requires quoted strings.)
+  export CARGO_NET_OFFLINE=true
+  local vendor_dir="$PWD/vendor"
+  cargo --config 'source.crates-io.replace-with="vendored-sources"' \
+        --config "source.vendored-sources.directory=\"$vendor_dir\"" \
+        build --release --locked --offline -p plasma-auto-tiler
+  # Native effect against Arch's own KWin headers. Same vendor tree via
+  # PLASMA_AUTO_TILER_VENDOR_DIR (see kwin/native-effect/CMakeLists.txt).
+  export PLASMA_AUTO_TILER_VENDOR_DIR="$PWD/vendor"
+  cmake -S kwin/native-effect -B build-native \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_TESTING=OFF \
+    -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build build-native
+}
+
+package_plasma-auto-tiler() {
+  pkgdesc='COSMIC-style automatic tiling for KWin; press Revert in Settings before removing'
+  depends=(kwin hicolor-icon-theme)
+  install=plasma-auto-tiler.install
+  # Helpers, not hard requirements: tiling works without them.
+  optdepends=('kconfig: kwriteconfig6/kreadconfig6 used by enable/disable paths'
+              'kcmutils: kcmshell6 used by the tray Settings action'
+              'plasma-auto-tiler-native-effect: ABI-matched effect and settings pages')
+  cd "$pkgbase-$pkgver"
+  install -Dm755 target/release/plasma-auto-tiler "$pkgdir/usr/bin/plasma-auto-tiler"
+  # KWin script: the exact prebuilt four-file set, no npm involved.
+  local scriptdir="$pkgdir/usr/share/kwin/scripts/plasma-auto-tiler-kwin"
+  install -Dm644 kwin/metadata.json "$scriptdir/metadata.json"
+  install -Dm644 kwin/contents/code/main.js "$scriptdir/contents/code/main.js"
+  install -Dm644 kwin/contents/config/main.xml "$scriptdir/contents/config/main.xml"
+  install -Dm644 kwin/contents/ui/config.ui "$scriptdir/contents/ui/config.ui"
+  # D-Bus activation descriptor (template carries @out@, Nix-style).
+  install -d "$pkgdir/usr/share/dbus-1/services"
+  sed 's|@out@|/usr|' nix/org.plasmaautotiler.Planner.service \
+    > "$pkgdir/usr/share/dbus-1/services/org.plasmaautotiler.Planner.service"
+  # Systemd user units (mirrors home-manager-module.nix; never auto-enabled).
+  install -Dm644 packaging/systemd/plasma-auto-tiler-tray.service \
+    "$pkgdir/usr/lib/systemd/user/plasma-auto-tiler-tray.service"
+  install -Dm644 packaging/systemd/plasma-auto-tiler-planner.service \
+    "$pkgdir/usr/lib/systemd/user/plasma-auto-tiler-planner.service"
+  install -Dm644 assets/icons/plasma-auto-tiler.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg"
+}
+
+package_plasma-auto-tiler-native-effect() {
+  pkgdesc='Plasma Auto Tiler native KWin effect and settings pages (optional, ABI-bound)'
+  # Deliberately unversioned KWin dependency: this package must never hold a
+  # KWin upgrade back (a pinned dependency makes pacman -Su fail until the
+  # effect is rebuilt/removed), and an exact dependency still would not prove
+  # the loaded .so matches the running KWin. Rebuilds track KWin via the
+  # kwin makedepends above; see docs/installation.md for the upgrade-window
+  # limitation and the versioned factory IID check.
+  depends=("plasma-auto-tiler=$pkgver-$pkgrel" kwin)
+  install=plasma-auto-tiler-native-effect.install
+  cd "$pkgbase-$pkgver"
+  # Three plugins; JSON metadata is embedded in the .so files at compile
+  # time, so no .json ships alongside.
+  DESTDIR="$pkgdir" cmake --install build-native
+}
+
+# vim: ft=sh

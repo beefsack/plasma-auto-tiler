@@ -86,6 +86,12 @@ lifetime, linking existing fixtures:
 | Ordinary activation vs fullscreen/game-focused guard (D27) | From an ordinary hidden window, send one unsolicited activation; repeat while a fullscreen/game window is focused | Ordinary: switch and focus; fullscreen/game-focused: urgency-only guard | Ours TBD; ref/native TBD beyond linked R-ACT-01 |
 | New-login intent scoped-store vs fallback (D26) | End session; start a new login and observe owned intent | Session-scoped store (REQ-RST-01d) cannot restore cross-login intent with no implicit namespace expansion; tentative fallback (b) listed known limitation applies to that leg unless a later design is authorized | Ours TBD; ref/native TBD beyond linked R-RST-02 |
 
+### 0.1 package split discriminator (Settings decision pending)
+
+| Variant | Minimal action sequence | Offline evidence | Desired / native outcome |
+| --- | --- | --- | --- |
+| Native companion removed | Install core and companion; use Settings Fix once; close Settings; remove only the companion; open another ordinary window; choose tray Settings or KWin Scripts Configure | Core owns script/planner/tray; the script's `X-KDE-ConfigModule` and tray Settings depend on the companion KCM. Removal does not restore prior host keys. [Packaging record](../changes/archive/release-0.1-offline-packaging.md) | Tiling must continue and KWin remain stable per approved 0.1 gate; physical outcome TBD. Settings/Revert availability is a product decision, TBD; recommendation is a KWin-independent KCM in core or a non-effect settings companion. Reference-WM equivalents TBD, not inferred |
+
 ## Notation
 
 - `H[a,b,c]` horizontal split, children left to right.

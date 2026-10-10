@@ -35,9 +35,13 @@ decisions of 2026-09-24 are under
     defaults-only 0.1 for D03, D09, D10, D12, D13, D27; meaningful alternative
     settings deferred to P2 `0.1 triage settings follow-up`, awaiting review.
     [Tentative decisions](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
-  - P1 0.1 packaging (Nix flake/Home Manager, GitHub Release, OBS packages,
-    split optional effect, Revert-before-removal guidance); accounts/token
-    supplied by the user at the start of the next orchestrator session.
+  - P1 0.1 packaging: offline recipes/archive/tag workflows and
+    Revert-before-removal guidance prepared 2026-10-11; distro offline
+    builds passed. Remaining: Settings-without-KCM product decision,
+    OBS tag-to-stable source/checksum handoff, accounts/provisioning,
+    licensing confirmation, runtime/solver validation. Ubuntu native ECM
+    floor and neon provisioning remain blocked.
+    [Evidence](changes/archive/release-0.1-offline-packaging.md).
   - External NixOS/Home Manager validation (P1 gate).
   - Workspace tiling toggle Meta+Y (KDE) delivered offline 2026-10-11;
     physical/restart/preset acceptance in Pending live checks. Win+Y remains
@@ -2601,6 +2605,19 @@ decisions of 2026-09-24 are under
   package note say "press Revert in Settings before removing".
   [research](research/distribution-package-feasibility/feasibility.md)
   [OBS](research/distribution-package-feasibility/obs.md)
+  Offline prep delivered 2026-10-11: tagged-SHA prebuilt JS + vendored Rust
+  source archive, checksums, release/credential-gated trigger workflows,
+  RPM and AUR split recipes, Ubuntu core Debian recipe, user activation units
+  and Revert guidance. Exact scratch-tag archive built without networking in
+  Tumbleweed/Fedora 44 RPM, Arch split and Ubuntu 26.04 Debian containers;
+  Fedora 43 passed an earlier source-contract probe. External Nix validation
+  remains separate. Packaging item remains P1: decide Settings ownership
+  when native companion absent (recommend KWin-independent KCMs in core),
+  resolve automated OBS stable-source/checksum update before enabling token,
+  confirm first-party licensing/vendor inventory, provision accounts/targets
+  and prove real dependency-solver/live-session behavior. Ubuntu native ECM
+  blocker and neon target provisioning return to the user.
+  [Preparation](changes/archive/release-0.1-offline-packaging.md)
 - P2 | Simplify drag preview + cross-output drop code | Post-live cleanup only:
   cut advisory `hover_prior` validation, lag-only fences, verbose comments;
   net deletion, no behavior change.

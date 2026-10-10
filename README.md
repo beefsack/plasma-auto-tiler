@@ -14,6 +14,9 @@ live evidence and are not claimed here.
 
 ### Distribution archive
 
+Distro packaging (RPM, Arch, Debian core-only, OBS wiring) is tentative
+0.1 offline preparation: see `docs/installation.md`.
+
 Create the reproducible KPackage release artifact and its checksum sidecar:
 
 ```sh

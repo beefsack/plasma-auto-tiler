@@ -1,0 +1,20 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Source: https://github.com/beefsack/plasma-auto-tiler
+
+Comment: Tentative offline-preparation metadata, not a complete licensing audit.
+ The KPlugin metadata declares the license below. The repository has no
+ project-wide LICENSE and its Rust manifests declare no license. Confirm
+ first-party licensing and enumerate vendored crates' own licenses before
+ publishing; the stanza below does not relicense vendor/ or Rust sources.
+
+Files: kwin/*
+Copyright: Plasma Auto Tiler Contributors
+License: GPL-2.0-or-later
+
+License: GPL-2.0-or-later
+ This package is licensed under the GNU General Public License version 2,
+ or (at your option) any later version, as declared in
+  kwin/metadata.json and kwin/native-effect/metadata.json.
+ .
+ On Debian systems the full text of the GNU General Public License
+ version 2 is available at /usr/share/common-licenses/GPL-2.

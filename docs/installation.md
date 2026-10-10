@@ -1,0 +1,223 @@
+# Installation (tentative 0.1 offline preparation)
+
+Status: packaging recipes exist but no OBS account, project, token, or
+published repository exists. Container builds completed for the recipes
+(evidence below); OBS source-handoff automation remains blocked, and
+full runtime dependency resolution and live-session checks remain pending.
+Package names and repository contents marked "verified Oct 2026"
+were checked against the live distro repositories from disposable
+containers.
+
+Build evidence: the real archive builder ran against an isolated scratch
+tag containing the proposed source changes. That archive built with fresh
+Cargo homes in disposable Docker containers using `--network none`:
+
+- Tumbleweed and Fedora 44: `rpmbuild -bb` produced core and native RPMs.
+  Generated KWin dependencies were unversioned names and
+  `libkwin.so.6()(64bit)`, with no exact KWin package-version requirement.
+- Fedora 43: an earlier contract-shaped source probe built both RPMs;
+  the final exact-archive verification used Fedora 44 instead.
+- Arch: `makepkg` produced both split packages; `pacman -U` resolved
+  dependencies. `makepkg --printsrcinfo` matched `.SRCINFO`; `namcap`
+  found no PKGBUILD errors. Shipping-package dependency warnings remain;
+  the generated debug package also has symlink diagnostics.
+- Ubuntu 26.04: `dpkg-buildpackage -us -uc` produced the core `.deb`
+  and source-package metadata. Vendored manifest backups survived cleaning;
+  the tray unit is not automatically enabled.
+- RPM/Ubuntu install probes used `--nodeps`/`--force-depends`, so they
+  establish payload installation and binary execution, not full dependency
+  solver acceptance. No desktop, D-Bus activation or compositor was started.
+
+Detailed evidence is in the archived change record. Package binaries are
+verification artifacts, not published releases; only the source archive's
+reproducibility is claimed, not identical RPM/DEB payloads.
+
+## Recipe layout (tentative)
+
+Licensing metadata is tentative: KPlugin metadata declares GPL-2.0-or-later,
+but there is no project-wide LICENSE or Rust-manifest license declaration.
+Confirm first-party licensing and complete the vendored-crate copyright
+inventory before publishing. The Debian copyright file is a partial template.
+
+| Path | Purpose |
+| --- | --- |
+| `packaging/rpm/plasma-auto-tiler.spec` | One spec, two binaries: `plasma-auto-tiler` (core) and `plasma-auto-tiler-native-effect` (optional). Conditionals cover openSUSE Tumbleweed and Fedora 43/44. |
+| `packaging/arch/PKGBUILD`, `.SRCINFO`, `plasma-auto-tiler*.install` | Split package (`plasma-auto-tiler`, `plasma-auto-tiler-native-effect`) for AUR-only consumption. No OBS pacman repo: Arch scope is AUR. |
+| `packaging/debian/` | Core-only `debian/` source dir for Ubuntu 26.04. Native effect intentionally absent (blocker below). |
+| `packaging/obs/_service` | Pins the immutable GitHub Release tarball per version and its SHA-256; never a raw git checkout. |
+| `packaging/systemd/` | `plasma-auto-tiler-tray.service` and `plasma-auto-tiler-planner.service` user units, mirroring `home-manager-module.nix`. Never auto-enabled by any recipe. |
+| `packaging/bump-version.sh` | Rewrites the pinned version across all recipes for a release (`--version X.Y.Z [--sha256 ...]`). |
+| `.obs/workflows.yml` | Single `tag_push` workflow running `trigger_services`. Inert until OBS provisioning exists. |
+
+## What gets installed
+
+Core (`plasma-auto-tiler`): `/usr/bin/plasma-auto-tiler`, the KWin script
+at `/usr/share/kwin/scripts/plasma-auto-tiler-kwin/` (exactly
+`metadata.json`, `contents/code/main.js`, `contents/config/main.xml`,
+`contents/ui/config.ui`; the bundle is prebuilt, recipes never run npm),
+`/usr/share/dbus-1/services/org.plasmaautotiler.Planner.service`,
+`/usr/lib/systemd/user/plasma-auto-tiler-{tray,planner}.service`, and the
+hicolor SVG icon.
+
+Native effect (`plasma-auto-tiler-native-effect`, where offered): exactly
+three plugins under the Qt6 plugin dir -
+`kwin/effects/plugins/plasma-auto-tiler-active-border.so`,
+`kwin/effects/configs/plasma-auto-tiler-active-border_config.so`, and
+`kwin/scripts/configs/plasma-auto-tiler-kwin_config.so`. JSON metadata is
+embedded in the `.so` files at compile time (`K_PLUGIN_CLASS_WITH_JSON` /
+`KWIN_EFFECT_FACTORY`), so no `.json` ships alongside; this matches the
+flake `installCheck` file set.
+
+## Enable, tray, and planner
+
+Recipes install files only. To use them:
+
+1. Enable the script: `kwriteconfig6 --file kwinrc --group Plugins --key
+   plasma-auto-tiler-kwinEnabled true`, then `qdbus org.kde.KWin /KWin
+   reconfigure`.
+2. Tray (optional): `systemctl --user enable --now
+   plasma-auto-tiler-tray.service`. The planner needs no enabling; D-Bus
+   activates `plasma-auto-tiler-planner.service` on demand.
+
+## Revert before removing (all managers)
+
+"Revert" means the Settings page buttons, not disabling the script.
+While the companion is installed, Settings offers Revert Shortcuts (restores
+KDE defaults for cleared shortcut bindings) and per-row Revert to KDE
+default (removes the local host key so the KDE default takes effect again).
+Press Revert before removing the companion or core: removal does not
+restore host keys or shortcut overrides. If you already removed without
+reverting, reinstall a compatible companion and press Revert. A core-only
+install has no Settings page. Changes from a previously installed companion
+can still persist and require restoration.
+Disabling the script (setting `plasma-auto-tiler-kwinEnabled=false` and
+reconfiguring KWin) is a separate step and does not restore host settings.
+
+Each recipe repeats this in its idiomatic post-removal message (RPM
+`%postun` echo on final erase only, pacman `post_remove`, Debian `postrm`
+on remove/purge).
+
+## KWin upgrades: policy and limitation
+
+Core never pins KWin, and the native package depends on KWin unversioned.
+This is deliberate: an exact `Requires` would hold host KWin security
+updates back (zypper proposes keeping the old KWin or removing the effect;
+dnf errors on the transaction; `pacman -Su` fails with a dependency
+break; apt holds the upgrade), while still not proving the loaded `.so`
+matches the running KWin. So:
+
+- After every KWin/Plasma upgrade, update the native-effect package to the
+  rebuild against the new headers before relying on the effect. Core tiling
+  keeps working without it.
+- KWin 6.7.5's [loader source](https://github.com/KDE/kwin/blob/v6.7.5/src/effect/effectloader.cpp)
+  checks the plugin IID before `loader.instance()` and returns null on a
+  mismatch. Its [factory header](https://github.com/KDE/kwin/blob/v6.7.5/src/effect/effect.h)
+  includes `KWIN_PLUGIN_VERSION_STRING` in that IID; distro builds confirmed
+  this metadata. A different-version effect is refused before instantiation.
+  KCMs run in the settings process. Missing/failed/removed-effect live
+  acceptance remains a separate user-owned 0.1 gate.
+- Residual risk (concrete): same-IID C++ ABI drift is not loader-guarded -
+  upstream KWin states effect ABIs are not stable. Only rebuilding covers
+  it (tracked via the `cmake(KWin)` BuildRequires). The existing versioned
+  IID already covers version changes; another version comparison would not
+  detect same-version distro ABI patches. Such patches require a rebuild.
+  RPM auto-generated ELF SONAME `Requires` are plain SONAME tokens with no
+  versions (confirmed in the real TW and F43 builds:
+  `libkwin.so.6()(64bit)`), so they do not block upgrades within the
+  SONAME; no dependency filtering is applied. See also the OBS rebuild
+  timing note below.
+
+## Without the companion: what still works
+
+Tiling, workspaces, shortcuts, and the planner keep working on core alone.
+What is missing: the script Configure page and the tray Settings action
+have no project page until the ABI-matched native-effect package is
+installed (the script's `X-KDE-ConfigModule` resolves only then; the Nix
+flake records the same limitation). This stays an open product question.
+Recommendation for user review: move the KWin-independent native KCMs to
+core (or a non-effect settings companion), leaving only the ABI-bound effect
+optional. This would preserve Settings and Revert without borders and could
+help Ubuntu. That ownership/build split is not implemented or approved.
+
+## Per-distro notes
+
+- openSUSE Tumbleweed (verified Oct 2026: `kwin6-devel` 6.7.5 with
+  `cmake(KWin)`, `kf6-extra-cmake-modules` 6.30.0, `kf6-*-devel` 6.30.0,
+  `qt6-base-devel`, `rust`/`cargo` 1.98.1, `systemd-rpm-macros`,
+  `kf6-kconfig`/`kf6-kcmutils` shipping the config/shell helpers). First
+  OBS target; rolling KWin means rebuild per snapshot.
+- Fedora 43/44 (verified Oct 2026 via updates repo: `kwin-devel` 6.7.5
+  with `cmake(KWin)`, `extra-cmake-modules` 6.30.0, `kf6-*-devel` 6.30.0,
+  `qt6-qtbase-devel`, `rust`/`cargo` 1.98.1, `systemd-rpm-macros`). Base
+  repos alone may carry older ECM/KDE stacks, so the OBS target must
+  resolve the updates repository; the spec's `>= 6.26.0` ECM floor fails
+  closed otherwise. Same spec as Tumbleweed via `%suse_version`/`%fedora`
+  conditionals.
+- Arch, AUR only (verified Oct 2026: `kwin` 6.7.5 ships headers, ECM
+  6.30.0, unprefixed `kconfig`/`kcmutils`/etc., `rust` 1.99 shipping cargo).
+  Split PKGBUILD; local AUR-shaped builds see the user's own KWin. There is
+  no OBS pacman repo and none is planned.
+- Ubuntu 26.04 core only (verified Oct 2026: `rustc`/`cargo` 1.93.1,
+  `debhelper` 13.31, `kwin-wayland`/`kwin-x11` and `kwin-dev` 6.6.x,
+  `libkf6config-bin`/`libkf6kcmutils-bin` shipping the helpers; core
+  `.deb` built end-to-end, see evidence above). Native effect blocked:
+  `extra-cmake-modules` 6.24 is below the hard 6.26 CMake floor, and
+  `nodejs` 22 is below the old build floor (irrelevant for core-only,
+  which never runs npm). The `Recommends:
+  plasma-auto-tiler-native-effect` in `debian/control` is aspirational
+  until that floor moves; apt ignores unresolvable Recommends.
+- KDE neon: no OBS target provisioning exists (upstream
+  openSUSE/open-build-service#19317); do not promise it.
+
+## OBS wiring (provisioning-gated, nothing created)
+
+**Blocked automation leg:** the workflow cannot upload sources: `trigger_services` only re-runs
+`_service` on the package sources already committed in OBS, so every
+release needs its sources updated there first. Until that happens the
+pinned checksum placeholder makes the source service fail closed; it is not
+a usable release pipeline even if the token is supplied. Keep OBS_TOKEN
+unset until the source handoff is resolved and tested.
+
+1. Maintainer creates the OBS account, one stable project, and the
+   `plasma-auto-tiler` package (unpublished test repo first), uploading
+   the spec, `debian/` files, and `_service` manually. (No PKGBUILD: Arch
+   is AUR-only.)
+2. With OBS_TOKEN still unset, push the release tag. GitHub publishes the
+   tarball and checksum; its OBS job reports an inert skip.
+3. For a manual source-service trial after that release, run
+   `packaging/bump-version.sh --version X.Y.Z --sha256 <64-hex-digest>` in
+   a packaging checkout, then commit the bumped spec, Debian files and
+   `_service` to the OBS package using `osc`. This is a manual fallback,
+   not completed tag-to-stable automation. Source services download and
+   verify the release archive before the network-free build runs.
+4. Once an automated source handoff is implemented and tested, configure
+   GitHub secret OBS_TOKEN (`<id>:<secret>`) and variable OBS_TRIGGER_URL.
+   The post-release webhook is tag-only and inert without its secret.
+   A repo-level webhook would race asset creation and must not be added.
+
+Two investigated mechanisms did not close the handoff: `branch_package`
+creates tag-suffixed packages rather than updating the chosen stable
+package; `verify_file` accepts a literal checksum, not a checksum-sidecar
+parameter. See the [OBS workflow guide](https://openbuildservice.org/help/manuals/obs-user-guide/cha-obs-scm-ci-workflow-integration)
+and [source-service guide](https://www.open-build-service.org/help/manuals/obs-user-guide/cha-obs-source-services).
+
+Rebuild timing honesty: OBS rebuilds after it sees new KWin build
+dependencies (default transitive rebuild), but DoD polling, queue, build,
+and publish latency are unbounded here, so a same-day distro KWin release
+can precede its rebuilt effect. The loose dependency plus the
+versioned-IID check allows version updates without an exact package pin.
+SONAME-breaking host changes and same-version ABI patches still need distro
+transaction/rebuild verification; no solver simulation of those cases was run.
+
+## Building locally (no OBS needed)
+
+- RPM: `rpmbuild -bs packaging/rpm/plasma-auto-tiler.spec` (needs the
+  release tarball as `Source0`; full builds need the distro deps above).
+- Arch: `makepkg --printsrcinfo` / `makepkg -s` from `packaging/arch/`
+  with the release tarball URL reachable.
+- Debian: copy the release tarball to
+  `plasma-auto-tiler_0.1.0.orig.tar.gz` beside its extracted directory
+  (adjust the version for later releases), overlay `packaging/debian/` as
+  `debian/` inside it, then run `dpkg-buildpackage -us -uc` there.
+- Version bump check: `packaging/bump-version.sh --version <current>`
+  must be a no-op.

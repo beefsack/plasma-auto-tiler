@@ -1,0 +1,25 @@
+# Tentative 0.1 OBS workflow. Not yet provisioned (no OBS account, token,
+# or package exists); inert until then. trigger_services only re-runs
+# _service on already-committed OBS package sources, so this workflow does
+# NOT deliver new recipes or checksums by itself: every release needs the
+# manual `osc` source update first (see docs/installation.md). Until that
+# lands, the pinned placeholders fail closed. See
+# scripts/trigger-obs-webhook.sh for the provisioning contract.
+#
+# The trigger script delivers a synthetic push event with
+# ref refs/tags/vX.Y.Z AFTER release.yml has published the GitHub Release,
+# so the _service download below always finds its release tarball (no race,
+# unlike a repo-level tag webhook). No tag-name allowlist exists in OBS
+# filters, so "stable only" rests on that post-release delivery plus the
+# pinned per-version asset URL in packaging/obs/_service: any tag_push
+# re-runs the same pinned download idempotently and can never float to
+# another source. One stable package; the release tag builds only.
+workflows:
+  - steps:
+      - trigger_services:
+          # TODO(provisioning): replace with the real OBS project/package
+          # once the maintainer creates them (unpublished test repo first).
+          project: home:TODO
+          package: plasma-auto-tiler
+    filters:
+      event: tag_push

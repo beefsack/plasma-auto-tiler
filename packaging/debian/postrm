@@ -1,0 +1,15 @@
+#!/bin/sh
+# Idiomatic post-removal guidance: removal never touches kwinrc, so an
+# enabled script would keep pointing at files that are no longer installed.
+set -e
+
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+  echo "plasma-auto-tiler removed. Removal does not restore host keys or shortcut"
+  echo "overrides: if you did not press Revert in Settings first (Revert Shortcuts,"
+  echo "plus Revert to KDE default on changed host rows), reinstall a compatible"
+  echo "companion and press Revert (core-only has no Settings page)."
+fi
+
+#DEBHELPER#
+
+exit 0

@@ -1,0 +1,64 @@
+#!/usr/bin/make -f
+# Tentative 0.1 core-only recipe for Ubuntu 26.04 (see
+# docs/installation.md). The native effect is intentionally absent here:
+# resolute ships extra-cmake-modules 6.24, below this repo's hard 6.26
+# CMake floor. Core needs only cargo/rustc plus file installs.
+#
+# Source contract: build from the immutable GitHub Release tarball produced
+# by release.yml (scripts/build-source-archive.sh), which already contains
+# the prebuilt KWin bundle and vendored Rust crates. Never runs npm, never
+# touches the network.
+
+export CARGO_NET_OFFLINE = true
+
+%:
+	dh $@
+
+# The tray unit ships [Install] so the user can opt in with
+# `systemctl --user enable`, but the package itself must never auto-enable
+# it on install (the tray is opt-in everywhere else too). --no-enable keeps
+# the daemon-reload bookkeeping while dropping the enable step (verified:
+# the generated postinst enables otherwise).
+override_dh_installsystemduser:
+	dh_installsystemduser --no-enable
+
+# dh_clean treats *.orig as patch debris and would delete cargo vendor's
+# original-manifest backups (vendor/*/*.orig), which the offline build
+# needs for checksum calculation. Exclude the vendor tree (verified: a
+# plain `debian/rules clean` visibly deletes them otherwise). Cargo's
+# target/ is not standard dh_clean cruft, so remove it explicitly to keep
+# the source package clean.
+override_dh_clean:
+	dh_clean -Xvendor
+	rm -rf target
+
+override_dh_auto_build:
+	# Fail closed: the recipe version must match the release tarball.
+	test "$$(cat VERSION)" = "$$(dpkg-parsechangelog -S Version | cut -d- -f1)"
+	grep -Eq '^[0-9a-f]{40}([0-9a-f]{24})?$$' SOURCE_REV
+	grep -Fq "$$(cat SOURCE_REV)" kwin/contents/code/main.js
+	test -d vendor
+	# Offline Rust core build, exactly per scripts/build-source-archive.sh.
+	# (The --config directory value carries inner double quotes: cargo's
+	# CLI expression parser requires quoted strings.)
+	cargo --config 'source.crates-io.replace-with="vendored-sources"' \
+	      --config "source.vendored-sources.directory=\"$$PWD/vendor\"" \
+	      build --release --locked --offline -p plasma-auto-tiler
+
+override_dh_auto_install:
+	install -Dm755 target/release/plasma-auto-tiler debian/plasma-auto-tiler/usr/bin/plasma-auto-tiler
+	scriptdir=debian/plasma-auto-tiler/usr/share/kwin/scripts/plasma-auto-tiler-kwin; \
+	install -Dm644 kwin/metadata.json "$$scriptdir/metadata.json"; \
+	install -Dm644 kwin/contents/code/main.js "$$scriptdir/contents/code/main.js"; \
+	install -Dm644 kwin/contents/config/main.xml "$$scriptdir/contents/config/main.xml"; \
+	install -Dm644 kwin/contents/ui/config.ui "$$scriptdir/contents/ui/config.ui"
+	install -d debian/plasma-auto-tiler/usr/share/dbus-1/services
+	sed 's|@out@|/usr|' nix/org.plasmaautotiler.Planner.service \
+	  > debian/plasma-auto-tiler/usr/share/dbus-1/services/org.plasmaautotiler.Planner.service
+	chmod 644 debian/plasma-auto-tiler/usr/share/dbus-1/services/org.plasmaautotiler.Planner.service
+	install -Dm644 packaging/systemd/plasma-auto-tiler-tray.service \
+	  debian/plasma-auto-tiler/usr/lib/systemd/user/plasma-auto-tiler-tray.service
+	install -Dm644 packaging/systemd/plasma-auto-tiler-planner.service \
+	  debian/plasma-auto-tiler/usr/lib/systemd/user/plasma-auto-tiler-planner.service
+	install -Dm644 assets/icons/plasma-auto-tiler.svg \
+	  debian/plasma-auto-tiler/usr/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg

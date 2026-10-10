@@ -1,0 +1,7 @@
+plasma-auto-tiler (0.1.0-1) unstable; urgency=medium
+
+  * Tentative 0.1 core-only recipe for Ubuntu 26.04 offline preparation.
+    Native effect omitted: resolute extra-cmake-modules 6.24 is below the
+    hard 6.26 CMake floor.
+
+ -- Plasma Auto Tiler Contributors <noreply@example.com>  Sat, 10 Oct 2026 00:00:00 +0000

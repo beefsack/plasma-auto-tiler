@@ -1,0 +1,11 @@
+# Pacman install scriptlet for plasma-auto-tiler-native-effect.
+# The Settings page (with Revert) lives in this package: press Revert
+# before removing, or reinstall a compatible companion and press Revert
+# after, otherwise host keys and shortcut overrides stay changed.
+
+post_remove() {
+  echo "plasma-auto-tiler-native-effect removed. Removal does not restore host keys"
+  echo "or shortcut overrides: if you did not press Revert in Settings first"
+  echo "(Revert Shortcuts, plus Revert to KDE default on changed host rows),"
+  echo "reinstall a compatible companion and press Revert."
+}

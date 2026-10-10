@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Tentative 0.1 OBS source service. Not yet provisioned (no OBS account,
+     project, or package exists); see docs/installation.md.
+  - Consumes the immutable GitHub Release source tarball produced by
+    release.yml AFTER the tag push (obs-trigger runs on needs:
+    source-release), including the prebuilt KWin bundle and vendored Rust
+    crates. Never tar_scm: a raw git checkout lacks vendor/ and the prebuilt
+    bundle, and the source-service environment has no pinned Node 24 /
+    cargo-vendor contract.
+  - This file alone automates nothing: the workflow step trigger_services
+    only re-runs these services on the package sources already committed in
+    OBS. Every release therefore needs a manual `osc` source update (bumped
+    recipes plus the real sidecar checksum below) BEFORE the trigger can do
+    anything useful; until then the placeholders fail closed. See
+    docs/installation.md for the blocked automation leg and manual fallback.
+  - Services run in listed order at source time: server-side on every commit
+    and on the tag_push workflow's trigger_services step, locally via
+    `osc service run`. Generated files carry the `_service:` prefix; the
+    verify_file entry below names the download_url output accordingly.
+  - buildtime mode is deliberately NOT used: build workers have no network
+    (always true on build.opensuse.org), so the download must happen at
+    source time, not inside the build job.
+  - No tag-name allowlist exists server-side (OBS documents no tag filter
+    for tag_push), so "stable only" rests on process: the webhook fires
+    only after a GitHub Release for a vX.Y.Z tag, and this file pins the
+    exact release asset per version. A stray tag_push re-runs the same
+    pinned download idempotently; it can never float to another source.
+  - Release flow per version: push tag vX.Y.Z -> release.yml builds and
+    publishes the tarball plus .sha256 sidecar with OBS_TOKEN unset ->
+    maintainer commits bumped sources and the real digest to OBS for a
+    manual service trial. Automatic post-release source handoff is blocked;
+    supplying OBS_TOKEN alone does not resolve it.
+-->
+<services>
+  <service name="download_url">
+    <param name="url">https://github.com/beefsack/plasma-auto-tiler/releases/download/v0.1.0/plasma-auto-tiler-0.1.0.tar.gz</param>
+  </service>
+  <service name="verify_file">
+    <param name="file">_service:download_url:plasma-auto-tiler-0.1.0.tar.gz</param>
+    <param name="verifier">sha256</param>
+    <!-- Filled from the published dist/plasma-auto-tiler-0.1.0.tar.gz.sha256
+         sidecar at release time via the bump-version.sh sha256 option.
+         Non-hex on purpose until then: the service fails closed instead of
+         silently trusting any download. -->
+    <param name="checksum">REPLACE-WITH-RELEASE-SIDECAR-SHA256</param>
+  </service>
+</services>
