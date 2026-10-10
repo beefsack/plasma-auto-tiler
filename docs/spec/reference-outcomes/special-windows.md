@@ -42,8 +42,7 @@ transient (no dialog flag) is a different fixture and is not claimed.
 - Then bspwm: D floats centered (transient rule plus dialog-type
   center); no modal mechanism exists so no fence.
   `S(S-bsp-spc)`.
-- Then i3: D floats (transient-for plus dialog-type branches).
-  Frame and fence TBD. `S(S-i3-min)` + `S(S-i3-ins)`; queued.
+- Then i3: D floats (transient-for plus dialog-type branches; modal adds no branch beyond the same float admission, so the modal leg matches). Frame TBD (F: D request geometry / leader rect unstated, selecting stored-geometry per `floating.c:330` vs parent-relative leader-centered per `:372-378` vs workspace-centered fallback; output containment per `:387-403` unrecorded). A later parent-focus request succeeds with no modal fence. `S(S-i3-min)` + `S(S-i3-flt-toggle)`; queued (placement leg).
 - Then xmonad/Tall+Navigation2D: D floats at its managed native
   geometry with newcomer focus; the modal flag is inert (no branch),
   so the modal leg matches. `S(S-xmo-float)`.
@@ -567,7 +566,7 @@ All fresh variants below reset the client and WM state independently.
   `S(S-bsp-spc)` + `S(S-bsp-layout)` + `S(S-bsp-admit)`.
 - Then i3: E floats (min==max branch); no maximize verb/state exists
   (maximize is derived-only), so the born-maximized/unmaximize legs have
-  no counterpart. Client ack TBD. `S(S-i3-min)` + `S(S-i3-max)`.
+  no counterpart and never run. `S(S-i3-min)` + `S(S-i3-max)`.
 - Then xmonad/Tall+Navigation2D: E floats (fixed/transient manage); no
   maximize command/state exists (`Full` is a workspace layout, not
   per-window maximize), so the born-maximized/unmaximize legs have no
@@ -783,8 +782,8 @@ All fresh variants below reset the client and WM state independently.
   `S(S-hyp-float)`.
 - Then bspwm: No workspace-mode counterpart per R-FLT-04 (no workspace tiling toggle; float is per-window, so enable/F-arrival, changed-hints/predicate, override, and maximized legs never run); `S(S-bsp-layout)`.
 - Then i3: no workspace-mode counterpart per R-FLT-04; F-arrival,
-  changed-hints/predicate, override, and maximized legs share the absence.
-  Outcome TBD. `S(S-i3-wsmode)`.
+  changed-hints/predicate, override, and maximized legs share the absence
+  with no applicable journey. `S(S-i3-wsmode)`.
 - Then xmonad/Tall+Navigation2D: no workspace-mode counterpart per
   R-FLT-04 (no workspace tiling toggle in source; float is per-window, so enable/F-arrival, changed-hints/predicate, override, and maximized legs never run). `S(S-xmo-layout)`.
 - Then sway: no workspace-mode counterpart per R-FLT-04 (no workspace tiling toggle; float is per-window, so enable/F-arrival, changed-hints/predicate, override, and maximized legs never run with no applicable journey). `S(S-sway-wsmode)`.
@@ -874,12 +873,7 @@ All fresh variants below reset the client and WM state independently.
   E is absent (dump reflects live state). Store-fault (missing/unreadable/
   corrupt/v1/mismatched) and complete-vs-partial omission variants have no
   counterpart in the dump/load inventory (orderly fields only). `S(S-bsp-restore)`.
-- Then i3: restart carries the layout file and re-execs (percents, focused
-  flag/activation, floating geometry round-trip); fixed E stays floating
-  and explicitly tiled E stays tiled. Re-floated E restores as floating and
-  closed E is absent. Store-fault/ID/omission variants have no counterpart
-  in the layout-file inventory (in-place restart fields only). Fresh-login
-  session wiring TBD. `S(S-i3-restart)`.
+- Then i3: fixture fresh start (no layout file stated): missing file skips restore (`tree.c:71-74`) into `tree_init` (`main.c:935-937`) plus ordinary manage (`manage.c:44-68`), so fixed E re-floats via min==max and a pre-stop explicit tile is recomputed (lost); unreadable/corrupt fall back the same way (slurp fail `:77-80` / append fail `:95-98` to init); ID mismatch finds no swallow (`manage.c:282-283,357-376`, `restart_mode` flag `load_layout.c:583-584`) into ordinary manage, recomputed; closed E has no window to swallow, absent; re-floated E restores floating via the orderly fields plus placeholder open (`tree.c:116`). Orderly `--restart` with the file preserves tiling via placeholders (out-of-fixture data point). v1 no-tile field and partial inventory omitting a live hidden client have no counterpart in the whole-tree layout dump (no versioned membership/partial semantics). `S(S-i3-restart)` + `S(S-i3-min)`.
 - Then xmonad/Tall+Navigation2D: restart resumes the windowset including
   the floating map with Tall recalculated; fixed E carries as an ordinary
   float and explicitly tiled E (sink clears the map) stays tiled. Re-floated

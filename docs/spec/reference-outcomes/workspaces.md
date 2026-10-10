@@ -153,7 +153,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then COSMIC: Reuses the existing trailing empty (B lands sole; refresh then ensures a fresh trailing empty); `SendToLastWorkspace` leaves focus (falls back to A), `MoveToLastWorkspace` follows with B; numeric `0` is a separate binding (index 9), not the trailing-empty action; `S(S-cos-send)` + `S(S-cos-focusfix)`
 - Then Hyprland/Dwindle: Unsupported action parameter here: no trailing-empty shortcut exists in source (workspaces are explicit find-or-create; numeric `0` is an invalid workspace ID, so the `0` send resolves invalid and the move errors with no transfer: tree and focus unchanged). The only empty-related resolver is first-empty `empty`, never trailing-empty. `S(S-hyp-movews)` + `S(S-hyp-ws)`
 - Then bspwm: Unsupported action parameter here: no trailing-empty shortcut in source (desktops are explicit-only with explicit `desktop -r` removal), so the trailing-empty/`0` send has no built-in equivalent and never runs (no applicable journey); `S(S-bsp-send)` + `S(S-bsp-ws)`
-- Then i3: Unsupported action parameter here: no trailing-empty shortcut in source (`move to workspace number` targets explicit workspaces); outcome TBD (no built-in equivalent for the trailing-empty parameter); `S(S-i3-movews)`
+- Then i3: Unsupported action parameter here: no trailing-empty shortcut in source (`move to workspace number` targets explicit workspaces via `workspace_get` create-on-demand; explicit `0` names workspace `0`, a different target out of scope for reuse, never the trailing empty); the trailing-empty send has no applicable journey and never runs; `S(S-i3-movews)` + `S(S-i3-ws)`
 - Then xmonad/Tall+Navigation2D: Unsupported action parameter here: no trailing-empty shortcut in source (workspaces explicit; `shiftWin` to a non-member tag returns the input unchanged, so the trailing-empty/`0` send never runs); `S(S-xmo-shift)`
 - Then sway: Unsupported action parameter here: no trailing-empty shortcut in source (`move to workspace number` targets explicit workspaces with find-or-create; `0` names explicit workspace `0`, never the trailing empty), so the trailing-empty send has no applicable journey and never votes here; the explicit-`0` input instead creates workspace `0` and moves B there sole via the ordinary number path (different target, out of scope for reuse). `S(S-sway-movews)`
 - Then qtile/Columns: Unsupported action parameter here: no trailing-empty shortcut in source (groups are explicit 1-9; `togroup` takes explicit names only and an unknown group raises before any hide/remove/add, so the `0`/trailing-empty send never runs and tree and focus stay unchanged); `S(S-qti-group)`
@@ -329,7 +329,7 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then COSMIC: Forward B arrives floating reusing its last tiled origin with clamped size (exact frame TBD); source reflows; return is fresh tiled admission at A (B after A); `SendToWorkspace` leaves focus (source-MRU fallback each leg), `MoveToWorkspace` follows with B; `S(S-cos-send)` + `S(S-cos-last)` + `S(S-cos-axis)` + `S(S-cos-newgroup)` + `S(S-cos-focusfix)`
 - Then Hyprland/Dwindle: Forward TBD: no workspace floating mode exists in source to map `WS2 floating` onto (arrival dispatch is per-window by the mover's own float state, which this fixture never changes), so no floating arrival is recorded; return anchor is sole A (A geometry unrecorded, so axis TBD), B before/after A TBD (cursor half); exact frames TBD; `S(S-hyp-movews)`
 - Then bspwm: no-counterpart (no workspace floating mode exists in source: float is per-window and desktop layout is tiled/monocle only, so the forward send to a floating workspace never runs and the return leg is conditional on that unestablished forward); `S(S-bsp-float)` + `S(S-bsp-layout)`
-- Then i3: Forward TBD: no workspace floating mode exists in source to map `WS2 floating` onto (float is per-window); arrival dispatch for that parameter unevidenced, so the return leg is conditional on an unestablished forward; `S(S-i3-movews)`
+- Then i3: No workspace-mode counterpart in source (no workspace floating mode exists: float is per-window; `workspace_layout` default/stacked/tabbed only), so the forward send to a floating workspace never runs and the return leg, conditional on that unestablished forward, never runs either; no applicable journey; `S(S-i3-wsmode)` + `S(S-i3-movews)`
 - Then xmonad/Tall+Navigation2D: no workspace-mode counterpart (no workspace floating mode in source: float is per-window with layout Tall/Mirror/Full plus floating layer only, so the forward/return send never runs); `S(S-xmo-float)` + `S(S-xmo-layout)`
 - Then sway: No workspace-mode counterpart in source (no workspace floating mode exists: float is per-window; `workspace_layout` default/stacked/tabbed only), so the forward send to a floating workspace never runs and the return leg, conditional on that unestablished forward, never runs either; no applicable journey. `S(S-sway-wsmode)`
 - Then qtile/Columns: no-counterpart (no workspace floating mode exists in source: float is per-window and Columns always tiles plus a floating layer, so the `WS2 floating` target has no faithful start and no floating-workspace transfer journey ever runs; an ordinary `togroup` would admit B tiled via the ordinary anchor, which substitutes a different target and never votes here); `S(S-qti-wstoggle)` + `S(S-qti-group)`
@@ -729,13 +729,7 @@ verb inventory); selected intent and doc assertions are never evidence.
   unchanged (no focus write anywhere in the non-active path).
   `S(S-hyp-ws)` + `S(S-hyp-wsmove-fs)`
 - Then bspwm: whole-desktop reassignment via `desktop -m MONITOR` (`transfer_desktop` unlink/append-insert; the hidden WS2 move leaves L showing WS1 and R showing WS3 with WS2 present hidden, no focus write on either follow leg since the moved desktop was not active); `S(S-bsp-ws)`
-- Then i3: whole-workspace detach/attach via the matched-window form
-  `[workspace="^WS2$"] move workspace to output R` (criteria targeting
-  iterates matched windows' workspaces; the bare
-  current-workspace invocation never substitutes); the emptied source
-  shows its next focus-stack entry, created if last; destination focus
-  when the source was hidden stays TBD. `S(S-i3-ws)`;
-  hidden-source focus queued.
+- Then i3: whole-workspace detach/attach via the matched-window form `[workspace="^WS2$"] move workspace to output R` (criteria targeting walks all cons including hidden, so hidden WS2 resolves; the bare current-workspace invocation moves the focused workspace only and never substitutes); L keeps showing WS1 and R keeps showing WS3 with WS2 present hidden (the hidden move path issues no `workspace_show`, so destination and source focus are unchanged at workspace level). `S(S-i3-ws)`.
 - Then xmonad/Tall+Navigation2D: no-counterpart on the ownership
   fixture (no workspace-ownership move verb exists); independently,
   `greedyView` reassigns display/view with a hidden swap, never an
@@ -1116,11 +1110,16 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   to the target before removing. Under that variant the `last` history
   walk applies; exact first/second targets stay TBD. `S(S-bsp-monrm)` +
   `S(S-bsp-ws)`; variant targets queued.
-- Then i3: the displaced workspace migrates to L with its name preserved and
-  showing it records WS2 as previous (same-workspace re-show excluded);
-  first previous on L selects WS2 with its descended remembered focus.
-  Reconnect return placement and the exact second toggle stay TBD.
-  `S(S-i3-ws)`.
+- Then i3: the displaced workspace migrates to L with its name preserved via
+  `move_content` (first-remaining-output attach with floating-coordinate fix);
+  the displacement `workspace_show` early-returns on the moved workspace
+  (same-workspace re-show), so it records no previous, and reconnect assigns
+  fresh via `init_ws_for_output` without consulting previous-workspace history
+  (no return affinity under the profile with no assignments; no previous-ID
+  clearing exists, stale names recreate via `workspace_get`). First/second
+  previous targets stay TBD (F: the global focus chain and previous name at
+  disconnect are unstated; the Given per-L previous WS1 does not fix i3's
+  single global history). `S(S-i3-ws)`; targets queued.
 - Then xmonad/Tall+Navigation2D: no-counterpart (no back-and-forth or
   previous-workspace verb in the profiled key inventory). `S(S-xmo-ctl)`.
 - Then sway: output removal evacuates each workspace to the priority
@@ -1356,9 +1355,9 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
 - Then i3: next/previous resolve via the wrap fallback through the same
   no-follow path (both runs stay; mover focus restored to the source);
   attachment is after the target focus. The emptied source is retained
-  while visible and closes once empty and invisible. Exact focused
-  container and frames TBD. `S(S-i3-movews)` + `S(S-i3-ws)` +
-  `S(S-i3-wsretain)`; focus/frames queued.
+  while visible and closes once empty and invisible; the restored focus is
+  the emptied source workspace node. `S(S-i3-movews)` + `S(S-i3-ws)` +
+  `S(S-i3-wsretain)`.
 - Then xmonad/Tall+Navigation2D: no-counterpart (no relative-send verb in
   the profiled core+Navigation2D inventory; relative shift needs CycleWS).
   `S(S-xmo-ctl)`.
@@ -1953,10 +1952,7 @@ baseline above is unchanged. Record:
   transfer drops the moved desktop's history entries. `S(S-bsp-ws)` +
   `S(S-out07-bsp-mon)` + `S(S-bsp-mondir)` + `S(S-bsp-wsstay)` +
   `S(S-bsp-wshist)`; identity/focus queued.
-- Then i3: no-counterpart (no directional whole-workspace verb exists:
-  `move workspace to output` takes explicit output names only; the
-  directed-output path is window-only and `tree_move` refuses
-  workspaces). Unsupported outcome TBD. `S(S-i3-ws)` + `S(S-i3-wsdir)`.
+- Then i3: `move workspace to output up` resolves directionally (the output word `up` maps via `get_output_next_wrap` to the closest overlapping output above, wrapping to the farthest opposite when none; U1/U2 both overlap with equal y, so first-enumerated wins). The up-migration runs via `workspace_move_to_output` with source refill when last and destination `workspace_show` focusing the moved B. Exact U1/U2 identity and displaced views stay TBD (F: output list order and U1/U2 contents unstated). `S(S-i3-ws)` + `S(S-i3-wsdir)`; identity/views queued.
 - Then xmonad/Tall+Navigation2D: no-counterpart (no workspace-ownership
   move verb exists; `shift`/`shiftWin` take explicit tags only, and no
   directional workspace verb exists in the profiled inventory, so migration selection never runs).

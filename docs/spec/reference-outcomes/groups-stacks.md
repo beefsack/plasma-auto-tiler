@@ -93,9 +93,7 @@ evidence.
 - Then bspwm: no-counterpart (no stack/tab group in source; monocle is a
   desktop layout, not tabs, so neither leg has a faithful start).
   `S(S-bsp-layout)`.
-- Then i3: TBD (tabbed parent plus directional `move` inventory sourced,
-  but join order/active and the sequential leave outcome are untraced).
-  `S(S-i3-grp)` + `S(S-i3-move)`; queued.
+- Then i3: joins via `move left` into the tabbed parent appended last as `S[A,C,B*]` with B active (bordering-branch descend picks C for the LEFT step into HORIZ tabbed,   `AFTER` insert via `insert_con_into` with global focused preserved despite stack surgery); then leaves via `move right` promoting B after the group to a new tile right as `H[S[A,C],B*]` with focus staying B (no same-orientation swap at the tail: lone-last-child escapes via the above-container `AFTER` insert; group retained as `[A,C]` with survivor active A, no dissolve; single-child wrappers persist). `S(S-i3-grp)` + `S(S-i3-move)`.
 - Then xmonad/Tall+Navigation2D: no-counterpart (core layouts Tall,
   Mirror Tall, Full only; no tab-toggle/join/leave verb in this profile).
   `S(S-xmo-layout)` + `S(S-xmo-core-nav)`.

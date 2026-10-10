@@ -237,8 +237,7 @@ ancestry claims. Ours cells cite the Engine move rules at `9241c94`
 - Then Hyprland/Dwindle: A enters the V group at the focal-hit leaf, not the remembered child: the 1px-right focal lands inside V with no single-window partner override (neighbor is a group node), and the override focal resolves via closest-node distance with no MRU anchor, so A splits the focal-hit leaf; no whole-group swap or beside-wrap; focus stays A (non-silent); exact B-vs-C leaf TBD (F: A's mid-height vs the B/C divider plus admission order unrecorded, so remembered-C vs geometric leaf is not established). `S(S-hyp-move)` + `S(S-hyp-ins)`; leaf queued.
 - Then bspwm: A swaps with leaf C, not the whole V group; C wins the
   equal-distance tie by history, and focus stays A. `S(S-bsp-move-target)`.
-- Then i3: A enters the V group; exact index (remembered C vs edge) TBD.
-  `S(S-i3-move)`.
+- Then i3: A enters the V group after the remembered C as `V[B,C,A*]` (bordering-branch descend picks the focus-head child C for the RIGHT step into VERT, `AFTER` insert on orientation mismatch via `insert_con_into`); not a whole-group swap or beside-wrap; focus stays A. `S(S-i3-move)`.
 - Then xmonad/Tall+Navigation2D: fixture-inapplicable (flat Tall has no
   nested V group). `S(S-xmo-layout)`.
 - Then sway: A enters the V group at index 1 before the remembered C as `V[B,A*,C]` (perpendicular reparent to the MRU active child C; not a whole-group swap or beside-wrap); focus stays A. `S(S-sway-move)`.

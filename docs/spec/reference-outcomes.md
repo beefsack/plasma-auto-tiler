@@ -1422,7 +1422,9 @@ Legend:
   switch per `S(S-i3-ws)` @903bcd518df32b0e055b17f5da3f988a0187fd3d
 - `S-i3-flt-toggle` i3:src/floating.c:277-281,328-342,367 (`floating_enable`
   detaches to a workspace floating wrapper framed from stored geometry with
-  size clamp) and :419-447 (`floating_disable` inserts after the
+  size clamp) and :372-383 (leader-centered else workspace-centered fallback
+  when geometry is (0,0)) and :387-403 (output containment fix with
+  workspace re-center) and :419-447 (`floating_disable` inserts after the
   tiling-focused descendant with percent reset, no old-slot restore) and
   src/commands.c:1142-1168 (float toggle dispatch)
   @903bcd518df32b0e055b17f5da3f988a0187fd3d
@@ -1430,7 +1432,9 @@ Legend:
   no float-only guard, then pushes) and src/output.c:87-123 (only floating
   stickies move to the visible workspace) and src/ewmh.c:146-155 (sticky
   effective only when floating) and src/manage.c:476-487 (admission sticky
-  hints) and src/load_layout.c:578-580 (serialized `sticky` on restart)
+  hints) and src/load_layout.c:578-580 + src/ipc.c:645-646
+  (serialized `sticky` round-trip on restart) and src/con.c:1388-1394 +
+  src/floating.c:815-835 (same-output sticky push retains the frame)
   @903bcd518df32b0e055b17f5da3f988a0187fd3d
 - `S-i3-fs` i3:src/con.c:1188-1309 (fullscreen toggle/enable/disable is a
   mode flag, tree retained; enable focuses the target) and
@@ -1438,7 +1442,9 @@ Legend:
   (client FULLSCREEN message uses the same toggle) and
   src/render.c:126-138,253-268 (overlay render; floating blocked except popup
   modes) and src/tree.c:515-520 (directional focus from fullscreen drops to
-  workspace level) @903bcd518df32b0e055b17f5da3f988a0187fd3d
+  workspace level) and src/commands.c:1431-1481 (criteria `focus` via
+  `con_activate_unblock`) and src/con.c:302-330 (unblock disables covering
+  fullscreen, then activates) @903bcd518df32b0e055b17f5da3f988a0187fd3d
 - `S-i3-max` i3:parser-specs/commands.spec:226-262 (fullscreen/sticky/
   floating verbs, no maximize verb) and src/con.c:428-485 (maximized derived
   from layout) and src/x.c:831-866 (hints written to the client only)
@@ -1470,7 +1476,8 @@ Legend:
 - `S-i3-outmove` i3:src/move.c:206-253 (`move_to_output_directed`: closest output
   in direction, visible workspace, `attach_to_workspace`, mover-focused follow via
   `workspace_show`) and :179-199 (`attach_to_workspace`: RIGHT/DOWN to HEAD,
-  else TAIL; focus TAIL; `workspace_layout` wrapper honored) and :259-282,342-347
+  else TAIL; focus TAIL; direct workspace insert with no `workspace_attach_to`
+  wrapper on this path) and :259-282,342-347
   (lone/single-child workspace falls back to output-directed; workspace-level
   no-swap falls back to output-directed)
   @903bcd518df32b0e055b17f5da3f988a0187fd3d
@@ -2077,8 +2084,8 @@ Legend:
   src/commands.c:1174-1200 (`cmd_split` via `tree_split` VERT/HORIZ, `t`
   toggles the current orientation)
   @903bcd518df32b0e055b17f5da3f988a0187fd3d
-  (verb and orientation-set legs; override interaction with automatic
-  admission and persistence stay TBD)
+  (verb and orientation-set legs; `tree_split` wraps immediately with
+  percent carry and the wrapper persists for later admissions)
 - `S-cos-tilefocus` cosmic-comp:src/shell/layout/tiling/mod.rs:1835-2087
   (`next_focus`: `In` descends to the remembered else first child, `Out`
   returns the parent group, directional orientation walk with geometric
@@ -3357,16 +3364,28 @@ Legend:
   src/commands.c:1068-1115 (`move workspace to output` dispatch) and
   parser-specs/commands.spec:165-183 (next/prev/back_and_forth grammar)
   and :293-296 (relative move-to-workspace) and :375-433 (relative and
-  whole-workspace move grammar)
+  whole-workspace move grammar) and src/randr.c:860-918 (`move_content`:
+  disconnect evacuates to the first output, empty-unfocused destroyed,
+  floating fix, focus follows the moved focused con, docks moved) and
+  :456-525 (`init_ws_for_output`: reconnect assigns by assignment else
+  first-assigned else first-free, no identity/affinity store, no previous
+  consult) and :80-99 (`get_first_output`: primary else first active)
   @903bcd518df32b0e055b17f5da3f988a0187fd3d
-- `S-i3-wsdir` i3 whole-workspace output grammar is name-only:
-  i3:parser-specs/commands.spec:445-453 (`MOVE_WORKSPACE_TO_OUTPUT_WORD`
-  takes `output = word` only, no direction) + src/commands.c:1023-1115
+  (disconnect evacuates to the first remaining output; reconnect is fresh
+  assignment, never return affinity)
+- `S-i3-wsdir` i3:parser-specs/commands.spec:445-453 (`MOVE_WORKSPACE_TO_OUTPUT_WORD`
+  takes `output = word`, admitting directional words) + src/output.c:33-50
+  (`get_output_from_string` maps left/right/up/down via
+  `get_output_next_wrap`) + src/randr.c:225-246 (`get_output_next_wrap`:
+  closest in direction else farthest-opposite wrap) and :259-319
+  (`get_output_next`: closest by coordinate with x/y-overlap gate,
+  first-enumerated ties) + src/commands.c:1023-1115
   (`user_output_names_find_next` matches explicit names cyclically) +
-  src/move.c:206-253 (`move_to_output_directed` is the window-only
-  directed path) and :266-269 (`tree_move` refuses `CT_WORKSPACE`)
+  src/move.c:266-269 (`tree_move` refuses `CT_WORKSPACE` on the window
+  directional path only)
   @903bcd518df32b0e055b17f5da3f988a0187fd3d
-  (no directional whole-workspace verb; window moves never substitute)
+  (the `move workspace to output` word resolves directionally at runtime;
+  window moves never substitute)
 - `S-i3-stickyshow` i3:src/workspace.c:562-567 (`workspace_show` tail
   pushes floating sticky windows to the now-visible workspace after
   focusing) + `S(S-i3-sticky)` push filter (tiling cons skipped)
@@ -4601,9 +4620,17 @@ Legend:
   (`--restart` consumes the file on re-exec only) +
   src/load_layout.c:594-595 (percent readback), :574-575,763-764
   (focused flag and activation), :518-534 (floating geometry readback) +
-  src/ipc.c:413,431,508-519,628-630 (dumped percent/focus/rect fields)
+  src/ipc.c:413,431,508-519,628-630 (dumped percent/focus/rect fields) +
+  src/manage.c:44-68 (`manage_existing_windows` re-runs ordinary manage
+  over mapped windows on every start) + src/main.c:1121 (startup call) +
+  src/manage.c:282-283 (layout matching only with a restart file) +
+  src/tree.c:66-123 (restore with missing/slurp/append fallback to init,
+  placeholder open at :116) + src/main.c:923-937 (layout-path consume else
+  `tree_init`) + src/load_layout.c:583-584 (`restart_mode` swallow flag)
   @903bcd518df32b0e055b17f5da3f988a0187fd3d
-  (in-place layout-file restart; fresh-login session wiring untraced)
+  (in-place layout-file restart; fresh start without the file recomputes
+  admission, losing pre-stop explicit tiles; whole-tree dump has no
+  versioned membership/partial semantics)
 - `S-nir-rst` niri:niri-ipc/src/lib.rs:196-204 (`Quit` exits) and
   :936-947 (`LoadConfigFile` reloads the current/new config file only;
   no layout dump or re-exec verb in the full `Action` enum) +
