@@ -19,6 +19,8 @@ decisions of 2026-09-24 are under
   leaves tiling working and KWin stable. Other live checks may ship as listed
   known issues provided none crashes or silently stops tiling; no separate
   dogfood period. Includes these pending pieces:
+  - [OPEN-requirement triage and live-check gate](research/release-0.1-triage.md):
+    proposal awaiting user decisions.
   - Classify pending live checks into must-pass versus known-issue-allowed.
   - Triage the 60 OPEN requirements into 0.1-relevant (touches a must-pass
     core journey, or current behavior is undefined/refusal/surprising) versus
