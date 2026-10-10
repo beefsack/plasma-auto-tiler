@@ -2327,13 +2327,14 @@ decisions of 2026-09-24 are under
   Linux/macOS session: FancyWM core submodules, niri/sway/river/awesome/dwm
   source analysis (web-only now). Keep it updated as projects are studied.
   [Evidence](changes/archive/prior-art-catalogue.md).
-- P1 | Non-native tiler host-interaction research | User 2026-10-09: after
-  the reference-matrix per-WM source-fill passes finish. Study tilers that run
-  on top of a host WM (KWin scripts, GNOME extensions, Windows and macOS
-  tilers): host interaction, keybind capture, custom rendering, workspaces,
-  window control hooks/APIs, and user reception (polished/native-feeling vs
-  janky/unreliable). Output: lessons for how we interact with each host.
-  Builds on the [prior-art catalogue](research/prior-art.md).
+- P1 | Non-native tiler host-interaction research | Delivered 2026-10-10:
+  [report](research/non-native-tiler-host-interaction.md) covers KWin, GNOME,
+  Windows and macOS interaction APIs, shortcuts, rendering, workspaces,
+  window control and dated reception evidence. Pinned source tables,
+  illustrative issue samples and independent citation spot-check; no live
+  testing. Candidate lessons and approved-decision tensions are listed for
+  user selection; no implementation items or rule changes selected.
+  [Evidence](changes/archive/non-native-tiler-host-interaction.md).
 - P1 | Cross-platform dev environment (mise) | Delivered 2026-10-03
   (`4e95150`, `fda206b`, CI green incl. hosted Windows/macOS install
   checks): root `mise.toml` (Rust stable, just, jq, gh, ripgrep; yq on
