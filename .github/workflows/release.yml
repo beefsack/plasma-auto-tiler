@@ -1,0 +1,68 @@
+name: Release
+
+# Stable releases only: runs on version tags (vX.Y.Z). The archive script
+# fails closed on any other tag shape, so a mistagged push fails loudly
+# instead of publishing. No accounts, tokens, or external publishing beyond
+# the GitHub Release itself.
+on:
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: write
+
+jobs:
+  source-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v17
+        with:
+          name: devenv
+      - name: Install devenv
+        run: nix profile add github:cachix/devenv/v2.4.0
+      - name: Build offline source archive from tag
+        run: devenv shell --impure -- bash -euo pipefail -c 'scripts/build-source-archive.sh --tag "${GITHUB_REF_NAME}"'
+      - name: Create GitHub Release with archive and checksums
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          archive="dist/plasma-auto-tiler-${TAG#v}.tar.gz"
+          test -f "$archive"
+          test -f "$archive.sha256"
+          {
+            echo "Offline source release for KDE packaging."
+            echo ""
+            echo "Archive extracts to a single top-level directory and ships the"
+            echo "prebuilt KWin bundle plus vendored Rust crates for fully offline"
+            echo "OBS/distro builds; see scripts/build-source-archive.sh for the contract."
+            echo ""
+            cat "$archive.sha256"
+          } > "$RUNNER_TEMP/release-notes.md"
+          gh release create "$TAG" --title "Plasma Auto Tiler $TAG" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            "$archive" "$archive.sha256"
+          # Fail closed unless the release and both assets are visible back.
+          names="$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort)"
+          printf '%s\n' "$names" | grep -Fxq "plasma-auto-tiler-${TAG#v}.tar.gz"
+          printf '%s\n' "$names" | grep -Fxq "plasma-auto-tiler-${TAG#v}.tar.gz.sha256"
+
+  # OBS delivery runs only after the release above is published, so the
+  # release asset exists before any webhook fires. OBS source/checksum
+  # handoff is still blocked: keep the secret unset until provisioning
+  # resolves that handoff. Read-only and inert without the optional secret.
+  obs-trigger:
+    needs: source-release
+    permissions:
+      contents: read
+    uses: ./.github/workflows/obs-trigger.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets:
+      OBS_TOKEN: ${{ secrets.OBS_TOKEN }}

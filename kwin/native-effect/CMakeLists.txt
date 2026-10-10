@@ -66,6 +66,18 @@ if(DEFINED ENV{CARGO_NET_OFFLINE} AND "$ENV{CARGO_NET_OFFLINE}" STREQUAL "true")
 else()
     set(EFFECT_CARGO_OFFLINE_ARG "")
 endif()
+# Release-archive offline vendor: when PLASMA_AUTO_TILER_VENDOR_DIR points at
+# the source archive's vendor/ directory (absolute path), pass cargo --config
+# source replacement so the workspace resolves crates-io from that directory
+# with no network and no CARGO_HOME setup. Distro recipes set this alongside
+# CARGO_NET_OFFLINE=true; unset keeps host/Nix behavior unchanged.
+if(DEFINED ENV{PLASMA_AUTO_TILER_VENDOR_DIR} AND NOT "$ENV{PLASMA_AUTO_TILER_VENDOR_DIR}" STREQUAL "")
+    set(EFFECT_CARGO_VENDOR_ARGS
+        --config source.crates-io.replace-with="vendored-sources"
+        --config source.vendored-sources.directory="$ENV{PLASMA_AUTO_TILER_VENDOR_DIR}")
+else()
+    set(EFFECT_CARGO_VENDOR_ARGS "")
+endif()
 add_custom_command(
     OUTPUT "${EFFECT_STATICLIB}"
     COMMAND "${CARGO_PROGRAM}"
@@ -73,6 +85,7 @@ add_custom_command(
         --release
         --locked
         ${EFFECT_CARGO_OFFLINE_ARG}
+        ${EFFECT_CARGO_VENDOR_ARGS}
         --manifest-path "${EFFECT_FFI_CRATE_DIR}/Cargo.toml"
         -p tiler-kwin-effect-ffi
         --target-dir "${EFFECT_CARGO_TARGET_DIR}"
@@ -441,6 +454,7 @@ if(BUILD_TESTING)
     add_test(NAME native-effect-drag-oracle-rs
         COMMAND "${CARGO_PROGRAM}" test --release --locked
             ${EFFECT_CARGO_OFFLINE_ARG}
+            ${EFFECT_CARGO_VENDOR_ARGS}
             --manifest-path "${EFFECT_FFI_CRATE_DIR}/Cargo.toml"
             -p tiler-kwin-effect-ffi --lib drag_oracle::
             --target-dir "${EFFECT_CARGO_TARGET_DIR}")
@@ -448,6 +462,7 @@ if(BUILD_TESTING)
     add_test(NAME native-effect-group-highlight-rs
         COMMAND "${CARGO_PROGRAM}" test --release --locked
             ${EFFECT_CARGO_OFFLINE_ARG}
+            ${EFFECT_CARGO_VENDOR_ARGS}
             --manifest-path "${EFFECT_FFI_CRATE_DIR}/Cargo.toml"
             -p tiler-kwin-effect-ffi --lib group_highlight::
             --target-dir "${EFFECT_CARGO_TARGET_DIR}")

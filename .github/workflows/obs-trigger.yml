@@ -1,0 +1,47 @@
+name: OBS trigger
+
+# Reusable webhook delivery for stable release tags. Called from release.yml
+# after the source-release job creates the GitHub Release, so OBS only ever
+# runs against a published release tarball (no repo-level tag-push webhook,
+# no race, no raw source upload). Tag-only is enforced twice: the caller
+# runs on tag pushes, and the job below refuses any ref outside refs/tags/v*.
+#
+# Provisioning contract and tag-selection honesty: see
+# scripts/trigger-obs-webhook.sh. Inert without the OBS_TOKEN secret.
+# End-to-end delivery is unverified until OBS provisioning exists.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag (vX.Y.Z) the caller built and published.
+        required: true
+        type: string
+    secrets:
+      OBS_TOKEN:
+        description: "<token-id>:<token-secret> OBS workflow token pair."
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  fire-webhook:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+      - name: Fire OBS tag_push webhook after release
+        env:
+          TAG: ${{ inputs.tag }}
+          OBS_TOKEN: ${{ secrets.OBS_TOKEN }}
+          OBS_TRIGGER_URL: ${{ vars.OBS_TRIGGER_URL }}
+        run: |
+          set -euo pipefail
+          [[ "refs/tags/$TAG" == "${GITHUB_REF}" ]] \
+            || { echo "error: input tag $TAG does not match event ref ${GITHUB_REF}; refusing" >&2; exit 1; }
+          sha="$(git rev-parse "$TAG^{commit}")"
+          scripts/trigger-obs-webhook.sh --tag "$TAG" --sha "$sha" \
+            --repo "${GITHUB_REPOSITORY}"

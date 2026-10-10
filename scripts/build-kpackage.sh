@@ -50,7 +50,10 @@ fi
 mkdir -p -- "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd -- "$OUTPUT_DIR" && pwd -P)"
 
-NPM="$(require_tool NPM_BIN npm)"
+NPM=""
+if [[ "${PLASMA_AUTO_TILER_PREBUILT_BUNDLE:-0}" != "1" ]]; then
+  NPM="$(require_tool NPM_BIN npm)"
+fi
 ZIP="$(require_tool ZIP_BIN zip)"
 SHA256SUM="$(require_tool SHA256SUM_BIN sha256sum)"
 KPACKAGETOOL6="$(require_tool KPACKAGETOOL6_BIN kpackagetool6)"
@@ -130,8 +133,17 @@ restore_previous_outputs() {
   fi
 }
 
-# Build the generated bundle before checking and copying the fixed source set.
-"$NPM" --prefix "$KWIN_DIR" run build || die "npm run build failed"
+# Build the generated bundle before checking and copying the fixed source set,
+# unless the caller supplies the prebuilt offline bundle (release source
+# archives ship kwin/contents/code/main.js ready-made, so distro builds do
+# not need the Node >=24 toolchain; any Node that parses metadata.json
+# still suffices for the plugin-id check above).
+if [[ "${PLASMA_AUTO_TILER_PREBUILT_BUNDLE:-0}" == "1" ]]; then
+  [[ -f "$KWIN_DIR/contents/code/main.js" && ! -L "$KWIN_DIR/contents/code/main.js" ]] \
+    || die "PLASMA_AUTO_TILER_PREBUILT_BUNDLE=1 but contents/code/main.js is not a regular non-symlink file"
+else
+  "$NPM" --prefix "$KWIN_DIR" run build || die "npm run build failed"
+fi
 
 for member in "${MEMBERS[@]}"; do
   source="$KWIN_DIR/$member"
