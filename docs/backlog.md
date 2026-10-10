@@ -38,7 +38,7 @@ decisions of 2026-09-24 are under
   a proof-arrow extended-key encoding defect, corrected without changing
   product filtering. Native gates and independent mutation review pass.
   Initial SPI target mix-up was recovered; final arranging is 1 and pen is 35.
-  Windows settings UI Apply/Revert, physical shortcuts and Snap
+  Windows settings UI Apply/Revert delivered; physical shortcuts and Snap
   Layouts/bar/Assist/shake coverage remain pending. Managed workspaces now pass
   current-artifact helper and scoped Notepad/Calculator/Paint journeys: existing
   ordinals, send/follow, trailing empty, independent layouts, identity-safe
@@ -158,23 +158,6 @@ decisions of 2026-09-24 are under
     [principle](principles.md#gaming-compatibility)
   [record](changes/windows-gaming-coexistence.md)
   [decision](decisions.md#gaming-safety)
-- P1 | Windows placement physical acceptance | User dogfood defects
-  (2026-10-03) fixed and live-API verified (`174e70b` diagnostics,
-  `2c918d3` startup/minimum placement, `4a636ae` maximise/restore,
-  `832e171` record; CI green): overlapping cascades and minimum-infeasible
-  fits use long-edge sequential seeding (KDE and Windows; a bisection
-  chain, not guaranteed 2x2); Windows infeasible tiles move to their origin
-  at minimum size instead of staying put; maximise keeps siblings stable and
-  restore reconciles promptly. Send return rule verified unchanged; the
-  original dogfood anchor is unknown. Choices ratified 2026-10-08; user
-  to dogfood startup (both platforms), Win+M and send returns. Risk:
-  minimum-sized windows can overlap or extend past the work area. User
-  decision B6 (2026-10-05) makes origin+minimum the policy on both
-  platforms (KDE delivered offline `cf6ab31`); clean/tolerance-valid adoption
-  plus sequential long-edge fallback is selected, without centre inference
-  or exact COSMIC parity. Retained overlay minima and bounded restore wake
-  are ratified; physical timing remains pending.
-  [record](changes/archive/windows-placement-correctness.md)
 - P1 | KDE follow-ups from the Windows port | Audit 2026-10-05
   ([note](research/cross-platform-core/post-windows-audit.md)); user order
   B1/B2, B3-B5, B7, B8. B1/B2 stale maximize/sticky attempted-state
@@ -224,17 +207,7 @@ decisions of 2026-09-24 are under
   (2026-10-05): all good; PC remap checks later. Next: B8 after user acceptance of the existing KDE
   shortcut controls. Core extraction: no new move until macOS starts.
   Shared restart store in core (float intent, tile overrides, possibly positions); platforms supply window identity and storage location (user 2026-10-08).
-- P1 | Directional focus/move from floating windows | Partial delivery
-  (user decision 2026-10-05, rows R-FLT-07..11): KDE COSMIC float/sticky-only
-  top-left-axis focus and explicit four-direction half-snaps delivered offline;
-  tile-origin still skips floats. Misses reuse existing horizontal output-edge
-  behavior, without COSMIC workspace cycling. 897 KWin / 1107 Rust tests and
-  all gates pass. User laptop check passed (2026-10-05): float-to-float
-  Meta+arrow focus (ordinary and sticky) and Meta+Shift+arrow half-snaps.
-  Windows implementation pending next PC session. Quarter/maximize/repeated-outward transfer snap states
-  deferred: require per-window state and transfer integration. Next: PC parity.
-  [Delivery and live steps](changes/archive/kde-floating-directional-navigation.md).
-- P1 | Windows parity with the 2026-10-05 KDE session | Can run on this PC:
+- P1 | Windows parity with the 2026-10-05 KDE session | Next Windows session:
   (a) float-origin directional focus and Meta+Shift+arrow half-snaps
   (R-FLT-07..11; Windows today refuses float subjects); (b) Q3 born-maximized
   reserved slot plus maximize overlay, replacing the one-shot admission
@@ -372,35 +345,19 @@ decisions of 2026-09-24 are under
      landing nearest the source remain. Explicit send reuses item-2 follow/
      source-MRU stay, with pinned source/target current-view arrival fences.
   Bindings for other accepted additions remain to be chosen.
-- P1 | Position-based output selection for ambiguous candidates | User decision
-  2026-10-09: shared core + KDE delivered offline; Windows handoff item 16 only
-  while Windows multi-output remains parked. Exhausted directional moves
-  (REQ-MOV-08/08b, R-MOV-11..13, REQ-OUT-01) and explicit output sends
-  (REQ-OUT-04, R-OUT-04/07): choose the candidate whose shared edge contains
-  the moving window centre projection; if none, larger overlap with the
-  window span along the edge; final left/top tie-break. Whole-workspace
-  migration (REQ-WS-12, R-WS-12): largest shared edge, then left/top.
-  Unreadable topology still refuses; no candidate no-op; no wrap. Replace
-  ambiguity refusal in the existing FULL-rectangle adjacency route, retaining
-  arrival/current-view/lifetime fences. Deliberate COSMIC deviation; window
-  position matches the majority, and no reference refuses ambiguity.
-  [Four-direction transfer](changes/archive/four-direction-output-transfer.md),
-  [workspace migration](changes/archive/kde-whole-workspace-output-migration.md),
-  [two-candidate migration discriminator](spec/reference-outcomes/workspaces.md#r-ws-27-two-candidate-migration-selection).
-  [Delivery](changes/archive/position-based-output-selection.md): 1258 KWin / 1288
-  Rust tests, real-Engine move/send/migration fixtures and all offline gates pass.
-  Remaining: user-owned two-candidate live check below and parked Windows wiring.
 - P1 | Windows handoff: reference-consensus additions | D1, user 2026-10-07:
   Windows agent wires each adapter piece after its KDE-side delivery.
   ### How to use this handoff
 
-  - Source-checked 2026-10-08 at HEAD
+  - Historical source checks 2026-10-08 at
     `9bbc83b6bf37295cb2883d9d31880599e7bdf088` for items 1-5 and shared
-    plumbing; re-find the named function after pulling.
-  - Current-revision check 2026-10-08 at HEAD
+    plumbing.
+  - Historical revision check 2026-10-08 at
     `db31234f450e11af78406518150438c623ea91e4` for entries 6-12 and the
     matrix/spec corrections below; original revision provenance above is
-    preserved. Re-find named symbols after pulling; no pull performed.
+    preserved. Deliveries through `1c26f2d` (2026-10-10) supersede this
+    baseline, including output selection `a8e32ce` and items 17-20. Line
+    references below are historical locators; re-find named symbols after pulling.
   - KDE/shared deliveries: item 1 `7f1a9ee`, item 2 `8d476ee`, item 3
     `0dc7518`, item 4 `fa15add`, item 5 `9bbc83b`. Item 1 has user-confirmed
     SINGLE-output live acceptance (2026-10-07, unspecified edge cases/presets).
@@ -444,6 +401,10 @@ decisions of 2026-09-24 are under
   | 14 | Q4 whole-workspace migration R-WS-12 | Core/KDE offline delivery including D8 overlay carry under user decisions 2026-10-08 (normative as delivered); depends on item 5's parked multi-output foundation, item 1 history invalidation and item 12 for non-local runtime modes. Windows adapter including D8 pending; no Windows behavior delivered. |
   | 15 | B9 / M09 maximized intentional unfloat R-FLT-06 | KDE/shared-core offline evidence delivered; replace Windows maximize refusal only for ordinary floating-to-tiled toggle, clear/observe before fresh admission. Coordinate fixed tile overrides with items 8/13; independent of Q3 item 11 overlay retention. |
   | 16 | Position-based output selection | Shared core/KDE delivered offline 2026-10-09; Windows handoff only. Wire with item 5's parked multi-output foundation and item 14 migration, preserving arrival/current-view/lifetime fences. |
+  | 17 | G-05 per-axis-zero predicate | Shared core/KDE delivered offline 2026-10-10; Windows predicate/schema/UI wiring with item 13 pending. |
+  | 18 | G-06 maximized directional focus/move | Shared opt-in fence/KDE delivered offline 2026-10-10; Windows focus fence and unmaximize-before-move pending; coordinate float half-snaps with item 10. |
+  | 19 | G-37 migration source-refill setting | Shared core/KDE delivered offline 2026-10-10; Windows config/UI/runtime pending with items 1/14 and the parked multi-output foundation. |
+  | 20 | G-D2 maximized send carry | KDE delivered offline 2026-10-10; verify existing Windows retained-overlay send with item 2 follow/stay. Cross-output legs need the parked foundation. |
 
   Q2 R-SPC-04 occupies handoff item 13 below; Q3 R-RST-01 KDE delivery is
   complete offline and updates existing item 8. Q4 R-WS-12 fills item 14.
@@ -2320,10 +2281,8 @@ decisions of 2026-09-24 are under
 - P1 | Shortcut conflict model on KDE and macOS | Per-binding conflict list
   plus compatible/authentic presets (user 2026-10-03); KDE builds on its
   existing shortcut override Apply/Force/Revert; macOS when it starts.
-  KDE Keep/Disable catalog and presets delivered offline
-  (`e1bb52a`, `cdd4ef4`, `96d04ab`; CI green); choices ratified 2026-10-08
-  with Keep-preserving Apply delivered offline 2026-10-09 (M13): custom,
-  canonical and empty assignments preserved; only staged Authentic resets.
+  KDE catalog/presets and Keep-preserving Apply delivered offline (M13,
+  2026-10-09); live acceptance is in Pending live checks below.
   Integrated rebind and KDE first-run prompt deferred. KDE live
   acceptance pending: [checks](live-shortcut-override-verification.md),
   [record](changes/kde-shortcut-conflicts.md).
@@ -2338,36 +2297,15 @@ decisions of 2026-09-24 are under
   the selected behavior contract for Linux, Windows and macOS, except recorded
   exceptions. COSMIC is the reference-default yardstick; macOS modifier
   mapping is decided when macOS starts.
-  cosmic-comp (user favourite: n-ary splits, join/leave UX) is a key input.
-  User proposal (2026-10-03): a reference-WM outcome matrix (action
-  scenarios x input WMs such as COSMIC, Hyprland, bspwm, i3, xmonad) as the
-  source of truth feeding the spec and its supported variants (for example
-  n-ary vs binary splits); retrofill COSMIC outcomes from tests already
-  done; every behaviour ambiguity adds a row the user can fill later when
-  source code cannot answer it. Initial matrix delivered (`076aba1`,
-  [reference outcomes](spec/reference-outcomes.md), 27 scenarios, format
-  provisional); AGENTS.md now requires a row per ambiguity. All eight
-  reference columns source-filled under pinned profiles: COSMIC (`bdb205f`),
-  Hyprland (`4f82534`), bspwm (`e6b71cc`), i3 (`4128bdf`), xmonad (`548146d`),
-  sway (`332afdc`), qtile (`c32eb48`) and awesome (`046a1e8`). Matrix now has
-  58 scenarios. End-to-end expansion completed 2026-10-07 (`9241c94`..
-  `9168508`, [record](changes/archive/reference-matrix-expansion.md)):
-  matrix split into per-area files, GWT format confirmed (decisions.md),
-  scrolling profiles niri/PaperWM/karousel/paneru added, 125 scenarios
-  (67 new incl. 10 column mechanics), all 14 profiles per new scenario;
-  1198 assessed cells: 372 evidenced, 237 partial, 224 TBD, 328 qualified,
-  37 mixed. All 58 historical rows migrated to GWT with separate Ours
-  KDE/Windows outcomes (`c365fca`..`21f025d`; combined Ours text kept
-  under both for R-MAX-01, R-CTL-02/05/06/07). Source filling makes no
-  product decision. Provisional first spec draft `ac75b00`
-  ([functional spec](spec/functional-spec.md), single file, format
-  provisional): 49 normative (cited decisions only), 84 OPEN, 11
-  PROVISIONAL, 12 KDE/Windows gaps; covers all 125 scenarios; ends with a
-  grouped open-decisions index for one-sitting review. Flagged
-  contradictions: Q3 vs R-MAX-06 label and both adapters' admission
-  clear; B6 vs KDE skip-writes; float-origin nav vs Windows refusal; KDE
-  no-size-inference vs Windows containment fullscreen; B9 vs COSMIC
-  source; Q3/R-MAX-03 overlap.
+  [Reference outcomes](spec/reference-outcomes.md) use per-area Given/When/Then
+  scenarios, twelve pinned reference profiles and separate Ours KDE/Windows
+  outcomes. Source evidence is not a product decision; AGENTS.md requires a
+  discriminating row per ambiguity. All twelve remaining source-fill passes
+  completed (`f04511c`..`bfa486b`): zero not-attempted/unsupported-pending
+  candidates remain; residual host, fixture and live limits are in the
+  [archived ledger](changes/archive/reference-source-fill-remaining.md).
+  [Functional spec](spec/functional-spec.md) remains single-file with a
+  [grouped open-decisions index](spec/functional-spec.md#open-index).
   Current review 2026-10-10: all nine provisional requirements ratified;
   B9 no-refusal sub-leg selected; R-LAY-04 parked OPEN; G-06 makes
   REQ-MAX-08 NORMATIVE. Totals: 105 NORMATIVE, 60 OPEN,
@@ -2376,47 +2314,23 @@ decisions of 2026-09-24 are under
   distinct from selected intent; Windows control cells now cite Windows evidence.
   [Cross-WM consensus analysis](research/reference-wm-consensus.md) Table A
   now lists 24 Ours-vs-strong-consensus differences with recommendations
-  (see Open user decisions), plus strong-consensus predicates where Ours is
+  (selected decisions in [decisions](decisions.md)), plus strong-consensus predicates where Ours is
   TBD pending native observation. Splits decided 2026-10-07:
   R-DRAG-07 host-native presentation (KDE frame follows pointer, Windows
   Win-drag stationary preview) and R-DRAG-08 focus at press on both
   platforms (Windows implementation pending, KDE timing needs a live check).
-  Live-test queue: 508 cells grouped by environment (per reference WM, Ours KDE 39,
-  Ours Windows 37, macOS/paneru 82) in the archived record; candidate for
-  per-WM environments proposed in the
+  Historical live-test queue snapshot: 508 cells grouped by environment
+  (2026-10-07, not the current TBD total); candidate per-WM environments
+  are proposed in the
   [live-test environment proposal](research/live-test-vms/proposal.md).
-  Table A decisions are recorded under "Open user decisions" below;
+  Table A selections and 2026-10-10 comparison decisions are recorded in
+  [decisions](decisions.md#reference-matrix-and-spec-authority);
   priority native TBD rows R-WS-02, R-WS-04, R-WS-05, R-START-03, R-MAX-01 remain.
-- P2 | Prior-art catalogue upkeep | Completed 2026-10-03 (`e4c1d92`):
-  [maintained index](research/prior-art.md), grouped by desktop and type
-  (compositor-native vs host-integrated) with algorithm families,
-  mechanisms, workspaces, licences and clone inventory. Deferred to a
-  Linux/macOS session: FancyWM core submodules, niri/sway/river/awesome/dwm
-  source analysis (web-only now). Keep it updated as projects are studied.
+- P2 | Prior-art catalogue upkeep | Catalogue delivered 2026-10-03; maintain
+  [the index](research/prior-art.md) as projects are studied. Deferred general
+  source analysis: FancyWM core submodules and niri/sway/river/awesome/dwm
+  (distinct from the completed bounded matrix source-fill passes).
   [Evidence](changes/archive/prior-art-catalogue.md).
-- P1 | Non-native tiler host-interaction research | Delivered 2026-10-10:
-  [report](research/non-native-tiler-host-interaction.md) covers KWin, GNOME,
-  Windows and macOS interaction APIs, shortcuts, rendering, workspaces,
-  window control and dated reception evidence. Pinned source tables,
-  illustrative issue samples and independent citation spot-check; no live
-  testing. Candidate lessons and approved-decision tensions are listed for
-  user selection; no implementation items or rule changes selected.
-  [Evidence](changes/archive/non-native-tiler-host-interaction.md).
-- P1 | Cross-platform dev environment (mise) | Delivered 2026-10-03
-  (`4e95150`, `fda206b`, CI green incl. hosted Windows/macOS install
-  checks): root `mise.toml` (Rust stable, just, jq, gh, ripgrep; yq on
-  Windows), AGENTS.md and runbooks updated. Provisional: rolling `latest`/
-  `stable` without `mise.lock`; hosted install checks instead of exact
-  mise/Nix pin equality. User: `winget install --exact --id jdx.mise
-  --source winget`, then `mise trust`, `mise install`,
-  `mise exec -- rustc -vV` from the repo root.
-  [record](changes/archive/cross-platform-mise.md)
-- P2 | Windows reference-WM comparison | Completed 2026-10-03 (`2b0540c`,
-  `d1b22dd`): [comparison](research/windows-port/reference-wm-comparison.md)
-  keeps our public `SW_HIDE` hiding and minimum hints; Whim's projected
-  drag preview informs parity 8; komorebi-bar/Zebar/Seelen inform parity 10.
-  No official Win+G/Win+F11 suppression found. Follow-up: Steam/Firefox/UWP
-  admission observations (small).
 - P1 | macOS port | Work expected soon (user 2026-10-03). Readiness research
   done (`f095042`): setup/TCC/signing runbook, sourced prior-art survey and
   tentative plan, which recommended public AX/AppKit. User direction
@@ -2445,22 +2359,10 @@ decisions of 2026-09-24 are under
   No bump. Next: recheck, then bump devenv and native flake
   pins; user re-enters devenv after the bump.
   [record](changes/archive/rust-toolchain-tracking-2026-10.md)
-- P1 | Tray tiling/floating workspace toggle | Shipped `e407531`; user
-  confirmed live (2026-09-29) that toggling a workspace floating and back to
-  tiled behaves as expected. Remaining live: default change, cross-boundary
-  send (see Pending live checks). Tray invokes a keyless KWin script shortcut
-  action over KGlobalAccel; the default is
-  `kwinrc [Script-plasma-auto-tiler-kwin] defaultTiled`. Simplicity review
-  done offline (2026-09-29): duplicated cache recovery consolidated, the
-  rest kept as earning its place.
-  [change](changes/archive/tray-workspace-toggle.md)
-  [review](changes/archive/tray-toggle-simplicity.md)
-- P1 | Group underlay on window movement only | User (2026-09-30): show the
-  underlay only while moving windows, replacing Meta-held. Staged: A
-  Meta+Shift hold; B focused-window interactive move (Meta+drag, title-bar
-  drag); C unfocused dragged-window support. Move-only, hard-coded. Stop and
-  report if any stage (especially C) grows complex. A/B delivered
-  2026-10-05, user laptop check good (see KDE follow-ups above); C parked.
+- PARKED | Group underlay stage C (unfocused dragged window) | A/B delivered
+  and laptop-confirmed 2026-10-05; PC remap checks remain under K1 visual
+  policy below. C is parked
+  for reassessment with Windows parity item 7; stop/report if it grows complex.
   [change](changes/group-underlay-move-trigger.md)
 - P1 | Ghostty/local native alignment | The ~56 px shortfall is unexplained
   (source-only baseline fix is in; needs a fresh `just dev trace` local-move
@@ -2474,30 +2376,6 @@ decisions of 2026-09-24 are under
   [bounds fix](changes/archive/multi-output-domain-bounds.md)
   [phase 2 parked](changes/learned-size-limits.md)
   [drag investigation](changes/window-alignment-drag-investigation.md)
-- P1 | Reference comparison decisions 2026-10-10 | Shared core + KDE delivered
-  offline; Windows adapter work is handoff items 17-20.
-  [Review decisions](research/reference-rule-comparison-review.md#user-decisions-2026-10-10),
-  [spec](spec/functional-spec.md), [decision record](decisions.md).
-  - G-05 REQ-SPC-04a: shared predicate zero-unset-per-axis plus KDE wiring;
-    equal partial-zero tiles under both-axes, floats under either-axis via
-    the nonzero fixed axis. Preserve other guards/admission-only scope.
-  - G-06 REQ-MAX-08: directional focus fence while focused-maximized;
-    directional move makes one clear attempt then moves only after observed
-    clear with fresh directional/reference/focus/domain guards; eligible
-    floats half-snap. Shared opt-in focus fence; pointer/fullscreen unchanged.
-  - G-37 REQ-WS-12d/e: functional source-refill setting (last remaining default
-    / MRU), shared core + KDE KCM/live config. Use item-1.2 per-output history;
-    previous stable ID must remain live in the source scoped ring excluding
-    the migrated ID (surviving empty valid), otherwise last remaining.
-    Destination insertion and history invalidation unchanged.
-  - G-D2 REQ-MAX-09 maximize leg: KDE maximized-send carry keeps maximize on
-    arrival; coordinate core only where required. Fullscreen Table A remains
-    unchanged, KDE fullscreen observe-first retained.
-  - Status: delivered offline 2026-10-10, independent fence review clean;
-    1307 KWin / 1304 Rust / 1152 portable / 33 native checks and all gates
-    pass. [Delivery](changes/archive/reference-comparison-implementation.md).
-    G-01..04/G-07 retained. Next: user-owned native checks below and Windows
-    wiring; KDE arrival maximize preservation remains live-unobserved.
 - P1 | External NixOS/Home Manager delivery validation | Clean external
   install, update, rollback, and host-matching KWin ABI still unproven
   off the dev machine.
@@ -2528,10 +2406,17 @@ decisions of 2026-09-24 are under
   needs sender, method, and fault-stack evidence before attributing it to
   the effect or script.
   [record](changes/archive/kwin-qkeysequence-dbus-abort.md)
-- P2 | JavaScript workload evidence | PARKED (User decision 2026-10-09);
+- PARKED | JavaScript workload evidence | User decision 2026-10-09;
   relevant only if a native replacement of KWin-script window add/remove
   handling is proposed, requiring sustained-workload evidence then.
   [change](changes/js-workload.md)
+- DEFERRED 2026-10-10 | Reference matrix follow-ups | Both host-source pinning
+  (GNOME Shell/Mutter/wlroots; former estimate 19 cells, now 40 host-source
+  candidates after reclassification: 38 PaperWM, 2 sway) and fixture/scenario
+  wording tightening (302 cells across 92 rows) are deferred. Revisit wording
+  only when a specific open decision depends on a row; neither is P1 work.
+  [Residual ledger](changes/archive/reference-source-fill-remaining.md),
+  [decision](decisions.md#reference-matrix-and-spec-authority).
 - P2 | Keyboard-layout support | After initial release; US keyboards only
   for MVP.
   [change](changes/shortcuts.md)
@@ -2618,6 +2503,7 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 
 - Reference comparison decisions 2026-10-10 (shared/core KDE delivered offline,
   Windows wiring pending; user-owned checks):
+  [Delivery](changes/archive/reference-comparison-implementation.md).
   - G-05: freshly admit (640,0) and (0,480) equal partial-zero hints under
     both predicates: tile for both-axes, untouched automatic float for
     either-axis. Full-zero/unbounded sentinel still tile; fully positive
@@ -2658,6 +2544,26 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   [Record](changes/archive/position-based-output-selection.md),
   [R-MOV-12](spec/reference-outcomes/move.md#r-mov-12-exhausted-up-move-with-two-candidate-outputs-above),
   [R-WS-27](spec/reference-outcomes/workspaces.md#r-ws-27-two-candidate-migration-selection).
+
+### Windows session
+
+- Placement physical acceptance (fixes live-API verified, ratified 2026-10-08):
+  dogfood startup adoption on Windows, Win+M maximize/restore and send returns.
+  Clean/tolerance-valid layouts keep their fit; overlap/minimum-infeasible fits
+  use sequential long-edge seeds, origin+minimum can overlap/exceed the work area.
+  Verify retained-overlay minima and bounded restore timing. KDE startup/B6/Q3
+  legs are listed below; the original Windows dogfood anchor remains unknown.
+  [Record](changes/archive/windows-placement-correctness.md).
+- Delivered Windows parity/settings/tray physical acceptance: maximize,
+  fullscreen, float/sticky, title-bar/Win-drag feel, physical shortcuts and
+  Snap Layouts/bar/Assist/shake; real Explorer restart and other DPI/output
+  arrangements; Steam/Firefox/UWP admission observations from the completed
+  [reference-WM comparison](research/windows-port/reference-wm-comparison.md).
+  Settings Apply/Revert and tray proof are delivered, not open
+  implementation; physical containment limitations remain disclosed/parked.
+  [Settings](changes/archive/windows-settings.md),
+  [tray/first-run](changes/archive/windows-tray-first-run.md),
+  [foreground acceptance](changes/archive/windows-foreground-acceptance.md).
 
 ### Reference WMs (user)
 
@@ -2730,7 +2636,8 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   focus and stacking, including a fixed borderless game. Check single-axis
   clients tile by default and float under `either-axis-fixed`; equal partial-zero
   clients tile by default and float via their nonzero axis under `either-axis-fixed`
-   after G-05 delivery (offline complete); unset/full-zero/sentinel
+  after G-05 delivery (offline complete; exact partial-zero legs are above);
+  unset/full-zero/sentinel
   hints do not auto-float. Gain/lose fixed hints after admission without
   changing float identity. Meta+G tiles an automatic float and stays tiled
   through minimize/restore, workspace/output observation and domain re-adoption;
@@ -2870,16 +2777,15 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   [audit](changes/archive/resilience-audit.md)
   [sweep](changes/archive/fail-closed-sweep.md)
   [bridge](changes/archive/active-group-highlight-design.md)
-- Tray icon and login/autostart: confirm panel presence and the worktree tray
-  lifecycle under `just dev`; no tray launcher existed in the earlier report.
-  [audit](changes/archive/resilience-audit.md)
 - Tray Active status under `just dev` (worktree tray): healthy shows Active,
-  snapshot loss shows NeedsAttention. Systemd unit checks need a packaged
+  snapshot loss shows NeedsAttention; confirm panel presence and lifecycle
+  (no tray launcher existed in the earlier report). Systemd checks need a packaged
   Home Manager install: login starts one tray; killing it restarts it; a
   second invocation exits cleanly; logout stops it without a loop; `just dev`
   preserves the packaged owner; tray diagnostics appear once each in
   `journalctl --user` (native journald submission removed).
   [change](changes/archive/tray-and-restart-followups.md)
+  [audit](changes/archive/resilience-audit.md)
 - Process-loss and sleep recovery cases on the laptop.
   [live plan](changes/archive/recovery-process-sleep-audit.md#live-test-plan)
 - Native border delivery and suppression: fresh-session plugin discovery,
@@ -2896,9 +2802,9 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   native focus/desktop and no rendered-state claim.
   [record](changes/background-tiling.md)
 - Reliability gates: fullscreen residual-cost gate plus gaming cost baseline,
-  maximize-admission overlay gate (session-restored maximized app keeps maximize
-  over a reserved slot, native restore tiles, no loop), work-area projection gate (resolution/scaling/
+  work-area projection gate (resolution/scaling/
   work-area change incl. fullscreen isolation and restoration).
+  Maximize-admission/session-restore checks are covered by Q3/R-MAX-03 above.
   [investigation](changes/reliability-condition-investigation.md)
 - Custom Tile manual runtime check: separately authorized run with exact
   restoration.
@@ -2907,19 +2813,18 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   nested split placement.
   [change](changes/archive/nested-placement-affordance.md)
 - Tray live/release acceptance: KWin-owner snapshots, watcher ordering,
-  login/autostart, update/rollback.
+  update/rollback; login/autostart uses the packaged systemd checks above.
   [change](changes/archive/architecture-review-ar13-tray.md)
   [carrier](changes/archive/tray-carrier.md)
 - Drag-oracle post-fix proof: rebuild/new session with committed resizes,
   8 px gaps, one planned-applied result, no immediate reconcile.
   [decision](decisions.md#pointer-drag-and-drop)
-- Startup adoption recursive-cut fit (user decision 2026-09-29, replaces the
-  near-strip fit): user confirmed live (2026-09-29) it works really well
-  restarting over a previously tiled workspace. Remaining: confirmed
-  Planner-loss fresh session. The centre-split fallback for overlapping
-  windows was superseded by `2c918d3` (2026-10-03): such fits now decline
-  to sequential long-edge seeding; check that overlapping windows seed a
-  long-edge chain and clean tiles keep their fit (KDE fixtures added in B5).
+- Startup adoption: current hybrid is clean/tolerance-valid recursive-cut fit,
+  otherwise sequential long-edge seeding (`2c918d3`, 2026-10-03), with no
+  centre-split fallback. Restart over previously tiled windows was confirmed
+  live 2026-09-29. Remaining: a fresh session after confirmed Planner loss;
+  check clean tiles preserve their fit and overlapping windows seed a
+  long-edge chain (KDE fixtures added in B5).
   [record](changes/placement-aware-startup-adoption.md)
 - KWin controller silent unload (diagnostic only): attribute only with
   before/after `isScriptLoaded`, exact `Script<ID>`, and KWin PID/start
@@ -2955,8 +2860,8 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   full rectangles still select the neighbor, tiles stay inside work areas.
   Horizontal Meta+Shift+Left/Right still works, including sole windows;
   no candidate stays put, unreadable topology refuses. Multi-candidate
-  position-based selection (User decision 2026-10-09) awaits implementation
-  before its live check. Meta+Ctrl+Alt+arrows/
+  position-based selection delivered offline in `a8e32ce`; its dedicated
+  two-candidate live check is above. Meta+Ctrl+Alt+arrows/
   HJKL sends before local exhaustion to the target's CURRENT workspace and
   follows the mover; rebind directional output-stay from empty defaults and
   verify source selection/MRU focus and ordinary remembered-leaf admission.
@@ -3034,22 +2939,27 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 - Windows taskbar workspace indicator (parity 10): presentation design.
 - macOS Phase 0: host model and macOS floor, Intel support, stable signer,
   Meta mapping. [plan](research/macos-port/plan.md)
-- Reference consensus differences (functional specification line above):
-  the 12 new 2026-10-07 recommendations were accepted (see "Adopt
-  reference-consensus additions"); R-WS-01 decided 2026-10-07 (keep
-  follow default, add send-and-stay) and R-MOV-03 (COSMIC wrap default,
-  configurable); rule: COSMIC stays default unless references agree
-  extremely strongly against it, with the alternative configurable unless
-  only one outlier or only scrolling WMs differ; R-FLT-05 folded into
-  R-RST-01; R-MAX-05 kept for a Future spike; R-MAX-07 Windows inference
-  kept (gaming); R-MIN-01..03 B6 kept (overlap is a last resort); the
-  R-DRAG-04 Esc cancel kept (setting maybe later); R-GRP-03 tabs scheduled
-  after 0.1; R-DRAG-07 host-native drag presentation (Windows Win+drag
-  stays stationary); R-DRAG-08 focus at press. Table A rows decided
-  including R-FLT-06 unmaximize/fresh-admit (2026-10-08); the user's COSMIC
-  B9 observation is confirmation only;
-  R-FLT-09 is already planned Windows parity.
-- Live-test environments for the 508-cell matrix queue
+- Windows package/update channel: final distribution route remains unselected
+  (Store/signed installer/winget under evaluation); blocks release packaging,
+  not the parity implementation. [Plan](research/windows-port/plan.md).
+- Windows restart intent persistence (handoff item 8): select identity/storage,
+  recovery-journal versus separate-store routing and schema; REQ-RST-01c
+  membership/set/focus remains OPEN. Blocks that persistence piece, not other
+  handoff work. [Spec](spec/functional-spec.md#startup).
+- Remaining accepted-addition bindings: defaults outside items 1-5 remain
+  unchosen. Existing send-and-stay/output-stay/migration actions deliberately
+  stay bindable and unbound; no default choice is needed to implement them.
+  [Shortcuts](spec/functional-spec.md#shortcuts).
+- Non-native tiler candidate lessons: delivered research awaits selection of
+  any follow-up; approved-decision tensions are options, not new requirements.
+  No current implementation blocked.
+  [Report](research/non-native-tiler-host-interaction.md),
+  [evidence](changes/archive/non-native-tiler-host-interaction.md).
+- Other unselected behavior: the functional spec's
+  [open-decisions index](spec/functional-spec.md#open-index) lists 60 OPEN
+  requirement rows plus the KDE observe-first fullscreen-send sub-leg;
+  design questions remain distinct from delivered implementation/live gaps.
+- Live-test environments (historical 508-cell queue snapshot, 2026-10-07)
   ([proposal](research/live-test-vms/proposal.md), revised 2026-10-07 at
   the user's request): one shared per-WM definition (packages with
   optional pinned-source override, profile config, fixture clients,

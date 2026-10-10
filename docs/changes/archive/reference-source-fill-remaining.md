@@ -1,23 +1,43 @@
 # Remaining reference source-fill triage
 
+Archived 2026-10-10: all twelve source-fill passes are complete. This is a
+residual classification ledger, not an active source-fill plan. Counts below
+are the source-pass completion snapshot, not a fresh recount after later
+implementation or matrix maintenance.
+
+## Follow-up decision 2026-10-10
+
+- User deferred both GNOME Shell/Mutter/wlroots host-source pinning and
+  fixture/scenario wording tightening (302 cells across 92 rows).
+- Revisit wording only when a specific open decision depends on such a row.
+- The former host-source estimate of 19 cells (17 PaperWM, 2 sway) preceded
+  21 PaperWM N-to-H reclassifications. The snapshot now has 40 candidates
+  (38 PaperWM Shell/Mutter, 2 sway wlroots), not promised whole-cell closures.
+  Other residual host limits are unchanged; no source was pinned.
+- Product comparisons were reviewed and selected separately on 2026-10-10;
+  older per-pass "user review" next-action text below is historical provenance.
+  [Durable decision](../../decisions.md#reference-matrix-and-spec-authority).
+- Exact next action for this completed source-fill plan: none. Deferred
+  follow-ups and user-owned runtime checks are separate.
+
 ## Goal and scope
 
 Triage all remaining reference TBD cells by WM to select high-yield,
 context-bounded source passes. The initial triage classified existing evidence;
 the counts and ledgers now include the completed PaperWM, karousel, paneru,
 COSMIC, xmonad, awesome, bspwm, Hyprland, qtile, niri, sway and i3 source passes recorded in
-[PaperWM's outcome note](archive/paperwm-reference-source-fill.md)
-and [karousel's outcome note](archive/karousel-reference-source-fill.md), plus
-[paneru's outcome note](archive/paneru-reference-source-fill.md) and
-[COSMIC's outcome note](archive/cosmic-reference-source-fill.md) and
-[xmonad's outcome note](archive/xmonad-reference-source-fill.md) and
-[awesome's outcome note](archive/awesome-reference-source-fill.md) and
-[bspwm's outcome note](archive/bspwm-reference-source-fill.md) and
-[Hyprland's outcome note](archive/hyprland-reference-source-fill.md) and
-[qtile's outcome note](archive/qtile-reference-source-fill.md) and
-[niri's outcome note](archive/niri-reference-source-fill.md) and
-[sway's outcome note](archive/sway-reference-source-fill.md) and
-[i3's outcome note](archive/i3-reference-source-fill.md). No scenarios
+[PaperWM's outcome note](paperwm-reference-source-fill.md)
+and [karousel's outcome note](karousel-reference-source-fill.md), plus
+[paneru's outcome note](paneru-reference-source-fill.md) and
+[COSMIC's outcome note](cosmic-reference-source-fill.md) and
+[xmonad's outcome note](xmonad-reference-source-fill.md) and
+[awesome's outcome note](awesome-reference-source-fill.md) and
+[bspwm's outcome note](bspwm-reference-source-fill.md) and
+[Hyprland's outcome note](hyprland-reference-source-fill.md) and
+[qtile's outcome note](qtile-reference-source-fill.md) and
+[niri's outcome note](niri-reference-source-fill.md) and
+[sway's outcome note](sway-reference-source-fill.md) and
+[i3's outcome note](i3-reference-source-fill.md). No scenarios
 were tightened. Documentation only; no live
 testing, cloning, new source pins, source-checkout changes, or stash changes.
 Ours is counted separately and is out of scope for reference source tracing.
@@ -48,7 +68,7 @@ Workers use muse-spark, one active at a time. The Lead owns this note.
   51 paneru, 29 COSMIC, 48 xmonad, 36 awesome, 53 bspwm, 44 Hyprland,
   43 qtile, 44 niri, 30 sway and 29 i3 closures.
   **Ours: 169 TBD**, excluded.
-- Twelve reference profiles, as pinned in the [matrix index](../spec/reference-outcomes.md#wm-profiles-and-config-assumptions).
+- Twelve reference profiles, as pinned in the [matrix index](../../spec/reference-outcomes.md#wm-profiles-and-config-assumptions).
   KWin is not a separate column. Karousel's host KWin is already pinned at
   `8438567a` (`S-kwin-resizeable`, `S-kwin-tabbox`, `S-kwin-act`); unfinished
   tracing at that revision is not missing-host-source.
@@ -435,7 +455,7 @@ and persistence/special-window slices; U cells were evaluated with their area.
   new source revision; only X11 per-axis absent-height fixture encoding remains.
 - Approved rules unchanged. Source comparisons requiring user review and
   explicit existing deviation coverage are listed with rule/source locations
-  in [COSMIC's archived note](archive/cosmic-reference-source-fill.md).
+  in [COSMIC's archived note](cosmic-reference-source-fill.md).
   REQ-MAX-08/09 retain OPEN/unresolved wording despite earlier Windows policy
   text; this pass does not reconcile that product decision.
 - No scenario/code/source-checkout/stash changes or live testing.
@@ -461,7 +481,7 @@ and persistence/special-window slices; U cells were evaluated with their area.
   beyond-Observe frames/focus.
 - Approved rules unchanged. Source differences, explicit existing deviation
   coverage, corrections and final verification are recorded in
-  [xmonad's archived note](archive/xmonad-reference-source-fill.md).
+  [xmonad's archived note](xmonad-reference-source-fill.md).
 - No scenario/code/source-checkout/stash changes or live testing.
 
 ## awesome source-pass outcome
@@ -480,7 +500,7 @@ and persistence/special-window slices; U cells were evaluated with their area.
   Already-resolved/excluded cells remain outside this pass; the archived note
   records older append wording discovered there for separate correction.
 - Approved rules unchanged. Source comparisons, correction evidence and final
-  verification are recorded in [awesome's archived note](archive/awesome-reference-source-fill.md).
+  verification are recorded in [awesome's archived note](awesome-reference-source-fill.md).
 - No scenario/code/source-checkout/stash changes or live testing.
 
 ## bspwm source-pass outcome
@@ -498,7 +518,7 @@ and persistence/special-window slices; U cells were evaluated with their area.
   collapses the vacant child, with the saved-rectangle axis still fixture-bound.
   Dump/restore keeps live client X IDs; it is not cross-session app rematching.
 - Approved rules unchanged. Eight source comparisons and correction evidence
-  are recorded in [bspwm's archived note](archive/bspwm-reference-source-fill.md).
+  are recorded in [bspwm's archived note](bspwm-reference-source-fill.md).
 - No scenario/code/source-checkout/stash changes or live testing.
 
 ## Hyprland source-pass outcome
@@ -519,7 +539,7 @@ and persistence/special-window slices; U cells were evaluated with their area.
   not require numeric shares/steps/axes. WS-20 was reopened for E's unspecified
   numeric ID; ordinal order does not prove the numeric+1 target is E.
 - Approved rules unchanged. Eight source comparisons, source corrections and
-  final verification are recorded in [Hyprland's archived note](archive/hyprland-reference-source-fill.md).
+  final verification are recorded in [Hyprland's archived note](hyprland-reference-source-fill.md).
 - No scenario/code/source-checkout/stash changes or live testing.
 
 ## qtile source-pass outcome
@@ -536,7 +556,7 @@ and persistence/special-window slices; U cells were evaluated with their area.
   tiled slot, maximize removes it; X11 restart freshly re-admits while
   Wayland has no restart journey. QueryTree focus is F, not missing-host H.
 - Approved rules unchanged. Source comparisons, corrected policy and final
-  verification are recorded in [qtile's archived note](archive/qtile-reference-source-fill.md).
+  verification are recorded in [qtile's archived note](qtile-reference-source-fill.md).
 - No scenario/code/source-checkout/stash changes or live testing.
 
 ## niri source-pass outcome
@@ -553,7 +573,7 @@ and persistence/special-window slices; U cells were evaluated with their area.
   workspace targeting; a pause can change insertion through edge auto-scroll.
   These selectors remain fixture-bound, rather than guessed closed.
 - Approved rules unchanged. Source comparisons, rejected approaches and
-  corrected verification are recorded in [niri's archived note](archive/niri-reference-source-fill.md).
+  corrected verification are recorded in [niri's archived note](niri-reference-source-fill.md).
 - No scenario/code/source-checkout/stash changes or live testing.
 
 ## sway source-pass outcome
@@ -569,7 +589,7 @@ and persistence/special-window slices; U cells were evaluated with their area.
   send focus resolves to the workspace node without an extra fixture gap.
 - Approved rules unchanged. Nine independently verified comparisons and
   rejected traces/corrections are recorded in
-  [sway's archived note](archive/sway-reference-source-fill.md).
+  [sway's archived note](sway-reference-source-fill.md).
 - No scenario/code/source-checkout/stash changes or live testing.
 
 ## i3 source-pass outcome
@@ -585,7 +605,7 @@ and persistence/special-window slices; U cells were evaluated with their area.
   workspace migration is focus-neutral; sticky restart geometry closes
   relationally without needing pixels. Fresh start is not orderly re-exec.
 - Eleven source-policy comparisons, corrections and verification are recorded
-  in [i3's archived note](archive/i3-reference-source-fill.md). Approved rules,
+  in [i3's archived note](i3-reference-source-fill.md). Approved rules,
   scenarios, profiles and excluded cells preserved; no live/code/source/stash changes.
 - No N/U remains for any reference WM. Residual H/F/L needs host-source,
   fixture inputs or user-owned runtime observations outside these passes.

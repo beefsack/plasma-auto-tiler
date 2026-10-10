@@ -584,6 +584,15 @@ platform API behavior.
   add the shortest discriminating action sequence. Read source where confident;
   otherwise leave the outcome for the user's later test. Variant hook names are
   provisional indexing, not new product or settings commitments.
+- User decision 2026-10-10 (matrix follow-ups): defer both GNOME Shell/Mutter/
+  wlroots host-source pinning and fixture/scenario wording tightening (302
+  residual cells across 92 rows). Revisit wording only when a specific open
+  decision depends on such a row; neither follow-up is active P1 work.
+  The former host-source estimate was 19 cells (17 PaperWM, 2 sway); completed
+  extension tracing reclassified 21 additional PaperWM cells, giving 40
+  current candidates (38 PaperWM, 2 sway), not guaranteed whole-cell closures.
+  Completed source passes and remaining limits are retained in the
+  [archived residual ledger](changes/archive/reference-source-fill-remaining.md).
 - Workflows transfer across Linux, Windows and macOS (shortcuts and behavior
   consistency decided under Shortcuts above).
 ## Shortcuts, Conflicts and Presets
