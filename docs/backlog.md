@@ -20,13 +20,13 @@ decisions of 2026-09-24 are under
   explicit opt-in; custom-drawing
   underlay experiment with outline fallback; most obvious distribution
   (Store plus signed installer plus winget under evaluation); develop
-  natively on the user's Windows 11 PC (also the KDE multi-output PC);
+  natively on Windows 11; multi-output live work needs a multi-output Windows setup;
   elevated (administrator) windows unmanaged by default, a user-chosen
   run-elevated option possible later; logical workspace model refined in the
   spikes; shared settings/action intent (deferred K2) and difference
   classification (deferred K3) revisited when macOS starts. Open: final
   package/update channel. Status 2026-10-02: Phase 1 lifecycle/recovery plus
-  WH_KEYBOARD_LL input done and accepted on this single-display PC; Phase 2
+  WH_KEYBOARD_LL input done and accepted on a single-display setup; Phase 2
   automatic Engine-driven tiling-only dogfood preview verified (no shortcuts,
   input hooks or hiding; stop/crash leaves windows in place). Shortcut slice
   completed with retained-Engine focus/move, default-on keyboard takeover and
@@ -99,7 +99,7 @@ decisions of 2026-09-24 are under
   preview. Move-drag press-focus is selected; current drop activation is an
   implementation gap (handoff item 7); inactive resize keeps focus. Physical feel checks
   user-owned; underlay C stays parked (needs extra machinery).
-  (9) multi-output support PARKED: needs the multi-output PC for live work;
+  (9) multi-output support PARKED: needs a multi-output Windows setup for live work;
   (10) taskbar item showing workspaces PARKED on the user design discussion
   (options in the [comparison](research/windows-port/reference-wm-comparison.md));
   (11) settings core slice delivered (`df4edc5`, `1c97c52`, `999f2f3`,
@@ -163,7 +163,7 @@ decisions of 2026-09-24 are under
   B1/B2, B3-B5, B7, B8. B1/B2 stale maximize/sticky attempted-state
   refusals repaired offline (one attempt per activation; 843 KWin tests
   pass); B3-B5 shared-core KDE fixtures added, no defect found
-  ([record](changes/archive/kde-post-windows-followups.md)). User laptop
+  ([record](changes/archive/kde-post-windows-followups.md)). User-owned live check
   (2026-10-05): Meta+M, then Meta+Shift+G refused while maximized, then
   Meta+M restored, as decided. DEFECT: Meta+Shift+G on a tiled window
   floats it sticky but focus moves to another window (Meta+G keeps focus);
@@ -172,7 +172,7 @@ decisions of 2026-09-24 are under
   actuating survivor focus (pre-existing source defect, not B2). Repaired
   offline by skipping that activation over a focused float/sticky subject;
   faithful regression red/green, 846 KWin tests and all gates pass. User
-  laptop re-check (2026-10-05): normal and sticky float focus correct
+  live re-check (2026-10-05): normal and sticky float focus correct
   ([evidence](changes/archive/kde-post-windows-followups.md#laptop-re-check-user-owned)).
   Q8 offline repeat evidence delivered: second same-reference maximize/sticky
   native-change cycles, duplicate sticky notification convergence and one native
@@ -203,8 +203,8 @@ decisions of 2026-09-24 are under
   Pinned 11-WM source comparison added. B7
   movement-only underlay A/B delivered offline (Meta+Shift chord or focused
   native user move; host-matched native build and all gates pass; paired
-  FFI signature change; C parked); user tested A/B on the laptop
-  (2026-10-05): all good; PC remap checks later. Next: B8 after user acceptance of the existing KDE
+  FFI signature change; C parked); user tested A/B on a single-output setup
+  (2026-10-05): all good; multi-output remap checks later. Next: B8 after user acceptance of the existing KDE
   shortcut controls. Core extraction: no new move until macOS starts.
   Shared restart store in core (float intent, tile overrides, possibly positions); platforms supply window identity and storage location (user 2026-10-08).
 - P1 | Windows parity with the 2026-10-05 KDE session | Next Windows session:
@@ -389,7 +389,7 @@ decisions of 2026-09-24 are under
   | 2 | Item 2 explicit follow/stay, then relative sends | Reuse item 1 ring/action routing, not MRU target selection. |
   | 3 | Item 3 live same-axis setting | Independent; replace compile constant without rebuilding trees. |
   | 4 | Item 4 orientation action | Reuse input/catalog/live settings infrastructure. |
-  | 5 | Parked parity-queue multi-output foundation, then handoff item 5 | Per-monitor current-view observation, membership/geometry/visibility/recovery fences first; user live checks need the other Windows PC. Offline topology/Engine tests can precede that. |
+  | 5 | Parked parity-queue multi-output foundation, then handoff item 5 | Per-monitor current-view observation, membership/geometry/visibility/recovery fences first; user live checks need a multi-output Windows setup. Offline topology/Engine tests can precede that. |
   | 6 | Keyboard resize R-RSZ-01 (parity d) | Independent; needs fresh Alt-capable trigger plus dedicated resize intent. No dependency on items 1-5 except shared modifier routing. |
   | 7 | Press-focus R-DRAG-08 | Independent of items 1-5; touches Win-drag arm only. Keep R-DRAG-07 stationary-source/moving-preview split intact. |
   | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; KDE Q3 plus D7 tile-override store delivered offline. Ordinary/sticky intent must remain distinct from automatic fixed origin and recovery authority; Windows mechanism unselected, REQ-RST-01c stays OPEN. Coordinate D7 membership with item 13. |
@@ -1110,7 +1110,7 @@ decisions of 2026-09-24 are under
        transfer, delayed arrival, no repeated follow; independent owned-window
        stop/restore across outputs. Common gates/docs R-MOV-08/11..13 and
        R-OUT-01/04/07; item 9 and physical acceptance remain explicit blockers.
-     - User on two-output PC: stack outputs, lower V[A*,B], upper X; exhausted
+     - User on a two-output setup: stack outputs, lower V[A*,B], upper X; exhausted
        Win+Shift+Up moves A nearest source below X, source B; fresh sole A also
        crosses. Mirror Left/Right/Down, empty and occupied destinations. With
        local move available it wins; explicit Win+Ctrl+Alt+direction instead
@@ -1793,7 +1793,7 @@ decisions of 2026-09-24 are under
       `src/settings_ui.rs:314/:394` and `src/tray.rs:179-275` are
       tiled/floating controls, not scope.
     - [ ] Windows-only: owner selection/foreground/CLI producers, hotplug
-      journeys, multi-output native evidence on the second PC.
+      journeys, multi-output native evidence on a multi-output Windows setup.
     - User journey: two-output L/R with WS1/WS2 on L; L WS1->WS2, change
       R, focus L, previous twice (local: WS1 then WS2; R unchanged);
       shared mode WS1->WS2->WS3 then previous twice (WS2 then WS3);
@@ -1947,7 +1947,7 @@ decisions of 2026-09-24 are under
       points must emit bounded correlated decision diagnostics.
     - [ ] Windows-only: fresh max-track/DPI/inset observations, timeout/hung
       clients, native overlay/restore and fixed borderless/exclusive games;
-      user owns live checks on the Windows PC. Linux tests prove none of these.
+      user owns live Windows checks. Linux tests prove none of these.
     - [ ] Windows: predicate default/variants/invalid and subsequent-admission
       tests, setting/schema/UI/live wiring; same-axis uses item 3's renamed
       values, with old IDs rejected and no aliases. User owns live checks.
@@ -2069,7 +2069,7 @@ decisions of 2026-09-24 are under
     - [ ] Windows-only: whole-member physical output transfer, mixed DPI/work
       areas, native arrival/view/focus timing, hidden/minimized/transient lifetime
       and carried-overlay native-move-only writes, owned-window recovery after partial
-      writes. User owns live journeys on the two-output PC.
+      writes. User owns live journeys on a two-output setup.
     - User journey/DoD: select WS2 `H[A,V[B*,C]]` on L, R shows occupied WS3;
       bind migration right, verify same WS2/tree/shares, WS3 hidden, L last
       remaining, B focus only after arrival. Repeat empty, intentional/automatic
@@ -2150,7 +2150,7 @@ decisions of 2026-09-24 are under
       `output-send-engine-fixture.test.ts`, `workspace-migrate-engine-fixture.test.ts`
       and `plan-directional.test.ts` discriminators to Windows's existing harness.
       Linux portable tests prove no Windows native behavior. User owns live checks
-      on the multi-output PC; update Windows matrix/spec only with actual evidence.
+      on a multi-output Windows setup; update Windows matrix/spec only with actual evidence.
 
   - Item 17: G-05 per-axis-zero fixed-size predicate (User 2026-10-10,
     REQ-SPC-04a). Coordinate with item 13: zero means unset on each axis;
@@ -2360,7 +2360,7 @@ decisions of 2026-09-24 are under
   pins; user re-enters devenv after the bump.
   [record](changes/archive/rust-toolchain-tracking-2026-10.md)
 - PARKED | Group underlay stage C (unfocused dragged window) | A/B delivered
-  and laptop-confirmed 2026-10-05; PC remap checks remain under K1 visual
+  and user-confirmed 2026-10-05; multi-output remap checks remain under K1 visual
   policy below. C is parked
   for reassessment with Windows parity item 7; stop/report if it grows complex.
   [change](changes/group-underlay-move-trigger.md)
@@ -2369,16 +2369,16 @@ decisions of 2026-09-24 are under
   plus follow-on command trace), and one requested `2032x1092` became
   `1920x1036` while another primary Ghostty accepted full size (per-window
   native cap or stale output-derived cap unproven). Hypothesis
-  (Orchestrator, 2026-09-28): 1920x1036 equals HDMI-A-2's work area, so the
-  window may be constrained to the other output. Next: PC `just dev trace`
-  with one tall tiled window on DP-6; check output, bounds and constraints.
+  (Orchestrator, 2026-09-28): 1920x1036 equals another output's work area, so the
+  window may be constrained to the other output. Next: `just dev trace`
+  with one tall tiled window on the source output; check output, bounds and constraints.
   Gates reconciliation phase 2.
   [bounds fix](changes/archive/multi-output-domain-bounds.md)
   [phase 2 parked](changes/learned-size-limits.md)
   [drag investigation](changes/window-alignment-drag-investigation.md)
 - P1 | External NixOS/Home Manager delivery validation | Clean external
   install, update, rollback, and host-matching KWin ABI still unproven
-  off the dev machine.
+  on an independent host.
   [change](changes/archive/nix-current-host-delivery.md)
 - P2 | Simplify drag preview + cross-output drop code | Post-live cleanup only:
   cut advisory `hover_prior` validation, lag-only fences, verbose comments;
@@ -2394,7 +2394,7 @@ decisions of 2026-09-24 are under
   (4) KWin script and Rust tiling only, native effect unchanged. Added
   complexity must deliver more value than it costs. Phase 1 (shared
   foreground/hidden classifier, refresh classification logs) passed the
-  user's laptop live test at `062d707` (2026-09-28, "felt good and minimally
+  user's live test at `062d707` (2026-09-28, "felt good and minimally
   janky"; trace `~/Downloads/plasma-auto-tiler-dev.uE1S5n.log`). Quiet
   refresh outcomes were ~60% of refresh log lines. Phase 2 (learned limits)
   parked by the user (2026-09-28) after a candidate exceeded the complexity
@@ -2573,7 +2573,7 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   actual result; this is confirmation, not a product or implementation gate.
   [row](spec/reference-outcomes/floating.md)
 
-### Single-output laptop
+### Single-output setup
 
 - B1/B2 native-change repeats and held-key autorepeat (Q8 offline evidence
   delivered): repeat Meta+M/native-restore/repress and the inverse ordering;
@@ -2786,7 +2786,7 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   `journalctl --user` (native journald submission removed).
   [change](changes/archive/tray-and-restart-followups.md)
   [audit](changes/archive/resilience-audit.md)
-- Process-loss and sleep recovery cases on the laptop.
+- Process-loss and sleep recovery cases on a single-output setup.
   [live plan](changes/archive/recovery-process-sleep-audit.md#live-test-plan)
 - Native border delivery and suppression: fresh-session plugin discovery,
   border rendering, and oracle endpoint; fullscreen/any-maximise suppresses
@@ -2834,7 +2834,7 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   and live capture unproven; per-route offline diagnostics shipped.
   [coverage](changes/archive/observability-coverage-assessment.md)
 
-### Multi-output PC
+### Multi-output setup
 
 - KDE Q4 R-WS-12/R-WS-21..26 (offline delivered, user decisions 2026-10-08): rebind
   the four empty-default migration actions; local/global-unique with native
@@ -2868,7 +2868,7 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   Check membership-only floating boundaries with only tiled-side reflow.
   [Record](changes/archive/four-direction-output-transfer.md),
   [live guide](live-kwin-testing.md). User-owned; no item-5 live result claimed.
-- Core extraction K1 visual policy: laptop confirmed by the user
+- Core extraction K1 visual policy: confirmed by the user
   (2026-09-30: active border, fullscreen/maximise suppression, group
   underlay, drag preview). Remaining: border, underlay and preview remap
   correctly across outputs with differing scales/origins.
@@ -2898,18 +2898,18 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   spatially per output (no ID-order rebuild), tray status recovers; script
   reload with shared IDs keeps groups/splits.
   [change](changes/archive/tray-and-restart-followups.md)
-- Reconciliation phase 1 (PC): hidden and sticky domains stay quiet without
+- Reconciliation phase 1 (multi-output setup): hidden and sticky domains stay quiet without
   ping-pong, unreadable outputs imply no departure, stale replies ignored,
   immediate/delayed send/R4 follow and forced refresh.
   [record](changes/archive/robust-difference-reconciliation.md)
-- Process-loss and sleep recovery cases on the PC.
+- Process-loss and sleep recovery cases on a multi-output setup.
   [live plan](changes/archive/recovery-process-sleep-audit.md#live-test-plan)
 - Output hotplug displacement/return: disconnect preserves layouts per
   surviving monitor; reconnect returns workspaces with current contents;
   explicit moves stay at their destination.
   [investigation](changes/reliability-condition-investigation.md)
-- Multi-output workspace anti-oscillation: trailing-empty behavior on the
-  multi-output machine.
+- Multi-output workspace anti-oscillation: trailing-empty behavior on a
+  multi-output setup.
   [runbook](live-oscillation-verification.md)
 - Native dev lifecycle removal/dogfood coexistence: removal and
   dogfood-coexistence refusal unverified (startup/discovery already
