@@ -109,4 +109,9 @@
   settings absence and SPI arranging1/pen35 restored. No forced-owner probes.
 - Pending physical input/feel/Start-mask, inactive resize focus/feel, actuation
   failure/race native journeys and cross-output. No shared-core change required.
-- Publication/CI pending below.
+- Pushed `9bb2b6f`. CI
+  [38073331721](https://github.com/beefsack/plasma-auto-tiler/actions/runs/38073331721)
+  completed success: windows, rust, kwin, shell, native and macos. Linux/KDE
+  gates are hosted evidence; local native gates passed before publication.
+- Exact next implementation action: none for scoped item7 delivery; pending
+  user-owned/native edge checks and tentative review are listed above.
