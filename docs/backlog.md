@@ -2833,14 +2833,12 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 
 ## Open user decisions
 
-- COSMIC-vs-rule comparisons from the COSMIC source-fill (`21300f7`), no
-  recorded deviation covers them: MOV-08 (Up tries previous workspace before
-  output), MAX-08 focus/move and MAX-09 (Windows maximize policy vs COSMIC),
-  CTL-04 (pinned workspace overrides survive restart), WS-20 (sole-window
-  next send), SPC-07 (equal sentinel hints float), OUT-06 (disconnect of the
-  focused output). REQ-MAX-08 OPEN and REQ-MAX-09 wording are inconsistent
-  with the Windows maximize policy text.
-  [record](changes/archive/cosmic-reference-source-fill.md)
+- Consolidated reference-rule comparisons: 87 source-fill entries reviewed
+  across all twelve references; 45 rule groups (8 MATERIAL, 35 NOT MATERIAL,
+  2 RECORD DRIFT). Review material cases one at a time in report impact order,
+  starting with equal-sentinel admission (G-01); recommendations are not
+  selected rules. This replaces the COSMIC-only comparison queue.
+  [review report](research/reference-rule-comparison-review.md)
 
 - OBS POC inputs: OBS account/project, GitHub PAT/webhook wiring, Fedora
   release, neon/Kubuntu pursuit, absent-during-upgrade policy, pacman repo
