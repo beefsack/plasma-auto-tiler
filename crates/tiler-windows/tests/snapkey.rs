@@ -51,6 +51,7 @@ fn push_snap(
     match SnapClassify::push(m, vk, is_up, fg, inj)? {
         Classified::Snap(intent) => Some(intent),
         Classified::Workspace(_)
+        | Classified::WorkspaceHistory(_)
         | Classified::Maximize(_)
         | Classified::Fullscreen(_)
         | Classified::Float(_)
@@ -70,6 +71,7 @@ fn push_workspace(
     match SnapClassify::push(m, vk, is_up, fg, inj)? {
         Classified::Workspace(intent) => Some(intent),
         Classified::Snap(_)
+        | Classified::WorkspaceHistory(_)
         | Classified::Maximize(_)
         | Classified::Fullscreen(_)
         | Classified::Float(_)
@@ -90,6 +92,7 @@ fn push_maximize(
         Classified::Maximize(intent) => Some(intent),
         Classified::Snap(_)
         | Classified::Workspace(_)
+        | Classified::WorkspaceHistory(_)
         | Classified::Fullscreen(_)
         | Classified::Float(_)
         | Classified::Sticky(_) => {
@@ -108,6 +111,7 @@ fn push_fullscreen(
         Classified::Fullscreen(intent) => Some(intent),
         Classified::Snap(_)
         | Classified::Workspace(_)
+        | Classified::WorkspaceHistory(_)
         | Classified::Maximize(_)
         | Classified::Float(_)
         | Classified::Sticky(_) => {
@@ -129,6 +133,7 @@ fn push_float(
         Classified::Sticky(_) => None,
         Classified::Snap(_)
         | Classified::Workspace(_)
+        | Classified::WorkspaceHistory(_)
         | Classified::Maximize(_)
         | Classified::Fullscreen(_) => {
             panic!("expected float chord")
@@ -149,6 +154,7 @@ fn push_sticky(
         Classified::Float(_) => None,
         Classified::Snap(_)
         | Classified::Workspace(_)
+        | Classified::WorkspaceHistory(_)
         | Classified::Maximize(_)
         | Classified::Fullscreen(_) => {
             panic!("expected sticky chord")
@@ -437,7 +443,8 @@ fn unshifted_win_l_needs_explicit_opt_in() {
 
 #[test]
 fn extra_modifiers_and_injected_pass_untracked() {
-    for mod_vk in [VK_CONTROL, VK_MENU, VK_LMENU] {
+    // Alt/Menu modifiers still force pass-through (no Alt arm exists yet).
+    for mod_vk in [VK_MENU, VK_LMENU] {
         let mut m = SnapClassify::new(takeover());
         win_down(&mut m, VK_LWIN);
         push_snap(&mut m, mod_vk, false, true, false);
@@ -448,6 +455,26 @@ fn extra_modifiers_and_injected_pass_untracked() {
             (0, 0, 0)
         );
         push_snap(&mut m, mod_vk, true, true, false);
+    }
+    // Ctrl is the item 1 history arm, not an extra modifier: Win+Ctrl+H
+    // classifies as history-prev (consumed), with its pair closing consumed.
+    {
+        use tiler_windows::snapkey::VK_CONTROL;
+        let mut m = SnapClassify::new(takeover());
+        win_down(&mut m, VK_LWIN);
+        SnapClassify::push(&mut m, VK_CONTROL, false, true, false);
+        match SnapClassify::push(&mut m, VK_H, false, true, false).expect("history down") {
+            Classified::WorkspaceHistory(intent) => {
+                assert!(intent.consumed && intent.announce);
+                assert_eq!(intent.op, tiler_windows::snapkey::WorkspaceHistoryOp::Prev);
+            }
+            other => panic!("expected history-prev, got {other:?}"),
+        }
+        match SnapClassify::push(&mut m, VK_H, true, true, false).expect("history up") {
+            Classified::WorkspaceHistory(intent) => assert!(intent.consumed && !intent.announce),
+            other => panic!("expected history up, got {other:?}"),
+        }
+        SnapClassify::push(&mut m, VK_CONTROL, true, true, false);
     }
     // Injected chords never classify, never arm the mask.
     let mut m = SnapClassify::new(takeover());
@@ -542,6 +569,7 @@ fn saturated_queue_swallows_and_counts_loss() {
     match q.pop_front().expect("intent") {
         QueuedSnapEvent::Intent(queued) => assert_eq!(queued.origin, origin),
         QueuedSnapEvent::Workspace(_)
+        | QueuedSnapEvent::WorkspaceHistory(_)
         | QueuedSnapEvent::Maximize(_)
         | QueuedSnapEvent::Fullscreen(_)
         | QueuedSnapEvent::Float(_)
@@ -1998,13 +2026,14 @@ fn authentic_mask_plain_unowned_consumed_and_saturation() {
     let mut q = SnapQueue::new();
     win_down(&mut m, VK_LWIN);
     assert!(!win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
-    // Unowned OS chords never arm the mask.
+    // Unowned OS chords never arm the mask (Alt has no arm; Ctrl now owns
+    // the history arm, covered below).
     let mut m = SnapClassify::new(takeover());
     let mut q = SnapQueue::new();
     win_down(&mut m, VK_LWIN);
-    push_snap(&mut m, VK_CONTROL, false, true, false);
+    push_snap(&mut m, VK_MENU, false, true, false);
     assert_eq!(push_snap(&mut m, VK_H, false, true, false), None);
-    push_snap(&mut m, VK_CONTROL, true, true, false);
+    push_snap(&mut m, VK_MENU, true, true, false);
     assert!(!win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
     // Consumed hold arms exactly one mask per Win hold.
     let mut m = SnapClassify::new(takeover());
@@ -2356,13 +2385,30 @@ fn owned_hold_modifier_transition_matrix() {
     let up = push_sticky(&mut m, true, true, false).expect("paired up");
     assert!(up.consumed);
     assert_eq!((m.float_counts.down, m.float_counts.up), (0, 0));
-    // Fresh unowned chords still pass through untracked with no hold armed.
+    // Fresh unowned chords still pass through untracked with no hold armed
+    // (Alt has no arm). Ctrl owns the history arm: Win+Ctrl+H classifies
+    // history-prev with its pair closing consumed.
     let mut m = SnapClassify::new(takeover());
     win_down(&mut m, VK_LWIN);
-    push_snap(&mut m, VK_CONTROL, false, true, false);
+    push_snap(&mut m, VK_MENU, false, true, false);
     assert_eq!(push_snap(&mut m, VK_H, false, true, false), None);
     assert_eq!(push_snap(&mut m, VK_H, true, true, false), None);
-    push_snap(&mut m, VK_CONTROL, true, true, false);
+    push_snap(&mut m, VK_MENU, true, true, false);
+    {
+        use tiler_windows::snapkey::VK_CONTROL;
+        let mut m = SnapClassify::new(takeover());
+        win_down(&mut m, VK_LWIN);
+        SnapClassify::push(&mut m, VK_CONTROL, false, true, false);
+        match SnapClassify::push(&mut m, VK_H, false, true, false).expect("history down") {
+            Classified::WorkspaceHistory(intent) => assert!(intent.consumed && intent.announce),
+            other => panic!("expected history, got {other:?}"),
+        }
+        match SnapClassify::push(&mut m, VK_H, true, true, false).expect("history up") {
+            Classified::WorkspaceHistory(intent) => assert!(intent.consumed),
+            other => panic!("expected history up, got {other:?}"),
+        }
+        SnapClassify::push(&mut m, VK_CONTROL, true, true, false);
+    }
     let mut m = SnapClassify::new(takeover());
     assert_eq!(push_snap(&mut m, VK_H, false, true, false), None);
 }

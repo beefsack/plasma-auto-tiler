@@ -249,6 +249,10 @@ platform API behavior.
 - Delivery coordination for items 1-5: see Move, Layout and Output Commands
   below.
 - Item 1, R-WS-08 / R-WS-11:
+    - Windows delivery 2026-10-10: local observed-history/ring, exact Ctrl/Tab
+      action routing and settings/UI/presets delivered offline; native gates
+      passed. Native history/physical/UI journeys and non-local/multi-output
+      remain pending ([record](changes/archive/windows-workspace-history-ring.md)).
     - 1.1: previous-view toggle is Meta+Ctrl+Tab on KDE / Win+Ctrl+Tab on
       Windows. Previous/next workspace uses Meta/Win+Ctrl+arrows and
       Meta/Win+Ctrl+H/J/K/L: left/up previous, right/down next (COSMIC

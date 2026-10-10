@@ -243,6 +243,9 @@ fn rebind_routes_single_arm_and_old_default_passes_through() {
         vec![ChordRemap {
             from_vk: VK_U,
             from_shift: false,
+            from_ctrl: false,
+            from_alt: false,
+            action: tiler_windows::snapkey::ChordAction::Directional,
             to_vk: VK_H
         },]
     );
@@ -251,7 +254,9 @@ fn rebind_routes_single_arm_and_old_default_passes_through() {
         disabled,
         vec![ChordDisable {
             vk: VK_H,
-            shift: false
+            shift: false,
+            ctrl: false,
+            alt: false
         }]
     );
     let mut machine = SnapClassify::new(takeover());
@@ -272,11 +277,16 @@ fn rebind_routes_single_arm_and_old_default_passes_through() {
     shifted.set_remap(vec![ChordRemap {
         from_vk: VK_U,
         from_shift: false,
+        from_ctrl: false,
+        from_alt: false,
+        action: tiler_windows::snapkey::ChordAction::Directional,
         to_vk: VK_H,
     }]);
     shifted.set_disabled(vec![ChordDisable {
         vk: VK_H,
         shift: false,
+        ctrl: false,
+        alt: false,
     }]);
     SnapClassify::push(&mut shifted, VK_LWIN, false, true, false);
     SnapClassify::push(&mut shifted, VK_SHIFT, false, true, false);
@@ -368,6 +378,9 @@ fn mid_hold_remap_removal_pins_pairing_and_swallows() {
     machine.set_remap(vec![ChordRemap {
         from_vk: VK_U,
         from_shift: false,
+        from_ctrl: false,
+        from_alt: false,
+        action: tiler_windows::snapkey::ChordAction::Directional,
         to_vk: VK_H,
     }]);
     SnapClassify::push(&mut machine, VK_LWIN, false, true, false);
@@ -404,6 +417,8 @@ fn mid_hold_disable_gates_repeat_dispatch_but_keeps_pair() {
     machine.set_disabled(vec![ChordDisable {
         vk: VK_H,
         shift: false,
+        ctrl: false,
+        alt: false,
     }]);
     let repeat = SnapClassify::push(&mut machine, VK_H, false, true, false).expect("repeat");
     assert!(repeat.consumed() && !repeat.announce());
@@ -451,6 +466,9 @@ fn remap_up_survives_mid_hold_shift_flip() {
     machine.set_remap(vec![ChordRemap {
         from_vk: VK_Q,
         from_shift: true,
+        from_ctrl: false,
+        from_alt: false,
+        action: tiler_windows::snapkey::ChordAction::Sticky,
         to_vk: VK_G,
     }]);
     SnapClassify::push(&mut machine, VK_LWIN, false, true, false);
@@ -482,11 +500,16 @@ fn rebound_collision_shifted_native_never_repeats_owner() {
     machine.set_remap(vec![ChordRemap {
         from_vk: VK_U,
         from_shift: false,
+        from_ctrl: false,
+        from_alt: false,
+        action: tiler_windows::snapkey::ChordAction::Directional,
         to_vk: VK_H,
     }]);
     machine.set_disabled(vec![ChordDisable {
         vk: VK_H,
         shift: false,
+        ctrl: false,
+        alt: false,
     }]);
     SnapClassify::push(&mut machine, VK_LWIN, false, true, false);
     let down = SnapClassify::push(&mut machine, VK_U, false, true, false).expect("U down");
@@ -535,11 +558,16 @@ fn suppressed_rebound_away_up_never_steals_owner_pair() {
     machine.set_remap(vec![ChordRemap {
         from_vk: VK_U,
         from_shift: false,
+        from_ctrl: false,
+        from_alt: false,
+        action: tiler_windows::snapkey::ChordAction::Directional,
         to_vk: VK_H,
     }]);
     machine.set_disabled(vec![ChordDisable {
         vk: VK_H,
         shift: false,
+        ctrl: false,
+        alt: false,
     }]);
     SnapClassify::push(&mut machine, VK_LWIN, false, true, false);
     let down = SnapClassify::push(&mut machine, VK_U, false, true, false).expect("U down");
@@ -573,11 +601,16 @@ fn same_physical_rebound_pins_across_shift_flip() {
     machine.set_remap(vec![ChordRemap {
         from_vk: VK_U,
         from_shift: false,
+        from_ctrl: false,
+        from_alt: false,
+        action: tiler_windows::snapkey::ChordAction::Directional,
         to_vk: VK_H,
     }]);
     machine.set_disabled(vec![ChordDisable {
         vk: VK_H,
         shift: false,
+        ctrl: false,
+        alt: false,
     }]);
     SnapClassify::push(&mut machine, VK_LWIN, false, true, false);
     let down = SnapClassify::push(&mut machine, VK_U, false, true, false).expect("U down");
@@ -612,17 +645,25 @@ fn three_colliders_pair_in_any_release_order_across_remap_change() {
                 ChordRemap {
                     from_vk: VK_U,
                     from_shift: false,
+                    from_ctrl: false,
+                    from_alt: false,
+                    action: tiler_windows::snapkey::ChordAction::Directional,
                     to_vk: VK_H,
                 },
                 ChordRemap {
                     from_vk: VK_I,
                     from_shift: false,
+                    from_ctrl: false,
+                    from_alt: false,
+                    action: tiler_windows::snapkey::ChordAction::Directional,
                     to_vk: VK_H,
                 },
             ],
             vec![ChordDisable {
                 vk: VK_H,
                 shift: false,
+                ctrl: false,
+                alt: false,
             }],
         )
     };
@@ -675,29 +716,35 @@ fn compatible_preset_disables_os_conflicting_rows() {
     let mut settings = Settings::default();
     let changed = tiler_windows::settings::apply_preset(&mut settings, Preset::Compatible);
     // Every OS-conflicting row: 8 focus + 4 move-arrow + 3 toggles + 20
-    // workspace digits.
-    assert_eq!(changed.len(), 35);
+    // workspace digits + 2 history arrows.
+    assert_eq!(changed.len(), 37);
     assert!(changed.contains(&"toggle-float"));
     assert!(changed.contains(&"toggle-fullscreen"));
     assert!(changed.contains(&"focus-left"));
     assert!(changed.contains(&"focus-left-arrow"));
     assert!(changed.contains(&"move-left-arrow"));
     assert!(changed.contains(&"workspace-select-1"));
+    assert!(changed.contains(&"workspace-prev-left-arrow"));
+    assert!(changed.contains(&"workspace-next-right-arrow"));
     let effective = tiler_windows::settings::effective_bindings(&settings);
-    assert_eq!(effective.len(), 48);
+    assert_eq!(effective.len(), 57);
     for row in &effective {
         if tiler_windows::settings::compatible_disabled_ids().contains(&row.id) {
             assert!(!row.active, "{}", row.id);
             assert!(!row.effective, "{}", row.id);
         }
     }
-    // Conflict-free letter moves plus sticky stay active.
+    // Conflict-free letter moves plus sticky stay active, plus the kept
+    // history rows (Tab/letters/Up/Down).
     for id in [
         "move-left",
         "move-down",
         "move-up",
         "move-right",
         "toggle-sticky",
+        "workspace-previous",
+        "workspace-prev-h",
+        "workspace-next-j",
     ] {
         let row = effective.iter().find(|row| row.id == id).expect("row");
         assert!(row.active && row.effective, "{id}");

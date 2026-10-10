@@ -56,6 +56,10 @@ pub const VK_RWIN: u32 = 92;
 pub const VK_ESCAPE: u32 = 27;
 pub const VK_M: u32 = 0x4D;
 pub const VK_F11: u32 = 0x7A;
+/// Tab chord key for the previous-view toggle (Win+Ctrl+Tab, item 1).
+/// `vk_for_key_name` in settings recognizes `Tab`; the classifier treats it
+/// as a history arm only with Ctrl held (never a directional/digit arm).
+pub const VK_TAB: u32 = 0x09;
 pub const VK_SHIFT: u32 = 16;
 pub const VK_CONTROL: u32 = 17;
 pub const VK_MENU: u32 = 18;
@@ -118,32 +122,85 @@ impl SnapOp {
 
 /// One classifier remap entry for a rebound shortcut binding: one rebound
 /// physical chord routes into the existing action classifier at its canonical
-/// virtual key. Entries are single-polarity (one per explicit rebind chord):
-/// the rebind's Shift must match the binding's native arm, so the classifier's
-/// Shift-derived op keeps meaning what the binding says. Downs match the entry
-/// strictly; ups resolve through the down-time pin, so a mid-hold Shift flip
-/// still closes the pair instead of orphaning a stuck down slot
-/// (see [`SnapClassify::push`]). Entries are owner state, never callback
-/// state: the owner publishes the table and the callback only reads it through
-/// the machine (one cheap scan per event).
+/// virtual key plus explicit action. Entries carry the full modifier shape
+/// (Shift/Ctrl/Alt): the rebind's modifiers must match the binding's native
+/// arm, so the classifier's modifier-derived op keeps meaning what the
+/// binding says. Downs match the entry strictly; ups resolve through the
+/// down-time pin, so a mid-hold modifier flip still closes the pair instead
+/// of orphaning a stuck down slot (see [`SnapClassify::push`]). Entries are
+/// owner state, never callback state: the owner publishes the table and the
+/// callback only reads it through the machine (one cheap scan per event).
+/// `action` carries the explicit target arm (item 1 history vs
+/// focus/move/digit/toggle arms sharing one VK); a future unbound stay row
+/// has no canonical default VK but still rebinds through its action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChordRemap {
     pub from_vk: u32,
     pub from_shift: bool,
+    pub from_ctrl: bool,
+    pub from_alt: bool,
+    pub action: ChordAction,
     pub to_vk: u32,
 }
 
 /// One classifier suppression entry for a disabled or rebound-away chord: a
 /// physical chord the owner no longer intercepts passes through untracked.
-/// Entries are single-polarity physical chords (virtual key plus the Shift
-/// state that selects the arm). Fresh downs check the rebound table first (a
-/// rebound claims its physical chord even when the old default is suppressed),
-/// then this table; in-flight consumed holds ride their stored down verdict
-/// to their paired key-up regardless of later table changes.
+/// Entries are full-modifier physical chords (virtual key plus the Shift/Ctrl/
+/// Alt state that selects the arm). Fresh downs check the rebound table first
+/// (a rebound claims its physical chord even when the old default is
+/// suppressed), then this table; in-flight consumed holds ride their stored
+/// down verdict to their paired key-up regardless of later table changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChordDisable {
     pub vk: u32,
     pub shift: bool,
+    pub ctrl: bool,
+    pub alt: bool,
+}
+
+/// Explicit action routing for one rebound chord: which classifier arm the
+/// physical chord enters. VK alone cannot identify focus vs relative select
+/// vs relative follow vs output follow arms sharing one key; the action pins
+/// it. Item 1 uses the three history actions; existing arms keep their
+/// meaning through the same plumbing for later items (unbound stay rows ride
+/// an action with no canonical default VK).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChordAction {
+    Directional,
+    WorkspaceDigit,
+    Maximize,
+    Fullscreen,
+    Float,
+    Sticky,
+    WorkspacePrevious,
+    WorkspacePrev,
+    WorkspaceNext,
+}
+
+impl ChordAction {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Directional => "directional",
+            Self::WorkspaceDigit => "workspace-digit",
+            Self::Maximize => "maximize",
+            Self::Fullscreen => "fullscreen",
+            Self::Float => "float",
+            Self::Sticky => "sticky",
+            Self::WorkspacePrevious => "workspace-previous",
+            Self::WorkspacePrev => "workspace-prev",
+            Self::WorkspaceNext => "workspace-next",
+        }
+    }
+}
+
+/// Down-time physical routing pinned through the matching up: the canonical
+/// key plus the explicit action the down routed to. A mid-hold table change
+/// can neither orphan the hold nor leak its pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PinnedRoute {
+    canon: u32,
+    action: ChordAction,
 }
 
 /// Physical routing-table size: every chord virtual key fits in one byte.
@@ -152,8 +209,8 @@ const PIN_KEYS: usize = 256;
 /// Fresh-down routing outcome for one physical chord (see
 /// [`SnapClassify::fresh_route`], a private helper).
 enum Route {
-    /// Routes into the classifier at the canonical key.
-    Remap(u32),
+    /// Routes into the classifier at the canonical key plus explicit action.
+    Remap(ChordAction, u32),
     /// Passes through untracked.
     Suppressed,
     /// Classifies as itself.
@@ -235,7 +292,8 @@ pub const fn is_digit_vk(vk: u32) -> bool {
 
 /// True for any chord key the single classifier owns: directional catalog
 /// plus workspace digits plus the maximize, fullscreen, float, and sticky
-/// toggles. Modifiers, Win keys, and ordinary keys are not chord keys.
+/// toggles plus the item 1 history keys (Tab/H/J/K/L/arrows with Ctrl).
+/// Modifiers, Win keys, and ordinary keys are not chord keys.
 #[must_use]
 pub fn is_chord_vk(vk: u32) -> bool {
     catalog_index(vk).is_some()
@@ -243,6 +301,48 @@ pub fn is_chord_vk(vk: u32) -> bool {
         || is_maximize_vk(vk)
         || is_fullscreen_vk(vk)
         || is_float_vk(vk)
+        || is_history_vk(vk)
+}
+
+/// True for item 1 history chord keys: Tab plus H/J/K/L plus the four arrows.
+/// These classify as history only with Ctrl held (no Shift/Alt); without Ctrl
+/// the letters/arrows ride their directional arms and Tab passes through.
+#[must_use]
+pub const fn is_history_vk(vk: u32) -> bool {
+    matches!(
+        vk,
+        VK_TAB | VK_H | VK_J | VK_K | VK_L | VK_LEFT | VK_DOWN | VK_UP | VK_RIGHT
+    )
+}
+
+/// History slot index for a canonical history key: 0 Tab (Previous), 1 H,
+/// 2 K, 3 Left, 4 Up (Prev), 5 J, 6 L, 7 Down, 8 Right (Next).
+#[must_use]
+pub const fn history_index(vk: u32) -> Option<usize> {
+    match vk {
+        VK_TAB => Some(0),
+        VK_H => Some(1),
+        VK_K => Some(2),
+        VK_LEFT => Some(3),
+        VK_UP => Some(4),
+        VK_J => Some(5),
+        VK_L => Some(6),
+        VK_DOWN => Some(7),
+        VK_RIGHT => Some(8),
+        _ => None,
+    }
+}
+
+/// History op for a canonical history key: Tab toggles the previous view,
+/// H/K/Left/Up step to the previous ordinal, J/L/Down/Right step next.
+#[must_use]
+pub const fn history_op_for_vk(vk: u32) -> Option<WorkspaceHistoryOp> {
+    match vk {
+        VK_TAB => Some(WorkspaceHistoryOp::Previous),
+        VK_H | VK_K | VK_LEFT | VK_UP => Some(WorkspaceHistoryOp::Prev),
+        VK_J | VK_L | VK_DOWN | VK_RIGHT => Some(WorkspaceHistoryOp::Next),
+        _ => None,
+    }
 }
 
 /// True only for the maximize-toggle chord key (Win+M, KDE Meta+M parity).
@@ -317,6 +417,13 @@ fn digit_repeat_live(shift: bool, ctrl: bool, alt: bool, win: bool, op: Workspac
     !ctrl && !alt && win && (shift == (op == WorkspaceOp::Send))
 }
 
+/// Whether a live modifier/Win combination still matches a pinned history
+/// op: Win+Ctrl held, no Shift/Alt, Win still held. Same
+/// swallow-but-don't-dispatch contract as directional repeats.
+fn history_repeat_live(ctrl: bool, shift: bool, alt: bool, win: bool) -> bool {
+    ctrl && !shift && !alt && win
+}
+
 /// Collision refusal from the live owner's hold shape: same variant and
 /// action identity, refreshed edge/foreground, the collider's own consumed
 /// verdict, and never dispatched (`announce` is always false, so the owner
@@ -344,6 +451,15 @@ fn collide_refusal(
             consumed,
             announce: false,
         }),
+        Classified::WorkspaceHistory(intent) => {
+            Classified::WorkspaceHistory(WorkspaceHistoryIntent {
+                op: intent.op,
+                edge,
+                foreground,
+                consumed,
+                announce: false,
+            })
+        }
         Classified::Maximize(_) => Classified::Maximize(MaximizeIntent {
             edge,
             foreground,
@@ -384,6 +500,9 @@ fn collide_trigger(shape: &Classified) -> Option<MaskTrigger> {
             op: intent.op,
             index: intent.index,
         }),
+        Classified::WorkspaceHistory(intent) => {
+            Some(MaskTrigger::WorkspaceHistory { op: intent.op })
+        }
         Classified::Maximize(_) => Some(MaskTrigger::Maximize),
         Classified::Fullscreen(_) => Some(MaskTrigger::Fullscreen),
         Classified::Float(_) => Some(MaskTrigger::Float),
@@ -451,6 +570,41 @@ pub struct WorkspaceIntent {
     pub announce: bool,
 }
 
+/// Item 1 history op: `Previous` toggles the previous view (Win+Ctrl+Tab),
+/// `Prev` steps to the previous ordinal (Win+Ctrl+H/K/Left/Up), `Next` steps
+/// to the next ordinal (Win+Ctrl+J/L/Down/Right). Fixed at down time from the
+/// canonical key; later modifier flips never rewrite it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceHistoryOp {
+    Previous,
+    Prev,
+    Next,
+}
+
+impl WorkspaceHistoryOp {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Previous => "previous",
+            Self::Prev => "prev",
+            Self::Next => "next",
+        }
+    }
+}
+
+/// Classifier outcome for one workspace history event (item 1). Only downs
+/// dispatch (relative-step repeats re-dispatch while live), ups close the
+/// pair; held repeats of the Previous toggle stay swallowed like maximize
+/// (no re-toggle, no view pingpong).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceHistoryIntent {
+    pub op: WorkspaceHistoryOp,
+    pub edge: SnapEdge,
+    pub foreground: bool,
+    pub consumed: bool,
+    pub announce: bool,
+}
+
 /// Classifier outcome for one maximize-toggle event (Win+M, KDE Meta+M
 /// parity). The toggle carries no direction: only downs and repeats
 /// dispatch, ups close the pair.
@@ -495,14 +649,17 @@ pub struct StickyIntent {
     pub announce: bool,
 }
 
-/// Unified classifier outcome: exactly one of directional, workspace,
-/// maximize, fullscreen, or float. One machine, one modifier/mask authority;
-/// maximize, fullscreen, and float share Win/Shift/Ctrl/Alt tracking, origin
-/// pairing, saturation, and the E8 mask with H/J/K/L/arrows and digits.
+/// Unified classifier outcome: exactly one of directional, workspace digit,
+/// workspace history, maximize, fullscreen, or float/sticky. One machine,
+/// one modifier/mask authority; history shares Win/Shift/Ctrl/Alt tracking,
+/// origin pairing, saturation, and the E8 mask with H/J/K/L/arrows and
+/// digits. Ctrl selects the history arm (existing digit/directional arms
+/// refuse Ctrl); Shift/Alt select nothing there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Classified {
     Snap(SnapIntent),
     Workspace(WorkspaceIntent),
+    WorkspaceHistory(WorkspaceHistoryIntent),
     Maximize(MaximizeIntent),
     Fullscreen(FullscreenIntent),
     Float(FloatIntent),
@@ -515,6 +672,7 @@ impl Classified {
         match self {
             Self::Snap(intent) => intent.consumed,
             Self::Workspace(intent) => intent.consumed,
+            Self::WorkspaceHistory(intent) => intent.consumed,
             Self::Maximize(intent) => intent.consumed,
             Self::Fullscreen(intent) => intent.consumed,
             Self::Float(intent) => intent.consumed,
@@ -527,6 +685,7 @@ impl Classified {
         match self {
             Self::Snap(intent) => intent.announce,
             Self::Workspace(intent) => intent.announce,
+            Self::WorkspaceHistory(intent) => intent.announce,
             Self::Maximize(intent) => intent.announce,
             Self::Fullscreen(intent) => intent.announce,
             Self::Float(intent) => intent.announce,
@@ -535,16 +694,18 @@ impl Classified {
     }
 }
 
-/// Which chord armed the Start-menu mask. Digits, maximize, fullscreen, and
-/// float arm it exactly like directional chords: any consumed chord in the Win
-/// hold needs the E8 pair at Win-up, or the OS opens Start. `WinDrag` arms it
-/// for the project-driven Win+Left stationary gesture (parity item 7 second
-/// unit): the mouse hook consumes the click, so the keyboard classifier never
-/// sees a chord, but the Win hold still needs the same mask at release.
+/// Which chord armed the Start-menu mask. Digits, history, maximize,
+/// fullscreen, and float arm it exactly like directional chords: any consumed
+/// chord in the Win hold needs the E8 pair at Win-up, or the OS opens Start.
+/// `WinDrag` arms it for the project-driven Win+Left stationary gesture
+/// (parity item 7 second unit): the mouse hook consumes the click, so the
+/// keyboard classifier never sees a chord, but the Win hold still needs the
+/// same mask at release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaskTrigger {
     Snap { op: SnapOp, direction: Direction },
     Workspace { op: WorkspaceOp, index: u8 },
+    WorkspaceHistory { op: WorkspaceHistoryOp },
     Maximize,
     Fullscreen,
     Float,
@@ -608,10 +769,10 @@ pub struct SnapClassify {
     pub gate_active: bool,
     pub allow_win_l: bool,
     /// Owner-published rebound-chord table (empty means no rebinds): one rebound
-    /// physical chord translates to its canonical virtual key on entry, so
-    /// physical tracking, pairing, release, and repeat safety ride the
-    /// existing per-key slots unchanged. Single-polarity: the rebind's Shift
-    /// must match the binding's native arm.
+    /// physical chord translates to its canonical virtual key plus explicit
+    /// action on entry, so physical tracking, pairing, release, and repeat
+    /// safety ride the existing per-key slots unchanged. Full-modifier: the
+    /// rebind's Shift/Ctrl/Alt must match the binding's native arm.
     vk_remap: Vec<ChordRemap>,
     /// Owner-published suppression table (empty means everything kept):
     /// disabled or rebound-away physical chords pass through untracked.
@@ -620,14 +781,14 @@ pub struct SnapClassify {
     vk_disabled: Vec<ChordDisable>,
     /// Down-time physical routing pinned through the matching up: index by
     /// physical virtual key (all chord keys fit in one byte), value is the
-    /// canonical key the down routed to. A mid-hold table change can neither
-    /// orphan the hold (ups resolve through the pin) nor leak its pair
-    /// (repeats ride the stored verdict with dispatch gated on the chord
-    /// still routing live), and the Start-menu mask obligation survives
-    /// untouched. Only a hold the family actually owns pins: refused fresh
-    /// downs (bare, extra-modified, arm-refused, fenced, suppressed, gated
-    /// off) leave no pin, so their paired key-up passes through as well.
-    phys_pin: [Option<u32>; 256],
+    /// canonical key plus explicit action the down routed to. A mid-hold
+    /// table change can neither orphan the hold (ups resolve through the pin)
+    /// nor leak its pair (repeats ride the stored verdict with dispatch gated
+    /// on the chord still routing live), and the Start-menu mask obligation
+    /// survives untouched. Only a hold the family actually owns pins: refused
+    /// fresh downs (bare, extra-modified, arm-refused, fenced, suppressed,
+    /// gated off) leave no pin, so their paired key-up passes through as well.
+    phys_pin: [Option<PinnedRoute>; 256],
     /// Live safe-refusal holds per physical key: a different physical routing
     /// to an already-held canonical is swallowed here (consumed, never
     /// dispatched) with its own down-time verdict until its paired key-up,
@@ -641,6 +802,10 @@ pub struct SnapClassify {
     pub fullscreen_counts: SnapCounts,
     pub float_counts: SnapCounts,
     pub sticky_counts: SnapCounts,
+    hist_down: [bool; 9],
+    hist_origin: [bool; 9],
+    hist_op: [Option<WorkspaceHistoryOp>; 9],
+    pub hist_counts: [SnapCounts; 9],
     mask_pending: bool,
     mask_trigger: Option<MaskTrigger>,
     hold_masked: bool,
@@ -695,6 +860,10 @@ impl SnapClassify {
             fullscreen_counts: SnapCounts::default(),
             float_counts: SnapCounts::default(),
             sticky_counts: SnapCounts::default(),
+            hist_down: [false; 9],
+            hist_origin: [false; 9],
+            hist_op: [None; 9],
+            hist_counts: [SnapCounts::default(); 9],
             mask_pending: false,
             mask_trigger: None,
             hold_masked: false,
@@ -734,10 +903,10 @@ impl SnapClassify {
     /// instead of entering the classifier. Rebound chords never reach here
     /// (the rebound table wins); paired key-ups never reach here either (they
     /// ride their stored down verdict).
-    fn is_suppressed(&self, vk: u32, shift: bool) -> bool {
-        self.vk_disabled
-            .iter()
-            .any(|entry| entry.vk == vk && entry.shift == shift)
+    fn is_suppressed(&self, vk: u32, shift: bool, ctrl: bool, alt: bool) -> bool {
+        self.vk_disabled.iter().any(|entry| {
+            entry.vk == vk && entry.shift == shift && entry.ctrl == ctrl && entry.alt == alt
+        })
     }
 
     /// True for any physical key the classifier owns: catalog chord keys plus
@@ -748,35 +917,84 @@ impl SnapClassify {
         is_chord_vk(vk) || self.vk_remap.iter().any(|entry| entry.from_vk == vk)
     }
 
-    /// Fresh-down routing for one physical chord at the given Shift state:
+    /// Fresh-down routing for one physical chord at its live modifier state:
     /// rebound wins over suppression; suppression passes through; otherwise
     /// the physical key classifies as itself.
-    fn fresh_route(&self, physical: u32, shift: bool) -> Route {
-        if let Some(entry) = self
-            .vk_remap
-            .iter()
-            .find(|entry| entry.from_vk == physical && entry.from_shift == shift)
-        {
-            return Route::Remap(entry.to_vk);
+    fn fresh_route(&self, physical: u32, shift: bool, ctrl: bool, alt: bool) -> Route {
+        if let Some(entry) = self.vk_remap.iter().find(|entry| {
+            entry.from_vk == physical
+                && entry.from_shift == shift
+                && entry.from_ctrl == ctrl
+                && entry.from_alt == alt
+        }) {
+            return Route::Remap(entry.action, entry.to_vk);
         }
-        if self.is_suppressed(physical, shift) {
+        if self.is_suppressed(physical, shift, ctrl, alt) {
             return Route::Suppressed;
         }
         Route::Direct
     }
 
-    /// True when the physical chord still routes to the pinned canonical key
-    /// under the live tables. Pinned-hold repeats dispatch only while this
-    /// holds; otherwise they stay swallowed without dispatching.
-    fn route_matches(&self, physical: u32, canon: u32) -> bool {
-        match self.fresh_route(physical, self.shift) {
-            Route::Remap(target) => target == canon,
-            Route::Direct => physical == canon,
+    /// True when the physical chord still routes to the pinned canonical
+    /// route under the live tables. Pinned-hold repeats dispatch only while
+    /// this holds; otherwise they stay swallowed without dispatching.
+    fn route_matches(&self, physical: u32, pinned: PinnedRoute) -> bool {
+        match self.fresh_route(physical, self.shift, self.ctrl, self.alt) {
+            Route::Remap(action, target) => action == pinned.action && target == pinned.canon,
+            Route::Direct => {
+                physical == pinned.canon && self.direct_action(physical) == Some(pinned.action)
+            }
             Route::Suppressed => false,
         }
     }
 
-    fn pin_get(&self, physical: u32) -> Option<u32> {
+    /// Explicit action for a direct (non-remapped) physical chord at its live
+    /// modifiers: history wins on Win+Ctrl (no Shift/Alt), otherwise the
+    /// existing VK-derived arm. `None` means the chord refuses (bare,
+    /// extra-modified, or arm-refused) and leaves no pin.
+    fn direct_action(&self, physical: u32) -> Option<ChordAction> {
+        let win = self.win_l || self.win_r;
+        if !win {
+            return None;
+        }
+        // Item 1 history: Win+Ctrl with no Shift/Alt on a history key.
+        if self.ctrl
+            && !self.shift
+            && !self.alt
+            && let Some(op) = history_op_for_vk(physical)
+        {
+            return Some(match op {
+                WorkspaceHistoryOp::Previous => ChordAction::WorkspacePrevious,
+                WorkspaceHistoryOp::Prev => ChordAction::WorkspacePrev,
+                WorkspaceHistoryOp::Next => ChordAction::WorkspaceNext,
+            });
+        }
+        if self.ctrl || self.alt {
+            return None;
+        }
+        if catalog_index(physical).is_some() {
+            return Some(ChordAction::Directional);
+        }
+        if is_digit_vk(physical) {
+            return Some(ChordAction::WorkspaceDigit);
+        }
+        if is_maximize_vk(physical) && !self.shift {
+            return Some(ChordAction::Maximize);
+        }
+        if is_fullscreen_vk(physical) && !self.shift {
+            return Some(ChordAction::Fullscreen);
+        }
+        if is_float_vk(physical) {
+            return Some(if self.shift {
+                ChordAction::Sticky
+            } else {
+                ChordAction::Float
+            });
+        }
+        None
+    }
+
+    fn pin_get(&self, physical: u32) -> Option<PinnedRoute> {
         if (physical as usize) < PIN_KEYS {
             self.phys_pin[physical as usize]
         } else {
@@ -784,13 +1002,13 @@ impl SnapClassify {
         }
     }
 
-    fn pin_set(&mut self, physical: u32, canon: u32) {
+    fn pin_set(&mut self, physical: u32, route: PinnedRoute) {
         if (physical as usize) < PIN_KEYS {
-            self.phys_pin[physical as usize] = Some(canon);
+            self.phys_pin[physical as usize] = Some(route);
         }
     }
 
-    fn pin_take(&mut self, physical: u32) -> Option<u32> {
+    fn pin_take(&mut self, physical: u32) -> Option<PinnedRoute> {
         if (physical as usize) < PIN_KEYS {
             self.phys_pin[physical as usize].take()
         } else {
@@ -852,108 +1070,128 @@ impl SnapClassify {
             return true;
         }
         match self.pin_get(vk) {
-            Some(canon) => self.canon_is_down(canon),
+            Some(pinned) => self.canon_is_down(pinned.action, pinned.canon),
             None => false,
         }
     }
 
-    /// Live shape of the hold owning a canonical key, for a colliding
+    /// Live shape of the hold owning a canonical route, for a colliding
     /// physical's safe refusal: same variant and action identity as the
     /// owner's down (the op stays pinned at the owner's down time, so a
-    /// later Shift flip cannot rewrite it). `None` when no hold owns it.
-    fn held_shape(&self, canon: u32) -> Option<Classified> {
-        if let Some(idx) = catalog_index(canon) {
-            if !self.key_down[idx] {
-                return None;
+    /// later modifier flip cannot rewrite it). `None` when no hold owns it.
+    /// History arms own separate slots from directional/digit arms sharing
+    /// one VK, so cross-arm holds never collide.
+    fn held_shape(&self, action: ChordAction, canon: u32) -> Option<Classified> {
+        match action {
+            ChordAction::Directional => {
+                let idx = catalog_index(canon)?;
+                if !self.key_down[idx] {
+                    return None;
+                }
+                Some(Classified::Snap(SnapIntent {
+                    op: self.key_op[idx].unwrap_or(SnapOp::Focus),
+                    direction: index_direction(idx),
+                    edge: SnapEdge::Down,
+                    foreground: true,
+                    consumed: self.key_origin[idx],
+                    announce: false,
+                }))
             }
-            return Some(Classified::Snap(SnapIntent {
-                op: self.key_op[idx].unwrap_or(SnapOp::Focus),
-                direction: index_direction(idx),
-                edge: SnapEdge::Down,
-                foreground: true,
-                consumed: self.key_origin[idx],
-                announce: false,
-            }));
-        }
-        if is_digit_vk(canon) {
-            let slot = (canon - VK_0) as usize;
-            if !self.digit_down[slot] {
-                return None;
+            ChordAction::WorkspaceDigit => {
+                if !is_digit_vk(canon) {
+                    return None;
+                }
+                let slot = (canon - VK_0) as usize;
+                if !self.digit_down[slot] {
+                    return None;
+                }
+                Some(Classified::Workspace(WorkspaceIntent {
+                    op: self.digit_op[slot].unwrap_or(WorkspaceOp::Select),
+                    index: slot as u8,
+                    edge: SnapEdge::Down,
+                    foreground: true,
+                    consumed: self.digit_origin[slot],
+                    announce: false,
+                }))
             }
-            return Some(Classified::Workspace(WorkspaceIntent {
-                op: self.digit_op[slot].unwrap_or(WorkspaceOp::Select),
-                index: slot as u8,
-                edge: SnapEdge::Down,
-                foreground: true,
-                consumed: self.digit_origin[slot],
-                announce: false,
-            }));
-        }
-        if is_maximize_vk(canon) {
-            if !self.maximize_down {
-                return None;
+            ChordAction::WorkspacePrevious
+            | ChordAction::WorkspacePrev
+            | ChordAction::WorkspaceNext => {
+                let idx = history_index(canon)?;
+                if !self.hist_down[idx] {
+                    return None;
+                }
+                Some(Classified::WorkspaceHistory(WorkspaceHistoryIntent {
+                    op: self.hist_op[idx].unwrap_or(WorkspaceHistoryOp::Prev),
+                    edge: SnapEdge::Down,
+                    foreground: true,
+                    consumed: self.hist_origin[idx],
+                    announce: false,
+                }))
             }
-            return Some(Classified::Maximize(MaximizeIntent {
-                edge: SnapEdge::Down,
-                foreground: true,
-                consumed: self.maximize_origin,
-                announce: false,
-            }));
-        }
-        if is_fullscreen_vk(canon) {
-            if !self.fullscreen_down {
-                return None;
+            ChordAction::Maximize => {
+                if !self.maximize_down {
+                    return None;
+                }
+                Some(Classified::Maximize(MaximizeIntent {
+                    edge: SnapEdge::Down,
+                    foreground: true,
+                    consumed: self.maximize_origin,
+                    announce: false,
+                }))
             }
-            return Some(Classified::Fullscreen(FullscreenIntent {
-                edge: SnapEdge::Down,
-                foreground: true,
-                consumed: self.fullscreen_origin,
-                announce: false,
-            }));
-        }
-        if is_float_vk(canon) || is_sticky_vk(canon) {
-            if self.float_down {
-                return Some(Classified::Float(FloatIntent {
+            ChordAction::Fullscreen => {
+                if !self.fullscreen_down {
+                    return None;
+                }
+                Some(Classified::Fullscreen(FullscreenIntent {
+                    edge: SnapEdge::Down,
+                    foreground: true,
+                    consumed: self.fullscreen_origin,
+                    announce: false,
+                }))
+            }
+            ChordAction::Float => {
+                if !self.float_down {
+                    return None;
+                }
+                Some(Classified::Float(FloatIntent {
                     edge: SnapEdge::Down,
                     foreground: true,
                     consumed: self.float_origin,
                     announce: false,
-                }));
+                }))
             }
-            if self.sticky_down {
-                return Some(Classified::Sticky(StickyIntent {
+            ChordAction::Sticky => {
+                if !self.sticky_down {
+                    return None;
+                }
+                Some(Classified::Sticky(StickyIntent {
                     edge: SnapEdge::Down,
                     foreground: true,
                     consumed: self.sticky_origin,
                     announce: false,
-                }));
+                }))
             }
-            return None;
         }
-        None
     }
 
-    /// Whether a canonical chord key currently holds a down without its up.
-    fn canon_is_down(&self, vk: u32) -> bool {
-        if let Some(idx) = catalog_index(vk) {
-            return self.key_down[idx];
+    /// Whether a canonical route currently holds a down without its up.
+    /// History arms own separate slots from directional arms sharing one VK.
+    fn canon_is_down(&self, action: ChordAction, vk: u32) -> bool {
+        match action {
+            ChordAction::Directional => catalog_index(vk).is_some_and(|idx| self.key_down[idx]),
+            ChordAction::WorkspaceDigit => is_digit_vk(vk) && self.digit_down[(vk - VK_0) as usize],
+            ChordAction::WorkspacePrevious
+            | ChordAction::WorkspacePrev
+            | ChordAction::WorkspaceNext => {
+                history_index(vk).is_some_and(|idx| self.hist_down[idx])
+            }
+            ChordAction::Maximize => self.maximize_down,
+            ChordAction::Fullscreen => self.fullscreen_down,
+            ChordAction::Float => self.float_down,
+            ChordAction::Sticky => self.sticky_down,
         }
-        if is_digit_vk(vk) {
-            return self.digit_down[(vk - VK_0) as usize];
-        }
-        if is_maximize_vk(vk) {
-            return self.maximize_down;
-        }
-        if is_fullscreen_vk(vk) {
-            return self.fullscreen_down;
-        }
-        if is_float_vk(vk) {
-            return self.float_down || self.sticky_down;
-        }
-        if is_sticky_vk(vk) {
-            return self.float_down || self.sticky_down;
-        }
-        false
     }
 
     fn note_win_down(&mut self, vk: u32) {
@@ -1087,44 +1325,63 @@ impl SnapClassify {
         if is_up {
             // The pin proves this physical opened the hold; the family
             // closes its own paired slot below.
-            let canon = self.pin_take(physical)?;
-            return self.push_owned(physical, canon, true, foreground, true);
+            let pinned = self.pin_take(physical)?;
+            return self.push_owned(
+                physical,
+                pinned.canon,
+                pinned.action,
+                true,
+                foreground,
+                true,
+            );
         }
-        if let Some(canon) = self.pin_get(physical) {
-            let live = self.route_matches(physical, canon);
-            return self.push_owned(physical, canon, false, foreground, live);
+        if let Some(pinned) = self.pin_get(physical) {
+            let live = self.route_matches(physical, pinned);
+            return self.push_owned(
+                physical,
+                pinned.canon,
+                pinned.action,
+                false,
+                foreground,
+                live,
+            );
         }
         // Fresh down: refuse before pinning, so a refused chord leaves no
-        // orphan pin and its paired key-up passes through as well. The
-        // checks mirror the family fresh guards (bare, extra-modified, and
-        // Shift-refused arms plus the physical lock fence).
-        if self.ctrl || self.alt || !(self.win_l || self.win_r) {
+        // orphan pin and its paired key-up passes through as well. Win must
+        // be held; modifiers select the arm (Ctrl selects history, existing
+        // arms refuse Ctrl/Alt inside their family guards).
+        if !(self.win_l || self.win_r) {
             return None;
         }
-        let (canon, remapped) = match self.fresh_route(physical, self.shift) {
-            Route::Suppressed => return None,
-            Route::Remap(c) => (c, true),
-            Route::Direct => (physical, false),
-        };
-        if self.shift
-            && !is_digit_vk(canon)
-            && catalog_index(canon).is_none()
-            && !is_float_vk(canon)
-            && !is_sticky_vk(canon)
+        let (action, canon, remapped) =
+            match self.fresh_route(physical, self.shift, self.ctrl, self.alt) {
+                Route::Suppressed => return None,
+                Route::Remap(action, target) => (action, target, true),
+                Route::Direct => {
+                    let action = self.direct_action(physical)?;
+                    (action, physical, false)
+                }
+            };
+        // Unshifted physical Win+L is the OS lock chord: without explicit
+        // opt-in it passes through untracked, so its paired key-up also
+        // passes. The fence keys on the physical chord: a safe rebound
+        // into the canonical L slot works without opt-in.
+        if action == ChordAction::Directional
+            && !self.shift
+            && physical == VK_L
+            && !self.allow_win_l
+            && catalog_index(canon) == Some(3)
         {
             return None;
         }
-        if physical == VK_L && !self.shift && !self.allow_win_l && catalog_index(canon) == Some(3) {
-            return None;
-        }
-        if self.canon_is_down(canon) {
+        if self.canon_is_down(action, canon) {
             // Owned by a different physical: swallow as a safe consumed
             // refusal with its own down-time verdict. Passed while the gate
             // is off never holds: it passes through like a suppression.
             if !(self.enabled && self.gate_active) {
                 return None;
             }
-            let shape = self.held_shape(canon)?;
+            let shape = self.held_shape(action, canon)?;
             let down = collide_refusal(shape, SnapEdge::Down, foreground, true);
             if pidx < PIN_KEYS {
                 self.collide[pidx] = Some(down);
@@ -1134,36 +1391,51 @@ impl SnapClassify {
             return Some(down);
         }
         if remapped || is_chord_vk(physical) {
-            self.pin_set(physical, canon);
+            self.pin_set(physical, PinnedRoute { canon, action });
         }
-        self.push_owned(physical, canon, false, foreground, true)
+        self.push_owned(physical, canon, action, false, foreground, true)
     }
 
     /// Owned-chord dispatch for [`SnapClassify::push`]: `physical` opened the
-    /// hold (or repeats it) and `vk` is its down-time canonical key. Family
-    /// pairing, op pinning, gate riding, and mask semantics are unchanged;
-    /// the central guard above guarantees only true owners arrive here.
+    /// hold (or repeats it), `vk` is its down-time canonical key and `action`
+    /// its explicit arm. Family pairing, op pinning, gate riding, and mask
+    /// semantics are unchanged; the central guard above guarantees only true
+    /// owners arrive here.
     fn push_owned(
         &mut self,
         physical: u32,
         vk: u32,
+        action: ChordAction,
         is_up: bool,
         foreground: bool,
         route_live: bool,
     ) -> Option<Classified> {
+        match action {
+            ChordAction::WorkspacePrevious
+            | ChordAction::WorkspacePrev
+            | ChordAction::WorkspaceNext => {
+                return self.push_history(physical, vk, action, is_up, foreground, route_live);
+            }
+            ChordAction::WorkspaceDigit => {
+                return self.push_digit(vk, is_up, foreground, route_live);
+            }
+            ChordAction::Maximize => {
+                return self.push_maximize(is_up, foreground, route_live);
+            }
+            ChordAction::Fullscreen => {
+                return self.push_fullscreen(is_up, foreground, route_live);
+            }
+            ChordAction::Float => {
+                debug_assert!(is_float_vk(vk) || is_sticky_vk(vk));
+                return self.push_g(is_up, foreground, route_live);
+            }
+            ChordAction::Sticky => {
+                debug_assert!(is_float_vk(vk) || is_sticky_vk(vk));
+                return self.push_g(is_up, foreground, route_live);
+            }
+            ChordAction::Directional => {}
+        }
         let physical_lock = physical == VK_L;
-        if is_digit_vk(vk) {
-            return self.push_digit(vk, is_up, foreground, route_live);
-        }
-        if is_maximize_vk(vk) {
-            return self.push_maximize(is_up, foreground, route_live);
-        }
-        if is_fullscreen_vk(vk) {
-            return self.push_fullscreen(is_up, foreground, route_live);
-        }
-        if is_float_vk(vk) || is_sticky_vk(vk) {
-            return self.push_g(is_up, foreground, route_live);
-        }
         let idx = catalog_index(vk)?;
         let direction = index_direction(idx);
         if is_up {
@@ -1286,6 +1558,143 @@ impl SnapClassify {
                     Some(Classified::Snap(SnapIntent {
                         op,
                         direction,
+                        edge: SnapEdge::Down,
+                        foreground,
+                        consumed: false,
+                        announce: false,
+                    }))
+                }
+            }
+        }
+    }
+
+    /// History half of the unified classifier (item 1: Win+Ctrl+Tab toggle,
+    /// Win+Ctrl+H/K/Left/Up previous, Win+Ctrl+J/L/Down/Right next). Same
+    /// Win/armed-hold/gate/mask contract as digits, but Ctrl selects the arm:
+    /// fresh downs require Win+Ctrl with no Shift/Alt. The op is fixed at
+    /// down time from the explicit action (rebinds keep their action even
+    /// when the physical key differs); relative-step repeats ride the armed
+    /// hold and dispatch while the live Win+Ctrl combination still matches,
+    /// so held-key autorepeat steps repeatedly, while Previous-toggle repeats
+    /// stay swallowed (maximize parity, no pingpong). Ups close the pair. Fresh downs
+    /// consume iff takeover is on with the shortcut gate active; the owner
+    /// rechecks fresh scope/suspension before any select.
+    /// `route_live` gates fresh consumption and repeat dispatch: a pinned
+    /// hold whose chord no longer routes live stays swallowed without
+    /// dispatching until its matching up.
+    fn push_history(
+        &mut self,
+        _physical: u32,
+        vk: u32,
+        action: ChordAction,
+        is_up: bool,
+        foreground: bool,
+        route_live: bool,
+    ) -> Option<Classified> {
+        let idx = history_index(vk)?;
+        let op = match action {
+            ChordAction::WorkspacePrevious => WorkspaceHistoryOp::Previous,
+            ChordAction::WorkspacePrev => WorkspaceHistoryOp::Prev,
+            ChordAction::WorkspaceNext => WorkspaceHistoryOp::Next,
+            _ => return None,
+        };
+        if is_up {
+            if !self.hist_down[idx] {
+                return None;
+            }
+            self.hist_down[idx] = false;
+            let origin = self.hist_origin[idx];
+            self.hist_origin[idx] = false;
+            self.hist_op[idx] = None;
+            self.hist_counts[idx].up += 1;
+            if origin {
+                self.hist_counts[idx].consumed += 1;
+                Some(Classified::WorkspaceHistory(WorkspaceHistoryIntent {
+                    op,
+                    edge: SnapEdge::Up,
+                    foreground,
+                    consumed: true,
+                    announce: false,
+                }))
+            } else {
+                self.hist_counts[idx].passed += 1;
+                Some(Classified::WorkspaceHistory(WorkspaceHistoryIntent {
+                    op,
+                    edge: SnapEdge::Up,
+                    foreground,
+                    consumed: false,
+                    announce: false,
+                }))
+            }
+        } else {
+            // Armed-hold repeats classify before the fresh-chord guard: a
+            // consumed hold stays swallowed across mid-hold modifier/Win
+            // transitions (only `announce` follows the live combination), a
+            // passed hold stays passed.
+            if self.hist_down[idx] {
+                self.hist_counts[idx].repeat += 1;
+                let pinned = self.hist_op[idx].unwrap_or(op);
+                if self.hist_origin[idx] {
+                    let live = self.enabled
+                        && self.gate_active
+                        && route_live
+                        && history_repeat_live(
+                            self.ctrl,
+                            self.shift,
+                            self.alt,
+                            self.win_l || self.win_r,
+                        );
+                    self.hist_counts[idx].consumed += 1;
+                    if self.win_l || self.win_r {
+                        self.mask_pending = true;
+                        self.mask_trigger = Some(MaskTrigger::WorkspaceHistory { op: pinned });
+                    }
+                    // The Previous toggle never re-dispatches on hold
+                    // (maximize parity): a held Tab would otherwise pingpong
+                    // between the two views. Relative steps keep digit-like
+                    // repeat dispatch while live.
+                    let announce = live && pinned != WorkspaceHistoryOp::Previous;
+                    Some(Classified::WorkspaceHistory(WorkspaceHistoryIntent {
+                        op: pinned,
+                        edge: SnapEdge::Repeat,
+                        foreground,
+                        consumed: true,
+                        announce,
+                    }))
+                } else {
+                    self.hist_counts[idx].passed += 1;
+                    Some(Classified::WorkspaceHistory(WorkspaceHistoryIntent {
+                        op: pinned,
+                        edge: SnapEdge::Repeat,
+                        foreground,
+                        consumed: false,
+                        announce: false,
+                    }))
+                }
+            } else {
+                if !self.ctrl || self.shift || self.alt || !(self.win_l || self.win_r) {
+                    return None;
+                }
+                self.hist_down[idx] = true;
+                let origin = self.enabled && self.gate_active && route_live;
+                self.hist_origin[idx] = origin;
+                self.hist_op[idx] = Some(op);
+                self.hist_counts[idx].down += 1;
+                if origin {
+                    self.hist_counts[idx].consumed += 1;
+                    self.mask_pending = true;
+                    self.mask_trigger = Some(MaskTrigger::WorkspaceHistory { op });
+                    Some(Classified::WorkspaceHistory(WorkspaceHistoryIntent {
+                        op,
+                        edge: SnapEdge::Down,
+                        foreground,
+                        consumed: true,
+                        announce: true,
+                    }))
+                } else {
+                    self.hist_counts[idx].passed += 1;
+                    Some(Classified::WorkspaceHistory(WorkspaceHistoryIntent {
+                        op,
                         edge: SnapEdge::Down,
                         foreground,
                         consumed: false,
@@ -1958,6 +2367,290 @@ mod windrag_mask_tests {
     }
 }
 
+#[cfg(test)]
+mod history_tests {
+    use super::{
+        ChordAction, ChordDisable, ChordRemap, Classified, KeyboardConfig, MaskTrigger,
+        SnapClassify, SnapEdge, VK_CONTROL, VK_DOWN, VK_H, VK_J, VK_K, VK_L, VK_LEFT, VK_LWIN,
+        VK_MENU, VK_RIGHT, VK_SHIFT, VK_TAB, VK_UP, WorkspaceHistoryOp,
+    };
+
+    fn enabled() -> KeyboardConfig {
+        KeyboardConfig {
+            takeover: true,
+            allow_win_l: false,
+        }
+    }
+
+    fn ctrl_down(m: &mut SnapClassify) {
+        SnapClassify::push(m, VK_CONTROL, false, true, false);
+    }
+
+    fn ctrl_up(m: &mut SnapClassify) {
+        SnapClassify::push(m, VK_CONTROL, true, true, false);
+    }
+
+    fn history_op(m: &mut SnapClassify, vk: u32) -> WorkspaceHistoryOp {
+        match SnapClassify::push(m, vk, false, true, false).expect("history down") {
+            Classified::WorkspaceHistory(intent) => {
+                assert!(intent.consumed && intent.announce);
+                intent.op
+            }
+            other => panic!("expected history, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exact_ctrl_tab_routing_with_op_per_key() {
+        // Win+Ctrl+Tab toggles, H/K/Left/Up step prev, J/L/Down/Right next.
+        // Bare Tab/Chords without Win or Ctrl pass through untracked.
+        for (vk, op) in [
+            (VK_TAB, WorkspaceHistoryOp::Previous),
+            (VK_H, WorkspaceHistoryOp::Prev),
+            (VK_K, WorkspaceHistoryOp::Prev),
+            (VK_LEFT, WorkspaceHistoryOp::Prev),
+            (VK_UP, WorkspaceHistoryOp::Prev),
+            (VK_J, WorkspaceHistoryOp::Next),
+            (VK_L, WorkspaceHistoryOp::Next),
+            (VK_DOWN, WorkspaceHistoryOp::Next),
+            (VK_RIGHT, WorkspaceHistoryOp::Next),
+        ] {
+            let mut m = SnapClassify::new(enabled());
+            SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+            ctrl_down(&mut m);
+            assert_eq!(history_op(&mut m, vk), op);
+            match SnapClassify::push(&mut m, vk, true, true, false).expect("history up") {
+                Classified::WorkspaceHistory(intent) => {
+                    assert_eq!(intent.op, op);
+                    assert!(intent.consumed && !intent.announce);
+                }
+                other => panic!("expected history up, got {other:?}"),
+            }
+            ctrl_up(&mut m);
+            assert!(!m.key_is_down(vk));
+        }
+        // Bare (no Win) and extra-modified (Shift/Alt) chords refuse with no
+        // pin, so their paired ups also pass.
+        let mut m = SnapClassify::new(enabled());
+        assert_eq!(SnapClassify::push(&mut m, VK_TAB, false, true, false), None);
+        assert_eq!(SnapClassify::push(&mut m, VK_TAB, true, true, false), None);
+        let mut m = SnapClassify::new(enabled());
+        SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+        SnapClassify::push(&mut m, VK_SHIFT, false, true, false);
+        ctrl_down(&mut m);
+        assert_eq!(SnapClassify::push(&mut m, VK_H, false, true, false), None);
+        let mut m = SnapClassify::new(enabled());
+        SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+        SnapClassify::push(&mut m, VK_MENU, false, true, false);
+        ctrl_down(&mut m);
+        assert_eq!(SnapClassify::push(&mut m, VK_H, false, true, false), None);
+    }
+
+    #[test]
+    fn history_repeat_dispatches_while_ctrl_live() {
+        // Held-key autorepeat: repeats dispatch while Win+Ctrl holds, stay
+        // swallowed (no dispatch) once Ctrl leaves, pair closes consumed.
+        let mut m = SnapClassify::new(enabled());
+        SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+        ctrl_down(&mut m);
+        assert_eq!(history_op(&mut m, VK_J), WorkspaceHistoryOp::Next);
+        match SnapClassify::push(&mut m, VK_J, false, true, false).expect("repeat") {
+            Classified::WorkspaceHistory(intent) => {
+                assert_eq!(
+                    (intent.op, intent.edge),
+                    (WorkspaceHistoryOp::Next, SnapEdge::Repeat)
+                );
+                assert!(intent.consumed && intent.announce);
+            }
+            other => panic!("expected repeat, got {other:?}"),
+        }
+        ctrl_up(&mut m);
+        match SnapClassify::push(&mut m, VK_J, false, true, false).expect("repeat") {
+            Classified::WorkspaceHistory(intent) => assert!(intent.consumed && !intent.announce),
+            other => panic!("expected swallowed repeat, got {other:?}"),
+        }
+        match SnapClassify::push(&mut m, VK_J, true, true, false).expect("up") {
+            Classified::WorkspaceHistory(intent) => assert!(intent.consumed && !intent.announce),
+            other => panic!("expected up, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn previous_hold_repeat_swallows_without_pingpong() {
+        // Win+Ctrl+Tab down dispatches once; held repeats stay consumed and
+        // masked but never re-dispatch (maximize parity: otherwise the hold
+        // would pingpong between the two views). The paired release closes
+        // consumed with no orphan hold behind it.
+        let mut m = SnapClassify::new(enabled());
+        SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+        ctrl_down(&mut m);
+        assert_eq!(history_op(&mut m, VK_TAB), WorkspaceHistoryOp::Previous);
+        for _ in 0..2 {
+            match SnapClassify::push(&mut m, VK_TAB, false, true, false).expect("repeat") {
+                Classified::WorkspaceHistory(intent) => {
+                    assert_eq!(
+                        (intent.op, intent.edge),
+                        (WorkspaceHistoryOp::Previous, SnapEdge::Repeat)
+                    );
+                    assert!(intent.consumed && !intent.announce);
+                }
+                other => panic!("expected swallowed repeat, got {other:?}"),
+            }
+        }
+        match SnapClassify::push(&mut m, VK_TAB, true, true, false).expect("up") {
+            Classified::WorkspaceHistory(intent) => {
+                assert_eq!(intent.op, WorkspaceHistoryOp::Previous);
+                assert!(intent.consumed && !intent.announce);
+            }
+            other => panic!("expected up, got {other:?}"),
+        }
+        assert!(!m.key_is_down(VK_TAB));
+        assert_eq!(SnapClassify::push(&mut m, VK_TAB, true, true, false), None);
+        // Relative steps still re-dispatch while live (control case).
+        let mut m = SnapClassify::new(enabled());
+        SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+        ctrl_down(&mut m);
+        assert_eq!(history_op(&mut m, VK_J), WorkspaceHistoryOp::Next);
+        match SnapClassify::push(&mut m, VK_J, false, true, false).expect("repeat") {
+            Classified::WorkspaceHistory(intent) => assert!(intent.consumed && intent.announce),
+            other => panic!("expected dispatching repeat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn history_held_rebind_disable_gate_repeat_but_keep_pair() {
+        // Rebound history (Win+Ctrl+U -> Prev/H) dispatches; removing the
+        // mapping mid-hold swallows repeats without dispatching while the
+        // pair still closes consumed; disabling the canonical mid-hold does
+        // the same; fresh presses afterwards pass through.
+        let remap = || {
+            vec![ChordRemap {
+                from_vk: 0x55,
+                from_shift: false,
+                from_ctrl: true,
+                from_alt: false,
+                action: ChordAction::WorkspacePrev,
+                to_vk: VK_H,
+            }]
+        };
+        let mut m = SnapClassify::new(enabled());
+        m.set_remap(remap());
+        SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+        ctrl_down(&mut m);
+        assert_eq!(history_op(&mut m, 0x55), WorkspaceHistoryOp::Prev);
+        m.set_remap(Vec::new());
+        match SnapClassify::push(&mut m, 0x55, false, true, false).expect("repeat") {
+            Classified::WorkspaceHistory(intent) => assert!(intent.consumed && !intent.announce),
+            other => panic!("expected swallowed repeat, got {other:?}"),
+        }
+        match SnapClassify::push(&mut m, 0x55, true, true, false).expect("up") {
+            Classified::WorkspaceHistory(intent) => assert!(intent.consumed),
+            other => panic!("expected up, got {other:?}"),
+        }
+        assert_eq!(SnapClassify::push(&mut m, 0x55, false, true, false), None);
+        // Canonical disable mid-hold gates dispatch but keeps the pair.
+        let mut m = SnapClassify::new(enabled());
+        SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+        ctrl_down(&mut m);
+        assert_eq!(history_op(&mut m, VK_H), WorkspaceHistoryOp::Prev);
+        m.set_disabled(vec![ChordDisable {
+            vk: VK_H,
+            shift: false,
+            ctrl: true,
+            alt: false,
+        }]);
+        match SnapClassify::push(&mut m, VK_H, false, true, false).expect("repeat") {
+            Classified::WorkspaceHistory(intent) => assert!(intent.consumed && !intent.announce),
+            other => panic!("expected swallowed repeat, got {other:?}"),
+        }
+        match SnapClassify::push(&mut m, VK_H, true, true, false).expect("up") {
+            Classified::WorkspaceHistory(intent) => assert!(intent.consumed),
+            other => panic!("expected up, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn history_arms_mask_and_survives_saturation() {
+        // A consumed history chord arms the Start-menu mask; saturation drops
+        // only queued evidence while the verdict still swallows.
+        use super::{SnapQueue, classify_and_queue, win_up_mask_reserve};
+        let mut m = SnapClassify::new(enabled());
+        let mut q = SnapQueue::new();
+        SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+        ctrl_down(&mut m);
+        let down = SnapClassify::push(&mut m, VK_TAB, false, true, false).expect("down");
+        assert!(down.consumed() && down.announce());
+        assert!(win_up_mask_reserve(
+            &mut m,
+            &mut q,
+            VK_LWIN,
+            true,
+            std::time::Instant::now()
+        ));
+        match q.pop_front().expect("mask") {
+            super::QueuedSnapEvent::Mask(mask) => {
+                assert_eq!(
+                    mask.trigger,
+                    MaskTrigger::WorkspaceHistory {
+                        op: WorkspaceHistoryOp::Previous
+                    }
+                )
+            }
+            other => panic!("expected mask, got {other:?}"),
+        }
+        // Queue/mask routing: history classifies and queues with announce.
+        let mut m = SnapClassify::new(enabled());
+        let mut q = SnapQueue::new();
+        let tick = std::time::Instant::now();
+        assert_eq!(
+            classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+            None
+        );
+        assert_eq!(
+            classify_and_queue(&mut m, &mut q, VK_CONTROL, false, None, false, tick, true),
+            None
+        );
+        assert_eq!(
+            classify_and_queue(&mut m, &mut q, VK_J, false, None, false, tick, true),
+            Some(true)
+        );
+        match q.pop_front().expect("history") {
+            super::QueuedSnapEvent::WorkspaceHistory(queued) => {
+                assert_eq!(queued.op, WorkspaceHistoryOp::Next);
+                assert!(queued.consumed && queued.announce);
+            }
+            other => panic!("expected history, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn history_cross_arm_holds_never_collide() {
+        // Win+H (focus) and Win+Ctrl+H (history-prev) share VK_H across
+        // separate slots: both hold independently, release in any order.
+        let mut m = SnapClassify::new(enabled());
+        SnapClassify::push(&mut m, VK_LWIN, false, true, false);
+        match SnapClassify::push(&mut m, VK_H, false, true, false).expect("focus") {
+            Classified::Snap(intent) => assert!(intent.consumed),
+            other => panic!("expected focus, got {other:?}"),
+        }
+        ctrl_down(&mut m);
+        // Same physical H is already pinned to focus: this is the owner's
+        // repeat (swallowed, no dispatch flip into history).
+        match SnapClassify::push(&mut m, VK_H, false, true, false).expect("repeat") {
+            Classified::Snap(intent) => assert!(intent.consumed && !intent.announce),
+            other => panic!("expected pinned focus repeat, got {other:?}"),
+        }
+        ctrl_up(&mut m);
+        match SnapClassify::push(&mut m, VK_H, true, true, false).expect("up") {
+            Classified::Snap(intent) => assert!(intent.consumed),
+            other => panic!("expected focus up, got {other:?}"),
+        }
+        // Fresh history after the focus hold closed.
+        ctrl_down(&mut m);
+        assert_eq!(history_op(&mut m, VK_H), WorkspaceHistoryOp::Prev);
+    }
+}
+
 /// One Start-menu mask reservation: the arming chord plus the Win-up instant
 /// and the SendInput result stamped after the send, so a short write can never
 /// be logged as success.
@@ -2062,6 +2755,20 @@ pub struct QueuedWorkspaceIntent {
     pub tick: std::time::Instant,
 }
 
+/// One approved workspace history chord captured by the callback (item 1).
+/// History selects need no origin: toggle/relative steps act on the chord
+/// output's current view, never a managed mover. `origin` rides only for
+/// mask/queue parity and is ignored at dispatch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedWorkspaceHistoryIntent {
+    pub op: WorkspaceHistoryOp,
+    pub edge: SnapEdge,
+    pub origin: Option<SnapOrigin>,
+    pub consumed: bool,
+    pub announce: bool,
+    pub tick: std::time::Instant,
+}
+
 /// One approved maximize chord captured by the callback. `origin` is the
 /// managed identity bound at chord time (`None` means background/inactive or
 /// unmanaged foreground at chord time); without an origin the toggle never
@@ -2116,6 +2823,7 @@ pub struct QueuedStickyIntent {
 pub enum QueuedSnapEvent {
     Intent(QueuedIntent),
     Workspace(QueuedWorkspaceIntent),
+    WorkspaceHistory(QueuedWorkspaceHistoryIntent),
     Maximize(QueuedMaximizeIntent),
     Fullscreen(QueuedFullscreenIntent),
     Float(QueuedFloatIntent),
@@ -2252,6 +2960,16 @@ pub fn classify_and_queue(
             announce: intent.announce,
             tick,
         }),
+        Classified::WorkspaceHistory(intent) => {
+            QueuedSnapEvent::WorkspaceHistory(QueuedWorkspaceHistoryIntent {
+                op: intent.op,
+                edge: intent.edge,
+                origin,
+                consumed: intent.consumed,
+                announce: intent.announce,
+                tick,
+            })
+        }
         Classified::Maximize(intent) => QueuedSnapEvent::Maximize(QueuedMaximizeIntent {
             edge: intent.edge,
             origin,
@@ -3603,6 +4321,9 @@ pub mod sys {
             super::MaskTrigger::Workspace { op, index } => serde_json::json!({
                 "trigger_op": op.as_str(),
                 "trigger_index": index,
+            }),
+            super::MaskTrigger::WorkspaceHistory { op } => serde_json::json!({
+                "trigger_op": op.as_str(),
             }),
             super::MaskTrigger::Maximize => serde_json::json!({
                 "trigger_op": "maximize",

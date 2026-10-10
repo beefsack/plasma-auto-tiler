@@ -106,6 +106,20 @@ pub struct ManagedWorkspaces {
     /// Session-local per-workspace tiled state, keyed by workspace id.
     /// Absent entries read as the default (see [`ManagedWorkspaces::is_tiled`]).
     tiled: BTreeMap<String, bool>,
+    /// Stable previous workspace id per output (item 1 history): the actual
+    /// immediately preceding observed view. Survives emptiness; clears on
+    /// removal/unassignment/leaving the recording output's scope. No-op until
+    /// the next recorded change; never recreated or ordinal-reinterpreted.
+    previous: BTreeMap<String, String>,
+    /// Last observed active workspace id per output (item 1 baseline):
+    /// primed on output creation/reconnect, advanced only by
+    /// [`ManagedWorkspaces::observe_workspace_change`].
+    baseline: BTreeMap<String, String>,
+    /// Single shared-scope history for future non-local modes (item 12/14
+    /// pending): pure helpers only, no runtime observation yet.
+    shared_previous: Option<String>,
+    /// Single shared-scope baseline for future non-local modes: pure only.
+    shared_baseline: Option<String>,
 }
 
 impl Default for ManagedWorkspaces {
@@ -125,6 +139,10 @@ impl ManagedWorkspaces {
             next_output: 0,
             default_tiled: true,
             tiled: BTreeMap::new(),
+            previous: BTreeMap::new(),
+            baseline: BTreeMap::new(),
+            shared_previous: None,
+            shared_baseline: None,
         }
     }
 
@@ -223,6 +241,12 @@ impl ManagedWorkspaces {
                 });
             }
             self.outputs.insert(key.to_owned(), state);
+            // Prime a fresh observation baseline for the new output: the
+            // initial active view with no previous yet. Subsequent observed
+            // displacement/return changes record from here.
+            if let Some(active) = self.active_id(key) {
+                self.baseline.insert(key.to_owned(), active);
+            }
         }
         self.outputs.get_mut(key).expect("ensured output")
     }
@@ -237,6 +261,209 @@ impl ManagedWorkspaces {
         self.outputs
             .get(output)
             .and_then(|o| o.order.get(o.active).map(|w| w.id.clone()))
+    }
+
+    /// Stable previous workspace id for one output (item 1 toggle target).
+    /// `None` until a recorded change exists or after invalidation clears it.
+    #[must_use]
+    pub fn history_previous(&self, output: &str) -> Option<String> {
+        self.previous.get(output).cloned()
+    }
+
+    /// Last observed active workspace id for one output (item 1 baseline).
+    #[must_use]
+    pub fn history_baseline(&self, output: &str) -> Option<String> {
+        self.baseline.get(output).cloned()
+    }
+
+    /// Record one successfully observed view change on an output. Only
+    /// completed transitions call this (verified hide/reveal select,
+    /// verified send-follow arrival, native/foreground activation, hotplug):
+    /// never attempted setters, same-workspace activation, or output focus
+    /// alone. Returns true when a new previous entry was recorded.
+    ///
+    /// Rules: unknown outputs or unknown current ids never record; a missing
+    /// baseline primes to current with no previous; an unchanged baseline is
+    /// a no-op (validating a stale previous); a changed baseline stores the
+    /// old baseline as previous unless it left scope (then previous clears
+    /// and no valid toggle exists until the next recorded change).
+    pub fn observe_workspace_change(&mut self, output: &str, current: &str) -> bool {
+        let live: BTreeSet<String> = match self.outputs.get(output) {
+            Some(state) => state.order.iter().map(|e| e.id.clone()).collect(),
+            None => return false,
+        };
+        if !live.contains(current) {
+            self.validate_history(output);
+            return false;
+        }
+        match self.baseline.get(output).cloned() {
+            None => {
+                self.baseline.insert(output.to_owned(), current.to_owned());
+                self.validate_history(output);
+                false
+            }
+            Some(base) if base == current => {
+                self.validate_history(output);
+                false
+            }
+            Some(base) => {
+                if live.contains(&base) {
+                    self.previous.insert(output.to_owned(), base);
+                } else {
+                    self.previous.remove(output);
+                }
+                self.baseline.insert(output.to_owned(), current.to_owned());
+                self.validate_history(output);
+                self.previous.contains_key(output)
+            }
+        }
+    }
+
+    /// Resolve the previous-view toggle target without activating, appending,
+    /// or creating. Validates the stable id (clears removed/unassigned or
+    /// out-of-scope entries like removal); `None` is a no-op until the next
+    /// recorded change. Returning the active id itself is a valid no-op
+    /// target: the caller treats it as already-there with no native effect.
+    pub fn resolve_previous(&mut self, output: &str) -> Option<String> {
+        let id = self.previous.get(output).cloned()?;
+        let live = self.outputs.get(output)?;
+        if live.order.iter().any(|e| e.id == id) {
+            Some(id)
+        } else {
+            self.previous.remove(output);
+            None
+        }
+    }
+
+    /// Resolve an ordinal ring step without activating, appending, or
+    /// creating. The ring is every existing scoped id in order, including the
+    /// trailing empty and ordinals beyond 9; first/last wrap. `delta` must be
+    /// -1 (previous) or +1 (next); anything else refuses.
+    pub fn resolve_relative(&self, output: &str, delta: i32) -> Option<String> {
+        if delta != -1 && delta != 1 {
+            return None;
+        }
+        let state = self.outputs.get(output)?;
+        if state.order.is_empty() {
+            return None;
+        }
+        let ring: Vec<String> = state.order.iter().map(|e| e.id.clone()).collect();
+        let current = state.order.get(state.active).map(|e| e.id.clone())?;
+        let at = ring.iter().position(|id| id == &current)?;
+        let next = ring[(at as i32 + delta + ring.len() as i32) as usize % ring.len()].clone();
+        Some(next)
+    }
+
+    /// Scoped ring ids for one output: every existing id in order, including
+    /// the trailing empty and ordinals beyond 9. Selection creates nothing.
+    #[must_use]
+    pub fn scoped_ring_ids(&self, output: &str) -> Vec<String> {
+        self.workspace_ids(output)
+    }
+
+    /// Drop both the previous entry and the observed baseline for one
+    /// output (disconnect handling). Displacement associations stay separate.
+    pub fn discard_output_history(&mut self, output: &str) {
+        self.previous.remove(output);
+        self.baseline.remove(output);
+    }
+
+    /// Validate one output's previous entry against live scope: a removed,
+    /// unassigned, or out-of-scope id clears. Never reinterprets an ordinal
+    /// or recreates a workspace.
+    fn validate_history(&mut self, output: &str) {
+        let live: Option<BTreeSet<String>> = self
+            .outputs
+            .get(output)
+            .map(|s| s.order.iter().map(|e| e.id.clone()).collect());
+        let Some(live) = live else {
+            self.previous.remove(output);
+            self.baseline.remove(output);
+            return;
+        };
+        if let Some(prev) = self.previous.get(output).cloned()
+            && !live.contains(&prev)
+        {
+            self.previous.remove(output);
+        }
+        if let Some(base) = self.baseline.get(output).cloned()
+            && !live.contains(&base)
+        {
+            // Re-prime a removed baseline to the live active view so the next
+            // observed change records honestly instead of dangling.
+            if let Some(active) = self.active_id(output) {
+                self.baseline.insert(output.to_owned(), active);
+            } else {
+                self.baseline.remove(output);
+            }
+        }
+    }
+
+    /// Pure shared-scope observation for future non-local modes (pending
+    /// runtime): same record/no-op/invalidate rules over one history/ring.
+    /// `live` is the full shared order; `current` is the observed view.
+    pub fn observe_shared_change(&mut self, live: &[String], current: &str) -> bool {
+        if !live.contains(&current.to_owned()) {
+            self.validate_shared(live);
+            return false;
+        }
+        match self.shared_baseline.clone() {
+            None => {
+                self.shared_baseline = Some(current.to_owned());
+                self.validate_shared(live);
+                false
+            }
+            Some(base) if base == current => {
+                self.validate_shared(live);
+                false
+            }
+            Some(base) => {
+                if live.contains(&base) {
+                    self.shared_previous = Some(base);
+                } else {
+                    self.shared_previous = None;
+                }
+                self.shared_baseline = Some(current.to_owned());
+                self.validate_shared(live);
+                self.shared_previous.is_some()
+            }
+        }
+    }
+
+    /// Pure shared-scope previous resolver (pending runtime): validates the
+    /// stable id against `live`, clearing removed entries.
+    pub fn resolve_shared_previous(&mut self, live: &[String]) -> Option<String> {
+        let id = self.shared_previous.clone()?;
+        if live.contains(&id) {
+            Some(id)
+        } else {
+            self.shared_previous = None;
+            None
+        }
+    }
+
+    /// Pure shared-scope ring step (pending runtime): wraps over the full
+    /// shared order including trailing empty and beyond-9 positions.
+    #[must_use]
+    pub fn resolve_shared_relative(live: &[String], current: &str, delta: i32) -> Option<String> {
+        if delta != -1 && delta != 1 || live.is_empty() {
+            return None;
+        }
+        let at = live.iter().position(|id| id == current)?;
+        Some(live[(at as i32 + delta + live.len() as i32) as usize % live.len()].clone())
+    }
+
+    fn validate_shared(&mut self, live: &[String]) {
+        if let Some(prev) = self.shared_previous.clone()
+            && !live.contains(&prev)
+        {
+            self.shared_previous = None;
+        }
+        if let Some(base) = self.shared_baseline.clone()
+            && !live.contains(&base)
+        {
+            self.shared_baseline = None;
+        }
     }
 
     /// Activate one workspace by id without disturbing order. Returns false
@@ -552,6 +779,11 @@ impl ManagedWorkspaces {
             record.workspace_ids.retain(|id| live.contains(id));
         }
         self.displaced.retain(|_, r| !r.workspace_ids.is_empty());
+        // History invalidation: a removed/unassigned previous clears; a
+        // removed baseline re-primes to the live active view. Surviving empty
+        // workspaces stay valid; ordinals are never reinterpreted and nothing
+        // is recreated here.
+        self.validate_history(output);
     }
 
     /// Move whole workspaces from origin onto a caller-selected survivor.
@@ -570,6 +802,9 @@ impl ManagedWorkspaces {
             .unwrap_or_default();
         if ids.is_empty() {
             self.outputs.remove(origin);
+            // A disconnected output's history is discarded with the output.
+            self.discard_output_history(origin);
+            self.validate_history(dest);
             return true;
         }
         let moving: Vec<WorkspaceEntry> = self
@@ -593,6 +828,12 @@ impl ManagedWorkspaces {
                 dest_key: dest.to_owned(),
             },
         );
+        // Disconnect drops BOTH the previous entry and the observed baseline
+        // for the removed origin; the survivor's previous stays valid only
+        // while still in its scope (movement to another output clears like
+        // removal, so toggle is a no-op until the next recorded change).
+        self.discard_output_history(origin);
+        self.validate_history(dest);
         true
     }
 
@@ -652,6 +893,19 @@ impl ManagedWorkspaces {
             self.seed_mode(id);
         }
         self.displaced.remove(origin);
+        // Reconnect selection never consults or restores history: clear any
+        // stale previous for the origin and prime a fresh baseline at the
+        // returning active view. The next observed displacement/return change
+        // records from there. The survivor's history validates against its
+        // shrunken scope (a moved previous D clears on L like removal).
+        self.previous.remove(origin);
+        if let Some(active) = self.active_id(origin) {
+            self.baseline.insert(origin.to_owned(), active);
+        } else {
+            self.baseline.remove(origin);
+        }
+        self.validate_history(&record.dest_key);
+        self.validate_history(origin);
         true
     }
 
@@ -1445,5 +1699,280 @@ mod tests {
             topology_fingerprint(&moved_areas, &workspaces, &members, 1),
             base
         );
+    }
+
+    // Item 1 history/ring regression: observed changes record, failed
+    // attempts and same-view activation never do, and the ring wraps the
+    // full scoped order including trailing empty and ordinals beyond 9.
+
+    fn history_ids(m: &ManagedWorkspaces, output: &str) -> Vec<String> {
+        m.workspace_ids(output)
+    }
+
+    fn occupy_all_then_trailing(m: &mut ManagedWorkspaces, output: &str, count: usize) {
+        for i in 0..count {
+            let ids = history_ids(m, output);
+            let mut placed = false;
+            for ws in &ids {
+                let occupied = m.workspace_members(output, ws).is_empty();
+                if occupied {
+                    assert!(m.assign(key(700 + i as u64), output, ws, false));
+                    placed = true;
+                    break;
+                }
+            }
+            assert!(placed, "workspace available for {i}");
+            let _ = m.select_trailing(output);
+        }
+    }
+
+    #[test]
+    fn history_records_only_observed_changes() {
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        let ids = history_ids(&m, "mon-1");
+        let (ws1, ws2) = (ids[0].clone(), ids[1].clone());
+        // Fresh output primes the baseline with no previous: toggle is a
+        // no-op until the next recorded change, and setters never record.
+        assert_eq!(m.history_baseline("mon-1").as_deref(), Some(ws1.as_str()));
+        assert_eq!(m.history_previous("mon-1"), None);
+        assert_eq!(m.resolve_previous("mon-1"), None);
+        assert!(m.activate("mon-1", &ws1));
+        assert!(!m.observe_workspace_change("mon-1", &ws1));
+        assert_eq!(m.history_previous("mon-1"), None);
+        // Unknown output/current never records.
+        assert!(!m.observe_workspace_change("mon-gone", &ws1));
+        assert!(!m.observe_workspace_change("mon-1", "ws-gone"));
+        // First observed change records previous=ws1.
+        assert!(m.activate("mon-1", &ws2));
+        assert!(m.observe_workspace_change("mon-1", &ws2));
+        assert_eq!(m.history_previous("mon-1").as_deref(), Some(ws1.as_str()));
+        assert_eq!(m.resolve_previous("mon-1").as_deref(), Some(ws1.as_str()));
+    }
+
+    #[test]
+    fn history_repeated_toggle_walks_two_views() {
+        // WS1->WS2->WS3->WS2->WS3: toggle alternates the last two observed
+        // views (two-view toggle, not MRU traversal).
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        let ids = history_ids(&m, "mon-1");
+        assert!(m.assign(key(701), "mon-1", &ids[0], false));
+        assert!(m.assign(key(702), "mon-1", &ids[1], false));
+        let (third, created) = m.select_trailing("mon-1").expect("third");
+        assert!(created);
+        // Trailing creation is itself an observed view change in production
+        // (`workspace_do_select` records the verified transition).
+        assert!(m.observe_workspace_change("mon-1", &third));
+        assert!(m.activate("mon-1", &ids[0]));
+        assert!(m.observe_workspace_change("mon-1", &ids[0]));
+        let ids = history_ids(&m, "mon-1");
+        let (ws1, ws2, ws3) = (ids[0].clone(), ids[1].clone(), third.clone());
+        for target in [&ws2, &ws3, &ws2, &ws3] {
+            assert!(m.activate("mon-1", target));
+            assert!(m.observe_workspace_change("mon-1", target));
+        }
+        assert_eq!(m.history_baseline("mon-1").as_deref(), Some(ws3.as_str()));
+        assert_eq!(m.history_previous("mon-1").as_deref(), Some(ws2.as_str()));
+        // Toggle target resolves to ws2 without activating.
+        let before = m.active_id("mon-1").expect("active");
+        assert_eq!(m.resolve_previous("mon-1").as_deref(), Some(ws2.as_str()));
+        assert_eq!(m.active_id("mon-1").as_deref(), Some(before.as_str()));
+        assert!(m.activate("mon-1", &ws2));
+        assert!(m.observe_workspace_change("mon-1", &ws2));
+        assert_eq!(m.history_previous("mon-1").as_deref(), Some(ws3.as_str()));
+        let _ = ws1;
+    }
+
+    #[test]
+    fn history_same_view_and_output_focus_never_record() {
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        m.ensure_output("mon-2");
+        let ids = history_ids(&m, "mon-1");
+        assert!(m.activate("mon-1", &ids[1]));
+        assert!(m.observe_workspace_change("mon-1", &ids[1]));
+        // Re-observing the same view is a no-op: previous stays.
+        assert!(!m.observe_workspace_change("mon-1", &ids[1]));
+        assert_eq!(
+            m.history_previous("mon-1").as_deref(),
+            Some(ids[0].as_str())
+        );
+        // Merely focusing another output (no view change there) records
+        // nothing on either output.
+        assert!(!m.observe_workspace_change("mon-2", &history_ids(&m, "mon-2")[0]));
+        assert_eq!(m.history_previous("mon-2"), None);
+    }
+
+    #[test]
+    fn history_surviving_empty_stays_valid_but_removal_clears() {
+        // Genuine lifecycle: visit ws2 (previous), empty it without removing
+        // (stable id survives and still toggles), then prune it as an
+        // intermediate empty through the real trailing plan. Removal clears
+        // the previous entry: toggle is a no-op with no recreation.
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        let ids = history_ids(&m, "mon-1");
+        let (ws1, ws2) = (ids[0].clone(), ids[1].clone());
+        // Occupy both so trailing appends a third workspace.
+        let first_win = key(11);
+        let second_win = key(12);
+        assert!(m.assign(first_win.clone(), "mon-1", &ws1, false));
+        assert!(m.assign(second_win.clone(), "mon-1", &ws2, false));
+        let (ws3, created) = m.select_trailing("mon-1").expect("third");
+        assert!(created);
+        // Visit ws2, then return to ws1: previous is the visited ws2.
+        assert!(m.activate("mon-1", &ws2));
+        assert!(m.observe_workspace_change("mon-1", &ws2));
+        assert!(m.activate("mon-1", &ws1));
+        assert!(m.observe_workspace_change("mon-1", &ws1));
+        assert_eq!(m.history_previous("mon-1").as_deref(), Some(ws2.as_str()));
+        // Empty the previous workspace without removing it: the stable id
+        // survives emptiness and still resolves.
+        assert!(m.remove_window(&second_win));
+        assert!(m.workspace_members("mon-1", &ws2).is_empty());
+        assert_eq!(m.resolve_previous("mon-1").as_deref(), Some(ws2.as_str()));
+        // Order is now [ws1 occupied, ws2 empty intermediate, ws3 trailing
+        // empty] with ws1 active: the real plan prunes exactly ws2.
+        let (removed, append) = m.plan_cleanup("mon-1", std::slice::from_ref(&ws1), &[]);
+        assert_eq!(removed, vec![ws2.clone()]);
+        assert!(!append);
+        m.apply_cleanup("mon-1", &removed, append);
+        // Inventory is stable with no recreation: survivors keep their ids,
+        // the active view is untouched, and the removed previous clears.
+        assert_eq!(m.workspace_ids("mon-1"), vec![ws1.clone(), ws3.clone()]);
+        assert_eq!(m.active_id("mon-1").as_deref(), Some(ws1.as_str()));
+        assert_eq!(m.history_previous("mon-1"), None);
+        assert_eq!(m.resolve_previous("mon-1"), None);
+        let _ = first_win;
+    }
+
+    #[test]
+    fn history_disconnect_discards_and_reconnect_primes_fresh() {
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        m.ensure_output("mon-2");
+        let ids = history_ids(&m, "mon-1");
+        assert!(m.activate("mon-1", &ids[1]));
+        assert!(m.observe_workspace_change("mon-1", &ids[1]));
+        assert!(m.history_previous("mon-1").is_some());
+        // Disconnect drops BOTH previous and baseline for the origin.
+        assert!(m.displace_output_to("mon-1", "mon-2"));
+        assert_eq!(m.history_previous("mon-1"), None);
+        assert_eq!(m.history_baseline("mon-1"), None);
+        // Reconnect primes a fresh baseline with no previous: toggle is a
+        // no-op until the next recorded change, and selection never
+        // consulted history (active is the first returning workspace).
+        assert!(m.reconnect_output("mon-1"));
+        assert_eq!(m.history_previous("mon-1"), None);
+        let active = m.active_id("mon-1").expect("active");
+        assert_eq!(
+            m.history_baseline("mon-1").as_deref(),
+            Some(active.as_str())
+        );
+        assert_eq!(m.resolve_previous("mon-1"), None);
+        // The next observed displacement/return change records from the
+        // fresh baseline.
+        let ids = history_ids(&m, "mon-1");
+        let other = ids.iter().find(|id| *id != &active).expect("other").clone();
+        assert!(m.activate("mon-1", &other));
+        assert!(m.observe_workspace_change("mon-1", &other));
+        assert_eq!(
+            m.history_previous("mon-1").as_deref(),
+            Some(active.as_str())
+        );
+    }
+
+    #[test]
+    fn ring_wraps_trailing_and_beyond_nine_without_creation() {
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        occupy_all_then_trailing(&mut m, "mon-1", 10);
+        assert!(m.workspace_count("mon-1") > 9);
+        let ring = m.scoped_ring_ids("mon-1");
+        assert_eq!(ring, history_ids(&m, "mon-1"));
+        let first = ring.first().expect("first").clone();
+        let last = ring.last().expect("last").clone();
+        // Last -> next wraps to first; first -> previous wraps to last.
+        assert!(m.activate("mon-1", &last));
+        assert_eq!(
+            m.resolve_relative("mon-1", 1).as_deref(),
+            Some(first.as_str())
+        );
+        assert!(m.activate("mon-1", &first));
+        assert_eq!(
+            m.resolve_relative("mon-1", -1).as_deref(),
+            Some(last.as_str())
+        );
+        // Resolution creates nothing and refuses bad deltas.
+        let count = m.workspace_count("mon-1");
+        assert_eq!(m.resolve_relative("mon-1", 0), None);
+        assert_eq!(m.resolve_relative("mon-1", 2), None);
+        assert_eq!(m.workspace_count("mon-1"), count);
+        // Unknown output refuses.
+        assert_eq!(m.resolve_relative("mon-gone", 1), None);
+    }
+
+    #[test]
+    fn history_per_output_isolation_and_shared_scope() {
+        // Local/global-unique model: per-output histories never leak.
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        m.ensure_output("mon-2");
+        let a = history_ids(&m, "mon-1");
+        let b = history_ids(&m, "mon-2");
+        assert!(m.activate("mon-1", &a[1]));
+        assert!(m.observe_workspace_change("mon-1", &a[1]));
+        assert_eq!(m.history_previous("mon-1").as_deref(), Some(a[0].as_str()));
+        assert_eq!(m.history_previous("mon-2"), None);
+        // Output focus alone on mon-2 records nothing.
+        assert!(!m.observe_workspace_change("mon-2", &b[0]));
+        // Shared model (future non-local runtime): one history/ring over the
+        // full order, same record/no-op/invalidate rules, pure only.
+        let live = vec!["s1".to_owned(), "s2".to_owned(), "s3".to_owned()];
+        assert!(!m.observe_shared_change(&live, "s1"));
+        assert!(m.resolve_shared_previous(&live).is_none());
+        assert!(m.observe_shared_change(&live, "s2"));
+        assert_eq!(m.resolve_shared_previous(&live).as_deref(), Some("s1"));
+        assert_eq!(
+            ManagedWorkspaces::resolve_shared_relative(&live, "s3", 1).as_deref(),
+            Some("s1")
+        );
+        assert_eq!(
+            ManagedWorkspaces::resolve_shared_relative(&live, "s1", -1).as_deref(),
+            Some("s3")
+        );
+        // Removed shared ids clear through the genuine path, never
+        // reinterpret: record s2 as previous against the full ring, then
+        // resolve against a ring without it.
+        let short = vec!["s1".to_owned(), "s3".to_owned()];
+        assert_eq!(m.resolve_shared_previous(&short).as_deref(), Some("s1"));
+        assert!(m.observe_shared_change(&live, "s3"));
+        assert_eq!(m.resolve_shared_previous(&live).as_deref(), Some("s2"));
+        assert_eq!(m.resolve_shared_previous(&short), None);
+        assert_eq!(m.shared_previous, None);
+    }
+
+    #[test]
+    fn history_moved_previous_clears_like_removal() {
+        // A previous entry that moves to another output's scope clears on
+        // the recording output (return-on-reconnect case): toggle is a
+        // no-op until the next recorded change.
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        m.ensure_output("mon-2");
+        let ids = history_ids(&m, "mon-1");
+        assert!(m.activate("mon-1", &ids[1]));
+        assert!(m.observe_workspace_change("mon-1", &ids[1]));
+        assert!(m.displace_output_to("mon-1", "mon-2"));
+        assert!(m.reconnect_output("mon-1"));
+        assert_eq!(m.history_previous("mon-1"), None);
+        // Unchanged inventory: displacement/return moved workspaces without
+        // creating or duplicating ids on the survivor.
+        let survivor = history_ids(&m, "mon-2");
+        let mut seen = survivor.clone();
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen.len(), survivor.len());
     }
 }

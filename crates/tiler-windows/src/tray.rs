@@ -339,7 +339,7 @@ pub fn first_run_body() -> String {
 }
 
 /// Validated settings for one first-run choice. Authentic is the catalog
-/// defaults; compatible is the deterministic reset disabling the 35
+/// defaults; compatible is the deterministic reset disabling the 37
 /// OS-conflicting rows (Win+L opt-in preserved in both).
 #[must_use]
 pub fn settings_for_choice(choice: FirstRunChoice) -> Settings {
@@ -806,6 +806,13 @@ mod tests {
         }
         assert!(!compatible.bindings.contains_key("move-left"));
         assert!(!compatible.bindings.contains_key("toggle-sticky"));
+        // Item 1 history: Compatible disables only the two recorded
+        // virtual-desktop arrows; the toggle and the other six steps stay
+        // kept with the honest ownership-unknown note (no warning: unknown
+        // containment adds none).
+        assert!(!compatible.bindings.contains_key("workspace-previous"));
+        assert!(!compatible.bindings.contains_key("workspace-prev-h"));
+        assert!(unresolved_conflicts(&compatible, true, false).is_empty());
     }
 
     #[test]

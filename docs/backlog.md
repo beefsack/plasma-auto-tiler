@@ -518,8 +518,12 @@ decisions of 2026-09-24 are under
     success alone does not prove physical OS suppression.
 
   ### Item implementation checklists
-  - Item 1: KDE adapter delivered offline, no shared Rust core/API changes or
-    resulting Windows build repairs. Windows changes still needed:
+  - Item 1: Windows local history/ring and exact Ctrl/Tab settings/input/UI
+    delivered offline 2026-10-10 (base `91db9d2` + delivery commit,
+    [record](changes/archive/windows-workspace-history-ring.md)); native gates
+    passed, scoped numbered hide/reveal agent-observed. Native history chords,
+    UI journeys and physical input pending; non-local/multi-output parked.
+    KDE adapter delivered offline, no shared Rust core/API changes. Historical checklist:
 
     #### Item 1 behavior and reference seams
 

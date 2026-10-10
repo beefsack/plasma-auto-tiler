@@ -72,9 +72,9 @@ use crate::model::ProcessIdentity;
 use crate::native::HeldProcess;
 use crate::settings::LiveSettings;
 use crate::snapkey::{
-    KeyboardConfig, MAX_DISPATCH_PER_TICK, OriginVerdict, QueuedSnapEvent, SnapOp, SnapOrigin,
-    VK_LSHIFT, VK_LWIN, VK_MASK, VK_RSHIFT, VK_RWIN, VK_SHIFT, WorkspaceOp, direction_name,
-    resolve_origin,
+    KeyboardConfig, MAX_DISPATCH_PER_TICK, OriginVerdict, QueuedSnapEvent,
+    QueuedWorkspaceHistoryIntent, SnapOp, SnapOrigin, VK_LSHIFT, VK_LWIN, VK_MASK, VK_RSHIFT,
+    VK_RWIN, VK_SHIFT, WorkspaceHistoryOp, WorkspaceOp, direction_name, resolve_origin,
 };
 use crate::storage::LedgerStore;
 use crate::tiling::{
@@ -5677,6 +5677,7 @@ fn keyboard_tick(
                 }
                 QueuedSnapEvent::Intent(_) => stale += 1,
                 QueuedSnapEvent::Workspace(_) => stale += 1,
+                QueuedSnapEvent::WorkspaceHistory(_) => stale += 1,
                 QueuedSnapEvent::Maximize(_) => stale += 1,
                 QueuedSnapEvent::Fullscreen(_) => stale += 1,
                 QueuedSnapEvent::Float(_) => stale += 1,
@@ -6867,6 +6868,23 @@ fn keyboard_tick(
                             "edge": intent.edge.as_str(),
                             "disposition": "rerouted",
                             "outcome": "workspace-tick",
+                        }),
+                    );
+                }
+            }
+            QueuedSnapEvent::WorkspaceHistory(intent) => {
+                // Routed to workspace_history_tick by the caller; defensive
+                // drop here stays trace-only like digits.
+                if state.trace {
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "workspace-history",
+                            "tick": state.tick,
+                            "op": intent.op.as_str(),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "rerouted",
+                            "outcome": "workspace-history-tick",
                         }),
                     );
                 }
@@ -10060,6 +10078,12 @@ fn workspace_do_select(
     // hide and reveal effects verified, so the switch is real.
     state.workspaces.activate(output, target);
     state.active_output = output.to_owned();
+    // Item 1 history: record the actual completed view transition here,
+    // including when later focus/geometry fails below. View evidence (the
+    // verified hide/reveal above), not the final action success label,
+    // controls history. Same-view activation returned early above and never
+    // records; failed hide/reveal returned partial before activation.
+    state.workspaces.observe_workspace_change(output, target);
     // Trailing maintenance: keep one empty, minimum two, active preserved.
     // Sticky members never occupy, so a sticky-only workspace prunes like an
     // empty one while the sticky float state itself is retained.
@@ -11690,6 +11714,238 @@ fn workspace_tick(
     }
 }
 
+/// Drain one bounded batch of workspace history intents (item 1). Toggle and
+/// relative steps work on empty workspaces and unmanaged foreground: they
+/// select views, never movers, so no managed-focus gate applies. The
+/// `--no-keyboard-snap-takeover` off switch disables all product
+/// interception (defensive second fence). Fullscreen and elevated foreground
+/// gate all history ops like digits. Targets resolve without preactivating
+/// (pure `resolve_previous`/`resolve_relative`: no activation, append, or
+/// creation); only the verified `workspace_do_select` transition activates,
+/// and its observation recording supplies history. Toggle with no recorded
+/// change, or a removed/unassigned/out-of-scope previous, settles as
+/// `unknown-target` (no-op until the next recorded change, never
+/// recreation/ordinal reinterpretation).
+#[allow(clippy::too_many_arguments)]
+fn workspace_history_tick(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    dir: &Path,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    events: Vec<QueuedWorkspaceHistoryIntent>,
+    blocked: Option<&'static str>,
+) {
+    let log_path = state.log_path.clone();
+    if let Some(cause) = blocked {
+        let stale = events.len() as u32;
+        if stale > 0 {
+            log_json_at(
+                &log_path,
+                serde_json::json!({"event":"workspace-history-stale","cause": cause, "dropped": stale}),
+            );
+        }
+        return;
+    }
+    if !state.keyboard.takeover {
+        if !events.is_empty() {
+            log_json_at(
+                &log_path,
+                serde_json::json!({"event":"workspace-history-stale","cause":"takeover-off","dropped": events.len()}),
+            );
+        }
+        return;
+    }
+    for intent in events {
+        if !intent.consumed || !intent.announce {
+            if state.trace {
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": "workspace-history",
+                        "tick": state.tick,
+                        "op": intent.op.as_str(),
+                        "edge": intent.edge.as_str(),
+                        "disposition": if intent.consumed { "consumed" } else { "passed" },
+                        "outcome": "key-up",
+                    }),
+                );
+            }
+            continue;
+        }
+        let dispatch_start = Instant::now();
+        if suspend_read(state, me, fulls).veto.block {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "workspace-history",
+                    "op": intent.op.as_str(),
+                    "edge": intent.edge.as_str(),
+                    "disposition": "consumed",
+                    "outcome": "suspended",
+                }),
+            );
+            continue;
+        }
+        if foreground_elevated(me) {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "workspace-history",
+                    "op": intent.op.as_str(),
+                    "edge": intent.edge.as_str(),
+                    "disposition": "consumed",
+                    "outcome": "elevated-foreground",
+                }),
+            );
+            continue;
+        }
+        let Some(output) = chord_output(state, areas) else {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "workspace-history",
+                    "op": intent.op.as_str(),
+                    "edge": intent.edge.as_str(),
+                    "disposition": "consumed",
+                    "outcome": "unknown-output",
+                }),
+            );
+            continue;
+        };
+        state.workspaces.ensure_output(&output);
+        state.tick += 1;
+        let tick = state.tick;
+        let mut skipped: Vec<(String, String)> = Vec::new();
+        let mut retained: Vec<RetainedRow> = Vec::new();
+        let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained) else {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "workspace-history",
+                    "tick": tick,
+                    "op": intent.op.as_str(),
+                    "edge": intent.edge.as_str(),
+                    "disposition": "consumed",
+                    "outcome": "observation-failed",
+                }),
+            );
+            continue;
+        };
+        publish_managed(state, me, &observed, &retained);
+        ensure_workspace_assignments(state, me, &mut observed, &retained, areas);
+        clear_maximize_at_admission(state, me, &retained);
+        workspace_close_cleanup(state);
+        let op = intent.op;
+        let edge = intent.edge;
+        let ctx = ActionCtx {
+            correlation: format!("act-{tick}"),
+            tick,
+            queued_at: intent.tick,
+            start: dispatch_start,
+        };
+        // Pure resolution: no activation, append, or creation. Previous
+        // validates its stable id (clears removed/out-of-scope); relative
+        // wraps the full scoped ring including trailing empty and >9.
+        let target: Option<String> = match op {
+            WorkspaceHistoryOp::Previous => state.workspaces.resolve_previous(&output),
+            WorkspaceHistoryOp::Prev => state.workspaces.resolve_relative(&output, -1),
+            WorkspaceHistoryOp::Next => state.workspaces.resolve_relative(&output, 1),
+        };
+        match target {
+            Some(id) => {
+                let effect = workspace_do_select(
+                    state,
+                    me,
+                    store,
+                    dir,
+                    fulls,
+                    areas,
+                    &mut observed,
+                    &output,
+                    &id,
+                    &ctx,
+                    None,
+                );
+                log_json_at(
+                    &log_path,
+                    workspace_history_log(state, tick, op.as_str(), edge.as_str(), effect.outcome),
+                );
+                log_workspace_action(
+                    state,
+                    &log_path,
+                    &ActionLine {
+                        ctx: &ctx,
+                        op: op.as_str(),
+                        index: 0,
+                        edge: edge.as_str(),
+                        outcome: effect.outcome,
+                        focus: effect.focus,
+                        timings: &ActionTimings {
+                            transition_ms: effect.transition_ms,
+                            observation_ms: effect.observation_ms,
+                            source_plan_ms: 0,
+                            target_plan_ms: effect.plan_ms,
+                            source_geometry_ms: 0,
+                            target_geometry_ms: effect.geometry_ms,
+                            hide_ms: effect.hide_ms,
+                            reveal_ms: effect.reveal_ms,
+                            focus_ms: effect.focus_ms,
+                        },
+                        source_workspace: &effect.source_workspace,
+                        target_workspace: &effect.target_workspace,
+                        source: None,
+                        target: effect.geometry.as_ref(),
+                    },
+                );
+            }
+            None => {
+                log_json_at(
+                    &log_path,
+                    workspace_history_log(
+                        state,
+                        tick,
+                        op.as_str(),
+                        edge.as_str(),
+                        "unknown-target",
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// Bounded history log line: opaque output/workspace tokens plus
+/// op/edge/outcome only. No HWNDs, tokens, titles, or app data.
+fn workspace_history_log(
+    state: &TileLoop,
+    tick: u64,
+    op: &str,
+    edge: &str,
+    outcome: &str,
+) -> serde_json::Value {
+    let output = if state.active_output.is_empty() {
+        "o?".to_owned()
+    } else {
+        state.workspaces.output_token(&state.active_output)
+    };
+    let workspace = state
+        .workspaces
+        .active_id(&state.active_output)
+        .map(|id| state.workspaces.workspace_token(&state.active_output, &id))
+        .unwrap_or_else(|| "ws?".to_owned());
+    serde_json::json!({
+        "event": "workspace-history",
+        "tick": tick,
+        "output": output,
+        "workspace": workspace,
+        "op": op,
+        "edge": edge,
+        "outcome": outcome,
+    })
+}
+
 /// Bounded workspace log line: opaque output/workspace tokens plus
 /// op/index/edge/outcome only. No HWNDs, tokens, titles, or app data.
 fn workspace_log(
@@ -12205,9 +12461,18 @@ fn sync_monitor_outputs(state: &mut TileLoop, areas: &[MonitorArea]) {
                     "retained": retained_count,
                 }),
             );
+            // Hotplug-driven observed change records like any other: observe
+            // the survivor's post-actuation view so a later toggle returns
+            // to the actual preceding view. `displace_output_to` already
+            // discarded the removed origin's history.
+            if let Some(active) = state.workspaces.active_id(&dest) {
+                state.workspaces.observe_workspace_change(&dest, &active);
+            }
         } else {
             // No survivor: defer with known origins kept, never drop the
-            // workspaces or their Engine sessions.
+            // workspaces or their Engine sessions. The disconnected output's
+            // history is still discarded with the output.
+            state.workspaces.discard_output_history(&origin);
             deferred.push(origin);
         }
     }
@@ -12225,6 +12490,11 @@ fn sync_monitor_outputs(state: &mut TileLoop, areas: &[MonitorArea]) {
         .collect();
     for origin in displaced {
         if current.contains(&origin) {
+            let dest_key = state
+                .workspaces
+                .displaced_snapshot()
+                .get(&origin)
+                .map(|r| r.dest_key.clone());
             if let Some(record) = state.workspaces.displaced_snapshot().get(&origin).cloned() {
                 let bounds = areas
                     .iter()
@@ -12252,6 +12522,20 @@ fn sync_monitor_outputs(state: &mut TileLoop, areas: &[MonitorArea]) {
                 }
             }
             state.workspaces.reconnect_output(&origin);
+            // Reconnect primes a fresh baseline at the returning view and
+            // never consults history for selection (see `reconnect_output`).
+            // Record any subsequently observed survivor displacement here so
+            // two changes in one handler leave the actual immediately
+            // preceding view: the survivor's post-return view observes
+            // against its pre-return baseline.
+            let dest_key = dest_key.unwrap_or_else(|| state.active_output.clone());
+            if !dest_key.is_empty()
+                && let Some(active) = state.workspaces.active_id(&dest_key)
+            {
+                state
+                    .workspaces
+                    .observe_workspace_change(&dest_key, &active);
+            }
         }
     }
     // Deferred no-survivor origins stay known with their last geometry until
@@ -14313,16 +14597,18 @@ fn run_tile_loop(
             } else {
                 Vec::new()
             };
-            // Workspace digits ride the same hook/queue/mask authority but
-            // dispatch through the workspace owner, never the directional
-            // Engine route. Partition here so each batch keeps its verdict
-            // vocabulary; `shortcut-proof` keeps workspace hides disabled
-            // inside `workspace_tick` via the proof gate.
+            // Workspace digits and history ride the same hook/queue/mask
+            // authority but dispatch through the workspace owner, never the
+            // directional Engine route. Partition here so each batch keeps its
+            // verdict vocabulary; `shortcut-proof` keeps workspace hides
+            // disabled inside `workspace_tick` via the proof gate.
             let mut workspace_events = Vec::new();
+            let mut history_events = Vec::new();
             let mut directional_events = Vec::new();
             for event in snap_events {
                 match event {
                     QueuedSnapEvent::Workspace(intent) => workspace_events.push(intent),
+                    QueuedSnapEvent::WorkspaceHistory(intent) => history_events.push(intent),
                     QueuedSnapEvent::Mask(_)
                     | QueuedSnapEvent::Intent(_)
                     | QueuedSnapEvent::Maximize(_)
@@ -14333,7 +14619,7 @@ fn run_tile_loop(
                     }
                 }
             }
-            if !workspace_events.is_empty() {
+            if !workspace_events.is_empty() || !history_events.is_empty() {
                 woke = true;
             }
             let snap_events = directional_events;
@@ -14665,6 +14951,18 @@ fn run_tile_loop(
                         Some("suspended"),
                     );
                 }
+                if !history_events.is_empty() {
+                    workspace_history_tick(
+                        &mut state,
+                        me,
+                        store,
+                        dir,
+                        &fulls,
+                        &areas,
+                        history_events,
+                        Some("suspended"),
+                    );
+                }
                 // Out-of-hook select observes the same suspension: consumed
                 // once with a suspended outcome, never applied while a
                 // fullscreen foreground holds the session.
@@ -14887,6 +15185,18 @@ fn run_tile_loop(
                         Some("gesture"),
                     );
                 }
+                if !history_events.is_empty() {
+                    workspace_history_tick(
+                        &mut state,
+                        me,
+                        store,
+                        dir,
+                        &fulls,
+                        &areas,
+                        history_events,
+                        Some("gesture"),
+                    );
+                }
                 // Drop-preview track on the 100ms pump while held: fresh
                 // observation plus the shared Engine resolver per moved
                 // pointer, on both producers. No focus, no geometry writes.
@@ -14894,7 +15204,10 @@ fn run_tile_loop(
                 continue;
             }
             if ended.is_empty() {
-                if snap_events.is_empty() && workspace_events.is_empty() {
+                if snap_events.is_empty()
+                    && workspace_events.is_empty()
+                    && history_events.is_empty()
+                {
                     reconcile_tick(&mut state, me, &fulls, &areas);
                     if state.restore_wake.is_some() {
                         let (expired, lost, done) = restore_wake_probe(
@@ -14926,6 +15239,18 @@ fn run_tile_loop(
                             None,
                         );
                     }
+                    if !history_events.is_empty() {
+                        workspace_history_tick(
+                            &mut state,
+                            me,
+                            store,
+                            dir,
+                            &fulls,
+                            &areas,
+                            history_events,
+                            None,
+                        );
+                    }
                     poll_workspace_cli_request(&mut state, me, store, dir, &fulls, &areas);
                 }
             } else {
@@ -14944,6 +15269,18 @@ fn run_tile_loop(
                         &fulls,
                         &areas,
                         workspace_events,
+                        Some("gesture"),
+                    );
+                }
+                if !history_events.is_empty() {
+                    workspace_history_tick(
+                        &mut state,
+                        me,
+                        store,
+                        dir,
+                        &fulls,
+                        &areas,
+                        history_events,
                         Some("gesture"),
                     );
                 }

@@ -486,8 +486,10 @@ verb inventory); selected intent and doc assertions are never evidence.
   [adapter](../../../kwin/src/workspace-native.ts),
   [fixtures](../../../kwin/tests/workspace-previous-relative.test.ts),
   [record](../../changes/archive/kde-workspace-history-ring.md).
-- Then Ours Windows: no-counterpart (index-only `Select`; no
-  previous/history verb). `S(S-ours-planops)`.
+- Then Ours Windows: WS2 then WS3 via Win+Ctrl+Tab in portable local
+  observed-history tests; delivered offline 2026-10-10, base `91db9d2` plus
+  [delivery record](../../changes/archive/windows-workspace-history-ring.md).
+  Native toggle/physical-input result TBD; non-local/multi-output pending.
 - Variant hook: provisional/TBD (history-toggle hook, to discuss).
 
 ### R-WS-09: select WS2; select WS1 (return focus and viewport)
@@ -689,8 +691,12 @@ verb inventory); selected intent and doc assertions are never evidence.
   [fixtures](../../../kwin/tests/workspace-previous-relative.test.ts),
   [reconciler](../../../kwin/native-effect/shortcutreconciler.cpp),
   [record](../../changes/archive/kde-workspace-history-ring.md).
-- Then Ours Windows: no-counterpart (index-only `Select`; no
-  next/previous verb). `S(S-ours-planops)`.
+- Then Ours Windows: local Win+Ctrl+H/K/Left/Up previous,
+  J/L/Down/Right next; full existing ring wraps including trailing empty and
+  >9 without creation. Compatible disables only Left/Right. Portable tests
+  and native offline gates passed 2026-10-10, base `91db9d2` plus
+  [delivery record](../../changes/archive/windows-workspace-history-ring.md).
+  Native chord/physical/preset outcomes TBD; non-local/multi-output pending.
 - Variant hook: provisional/TBD (relative-switch hook, to discuss).
 
 ### R-WS-12: move whole WS2 to R
@@ -1012,8 +1018,10 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
 - Then Ours KDE: local/global-unique L WS1 then WS2, R unchanged;
   shared WS2 then WS3. Implemented offline, native journey TBD; item 1.2.
   [Fixtures](../../../kwin/tests/workspace-previous-relative.test.ts).
-- Then Ours Windows: same selected scope/toggle target; implementation
-  pending, including non-local modes; item 1.2.
+- Then Ours Windows: per-output pure isolation tested offline 2026-10-10
+  (base `91db9d2` plus [record](../../changes/archive/windows-workspace-history-ring.md));
+  local single-display runtime wired. This two-output journey and non-local
+  modes remain pending; native outcome TBD (item 1.2).
 - Variant hook: provisional/TBD (R-WS-08 history scope).
 
 ### R-WS-16: previous after the visited empty workspace is removed
@@ -1072,12 +1080,12 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   recorded change, no recreation/reinterpretation. Surviving empty E stays
   valid. Implemented offline, native journey TBD; item 1.3.
   [Fixtures](../../../kwin/tests/workspace-previous-relative.test.ts).
-- Then Ours Windows: same selected stable-ID rule; implementation pending.
-  A removal route exists (`crates/tiler-windows/src/workspace.rs:508`;
-  `crates/tiler-windows/src/tiling_sys.rs:9228-9234`, :10074-10080);
-  whether the exact given (removed trailing empty E as previous) clears on
-  Windows is TBD; no live acceptance recorded here (corrected 2026-10-08
-  at `db31234`).
+- Then Ours Windows: surviving empty previous stays valid; actual cleanup
+  of a previously visited intermediate empty clears the stable ID, no
+  recreation/reinterpretation. Portable lifecycle regression passed
+  2026-10-10, base `91db9d2` plus
+  [record](../../changes/archive/windows-workspace-history-ring.md).
+  Exact given trailing-empty removal applicability/native result stays TBD.
 - Variant hook: provisional/TBD (R-WS-08 previous-ID validity).
 
 ### R-WS-17: previous around disconnect displacement and reconnect return
@@ -1171,7 +1179,10 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   Implemented offline, native journey TBD (1.5).
   [Fixtures](../../../kwin/tests/workspace-previous-relative.test.ts).
 - Then Ours Windows: same selected 1.5 history/scope rule and conditional
-  second toggle; implementation pending, multi-output parked; native journey TBD.
+  second toggle; pure disconnect/reconnect invalidation tested offline
+  2026-10-10, base `91db9d2` plus
+  [record](../../changes/archive/windows-workspace-history-ring.md).
+  Multi-output runtime parked; native journey TBD.
 - Variant hook: provisional/TBD (R-WS-08 hotplug history).
 
 ### R-WS-18: relative next send fills the trailing empty

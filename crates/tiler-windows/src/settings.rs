@@ -320,21 +320,26 @@ pub struct Chord {
 }
 
 /// Virtual-key constants shared with the classifier (letters/digits/F-keys
-/// derive arithmetically; arrows mirror `snapkey`).
+/// derive arithmetically; arrows/tab mirror `snapkey`).
 pub const VK_LEFT: u32 = 37;
 pub const VK_UP: u32 = 38;
 pub const VK_RIGHT: u32 = 39;
 pub const VK_DOWN: u32 = 40;
+/// Tab chord key for the item 1 previous-view toggle (Win+Ctrl+Tab).
+pub const VK_TAB: u32 = 0x09;
 /// Float/sticky shared virtual key: the only canonical target two rebound
 /// rows may share (separate arm slots), every other shared canonical target
 /// would collide in one slot and refuses in validation.
 pub const VK_G: u32 = 0x47;
 
 /// Map a canonical key name to its virtual key. Letters A-Z, digits 0-9,
-/// F1-F24, and the four arrows. Anything else is malformed: chords may only
-/// name known keys.
+/// F1-F24, the four arrows, and Tab. Anything else is malformed: chords may
+/// only name known keys.
 #[must_use]
 pub fn vk_for_key_name(name: &str) -> Option<(u32, &'static str)> {
+    if name.eq_ignore_ascii_case("tab") {
+        return Some((VK_TAB, "Tab"));
+    }
     const ARROWS: [(&str, u32); 4] = [
         ("Left", VK_LEFT),
         ("Up", VK_UP),
@@ -469,8 +474,9 @@ pub const fn is_lock_chord(chord: &Chord) -> bool {
 }
 
 /// Which runtime arm a catalog action belongs to. Directional/workspace arms
-/// split on Shift; toggles carry their fixed polarity; resize arms are
-/// documented but not intercepted on Windows (Alt chords pass through).
+/// split on Shift; history arms split on Ctrl (item 1); toggles carry their
+/// fixed polarity; resize arms are documented but not intercepted on Windows
+/// (Alt chords pass through).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BindingFamily {
     Directional {
@@ -481,6 +487,9 @@ pub enum BindingFamily {
         index: u8,
         op: SnapFamilyOp,
     },
+    WorkspaceHistory {
+        kind: WorkspaceHistoryKind,
+    },
     Toggle {
         kind: ToggleKind,
     },
@@ -488,6 +497,26 @@ pub enum BindingFamily {
         direction: &'static str,
         mode: &'static str,
     },
+}
+
+/// Item 1 history arm: `Previous` toggles the previous view (Win+Ctrl+Tab),
+/// `Prev` steps to the previous ordinal, `Next` steps to the next ordinal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceHistoryKind {
+    Previous,
+    Prev,
+    Next,
+}
+
+impl WorkspaceHistoryKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Previous => "previous",
+            Self::Prev => "prev",
+            Self::Next => "next",
+        }
+    }
 }
 
 /// Focus/move/select/send arm selector.
@@ -824,8 +853,84 @@ pub fn binding_catalog() -> Vec<BindingDef> {
         rows.push(workspace_row(index, SnapFamilyOp::Shifted));
     }
     rows.push(workspace_row(0, SnapFamilyOp::Shifted));
+    // Item 1 history rows: one Win+Ctrl+Tab previous-view toggle plus eight
+    // Win+Ctrl relative steps (H/K/Left/Up previous, J/L/Down/Right next).
+    // Authentic keeps all nine; Compatible disables only Left/Right (native
+    // virtual-desktop ownership, unverified in repo); Tab/letters/Up/Down
+    // carry the honest ownership-unknown note.
+    for (id, text, kind, chord) in HISTORY_ROWS {
+        rows.push(BindingDef {
+            id,
+            text,
+            family: BindingFamily::WorkspaceHistory { kind },
+            defaults: chord,
+            implemented: true,
+            conflict: chord_conflict(chord[0]),
+        });
+    }
     rows
 }
+
+/// Item 1 history catalog rows: toggle plus four previous and four next
+/// ordinals. Separate rows keep the per-binding model truthful: arrows and
+/// letters ride different OS conflicts, so disabling or rebinding one never
+/// touches the other.
+const HISTORY_ROWS: [(&str, &str, WorkspaceHistoryKind, &[&str]); 9] = [
+    (
+        "workspace-previous",
+        "Toggle previous workspace",
+        WorkspaceHistoryKind::Previous,
+        &["Win+Ctrl+Tab"],
+    ),
+    (
+        "workspace-prev-h",
+        "Previous workspace",
+        WorkspaceHistoryKind::Prev,
+        &["Win+Ctrl+H"],
+    ),
+    (
+        "workspace-prev-k",
+        "Previous workspace",
+        WorkspaceHistoryKind::Prev,
+        &["Win+Ctrl+K"],
+    ),
+    (
+        "workspace-prev-left-arrow",
+        "Previous workspace",
+        WorkspaceHistoryKind::Prev,
+        &["Win+Ctrl+Left"],
+    ),
+    (
+        "workspace-prev-up-arrow",
+        "Previous workspace",
+        WorkspaceHistoryKind::Prev,
+        &["Win+Ctrl+Up"],
+    ),
+    (
+        "workspace-next-j",
+        "Next workspace",
+        WorkspaceHistoryKind::Next,
+        &["Win+Ctrl+J"],
+    ),
+    (
+        "workspace-next-l",
+        "Next workspace",
+        WorkspaceHistoryKind::Next,
+        &["Win+Ctrl+L"],
+    ),
+    (
+        "workspace-next-down-arrow",
+        "Next workspace",
+        WorkspaceHistoryKind::Next,
+        &["Win+Ctrl+Down"],
+    ),
+    (
+        "workspace-next-right-arrow",
+        "Next workspace",
+        WorkspaceHistoryKind::Next,
+        &["Win+Ctrl+Right"],
+    ),
+];
 
 fn workspace_row(index: u8, op: SnapFamilyOp) -> BindingDef {
     // Static per-index rows (KDE `workspaceShortcutCatalog` parity: select
@@ -945,16 +1050,37 @@ fn directional_conflict(id: &str) -> Option<&'static str> {
 /// owners follow the official Microsoft "Keyboard shortcuts in Windows" list
 /// (Windows 11 tab; Windows 10 tab for the Win+U Ease-of-Access origin).
 /// Chords the list does not document carry the honest unverified note instead
-/// of a definitive clean claim; unparsable or Alt/Ctrl chords (outside the
-/// Win[+Shift] rebind model) report `None` (not applicable). Only containment
-/// with live trace evidence claims containment (Game Bar, Xbox mode); every
-/// other kept chord honestly reports override-needs-takeover with containment
-/// unproven.
+/// of a definitive clean claim; unparsable, Alt, or shifted-Ctrl chords
+/// (outside the Win[+Shift] and Win+Ctrl rebind model) report `None` (not
+/// applicable). Unshifted Win+Ctrl chords (item 1 history) report the
+/// recorded virtual-desktop note for Left/Right and the honest
+/// ownership-unknown note for Tab/letters/Up/Down, never a stock-holder or
+/// conflict-free claim. Only containment with live trace evidence claims
+/// containment (Game Bar, Xbox mode); every other kept chord honestly
+/// reports override-needs-takeover with containment unproven.
 #[must_use]
 pub fn chord_conflict(text: &str) -> Option<&'static str> {
     let chord = parse_chord(text).ok()?;
-    if chord.alt || chord.ctrl {
+    if chord.alt {
         return None;
+    }
+    if chord.ctrl {
+        // Item 1 history arm only: unshifted Win+Ctrl. Shifted Ctrl chords
+        // belong to later items; report not applicable here.
+        if chord.shift {
+            return None;
+        }
+        return Some(match chord.vk {
+            VK_LEFT | VK_RIGHT => {
+                "Windows virtual desktop switch (ownership unverified in repository); override needs takeover, containment unproven live"
+            }
+            VK_TAB | 0x48 | 0x4A | 0x4B | 0x4C | VK_UP | VK_DOWN => {
+                "No documented conflict in this list; other apps may bind it (Windows virtual-desktop ownership unverified in repository)"
+            }
+            _ => {
+                "No documented conflict in this list; other apps may bind it (Windows virtual-desktop ownership unverified in repository)"
+            }
+        });
     }
     match (chord.vk, chord.shift) {
         (0x41, false) => Some("Action Center owns Win+A; override needs takeover"),
@@ -1034,12 +1160,61 @@ pub fn binding_wants_shift(def: &BindingDef) -> bool {
         BindingFamily::Directional { op, .. } | BindingFamily::Workspace { op, .. } => {
             op.wants_shift()
         }
+        BindingFamily::WorkspaceHistory { .. } => false,
         BindingFamily::Toggle { kind } => kind.wants_shift(),
         BindingFamily::Resize { mode, .. } => mode == "inwards",
     }
 }
 
+/// Native Ctrl polarity of one catalog binding: item 1 history arms ride
+/// Win+Ctrl; every other implemented arm rides without Ctrl. Carried through
+/// routing, duplicate detection, canonical hold slots, and release pins so a
+/// later unbound stay action can reuse the plumbing without rework.
+#[must_use]
+pub fn binding_wants_ctrl(def: &BindingDef) -> bool {
+    matches!(def.family, BindingFamily::WorkspaceHistory { .. })
+}
+
+/// Native Alt polarity of one catalog binding: no implemented arm uses Alt
+/// yet (resize rows pass through untracked). Carried explicitly so later
+/// output-follow arms (Ctrl+Alt) slot in without rework.
+#[must_use]
+pub const fn binding_wants_alt(_def: &BindingDef) -> bool {
+    false
+}
+
+/// Explicit classifier action for one catalog binding: VK alone cannot
+/// identify focus vs relative select vs relative follow vs output follow
+/// arms sharing one key, so the action pins the arm. History toggle/prev/
+/// next ride distinct actions; existing arms keep theirs.
+#[must_use]
+pub fn binding_action(def: &BindingDef) -> crate::snapkey::ChordAction {
+    use crate::snapkey::ChordAction;
+    match def.family {
+        BindingFamily::Directional { .. } => ChordAction::Directional,
+        BindingFamily::Workspace { .. } => ChordAction::WorkspaceDigit,
+        BindingFamily::WorkspaceHistory { kind } => match kind {
+            WorkspaceHistoryKind::Previous => ChordAction::WorkspacePrevious,
+            WorkspaceHistoryKind::Prev => ChordAction::WorkspacePrev,
+            WorkspaceHistoryKind::Next => ChordAction::WorkspaceNext,
+        },
+        BindingFamily::Toggle { kind } => match kind {
+            ToggleKind::Float => ChordAction::Float,
+            ToggleKind::Sticky => ChordAction::Sticky,
+            ToggleKind::Maximize => ChordAction::Maximize,
+            ToggleKind::Fullscreen => ChordAction::Fullscreen,
+        },
+        // Defensive only: resize rows are not intercepted (`implemented:
+        // false`), so validation refuses their rebinds and the routing
+        // tables skip them before this mapping is ever consulted.
+        BindingFamily::Resize { .. } => ChordAction::Directional,
+    }
+}
+
 /// Canonical virtual key of one catalog binding (first default chord).
+/// History rows carry their canonical Tab/letter/arrow VK; a future unbound
+/// stay row has no canonical default VK (returns `None`) but must still
+/// rebind through its explicit action.
 #[must_use]
 pub fn binding_canonical_vk(def: &BindingDef) -> Option<u32> {
     def.defaults
@@ -1140,16 +1315,17 @@ pub fn effective_bindings(settings: &Settings) -> Vec<EffectiveBinding> {
 }
 
 /// One classifier remap entry: a rebound physical chord routes into the
-/// existing action classifier at its canonical virtual key (see
-/// [`crate::snapkey::ChordRemap`]).
+/// existing action classifier at its canonical virtual key plus explicit
+/// action (see [`crate::snapkey::ChordRemap`]).
 use crate::snapkey::{ChordDisable, ChordRemap};
 
-/// Build the live classifier remap from validated settings: one single-polarity
-/// entry per effective Win-family rebind (no Alt/Ctrl by validation, Shift
-/// matching the binding's native arm). The rebound chord alone routes; the
-/// binding's old default chords pass through via [`build_disabled`].
-/// Unimplemented (resize) rows contribute nothing: their rebinds refuse in
-/// validation, so reaching here with one is a defensive skip.
+/// Build the live classifier remap from validated settings: one full-modifier
+/// entry per effective rebind (Shift/Ctrl/Alt matching the binding's native
+/// arm). The rebound chord alone routes; the binding's old default chords
+/// pass through via [`build_disabled`]. Unimplemented (resize) rows
+/// contribute nothing: their rebinds refuse in validation, so reaching here
+/// with one is a defensive skip. A future unbound stay row has no canonical
+/// default VK; its rebind still routes through its explicit action.
 #[must_use]
 pub fn build_remap(settings: &Settings) -> Vec<ChordRemap> {
     let mut defs = BTreeMap::new();
@@ -1173,13 +1349,24 @@ pub fn build_remap(settings: &Settings) -> Vec<ChordRemap> {
         let Ok(parsed) = parse_chord(text) else {
             continue;
         };
-        if parsed.alt || parsed.ctrl {
+        if parsed.shift != binding_wants_shift(def)
+            || parsed.ctrl != binding_wants_ctrl(def)
+            || parsed.alt != binding_wants_alt(def)
+        {
             continue;
         }
-        if parsed.shift != binding_wants_shift(def) {
-            continue;
-        }
+        let action = binding_action(def);
         let Some(to_vk) = binding_canonical_vk(def) else {
+            // Unbound stay-style row (no canonical default): route by action
+            // alone using the rebound VK as the canonical key slot.
+            out.push(ChordRemap {
+                from_vk: parsed.vk,
+                from_shift: parsed.shift,
+                from_ctrl: parsed.ctrl,
+                from_alt: parsed.alt,
+                action,
+                to_vk: parsed.vk,
+            });
             continue;
         };
         if parsed.vk == to_vk {
@@ -1188,17 +1375,27 @@ pub fn build_remap(settings: &Settings) -> Vec<ChordRemap> {
         out.push(ChordRemap {
             from_vk: parsed.vk,
             from_shift: parsed.shift,
+            from_ctrl: parsed.ctrl,
+            from_alt: parsed.alt,
+            action,
             to_vk,
         });
     }
-    out.sort_by_key(|entry| (entry.from_vk, entry.from_shift));
+    out.sort_by_key(|entry| {
+        (
+            entry.from_vk,
+            entry.from_shift,
+            entry.from_ctrl,
+            entry.from_alt,
+        )
+    });
     out
 }
 
 /// Build the live classifier suppression table from validated settings: every
 /// disabled binding's default chord passes through, and every rebind's old
 /// default chord passes through (only the custom chord routes, via
-/// [`build_remap`]). Entries are single-polarity physical chords. The rebound
+/// [`build_remap`]). Entries are full-modifier physical chords. The rebound
 /// table wins over suppression for fresh downs, so a key claimed by a rebind
 /// still routes even when another row's old default names it. Unimplemented
 /// (resize) rows contribute nothing: Alt chords pass through untracked.
@@ -1224,6 +1421,8 @@ pub fn build_disabled(settings: &Settings) -> Vec<ChordDisable> {
                         out.push(ChordDisable {
                             vk: parsed.vk,
                             shift: parsed.shift,
+                            ctrl: parsed.ctrl,
+                            alt: parsed.alt,
                         });
                     }
                 }
@@ -1244,14 +1443,16 @@ pub fn build_disabled(settings: &Settings) -> Vec<ChordDisable> {
                         out.push(ChordDisable {
                             vk: parsed.vk,
                             shift: parsed.shift,
+                            ctrl: parsed.ctrl,
+                            alt: parsed.alt,
                         });
                     }
                 }
             }
         }
     }
-    out.sort_by_key(|entry| (entry.vk, entry.shift));
-    out.dedup_by_key(|entry| (entry.vk, entry.shift));
+    out.sort_by_key(|entry| (entry.vk, entry.shift, entry.ctrl, entry.alt));
+    out.dedup_by_key(|entry| (entry.vk, entry.shift, entry.ctrl, entry.alt));
     out
 }
 
@@ -1263,8 +1464,8 @@ pub const fn gap_valid(value: i32) -> bool {
 
 /// Strict full-document validation. Unknown binding ids, incoherent
 /// state/chord pairs, malformed chords, lock-chord targets, wrong-polarity
-/// or Alt/Ctrl rebinds, resize rebinds (not intercepted: no fake rebind),
-/// and duplicate active chords all refuse.
+/// (Shift/Ctrl/Alt must match the binding's native arm), resize rebinds (not
+/// intercepted: no fake rebind), and duplicate active chords all refuse.
 pub fn validate_settings(settings: &Settings) -> Result<(), SettingsError> {
     if settings.v != SETTINGS_SCHEMA_VERSION {
         return Err(SettingsError::UnsupportedVersion);
@@ -1325,18 +1526,21 @@ fn validate_bindings(settings: &Settings) -> Result<(), SettingsError> {
     // State/chord coherence plus per-rebind safety. Duplicate detection runs
     // on the effective chord set below, so disabled bindings free their
     // default chords for reuse.
-    let mut custom_keys: std::collections::HashSet<(u32, bool)> = std::collections::HashSet::new();
+    let mut custom_keys: std::collections::HashSet<(u32, bool, bool, bool)> =
+        std::collections::HashSet::new();
     // Canonical targets already claimed by a rebind: two rebound rows
-    // routing into one canonical key would share one classifier slot and
-    // clear each other's holds (routing is pinned per physical key, but the
-    // hold slot is per canonical key), so the second refuses. Float/sticky
-    // share the G key across separate arm slots and stay allowed. Residual:
-    // a rebound sharing its canonical with a kept row on another physical
-    // key still shares that slot; concurrent cross-physical holds then ride
-    // the pinned hold (swallowed, pair closes on first up, no OS leak, no
-    // stuck slot). Refusing that too would forbid nearly every rebind, since
+    // routing into one (action, canonical key) would share one classifier
+    // slot and clear each other's holds (routing is pinned per physical key,
+    // but the hold slot is per canonical route), so the second refuses.
+    // Distinct actions may share one VK across separate arm slots (float vs
+    // sticky on G; history vs directional on H/J/K/L/arrows with Ctrl), so
+    // the key is the explicit (action, canonical) pair. Residual: a rebound
+    // sharing its canonical route with a kept row on another physical key
+    // still shares that slot; concurrent cross-physical holds then ride the
+    // pinned hold (swallowed, pair closes on first up, no OS leak, no stuck
+    // slot). Refusing that too would forbid nearly every rebind, since
     // focus/move arms share canonicals by design.
-    let mut canon_targets: std::collections::HashMap<u32, String> =
+    let mut canon_targets: std::collections::HashMap<(crate::snapkey::ChordAction, u32), String> =
         std::collections::HashMap::new();
     for (id, setting) in &settings.bindings {
         let Some(def) = defs.get(id.as_str()) else {
@@ -1360,52 +1564,57 @@ fn validate_bindings(settings: &Settings) -> Result<(), SettingsError> {
                         "binding {id} must not target unshifted Win+L"
                     )));
                 }
-                if parsed.alt || parsed.ctrl {
-                    return Err(invalid(format!(
-                        "binding {id} rebind supports Win[+Shift] only"
-                    )));
-                }
                 if !def.implemented {
                     return Err(invalid(format!(
                         "binding {id} is not intercepted on Windows and cannot rebind"
                     )));
                 }
                 // The rebound chord alone routes (see `build_remap`): its
-                // Shift must match the binding's native arm, or a focus-only
-                // rebind would also arm an unintended shifted move (and vice
-                // versa). The classifier derives the arm from live Shift.
-                if parsed.shift != binding_wants_shift(def) {
-                    let want = if binding_wants_shift(def) {
-                        "Win+Shift"
-                    } else {
-                        "Win without Shift"
+                // Shift/Ctrl/Alt must match the binding's native arm, or a
+                // focus-only rebind would also arm an unintended arm (and vice
+                // versa). The classifier derives the arm from live modifiers
+                // plus the explicit action.
+                if parsed.shift != binding_wants_shift(def)
+                    || parsed.ctrl != binding_wants_ctrl(def)
+                    || parsed.alt != binding_wants_alt(def)
+                {
+                    let want = match (
+                        binding_wants_shift(def),
+                        binding_wants_ctrl(def),
+                        binding_wants_alt(def),
+                    ) {
+                        (true, false, false) => "Win+Shift",
+                        (false, true, false) => "Win+Ctrl",
+                        (false, false, false) => "Win without Shift",
+                        _ => "the binding's modifier arm",
                     };
                     return Err(invalid(format!("binding {id} rebind needs {want}")));
                 }
                 // One rebound chord serves one binding: entries are
-                // single-polarity physical chords, so the same key may serve
-                // two arms (like float/sticky share G) but never the same
-                // chord twice.
-                if !custom_keys.insert((parsed.vk, parsed.shift)) {
+                // full-modifier physical chords, so the same key may serve
+                // two arms (like float/sticky share G, or history shares
+                // H/J/K/L/arrows with Ctrl) but never the same chord twice.
+                if !custom_keys.insert((parsed.vk, parsed.shift, parsed.ctrl, parsed.alt)) {
                     return Err(invalid(format!(
                         "binding {id} rebinds an already-rebound chord"
                     )));
                 }
-                // One canonical target serves one rebound row (float/sticky
-                // excepted): two physical keys routing into one canonical
-                // slot would share one hold and clear each other, so the
-                // classifier pins routing per physical key instead. A
-                // keep-equivalent rebind (custom equals its own default)
-                // claims nothing new.
+                // One canonical route serves one rebound row: two physical keys
+                // routing into one (action, canonical) slot would share one
+                // hold and clear each other, so the classifier pins routing
+                // per physical key instead. A keep-equivalent rebind (custom
+                // equals its own default) claims nothing new.
                 let own_default = def
                     .defaults
                     .iter()
                     .any(|default| parse_chord(default).ok() == Some(parsed));
                 if !own_default {
-                    let to_vk = binding_canonical_vk(def)
-                        .ok_or_else(|| invalid(format!("binding {id} has no canonical chord")))?;
-                    if to_vk != VK_G
-                        && let Some(first) = canon_targets.insert(to_vk, id.clone())
+                    let action = binding_action(def);
+                    // Unbound stay-style rows carry no canonical default: the
+                    // action alone routes, so there is no canonical slot to
+                    // claim here.
+                    if let Some(to_vk) = binding_canonical_vk(def)
+                        && let Some(first) = canon_targets.insert((action, to_vk), id.clone())
                     {
                         return Err(invalid(format!(
                             "binding {id} rebinds onto the action already rebound by {first}"
@@ -1474,10 +1683,14 @@ pub enum Preset {
     /// voice, Win+J recall, Win+K cast, Win+L lock, arrows Snap/maximize/
     /// minimize), all move-arrow rows (Win+Shift+arrows monitor-move/stretch),
     /// float (Win+G Game Bar), maximize (Win+M minimize-all), fullscreen
-    /// (Win+F11 Xbox mode), and all workspace digits (Win[/Shift]+digits
-    /// taskbar launch/new-instance) are disabled. What stays is exactly the
+    /// (Win+F11 Xbox mode), all workspace digits (Win[/Shift]+digits
+    /// taskbar launch/new-instance), and the two item 1 history arrows
+    /// (Win+Ctrl+Left/Right native virtual-desktop switch, ownership
+    /// unverified in repository) are disabled. What stays is exactly the
     /// undocumented set: letter moves (Win+Shift+H/J/K/L) and sticky
-    /// (Win+Shift+G) carry no documented owner in the official list. Applies as a deterministic reset: all overrides are
+    /// (Win+Shift+G) carry no documented owner in the official list, plus
+    /// the seven kept history rows (Tab/letters/Up/Down with the honest
+    /// ownership-unknown note). Applies as a deterministic reset: all overrides are
     /// dropped first, then the conflicts disable. Resize rows already pass
     /// through untracked and are untouched. Manual rebinding stays available
     /// afterwards; no replacement defaults are invented. The Win+L opt-in is
@@ -1525,7 +1738,7 @@ pub fn apply_preset(settings: &mut Settings, preset: Preset) -> Vec<&'static str
 /// Preset decision helper: the ids the compatible preset disables (every
 /// OS-conflicting implemented row; see [`Preset::Compatible`]).
 #[must_use]
-pub const fn compatible_disabled_ids() -> [&'static str; 35] {
+pub const fn compatible_disabled_ids() -> [&'static str; 37] {
     [
         "focus-left",
         "focus-left-arrow",
@@ -1562,6 +1775,8 @@ pub const fn compatible_disabled_ids() -> [&'static str; 35] {
         "workspace-send-8",
         "workspace-send-9",
         "workspace-send-0",
+        "workspace-prev-left-arrow",
+        "workspace-next-right-arrow",
     ]
 }
 
@@ -1877,18 +2092,23 @@ mod tests {
         ] {
             assert!(parse_chord(bad).is_err(), "{bad}");
         }
+        // Tab is a known key for the item 1 toggle.
+        assert_eq!(
+            render_chord(&parse_chord("Win+Ctrl+Tab").expect("tab")),
+            "Win+Ctrl+Tab"
+        );
     }
 
     #[test]
     fn catalog_covers_kde_actions_without_collisions() {
         let catalog = binding_catalog();
         // 16 focus/move (letter plus separate arrow rows) + 8 resize + 4
-        // toggles + 20 workspace = 48.
-        assert_eq!(catalog.len(), 48);
+        // toggles + 20 workspace + 9 item 1 history = 57.
+        assert_eq!(catalog.len(), 57);
         let mut ids: Vec<&str> = catalog.iter().map(|def| def.id).collect();
         ids.sort();
         ids.dedup();
-        assert_eq!(ids.len(), 48);
+        assert_eq!(ids.len(), 57);
         // Every default parses; resize rows are the only unimplemented ones.
         for def in &catalog {
             for default in def.defaults {
@@ -1910,6 +2130,31 @@ mod tests {
             .expect("row");
         assert_eq!(focus_left_arrow.defaults, &["Win+Left"]);
         assert!(focus_left_arrow.conflict.is_some());
+        // Item 1 history rows: toggle plus eight relative steps, all
+        // implemented with honest ownership text.
+        let previous = catalog
+            .iter()
+            .find(|def| def.id == "workspace-previous")
+            .expect("row");
+        assert_eq!(previous.defaults, &["Win+Ctrl+Tab"]);
+        assert!(
+            previous
+                .conflict
+                .is_some_and(|c| c.contains("unverified in repository"))
+        );
+        let prev_arrow = catalog
+            .iter()
+            .find(|def| def.id == "workspace-prev-left-arrow")
+            .expect("row");
+        assert_eq!(prev_arrow.defaults, &["Win+Ctrl+Left"]);
+        assert!(
+            prev_arrow
+                .conflict
+                .is_some_and(|c| c.contains("virtual desktop"))
+        );
+        assert!(binding_wants_ctrl(previous));
+        assert!(!binding_wants_shift(previous));
+        assert!(!binding_wants_alt(previous));
     }
 
     #[test]
@@ -2133,7 +2378,7 @@ mod tests {
         assert!(settings.bindings.is_empty());
         assert!(settings.core.keyboard.allow_win_l);
         assert!(validate_settings(&settings).is_ok());
-        // Compatible disables every OS-conflicting row (35), preserving the
+        // Compatible disables every OS-conflicting row (37), preserving the
         // opt-in. From empty state the change is exactly the disable list.
         let changed = apply_preset(&mut settings, Preset::Compatible);
         assert_eq!(changed, compatible_disabled_ids());
@@ -2142,14 +2387,19 @@ mod tests {
         assert!(changed.contains(&"toggle-float"));
         assert!(changed.contains(&"toggle-fullscreen"));
         assert!(changed.contains(&"workspace-select-1"));
+        assert!(changed.contains(&"workspace-prev-left-arrow"));
+        assert!(changed.contains(&"workspace-next-right-arrow"));
+        assert!(!changed.contains(&"workspace-previous"));
+        assert!(!changed.contains(&"workspace-prev-h"));
         assert_eq!(
             settings.bindings.get("toggle-float").map(|b| &b.state),
             Some(&BindingState::Disabled)
         );
         assert!(!settings.bindings.contains_key("move-left"));
         assert!(!settings.bindings.contains_key("toggle-sticky"));
+        assert!(!settings.bindings.contains_key("workspace-previous"));
         let effective = effective_bindings(&settings);
-        assert_eq!(effective.len(), 48);
+        assert_eq!(effective.len(), 57);
         for row in &effective {
             if compatible_disabled_ids().contains(&row.id) {
                 assert!(!row.active, "{}", row.id);
@@ -2246,7 +2496,7 @@ mod tests {
                 chord: Some("Win+U".to_owned()),
             },
         );
-        // One single-polarity entry: the unshifted rebound routes to focus.
+        // One full-modifier entry: the unshifted rebound routes to focus.
         // The shifted chord on the same key stays native (no unintended move).
         let remap = build_remap(&settings);
         assert_eq!(
@@ -2254,6 +2504,9 @@ mod tests {
             vec![ChordRemap {
                 from_vk: 0x55,
                 from_shift: false,
+                from_ctrl: false,
+                from_alt: false,
+                action: crate::snapkey::ChordAction::Directional,
                 to_vk: 0x48
             },]
         );
@@ -2263,7 +2516,9 @@ mod tests {
             disabled,
             vec![ChordDisable {
                 vk: 0x48,
-                shift: false
+                shift: false,
+                ctrl: false,
+                alt: false
             }]
         );
         // Rebinding onto the canonical key is a valid no-op (no entry).
@@ -2304,11 +2559,15 @@ mod tests {
             vec![
                 ChordDisable {
                     vk: VK_LEFT,
-                    shift: false
+                    shift: false,
+                    ctrl: false,
+                    alt: false
                 },
                 ChordDisable {
                     vk: 0x47,
-                    shift: false
+                    shift: false,
+                    ctrl: false,
+                    alt: false
                 },
             ]
         );
@@ -2325,5 +2584,49 @@ mod tests {
             validate_settings(&settings),
             Err(SettingsError::UnsupportedVersion)
         );
+    }
+
+    #[test]
+    fn history_rebind_needs_ctrl_and_shares_vk_across_actions() {
+        // Item 1 history arms ride Win+Ctrl: unshifted Win-only refuses,
+        // shifted Ctrl refuses, Alt refuses, and the Ctrl arm validates.
+        for bad in ["Win+U", "Win+Shift+U", "Win+Alt+U", "Win+Ctrl+Shift+U"] {
+            let mut settings = Settings::default();
+            settings.bindings.insert(
+                "workspace-prev-h".to_owned(),
+                BindingSetting {
+                    state: BindingState::Rebind,
+                    chord: Some(bad.to_owned()),
+                },
+            );
+            assert!(validate_settings(&settings).is_err(), "{bad}");
+        }
+        let mut settings = Settings::default();
+        settings.bindings.insert(
+            "workspace-prev-h".to_owned(),
+            BindingSetting {
+                state: BindingState::Rebind,
+                chord: Some("Win+Ctrl+U".to_owned()),
+            },
+        );
+        assert!(validate_settings(&settings).is_ok());
+        // History shares H with the directional focus arm across separate
+        // slots: keeping Win+H focus while rebound history rides Win+Ctrl+U
+        // validates (distinct explicit actions).
+        let remap = build_remap(&settings);
+        assert_eq!(remap.len(), 1);
+        assert_eq!(remap[0].from_vk, 0x55);
+        assert!(remap[0].from_ctrl);
+        assert_eq!(remap[0].action, crate::snapkey::ChordAction::WorkspacePrev);
+        // Two history prev rows share no canonical slot (distinct VKs), but
+        // two rebinds onto the same history action+VK refuse.
+        settings.bindings.insert(
+            "workspace-prev-k".to_owned(),
+            BindingSetting {
+                state: BindingState::Rebind,
+                chord: Some("Win+Ctrl+U".to_owned()),
+            },
+        );
+        assert!(validate_settings(&settings).is_err());
     }
 }
