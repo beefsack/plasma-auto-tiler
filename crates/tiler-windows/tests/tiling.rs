@@ -1973,6 +1973,7 @@ fn workspace_request_roundtrip_and_refusals_relative() {
     assert_eq!(parsed.direction, None);
 }
 
+#[cfg(windows)]
 #[test]
 fn live_overlay_flags_on_a_null_handle_fall_back_without_touching_windows() {
     // Item 20 live-read contract: three bounded reads, no setters. A null

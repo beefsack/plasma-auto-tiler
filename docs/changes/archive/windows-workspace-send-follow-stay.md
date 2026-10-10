@@ -129,5 +129,11 @@
   Concurrent shared-core change adds float-focus tests only; core/protocol
   production source is unchanged, so native effect artifact evidence remains
   applicable. Native gates must also pass on the integrated revision.
+- Integrated revision `4f488e6` passed all local native gates and was pushed.
+  CI run 38056399139 found the native null-handle integration test referenced
+  Windows-only `tiling_sys` without a cfg guard, breaking Linux compilation.
+  One causal test-only repair adds `#[cfg(windows)]`; production and live
+  evidence are unchanged. Windows/KWin/macOS jobs passed on that run;
+  full CI verification follows the repair publication.
 - Environment install incident/accepted tentative decision is recorded in
   item 1; all further mise invocations require `MISE_AUTO_INSTALL=0`.
