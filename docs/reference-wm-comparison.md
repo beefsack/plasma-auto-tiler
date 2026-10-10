@@ -153,7 +153,8 @@ supports pinning a workspace to keep it alive when empty ([C-Bas], `verified`),
 but its auto-create/remove of empty workspaces is `unverified`. bspwm is fixed.
 Adoption recommendation: dynamic workspaces created on demand and removed when
 empty-and-inactive, with pin/persist, matching Hyprland `persistent` and COSMIC
-"pin workspaces" (backlog P2 `dynamic-workspaces`).
+"pin workspaces" ([backlog Future: Pinned/persistent workspaces](backlog.md#pinned-persistent-workspaces),
+User decision 2026-10-10 G-07).
 
 ## 8. Default shortcuts (focus / move / resize / orientation / float / fullscreen / maximize / workspace)
 

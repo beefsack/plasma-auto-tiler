@@ -148,7 +148,11 @@ platform API behavior.
   - Each managed workspace owns a session-local tiled/floating flag. Startup
     seeds all workspaces from the saved default (`true`); live default changes
     seed only subsequently created workspaces. Overrides reset on owner
-    restart and never persist. No keyboard binding for the default itself.
+    restart and never persist. COSMIC matches this for unpinned workspaces;
+    it persists the tiling flag only for pinned workspaces, which we do not
+    support (G-07, User 2026-10-10). Pinned/persistent workspaces are Future
+    scope, grouped with the shared restart store. No keyboard binding for
+    the default itself.
   - Floating preserves native frames, membership and hide/reveal while stopping
     domain tiling, directional navigation, group underlay and drop preview.
     The active border stays independent. Retile releases the Engine domain
@@ -194,12 +198,16 @@ platform API behavior.
     preserved in separate workspace(s), never merged into remaining layout.
     Active-focus survivor choice: disconnected-monitor active window shows its
     relocated workspace with focus retained; surviving-monitor active window
-    preserves current view and focus. On reconnection, displaced workspaces
+    preserves current view and focus. Deliberate COSMIC/6-reference deviation
+    (G-02, User 2026-10-10): focus continuity keeps the window in use visible.
+    On reconnection, displaced workspaces
     return automatically to their original monitor with then-current contents
     (never a saved snapshot, never individually pulled-back explicitly moved
     windows). Multiple-survivor destination: nearest surviving monitor from
     disconnect-time geometry, fallback current primary then output ordering;
-    never post-disconnect frame geometry as proxy. Reconnect focus: returning-
+    never post-disconnect frame geometry as proxy. Deliberate COSMIC
+    first-remaining deviation (G-02, User 2026-10-10): spatial proximity,
+    discriminating only with 3+ outputs. Reconnect focus: returning-
     workspace active window shows that workspace with focus retained;
     surviving-output actives preserve view/focus with no stealing. Reconnect
     selection never consults or restores prior-view history (R-WS-08 history
@@ -253,7 +261,10 @@ platform API behavior.
     - 1.3: remember stable workspace IDs. A surviving workspace, even empty,
       remains valid. A removed/unassigned ID clears the previous entry;
       toggle is a no-op until the next recorded change. No ordinal
-      reinterpretation or recreation.
+      reinterpretation or recreation. Keep this and 1.5 without a setting
+      (G-04, User 2026-10-10): majority reference retention comes from global
+      history models deliberately excluded by our per-output model in 1.2;
+      COSMIC has no history verb. Removed workspaces are never recreated.
     - 1.4: the ring is every existing workspace in scoped order, including
       the trailing empty and ordinals beyond 9; first/last wrap. Selection
       itself creates nothing.
@@ -276,7 +287,9 @@ platform API behavior.
       MRU, wrapping including the trailing empty). Sending into it fills it;
       normal lifecycle maintenance supplies the next empty. Resolve the target
       once before transfer. Follow/stay applies to absolute and relative
-      sends.
+      sends. A sole-window send-next also fills the pre-transfer trailing
+      empty. Deliberate COSMIC deviation (G-03, User 2026-10-10): COSMIC
+      refuses, six references fill; predictable send is the reason.
     - KDE floating-boundary sends currently preserve source view; item 2
       routes explicit follow/stay through that path so the default follows
       (implementation gap, not a new decision).
@@ -298,10 +311,22 @@ platform API behavior.
     delivered. Insert immediately after the target output's current
     workspace and show the moved workspace; the previous target
     workspace stays listed and hidden.
-  - D5 source/empty: source selects its last remaining scoped
-    workspace (COSMIC); empty migration allowed and retains its
-    backing ID, as delivered. Native lifecycle timing remains for
-    user testing.
+  - D5 source/empty (G-37, User 2026-10-10):
+    `Source workspace after migration` selects `last-remaining-workspace`
+    (default, label `Last remaining workspace`, tooltip COSMIC) or
+    `most-recently-used-workspace`
+    (label `Most recently used workspace`, tooltip bspwm, i3, awesome).
+    KDE `migrationSourceRefill` with a KCM control; Windows
+    `core.migration_source_refill`, additive settings schema version 1,
+    missing defaults to `last-remaining-workspace`, no migration. Apply
+    changes live to subsequent migrations. MRU uses per-output history
+    from item 1.2, not a global-history model; define exact eligibility
+    during implementation and fall back to last remaining when no eligible
+    entry exists. History invalidation in 1.3/1.5 still applies. Destination
+    insertion in D4 is unchanged. Empty migration remains allowed and retains
+    its backing ID; native lifecycle timing remains for user testing.
+    Status: last-remaining default delivered offline; new setting/MRU shared
+    core + KDE implementation and Windows handoff pending (REQ-WS-12d/e).
   - D6 focus: retain the moved active client only after all member
     arrivals and both view changes are verified, as delivered.
     Empty/sticky-active migration uses native output switching with
@@ -420,24 +445,33 @@ platform API behavior.
   wiring and user-owned two-output native journey pending. Full rectangles
   select adjacency only; placement retains per-desktop work areas.
 ## Fixed-Size Admission
-- User decisions 2026-10-08 (fixed-size admission R-SPC-04 D1-D8, outcomes
-  decided; D1/D5/D6/D7 delivered offline, native checks pending):
-  - D1 predicate: COSMIC whole-vector equality default as delivered
-    (both min/max vectors present, usable, nonnegative, not full-zero
-    or unbounded sentinels, equal on both axes; equal partial-zero
-    counts; no inference from `resizeable`). New setting values are
+- User decisions 2026-10-08 and 2026-10-10 (fixed-size admission R-SPC-04
+  D1-D8; D1 per-axis zero change pending, D5/D6/D7 delivered offline,
+  native checks pending):
+  - D1 predicate: both min/max vectors present, usable and nonnegative;
+    retain full-zero and unbounded-sentinel guards, no inference from
+    `resizeable`. The sentinel guard is a deliberate KDE host adaptation
+    (G-01, User 2026-10-10): KWin's marker means "no limit"; references
+    compare raw values, and ten references including COSMIC float raw-equal
+    sentinels. This is not plain COSMIC parity. Setting values are
     functionally named `Width and height both fixed` (default, tooltip
     names COSMIC) and `Width or height fixed` (tooltip names Hyprland
     (Wayland) and sway). KDE `fixedSizePredicate`, Windows handoff
     `core.fixed_size_predicate`: `both-axes-fixed` default or
-    `either-axis-fixed`. Both retain the same hint-validity guards; only
-    the final equality changes from both axes to either axis. Changes
-    affect subsequent admissions only, never existing classifications.
+    `either-axis-fixed`. Zero is unset per axis (G-05, User 2026-10-10):
+    a fixed axis needs equal nonzero bounds. Equal partial-zero hints such
+    as min=max=(640,0) are not fixed under `both-axes-fixed`, but are fixed
+    under `either-axis-fixed` through the genuinely fixed nonzero axis.
+    Deliberate COSMIC deviation: COSMIC raw equality floats partial-zero;
+    five of eight non-scrolling references plus PaperWM/karousel tile;
+    per-axis zero handling is consistent with the full-zero guard.
+    Both predicates retain the other hint-validity guards. Changes affect
+    subsequent admissions only, never existing classifications.
     Same-axis values:
     see item 3 under Move, Layout and Output Commands (canonical).
     Breaking configs is acceptable
-    pre-release (dogfooding correctness priority), no migration,
-    D1 delivered offline ([record](changes/archive/admission-and-move-settings.md)); Windows predicate/schema/UI wiring remains handoff-only.
+    pre-release (dogfooding correctness priority), no migration.
+    Status: D1 setting delivered offline ([record](changes/archive/admission-and-move-settings.md)); G-05 shared-core predicate/KDE change pending; Windows predicate/schema/UI and per-axis-zero wiring remain handoff-only.
   - D2 hint changes: admission-only in both directions as delivered;
     keep reacting to windows resizing themselves to avoid
     gaps/overlaps. No new hint-signal work requested.
@@ -665,7 +699,7 @@ platform API behavior.
   Commands (canonical). Functional naming per Functional naming below.
 - Functional naming (user 2026-10-08): settings and their values use
   functional names; reference WMs appear only in tooltips. Exact IDs decided
-  for `sameAxisMove` above, pending for the fixed-size predicate values.
+  for `sameAxisMove`, `fixedSizePredicate`, and `migrationSourceRefill` above.
 ## Gaming Safety
 
 - Gaming compatibility must be flawless (see Principles). Provide alternate
@@ -1454,12 +1488,29 @@ platform API behavior.
   born-fullscreen exit clear remains. Physical held-key/autorepeat
   delivery through KGlobalAccel remains user-owned acceptance. Evidence:
   [KDE follow-up](changes/archive/kde-post-windows-followups.md).
+- Maximized directional operations (G-06, User 2026-10-10; REQ-MAX-08
+  NORMATIVE, resolves review G-D1): both platforms follow COSMIC.
+  Directional focus is fenced while the focused window is maximized (no-op);
+  leave via unmaximize or Alt+Tab. Directional move of a maximized window
+  unmaximizes it first, then moves. Existing maximized-subject pointer
+  refusals remain; this decision changes directional commands only.
+  Status: KDE and shared core if applicable pending; Windows adapter handoff pending.
+- Maximized workspace sends (G-D2, User 2026-10-10; REQ-MAX-09 maximize
+  leg): sending a maximized window to another workspace keeps it maximized
+  on arrival, cross-platform. Deliberate COSMIC/niri deviation (they
+  unmaximize): a send relocates the whole window so its state travels,
+  unlike an in-layout move; Hyprland/qtile/awesome agree. Fullscreen carry
+  selected in Table A 2026-10-07 is unchanged, including the separate KDE
+  fullscreen observe-first status; whole-workspace output migration D8
+  remains its own carried-overlay rule.
+  Status: existing Windows maximize policy; KDE maximize carry pending; KDE fullscreen native send still observe-first (currently refuses fullscreen sends).
 - Windows (parity items 3-6):
   - Maximize (Win+M matches Meta+M): retained-tile overlay; siblings keep
-    layout; never suspends the workspace. Directional focus may enter or leave
-    a maximized member; movement and pointer operations refuse it; Win+Arrow
-    stays focus, never Snap; send/follow, select-away hiding and return
-    preserve maximize. Current code makes one admission-time restore attempt
+    layout; never suspends the workspace. Directional focus is a no-op while
+    the focused window is maximized; directional move unmaximizes first,
+    then moves (shared rule above). Pointer operations still refuse a
+    maximized subject; Win+Arrow stays focus, never Snap. Send/follow,
+    select-away hiding and return preserve maximize. Current code makes one admission-time restore attempt
     for a first-seen maximized window without a tile slot (gap: Q3 selects
     no launch unmaximize with a reserved slot); retained slots exempt;
     fullscreen wins. Stop/crash preserve
@@ -1470,6 +1521,8 @@ platform API behavior.
     double-click paths machine-proven; physical input and other output/DPI
     arrangements remain user-owned
     ([maximise](changes/archive/windows-maximise.md)).
+    Status: G-06 focus fence/unmaximize-before-move pending Windows wiring;
+    maximized-send preservation remains the existing Windows policy.
   - Fullscreen (Win+F11 matches Meta+F11): managed fullscreen retains
     membership/tree/shares, pauses geometry writes, restores the current
     Engine allocation on exit; precedes maximize; suppresses border and

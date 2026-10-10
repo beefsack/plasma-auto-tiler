@@ -406,13 +406,21 @@ All fresh variants below reset the client and WM state independently.
   (same rule-gated admission; AX exposes no min/max hint equality).
   `S(S-pan-admit)`.
 - Then Ours KDE: missing/full-zero/sentinel do not auto-float; equal
-  partial-zero vectors do (NORMATIVE D1, no resizeable inference).
+  partial-zero vectors currently do (implementation gap against G-05,
+  User 2026-10-10; no resizeable inference).
   Implemented offline 2026-10-08; [shared predicate fixtures](../../../crates/tiler-core/tests/fixed_size_admission.rs),
   [KDE fixtures](../../../kwin/tests/fixed-size-admission.test.ts).
-  Both predicates preserve these guards; the width-fixed/height-absent
+  Selected G-05 target: zero is unset per axis, so equal (640,0)/(0,480)
+  tiles under `both-axes-fixed` and floats under `either-axis-fixed` via its
+  genuinely fixed nonzero axis. Shared predicate/KDE implementation pending;
+  deliberate COSMIC raw-equality deviation for consistent zero handling.
+  G-01 retains full-zero/sentinel guards; sentinel rejection is deliberate
+  KDE host adaptation (KWin marker means no limit; ten references including
+  COSMIC float raw-equal sentinels). The width-fixed/height-absent
   variant tiles under both (whole vectors must be usable). Reference outcomes
   for that added guard variant and native hint representation remain TBD.
-- Then Ours Windows: TBD (max-track extraction not wired).
+- Then Ours Windows: TBD (max-track extraction not wired); G-05 per-axis-zero
+  target above selected, Windows handoff pending.
 - Variant hook: NORMATIVE whole-size equality vs meaningful-bound
   normalization (User 2026-10-08).
 

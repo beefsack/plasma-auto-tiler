@@ -48,6 +48,17 @@ Minimal variants of [R-CTL-05/06](reference-outcomes/restart-persistence.md#r-ct
 | Keep custom conflict | Give a project and foreign action the same custom chord; Keep; Apply; preview Force; confirm | Actual custom chord shown; Apply refuses; confirmed/revalidated Force removes only that chord from the foreign holder and preserves project assignment | No counterpart: no Keep/preview/Force foreign-clearing model in any pinned shortcut inventory (mask/unbind verbs only, no draft preview); outcome TBD (owner-specific, project-only Keep/Force). `S(S-cos-shortcut)` + `S(S-hyp-shortcut)` + `S(S-bsp-ctl)` + `S(S-i3-bind)` + `S(S-xmo-ctl)` + `S(S-sway-bind)` + `S(S-qti-keys)` + `S(S-awe-keys)` + `S(S-nir-acts)` + `S(S-pap-acts)` + `S(S-kar-acts)` + `S(S-pan-cmds)` |
 | Stale Force / write drift | Preview custom conflict; change project/foreign assignment or staged intent; confirm Force (separately: change Keep during a selected write) | Stale confirmation refuses before writes; post-write drift fails verification without canonical reset | No counterpart: no stale-preview/write-drift revalidation model in any pinned shortcut inventory; outcome TBD (owner-specific, project-only Force; live timing-dependent). `S(S-cos-shortcut)` + `S(S-hyp-shortcut)` + `S(S-bsp-ctl)` + `S(S-i3-bind)` + `S(S-xmo-ctl)` + `S(S-sway-bind)` + `S(S-qti-keys)` + `S(S-awe-keys)` + `S(S-nir-acts)` + `S(S-pap-acts)` + `S(S-kar-acts)` + `S(S-pan-cmds)` |
 
+### 2026-10-10 reference comparison discriminators
+
+Minimal variants of existing R-MAX-08 and R-WS-23. Selected intent is recorded
+below; implementation and native outcomes are pending, not new evidence.
+
+| Variant | Minimal action sequence | Selected Ours KDE / Windows target | Reference / native evidence |
+| --- | --- | --- | --- |
+| Isolated maximized mover (G-06, R-MAX-08) | Prepare `H[A,B*,C]`, maximize B; move B right once without a preceding focus command | Unmaximize B first, then ordinary directional move; shared-core if applicable/KDE and Windows implementation pending | Existing R-MAX-08 traces COSMIC unmax-move and Hyprland refusal on still-focused maximized B; profiles whose focus step changed the mover do not establish this isolated variant. Other exact reference outcomes and both Ours native journeys TBD |
+| Source MRU differs from order (G-37, R-WS-23) | L has occupied WS1, occupied WS2, trailing E; visit WS1 then WS2, migrate active WS2 to R; repeat fresh under each source-refill value | Default `last-remaining-workspace` shows E; `most-recently-used-workspace` shows eligible WS1 from L history; core/KDE and Windows implementation pending | Existing R-WS-23 gives reference policies, but exact history-qualified outcomes for this added variant are TBD; Ours native journeys TBD |
+| Source MRU fallback (G-37, R-WS-23) | Same source order; no eligible previous entry on L; migrate active WS2 to R with MRU selected; repeat with the remembered entry removed or migrated out of L's scope | Fall back to last remaining; do not recreate or follow an out-of-scope ID. Exact eligibility defined during implementation, retaining item-1.2 per-output history | All exact reference outcomes and Ours native journeys TBD; global-history models are not substituted for the selected per-output model |
+
 ## Notation
 
 - `H[a,b,c]` horizontal split, children left to right.

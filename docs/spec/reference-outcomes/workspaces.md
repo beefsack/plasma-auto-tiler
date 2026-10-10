@@ -1666,6 +1666,11 @@ baseline above is unchanged. Record:
   existing minimum-two/trailing-spare lifecycle converges on topology
   signals; empty migrates under the same id with no fabricated focus.
   Implemented offline (NORMATIVE D5, User 2026-10-08), native lifecycle/focus TBD.
+  G-37 User 2026-10-10 keeps this as the default and selects an MRU setting
+  using item-1.2 per-output history, falling back to last remaining with no
+  eligible entry; exact eligibility defined during implementation. Shared
+  core/KDE setting and MRU implementation pending; destination insertion
+  unchanged. [Discriminating variants](../reference-outcomes.md#2026-10-10-reference-comparison-discriminators).
   [Native map](../../../kwin/src/workspace-native.ts),
   [fixtures](../../../kwin/tests/workspace-migrate.test.ts).
 - Then Ours Windows: no-counterpart (no whole-workspace verb).

@@ -1675,7 +1675,8 @@ decisions of 2026-09-24 are under
       retained slots/fullscreen/floating domains exempt). No launch
       unmaximize, no one-shot retile restore. First fullscreen exit is separate
       (D5 core/KDE delivered offline, Windows pending); B9 unmaximize/fresh-admit is item 15;
-      no R-MAX-08 nav choice.
+      R-MAX-08 focus fence/unmaximize-before-move is selected 2026-10-10,
+      implemented separately under handoff item 18.
     - KDE exact (verified 2026-10-08 at `db31234`):
       `kwin/src/plan-adapter.ts:5933` `clearMaximizeAtAdmission` (skips
       fullscreen, skips attempted ids via `maximizeAdmissionAttempts`,
@@ -1856,8 +1857,10 @@ decisions of 2026-09-24 are under
     #### Item 13 behavior and reference seams
 
     - Normative addition: REQ-SPC-04 floats ordinary fixed-size clients.
-      Decided edges (user 2026-10-08) REQ-SPC-04a..h: equal usable whole vectors including
-      partial-zero; missing/full-zero/sentinel excluded; admission-only hint
+      Decided edges (user 2026-10-08/10) REQ-SPC-04a..h: equal usable bounds;
+      zero is unset per axis (G-05, item 17), partial-zero tiles under
+      both-axes-fixed and floats under either-axis-fixed via its nonzero axis;
+      missing/full-zero/sentinel excluded; admission-only hint
       status; same-live-client user tile overrides; fixed-floating base under
       native maximize; born-fullscreen first exit classifies as newly admitted
       (fixed floats with no writes, otherwise tiles; prior fixed floats
@@ -2188,6 +2191,56 @@ decisions of 2026-09-24 are under
       Linux portable tests prove no Windows native behavior. User owns live checks
       on the multi-output PC; update Windows matrix/spec only with actual evidence.
 
+  - Item 17: G-05 per-axis-zero fixed-size predicate (User 2026-10-10,
+    REQ-SPC-04a). Coordinate with item 13: zero means unset on each axis;
+    equal partial-zero hints (640,0) and (0,480) are not fixed under
+    `both-axes-fixed`, but their genuinely fixed nonzero axis makes them fixed
+    under `either-axis-fixed`. Keep full-zero and unbounded-sentinel guards.
+    Shared-core predicate + KDE delivery pending; Windows must wire the
+    corrected predicate with item 13's max-track/schema/UI/opt-in work.
+    Acceptance: positive fixed, both partial-zero orientations, full-zero,
+    missing, sentinel and subsequent-admission/no-reclassification controls;
+    native hints/no-touch checks pending on each platform.
+
+  - Item 18: G-06 maximized directional focus/move (User 2026-10-10,
+    REQ-MAX-08 NORMATIVE; resolves G-D1). Both platforms follow COSMIC:
+    directional focus no-ops while the focused window is maximized (leave via
+    unmaximize or Alt+Tab); directional move unmaximizes first, then moves.
+    Replace Windows focus-permit/movement-refusal, retaining pointer refusals
+    and fullscreen policy. Shared-core work if applicable + KDE pending;
+    Windows adapter wiring pending. Acceptance: focused-max focus in all
+    directions; fresh isolated maximized mover clears before ordinary move;
+    ordinary navigation and pointer/fullscreen controls unchanged. Native
+    focus/state/geometry timing checks pending on both platforms.
+
+  - Item 19: G-37 Source workspace after migration (User 2026-10-10,
+    REQ-WS-12d/e). Coordinate with items 1/14: Windows
+    `core.migration_source_refill`, KDE `migrationSourceRefill` + KCM;
+    `last-remaining-workspace` default (`Last remaining workspace`, tooltip
+    COSMIC) / `most-recently-used-workspace` (`Most recently used workspace`,
+    tooltip bspwm, i3, awesome). Additive schema-v1 field, missing=default,
+    no migration; live changes affect subsequent migrations. MRU uses item
+    1.2 per-output history; define exact eligibility during implementation,
+    fall back to last remaining without an eligible entry. Keep scoped
+    invalidation, destination insertion and empty migration unchanged.
+    Shared-core/KDE setting and MRU implementation pending; Windows config,
+    settings UI and runtime wiring pending with the parked multi-output
+    foundation. Acceptance: MRU differs from last-remaining, no eligible
+    entry fallback, migrated/removed entry exclusion, output-local history,
+    default/invalid/live settings, retained moved workspace state; native
+    journeys pending on both platforms.
+
+  - Item 20: G-D2 maximized workspace-send carry (User 2026-10-10,
+    REQ-MAX-09 maximize leg). Keep maximize on arrival: Windows existing
+    policy, cross-platform target; KDE carry pending. Deliberate COSMIC/niri
+    deviation: a send relocates the whole window/state, unlike in-layout move.
+    Verify Windows retained-overlay send/follow and send-and-stay through
+    ordinary send integration; do not replace it with item 18's unmax-move.
+    Fullscreen stays item 9/Table A 2026-10-07; KDE fullscreen observe-first
+    and whole-workspace D8 carry remain distinct. Acceptance: maximize on
+    arrival, source reflow/target slot and follow/stay, native unmaximize on
+    target; live checks pending, fullscreen controls unchanged.
+
   ### Source discrepancies to preserve and report
 
   | Existing assertion | Current source / implementation gap | Handoff treatment |
@@ -2248,8 +2301,9 @@ decisions of 2026-09-24 are under
   clear; B6 vs KDE skip-writes; float-origin nav vs Windows refusal; KDE
   no-size-inference vs Windows containment fullscreen; B9 vs COSMIC
   source; Q3/R-MAX-03 overlap.
-  Current review 2026-10-09: all nine provisional requirements ratified;
-  B9 no-refusal sub-leg selected; R-LAY-04 parked OPEN. Totals: 104 NORMATIVE, 61 OPEN,
+  Current review 2026-10-10: all nine provisional requirements ratified;
+  B9 no-refusal sub-leg selected; R-LAY-04 parked OPEN; G-06 makes
+  REQ-MAX-08 NORMATIVE. Totals: 105 NORMATIVE, 60 OPEN,
   0 PROVISIONAL requirement rows; 156 scenarios including R-WS-27 with TBD
   reference outcomes. Platform implementation/native gaps stay
   distinct from selected intent; Windows control cells now cite Windows evidence.
@@ -2352,9 +2406,25 @@ decisions of 2026-09-24 are under
   [bounds fix](changes/archive/multi-output-domain-bounds.md)
   [phase 2 parked](changes/learned-size-limits.md)
   [drag investigation](changes/window-alignment-drag-investigation.md)
-- P1 | Navigation/movement while maximised | No suppression policy selected;
-  semantics await the user's COSMIC comparison.
-  [behavior](decisions.md#window-state-float-sticky-maximize-fullscreen)
+- P1 | Reference comparison decisions 2026-10-10 | Implement the selected
+  changes in shared core + KDE; Windows adapter work is handoff items 17-20.
+  [Review decisions](research/reference-rule-comparison-review.md#user-decisions-2026-10-10),
+  [spec](spec/functional-spec.md), [decision record](decisions.md).
+  - G-05 REQ-SPC-04a: shared predicate zero-unset-per-axis plus KDE wiring;
+    equal partial-zero tiles under both-axes, floats under either-axis via
+    the nonzero fixed axis. Preserve other guards/admission-only scope.
+  - G-06 REQ-MAX-08: directional focus fence while focused-maximized;
+    directional move unmaximizes first, then moves. KDE + shared core if
+    applicable; pointer/fullscreen rules unchanged.
+  - G-37 REQ-WS-12d/e: functional source-refill setting (last remaining default
+    / MRU), shared core + KDE KCM/live config. Use item-1.2 per-output history;
+    define exact eligibility during implementation and fall back to last
+    remaining when no eligible entry exists. Destination insertion unchanged.
+  - G-D2 REQ-MAX-09 maximize leg: KDE maximized-send carry keeps maximize on
+    arrival; coordinate core only where required. Fullscreen Table A remains
+    unchanged, KDE fullscreen observe-first retained.
+  - Status: implementation pending; G-01..04/G-07 are retained rules, no
+    implementation change. Pending live checks below follow delivery.
 - P1 | External NixOS/Home Manager delivery validation | Clean external
   install, update, rollback, and host-matching KWin ABI still unproven
   off the dev machine.
@@ -2443,6 +2513,13 @@ decisions of 2026-09-24 are under
 
 Unprioritised ideas; not scheduled.
 
+<a id="pinned-persistent-workspaces"></a>
+- Pinned/persistent workspaces (COSMIC pin, Hyprland `persistent` rule, niri
+  named workspaces): an empty-surviving workspace with monitor affinity;
+  pinned workspaces keep their tiling override across restart; group with
+  the shared restart store (G-07, User 2026-10-10). Ordinary unpinned overrides
+  still reset; feature design/implementation remains Future scope.
+
 - Windows app-owned fullscreen UX spike: options for exiting/toggling
   fullscreen an application entered itself (user 2026-10-03, later).
   User 2026-10-07 (R-MAX-05, references 8/8 exit without refusal): keep
@@ -2465,6 +2542,27 @@ Unprioritised ideas; not scheduled.
 
 Items below retain their stated pending scope; dated user confirmations are
 recorded separately from unexercised legs. Reference-WM checks test other compositors.
+
+- Reference comparison decisions 2026-10-10 (implementation pending,
+  user-owned KDE and Windows checks after their respective delivery):
+  - G-05: freshly admit (640,0) and (0,480) equal partial-zero hints under
+    both predicates: tile for both-axes, untouched automatic float for
+    either-axis. Full-zero/unbounded sentinel still tile; fully positive
+    fixed still floats; changing settings never reclassifies existing clients.
+  - G-06: maximize focused B among tiles, press each directional focus chord:
+    no-op until unmaximize/Alt+Tab. In fresh maximized-B legs, directional
+    move clears maximize first and then performs the ordinary move; record
+    native clear/move timing. Existing pointer/fullscreen controls unchanged.
+  - G-37 (multi-output): visit surviving WS1 then active WS2 on L, with a
+    distinct trailing E; migrate WS2 to R. Default shows last remaining E;
+    MRU shows eligible WS1. Clear/invalidate history and repeat: MRU falls
+    back to last remaining. Check each output's independent history, live
+    settings pickup, empty migrations and unchanged destination insertion.
+  - G-D2: send maximized B to another occupied workspace with follow and
+    stay; it arrives maximized, unmaximizing there restores its target slot.
+    Windows existing maximize policy is verification; KDE carry awaits
+    implementation. Fullscreen is the separate Table A Windows carry check;
+    KDE native fullscreen send remains observe-first.
 
 - KDE two-candidate output move/send/migration (offline delivered 2026-10-09):
   use one wide source and two outputs touching the requested edge. Exhaust local
@@ -2549,7 +2647,9 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 - KDE Q2 R-SPC-04/06..13 (offline delivered, user decisions 2026-10-08): open a
   fixed-size ordinary client beside a tile; record unchanged incoming frame,
   focus and stacking, including a fixed borderless game. Check single-axis
-  clients tile by default and float under `either-axis-fixed`, equal partial-zero clients float, unset/full-zero/sentinel
+  clients tile by default and float under `either-axis-fixed`; equal partial-zero
+  clients tile by default and float via their nonzero axis under `either-axis-fixed`
+  after G-05 delivery (pending); unset/full-zero/sentinel
   hints do not auto-float. Gain/lose fixed hints after admission without
   changing float identity. Meta+G tiles an automatic float and stays tiled
   through minimize/restore, workspace/output observation and domain re-adoption;
@@ -2833,13 +2933,6 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 
 ## Open user decisions
 
-- Consolidated reference-rule comparisons: 87 source-fill entries reviewed
-  across all twelve references; 45 rule groups (8 MATERIAL, 35 NOT MATERIAL,
-  2 RECORD DRIFT). Review material cases one at a time in report impact order,
-  starting with equal-sentinel admission (G-01); recommendations are not
-  selected rules. This replaces the COSMIC-only comparison queue.
-  [review report](research/reference-rule-comparison-review.md)
-
 - OBS POC inputs: OBS account/project, GitHub PAT/webhook wiring, Fedora
   release, neon/Kubuntu pursuit, absent-during-upgrade policy, pacman repo
   vs AUR.
@@ -2851,9 +2944,6 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 - Borderless-windowed fullscreen heuristic (born-fullscreen option 3): only
   if dogfooding shows games arriving non-fullscreen.
   [change](changes/archive/born-fullscreen-admission.md)
-- Navigation/movement while maximised: no suppression policy selected;
-  semantics await the user's COSMIC comparison.
-  [decision](decisions.md#window-state-float-sticky-maximize-fullscreen)
 - Windows Win+F11/Win+G containment (parked with Windows gaming coexistence):
   Authentic ownership and disclosed limitation are selected 2026-10-08;
   Compatible/disable/rebind provide Game Bar access. Later test and user review
