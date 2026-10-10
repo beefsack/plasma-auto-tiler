@@ -2326,7 +2326,7 @@ decisions of 2026-09-24 are under
   Table A selections and 2026-10-10 comparison decisions are recorded in
   [decisions](decisions.md#reference-matrix-and-spec-authority);
   priority native TBD rows R-WS-02, R-WS-04, R-WS-05, R-START-03, R-MAX-01 remain.
-- P2 | Prior-art catalogue upkeep | Catalogue delivered 2026-10-03; maintain
+- P3 | Prior-art catalogue upkeep | Catalogue delivered 2026-10-03; maintain
   [the index](research/prior-art.md) as projects are studied. Deferred general
   source analysis: FancyWM core submodules and niri/sway/river/awesome/dwm
   (distinct from the completed bounded matrix source-fill passes).
