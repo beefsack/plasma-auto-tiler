@@ -939,8 +939,8 @@ decisions of 2026-09-24 are under
       remains pending. Port follow/stay MRU/null, admission equality, visibility
       fences, relative wrap/spare and floating-boundary regression coverage.
   - Item 3: Windows schema-v1/live setting/UI/move routing delivered 2026-10-11
-      (base `fafcd31` + delivery commit, [record](changes/archive/windows-same-axis-move.md));
-      native gates and agent-observed Apply/Revert/no-rebuild passed. Physical
+      (`755aab8`, [record](changes/archive/windows-same-axis-move.md));
+      native gates/CI and agent-observed Apply/Revert/no-rebuild passed. Physical
       directional journey pending; checklist below retained as acceptance detail.
       Sites below under `crates/tiler-windows/`:
 
@@ -1042,8 +1042,8 @@ decisions of 2026-09-24 are under
        tree rebuild. Linux workspace tests/clippy compile portable Windows
        modules; native Windows UI/owner checks remain Windows-owned.
   - Item 4: Windows Win+O/catalog/presets/input/owner routing delivered 2026-10-11
-      (base `755aab8` + delivery commit, [record](changes/archive/windows-parent-orientation-toggle.md));
-      native gates and agent-observed Settings/owner adoption passed. Physical
+      (`f5801d8`, test-only CI repair `83085a3`, [record](changes/archive/windows-parent-orientation-toggle.md));
+      native gates/CI and agent-observed Settings/owner adoption passed. Physical
       toggle/OS suppression pending; held-repeat choice tentative pending user
       review. Checklist below retained as acceptance detail (Windows paths):
 
