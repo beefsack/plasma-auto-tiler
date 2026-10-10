@@ -56,6 +56,7 @@ fn push_snap(
         | Classified::Maximize(_)
         | Classified::Fullscreen(_)
         | Classified::Float(_)
+        | Classified::Orientation(_)
         | Classified::Sticky(_) => {
             panic!("expected directional chord")
         }
@@ -77,6 +78,7 @@ fn push_workspace(
         | Classified::Maximize(_)
         | Classified::Fullscreen(_)
         | Classified::Float(_)
+        | Classified::Orientation(_)
         | Classified::Sticky(_) => {
             panic!("expected workspace digit")
         }
@@ -98,6 +100,7 @@ fn push_maximize(
         | Classified::WorkspaceHistory(_)
         | Classified::Fullscreen(_)
         | Classified::Float(_)
+        | Classified::Orientation(_)
         | Classified::Sticky(_) => {
             panic!("expected maximize chord")
         }
@@ -118,6 +121,7 @@ fn push_fullscreen(
         | Classified::WorkspaceHistory(_)
         | Classified::Maximize(_)
         | Classified::Float(_)
+        | Classified::Orientation(_)
         | Classified::Sticky(_) => {
             panic!("expected fullscreen chord")
         }
@@ -140,6 +144,7 @@ fn push_float(
         | Classified::WorkspaceSend(_)
         | Classified::WorkspaceHistory(_)
         | Classified::Maximize(_)
+        | Classified::Orientation(_)
         | Classified::Fullscreen(_) => {
             panic!("expected float chord")
         }
@@ -162,8 +167,31 @@ fn push_sticky(
         | Classified::WorkspaceSend(_)
         | Classified::WorkspaceHistory(_)
         | Classified::Maximize(_)
+        | Classified::Orientation(_)
         | Classified::Fullscreen(_) => {
             panic!("expected sticky chord")
+        }
+    }
+}
+
+fn push_orientation(
+    m: &mut SnapClassify,
+    is_up: bool,
+    fg: bool,
+    inj: bool,
+) -> Option<tiler_windows::snapkey::OrientationIntent> {
+    use tiler_windows::snapkey::VK_O;
+    match SnapClassify::push(m, VK_O, is_up, fg, inj)? {
+        Classified::Orientation(intent) => Some(intent),
+        Classified::Snap(_)
+        | Classified::Workspace(_)
+        | Classified::WorkspaceSend(_)
+        | Classified::WorkspaceHistory(_)
+        | Classified::Maximize(_)
+        | Classified::Fullscreen(_)
+        | Classified::Float(_)
+        | Classified::Sticky(_) => {
+            panic!("expected orientation chord")
         }
     }
 }
@@ -580,6 +608,7 @@ fn saturated_queue_swallows_and_counts_loss() {
         | QueuedSnapEvent::Maximize(_)
         | QueuedSnapEvent::Fullscreen(_)
         | QueuedSnapEvent::Float(_)
+        | QueuedSnapEvent::Orientation(_)
         | QueuedSnapEvent::Sticky(_)
         | QueuedSnapEvent::Mask(_) => panic!("expected intent"),
     }
@@ -1423,6 +1452,247 @@ fn maximize_arms_start_menu_mask_and_survives_saturation() {
     );
     assert!(q.dropped >= 1);
     assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+}
+
+#[test]
+fn orientation_toggle_consumes_down_repeat_up_with_origin_pairing() {
+    // Win+O (KDE Meta+O parity, item 4): down consumes with announce, held
+    // repeat is swallowed (no re-toggle, like the discrete KDE shortcut),
+    // up closes the pair without announce. Win released before the key-up
+    // still pairs by origin. Repeat re-dispatch stays native-journey TBD
+    // (tentative): the hold swallows without dispatching.
+    use tiler_windows::snapkey::{VK_O, is_orientation_vk};
+    assert!(is_chord_vk(VK_O));
+    assert!(is_orientation_vk(VK_O));
+    assert_eq!(VK_O, 0x4F);
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    assert!(m.win_held());
+    assert!(!m.key_is_down(VK_O));
+    let down = push_orientation(&mut m, false, true, false).expect("orientation down");
+    assert_eq!(down.edge, SnapEdge::Down);
+    assert!(down.consumed && down.announce);
+    assert!(m.key_is_down(VK_O));
+    let repeat = push_orientation(&mut m, false, true, false).expect("orientation repeat");
+    assert_eq!(repeat.edge, SnapEdge::Repeat);
+    assert!(repeat.consumed && !repeat.announce);
+    // Win released before the key-up still pairs by origin.
+    push_snap(&mut m, VK_LWIN, true, true, false);
+    let up = push_orientation(&mut m, true, true, false).expect("paired up");
+    assert_eq!(up.edge, SnapEdge::Up);
+    assert!(up.consumed && !up.announce);
+    assert!(!m.key_is_down(VK_O));
+    assert_eq!(push_orientation(&mut m, true, true, false), None);
+    assert_eq!(
+        (
+            m.orientation_counts.down,
+            m.orientation_counts.repeat,
+            m.orientation_counts.up
+        ),
+        (1, 1, 1)
+    );
+    assert_eq!(m.orientation_counts.consumed, 3);
+    // Directional catalog untouched by the O chord.
+    assert!(m.counts.iter().all(|c| c.down == 0 && c.up == 0));
+}
+
+#[test]
+fn orientation_modifier_exactness_passes_untracked() {
+    // Only exact unshifted Win+O classifies: Shift/Ctrl/Alt, missing Win,
+    // bare O, and injected O never classify and never arm the mask.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    assert_eq!(push_orientation(&mut m, false, true, false), None);
+    assert_eq!(push_orientation(&mut m, true, true, false), None);
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    assert_eq!((m.orientation_counts.down, m.orientation_counts.up), (0, 0));
+    for mod_vk in [VK_CONTROL, VK_MENU, VK_LMENU] {
+        let mut m = SnapClassify::new(takeover());
+        win_down(&mut m, VK_LWIN);
+        push_snap(&mut m, mod_vk, false, true, false);
+        assert_eq!(push_orientation(&mut m, false, true, false), None);
+        assert_eq!(push_orientation(&mut m, true, true, false), None);
+        push_snap(&mut m, mod_vk, true, true, false);
+    }
+    let mut m = SnapClassify::new(takeover());
+    assert_eq!(push_orientation(&mut m, false, true, false), None);
+    assert_eq!(push_orientation(&mut m, false, true, true), None);
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    assert_eq!(push_orientation(&mut m, false, true, true), None);
+    assert!(!win_up_mask_reserve(
+        &mut m,
+        &mut SnapQueue::new(),
+        VK_LWIN,
+        true,
+        std::time::Instant::now()
+    ));
+}
+
+#[test]
+fn orientation_unmanaged_consumes_gate_off_passes() {
+    // Unmanaged foreground with the gate on still swallows at interception
+    // (the owner settles without acting); takeover off stays passthrough,
+    // and a fresh chord with the shortcut gate off passes through.
+    use tiler_windows::snapkey::VK_O;
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    let down = push_orientation(&mut m, false, false, false).expect("unmanaged down");
+    assert!(down.consumed && down.announce);
+    let repeat = push_orientation(&mut m, false, true, false).expect("repeat");
+    assert!(repeat.consumed);
+    let up = push_orientation(&mut m, true, true, false).expect("paired up");
+    assert!(up.consumed);
+    let mut m = SnapClassify::new(KeyboardConfig::disabled());
+    win_down(&mut m, VK_LWIN);
+    let down = push_orientation(&mut m, false, true, false).expect("logged");
+    assert!(!down.consumed && !down.announce);
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    let tick = std::time::Instant::now();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_O, false, None, false, tick, false),
+        Some(false)
+    );
+    match q.pop_front().expect("orientation intent") {
+        QueuedSnapEvent::Orientation(intent) => assert!(!intent.consumed),
+        _ => panic!("expected orientation intent"),
+    }
+}
+
+#[test]
+fn orientation_arms_start_menu_mask_and_survives_saturation() {
+    use tiler_windows::snapkey::{
+        MaskTrigger, QueuedMask, QueuedOrientationIntent, SnapQueue, VK_O,
+    };
+    // A consumed Win+O reserves the E8 mask at Win-up with trigger evidence.
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    let tick = std::time::Instant::now();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_O,
+            false,
+            Some(origin_of(7, "w7")),
+            false,
+            tick,
+            true
+        ),
+        Some(true)
+    );
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    match q.pop_front().expect("orientation intent") {
+        QueuedSnapEvent::Orientation(QueuedOrientationIntent { origin, .. }) => {
+            assert_eq!(origin, Some(origin_of(7, "w7")));
+        }
+        _ => panic!("expected orientation intent"),
+    }
+    match q.pop_front().expect("mask") {
+        QueuedSnapEvent::Mask(mask) => assert_eq!(mask.trigger, MaskTrigger::Orientation),
+        _ => panic!("expected mask"),
+    }
+    // Authentic saturation: the toggle still swallows and counts loss,
+    // while an earlier consumed toggle's mask stays armed (mask reservation
+    // makes room when full).
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    push_snap(&mut m, VK_LWIN, false, true, false);
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_O,
+            false,
+            Some(origin_of(9, "w9")),
+            false,
+            tick,
+            true
+        ),
+        Some(true)
+    );
+    while q.len() < INTENT_QUEUE_CAP {
+        let _ = q.push(QueuedSnapEvent::Mask(QueuedMask {
+            trigger: MaskTrigger::Orientation,
+            tick,
+            inserted: 0,
+            release_sent: false,
+        }));
+    }
+    assert!(q.is_full());
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_O,
+            false,
+            Some(origin_of(9, "w9")),
+            false,
+            tick,
+            true
+        ),
+        Some(true)
+    );
+    assert!(q.dropped >= 1);
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+}
+
+#[test]
+fn orientation_held_rebind_disable_gate_repeat_but_keep_pair() {
+    // Rebound orientation (Win+U -> Orientation/O) dispatches; removing the
+    // mapping mid-hold swallows repeats without dispatching while the pair
+    // still closes consumed; disabling the canonical mid-hold does the same;
+    // fresh presses afterwards pass through.
+    use tiler_windows::snapkey::{ChordAction, ChordDisable, ChordRemap, VK_O};
+    const VK_U: u32 = 0x55;
+    let remap = || {
+        vec![ChordRemap {
+            from_vk: VK_U,
+            from_shift: false,
+            from_ctrl: false,
+            from_alt: false,
+            action: ChordAction::Orientation,
+            to_vk: VK_O,
+        }]
+    };
+    let mut m = SnapClassify::new(takeover());
+    m.set_remap(remap());
+    win_down(&mut m, VK_LWIN);
+    match SnapClassify::push(&mut m, VK_U, false, true, false).expect("rebound down") {
+        Classified::Orientation(intent) => assert!(intent.consumed && intent.announce),
+        other => panic!("expected orientation, got {other:?}"),
+    }
+    m.set_remap(Vec::new());
+    let repeat = SnapClassify::push(&mut m, VK_U, false, true, false).expect("repeat");
+    assert!(repeat.consumed() && !repeat.announce());
+    let up = SnapClassify::push(&mut m, VK_U, true, true, false).expect("up");
+    assert!(up.consumed());
+    assert_eq!(SnapClassify::push(&mut m, VK_U, false, true, false), None);
+    // Canonical disable mid-hold gates dispatch but keeps the pair.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    let down = push_orientation(&mut m, false, true, false).expect("down");
+    assert!(down.consumed && down.announce);
+    m.set_disabled(vec![ChordDisable {
+        vk: VK_O,
+        shift: false,
+        ctrl: false,
+        alt: false,
+    }]);
+    let repeat = push_orientation(&mut m, false, true, false).expect("repeat");
+    assert!(repeat.consumed && !repeat.announce);
+    let up = push_orientation(&mut m, true, true, false).expect("up");
+    assert!(up.consumed);
 }
 
 #[test]
@@ -2692,6 +2962,7 @@ fn push_send(
         | Classified::Maximize(_)
         | Classified::Fullscreen(_)
         | Classified::Float(_)
+        | Classified::Orientation(_)
         | Classified::Sticky(_) => {
             panic!("expected relative send")
         }

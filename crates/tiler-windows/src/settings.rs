@@ -623,6 +623,7 @@ pub enum ToggleKind {
     Sticky,
     Maximize,
     Fullscreen,
+    Orientation,
 }
 
 impl ToggleKind {
@@ -633,6 +634,7 @@ impl ToggleKind {
             Self::Sticky => "sticky",
             Self::Maximize => "maximize",
             Self::Fullscreen => "fullscreen",
+            Self::Orientation => "orientation",
         }
     }
 
@@ -641,7 +643,7 @@ impl ToggleKind {
     pub const fn wants_shift(self) -> bool {
         match self {
             Self::Sticky => true,
-            Self::Float | Self::Maximize | Self::Fullscreen => false,
+            Self::Float | Self::Maximize | Self::Fullscreen | Self::Orientation => false,
         }
     }
 }
@@ -913,6 +915,16 @@ pub fn binding_catalog() -> Vec<BindingDef> {
         defaults: &["Win+F11"],
         implemented: true,
         conflict: chord_conflict("Win+F11"),
+    });
+    rows.push(BindingDef {
+        id: "toggle-orientation",
+        text: "Toggle parent split orientation",
+        family: BindingFamily::Toggle {
+            kind: ToggleKind::Orientation,
+        },
+        defaults: &["Win+O"],
+        implemented: true,
+        conflict: chord_conflict("Win+O"),
     });
     for index in 1..=9u8 {
         rows.push(workspace_row(index, SnapFamilyOp::Primary));
@@ -1504,6 +1516,7 @@ pub fn binding_action(def: &BindingDef) -> crate::snapkey::ChordAction {
             ToggleKind::Sticky => ChordAction::Sticky,
             ToggleKind::Maximize => ChordAction::Maximize,
             ToggleKind::Fullscreen => ChordAction::Fullscreen,
+            ToggleKind::Orientation => ChordAction::Orientation,
         },
         // Defensive only: resize rows are not intercepted (`implemented:
         // false`), so validation refuses their rebinds and the routing
@@ -1996,7 +2009,8 @@ pub enum Preset {
     /// voice, Win+J recall, Win+K cast, Win+L lock, arrows Snap/maximize/
     /// minimize), all move-arrow rows (Win+Shift+arrows monitor-move/stretch),
     /// float (Win+G Game Bar), maximize (Win+M minimize-all), fullscreen
-    /// (Win+F11 Xbox mode), all workspace digits (Win[/Shift]+digits
+    /// (Win+F11 Xbox mode), orientation (Win+O orientation lock), all
+    /// workspace digits (Win[/Shift]+digits
     /// taskbar launch/new-instance), and the two item 1 history arrows
     /// (Win+Ctrl+Left/Right native virtual-desktop switch, ownership
     /// unverified in repository) are disabled. What stays is exactly the
@@ -2054,7 +2068,7 @@ pub fn apply_preset(settings: &mut Settings, preset: Preset) -> Vec<&'static str
 /// Preset decision helper: the ids the compatible preset disables (every
 /// OS-conflicting implemented row; see [`Preset::Compatible`]).
 #[must_use]
-pub const fn compatible_disabled_ids() -> [&'static str; 37] {
+pub const fn compatible_disabled_ids() -> [&'static str; 38] {
     [
         "focus-left",
         "focus-left-arrow",
@@ -2071,6 +2085,7 @@ pub const fn compatible_disabled_ids() -> [&'static str; 37] {
         "toggle-float",
         "toggle-maximize",
         "toggle-fullscreen",
+        "toggle-orientation",
         "workspace-select-1",
         "workspace-select-2",
         "workspace-select-3",
@@ -2495,14 +2510,14 @@ mod tests {
     #[test]
     fn catalog_covers_kde_actions_without_collisions() {
         let catalog = binding_catalog();
-        // 16 focus/move (letter plus separate arrow rows) + 8 resize + 4
+        // 16 focus/move (letter plus separate arrow rows) + 8 resize + 5
         // toggles + 20 workspace + 9 item 1 history + 10 numbered stay +
-        // 8 relative follow + 8 relative stay (item 2) = 83.
-        assert_eq!(catalog.len(), 83);
+        // 8 relative follow + 8 relative stay (item 2) = 84.
+        assert_eq!(catalog.len(), 84);
         let mut ids: Vec<&str> = catalog.iter().map(|def| def.id).collect();
         ids.sort();
         ids.dedup();
-        assert_eq!(ids.len(), 83);
+        assert_eq!(ids.len(), 84);
         // Every default parses; resize rows are the only unimplemented ones.
         for def in &catalog {
             for default in def.defaults {
@@ -2772,7 +2787,7 @@ mod tests {
         assert!(settings.bindings.is_empty());
         assert!(settings.core.keyboard.allow_win_l);
         assert!(validate_settings(&settings).is_ok());
-        // Compatible disables every OS-conflicting row (37), preserving the
+        // Compatible disables every OS-conflicting row (38), preserving the
         // opt-in. From empty state the change is exactly the disable list.
         let changed = apply_preset(&mut settings, Preset::Compatible);
         assert_eq!(changed, compatible_disabled_ids());
@@ -2793,7 +2808,7 @@ mod tests {
         assert!(!settings.bindings.contains_key("toggle-sticky"));
         assert!(!settings.bindings.contains_key("workspace-previous"));
         let effective = effective_bindings(&settings);
-        assert_eq!(effective.len(), 83);
+        assert_eq!(effective.len(), 84);
         for row in &effective {
             if compatible_disabled_ids().contains(&row.id) {
                 assert!(!row.active, "{}", row.id);

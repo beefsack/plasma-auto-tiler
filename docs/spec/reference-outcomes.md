@@ -34,6 +34,12 @@ establish KGlobalAccel's held-key delivery or select a repeat-suppression policy
 | --- | --- | --- | --- |
 | Held-key delivery | Focus ordinary eligible A; hold Meta+M past the repeat delay; release; press once again. From a fresh ordinary A, repeat with Meta+Shift+G | [KWin fixtures](../../kwin/tests/plan-adapter.test.ts) pin one native attempt per delivered maximize callback, repeated native restore/restick cycles and duplicate sticky notification convergence; existing sticky fixtures pin per-activation attempts | Ours KDE: callback count while held, visible cycling, release/repress delivery and any required suppression policy TBD, user-owned. Ours Windows: held repeats consumed without dispatch per the recorded decision; physical journey TBD. Reference WMs: this exact held-key sequence TBD; no source/native claim added |
 
+### R-LAY-01 Windows held-key discriminator
+
+| Variant | Minimal action sequence | Windows offline outcome / tentative decision | Unsupported / physical outcomes |
+| --- | --- | --- | --- |
+| Held orientation toggle | Focus B in `H[A,B*]`; hold Win+O past repeat delay; release; press once again | Tentative, pending user review: one toggle on discrete down, consumed repeats do not retoggle; release/repress returns H. Classifier/queue tests 2026-10-11, base `755aab8` + delivery commit ([record](../changes/archive/windows-parent-orientation-toggle.md)) | Windows physical delivery/OS suppression TBD, user-owned. KDE held callback behavior and exact reference-WM held sequence TBD; no unsupported outcome inferred |
+
 ### R-CTL-05 M13 Lead readings
 
 Minimal variants of [R-CTL-05/06](reference-outcomes/restart-persistence.md#r-ctl-05-shortcut-staging-and-apply), User 2026-10-08 M13 = B. Native store stays authoritative; these are offline KDE outcomes, not live acceptance or selected Windows runtime changes.
@@ -4926,9 +4932,9 @@ minimum-size stays a supplemental file (not nested in resize).
 |---|---|---|---|
 | Insertion | [insertion.md](reference-outcomes/insertion.md) | R-INS-01..08 (8) | none (R-INS-03..08 landed in piece B1) |
 | Focus | [focus.md](reference-outcomes/focus.md) | R-FOC-01..04 (4) | none (landed in piece B2) |
-| Move | [move.md](reference-outcomes/move.md) | R-MOV-01..13 (13) | R-MOV-09..13 added 2026-10-07; reference source legs filled, unsupported legs TBD; KDE items 3/5 R-MOV-03/08/09..13 delivered offline; native journeys/Windows wiring pending |
+| Move | [move.md](reference-outcomes/move.md) | R-MOV-01..13 (13) | R-MOV-09..13 added 2026-10-07; reference source legs filled, unsupported legs TBD; KDE items 3/5 delivered offline; Windows item 3 delivered 2026-10-11 (`755aab8`), native Settings/no-rebuild observed, physical moves pending; Windows item 5 pending |
 | Resize | [resize.md](reference-outcomes/resize.md) | R-RSZ-01..04 (4) | none (landed in piece B4) |
-| Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | R-LAY-01..06 (6) | R-LAY-01/05/06 KDE implemented offline; native journey/Windows wiring pending; R-LAY-05/06 reference source legs filled, unsupported legs TBD |
+| Layout commands | [layout-commands.md](reference-outcomes/layout-commands.md) | R-LAY-01..06 (6) | R-LAY-01/05/06 KDE implemented offline; Windows item 4 delivered 2026-10-11 (base `755aab8` + delivery commit), native Settings/owner adoption observed, physical toggle/OS suppression pending; reference source legs filled, unsupported legs TBD |
 | Workspaces | [workspaces.md](reference-outcomes/workspaces.md) | R-WS-01..27 (27) | KDE items 1/2 delivered, item 1 single-output user-confirmed, item 2 offline only; Q4 R-WS-12/21..26 implemented offline under user-selected NORMATIVE D1-D9 (User 2026-10-08; D8 carry delivered offline); R-WS-27 two-candidate migration selection added User decision 2026-10-09 with reference outcomes TBD and Ours selection pending code; native/Windows legs TBD except R-WS-25 overlay-carry source evidence |
 | Minimize | [minimize.md](reference-outcomes/minimize.md) | R-MNZ-01..03 (3) | none (landed) |
 | Maximise / fullscreen | [maximize-fullscreen.md](reference-outcomes/maximize-fullscreen.md) | R-MAX-01..09 (9) | none (landed with scrolling backfill) |

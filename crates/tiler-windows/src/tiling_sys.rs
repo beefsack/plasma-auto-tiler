@@ -5731,6 +5731,7 @@ fn keyboard_tick(
                 QueuedSnapEvent::WorkspaceSend(_) => stale += 1,
                 QueuedSnapEvent::WorkspaceHistory(_) => stale += 1,
                 QueuedSnapEvent::Maximize(_) => stale += 1,
+                QueuedSnapEvent::Orientation(_) => stale += 1,
                 QueuedSnapEvent::Fullscreen(_) => stale += 1,
                 QueuedSnapEvent::Float(_) => stale += 1,
                 QueuedSnapEvent::Sticky(_) => stale += 1,
@@ -6962,6 +6963,9 @@ fn keyboard_tick(
             QueuedSnapEvent::Float(intent) => {
                 dispatch_float_intent(state, me, fulls, areas, intent);
             }
+            QueuedSnapEvent::Orientation(intent) => {
+                dispatch_orientation_intent(state, me, fulls, areas, intent);
+            }
             QueuedSnapEvent::Sticky(intent) => {
                 dispatch_sticky_intent(state, me, fulls, areas, intent);
             }
@@ -7143,6 +7147,42 @@ fn chord_overlay_refusal(
         }
     } else {
         None
+    }
+}
+
+/// Overlay refusal for one orientation target, orientation vocabulary.
+/// Same live-state sourcing as the float/sticky overlay fence: the live
+/// observed fullscreen flag plus a fresh zoom read when visible, else the
+/// retained overlay flags plus a fresh zoom read.
+fn orientation_overlay_refusal(
+    observed: &[ObservedWindow],
+    retained: &[RetainedRow],
+    member_key: &crate::workspace::WindowKey,
+) -> Option<&'static str> {
+    let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
+    let zoomed = is_zoomed_now(member_key.hwnd);
+    if let Some(window) = by_hwnd.get(&member_key.hwnd) {
+        crate::tiling::orientation_toggle_refusal(window.facts.captionless_fullscreen, zoomed)
+    } else if let Some(row) = retained.iter().find(|r| r.key == *member_key) {
+        crate::tiling::orientation_toggle_refusal(row.fullscreen, zoomed)
+    } else {
+        None
+    }
+}
+
+/// Accept only the matching orientation plan from one Engine reply: a `Tiled`
+/// plan of exactly `TiledKind::ToggleOrientation`. Lone root (`unchanged`),
+/// float/no-focus (`not-tiled`), and every other refusal return `None` so the
+/// caller settles with no writes and no focus mutation. Called by the native
+/// orientation route; pinned against real Engine replies below.
+fn orientation_plan(reply: &CoreReply) -> Option<&tiler_core::boundary::TiledPlan> {
+    match reply {
+        CoreReply::Tiled(plan)
+            if plan.kind == tiler_core::boundary::TiledKind::ToggleOrientation =>
+        {
+            Some(plan)
+        }
+        _ => None,
     }
 }
 
@@ -7983,6 +8023,252 @@ fn dispatch_float_intent(
         "float-applied",
         false,
     );
+}
+
+/// Win+O orientation toggle (KDE Meta+O parity, item 4 R-LAY-01): fresh
+/// observation, exact origin re-resolution, full gates, one Engine
+/// `ToggleOrientation` on the retained session, then sibling reflow through
+/// the shared write path. No focus or view mutation: focus stays on the same
+/// window and the workspace never switches. Lone root, float/sticky
+/// subjects, missing focus, floating workspaces, and focused overlays settle
+/// with no writes; sibling overlays reproject as reserved slots and skip
+/// native writes through the existing writable fence.
+fn dispatch_orientation_intent(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    intent: crate::snapkey::QueuedOrientationIntent,
+) {
+    let log_path = state.log_path.clone();
+    // Key-ups close the pair and passed chords never dispatch: trace-only so
+    // held-key traffic stays out of normal logs.
+    if !intent.consumed || !intent.announce {
+        if state.trace {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "orientation-toggle",
+                    "tick": state.tick,
+                    "edge": intent.edge.as_str(),
+                    "disposition": if intent.consumed { "consumed" } else { "passed" },
+                    "outcome": if intent.consumed { "key-up" } else { "passed" },
+                }),
+            );
+        }
+        return;
+    }
+    state.tick += 1;
+    let tick = state.tick;
+    let correlation = state.correlation();
+    let settle = |outcome: &'static str| {
+        serde_json::json!({
+            "event": "orientation-toggle",
+            "tick": tick,
+            "correlation": correlation.as_str(),
+            "edge": intent.edge.as_str(),
+            "disposition": "consumed",
+            "outcome": outcome,
+        })
+    };
+    let Some(origin) = intent.origin.clone() else {
+        state.snap_advance = None;
+        let line = settle("origin-vanished");
+        log_json_at(&log_path, line);
+        return;
+    };
+    // Fresh per-intent suspension/elevation fence (workspace_tick parity):
+    // newly intercepted suspended/elevated chords settle here with no side
+    // effects. The suspend read exempts verified managed overlays, and the
+    // target revalidation below refuses protected windows.
+    if let Some(outcome) = crate::tiling::toggle_gate_outcome(
+        suspend_read(state, me, fulls).veto.block,
+        foreground_elevated(me),
+    ) {
+        let mut line = settle(outcome);
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    };
+    let Some(chord) = observe_chord_intent(state, me, fulls, areas) else {
+        let mut line = settle("observation-failed");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    };
+    let ChordObserved {
+        observed,
+        retained,
+        skipped,
+    } = chord;
+    let ChordTarget {
+        from,
+        member_key,
+        loc,
+        ..
+    } = match resolve_chord_target(state, me, areas, &origin) {
+        Ok(target) => target,
+        Err(reject) => {
+            settle_chord_reject(&log_path, &settle, &origin, &reject);
+            return;
+        }
+    };
+    // Floating workspaces run no tile layout: the toggle settles with no
+    // writes and every frame stays native.
+    if !workspace_mode_tiled(state, &loc.output, &loc.workspace) {
+        state.snap_advance = None;
+        let mut line = settle("workspace-floating");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    // Float/sticky subjects hold no tile slot: the toggle settles with no
+    // writes, never retiles them.
+    if state.sticky.contains_key(&member_key) {
+        let mut line = settle("orientation-refused-sticky");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    if engine_is_float(state, &loc.output, &loc.workspace, &from) {
+        let mut line = settle("orientation-refused-floating");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    // Focused overlays refuse before any Engine mutation: a maximized or
+    // fullscreen focused window keeps its native state and its reserved slot.
+    if let Some(refusal) = orientation_overlay_refusal(&observed, &retained, &member_key) {
+        let mut line = settle(refusal);
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    let mut hint_cx = HintCx::new();
+    let Some(rows) = assemble_domain_rows(
+        state,
+        &loc.output,
+        &loc.workspace,
+        &observed,
+        &retained,
+        "orientation",
+        correlation.as_str(),
+        &mut hint_cx,
+    ) else {
+        let mut line = settle("deferred");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    };
+    if !rows.iter().any(|r| r.token == from) {
+        let mut line = settle("unmanaged");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    let windows: Vec<(WindowId, Rect, WindowSizeHints, bool)> = rows
+        .iter()
+        .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
+        .collect();
+    let fp = fingerprint(
+        &rows
+            .iter()
+            .map(|r| (r.token.clone(), r.rect))
+            .collect::<Vec<_>>(),
+    );
+    let from_id = WindowId(from.clone());
+    let Some((domain, domain_key)) = workspace_domain_for(
+        &loc.output,
+        &loc.workspace,
+        areas,
+        state.inner_gap,
+        state.outer_gap,
+    ) else {
+        let mut line = settle("unknown-output");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    };
+    // Live gap edits adopt here so the toggle converges against matching gaps
+    // instead of refusing the keypress.
+    {
+        let revision = revision_for(state, &loc.output, &loc.workspace);
+        let outer_gap = state.outer_gap;
+        adopt_gaps_for_route(
+            state,
+            &domain,
+            &domain_key,
+            outer_gap,
+            &windows,
+            Some(&from_id),
+            revision,
+            fp,
+            &correlation,
+        );
+    }
+    let mut event = crate::tiling::build_reconcile_event_for_floating(
+        &state.owner,
+        &state.generation,
+        &correlation,
+        revision_for(state, &loc.output, &loc.workspace),
+        fp,
+        &domain,
+        &domain_key,
+        state.outer_gap,
+        &windows,
+        Some(&from_id),
+    );
+    event.command = CoreCommand::ToggleOrientation {
+        window: from.clone(),
+    };
+    let reply = state.engine.handle(&event);
+    if orientation_plan(&reply).is_none() {
+        // Lone root (`unchanged`), float/no-focus (`not-tiled`), and every
+        // other refusal settle here with no writes and no focus mutation.
+        let mut line = settle(reply_outcome(&reply));
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    let writable = writable_tokens(state, &loc.output, &loc.workspace, &observed);
+    let summary = apply_geometry(
+        state,
+        ApplyInput {
+            me,
+            fulls,
+            reply: &reply,
+            observed: &observed,
+            op: "orientation",
+            tick,
+            correlation: correlation.as_str(),
+            skipped,
+            writable: &writable,
+            output_token: state.workspaces.output_token(&loc.output),
+            workspace_token: state
+                .workspaces
+                .workspace_token(&loc.output, &loc.workspace),
+            revision: revision_for(state, &loc.output, &loc.workspace),
+        },
+    );
+    // Sibling overlays reprojected as reserved slots skip native writes
+    // through the writable fence above; only verified writes count here.
+    // Focus stays on the same window: no focus setter, no view switch.
+    let outcome = match summary {
+        Some(s) if !s.readback_ok => "orientation-unverified",
+        Some(s) if s.mismatched > 0 => "orientation-mismatch",
+        Some(s) if s.applied > 0 => "orientation-applied",
+        Some(_) => "orientation-noop",
+        None => reply_outcome(&reply),
+    };
+    let mut line = settle(outcome);
+    line["origin"] = serde_json::Value::from(origin.token.clone());
+    line["window"] = serde_json::Value::from(from.clone());
+    log_json_at(&log_path, line);
 }
 
 /// Cross-domain sticky-off to the current workspace: drop the float exception
@@ -15811,6 +16097,7 @@ fn run_tile_loop(
                     QueuedSnapEvent::Mask(_)
                     | QueuedSnapEvent::Intent(_)
                     | QueuedSnapEvent::Maximize(_)
+                    | QueuedSnapEvent::Orientation(_)
                     | QueuedSnapEvent::Fullscreen(_)
                     | QueuedSnapEvent::Float(_)
                     | QueuedSnapEvent::Sticky(_) => {
@@ -19187,5 +19474,544 @@ mod rmax03_adapter_tests {
             std::collections::HashSet::from(["w8".to_owned()]),
             "restored member takes the production tiled write"
         );
+    }
+}
+
+#[cfg(test)]
+mod orientation_route_tests {
+    use super::rmax03_adapter_tests::test_state;
+    use super::{
+        MonitorArea, dispatch_orientation_intent, keyboard_tick, orientation_overlay_refusal,
+        orientation_plan, resolve_chord_target, workspace_domain_for, writable_tokens,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    /// Null/disposable-handle harness: every HWND below is fake (101/102 are
+    /// never live windows), `me` is fabricated so every pre-write identity
+    /// gate fails closed on real windows, and logs redirect to a temp dir
+    /// that is removed afterwards. Only OS reads plus in-memory state run
+    /// here; no hooks, no setters on foreign windows, no live apps.
+    const FAKE_HWND: u64 = 101;
+    const FAKE_HWND_2: u64 = 102;
+
+    fn log_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("tiler-ori-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("tmp log dir");
+        dir
+    }
+
+    fn fake_me() -> crate::model::ProcessIdentity {
+        crate::model::ProcessIdentity {
+            pid: 4242,
+            process_creation: "test-creation".to_owned(),
+            user_sid: "S-1-5-test".to_owned(),
+            session_id: 1,
+            exe_path: "test.exe".to_owned(),
+        }
+    }
+
+    fn fake_origin() -> crate::snapkey::SnapOrigin {
+        crate::snapkey::SnapOrigin {
+            hwnd: FAKE_HWND,
+            token: "w1".to_owned(),
+            pid: 7,
+            creation: "creation-ori".to_owned(),
+        }
+    }
+
+    fn fake_key() -> crate::workspace::WindowKey {
+        crate::workspace::WindowKey {
+            hwnd: FAKE_HWND,
+            pid: 7,
+            creation: "creation-ori".to_owned(),
+        }
+    }
+
+    fn ori_intent(
+        origin: Option<crate::snapkey::SnapOrigin>,
+    ) -> crate::snapkey::QueuedOrientationIntent {
+        crate::snapkey::QueuedOrientationIntent {
+            edge: crate::snapkey::SnapEdge::Down,
+            origin,
+            consumed: true,
+            announce: true,
+            tick: std::time::Instant::now(),
+        }
+    }
+
+    fn test_areas() -> Vec<MonitorArea> {
+        let rect = tiler_core::geometry::Rect {
+            x: 0,
+            y: 0,
+            w: 1920,
+            h: 1040,
+        };
+        vec![MonitorArea {
+            device: "mon-9".to_owned(),
+            work: rect,
+            full: rect,
+        }]
+    }
+
+    /// Seed a tiled w1+w2 pair on the fabricated output through direct Engine
+    /// handles (no native calls) and return the Engine domain key the
+    /// production route re-derives from `areas`.
+    fn seed_pair(state: &mut super::TileLoop) -> tiler_core::session::DomainKey {
+        use tiler_core::directional::WindowId;
+        let areas = test_areas();
+        let (domain, key) =
+            workspace_domain_for("mon-9", "ws-9", &areas, state.inner_gap, state.outer_gap)
+                .expect("fabricated domain");
+        let none = tiler_core::size_hints::WindowSizeHints::none();
+        let bounds = tiler_core::geometry::Rect {
+            x: 0,
+            y: 0,
+            w: 800,
+            h: 600,
+        };
+        for (correlation, tokens) in [
+            ("ori-rt-seed-1", vec!["w1"]),
+            ("ori-rt-seed-2", vec!["w1", "w2"]),
+        ] {
+            let rows: Vec<(
+                WindowId,
+                tiler_core::geometry::Rect,
+                tiler_core::size_hints::WindowSizeHints,
+                bool,
+            )> = tokens
+                .iter()
+                .map(|token| (WindowId((*token).to_owned()), bounds, none, false))
+                .collect();
+            let correlation_id =
+                tiler_core::ids::CorrelationId::parse(correlation).expect("correlation");
+            let fp = crate::tiling::fingerprint(
+                &rows
+                    .iter()
+                    .map(|(token, rect, _, _)| (token.0.clone(), *rect))
+                    .collect::<Vec<_>>(),
+            );
+            let revision = state
+                .engine
+                .session(&key)
+                .map(|session| session.accepted_revision())
+                .unwrap_or(0);
+            let event = crate::tiling::build_reconcile_event_for_floating(
+                &state.owner,
+                &state.generation,
+                &correlation_id,
+                revision,
+                fp,
+                &domain,
+                &key,
+                state.outer_gap,
+                &rows,
+                Some(&WindowId("w1".to_owned())),
+            );
+            let reply = state.engine.handle(&event);
+            assert!(
+                matches!(
+                    reply,
+                    tiler_core::boundary::CoreReply::Projection(_)
+                        | tiler_core::boundary::CoreReply::Tiled(_)
+                ),
+                "seed {correlation} converges, got {reply:?}"
+            );
+        }
+        key
+    }
+
+    fn engine_snapshot(
+        state: &super::TileLoop,
+        key: &tiler_core::session::DomainKey,
+    ) -> Option<tiler_core::session::SessionSnapshot> {
+        state.engine.session(key).map(|session| session.snapshot())
+    }
+
+    fn log_text(dir: &std::path::Path) -> String {
+        std::fs::read_to_string(dir.join("owner.log")).unwrap_or_default()
+    }
+
+    fn assert_outcome(dir: &std::path::Path, outcome: &str) {
+        let text = log_text(dir);
+        assert!(
+            text.contains(&format!("\"outcome\":\"{outcome}\"")),
+            "expected outcome {outcome} in log, got: {text}"
+        );
+    }
+
+    #[test]
+    fn orientation_stale_origin_settles_without_mutation() {
+        // Unknown origin through the real dispatch route: a fabricated origin
+        // matches nothing the owner publishes and settles `origin-vanished`
+        // with zero Engine, focus, or view mutation. The log outcome pins
+        // the fence so a suspension-gated run fails loudly instead of
+        // passing weakly.
+        // Scope note: full-dispatch coverage stops here by construction.
+        // Offline tests must fabricate `me`, and observation filters every
+        // real window against it, so no live origin can reach the dispatch
+        // resolver and every fabricated one is vanished. The
+        // external-focus (`foreground-changed`) and lifetime
+        // (`identity-changed`) fences are pinned at the production resolver
+        // below with fabricated table state instead.
+        let dir = log_dir("ori-vanished");
+        let mut state = test_state();
+        state.log_path = dir.join("owner.log");
+        let key = seed_pair(&mut state);
+        state.workspaces.ensure_output("mon-9");
+        let before = engine_snapshot(&state, &key);
+        assert!(before.is_some(), "seeded session exists");
+        let active_before = state.workspaces.active_id("mon-9");
+        let me = fake_me();
+        let fulls: Vec<tiler_core::geometry::Rect> = Vec::new();
+        let areas = test_areas();
+        dispatch_orientation_intent(
+            &mut state,
+            &me,
+            &fulls,
+            &areas,
+            ori_intent(Some(fake_origin())),
+        );
+        assert_outcome(&dir, "origin-vanished");
+        assert_eq!(
+            engine_snapshot(&state, &key),
+            before,
+            "stale origin must not mutate the Engine"
+        );
+        assert_eq!(
+            state.workspaces.active_id("mon-9"),
+            active_before,
+            "stale origin must not switch the view"
+        );
+        assert!(
+            state.snap_advance.is_none(),
+            "stale origin carries no focus advance"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn orientation_resolver_fences_settle_without_mutation() {
+        // The production origin resolver (`resolve_chord_target`, called by
+        // every toggle route) with fabricated table state and no publication
+        // step: a live-but-unfocused origin settles `foreground-changed` and
+        // clears any advance, while an owner-advanced continuation to a
+        // lifetime-stale member settles `identity-changed` and drops the
+        // stale membership. Neither mutates Engine state or the view. The
+        // foreground HWND is only ever READ to mirror the continuation.
+        let mut state = test_state();
+        let key = seed_pair(&mut state);
+        let output = "mon-9".to_owned();
+        state.workspaces.ensure_output(&output);
+        let active = state.workspaces.active_id(&output).expect("active");
+        let member = fake_key();
+        assert!(
+            state
+                .workspaces
+                .assign(member.clone(), &output, &active, false)
+        );
+        state.member_tokens.insert(member.clone(), "w1".to_owned());
+        state
+            .member_tags
+            .insert(member.clone(), "tag-ori-1".to_owned());
+        let me = fake_me();
+        let areas = test_areas();
+        let before = engine_snapshot(&state, &key);
+        assert!(before.is_some(), "seeded session exists");
+
+        // Unfocused origin: live in the table, foreground elsewhere.
+        state.snap_advance = Some(fake_origin());
+        state.snap_origins.insert(FAKE_HWND, fake_origin());
+        match resolve_chord_target(&mut state, &me, &areas, &fake_origin()) {
+            Err(reject) => assert_eq!(reject.outcome, "foreground-changed"),
+            Ok(_) => panic!("unfocused origin must refuse"),
+        }
+        assert!(
+            state.snap_advance.is_none(),
+            "external focus clears the advance"
+        );
+
+        // Lifetime-stale member behind an owner-advanced continuation: mirror
+        // the live foreground into the advance so only the lifetime fence
+        // refuses.
+        let foreground = unsafe { GetForegroundWindow() } as usize as u64;
+        let advance = crate::snapkey::SnapOrigin {
+            hwnd: foreground,
+            token: "w1".to_owned(),
+            pid: 7,
+            creation: "creation-ori".to_owned(),
+        };
+        state.snap_origins.insert(foreground, advance.clone());
+        state.snap_advance = Some(advance);
+        match resolve_chord_target(&mut state, &me, &areas, &fake_origin()) {
+            Err(reject) => assert_eq!(reject.outcome, "identity-changed"),
+            Ok(_) => panic!("lifetime-stale member must refuse"),
+        }
+        assert!(
+            !state.member_tokens.contains_key(&member),
+            "lifetime mismatch drops the stale membership"
+        );
+        assert_eq!(
+            engine_snapshot(&state, &key),
+            before,
+            "resolver fences must not mutate the Engine"
+        );
+        assert_eq!(
+            state.workspaces.active_id(&output),
+            Some(active),
+            "resolver fences must not switch the view"
+        );
+    }
+
+    #[test]
+    fn orientation_suspended_queue_drops_without_mutation() {
+        // The pump-level suspension route (`blocked`): a consumed orientation
+        // intent drops with zero Engine, focus, or view mutation and no tick
+        // advance. Fully hermetic: no Win32 reads at all.
+        let dir = log_dir("ori-suspended");
+        let mut state = test_state();
+        state.log_path = dir.join("owner.log");
+        let key = seed_pair(&mut state);
+        state.workspaces.ensure_output("mon-9");
+        let before = engine_snapshot(&state, &key);
+        assert!(before.is_some(), "seeded session exists");
+        let active_before = state.workspaces.active_id("mon-9");
+        let me = fake_me();
+        let fulls: Vec<tiler_core::geometry::Rect> = Vec::new();
+        let areas = test_areas();
+        keyboard_tick(
+            &mut state,
+            &me,
+            &fulls,
+            &areas,
+            vec![crate::snapkey::QueuedSnapEvent::Orientation(ori_intent(
+                Some(fake_origin()),
+            ))],
+            Some("test-suspend"),
+        );
+        assert_eq!(
+            engine_snapshot(&state, &key),
+            before,
+            "suspended queue must not mutate the Engine"
+        );
+        assert_eq!(
+            state.workspaces.active_id("mon-9"),
+            active_before,
+            "suspended queue must not switch the view"
+        );
+        assert!(state.snap_advance.is_none());
+        assert_eq!(state.tick, 0, "suspended queue advances no tick");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn orientation_plan_accepts_only_matching_tiled() {
+        // The extracted production seam against real Engine replies: a
+        // ToggleOrientation plan accepts; a ToggleFloat plan and a refusal
+        // do not.
+        use tiler_core::boundary::{CoreCommand, CoreReply};
+        use tiler_core::directional::WindowId;
+        let mut state = test_state();
+        let _key = seed_pair(&mut state);
+        let none = tiler_core::size_hints::WindowSizeHints::none();
+        let bounds = tiler_core::geometry::Rect {
+            x: 0,
+            y: 0,
+            w: 800,
+            h: 600,
+        };
+        let rows = [
+            (WindowId("w1".to_owned()), bounds, none, false),
+            (WindowId("w2".to_owned()), bounds, none, false),
+        ];
+        let event_for =
+            |state: &super::TileLoop, correlation: &str, focused: &str, command: CoreCommand| {
+                let areas = test_areas();
+                let (domain, key) =
+                    workspace_domain_for("mon-9", "ws-9", &areas, state.inner_gap, state.outer_gap)
+                        .expect("fabricated domain");
+                let correlation_id =
+                    tiler_core::ids::CorrelationId::parse(correlation).expect("correlation");
+                let fp = crate::tiling::fingerprint(
+                    &rows
+                        .iter()
+                        .map(|(token, rect, _, _)| (token.0.clone(), *rect))
+                        .collect::<Vec<_>>(),
+                );
+                let revision = state
+                    .engine
+                    .session(&key)
+                    .map(|session| session.accepted_revision())
+                    .unwrap_or(0);
+                let mut event = crate::tiling::build_reconcile_event_for_floating(
+                    &state.owner,
+                    &state.generation,
+                    &correlation_id,
+                    revision,
+                    fp,
+                    &domain,
+                    &key,
+                    state.outer_gap,
+                    &rows,
+                    Some(&WindowId(focused.to_owned())),
+                );
+                event.command = command;
+                event
+            };
+        let reply = state.engine.handle(&event_for(
+            &state,
+            "ori-seam-toggle",
+            "w1",
+            CoreCommand::ToggleOrientation {
+                window: "w1".to_owned(),
+            },
+        ));
+        let plan = orientation_plan(&reply).expect("matching Tiled accepts");
+        assert_eq!(
+            plan.kind,
+            tiler_core::boundary::TiledKind::ToggleOrientation
+        );
+        assert_eq!(plan.geometry.len(), 2);
+        // Writes extract from the accepted plan: both tiles reproject.
+        let writes = crate::workspace_owner::planned_writes(&reply).expect("plan extracts");
+        assert_eq!(writes.len(), 2);
+        let reply = state.engine.handle(&event_for(
+            &state,
+            "ori-seam-float",
+            "w1",
+            CoreCommand::ToggleFloat {
+                window: "w1".to_owned(),
+                float_rect: None,
+            },
+        ));
+        assert!(
+            matches!(reply, CoreReply::Tiled(_)),
+            "float commits, got {reply:?}"
+        );
+        assert!(
+            orientation_plan(&reply).is_none(),
+            "wrong Tiled kind refuses"
+        );
+        let reply = state.engine.handle(&event_for(
+            &state,
+            "ori-seam-unknown",
+            "w1",
+            CoreCommand::ToggleOrientation {
+                window: "w9".to_owned(),
+            },
+        ));
+        assert!(
+            matches!(reply, CoreReply::Rejected { .. }),
+            "unknown window refuses, got {reply:?}"
+        );
+        assert!(orientation_plan(&reply).is_none(), "refusal refuses");
+    }
+
+    #[test]
+    fn orientation_guard_seams_refuse_overlays_and_scope_writes() {
+        // Production-called guard seams with fabricated native state (fake
+        // HWND reads only): focused overlays refuse with orientation
+        // vocabulary, retained-only siblings take no writes, and the
+        // suspension/elevation gate vocabulary holds.
+        let mut state = test_state();
+        let member = fake_key();
+        let member2 = crate::workspace::WindowKey {
+            hwnd: FAKE_HWND_2,
+            pid: 8,
+            creation: "creation-ori-2".to_owned(),
+        };
+        let observed = |hwnd: u64, token: &str, fullscreen: bool| super::ObservedWindow {
+            hwnd,
+            token: token.to_owned(),
+            outer: tiler_core::geometry::Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 100,
+            },
+            visible: tiler_core::geometry::Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 100,
+            },
+            insets: crate::tiling::FrameInsets {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
+            identity: crate::tiling::ObservedTarget {
+                hwnd,
+                pid: 7,
+                process_creation: "creation-ori".to_owned(),
+                exe_path: "C:\\test\\app.exe".to_owned(),
+                user_sid: "S-1-5-test".to_owned(),
+                session_id: 1,
+                tag: String::new(),
+            },
+            facts: crate::tiling::WindowFacts {
+                visible: true,
+                minimized: false,
+                maximized: false,
+                cloaked: false,
+                elevated: false,
+                shell: false,
+                tool_window: false,
+                owned: false,
+                captionless_fullscreen: fullscreen,
+                no_activate: false,
+                dialog: false,
+            },
+        };
+        // Clean focus proceeds; live fullscreen refuses; retained-only
+        // fullscreen refuses through the retained row.
+        assert_eq!(
+            orientation_overlay_refusal(&[observed(FAKE_HWND, "w1", false)], &[], &member),
+            None
+        );
+        assert_eq!(
+            orientation_overlay_refusal(&[observed(FAKE_HWND, "w1", true)], &[], &member),
+            Some("orientation-refused-fullscreen")
+        );
+        let retained = vec![super::RetainedRow {
+            key: member.clone(),
+            token: "w1".to_owned(),
+            rect: None,
+            maximized: false,
+            fullscreen: true,
+            facts: None,
+        }];
+        assert_eq!(
+            orientation_overlay_refusal(&[], &retained, &member),
+            Some("orientation-refused-fullscreen")
+        );
+        // Write scoping: w2 assigned but never freshly observed takes no
+        // writes while w1 does.
+        let output = "mon-9".to_owned();
+        state.workspaces.ensure_output(&output);
+        let active = state.workspaces.active_id(&output).expect("active");
+        assert!(
+            state
+                .workspaces
+                .assign(member.clone(), &output, &active, false)
+        );
+        assert!(
+            state
+                .workspaces
+                .assign(member2.clone(), &output, &active, false)
+        );
+        state.member_tokens.insert(member.clone(), "w1".to_owned());
+        state.member_tokens.insert(member2.clone(), "w2".to_owned());
+        let observed = vec![observed(FAKE_HWND, "w1", false)];
+        assert_eq!(
+            writable_tokens(&state, &output, &active, &observed),
+            std::collections::HashSet::from(["w1".to_owned()]),
+            "retained-only sibling takes no writes"
+        );
+        // Suspension/elevation gate vocabulary: blocked or elevated settles,
+        // quiet proceeds.
+        assert!(crate::tiling::toggle_gate_outcome(true, false).is_some());
+        assert!(crate::tiling::toggle_gate_outcome(false, true).is_some());
+        assert!(crate::tiling::toggle_gate_outcome(false, false).is_none());
     }
 }

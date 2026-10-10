@@ -1024,6 +1024,862 @@ mod tests {
         assert_eq!(plan.float_rect, Some(moved));
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn orientation_event(
+        owner: &OwnerId,
+        generation: &GenerationId,
+        correlation: &str,
+        revision: u64,
+        domain: &(OutputDomain, DomainKey),
+        rows: &[(
+            WindowId,
+            Rect,
+            tiler_core::size_hints::WindowSizeHints,
+            bool,
+        )],
+        focused: &str,
+        window: &str,
+    ) -> tiler_core::boundary::CoreEvent {
+        use tiler_core::boundary::CoreCommand;
+        let correlation = CorrelationId::parse(correlation).expect("correlation");
+        let fp = crate::tiling::fingerprint(
+            &rows
+                .iter()
+                .map(|(token, rect, _, _)| (token.0.clone(), *rect))
+                .collect::<Vec<_>>(),
+        );
+        let carried: Vec<(
+            WindowId,
+            Rect,
+            tiler_core::size_hints::WindowSizeHints,
+            bool,
+        )> = rows.to_vec();
+        let mut event = crate::tiling::build_reconcile_event_for_floating(
+            owner,
+            generation,
+            &correlation,
+            revision,
+            fp,
+            &domain.0,
+            &domain.1,
+            8,
+            &carried,
+            Some(&WindowId(focused.to_owned())),
+        );
+        event.command = CoreCommand::ToggleOrientation {
+            window: window.to_owned(),
+        };
+        event
+    }
+
+    fn seed_pair_for_orientation(
+        engine: &mut tiler_core::engine::Engine,
+        owner: &OwnerId,
+        generation: &GenerationId,
+        domain: &(OutputDomain, DomainKey),
+        bounds: Rect,
+        focused: &str,
+    ) {
+        use tiler_core::boundary::CoreReply;
+        for (correlation, tokens, focus) in [
+            ("ori-seed-1", vec!["w1"], "w1"),
+            ("ori-seed-2", vec!["w1", "w2"], focused),
+        ] {
+            let rows: Vec<(
+                WindowId,
+                Rect,
+                tiler_core::size_hints::WindowSizeHints,
+                bool,
+            )> = tokens
+                .iter()
+                .map(|token| {
+                    (
+                        WindowId((*token).to_owned()),
+                        bounds,
+                        tiler_core::size_hints::WindowSizeHints::none(),
+                        false,
+                    )
+                })
+                .collect();
+            let correlation_id = CorrelationId::parse(correlation).expect("correlation");
+            let fp = crate::tiling::fingerprint(
+                &rows
+                    .iter()
+                    .map(|(token, rect, _, _)| (token.0.clone(), *rect))
+                    .collect::<Vec<_>>(),
+            );
+            let event = crate::tiling::build_reconcile_event_for_floating(
+                owner,
+                generation,
+                &correlation_id,
+                revision_of(engine, domain),
+                fp,
+                &domain.0,
+                &domain.1,
+                8,
+                &rows,
+                Some(&WindowId(focus.to_owned())),
+            );
+            let reply = engine.handle(&event);
+            assert!(
+                matches!(reply, CoreReply::Projection(_) | CoreReply::Tiled(_)),
+                "seed {correlation} converges, got {reply:?}"
+            );
+        }
+    }
+
+    fn root_group_of(
+        engine: &tiler_core::engine::Engine,
+        domain: &(OutputDomain, DomainKey),
+    ) -> (tiler_core::directional::Axis, Vec<String>, Vec<u64>) {
+        use tiler_core::directional::Node;
+        let tree = engine
+            .session(&domain.1)
+            .expect("session")
+            .snapshot()
+            .domains
+            .into_iter()
+            .next()
+            .expect("domain")
+            .tree
+            .expect("tree");
+        match tree {
+            Node::Group {
+                axis,
+                children,
+                shares,
+                ..
+            } => (
+                axis,
+                children.iter().map(|child| child.id().0.clone()).collect(),
+                shares,
+            ),
+            Node::Leaf { .. } => panic!("expected a root group, got a lone leaf"),
+        }
+    }
+
+    fn focus_leaf_of(
+        engine: &tiler_core::engine::Engine,
+        domain: &(OutputDomain, DomainKey),
+    ) -> Option<String> {
+        engine
+            .session(&domain.1)
+            .expect("session")
+            .focus()
+            .1
+            .map(|leaf| leaf.0.clone())
+    }
+
+    #[test]
+    fn toggle_orientation_flips_root_horizontal_to_vertical() {
+        // Wide pair admits an H root; Win+O flips it to V, preserving child
+        // order, shares, and focus with a matching Tiled kind.
+        use tiler_core::boundary::{CoreReply, TiledKind};
+        use tiler_core::directional::Axis;
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = rect(0, 0);
+        let domain = workspace_domain("mon-a", "ws-1", bounds, 8);
+        seed_pair_for_orientation(&mut engine, &owner, &generation, &domain, bounds, "w1");
+        let (axis_before, order_before, shares_before) = root_group_of(&engine, &domain);
+        assert_eq!(axis_before, Axis::Horizontal);
+        let focus_before = focus_leaf_of(&engine, &domain);
+        let reply = engine.handle(&orientation_event(
+            &owner,
+            &generation,
+            "ori-1",
+            revision_of(&engine, &domain),
+            &domain,
+            &[
+                (
+                    WindowId("w1".to_owned()),
+                    bounds,
+                    tiler_core::size_hints::WindowSizeHints::none(),
+                    false,
+                ),
+                (
+                    WindowId("w2".to_owned()),
+                    bounds,
+                    tiler_core::size_hints::WindowSizeHints::none(),
+                    false,
+                ),
+            ],
+            "w1",
+            "w1",
+        ));
+        let CoreReply::Tiled(plan) = reply else {
+            panic!("toggle commits, got {reply:?}");
+        };
+        assert_eq!(plan.kind, TiledKind::ToggleOrientation);
+        let (axis_after, order_after, shares_after) = root_group_of(&engine, &domain);
+        assert_eq!(axis_after, Axis::Vertical);
+        assert_eq!(order_after, order_before, "child order retained");
+        assert_eq!(shares_after, shares_before, "shares retained");
+        assert_eq!(
+            focus_leaf_of(&engine, &domain),
+            focus_before,
+            "focus retained"
+        );
+        assert_eq!(plan.focus_leaf.map(|leaf| leaf.0), focus_before);
+        assert_eq!(plan.geometry.len(), 2);
+    }
+
+    #[test]
+    fn toggle_orientation_flips_root_vertical_to_horizontal() {
+        // Tall pair admits a V root; Win+O flips it to H.
+        use tiler_core::boundary::{CoreReply, TiledKind};
+        use tiler_core::directional::Axis;
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 600,
+            h: 800,
+        };
+        let domain = workspace_domain("mon-a", "ws-1", bounds, 8);
+        seed_pair_for_orientation(&mut engine, &owner, &generation, &domain, bounds, "w2");
+        let (axis_before, _, _) = root_group_of(&engine, &domain);
+        assert_eq!(axis_before, Axis::Vertical);
+        let reply = engine.handle(&orientation_event(
+            &owner,
+            &generation,
+            "ori-1",
+            revision_of(&engine, &domain),
+            &domain,
+            &[
+                (
+                    WindowId("w1".to_owned()),
+                    bounds,
+                    tiler_core::size_hints::WindowSizeHints::none(),
+                    false,
+                ),
+                (
+                    WindowId("w2".to_owned()),
+                    bounds,
+                    tiler_core::size_hints::WindowSizeHints::none(),
+                    false,
+                ),
+            ],
+            "w2",
+            "w2",
+        ));
+        let CoreReply::Tiled(plan) = reply else {
+            panic!("toggle commits, got {reply:?}");
+        };
+        assert_eq!(plan.kind, TiledKind::ToggleOrientation);
+        let (axis_after, _, _) = root_group_of(&engine, &domain);
+        assert_eq!(axis_after, Axis::Horizontal);
+    }
+
+    #[test]
+    fn toggle_orientation_flips_only_the_nested_immediate_parent() {
+        // H[w1 V[w2 w3]] with w3 focused: only the inner V flips to H; the
+        // root stays H with order/shares/focus retained.
+        use tiler_core::boundary::{CoreReply, TiledKind};
+        use tiler_core::directional::{Axis, Node};
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 120,
+            h: 80,
+        };
+        let domain = workspace_domain("mon-a", "ws-1", bounds, 0);
+        let wide = Rect {
+            x: 0,
+            y: 0,
+            w: 120,
+            h: 80,
+        };
+        let tall = Rect {
+            x: 0,
+            y: 0,
+            w: 80,
+            h: 120,
+        };
+        let none = tiler_core::size_hints::WindowSizeHints::none();
+        for (correlation, rows, focused) in [
+            (
+                "ori-seed-1",
+                vec![(WindowId("w1".to_owned()), wide, none, false)],
+                "w1",
+            ),
+            (
+                "ori-seed-2",
+                vec![
+                    (WindowId("w1".to_owned()), wide, none, false),
+                    (WindowId("w2".to_owned()), wide, none, false),
+                ],
+                "w2",
+            ),
+            (
+                "ori-seed-3",
+                vec![
+                    (WindowId("w1".to_owned()), wide, none, false),
+                    (WindowId("w2".to_owned()), wide, none, false),
+                    (WindowId("w3".to_owned()), tall, none, false),
+                ],
+                "w3",
+            ),
+        ] {
+            let correlation_id = CorrelationId::parse(correlation).expect("correlation");
+            let fp = crate::tiling::fingerprint(
+                &rows
+                    .iter()
+                    .map(|(token, rect, _, _)| (token.0.clone(), *rect))
+                    .collect::<Vec<_>>(),
+            );
+            let event = crate::tiling::build_reconcile_event_for_floating(
+                &owner,
+                &generation,
+                &correlation_id,
+                revision_of(&engine, &domain),
+                fp,
+                &domain.0,
+                &domain.1,
+                0,
+                &rows,
+                Some(&WindowId(focused.to_owned())),
+            );
+            let reply = engine.handle(&event);
+            assert!(
+                matches!(reply, CoreReply::Projection(_) | CoreReply::Tiled(_)),
+                "seed {correlation} converges, got {reply:?}"
+            );
+        }
+        let (root_before, _, shares_before) = root_group_of(&engine, &domain);
+        assert_eq!(root_before, Axis::Horizontal);
+        let focus_before = focus_leaf_of(&engine, &domain);
+        let reply = engine.handle(&orientation_event(
+            &owner,
+            &generation,
+            "ori-nested",
+            revision_of(&engine, &domain),
+            &domain,
+            &[
+                (WindowId("w1".to_owned()), wide, none, false),
+                (WindowId("w2".to_owned()), wide, none, false),
+                (WindowId("w3".to_owned()), tall, none, false),
+            ],
+            "w3",
+            "w3",
+        ));
+        let CoreReply::Tiled(plan) = reply else {
+            panic!("toggle commits, got {reply:?}");
+        };
+        assert_eq!(plan.kind, TiledKind::ToggleOrientation);
+        let tree = engine
+            .session(&domain.1)
+            .expect("session")
+            .snapshot()
+            .domains
+            .into_iter()
+            .next()
+            .expect("domain")
+            .tree
+            .expect("tree");
+        match tree {
+            Node::Group {
+                axis,
+                children,
+                shares,
+                ..
+            } => {
+                assert_eq!(axis, Axis::Horizontal, "root stays H");
+                assert_eq!(shares, shares_before, "root shares retained");
+                assert_eq!(children.len(), 2);
+                assert_eq!(children[0].id().0, "leaf-w1");
+                match &children[1] {
+                    Node::Group { axis, children, .. } => {
+                        assert_eq!(*axis, Axis::Horizontal, "inner V flips to H");
+                        assert_eq!(children.len(), 2);
+                        assert_eq!(children[0].id().0, "leaf-w2");
+                        assert_eq!(children[1].id().0, "leaf-w3");
+                    }
+                    other => panic!("expected inner H[w2 w3], got {other:?}"),
+                }
+            }
+            other => panic!("expected root H[w1 H[w2 w3]], got {other:?}"),
+        }
+        assert_eq!(
+            focus_leaf_of(&engine, &domain),
+            focus_before,
+            "focus retained"
+        );
+        assert_eq!(plan.geometry.len(), 3);
+    }
+
+    #[test]
+    fn toggle_orientation_twice_restores_exact_tree_with_unequal_shares() {
+        // A resize makes root shares unequal; two toggles restore the exact
+        // pre-toggle tree, geometry, and focus.
+        use tiler_core::boundary::{CoreCommand, CoreReply, TiledKind};
+        use tiler_core::directional::Axis;
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = rect(0, 0);
+        let domain = workspace_domain("mon-a", "ws-1", bounds, 8);
+        seed_pair_for_orientation(&mut engine, &owner, &generation, &domain, bounds, "w2");
+        let none = tiler_core::size_hints::WindowSizeHints::none();
+        let rows = [
+            (WindowId("w1".to_owned()), bounds, none, false),
+            (WindowId("w2".to_owned()), bounds, none, false),
+        ];
+        let resize = |engine: &tiler_core::engine::Engine, correlation: &str| {
+            let correlation_id = CorrelationId::parse(correlation).expect("correlation");
+            let fp = crate::tiling::fingerprint(
+                &rows
+                    .iter()
+                    .map(|(token, rect, _, _)| (token.0.clone(), *rect))
+                    .collect::<Vec<_>>(),
+            );
+            let mut event = crate::tiling::build_reconcile_event_for_floating(
+                &owner,
+                &generation,
+                &correlation_id,
+                revision_of(engine, &domain),
+                fp,
+                &domain.0,
+                &domain.1,
+                8,
+                &rows,
+                Some(&WindowId("w2".to_owned())),
+            );
+            event.command = CoreCommand::Resize {
+                window: "w2".to_owned(),
+                direction: "left".to_owned(),
+                mode: "outwards".to_owned(),
+                press_index: 0,
+            };
+            event
+        };
+        let reply = engine.handle(&resize(&engine, "ori-resize-1"));
+        assert!(
+            matches!(reply, CoreReply::Resize(_)),
+            "resize commits, got {reply:?}"
+        );
+        let (_, _, shares) = root_group_of(&engine, &domain);
+        assert_eq!(shares.len(), 2);
+        assert_ne!(
+            shares[0], shares[1],
+            "resize makes root shares unequal: {shares:?}"
+        );
+        let before = root_group_of(&engine, &domain);
+        assert_eq!(before.0, Axis::Horizontal);
+        let focus_before = focus_leaf_of(&engine, &domain);
+        let geometry_before: Vec<(String, Rect)> = match engine.handle(&orientation_event(
+            &owner,
+            &generation,
+            "ori-first",
+            revision_of(&engine, &domain),
+            &domain,
+            &rows,
+            "w2",
+            "w2",
+        )) {
+            CoreReply::Tiled(plan) => {
+                assert_eq!(plan.kind, TiledKind::ToggleOrientation);
+                plan.geometry
+                    .iter()
+                    .map(|g| (g.window.0.clone(), g.rect))
+                    .collect()
+            }
+            reply => panic!("first toggle commits, got {reply:?}"),
+        };
+        let mid = root_group_of(&engine, &domain);
+        assert_eq!(mid.0, Axis::Vertical);
+        assert_eq!(mid.1, before.1, "order retained through the flip");
+        assert_eq!(mid.2, before.2, "unequal shares retained through the flip");
+        // Second toggle restores the exact pre-toggle tree, geometry, focus.
+        let geometry_second: Vec<(String, Rect)> = match engine.handle(&orientation_event(
+            &owner,
+            &generation,
+            "ori-second",
+            revision_of(&engine, &domain),
+            &domain,
+            &rows,
+            "w2",
+            "w2",
+        )) {
+            CoreReply::Tiled(plan) => {
+                assert_eq!(plan.kind, TiledKind::ToggleOrientation);
+                plan.geometry
+                    .iter()
+                    .map(|g| (g.window.0.clone(), g.rect))
+                    .collect()
+            }
+            reply => panic!("second toggle commits, got {reply:?}"),
+        };
+        // Geometry rects in the toggle plans describe the flipped allocation;
+        // the committed tree is the exact roundtrip signal.
+        let after = root_group_of(&engine, &domain);
+        assert_eq!(after, before, "double toggle restores the exact tree");
+        assert_eq!(
+            focus_leaf_of(&engine, &domain),
+            focus_before,
+            "focus retained through both toggles"
+        );
+        assert_ne!(
+            geometry_before, geometry_second,
+            "the two toggles allocate opposite axes"
+        );
+    }
+
+    #[test]
+    fn toggle_orientation_honors_minimum_allocation() {
+        // A satisfiable minimum on w1 takes slack through the hints-aware
+        // projector, exactly like every other workflow.
+        use tiler_core::boundary::{CoreReply, TiledKind};
+        use tiler_core::size_hints::WindowSizeHints;
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = rect(0, 0);
+        let domain = workspace_domain("mon-a", "ws-1", bounds, 8);
+        seed_pair_for_orientation(&mut engine, &owner, &generation, &domain, bounds, "w1");
+        let hints = WindowSizeHints {
+            min_w: None,
+            min_h: Some(400),
+            max_w: None,
+            max_h: None,
+        };
+        let reply = engine.handle(&orientation_event(
+            &owner,
+            &generation,
+            "ori-min",
+            revision_of(&engine, &domain),
+            &domain,
+            &[
+                (WindowId("w1".to_owned()), bounds, hints, false),
+                (
+                    WindowId("w2".to_owned()),
+                    bounds,
+                    WindowSizeHints::none(),
+                    false,
+                ),
+            ],
+            "w1",
+            "w1",
+        ));
+        let CoreReply::Tiled(plan) = reply else {
+            panic!("toggle commits, got {reply:?}");
+        };
+        assert_eq!(plan.kind, TiledKind::ToggleOrientation);
+        let placed = plan
+            .geometry
+            .iter()
+            .find(|g| g.window.0 == "w1")
+            .expect("w1 placed");
+        assert!(
+            placed.rect.h >= 400,
+            "minimum takes slack: {:?}",
+            placed.rect
+        );
+        assert!(
+            plan.geometry.iter().all(|g| !g.overconstrained),
+            "satisfiable minima stay unconstrained"
+        );
+    }
+
+    #[test]
+    fn toggle_orientation_lone_leaf_noop_then_long_edge_admission() {
+        // A sole root leaf refuses as unchanged with no plan; admitting a
+        // second window afterwards still uses the long-edge rule (no saved
+        // orientation hint from the no-op).
+        use tiler_core::boundary::CoreReply;
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = rect(0, 0);
+        let domain = workspace_domain("mon-a", "ws-1", bounds, 8);
+        let none = tiler_core::size_hints::WindowSizeHints::none();
+        let correlation_id = CorrelationId::parse("ori-lone-seed").expect("correlation");
+        let seed_rows = [(WindowId("w1".to_owned()), bounds, none, false)];
+        let fp = crate::tiling::fingerprint(
+            &seed_rows
+                .iter()
+                .map(|(token, rect, _, _)| (token.0.clone(), *rect))
+                .collect::<Vec<_>>(),
+        );
+        let seed = crate::tiling::build_reconcile_event_for_floating(
+            &owner,
+            &generation,
+            &correlation_id,
+            revision_of(&engine, &domain),
+            fp,
+            &domain.0,
+            &domain.1,
+            8,
+            &seed_rows,
+            Some(&WindowId("w1".to_owned())),
+        );
+        let reply = engine.handle(&seed);
+        assert!(
+            matches!(reply, CoreReply::Projection(_) | CoreReply::Tiled(_)),
+            "lone seed converges, got {reply:?}"
+        );
+        let reply = engine.handle(&orientation_event(
+            &owner,
+            &generation,
+            "ori-lone",
+            revision_of(&engine, &domain),
+            &domain,
+            &seed_rows,
+            "w1",
+            "w1",
+        ));
+        match reply {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "unchanged"),
+            reply => panic!("lone toggle refuses unchanged, got {reply:?}"),
+        }
+        // Fresh admission beside the lone leaf still splits the long edge.
+        let admit_rows = [
+            (WindowId("w1".to_owned()), bounds, none, false),
+            (WindowId("w2".to_owned()), bounds, none, false),
+        ];
+        let admit_id = CorrelationId::parse("ori-lone-admit").expect("correlation");
+        let admit_fp = crate::tiling::fingerprint(
+            &admit_rows
+                .iter()
+                .map(|(token, rect, _, _)| (token.0.clone(), *rect))
+                .collect::<Vec<_>>(),
+        );
+        let admit = crate::tiling::build_reconcile_event_for_floating(
+            &owner,
+            &generation,
+            &admit_id,
+            revision_of(&engine, &domain),
+            admit_fp,
+            &domain.0,
+            &domain.1,
+            8,
+            &admit_rows,
+            Some(&WindowId("w2".to_owned())),
+        );
+        let reply = engine.handle(&admit);
+        assert!(
+            matches!(reply, CoreReply::Projection(_) | CoreReply::Tiled(_)),
+            "admission converges, got {reply:?}"
+        );
+        let (axis, _, _) = root_group_of(&engine, &domain);
+        assert_eq!(
+            axis,
+            tiler_core::directional::Axis::Horizontal,
+            "wide bounds still admit along the long edge"
+        );
+    }
+
+    #[test]
+    fn toggle_orientation_refuses_non_tiled_subjects() {
+        // Float subjects, focus mismatches, and unknown windows refuse with
+        // no plan: the adapter settles these as no-write outcomes.
+        use tiler_core::boundary::CoreReply;
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = rect(0, 0);
+        let domain = workspace_domain("mon-a", "ws-1", bounds, 8);
+        seed_pair_for_orientation(&mut engine, &owner, &generation, &domain, bounds, "w1");
+        let none = tiler_core::size_hints::WindowSizeHints::none();
+        let rows = [
+            (WindowId("w1".to_owned()), bounds, none, false),
+            (WindowId("w2".to_owned()), bounds, none, false),
+        ];
+        // Float w1, then toggle it: not tiled.
+        let reply = engine.handle(&float_event(
+            &owner,
+            &generation,
+            "ori-float-1",
+            revision_of(&engine, &domain),
+            &domain,
+            &[
+                (WindowId("w1".to_owned()), bounds, false),
+                (WindowId("w2".to_owned()), bounds, false),
+            ],
+            "w1",
+            "w1",
+            None,
+        ));
+        assert!(
+            matches!(reply, CoreReply::Tiled(_)),
+            "float commits, got {reply:?}"
+        );
+        let floated_rows = [
+            (WindowId("w1".to_owned()), bounds, none, true),
+            (WindowId("w2".to_owned()), bounds, none, false),
+        ];
+        let reply = engine.handle(&orientation_event(
+            &owner,
+            &generation,
+            "ori-float-toggle",
+            revision_of(&engine, &domain),
+            &domain,
+            &floated_rows,
+            "w1",
+            "w1",
+        ));
+        match reply {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "not-tiled"),
+            reply => panic!("float toggle refuses not-tiled, got {reply:?}"),
+        }
+        // Unfloat w1 again so later legs run tiled.
+        let reply = engine.handle(&float_event(
+            &owner,
+            &generation,
+            "ori-unfloat-1",
+            revision_of(&engine, &domain),
+            &domain,
+            &[
+                (WindowId("w1".to_owned()), bounds, true),
+                (WindowId("w2".to_owned()), bounds, false),
+            ],
+            "w1",
+            "w1",
+            Some(bounds),
+        ));
+        assert!(
+            matches!(reply, CoreReply::Tiled(_)),
+            "unfloat commits, got {reply:?}"
+        );
+        // Toggle w2 while w1 is focused: focus mismatch.
+        let reply = engine.handle(&orientation_event(
+            &owner,
+            &generation,
+            "ori-mismatch",
+            revision_of(&engine, &domain),
+            &domain,
+            &rows,
+            "w1",
+            "w2",
+        ));
+        match reply {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "focus-mismatch"),
+            reply => panic!("mismatched toggle refuses, got {reply:?}"),
+        }
+        // Toggle an unknown window: unknown window.
+        let reply = engine.handle(&orientation_event(
+            &owner,
+            &generation,
+            "ori-unknown",
+            revision_of(&engine, &domain),
+            &domain,
+            &rows,
+            "w1",
+            "w9",
+        ));
+        match reply {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "unknown-window"),
+            reply => panic!("unknown toggle refuses, got {reply:?}"),
+        }
+    }
+
+    #[test]
+    fn toggle_orientation_fail_closed_on_focused_overlay_flags() {
+        // A focused window observed with overlay flags refuses with no plan.
+        // Production never sends flags (the adapter zeroes them and refuses
+        // focused overlays first with orientation vocabulary); this pins the
+        // shared fail-closed fence behind it.
+        use tiler_core::boundary::CoreReply;
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = rect(0, 0);
+        let domain = workspace_domain("mon-a", "ws-1", bounds, 8);
+        seed_pair_for_orientation(&mut engine, &owner, &generation, &domain, bounds, "w1");
+        let none = tiler_core::size_hints::WindowSizeHints::none();
+        let rows = [
+            (WindowId("w1".to_owned()), bounds, none, false),
+            (WindowId("w2".to_owned()), bounds, none, false),
+        ];
+        for (correlation, flag) in [
+            ("ori-overlay-max", "maximized"),
+            ("ori-overlay-full", "fullscreen"),
+        ] {
+            let mut event = orientation_event(
+                &owner,
+                &generation,
+                correlation,
+                revision_of(&engine, &domain),
+                &domain,
+                &rows,
+                "w1",
+                "w1",
+            );
+            let focused = event
+                .windows
+                .iter_mut()
+                .find(|w| w.window.0 == "w1")
+                .expect("focused row");
+            if flag == "maximized" {
+                focused.maximized = true;
+            } else {
+                focused.fullscreen = true;
+            }
+            match engine.handle(&event) {
+                CoreReply::Rejected { .. } => {}
+                reply => panic!("flagged focus refuses, got {reply:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn toggle_orientation_plan_carries_every_tile_for_write_scoping() {
+        // The ToggleOrientation plan reprojects every tile (sibling reserved
+        // slots included); the portable writable fence scopes native writes
+        // to fresh non-hidden members, so hidden siblings take no writes.
+        use std::collections::{BTreeMap, BTreeSet, HashSet};
+        use tiler_core::boundary::{CoreReply, TiledKind};
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = rect(0, 0);
+        let domain = workspace_domain("mon-a", "ws-1", bounds, 8);
+        seed_pair_for_orientation(&mut engine, &owner, &generation, &domain, bounds, "w1");
+        let none = tiler_core::size_hints::WindowSizeHints::none();
+        let rows = [
+            (WindowId("w1".to_owned()), bounds, none, false),
+            (WindowId("w2".to_owned()), bounds, none, false),
+        ];
+        let reply = engine.handle(&orientation_event(
+            &owner,
+            &generation,
+            "ori-scope",
+            revision_of(&engine, &domain),
+            &domain,
+            &rows,
+            "w1",
+            "w1",
+        ));
+        let CoreReply::Tiled(plan) = reply else {
+            panic!("toggle commits, got {reply:?}");
+        };
+        assert_eq!(plan.kind, TiledKind::ToggleOrientation);
+        let writes = super::planned_writes(&CoreReply::Tiled(plan)).expect("plan extracts");
+        assert_eq!(writes.len(), 2, "both tiles reproject");
+        // Hidden members converge membership but never take geometry writes.
+        let members: BTreeSet<WindowKey> = [key(1), key(2)].into_iter().collect();
+        let mut token_of = BTreeMap::new();
+        token_of.insert(key(1), "w1".to_owned());
+        let fresh: HashSet<String> = ["w1".to_owned()].into_iter().collect();
+        let scoped = super::writable_subset(&members, |k| *k == key(2), &token_of, &fresh);
+        assert_eq!(scoped, fresh, "hidden w2 takes no writes");
+    }
+
     #[test]
     fn hidden_snapshot_rect_prefers_live_float_then_tiled() {
         // Intentional floats ride the live float snapshot; every other member
@@ -3036,6 +3892,29 @@ mod tests {
             None
         );
         assert_eq!(crate::tiling::sticky_directional_refusal(false, true), None);
+    }
+
+    #[test]
+    fn orientation_toggle_refusals_carry_orientation_vocabulary() {
+        // Fullscreen wins, then maximize; normal proceeds. The native
+        // orientation path calls this before any Engine mutation, so a
+        // focused overlay keeps its native state and reserved slot.
+        assert_eq!(
+            crate::tiling::orientation_toggle_refusal(true, false),
+            Some("orientation-refused-fullscreen")
+        );
+        assert_eq!(
+            crate::tiling::orientation_toggle_refusal(false, true),
+            Some("orientation-refused-maximize")
+        );
+        assert_eq!(
+            crate::tiling::orientation_toggle_refusal(true, true),
+            Some("orientation-refused-fullscreen")
+        );
+        assert_eq!(
+            crate::tiling::orientation_toggle_refusal(false, false),
+            None
+        );
     }
 
     #[test]

@@ -1197,7 +1197,7 @@ pub fn cmd_settings() -> Result<String, DynError> {
         Ctl { id: ID_SAME_AXIS_GROUP, class: "BUTTON", text: "Group with neighbor".to_owned(), x: 20, y: 474, w: 200, h: 24, style: radio_first | tab },
         Ctl { id: ID_SAME_AXIS_SWAP, class: "BUTTON", text: "Swap with neighbor".to_owned(), x: 230, y: 474, w: 200, h: 24, style: radio | tab },
         Ctl { id: 0, class: "STATIC", text: "Same-axis moves apply to subsequent moves only; existing trees keep their layout until the next move.".to_owned(), x: 440, y: 472, w: 464, h: 30, style: label },
-        Ctl { id: 0, class: "BUTTON", text: "Shortcuts (83 rows)".to_owned(), x: 10, y: 516, w: 904, h: 268, style: group },
+        Ctl { id: 0, class: "BUTTON", text: "Shortcuts (84 rows)".to_owned(), x: 10, y: 516, w: 904, h: 268, style: group },
         Ctl { id: ID_BINDING_LIST, class: "LISTBOX", text: String::new(), x: 20, y: 538, w: 540, h: 230, style: list_style | tab },
         Ctl { id: ID_BINDING_INFO, class: "EDIT", text: String::new(), x: 570, y: 538, w: 324, h: 100, style: info_style },
         Ctl { id: ID_BIND_KEEP, class: "BUTTON", text: "Keep".to_owned(), x: 570, y: 642, w: 100, h: 26, style: push | tab },

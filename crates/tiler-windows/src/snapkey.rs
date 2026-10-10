@@ -56,6 +56,11 @@ pub const VK_RWIN: u32 = 92;
 pub const VK_ESCAPE: u32 = 27;
 pub const VK_M: u32 = 0x4D;
 pub const VK_F11: u32 = 0x7A;
+/// Orientation-toggle chord key (Win+O, KDE Meta+O parity, item 4).
+/// `vk_for_key_name` in settings recognizes `O`; the classifier treats it
+/// as an orientation arm only unshifted with no Ctrl/Alt (never a
+/// directional/digit/history arm).
+pub const VK_O: u32 = 0x4F;
 /// Tab chord key for the previous-view toggle (Win+Ctrl+Tab, item 1).
 /// `vk_for_key_name` in settings recognizes `Tab`; the classifier treats it
 /// as a history arm only with Ctrl held (never a directional/digit arm).
@@ -179,6 +184,7 @@ pub enum ChordAction {
     Fullscreen,
     Float,
     Sticky,
+    Orientation,
     WorkspacePrevious,
     WorkspacePrev,
     WorkspaceNext,
@@ -199,6 +205,7 @@ impl ChordAction {
             Self::Fullscreen => "fullscreen",
             Self::Float => "float",
             Self::Sticky => "sticky",
+            Self::Orientation => "orientation",
             Self::WorkspacePrevious => "workspace-previous",
             Self::WorkspacePrev => "workspace-prev",
             Self::WorkspaceNext => "workspace-next",
@@ -303,9 +310,9 @@ pub const fn is_digit_vk(vk: u32) -> bool {
 }
 
 /// True for any chord key the single classifier owns: directional catalog
-/// plus workspace digits plus the maximize, fullscreen, float, and sticky
-/// toggles plus the item 1 history keys (Tab/H/J/K/L/arrows with Ctrl).
-/// Modifiers, Win keys, and ordinary keys are not chord keys.
+/// plus workspace digits plus the maximize, fullscreen, float, sticky, and
+/// orientation toggles plus the item 1 history keys (Tab/H/J/K/L/arrows with
+/// Ctrl). Modifiers, Win keys, and ordinary keys are not chord keys.
 #[must_use]
 pub fn is_chord_vk(vk: u32) -> bool {
     catalog_index(vk).is_some()
@@ -313,6 +320,7 @@ pub fn is_chord_vk(vk: u32) -> bool {
         || is_maximize_vk(vk)
         || is_fullscreen_vk(vk)
         || is_float_vk(vk)
+        || is_orientation_vk(vk)
         || is_history_vk(vk)
 }
 
@@ -426,6 +434,14 @@ pub const fn is_sticky_vk(vk: u32) -> bool {
     vk == VK_G
 }
 
+/// True only for the orientation-toggle chord key (Win+O, KDE Meta+O
+/// parity, item 4). Like maximize, any Shift/Ctrl/Alt combination passes
+/// through untracked: there is no shifted orientation arm.
+#[must_use]
+pub const fn is_orientation_vk(vk: u32) -> bool {
+    vk == VK_O
+}
+
 /// Direction for a catalog index. Letters and arrows are exact aliases.
 fn index_direction(idx: usize) -> Direction {
     match idx {
@@ -523,6 +539,12 @@ fn collide_refusal(
             consumed,
             announce: false,
         }),
+        Classified::Orientation(_) => Classified::Orientation(OrientationIntent {
+            edge,
+            foreground,
+            consumed,
+            announce: false,
+        }),
         Classified::Fullscreen(_) => Classified::Fullscreen(FullscreenIntent {
             edge,
             foreground,
@@ -565,6 +587,7 @@ fn collide_trigger(shape: &Classified) -> Option<MaskTrigger> {
             Some(MaskTrigger::WorkspaceHistory { op: intent.op })
         }
         Classified::Maximize(_) => Some(MaskTrigger::Maximize),
+        Classified::Orientation(_) => Some(MaskTrigger::Orientation),
         Classified::Fullscreen(_) => Some(MaskTrigger::Fullscreen),
         Classified::Float(_) => Some(MaskTrigger::Float),
         Classified::Sticky(_) => Some(MaskTrigger::Sticky),
@@ -730,6 +753,19 @@ pub struct StickyIntent {
     pub announce: bool,
 }
 
+/// Classifier outcome for one orientation-toggle event (Win+O, KDE Meta+O
+/// parity, item 4). The toggle carries no direction: only the down
+/// dispatches, ups close the pair. Held repeats stay swallowed like
+/// maximize/float (a held O would otherwise pingpong the parent axis);
+/// repeat re-dispatch selection stays native-journey TBD (tentative).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OrientationIntent {
+    pub edge: SnapEdge,
+    pub foreground: bool,
+    pub consumed: bool,
+    pub announce: bool,
+}
+
 /// Unified classifier outcome: exactly one of directional, workspace digit,
 /// workspace history, maximize, fullscreen, or float/sticky. One machine,
 /// one modifier/mask authority; history shares Win/Shift/Ctrl/Alt tracking,
@@ -746,6 +782,7 @@ pub enum Classified {
     Fullscreen(FullscreenIntent),
     Float(FloatIntent),
     Sticky(StickyIntent),
+    Orientation(OrientationIntent),
 }
 
 impl Classified {
@@ -760,6 +797,7 @@ impl Classified {
             Self::Fullscreen(intent) => intent.consumed,
             Self::Float(intent) => intent.consumed,
             Self::Sticky(intent) => intent.consumed,
+            Self::Orientation(intent) => intent.consumed,
         }
     }
 
@@ -774,6 +812,7 @@ impl Classified {
             Self::Fullscreen(intent) => intent.announce,
             Self::Float(intent) => intent.announce,
             Self::Sticky(intent) => intent.announce,
+            Self::Orientation(intent) => intent.announce,
         }
     }
 }
@@ -795,6 +834,7 @@ pub enum MaskTrigger {
     Fullscreen,
     Float,
     Sticky,
+    Orientation,
     WinDrag,
 }
 
@@ -854,6 +894,8 @@ pub struct SnapClassify {
     float_origin: bool,
     sticky_down: bool,
     sticky_origin: bool,
+    orientation_down: bool,
+    orientation_origin: bool,
     pub enabled: bool,
     /// Shortcut-handling gate published by the owner (takeover plus the
     /// eventual pause source, e.g. Xbox detection). Fresh downs consume iff
@@ -898,6 +940,7 @@ pub struct SnapClassify {
     pub fullscreen_counts: SnapCounts,
     pub float_counts: SnapCounts,
     pub sticky_counts: SnapCounts,
+    pub orientation_counts: SnapCounts,
     hist_down: [bool; 9],
     hist_origin: [bool; 9],
     hist_op: [Option<WorkspaceHistoryOp>; 9],
@@ -949,6 +992,8 @@ impl SnapClassify {
             float_origin: false,
             sticky_down: false,
             sticky_origin: false,
+            orientation_down: false,
+            orientation_origin: false,
             enabled: config.takeover,
             gate_active: true,
             allow_win_l: config.allow_win_l,
@@ -962,6 +1007,7 @@ impl SnapClassify {
             fullscreen_counts: SnapCounts::default(),
             float_counts: SnapCounts::default(),
             sticky_counts: SnapCounts::default(),
+            orientation_counts: SnapCounts::default(),
             hist_down: [false; 9],
             hist_origin: [false; 9],
             hist_op: [None; 9],
@@ -1100,6 +1146,9 @@ impl SnapClassify {
         }
         if is_fullscreen_vk(physical) && !self.shift {
             return Some(ChordAction::Fullscreen);
+        }
+        if is_orientation_vk(physical) && !self.shift {
+            return Some(ChordAction::Orientation);
         }
         if is_float_vk(physical) {
             return Some(if self.shift {
@@ -1275,6 +1324,17 @@ impl SnapClassify {
                     announce: false,
                 }))
             }
+            ChordAction::Orientation => {
+                if !self.orientation_down {
+                    return None;
+                }
+                Some(Classified::Orientation(OrientationIntent {
+                    edge: SnapEdge::Down,
+                    foreground: true,
+                    consumed: self.orientation_origin,
+                    announce: false,
+                }))
+            }
             ChordAction::Fullscreen => {
                 if !self.fullscreen_down {
                     return None;
@@ -1331,6 +1391,7 @@ impl SnapClassify {
                 history_index(vk).is_some_and(|idx| self.hist_down[idx])
             }
             ChordAction::Maximize => self.maximize_down,
+            ChordAction::Orientation => self.orientation_down,
             ChordAction::Fullscreen => self.fullscreen_down,
             ChordAction::Float => self.float_down,
             ChordAction::Sticky => self.sticky_down,
@@ -1570,6 +1631,9 @@ impl SnapClassify {
             }
             ChordAction::Maximize => {
                 return self.push_maximize(is_up, foreground, route_live);
+            }
+            ChordAction::Orientation => {
+                return self.push_orientation(is_up, foreground, route_live);
             }
             ChordAction::Fullscreen => {
                 return self.push_fullscreen(is_up, foreground, route_live);
@@ -2266,6 +2330,110 @@ impl SnapClassify {
                 } else {
                     self.max_counts.passed += 1;
                     Some(Classified::Maximize(MaximizeIntent {
+                        edge: SnapEdge::Down,
+                        foreground,
+                        consumed: false,
+                        announce: false,
+                    }))
+                }
+            }
+        }
+    }
+
+    /// Orientation-toggle half of the unified classifier (Win+O, KDE Meta+O
+    /// parity, item 4): same Win/Ctrl/Alt/armed-hold/gate/mask contract as
+    /// the maximize arm. Any held Shift (or Ctrl/Alt, or missing Win) passes
+    /// a fresh O through untracked and the paired key-up also passes. A
+    /// consumed hold stays swallowed across later Shift/Ctrl/Alt/Win
+    /// transitions until its matching up. Tentative Windows repeat policy:
+    /// only the down dispatches; held repeats are swallowed (mask stays
+    /// armed) instead of re-toggling. Ups close the pair. Fresh downs
+    /// consume iff takeover is on with the shortcut gate active; the owner
+    /// rechecks fresh identity/scope/elevation/fullscreen/gesture before any
+    /// action.
+    fn push_orientation(
+        &mut self,
+        is_up: bool,
+        foreground: bool,
+        route_live: bool,
+    ) -> Option<Classified> {
+        if is_up {
+            if !self.orientation_down {
+                return None;
+            }
+            self.orientation_down = false;
+            let origin = self.orientation_origin;
+            self.orientation_origin = false;
+            self.orientation_counts.up += 1;
+            if origin {
+                self.orientation_counts.consumed += 1;
+                Some(Classified::Orientation(OrientationIntent {
+                    edge: SnapEdge::Up,
+                    foreground,
+                    consumed: true,
+                    announce: false,
+                }))
+            } else {
+                self.orientation_counts.passed += 1;
+                Some(Classified::Orientation(OrientationIntent {
+                    edge: SnapEdge::Up,
+                    foreground,
+                    consumed: false,
+                    announce: false,
+                }))
+            }
+        } else {
+            // Armed-hold repeats classify before the fresh-chord guard: a
+            // consumed O hold stays swallowed across later Shift/Ctrl/Alt/Win
+            // transitions (never re-dispatched), a passed hold stays passed.
+            if self.orientation_down {
+                self.orientation_counts.repeat += 1;
+                if self.orientation_origin {
+                    // Held repeat: swallowed, never re-dispatched. A Win-held
+                    // hold continues to disguise Win, so the mask stays
+                    // armed; a bare repeat after Win-up must not create a new
+                    // mask obligation.
+                    self.orientation_counts.consumed += 1;
+                    if self.win_l || self.win_r {
+                        self.mask_pending = true;
+                        self.mask_trigger = Some(MaskTrigger::Orientation);
+                    }
+                    Some(Classified::Orientation(OrientationIntent {
+                        edge: SnapEdge::Repeat,
+                        foreground,
+                        consumed: true,
+                        announce: false,
+                    }))
+                } else {
+                    self.orientation_counts.passed += 1;
+                    Some(Classified::Orientation(OrientationIntent {
+                        edge: SnapEdge::Repeat,
+                        foreground,
+                        consumed: false,
+                        announce: false,
+                    }))
+                }
+            } else {
+                if self.ctrl || self.alt || self.shift || !(self.win_l || self.win_r) {
+                    return None;
+                }
+                self.orientation_down = true;
+                let origin = self.enabled && self.gate_active && route_live;
+                self.orientation_origin = origin;
+                self.orientation_counts.down += 1;
+                if origin {
+                    self.orientation_counts.consumed += 1;
+                    self.mask_pending = true;
+                    self.mask_trigger = Some(MaskTrigger::Orientation);
+                    Some(Classified::Orientation(OrientationIntent {
+                        edge: SnapEdge::Down,
+                        foreground,
+                        consumed: true,
+                        announce: true,
+                    }))
+                } else {
+                    self.orientation_counts.passed += 1;
+                    Some(Classified::Orientation(OrientationIntent {
                         edge: SnapEdge::Down,
                         foreground,
                         consumed: false,
@@ -3167,6 +3335,18 @@ pub struct QueuedStickyIntent {
     pub tick: std::time::Instant,
 }
 
+/// One approved orientation chord captured by the callback (item 4). Same
+/// origin contract as maximize; without an origin the toggle never
+/// dispatches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedOrientationIntent {
+    pub edge: SnapEdge,
+    pub origin: Option<SnapOrigin>,
+    pub consumed: bool,
+    pub announce: bool,
+    pub tick: std::time::Instant,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueuedSnapEvent {
     Intent(QueuedIntent),
@@ -3177,6 +3357,7 @@ pub enum QueuedSnapEvent {
     Fullscreen(QueuedFullscreenIntent),
     Float(QueuedFloatIntent),
     Sticky(QueuedStickyIntent),
+    Orientation(QueuedOrientationIntent),
     Mask(QueuedMask),
 }
 
@@ -3353,6 +3534,13 @@ pub fn classify_and_queue(
             tick,
         }),
         Classified::Sticky(intent) => QueuedSnapEvent::Sticky(QueuedStickyIntent {
+            edge: intent.edge,
+            origin,
+            consumed: intent.consumed,
+            announce: intent.announce,
+            tick,
+        }),
+        Classified::Orientation(intent) => QueuedSnapEvent::Orientation(QueuedOrientationIntent {
             edge: intent.edge,
             origin,
             consumed: intent.consumed,
@@ -4701,6 +4889,9 @@ pub mod sys {
             }),
             super::MaskTrigger::Sticky => serde_json::json!({
                 "trigger_op": "sticky",
+            }),
+            super::MaskTrigger::Orientation => serde_json::json!({
+                "trigger_op": "orientation",
             }),
             super::MaskTrigger::WinDrag => serde_json::json!({
                 "trigger_op": "windrag",

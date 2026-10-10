@@ -1041,9 +1041,11 @@ decisions of 2026-09-24 are under
        default wrap, group-neighbor/boundary parity and live changes without
        tree rebuild. Linux workspace tests/clippy compile portable Windows
        modules; native Windows UI/owner checks remain Windows-owned.
-  - Item 4: shared Rust core/protocol + KDE delivered offline; zero Windows
-      compile fixes required, existing Windows behavior preserved. Exact
-      wiring handoff (paths under `crates/tiler-windows/`):
+  - Item 4: Windows Win+O/catalog/presets/input/owner routing delivered 2026-10-11
+      (base `755aab8` + delivery commit, [record](changes/archive/windows-parent-orientation-toggle.md));
+      native gates and agent-observed Settings/owner adoption passed. Physical
+      toggle/OS suppression pending; held-repeat choice tentative pending user
+      review. Checklist below retained as acceptance detail (Windows paths):
 
      #### Item 4 behavior, references and acceptance
 

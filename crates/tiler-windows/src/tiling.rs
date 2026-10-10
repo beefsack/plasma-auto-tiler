@@ -425,6 +425,21 @@ pub const fn sticky_toggle_refusal(fullscreen: bool, maximized: bool) -> Option<
     }
 }
 
+/// Orientation-toggle refusal for an overlay target (item 4, R-LAY-01): a
+/// fullscreen or maximized focused window never toggles its parent axis,
+/// matching the move/float/sticky overlay isolation. Fullscreen wins when
+/// both hold. `None` when the route may proceed.
+#[must_use]
+pub const fn orientation_toggle_refusal(fullscreen: bool, maximized: bool) -> Option<&'static str> {
+    if fullscreen {
+        Some("orientation-refused-fullscreen")
+    } else if maximized {
+        Some("orientation-refused-maximize")
+    } else {
+        None
+    }
+}
+
 /// Directional refusal for a sticky subject window (KDE sticky isolation
 /// parity): a sticky focused window never starts directional focus/move, and
 /// sticky windows are never directional targets (they ride slotless floats).

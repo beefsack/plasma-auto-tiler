@@ -715,11 +715,12 @@ fn three_colliders_pair_in_any_release_order_across_remap_change() {
 fn compatible_preset_disables_os_conflicting_rows() {
     let mut settings = Settings::default();
     let changed = tiler_windows::settings::apply_preset(&mut settings, Preset::Compatible);
-    // Every OS-conflicting row: 8 focus + 4 move-arrow + 3 toggles + 20
+    // Every OS-conflicting row: 8 focus + 4 move-arrow + 4 toggles + 20
     // workspace digits + 2 history arrows.
-    assert_eq!(changed.len(), 37);
+    assert_eq!(changed.len(), 38);
     assert!(changed.contains(&"toggle-float"));
     assert!(changed.contains(&"toggle-fullscreen"));
+    assert!(changed.contains(&"toggle-orientation"));
     assert!(changed.contains(&"focus-left"));
     assert!(changed.contains(&"focus-left-arrow"));
     assert!(changed.contains(&"move-left-arrow"));
@@ -727,7 +728,7 @@ fn compatible_preset_disables_os_conflicting_rows() {
     assert!(changed.contains(&"workspace-prev-left-arrow"));
     assert!(changed.contains(&"workspace-next-right-arrow"));
     let effective = tiler_windows::settings::effective_bindings(&settings);
-    assert_eq!(effective.len(), 83);
+    assert_eq!(effective.len(), 84);
     for row in &effective {
         if tiler_windows::settings::compatible_disabled_ids().contains(&row.id) {
             assert!(!row.active, "{}", row.id);
@@ -906,9 +907,10 @@ fn retained_update_gaps_preserves_topology() {
 }
 
 // Item 2 catalog/settings: 26 new rows (10 numbered stay + 8 relative follow
-// + 8 relative stay) for 83 total; follow defaults keep pending evidenced
-// conflicts with honest unknown-ownership text (no new Compatible disables);
-// stay rows are bindable unbound with Keep meaning unbound.
+// + 8 relative stay) for 83 total, plus the item 4 orientation toggle for 84;
+// follow defaults keep pending evidenced conflicts with honest
+// unknown-ownership text (no new Compatible disables); stay rows are bindable
+// unbound with Keep meaning unbound.
 
 #[test]
 fn catalog_exposes_item2_rows_with_exact_modifiers() {
@@ -918,7 +920,7 @@ fn catalog_exposes_item2_rows_with_exact_modifiers() {
     };
     use tiler_windows::snapkey::ChordAction;
     let catalog = binding_catalog();
-    assert_eq!(catalog.len(), 83);
+    assert_eq!(catalog.len(), 84);
     // Numbered stay: ten unbound rows on the shifted digit arm through the
     // stay action, sharing the follow digit canonical slot.
     for index in [1u8, 2, 9, 0] {
@@ -1017,6 +1019,123 @@ fn catalog_exposes_item2_rows_with_exact_modifiers() {
         assert_eq!(binding_action(def), action);
         assert!(binding_canonical_vk(def).is_some(), "{id} has a slot");
     }
+}
+
+// Item 4 catalog/settings: one `toggle-orientation` row on exact unshifted
+// Win+O; Authentic keeps it (OS orientation lock takeover), Compatible
+// disables it. Keep/Disable/Rebind ride the existing toggle plumbing.
+#[test]
+fn catalog_exposes_orientation_row_with_exact_modifiers() {
+    use tiler_windows::settings::{
+        BindingSetting, BindingState, Preset, Settings, apply_preset, binding_action,
+        binding_canonical_vk, binding_catalog, binding_modifiers_ok, binding_wants_ctrl,
+        binding_wants_shift, compatible_disabled_ids, effective_bindings, parse_chord,
+        validate_settings,
+    };
+    use tiler_windows::snapkey::ChordAction;
+    let catalog = binding_catalog();
+    let def = catalog
+        .iter()
+        .find(|def| def.id == "toggle-orientation")
+        .expect("row");
+    assert_eq!(def.defaults, &["Win+O"]);
+    assert!(def.implemented);
+    assert!(!binding_wants_shift(def));
+    assert!(!binding_wants_ctrl(def));
+    assert_eq!(binding_action(def), ChordAction::Orientation);
+    assert_eq!(binding_canonical_vk(def), Some(0x4F));
+    let conflict = def.conflict.expect("orientation-lock text");
+    assert!(
+        conflict.contains("orientation lock") && conflict.contains("takeover"),
+        "{conflict}"
+    );
+    // Exact modifiers: only unshifted Win+O matches the arm.
+    let parsed = parse_chord("Win+O").expect("parse");
+    assert!(binding_modifiers_ok(
+        def,
+        parsed.shift,
+        parsed.ctrl,
+        parsed.alt
+    ));
+    for chord in ["Win+Shift+O", "Win+Ctrl+O", "Win+Alt+O"] {
+        let parsed = parse_chord(chord).expect("parse");
+        assert!(
+            !binding_modifiers_ok(def, parsed.shift, parsed.ctrl, parsed.alt),
+            "{chord} must not match"
+        );
+    }
+    // Authentic keeps; Compatible disables.
+    let effective = effective_bindings(&Settings::default());
+    let row = effective
+        .iter()
+        .find(|row| row.id == "toggle-orientation")
+        .expect("row");
+    assert!(row.active && row.effective);
+    assert_eq!(row.chords, vec!["Win+O".to_owned()]);
+    assert!(compatible_disabled_ids().contains(&"toggle-orientation"));
+    let mut settings = Settings::default();
+    apply_preset(&mut settings, Preset::Compatible);
+    assert_eq!(
+        settings
+            .bindings
+            .get("toggle-orientation")
+            .map(|b| &b.state),
+        Some(&BindingState::Disabled)
+    );
+    let effective = effective_bindings(&settings);
+    let row = effective
+        .iter()
+        .find(|row| row.id == "toggle-orientation")
+        .expect("row");
+    assert!(!row.active && !row.effective);
+    // Disable passes through; rebind to a fresh unshifted chord validates
+    // and reports the rebound chord's own conflict.
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "toggle-orientation".to_owned(),
+        BindingSetting {
+            state: BindingState::Disabled,
+            chord: None,
+        },
+    );
+    assert!(validate_settings(&settings).is_ok());
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "toggle-orientation".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+U".to_owned()),
+        },
+    );
+    assert!(validate_settings(&settings).is_ok());
+    let effective = effective_bindings(&settings);
+    let row = effective
+        .iter()
+        .find(|row| row.id == "toggle-orientation")
+        .expect("row");
+    assert_eq!(row.chords, vec!["Win+U".to_owned()]);
+    // Wrong-arm rebinds refuse.
+    for chord in ["Win+Shift+U", "Win+Ctrl+U", "Win+Alt+U"] {
+        let mut settings = Settings::default();
+        settings.bindings.insert(
+            "toggle-orientation".to_owned(),
+            BindingSetting {
+                state: BindingState::Rebind,
+                chord: Some(chord.to_owned()),
+            },
+        );
+        assert!(validate_settings(&settings).is_err(), "{chord} refuses");
+    }
+    // Duplicate active chord refuses.
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "toggle-orientation".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+M".to_owned()),
+        },
+    );
+    assert!(validate_settings(&settings).is_err());
 }
 
 #[test]

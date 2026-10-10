@@ -497,7 +497,14 @@ platform API behavior.
       orientation hint for future admissions; long-edge rule unchanged.
     - Status: shared core/protocol + KDE Meta+O/catalog/presets delivered
       offline ([record](changes/archive/parent-orientation-toggle.md));
-      Windows wiring and user-owned native journey pending.
+      Windows Win+O/catalog/presets/input/owner routing delivered 2026-10-11,
+      base `755aab8` + delivery commit ([record](changes/archive/windows-parent-orientation-toggle.md)).
+      Native gates and agent-observed Settings/owner adoption passed; physical
+      toggle and OS suppression remain user-owned pending.
+    - Windows held-repeat choice (tentative, pending user review): one toggle
+      per discrete down; held repeats consumed without dispatch, release/repress
+      toggles again. [Discriminator](spec/reference-outcomes.md#r-lay-01-windows-held-key-discriminator)
+      leaves physical/KDE/unsupported reference outcomes TBD.
 - User decision 2026-10-09 (R-LAY-04 workspace-local layout selection):
   PARK until a genuine second layout exists; revisit when tabbed stacks are
   designed after 0.1. Whether tabs count as L2 is a future decision.

@@ -30,7 +30,7 @@ implementation record. Selected intent and doc assertions alone are never eviden
   COSMIC `ToggleOrientation`; Hyprland `layoutmsg togglesplit`; bspwm
   `node @parent -y` (cycle or explicit type); i3 `layout toggle split`;
   sway `layout toggle split`; Ours KDE `toggle-orientation` (Meta+O),
-  Ours Windows adapter pending (inventory below). Other profiles
+  Ours Windows `toggle-orientation` (Win+O). Other profiles
   per inventory below.
 - Observe: same children on the new axis vs wrapping a leaf/new group;
   scope of the layout command. Focus retention is recorded where the
@@ -67,8 +67,12 @@ implementation record. Selected intent and doc assertions alone are never eviden
   focus preserved; second invocation restores H. Shared Session/Engine/protocol
   and KDE Meta+O/native catalog/presets implemented offline, native journey
   pending; [tests and record](../../changes/archive/parent-orientation-toggle.md).
-- Then Ours Windows: no adapter orientation verb in the pinned inventory
-  (`S(S-ours-planops)`); shared core now supports it, Windows wiring pending.
+- Then Ours Windows: Win+O immediate-parent route delivered 2026-10-11,
+  base `755aab8` + delivery commit ([record](../../changes/archive/windows-parent-orientation-toggle.md)).
+  Real retained Engine H/V root flips preserve order/shares/focus and double
+  toggle restores tree; native gates and agent-observed Settings/preset/live
+  routing adoption passed. Positive physical toggle/OS suppression pending;
+  Authentic owns Win+O, Compatible disables ours. Held-repeat choice tentative.
 - Variant hook: provisional/TBD (orientation-scope hook, to discuss).
 
 ### R-LAY-02: rotate 90 degrees; mirror left/right (separate fresh legs)
@@ -242,7 +246,9 @@ implementation record. Selected intent and doc assertions alone are never eviden
 [Item 4](../../decisions.md#move-layout-and-output-commands) selects R-LAY-01:
 Meta+O / Win+O immediate-parent toggle including root, order/shares/focus
 preserved; sole root leaf no-op and no saved admission hint. KDE offline
-evidence is linked below; Windows adapter and KDE native journey remain pending.
+evidence is linked below; Windows adapter delivered 2026-10-11
+([record](../../changes/archive/windows-parent-orientation-toggle.md));
+both physical native toggle journeys remain pending.
 Reference WM pins and outcomes are unchanged.
 
 ### R-LAY-05: immediate parent toggled twice in a nested tree
@@ -301,8 +307,10 @@ Reference WM pins and outcomes are unchanged.
   `H[A,V[B*,C]]`, including unequal child shares, order and B focus;
   root axis unchanged. Meta+O immediate-parent route implemented, native
   journey pending; [record](../../changes/archive/parent-orientation-toggle.md), item 4.2.
-- Then Ours Windows: same selected scope/roundtrip target;
-  implementation pending; item 4.2.
+- Then Ours Windows: scope/roundtrip delivered 2026-10-11, base `755aab8` +
+  delivery commit ([record](../../changes/archive/windows-parent-orientation-toggle.md)).
+  Retained Engine nested parent-only and unequal-share exact double roundtrip
+  tests pass with focus retained; physical native geometry/focus pending; item 4.2.
 - Variant hook: provisional/TBD (R-LAY-01 orientation scope).
 
 ### R-LAY-06: sole-leaf toggle then ordinary admission
@@ -380,6 +388,8 @@ Reference WM pins and outcomes are unchanged.
   Core wide fixture gives `H[A,B*]` (newcomer desired focus); exact native
   admission order/focus on the 1920x1080 journey remains TBD.
   [record](../../changes/archive/parent-orientation-toggle.md), item 4.2.
-- Then Ours Windows: same selected no-hint/long-edge target;
-  implementation pending; exact newcomer order/native focus TBD; item 4.2.
+- Then Ours Windows: no-hint/long-edge route delivered 2026-10-11, base
+  `755aab8` + delivery commit ([record](../../changes/archive/windows-parent-orientation-toggle.md)).
+  Retained Engine lone no-op leaves snapshot unchanged and subsequent wide
+  admission uses long edge; exact native newcomer order/focus TBD; item 4.2.
 - Variant hook: provisional/TBD (R-LAY-01 sole-leaf admission hint).

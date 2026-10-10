@@ -42,7 +42,7 @@ fn history_down(m: &mut SnapClassify, vk: u32) -> WorkspaceHistoryOp {
 #[test]
 fn catalog_exposes_nine_history_rows_with_honest_conflicts() {
     let catalog = binding_catalog();
-    assert_eq!(catalog.len(), 83);
+    assert_eq!(catalog.len(), 84);
     let ids: Vec<&str> = catalog
         .iter()
         .filter(|def| {
@@ -112,7 +112,7 @@ fn presets_authentic_keeps_all_and_compatible_disables_only_arrows() {
     // Compatible disables only the two recorded virtual-desktop arrows.
     let mut settings = Settings::default();
     apply_preset(&mut settings, Preset::Compatible);
-    assert_eq!(compatible_disabled_ids().len(), 37);
+    assert_eq!(compatible_disabled_ids().len(), 38);
     for id in ["workspace-prev-left-arrow", "workspace-next-right-arrow"] {
         assert!(compatible_disabled_ids().contains(&id), "{id} disabled");
         assert_eq!(
