@@ -607,12 +607,14 @@ platform API behavior.
     Windows behavior unchanged; native checks remain pending.
 - User decisions 2026-10-08 (workspace migration R-WS-12 D1-D9, outcomes
   decided): see Workspaces above.
-- Windows restart intent persistence (user 2026-10-10, handoff item 8): the
-  Windows agent writes a short design proposal covering identity, storage,
-  data format, recovery-journal versus separate store, and REQ-RST-01c
-  membership/set/focus options, with a recommendation for the user to decide.
-  Implementation stays blocked until that decision; other handoff items
-  proceed. No mechanism is selected by this decision.
+- Windows restart intent persistence (user 2026-10-10, handoff item 8,
+  option A): on-window `SetProp` markers with the distinctive project prefix,
+  same pattern as `PlasmaAutoTilerSticky`, for intentional-float and
+  fixed-window tile-override intent. A marker restores classification only,
+  never authorizes writes or recovery ownership; written after native
+  success, removed on unfloat/sticky-off/re-float; unreadable means no
+  intent, logged. No separate store file and no recovery-ledger change.
+  REQ-RST-01c membership/set/focus and post-restart un-stick stay OPEN/TBD.
 
 ## Reference Matrix and Spec Authority
 

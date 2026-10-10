@@ -198,8 +198,8 @@ decisions of 2026-09-24 are under
   per-monitor workspaces (multi-output), gaming coexistence (Win+G/F11
   containment review, Xbox mode detection, M16 100ms pump measurement),
   combined workspace-presentation research (hidden-workspace Alt+Tab/taskbar
-  semantics plus taskbar indicator parity 10), restart-persistence decision
-  (item 8 proposal) and package/update channel decision (short research refresh
+  semantics plus taskbar indicator parity 10), restart persistence (item 8,
+  on-window markers selected 2026-10-10) and package/update channel decision (short research refresh
   during Windows release planning; most obvious and unsurprising for users).
   Gaming and Windows-agent presentation research run after multi-output,
   before release; presentation produces options plus a recommendation for
@@ -455,7 +455,7 @@ decisions of 2026-09-24 are under
   | 5 | Unparked parity-queue multi-output foundation after single-output items 1-4, 6, 7, 9-11, 13, 15, 17, 18, 20 (18 before 10/11), then handoff items 5, 12, 14, 16, 19 | Per-monitor current-view observation, membership/geometry/visibility/recovery fences first; user live checks need a multi-output Windows setup. Offline topology/Engine tests can precede that. |
   | 6 | Keyboard resize R-RSZ-01 (parity d) | Independent; needs fresh Alt-capable trigger plus dedicated resize intent. No dependency on items 1-5 except shared modifier routing. |
   | 7 | Press-focus R-DRAG-08 | Independent of items 1-5; touches Win-drag arm only. Keep R-DRAG-07 stationary-source/moving-preview split intact. |
-  | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; KDE Q3 plus D7 tile-override store delivered offline. Ordinary/sticky intent must remain distinct from automatic fixed origin and recovery authority. Windows agent writes a short proposal (identity, storage, data format, recovery journal vs separate store, REQ-RST-01c membership/set/focus options and recommendation) for user decision; implementation blocked until then, other items proceed. Coordinate D7 membership with item 13. |
+  | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; KDE Q3 plus D7 tile-override store delivered offline. Ordinary/sticky intent must remain distinct from automatic fixed origin and recovery authority; Windows mechanism selected 2026-10-10 (prefixed on-window markers, item 8 below), REQ-RST-01c stays OPEN. Coordinate D7 membership with item 13. |
   | 9 | Fullscreen send R-MAX-09 (Windows carry; NOT the parity-queue multi-output foundation) | Depends on handoff item 2 follow/stay wiring only; same-output workspace carry, no cross-output claim. |
   | 10 | Float/half-snap parity (a) R-FLT-07..11 | Independent of items 1-5; reuses existing focus/move catalog rows, no new chords. |
   | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; first-fullscreen-exit is separate (D5 core/KDE delivered offline, Windows pending). B9 unmaximize/fresh-admit is item 15. Independent of items 1-5. |
@@ -1498,11 +1498,8 @@ decisions of 2026-09-24 are under
       fences (`member_tokens`/`member_identity`/`member_tags`,
       `visible_lifetime_ok`, `reused_hwnd_stale`) and independent recovery.
       Do not authorize writes from a marker or guessed HWND alone.
-      Windows agent writes a short design proposal (identity, storage, data
-      format, recovery journal vs separate store, REQ-RST-01c membership/set/
-      focus options and a recommendation) for the user to decide. Item 8
-      implementation stays blocked until then; other handoff items proceed.
-      No mechanism selected; REQ-RST-01c remains OPEN. Existing
+      Mechanism: prefixed on-window markers (user decision 2026-10-10 above).
+      REQ-RST-01c membership/set/focus remains OPEN. Existing
       live sticky toggles retain the two pre-sticky origins; the exact
       post-restart un-stick result is not selected by R-FLT-05 and stays TBD.
       No new shortcut/catalog row or preset is selected.
@@ -3046,10 +3043,6 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   and recommendation for hidden-workspace Alt+Tab/taskbar semantics plus
   taskbar workspace indicator (parity 10), as a Windows release gate.
   [note](research/windows-port/alt-tab-hidden-workspaces.md)
-- Windows restart persistence (handoff item 8): Windows-agent design proposal
-  (identity, storage, data format, recovery journal vs separate store,
-  REQ-RST-01c membership/set/focus options and recommendation) for user
-  decision; implementation blocked until then, other handoff items proceed.
 - Other unselected behavior: the functional spec's
   [open-decisions index](spec/functional-spec.md#open-index) lists 60 OPEN
   requirement rows plus the KDE observe-first fullscreen-send sub-leg;

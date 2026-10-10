@@ -40,10 +40,11 @@ Do not edit `docs/principles.md` or disturb concurrent Windows work or stashes.
 - Review corrections: remove stale parked multi-output references, keep new
   P0 presentation research and P1 packaging in their priority areas, and
   persist the conditional KDE borderless-game watch rule.
-- Existing-record conflict reconciled: item 8's summary selected prefixed
-  on-window markers (`91db9d2`) while its detail said mechanism unselected.
-  The user's latest proposal-first instruction supersedes that summary;
-  implementation remains blocked pending the user's design decision.
+- Existing-record conflict: the Windows session selected prefixed on-window
+  markers for item 8 (`91db9d2`) before this session's proposal-first
+  decision 2 was recorded. User 2026-10-10 chose option A: the Windows-session
+  marker selection stands and decision 2 is withdrawn as already satisfied;
+  item 8 is unblocked.
 - Report section links and archived non-native evidence are retained from
   KDE, Windows gate/measurement/presentation and macOS Phase 0 target items.
   `git diff --check` passed; changes are documentation only.
