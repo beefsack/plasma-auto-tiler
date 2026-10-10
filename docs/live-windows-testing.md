@@ -3,8 +3,9 @@
 Read this guide before planning or running live Windows work. It is the
 repository's safety and operational contract; it does not grant mutation
 authorization. The user selected writing it before the first Windows session
-  (2026-09-30, option A). Owned-window graceful/forced-loss restore is machine-
-  proven on the physical PC; input and broader app acceptance remain pending.
+  (2026-09-30, option A). Owned-window graceful/forced-loss restore must be
+  proven on the physical host before broader use; input and broader app
+  acceptance remain pending.
 
 For native tools, permissions and Sandbox limitations, use the
 [Windows development environment](windows-dev-environment.md). Product scope
@@ -96,8 +97,9 @@ do not broaden cleanup or repeatedly restart the experiment.
 ## Sandbox Registry And Policy Experiments (deferred to Phase 4)
 
 - Registry/policy mutations are allowed only inside Windows Sandbox and only
-  for the separately approved experiment. Sandbox closed 2026-09-30 after a
-  failed preflight; no Sandbox again this assignment. Confirm the command/process and
+  for the separately approved experiment. Sandbox use stays deferred to
+  Phase 4 clean-runtime and guest-only experiments; historical 2026-09-30
+  preflight state is not current proof. Confirm the command/process and
   target registry belong to the guest, not the host. If Sandbox is unavailable,
   defer; a separate account on the daily host is not this isolation boundary.
 - Record the exact key/value preimage, including absence, type and contents.
@@ -112,7 +114,7 @@ do not broaden cleanup or repeatedly restart the experiment.
 - Use only the approved read-only payload mapping; no writable mapping of
   host settings, home or checkout. Preserve needed evidence before closing
   the disposable guest. Do not assume guest display/input/integrity behavior
-  matches the physical PC; use the runbook's isolation limits.
+  matches the physical host; use the runbook's isolation limits.
 
 ## Live Evidence
 

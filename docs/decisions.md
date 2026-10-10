@@ -14,8 +14,8 @@ platform API behavior.
 - Windows distribution should be the most obvious and unsurprising for users.
   Store availability alongside manual installation is research scope, not a
   selected package or update channel.
-- Develop directly on the Windows 11 PC, not a VM (single Gigabyte M27Q
-  baseline; Windows multi-monitor moves to the user's other Win11 PC). Keep
+- Develop directly on native Windows 11, not a VM. Multi-monitor live work
+  needs a multi-monitor Windows setup. Keep
   the NixOS/Linux flow intact.
 - Sandbox closed 2026-09-30: Phase 1-3 live proof runs on the physical
   desktop with owned disposable windows first; Sandbox deferred to Phase 4.
@@ -37,6 +37,13 @@ platform API behavior.
   stay in that root file. devenv/Nix stays the source on Linux/NixOS, including
   system libraries. Minimal `AGENTS.md` changes needed to allow this are
   approved; avoid bloat.
+- User decision 2026-10-10 (Windows shell and toolchain): install PS7 via
+  `winget install --exact --id Microsoft.PowerShell --source winget`, not the
+  Microsoft Store; use VS 2026 Build Tools or another 2026 edition with the Desktop C++
+  workload, recommended x64/x86 MSVC tools and Windows SDK, via Visual
+  Studio Installer (no confirmed 2026 winget ID). The VS 2026 route was
+  validated by the native offline gates on 2026-10-10; live-testing and
+  clean-runtime acceptance remain separate.
 - Implemented dev route (2026-10-03): root `mise.toml` declares stable Rust
   via rustup with rustfmt/clippy and just/jq/gh/ripgrep on Windows/macOS;
   yq is Windows-only. Git, MSVC/SDK, Xcode/CLT and host shell bootstrap
@@ -617,14 +624,14 @@ platform API behavior.
 - Windows input and Snap (user 2026-10-01): `WH_KEYBOARD_LL` with `vkE8`
   menu-mask at Win key-up while Win held, consuming only approved catalog
   chords; `RegisterHotKey` rejected after all four chords returned 1409
-  (owner unknown) on this PC. Win+L stays explicit opt-in only and unproven.
+  (owner unknown in observed runs). Win+L stays explicit opt-in only and unproven.
   Windows takes over native Snap shortcuts by default, with a visible setting
   to turn takeover off. While a workspace is tiled, prevent Snap through
   keyboard (selected LL hook) and mouse paths (session-only
   `SPI_SETWINARRANGING FALSE` while tiling is active, with visible
   Apply/Revert, exact preimage capture/readback and conditional restoration
-  on stop; on Win11 build 26200 disabling via pvParam FALSE requires uiParam
-  TRUE). Snap Layouts flyout/Snap Assist coverage remains to be proven.
+  on stop; on observed Windows 11 builds, disabling via pvParam FALSE has
+  required uiParam TRUE; verify on the host). Snap Layouts flyout/Snap Assist coverage remains to be proven.
 - Windows Authentic/Compatible (user 2026-10-08): defaults to Authentic with
   Compatible available in Settings. Owned-chord interception is independent of
   foreground/action eligibility. Pressing an explicitly bound command
@@ -951,7 +958,7 @@ platform API behavior.
   `--active-border-theme` selects accent;
    `--no-active-border-theme` selects configured colour.
    `--no-active-border` disables the surface.
-- Scoped machine evidence passed; physical display/input, other DPI/output
+- Scoped evidence passed; physical display/input, other DPI/output
   arrangements and topmost/style variants remain bounded follow-up checks.
   Evidence and limitations:
    `changes/archive/windows-active-border.md`.
@@ -1096,7 +1103,7 @@ platform API behavior.
   native workspace with Started (a legitimate pointer-based cross-domain drag
   remains available). The refused drop's restore reconcile binds to the
   freshly observed destination containing the mover; the source still reflows
-  through send settlement. Confirmed live by the user (laptop, 2026-09-29);
+  through send settlement. Confirmed live by the user (2026-09-29);
   see [mid-drag-destination-recovery](changes/archive/mid-drag-destination-recovery.md).
 - Interactive resize uses drop intent (user 2026-09-24): fallback
   grabbed-edge classification from pointer and starting frame; a matching
@@ -1426,8 +1433,8 @@ platform API behavior.
   `Meta+G` on a plain floating window must still tile it; moving or resizing
   a float alone never tiles it.
 - User decision 2026-10-05: float-origin directional focus and move follow
-  COSMIC. KDE delivers focus plus the first half-snap step; Windows remains
-  pending for the next PC session because Linux gates do not verify native
+  COSMIC. KDE delivers focus plus the first half-snap step; Windows wiring
+  remains pending because Linux gates do not verify native
   Windows actuation. Tile-origin navigation continues to skip floats.
 - KDE float-origin focus searches only ordinary/sticky floats on the current
   output/workspace, by top-left position on the requested axis, ignoring the
@@ -1452,7 +1459,7 @@ platform API behavior.
   are deferred because they need per-window snap state and transfer integration.
   Fullscreen/maximized, interactive resize and incompatible declared-size
   constraints refuse geometry writes. One explicit write, no reassertion.
-- Offline regression gates pass; laptop physical acceptance remains user-owned.
+- Offline regression gates pass; physical acceptance remains user-owned.
   Evidence and next checks:
   [KDE floating navigation](changes/archive/kde-floating-directional-navigation.md).
 
@@ -1544,7 +1551,7 @@ platform API behavior.
     One native toggle attempt per discrete Win+M down (the discrete rule also
     fixes KDE's map-refusal case); held repeats consumed without dispatch.
     Status: scoped synthetic proof passed; native system-command and
-    double-click paths machine-proven; physical input and other output/DPI
+    double-click paths proven in scoped runs; physical input and other output/DPI
     arrangements remain user-owned
     ([maximise](changes/archive/windows-maximise.md)).
     Status: G-06 focus fence/unmaximize-before-move pending Windows wiring;
@@ -1590,7 +1597,7 @@ platform API behavior.
     membership. Born-fullscreen holds stay distinct from intentional float
     actuation. One attempt per discrete down. B9 selected behavior
     (unmaximize-then-fresh-admit) is delivered offline on KDE; Windows pending.
-    Status: machine evidence proves activation and cleanup only; float
+    Status: scoped evidence proves activation and cleanup only; float
     behavior, physical input/display and other arrangements remain user-owned
     ([float](changes/archive/windows-float.md)).
   - Sticky float (Win+Shift+G matches Meta+Shift+G): tiled-origin floats

@@ -1,4 +1,4 @@
-# Live Shortcut Override Verification (Second PC)
+# Live Shortcut Override Verification (Multi-Output Setup)
 
 ## Purpose
 
@@ -13,9 +13,9 @@ Superseded machinery is gone: no journal, no migration, no Finish Apply,
 no Restore, no preimage restore, no Force-limited-to-compiled-clear-rows.
 Do not follow journal-era steps from Git history.
 
-## Setup (Second PC)
+## Setup (Multi-Output Setup)
 
-- Pull this checkout on the second multi-output PC.
+- Use a native KDE checkout on a multi-output setup.
 - Build and stage the native effect with the documented dev path only:
 
 ```sh

@@ -5,52 +5,46 @@
   `target/`, settings or compiled effects. No WSL or development VM.
 - Evidence checked 2026-09-30: **V** = verified primary documentation/source;
   **R** = verified repository inspection; **O** = upstream issue report;
-  **U** = unverified on this PC; **P** = recommendation, not an adopted decision.
-  Source keys are at the end. Documented commands still need PC verification.
-- **R:** [Windows decisions](decisions.md#scope-and-platform-goals) select this same PC as
-  the KDE multi-output host (DP-6 and HDMI-A-2). **Settled (user 2026-09-30):**
-  Windows 11 Pro x64 build 26200 dual-boots NixOS nixos-unstable; do not
-  change the boot arrangement. Windows monitor IDs differ.
-- **Accepted baseline (user 2026-09-30, this dev PC):** one display only.
-  Historical KDE DP-6/HDMI-A-2 assertions above are unchanged; single Windows
-  display vs historical KDE multi-output is not proof of a present wiring
-  change (flagged contradiction, not resolved). Windows multi-monitor work
-  moves to the user's other Win11 PC.
-
-| Item | Accepted value |
-| --- | --- |
-| Display | ONE Gigabyte M27Q, `\\.\DISPLAY1`, `DISPLAY\GBT270D\5&35A435C3&5&UID41221`, primary, origin 0,0 |
-| Mode | 2560x1440 @170Hz, 125%, calculated effective DPI 120 |
-| Work area | DPI-unaware query logical 0,0-2048,1104; inferred physical 0,0-2560,1380 NOT directly queried |
+  **U** = unverified on the host; **P** = recommendation, not an adopted decision.
+  Source keys are at the end. Documented commands still need host verification.
+- Record the Windows 11 x64 host's OS build and actual
+  display topology (identities, modes, scale, work areas) in each live test
+  record; observed values are test evidence, never runbook prerequisites.
+  Do not change host boot or partition arrangement as part of setup.
+- **Accepted baseline (user 2026-09-30):** initial owned-window proof may be
+  bounded to one display. Multi-monitor acceptance needs a multi-monitor
+  Windows setup (native Windows, not a VM).
 
 - **R:** KDE-first extraction ended at K1. Start Windows Phase 1 with native
-  build/tests, single-display baseline above, independent stop/restore on owned test
-  windows, then physical Win+Arrow proof. Native dev/stop, exact-owner emergency
-  exit and independent owned-window restore are now machine-proven on this PC;
-  input proof remains pending (see the [active record](changes/windows-phase1-implementation.md)).
+  build/tests, the recorded host display topology, independent stop/restore
+  on owned test windows (initial proof may be bounded to one display),
+  then physical Win+Arrow proof. Native dev/stop, exact-owner emergency
+  exit and independent owned-window restore must be proven on the host before
+  broader use (see the [active record](changes/windows-phase1-implementation.md));
+  input proof remains pending.
   This runbook grants no live-testing authority.
 
 ## Decisions needed from the user
 
-### Before the first Windows session (on the laptop)
+### Before the first Windows session
 
 | Decision | Options and consequences | Recommendation (P) |
 | --- | --- | --- |
 | Root AGENTS.md dependency rule | **Decided (user 2026-09-30):** root `AGENTS.md` keeps `devenv.nix` for Linux; on Windows this document is the dependency list. New Windows tools are added here first with user approval; the user performs installs. | Done. |
-| Dependency declaration file | **Decided (user 2026-09-30, extended with mise):** root `mise.toml` declares the Windows/macOS CLI and Rust tooling (OS-filtered entries; user runs installs). This runbook remains the dependency list and manual-prerequisite record. A WinGet Configuration (`.config/configuration.winget`) may follow once the setup is proven on the PC. | mise route active; WinGet config on revisit. |
-| `.gitattributes` | **Decided (user 2026-09-30): repository-wide LF policy**, the contract below, added on the laptop before the Windows clone. Renormalization changed no tracked file. | Done. |
+| Dependency declaration file | **Decided (user 2026-09-30, extended with mise):** root `mise.toml` declares the Windows/macOS CLI and Rust tooling (OS-filtered entries; user runs installs). This runbook remains the dependency list and manual-prerequisite record. A WinGet Configuration (`.config/configuration.winget`) may follow once the setup is proven on the host. | mise route active; WinGet config on revisit. |
+| `.gitattributes` | **Decided (user 2026-09-30): repository-wide LF policy**, the contract below, added before the Windows clone. Renormalization changed no tracked file. | Done. |
 | Rust upgrades | **Settled (user 2026-09-30, option A):** pre-1.0 track latest stable Rust and fix breakage. Windows uses rustup stable default with rustfmt/clippy, no directory override and no toolchain file. Linux and existing Linux CI use the regularly bumped nixpkgs pin in `devenv.yaml`. | Revisit the upgrade process at 1.0. |
-| Windows live-testing governance | **Decided (user 2026-09-30, option A):** write [live Windows testing](live-windows-testing.md) on the laptop before the first Windows session. Each experiment class still needs user authorization. | Done; follow the protocol before live work. |
+| Windows live-testing governance | **Decided (user 2026-09-30, option A):** write [live Windows testing](live-windows-testing.md) before the first Windows session. Each experiment class still needs user authorization. | Done; follow the protocol before live work. |
 
 ### During the first Windows session
 
 | Decision | Options and consequences | Recommendation (P) |
 | --- | --- | --- |
-| Storage and long paths | **Settled (user 2026-09-30):** actual checkout `C:\Users\beefs\Development\plasma-auto-tiler`; Git longpaths per clone on; OS `LongPathsEnabled` already 1. Keep paths short without changing host registry. | Done. |
+| Storage and long paths | **Settled (user 2026-09-30):** use a short checkout path; Git longpaths enabled per clone. The host long-path setting is optional: probe it read-only, review errors, and never write registry automatically. Keep paths short. | Done. |
 | Credentials | **Settled (user 2026-09-30):** HTTPS + GCM. | Done; do not copy credentials into the runbook. |
-| CLI scope | **Settled (user 2026-09-30):** Git, rg, PS7, rustup, MSVC Build Tools 2022 + SDK, just, jq, yq, gh. No Coreutils; qsv skipped. Install route settled: root `mise.toml` manages Rust (via rustup), rg, just, jq, yq, gh; Git, MSVC Build Tools + SDK and the Store PS7 bootstrap stay manual. | Done. |
-| opencode configuration and plugin version | **Settled (user 2026-09-30):** opencode via winget, known-working config transferred; PS7 Store/MSIX, not MSI, and no explicit shell path in opencode. Routing proved by first fresh muse-spark Worker; available identity model family is muse-spark with no independent provider introspection. | Smoke-test skills and `gpt-sol` -> `muse-spark` routing before work. Stop/report incompatibility rather than silently changing routing/plugins. |
-| Isolation | **Settled (user 2026-09-30):** Sandbox enabled, installed and rebooted, then closed 2026-09-30 after a failed preflight (user dismissed the WM_CLOSE confirmation; no processes remain). Phase 1-3 live proof is physical-desktop owned windows first; Sandbox is deferred to Phase 4 clean runtime plus Win+L guest-only policy. Never host policy writes. | Physical first under the live protocol. Sandbox only for Phase 4 clean runtime and guest-only Win+L; if unavailable, defer those; no policy experiments on the daily desktop. |
+| CLI scope | **Settled (user 2026-09-30; shell/toolchain updated 2026-10-10):** Git, rg, PS7, rustup, VS 2026 toolchain + SDK, just, jq, yq, gh. No Coreutils; qsv skipped. Root `mise.toml` manages Rust (via rustup), rg, just, jq, yq, gh; Git and the shell/toolchain prerequisites stay manual (see §§1, 4 below for routes and validation). | Done. |
+| opencode configuration and plugin version | **Settled (user 2026-09-30):** opencode via winget; transfer the known-working config without an explicit shell path. Verify fresh `muse-spark` Worker routing before work; do not assume independent provider introspection. | Follow the §6 smoke test. Stop/report incompatibility rather than silently changing routing/plugins. |
+| Isolation | **Settled (user 2026-09-30):** Sandbox for Phase 4 clean runtime plus Win+L guest-only policy; Phase 1-3 live proof is physical-desktop owned windows first. Historical 2026-09-30 preflight state is in the [Phase 1 note](changes/windows-phase1-implementation.md). Never host policy writes. | Physical first under the live protocol. Sandbox only for Phase 4 clean runtime and guest-only Win+L; if unavailable, defer those; no policy experiments on the daily desktop. |
 
 ### Line-ending contract
 
@@ -93,7 +87,7 @@ UTF-8 without BOM for project text. Future CMD/batch files check out as CRLF.
   automation without a demonstrated need. WinGet import/export alone cannot
   represent these post-install states or a VS workload contract.
 - **R; V: R1:** `devenv.nix` selects default nixpkgs Rust from pinned
-  `devenv.yaml`; current local rustc/cargo are 1.98.1/1.98.0. No rustup or
+  `devenv.yaml`; verify the selected version with `rustc -vV` instead of assuming one. No rustup or
   toolchain file is used. Direct Nix binaries ignore `rust-toolchain.toml`;
   devenv can explicitly use `languages.rust.toolchainFile` with rust-overlay.
   Existing Ubuntu CI invokes Cargo inside devenv, so a TOML file alone does
@@ -137,7 +131,7 @@ UTF-8 without BOM for project text. Future CMD/batch files check out as CRLF.
 
 ## Day-one setup, in order
 
-Commands are for the **user on the PC**. This list is the Windows dependency
+Commands are for the **user on the Windows host**. This list is the Windows dependency
 contract (root `AGENTS.md`); agents ask before any install. Use an ordinary
 account/terminal; allow installer UAC only where required. Reopen Terminal
 after installers change PATH; restart opencode after configuration changes.
@@ -169,21 +163,21 @@ mise exec -- rg --version
 - Managed by mise: stable Rust via rustup (mise installs rustup if absent;
   [process-local `RUSTUP_TOOLCHAIN`](https://mise.jdx.dev/lang/rust.html),
   no persisted directory override), just, jq, yq, gh, rg. Manual
-  prerequisites stay manual: Git, MSVC Build Tools 2022 + SDK, Store PS7
-  bootstrap (PowerShell stays a manual host shell; it is not mise-managed).
+  prerequisites stay manual: Git, the VS 2026 toolchain + SDK (Visual Studio
+  Installer route), winget PS7 bootstrap (PowerShell stays a manual host shell; it is not mise-managed).
 - Run gates with `mise exec -- cargo ...` so they consume the
   mise-selected toolchain. No `rust-toolchain.toml`. Require
   `host: x86_64-pc-windows-msvc`.
 
 ### 1. Establish PowerShell 7 and a short checkout location
 
-**Settled (user 2026-09-30):** PS7 Store/MSIX, not MSI; no explicit shell
-path in opencode since the Store alias breaks it. **V: W2:** the Store
-install uses the Store execution alias. Use the Windows Terminal PS7
-profile that launches the Store PS7.
+**User decision 2026-10-10:** install PS7 through winget;
+no explicit shell path in opencode. Use a Windows Terminal PS7 profile.
+Check the shell generically (edition Core, current stable); no version is pinned.
 
 ```powershell
 winget --version
+winget install --exact --id Microsoft.PowerShell --source winget
 ```
 
 Open a fresh Terminal PS7 profile:
@@ -200,8 +194,8 @@ winver
 - **V: W3:** optional Dev Drive: Windows 11 build >= 22621.2338, 8 GB RAM
   minimum/16 GB recommended, >= 50 GB free, admin setup. ReFS Dev Drive is
   Microsoft-recommended for repos/package caches, not VS/SDK/tool installs.
-  Use Settings to create it only with user approval; do not repartition the
-  shared KDE test PC as part of setup. Defender performance mode requires a
+  Use Settings to create it only with user approval; do not repartition any host
+  as part of setup. Defender performance mode requires a
   trusted drive, Defender primary AV and real-time protection on (platform
   >= 4.18.2303.8, intelligence >= 1.385.1455.0). It scans asynchronously;
   it is not an exclusion. Verify `fsutil devdrv query D:` and Windows Security
@@ -222,8 +216,7 @@ winget install --exact --id Git.Git --source winget
 # rg is mise-managed (see the mise route above), not a winget install.
 ```
 
-The following uses `C:\src\pat` as a fresh-clone example, not this PC's
-settled checkout. Verify the selected parent exists before cloning:
+The following uses `C:\src\pat` as a fresh-clone example; use a short host path. Verify the selected parent exists before cloning:
 
 ```powershell
 git clone --config core.autocrlf=false --config core.eol=lf --config core.longpaths=true https://github.com/beefsack/plasma-auto-tiler.git C:\src\pat
@@ -239,12 +232,30 @@ where.exe git
 $env:PATH -split ';'
 ```
 
+For an existing clone, set the same contract locally instead of re-cloning:
+
+```powershell
+git config --local core.autocrlf false
+git config --local core.eol lf
+git config --local core.longpaths true
+git config --show-origin --get-regexp '^core\.(autocrlf|eol|longpaths)$'
+```
+
+On a fresh host, set the commit identity yourself before the first commit
+(agents never change Git config):
+
+```powershell
+git config --global user.name "<name>"
+git config --global user.email "<email>"
+```
+
 - **V: G3:** Git `core.longpaths` covers built-in Git operations, not every
   shell/tool. **V: W4:** Windows' separate `LongPathsEnabled` opt-in also
   needs app `longPathAware` support (or supported extended-path APIs); it
   does not make every Rust build script/SDK/linker/Explorer path safe.
-  **U:** this PC's deep Cargo target paths have not been tested. Prefer short
-  checkout/cache/output roots; no policy write is needed on day one.
+  **U:** deep Cargo target paths need host verification. Prefer short
+  checkout/cache/output roots and verify the native build on the host;
+  these steps make no registry write.
   Read-only check:
 
 ```powershell
@@ -281,25 +292,21 @@ Get-Command ls, ls.exe, cat, cat.exe, rm, rm.exe
   The PSReadLine input wrapper is interactive, not an agent-shell guarantee.
   Coreutils does not make POSIX scripts native PowerShell scripts.
 
-### 4. Install Build Tools and an explicitly selected Rust MSVC toolchain
+### 4. Install the VS toolchain and an explicitly selected Rust MSVC toolchain
 
-**V: R2/W8:** Desktop development with C++ plus recommended MSVC x64/x86
-tools and Windows SDK; full Visual Studio IDE is unnecessary. Confirm these
-components in Visual Studio Installer after installation.
-
-```powershell
-winget install --exact --id Microsoft.VisualStudio.2022.BuildTools --source winget --override "--wait --quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --addProductLang En-us"
-```
+**V: R2/W8; user decision 2026-10-10:** VS 2026 Build Tools or another 2026
+edition with the Desktop development with C++ workload, recommended x64/x86
+MSVC tools and Windows SDK; full Visual Studio IDE is unnecessary. Install
+through Visual Studio Installer and confirm these components there; no 2026
+winget package ID is confirmed, so no winget install command is given here.
+**Validated 2026-10-10:** the native offline gates in §5 passed with the
+VS 2026 MSVC linker. Live-testing and clean-runtime acceptance remain separate.
 
 Reopen PS7 at the checkout and follow the mise tool route above before
 the Rust checks below. Pre-1.0 policy is latest stable (user
-2026-09-30, option A; revisit at 1.0). Historical first-gate measurement
-(2026-09-30): stable rustc/cargo 1.98.1 `x86_64-pc-windows-msvc`
-(official stable 2026-09-03), stable default, no overrides, with
-build/test/fmt --all/strict clippy pass (569 tests) and PS7 Core 7.6.6.
-Historical Linux rustc/cargo 1.98.1/1.98.0 came from the `devenv.yaml`
-nixpkgs pin. Policy stays latest stable; do not treat the 1.98.1 numbers
-as pins.
+2026-09-30, option A; revisit at 1.0). Record observed rustc/cargo versions
+with each gate run; observed numbers are test evidence, never pins. The
+Linux toolchain follows the `devenv.yaml` nixpkgs pin.
 
 ```powershell
 mise exec -- rustup show
@@ -326,8 +333,10 @@ mise exec -- where.exe cargo
 | KWin npm | `npm ci` and `typecheck` can use native Node >= 24. Current build/test scripts use POSIX `rm -rf`/`VAR=value`; tests also invoke `npx` with `execFileSync` (Windows `.cmd` issue). Keep build/tests on Linux unchanged. |
 | Linux gates | Workspace Rust tests/clippy, `just check-portable` (bash/jq/grep), shell suites, Nix checks, native KWin build/CTest and user live tests stay on Linux. |
 
-- **R:** Windows target std is absent from the laptop devenv sysroot; no
-  offline `cargo check --target x86_64-pc-windows-msvc` was run or installed.
+- **R; P:** verify Windows-target std availability in the Linux devenv
+  sysroot before claiming offline `cargo check --target
+  x86_64-pc-windows-msvc` results; do not install toolchains ad hoc to work
+  around a missing target.
   **P:** explicit package flags are the smallest reliable boundary; changing
   `default-members` changes Linux defaults, while target-gating dependencies
   alone cannot repair unguarded Linux source.
@@ -351,8 +360,8 @@ mise exec -- cargo clippy --locked -p tiler-core -p tiler-protocol -p tiler-kwin
   the discovered executable. `cc` build scripts discover `cl`/`lib` too;
   scripts directly invoking `link.exe` still depend on their own PATH.
 - **V: W9; P:** diagnostic: open Start's **x64 Native Tools Command Prompt
-  for VS 2022**, then launch the Store PS7 from that CMD window to inherit
-  its environment (no hardcoded MSI path):
+  for VS**, then launch PS7 from that CMD window to inherit
+  its environment (no hardcoded install path):
 
 ```cmd
 pwsh.exe -NoProfile
@@ -380,7 +389,7 @@ $env:INCLUDE
   No Nix/KWin/live tests in this job. Hosted runner preinstalled tools are
   **not** clean-runtime evidence [W10].
 - **P:** Windows sessions touching shared code must pass these native gates
-  plus all applicable Linux gates via user-authorized push/CI or the laptop.
+  plus all applicable Linux gates via user-authorized push/CI or Linux.
   Report Linux gates pending until green; physical KDE/Windows acceptance is
   user-owned. Do not claim deferred gates passed. Root `just dev` remains
   Linux-only. Native loop: `just --justfile windows.justfile dev`, `dev trace`,
@@ -393,9 +402,9 @@ $env:INCLUDE
 
 ### 6. Configure opencode and smoke-test the actual agent environment
 
-- **Settled (user 2026-09-30):** opencode installed via winget with the
-  known-working configuration transferred. Keep Store PS7 shell resolution;
-  do not configure an explicit opencode shell path.
+- **Settled (user 2026-09-30):** install opencode via winget and transfer the
+  known-working configuration. Keep PS7 shell resolution without an explicit
+  opencode shell path.
 - **V: O2:** global paths are `~/.config/opencode/opencode.json` and
   `~/.config/opencode/AGENTS.md` (normally `$HOME\.config\opencode\...` on
   Windows). Transfer the user's existing global rules and named agents,
@@ -408,8 +417,8 @@ $env:INCLUDE
 - **O; U: O4:** reports cover Store pwsh -> 5.1 fallback, ripgrep extraction,
   Windows plugin cache paths containing illegal `:`, and Git/PATH casing.
   Reports are verified, their applicability/fix status on the chosen binary
-  is not fully established. Fresh processed-beef Worker routing succeeded on
-  this PC; this does not verify every permission rule. Installing
+  is not fully established. Verify fresh processed-beef Worker routing on the
+  host before work; success does not verify every permission rule. Installing
   rg on PATH does not prove opencode's internal bootstrap will use it.
 
 ```powershell
@@ -451,8 +460,8 @@ git status --short
   (Pro/Enterprise/Education, not Home), BIOS virtualization, compatible CPU
   virtualization/SLAT, >= 4 GB RAM (8 recommended), two cores, >= 1 GB disk.
   Enable Windows Sandbox in Windows Features as a user/admin action; restart
-  if prompted. It is a disposable test guest on the **PC**, not development
-  in a VM or an assumption that the laptop can host one.
+  if prompted. It is a disposable test guest on the Windows host, not development
+  in a VM or an assumption that another host can provide one.
 - **P:** map only the exact shipped-payload directory read-only, disable
   networking/clipboard in `.wsb`, copy payload into guest-local storage and
   run without installing Rust, Git, PS7 or build tools. Repeat on a clean
@@ -470,28 +479,28 @@ git status --short
 | Clean binary startup; owned-window hide/reveal and forced-process-loss recovery | Physical desktop with owned disposable windows first (Phase 1-3). Phase 4 repeats clean-install/runtime in Sandbox when available. Discarding a guest is containment, not proof the independent restore path works. |
 | Win+L policy | Deferred to Phase 4 Sandbox guest-only snapshot/write/readback/locking-API/restore experiment. **U:** redirected Win+L may reach the host; no primary guarantee of guest chord delivery or reliable guest unlock. Never modify host policy. |
 | Win+Arrow, Snap/Start suppression, down/up and disable reversal | User's physical desktop; guest hooks see redirected input, not equivalent shell behavior. All four directions, ordinary integrity and game-disable proof. |
-| Two monitors, mixed DPI, games/anti-cheat, UAC/secure desktop | Other Win11 PC (not this dev PC). Sandbox's one guest display is not the host's topology; vGPU/RDP is not physical game compatibility. |
+| Two monitors, mixed DPI, games/anti-cheat, UAC/secure desktop | A multi-monitor Windows setup (native Windows, not a VM). Sandbox's one guest display is not the host's topology; vGPU/RDP is not physical game compatibility. |
 
 ### Verification checklist
 
 - [ ] Windows live-test boundary decided; installed tools match this list and the latest-stable Rust policy.
 - [ ] Agent tool call: Core PS7, correct `$PSHOME`, native executable paths.
-- [x] `rustc -vV`: x86_64-pc-windows-msvc; stable default active in checkout, no override.
-- [x] Native build/test/fmt/strict clippy pass; required Linux gates identified.
+- [ ] `rustc -vV`: x86_64-pc-windows-msvc; stable default active in checkout, no override.
+- [ ] Native build/test/fmt/strict clippy pass; required Linux gates identified.
 - [ ] `where.exe link` checked in ordinary and x64 VS environments; no foreign
   linker in the VS environment; Coreutils link disabled if installed.
 - [ ] Git settings/origins, LF checkout/attributes, `core.longpaths`, short
   paths, clean status and `git diff --check`; no mass conversion.
-- [x] processed-beef skills and fresh `muse-spark` Worker routing work with transferred config.
-- [x] Dual-boot confirmed: Win11 Pro build 26200 + NixOS nixos-unstable.
-- [x] Sandbox enabled, installed, rebooted, then closed 2026-09-30 after a failed preflight (user-dismissed WM_CLOSE; no processes remain); deferred to Phase 4 + Win+L guest-only. See [Phase 1 note](changes/windows-phase1-implementation.md).
-- [x] Single-display M27Q baseline accepted 2026-09-30 (see top of this doc); multi-monitor moves to the other Win11 PC. Physical input/display/game acceptance remains pending.
+- [ ] processed-beef skills and fresh `muse-spark` Worker routing work with transferred config.
+- [ ] Host OS/boot arrangement recorded; do not change the host boot arrangement.
+- [ ] Sandbox availability confirmed before Phase 4 + Win+L guest-only work; the historical 2026-09-30 preflight state is in the [Phase 1 note](changes/windows-phase1-implementation.md), not current proof.
+- [ ] Host display topology recorded (see top of this doc); initial owned-window proof may be bounded to one display; multi-monitor acceptance needs a multi-monitor Windows setup. Physical input/display/game acceptance remains pending.
 - [ ] Clean-runtime and independent recovery evidence obtained when a runnable
-  Windows spike exists; static CRT/OS imports are supporting, not proof. No
-  Sandbox again this assignment. Host input/game gates remain pending until
-  user-tested.
+  Windows spike exists; static CRT/OS imports are supporting, not proof.
+  Sandbox use stays deferred to Phase 4 clean-runtime and guest-only work.
+  Host input/game gates remain pending until user-tested.
 
-## Proposed PC global AGENTS.md section
+## Proposed Windows global AGENTS.md section
 
 **P:** append to the user's existing global rules, not replace them. Root
 dependency/live-testing amendments remain separate user decisions.
@@ -518,11 +527,11 @@ dependency/live-testing amendments remain separate user decisions.
 
 ## Proposed opencode configuration
 
-**V: O2/O5; P:** carry over the laptop's existing permission block and plugins
+**V: O2/O5; P:** carry over the existing permission block and plugins
 (`processed-beef@git+https://github.com/beefsack/processed-beef.git` and
 `opencode-claude-auth@latest`), preserving `edit: ask`, `subagent_depth: 2`
 and the existing bounded command allowlist. Merge these additions into the
-PC's global `opencode.json`; do not replace the allowlist. `shell` applies to
+user's global `opencode.json`; do not replace the allowlist. `shell` applies to
 agent shell tool calls; the permission key remains `bash` with PowerShell.
 Patterns use literal command text and `*`, not regex alternatives. Keep the
 existing `"*": "ask"` first and the deny rules last: last matching rule wins.
@@ -589,12 +598,15 @@ Before live Windows work, read and follow [live Windows testing](live-windows-te
 | AV block / SmartScreen reputation | Low-prevalence unsigned builds; detection | Keep Defender/SmartScreen on; inspect own hash/detection, submit false positive | Windows Security history and Microsoft submission [W13]; **U** hook-specific keylogger heuristic, not guaranteed |
 | Slow build | Scan-heavy repo/cache | Optional trusted Dev Drive performance mode, no broad exclusions | Drive query, Defender UI, measured build [W3] |
 | Extra runtime dependency | Dynamic CRT/dev DLLs | Future static CRT and artifact-only clean guest/machine | dumpbin imports plus clean launch; hosted CI insufficient |
-| Agent environment mismatch | Store alias, rg bootstrap, git plugin cache/path issue | Store PS7 with no explicit opencode shell path, official CLI, fresh smoke before delegation | Tool-call Core/version/path, dedicated search, skills and routing |
+| Agent environment mismatch | shell resolution, rg bootstrap, git plugin cache/path issue | PS7 with no explicit opencode shell path, official CLI, fresh smoke before delegation | Tool-call Core/version/path, dedicated search, skills and routing |
 
 ## Sources
 
-All accessed **2026-09-30**. Primary docs/source verify mechanisms; issue
-reports do not prove current-PC behavior. Local inspection is **R**, not a
+Unless noted otherwise, sources were accessed **2026-09-30**. The
+`Microsoft.PowerShell` package ID was confirmed **2026-10-10** with read-only
+`winget show --exact --id Microsoft.PowerShell --source winget`; no VS 2026
+winget ID was confirmed. Primary docs/source verify mechanisms; issue
+reports do not prove current-host behavior. Local inspection is **R**, not a
 Windows execution result.
 
 - G1: [Git attributes](https://git-scm.com/docs/gitattributes).
@@ -611,7 +623,7 @@ Windows execution result.
 - W5: [WinGet manifests](https://github.com/microsoft/winget-pkgs): [rg MSVC](https://github.com/microsoft/winget-pkgs/tree/master/manifests/b/BurntSushi/ripgrep/MSVC), [jq](https://github.com/microsoft/winget-pkgs/tree/master/manifests/j/jqlang/jq), [yq](https://github.com/microsoft/winget-pkgs/tree/master/manifests/m/MikeFarah/yq), [gh](https://github.com/microsoft/winget-pkgs/tree/master/manifests/g/GitHub/cli).
 - W6: [just Windows installation](https://just.systems/man/en/packages.html), [qsv Windows release assets](https://github.com/dathere/qsv/releases).
 - W7: [Microsoft Coreutils overview](https://learn.microsoft.com/en-us/windows/core-utils/overview), [preview/manager/shell conflicts](https://github.com/microsoft/coreutils), [first release](https://github.com/microsoft/coreutils/releases/tag/v2026.5.29).
-- W8: [VS Build Tools workloads/components](https://learn.microsoft.com/en-us/visualstudio/install/workload-component-id-vs-build-tools?view=vs-2022).
+- W8: [Previously used VS 2022 route's workloads/components](https://learn.microsoft.com/en-us/visualstudio/install/workload-component-id-vs-build-tools?view=vs-2022); see §4 for the selected VS 2026 route and its native offline validation.
 - W9: [VS native command-line environments](https://learn.microsoft.com/en-us/cpp/build/building-on-the-command-line?view=msvc-170).
 - W10: [GitHub hosted runner images/software](https://github.com/actions/runner-images).
 - W11: [Sandbox editions/requirements](https://learn.microsoft.com/en-us/windows/security/application-security/application-isolation/windows-sandbox/), [installation](https://learn.microsoft.com/en-us/windows/security/application-security/application-isolation/windows-sandbox/windows-sandbox-install), [configuration/isolation/persistence](https://learn.microsoft.com/en-us/windows/security/application-security/application-isolation/windows-sandbox/windows-sandbox-configure-using-wsb-file).
@@ -626,7 +638,7 @@ Windows execution result.
   `crates/plasma-auto-tiler/src/planner_service.rs`, `devenv.nix`, `devenv.yaml`,
   `.github/workflows/ci.yml`, `justfile`, `kwin/package.json`,
   `kwin/tests/{trace,source-rev,artifact-smoke,refresh-quiet-trace}.test.ts`;
-  `git ls-files --eol`, current sysroot inventory. No Windows target installed.
+  `git ls-files --eol`; verify target/sysroot inventory on the host.
 - **U remaining:** actual tool/plugin/permission behavior on the chosen opencode version,
   exact Sandbox display/input behavior, security detection, deep target paths,
   clean runtime closure and all physical shortcut/display/game acceptance.
