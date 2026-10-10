@@ -479,6 +479,152 @@ fn maximized_member_never_takes_geometry_writes() {
 }
 
 #[test]
+fn fullscreen_member_never_takes_geometry_writes() {
+    // Item 9 production seam: a fullscreen member classifies out of the
+    // eligible observation exactly like maximized, so the portable writable
+    // subset (the same `writable_subset` production calls) never includes
+    // its retained-only token: the overlaid tile keeps its Engine allocation
+    // with no native size/position write. Only move/hide/reveal touch it;
+    // focus carries no write (`classify_focus` overlay exemption, already
+    // pinned). The app-owned toggle refusal (`fullscreen_toggle_decision`)
+    // is untouched and covered separately.
+    use std::collections::{BTreeMap, BTreeSet, HashSet};
+    use tiler_windows::workspace::WindowKey;
+    use tiler_windows::workspace_owner::writable_subset;
+    let mut facts = eligible_facts();
+    facts.captionless_fullscreen = true;
+    assert_eq!(classify(&facts), Err(SkipReason::Fullscreen));
+    assert!(classify_focus(&facts).is_ok());
+    let key = WindowKey {
+        hwnd: 13,
+        pid: 14,
+        creation: "creation-b".to_owned(),
+    };
+    let members: BTreeSet<WindowKey> = BTreeSet::from([key.clone()]);
+    let token_of: BTreeMap<WindowKey, String> = BTreeMap::from([(key.clone(), "wB".to_owned())]);
+    let fresh: HashSet<String> = HashSet::new();
+    assert!(writable_subset(&members, |_| false, &token_of, &fresh).is_empty());
+    let fresh: HashSet<String> = HashSet::from(["wB".to_owned()]);
+    assert_eq!(
+        writable_subset(&members, |_| false, &token_of, &fresh),
+        HashSet::from(["wB".to_owned()])
+    );
+    assert!(writable_subset(&members, |_| true, &token_of, &fresh).is_empty());
+}
+#[test]
+fn fullscreen_send_carry_uses_stable_flags_and_reuses_mru_focus() {
+    // Item 9 integration seam: the stable fullscreen gate admits, the actual
+    // Engine stay send commits, and the plan focus resolves to the source
+    // MRU window (never the mover).
+    use tiler_core::engine::Engine;
+    use tiler_windows::workspace_owner::{
+        build_send_event, send_overlay_gate, stamp_send_target, workspace_domain,
+    };
+    assert_eq!(
+        send_overlay_gate(false, true, false, Some(true), true),
+        Ok(())
+    );
+    assert_eq!(
+        send_overlay_gate(false, false, false, Some(true), false),
+        Err("send-refused-fullscreen")
+    );
+    let bounds = rect(0, 0, 800, 600);
+    let mut engine = Engine::new();
+    let owner = OwnerId::parse("tiler-windows").expect("owner");
+    let generation = GenerationId::parse("aa").expect("generation");
+    engine.sync_binding(&owner, &generation);
+    let source = workspace_domain("mon-a", "ws-1", bounds, 8);
+    let target = workspace_domain("mon-a", "ws-2", bounds, 8);
+    for (tokens, focused) in [
+        (vec![("wA", bounds), ("wB", bounds)], Some("wB")),
+        (vec![("wC", bounds)], None),
+    ] {
+        let (domain, key) = if focused.is_some() { &source } else { &target };
+        let correlation = CorrelationId::parse("seed").expect("correlation");
+        let event = tiler_windows::tiling::build_reconcile_event_for(
+            &owner,
+            &generation,
+            &correlation,
+            0,
+            tokens.len() as u64,
+            domain,
+            key,
+            8,
+            &tokens
+                .iter()
+                .map(|(t, r)| {
+                    (
+                        WindowId((*t).to_owned()),
+                        *r,
+                        tiler_core::size_hints::WindowSizeHints::none(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            focused.map(|f| WindowId(f.to_owned())).as_ref(),
+        );
+        let _ = engine.handle(&event);
+    }
+    let revision = engine
+        .session(&source.1)
+        .map(|s| s.accepted_revision())
+        .unwrap_or(0);
+    let correlation = CorrelationId::parse("tick-1").expect("correlation");
+    let rows: Vec<tiler_windows::workspace_owner::OwnerRow> = ["wA", "wB"]
+        .iter()
+        .map(|t| tiler_windows::workspace_owner::OwnerRow {
+            token: (*t).to_owned(),
+            rect: bounds,
+            hints: tiler_core::size_hints::WindowSizeHints::none(),
+            floating: false,
+        })
+        .collect();
+    let mut event = build_send_event(
+        &owner,
+        &generation,
+        &correlation,
+        revision,
+        42,
+        source.clone(),
+        target.clone(),
+        &rows,
+        &[],
+        "wB",
+        8,
+        false,
+    )
+    .expect("event");
+    stamp_send_target(&mut event, &target.1);
+    let reply = engine.handle(&event);
+    let tiler_core::boundary::CoreReply::SendWorkspace(plan) = &reply else {
+        panic!("fullscreen-leg send commits, got {reply:?}");
+    };
+    assert!(
+        plan.geometry.iter().any(|g| g.window.0 == "wB"),
+        "mover admitted onto the target allocation"
+    );
+    let focus_domain = plan.focus_domain.clone().expect("stay focus domain");
+    assert_eq!(focus_domain, source.1, "stay focuses the source");
+    let focus_leaf = plan.focus_leaf.clone().expect("stay focus leaf");
+    let focused_window = engine
+        .session(&focus_domain)
+        .expect("focus session")
+        .snapshot()
+        .windows
+        .iter()
+        .find(|link| {
+            link.leaf == focus_leaf
+                && link.output == focus_domain.output
+                && link.workspace == focus_domain.workspace
+        })
+        .map(|link| link.window.0.clone());
+    assert_eq!(
+        focused_window.as_deref(),
+        Some("wA"),
+        "stay focus resolves to the source MRU, never the mover"
+    );
+}
+
+#[test]
 fn scope_filter_defaults_open_and_fences_exes() {
     let empty: Vec<String> = Vec::new();
     assert!(scope_allows(&empty, "C:\\Windows\\System32\\notepad.exe"));
@@ -2789,4 +2935,72 @@ fn r_max_03_floating_first_seen_max_defers_clear_then_tiles_on_retile() {
             .is_some_and(|s| s.is_exception(&WindowId("w9".to_owned()))),
         "intentional float exception survives the shared plan"
     );
+}
+
+#[test]
+fn workspace_cli_parses_fullscreen_toggle_without_move() {
+    // Item 9 test-needed out-of-hook route: `workspace --fullscreen` toggles
+    // the focused managed window through the existing workspace CLI request
+    // transport with no workspace move, no carried HWND, and no new IPC.
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|s| (*s).to_owned()).collect()
+    }
+    let parsed = parse_workspace_args(&strings(&["--fullscreen"])).expect("fullscreen parses");
+    assert_eq!(parsed.action, WorkspaceAction::Fullscreen);
+    assert_eq!(parsed.action.as_str(), "fullscreen");
+    assert_eq!(parsed.index, 0);
+    assert_eq!(parsed.direction, None);
+    // Normal-only transport fence: fullscreen is neither a send (no mover
+    // transfer, no follow intent) nor a select/history move, so the owner
+    // routes it to the fullscreen toggle branch only.
+    assert!(!parsed.action.is_send());
+    assert_eq!(parsed.action.follow(), None);
+    assert!(verify_workspace_argv_consistency(&strings(&["--fullscreen"]), &parsed).is_ok());
+    // Exclusivity and arity: exactly one bare flag, no mixing, no value.
+    assert!(parse_workspace_args(&strings(&["--fullscreen", "1"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--fullscreen", "next"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--select", "1", "--fullscreen"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--fullscreen", "--fullscreen"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--previous", "--fullscreen"])).is_err());
+    assert!(verify_workspace_argv_consistency(&strings(&["--previous"]), &parsed).is_err());
+    assert!(verify_workspace_argv_consistency(&strings(&["--fullscreen", "1"]), &parsed).is_err());
+    // Transport roundtrip carries exactly the grammar (no HWND/geometry), and
+    // a misplaced direction refuses: the request body never steers the target.
+    let request = WorkspaceRequest {
+        v: 1,
+        creation: "abc123".to_owned(),
+        pid: 4242,
+        exe_path: "C:\\bin\\tiler-windows.exe".to_owned(),
+        user_sid: "S-1-5-21-1".to_owned(),
+        session_id: 1,
+        action: WorkspaceAction::Fullscreen,
+        index: 0,
+        direction: None,
+        correlation: "cli-4242-ab12".to_owned(),
+    };
+    let body = render_workspace_request(&request);
+    assert!(body.contains("fullscreen"));
+    assert!(!body.contains("hwnd"));
+    assert_eq!(parse_workspace_request(&body).expect("roundtrip"), request);
+    let mut misplaced = request.clone();
+    misplaced.direction = Some(tiler_windows::tiling::WorkspaceDirection::Next);
+    assert!(parse_workspace_request(&render_workspace_request(&misplaced)).is_err());
+    // Route reuses the production toggle authority verbatim (no new decision):
+    // normal frames enter, owned frames exit, app-owned frames refuse
+    // (R-MAX-05), and suspended/elevated intents settle with no effect.
+    assert_eq!(
+        fullscreen_toggle_decision(false, false),
+        FullscreenToggle::Enter
+    );
+    assert_eq!(
+        fullscreen_toggle_decision(true, true),
+        FullscreenToggle::ExitOwned
+    );
+    assert_eq!(
+        fullscreen_toggle_decision(true, false),
+        FullscreenToggle::RefuseAppOwned
+    );
+    assert!(toggle_gate_outcome(true, false).is_some());
+    assert!(toggle_gate_outcome(false, true).is_some());
+    assert_eq!(toggle_gate_outcome(false, false), None);
 }

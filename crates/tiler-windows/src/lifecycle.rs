@@ -3,11 +3,12 @@ pub const MAX_RUN_SECONDS: u64 = 600;
 pub const STOP_REQUEST_FILE: &str = "stop.request";
 /// Exact-owner out-of-hook workspace request (normal `tile` only): one JSON
 /// object naming the owner creation plus an action (`select`/`send`/`stay`/
-/// `previous`/`relative`/`send-relative`/`stay-relative), a digit index 0..=9
-/// for the indexed actions, and a `previous`/`next` direction for the
+/// `previous`/`fullscreen`/`relative`/`send-relative`/`stay-relative), a digit
+/// index 0..=9 for the indexed actions, and a `previous`/`next` direction for
 /// relative actions. The owner loop validates the full owner binding and
 /// consumes the file once through the existing `workspace_do_select` /
-/// `workspace_do_send` resolvers (plus the pure history resolvers); the CLI
+/// `workspace_do_send` resolvers (plus the pure history resolvers and, for
+/// `fullscreen`, the existing project-owned fullscreen toggle); the CLI
 /// never actuates windows.
 pub const WORKSPACE_REQUEST_FILE: &str = "workspace.request";
 /// Pointer to the current per-run log file name (never geometry).

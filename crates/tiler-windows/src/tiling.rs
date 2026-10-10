@@ -2836,10 +2836,11 @@ pub fn parse_inspect_args(args: &[String]) -> Result<InspectOptions, String> {
 /// Exact-owner `workspace` control action (normal `tile` only): `select`
 /// focuses an existing/trailing same-output workspace, `send` moves the
 /// focused managed window there and follows, `stay` moves it without
-/// following, `previous` toggles the previous view, and the three `relative`
-/// forms step the item 1 scoped ring (`relative` selects, `send-relative`
-/// follows, `stay-relative` stays). No synthetic input, no keyboard
-/// acceptance, never a proof path.
+/// following, `previous` toggles the previous view, `fullscreen` toggles
+/// fullscreen on the focused managed window with no workspace move, and the
+/// three `relative` forms step the item 1 scoped ring (`relative` selects,
+/// `send-relative` follows, `stay-relative` stays). No synthetic input, no
+/// keyboard acceptance, never a proof path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum WorkspaceAction {
     #[serde(rename = "select")]
@@ -2850,6 +2851,8 @@ pub enum WorkspaceAction {
     Stay,
     #[serde(rename = "previous")]
     Previous,
+    #[serde(rename = "fullscreen")]
+    Fullscreen,
     #[serde(rename = "relative")]
     RelativeHistory,
     #[serde(rename = "send-relative")]
@@ -2866,6 +2869,7 @@ impl WorkspaceAction {
             Self::Send => "send",
             Self::Stay => "stay",
             Self::Previous => "previous",
+            Self::Fullscreen => "fullscreen",
             Self::RelativeHistory => "relative",
             Self::RelativeSend => "send-relative",
             Self::RelativeStay => "stay-relative",
@@ -2874,24 +2878,27 @@ impl WorkspaceAction {
 
     /// True for the three send-family actions (numbered/relative follow/stay):
     /// they move the focused managed window and require a managed origin.
-    /// Select/history actions work on empty workspaces and unmanaged
+    /// Select/history/fullscreen actions never move workspaces; `fullscreen`
+    /// still requires a managed origin (it toggles the focused managed
+    /// window), while select/history work on empty workspaces and unmanaged
     /// foreground.
     #[must_use]
     pub const fn is_send(self) -> bool {
         match self {
             Self::Send | Self::RelativeSend | Self::RelativeStay | Self::Stay => true,
-            Self::Select | Self::Previous | Self::RelativeHistory => false,
+            Self::Select | Self::Previous | Self::Fullscreen | Self::RelativeHistory => false,
         }
     }
 
     /// Explicit follow intent for the send family (`send`/`send-relative`
-    /// follow; `stay`/`stay-relative` stay). `None` for select/history.
+    /// follow; `stay`/`stay-relative` stay). `None` for select/history/
+    /// fullscreen.
     #[must_use]
     pub const fn follow(self) -> Option<bool> {
         match self {
             Self::Send | Self::RelativeSend => Some(true),
             Self::Stay | Self::RelativeStay => Some(false),
-            Self::Select | Self::Previous | Self::RelativeHistory => None,
+            Self::Select | Self::Previous | Self::Fullscreen | Self::RelativeHistory => None,
         }
     }
 }
@@ -2927,12 +2934,15 @@ impl WorkspaceDirection {
 }
 
 /// CLI options for the exact-owner `workspace` control (normal `tile` only):
-/// `--select`/`--send`/`--stay` take a digit index 0..=9; `--previous` takes
-/// no value; `--relative`/`--send-relative`/`--stay-relative` take
-/// `previous`|`next`. The CLI only queues a bounded single-pending request
-/// file; the owner loop validates the full owner binding and dispatches
-/// through the existing `workspace_do_select` / `workspace_do_send`
-/// resolvers (plus the pure history resolvers). No synthetic input, no
+/// `--select`/`--send`/`--stay` take a digit index 0..=9; `--previous` and
+/// `--fullscreen` take no value; `--relative`/`--send-relative`/
+/// `--stay-relative` take `previous`|`next`. The CLI only queues a bounded
+/// single-pending request file; the owner loop validates the full owner
+/// binding and dispatches through the existing `workspace_do_select` /
+/// `workspace_do_send` resolvers (plus the pure history resolvers) or, for
+/// `--fullscreen`, through the existing project-owned fullscreen toggle
+/// (`fullscreen_toggle_decision` + `enter_fullscreen`/`exit_fullscreen_owned`
+/// with the `RefuseAppOwned` R-MAX-05 refusal). No synthetic input, no
 /// keyboard acceptance, never a proof path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceOptions {
@@ -2942,10 +2952,11 @@ pub struct WorkspaceOptions {
 }
 
 /// Parse `workspace` CLI forms. Exactly one action flag; indexed forms take a
-/// digit 0..=9, relative forms take `previous`|`next`, `--previous` takes no
-/// value. Anything else (including a missing value or both flags) refuses.
+/// digit 0..=9, relative forms take `previous`|`next`, `--previous` and
+/// `--fullscreen` take no value. Anything else (including a missing value or
+/// both flags) refuses.
 pub fn parse_workspace_args(args: &[String]) -> Result<WorkspaceOptions, String> {
-    let usage = "usage: workspace (--select|--send|--stay) INDEX | --previous | (--relative|--send-relative|--stay-relative) (previous|next)";
+    let usage = "usage: workspace (--select|--send|--stay) INDEX | --previous | --fullscreen | (--relative|--send-relative|--stay-relative) (previous|next)";
     let mut action: Option<WorkspaceAction> = None;
     let mut index: u8 = 0;
     let mut direction: Option<WorkspaceDirection> = None;
@@ -2957,6 +2968,7 @@ pub fn parse_workspace_args(args: &[String]) -> Result<WorkspaceOptions, String>
             "--send" => WorkspaceAction::Send,
             "--stay" => WorkspaceAction::Stay,
             "--previous" => WorkspaceAction::Previous,
+            "--fullscreen" => WorkspaceAction::Fullscreen,
             "--relative" => WorkspaceAction::RelativeHistory,
             "--send-relative" => WorkspaceAction::RelativeSend,
             "--stay-relative" => WorkspaceAction::RelativeStay,
@@ -2976,7 +2988,7 @@ pub fn parse_workspace_args(args: &[String]) -> Result<WorkspaceOptions, String>
                 index = parsed;
                 i += 1;
             }
-            WorkspaceAction::Previous => {}
+            WorkspaceAction::Previous | WorkspaceAction::Fullscreen => {}
             WorkspaceAction::RelativeHistory
             | WorkspaceAction::RelativeSend
             | WorkspaceAction::RelativeStay => {
@@ -3002,24 +3014,25 @@ pub fn parse_workspace_args(args: &[String]) -> Result<WorkspaceOptions, String>
 }
 
 /// Verify the raw received argv against the parsed `workspace` options:
-/// exactly one action flag plus its matching value (none for `--previous`),
-/// no unknown flags.
+/// exactly one action flag plus its matching value (none for `--previous`
+/// and `--fullscreen`), no unknown flags.
 pub fn verify_workspace_argv_consistency(
     raw: &[String],
     parsed: &WorkspaceOptions,
 ) -> Result<(), String> {
-    let usage = "usage: workspace (--select|--send|--stay) INDEX | --previous | (--relative|--send-relative|--stay-relative) (previous|next)";
+    let usage = "usage: workspace (--select|--send|--stay) INDEX | --previous | --fullscreen | (--relative|--send-relative|--stay-relative) (previous|next)";
     let want = match parsed.action {
         WorkspaceAction::Select => "--select",
         WorkspaceAction::Send => "--send",
         WorkspaceAction::Stay => "--stay",
         WorkspaceAction::Previous => "--previous",
+        WorkspaceAction::Fullscreen => "--fullscreen",
         WorkspaceAction::RelativeHistory => "--relative",
         WorkspaceAction::RelativeSend => "--send-relative",
         WorkspaceAction::RelativeStay => "--stay-relative",
     };
     match parsed.action {
-        WorkspaceAction::Previous => {
+        WorkspaceAction::Previous | WorkspaceAction::Fullscreen => {
             if raw.len() != 1 {
                 return Err(usage.to_owned());
             }
@@ -3115,7 +3128,8 @@ pub fn parse_workspace_request(json: &str) -> Result<WorkspaceRequest, String> {
         WorkspaceAction::Select
         | WorkspaceAction::Send
         | WorkspaceAction::Stay
-        | WorkspaceAction::Previous => {
+        | WorkspaceAction::Previous
+        | WorkspaceAction::Fullscreen => {
             if request.direction.is_some() {
                 return Err("refuse: malformed workspace request".to_owned());
             }

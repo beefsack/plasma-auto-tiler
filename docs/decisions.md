@@ -1728,6 +1728,19 @@ platform API behavior.
   output transfer, without unmaximize/remaximize or overlay geometry writes.
   Existing arrival/current-view/lifetime/follow/stay fences still apply.
   Status: KDE maximize carry delivered offline ([record](changes/archive/reference-comparison-implementation.md)); KDE native arrival preservation pending. Windows same-output numbered/relative follow/stay, source MRU and native target unmaximize agent-observed 2026-10-11 ([record](changes/archive/windows-workspace-send-follow-stay.md)); physical/cross-output pending. KDE fullscreen native send still observe-first (currently refuses fullscreen sends).
+- Windows fullscreen workspace carry R-MAX-09 delivered 2026-10-11,
+  base `6b76589` plus delivery commit ([record](changes/archive/windows-fullscreen-workspace-carry.md)).
+  Same-output numbered follow/stay and relative follow, source reflow/MRU,
+  hidden target and project exit to target allocation agent-observed; native
+  gates passed. No restore before send or mover geometry writes.
+  Tentative, pending user review: fullscreen follow suppresses explicit focus
+  actuation for its reveal transition (native reveal may focus); managed
+  app-owned fullscreen with a retained tile uses the same stable-flag carry
+  fences, while R-MAX-05 toggle refusal remains. Unreadable fullscreen flags
+  defer before effects; slotless born-fullscreen stays ineligible.
+  Test-needed `workspace --fullscreen` reuses exact-owner consume-once CLI
+  transport and toggle authority; grammar is tentative, pending user review.
+  Physical shortcuts/native flag races/app-owned games/cross-output pending.
 - KDE borderless-windowed fullscreen heuristic (born-fullscreen option 3,
   user 2026-10-10): stays conditional. The user watches for borderless games
   during dogfooding; revisit only if games arrive non-fullscreen. This is a

@@ -1612,9 +1612,13 @@ decisions of 2026-09-24 are under
       matrix `R-RST-01` and `R-FLT-05` Ours Windows cells updated with
       dated offline evidence, native journey TBD.
 
-  - Item 9: fullscreen send R-MAX-09 (Windows carry). Table A R-MAX-09
-    accepted 2026-10-07: Windows workspace send carries fullscreen state
-    without restoring first (P1 adoption entry in this file). Depends on
+  - Item 9: fullscreen send R-MAX-09 delivered same-output 2026-10-11,
+    base `6b76589` plus delivery commit ([record](changes/archive/windows-fullscreen-workspace-carry.md));
+    native gates passed; CLI numbered follow/stay, relative follow and exit
+    to target allocation agent-observed. Physical/flag-race/app-owned/game/
+    cross-output pending; fullscreen follow focus suppression and exact-owner
+    fullscreen CLI are tentative, pending user review. Historical checklist:
+    Table A accepted 2026-10-07 carries state without restoring first. Depends on
     handoff item 2 follow/stay wiring only; same-output workspace carry,
     never the parity-queue multi-output foundation.
 

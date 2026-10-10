@@ -227,10 +227,11 @@ pub struct SendFenceLive {
 /// Re-verify carried pre-plan fences against live tail-time readings.
 /// `None` holds; `Some(outcome)` refuses with no further effects and no
 /// replay. Ordinary movers ride `(false, false)` overlay flags through both
-/// sides and pass trivially; a live fullscreen refuses outright (never
-/// sends) and any overlay drift defers with no restore. Production tails
-/// MUST route through this gate (tested decision table below); it never
-/// fabricates state, only compares.
+/// sides and pass trivially; a stable fullscreen snapshot carries exactly
+/// like maximized (item 9); a newly arrived live fullscreen refuses outright
+/// (never sends) and any other overlay drift defers with no restore.
+/// Production tails MUST route through this gate (tested decision table
+/// below); it never fabricates state, only compares.
 #[must_use]
 pub const fn send_fences_hold(
     snap: SendFenceSnapshot,
@@ -254,7 +255,7 @@ pub const fn send_fences_hold(
     if !live.membership_ok {
         return Some("unverified");
     }
-    if live.overlay_fullscreen {
+    if live.overlay_fullscreen && live.overlay_fullscreen != snap.overlay_fullscreen {
         return Some("send-refused-fullscreen");
     }
     if live.overlay_maximized != snap.overlay_maximized
@@ -265,25 +266,60 @@ pub const fn send_fences_hold(
     None
 }
 
-/// Item 20 overlay-flag gate for a send (portable decision; the caller
-/// supplies live OS reads, never fabricated): live fullscreen refuses
-/// outright; any maximized/fullscreen drift between the pre-plan snapshot
-/// and the live recheck defers with no writes and no restore. Production
-/// pre-plan, post-plan, and pre-effect checks MUST route through this gate
-/// (tested decision table below). Maximized carry itself never restores.
+/// Item 9 fullscreen-carry overlay-flag gate for a send (portable decision;
+/// the caller supplies live OS reads, never fabricated): a stable fullscreen
+/// snapshot carries exactly like maximized; a newly arrived live fullscreen
+/// refuses outright; any other maximized/fullscreen drift between the
+/// pre-plan snapshot and the live recheck defers with no writes and no
+/// restore. A fullscreen snapshot with an unreadable live flag defers as
+/// well (pre-effect: never trust the retained fallback before effects; the
+/// post-transfer hidden tails keep the bounded legacy fallback, unchanged).
+/// Production pre-plan, post-plan, and pre-effect checks MUST route through
+/// this gate (tested decision table below). Maximized/fullscreen carry
+/// itself never restores.
 pub const fn send_overlay_gate(
     pre_maximized: bool,
     pre_fullscreen: bool,
     live_maximized: bool,
-    live_fullscreen: bool,
+    live_fullscreen: Option<bool>,
+    fallback_fullscreen: bool,
 ) -> Result<(), &'static str> {
-    if live_fullscreen {
+    if pre_fullscreen && live_fullscreen.is_none() {
+        return Err("deferred");
+    }
+    let live_fullscreen = match live_fullscreen {
+        Some(flag) => flag,
+        None => fallback_fullscreen,
+    };
+    if live_fullscreen && live_fullscreen != pre_fullscreen {
         return Err("send-refused-fullscreen");
     }
     if live_maximized != pre_maximized || live_fullscreen != pre_fullscreen {
         return Err("deferred");
     }
     Ok(())
+}
+
+/// Item 9 retained-overlay admission for a send: a retained maximized or
+/// fullscreen member resolves through its retained row with a live flag
+/// recheck (never as an ordinary mover); any other retained row never sends
+/// as an overlay mover. Slotless born-held windows never reach this (no
+/// member token means `unmanaged` first). Production send dispatch MUST
+/// route retained movers through this (tested table below).
+#[must_use]
+pub const fn send_retained_overlay_admits(row_maximized: bool, row_fullscreen: bool) -> bool {
+    row_maximized || row_fullscreen
+}
+
+/// Item 9 follow-focus policy for a workspace send: a stable fullscreen
+/// snapshot suppresses ALL explicit focus actuation for the follow
+/// transition (the select still reveals/reconciles the target; a fresh
+/// foreground readback reports observed focus honestly). Ordinary and
+/// maximized sends keep explicit focus. Production `workspace_send_follow`
+/// MUST route through this; it never touches windows, only decides.
+#[must_use]
+pub const fn send_focus_suppressed(snapshot_fullscreen: bool) -> bool {
+    snapshot_fullscreen
 }
 
 /// Stay-focus resolution class (item 2): `Null` is a genuine null plan (sole
@@ -4773,6 +4809,214 @@ mod tests {
     }
 
     #[test]
+    fn send_fullscreen_carry_matches_maximized_allocation() {
+        // Item 9: each overlay kind resolves through retained admission plus
+        // the live overlay gate, then takes the identical actual retained
+        // Engine allocation in both intents (the Engine never sees overlay
+        // flags). Fails if either leg's admission or gate is removed.
+        use super::{send_overlay_gate, send_retained_overlay_admits};
+        let bounds = rect(0, 0);
+        let mut allocations = Vec::new();
+        for (row_maximized, row_fullscreen) in [(true, false), (false, true)] {
+            // Retained resolution, production order: admission first, then the
+            // live recheck against the row snapshot (readable stable frame).
+            assert!(
+                send_retained_overlay_admits(row_maximized, row_fullscreen),
+                "overlay leg admits"
+            );
+            assert_eq!(
+                send_overlay_gate(
+                    row_maximized,
+                    row_fullscreen,
+                    row_maximized,
+                    Some(row_fullscreen),
+                    row_fullscreen
+                ),
+                Ok(()),
+                "stable overlay leg carries"
+            );
+            for follow in [true, false] {
+                let mut engine = tiler_core::engine::Engine::new();
+                let owner = OwnerId::parse("tiler-windows").expect("owner");
+                let generation = GenerationId::parse("aa").expect("generation");
+                engine.sync_binding(&owner, &generation);
+                let source = workspace_domain("mon-a", "ws-1", bounds, 8);
+                let target = workspace_domain("mon-a", "ws-2", bounds, 8);
+                seed_send_domains(
+                    &mut engine,
+                    &owner,
+                    &generation,
+                    &source,
+                    &target,
+                    &["wA", "wB"],
+                    &["wC"],
+                    "wB",
+                    bounds,
+                );
+                let plan = send_through_engine(
+                    &mut engine,
+                    &owner,
+                    &generation,
+                    &source,
+                    &target,
+                    &["wA", "wB"],
+                    &["wC"],
+                    "wB",
+                    bounds,
+                    follow,
+                );
+                let mut geometry: Vec<(String, Rect)> = plan
+                    .geometry
+                    .iter()
+                    .map(|g| (g.window.0.clone(), g.rect))
+                    .collect();
+                geometry.sort_by(|a, b| a.0.cmp(&b.0));
+                allocations.push((
+                    row_maximized,
+                    row_fullscreen,
+                    follow,
+                    plan.operation,
+                    geometry,
+                ));
+            }
+        }
+        let first = &allocations[0];
+        for entry in &allocations[1..] {
+            assert_eq!(
+                std::mem::discriminant(&entry.3),
+                std::mem::discriminant(&first.3),
+                "same structural operation across overlay kinds and intents"
+            );
+            assert_eq!(
+                entry.4, first.4,
+                "identical allocation across overlay kinds and intents"
+            );
+        }
+        assert!(first.4.iter().any(|(w, _)| w == "wB"), "mover admitted");
+        assert!(first.4.iter().any(|(w, _)| w == "wA"), "survivor reflowed");
+    }
+
+    #[test]
+    fn send_fullscreen_mover_never_takes_geometry_writes() {
+        // Item 9: a fullscreen mover classifies out of the eligible
+        // observation exactly like maximized, so the portable writable
+        // subset (the same `writable_subset` production calls) never
+        // includes its retained-only token: no native size/position write.
+        use crate::tiling::{SkipReason, classify, classify_focus};
+        use std::collections::{BTreeMap, BTreeSet, HashSet};
+        let facts = crate::tiling::WindowFacts {
+            visible: true,
+            minimized: false,
+            maximized: false,
+            cloaked: false,
+            elevated: false,
+            shell: false,
+            tool_window: false,
+            owned: false,
+            captionless_fullscreen: true,
+            no_activate: false,
+            dialog: false,
+        };
+        assert_eq!(classify(&facts), Err(SkipReason::Fullscreen));
+        assert!(classify_focus(&facts).is_ok());
+        let key = key(77);
+        let members: BTreeSet<WindowKey> = BTreeSet::from([key.clone()]);
+        let token_of: BTreeMap<WindowKey, String> =
+            BTreeMap::from([(key.clone(), "wB".to_owned())]);
+        let fresh: HashSet<String> = HashSet::new();
+        assert!(
+            super::writable_subset(&members, |_| false, &token_of, &fresh).is_empty(),
+            "retained fullscreen token never writable"
+        );
+        let fresh: HashSet<String> = HashSet::from(["wB".to_owned()]);
+        assert!(
+            super::writable_subset(&members, |_| true, &token_of, &fresh).is_empty(),
+            "hidden fullscreen target never writable"
+        );
+    }
+
+    #[test]
+    fn send_fullscreen_stay_keeps_source_mru_and_null_without_setter() {
+        // Item 9: stay reuses the existing MRU/null policy unchanged. A
+        // non-empty source names the source MRU (never the mover), and the
+        // genuine sole-mover Engine null plan resolves Null (no setter).
+        use super::{StayFocusClass, classify_stay_focus};
+        let bounds = rect(0, 0);
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        let mut engine = tiler_core::engine::Engine::new();
+        engine.sync_binding(&owner, &generation);
+        let source = workspace_domain("mon-a", "ws-1", bounds, 8);
+        let target = workspace_domain("mon-a", "ws-2", bounds, 8);
+        seed_send_domains(
+            &mut engine,
+            &owner,
+            &generation,
+            &source,
+            &target,
+            &["wA", "wB"],
+            &["wC"],
+            "wB",
+            bounds,
+        );
+        let stay = send_through_engine(
+            &mut engine,
+            &owner,
+            &generation,
+            &source,
+            &target,
+            &["wA", "wB"],
+            &["wC"],
+            "wB",
+            bounds,
+            false,
+        );
+        let stay_focus = stay.focus_domain.clone().expect("stay focus");
+        assert_eq!(stay_focus, source.1, "stay focuses the source");
+        let stay_leaf = stay.focus_leaf.clone().expect("stay leaf");
+        assert_eq!(
+            snapshot_window(&engine, &stay_focus, &stay_leaf).as_deref(),
+            Some("wA"),
+            "stay names the source MRU, never the mover"
+        );
+        // Genuine sole-mover null plan from the actual Engine, then the
+        // production policy on that plan state: Null means no setter.
+        let mut engine = tiler_core::engine::Engine::new();
+        engine.sync_binding(&owner, &generation);
+        seed_send_domains(
+            &mut engine,
+            &owner,
+            &generation,
+            &source,
+            &target,
+            &["wB"],
+            &["wC"],
+            "wB",
+            bounds,
+        );
+        let sole = send_through_engine(
+            &mut engine,
+            &owner,
+            &generation,
+            &source,
+            &target,
+            &["wB"],
+            &["wC"],
+            "wB",
+            bounds,
+            false,
+        );
+        assert_eq!(sole.focus_domain, None, "sole stay has no focus domain");
+        assert_eq!(sole.focus_leaf, None, "sole stay has no focus leaf");
+        let plan_null = sole.focus_domain.is_none() || sole.focus_leaf.is_none();
+        assert_eq!(
+            classify_stay_focus(plan_null, false, false, false, false, false),
+            StayFocusClass::Null,
+            "actual null plan resolves Null with no setter"
+        );
+    }
+
+    #[test]
     fn relative_send_target_freezes_once_across_trailing_and_wrap() {
         // Ring resolution is pure: no activation, no append, no creation.
         // Targets freeze once pre-transfer (filling the trailing empty
@@ -5023,7 +5267,8 @@ mod tests {
             ),
             Some("unverified")
         );
-        // Item 20: live fullscreen refuses outright, overlay drift defers.
+        // Item 9: a newly arrived live fullscreen refuses outright, other
+        // overlay drift defers.
         assert_eq!(
             send_fences_hold(
                 snap,
@@ -5069,40 +5314,134 @@ mod tests {
             ),
             Some("deferred")
         );
+        // Retained fullscreen carry holds exactly like maximized while flags
+        // stay stable; a fullscreen exit defers and a maximized drift on a
+        // fullscreen snapshot defers.
+        let snap_full = SendFenceSnapshot {
+            overlay_fullscreen: true,
+            ..snap
+        };
+        assert_eq!(
+            send_fences_hold(
+                snap_full,
+                SendFenceLive {
+                    overlay_fullscreen: true,
+                    ..live
+                }
+            ),
+            None
+        );
+        assert_eq!(
+            send_fences_hold(
+                snap_full,
+                SendFenceLive {
+                    overlay_fullscreen: false,
+                    ..live
+                }
+            ),
+            Some("deferred")
+        );
+        assert_eq!(
+            send_fences_hold(
+                snap_full,
+                SendFenceLive {
+                    overlay_fullscreen: true,
+                    overlay_maximized: true,
+                    ..live
+                }
+            ),
+            Some("deferred")
+        );
     }
 
     #[test]
     fn send_overlay_gate_refuses_fullscreen_and_defers_drift() {
         // Production pre-plan, post-plan, and pre-effect checks MUST route
-        // through `send_overlay_gate` with live OS reads: fullscreen never
-        // sends, drift defers with no restore, stable maximized carry passes.
+        // through `send_overlay_gate` with live OS reads: a newly arrived
+        // fullscreen refuses outright, other drift defers with no restore,
+        // and stable maximized/fullscreen carry passes (item 9). A
+        // fullscreen snapshot with an unreadable live flag defers pre-effect
+        // (never trusts the fallback); ordinary/maximized snapshots keep the
+        // legacy fallback.
         use super::send_overlay_gate;
-        assert_eq!(send_overlay_gate(false, false, false, false), Ok(()));
-        assert_eq!(send_overlay_gate(true, false, true, false), Ok(()));
         assert_eq!(
-            send_overlay_gate(false, false, false, true),
+            send_overlay_gate(false, false, false, Some(false), false),
+            Ok(())
+        );
+        assert_eq!(
+            send_overlay_gate(true, false, true, Some(false), false),
+            Ok(())
+        );
+        assert_eq!(
+            send_overlay_gate(false, true, false, Some(true), true),
+            Ok(())
+        );
+        assert_eq!(
+            send_overlay_gate(true, true, true, Some(true), true),
+            Ok(())
+        );
+        assert_eq!(
+            send_overlay_gate(false, false, false, Some(true), false),
             Err("send-refused-fullscreen")
         );
         assert_eq!(
-            send_overlay_gate(true, false, true, true),
+            send_overlay_gate(true, false, true, Some(true), true),
             Err("send-refused-fullscreen")
         );
         assert_eq!(
-            send_overlay_gate(false, true, false, true),
-            Err("send-refused-fullscreen")
-        );
-        assert_eq!(
-            send_overlay_gate(true, false, false, false),
+            send_overlay_gate(false, true, true, Some(true), true),
             Err("deferred")
         );
         assert_eq!(
-            send_overlay_gate(false, false, true, false),
+            send_overlay_gate(false, true, false, Some(false), true),
             Err("deferred")
         );
         assert_eq!(
-            send_overlay_gate(false, false, false, true),
-            Err("send-refused-fullscreen")
+            send_overlay_gate(true, false, false, Some(false), false),
+            Err("deferred")
         );
+        assert_eq!(
+            send_overlay_gate(false, false, true, Some(false), false),
+            Err("deferred")
+        );
+        // Unreadable live flag: fullscreen snapshots defer, others ride the
+        // legacy fallback (unreadable ordinary holds, retained maximized
+        // still defers its maximize drift).
+        assert_eq!(
+            send_overlay_gate(false, true, false, None, true),
+            Err("deferred")
+        );
+        assert_eq!(send_overlay_gate(false, false, false, None, false), Ok(()));
+        assert_eq!(
+            send_overlay_gate(true, false, false, None, false),
+            Err("deferred")
+        );
+    }
+
+    #[test]
+    fn send_retained_overlay_admission_covers_maximized_and_fullscreen() {
+        // Production send dispatch MUST route retained movers through
+        // `send_retained_overlay_admits`: maximized and fullscreen members
+        // resolve through the retained row with a live recheck, never as
+        // ordinary; any other retained row never sends as an overlay mover
+        // (slotless born-held windows never reach this: no member token
+        // means `unmanaged` first).
+        use super::send_retained_overlay_admits;
+        assert!(send_retained_overlay_admits(true, false));
+        assert!(send_retained_overlay_admits(false, true));
+        assert!(send_retained_overlay_admits(true, true));
+        assert!(!send_retained_overlay_admits(false, false));
+    }
+
+    #[test]
+    fn send_focus_suppressed_only_for_fullscreen_snapshots() {
+        // Production `workspace_send_follow` MUST route through
+        // `send_focus_suppressed`: a fullscreen snapshot suppresses ALL
+        // explicit focus actuation for the follow transition; ordinary and
+        // maximized snapshots keep explicit focus.
+        use super::send_focus_suppressed;
+        assert!(!send_focus_suppressed(false));
+        assert!(send_focus_suppressed(true));
     }
 
     #[test]

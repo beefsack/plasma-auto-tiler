@@ -533,12 +533,30 @@ rectangles where geometry is load-bearing.
   target, stay retains source MRU/visibility, native unmaximize returns to
   retained target allocation. Native gates passed, base `553c65b` plus
   [delivery record](../../changes/archive/windows-workspace-send-follow-stay.md).
-  Physical chords/flag-race injection/cross-output pending;
-  a fullscreen B refuses with no writes
-  (`send-refused-fullscreen`). `S(S-ours-ws)` + `S(S-ours-winsend)`.
+  Fullscreen same-output carry delivered and agent-observed 2026-10-11,
+  base `6b76589` plus [delivery record](../../changes/archive/windows-fullscreen-workspace-carry.md):
+  numbered follow/stay and relative follow keep B captionless at full-output
+  bounds without restoring first; source A reflows, target C shares the
+  retained Engine allocation, and project fullscreen exit restores B to its
+  target slot. Stay keeps A foreground and B hidden until target selection.
+  Fullscreen follow suppresses explicit focus actuation (`focus-suppressed`
+  observed), selecting/revealing target without forcing B foreground; this
+  gaming-first detail is tentative, pending user review. Stable managed
+  app-owned fullscreen uses the same carry gates, also tentative; native
+  app-owned carry remains TBD. Slotless born-fullscreen has no retained tile
+  allocation and stays ineligible. R-MAX-05 toggle refusal is unchanged.
+  Physical chords, deterministic native flag-race injection, games and
+  cross-output remain pending. `S(S-ours-ws)` + `S(S-ours-winsend)`.
   G-D2 User 2026-10-10 retains maximized arrival carry as the cross-platform
   target (deliberate COSMIC/niri deviation: sending relocates the whole window
   and its state, unlike an in-layout move). The selected fullscreen carry
-  from Table A 2026-10-07 is unchanged and still an implementation gap.
+  from Table A 2026-10-07 is implemented for Windows same-output sends.
+- Discriminating Windows variants (2026-10-11): `WS1=H[A,B*:full]`,
+  occupied WS2; follow-send B -> target revealed, B still full, zero explicit
+  focus actuation (agent-observed); fresh managed app-owned B:full with no
+  project preimage -> send uses the same carry fences, toggle still refuses,
+  native send outcome TBD. Fresh slotless born-fullscreen B -> send cannot
+  obtain a retained tile allocation; native outcome TBD. Unsupported reference
+  outcomes for these ownership/focus variants remain TBD.
 - Variant hook: NORMATIVE maximized carry (G-D2 User 2026-10-10);
   fullscreen KDE native policy remains observe-first/TBD.

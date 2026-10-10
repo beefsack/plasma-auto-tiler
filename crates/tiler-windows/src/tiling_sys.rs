@@ -10202,6 +10202,7 @@ fn workspace_do_select(
     target: &str,
     ctx: &ActionCtx,
     focus_hint: Option<&crate::workspace::WindowKey>,
+    suppress_focus: bool,
 ) -> SelectEffect {
     let none =
         |outcome: &'static str, source_workspace: String, target_workspace: String| SelectEffect {
@@ -10504,56 +10505,76 @@ fn workspace_do_select(
     // fullscreen or elevated arrival is never stolen from, and identity,
     // lifetime, scope, and observation gates inside `actuate_focus` still
     // apply. Skipping focus there lets geometry veto honestly.
-    let members = state.workspaces.workspace_members(output, target);
-    // Retained-aware focus set: maximized and fullscreen movers are
-    // retained, never eligible-observed, so their tokens ride along for focus
-    // only (geometry still excludes them via `writable_tokens`; focus carries
-    // no write, KDE `requestFocus` parity). The foreground fence below still
-    // never steals from a real arrival.
-    let mut fresh_tokens: HashSet<String> =
-        fresh_observed.iter().map(|w| w.token.clone()).collect();
-    for row in &fresh_retained {
-        if row.maximized || row.fullscreen {
-            fresh_tokens.insert(row.token.clone());
-        }
-    }
-    let eligible =
-        state
-            .workspaces
-            .eligible_focus_set(&members, &state.member_tokens, &fresh_tokens);
-    let focus_key = focus_hint
-        .filter(|hint| eligible.contains(*hint))
-        .cloned()
-        .or_else(|| state.workspaces.focus_target(output, target, &eligible));
+    // Item 9 fullscreen-carry transitions suppress ALL explicit focus
+    // actuation here (never `SetForegroundWindow` on a fullscreen mover):
+    // the select still reveals/reconciles the target, and a fresh foreground
+    // readback reports observed focus honestly below.
     let mut focus_outcome: &'static str = "no-focus";
     // Focus duration covers the bounded pumped settle when it runs, so a
     // dominating 500 ms settle attributes to focus, not geometry.
     let mut focus_ms: u64 = 0;
-    if let Some(ref focus_key) = focus_key {
-        let token = state
-            .member_tokens
-            .get(focus_key)
+    if suppress_focus {
+        // No setter, no priming, no MRU fallback actuation: compare the fresh
+        // foreground against the mover hint only. Native reveal may have
+        // focused the mover; anything else stays explicitly suppressed.
+        let foreground = unsafe { GetForegroundWindow() } as usize as u64;
+        let observed = focus_hint.is_some_and(|hint| hint.hwnd != 0 && foreground == hint.hwnd);
+        if observed {
+            focus_outcome = "focus-ok";
+            if let Some(hint) = focus_hint {
+                state.workspaces.note_foreground(hint);
+            }
+        } else {
+            focus_outcome = "focus-suppressed";
+        }
+    } else {
+        // Retained-aware focus set: maximized and fullscreen movers are
+        // retained, never eligible-observed, so their tokens ride along for focus
+        // only (geometry still excludes them via `writable_tokens`; focus carries
+        // no write, KDE `requestFocus` parity). The foreground fence below still
+        // never steals from a real arrival.
+        let members = state.workspaces.workspace_members(output, target);
+        let mut fresh_tokens: HashSet<String> =
+            fresh_observed.iter().map(|w| w.token.clone()).collect();
+        for row in &fresh_retained {
+            if row.maximized || row.fullscreen {
+                fresh_tokens.insert(row.token.clone());
+            }
+        }
+        let eligible =
+            state
+                .workspaces
+                .eligible_focus_set(&members, &state.member_tokens, &fresh_tokens);
+        let focus_key = focus_hint
+            .filter(|hint| eligible.contains(*hint))
             .cloned()
-            .unwrap_or_default();
-        if !token.is_empty() {
-            if crate::workspace_owner::focus_before_geometry(
-                true,
-                suspend_read(state, me, fulls).veto.block,
-                foreground_elevated(me),
-            ) {
-                let focus_start = Instant::now();
-                let actuation =
-                    actuate_focus(state, me, fulls, &fresh_observed, &fresh_retained, &token);
-                focus_ms = focus_start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-                focus_outcome = actuation.outcome;
-                if actuation.outcome == "focus-ok" {
-                    state.workspaces.note_foreground(focus_key);
+            .or_else(|| state.workspaces.focus_target(output, target, &eligible));
+        if let Some(ref focus_key) = focus_key {
+            let token = state
+                .member_tokens
+                .get(focus_key)
+                .cloned()
+                .unwrap_or_default();
+            if !token.is_empty() {
+                if crate::workspace_owner::focus_before_geometry(
+                    true,
+                    suspend_read(state, me, fulls).veto.block,
+                    foreground_elevated(me),
+                ) {
+                    let focus_start = Instant::now();
+                    let actuation =
+                        actuate_focus(state, me, fulls, &fresh_observed, &fresh_retained, &token);
+                    focus_ms = focus_start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                    focus_outcome = actuation.outcome;
+                    if actuation.outcome == "focus-ok" {
+                        state.workspaces.note_foreground(focus_key);
+                    }
+                } else {
+                    // Fenced: a real fullscreen/elevated foreground arrived
+                    // during the transition. Never steal; geometry below vetoes
+                    // honestly instead of riding along.
+                    focus_outcome = "focus-skipped-fence";
                 }
-            } else {
-                // Fenced: a real fullscreen/elevated foreground arrived
-                // during the transition. Never steal; geometry below vetoes
-                // honestly instead of riding along.
-                focus_outcome = "focus-skipped-fence";
             }
         }
     }
@@ -10767,21 +10788,22 @@ impl SendPreflight {
         }
     }
 
-    /// Live overlay-only recheck before native effects (item 20): fullscreen
-    /// refuses, drift defers. Narrower than [`crate::workspace_owner::send_fences_hold`];
-    /// follow tails (whose selects re-verify everything else) use this.
+    /// Live overlay-only recheck before native effects (item 9): a newly
+    /// arrived fullscreen refuses, other drift defers. Narrower than
+    /// [`crate::workspace_owner::send_fences_hold`]; follow tails (whose
+    /// selects re-verify everything else) use this.
     fn overlay_hold(
         &self,
         mover_hwnd: u64,
         fulls: &[Rect],
     ) -> std::result::Result<(), &'static str> {
         let (live_max, live_full_opt) = live_overlay_flags(mover_hwnd, fulls);
-        let live_full = live_full_opt.unwrap_or(self.fallback_fullscreen);
         crate::workspace_owner::send_overlay_gate(
             self.fences.overlay_maximized,
             self.fences.overlay_fullscreen,
             live_max,
-            live_full,
+            live_full_opt,
+            self.fallback_fullscreen,
         )
     }
 }
@@ -10860,21 +10882,26 @@ fn workspace_do_send_native(
         }
         fresh.facts.minimized
     } else if let Some(row) = retained.iter().find(|r| r.key == *mover_key) {
-        if !row.maximized {
+        if !crate::workspace_owner::send_retained_overlay_admits(row.maximized, row.fullscreen) {
             return fail_at("origin-vanished");
         }
-        // Item 20 live snapshot (not the retained row): fullscreen refuses
-        // outright with retained-row fallback for unreadable frames, never a
-        // fabricated value; any maximized/fullscreen drift defers with no
-        // restore. Maximized carry itself never restores.
+        // Item 9 live snapshot (not the retained row): a stable
+        // maximized/fullscreen snapshot carries without restoring; a newly
+        // arrived live fullscreen refuses outright, other drift defers, and
+        // an unreadable live flag defers a fullscreen snapshot (never trust
+        // the fallback before effects). Maximized/fullscreen carry itself
+        // never restores.
         let (live_max, live_full_opt) = live_overlay_flags(mover_hwnd, fulls);
-        let live_full = live_full_opt.unwrap_or(row.fullscreen);
-        if let Err(outcome) =
-            crate::workspace_owner::send_overlay_gate(true, false, live_max, live_full)
-        {
+        if let Err(outcome) = crate::workspace_owner::send_overlay_gate(
+            row.maximized,
+            row.fullscreen,
+            live_max,
+            live_full_opt,
+            row.fullscreen,
+        ) {
             return fail_at(outcome);
         }
-        snap_overlay = (true, false);
+        snap_overlay = (row.maximized, row.fullscreen);
         fallback_fullscreen = row.fullscreen;
         if stored.pid != mover_key.pid || stored.process_creation != mover_key.creation {
             return fail_at("origin-vanished");
@@ -10891,19 +10918,19 @@ fn workspace_do_send_native(
     {
         return fail_at("identity-changed");
     }
-    // Item 20 pre-transfer overlay gate with live reads (mirrors the Engine
+    // Item 9 pre-transfer overlay gate with live reads (mirrors the Engine
     // route's pre-assign check): an observed mover that went borderless
-    // fullscreen live refuses here with NO membership change; drift from the
-    // snapshot defers the same way. The post-transfer recheck below stays
-    // for races across the transfer itself.
+    // fullscreen live refuses here with NO membership change; other drift
+    // from the snapshot defers the same way. The post-transfer recheck below
+    // stays for races across the transfer itself.
     {
         let (live_max, live_full_opt) = live_overlay_flags(mover_hwnd, fulls);
-        let live_full = live_full_opt.unwrap_or(fallback_fullscreen);
         if let Err(outcome) = crate::workspace_owner::send_overlay_gate(
             snap_overlay.0,
             snap_overlay.1,
             live_max,
-            live_full,
+            live_full_opt,
+            fallback_fullscreen,
         ) {
             return fail_at(outcome);
         }
@@ -11411,14 +11438,15 @@ fn workspace_do_send(
     // One shared hint-query budget across both assemblies: source and target
     // never independently blow the per-operation bound.
     //
-    // Pre-dispatch overlay gate (item 20): a retained maximized member is
-    // retained, never eligible, so it must read maximized live (not the
-    // retained row) before the Engine plans; live fullscreen refuses
-    // outright with retained-row fallback for unreadable frames, never a
-    // fabricated value. Observed movers ride the ordinary (false, false)
-    // expectation from observation; the post-plan recheck below gates any
-    // live race before effects. A tiled maximized member sends (maximized
-    // carry, never restore); a fullscreen mover refuses with no writes.
+    // Pre-dispatch overlay gate (item 9): a retained maximized/fullscreen
+    // member is retained, never eligible, so it must read its overlay flags
+    // live (not the retained row) before the Engine plans; a stable
+    // maximized/fullscreen snapshot carries without restoring, with
+    // retained-row fallback for unreadable frames, never a fabricated value.
+    // Observed movers ride the ordinary (false, false) expectation from
+    // observation; the post-plan recheck below gates any live race before
+    // effects. A tiled maximized/fullscreen member sends (carry, never
+    // restore); a newly fullscreened ordinary mover refuses with no writes.
     let mover_observed = observed.iter().any(|w| w.hwnd == mover_hwnd);
     let (snap_overlay, fallback_fullscreen) = if mover_observed {
         ((false, false), false)
@@ -11428,17 +11456,20 @@ fn workspace_do_send(
         };
         // Actual KDE wrapper behavior (workspace-send `non-tiled-focus`):
         // overlay movers never send as ordinary.
-        if !row.maximized {
+        if !crate::workspace_owner::send_retained_overlay_admits(row.maximized, row.fullscreen) {
             return fail_at("origin-vanished");
         }
         let (live_max, live_full_opt) = live_overlay_flags(mover_hwnd, fulls);
-        let live_full = live_full_opt.unwrap_or(row.fullscreen);
-        if let Err(outcome) =
-            crate::workspace_owner::send_overlay_gate(true, false, live_max, live_full)
-        {
+        if let Err(outcome) = crate::workspace_owner::send_overlay_gate(
+            row.maximized,
+            row.fullscreen,
+            live_max,
+            live_full_opt,
+            row.fullscreen,
+        ) {
             return fail_at(outcome);
         }
-        ((true, false), row.fullscreen)
+        ((row.maximized, row.fullscreen), row.fullscreen)
     };
     let preflight = SendPreflight {
         fences: crate::workspace_owner::SendFenceSnapshot {
@@ -11600,26 +11631,26 @@ fn workspace_do_send(
     };
     // Project-owned membership change after revalidation and the planned
     // Engine mutation: exact identity table update, never HWND alone. A
-    // tiled maximized member sends too (KDE parity): it is retained rather
-    // than eligible, so it resolves through its retained row with a live
-    // flag recheck (not the retained row) instead of the eligible
+    // tiled maximized/fullscreen member sends too (KDE parity): it is
+    // retained rather than eligible, so it resolves through its retained row
+    // with a live flag recheck (not the retained row) instead of the eligible
     // observation. Its target allocation is kept by the plan while overlay
     // geometry never writes.
     let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
     let Some(stored) = state.member_identity.get(&mover_key).cloned() else {
         return fail_at("unmanaged");
     };
-    // Item 20 post-plan recheck with live OS reads (not the retained row):
-    // fullscreen refuses, drift defers. Before any membership change or
-    // native effect, for follow and stay alike.
+    // Item 9 post-plan recheck with live OS reads (not the retained row):
+    // a newly arrived fullscreen refuses, other drift defers. Before any
+    // membership change or native effect, for follow and stay alike.
     {
         let (live_max, live_full_opt) = live_overlay_flags(mover_hwnd, fulls);
-        let live_full = live_full_opt.unwrap_or(preflight.fallback_fullscreen);
         if let Err(outcome) = crate::workspace_owner::send_overlay_gate(
             preflight.fences.overlay_maximized,
             preflight.fences.overlay_fullscreen,
             live_max,
-            live_full,
+            live_full_opt,
+            preflight.fallback_fullscreen,
         ) {
             return fail_at(outcome);
         }
@@ -11638,10 +11669,11 @@ fn workspace_do_send(
         }
         fresh.facts.minimized
     } else if let Some(row) = retained.iter().find(|r| r.key == mover_key) {
-        // Retained maximized mover: the live overlay gate above already
-        // refused fullscreen and deferred drift; only a maximized member
-        // proceeds, with no restore and no remaximize (maximized carry).
-        if !row.maximized {
+        // Retained maximized/fullscreen mover: the live overlay gate above
+        // already refused a newly arrived fullscreen and deferred drift; only
+        // a maximized/fullscreen member proceeds, with no restore and no
+        // remaximize (overlay carry).
+        if !crate::workspace_owner::send_retained_overlay_admits(row.maximized, row.fullscreen) {
             return fail_at("origin-vanished");
         }
         if stored.pid != mover_key.pid || stored.process_creation != mover_key.creation {
@@ -11786,9 +11818,10 @@ fn workspace_do_send(
 /// Shared send tail for both the Engine plan route and the native
 /// cross-boundary route: commit-before-hide the mover, then follow by
 /// selecting the target (which reveals it and reconciles it when tiled).
-/// The carried overlay snapshot re-verifies live before hide (item 20):
-/// fullscreen refuses, drift defers, with no restore and no replay. Broader
-/// view/mode/gap races stay with the select's own fresh fences below.
+/// The carried overlay snapshot re-verifies live before hide (item 9):
+/// a newly arrived fullscreen refuses, other drift defers, with no restore
+/// and no replay. Broader view/mode/gap races stay with the select's own
+/// fresh fences below.
 #[allow(clippy::too_many_arguments)]
 fn workspace_send_follow(
     state: &mut TileLoop,
@@ -11854,6 +11887,11 @@ fn workspace_send_follow(
             target_workspace: target_token.to_owned(),
         };
     }
+    // Item 9 follow-focus policy: a fullscreen snapshot suppresses ALL
+    // explicit focus actuation for this transition (select still reveals the
+    // target; observed focus reports honestly, suppressed reports success).
+    let suppress_focus =
+        crate::workspace_owner::send_focus_suppressed(preflight.fences.overlay_fullscreen);
     let select = workspace_do_select(
         state,
         me,
@@ -11866,6 +11904,7 @@ fn workspace_send_follow(
         target_id,
         ctx,
         Some(mover_key),
+        suppress_focus,
     );
     if select.outcome != "ok" {
         return SendEffect {
@@ -11886,7 +11925,12 @@ fn workspace_send_follow(
             target_workspace: select.target_workspace.clone(),
         };
     }
-    let outcome: &'static str = if select.focus == "focus-ok" {
+    // Item 9: a suppressed fullscreen follow reports success honestly when no
+    // explicit focus was required (`focus-suppressed`); observed focus still
+    // reports `focus-ok`. Ordinary/maximized follows keep the verified-only
+    // mapping below.
+    let suppressed_ok = suppress_focus && select.focus == "focus-suppressed";
+    let outcome: &'static str = if select.focus == "focus-ok" || suppressed_ok {
         "ok"
     } else {
         "focus-unverified"
@@ -12286,19 +12330,233 @@ fn workspace_send_stay(
     }
 }
 
+/// Exact-owner out-of-hook fullscreen toggle for the normal `tile` loop only
+/// (item 9 test-needed route; the hook still filters injected Win+F11).
+/// Reuses the production Win+F11 authority verbatim: the `toggle_gate_outcome`
+/// suspend/elevated fence (owned-fullscreen exemption preserved), a fresh
+/// observation, the live-foreground `snap_origins` origin (never a carried
+/// HWND), the `member_matches` origin binding, the `revalidate_target`
+/// focus/identity/scope/lifetime/proof gates with the focus-relaxed overlay
+/// allowance, and the `fullscreen_toggle_decision` direction (including the
+/// app-owned R-MAX-05 refusal) plus `enter_fullscreen`/`exit_fullscreen_owned`
+/// with the same post-restore reconcile. Consume-once, exact-owner, and proof
+/// refusal ride the shared `poll_workspace_cli_request` prefix; this runs only
+/// after those pass. Logs `fullscreen-toggle` with edge `cli`.
+fn dispatch_fullscreen_cli_toggle(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+) {
+    state.tick += 1;
+    let tick = state.tick;
+    let correlation = state.correlation();
+    let settle = |outcome: &'static str| {
+        serde_json::json!({
+            "event": "fullscreen-toggle",
+            "tick": tick,
+            "correlation": correlation.as_str(),
+            "edge": "cli",
+            "disposition": "consumed",
+            "outcome": outcome,
+        })
+    };
+    // Production per-intent fence first, before any observation.
+    if let Some(outcome) = crate::tiling::toggle_gate_outcome(
+        suspend_read(state, me, fulls).veto.block,
+        foreground_elevated(me),
+    ) {
+        log_json_at(&state.log_path, settle(outcome));
+        return;
+    }
+    let mut skipped: Vec<(String, String)> = Vec::new();
+    let mut retained: Vec<RetainedRow> = Vec::new();
+    let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained) else {
+        log_json_at(&state.log_path, settle("observation-failed"));
+        return;
+    };
+    publish_managed(state, me, &observed, &retained);
+    ensure_workspace_assignments(state, me, &mut observed, &retained, areas);
+    clear_maximize_at_admission(state, me, &retained);
+    // Live-foreground origin through the same map the hook binds chords
+    // against; never a carried HWND, never a retarget.
+    let foreground_hwnd = unsafe { GetForegroundWindow() } as usize as u64;
+    let origin = state.snap_origins.get(&foreground_hwnd).cloned();
+    let Some(origin) = origin.filter(|o| !o.token.is_empty()) else {
+        log_json_at(&state.log_path, settle("unmanaged"));
+        return;
+    };
+    let Some(member_key) = state
+        .member_tokens
+        .iter()
+        .find(|(_, token)| token.as_str() == origin.token.as_str())
+        .map(|(key, _)| key.clone())
+    else {
+        let mut line = settle("unmanaged");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&state.log_path, line);
+        return;
+    };
+    if !crate::workspace_owner::member_matches(
+        &member_key,
+        origin.hwnd,
+        origin.pid,
+        &origin.creation,
+    ) {
+        let mut line = settle("foreground-changed");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&state.log_path, line);
+        return;
+    };
+    // Fresh pre-effect revalidation through the production target gate,
+    // identical to the hook path (retained overlay construction included).
+    let owned_expected: Option<ObservedWindow>;
+    let expected = if let Some(found) = observed.iter().find(|w| w.hwnd == member_key.hwnd) {
+        found
+    } else {
+        let Some(row) = retained.iter().find(|r| r.key == member_key) else {
+            let mut line = settle("deferred");
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            log_json_at(&state.log_path, line);
+            return;
+        };
+        let Some(stored) = state.member_identity.get(&row.key).cloned() else {
+            let mut line = settle("unmanaged");
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            log_json_at(&state.log_path, line);
+            return;
+        };
+        owned_expected = Some(ObservedWindow {
+            hwnd: row.key.hwnd,
+            token: row.token.clone(),
+            outer: Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
+            visible: Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
+            insets: FrameInsets::default(),
+            identity: crate::tiling::ObservedTarget {
+                hwnd: row.key.hwnd,
+                pid: row.key.pid,
+                process_creation: row.key.creation.clone(),
+                exe_path: stored.exe_path,
+                user_sid: stored.user_sid,
+                session_id: stored.session_id,
+                tag: String::new(),
+            },
+            facts: row.facts.unwrap_or(crate::tiling::WindowFacts {
+                visible: true,
+                minimized: false,
+                maximized: true,
+                cloaked: false,
+                elevated: false,
+                shell: false,
+                tool_window: false,
+                owned: false,
+                captionless_fullscreen: false,
+                no_activate: false,
+                dialog: false,
+            }),
+        });
+        owned_expected.as_ref().expect("retained expected built")
+    };
+    let from = origin.token.clone();
+    let proof_mode = state.allowlist.is_some();
+    let member_tag = state.member_tags.get(&member_key).map(String::as_str);
+    let target = match revalidate_target(
+        expected,
+        me,
+        fulls,
+        &mut state.tokens,
+        proof_mode,
+        state.allowlist.as_ref(),
+        &state.scope,
+        member_tag,
+        &state.scope_hosts,
+        true,
+    ) {
+        Ok(target) => target,
+        Err(reason) => {
+            if reason == "identity-changed" {
+                drop_member_state(state, &member_key);
+            }
+            let mut line = settle(reason);
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            log_json_at(&state.log_path, line);
+            return;
+        }
+    };
+    let _held = &target.held;
+    let now_fullscreen = target.window.facts.captionless_fullscreen;
+    let meta = read_fullscreen_meta(member_key.hwnd);
+    let (target_label, outcome) = match fullscreen_toggle_decision(now_fullscreen, meta.is_some()) {
+        crate::tiling::FullscreenToggle::RefuseAppOwned => {
+            ("fullscreen", "fullscreen-refused-app-owned")
+        }
+        crate::tiling::FullscreenToggle::Enter => {
+            let full = output_for_rect(areas, &target.window.visible);
+            let full = areas
+                .iter()
+                .find(|a| a.device == full)
+                .map(|area| area.full)
+                .or_else(|| areas.first().map(|area| area.full));
+            match full {
+                Some(full) => ("fullscreen", enter_fullscreen(member_key.hwnd, full)),
+                None => ("fullscreen", "unknown-output"),
+            }
+        }
+        crate::tiling::FullscreenToggle::ExitOwned => {
+            let meta = meta.expect("decision owns metadata");
+            let outcome = exit_fullscreen_owned(member_key.hwnd, &meta);
+            if outcome == "restored" && !meta.was_maximized {
+                let fulls_owned = fulls.to_vec();
+                reconcile_tick(state, me, &fulls_owned, areas);
+            }
+            ("restored", outcome)
+        }
+    };
+    log_json_at(
+        &state.log_path,
+        serde_json::json!({
+            "event": "fullscreen-toggle",
+            "tick": tick,
+            "correlation": correlation.as_str(),
+            "edge": "cli",
+            "disposition": "consumed",
+            "outcome": outcome,
+            "target": target_label,
+            "origin": origin.token,
+            "window": from,
+        }),
+    );
+}
+
 /// Exact-owner out-of-hook workspace control: one bounded `workspace.request`
 /// file consumed once through the existing `workspace_do_select` /
 /// `workspace_do_send` resolvers (plus the pure history resolvers for the
-/// previous/relative forms). Normal `tile` only (proof owners refuse
-/// without effect); fullscreen and elevated foreground gate like the hook
-/// path; the keyboard takeover switch never gates this (out-of-hook
+/// previous/relative forms) or, for `fullscreen`, through the existing
+/// project-owned fullscreen toggle below. Normal `tile` only (proof owners
+/// refuse without effect); workspace ops gate fullscreen and elevated
+/// foreground like the hook path while the fullscreen op routes through the
+/// production `toggle_gate_outcome` (owned-fullscreen exemption preserved);
+/// the keyboard takeover switch never gates this (out-of-hook
 /// dogfood/recovery). The request is deleted before dispatch so there is no
 /// replay; a malformed or mismatched body is consumed the same way with a
 /// `refused` outcome. Sends carry no chord origin: the mover is the live
 /// foreground managed window at dispatch, resolved through the same
 /// `snap_origins` map the hook binds chords against, then the exact same
 /// `workspace_do_send` focus/identity/scope/owner gates with the request's
-/// explicit follow/stay intent. Production log
+/// explicit follow/stay intent. Fullscreen carries no HWND either: it toggles
+/// the live foreground managed window through the same `revalidate_target` +
+/// `fullscreen_toggle_decision` authority as the Win+F11 hook (including the
+/// app-owned R-MAX-05 refusal). Production log
 /// carries op/index/edge/outcome only (no HWNDs, tokens, or identity bytes);
 /// the client correlation is opaque and never logged.
 fn poll_workspace_cli_request(
@@ -12326,6 +12584,7 @@ fn poll_workspace_cli_request(
                     || a == "send"
                     || a == "stay"
                     || a == "previous"
+                    || a == "fullscreen"
                     || a == "relative"
                     || a == "send-relative"
                     || a == "stay-relative"
@@ -12375,6 +12634,10 @@ fn poll_workspace_cli_request(
             &state.log_path,
             workspace_log(state, tick, op, request.index, "cli", "refused"),
         );
+        return;
+    }
+    if request.action == WorkspaceAction::Fullscreen {
+        dispatch_fullscreen_cli_toggle(state, me, fulls, areas);
         return;
     }
     if suspend_read(state, me, fulls).veto.block {
@@ -12475,6 +12738,7 @@ fn poll_workspace_cli_request(
             },
             WorkspaceAction::Select
             | WorkspaceAction::Previous
+            | WorkspaceAction::Fullscreen
             | WorkspaceAction::RelativeHistory => {
                 log_json_at(
                     &state.log_path,
@@ -12606,6 +12870,7 @@ fn poll_workspace_cli_request(
         },
         WorkspaceAction::Send
         | WorkspaceAction::Stay
+        | WorkspaceAction::Fullscreen
         | WorkspaceAction::RelativeSend
         | WorkspaceAction::RelativeStay => (None, "refused", op, request.index),
     };
@@ -12635,6 +12900,7 @@ fn poll_workspace_cli_request(
         &target,
         &ctx,
         None,
+        false,
     );
     log_json_at(
         &state.log_path,
@@ -12847,6 +13113,7 @@ fn workspace_tick(
                             &id,
                             &ctx,
                             None,
+                            false,
                         );
                         log_json_at(
                             &log_path,
@@ -13345,6 +13612,7 @@ fn workspace_history_tick(
                     &id,
                     &ctx,
                     None,
+                    false,
                 );
                 log_json_at(
                     &log_path,
@@ -13696,7 +13964,7 @@ fn poll_foreground_workspace(
         start,
     };
     let effect = workspace_do_select(
-        state, me, store, dir, fulls, areas, observed, &output, &workspace, &ctx, None,
+        state, me, store, dir, fulls, areas, observed, &output, &workspace, &ctx, None, false,
     );
     log_workspace_action(
         state,
@@ -17259,17 +17527,18 @@ pub fn load_normal_tile_base() -> (
     }
 }
 
-/// `workspace (--select|--send) INDEX` command: exact-owner out-of-hook
-/// control for the normal `tile` loop only. Queues one bounded
-/// `workspace.request` file; the owner validates the full owner binding
-/// (creation/pid/exe/sid/session plus a client correlation) and dispatches
-/// once through the existing `workspace_do_select` / `workspace_do_send`
-/// resolvers. No window actuation here, no synthetic input, no keyboard
+/// `workspace` command: exact-owner out-of-hook control for the normal `tile`
+/// loop only. Queues one bounded `workspace.request` file; the owner validates
+/// the full owner binding (creation/pid/exe/sid/session plus a client
+/// correlation) and dispatches once through the existing `workspace_do_select`
+/// / `workspace_do_send` resolvers (or the existing project-owned fullscreen
+/// toggle for `--fullscreen`). No window actuation here, no synthetic input,
 /// acceptance. Refuses when no normal owner runs, when the caller is not the
 /// same medium path (SID/session/exe), when the ledger owner is a proof run,
 /// and when a request is already pending (single-pending queue, no overwrite,
 /// no replay). Stdout reports `dispatched` (queued) honestly; completion is
-/// the owner's `workspace` log outcome, observed natively by the caller.
+/// the owner's `workspace` (or `fullscreen-toggle` for `--fullscreen`) log
+/// outcome, observed natively by the caller.
 pub fn cmd_workspace(options: &WorkspaceOptions) -> Result<String> {
     use crate::tiling::{WORKSPACE_REQUEST_VERSION, WorkspaceRequest, render_workspace_request};
     ensure_pm_v2()?;
@@ -18517,10 +18786,27 @@ mod send_preflight_tests {
             preflight(true, false, true).overlay_hold(0, &fulls),
             Err("send-refused-fullscreen")
         );
+        // Ordinary snapshot with a fullscreen fallback refuses the newly
+        // arrived fullscreen the same way.
+        assert_eq!(
+            preflight(false, false, true).overlay_hold(0, &fulls),
+            Err("send-refused-fullscreen")
+        );
         // Retained snapshot against a null live read defers drift with no
         // restore.
         assert_eq!(
             preflight(true, false, false).overlay_hold(0, &fulls),
+            Err("deferred")
+        );
+        // Item 9: a fullscreen snapshot with an unreadable live flag defers
+        // pre-effect instead of trusting the fallback (readable stable
+        // fullscreen still carries through the portable gate, pinned there).
+        assert_eq!(
+            preflight(false, true, true).overlay_hold(0, &fulls),
+            Err("deferred")
+        );
+        assert_eq!(
+            preflight(false, true, false).overlay_hold(0, &fulls),
             Err("deferred")
         );
     }
