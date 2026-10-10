@@ -393,9 +393,9 @@ per-output-local (default), global-unique and shared use the same chord
 catalog; Windows global-unique/shared mappings await runtime implementation),
 [Windows](../../crates/tiler-windows/src/settings.rs) `binding_catalog`.
 Spec links below point at behavior sections inside this file. Items 1-5 have
-selected defaults below, implementation pending; bindings for other accepted
-additions remain unchosen ([decisions](../decisions.md#shortcuts-conflicts-and-presets),
-USER 2026-10-07).
+selected defaults below, implementation pending. Workspace tiling toggle
+Meta+Y / Win+Y is selected (USER 2026-10-10); all other currently unbound
+actions stay unbound ([decisions](../decisions.md#shortcuts-conflicts-and-presets)).
 Rotate/master and cycle verbs remain unselected.
 
 | Action | KDE default | Windows default | macOS | Spec |
@@ -419,7 +419,7 @@ Rotate/master and cycle verbs remain unselected.
 | Send to workspace 1..9 | Meta+Shift+1..9; Meta+!, Meta+@, Meta+#, Meta+$, Meta+%, Meta+^, Meta+&, Meta+*, Meta+( aliases | Win+Shift+1..9 (symbols share digit key, no separate row) | mapping OPEN | [#6 Workspaces](#workspaces) |
 | Send to trailing/append | Meta+Shift+0, Meta+) alias | Win+Shift+0 | mapping OPEN | [#6 Workspaces](#workspaces) |
 | Numbered/relative send-and-stay | unbound, bindable (implemented offline, native journey pending) | unbound, bindable (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
-| Workspace tiling toggle | unbound (tray action, empty key sequence) | unbound (tray checkbox only) | mapping OPEN | [#7 Floating](#floating) |
+| Workspace tiling toggle | Meta+Y (selected, binding implementation pending; KDE holder unverified) | Win+Y (selected, binding implementation pending; Mixed Reality conflict, Authentic/Compatible model) | mapping OPEN | [#7 Floating](#floating) |
 | Previous-workspace toggle | Meta+Ctrl+Tab (single-output native journey user-confirmed 2026-10-07) | Win+Ctrl+Tab (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
 | Relative switch | Meta+Ctrl+H/K, Meta+Ctrl+Left/Up previous; Meta+Ctrl+J/L, Meta+Ctrl+Down/Right next (single-output native journey user-confirmed; multi-output/presets pending) | Win+Ctrl+H/J/K/L, Win+Ctrl+Left/Down/Up/Right (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |
 | Relative send-and-follow | Meta+Ctrl+Shift+H/K, Meta+Ctrl+Shift+Left/Up previous; Meta+Ctrl+Shift+J/L, Meta+Ctrl+Shift+Down/Right next (implemented offline, native journey pending) | Win+Ctrl+Shift+H/J/K/L, Win+Ctrl+Shift+Left/Down/Up/Right (implementation pending) | mapping OPEN | [#6 Workspaces](#workspaces) |

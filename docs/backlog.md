@@ -10,6 +10,31 @@ decisions of 2026-09-24 are under
 
 ## Open work
 
+- P0/P1 | 0.1 release (KDE Plasma) | Existing MVP, KDE only (user 2026-10-10;
+  [scope](decisions.md#scope-and-platform-goals)). Must-pass gate: VISION
+  reliability (sleep/wake, output plug/unplug, resolution/scaling changes,
+  fullscreen applications, underlying configuration changes), gaming/fullscreen
+  non-interference, core journeys (tiling, focus/move, workspaces, multi-output,
+  border, shortcuts, settings, restart), and missing/failed/removed effect
+  leaves tiling working and KWin stable. Other live checks may ship as listed
+  known issues provided none crashes or silently stops tiling; no separate
+  dogfood period. Includes these pending pieces:
+  - Classify pending live checks into must-pass versus known-issue-allowed.
+  - Triage the 60 OPEN requirements into 0.1-relevant (touches a must-pass
+    core journey, or current behavior is undefined/refusal/surprising) versus
+    post-0.1; decide only the relevant set before 0.1, one at a time with the
+    user. Triage and live-check classification are separate follow-up pieces.
+  - P1 0.1 packaging (Nix flake/Home Manager, GitHub Release, OBS packages,
+    split optional effect, Revert-before-removal guidance); accounts/token
+    supplied by the user at the start of the next orchestrator session.
+  - External NixOS/Home Manager validation (P1 gate).
+  - Workspace tiling toggle default Meta+Y (KDE); Win+Y Windows handoff.
+  Windows continues as a development preview with its own later release;
+  macOS starts after KDE 0.1 ships. KDE current approach retained; no new
+  non-native-research items. Lessons persist linked
+  ([candidate lessons](research/non-native-tiler-host-interaction.md#candidate-lessons-for-this-project),
+  [cross-cutting findings](research/non-native-tiler-host-interaction.md#cross-cutting-findings),
+  [evidence](changes/archive/non-native-tiler-host-interaction.md)).
 - P0 | Windows port | KDE-first core extraction finished at K1 (user
   2026-09-30; K2/K3 revisit when macOS starts, see
   [extraction](research/cross-platform-core/extraction.md),
@@ -99,9 +124,14 @@ decisions of 2026-09-24 are under
   preview. Move-drag press-focus is selected; current drop activation is an
   implementation gap (handoff item 7); inactive resize keeps focus. Physical feel checks
   user-owned; underlay C stays parked (needs extra machinery).
-  (9) multi-output support PARKED: needs a multi-output Windows setup for live work;
-  (10) taskbar item showing workspaces PARKED on the user design discussion
-  (options in the [comparison](research/windows-port/reference-wm-comparison.md));
+  (9) multi-output support UNPARKED (user 2026-10-10): after single-output
+  handoff items 1-4, 6, 7, 9-11, 13, 15, 17, 18, 20, with item 18 before
+  10/11, then the multi-output foundation and dependent items 5, 12, 14, 16,
+  19. Live work needs a multi-output Windows setup;
+  (10) taskbar workspace indicator is combined with hidden-workspace Alt+Tab/
+  taskbar semantics in Windows-agent workspace-presentation research after
+  multi-output, as a Windows release gate
+  ([note](research/windows-port/alt-tab-hidden-workspaces.md));
   (11) settings core slice delivered (`df4edc5`, `1c97c52`, `999f2f3`,
   `81986ab`; CI green; `just --justfile windows.justfile settings`;
   [evidence](changes/archive/windows-settings.md)): JSON store under
@@ -125,7 +155,9 @@ decisions of 2026-09-24 are under
   per-binding OS-conflict list with compatible/authentic quick-set presets,
   first-run prompt ratified 2026-10-08; [decision](decisions.md#settings-tray-and-first-run)).
   Provisional choices 2-6 accepted by the user (2026-10-03).
-- P0 | Windows gaming coexistence | User (2026-10-03): (a) authentic mode
+- P0 | Windows gaming coexistence | Windows release gate after multi-output,
+  before any Windows release (user 2026-10-10); not now despite P0.
+  User (2026-10-03): (a) authentic mode
   until settings exist: our bindings must not leak to OS shortcuts (Win+G
   opened Xbox Game Bar when the foreground was unmanaged, and Xbox mode was
   entered during agent tests; user dogfood 2026-10-03: Win+F11 entered Xbox
@@ -156,8 +188,39 @@ decisions of 2026-09-24 are under
     Apply the M04 bar: aim for zero; demonstrate any unavoidable residual
     minimal and imperceivable. Physical game measurements are user-owned.
     [principle](principles.md#gaming-compatibility)
+    Non-native measurement lessons:
+    [event/pump boundary](research/non-native-tiler-host-interaction.md#layer-layout-authority-events-and-reconciliation-dim-1),
+    [candidate lessons](research/non-native-tiler-host-interaction.md#candidate-lessons-for-this-project),
+    [evidence](changes/archive/non-native-tiler-host-interaction.md).
   [record](changes/windows-gaming-coexistence.md)
   [decision](decisions.md#gaming-safety)
+- P0 | Windows release gate | Own later release (user 2026-10-10): managed
+  per-monitor workspaces (multi-output), gaming coexistence (Win+G/F11
+  containment review, Xbox mode detection, M16 100ms pump measurement),
+  combined workspace-presentation research (hidden-workspace Alt+Tab/taskbar
+  semantics plus taskbar indicator parity 10), restart-persistence decision
+  (item 8 proposal) and package/update channel decision (short research refresh
+  during Windows release planning; most obvious and unsurprising for users).
+  Gaming and Windows-agent presentation research run after multi-output,
+  before release; presentation produces options plus a recommendation for
+  the user. Non-native lessons and evidence stay linked:
+  [event/pump boundary](research/non-native-tiler-host-interaction.md#layer-layout-authority-events-and-reconciliation-dim-1),
+  [workspaces/Alt+Tab](research/non-native-tiler-host-interaction.md#workspaces-monitors-overview-and-alttab-dim-4),
+  [candidate lessons](research/non-native-tiler-host-interaction.md#candidate-lessons-for-this-project),
+  [evidence](changes/archive/non-native-tiler-host-interaction.md).
+- P0 | Windows workspace presentation research | After multi-output, before
+  Windows release (user 2026-10-10). Windows agent combines hidden-workspace
+  Alt+Tab/taskbar semantics and taskbar workspace indicator (parity 10),
+  producing options plus a recommendation for the user. Existing Alt+Tab
+  research (`580c766`, `8129b37`;
+  [note](research/windows-port/alt-tab-hidden-workspaces.md)):
+  keep SW_HIDE (no supported reinsertion); public off-screen parking is the
+  only official candidate, with visibility/recovery costs; native desktops
+  and private cloaking need separate API decisions. Activation behaviour
+  is matrix row R-WS-07. No presentation design selected. Non-native inputs:
+  [workspaces/Alt+Tab](research/non-native-tiler-host-interaction.md#workspaces-monitors-overview-and-alttab-dim-4),
+  [candidate lessons](research/non-native-tiler-host-interaction.md#candidate-lessons-for-this-project),
+  [evidence](changes/archive/non-native-tiler-host-interaction.md).
 - P1 | KDE follow-ups from the Windows port | Audit 2026-10-05
   ([note](research/cross-platform-core/post-windows-audit.md)); user order
   B1/B2, B3-B5, B7, B8. B1/B2 stale maximize/sticky attempted-state
@@ -389,22 +452,22 @@ decisions of 2026-09-24 are under
   | 2 | Item 2 explicit follow/stay, then relative sends | Reuse item 1 ring/action routing, not MRU target selection. |
   | 3 | Item 3 live same-axis setting | Independent; replace compile constant without rebuilding trees. |
   | 4 | Item 4 orientation action | Reuse input/catalog/live settings infrastructure. |
-  | 5 | Parked parity-queue multi-output foundation, then handoff item 5 | Per-monitor current-view observation, membership/geometry/visibility/recovery fences first; user live checks need a multi-output Windows setup. Offline topology/Engine tests can precede that. |
+  | 5 | Unparked parity-queue multi-output foundation after single-output items 1-4, 6, 7, 9-11, 13, 15, 17, 18, 20 (18 before 10/11), then handoff items 5, 12, 14, 16, 19 | Per-monitor current-view observation, membership/geometry/visibility/recovery fences first; user live checks need a multi-output Windows setup. Offline topology/Engine tests can precede that. |
   | 6 | Keyboard resize R-RSZ-01 (parity d) | Independent; needs fresh Alt-capable trigger plus dedicated resize intent. No dependency on items 1-5 except shared modifier routing. |
   | 7 | Press-focus R-DRAG-08 | Independent of items 1-5; touches Win-drag arm only. Keep R-DRAG-07 stationary-source/moving-preview split intact. |
-  | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; KDE Q3 plus D7 tile-override store delivered offline. Ordinary/sticky intent must remain distinct from automatic fixed origin and recovery authority; Windows mechanism selected 2026-10-10 (prefixed on-window markers, item 8 below), REQ-RST-01c stays OPEN. Coordinate D7 membership with item 13. |
-  | 9 | Fullscreen send R-MAX-09 (Windows carry; NOT the parked parity-queue multi-output foundation) | Depends on handoff item 2 follow/stay wiring only; same-output workspace carry, no cross-output claim. |
+  | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; KDE Q3 plus D7 tile-override store delivered offline. Ordinary/sticky intent must remain distinct from automatic fixed origin and recovery authority. Windows agent writes a short proposal (identity, storage, data format, recovery journal vs separate store, REQ-RST-01c membership/set/focus options and recommendation) for user decision; implementation blocked until then, other items proceed. Coordinate D7 membership with item 13. |
+  | 9 | Fullscreen send R-MAX-09 (Windows carry; NOT the parity-queue multi-output foundation) | Depends on handoff item 2 follow/stay wiring only; same-output workspace carry, no cross-output claim. |
   | 10 | Float/half-snap parity (a) R-FLT-07..11 | Independent of items 1-5; reuses existing focus/move catalog rows, no new chords. |
   | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; first-fullscreen-exit is separate (D5 core/KDE delivered offline, Windows pending). B9 unmaximize/fresh-admit is item 15. Independent of items 1-5. |
-  | 12 | Non-local workspace modes parity (d) | Depends on handoff items 1/2 (ring + follow/stay) and the parked parity-queue multi-output foundation; last. |
+  | 12 | Non-local workspace modes parity (d) | Depends on handoff items 1/2 (ring + follow/stay) and the parity-queue multi-output foundation; last. |
   | 13 | Q2 fixed-size float admission R-SPC-04 | KDE/shared offline delivery including D1 predicate setting, D5 first-fullscreen-exit, D6 tiling-enable check and D7 tile-override restart store; Windows max-track observation, predicate/schema/UI and lifetime/origin wiring before enabling the Engine opt-in. Windows D7 persistence coordinates with item 8; fixed/maximize intersection with item 11. |
-  | 14 | Q4 whole-workspace migration R-WS-12 | Core/KDE offline delivery including D8 overlay carry under user decisions 2026-10-08 (normative as delivered); depends on item 5's parked multi-output foundation, item 1 history invalidation and item 12 for non-local runtime modes. Windows adapter including D8 pending; no Windows behavior delivered. |
+  | 14 | Q4 whole-workspace migration R-WS-12 | Core/KDE offline delivery including D8 overlay carry under user decisions 2026-10-08 (normative as delivered); depends on item 5's multi-output foundation, item 1 history invalidation and item 12 for non-local runtime modes. Windows adapter including D8 pending; no Windows behavior delivered. |
   | 15 | B9 / M09 maximized intentional unfloat R-FLT-06 | KDE/shared-core offline evidence delivered; replace Windows maximize refusal only for ordinary floating-to-tiled toggle, clear/observe before fresh admission. Coordinate fixed tile overrides with items 8/13; independent of Q3 item 11 overlay retention. |
-  | 16 | Position-based output selection | Shared core/KDE delivered offline 2026-10-09; Windows handoff only. Wire with item 5's parked multi-output foundation and item 14 migration, preserving arrival/current-view/lifetime fences. |
+  | 16 | Position-based output selection | Shared core/KDE delivered offline 2026-10-09; Windows handoff only. Wire with item 5's multi-output foundation and item 14 migration, preserving arrival/current-view/lifetime fences. |
   | 17 | G-05 per-axis-zero predicate | Shared core/KDE delivered offline 2026-10-10; Windows predicate/schema/UI wiring with item 13 pending. |
   | 18 | G-06 maximized directional focus/move | Shared opt-in fence/KDE delivered offline 2026-10-10; Windows focus fence and unmaximize-before-move pending; coordinate float half-snaps with item 10. |
-  | 19 | G-37 migration source-refill setting | Shared core/KDE delivered offline 2026-10-10; Windows config/UI/runtime pending with items 1/14 and the parked multi-output foundation. |
-  | 20 | G-D2 maximized send carry | KDE delivered offline 2026-10-10; verify existing Windows retained-overlay send with item 2 follow/stay. Cross-output legs need the parked foundation. |
+  | 19 | G-37 migration source-refill setting | Shared core/KDE delivered offline 2026-10-10; Windows config/UI/runtime pending with items 1/14 and the multi-output foundation. |
+  | 20 | G-D2 maximized send carry | KDE delivered offline 2026-10-10; verify existing Windows retained-overlay send with item 2 follow/stay. Cross-output legs need the item 5 foundation. |
 
   Q2 R-SPC-04 occupies handoff item 13 below; Q3 R-RST-01 KDE delivery is
   complete offline and updates existing item 8. Q4 R-WS-12 fills item 14.
@@ -998,7 +1061,8 @@ decisions of 2026-09-24 are under
        owner/input/UI and physical Win+O takeover remain Windows-owned.
   - Item 5: shared Rust core/protocol + KDE delivered offline; zero Windows
       compile fixes required, current Windows behavior preserved. Depends on
-      parked Windows multi-output work. Exact sites under `crates/tiler-windows/`:
+      the unparked Windows multi-output foundation, after the single-output
+      queue above. Exact sites under `crates/tiler-windows/`:
 
      #### Item 5 behavior and shared contract
 
@@ -1434,9 +1498,11 @@ decisions of 2026-09-24 are under
       fences (`member_tokens`/`member_identity`/`member_tags`,
       `visible_lifetime_ok`, `reused_hwnd_stale`) and independent recovery.
       Do not authorize writes from a marker or guessed HWND alone.
-      Persistence/identity mechanism, journal-versus-separate-store routing
-      and schema are not selected here; record the implementation proposal
-      before wiring. REQ-RST-01c membership/set/focus remains OPEN. Existing
+      Windows agent writes a short design proposal (identity, storage, data
+      format, recovery journal vs separate store, REQ-RST-01c membership/set/
+      focus options and a recommendation) for the user to decide. Item 8
+      implementation stays blocked until then; other handoff items proceed.
+      No mechanism selected; REQ-RST-01c remains OPEN. Existing
       live sticky toggles retain the two pre-sticky origins; the exact
       post-restart un-stick result is not selected by R-FLT-05 and stays TBD.
       No new shortcut/catalog row or preset is selected.
@@ -1467,7 +1533,7 @@ decisions of 2026-09-24 are under
     accepted 2026-10-07: Windows workspace send carries fullscreen state
     without restoring first (P1 adoption entry in this file). Depends on
     handoff item 2 follow/stay wiring only; same-output workspace carry,
-    never the parked parity-queue multi-output foundation.
+    never the parity-queue multi-output foundation.
 
     #### Item 9 behavior and reference seams
 
@@ -1731,7 +1797,7 @@ decisions of 2026-09-24 are under
     global-unique keep per-output history/rings, shared keeps one
     history/ring. KDE mappings delivered offline; Windows local-only
     today. Depends on handoff items 1/2 (history/ring + follow/stay) and
-    the parked parity-queue multi-output foundation; last.
+    the parity-queue multi-output foundation; last.
 
     #### Item 12 behavior and reference seams
 
@@ -1972,7 +2038,7 @@ decisions of 2026-09-24 are under
     was accepted 2026-10-07; D1-D9 detail is user decisions 2026-10-08
     (normative as delivered). Core/Linux planner/KDE delivered offline;
     Windows behavior remains unchanged. D8 carry delivered offline in core/KDE
-    2026-10-09; Windows wiring pending. Depends on the parked multi-output
+    2026-10-09; Windows wiring pending. Depends on the multi-output
     foundation (item 5), scoped history (item 1), and item 12 for non-local
     modes. [Record](changes/archive/kde-whole-workspace-output-migration.md),
     [spec](spec/functional-spec.md#workspaces) REQ-WS-12/12a..i,
@@ -1983,7 +2049,7 @@ decisions of 2026-09-24 are under
     - Four directional active-only, follow-only actions, all UNBOUND by default.
       Resolve FULL-output-rectangle reciprocal adjacency, no wrap; choose
       largest shared edge, then left/top (User decision 2026-10-09; selection
-      delivered offline in core/KDE, Windows item 16 only while multi-output parked).
+      delivered offline in core/KDE, Windows item 16 pending the item 5 foundation).
       Hidden R-WS-12 baseline has no counterpart; explicitly select its active
       leg. KDE local/global-unique requires strict native per-output desktops;
       shared/false/unreadable refuses. Windows has no KWin option: establish
@@ -2117,7 +2183,8 @@ decisions of 2026-09-24 are under
       REQ-FLT-06/06b and Ours cell with offline evidence; native journey TBD.
 
   - Item 16: position-based output selection (User 2026-10-09). Shared core/KDE
-    delivered offline; Windows runtime unchanged, multi-output stays PARKED.
+    delivered offline; Windows runtime unchanged, multi-output unparked and
+    scheduled after the single-output handoff queue (user 2026-10-10).
     Implement with items 5/14 when their multi-output foundation is resumed.
     [Record](changes/archive/position-based-output-selection.md),
     [spec](spec/functional-spec.md#move) REQ-MOV-08/08b,
@@ -2230,7 +2297,7 @@ decisions of 2026-09-24 are under
     a still-scoped live source current view in both modes. Keep scoped
     invalidation, destination insertion and empty migration unchanged.
     Shared-core/KDE setting and MRU delivered offline 2026-10-10; Windows config,
-    settings UI and runtime wiring pending with the parked multi-output
+    settings UI and runtime wiring pending with the multi-output
     foundation. Exact seams:
     - `core/output_selection.rs` `MigrationSourceRefill::{LastRemaining,
       MostRecentlyUsed}`, `parse_wire` / `as_wire_str` and pure
@@ -2281,11 +2348,20 @@ decisions of 2026-09-24 are under
     arrival, source reflow/target slot and follow/stay, native unmaximize on
     target; live checks pending, fullscreen controls unchanged.
 
+  - Item 21: workspace tiling toggle default Win+Y (user 2026-10-10), matching
+    COSMIC `ToggleTiling` Super+Y (`cosmic-comp/data/keybindings.ron:85`,
+    pinned `3d55cba0`). Wire the Windows catalog and existing Authentic/
+    Compatible conflict model; Win+Y is recorded as a Mixed Reality conflict.
+    Other currently unbound actions stay unbound. Acceptance: shortcut and
+    tray checkbox toggle the same per-workspace state; Apply/Revert, presets
+    and takeover-off release work; update shortcut records with dated offline
+    evidence, native checks pending. KDE Meta+Y is a separate P1 item below.
+
   ### Source discrepancies to preserve and report
 
   | Existing assertion | Current source / implementation gap | Handoff treatment |
   | --- | --- | --- |
-  | [R-OUT-01](spec/reference-outcomes/multi-output.md#r-out-01-scrolling-assessment-move-left-onto-an-occupied-output) Ours Windows claimed exhausted-horizontal R4; [R-MOV-05](spec/reference-outcomes/move.md#r-mov-05-backfill-edge-move-with-no-left-neighbor-scrolling) claimed horizontal crossing with Up/Down excluded. | `src/tiling_sys.rs:6099/6105` sets `cross_output_transfer:false` in a single-domain event; no Windows cross actuation. Shared core supports four-direction R4. | Corrected both cells 2026-10-08 at `db31234` to local-only current-code facts. Handoff item 5 remains blocked on the parked parity-queue multi-output foundation; no native acceptance claimed. |
+  | [R-OUT-01](spec/reference-outcomes/multi-output.md#r-out-01-scrolling-assessment-move-left-onto-an-occupied-output) Ours Windows claimed exhausted-horizontal R4; [R-MOV-05](spec/reference-outcomes/move.md#r-mov-05-backfill-edge-move-with-no-left-neighbor-scrolling) claimed horizontal crossing with Up/Down excluded. | `src/tiling_sys.rs:6099/6105` sets `cross_output_transfer:false` in a single-domain event; no Windows cross actuation. Shared core supports four-direction R4. | Corrected both cells 2026-10-08 at `db31234` to local-only current-code facts. Handoff item 5 is sequenced after the single-output queue (18 before 10/11); no native acceptance claimed. |
   | [R-WS-10](spec/reference-outcomes/workspaces.md#r-ws-10-send-b-away-empty-middle-retained-vs-removed) and [R-WS-16](spec/reference-outcomes/workspaces.md#r-ws-16-previous-after-the-visited-empty-workspace-is-removed) Ours Windows said no removal path; spec REQ-WS-10 repeated it. | `src/workspace.rs:508` removes stable IDs; `src/tiling_sys.rs:9228-9234` retirement cleanup and :10074-10080 selection invoke it. `core/workspace.rs:35` plans eligible invisible-empty removal, protecting the trailing spare and minimum count. | Corrected both cells and REQ-WS-10 2026-10-08 at `db31234`. Exact native scenarios remain TBD; handoff item 1 invalidates actually removed IDs and tests surviving empties separately. |
   | Existing higher-level item-2 summary says Compatible disables arrows, while decision 2.1 identifies stock holders only on KDE and says Windows ownership unknown. | `src/settings.rs:954-957` currently returns None for all Ctrl/Alt chords; no Windows holder evidence for new send/output arms. Verified 2026-10-08 at `db31234`; status outstanding, no new policy selected. | KDE arrows are disabled by KDE Compatible. Windows unknown new arms keep defaults with unknown-ownership text until evidenced policy is recorded; do not manufacture Windows holder claims. |
   | Current settings/rebind helpers assume every implemented action has a canonical default chord. | `src/settings.rs:1044` canonical helper returns None for empty defaults; `build_remap` :1182 skips that action; `validate_bindings` :1405 rejects it. Keep-empty is currently active/effective (:1082); UI `refresh_info` (`src/settings_ui.rs:248`) labels it disabled. Verified 2026-10-08 at `db31234`; status outstanding, plus `settings_ui.rs:286` resize note. | Items 2/5 must wire unbound ACTION targets explicitly, make Keep-empty non-intercepting and display unbound distinctly from Disabled. These are adapter limitations, not a decision reversal. |
@@ -2298,12 +2374,13 @@ decisions of 2026-09-24 are under
   Integrated rebind and KDE first-run prompt deferred. KDE live
   acceptance pending: [checks](live-shortcut-override-verification.md),
   [record](changes/kde-shortcut-conflicts.md).
-- P3 | Hidden-workspace Alt+Tab option | Research complete (`580c766`,
-  `8129b37`; [note](research/windows-port/alt-tab-hidden-workspaces.md)):
-  keep SW_HIDE (no supported reinsertion); public off-screen parking is the
-  only official candidate, with visibility/recovery costs; native desktops
-  and private cloaking need separate API decisions. Activation behaviour
-  is matrix row R-WS-07. Implementation deferred; no design selected.
+- P1 | KDE workspace tiling toggle default Meta+Y | Catalog implementation
+  plus conflict checks under the existing Authentic/Compatible model (user
+  2026-10-10). KDE holder of Meta+Y is unverified; establish it before recording
+  conflict ownership. Verify shortcut/tray state parity, Apply/Force/Revert,
+  presets and the keyless-action path. Windows Win+Y is handoff item 21;
+  all other currently unbound actions stay unbound.
+  [shortcut rule](decisions.md#shortcuts-conflicts-and-presets)
 - P1 | Cross-platform functional specification | After the Windows tiling
   dogfood slice, define window/workspace behavior and keyboard shortcuts as
   the selected behavior contract for Linux, Windows and macOS, except recorded
@@ -2343,18 +2420,24 @@ decisions of 2026-09-24 are under
   source analysis: FancyWM core submodules and niri/sway/river/awesome/dwm
   (distinct from the completed bounded matrix source-fill passes).
   [Evidence](changes/archive/prior-art-catalogue.md).
-- P1 | macOS port | Work expected soon (user 2026-10-03). Readiness research
+- P1 | macOS port | Starts after KDE 0.1 ships (user 2026-10-10). Readiness research
   done (`f095042`): setup/TCC/signing runbook, sourced prior-art survey and
   tentative plan, which recommended public AX/AppKit. User direction
   (2026-10-03) supersedes that default: lower-level, lower-jank yabai-style
   route first, optional higher-level AeroSpace-style alternative later;
   default tier 2 (public plus private APIs, SIP enabled, no Dock injection).
   Plan revised to tier 2 from nine pinned local sources (`df018fb`,
-  `05d1d1f`; [record](changes/archive/macos-tier2-plan.md)). PARKED on
-  Phase 0 user inputs (recommendations in the plan): host model/macOS
-  floor (Apple Silicon, provisional 15+), Intel (arm64 first), stable
-  signer (Developer ID if available), Meta mapping (Cmd). Then Phase 1
-  lifecycle/recovery and hotkey probes on a Mac.
+  `05d1d1f`; [record](changes/archive/macos-tier2-plan.md)). Phase 0 inputs
+  are decided when macOS starts: host model/macOS floor (Apple Silicon,
+  provisional 15+), Intel (arm64 first), stable signer (Developer ID if
+  available), Meta mapping (Cmd). Core extraction (K2/K3) and shared restart
+  store remain tied to that start. Carry the non-native capability-first
+  spikes and one registration plus one interception hotkey path into Phase 0,
+  then Phase 1 lifecycle/recovery and hotkey probes on a Mac.
+  [API layer/events](research/non-native-tiler-host-interaction.md#d1-api-layer-authority-events-and-reconcile),
+  [hotkeys/consent](research/non-native-tiler-host-interaction.md#d2-hotkeys-consent-conflicts-secure-input-taps-focus),
+  [candidate lessons](research/non-native-tiler-host-interaction.md#candidate-lessons-for-this-project),
+  [evidence](changes/archive/non-native-tiler-host-interaction.md).
   [setup](macos-dev-environment.md)
   [survey](research/macos-port/prior-art.md)
   [plan](research/macos-port/plan.md)
@@ -2390,8 +2473,25 @@ decisions of 2026-09-24 are under
   [drag investigation](changes/window-alignment-drag-investigation.md)
 - P1 | External NixOS/Home Manager delivery validation | Clean external
   install, update, rollback, and host-matching KWin ABI still unproven
-  on an independent host.
+  on an independent host. Remains P1 in the 0.1 gate (user 2026-10-10).
   [change](changes/archive/nix-current-host-delivery.md)
+- P1 | 0.1 packaging: mainstream install path | Nix flake/Home Manager,
+  GitHub Release and OBS distro packages (user 2026-10-10; KDE Store excluded).
+  OBS builds release tags only into one stable repository: openSUSE Tumbleweed,
+  Fedora 43/44 with updates repos; Arch via AUR PKGBUILD, not OBS pacman.
+  Attempt Ubuntu 26.04 and KDE neon; return to the user for a decision if too
+  challenging. Ubuntu blockers: ECM 6.24 below our 6.26 floor, Node 22 below
+  our 24 floor (pre-built JS bundle in source archive may remove Node need as
+  ordinary engineering); neon OBS provisioning unverified. User creates OBS
+  account/project, GitHub-to-OBS token and AUR account at the start of the next
+  orchestrator session; spec, PKGBUILD and OBS service prep may proceed offline.
+  Acceptance: core script/planner/tray independent of optional ABI-bound effect;
+  never block KWin updates; mismatched/absent effect degrades borders/drag preview
+  until rebuild. Must-pass missing/failed/removed effect check keeps tiling working
+  and KWin stable. Install/uninstall docs, package descriptions and a post-removal
+  package note say "press Revert in Settings before removing".
+  [research](research/distribution-package-feasibility/feasibility.md)
+  [OBS](research/distribution-package-feasibility/obs.md)
 - P2 | Simplify drag preview + cross-output drop code | Post-live cleanup only:
   cut advisory `hover_prior` validation, lag-only fences, verbose comments;
   net deletion, no behavior change.
@@ -2432,13 +2532,6 @@ decisions of 2026-09-24 are under
 - P2 | Keyboard-layout support | After initial release; US keyboards only
   for MVP.
   [change](changes/shortcuts.md)
-- P2 | Mainstream install path | Target: single mainstream KDE install
-  (distro packages built alongside KWin). OBS is a partial fit with a
-  proposed Tumbleweed-then-Fedora POC. Needs the user: OBS account/project,
-  Fedora release, neon/Kubuntu pursuit, absent-during-upgrade policy, pacman
-  repo vs AUR.
-  [research](research/distribution-package-feasibility/feasibility.md)
-  [OBS](research/distribution-package-feasibility/obs.md)
 - P3 | AR6/AR7 workspace model + portable policy in core | Deferred until a
   non-KWin host needs it; current KWin is the "native workspaces" mode.
   Portable layout/domain relocation is shared; remaining host mapping is
@@ -2446,7 +2539,12 @@ decisions of 2026-09-24 are under
   cross-platform audit.
   [design](changes/architecture-review-ar6-workspaces.md)
   [audit](research/cross-platform-core/extraction.md)
-- P3 | Gap-drag anchor | Deferred experimentation incl. gap-0; research complete
+- PARKED | Live-test reference environments | Deferred until after 0.1;
+  revisit when a specific decision needs live reference evidence or tabbed
+  stacks are designed (user 2026-10-10). Keep the proposal as research.
+  [proposal](research/live-test-vms/proposal.md)
+- P3 | Gap-drag anchor (post-0.1) | No anchor at gap 0; gap-drag exists only
+  with gaps above 0, edge-drag covers gap 0 (user 2026-10-10). Research complete
   (layer-shell gap surfaces first, KWin input filter fallback; needs a Rust
   split-boundary request).
   [native boundary](decisions.md#engine-architecture-and-convergence)
@@ -2457,8 +2555,9 @@ decisions of 2026-09-24 are under
   validation only; pinned-semantics research is not a substitute.
   [comparison](reference-wm-comparison.md)
   [profile research](research/reference-wm-profile-support.md)
-- P3 | Artifact publication | KDE Store plus GitHub Release after MVP
-  delivery dependencies complete.
+- P3 | Artifact publication | GitHub Release plus OBS distro packages once
+  0.1 delivery prerequisites are complete, for the 0.1 release; KDE Store
+  excluded (user 2026-10-10).
   [foundations](changes/archive/delivered-foundations.md)
 - P3 | Live workspace-mode switch (post-MVP) | Quiesce, rebuild mapping,
   fresh-adopt without native moves; needs a safe Planner generation
@@ -2501,11 +2600,12 @@ Unprioritised ideas; not scheduled.
   Xbox voice chat); Start menu and controller access are not enough (user
   2026-10-03, after parity and correctness work).
 
-- Uninstall revert of host settings: reset our overridden KDE settings to
-  defaults on uninstall. Parked by the user (2026-09-29) pending research,
-  possibly via package manager hooks; no verified per-user hook exists for
-  Nix/Home Manager, KDE Store or distro packages. Users can use the
-  settings-page Revert buttons meanwhile.
+- Automatic uninstall revert of host settings: parked research after 0.1
+  (user 2026-10-10), aiming for "uninstall leaves no changed KDE settings".
+  Possibly via package manager hooks; no verified per-user hook exists for
+  Nix/Home Manager, KDE Store or distro packages. For 0.1, document pressing
+  Revert in Settings before removal in install/uninstall docs, package
+  descriptions and a post-removal package note (P1 packaging acceptance).
   [research](changes/archive/host-settings-conflicts.md)
 
 ## Pending live checks
@@ -2552,7 +2652,7 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   migration and verify the largest edge wins even when the focused window
   projects onto the smaller candidate. Check work-area placement, chosen-target
   native arrival and no replay, float carry/sticky stay on migration. User-owned;
-  native evidence pending, Windows multi-output parked.
+  native evidence pending; Windows cross-output legs await the item 5 foundation.
   [Record](changes/archive/position-based-output-selection.md),
   [R-MOV-12](spec/reference-outcomes/move.md#r-mov-12-exhausted-up-move-with-two-candidate-outputs-above),
   [R-WS-27](spec/reference-outcomes/workspaces.md#r-ws-27-two-candidate-migration-selection).
@@ -2931,62 +3031,38 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 
 ## Open user decisions
 
-- OBS POC inputs: OBS account/project, GitHub PAT/webhook wiring, Fedora
-  release, neon/Kubuntu pursuit, absent-during-upgrade policy, pacman repo
-  vs AUR.
-  [OBS](research/distribution-package-feasibility/obs.md)
-  [research](research/distribution-package-feasibility/feasibility.md)
-- Gap-drag gap-0 behavior: deferred experimentation; choose whether a zero-gap
-  layout exposes a drag anchor before prototyping.
-  [native boundary](decisions.md#engine-architecture-and-convergence)
-- Borderless-windowed fullscreen heuristic (born-fullscreen option 3): only
-  if dogfooding shows games arriving non-fullscreen.
-  [change](changes/archive/born-fullscreen-admission.md)
-- Windows Win+F11/Win+G containment (parked with Windows gaming coexistence):
+- Windows Win+F11/Win+G containment (release gate after multi-output):
   Authentic ownership and disclosed limitation are selected 2026-10-08;
   Compatible/disable/rebind provide Game Bar access. Later test and user review
   owns containment and any host-setting/thread/registry/policy alternative;
   none of those mechanisms is selected or authorized by the ratification.
   [record](changes/windows-gaming-coexistence.md)
-- Windows taskbar workspace indicator (parity 10): presentation design.
-- macOS Phase 0: host model and macOS floor, Intel support, stable signer,
-  Meta mapping. [plan](research/macos-port/plan.md)
-- Windows package/update channel: final distribution route remains unselected
-  (Store/signed installer/winget under evaluation); blocks release packaging,
-  not the parity implementation. [Plan](research/windows-port/plan.md).
-- Remaining accepted-addition bindings: defaults outside items 1-5 remain
-  unchosen. Existing send-and-stay/output-stay/migration actions deliberately
-  stay bindable and unbound; no default choice is needed to implement them.
-  [Shortcuts](spec/functional-spec.md#shortcuts).
-- Non-native tiler candidate lessons: delivered research awaits selection of
-  any follow-up; approved-decision tensions are options, not new requirements.
-  No current implementation blocked.
-  [Report](research/non-native-tiler-host-interaction.md),
-  [evidence](changes/archive/non-native-tiler-host-interaction.md).
+- macOS Phase 0: after KDE 0.1 ships, decide host/floor, Intel support, stable
+  signer and Meta mapping when macOS starts. [plan](research/macos-port/plan.md)
+- Windows package/update channel: deferred to Windows release planning;
+  short research refresh then user decision, most obvious and unsurprising
+  for users. Blocks release packaging, not parity. [plan](research/windows-port/plan.md)
+- Windows workspace presentation: after multi-output, Windows-agent options
+  and recommendation for hidden-workspace Alt+Tab/taskbar semantics plus
+  taskbar workspace indicator (parity 10), as a Windows release gate.
+  [note](research/windows-port/alt-tab-hidden-workspaces.md)
+- Windows restart persistence (handoff item 8): Windows-agent design proposal
+  (identity, storage, data format, recovery journal vs separate store,
+  REQ-RST-01c membership/set/focus options and recommendation) for user
+  decision; implementation blocked until then, other handoff items proceed.
 - Other unselected behavior: the functional spec's
   [open-decisions index](spec/functional-spec.md#open-index) lists 60 OPEN
   requirement rows plus the KDE observe-first fullscreen-send sub-leg;
-  design questions remain distinct from delivered implementation/live gaps.
-- Live-test environments (historical 508-cell queue snapshot, 2026-10-07)
-  ([proposal](research/live-test-vms/proposal.md), revised 2026-10-07 at
-  the user's request): one shared per-WM definition (packages with
-  optional pinned-source override, profile config, fixture clients,
-  observation helper) feeding two run modes: A nested on the host Plasma
-  session (Wayland WMs as a nested window, X11 WMs in Xephyr; KWin
-  "Ignore global shortcuts" rule for Super) and B lean `build-vm` VM
-  sharing the host store (multi-output, hotplug, real sessions). User
-  prefers A, switching to B when needed. Reasoned estimates, unmeasured:
-  A first slice 1.5-3 GiB store growth (all WMs ~6-15 GiB); B adds ~1-3
-  GiB plus sparse 4-8 GiB disks. Nested launches unverified at runtime.
-  First slice (user 2026-10-07): i3, sway, bspwm plus COSMIC and Hyprland
-  (very important to the project), nested mode A first, VM mode B for
-  multi-output/hotplug rows. Queue: i3 13, sway 18, bspwm 19, COSMIC 29,
-  Hyprland 37 cells. COSMIC/Hyprland nested runs are GPU-heavier and their
-  nested multi-output is unestablished. Not started (document only);
-  implementation needs a go-ahead.
+  separate 0.1-relevant versus post-0.1 triage pending, with only the relevant
+  set decided before 0.1, one at a time with the user (2026-10-10).
+  Design questions remain distinct from delivered implementation/live gaps.
 
 ## Known issues and risks
 
+- Borderless-windowed fullscreen heuristic (born-fullscreen option 3):
+  watched, conditional (user 2026-10-10). The user watches for borderless
+  games during dogfooding; pursue only if games arrive non-fullscreen.
+  [change](changes/archive/born-fullscreen-admission.md)
 - PID 3568836 SIGABRT (`QKeySequence` D-Bus abort) unattributed; needs
   sender, method, and fault-stack evidence.
   [record](changes/archive/kwin-qkeysequence-dbus-abort.md)

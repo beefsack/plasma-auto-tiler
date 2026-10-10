@@ -25,11 +25,50 @@ platform API behavior.
   where the user runs the tiler elevated may be considered; not a default now.
 - macOS decisions (version floor, App Store, shortcut consent, updates, UI
   language) are deferred until macOS spiking starts.
+- macOS starts after KDE 0.1 ships (user 2026-10-10). Phase 0 host/floor,
+  Intel, signer and Meta inputs are decided then; core extraction (K2/K3)
+  and the shared restart store remain tied to that start. Phase 0 carries
+  capability-first spikes and one registration plus one interception hotkey
+  path from the non-native research
+  ([API layer/events](research/non-native-tiler-host-interaction.md#d1-api-layer-authority-events-and-reconcile),
+  [hotkeys/consent](research/non-native-tiler-host-interaction.md#d2-hotkeys-consent-conflicts-secure-input-taps-focus),
+  [candidate lessons](research/non-native-tiler-host-interaction.md#candidate-lessons-for-this-project),
+  [evidence](changes/archive/non-native-tiler-host-interaction.md)).
 - User direction 2026-10-03 (macOS approach): prefer the lower-level,
   lower-jank route first (yabai-style). An optional higher-level public-API
   route (AeroSpace-style) may be evaluated later. Default to tier 2, public
   plus private APIs with SIP left enabled; no Dock injection or reduced SIP.
   Re-evaluate deeper tiers only if tier 2 cannot solve a problem well.
+- User decisions 2026-10-10 (0.1 release scope and gate):
+  - Release 0.1 is the existing MVP on KDE Plasma only. Windows continues
+    as a development preview and ships in its own later release, requiring
+    managed per-monitor workspaces (2026-09-30).
+  - Must-pass gate: the VISION reliability list (sleep/wake, plugging/
+    unplugging outputs, resolution and scaling changes, fullscreen
+    applications, underlying configuration changes); gaming/fullscreen
+    non-interference; core journeys (tiling, focus/move, workspaces,
+    multi-output, border, shortcuts, settings, restart); missing, failed or
+    removed effect leaves tiling working and KWin stable. Other live checks
+    may ship as listed known issues provided none crashes or silently stops
+    tiling. No separate dogfood period.
+  - Classification of pending live checks into must-pass versus
+    known-issue-allowed is a separate follow-up piece.
+  - The 60 OPEN requirements get a separate triage into 0.1-relevant
+    (touches a must-pass core journey, or current behavior is undefined,
+    refusal or surprising) versus post-0.1. Only the 0.1-relevant set is
+    decided before 0.1, one at a time with the user.
+  - Install paths: Nix flake/Home Manager, GitHub Release and OBS distro
+    packages. KDE Store is excluded from 0.1, replacing the earlier KDE
+    Store plus GitHub Release plan. External NixOS/Home Manager delivery
+    validation stays P1 in the gate; mainstream packaging becomes P1.
+  - OBS builds release tags only into one stable repository. Targets:
+    openSUSE Tumbleweed, Fedora 43/44 with updates repos, and Arch via an AUR
+    PKGBUILD (not an OBS pacman repo). Attempt Ubuntu 26.04 and KDE neon;
+    return to the user for a decision if too challenging.
+- Windows package/update channel (user 2026-10-10): deferred to Windows
+  release planning, then decided from a short research refresh under the
+  existing most-obvious-and-unsurprising criterion.
+
 ## Development Environment
 
 - User decision 2026-10-03 (dev environments): single root `mise.toml` for
@@ -112,8 +151,10 @@ platform API behavior.
   host keys. Host conflicts add a warning overlay to the tray icon and a top
   menu row opening Settings; left-click keeps opening the tray menu, snapshot
   loss keeps its separate NeedsAttention status; no notification or direct
-  Settings-on-icon-click. Uninstall restoring defaults for overridden host
-  settings is unselected and unimplemented.
+  Settings-on-icon-click. For 0.1, document pressing Revert in Settings before
+  removing in install/uninstall docs, package descriptions and a post-removal
+  package note. Automatic revert remains parked research after 0.1
+  ("uninstall leaves no changed KDE settings", user 2026-10-10).
 - Windows (user 2026-10-08):
   - Validated version-1 JSON settings in
     `%LOCALAPPDATA%\plasma-auto-tiler\settings.json`; normal owners read at
@@ -129,7 +170,15 @@ platform API behavior.
     clicks open its menu (conflict row, status, workspace tiling,
     new-workspace default, Settings, Stop). One stable icon GUID; TaskbarCreated
     revalidates or re-adds; proof owners create no tray or prompt. The
-    taskbar workspace indicator remains parked separately.
+    taskbar workspace indicator (parity 10) and hidden-workspace Alt+Tab/taskbar
+    semantics share one Windows-agent workspace-presentation research piece
+    after multi-output, before release, producing options and a recommendation
+    for the user (2026-10-10). Existing
+    [Alt+Tab research](research/windows-port/alt-tab-hidden-workspaces.md) and
+    non-native lessons remain inputs
+    ([workspaces/Alt+Tab](research/non-native-tiler-host-interaction.md#workspaces-monitors-overview-and-alttab-dim-4),
+    [candidate lessons](research/non-native-tiler-host-interaction.md#candidate-lessons-for-this-project),
+    [evidence](changes/archive/non-native-tiler-host-interaction.md)).
     Settings and the conflict row open the singleton UI; Stop uses ordinary
     teardown with graceful icon deletion and dead-owner cleanup through the
     existing recovery lease. Explorer may initially put the icon in overflow.
@@ -248,6 +297,10 @@ platform API behavior.
   ([workspace tiling](changes/archive/windows-workspace-tiling.md)).
 - Delivery coordination for items 1-5: see Move, Layout and Output Commands
   below.
+- Windows multi-output is unparked (user 2026-10-10): after the single-output
+  handoff queue 1-4, 6, 7, 9-11, 13, 15, 17, 18, 20, with item 18 before
+  10/11, proceed to the multi-output foundation and dependent items 5, 12,
+  14, 16, 19 ([handoff](backlog.md)).
 - Item 1, R-WS-08 / R-WS-11:
     - Windows delivery 2026-10-10: local observed-history/ring, exact Ctrl/Tab
       action routing and settings/UI/presets delivered offline; native gates
@@ -554,6 +607,12 @@ platform API behavior.
     Windows behavior unchanged; native checks remain pending.
 - User decisions 2026-10-08 (workspace migration R-WS-12 D1-D9, outcomes
   decided): see Workspaces above.
+- Windows restart intent persistence (user 2026-10-10, handoff item 8): the
+  Windows agent writes a short design proposal covering identity, storage,
+  data format, recovery-journal versus separate store, and REQ-RST-01c
+  membership/set/focus options, with a recommendation for the user to decide.
+  Implementation stays blocked until that decision; other handoff items
+  proceed. No mechanism is selected by this decision.
 
 ## Reference Matrix and Spec Authority
 
@@ -606,6 +665,10 @@ platform API behavior.
   [archived residual ledger](changes/archive/reference-source-fill-remaining.md).
 - Workflows transfer across Linux, Windows and macOS (shortcuts and behavior
   consistency decided under Shortcuts above).
+- Live-test reference environments are deferred until after 0.1 (user
+  2026-10-10). Revisit when a specific decision needs live reference evidence
+  or when tabbed stacks are designed; the
+  [proposal](research/live-test-vms/proposal.md) stays parked research.
 ## Shortcuts, Conflicts and Presets
 
 - Shared defaults (user 2026-10-01 option A): Meta/Win shortcuts are defaults
@@ -724,6 +787,14 @@ platform API behavior.
 - Functional naming (user 2026-10-08): settings and their values use
   functional names; reference WMs appear only in tooltips. Exact IDs decided
   for `sameAxisMove`, `fixedSizePredicate`, and `migrationSourceRefill` above.
+- Workspace tiling toggle default (user 2026-10-10): KDE `Meta+Y`, Windows
+  `Win+Y`, matching COSMIC `ToggleTiling` on `Super+Y`
+  (`cosmic-comp/data/keybindings.ron:85`, pinned `3d55cba0`). All other
+  currently unbound actions stay unbound; COSMIC `SendToWorkspace` and
+  `MigrateWorkspaceToOutput` also have no binding in that pinned file. KDE
+  implementation uses the catalog and existing Authentic/Compatible conflict
+  model; the KDE `Meta+Y` holder is unverified. Windows wiring is handoff
+  item 21; these bindings are selected, implementation pending.
 ## Gaming Safety
 
 - Gaming compatibility must be flawless (see Principles). Provide alternate
@@ -741,6 +812,13 @@ platform API behavior.
   work (user 2026-10-03).
 - Shortcut containment (Authentic Win+G/F11) is decided under Shortcuts above;
   Windows 100ms pump gaming cost is unmeasured.
+- Windows gaming coexistence is a Windows release gate after multi-output,
+  before any Windows release (user 2026-10-10): Win+G/F11 containment review,
+  Xbox mode detection and M16 100ms pump-cost measurement. Its P0 label does
+  not schedule it now. Non-native research informs the measurement
+  ([event/pump boundary](research/non-native-tiler-host-interaction.md#layer-layout-authority-events-and-reconciliation-dim-1),
+  [candidate lessons](research/non-native-tiler-host-interaction.md#candidate-lessons-for-this-project),
+  [evidence](changes/archive/non-native-tiler-host-interaction.md)).
 
 ## Placement, Minimums and Startup Adoption
 
@@ -802,6 +880,12 @@ platform API behavior.
   remaining portable policy to core is deferred until a non-KWin host needs
   it; the current KWin logical-workspace implementation is the "native
   workspaces" mode of that future choice.
+- KDE current approach is retained after the non-native research (user
+  2026-10-10): no new follow-up items; Rust-owned layout, KWin observation/
+  actuation, host-parented visuals and explicit shortcut lifecycle remain.
+  [Candidate lessons](research/non-native-tiler-host-interaction.md#candidate-lessons-for-this-project),
+  [cross-cutting findings](research/non-native-tiler-host-interaction.md#cross-cutting-findings)
+  and [evidence](changes/archive/non-native-tiler-host-interaction.md) stay linked.
 - Architecture direction (user-approved 2026-09-24 from the
   [architecture review](research/architecture-review/review.md)): a portable
   `tiler-core` Engine with world/domain state behind a `LayoutPolicy` seam;
@@ -1058,6 +1142,8 @@ platform API behavior.
   - User decision 2026-10-07 (R-DRAG-04): Esc keeps cancelling a drag on both
     platforms (host KWin/Windows move convention; i3 also cancels) despite
     7/8 references dropping at the pointer; a setting may be explored later.
+  - Gap-drag (user 2026-10-10): no anchor at gap 0; gap-drag exists only when
+    gaps are above 0, with edge-drag covering gap 0. P3, post-0.1.
   - Tiled move drops use the existing Rust core drop resolver through the
     synchronous `drag-drop` Plan route; cross-output moves join the
     destination output's tiling at the drop point (no snap-back, no
@@ -1153,9 +1239,21 @@ platform API behavior.
 - Unified Settings page: see Settings above. The script KPackage still needs
   the host-built native KCM companion for Configure; the effect need not be
   enabled. Existing live border updates remain live.
-- The core distribution remains the script KPackage for KDE Store and an
-  identical GitHub Release artifact. Platform-native packages for the native
-  effect and KCM are permitted; their formats and publication are unselected.
+- Release/install paths and targets are selected under
+  [Scope and Platform Goals](#scope-and-platform-goals).
+- Split packages (user 2026-10-10): core (KWin script, planner, tray) is
+  independent of an optional ABI-bound native-effect package. Never block KWin
+  updates; when the effect mismatches, fails or is absent/removed, tiling
+  continues and KWin stays stable, while borders/drag preview degrade until
+  rebuild. Missing, failed and removed effect cases are must-pass 0.1 checks.
+- OBS attempt constraints ([research](research/distribution-package-feasibility/obs.md)):
+  Ubuntu 26.04 has ECM 6.24 below our 6.26 floor and Node 22 below our 24
+  floor. A pre-built JS bundle in the source archive may remove the Node
+  build requirement as ordinary engineering during the attempt. KDE neon
+  needs OBS provisioning, which is unverified.
+- At the start of the next orchestrator session, the user creates the OBS
+  account/project, GitHub-to-OBS token and AUR account. Packaging prep (spec,
+  PKGBUILD, OBS service files) may proceed offline before then.
 - Nix-first current-host delivery is selected. The repository flake statically
   exports `packages.default`, `packages.kwin-script`,
   `packages.native-effect`, and `packages.tray`, plus
@@ -1541,6 +1639,11 @@ platform API behavior.
   output transfer, without unmaximize/remaximize or overlay geometry writes.
   Existing arrival/current-view/lifetime/follow/stay fences still apply.
   Status: KDE maximize carry delivered offline ([record](changes/archive/reference-comparison-implementation.md)); real native maximize preservation on arrival pending observation. Existing Windows maximize policy remains; KDE fullscreen native send still observe-first (currently refuses fullscreen sends).
+- KDE borderless-windowed fullscreen heuristic (born-fullscreen option 3,
+  user 2026-10-10): stays conditional. The user watches for borderless games
+  during dogfooding; revisit only if games arrive non-fullscreen. This is a
+  watched risk, not a pending default selection; KDE remains flag-based.
+  [research](changes/archive/born-fullscreen-admission.md)
 - Windows (parity items 3-6):
   - Maximize (Win+M matches Meta+M): retained-tile overlay; siblings keep
     layout; never suspends the workspace. Directional focus is a no-op while
