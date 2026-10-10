@@ -1,4 +1,5 @@
-//! Product keyboard takeover: Win+H/J/K/L and Win+arrows for focus/move.
+//! Product keyboard takeover: Win+H/J/K/L and Win+arrows for focus/move,
+//! plus Win+Alt(+Shift) chords for keyboard resize.
 //!
 //! Portable classifier and bounded intent queue; the low-level hook itself
 //! lives in [`sys`] (`cfg(windows)` only) and mirrors the accepted
@@ -7,10 +8,13 @@
 //! modifying the spike.
 //!
 //! Exact KDE catalog (`kwin/src/plan-adapter-entry.ts`): unshifted Win+key is
-//! focus, Win+Shift+key is move, over letters H/J/K/L plus arrow aliases.
+//! focus, Win+Shift+key is move, over letters H/J/K/L plus arrow aliases;
+//! Win+Alt+key resizes outwards and Win+Shift+Alt+key resizes inwards over
+//! the same catalog (dedicated resize intents, never moves).
 //! Unshifted Win+L additionally requires explicit opt-in (`allow_win_l`);
-//! Win+Shift+L stays approved. Any Ctrl/Alt, injected input, or unrelated key
-//! passes through untracked and never enters the queue or logs.
+//! Win+Shift+L stays approved. Any Ctrl, any Alt outside the documented
+//! resize arms, injected input, or unrelated key passes through untracked
+//! and never enters the queue or logs.
 //!
 //! The callback never touches the Engine, geometry, or logs: it classifies one
 //! key event, pushes one bounded record, and (Win-up only, with no hook-state
@@ -108,7 +112,9 @@ pub const INTENT_QUEUE_CAP: usize = 512;
 pub const MAX_DISPATCH_PER_TICK: usize = 8;
 
 /// Which Engine route a chord takes. Core owns the semantics; this is only
-/// the focus/move selector (unshifted vs Shift).
+/// the focus/move selector (unshifted vs Shift). Resize intents never ride
+/// this enum: they carry their own [`ResizeMode`] so a resize can never be
+/// mistaken for a move.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapOp {
     Focus,
@@ -125,6 +131,40 @@ impl SnapOp {
     }
 }
 
+/// Keyboard resize mode: `Outwards` grows towards the direction
+/// (Win+Alt+key), `Inwards` shrinks from it (Win+Shift+Alt+key). Fixed at
+/// down time from the Shift state plus the explicit rebound action; later
+/// modifier flips never rewrite it. Never carried as [`SnapOp::Move`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeMode {
+    Outwards,
+    Inwards,
+}
+
+impl ResizeMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Outwards => "outwards",
+            Self::Inwards => "inwards",
+        }
+    }
+}
+
+/// Classifier outcome for one keyboard resize event (Win+Alt+key outwards,
+/// Win+Shift+Alt+key inwards, over H/J/K/L plus arrow aliases). Only downs
+/// and repeats dispatch, ups close the pair. Held repeats stay swallowed
+/// unless the live Win+Alt(+Shift) combination still matches the pinned
+/// mode; only the down dispatches a fresh hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResizeIntent {
+    pub mode: ResizeMode,
+    pub direction: Direction,
+    pub edge: SnapEdge,
+    pub foreground: bool,
+    pub consumed: bool,
+    pub announce: bool,
+}
 /// One classifier remap entry for a rebound shortcut binding: one rebound
 /// physical chord routes into the existing action classifier at its canonical
 /// virtual key plus explicit action. Entries carry the full modifier shape
@@ -188,6 +228,8 @@ pub enum ChordAction {
     WorkspacePrevious,
     WorkspacePrev,
     WorkspaceNext,
+    ResizeOut,
+    ResizeIn,
 }
 
 impl ChordAction {
@@ -209,6 +251,8 @@ impl ChordAction {
             Self::WorkspacePrevious => "workspace-previous",
             Self::WorkspacePrev => "workspace-prev",
             Self::WorkspaceNext => "workspace-next",
+            Self::ResizeOut => "resize-out",
+            Self::ResizeIn => "resize-in",
         }
     }
 }
@@ -481,6 +525,43 @@ fn digit_repeat_live(shift: bool, ctrl: bool, alt: bool, win: bool, op: Workspac
     !ctrl && !alt && win && (shift == (op == WorkspaceOp::Send))
 }
 
+/// Whether a live modifier/Win combination still matches a pinned resize
+/// mode: Win+Alt held, no Ctrl, Win still held, Shift still selecting the
+/// pinned mode (unshifted outwards, Shifted inwards). Same
+/// swallow-but-don't-dispatch contract as [`snap_repeat_live`]: the repeat
+/// arm stays pinned to the required modifiers/action.
+fn resize_repeat_live(shift: bool, ctrl: bool, alt: bool, win: bool, mode: ResizeMode) -> bool {
+    alt && !ctrl && win && (shift == (mode == ResizeMode::Inwards))
+}
+
+/// Resize mode for a Shift state: unshifted Alt grows outwards, Shift+Alt
+/// shrinks inwards.
+fn resize_mode_for_shift(shift: bool) -> ResizeMode {
+    if shift {
+        ResizeMode::Inwards
+    } else {
+        ResizeMode::Outwards
+    }
+}
+
+/// Explicit resize action for a mode: the bound action carries the mode, so
+/// a resize intent can never be disguised as a move.
+fn resize_action_for_mode(mode: ResizeMode) -> ChordAction {
+    match mode {
+        ResizeMode::Outwards => ChordAction::ResizeOut,
+        ResizeMode::Inwards => ChordAction::ResizeIn,
+    }
+}
+
+/// Resize mode for an explicit bound action.
+fn resize_mode_for_action(action: ChordAction) -> Option<ResizeMode> {
+    match action {
+        ChordAction::ResizeOut => Some(ResizeMode::Outwards),
+        ChordAction::ResizeIn => Some(ResizeMode::Inwards),
+        _ => None,
+    }
+}
+
 /// Whether a live modifier/Win combination still matches a pinned history
 /// op: Win+Ctrl held, no Shift/Alt, Win still held. Same
 /// swallow-but-don't-dispatch contract as directional repeats.
@@ -501,6 +582,14 @@ fn collide_refusal(
     match shape {
         Classified::Snap(intent) => Classified::Snap(SnapIntent {
             op: intent.op,
+            direction: intent.direction,
+            edge,
+            foreground,
+            consumed,
+            announce: false,
+        }),
+        Classified::Resize(intent) => Classified::Resize(ResizeIntent {
+            mode: intent.mode,
             direction: intent.direction,
             edge,
             foreground,
@@ -573,6 +662,10 @@ fn collide_trigger(shape: &Classified) -> Option<MaskTrigger> {
     match *shape {
         Classified::Snap(intent) => Some(MaskTrigger::Snap {
             op: intent.op,
+            direction: intent.direction,
+        }),
+        Classified::Resize(intent) => Some(MaskTrigger::Resize {
+            mode: intent.mode,
             direction: intent.direction,
         }),
         Classified::Workspace(intent) => Some(MaskTrigger::Workspace {
@@ -766,15 +859,17 @@ pub struct OrientationIntent {
     pub announce: bool,
 }
 
-/// Unified classifier outcome: exactly one of directional, workspace digit,
-/// workspace history, maximize, fullscreen, or float/sticky. One machine,
-/// one modifier/mask authority; history shares Win/Shift/Ctrl/Alt tracking,
-/// origin pairing, saturation, and the E8 mask with H/J/K/L/arrows and
-/// digits. Ctrl selects the history arm (existing digit/directional arms
-/// refuse Ctrl); Shift/Alt select nothing there.
+/// Unified classifier outcome: exactly one of directional, resize,
+/// workspace digit, workspace history, maximize, fullscreen, or
+/// float/sticky. One machine, one modifier/mask authority; history shares
+/// Win/Shift/Ctrl/Alt tracking, origin pairing, saturation, and the E8 mask
+/// with H/J/K/L/arrows and digits. Ctrl selects the history arm (existing
+/// digit/directional arms refuse Ctrl); Alt selects the resize arm (other
+/// arms refuse Alt).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Classified {
     Snap(SnapIntent),
+    Resize(ResizeIntent),
     Workspace(WorkspaceIntent),
     WorkspaceSend(WorkspaceSendIntent),
     WorkspaceHistory(WorkspaceHistoryIntent),
@@ -790,6 +885,7 @@ impl Classified {
     pub const fn consumed(self) -> bool {
         match self {
             Self::Snap(intent) => intent.consumed,
+            Self::Resize(intent) => intent.consumed,
             Self::Workspace(intent) => intent.consumed,
             Self::WorkspaceSend(intent) => intent.consumed,
             Self::WorkspaceHistory(intent) => intent.consumed,
@@ -805,6 +901,7 @@ impl Classified {
     pub const fn announce(self) -> bool {
         match self {
             Self::Snap(intent) => intent.announce,
+            Self::Resize(intent) => intent.announce,
             Self::Workspace(intent) => intent.announce,
             Self::WorkspaceSend(intent) => intent.announce,
             Self::WorkspaceHistory(intent) => intent.announce,
@@ -817,7 +914,7 @@ impl Classified {
     }
 }
 
-/// Which chord armed the Start-menu mask. Digits, history, maximize,
+/// Which chord armed the Start-menu mask. Digits, history, resize, maximize,
 /// fullscreen, and float arm it exactly like directional chords: any consumed
 /// chord in the Win hold needs the E8 pair at Win-up, or the OS opens Start.
 /// `WinDrag` arms it for the project-driven Win+Left stationary gesture
@@ -826,10 +923,25 @@ impl Classified {
 /// same mask at release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaskTrigger {
-    Snap { op: SnapOp, direction: Direction },
-    Workspace { op: WorkspaceOp, index: u8 },
-    WorkspaceSend { delta: i32, follow: bool },
-    WorkspaceHistory { op: WorkspaceHistoryOp },
+    Snap {
+        op: SnapOp,
+        direction: Direction,
+    },
+    Resize {
+        mode: ResizeMode,
+        direction: Direction,
+    },
+    Workspace {
+        op: WorkspaceOp,
+        index: u8,
+    },
+    WorkspaceSend {
+        delta: i32,
+        follow: bool,
+    },
+    WorkspaceHistory {
+        op: WorkspaceHistoryOp,
+    },
     Maximize,
     Fullscreen,
     Float,
@@ -896,6 +1008,9 @@ pub struct SnapClassify {
     sticky_origin: bool,
     orientation_down: bool,
     orientation_origin: bool,
+    resize_down: [bool; 8],
+    resize_origin: [bool; 8],
+    resize_mode: [Option<ResizeMode>; 8],
     pub enabled: bool,
     /// Shortcut-handling gate published by the owner (takeover plus the
     /// eventual pause source, e.g. Xbox detection). Fresh downs consume iff
@@ -935,6 +1050,7 @@ pub struct SnapClassify {
     /// changes; each entry clears on its own physical's key-up.
     collide: [Option<Classified>; 256],
     pub counts: [SnapCounts; 8],
+    pub resize_counts: [SnapCounts; 8],
     pub digit_counts: [SnapCounts; 10],
     pub max_counts: SnapCounts,
     pub fullscreen_counts: SnapCounts,
@@ -994,6 +1110,9 @@ impl SnapClassify {
             sticky_origin: false,
             orientation_down: false,
             orientation_origin: false,
+            resize_down: [false; 8],
+            resize_origin: [false; 8],
+            resize_mode: [None; 8],
             enabled: config.takeover,
             gate_active: true,
             allow_win_l: config.allow_win_l,
@@ -1002,6 +1121,7 @@ impl SnapClassify {
             phys_pin: [None; 256],
             collide: [None; 256],
             counts: [SnapCounts::default(); 8],
+            resize_counts: [SnapCounts::default(); 8],
             digit_counts: [SnapCounts::default(); 10],
             max_counts: SnapCounts::default(),
             fullscreen_counts: SnapCounts::default(),
@@ -1098,9 +1218,11 @@ impl SnapClassify {
 
     /// Explicit action for a direct (non-remapped) physical chord at its live
     /// modifiers: item 2 relative send wins on Win+Ctrl+Shift, history wins on
-    /// Win+Ctrl (no Shift/Alt), otherwise the existing VK-derived arm. `None`
-    /// means the chord refuses (bare, extra-modified, or arm-refused) and
-    /// leaves no pin.
+    /// Win+Ctrl (no Shift/Alt), resize wins on Win+Alt([+Shift]) with no Ctrl,
+    /// otherwise the existing VK-derived arm. `None` means the chord refuses
+    /// (bare, extra-modified, or arm-refused) and leaves no pin. Fresh Alt is
+    /// accepted only here on catalog keys through the documented resize arms;
+    /// any other Alt chord (unknown key, extra Ctrl) refuses.
     fn direct_action(&self, physical: u32) -> Option<ChordAction> {
         let win = self.win_l || self.win_r;
         if !win {
@@ -1131,6 +1253,14 @@ impl SnapClassify {
                 WorkspaceHistoryOp::Prev => ChordAction::WorkspacePrev,
                 WorkspaceHistoryOp::Next => ChordAction::WorkspaceNext,
             });
+        }
+        // Keyboard resize: Win+Alt+key grows outwards, Win+Shift+Alt+key
+        // shrinks inwards, over the directional catalog (letters plus arrow
+        // aliases). The mode rides the explicit bound action, never a move.
+        // Extra Ctrl refuses here; an exact effective rebind still routes
+        // through the rebound table above.
+        if self.alt && !self.ctrl && catalog_index(physical).is_some() {
+            return Some(resize_action_for_mode(resize_mode_for_shift(self.shift)));
         }
         if self.ctrl || self.alt {
             return None;
@@ -1263,6 +1393,20 @@ impl SnapClassify {
                     announce: false,
                 }))
             }
+            ChordAction::ResizeOut | ChordAction::ResizeIn => {
+                let idx = catalog_index(canon)?;
+                if !self.resize_down[idx] {
+                    return None;
+                }
+                Some(Classified::Resize(ResizeIntent {
+                    mode: self.resize_mode[idx].unwrap_or(ResizeMode::Outwards),
+                    direction: index_direction(idx),
+                    edge: SnapEdge::Down,
+                    foreground: true,
+                    consumed: self.resize_origin[idx],
+                    announce: false,
+                }))
+            }
             ChordAction::WorkspaceDigit | ChordAction::WorkspaceStayDigit => {
                 if !is_digit_vk(canon) {
                     return None;
@@ -1372,10 +1516,15 @@ impl SnapClassify {
     }
 
     /// Whether a canonical route currently holds a down without its up.
-    /// History arms own separate slots from directional arms sharing one VK.
+    /// History arms own separate slots from directional arms sharing one VK;
+    /// resize arms share one slot across both modes (one physical key holds
+    /// one resize at a time).
     fn canon_is_down(&self, action: ChordAction, vk: u32) -> bool {
         match action {
             ChordAction::Directional => catalog_index(vk).is_some_and(|idx| self.key_down[idx]),
+            ChordAction::ResizeOut | ChordAction::ResizeIn => {
+                catalog_index(vk).is_some_and(|idx| self.resize_down[idx])
+            }
             ChordAction::WorkspaceDigit | ChordAction::WorkspaceStayDigit => {
                 is_digit_vk(vk) && self.digit_down[(vk - VK_0) as usize]
             }
@@ -1646,6 +1795,9 @@ impl SnapClassify {
                 debug_assert!(is_float_vk(vk) || is_sticky_vk(vk));
                 return self.push_g(is_up, foreground, route_live);
             }
+            ChordAction::ResizeOut | ChordAction::ResizeIn => {
+                return self.push_resize(vk, action, is_up, foreground, route_live);
+            }
             ChordAction::Directional => {}
         }
         let physical_lock = physical == VK_L;
@@ -1770,6 +1922,155 @@ impl SnapClassify {
                     self.counts[idx].passed += 1;
                     Some(Classified::Snap(SnapIntent {
                         op,
+                        direction,
+                        edge: SnapEdge::Down,
+                        foreground,
+                        consumed: false,
+                        announce: false,
+                    }))
+                }
+            }
+        }
+    }
+
+    /// Resize half of the unified classifier (Win+Alt+key outwards,
+    /// Win+Shift+Alt+key inwards, over the directional catalog letters plus
+    /// arrow aliases). Same Win/armed-hold/gate/mask contract as the
+    /// directional catalog, but Alt selects the arm: fresh downs require
+    /// Win+Alt with no Ctrl, Shift selecting the mode. The mode is fixed at
+    /// down time from the explicit action (rebinds keep their action even
+    /// when the physical key differs) and rides the paired key-up; repeats of
+    /// a consumed hold stay swallowed until the matching up but only announce
+    /// while the live Win+Alt(+Shift) combination still matches the pinned
+    /// mode, so a bare-key repeat after Win-up never re-dispatches. Extra
+    /// Ctrl or a missing Win/Alt passes through untracked with no pin.
+    /// `route_live` gates fresh consumption and repeat dispatch: a pinned
+    /// hold whose chord no longer routes live (disabled or rebound away
+    /// mid-hold) stays swallowed without dispatching until its matching up.
+    fn push_resize(
+        &mut self,
+        vk: u32,
+        action: ChordAction,
+        is_up: bool,
+        foreground: bool,
+        route_live: bool,
+    ) -> Option<Classified> {
+        let idx = catalog_index(vk)?;
+        let mode = resize_mode_for_action(action)?;
+        let direction = index_direction(idx);
+        if is_up {
+            if !self.resize_down[idx] {
+                return None;
+            }
+            self.resize_down[idx] = false;
+            let origin = self.resize_origin[idx];
+            self.resize_origin[idx] = false;
+            let pinned = self.resize_mode[idx].unwrap_or(mode);
+            self.resize_mode[idx] = None;
+            self.resize_counts[idx].up += 1;
+            if origin {
+                self.resize_counts[idx].consumed += 1;
+                Some(Classified::Resize(ResizeIntent {
+                    mode: pinned,
+                    direction,
+                    edge: SnapEdge::Up,
+                    foreground,
+                    consumed: true,
+                    announce: false,
+                }))
+            } else {
+                self.resize_counts[idx].passed += 1;
+                Some(Classified::Resize(ResizeIntent {
+                    mode: pinned,
+                    direction,
+                    edge: SnapEdge::Up,
+                    foreground,
+                    consumed: false,
+                    announce: false,
+                }))
+            }
+        } else {
+            // Armed-hold repeats classify BEFORE the fresh-chord guard: a
+            // consumed hold stays swallowed until its matching up even when
+            // Alt/Shift/Ctrl/Win flip mid-hold. Only the dispatch
+            // (`announce`) needs the live combination to still match the
+            // pinned mode/action.
+            if self.resize_down[idx] {
+                self.resize_counts[idx].repeat += 1;
+                let pinned = self.resize_mode[idx].unwrap_or(mode);
+                if self.resize_origin[idx] {
+                    let live = self.enabled
+                        && self.gate_active
+                        && route_live
+                        && resize_repeat_live(
+                            self.shift,
+                            self.ctrl,
+                            self.alt,
+                            self.win_l || self.win_r,
+                            pinned,
+                        );
+                    self.resize_counts[idx].consumed += 1;
+                    // Only a Win-held repeat rearms the Start-menu mask: a
+                    // bare repeat after Win-up stays swallowed but must not
+                    // create a new mask obligation.
+                    if self.win_l || self.win_r {
+                        self.mask_pending = true;
+                        self.mask_trigger = Some(MaskTrigger::Resize {
+                            mode: pinned,
+                            direction,
+                        });
+                    }
+                    Some(Classified::Resize(ResizeIntent {
+                        mode: pinned,
+                        direction,
+                        edge: SnapEdge::Repeat,
+                        foreground,
+                        consumed: true,
+                        announce: live,
+                    }))
+                } else {
+                    self.resize_counts[idx].passed += 1;
+                    Some(Classified::Resize(ResizeIntent {
+                        mode: pinned,
+                        direction,
+                        edge: SnapEdge::Repeat,
+                        foreground,
+                        consumed: false,
+                        announce: false,
+                    }))
+                }
+            } else {
+                // Fresh down: Win+Alt with no Ctrl; Shift must select the
+                // bound mode (outwards unshifted, inwards shifted). The Alt
+                // arm is exact: unknown extra Ctrl or a missing Win/Alt
+                // refuses with no pin, so the paired key-up passes too.
+                if !(self.win_l || self.win_r) || !self.alt || self.ctrl {
+                    return None;
+                }
+                if self.shift != (mode == ResizeMode::Inwards) {
+                    return None;
+                }
+                self.resize_down[idx] = true;
+                let origin = self.enabled && self.gate_active && route_live;
+                self.resize_origin[idx] = origin;
+                self.resize_mode[idx] = Some(mode);
+                self.resize_counts[idx].down += 1;
+                if origin {
+                    self.resize_counts[idx].consumed += 1;
+                    self.mask_pending = true;
+                    self.mask_trigger = Some(MaskTrigger::Resize { mode, direction });
+                    Some(Classified::Resize(ResizeIntent {
+                        mode,
+                        direction,
+                        edge: SnapEdge::Down,
+                        foreground,
+                        consumed: true,
+                        announce: true,
+                    }))
+                } else {
+                    self.resize_counts[idx].passed += 1;
+                    Some(Classified::Resize(ResizeIntent {
+                        mode,
                         direction,
                         edge: SnapEdge::Down,
                         foreground,
@@ -3347,9 +3648,25 @@ pub struct QueuedOrientationIntent {
     pub tick: std::time::Instant,
 }
 
+/// One approved keyboard resize chord captured by the callback. `mode` is
+/// pinned at down time (outwards/inwards) with the direction; `origin` rides
+/// for mask/queue parity. Runtime geometry dispatch is a later unit: the
+/// owner currently settles these without acting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedResizeIntent {
+    pub mode: ResizeMode,
+    pub direction: Direction,
+    pub edge: SnapEdge,
+    pub origin: Option<SnapOrigin>,
+    pub consumed: bool,
+    pub announce: bool,
+    pub tick: std::time::Instant,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueuedSnapEvent {
     Intent(QueuedIntent),
+    Resize(QueuedResizeIntent),
     Workspace(QueuedWorkspaceIntent),
     WorkspaceSend(QueuedWorkspaceSendIntent),
     WorkspaceHistory(QueuedWorkspaceHistoryIntent),
@@ -3474,6 +3791,15 @@ pub fn classify_and_queue(
     let event = match ev {
         Classified::Snap(intent) => QueuedSnapEvent::Intent(QueuedIntent {
             op: intent.op,
+            direction: intent.direction,
+            edge: intent.edge,
+            origin,
+            consumed: intent.consumed,
+            announce: intent.announce,
+            tick,
+        }),
+        Classified::Resize(intent) => QueuedSnapEvent::Resize(QueuedResizeIntent {
+            mode: intent.mode,
             direction: intent.direction,
             edge: intent.edge,
             origin,
@@ -4865,6 +5191,10 @@ pub mod sys {
         let mut value = match mask.trigger {
             super::MaskTrigger::Snap { op, direction } => serde_json::json!({
                 "trigger_op": op.as_str(),
+                "trigger_direction": super::direction_name(direction),
+            }),
+            super::MaskTrigger::Resize { mode, direction } => serde_json::json!({
+                "trigger_op": mode.as_str(),
                 "trigger_direction": super::direction_name(direction),
             }),
             super::MaskTrigger::Workspace { op, index } => serde_json::json!({

@@ -2933,7 +2933,21 @@ Legend:
   crates/tiler-windows/src/tiling_sys.rs:13026-13048 (pointer-resize
   gesture maps to `CoreCommand::PointerResize`, the Windows resize path)
   @9241c94
-  (no Windows keyboard-resize trigger; keyboard legs have no counterpart)
+  (historical missing Windows keyboard-resize trigger). Superseded 2026-10-11,
+  base `f794cf9` + delivery commit: `settings.rs` `RESIZE_ROWS` /
+  `binding_catalog`, `snapkey.rs` `ResizeIntent` / `QueuedSnapEvent::Resize`,
+  `tiling_sys.rs` `dispatch_resize_intent`, and `tiling.rs`
+  `resize_repeat_next`; retained Engine resize fixtures and exact modifier /
+  held-routing / queue-mask tests in `tests/tiling.rs`, `tests/snapkey.rs`,
+  `tests/settings.rs`. Agent-observed downstream CLI geometry and native
+  Settings Apply/Revert; physical interception remains user-owned.
+  [Delivery/evidence](../changes/archive/windows-keyboard-resize.md).
+
+  Minimal Windows preset discriminator, tentative pending user review:
+
+  | Given | When | Ours Windows | Unsupported outcome |
+  | --- | --- | --- | --- |
+  | Default resize rows; Windows chord ownership unknown | Apply Compatible, then Authentic | Both keep Win+Alt and Win+Shift+Alt resize defaults with unknown-ownership / unproven-containment notes; Compatible disables known conflicts only (2026-10-11, base `f794cf9` + delivery commit, preset fixtures) | Actual foreign owner and physical OS containment TBD |
 - `S-ours-mou` plasma-auto-tiler:crates/tiler-windows/src/tiling_sys.rs:13017-13045
   (pointer gestures map to `CoreCommand::DragDrop`/`PointerResize`) +
   kwin/src/plan-adapter.ts:90 (`PlanOp` incl `pointer-resize`/`drag-drop`)

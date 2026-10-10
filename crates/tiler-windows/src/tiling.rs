@@ -3141,6 +3141,194 @@ pub fn parse_workspace_request(json: &str) -> Result<WorkspaceRequest, String> {
     Ok(request)
 }
 
+/// Exact KDE `requestResize` repeat tracker (portable pure step): the press
+/// index for one keyboard-resize dispatch plus the stored repeat state for
+/// the next press. Continues only when the focused window, direction, and
+/// mode all match the stored press; any focus/direction/mode change restarts
+/// at 0. Key-up never resets: like KDE, only a focus/direction/mode mismatch
+/// restarts the schedule. The pixel step itself comes from
+/// `tiler_core::cosmic_v1::keyboard_step_px` (12/14/16/18/20px cap), so an
+/// unbounded repeat run stays capped downstream. Wire tokens throughout
+/// (`left`/`right`/`up`/`down`, `outwards`/`inwards`) so the native
+/// dispatcher and offline tests share this exact rule with no duplication.
+/// No fingerprint input: the Windows rows cannot replicate KDE's carried
+/// snapshot stability across own verified writes, and a fingerprint reset on
+/// every own write would restart the mandated 12/14/16/18/20 schedule after
+/// the first press. External drift still fails closed at the Engine
+/// (`partial-observation`) and the next press then restarts the schedule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResizeRepeat {
+    pub focused: String,
+    pub direction: String,
+    pub mode: String,
+    pub next: u32,
+}
+
+/// Next keyboard-resize press index plus the stored state for the following
+/// press. See [`ResizeRepeat`] for the exact continuation rule.
+#[must_use]
+pub fn resize_repeat_next(
+    prev: Option<ResizeRepeat>,
+    focused: &str,
+    direction: &str,
+    mode: &str,
+) -> (u32, ResizeRepeat) {
+    if let Some(state) = prev
+        && state.focused == focused
+        && state.direction == direction
+        && state.mode == mode
+    {
+        let index = state.next;
+        return (
+            index,
+            ResizeRepeat {
+                focused: state.focused,
+                direction: state.direction,
+                mode: state.mode,
+                next: index.saturating_add(1),
+            },
+        );
+    }
+    (
+        0,
+        ResizeRepeat {
+            focused: focused.to_owned(),
+            direction: direction.to_owned(),
+            mode: mode.to_owned(),
+            next: 1,
+        },
+    )
+}
+
+/// Exact-owner test-needed keyboard-resize control (tentative, pending user
+/// review): `resize --direction DIR --mode MODE` queues one bounded request
+/// for the normal `tile` loop only. The owner consumes it once, resolves the
+/// live foreground as the resize subject through the production origin/
+/// member/lifetime/scope gates, and dispatches through the real
+/// `keyboard_tick` resize arm with the same fences and repeat tracker as a
+/// physical chord. No synthetic input, no classifier bypass, never a proof
+/// path. The production origin is the real captured foreground; the CLI
+/// carries no HWND. proof owners refuse; suspended/elevated sessions refuse.
+pub const RESIZE_REQUEST_FILE: &str = "resize.request";
+pub const RESIZE_REQUEST_VERSION: u32 = 1;
+
+/// CLI options for the exact-owner test-needed `resize` control (normal
+/// `tile` only): `--direction` takes `left`|`right`|`up`|`down`,
+/// `--mode` takes `outwards`|`inwards`, in exactly this order. The CLI only
+/// queues a bounded single-pending request file; the owner loop validates
+/// the full owner binding and dispatches through the production resize arm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResizeOptions {
+    pub direction: String,
+    pub mode: String,
+}
+
+/// Wire-valid resize direction token (Engine parser vocabulary).
+#[must_use]
+pub fn resize_direction_valid(direction: &str) -> bool {
+    matches!(direction, "left" | "right" | "up" | "down")
+}
+
+/// Wire-valid resize mode token (Engine parser vocabulary).
+#[must_use]
+pub fn resize_mode_valid(mode: &str) -> bool {
+    matches!(mode, "outwards" | "inwards")
+}
+
+/// Parse the test-needed `resize` CLI form. Exactly `--direction DIR`
+/// `--mode MODE` in this order; anything else (including swapped order, a
+/// missing value, or repeated flags) refuses.
+pub fn parse_resize_args(args: &[String]) -> Result<ResizeOptions, String> {
+    let usage = "usage: resize --direction (left|right|up|down) --mode (outwards|inwards)";
+    if args.len() != 4 {
+        return Err(usage.to_owned());
+    }
+    if args[0] != "--direction" || args[2] != "--mode" {
+        return Err(usage.to_owned());
+    }
+    if !resize_direction_valid(&args[1]) {
+        return Err("refuse: resize direction must be left|right|up|down".to_owned());
+    }
+    if !resize_mode_valid(&args[3]) {
+        return Err("refuse: resize mode must be outwards|inwards".to_owned());
+    }
+    Ok(ResizeOptions {
+        direction: args[1].clone(),
+        mode: args[3].clone(),
+    })
+}
+
+/// Verify the raw received argv against the parsed `resize` options:
+/// exactly `--direction DIR --mode MODE` with matching values, no unknown
+/// flags.
+pub fn verify_resize_argv_consistency(
+    raw: &[String],
+    parsed: &ResizeOptions,
+) -> Result<(), String> {
+    let usage = "usage: resize --direction (left|right|up|down) --mode (outwards|inwards)";
+    if raw.len() != 4 || raw[0] != "--direction" || raw[2] != "--mode" {
+        return Err(usage.to_owned());
+    }
+    if raw[1] != parsed.direction || raw[3] != parsed.mode {
+        return Err("error: argv/parsed resize mismatch (impossible)".to_owned());
+    }
+    Ok(())
+}
+
+/// Versioned exact-owner resize request body. `creation`/`pid`/`exe_path`/
+/// `user_sid`/`session_id` bind the exact ledger owner; `direction`/`mode`
+/// are the validated wire tokens; `correlation` is a client-generated opaque
+/// token the owner echoes in its dispatch log. No titles, no geometry, no
+/// HWNDs, no secrets.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ResizeRequest {
+    pub v: u32,
+    pub creation: String,
+    pub pid: u32,
+    pub exe_path: String,
+    pub user_sid: String,
+    pub session_id: u32,
+    pub direction: String,
+    pub mode: String,
+    pub correlation: String,
+}
+
+/// Render one resize request body. Bounds only; full owner equality stays
+/// with the owner-side check.
+pub fn render_resize_request(request: &ResizeRequest) -> String {
+    serde_json::to_string(request).unwrap_or_default()
+}
+
+/// Parse and bound one resize request body. Refuses malformed JSON, version
+/// drift, empty identity, unknown direction/mode tokens, and invalid
+/// correlation tokens. Owner equality (exact creation/pid/exe/sid/session)
+/// stays with the caller, which holds the live owner identity.
+pub fn parse_resize_request(json: &str) -> Result<ResizeRequest, String> {
+    let request: ResizeRequest =
+        serde_json::from_str(json).map_err(|_| "refuse: malformed resize request".to_owned())?;
+    if request.v != RESIZE_REQUEST_VERSION {
+        return Err("refuse: resize request version".to_owned());
+    }
+    if request.creation.is_empty()
+        || request.pid == 0
+        || request.exe_path.is_empty()
+        || request.user_sid.is_empty()
+        || request.correlation.is_empty()
+    {
+        return Err("refuse: malformed resize request".to_owned());
+    }
+    if !resize_direction_valid(&request.direction) {
+        return Err("refuse: malformed resize request".to_owned());
+    }
+    if !resize_mode_valid(&request.mode) {
+        return Err("refuse: malformed resize request".to_owned());
+    }
+    if tiler_core::ids::CorrelationId::parse(&request.correlation).is_none() {
+        return Err("refuse: malformed resize request".to_owned());
+    }
+    Ok(request)
+}
+
 /// Central portable borderless-fullscreen predicate: a captionless window
 /// whose visible frame completely contains any monitor's full bounds
 /// (`rcMonitor`, not `rcWork`). Dimensions alone never classify: captioned

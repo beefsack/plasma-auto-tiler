@@ -57,7 +57,8 @@ fn push_snap(
         | Classified::Fullscreen(_)
         | Classified::Float(_)
         | Classified::Orientation(_)
-        | Classified::Sticky(_) => {
+        | Classified::Sticky(_)
+        | Classified::Resize(_) => {
             panic!("expected directional chord")
         }
     }
@@ -79,7 +80,8 @@ fn push_workspace(
         | Classified::Fullscreen(_)
         | Classified::Float(_)
         | Classified::Orientation(_)
-        | Classified::Sticky(_) => {
+        | Classified::Sticky(_)
+        | Classified::Resize(_) => {
             panic!("expected workspace digit")
         }
     }
@@ -101,7 +103,8 @@ fn push_maximize(
         | Classified::Fullscreen(_)
         | Classified::Float(_)
         | Classified::Orientation(_)
-        | Classified::Sticky(_) => {
+        | Classified::Sticky(_)
+        | Classified::Resize(_) => {
             panic!("expected maximize chord")
         }
     }
@@ -122,7 +125,8 @@ fn push_fullscreen(
         | Classified::Maximize(_)
         | Classified::Float(_)
         | Classified::Orientation(_)
-        | Classified::Sticky(_) => {
+        | Classified::Sticky(_)
+        | Classified::Resize(_) => {
             panic!("expected fullscreen chord")
         }
     }
@@ -145,6 +149,7 @@ fn push_float(
         | Classified::WorkspaceHistory(_)
         | Classified::Maximize(_)
         | Classified::Orientation(_)
+        | Classified::Resize(_)
         | Classified::Fullscreen(_) => {
             panic!("expected float chord")
         }
@@ -168,6 +173,7 @@ fn push_sticky(
         | Classified::WorkspaceHistory(_)
         | Classified::Maximize(_)
         | Classified::Orientation(_)
+        | Classified::Resize(_)
         | Classified::Fullscreen(_) => {
             panic!("expected sticky chord")
         }
@@ -190,6 +196,7 @@ fn push_orientation(
         | Classified::Maximize(_)
         | Classified::Fullscreen(_)
         | Classified::Float(_)
+        | Classified::Resize(_)
         | Classified::Sticky(_) => {
             panic!("expected orientation chord")
         }
@@ -477,17 +484,42 @@ fn unshifted_win_l_needs_explicit_opt_in() {
 
 #[test]
 fn extra_modifiers_and_injected_pass_untracked() {
-    // Alt/Menu modifiers still force pass-through (no Alt arm exists yet).
+    // Alt selects the keyboard resize arm on catalog keys: Win+Alt+H consumes
+    // as resize-out (dedicated intent, never a directional move). Alt on a
+    // non-catalog key (Win+Alt+M) still passes through untracked with no hold.
     for mod_vk in [VK_MENU, VK_LMENU] {
         let mut m = SnapClassify::new(takeover());
         win_down(&mut m, VK_LWIN);
         push_snap(&mut m, mod_vk, false, true, false);
-        assert_eq!(push_snap(&mut m, VK_H, false, true, false), None);
-        assert_eq!(push_snap(&mut m, VK_H, true, true, false), None);
+        match SnapClassify::push(&mut m, VK_H, false, true, false).expect("resize down") {
+            Classified::Resize(intent) => {
+                assert!(intent.consumed && intent.announce);
+                assert_eq!(intent.mode, tiler_windows::snapkey::ResizeMode::Outwards);
+                assert_eq!(intent.direction, Direction::Left);
+            }
+            other => panic!("expected resize-out, got {other:?}"),
+        }
+        match SnapClassify::push(&mut m, VK_H, true, true, false).expect("resize up") {
+            Classified::Resize(intent) => assert!(intent.consumed && !intent.announce),
+            other => panic!("expected resize up, got {other:?}"),
+        }
+        assert_eq!(
+            (m.resize_counts[0].down, m.resize_counts[0].up),
+            (1, 1),
+            "resize arm carries its own counts, never the directional slot"
+        );
         assert_eq!(
             (m.counts[0].down, m.counts[0].up, m.counts[0].consumed),
             (0, 0, 0)
         );
+        push_snap(&mut m, mod_vk, true, true, false);
+        // Non-catalog Alt chord still passes with no pin, so its paired up
+        // passes too.
+        let mut m = SnapClassify::new(takeover());
+        win_down(&mut m, VK_LWIN);
+        push_snap(&mut m, mod_vk, false, true, false);
+        assert_eq!(SnapClassify::push(&mut m, VK_M, false, true, false), None);
+        assert_eq!(SnapClassify::push(&mut m, VK_M, true, true, false), None);
         push_snap(&mut m, mod_vk, true, true, false);
     }
     // Ctrl is the item 1 history arm, not an extra modifier: Win+Ctrl+H
@@ -610,6 +642,7 @@ fn saturated_queue_swallows_and_counts_loss() {
         | QueuedSnapEvent::Float(_)
         | QueuedSnapEvent::Orientation(_)
         | QueuedSnapEvent::Sticky(_)
+        | QueuedSnapEvent::Resize(_)
         | QueuedSnapEvent::Mask(_) => panic!("expected intent"),
     }
     while q.len() < INTENT_QUEUE_CAP {
@@ -2304,13 +2337,13 @@ fn authentic_mask_plain_unowned_consumed_and_saturation() {
     let mut q = SnapQueue::new();
     win_down(&mut m, VK_LWIN);
     assert!(!win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
-    // Unowned OS chords never arm the mask (Alt has no arm; Ctrl now owns
-    // the history arm, covered below).
+    // Unowned chords never arm the mask (Alt on a non-catalog key still
+    // passes; Ctrl now owns the history arm, covered below).
     let mut m = SnapClassify::new(takeover());
     let mut q = SnapQueue::new();
     win_down(&mut m, VK_LWIN);
     push_snap(&mut m, VK_MENU, false, true, false);
-    assert_eq!(push_snap(&mut m, VK_H, false, true, false), None);
+    assert_eq!(SnapClassify::push(&mut m, VK_M, false, true, false), None);
     push_snap(&mut m, VK_MENU, true, true, false);
     assert!(!win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
     // Consumed hold arms exactly one mask per Win hold.
@@ -2664,13 +2697,13 @@ fn owned_hold_modifier_transition_matrix() {
     assert!(up.consumed);
     assert_eq!((m.float_counts.down, m.float_counts.up), (0, 0));
     // Fresh unowned chords still pass through untracked with no hold armed
-    // (Alt has no arm). Ctrl owns the history arm: Win+Ctrl+H classifies
-    // history-prev with its pair closing consumed.
+    // (Alt on a non-catalog key). Ctrl owns the history arm: Win+Ctrl+H
+    // classifies history-prev with its pair closing consumed.
     let mut m = SnapClassify::new(takeover());
     win_down(&mut m, VK_LWIN);
     push_snap(&mut m, VK_MENU, false, true, false);
-    assert_eq!(push_snap(&mut m, VK_H, false, true, false), None);
-    assert_eq!(push_snap(&mut m, VK_H, true, true, false), None);
+    assert_eq!(SnapClassify::push(&mut m, VK_M, false, true, false), None);
+    assert_eq!(SnapClassify::push(&mut m, VK_M, true, true, false), None);
     push_snap(&mut m, VK_MENU, true, true, false);
     {
         use tiler_windows::snapkey::VK_CONTROL;
@@ -2963,7 +2996,8 @@ fn push_send(
         | Classified::Fullscreen(_)
         | Classified::Float(_)
         | Classified::Orientation(_)
-        | Classified::Sticky(_) => {
+        | Classified::Sticky(_)
+        | Classified::Resize(_) => {
             panic!("expected relative send")
         }
     }
@@ -3395,4 +3429,297 @@ fn relative_send_queue_carries_delta_follow_and_masks() {
         },
         _ => panic!("expected mask"),
     }
+}
+
+fn push_resize(
+    m: &mut SnapClassify,
+    vk: u32,
+    is_up: bool,
+    fg: bool,
+    inj: bool,
+) -> Option<tiler_windows::snapkey::ResizeIntent> {
+    match SnapClassify::push(m, vk, is_up, fg, inj)? {
+        Classified::Resize(intent) => Some(intent),
+        Classified::Snap(_)
+        | Classified::Workspace(_)
+        | Classified::WorkspaceSend(_)
+        | Classified::WorkspaceHistory(_)
+        | Classified::Maximize(_)
+        | Classified::Fullscreen(_)
+        | Classified::Float(_)
+        | Classified::Orientation(_)
+        | Classified::Sticky(_) => {
+            panic!("expected resize chord")
+        }
+    }
+}
+
+fn alt_down(m: &mut SnapClassify) {
+    push_snap(m, VK_MENU, false, true, false);
+}
+
+fn alt_up(m: &mut SnapClassify) {
+    push_snap(m, VK_MENU, true, true, false);
+}
+
+// Keyboard resize: all 16 physical chords (8 logical rows, letter plus arrow
+// alias each) route to dedicated resize intents with the exact mode, never a
+// directional move.
+#[test]
+fn resize_exact_modifiers_mode_and_aliases() {
+    use tiler_windows::snapkey::ResizeMode;
+    let cases: &[(u32, u32, Direction)] = &[
+        (VK_H, VK_LEFT, Direction::Left),
+        (VK_J, VK_DOWN, Direction::Down),
+        (VK_K, VK_UP, Direction::Up),
+        (VK_L, VK_RIGHT, Direction::Right),
+    ];
+    for (letter, arrow, direction) in cases {
+        for vk in [*letter, *arrow] {
+            // Outwards: Win+Alt+key.
+            let mut m = SnapClassify::new(takeover());
+            win_down(&mut m, VK_LWIN);
+            alt_down(&mut m);
+            let down = push_resize(&mut m, vk, false, true, false).expect("out down");
+            assert_eq!(down.mode, ResizeMode::Outwards);
+            assert_eq!(down.direction, *direction);
+            assert_eq!(down.edge, SnapEdge::Down);
+            assert!(down.consumed && down.announce);
+            let up = push_resize(&mut m, vk, true, true, false).expect("out up");
+            assert_eq!(
+                (up.mode, up.edge, up.consumed),
+                (ResizeMode::Outwards, SnapEdge::Up, true)
+            );
+            // Inwards: Win+Shift+Alt+key.
+            let mut m = SnapClassify::new(takeover());
+            win_down(&mut m, VK_LWIN);
+            push_snap(&mut m, VK_SHIFT, false, true, false);
+            alt_down(&mut m);
+            let down = push_resize(&mut m, vk, false, true, false).expect("in down");
+            assert_eq!(
+                (down.mode, down.direction),
+                (ResizeMode::Inwards, *direction)
+            );
+            assert!(down.consumed && down.announce);
+            // Releasing Shift before the key-up keeps the down-time mode.
+            push_snap(&mut m, VK_SHIFT, true, true, false);
+            let up = push_resize(&mut m, vk, true, true, false).expect("in up");
+            assert_eq!((up.mode, up.consumed), (ResizeMode::Inwards, true));
+            alt_up(&mut m);
+        }
+    }
+}
+
+// Resize repeat dispatch stays pinned to the required modifiers/action: only
+// a live Win+Alt(+Shift) combination matching the down-time mode dispatches;
+// anything else swallows without dispatching but keeps the pair consumed.
+#[test]
+fn resize_repeat_pins_mode_modifiers_and_action() {
+    use tiler_windows::snapkey::ResizeMode;
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    alt_down(&mut m);
+    let down = push_resize(&mut m, VK_H, false, true, false).expect("down");
+    assert_eq!(down.mode, ResizeMode::Outwards);
+    // Live repeat dispatches.
+    let repeat = push_resize(&mut m, VK_H, false, true, false).expect("repeat");
+    assert_eq!(
+        (repeat.mode, repeat.edge),
+        (ResizeMode::Outwards, SnapEdge::Repeat)
+    );
+    assert!(repeat.consumed && repeat.announce);
+    // Shift flip (would select inwards) swallows without dispatching and
+    // never rewrites the pinned mode.
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    let repeat = push_resize(&mut m, VK_H, false, true, false).expect("repeat");
+    assert_eq!(repeat.mode, ResizeMode::Outwards);
+    assert!(repeat.consumed && !repeat.announce);
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    // Extra Ctrl swallows without dispatching.
+    push_snap(&mut m, VK_CONTROL, false, true, false);
+    let repeat = push_resize(&mut m, VK_H, false, true, false).expect("repeat");
+    assert!(repeat.consumed && !repeat.announce);
+    push_snap(&mut m, VK_CONTROL, true, true, false);
+    // Released Alt swallows without dispatching.
+    alt_up(&mut m);
+    let repeat = push_resize(&mut m, VK_H, false, true, false).expect("repeat");
+    assert!(repeat.consumed && !repeat.announce);
+    // Pair still closes consumed.
+    let up = push_resize(&mut m, VK_H, true, true, false).expect("up");
+    assert!(up.consumed && !up.announce);
+    assert_eq!(push_resize(&mut m, VK_H, true, true, false), None);
+}
+
+// Unknown extra Ctrl (or any other unbound Alt shape) passes through
+// untracked unless an exact effective rebind claims it; bare and injected
+// chords never classify.
+#[test]
+fn resize_unknown_modifiers_pass_untracked() {
+    // Win+Ctrl+Alt+H is not a documented arm: passes with no pin, so the
+    // paired up passes too.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_CONTROL, false, true, false);
+    alt_down(&mut m);
+    assert_eq!(SnapClassify::push(&mut m, VK_H, false, true, false), None);
+    assert_eq!(SnapClassify::push(&mut m, VK_H, true, true, false), None);
+    assert_eq!((m.resize_counts[0].down, m.resize_counts[0].up), (0, 0));
+    // Bare Alt+H without Win passes; injected resize never classifies.
+    let mut m = SnapClassify::new(takeover());
+    push_snap(&mut m, VK_MENU, false, true, false);
+    assert_eq!(SnapClassify::push(&mut m, VK_H, false, true, false), None);
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    alt_down(&mut m);
+    assert_eq!(push_resize(&mut m, VK_H, false, true, true), None);
+    assert!(!win_up_mask_reserve(
+        &mut m,
+        &mut SnapQueue::new(),
+        VK_LWIN,
+        true,
+        std::time::Instant::now()
+    ));
+}
+
+// Held resize survives settings transitions: removing the remap or
+// disabling the row mid-hold gates repeat dispatch but keeps the consumed
+// pair; fresh presses afterwards pass through.
+#[test]
+fn resize_held_rebind_disable_gate_repeat_but_keep_pair() {
+    use tiler_windows::snapkey::{ChordAction, ChordDisable, ChordRemap};
+    let remap = || {
+        vec![ChordRemap {
+            from_vk: 0x55,
+            from_shift: false,
+            from_ctrl: false,
+            from_alt: true,
+            action: ChordAction::ResizeOut,
+            to_vk: VK_H,
+        }]
+    };
+    let mut m = SnapClassify::new(takeover());
+    m.set_remap(remap());
+    win_down(&mut m, VK_LWIN);
+    alt_down(&mut m);
+    match SnapClassify::push(&mut m, 0x55, false, true, false).expect("rebound down") {
+        Classified::Resize(intent) => {
+            assert_eq!(intent.mode, tiler_windows::snapkey::ResizeMode::Outwards);
+            assert!(intent.consumed && intent.announce);
+        }
+        other => panic!("expected resize, got {other:?}"),
+    }
+    m.set_remap(Vec::new());
+    match SnapClassify::push(&mut m, 0x55, false, true, false).expect("repeat") {
+        Classified::Resize(intent) => assert!(intent.consumed && !intent.announce),
+        other => panic!("expected swallowed repeat, got {other:?}"),
+    }
+    match SnapClassify::push(&mut m, 0x55, true, true, false).expect("up") {
+        Classified::Resize(intent) => assert!(intent.consumed),
+        other => panic!("expected up, got {other:?}"),
+    }
+    assert_eq!(SnapClassify::push(&mut m, 0x55, false, true, false), None);
+    // Canonical disable mid-hold gates dispatch but keeps the pair.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    alt_down(&mut m);
+    push_resize(&mut m, VK_H, false, true, false).expect("down");
+    m.set_disabled(vec![ChordDisable {
+        vk: VK_H,
+        shift: false,
+        ctrl: false,
+        alt: true,
+    }]);
+    match SnapClassify::push(&mut m, VK_H, false, true, false).expect("repeat") {
+        Classified::Resize(intent) => assert!(intent.consumed && !intent.announce),
+        other => panic!("expected swallowed repeat, got {other:?}"),
+    }
+    match SnapClassify::push(&mut m, VK_H, true, true, false).expect("up") {
+        Classified::Resize(intent) => assert!(intent.consumed),
+        other => panic!("expected up, got {other:?}"),
+    }
+}
+
+// Resize queues with mode/direction/origin, arms the Start-menu mask at
+// Win-up, and saturates fail-closed (still swallows, drops only evidence).
+#[test]
+fn resize_queue_carries_mode_and_masks_with_saturation() {
+    use tiler_windows::snapkey::{MaskTrigger, QueuedResizeIntent, ResizeMode};
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    let tick = std::time::Instant::now();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_MENU, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_J,
+            false,
+            Some(origin_of(5, "w5")),
+            false,
+            tick,
+            true
+        ),
+        Some(true)
+    );
+    match q.pop_front().expect("resize intent") {
+        QueuedSnapEvent::Resize(QueuedResizeIntent {
+            mode,
+            direction,
+            origin,
+            ..
+        }) => {
+            assert_eq!(mode, ResizeMode::Outwards);
+            assert_eq!(direction, Direction::Down);
+            assert_eq!(origin, Some(origin_of(5, "w5")));
+        }
+        other => panic!("expected resize, got {other:?}"),
+    }
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    match q.pop_front().expect("mask") {
+        QueuedSnapEvent::Mask(mask) => match mask.trigger {
+            MaskTrigger::Resize { mode, direction } => {
+                assert_eq!((mode, direction), (ResizeMode::Outwards, Direction::Down));
+            }
+            _ => panic!("expected resize mask trigger"),
+        },
+        other => panic!("expected mask, got {other:?}"),
+    }
+    // Saturation: an owned resize still swallows and counts the loss.
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    win_down(&mut m, VK_LWIN);
+    alt_down(&mut m);
+    while q.len() < INTENT_QUEUE_CAP {
+        assert!(q.push(QueuedSnapEvent::Resize(QueuedResizeIntent {
+            mode: ResizeMode::Outwards,
+            direction: Direction::Left,
+            edge: SnapEdge::Down,
+            origin: None,
+            consumed: true,
+            announce: true,
+            tick,
+        })));
+    }
+    assert!(q.is_full());
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_H,
+            false,
+            Some(origin_of(6, "w6")),
+            false,
+            tick,
+            true
+        ),
+        Some(true)
+    );
+    assert!(q.dropped >= 1);
 }

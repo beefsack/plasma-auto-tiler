@@ -32,8 +32,8 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   (`Mod+R` / `Mod+Shift+R`); PaperWM `resizeWInc` / `resizeWDec`; karousel
   `columnWidthIncrease` / `columnWidthDecrease`; paneru `Resize(Grow)` /
   `Resize(Shrink)`; Ours KDE `requestResize("right", "outwards")` /
-  `requestResize("right", "inwards")`, each at press_index 0; Windows has
-  no keyboard trigger. Explicit px legs are named command parameters,
+   `requestResize("right", "inwards")`, each at press_index 0; Windows
+   Win+Alt+Right / Win+Alt+Shift+Right use the shared resize path. Explicit px legs are named command parameters,
   not changes to shipped config; bare i3/sway defaults use ppt.
 - Observe: ratio vs pixel increment, neighbor allocation and reversibility.
 - Then COSMIC: pixel step moves the shared boundary (Outwards grows A,
@@ -78,9 +78,14 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   change; Inwards reverses it; minima refuse or clamp. The KDE adapter
   dispatches `op: "resize"` with direction/mode/press_index.
   `S(S-ours-resize)`.
-- Then Ours Windows: no-counterpart (keyboard resize is not intercepted on
-  Windows and its rebinds refuse; pointer resizing exists instead, which is
-  R-MOU-02, not this leg). `S(S-ours-winbind)`.
+- Then Ours Windows: delivered 2026-10-11, base `f794cf9` + delivery commit:
+  dedicated Alt intent dispatches `CoreCommand::Resize`; retained-Engine
+  fixtures prove 12/14/16/18/20px cap, adjacent shares only, inward reversal
+  and minima clamp. Agent-observed exact-owner CLI native grow/repeat/reversal
+  and vertical grow passed; Settings Keep/Disable/Rebind Apply/Revert passed.
+  Physical chord interception/rebound adoption and native minima-floor
+  exhaustion remain user-owned. `S(S-ours-winbind)`;
+  [record](../../changes/archive/windows-keyboard-resize.md).
 - Variant hook: provisional/TBD (no suitable existing hook; V-FLOAT-REFLOW
   covers float-removal reflow, not keyboard resize).
 
@@ -94,8 +99,7 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   COSMIC resize with LEFT edge Outwards; Hyprland edge/corner resize delta
   (smart-resizing path); bspwm `node -z left ...`; i3 `resize grow left`;
   sway `resize grow left`; qtile `grow_left()`; Ours Engine
-  `propose_resize` Left Outwards (KDE only; Windows has no keyboard-resize
-  trigger). No generic width verb is substituted for the scrolling
+   `propose_resize` Left Outwards (both adapters). No generic width verb is substituted for the scrolling
   profiles: each profile's edge-targeted inventory is established in its
   Then (no-counterpart where the pinned inventory lists no edge verb).
   Fixture must distinguish edge resize from generic width grow (R-RSZ-01).
@@ -134,8 +138,11 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   `S(S-pan-resize)`.
 - Then Ours KDE: no-op (exhausted/clamped-unchanged boundary refuses
   `Unchanged` with no plan and no pending). `S(S-ours-resize)`.
-- Then Ours Windows: no-counterpart (same missing keyboard-resize trigger
-  as R-RSZ-01). `S(S-ours-winbind)`.
+- Then Ours Windows: delivered 2026-10-11, base `f794cf9` + delivery commit:
+  retained-Engine edge/cross-axis no-mutation fixtures passed; agent-observed
+  CLI left/top outer-edge `unchanged` with bit-identical native rects.
+  Physical chord journey pending. `S(S-ours-winbind)`;
+  [record](../../changes/archive/windows-keyboard-resize.md).
 - Variant hook: provisional/TBD.
 
 ### R-RSZ-03: nested resize scope (nearest split vs ancestor)
@@ -175,8 +182,11 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
   ancestor). `S(S-pan-model)`.
 - Then Ours KDE: inner group shares move (nearest matching-edge-axis
   ancestor wins); only the two adjacent shares change. `S(S-ours-resize)`.
-- Then Ours Windows: no-counterpart (same missing keyboard-resize trigger
-  as R-RSZ-01). `S(S-ours-winbind)`.
+- Then Ours Windows: shared nearest matching-edge-axis path wired 2026-10-11,
+  base `f794cf9` + delivery commit; Windows retained-Engine adjacent-share
+  fixtures passed. Exact nested native fixture and physical chord journey
+  remain TBD. `S(S-ours-resize)` + `S(S-ours-winbind)`;
+  [record](../../changes/archive/windows-keyboard-resize.md).
 - Variant hook: provisional/TBD.
 
 ### R-RSZ-04: equalize/balance once
@@ -275,6 +285,6 @@ ancestry claims. Ours cells cite Engine + adapter source at `9241c94`
 - Then Ours KDE: no-counterpart (no equalize verb in the op inventory:
   directional resize only). `S(S-ours-resize)`.
 - Then Ours Windows: no-counterpart (no equalize verb in the operation
-  inventory; keyboard resize also has no trigger).
+  inventory; directional keyboard resize is a separate operation).
   `S(S-ours-resize)` + `S(S-ours-winbind)`.
 - Variant hook: provisional/TBD.

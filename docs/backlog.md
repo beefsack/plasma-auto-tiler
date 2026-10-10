@@ -363,9 +363,11 @@ decisions of 2026-09-24 are under
   Windows parity (b) remains pending for the Windows agent.
   (c) B9 overlaid unfloat: unmaximize then fresh-admit, selected 2026-10-08;
   remove the Windows refusal, with the user's COSMIC check as confirmation
-  only (handoff item 15; KDE delivered offline); (d) audit finding: Windows keyboard resize and non-local
-  workspace modes are unimplemented despite catalog/settings text
-  (`settings.rs:769-777`, `workspace.rs:95-108`).
+  only (handoff item 15; KDE delivered offline); (d) keyboard resize delivered
+  2026-10-11, base `f794cf9` + delivery commit (handoff item 6,
+  [record](changes/archive/windows-keyboard-resize.md)); physical interception
+  remains user-owned. Non-local workspace modes remain unimplemented despite
+  catalog/settings text (`workspace.rs:95-108`).
   [decisions](decisions.md#window-state-float-sticky-maximize-fullscreen)
   [audit](research/cross-platform-core/post-windows-audit.md)
 - P1 | Adopt reference-consensus additions | User 2026-10-07 accepted the
@@ -1329,7 +1331,13 @@ decisions of 2026-09-24 are under
        desktop, follow/stay, floating-boundary and stale/lifetime fixtures;
        native Windows acceptance remains Windows-owned.
 
-  - Item 6: keyboard resize R-RSZ-01 (parity d). Table A R-RSZ-01 accepted
+  - Item 6: keyboard resize R-RSZ-01 (parity d) delivered 2026-10-11, base
+    `f794cf9` + delivery commit ([record](changes/archive/windows-keyboard-resize.md)).
+    Native gates, retained-Engine geometry, agent-observed exact-owner CLI
+    grow/repeat/reversal/edge/overlay refusals and Settings Apply/Revert passed.
+    Physical suppression/rebound adoption and remaining native refusal/minimum
+    journeys user-owned. Both presets keep unknown-owner resize defaults
+    tentatively, pending user review. Historical checklist: Table A accepted
     2026-10-07 (Windows keyboard trigger via shared Engine pixel path; P1
     adoption entry in this file, [consensus](research/reference-wm-consensus.md);
     KDE match stays B). Catalog text already documents the rows; the trigger

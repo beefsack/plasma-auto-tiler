@@ -770,10 +770,20 @@ platform API behavior.
   prompt. Compatible resets to the default catalog then disables the
   OS-conflicting physical chords, including Win+G/F11, inventing no
   replacements. Per-binding Keep/Disable/Rebind with separate directional
-  letter/arrow rows and actual rebound-chord conflicts. Interim rebind limit:
-  Win plus the action's existing Shift arm only; Alt/Ctrl and unshifted Win+L
-  targets refuse; keyboard resize rows visibly unavailable; further workspace
-  mappings await runtime implementation.
+  letter/arrow rows and actual rebound-chord conflicts. Initial rebind limit
+  was Win plus the action's existing Shift arm only; Alt/Ctrl and unshifted
+  Win+L targets refused; keyboard resize rows were initially unavailable; further
+  workspace mappings await runtime implementation. Windows keyboard resize
+  delivered 2026-10-11, base `f794cf9` + delivery commit: dedicated Win+Alt
+  grow / Win+Shift+Alt shrink intents, HJKL and arrow aliases, shared Engine
+  pixel steps matching KDE, and real Keep/Disable/Rebind controls with exact
+  modifier arms ([record](changes/archive/windows-keyboard-resize.md)). Native
+  gates, downstream CLI geometry and Settings Apply/Revert agent-observed;
+  physical interception/rebound adoption user-owned. Tentative, pending user
+  review: both presets keep resize defaults because Windows ownership is
+  unverified; Compatible disables known conflicts only, with no conflict-free
+  claim. Test-needed exact-owner `resize --direction DIR --mode MODE` control
+  is also tentative; it uses production fences, not injected-hook bypass.
 - KDE staged controls (user 2026-10-08): the unified Settings page stages
   Keep/Disable and Authentic/Compatible choices (see the shortcut catalog in
   `kwin/native-effect/shortcutreconciler.cpp`: `shortcutProjectCatalog` and

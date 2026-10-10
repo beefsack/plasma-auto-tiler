@@ -530,8 +530,8 @@ pub const fn is_lock_chord(chord: &Chord) -> bool {
 
 /// Which runtime arm a catalog action belongs to. Directional/workspace arms
 /// split on Shift; history arms split on Ctrl (item 1); toggles carry their
-/// fixed polarity; resize arms are documented but not intercepted on Windows
-/// (Alt chords pass through).
+/// fixed polarity; resize arms split on Shift with Alt always held (outwards
+/// unshifted Win+Alt, inwards Win+Shift+Alt).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BindingFamily {
     Directional {
@@ -655,12 +655,12 @@ pub struct BindingDef {
     pub id: &'static str,
     pub text: &'static str,
     pub family: BindingFamily,
-    /// Default chord(s). Directional and resize rows carry exactly one chord
-    /// each (letters and arrows are separate rows); every other row carries
-    /// exactly one.
+    /// Default chord(s). Directional rows carry exactly one chord each
+    /// (letters and arrows are separate rows); resize rows carry two (the
+    /// letter plus its arrow alias); every other row carries exactly one.
     pub defaults: &'static [&'static str],
-    /// False for resize rows: Alt chords pass through untracked on Windows,
-    /// so the binding persists but never intercepts.
+    /// False only for rows the Windows hook never intercepts. All catalog
+    /// rows (including resize) are currently implemented.
     pub implemented: bool,
     /// Truthful per-physical-chord conflict note, if any.
     pub conflict: Option<&'static str>,
@@ -788,8 +788,12 @@ const FOCUS_MOVE_ROWS: [(&str, &str, &str, &[&str], SnapFamilyOp); 16] = [
 ];
 
 /// Resize rows: KDE `Meta+Alt+key` (grow/outwards) and
-/// `Meta+Alt+Shift+key` (shrink/inwards) plus arrow aliases. Documented but
-/// not intercepted: the classifier passes Alt chords through untracked.
+/// `Meta+Alt+Shift+key` (shrink/inwards) plus arrow aliases. Intercepted on
+/// Windows through the dedicated resize classifier arm (never a move):
+/// each row carries both its letter and arrow defaults (8 logical rows,
+/// 16 physical chords). Windows ownership of these chords is unverified in
+/// the repository, so both presets keep the defaults; containment is
+/// unproven live.
 const RESIZE_ROWS: [(&str, &str, &str, &str, &[&str]); 8] = [
     (
         "resize-out-left",
@@ -831,7 +835,7 @@ const RESIZE_ROWS: [(&str, &str, &str, &str, &[&str]); 8] = [
         "Shrink window from down",
         "down",
         "inwards",
-        &["Win+Alt+Shift+Down", "Win+Alt+Shift+J"],
+        &["Win+Alt+Shift+J", "Win+Alt+Shift+Down"],
     ),
     (
         "resize-in-up",
@@ -849,10 +853,17 @@ const RESIZE_ROWS: [(&str, &str, &str, &str, &[&str]); 8] = [
     ),
 ];
 
+/// Honest Windows conflict note for keyboard resize chords: ownership is
+/// unverified in the repository and containment is unproven live. Never a
+/// stock-holder or conflict-free claim.
+pub const RESIZE_CONFLICT: &str =
+    "Windows shortcut ownership unverified in repository; containment unproven live";
+
 /// Build the full binding catalog: directional focus/move (one row per
-/// physical chord: letters plus separate arrow rows), resize (documented, not
-/// intercepted), float/sticky/maximize/fullscreen toggles, and workspace
-/// select/send digits 0-9.
+/// physical chord: letters plus separate arrow rows), resize (8 logical
+/// rows, each with its letter plus arrow defaults, intercepted through the
+/// dedicated resize arm), float/sticky/maximize/fullscreen toggles, and
+/// workspace select/send digits 0-9.
 #[must_use]
 pub fn binding_catalog() -> Vec<BindingDef> {
     let mut rows = Vec::new();
@@ -872,8 +883,8 @@ pub fn binding_catalog() -> Vec<BindingDef> {
             text,
             family: BindingFamily::Resize { direction, mode },
             defaults,
-            implemented: false,
-            conflict: Some("not intercepted on Windows: Alt chords pass through untracked"),
+            implemented: true,
+            conflict: Some(RESIZE_CONFLICT),
         });
     }
     rows.push(BindingDef {
@@ -1307,8 +1318,11 @@ fn directional_conflict(id: &str) -> Option<&'static str> {
 /// owners follow the official Microsoft "Keyboard shortcuts in Windows" list
 /// (Windows 11 tab; Windows 10 tab for the Win+U Ease-of-Access origin).
 /// Chords the list does not document carry the honest unverified note instead
-/// of a definitive clean claim; unparsable or Alt chords (outside the
-/// Win[+Shift][+Ctrl] rebind model) report `None` (not applicable).
+/// of a definitive clean claim; unparsable chords report `None` (not
+/// applicable). Win+Alt chords (keyboard resize) report the honest
+/// ownership-unknown note: Windows Alt-chord ownership is unverified in the
+/// repository and containment is unproven live, never a stock-holder or
+/// conflict-free claim.
 /// Unshifted Win+Ctrl chords (item 1 history) report the recorded
 /// virtual-desktop note for Left/Right and the honest ownership-unknown note
 /// for Tab/letters/Up/Down, never a stock-holder or conflict-free claim.
@@ -1322,7 +1336,11 @@ fn directional_conflict(id: &str) -> Option<&'static str> {
 pub fn chord_conflict(text: &str) -> Option<&'static str> {
     let chord = parse_chord(text).ok()?;
     if chord.alt {
-        return None;
+        // Keyboard resize arm (Win+Alt / Win+Shift+Alt, no Ctrl): Windows
+        // Alt-chord ownership is unverified in the repository; containment
+        // is unproven live. Ctrl+Alt chords also land here with the same
+        // honest note rather than a definitive claim.
+        return Some(RESIZE_CONFLICT);
     }
     if chord.ctrl {
         // Item 2 relative-send arm: shifted Win+Ctrl. Windows Ctrl+Shift
@@ -1477,27 +1495,39 @@ pub fn binding_arm_text(def: &BindingDef) -> &'static str {
         (false, true, false) => "Win+Ctrl",
         (true, true, false) => "Win+Ctrl+Shift",
         (false, false, false) => "Win without Shift",
+        (false, false, true) => "Win+Alt",
+        (true, false, true) => "Win+Shift+Alt",
         _ => "the binding's modifier arm",
     }
 }
 
-/// Native Alt polarity of one catalog binding: no implemented arm uses Alt
-/// yet (resize rows pass through untracked). Carried explicitly so later
-/// output-follow arms (Ctrl+Alt) slot in without rework.
+/// Native Alt polarity of one catalog binding: keyboard resize arms ride
+/// Win+Alt (outwards) and Win+Shift+Alt (inwards); every other arm rides
+/// without Alt. Carried explicitly so later output-follow arms (Ctrl+Alt)
+/// slot in without rework.
 #[must_use]
-pub const fn binding_wants_alt(_def: &BindingDef) -> bool {
-    false
+pub const fn binding_wants_alt(def: &BindingDef) -> bool {
+    matches!(def.family, BindingFamily::Resize { .. })
 }
 
 /// Explicit classifier action for one catalog binding: VK alone cannot
 /// identify focus vs relative select vs relative follow vs output follow
 /// arms sharing one key, so the action pins the arm. History toggle/prev/
-/// next ride distinct actions; existing arms keep theirs.
+/// next ride distinct actions; resize outwards/inwards ride distinct resize
+/// actions carrying the mode (never a directional move); existing arms keep
+/// theirs.
 #[must_use]
 pub fn binding_action(def: &BindingDef) -> crate::snapkey::ChordAction {
     use crate::snapkey::ChordAction;
     match def.family {
         BindingFamily::Directional { .. } => ChordAction::Directional,
+        BindingFamily::Resize { mode, .. } => {
+            if mode == "inwards" {
+                ChordAction::ResizeIn
+            } else {
+                ChordAction::ResizeOut
+            }
+        }
         BindingFamily::Workspace { .. } => ChordAction::WorkspaceDigit,
         BindingFamily::WorkspaceStay { .. } => ChordAction::WorkspaceStayDigit,
         BindingFamily::WorkspaceSendRelative { prev, follow } => match (prev, follow) {
@@ -1518,19 +1548,17 @@ pub fn binding_action(def: &BindingDef) -> crate::snapkey::ChordAction {
             ToggleKind::Fullscreen => ChordAction::Fullscreen,
             ToggleKind::Orientation => ChordAction::Orientation,
         },
-        // Defensive only: resize rows are not intercepted (`implemented:
-        // false`), so validation refuses their rebinds and the routing
-        // tables skip them before this mapping is ever consulted.
-        BindingFamily::Resize { .. } => ChordAction::Directional,
     }
 }
 
 /// Canonical virtual key of one catalog binding (first default chord).
-/// History rows carry their canonical Tab/letter/arrow VK. An unbound stay
-/// row has no default chord but still carries its canonical slot by row
-/// identity (numbered stay shares the digit VK with its follow send;
-/// relative stay shares the H/K/arrow/J/L key with its follow arm), so a
-/// rebind routes into the shared hold slot through its explicit action.
+/// History rows carry their canonical Tab/letter/arrow VK. Resize rows carry
+/// their letter VK (the arrow alias shares the direction through its own
+/// hold slot). An unbound stay row has no default chord but still carries
+/// its canonical slot by row identity (numbered stay shares the digit VK
+/// with its follow send; relative stay shares the H/K/arrow/J/L key with its
+/// follow arm), so a rebind routes into the shared hold slot through its
+/// explicit action.
 #[must_use]
 pub fn binding_canonical_vk(def: &BindingDef) -> Option<u32> {
     if let Some(first) = def
@@ -1569,9 +1597,9 @@ pub struct EffectiveBinding {
     /// Live OS conflict for the UI: the catalog conflict for kept bindings,
     /// the same OS-owner text for disabled bindings (the OS action is live
     /// there), and the rebound chord's own conflict (see [`chord_conflict`])
-    /// for rebinds. `None` means not applicable (unparsable or Alt/Ctrl,
-    /// outside the rebind model); every plain Win[+Shift] chord carries
-    /// either its documented owner or the honest unverified note.
+    /// for rebinds. `None` means not applicable (unparsable or unbound);
+    /// every Win-family chord carries either its documented owner or the
+    /// honest unverified note (resize Alt chords included).
     pub conflict: Option<&'static str>,
 }
 
@@ -1662,12 +1690,11 @@ use crate::snapkey::{ChordDisable, ChordRemap};
 
 /// Build the live classifier remap from validated settings: one full-modifier
 /// entry per effective rebind (Shift/Ctrl/Alt matching the binding's native
-/// arm). The rebound chord alone routes; the binding's old default chords
-/// pass through via [`build_disabled`]. Unimplemented (resize) rows
-/// contribute nothing: their rebinds refuse in validation, so reaching here
-/// with one is a defensive skip. Unbound stay rows route into their canonical
-/// slot (shared with the follow arm on the same key) through the explicit
-/// stay action.
+/// arm, resize included). The rebound chord alone routes; the binding's old
+/// default chords pass through via [`build_disabled`]. Unbound stay rows
+/// route into their canonical slot (shared with the follow arm on the same
+/// key) through the explicit stay action; rebound resize rows route into
+/// their letter canonical slot through the mode-carrying resize action.
 #[must_use]
 pub fn build_remap(settings: &Settings) -> Vec<ChordRemap> {
     let mut defs = BTreeMap::new();
@@ -1724,10 +1751,10 @@ pub fn build_remap(settings: &Settings) -> Vec<ChordRemap> {
 /// Build the live classifier suppression table from validated settings: every
 /// disabled binding's default chord passes through, and every rebind's old
 /// default chord passes through (only the custom chord routes, via
-/// [`build_remap`]). Entries are full-modifier physical chords. The rebound
-/// table wins over suppression for fresh downs, so a key claimed by a rebind
-/// still routes even when another row's old default names it. Unimplemented
-/// (resize) rows contribute nothing: Alt chords pass through untracked.
+/// [`build_remap`]). Entries are full-modifier physical chords (resize rows
+/// contribute both their letter and arrow defaults). The rebound table wins
+/// over suppression for fresh downs, so a key claimed by a rebind still
+/// routes even when another row's old default names it.
 #[must_use]
 pub fn build_disabled(settings: &Settings) -> Vec<ChordDisable> {
     let mut defs = BTreeMap::new();
@@ -1793,8 +1820,8 @@ pub const fn gap_valid(value: i32) -> bool {
 
 /// Strict full-document validation. Unknown binding ids, incoherent
 /// state/chord pairs, malformed chords, lock-chord targets, wrong-polarity
-/// (Shift/Ctrl/Alt must match the binding's native arm), resize rebinds (not
-/// intercepted: no fake rebind), and duplicate active chords all refuse.
+/// (Shift/Ctrl/Alt must match the binding's native arm, resize included),
+/// and duplicate active chords all refuse.
 pub fn validate_settings(settings: &Settings) -> Result<(), SettingsError> {
     if settings.v != SETTINGS_SCHEMA_VERSION {
         return Err(SettingsError::UnsupportedVersion);
@@ -2005,7 +2032,7 @@ pub enum Preset {
     /// KDE catalog defaults for every binding. The Win+L explicit opt-in is
     /// preserved: `allow_win_l` keeps its current value.
     Authentic,
-    /// Authentic minus every OS-conflicting chord: all focus rows (Win+H
+    /// Authentic minus every known OS-conflicting chord: all focus rows (Win+H
     /// voice, Win+J recall, Win+K cast, Win+L lock, arrows Snap/maximize/
     /// minimize), all move-arrow rows (Win+Shift+arrows monitor-move/stretch),
     /// float (Win+G Game Bar), maximize (Win+M minimize-all), fullscreen
@@ -2019,12 +2046,14 @@ pub enum Preset {
     /// the seven kept history rows (Tab/letters/Up/Down with the honest
     /// ownership-unknown note) and the eight item 2 relative-send follow
     /// rows (Win+Ctrl+Shift ownership unknown, no new disables selected).
-    /// Item 2 stay rows stay unbound under both presets. Applies as a
-    /// deterministic reset: all overrides are
-    /// dropped first, then the conflicts disable. Resize rows already pass
-    /// through untracked and are untouched. Manual rebinding stays available
-    /// afterwards; no replacement defaults are invented. The Win+L opt-in is
-    /// preserved.
+    /// Both presets keep the keyboard resize defaults: Windows Alt-chord
+    /// ownership is unverified in the repository, so neither preset invents
+    /// an owner nor claims conflict-free; Compatible disables known
+    /// conflicts only. Item 2 stay rows stay unbound under both presets.
+    /// Applies as a deterministic reset: all overrides are
+    /// dropped first, then the conflicts disable. Manual rebinding stays
+    /// available afterwards; no replacement defaults are invented. The Win+L
+    /// opt-in is preserved.
     Compatible,
 }
 
@@ -2066,7 +2095,9 @@ pub fn apply_preset(settings: &mut Settings, preset: Preset) -> Vec<&'static str
 }
 
 /// Preset decision helper: the ids the compatible preset disables (every
-/// OS-conflicting implemented row; see [`Preset::Compatible`]).
+/// known OS-conflicting implemented row; resize rows keep their defaults
+/// under both presets since Windows Alt-chord ownership is unverified;
+/// see [`Preset::Compatible`]).
 #[must_use]
 pub const fn compatible_disabled_ids() -> [&'static str; 38] {
     [
@@ -2518,14 +2549,49 @@ mod tests {
         ids.sort();
         ids.dedup();
         assert_eq!(ids.len(), 84);
-        // Every default parses; resize rows are the only unimplemented ones.
+        // Every default parses and every row (resize included) intercepts.
         for def in &catalog {
             for default in def.defaults {
                 parse_chord(default).expect("catalog chord parses");
             }
-            let is_resize = matches!(def.family, BindingFamily::Resize { .. });
-            assert_eq!(def.implemented, !is_resize, "{}", def.id);
+            assert!(def.implemented, "{}", def.id);
         }
+        // Resize rows carry both letter and arrow defaults with the honest
+        // unknown-ownership note, and ride the Alt arms through
+        // mode-carrying actions.
+        let resize_out = catalog
+            .iter()
+            .find(|def| def.id == "resize-out-left")
+            .expect("row");
+        assert_eq!(resize_out.defaults, &["Win+Alt+H", "Win+Alt+Left"]);
+        assert!(
+            resize_out.conflict.is_some_and(
+                |c| c.contains("unverified in repository") && c.contains("unproven live")
+            )
+        );
+        assert!(!binding_wants_shift(resize_out));
+        assert!(!binding_wants_ctrl(resize_out));
+        assert!(binding_wants_alt(resize_out));
+        assert_eq!(
+            binding_action(resize_out),
+            crate::snapkey::ChordAction::ResizeOut
+        );
+        let resize_in = catalog
+            .iter()
+            .find(|def| def.id == "resize-in-left")
+            .expect("row");
+        assert_eq!(
+            resize_in.defaults,
+            &["Win+Alt+Shift+H", "Win+Alt+Shift+Left"]
+        );
+        assert!(binding_wants_shift(resize_in));
+        assert!(binding_wants_alt(resize_in));
+        assert_eq!(
+            binding_action(resize_in),
+            crate::snapkey::ChordAction::ResizeIn
+        );
+        assert_eq!(binding_arm_text(resize_out), "Win+Alt");
+        assert_eq!(binding_arm_text(resize_in), "Win+Shift+Alt");
         // Focus-right keeps the lock-gated default with a truthful conflict.
         let focus_right = catalog
             .iter()
@@ -2715,19 +2781,79 @@ mod tests {
         assert!(build_remap(&settings).is_empty());
         assert!(build_disabled(&settings).is_empty());
         settings.bindings.clear();
-        // Resize rebinds refuse: Alt chords pass through untracked, so there
-        // is no route to rebind onto (no fake rebind).
+        // Resize rebinds ride the dedicated Alt arms: outwards needs Win+Alt,
+        // inwards needs Win+Shift+Alt, each carrying its mode. The wrong
+        // Shift polarity, a missing Alt, or an extra Ctrl refuses.
         settings.bindings.insert(
             "resize-out-left".to_owned(),
             BindingSetting {
                 state: BindingState::Rebind,
-                chord: Some("Win+U".to_owned()),
+                chord: Some("Win+Alt+U".to_owned()),
+            },
+        );
+        assert!(validate_settings(&settings).is_ok());
+        let remap = build_remap(&settings);
+        assert_eq!(remap.len(), 1);
+        assert_eq!(
+            remap[0],
+            ChordRemap {
+                from_vk: 0x55,
+                from_shift: false,
+                from_ctrl: false,
+                from_alt: true,
+                action: crate::snapkey::ChordAction::ResizeOut,
+                to_vk: 0x48,
+            }
+        );
+        // The rebound-away defaults pass through via suppression (both the
+        // letter and arrow defaults of the rebound row).
+        let disabled = build_disabled(&settings);
+        assert!(disabled.contains(&ChordDisable {
+            vk: 0x48,
+            shift: false,
+            ctrl: false,
+            alt: true,
+        }));
+        assert!(disabled.contains(&ChordDisable {
+            vk: VK_LEFT,
+            shift: false,
+            ctrl: false,
+            alt: true,
+        }));
+        settings.bindings.clear();
+        for bad in ["Win+U", "Win+Shift+U", "Win+Ctrl+Alt+U", "Win+Alt+Shift+U"] {
+            settings.bindings.clear();
+            settings.bindings.insert(
+                "resize-out-left".to_owned(),
+                BindingSetting {
+                    state: BindingState::Rebind,
+                    chord: Some(bad.to_owned()),
+                },
+            );
+            assert!(validate_settings(&settings).is_err(), "{bad}");
+        }
+        settings.bindings.clear();
+        settings.bindings.insert(
+            "resize-in-left".to_owned(),
+            BindingSetting {
+                state: BindingState::Rebind,
+                chord: Some("Win+Alt+Shift+U".to_owned()),
+            },
+        );
+        assert!(validate_settings(&settings).is_ok());
+        settings.bindings.clear();
+        // Unshifted Win+L can never be a rebind target, resize included.
+        settings.bindings.insert(
+            "resize-out-left".to_owned(),
+            BindingSetting {
+                state: BindingState::Rebind,
+                chord: Some("Win+L".to_owned()),
             },
         );
         assert!(validate_settings(&settings).is_err());
         settings.bindings.remove("resize-out-left");
         assert!(validate_settings(&settings).is_ok());
-        // Alt rebind refuses.
+        // Alt rebind refuses on non-Alt arms.
         settings.bindings.insert(
             "focus-left".to_owned(),
             BindingSetting {

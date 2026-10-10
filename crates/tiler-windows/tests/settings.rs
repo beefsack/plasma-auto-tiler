@@ -1439,3 +1439,284 @@ fn same_axis_move_presets_leave_core_field_unchanged() {
         assert!(validate_settings(&settings).is_ok());
     }
 }
+
+// Keyboard resize catalog/settings: 8 logical rows (letter plus arrow alias
+// each, 16 physical chords) on the dedicated Win+Alt / Win+Shift+Alt arms
+// with mode-carrying actions. Both presets keep the defaults (Windows
+// Alt-chord ownership unverified in the repository; containment unproven
+// live); Compatible still disables known conflicts only.
+#[test]
+fn catalog_exposes_resize_rows_with_exact_modifiers() {
+    use tiler_windows::settings::{
+        RESIZE_CONFLICT, binding_action, binding_arm_text, binding_canonical_vk, binding_catalog,
+        binding_modifiers_ok, binding_wants_alt, binding_wants_ctrl, binding_wants_shift,
+        chord_conflict, effective_bindings, parse_chord,
+    };
+    use tiler_windows::snapkey::ChordAction;
+    let catalog = binding_catalog();
+    assert_eq!(catalog.len(), 84);
+    let resize: Vec<_> = catalog
+        .iter()
+        .filter(|def| {
+            matches!(
+                def.family,
+                tiler_windows::settings::BindingFamily::Resize { .. }
+            )
+        })
+        .collect();
+    assert_eq!(resize.len(), 8);
+    for def in &resize {
+        assert_eq!(
+            def.defaults.len(),
+            2,
+            "{} carries letter plus arrow",
+            def.id
+        );
+        assert!(def.implemented, "{}", def.id);
+        for default in def.defaults {
+            parse_chord(default).expect("catalog chord parses");
+        }
+        let conflict = def.conflict.expect("honest ownership text");
+        assert_eq!(conflict, RESIZE_CONFLICT);
+        assert!(
+            conflict.contains("unverified in repository") && conflict.contains("unproven live"),
+            "{}: {conflict}",
+            def.id
+        );
+        // Canonical VK is the letter (first default), never the arrow alias:
+        // the rebind routes into the letter hold slot through its explicit
+        // action.
+        let tiler_windows::settings::BindingFamily::Resize { direction, .. } = &def.family else {
+            panic!("{} is a resize row", def.id);
+        };
+        let letter_vk = match *direction {
+            "left" => 0x48,  // H
+            "down" => 0x4A,  // J
+            "up" => 0x4B,    // K
+            "right" => 0x4C, // L
+            other => panic!("{} has unknown direction {other}", def.id),
+        };
+        assert_eq!(
+            binding_canonical_vk(def),
+            Some(letter_vk),
+            "{} canonical is the letter VK",
+            def.id
+        );
+    }
+    let out = catalog
+        .iter()
+        .find(|def| def.id == "resize-out-left")
+        .expect("row");
+    assert_eq!(out.defaults, &["Win+Alt+H", "Win+Alt+Left"]);
+    assert!(!binding_wants_shift(out) && !binding_wants_ctrl(out) && binding_wants_alt(out));
+    assert_eq!(binding_action(out), ChordAction::ResizeOut);
+    assert_eq!(binding_arm_text(out), "Win+Alt");
+    let inn = catalog
+        .iter()
+        .find(|def| def.id == "resize-in-right")
+        .expect("row");
+    assert_eq!(inn.defaults, &["Win+Alt+Shift+L", "Win+Alt+Shift+Right"]);
+    assert!(binding_wants_shift(inn) && binding_wants_alt(inn) && !binding_wants_ctrl(inn));
+    assert_eq!(binding_action(inn), ChordAction::ResizeIn);
+    assert_eq!(binding_arm_text(inn), "Win+Shift+Alt");
+    // Exact arms: outwards matches Win+Alt only, inwards Win+Shift+Alt only.
+    let parsed = parse_chord("Win+Alt+H").expect("parse");
+    assert!(binding_modifiers_ok(
+        out,
+        parsed.shift,
+        parsed.ctrl,
+        parsed.alt
+    ));
+    for bad in ["Win+H", "Win+Shift+H", "Win+Ctrl+Alt+H", "Win+Alt+Shift+H"] {
+        let parsed = parse_chord(bad).expect("parse");
+        assert!(
+            !binding_modifiers_ok(out, parsed.shift, parsed.ctrl, parsed.alt),
+            "{bad}"
+        );
+    }
+    // Rebound chords report the same honest unknown-ownership text, never a
+    // stock-holder or conflict-free claim.
+    assert_eq!(chord_conflict("Win+Alt+U"), Some(RESIZE_CONFLICT));
+    assert_eq!(chord_conflict("Win+Alt+Shift+U"), Some(RESIZE_CONFLICT));
+    // Effective defaults are live under both presets.
+    let effective = effective_bindings(&Settings::default());
+    let row = effective
+        .iter()
+        .find(|row| row.id == "resize-out-left")
+        .expect("row");
+    assert!(row.active && row.effective);
+    assert_eq!(
+        row.chords,
+        vec!["Win+Alt+H".to_owned(), "Win+Alt+Left".to_owned()]
+    );
+    assert_eq!(row.conflict, Some(RESIZE_CONFLICT));
+    for preset in [Preset::Authentic, Preset::Compatible] {
+        let mut settings = Settings::default();
+        tiler_windows::settings::apply_preset(&mut settings, preset);
+        assert!(
+            !settings.bindings.contains_key("resize-out-left"),
+            "{preset:?} keeps resize"
+        );
+        assert!(
+            !settings.bindings.contains_key("resize-in-right"),
+            "{preset:?} keeps resize"
+        );
+        let effective = effective_bindings(&settings);
+        let row = effective
+            .iter()
+            .find(|row| row.id == "resize-in-left")
+            .expect("row");
+        assert!(row.active && row.effective, "{preset:?}");
+        assert!(tiler_windows::settings::validate_settings(&settings).is_ok());
+    }
+    // Compatible still disables a known conflict alongside the kept resize.
+    let mut settings = Settings::default();
+    tiler_windows::settings::apply_preset(&mut settings, Preset::Compatible);
+    assert_eq!(
+        settings.bindings.get("focus-left").map(|b| &b.state),
+        Some(&BindingState::Disabled)
+    );
+}
+
+// Keyboard resize Keep/Disable/Rebind: real transitions with full-modifier
+// duplicate checks and the honest unknown-ownership rebound text.
+#[test]
+fn resize_keep_disable_rebind_with_duplicates() {
+    use tiler_windows::settings::{
+        RESIZE_CONFLICT, Settings, binding_catalog, build_disabled, build_remap,
+        effective_bindings, validate_settings,
+    };
+    use tiler_windows::snapkey::{ChordAction, ChordDisable};
+    // Disable suppresses both physical defaults (letter plus arrow).
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "resize-out-left".to_owned(),
+        BindingSetting {
+            state: BindingState::Disabled,
+            chord: None,
+        },
+    );
+    assert!(validate_settings(&settings).is_ok());
+    let disabled = build_disabled(&settings);
+    assert!(disabled.contains(&ChordDisable {
+        vk: 0x48,
+        shift: false,
+        ctrl: false,
+        alt: true
+    }));
+    assert!(disabled.contains(&ChordDisable {
+        vk: 37,
+        shift: false,
+        ctrl: false,
+        alt: true
+    }));
+    assert!(build_remap(&settings).is_empty());
+    let effective = effective_bindings(&settings);
+    let row = effective
+        .iter()
+        .find(|row| row.id == "resize-out-left")
+        .expect("row");
+    assert!(!row.active && !row.effective);
+    assert_eq!(row.conflict, Some(RESIZE_CONFLICT));
+    // Rebind routes the exact Alt arm into the mode-carrying action at the
+    // letter canonical, suppresses both old defaults, and reports the
+    // rebound chord's own unknown-ownership conflict.
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "resize-out-left".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Alt+U".to_owned()),
+        },
+    );
+    assert!(validate_settings(&settings).is_ok());
+    let remap = build_remap(&settings);
+    assert_eq!(
+        remap,
+        vec![ChordRemap {
+            from_vk: VK_U,
+            from_shift: false,
+            from_ctrl: false,
+            from_alt: true,
+            action: ChordAction::ResizeOut,
+            to_vk: VK_H,
+        }]
+    );
+    let effective = effective_bindings(&settings);
+    let row = effective
+        .iter()
+        .find(|row| row.id == "resize-out-left")
+        .expect("row");
+    assert!(row.active && row.effective);
+    assert_eq!(row.chords, vec!["Win+Alt+U".to_owned()]);
+    assert_eq!(row.conflict, Some(RESIZE_CONFLICT));
+    // Full-modifier duplicate: two rows onto one Alt chord refuse, while the
+    // Shift and unshifted Alt variants on one key coexist (distinct chords).
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "resize-out-left".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Alt+U".to_owned()),
+        },
+    );
+    settings.bindings.insert(
+        "resize-out-down".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Alt+U".to_owned()),
+        },
+    );
+    assert!(validate_settings(&settings).is_err());
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "resize-out-left".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Alt+U".to_owned()),
+        },
+    );
+    settings.bindings.insert(
+        "resize-in-left".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Alt+Shift+U".to_owned()),
+        },
+    );
+    assert!(validate_settings(&settings).is_ok());
+    // Wrong arms refuse (missing Alt, extra Ctrl, flipped Shift).
+    for (id, bad) in [
+        ("resize-out-left", "Win+U"),
+        ("resize-out-left", "Win+Shift+U"),
+        ("resize-out-left", "Win+Ctrl+Alt+U"),
+        ("resize-in-left", "Win+Alt+U"),
+        ("resize-in-left", "Win+U"),
+    ] {
+        let mut settings = Settings::default();
+        settings.bindings.insert(
+            id.to_owned(),
+            BindingSetting {
+                state: BindingState::Rebind,
+                chord: Some(bad.to_owned()),
+            },
+        );
+        assert!(validate_settings(&settings).is_err(), "{id} {bad}");
+    }
+    // Unshifted Win+L can never be a target.
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "resize-in-left".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+L".to_owned()),
+        },
+    );
+    assert!(validate_settings(&settings).is_err());
+    // Catalog conflict helper is reachable from the row (no dead helper).
+    let catalog = binding_catalog();
+    let def = catalog
+        .iter()
+        .find(|def| def.id == "resize-out-left")
+        .expect("row");
+    assert_eq!(def.conflict, Some(RESIZE_CONFLICT));
+}

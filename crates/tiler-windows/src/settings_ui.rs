@@ -293,7 +293,9 @@ fn refresh_info(app: &App) {
         },
     }
     if !def.implemented {
-        info.push_str("\nNot available on Windows: keyboard resize is not intercepted (pointer resizing exists); rebind is refused.");
+        info.push_str(
+            "\nNot available on Windows: this binding is not intercepted; rebind is refused.",
+        );
     }
     set_text(app.ctl(ID_BINDING_INFO), &info.replace('\n', "\r\n"));
 }
@@ -504,10 +506,10 @@ fn collect_draft(app: &mut App) -> Result<Settings, String> {
 }
 
 /// Validate one rebind against the selected row and stage it in the draft.
-/// Resize rows refuse (not intercepted: no fake rebind); the Shift/Ctrl/Alt
-/// arm must match one of the action's native arms (history rows ride Win+Ctrl,
-/// relative sends ride Win+Ctrl+Shift, numbered stay rides Win+Shift plus
-/// Win+Ctrl+Shift).
+/// The Shift/Ctrl/Alt arm must match one of the action's native arms
+/// (history rows ride Win+Ctrl, relative sends ride Win+Ctrl+Shift,
+/// numbered stay rides Win+Shift plus Win+Ctrl+Shift, resize-out rides
+/// Win+Alt and resize-in rides Win+Shift+Alt).
 fn apply_rebind_text(app: &mut App, text: &str) -> Result<(), String> {
     let index = app
         .selected
@@ -1188,7 +1190,7 @@ pub fn cmd_settings() -> Result<String, DynError> {
         Ctl { id: 0, class: "BUTTON", text: "Presets".to_owned(), x: 622, y: 140, w: 292, h: 240, style: group },
         Ctl { id: ID_PRESET_AUTHENTIC, class: "BUTTON", text: "Authentic".to_owned(), x: 632, y: 162, w: 132, h: 28, style: push | tab },
         Ctl { id: ID_PRESET_COMPATIBLE, class: "BUTTON", text: "Compatible".to_owned(), x: 772, y: 162, w: 132, h: 28, style: push | tab },
-        Ctl { id: ID_PRESET_EXPLAIN, class: "STATIC", text: "Authentic restores KDE defaults for every binding (Win+L opt-in preserved). Compatible disables every OS-conflicting chord (including Win+Ctrl+Left/Right) and leaves the conflict-free set (letter moves, sticky, Win+Ctrl+Tab/letters/Up/Down, relative-send follows with unknown ownership). Stay rows stay unbound under both presets. No replacement defaults are invented; manual rebind stays available.".to_owned(), x: 632, y: 196, w: 272, h: 174, style: label },
+        Ctl { id: ID_PRESET_EXPLAIN, class: "STATIC", text: "Authentic restores KDE defaults for every binding (Win+L opt-in preserved). Compatible disables known OS-conflicting chords only (including Win+Ctrl+Left/Right); every other chord is kept, including ones with unknown Windows ownership (letter moves, sticky, Win+Ctrl+Tab/letters/Up/Down, relative-send follows, keyboard resize Alt chords). Kept does not mean conflict-free. Stay rows stay unbound under both presets. No replacement defaults are invented; manual rebind stays available.".to_owned(), x: 632, y: 196, w: 272, h: 174, style: label },
         Ctl { id: 0, class: "BUTTON", text: "New workspaces".to_owned(), x: 10, y: 388, w: 904, h: 56, style: group },
         Ctl { id: ID_DEFAULT_TILED, class: "BUTTON", text: "Tiled".to_owned(), x: 20, y: 410, w: 140, h: 24, style: radio_first | tab },
         Ctl { id: ID_DEFAULT_FLOATING, class: "BUTTON", text: "Floating".to_owned(), x: 170, y: 410, w: 140, h: 24, style: radio | tab },
@@ -1204,7 +1206,7 @@ pub fn cmd_settings() -> Result<String, DynError> {
         Ctl { id: ID_BIND_DISABLE, class: "BUTTON", text: "Disable".to_owned(), x: 676, y: 642, w: 100, h: 26, style: push | tab },
         Ctl { id: ID_BIND_CHORD, class: "EDIT", text: String::new(), x: 570, y: 674, w: 150, h: 24, style: edit_style | tab },
         Ctl { id: ID_BIND_REBIND, class: "BUTTON", text: "Set rebind".to_owned(), x: 726, y: 672, w: 120, h: 26, style: push | tab },
-        Ctl { id: ID_REBIND_NOTE, class: "STATIC", text: "Rebind: Win[+Shift][+Ctrl]+Key, keeping this action's modifier arm (focus/select unshifted, move/send shifted, numbered stay Win+Shift or Win+Ctrl+Shift, previous/relative Win+Ctrl, relative send Win+Ctrl+Shift). Alt refused; Win+L can never be a target. Win+G / Win+F11 cannot fully contain the OS Xbox/Game Bar handlers; Win+Ctrl+Left/Right virtual-desktop and Win+Ctrl+Shift arrow ownership are unverified.".to_owned(), x: 570, y: 702, w: 324, h: 74, style: label },
+        Ctl { id: ID_REBIND_NOTE, class: "STATIC", text: "Rebind: Win[+Shift][+Alt][+Ctrl]+Key, keeping this action's modifier arm (focus/select unshifted, move/send shifted, numbered stay Win+Shift or Win+Ctrl+Shift, previous/relative Win+Ctrl, relative send Win+Ctrl+Shift, resize out Win+Alt, resize in Win+Shift+Alt). Win+L can never be a target. Win+G / Win+F11 cannot fully contain the OS Xbox/Game Bar handlers; Win+Ctrl+Left/Right virtual-desktop, Win+Ctrl+Shift arrow, and Win+Alt chord ownership are unverified.".to_owned(), x: 570, y: 702, w: 324, h: 74, style: label },
         Ctl { id: ID_STATUS, class: "STATIC", text: "Status: ready.".to_owned(), x: 20, y: 792, w: 540, h: 60, style: label },
         Ctl { id: ID_APPLY, class: "BUTTON", text: "Apply".to_owned(), x: 580, y: 792, w: 100, h: 30, style: defpush | tab },
         Ctl { id: ID_REVERT, class: "BUTTON", text: "Revert".to_owned(), x: 690, y: 792, w: 100, h: 30, style: push | tab },

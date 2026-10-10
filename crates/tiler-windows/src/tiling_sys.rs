@@ -81,13 +81,13 @@ use crate::storage::LedgerStore;
 use crate::tiling::{
     AllowEntry, CaptureOptions, ChildrenOptions, FrameInsets, GestureIntent, HideProofOptions,
     INNER_GAP, InspectOptions, OUTER_GAP, OWNER_ID, ObservedTarget, ObservedTargetRef,
-    ReadbackOutcome, RefusedTracker, ScopeHostChild, SkipReason, StatelessVerdict, TileOptions,
-    TileProofOptions, TokenMap, WindowFacts, WorkspaceAction, WorkspaceOptions, allow_match,
-    allowlist_digest, classify, classify_gesture, drop_point_in_domain, fingerprint,
-    fullscreen_toggle_decision, hosted_child_allows, inspect_stateless_verdict,
-    is_borderless_fullscreen, parse_allowlist, parse_workspace_request, readback_outcome,
-    scope_allows, scope_exe_basename, should_hold_born_fullscreen, tick_summary_signature,
-    tiling_domain_bounds_with,
+    RESIZE_REQUEST_FILE, ReadbackOutcome, RefusedTracker, ResizeOptions, ScopeHostChild,
+    SkipReason, StatelessVerdict, TileOptions, TileProofOptions, TokenMap, WindowFacts,
+    WorkspaceAction, WorkspaceOptions, allow_match, allowlist_digest, classify, classify_gesture,
+    drop_point_in_domain, fingerprint, fullscreen_toggle_decision, hosted_child_allows,
+    inspect_stateless_verdict, is_borderless_fullscreen, parse_allowlist, parse_resize_request,
+    parse_workspace_request, readback_outcome, scope_allows, scope_exe_basename,
+    should_hold_born_fullscreen, tick_summary_signature, tiling_domain_bounds_with,
 };
 use crate::win_mouse::sys::WinDragPublished;
 use crate::win_mouse::{
@@ -1275,6 +1275,13 @@ struct TileLoop {
     /// origin continue from our own advance within and across batches, never
     /// a permissive retarget.
     snap_advance: Option<SnapOrigin>,
+    /// Exact KDE `requestResize` repeat state for keyboard resize: the
+    /// focused window, direction, and mode of the last dispatched resize
+    /// plus the next press index. Keyed by [`crate::tiling::ResizeRepeat`];
+    /// continued only on an exact three-way match, restarted otherwise.
+    /// Key-up never resets (KDE parity). Updated only when a resize passes
+    /// every pre-dispatch fence, before the Engine dispatch.
+    resize_repeat: Option<crate::tiling::ResizeRepeat>,
     /// Raw `EnumWindows` count from the latest observation (targets seen
     /// before any eligibility filtering, including zero).
     last_enumerated: usize,
@@ -5727,6 +5734,7 @@ fn keyboard_tick(
                     );
                 }
                 QueuedSnapEvent::Intent(_) => stale += 1,
+                QueuedSnapEvent::Resize(_) => stale += 1,
                 QueuedSnapEvent::Workspace(_) => stale += 1,
                 QueuedSnapEvent::WorkspaceSend(_) => stale += 1,
                 QueuedSnapEvent::WorkspaceHistory(_) => stale += 1,
@@ -6963,6 +6971,9 @@ fn keyboard_tick(
             QueuedSnapEvent::Float(intent) => {
                 dispatch_float_intent(state, me, fulls, areas, intent);
             }
+            QueuedSnapEvent::Resize(intent) => {
+                dispatch_resize_intent(state, me, fulls, areas, intent);
+            }
             QueuedSnapEvent::Orientation(intent) => {
                 dispatch_orientation_intent(state, me, fulls, areas, intent);
             }
@@ -6973,7 +6984,301 @@ fn keyboard_tick(
     }
 }
 
-/// Fresh observation plus admission shared by the float and sticky chords.
+/// Keyboard resize dispatch (Win+Alt grow outwards, Win+Shift+Alt shrink
+/// inwards, over H/J/K/L plus arrow aliases): fresh observation, exact
+/// origin re-resolution, full gates, one Engine [`CoreCommand::Resize`] on
+/// the retained session with the exact KDE `requestResize` repeat tracker
+/// (`repeatFocused`/`repeatDirection`/`repeatMode`/`repeatNext` via
+/// [`crate::tiling::resize_repeat_next`]; `press_index` 0 is the initial
+/// 12px press, then 14/16/18/20px capped), then sibling reflow through the
+/// shared write path. No focus, order, or topology mutation beyond the two
+/// adjacent shares: focus stays on the same window. Never Move semantics:
+/// the command is always `CoreCommand::Resize` carrying the pinned mode, and
+/// the subject is always the origin-verified focused mover.
+///
+/// Pre-dispatch refusals mirror KDE `requestResize` exactly (disabled, busy,
+/// floating subject, floating workspace, fullscreen/maximized overlay) plus
+/// the Windows production fences (suspend/elevated, exact origin
+/// re-resolution, lifetime, proof, scope). Refusals settle with no writes
+/// and no repeat-tracker update; only a fence-passing press advances the
+/// tracker, before the Engine dispatch (KDE order).
+fn dispatch_resize_intent(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    intent: crate::snapkey::QueuedResizeIntent,
+) {
+    let log_path = state.log_path.clone();
+    // Key-ups close the pair and passed chords never dispatch: trace-only so
+    // held-key traffic stays out of normal logs.
+    if !intent.consumed || !intent.announce {
+        if state.trace {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "resize",
+                    "tick": state.tick,
+                    "mode": intent.mode.as_str(),
+                    "direction": direction_name(intent.direction),
+                    "edge": intent.edge.as_str(),
+                    "disposition": if intent.consumed { "consumed" } else { "passed" },
+                    "outcome": if intent.consumed { "key-up" } else { "passed" },
+                }),
+            );
+        }
+        return;
+    }
+    state.tick += 1;
+    let tick = state.tick;
+    let correlation = state.correlation();
+    let settle = |outcome: &'static str| {
+        serde_json::json!({
+            "event": "resize",
+            "tick": tick,
+            "correlation": correlation.as_str(),
+            "mode": intent.mode.as_str(),
+            "direction": direction_name(intent.direction),
+            "edge": intent.edge.as_str(),
+            "disposition": "consumed",
+            "outcome": outcome,
+        })
+    };
+    // KDE `!enabled` parity: chords arriving while keyboard takeover is off
+    // never dispatch (the classifier already passes them through; this
+    // covers the exact-owner test-needed route, which bypasses it).
+    if !state.keyboard.takeover {
+        let line = settle("resize-refused-disabled");
+        log_json_at(&log_path, line);
+        return;
+    }
+    let Some(origin) = intent.origin.clone() else {
+        state.snap_advance = None;
+        let line = settle("origin-vanished");
+        log_json_at(&log_path, line);
+        return;
+    };
+    // Fresh per-intent suspension/elevation fence (workspace_tick parity):
+    // newly intercepted suspended/elevated chords settle here with no side
+    // effects.
+    if let Some(outcome) = crate::tiling::toggle_gate_outcome(
+        suspend_read(state, me, fulls).veto.block,
+        foreground_elevated(me),
+    ) {
+        let mut line = settle(outcome);
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    };
+    let Some(chord) = observe_chord_intent(state, me, fulls, areas) else {
+        let mut line = settle("observation-failed");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    };
+    let ChordObserved {
+        observed,
+        retained,
+        skipped,
+    } = chord;
+    let ChordTarget {
+        from,
+        member_key,
+        loc,
+    } = match resolve_chord_target(state, me, areas, &origin) {
+        Ok(target) => target,
+        Err(reject) => {
+            settle_chord_reject(&log_path, &settle, &origin, &reject);
+            return;
+        }
+    };
+    // Float/sticky subjects hold no tile slot: the resize settles with no
+    // writes, never retiles them. Ordered ahead of the workspace fence to
+    // match the Snap Move arm and KDE refusal priority (subject before
+    // domain).
+    if state.sticky.contains_key(&member_key) {
+        let mut line = settle("resize-refused-sticky");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    if engine_is_float(state, &loc.output, &loc.workspace, &from) {
+        let mut line = settle("resize-refused-floating");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    // Floating workspaces run no tile layout: the resize settles with no
+    // writes and every frame stays native (KDE plan-adapter parity).
+    if !workspace_mode_tiled(state, &loc.output, &loc.workspace) {
+        let mut line = settle("resize-refused-workspace-floating");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    // Focused overlays refuse before any Engine mutation: a maximized or
+    // fullscreen focused window keeps its native state and its reserved
+    // slot (KDE maximize/fullscreen isolation parity; fullscreen wins).
+    if let Some(row) = retained.iter().find(|r| r.key == member_key)
+        && let Some(cause) = overlay_refusal_for(row)
+    {
+        let mut line = settle(if cause == "fullscreen" {
+            "resize-refused-fullscreen"
+        } else {
+            "resize-refused-maximize"
+        });
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    let Some((domain, domain_key)) = workspace_domain_for(
+        &loc.output,
+        &loc.workspace,
+        areas,
+        state.inner_gap,
+        state.outer_gap,
+    ) else {
+        let mut line = settle("unknown-output");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    };
+    // KDE `inFlight`/`r4Flight` parity: a staged-but-unverified plan or an
+    // open drag holds the domain. The Engine would refuse `pending-exists`
+    // anyway; the pre-dispatch refusal keeps the outcome vocabulary exact
+    // and the repeat tracker untouched.
+    let busy = state.engine.session(&domain_key).is_some_and(|session| {
+        session.has_pending() || session.has_pending_desired() || session.has_drag()
+    });
+    if busy {
+        let mut line = settle("resize-refused-busy");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    let mut hint_cx = HintCx::new();
+    let Some(rows) = assemble_domain_rows(
+        state,
+        &loc.output,
+        &loc.workspace,
+        &observed,
+        &retained,
+        "resize",
+        correlation.as_str(),
+        &mut hint_cx,
+    ) else {
+        let mut line = settle("deferred");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    };
+    if !rows.iter().any(|r| r.token == from) {
+        let mut line = settle("unmanaged");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        log_json_at(&log_path, line);
+        return;
+    }
+    let windows: Vec<(WindowId, Rect, WindowSizeHints, bool)> = rows
+        .iter()
+        .map(|r| (WindowId(r.token.clone()), r.rect, r.hints, r.floating))
+        .collect();
+    let fp = fingerprint(
+        &rows
+            .iter()
+            .map(|r| (r.token.clone(), r.rect))
+            .collect::<Vec<_>>(),
+    );
+    let from_id = WindowId(from.clone());
+    // Live gap edits adopt here so the resize converges against matching
+    // gaps instead of refusing the keypress.
+    {
+        let revision = revision_for(state, &loc.output, &loc.workspace);
+        let outer_gap = state.outer_gap;
+        adopt_gaps_for_route(
+            state,
+            &domain,
+            &domain_key,
+            outer_gap,
+            &windows,
+            Some(&from_id),
+            revision,
+            fp,
+            &correlation,
+        );
+    }
+    // Exact KDE repeat tracker: continued only on a focused/direction/mode
+    // match, restarted otherwise, advanced before the Engine dispatch.
+    // `from` is the origin-verified token, never blind foreground.
+    let direction = direction_name(intent.direction).to_owned();
+    let mode = intent.mode.as_str().to_owned();
+    let (press_index, repeat) =
+        crate::tiling::resize_repeat_next(state.resize_repeat.clone(), &from, &direction, &mode);
+    state.resize_repeat = Some(repeat);
+    let mut event = crate::tiling::build_reconcile_event_for_floating(
+        &state.owner,
+        &state.generation,
+        &correlation,
+        revision_for(state, &loc.output, &loc.workspace),
+        fp,
+        &domain,
+        &domain_key,
+        state.outer_gap,
+        &windows,
+        Some(&from_id),
+    );
+    event.command = CoreCommand::Resize {
+        window: from.clone(),
+        direction,
+        mode,
+        press_index,
+    };
+    // Single-domain observations run the local retained propose/commit
+    // path; Core owns direction semantics. The reply carries complete
+    // desired geometry through `planned_writes`, exactly like Move.
+    let reply = state.engine.handle(&event);
+    let outcome = if let CoreReply::Resize(_) = &reply {
+        let writable = writable_tokens(state, &loc.output, &loc.workspace, &observed);
+        let summary = apply_geometry(
+            state,
+            ApplyInput {
+                me,
+                fulls,
+                reply: &reply,
+                observed: &observed,
+                op: "resize",
+                tick,
+                correlation: correlation.as_str(),
+                skipped,
+                writable: &writable,
+                output_token: state.workspaces.output_token(&loc.output),
+                workspace_token: state
+                    .workspaces
+                    .workspace_token(&loc.output, &loc.workspace),
+                revision: revision_for(state, &loc.output, &loc.workspace),
+            },
+        );
+        match summary {
+            Some(s) if !s.readback_ok => "resize-unverified",
+            Some(s) if s.mismatched > 0 => "resize-mismatch",
+            Some(s) if s.applied > 0 => "resize-applied",
+            Some(_) => "resize-noop",
+            None => reply_outcome(&reply),
+        }
+    } else {
+        reply_outcome(&reply)
+    };
+    let mut line = settle(outcome);
+    line["origin"] = serde_json::Value::from(origin.token.clone());
+    line["window"] = serde_json::Value::from(from);
+    line["press_index"] = serde_json::Value::from(press_index);
+    log_json_at(&log_path, line);
+}
+
 struct ChordObserved {
     observed: Vec<ObservedWindow>,
     retained: Vec<RetainedRow>,
@@ -12330,6 +12635,179 @@ fn workspace_send_stay(
     }
 }
 
+/// Test-needed exact-owner keyboard-resize poll for the normal `tile` loop
+/// only (tentative, pending user review). Consume-once, exact-owner, and
+/// proof refusal ride the shared `poll_workspace_cli_request` prefix shape.
+/// The live foreground resolves through the same `snap_origins` map the hook
+/// binds chords against (never a carried HWND, never a retarget), and the
+/// built intent dispatches through the real `keyboard_tick` resize arm, so
+/// every production fence (takeover, suspend/elevated, origin, lifetime,
+/// proof, scope, float/sticky, workspace, overlay, busy) and the exact
+/// repeat tracker apply unchanged. Logs one `resize` line with edge `cli`
+/// for the queued request; the dispatch itself logs the production `resize`
+/// line with the scheduled `press_index`.
+fn poll_resize_cli_request(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    dir: &Path,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+) {
+    use tiler_core::directional::Direction;
+    let path = dir.join(RESIZE_REQUEST_FILE);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(_) => return,
+    };
+    let log_path = state.log_path.clone();
+    // Best-effort labels for the pre-dispatch logs below: the actual parsed
+    // direction/mode when the body parses, `unknown` otherwise. Never fake
+    // precision for an unparseable payload.
+    let parsed = parse_resize_request(text.trim()).ok();
+    let direction_hint = parsed
+        .as_ref()
+        .map(|request| request.direction.clone())
+        .unwrap_or_else(|| "unknown".to_owned());
+    let mode_hint = parsed
+        .as_ref()
+        .map(|request| request.mode.clone())
+        .unwrap_or_else(|| "unknown".to_owned());
+    // Proof owners never serve the normal control: consume once with an
+    // honest refusal and no native effect so the queue cannot wedge.
+    if state.allowlist.is_some() {
+        let _ = std::fs::remove_file(&path);
+        state.tick += 1;
+        let tick = state.tick;
+        log_json_at(
+            &log_path,
+            serde_json::json!({
+                "event": "resize",
+                "tick": tick,
+                "mode": mode_hint,
+                "direction": direction_hint,
+                "edge": "cli",
+                "disposition": "consumed",
+                "outcome": "refused-proof",
+            }),
+        );
+        return;
+    }
+    // Consume-before-dispatch: exactly once, never replayed, never timed out
+    // and retried. A bad body is still consumed with a refused outcome.
+    let _ = std::fs::remove_file(&path);
+    let Some(request) = parsed else {
+        state.tick += 1;
+        let tick = state.tick;
+        log_json_at(
+            &log_path,
+            serde_json::json!({
+                "event": "resize",
+                "tick": tick,
+                "mode": mode_hint,
+                "direction": direction_hint,
+                "edge": "cli",
+                "disposition": "consumed",
+                "outcome": "refused",
+            }),
+        );
+        return;
+    };
+    let cli_line = |tick: u64, outcome: &'static str| {
+        serde_json::json!({
+            "event": "resize",
+            "tick": tick,
+            "mode": request.mode,
+            "direction": request.direction,
+            "edge": "cli",
+            "disposition": "consumed",
+            "outcome": outcome,
+        })
+    };
+    if request.creation != me.process_creation
+        || request.pid != me.pid
+        || !exe_paths_equal(&request.exe_path, &me.exe_path)
+        || request.user_sid != me.user_sid
+        || request.session_id != me.session_id
+    {
+        state.tick += 1;
+        let tick = state.tick;
+        log_json_at(&log_path, cli_line(tick, "refused"));
+        return;
+    }
+    // Production per-intent fence first, before any observation: a suspended
+    // session or an elevated foreground settles here with no side effects.
+    if let Some(outcome) = crate::tiling::toggle_gate_outcome(
+        suspend_read(state, me, fulls).veto.block,
+        foreground_elevated(me),
+    ) {
+        state.tick += 1;
+        let tick = state.tick;
+        log_json_at(&log_path, cli_line(tick, outcome));
+        return;
+    }
+    // Direction/mode typed decode onto the classifier vocabulary
+    // (`parse_resize_request` already bounded the literals; this match is
+    // the exhaustive mapping, never a default).
+    let direction = match request.direction.as_str() {
+        "left" => Direction::Left,
+        "right" => Direction::Right,
+        "up" => Direction::Up,
+        "down" => Direction::Down,
+        _ => {
+            state.tick += 1;
+            let tick = state.tick;
+            log_json_at(&log_path, cli_line(tick, "refused"));
+            return;
+        }
+    };
+    let mode = match request.mode.as_str() {
+        "outwards" => crate::snapkey::ResizeMode::Outwards,
+        "inwards" => crate::snapkey::ResizeMode::Inwards,
+        _ => {
+            state.tick += 1;
+            let tick = state.tick;
+            log_json_at(&log_path, cli_line(tick, "refused"));
+            return;
+        }
+    };
+    // Live-foreground origin through the same map the hook binds chords
+    // against; never a carried HWND, never a retarget. The dispatch
+    // re-resolves it against its own fresh observation, so a foreground
+    // change between here and there refuses instead of misacting.
+    let foreground_hwnd = unsafe { GetForegroundWindow() } as usize as u64;
+    let origin = state.snap_origins.get(&foreground_hwnd).cloned();
+    let Some(origin) = origin.filter(|o| !o.token.is_empty()) else {
+        state.tick += 1;
+        let tick = state.tick;
+        log_json_at(&log_path, cli_line(tick, "unmanaged"));
+        return;
+    };
+    state.tick += 1;
+    let tick = state.tick;
+    let mut queued = cli_line(tick, "dispatched");
+    queued["origin"] = serde_json::Value::from(origin.token.clone());
+    log_json_at(&log_path, queued);
+    keyboard_tick(
+        state,
+        me,
+        fulls,
+        areas,
+        vec![QueuedSnapEvent::Resize(
+            crate::snapkey::QueuedResizeIntent {
+                mode,
+                direction,
+                edge: crate::snapkey::SnapEdge::Down,
+                origin: Some(origin),
+                consumed: true,
+                announce: true,
+                tick: Instant::now(),
+            },
+        )],
+        None,
+    );
+}
+
 /// Exact-owner out-of-hook fullscreen toggle for the normal `tile` loop only
 /// (item 9 test-needed route; the hook still filters injected Win+F11).
 /// Reuses the production Win+F11 authority verbatim: the `toggle_gate_outcome`
@@ -15898,6 +16376,7 @@ fn run_tile_loop(
         windrag_origin_logged: None,
         windrag_stats_logged: (0, 0, 0, 0),
         snap_advance: None,
+        resize_repeat: None,
         last_enumerated: 0,
         workspaces: ManagedWorkspaces::new(),
         member_tokens: std::collections::BTreeMap::new(),
@@ -16455,6 +16934,7 @@ fn run_tile_loop(
                     QueuedSnapEvent::WorkspaceHistory(intent) => history_events.push(intent),
                     QueuedSnapEvent::Mask(_)
                     | QueuedSnapEvent::Intent(_)
+                    | QueuedSnapEvent::Resize(_)
                     | QueuedSnapEvent::Maximize(_)
                     | QueuedSnapEvent::Orientation(_)
                     | QueuedSnapEvent::Fullscreen(_)
@@ -16734,7 +17214,7 @@ fn run_tile_loop(
             // event; the poll itself consumes once and dispatches through the
             // existing resolver. Checked before the idle skip so a pending
             // request never waits for an unrelated wake.
-            if dir.join(WORKSPACE_REQUEST_FILE).exists() {
+            if dir.join(WORKSPACE_REQUEST_FILE).exists() || dir.join(RESIZE_REQUEST_FILE).exists() {
                 woke = true;
             }
             // Bare-chord edge wake: GetAsyncKeyState levels are sampled here,
@@ -16846,8 +17326,11 @@ fn run_tile_loop(
                 }
                 // Out-of-hook select observes the same suspension: consumed
                 // once with a suspended outcome, never applied while a
-                // fullscreen foreground holds the session.
+                // fullscreen foreground holds the session. The test-needed
+                // resize poll carries its own suspend fence and refuses the
+                // same way.
                 poll_workspace_cli_request(&mut state, me, store, dir, &fulls, &areas);
+                poll_resize_cli_request(&mut state, me, dir, &fulls, &areas);
                 state.gesture_before.clear();
                 state.active.clear();
                 state.move_kind.clear();
@@ -17117,6 +17600,7 @@ fn run_tile_loop(
                     }
                     workspace_maintenance(&mut state, me, store, dir, &fulls, &areas);
                     poll_workspace_cli_request(&mut state, me, store, dir, &fulls, &areas);
+                    poll_resize_cli_request(&mut state, me, dir, &fulls, &areas);
                 } else {
                     if !snap_events.is_empty() {
                         keyboard_tick(&mut state, me, &fulls, &areas, snap_events, None);
@@ -17756,6 +18240,123 @@ pub fn cmd_workspace(options: &WorkspaceOptions) -> Result<String> {
         }
     }
     Ok(serde_json::json!({"dispatched": true, "op": options.action.as_str(), "index": options.index, "direction": options.direction.map(|d| d.as_str())}).to_string())
+}
+
+/// Test-needed exact-owner keyboard-resize control for the normal `tile`
+/// loop only (tentative, pending user review; the product hook still filters
+/// injected chords, so synthetic input can never drive a resize). Mirrors
+/// `cmd_workspace` exactly: same-path medium caller, exact ledger-owner
+/// liveness, proof-owner refusal, and a bounded single-pending request file
+/// (`resize.request`). The owner consumes the request once, resolves the
+/// live foreground as the resize subject through the production origin/
+/// member/lifetime/scope gates, and dispatches through the real
+/// `keyboard_tick` resize arm: no classifier bypass, no fence bypass. The
+/// CLI carries direction/mode only, never an HWND.
+pub fn cmd_resize(options: &ResizeOptions) -> Result<String> {
+    use crate::tiling::{RESIZE_REQUEST_VERSION, ResizeRequest, render_resize_request};
+    ensure_pm_v2()?;
+    let me = medium_caller()?;
+    // Like `cmd_stop`, the CLI itself may run from any shell; only the
+    // ledger owner liveness plus the same-path medium binding gate below.
+    let dir =
+        crate::native::ledger_directory().map_err(|e| err(format!("error: ledger dir: {e}")))?;
+    let ledger_text =
+        std::fs::read_to_string(dir.join(crate::storage::LEDGER_FILE_NAME)).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                err("refuse: no owner running")
+            } else {
+                err(format!("error: ledger read: {e}"))
+            }
+        })?;
+    let record: crate::model::RecoveryLedger =
+        crate::model::parse_ledger(&ledger_text).map_err(|_| err("refuse: corrupt ledger"))?;
+    // Same-path medium caller check, mirroring `cmd_stop`: SID, session, exe.
+    if me.user_sid != record.owner.user_sid || me.session_id != record.owner.session_id {
+        return Err(err("refuse: owner mismatch"));
+    }
+    let exe = crate::native::current_exe_path().map_err(|e| err(format!("error: exe {e}")))?;
+    if !exe_paths_equal(&exe, &record.owner.exe_path) {
+        return Err(err("refuse: owner mismatch"));
+    }
+    // Proof owners never serve the normal control: a proof audit marker for
+    // this exact owner creation proves proof mode (normal runs write none).
+    let audit = dir.join(format!(
+        "proof-audit-{}.jsonl",
+        record.owner.process_creation
+    ));
+    if audit.exists() {
+        return Err(err("refuse: proof owner"));
+    }
+    // The ledger owner must be exactly alive (full identity, no PID reuse).
+    let held = HeldProcess::open(record.owner.pid).map_err(|e| match e {
+        crate::native::IdentityError::Absent => err("refuse: owner not running"),
+        other => err(format!("error: owner {other}")),
+    })?;
+    let live = held.identity().map_err(|e| match e {
+        crate::native::IdentityError::Absent => err("refuse: owner not running"),
+        other => err(format!("error: owner {other}")),
+    })?;
+    if live != record.owner || !held.is_alive() {
+        return Err(err("refuse: owner not running"));
+    }
+    let rid = held
+        .integrity()
+        .map_err(|e| err(format!("error: target integrity {e}")))?;
+    if !is_medium_rid(rid) {
+        return Err(err(format!("refuse: target integrity {rid} is not medium")));
+    }
+    if !crate::tiling::resize_direction_valid(&options.direction) {
+        return Err(err("refuse: resize direction must be left|right|up|down"));
+    }
+    if !crate::tiling::resize_mode_valid(&options.mode) {
+        return Err(err("refuse: resize mode must be outwards|inwards"));
+    }
+    let path = dir.join(RESIZE_REQUEST_FILE);
+    if path.exists() {
+        return Err(err("refuse: resize request pending"));
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(1);
+    let correlation = format!("cli-{}-{:x}", me.pid, nanos);
+    if tiler_core::ids::CorrelationId::parse(&correlation).is_none() {
+        return Err(err("error: correlation render"));
+    }
+    let request = ResizeRequest {
+        v: RESIZE_REQUEST_VERSION,
+        creation: record.owner.process_creation.clone(),
+        pid: record.owner.pid,
+        exe_path: record.owner.exe_path.clone(),
+        user_sid: record.owner.user_sid.clone(),
+        session_id: record.owner.session_id,
+        direction: options.direction.clone(),
+        mode: options.mode.clone(),
+        correlation: correlation.clone(),
+    };
+    let body = render_resize_request(&request);
+    if body.is_empty() {
+        return Err(err("error: request render"));
+    }
+    // Bounded single-pending queue: the body is written and synced to a
+    // same-directory unique temp first and only then published atomically
+    // with no-overwrite semantics, so the owner never observes a partial
+    // body. A publish race against an already-queued request refuses.
+    match crate::storage::publish_no_overwrite(
+        &dir,
+        RESIZE_REQUEST_FILE,
+        body.as_bytes(),
+        &correlation,
+    ) {
+        Ok(()) => {}
+        Err(crate::storage::PublishError::Pending) => {
+            return Err(err("refuse: resize request pending"));
+        }
+        Err(crate::storage::PublishError::Io(e)) => {
+            return Err(err(format!("error: request write: {e}")));
+        }
+    }
+    Ok(serde_json::json!({"dispatched": true, "op": "resize", "direction": options.direction, "mode": options.mode, "route": "test-needed-tentative"}).to_string())
 }
 
 /// `tile-proof` command: owned-helpers-only proof loop. Requires a nonempty
@@ -19620,6 +20221,7 @@ mod rmax03_adapter_tests {
             windrag_origin_logged: None,
             windrag_stats_logged: (0, 0, 0, 0),
             snap_advance: None,
+            resize_repeat: None,
             last_enumerated: 0,
             workspaces: crate::workspace::ManagedWorkspaces::new(),
             member_tokens: std::collections::BTreeMap::new(),
