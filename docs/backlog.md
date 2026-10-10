@@ -501,7 +501,7 @@ decisions of 2026-09-24 are under
   | 17 | G-05 per-axis-zero predicate | Shared core/KDE delivered offline 2026-10-10; Windows predicate/schema/UI wiring with item 13 pending. |
   | 18 | G-06 maximized directional focus/move | Shared opt-in fence/KDE delivered offline 2026-10-10; Windows focus fence and unmaximize-before-move pending; coordinate float half-snaps with item 10. |
   | 19 | G-37 migration source-refill setting | Shared core/KDE delivered offline 2026-10-10; Windows config/UI/runtime pending with items 1/14 and the multi-output foundation. |
-  | 20 | G-D2 maximized send carry | KDE delivered offline 2026-10-10; verify existing Windows retained-overlay send with item 2 follow/stay. Cross-output legs need the item 5 foundation. |
+  | 20 | G-D2 maximized send carry | Windows same-output numbered/relative follow/stay verified agent-observed 2026-10-11 with item 2; KDE offline. Physical/cross-output pending; item 5 foundation required. |
 
   Q2 R-SPC-04 occupies handoff item 13 below; Q3 R-RST-01 KDE delivery is
   complete offline and updates existing item 8. Q4 R-WS-12 fills item 14.
@@ -618,8 +618,9 @@ decisions of 2026-09-24 are under
   - Item 1: Windows local history/ring and exact Ctrl/Tab settings/input/UI
     delivered offline 2026-10-10 (base `91db9d2` + delivery commit,
     [record](changes/archive/windows-workspace-history-ring.md)); native gates
-    passed, scoped numbered hide/reveal agent-observed. Native history chords,
-    UI journeys and physical input pending; non-local/multi-output parked.
+    passed; native CLI toggle/ring/>9 and UI journeys also agent-observed
+    2026-10-11 with [item 2](changes/archive/windows-workspace-send-follow-stay.md).
+    Physical chords/preset OS effects pending; non-local/multi-output parked.
     KDE adapter delivered offline, no shared Rust core/API changes. Historical checklist:
 
     #### Item 1 behavior and reference seams
@@ -745,9 +746,12 @@ decisions of 2026-09-24 are under
       empty survival/removal, relocation/disconnect/reconnect, >9/trailing wrap,
       no creation, exact modifiers and presets); non-local modes/multi-output
       runtime remain the separately parked Windows work.
-  - Item 2: shared Rust core + KDE delivered offline. Windows compile-only
-    fix applied (decision 2.3), preserving current always-follow behavior;
-    exact handoff (all paths below under `crates/tiler-windows/`):
+  - Item 2: Windows explicit numbered/relative follow/stay, bindable unbound
+    stay rows and exact input/settings/UI delivered 2026-10-11 (base `553c65b`
+    + delivery commit, [record](changes/archive/windows-workspace-send-follow-stay.md)).
+    Native gates passed; scoped CLI/MRU/null/floating/>9 and UI outcomes
+    agent-observed. Physical chords/presets and non-local/multi-output pending.
+    Shared core/KDE offline delivery retained. Historical handoff:
 
     #### Item 2 behavior and shared contract
 
@@ -2354,7 +2358,12 @@ decisions of 2026-09-24 are under
     journeys pending on both platforms.
 
   - Item 20: G-D2 maximized workspace-send carry (User 2026-10-10,
-    REQ-MAX-09 maximize leg). Keep maximize on arrival: Windows existing
+    REQ-MAX-09 maximize leg).
+    Windows same-output numbered/relative follow/stay and native unmaximize
+    agent-observed 2026-10-11 at base `553c65b` + item-2 delivery commit
+    ([record](changes/archive/windows-workspace-send-follow-stay.md)); native
+    gates passed. Physical/flag-race and cross-output legs remain pending.
+    Keep maximize on arrival: Windows existing
     policy, cross-platform target; KDE carry delivered offline 2026-10-10.
     Deliberate COSMIC/niri
     deviation: a send relocates the whole window/state, unlike in-layout move.

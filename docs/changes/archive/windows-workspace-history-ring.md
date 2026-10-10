@@ -85,3 +85,9 @@
 - Matrix/spec evidence is revision-bound to base `91db9d2` plus this record's
   delivery commit. User-owned physical journeys, non-local modes and
   multi-output runtime remain pending. Linux/KWin gates await post-push CI.
+- Followup 2026-10-11: delivery `553c65b` CI run 38047125001 green for all
+  six jobs. Item 2's bounded exact-owner CLI transport enabled agent-observed
+  native two-view toggle, same-view no-record, follow-vs-stay history,
+  wrap/trailing/>9 in an 11-ID ring and native Settings Apply/Revert.
+  Revision/artifact-bound [evidence](windows-workspace-send-follow-stay.md).
+  Physical chords/preset OS effects and non-local/multi-output remain pending.

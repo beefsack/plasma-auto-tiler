@@ -42,7 +42,7 @@ fn history_down(m: &mut SnapClassify, vk: u32) -> WorkspaceHistoryOp {
 #[test]
 fn catalog_exposes_nine_history_rows_with_honest_conflicts() {
     let catalog = binding_catalog();
-    assert_eq!(catalog.len(), 57);
+    assert_eq!(catalog.len(), 83);
     let ids: Vec<&str> = catalog
         .iter()
         .filter(|def| {

@@ -340,6 +340,24 @@ impl ManagedWorkspaces {
     /// trailing empty and ordinals beyond 9; first/last wrap. `delta` must be
     /// -1 (previous) or +1 (next); anything else refuses.
     pub fn resolve_relative(&self, output: &str, delta: i32) -> Option<String> {
+        let current = self
+            .outputs
+            .get(output)?
+            .order
+            .get(self.outputs.get(output)?.active)?
+            .id
+            .clone();
+        self.resolve_relative_from(output, &current, delta)
+    }
+
+    /// Resolve an ordinal ring step from an explicit current workspace id
+    /// (item 2 sends resolve from the mover's source workspace, which is
+    /// usually but not always the active view). Pure: no activation, append,
+    /// or creation. Filling the resolved trailing empty invokes ordinary
+    /// lifecycle for the next spare after transfer; the frozen target never
+    /// re-resolves. `delta` must be -1 or +1; unknown output/current or an
+    /// empty ring refuses.
+    pub fn resolve_relative_from(&self, output: &str, current: &str, delta: i32) -> Option<String> {
         if delta != -1 && delta != 1 {
             return None;
         }
@@ -348,8 +366,7 @@ impl ManagedWorkspaces {
             return None;
         }
         let ring: Vec<String> = state.order.iter().map(|e| e.id.clone()).collect();
-        let current = state.order.get(state.active).map(|e| e.id.clone())?;
-        let at = ring.iter().position(|id| id == &current)?;
+        let at = ring.iter().position(|id| id == current)?;
         let next = ring[(at as i32 + delta + ring.len() as i32) as usize % ring.len()].clone();
         Some(next)
     }

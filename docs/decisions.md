@@ -307,8 +307,10 @@ platform API behavior.
 - Item 1, R-WS-08 / R-WS-11:
     - Windows delivery 2026-10-10: local observed-history/ring, exact Ctrl/Tab
       action routing and settings/UI/presets delivered offline; native gates
-      passed. Native history/physical/UI journeys and non-local/multi-output
-      remain pending ([record](changes/archive/windows-workspace-history-ring.md)).
+      passed ([record](changes/archive/windows-workspace-history-ring.md)).
+      Native CLI toggle/ring/>9 and Settings agent-observed 2026-10-11 with
+      [item 2](changes/archive/windows-workspace-send-follow-stay.md);
+      physical/preset OS journeys and non-local/multi-output remain pending.
     - 1.1: previous-view toggle is Meta+Ctrl+Tab on KDE / Win+Ctrl+Tab on
       Windows. Previous/next workspace uses Meta/Win+Ctrl+arrows and
       Meta/Win+Ctrl+H/J/K/L: left/up previous, right/down next (COSMIC
@@ -343,6 +345,11 @@ platform API behavior.
       until the next recorded change. A disconnected output's history
       is discarded with the output; output identity is session-local.
 - Item 2, R-WS-01 / R-WS-14:
+    - Windows delivery 2026-10-11: explicit numbered/relative follow/stay,
+      unbound stay catalog/settings/UI and native gates complete; scoped
+      ordinary-app CLI/MRU/null/floating/ring and Settings outcomes
+      agent-observed. Physical containment and non-local/multi-output pending
+      ([record](changes/archive/windows-workspace-send-follow-stay.md)).
     - 2.1: keep numbered follow chords Meta/Win+Shift+digits. Relative
       send-and-follow uses Meta/Win+Ctrl+Shift+arrows and +H/J/K/L.
       Numbered and relative send-and-stay are bindable, unbound by default.
@@ -1660,7 +1667,7 @@ platform API behavior.
   KDE allows flag-stable maximized tiled sends through native membership/
   output transfer, without unmaximize/remaximize or overlay geometry writes.
   Existing arrival/current-view/lifetime/follow/stay fences still apply.
-  Status: KDE maximize carry delivered offline ([record](changes/archive/reference-comparison-implementation.md)); real native maximize preservation on arrival pending observation. Existing Windows maximize policy remains; KDE fullscreen native send still observe-first (currently refuses fullscreen sends).
+  Status: KDE maximize carry delivered offline ([record](changes/archive/reference-comparison-implementation.md)); KDE native arrival preservation pending. Windows same-output numbered/relative follow/stay, source MRU and native target unmaximize agent-observed 2026-10-11 ([record](changes/archive/windows-workspace-send-follow-stay.md)); physical/cross-output pending. KDE fullscreen native send still observe-first (currently refuses fullscreen sends).
 - KDE borderless-windowed fullscreen heuristic (born-fullscreen option 3,
   user 2026-10-10): stays conditional. The user watches for borderless games
   during dogfooding; revisit only if games arrive non-fullscreen. This is a

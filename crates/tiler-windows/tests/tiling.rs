@@ -1783,6 +1783,7 @@ fn workspace_request_roundtrip_and_refusals() {
         session_id: 1,
         action: WorkspaceAction::Send,
         index: 2,
+        direction: None,
         correlation: "cli-4242-ab12".to_owned(),
     };
     let body = render_workspace_request(&request);
@@ -1809,8 +1810,10 @@ fn workspace_request_roundtrip_and_refusals() {
     let mut bad_owner = request.clone();
     bad_owner.creation = String::new();
     assert!(parse_workspace_request(&render_workspace_request(&bad_owner)).is_err());
-    // Missing action (old select-only body) and unknown action refuse: the
-    // transport carries exactly select/send, never a default.
+    // Missing action (old select-only body) and unknown action refuse. A
+    // missing direction on a relative action refuses, and a direction on an
+    // indexed/immediate action refuses: the transport carries exactly the
+    // grammar above, never a default.
     let legacy = serde_json::json!({
         "v": 1, "creation": "abc123", "pid": 4242,
         "exe_path": "C:\\bin\\tiler-windows.exe", "user_sid": "S-1-5-21-1",
@@ -1826,6 +1829,168 @@ fn workspace_request_roundtrip_and_refusals() {
     .to_string();
     assert!(parse_workspace_request(&unknown).is_err());
     assert!(parse_workspace_request("not json").is_err());
+}
+
+#[test]
+fn workspace_cli_parses_stay_and_relative_forms() {
+    use tiler_windows::tiling::WorkspaceDirection;
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|s| (*s).to_owned()).collect()
+    }
+    // Old `--send` keeps following; `--stay` stays; relative forms carry an
+    // explicit direction with the same follow/stay split.
+    let send = parse_workspace_args(&strings(&["--send", "2"])).expect("send");
+    assert_eq!(send.action, WorkspaceAction::Send);
+    assert_eq!(send.action.follow(), Some(true));
+    assert!(send.action.is_send());
+    let stay = parse_workspace_args(&strings(&["--stay", "2"])).expect("stay");
+    assert_eq!(stay.action, WorkspaceAction::Stay);
+    assert_eq!(stay.index, 2);
+    assert_eq!(stay.direction, None);
+    assert_eq!(stay.action.follow(), Some(false));
+    assert!(stay.action.is_send());
+    assert!(verify_workspace_argv_consistency(&strings(&["--stay", "2"]), &stay).is_ok());
+    for (flag, action, follow) in [
+        ("--send-relative", WorkspaceAction::RelativeSend, Some(true)),
+        (
+            "--stay-relative",
+            WorkspaceAction::RelativeStay,
+            Some(false),
+        ),
+        ("--relative", WorkspaceAction::RelativeHistory, None),
+    ] {
+        for (word, direction, delta) in [
+            ("previous", WorkspaceDirection::Previous, -1),
+            ("next", WorkspaceDirection::Next, 1),
+        ] {
+            let parsed = parse_workspace_args(&strings(&[flag, word])).expect("relative form");
+            assert_eq!(parsed.action, action);
+            assert_eq!(parsed.direction, Some(direction));
+            assert_eq!(direction.delta(), delta);
+            assert_eq!(parsed.action.follow(), follow);
+            assert_eq!(parsed.action.is_send(), follow.is_some());
+            assert!(verify_workspace_argv_consistency(&strings(&[flag, word]), &parsed).is_ok());
+        }
+    }
+    let previous = parse_workspace_args(&strings(&["--previous"])).expect("previous");
+    assert_eq!(previous.action, WorkspaceAction::Previous);
+    assert_eq!(previous.direction, None);
+    assert_eq!(previous.action.follow(), None);
+    assert!(!previous.action.is_send());
+    assert!(verify_workspace_argv_consistency(&strings(&["--previous"]), &previous).is_ok());
+    // Direction vocabulary roundtrips through as_str.
+    assert_eq!(WorkspaceDirection::Previous.as_str(), "previous");
+    assert_eq!(WorkspaceDirection::Next.as_str(), "next");
+    assert_eq!(WorkspaceAction::Stay.as_str(), "stay");
+    assert_eq!(WorkspaceAction::Previous.as_str(), "previous");
+    assert_eq!(WorkspaceAction::RelativeHistory.as_str(), "relative");
+    assert_eq!(WorkspaceAction::RelativeSend.as_str(), "send-relative");
+    assert_eq!(WorkspaceAction::RelativeStay.as_str(), "stay-relative");
+    // Refusals: missing/misplaced values, mixing, unknown words.
+    assert!(parse_workspace_args(&strings(&["--stay"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--stay", "10"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--previous", "1"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--relative"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--send-relative"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--stay-relative", "up"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--relative", "2"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--send", "1", "--stay", "1"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--relative", "next", "--previous"])).is_err());
+    assert!(verify_workspace_argv_consistency(&strings(&["--stay", "1"]), &stay).is_err());
+    assert!(verify_workspace_argv_consistency(&strings(&["--send", "2"]), &stay).is_err());
+    assert!(verify_workspace_argv_consistency(&strings(&["--previous", "x"]), &previous).is_err());
+}
+
+#[test]
+fn workspace_request_roundtrip_and_refusals_relative() {
+    use tiler_windows::tiling::WorkspaceDirection;
+    let request = WorkspaceRequest {
+        v: 1,
+        creation: "abc123".to_owned(),
+        pid: 4242,
+        exe_path: "C:\\bin\\tiler-windows.exe".to_owned(),
+        user_sid: "S-1-5-21-1".to_owned(),
+        session_id: 1,
+        action: WorkspaceAction::RelativeStay,
+        index: 0,
+        direction: Some(WorkspaceDirection::Next),
+        correlation: "cli-4242-ab12".to_owned(),
+    };
+    let body = render_workspace_request(&request);
+    assert!(body.contains("stay-relative") && body.contains("next"));
+    let parsed = parse_workspace_request(&body).expect("roundtrip");
+    assert_eq!(parsed, request);
+    assert_eq!(parsed.direction.map(|d| d.delta()), Some(1));
+    for (action, direction) in [
+        (
+            WorkspaceAction::RelativeSend,
+            Some(WorkspaceDirection::Next),
+        ),
+        (
+            WorkspaceAction::RelativeHistory,
+            Some(WorkspaceDirection::Previous),
+        ),
+        (WorkspaceAction::Previous, None),
+        (WorkspaceAction::Stay, None),
+    ] {
+        let variant = WorkspaceRequest {
+            action,
+            direction,
+            ..request.clone()
+        };
+        let parsed = parse_workspace_request(&render_workspace_request(&variant)).expect("variant");
+        assert_eq!(parsed.action, action);
+        assert_eq!(parsed.direction, direction);
+    }
+    // Missing direction on a relative action refuses; a direction on an
+    // indexed/immediate action refuses.
+    let mut missing = request.clone();
+    missing.direction = None;
+    assert!(parse_workspace_request(&render_workspace_request(&missing)).is_err());
+    let mut misplaced = request.clone();
+    misplaced.action = WorkspaceAction::Send;
+    assert!(parse_workspace_request(&render_workspace_request(&misplaced)).is_err());
+    let mut misplaced_previous = request.clone();
+    misplaced_previous.action = WorkspaceAction::Previous;
+    assert!(parse_workspace_request(&render_workspace_request(&misplaced_previous)).is_err());
+    // Unknown action and unknown direction refuse; legacy bodies without the
+    // direction field still parse for non-relative actions (serde default).
+    let unknown_direction = serde_json::json!({
+        "v": 1, "creation": "abc123", "pid": 4242,
+        "exe_path": "C:\\bin\\tiler-windows.exe", "user_sid": "S-1-5-21-1",
+        "session_id": 1, "action": "send-relative", "index": 0,
+        "direction": "up", "correlation": "cli-4242-ab12",
+    })
+    .to_string();
+    assert!(parse_workspace_request(&unknown_direction).is_err());
+    let legacy_send = serde_json::json!({
+        "v": 1, "creation": "abc123", "pid": 4242,
+        "exe_path": "C:\\bin\\tiler-windows.exe", "user_sid": "S-1-5-21-1",
+        "session_id": 1, "action": "send", "index": 2, "correlation": "cli-4242-ab12",
+    })
+    .to_string();
+    let parsed = parse_workspace_request(&legacy_send).expect("legacy send parses");
+    assert_eq!(parsed.direction, None);
+}
+
+#[test]
+fn live_overlay_flags_on_a_null_handle_fall_back_without_touching_windows() {
+    // Item 20 live-read contract: three bounded reads, no setters. A null
+    // handle reads unmaximized with an unreadable frame (no crash, no
+    // fabricated fullscreen), so production falls back to the retained row
+    // facts. This pins the fallback shape only; real maximized/fullscreen
+    // legs stay user-owned live.
+    use tiler_core::geometry::Rect;
+    let fulls = [Rect {
+        x: 0,
+        y: 0,
+        w: 1920,
+        h: 1080,
+    }];
+    assert_eq!(
+        tiler_windows::tiling_sys::live_overlay_flags(0, &fulls),
+        (false, None)
+    );
 }
 
 #[test]
@@ -2226,6 +2391,7 @@ fn born_floating_rows_converge_slotless_with_siblings_tiled() {
         &[],
         "w-tiled",
         8,
+        true,
     )
     .expect("send");
     assert!(

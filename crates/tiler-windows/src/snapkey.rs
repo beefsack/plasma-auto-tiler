@@ -130,9 +130,10 @@ impl SnapOp {
 /// of orphaning a stuck down slot (see [`SnapClassify::push`]). Entries are
 /// owner state, never callback state: the owner publishes the table and the
 /// callback only reads it through the machine (one cheap scan per event).
-/// `action` carries the explicit target arm (item 1 history vs
-/// focus/move/digit/toggle arms sharing one VK); a future unbound stay row
-/// has no canonical default VK but still rebinds through its action.
+/// `action` carries the explicit target arm (item 1 history vs item 2
+/// follow/stay vs focus/move/digit/toggle arms sharing one VK); unbound stay
+/// rows route into their canonical slot (shared with the follow arm on the
+/// same key) through the stay action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChordRemap {
     pub from_vk: u32,
@@ -161,13 +162,19 @@ pub struct ChordDisable {
 /// Explicit action routing for one rebound chord: which classifier arm the
 /// physical chord enters. VK alone cannot identify focus vs relative select
 /// vs relative follow vs output follow arms sharing one key; the action pins
-/// it. Item 1 uses the three history actions; existing arms keep their
+/// it. Item 1 uses the three history actions; item 2 adds numbered stay plus
+/// relative follow/stay (prev/next each); existing arms keep their
 /// meaning through the same plumbing for later items (unbound stay rows ride
-/// an action with no canonical default VK).
+/// their canonical slot through the stay action).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChordAction {
     Directional,
     WorkspaceDigit,
+    WorkspaceStayDigit,
+    WorkspaceSendPrev,
+    WorkspaceSendNext,
+    WorkspaceSendStayPrev,
+    WorkspaceSendStayNext,
     Maximize,
     Fullscreen,
     Float,
@@ -183,6 +190,11 @@ impl ChordAction {
         match self {
             Self::Directional => "directional",
             Self::WorkspaceDigit => "workspace-digit",
+            Self::WorkspaceStayDigit => "workspace-stay-digit",
+            Self::WorkspaceSendPrev => "workspace-send-prev",
+            Self::WorkspaceSendNext => "workspace-send-next",
+            Self::WorkspaceSendStayPrev => "workspace-send-stay-prev",
+            Self::WorkspaceSendStayNext => "workspace-send-stay-next",
             Self::Maximize => "maximize",
             Self::Fullscreen => "fullscreen",
             Self::Float => "float",
@@ -345,6 +357,42 @@ pub const fn history_op_for_vk(vk: u32) -> Option<WorkspaceHistoryOp> {
     }
 }
 
+/// Item 2 relative-send slot index for a canonical key: 0 H, 1 K, 2 Left,
+/// 3 Up (previous), 4 J, 5 L, 6 Down, 7 Right (next). Tab never sends.
+#[must_use]
+pub const fn relative_send_index(vk: u32) -> Option<usize> {
+    match vk {
+        VK_H => Some(0),
+        VK_K => Some(1),
+        VK_LEFT => Some(2),
+        VK_UP => Some(3),
+        VK_J => Some(4),
+        VK_L => Some(5),
+        VK_DOWN => Some(6),
+        VK_RIGHT => Some(7),
+        _ => None,
+    }
+}
+
+/// Item 2 relative-send step for a canonical key: H/K/Left/Up previous (-1),
+/// J/L/Down/Right next (+1). Tab and unknown keys refuse.
+#[must_use]
+pub const fn relative_send_delta(vk: u32) -> Option<i32> {
+    match vk {
+        VK_H | VK_K | VK_LEFT | VK_UP => Some(-1),
+        VK_J | VK_L | VK_DOWN | VK_RIGHT => Some(1),
+        _ => None,
+    }
+}
+
+/// Whether a live modifier/Win combination still matches a pinned relative
+/// send: Win+Ctrl+Shift held, no Alt, Win still held. Same
+/// swallow-but-don't-dispatch contract as digit repeats; follow/stay rides
+/// the pinned intent, never the live modifiers.
+fn relative_send_repeat_live(ctrl: bool, shift: bool, alt: bool, win: bool) -> bool {
+    ctrl && shift && !alt && win
+}
+
 /// True only for the maximize-toggle chord key (Win+M, KDE Meta+M parity).
 /// Shift/Ctrl/Alt select the directional/workspace arms instead: Win+Shift+M
 /// and any Ctrl/Alt combination pass through untracked.
@@ -446,6 +494,15 @@ fn collide_refusal(
         Classified::Workspace(intent) => Classified::Workspace(WorkspaceIntent {
             op: intent.op,
             index: intent.index,
+            follow: intent.follow,
+            edge,
+            foreground,
+            consumed,
+            announce: false,
+        }),
+        Classified::WorkspaceSend(intent) => Classified::WorkspaceSend(WorkspaceSendIntent {
+            delta: intent.delta,
+            follow: intent.follow,
             edge,
             foreground,
             consumed,
@@ -499,6 +556,10 @@ fn collide_trigger(shape: &Classified) -> Option<MaskTrigger> {
         Classified::Workspace(intent) => Some(MaskTrigger::Workspace {
             op: intent.op,
             index: intent.index,
+        }),
+        Classified::WorkspaceSend(intent) => Some(MaskTrigger::WorkspaceSend {
+            delta: intent.delta,
+            follow: intent.follow,
         }),
         Classified::WorkspaceHistory(intent) => {
             Some(MaskTrigger::WorkspaceHistory { op: intent.op })
@@ -560,10 +621,30 @@ impl WorkspaceOp {
 
 /// Classifier outcome for one workspace digit event. Edges reuse the snap
 /// vocabulary: only downs and repeats dispatch, ups close the pair.
+/// `follow` is pinned at down time from the explicit action (direct
+/// Shift+digit follows; the unbound stay rows rebind through
+/// `WorkspaceStayDigit` and stay); later modifier flips never rewrite it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WorkspaceIntent {
     pub op: WorkspaceOp,
     pub index: u8,
+    pub follow: bool,
+    pub edge: SnapEdge,
+    pub foreground: bool,
+    pub consumed: bool,
+    pub announce: bool,
+}
+
+/// Classifier outcome for one item 2 relative workspace-send event
+/// (Win+Ctrl+Shift+H/K/Left/Up previous, J/L/Down/Right next). Only downs
+/// and repeats dispatch, ups close the pair. `delta` is -1 (previous) or +1
+/// (next) from the canonical key; `follow` is pinned at down time from the
+/// explicit action (direct chords follow; the unbound stay rows rebind
+/// through the stay actions and stay).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceSendIntent {
+    pub delta: i32,
+    pub follow: bool,
     pub edge: SnapEdge,
     pub foreground: bool,
     pub consumed: bool,
@@ -659,6 +740,7 @@ pub struct StickyIntent {
 pub enum Classified {
     Snap(SnapIntent),
     Workspace(WorkspaceIntent),
+    WorkspaceSend(WorkspaceSendIntent),
     WorkspaceHistory(WorkspaceHistoryIntent),
     Maximize(MaximizeIntent),
     Fullscreen(FullscreenIntent),
@@ -672,6 +754,7 @@ impl Classified {
         match self {
             Self::Snap(intent) => intent.consumed,
             Self::Workspace(intent) => intent.consumed,
+            Self::WorkspaceSend(intent) => intent.consumed,
             Self::WorkspaceHistory(intent) => intent.consumed,
             Self::Maximize(intent) => intent.consumed,
             Self::Fullscreen(intent) => intent.consumed,
@@ -685,6 +768,7 @@ impl Classified {
         match self {
             Self::Snap(intent) => intent.announce,
             Self::Workspace(intent) => intent.announce,
+            Self::WorkspaceSend(intent) => intent.announce,
             Self::WorkspaceHistory(intent) => intent.announce,
             Self::Maximize(intent) => intent.announce,
             Self::Fullscreen(intent) => intent.announce,
@@ -705,6 +789,7 @@ impl Classified {
 pub enum MaskTrigger {
     Snap { op: SnapOp, direction: Direction },
     Workspace { op: WorkspaceOp, index: u8 },
+    WorkspaceSend { delta: i32, follow: bool },
     WorkspaceHistory { op: WorkspaceHistoryOp },
     Maximize,
     Fullscreen,
@@ -750,6 +835,17 @@ pub struct SnapClassify {
     digit_down: [bool; 10],
     digit_origin: [bool; 10],
     digit_op: [Option<WorkspaceOp>; 10],
+    digit_follow: [bool; 10],
+    /// Pinned Ctrl state per digit hold: numbered stay rides Win+Shift and
+    /// additionally the Win+Ctrl+Shift backlog arm, so the repeat dispatch
+    /// must follow the pinned arm (a mid-hold Ctrl flip swallows without
+    /// dispatching, never leaking a repeat or flipping into follow).
+    /// Follow/select holds always pin false via the fresh-down guard.
+    digit_ctrl: [bool; 10],
+    send_down: [bool; 8],
+    send_origin: [bool; 8],
+    send_follow: [bool; 8],
+    send_delta: [i32; 8],
     maximize_down: bool,
     maximize_origin: bool,
     fullscreen_down: bool,
@@ -839,6 +935,12 @@ impl SnapClassify {
             digit_down: [false; 10],
             digit_origin: [false; 10],
             digit_op: [None; 10],
+            digit_follow: [true; 10],
+            digit_ctrl: [false; 10],
+            send_down: [false; 8],
+            send_origin: [false; 8],
+            send_follow: [true; 8],
+            send_delta: [0; 8],
             maximize_down: false,
             maximize_origin: false,
             fullscreen_down: false,
@@ -949,13 +1051,28 @@ impl SnapClassify {
     }
 
     /// Explicit action for a direct (non-remapped) physical chord at its live
-    /// modifiers: history wins on Win+Ctrl (no Shift/Alt), otherwise the
-    /// existing VK-derived arm. `None` means the chord refuses (bare,
-    /// extra-modified, or arm-refused) and leaves no pin.
+    /// modifiers: item 2 relative send wins on Win+Ctrl+Shift, history wins on
+    /// Win+Ctrl (no Shift/Alt), otherwise the existing VK-derived arm. `None`
+    /// means the chord refuses (bare, extra-modified, or arm-refused) and
+    /// leaves no pin.
     fn direct_action(&self, physical: u32) -> Option<ChordAction> {
         let win = self.win_l || self.win_r;
         if !win {
             return None;
+        }
+        // Item 2 relative send: Win+Ctrl+Shift with no Alt on a relative key.
+        // Direct chords follow; stay rides only the explicit stay actions
+        // through the rebound table (unbound by default).
+        if self.ctrl
+            && self.shift
+            && !self.alt
+            && let Some(delta) = relative_send_delta(physical)
+        {
+            return Some(if delta < 0 {
+                ChordAction::WorkspaceSendPrev
+            } else {
+                ChordAction::WorkspaceSendNext
+            });
         }
         // Item 1 history: Win+Ctrl with no Shift/Alt on a history key.
         if self.ctrl
@@ -1097,7 +1214,7 @@ impl SnapClassify {
                     announce: false,
                 }))
             }
-            ChordAction::WorkspaceDigit => {
+            ChordAction::WorkspaceDigit | ChordAction::WorkspaceStayDigit => {
                 if !is_digit_vk(canon) {
                     return None;
                 }
@@ -1108,9 +1225,27 @@ impl SnapClassify {
                 Some(Classified::Workspace(WorkspaceIntent {
                     op: self.digit_op[slot].unwrap_or(WorkspaceOp::Select),
                     index: slot as u8,
+                    follow: self.digit_follow[slot],
                     edge: SnapEdge::Down,
                     foreground: true,
                     consumed: self.digit_origin[slot],
+                    announce: false,
+                }))
+            }
+            ChordAction::WorkspaceSendPrev
+            | ChordAction::WorkspaceSendNext
+            | ChordAction::WorkspaceSendStayPrev
+            | ChordAction::WorkspaceSendStayNext => {
+                let idx = relative_send_index(canon)?;
+                if !self.send_down[idx] {
+                    return None;
+                }
+                Some(Classified::WorkspaceSend(WorkspaceSendIntent {
+                    delta: self.send_delta[idx],
+                    follow: self.send_follow[idx],
+                    edge: SnapEdge::Down,
+                    foreground: true,
+                    consumed: self.send_origin[idx],
                     announce: false,
                 }))
             }
@@ -1181,7 +1316,15 @@ impl SnapClassify {
     fn canon_is_down(&self, action: ChordAction, vk: u32) -> bool {
         match action {
             ChordAction::Directional => catalog_index(vk).is_some_and(|idx| self.key_down[idx]),
-            ChordAction::WorkspaceDigit => is_digit_vk(vk) && self.digit_down[(vk - VK_0) as usize],
+            ChordAction::WorkspaceDigit | ChordAction::WorkspaceStayDigit => {
+                is_digit_vk(vk) && self.digit_down[(vk - VK_0) as usize]
+            }
+            ChordAction::WorkspaceSendPrev
+            | ChordAction::WorkspaceSendNext
+            | ChordAction::WorkspaceSendStayPrev
+            | ChordAction::WorkspaceSendStayNext => {
+                relative_send_index(vk).is_some_and(|idx| self.send_down[idx])
+            }
             ChordAction::WorkspacePrevious
             | ChordAction::WorkspacePrev
             | ChordAction::WorkspaceNext => {
@@ -1416,8 +1559,14 @@ impl SnapClassify {
             | ChordAction::WorkspaceNext => {
                 return self.push_history(physical, vk, action, is_up, foreground, route_live);
             }
-            ChordAction::WorkspaceDigit => {
-                return self.push_digit(vk, is_up, foreground, route_live);
+            ChordAction::WorkspaceDigit | ChordAction::WorkspaceStayDigit => {
+                return self.push_digit(vk, action, is_up, foreground, route_live);
+            }
+            ChordAction::WorkspaceSendPrev
+            | ChordAction::WorkspaceSendNext
+            | ChordAction::WorkspaceSendStayPrev
+            | ChordAction::WorkspaceSendStayNext => {
+                return self.push_relative_send(vk, action, is_up, foreground, route_live);
             }
             ChordAction::Maximize => {
                 return self.push_maximize(is_up, foreground, route_live);
@@ -1720,11 +1869,18 @@ impl SnapClassify {
     fn push_digit(
         &mut self,
         vk: u32,
+        action: ChordAction,
         is_up: bool,
         foreground: bool,
         route_live: bool,
     ) -> Option<Classified> {
+        if !(VK_0..=VK_9).contains(&vk) {
+            return None;
+        }
         let slot = (vk - VK_0) as usize;
+        // Explicit stay action pins follow=false; the direct digit arm pins
+        // follow from Shift (Shift sends and follows, unshifted selects).
+        let stay = action == ChordAction::WorkspaceStayDigit;
         if is_up {
             if !self.digit_down[slot] {
                 return None;
@@ -1734,12 +1890,16 @@ impl SnapClassify {
             self.digit_origin[slot] = false;
             let op = self.digit_op[slot].unwrap_or(WorkspaceOp::Select);
             self.digit_op[slot] = None;
+            let follow = self.digit_follow[slot];
+            self.digit_follow[slot] = true;
+            self.digit_ctrl[slot] = false;
             self.digit_counts[slot].up += 1;
             if origin {
                 self.digit_counts[slot].consumed += 1;
                 Some(Classified::Workspace(WorkspaceIntent {
                     op,
                     index: slot as u8,
+                    follow,
                     edge: SnapEdge::Up,
                     foreground,
                     consumed: true,
@@ -1750,6 +1910,7 @@ impl SnapClassify {
                 Some(Classified::Workspace(WorkspaceIntent {
                     op,
                     index: slot as u8,
+                    follow,
                     edge: SnapEdge::Up,
                     foreground,
                     consumed: false,
@@ -1765,17 +1926,31 @@ impl SnapClassify {
             if self.digit_down[slot] {
                 self.digit_counts[slot].repeat += 1;
                 let op = self.digit_op[slot].unwrap_or(WorkspaceOp::Select);
+                let follow = self.digit_follow[slot];
                 if self.digit_origin[slot] {
+                    // Stay repeats dispatch only while the live combination
+                    // still matches the pinned arm (Win+Shift plus the pinned
+                    // Ctrl); follow/select repeats ride `digit_repeat_live`,
+                    // which refuses Ctrl. Either way a mid-hold modifier flip
+                    // swallows without dispatching, leaking no repeat and
+                    // never flipping a stay into a follow.
                     let live = self.enabled
                         && self.gate_active
                         && route_live
-                        && digit_repeat_live(
-                            self.shift,
-                            self.ctrl,
-                            self.alt,
-                            self.win_l || self.win_r,
-                            op,
-                        );
+                        && if follow {
+                            digit_repeat_live(
+                                self.shift,
+                                self.ctrl,
+                                self.alt,
+                                self.win_l || self.win_r,
+                                op,
+                            )
+                        } else {
+                            self.shift
+                                && self.ctrl == self.digit_ctrl[slot]
+                                && !self.alt
+                                && (self.win_l || self.win_r)
+                        };
                     self.digit_counts[slot].consumed += 1;
                     // Win-held repeats only rearm the mask; bare repeats
                     // after Win-up stay swallowed without a new obligation.
@@ -1789,6 +1964,7 @@ impl SnapClassify {
                     Some(Classified::Workspace(WorkspaceIntent {
                         op,
                         index: slot as u8,
+                        follow,
                         edge: SnapEdge::Repeat,
                         foreground,
                         consumed: true,
@@ -1799,6 +1975,7 @@ impl SnapClassify {
                     Some(Classified::Workspace(WorkspaceIntent {
                         op,
                         index: slot as u8,
+                        follow,
                         edge: SnapEdge::Repeat,
                         foreground,
                         consumed: false,
@@ -1806,7 +1983,19 @@ impl SnapClassify {
                     }))
                 }
             } else {
-                if self.ctrl || self.alt || !(self.win_l || self.win_r) {
+                // Digit follow/select refuse Ctrl/Alt outright; numbered stay
+                // additionally accepts the Win+Ctrl+Shift backlog arm (Shift
+                // required, Alt never). Direct Ctrl+Shift+digit chords still
+                // refuse above in `direct_action`: only an explicit stay
+                // rebind routes here.
+                if !(self.win_l || self.win_r) || self.alt {
+                    return None;
+                }
+                if stay {
+                    if !self.shift {
+                        return None;
+                    }
+                } else if self.ctrl {
                     return None;
                 }
                 let op = if self.shift {
@@ -1814,10 +2003,15 @@ impl SnapClassify {
                 } else {
                     WorkspaceOp::Select
                 };
+                // Unshifted chords never stay: only shifted sends carry the
+                // follow/stay distinction.
+                let follow = if op == WorkspaceOp::Send { !stay } else { true };
                 self.digit_down[slot] = true;
                 let origin = self.enabled && self.gate_active && route_live;
                 self.digit_origin[slot] = origin;
                 self.digit_op[slot] = Some(op);
+                self.digit_follow[slot] = follow;
+                self.digit_ctrl[slot] = self.ctrl;
                 self.digit_counts[slot].down += 1;
                 if origin {
                     self.digit_counts[slot].consumed += 1;
@@ -1829,6 +2023,7 @@ impl SnapClassify {
                     Some(Classified::Workspace(WorkspaceIntent {
                         op,
                         index: slot as u8,
+                        follow,
                         edge: SnapEdge::Down,
                         foreground,
                         consumed: true,
@@ -1839,6 +2034,7 @@ impl SnapClassify {
                     Some(Classified::Workspace(WorkspaceIntent {
                         op,
                         index: slot as u8,
+                        follow,
                         edge: SnapEdge::Down,
                         foreground,
                         consumed: false,
@@ -1846,6 +2042,133 @@ impl SnapClassify {
                     }))
                 }
             }
+        }
+    }
+
+    /// Item 2 relative-send half of the unified classifier (Win+Ctrl+Shift+
+    /// H/K/Left/Up previous, J/L/Down/Right next). Same Win/armed-hold/gate/
+    /// mask contract as history, but Shift selects the send arm: fresh downs
+    /// require Win+Ctrl+Shift with no Alt. `follow` pins at down time from the
+    /// explicit action (direct chords follow; stay rows rebind through the
+    /// stay actions); `delta` pins from the canonical key. Repeats ride the
+    /// armed hold and dispatch while the live Win+Ctrl+Shift combination still
+    /// matches; ups close the pair. Fresh downs consume iff takeover is on
+    /// with the shortcut gate active; the owner rechecks fresh scope/
+    /// suspension before any send.
+    /// `route_live` gates fresh consumption and repeat dispatch: a pinned
+    /// hold whose chord no longer routes live stays swallowed without
+    /// dispatching until its matching up.
+    fn push_relative_send(
+        &mut self,
+        vk: u32,
+        action: ChordAction,
+        is_up: bool,
+        foreground: bool,
+        route_live: bool,
+    ) -> Option<Classified> {
+        let idx = relative_send_index(vk)?;
+        let follow = matches!(
+            action,
+            ChordAction::WorkspaceSendPrev | ChordAction::WorkspaceSendNext
+        );
+        let delta = relative_send_delta(vk)?;
+        // Defensive: the action's prev/next must agree with the canonical
+        // key's direction; a mismatched rebind (prev action onto a next key)
+        // refuses instead of sending the wrong way.
+        let action_prev = matches!(
+            action,
+            ChordAction::WorkspaceSendPrev | ChordAction::WorkspaceSendStayPrev
+        );
+        if (delta < 0) != action_prev {
+            return None;
+        }
+        let intent = |edge: SnapEdge, consumed: bool, announce: bool| {
+            Classified::WorkspaceSend(WorkspaceSendIntent {
+                delta,
+                follow,
+                edge,
+                foreground,
+                consumed,
+                announce,
+            })
+        };
+        if is_up {
+            if !self.send_down[idx] {
+                return None;
+            }
+            self.send_down[idx] = false;
+            let origin = self.send_origin[idx];
+            self.send_origin[idx] = false;
+            self.send_follow[idx] = true;
+            self.send_delta[idx] = 0;
+            // Per-slot counts reuse the history-adjacent vocabulary: count in
+            // the directional slot matching the canonical key when available.
+            if origin {
+                return Some(intent(SnapEdge::Up, true, false));
+            }
+            return Some(intent(SnapEdge::Up, false, false));
+        }
+        if self.send_down[idx] {
+            let pinned_follow = self.send_follow[idx];
+            let pinned_delta = self.send_delta[idx];
+            let pinned = Classified::WorkspaceSend(WorkspaceSendIntent {
+                delta: pinned_delta,
+                follow: pinned_follow,
+                edge: SnapEdge::Repeat,
+                foreground,
+                consumed: true,
+                announce: false,
+            });
+            let _ = pinned;
+            if self.send_origin[idx] {
+                let live = self.enabled
+                    && self.gate_active
+                    && route_live
+                    && relative_send_repeat_live(
+                        self.ctrl,
+                        self.shift,
+                        self.alt,
+                        self.win_l || self.win_r,
+                    );
+                if self.win_l || self.win_r {
+                    self.mask_pending = true;
+                    self.mask_trigger = Some(MaskTrigger::WorkspaceSend {
+                        delta: pinned_delta,
+                        follow: pinned_follow,
+                    });
+                }
+                return Some(Classified::WorkspaceSend(WorkspaceSendIntent {
+                    delta: pinned_delta,
+                    follow: pinned_follow,
+                    edge: SnapEdge::Repeat,
+                    foreground,
+                    consumed: true,
+                    announce: live,
+                }));
+            }
+            return Some(Classified::WorkspaceSend(WorkspaceSendIntent {
+                delta: pinned_delta,
+                follow: pinned_follow,
+                edge: SnapEdge::Repeat,
+                foreground,
+                consumed: false,
+                announce: false,
+            }));
+        }
+        if !self.ctrl || !self.shift || self.alt || !(self.win_l || self.win_r) {
+            return None;
+        }
+        self.send_down[idx] = true;
+        let origin = self.enabled && self.gate_active && route_live;
+        self.send_origin[idx] = origin;
+        self.send_follow[idx] = follow;
+        self.send_delta[idx] = delta;
+        if origin {
+            self.mask_pending = true;
+            self.mask_trigger = Some(MaskTrigger::WorkspaceSend { delta, follow });
+            Some(intent(SnapEdge::Down, true, true))
+        } else {
+            Some(intent(SnapEdge::Down, false, false))
         }
     }
 
@@ -2429,8 +2752,10 @@ mod history_tests {
             ctrl_up(&mut m);
             assert!(!m.key_is_down(vk));
         }
-        // Bare (no Win) and extra-modified (Shift/Alt) chords refuse with no
-        // pin, so their paired ups also pass.
+        // Bare (no Win) and Alt-modified chords refuse with no pin, so their
+        // paired ups also pass. Shift+Ctrl no longer refuses: item 2 routes
+        // Win+Ctrl+Shift+H to the relative-send follow arm (history itself
+        // still demands unshifted Win+Ctrl).
         let mut m = SnapClassify::new(enabled());
         assert_eq!(SnapClassify::push(&mut m, VK_TAB, false, true, false), None);
         assert_eq!(SnapClassify::push(&mut m, VK_TAB, true, true, false), None);
@@ -2438,7 +2763,13 @@ mod history_tests {
         SnapClassify::push(&mut m, VK_LWIN, false, true, false);
         SnapClassify::push(&mut m, VK_SHIFT, false, true, false);
         ctrl_down(&mut m);
-        assert_eq!(SnapClassify::push(&mut m, VK_H, false, true, false), None);
+        match SnapClassify::push(&mut m, VK_H, false, true, false).expect("relative send") {
+            Classified::WorkspaceSend(intent) => {
+                assert_eq!((intent.delta, intent.follow), (-1, true));
+                assert!(intent.consumed && intent.announce);
+            }
+            other => panic!("expected relative send, got {other:?}"),
+        }
         let mut m = SnapClassify::new(enabled());
         SnapClassify::push(&mut m, VK_LWIN, false, true, false);
         SnapClassify::push(&mut m, VK_MENU, false, true, false);
@@ -2743,11 +3074,28 @@ pub struct QueuedIntent {
 /// One approved workspace chord captured by the callback. `origin` is the
 /// managed identity bound at chord time (`None` means background/inactive or
 /// unmanaged foreground at chord time); select dispatches without an origin
-/// while send requires one.
+/// while send requires one. `follow` pins the explicit send intent at down
+/// time (direct Shift+digit follows; stay rows rebind through the stay action).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueuedWorkspaceIntent {
     pub op: WorkspaceOp,
     pub index: u8,
+    pub follow: bool,
+    pub edge: SnapEdge,
+    pub origin: Option<SnapOrigin>,
+    pub consumed: bool,
+    pub announce: bool,
+    pub tick: std::time::Instant,
+}
+
+/// One approved item 2 relative workspace-send chord captured by the
+/// callback. `delta` is -1 (previous) or +1 (next) in the item 1 scoped ring;
+/// `follow` pins the explicit intent at down time. Sends require a managed
+/// origin like numbered sends; `origin` rides for mask/queue parity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedWorkspaceSendIntent {
+    pub delta: i32,
+    pub follow: bool,
     pub edge: SnapEdge,
     pub origin: Option<SnapOrigin>,
     pub consumed: bool,
@@ -2823,6 +3171,7 @@ pub struct QueuedStickyIntent {
 pub enum QueuedSnapEvent {
     Intent(QueuedIntent),
     Workspace(QueuedWorkspaceIntent),
+    WorkspaceSend(QueuedWorkspaceSendIntent),
     WorkspaceHistory(QueuedWorkspaceHistoryIntent),
     Maximize(QueuedMaximizeIntent),
     Fullscreen(QueuedFullscreenIntent),
@@ -2954,12 +3303,24 @@ pub fn classify_and_queue(
         Classified::Workspace(intent) => QueuedSnapEvent::Workspace(QueuedWorkspaceIntent {
             op: intent.op,
             index: intent.index,
+            follow: intent.follow,
             edge: intent.edge,
             origin,
             consumed: intent.consumed,
             announce: intent.announce,
             tick,
         }),
+        Classified::WorkspaceSend(intent) => {
+            QueuedSnapEvent::WorkspaceSend(QueuedWorkspaceSendIntent {
+                delta: intent.delta,
+                follow: intent.follow,
+                edge: intent.edge,
+                origin,
+                consumed: intent.consumed,
+                announce: intent.announce,
+                tick,
+            })
+        }
         Classified::WorkspaceHistory(intent) => {
             QueuedSnapEvent::WorkspaceHistory(QueuedWorkspaceHistoryIntent {
                 op: intent.op,
@@ -4324,6 +4685,10 @@ pub mod sys {
             }),
             super::MaskTrigger::WorkspaceHistory { op } => serde_json::json!({
                 "trigger_op": op.as_str(),
+            }),
+            super::MaskTrigger::WorkspaceSend { delta, follow } => serde_json::json!({
+                "trigger_op": if delta < 0 { "send-prev" } else { "send-next" },
+                "trigger_follow": follow,
             }),
             super::MaskTrigger::Maximize => serde_json::json!({
                 "trigger_op": "maximize",

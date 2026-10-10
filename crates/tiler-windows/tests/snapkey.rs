@@ -51,6 +51,7 @@ fn push_snap(
     match SnapClassify::push(m, vk, is_up, fg, inj)? {
         Classified::Snap(intent) => Some(intent),
         Classified::Workspace(_)
+        | Classified::WorkspaceSend(_)
         | Classified::WorkspaceHistory(_)
         | Classified::Maximize(_)
         | Classified::Fullscreen(_)
@@ -71,6 +72,7 @@ fn push_workspace(
     match SnapClassify::push(m, vk, is_up, fg, inj)? {
         Classified::Workspace(intent) => Some(intent),
         Classified::Snap(_)
+        | Classified::WorkspaceSend(_)
         | Classified::WorkspaceHistory(_)
         | Classified::Maximize(_)
         | Classified::Fullscreen(_)
@@ -92,6 +94,7 @@ fn push_maximize(
         Classified::Maximize(intent) => Some(intent),
         Classified::Snap(_)
         | Classified::Workspace(_)
+        | Classified::WorkspaceSend(_)
         | Classified::WorkspaceHistory(_)
         | Classified::Fullscreen(_)
         | Classified::Float(_)
@@ -111,6 +114,7 @@ fn push_fullscreen(
         Classified::Fullscreen(intent) => Some(intent),
         Classified::Snap(_)
         | Classified::Workspace(_)
+        | Classified::WorkspaceSend(_)
         | Classified::WorkspaceHistory(_)
         | Classified::Maximize(_)
         | Classified::Float(_)
@@ -133,6 +137,7 @@ fn push_float(
         Classified::Sticky(_) => None,
         Classified::Snap(_)
         | Classified::Workspace(_)
+        | Classified::WorkspaceSend(_)
         | Classified::WorkspaceHistory(_)
         | Classified::Maximize(_)
         | Classified::Fullscreen(_) => {
@@ -154,6 +159,7 @@ fn push_sticky(
         Classified::Float(_) => None,
         Classified::Snap(_)
         | Classified::Workspace(_)
+        | Classified::WorkspaceSend(_)
         | Classified::WorkspaceHistory(_)
         | Classified::Maximize(_)
         | Classified::Fullscreen(_) => {
@@ -569,6 +575,7 @@ fn saturated_queue_swallows_and_counts_loss() {
     match q.pop_front().expect("intent") {
         QueuedSnapEvent::Intent(queued) => assert_eq!(queued.origin, origin),
         QueuedSnapEvent::Workspace(_)
+        | QueuedSnapEvent::WorkspaceSend(_)
         | QueuedSnapEvent::WorkspaceHistory(_)
         | QueuedSnapEvent::Maximize(_)
         | QueuedSnapEvent::Fullscreen(_)
@@ -2661,5 +2668,459 @@ fn callback_diag_reason_vocabulary_covers_pass_through() {
         (CallbackReason::WinUpPass, "win-up-pass"),
     ] {
         assert_eq!(reason.as_str(), want);
+    }
+}
+
+// Item 2: explicit follow/stay routing for numbered and relative sends.
+// Windows Ctrl+Shift arrow ownership is UNKNOWN: defaults keep pending
+// evidenced conflicts (no new Compatible disables), stay rows ride explicit
+// actions with no canonical default VK.
+
+fn push_send(
+    m: &mut SnapClassify,
+    vk: u32,
+    is_up: bool,
+    fg: bool,
+    inj: bool,
+) -> Option<tiler_windows::snapkey::WorkspaceSendIntent> {
+    match SnapClassify::push(m, vk, is_up, fg, inj)? {
+        Classified::WorkspaceSend(intent) => Some(intent),
+        Classified::Snap(_)
+        | Classified::Workspace(_)
+        | Classified::WorkspaceHistory(_)
+        | Classified::Maximize(_)
+        | Classified::Fullscreen(_)
+        | Classified::Float(_)
+        | Classified::Sticky(_) => {
+            panic!("expected relative send")
+        }
+    }
+}
+
+fn ctrl_shift_down(m: &mut SnapClassify) {
+    push_snap(m, VK_SHIFT, false, true, false);
+    push_snap(m, VK_CONTROL, false, true, false);
+}
+
+#[test]
+fn relative_follow_direct_chords_route_all_eight_keys() {
+    // Win+Ctrl+Shift+H/K/Left/Up step previous (-1, follow);
+    // J/L/Down/Right step next (+1, follow). Tab never sends.
+    for (vk, delta) in [
+        (VK_H, -1),
+        (VK_K, -1),
+        (VK_LEFT, -1),
+        (VK_UP, -1),
+        (VK_J, 1),
+        (VK_L, 1),
+        (VK_DOWN, 1),
+        (VK_RIGHT, 1),
+    ] {
+        let mut m = SnapClassify::new(takeover());
+        win_down(&mut m, VK_LWIN);
+        ctrl_shift_down(&mut m);
+        let down = push_send(&mut m, vk, false, true, false).expect("relative down");
+        assert_eq!((down.delta, down.follow), (delta, true));
+        assert!(down.consumed && down.announce);
+        let repeat = push_send(&mut m, vk, false, true, false).expect("repeat");
+        assert_eq!(repeat.edge, SnapEdge::Repeat);
+        assert!(repeat.consumed && repeat.announce);
+        let up = push_send(&mut m, vk, true, true, false).expect("paired up");
+        assert!(up.consumed && !up.announce);
+        assert!(!m.key_is_down(vk));
+    }
+    // Tab with Ctrl+Shift is not a send arm.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    ctrl_shift_down(&mut m);
+    assert_eq!(
+        SnapClassify::push(&mut m, tiler_windows::snapkey::VK_TAB, false, true, false),
+        None
+    );
+}
+
+#[test]
+fn relative_send_repeat_gates_on_live_modifiers() {
+    // Shift released mid-hold: the repeat stays swallowed without dispatch,
+    // and the paired up still closes consumed.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    ctrl_shift_down(&mut m);
+    let down = push_send(&mut m, VK_J, false, true, false).expect("down");
+    assert!(down.consumed && down.announce);
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    let repeat = push_send(&mut m, VK_J, false, true, false).expect("repeat");
+    assert!(repeat.consumed && !repeat.announce);
+    let up = push_send(&mut m, VK_J, true, true, false).expect("up");
+    assert!(up.consumed && !up.announce);
+}
+
+#[test]
+fn numbered_send_direct_chord_follows_and_stay_needs_its_action() {
+    // Direct Win+Shift+digit always follows; the unbound stay rows never fire
+    // without their explicit rebind action.
+    for index in [0u8, 1, 5, 9] {
+        let vk = VK_0 + u32::from(index);
+        let mut m = SnapClassify::new(takeover());
+        win_down(&mut m, VK_LWIN);
+        push_snap(&mut m, VK_SHIFT, false, true, false);
+        let send = push_workspace(&mut m, vk, false, true, false).expect("send down");
+        assert_eq!((send.op, send.index), (WorkspaceOp::Send, index));
+        assert!(send.follow, "direct numbered sends follow");
+        assert!(send.consumed && send.announce);
+    }
+}
+
+#[test]
+fn numbered_stay_rebind_routes_stay_with_shift_arm() {
+    // stay-workspace-2 rebound to Win+Shift+F6 routes stay (follow=false);
+    // the direct Win+Shift+2 chord still follows (stay rows carry no default
+    // to suppress).
+    use tiler_windows::settings::{
+        BindingSetting, BindingState, Settings, build_disabled, build_remap, validate_settings,
+    };
+    use tiler_windows::snapkey::ChordAction;
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "stay-workspace-2".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Shift+F6".to_owned()),
+        },
+    );
+    validate_settings(&settings).expect("stay rebind validates");
+    let remap = build_remap(&settings);
+    assert_eq!(remap.len(), 1);
+    assert_eq!(remap[0].action, ChordAction::WorkspaceStayDigit);
+    let mut m = SnapClassify::new(takeover());
+    m.set_remap(remap);
+    m.set_disabled(build_disabled(&settings));
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    let stay = push_workspace(&mut m, 0x75, false, true, false).expect("stay down");
+    assert_eq!((stay.op, stay.index), (WorkspaceOp::Send, 2));
+    assert!(!stay.follow, "stay action pins follow=false");
+    assert!(stay.consumed && stay.announce);
+    let up = push_workspace(&mut m, 0x75, true, true, false).expect("stay up");
+    assert!(!up.follow && up.consumed);
+    // Direct chord unaffected: still follow.
+    let mut m = SnapClassify::new(takeover());
+    m.set_remap(build_remap(&settings));
+    m.set_disabled(build_disabled(&settings));
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    let direct = push_workspace(&mut m, VK_0 + 2, false, true, false).expect("direct");
+    assert!(direct.follow);
+}
+
+fn settings_default_with_ctrl_shift_stay() -> tiler_windows::settings::Settings {
+    use tiler_windows::settings::{BindingSetting, BindingState, Settings};
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "stay-workspace-2".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Ctrl+Shift+F6".to_owned()),
+        },
+    );
+    settings
+}
+
+#[test]
+fn numbered_stay_ctrl_shift_arm_routes_stay() {
+    // Backlog journey example: stay-workspace-2 rebound to Win+Ctrl+Shift+F6
+    // routes stay (follow=false) with the pinned Ctrl arm; the plain
+    // Win+Shift stay rebind capability is untouched (see the previous test).
+    use tiler_windows::settings::{
+        BindingSetting, BindingState, Settings, build_disabled, build_remap, validate_settings,
+    };
+    use tiler_windows::snapkey::ChordAction;
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "stay-workspace-2".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Ctrl+Shift+F6".to_owned()),
+        },
+    );
+    validate_settings(&settings).expect("ctrl+shift stay rebind validates");
+    let remap = build_remap(&settings);
+    assert_eq!(remap.len(), 1);
+    assert_eq!(
+        (
+            remap[0].from_vk,
+            remap[0].from_shift,
+            remap[0].from_ctrl,
+            remap[0].from_alt,
+            remap[0].action,
+            remap[0].to_vk,
+        ),
+        (
+            0x75,
+            true,
+            true,
+            false,
+            ChordAction::WorkspaceStayDigit,
+            VK_0 + 2
+        )
+    );
+    let mut m = SnapClassify::new(takeover());
+    m.set_remap(remap);
+    m.set_disabled(build_disabled(&settings));
+    win_down(&mut m, VK_LWIN);
+    ctrl_shift_down(&mut m);
+    let stay = push_workspace(&mut m, 0x75, false, true, false).expect("stay down");
+    assert_eq!((stay.op, stay.index), (WorkspaceOp::Send, 2));
+    assert!(!stay.follow, "stay action pins follow=false");
+    assert!(stay.consumed && stay.announce);
+    // Repeat dispatches while the pinned Win+Ctrl+Shift arm holds.
+    let repeat = push_workspace(&mut m, 0x75, false, true, false).expect("stay repeat");
+    assert!(!repeat.follow && repeat.consumed && repeat.announce);
+    // Ctrl released mid-hold: the repeat swallows (consumed, no dispatch),
+    // leaking no repeat and never flipping into follow.
+    push_snap(&mut m, VK_CONTROL, true, true, false);
+    let swallowed = push_workspace(&mut m, 0x75, false, true, false).expect("swallowed repeat");
+    assert!(!swallowed.follow && swallowed.consumed && !swallowed.announce);
+    // Paired up still closes consumed with the pinned stay identity.
+    let up = push_workspace(&mut m, 0x75, true, true, false).expect("stay up");
+    assert_eq!((up.op, up.index, up.follow), (WorkspaceOp::Send, 2, false));
+    assert!(up.consumed && !up.announce);
+    // Wrong modifiers pass through untracked with their pairs: Win+Shift+F6
+    // without Ctrl is not the rebound chord, and Alt never arms stay.
+    let mut m = SnapClassify::new(takeover());
+    m.set_remap(build_remap(&settings));
+    m.set_disabled(build_disabled(&settings));
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    assert_eq!(push_workspace(&mut m, 0x75, false, true, false), None);
+    assert_eq!(push_workspace(&mut m, 0x75, true, true, false), None);
+    let mut m = SnapClassify::new(takeover());
+    m.set_remap(build_remap(&settings));
+    m.set_disabled(build_disabled(&settings));
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    push_snap(&mut m, VK_CONTROL, false, true, false);
+    push_snap(&mut m, VK_MENU, false, true, false);
+    assert_eq!(push_workspace(&mut m, 0x75, false, true, false), None);
+    assert_eq!(push_workspace(&mut m, 0x75, true, true, false), None);
+    // Rebind-away pins remain: the direct Win+Shift+2 chord still follows
+    // (stay rows carry no default to suppress).
+    let mut m = SnapClassify::new(takeover());
+    m.set_remap(build_remap(&settings));
+    m.set_disabled(build_disabled(&settings));
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    let direct = push_workspace(&mut m, VK_0 + 2, false, true, false).expect("direct");
+    assert_eq!((direct.op, direct.follow), (WorkspaceOp::Send, true));
+    // Disabled stay passes the rebound chord through entirely.
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "stay-workspace-2".to_owned(),
+        BindingSetting {
+            state: BindingState::Disabled,
+            chord: None,
+        },
+    );
+    let mut m = SnapClassify::new(takeover());
+    m.set_remap(build_remap(&settings));
+    m.set_disabled(build_disabled(&settings));
+    win_down(&mut m, VK_LWIN);
+    ctrl_shift_down(&mut m);
+    assert_eq!(push_workspace(&mut m, 0x75, false, true, false), None);
+    assert_eq!(push_workspace(&mut m, 0x75, true, true, false), None);
+    // A consumed Ctrl+Shift stay arms the Start-menu mask at Win-up.
+    use tiler_windows::snapkey::MaskTrigger;
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    let tick = std::time::Instant::now();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_SHIFT, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_CONTROL, false, None, false, tick, true),
+        None
+    );
+    m.set_remap(build_remap(&settings_default_with_ctrl_shift_stay()));
+    m.set_disabled(build_disabled(&settings_default_with_ctrl_shift_stay()));
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            0x75,
+            false,
+            Some(origin_of(7, "w7")),
+            false,
+            tick,
+            true
+        ),
+        Some(true)
+    );
+    match q.pop_front().expect("stay intent") {
+        QueuedSnapEvent::Workspace(intent) => {
+            assert_eq!(
+                (intent.op, intent.index, intent.follow),
+                (WorkspaceOp::Send, 2, false)
+            );
+            assert!(intent.consumed && intent.announce);
+        }
+        _ => panic!("expected workspace intent"),
+    }
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    match q.pop_front().expect("mask") {
+        QueuedSnapEvent::Mask(mask) => match mask.trigger {
+            MaskTrigger::Workspace { op, index } => {
+                assert_eq!((op, index), (WorkspaceOp::Send, 2));
+            }
+            _ => panic!("expected workspace mask trigger"),
+        },
+        _ => panic!("expected mask"),
+    }
+}
+
+#[test]
+fn relative_follow_rebind_away_passes_old_default_through() {
+    // send-prev-h rebound to Win+Ctrl+Shift+F6: the new chord follows prev,
+    // the rebound-away Win+Ctrl+Shift+H passes through with its pair.
+    use tiler_windows::settings::{
+        BindingSetting, BindingState, Settings, build_disabled, build_remap, validate_settings,
+    };
+    use tiler_windows::snapkey::ChordAction;
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "send-prev-h".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Ctrl+Shift+F6".to_owned()),
+        },
+    );
+    validate_settings(&settings).expect("relative rebind validates");
+    let remap = build_remap(&settings);
+    assert_eq!(remap.len(), 1);
+    assert_eq!(remap[0].action, ChordAction::WorkspaceSendPrev);
+    let mut m = SnapClassify::new(takeover());
+    m.set_remap(remap);
+    m.set_disabled(build_disabled(&settings));
+    win_down(&mut m, VK_LWIN);
+    ctrl_shift_down(&mut m);
+    let rebound = push_send(&mut m, 0x75, false, true, false).expect("rebound");
+    assert_eq!((rebound.delta, rebound.follow), (-1, true));
+    assert!(rebound.consumed && rebound.announce);
+    // Rebound-away canonical passes through on a fresh machine.
+    let mut plain = SnapClassify::new(takeover());
+    plain.set_remap(build_remap(&settings));
+    plain.set_disabled(build_disabled(&settings));
+    win_down(&mut plain, VK_LWIN);
+    ctrl_shift_down(&mut plain);
+    assert_eq!(
+        SnapClassify::push(&mut plain, VK_H, false, true, false),
+        None
+    );
+    assert_eq!(
+        SnapClassify::push(&mut plain, VK_H, true, true, false),
+        None
+    );
+}
+
+#[test]
+fn relative_stay_rebind_routes_stay_without_touching_follow() {
+    // send-stay-next-j rebound to Win+Ctrl+Shift+F6 routes stay-next; the
+    // direct Win+Ctrl+Shift+J follow still fires on a live machine.
+    use tiler_windows::settings::{
+        BindingSetting, BindingState, Settings, build_disabled, build_remap, validate_settings,
+    };
+    use tiler_windows::snapkey::ChordAction;
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "send-stay-next-j".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Ctrl+Shift+F6".to_owned()),
+        },
+    );
+    validate_settings(&settings).expect("stay rebind validates");
+    let remap = build_remap(&settings);
+    assert_eq!(remap.len(), 1);
+    assert_eq!(remap[0].action, ChordAction::WorkspaceSendStayNext);
+    let mut m = SnapClassify::new(takeover());
+    m.set_remap(remap);
+    m.set_disabled(build_disabled(&settings));
+    win_down(&mut m, VK_LWIN);
+    ctrl_shift_down(&mut m);
+    let stay = push_send(&mut m, 0x75, false, true, false).expect("stay");
+    assert_eq!((stay.delta, stay.follow), (1, false));
+    assert!(stay.consumed && stay.announce);
+    // Same canonical slot (J) is held by the stay rebind: a concurrent
+    // direct press collides safely (swallowed, pinned stay shape, never
+    // dispatched) until the hold closes.
+    let collide = push_send(&mut m, VK_J, false, true, false).expect("collide");
+    assert!(!collide.follow && collide.consumed && !collide.announce);
+    let up = push_send(&mut m, VK_J, true, true, false).expect("collide up");
+    assert!(up.consumed && !up.announce);
+    let stay_up = push_send(&mut m, 0x75, true, true, false).expect("stay up");
+    assert!(stay_up.consumed && !stay_up.announce);
+    let direct = push_send(&mut m, VK_J, false, true, false).expect("direct follow");
+    assert_eq!((direct.delta, direct.follow), (1, true));
+    assert!(direct.consumed && direct.announce);
+}
+
+#[test]
+fn relative_send_queue_carries_delta_follow_and_masks() {
+    // The queued record pins delta/follow/origin for the owner; a consumed
+    // relative send arms the Start-menu mask at Win-up like digits.
+    use tiler_windows::snapkey::{MaskTrigger, QueuedWorkspaceSendIntent};
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    let tick = std::time::Instant::now();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_SHIFT, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_CONTROL, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_J,
+            false,
+            Some(origin_of(9, "w9")),
+            false,
+            tick,
+            true
+        ),
+        Some(true)
+    );
+    match q.pop_front().expect("relative intent") {
+        QueuedSnapEvent::WorkspaceSend(QueuedWorkspaceSendIntent {
+            delta,
+            follow,
+            origin,
+            ..
+        }) => {
+            assert_eq!((delta, follow), (1, true));
+            assert_eq!(origin, Some(origin_of(9, "w9")));
+        }
+        other => panic!("expected relative send, got {other:?}"),
+    }
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    match q.pop_front().expect("mask") {
+        QueuedSnapEvent::Mask(mask) => match mask.trigger {
+            MaskTrigger::WorkspaceSend { delta, follow } => {
+                assert_eq!((delta, follow), (1, true));
+            }
+            _ => panic!("expected relative send mask trigger"),
+        },
+        _ => panic!("expected mask"),
     }
 }

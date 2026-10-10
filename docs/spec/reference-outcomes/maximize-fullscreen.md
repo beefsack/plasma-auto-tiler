@@ -528,7 +528,13 @@ rectangles where geometry is load-bearing.
   separate from whole-workspace output migration D8.
 - Then Ours Windows: a tiled maximized B sends through the retained
   Engine route (flag recheck, target allocation kept, overlay geometry
-  never writes) with follow; a fullscreen B refuses with no writes
+  never writes) with explicit follow/stay. Same-output numbered/relative
+  native CLI carry agent-observed 2026-10-11: maximize rect unchanged on
+  target, stay retains source MRU/visibility, native unmaximize returns to
+  retained target allocation. Native gates passed, base `553c65b` plus
+  [delivery record](../../changes/archive/windows-workspace-send-follow-stay.md).
+  Physical chords/flag-race injection/cross-output pending;
+  a fullscreen B refuses with no writes
   (`send-refused-fullscreen`). `S(S-ours-ws)` + `S(S-ours-winsend)`.
   G-D2 User 2026-10-10 retains maximized arrival carry as the cross-platform
   target (deliberate COSMIC/niri deviation: sending relocates the whole window

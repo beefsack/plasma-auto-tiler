@@ -325,6 +325,9 @@ pub const VK_LEFT: u32 = 37;
 pub const VK_UP: u32 = 38;
 pub const VK_RIGHT: u32 = 39;
 pub const VK_DOWN: u32 = 40;
+/// Digit base for the item 2 numbered-stay canonical slots (shared with the
+/// numbered follow sends on the same digit).
+pub const VK_0: u32 = 0x30;
 /// Tab chord key for the item 1 previous-view toggle (Win+Ctrl+Tab).
 pub const VK_TAB: u32 = 0x09;
 /// Float/sticky shared virtual key: the only canonical target two rebound
@@ -486,6 +489,20 @@ pub enum BindingFamily {
     Workspace {
         index: u8,
         op: SnapFamilyOp,
+    },
+    /// Item 2 numbered send-and-stay: bindable, unbound by default (empty
+    /// defaults). Keep means unbound, never Disabled/effective interception;
+    /// rebinds ride the shifted digit arm through the stay action.
+    WorkspaceStay {
+        index: u8,
+    },
+    /// Item 2 relative send: previous/next ordinal step in the item 1 scoped
+    /// ring (never MRU), resolved once before transfer. Follow rows carry
+    /// Win+Ctrl+Shift defaults; stay rows are bindable unbound. `prev` picks
+    /// the step direction; `follow` pins the explicit intent.
+    WorkspaceSendRelative {
+        prev: bool,
+        follow: bool,
     },
     WorkspaceHistory {
         kind: WorkspaceHistoryKind,
@@ -853,6 +870,46 @@ pub fn binding_catalog() -> Vec<BindingDef> {
         rows.push(workspace_row(index, SnapFamilyOp::Shifted));
     }
     rows.push(workspace_row(0, SnapFamilyOp::Shifted));
+    // Item 2 numbered send-and-stay rows: bindable, unbound by default.
+    // Keep means unbound (never Disabled/effective interception); the shifted
+    // digit arm plus the explicit stay action route rebinds.
+    for index in 1..=9u8 {
+        rows.push(BindingDef {
+            id: stay_id(index),
+            text: "Move window to workspace without following",
+            family: BindingFamily::WorkspaceStay { index },
+            defaults: &[],
+            implemented: true,
+            conflict: None,
+        });
+    }
+    rows.push(BindingDef {
+        id: stay_id(0),
+        text: "Move window to a newly appended workspace without following",
+        family: BindingFamily::WorkspaceStay { index: 0 },
+        defaults: &[],
+        implemented: true,
+        conflict: None,
+    });
+    // Item 2 relative sends: previous/next ordinal step in the item 1 scoped
+    // ring. Follow rows carry Win+Ctrl+Shift defaults; stay rows are
+    // bindable unbound. Windows Ctrl+Shift arrow ownership is UNKNOWN:
+    // defaults keep pending evidenced conflicts with the honest
+    // ownership-unknown note (no new Compatible disables).
+    for (id, text, prev, follow, chord) in RELATIVE_SEND_ROWS {
+        rows.push(BindingDef {
+            id,
+            text,
+            family: BindingFamily::WorkspaceSendRelative { prev, follow },
+            defaults: chord,
+            implemented: true,
+            conflict: if chord.is_empty() {
+                None
+            } else {
+                chord_conflict(chord[0])
+            },
+        });
+    }
     // Item 1 history rows: one Win+Ctrl+Tab previous-view toggle plus eight
     // Win+Ctrl relative steps (H/K/Left/Up previous, J/L/Down/Right next).
     // Authentic keeps all nine; Compatible disables only Left/Right (native
@@ -932,6 +989,142 @@ const HISTORY_ROWS: [(&str, &str, WorkspaceHistoryKind, &[&str]); 9] = [
     ),
 ];
 
+/// Item 2 numbered stay ids: ten bindable unbound rows mirroring the
+/// numbered follow sends.
+fn stay_id(index: u8) -> &'static str {
+    match index {
+        1 => "stay-workspace-1",
+        2 => "stay-workspace-2",
+        3 => "stay-workspace-3",
+        4 => "stay-workspace-4",
+        5 => "stay-workspace-5",
+        6 => "stay-workspace-6",
+        7 => "stay-workspace-7",
+        8 => "stay-workspace-8",
+        9 => "stay-workspace-9",
+        _ => "stay-workspace-0",
+    }
+}
+
+/// Item 2 relative-send catalog rows: four previous + four next follow rows
+/// with Win+Ctrl+Shift defaults, plus eight matching stay rows bindable
+/// unbound. Separate rows keep the per-binding model truthful: rebinding one
+/// never touches the other, and arrows/letters ride the honest
+/// ownership-unknown note (no new Compatible disables).
+const RELATIVE_SEND_ROWS: [(&str, &str, bool, bool, &[&str]); 16] = [
+    (
+        "send-prev-h",
+        "Move window to previous workspace",
+        true,
+        true,
+        &["Win+Ctrl+Shift+H"],
+    ),
+    (
+        "send-prev-k",
+        "Move window to previous workspace",
+        true,
+        true,
+        &["Win+Ctrl+Shift+K"],
+    ),
+    (
+        "send-prev-left-arrow",
+        "Move window to previous workspace",
+        true,
+        true,
+        &["Win+Ctrl+Shift+Left"],
+    ),
+    (
+        "send-prev-up-arrow",
+        "Move window to previous workspace",
+        true,
+        true,
+        &["Win+Ctrl+Shift+Up"],
+    ),
+    (
+        "send-next-j",
+        "Move window to next workspace",
+        false,
+        true,
+        &["Win+Ctrl+Shift+J"],
+    ),
+    (
+        "send-next-l",
+        "Move window to next workspace",
+        false,
+        true,
+        &["Win+Ctrl+Shift+L"],
+    ),
+    (
+        "send-next-down-arrow",
+        "Move window to next workspace",
+        false,
+        true,
+        &["Win+Ctrl+Shift+Down"],
+    ),
+    (
+        "send-next-right-arrow",
+        "Move window to next workspace",
+        false,
+        true,
+        &["Win+Ctrl+Shift+Right"],
+    ),
+    (
+        "send-stay-prev-h",
+        "Move window to previous workspace without following",
+        true,
+        false,
+        &[],
+    ),
+    (
+        "send-stay-prev-k",
+        "Move window to previous workspace without following",
+        true,
+        false,
+        &[],
+    ),
+    (
+        "send-stay-prev-left-arrow",
+        "Move window to previous workspace without following",
+        true,
+        false,
+        &[],
+    ),
+    (
+        "send-stay-prev-up-arrow",
+        "Move window to previous workspace without following",
+        true,
+        false,
+        &[],
+    ),
+    (
+        "send-stay-next-j",
+        "Move window to next workspace without following",
+        false,
+        false,
+        &[],
+    ),
+    (
+        "send-stay-next-l",
+        "Move window to next workspace without following",
+        false,
+        false,
+        &[],
+    ),
+    (
+        "send-stay-next-down-arrow",
+        "Move window to next workspace without following",
+        false,
+        false,
+        &[],
+    ),
+    (
+        "send-stay-next-right-arrow",
+        "Move window to next workspace without following",
+        false,
+        false,
+        &[],
+    ),
+];
 fn workspace_row(index: u8, op: SnapFamilyOp) -> BindingDef {
     // Static per-index rows (KDE `workspaceShortcutCatalog` parity: select
     // `Meta+1..0`, send `Meta+Shift+1..0`). Shifted US symbols share the
@@ -1050,12 +1243,15 @@ fn directional_conflict(id: &str) -> Option<&'static str> {
 /// owners follow the official Microsoft "Keyboard shortcuts in Windows" list
 /// (Windows 11 tab; Windows 10 tab for the Win+U Ease-of-Access origin).
 /// Chords the list does not document carry the honest unverified note instead
-/// of a definitive clean claim; unparsable, Alt, or shifted-Ctrl chords
-/// (outside the Win[+Shift] and Win+Ctrl rebind model) report `None` (not
-/// applicable). Unshifted Win+Ctrl chords (item 1 history) report the
-/// recorded virtual-desktop note for Left/Right and the honest
-/// ownership-unknown note for Tab/letters/Up/Down, never a stock-holder or
-/// conflict-free claim. Only containment with live trace evidence claims
+/// of a definitive clean claim; unparsable or Alt chords (outside the
+/// Win[+Shift][+Ctrl] rebind model) report `None` (not applicable).
+/// Unshifted Win+Ctrl chords (item 1 history) report the recorded
+/// virtual-desktop note for Left/Right and the honest ownership-unknown note
+/// for Tab/letters/Up/Down, never a stock-holder or conflict-free claim.
+/// Shifted Win+Ctrl chords (item 2 relative sends) report the honest
+/// ownership-unknown note: Windows Ctrl+Shift arrow ownership is UNKNOWN
+/// (decision 2.1), no new Compatible disables are selected, and containment
+/// is unproven live. Only containment with live trace evidence claims
 /// containment (Game Bar, Xbox mode); every other kept chord honestly
 /// reports override-needs-takeover with containment unproven.
 #[must_use]
@@ -1065,10 +1261,12 @@ pub fn chord_conflict(text: &str) -> Option<&'static str> {
         return None;
     }
     if chord.ctrl {
-        // Item 1 history arm only: unshifted Win+Ctrl. Shifted Ctrl chords
-        // belong to later items; report not applicable here.
+        // Item 2 relative-send arm: shifted Win+Ctrl. Windows Ctrl+Shift
+        // arrow ownership is unknown; keep defaults pending evidenced
+        // conflicts with the honest unknown-ownership text (no new
+        // Compatible disables, no invented holder claims).
         if chord.shift {
-            return None;
+            return Some("Windows shortcut ownership unknown; containment unproven live");
         }
         return Some(match chord.vk {
             VK_LEFT | VK_RIGHT => {
@@ -1160,6 +1358,7 @@ pub fn binding_wants_shift(def: &BindingDef) -> bool {
         BindingFamily::Directional { op, .. } | BindingFamily::Workspace { op, .. } => {
             op.wants_shift()
         }
+        BindingFamily::WorkspaceStay { .. } | BindingFamily::WorkspaceSendRelative { .. } => true,
         BindingFamily::WorkspaceHistory { .. } => false,
         BindingFamily::Toggle { kind } => kind.wants_shift(),
         BindingFamily::Resize { mode, .. } => mode == "inwards",
@@ -1167,12 +1366,55 @@ pub fn binding_wants_shift(def: &BindingDef) -> bool {
 }
 
 /// Native Ctrl polarity of one catalog binding: item 1 history arms ride
-/// Win+Ctrl; every other implemented arm rides without Ctrl. Carried through
-/// routing, duplicate detection, canonical hold slots, and release pins so a
-/// later unbound stay action can reuse the plumbing without rework.
+/// Win+Ctrl; item 2 relative sends ride Win+Ctrl+Shift; every other
+/// implemented arm rides without Ctrl by default. Numbered stay additionally
+/// accepts the Win+Ctrl+Shift backlog arm via [`binding_modifiers_ok`]; this
+/// default stays Ctrl-free so plain Win+Shift stay rebinds keep working.
+/// Carried through routing, duplicate detection, canonical hold slots, and
+/// release pins so unbound stay actions reuse the plumbing without rework.
 #[must_use]
 pub fn binding_wants_ctrl(def: &BindingDef) -> bool {
-    matches!(def.family, BindingFamily::WorkspaceHistory { .. })
+    matches!(
+        def.family,
+        BindingFamily::WorkspaceHistory { .. } | BindingFamily::WorkspaceSendRelative { .. }
+    )
+}
+
+/// Whether a parsed chord's modifiers match one of the binding's native
+/// arms. Every binding rides exactly its [`binding_wants_shift`] /
+/// [`binding_wants_ctrl`] / [`binding_wants_alt`] arm, except numbered stay,
+/// which additionally accepts the Win+Ctrl+Shift backlog example arm
+/// (Shift required, Alt never). Digit follow and all other arms are
+/// untouched: Ctrl stays refused there.
+#[must_use]
+pub fn binding_modifiers_ok(def: &BindingDef, shift: bool, ctrl: bool, alt: bool) -> bool {
+    if shift == binding_wants_shift(def)
+        && ctrl == binding_wants_ctrl(def)
+        && alt == binding_wants_alt(def)
+    {
+        return true;
+    }
+    matches!(def.family, BindingFamily::WorkspaceStay { .. }) && shift && ctrl && !alt
+}
+
+/// Native modifier-arm text for rebind errors: the single arm, or both stay
+/// arms (`Win+Shift or Win+Ctrl+Shift`).
+#[must_use]
+pub fn binding_arm_text(def: &BindingDef) -> &'static str {
+    if matches!(def.family, BindingFamily::WorkspaceStay { .. }) {
+        return "Win+Shift or Win+Ctrl+Shift";
+    }
+    match (
+        binding_wants_shift(def),
+        binding_wants_ctrl(def),
+        binding_wants_alt(def),
+    ) {
+        (true, false, false) => "Win+Shift",
+        (false, true, false) => "Win+Ctrl",
+        (true, true, false) => "Win+Ctrl+Shift",
+        (false, false, false) => "Win without Shift",
+        _ => "the binding's modifier arm",
+    }
 }
 
 /// Native Alt polarity of one catalog binding: no implemented arm uses Alt
@@ -1193,6 +1435,13 @@ pub fn binding_action(def: &BindingDef) -> crate::snapkey::ChordAction {
     match def.family {
         BindingFamily::Directional { .. } => ChordAction::Directional,
         BindingFamily::Workspace { .. } => ChordAction::WorkspaceDigit,
+        BindingFamily::WorkspaceStay { .. } => ChordAction::WorkspaceStayDigit,
+        BindingFamily::WorkspaceSendRelative { prev, follow } => match (prev, follow) {
+            (true, true) => ChordAction::WorkspaceSendPrev,
+            (false, true) => ChordAction::WorkspaceSendNext,
+            (true, false) => ChordAction::WorkspaceSendStayPrev,
+            (false, false) => ChordAction::WorkspaceSendStayNext,
+        },
         BindingFamily::WorkspaceHistory { kind } => match kind {
             WorkspaceHistoryKind::Previous => ChordAction::WorkspacePrevious,
             WorkspaceHistoryKind::Prev => ChordAction::WorkspacePrev,
@@ -1212,14 +1461,35 @@ pub fn binding_action(def: &BindingDef) -> crate::snapkey::ChordAction {
 }
 
 /// Canonical virtual key of one catalog binding (first default chord).
-/// History rows carry their canonical Tab/letter/arrow VK; a future unbound
-/// stay row has no canonical default VK (returns `None`) but must still
-/// rebind through its explicit action.
+/// History rows carry their canonical Tab/letter/arrow VK. An unbound stay
+/// row has no default chord but still carries its canonical slot by row
+/// identity (numbered stay shares the digit VK with its follow send;
+/// relative stay shares the H/K/arrow/J/L key with its follow arm), so a
+/// rebind routes into the shared hold slot through its explicit action.
 #[must_use]
 pub fn binding_canonical_vk(def: &BindingDef) -> Option<u32> {
-    def.defaults
+    if let Some(first) = def
+        .defaults
         .first()
         .and_then(|text| parse_chord(text).ok().map(|chord| chord.vk))
+    {
+        return Some(first);
+    }
+    match def.family {
+        BindingFamily::WorkspaceStay { index } => Some(VK_0 + u32::from(index)),
+        BindingFamily::WorkspaceSendRelative { .. } => Some(match def.id {
+            "send-stay-prev-h" => 0x48,
+            "send-stay-prev-k" => 0x4B,
+            "send-stay-prev-left-arrow" => VK_LEFT,
+            "send-stay-prev-up-arrow" => VK_UP,
+            "send-stay-next-j" => 0x4A,
+            "send-stay-next-l" => 0x4C,
+            "send-stay-next-down-arrow" => VK_DOWN,
+            "send-stay-next-right-arrow" => VK_RIGHT,
+            _ => return None,
+        }),
+        _ => None,
+    }
 }
 
 /// One effective (validated) binding: the persisted state plus the resolved
@@ -1255,7 +1525,13 @@ pub fn effective_bindings(settings: &Settings) -> Vec<EffectiveBinding> {
                 ..
             }) => {
                 let chords: Vec<String> = def.defaults.iter().map(|s| (*s).to_owned()).collect();
-                if def.implemented {
+                if def.defaults.is_empty() {
+                    // Unbound bindable row (item 2 stay): Keep means unbound,
+                    // never Disabled/effective interception. The chord stays
+                    // pass-through until rebound; the UI shows it unbound,
+                    // distinctly from disabled.
+                    (true, chords, false, "unbound: bindable", None)
+                } else if def.implemented {
                     (true, chords, true, "", def.conflict)
                 } else {
                     (
@@ -1324,8 +1600,9 @@ use crate::snapkey::{ChordDisable, ChordRemap};
 /// arm). The rebound chord alone routes; the binding's old default chords
 /// pass through via [`build_disabled`]. Unimplemented (resize) rows
 /// contribute nothing: their rebinds refuse in validation, so reaching here
-/// with one is a defensive skip. A future unbound stay row has no canonical
-/// default VK; its rebind still routes through its explicit action.
+/// with one is a defensive skip. Unbound stay rows route into their canonical
+/// slot (shared with the follow arm on the same key) through the explicit
+/// stay action.
 #[must_use]
 pub fn build_remap(settings: &Settings) -> Vec<ChordRemap> {
     let mut defs = BTreeMap::new();
@@ -1349,24 +1626,11 @@ pub fn build_remap(settings: &Settings) -> Vec<ChordRemap> {
         let Ok(parsed) = parse_chord(text) else {
             continue;
         };
-        if parsed.shift != binding_wants_shift(def)
-            || parsed.ctrl != binding_wants_ctrl(def)
-            || parsed.alt != binding_wants_alt(def)
-        {
+        if !binding_modifiers_ok(def, parsed.shift, parsed.ctrl, parsed.alt) {
             continue;
         }
         let action = binding_action(def);
         let Some(to_vk) = binding_canonical_vk(def) else {
-            // Unbound stay-style row (no canonical default): route by action
-            // alone using the rebound VK as the canonical key slot.
-            out.push(ChordRemap {
-                from_vk: parsed.vk,
-                from_shift: parsed.shift,
-                from_ctrl: parsed.ctrl,
-                from_alt: parsed.alt,
-                action,
-                to_vk: parsed.vk,
-            });
             continue;
         };
         if parsed.vk == to_vk {
@@ -1570,24 +1834,13 @@ fn validate_bindings(settings: &Settings) -> Result<(), SettingsError> {
                     )));
                 }
                 // The rebound chord alone routes (see `build_remap`): its
-                // Shift/Ctrl/Alt must match the binding's native arm, or a
+                // Shift/Ctrl/Alt must match one of the binding's native arms
+                // (numbered stay rides Win+Shift plus Win+Ctrl+Shift), or a
                 // focus-only rebind would also arm an unintended arm (and vice
                 // versa). The classifier derives the arm from live modifiers
                 // plus the explicit action.
-                if parsed.shift != binding_wants_shift(def)
-                    || parsed.ctrl != binding_wants_ctrl(def)
-                    || parsed.alt != binding_wants_alt(def)
-                {
-                    let want = match (
-                        binding_wants_shift(def),
-                        binding_wants_ctrl(def),
-                        binding_wants_alt(def),
-                    ) {
-                        (true, false, false) => "Win+Shift",
-                        (false, true, false) => "Win+Ctrl",
-                        (false, false, false) => "Win without Shift",
-                        _ => "the binding's modifier arm",
-                    };
+                if !binding_modifiers_ok(def, parsed.shift, parsed.ctrl, parsed.alt) {
+                    let want = binding_arm_text(def);
                     return Err(invalid(format!("binding {id} rebind needs {want}")));
                 }
                 // One rebound chord serves one binding: entries are
@@ -1610,9 +1863,12 @@ fn validate_bindings(settings: &Settings) -> Result<(), SettingsError> {
                     .any(|default| parse_chord(default).ok() == Some(parsed));
                 if !own_default {
                     let action = binding_action(def);
-                    // Unbound stay-style rows carry no canonical default: the
-                    // action alone routes, so there is no canonical slot to
-                    // claim here.
+                    // Unbound stay rows claim their canonical slot by row
+                    // identity (shared with the follow arm on the same key):
+                    // two rebound rows into one (action, canonical) slot
+                    // would share one hold, so the second refuses. Distinct
+                    // follow/stay actions share one VK across separate arm
+                    // slots, like float/sticky on G.
                     if let Some(to_vk) = binding_canonical_vk(def)
                         && let Some(first) = canon_targets.insert((action, to_vk), id.clone())
                     {
@@ -1690,7 +1946,10 @@ pub enum Preset {
     /// undocumented set: letter moves (Win+Shift+H/J/K/L) and sticky
     /// (Win+Shift+G) carry no documented owner in the official list, plus
     /// the seven kept history rows (Tab/letters/Up/Down with the honest
-    /// ownership-unknown note). Applies as a deterministic reset: all overrides are
+    /// ownership-unknown note) and the eight item 2 relative-send follow
+    /// rows (Win+Ctrl+Shift ownership unknown, no new disables selected).
+    /// Item 2 stay rows stay unbound under both presets. Applies as a
+    /// deterministic reset: all overrides are
     /// dropped first, then the conflicts disable. Resize rows already pass
     /// through untracked and are untouched. Manual rebinding stays available
     /// afterwards; no replacement defaults are invented. The Win+L opt-in is
@@ -2103,12 +2362,13 @@ mod tests {
     fn catalog_covers_kde_actions_without_collisions() {
         let catalog = binding_catalog();
         // 16 focus/move (letter plus separate arrow rows) + 8 resize + 4
-        // toggles + 20 workspace + 9 item 1 history = 57.
-        assert_eq!(catalog.len(), 57);
+        // toggles + 20 workspace + 9 item 1 history + 10 numbered stay +
+        // 8 relative follow + 8 relative stay (item 2) = 83.
+        assert_eq!(catalog.len(), 83);
         let mut ids: Vec<&str> = catalog.iter().map(|def| def.id).collect();
         ids.sort();
         ids.dedup();
-        assert_eq!(ids.len(), 57);
+        assert_eq!(ids.len(), 83);
         // Every default parses; resize rows are the only unimplemented ones.
         for def in &catalog {
             for default in def.defaults {
@@ -2399,7 +2659,7 @@ mod tests {
         assert!(!settings.bindings.contains_key("toggle-sticky"));
         assert!(!settings.bindings.contains_key("workspace-previous"));
         let effective = effective_bindings(&settings);
-        assert_eq!(effective.len(), 57);
+        assert_eq!(effective.len(), 83);
         for row in &effective {
             if compatible_disabled_ids().contains(&row.id) {
                 assert!(!row.active, "{}", row.id);

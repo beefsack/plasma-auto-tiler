@@ -727,7 +727,7 @@ fn compatible_preset_disables_os_conflicting_rows() {
     assert!(changed.contains(&"workspace-prev-left-arrow"));
     assert!(changed.contains(&"workspace-next-right-arrow"));
     let effective = tiler_windows::settings::effective_bindings(&settings);
-    assert_eq!(effective.len(), 57);
+    assert_eq!(effective.len(), 83);
     for row in &effective {
         if tiler_windows::settings::compatible_disabled_ids().contains(&row.id) {
             assert!(!row.active, "{}", row.id);
@@ -735,7 +735,8 @@ fn compatible_preset_disables_os_conflicting_rows() {
         }
     }
     // Conflict-free letter moves plus sticky stay active, plus the kept
-    // history rows (Tab/letters/Up/Down).
+    // history rows (Tab/letters/Up/Down) and the kept item 2 relative-send
+    // follow rows (unknown ownership, no new Compatible disables).
     for id in [
         "move-left",
         "move-down",
@@ -745,9 +746,19 @@ fn compatible_preset_disables_os_conflicting_rows() {
         "workspace-previous",
         "workspace-prev-h",
         "workspace-next-j",
+        "send-prev-h",
+        "send-next-j",
     ] {
         let row = effective.iter().find(|row| row.id == id).expect("row");
         assert!(row.active && row.effective, "{id}");
+    }
+    // Item 2 stay rows stay unbound under both presets: active but with no
+    // chord and not effective (bindable, distinctly not disabled).
+    for id in ["stay-workspace-1", "send-stay-prev-h", "send-stay-next-j"] {
+        let row = effective.iter().find(|row| row.id == id).expect("row");
+        assert!(row.active, "{id}");
+        assert!(row.chords.is_empty(), "{id}");
+        assert!(!row.effective, "{id}");
     }
     // Conflict text discloses the incomplete containment honestly.
     let catalog = tiler_windows::settings::binding_catalog();
@@ -892,4 +903,328 @@ fn retained_update_gaps_preserves_topology() {
         &engine, &key, 4, 12
     ));
     assert_eq!(engine.outer_gap(&key), Some(12));
+}
+
+// Item 2 catalog/settings: 26 new rows (10 numbered stay + 8 relative follow
+// + 8 relative stay) for 83 total; follow defaults keep pending evidenced
+// conflicts with honest unknown-ownership text (no new Compatible disables);
+// stay rows are bindable unbound with Keep meaning unbound.
+
+#[test]
+fn catalog_exposes_item2_rows_with_exact_modifiers() {
+    use tiler_windows::settings::{
+        binding_action, binding_canonical_vk, binding_catalog, binding_wants_ctrl,
+        binding_wants_shift,
+    };
+    use tiler_windows::snapkey::ChordAction;
+    let catalog = binding_catalog();
+    assert_eq!(catalog.len(), 83);
+    // Numbered stay: ten unbound rows on the shifted digit arm through the
+    // stay action, sharing the follow digit canonical slot.
+    for index in [1u8, 2, 9, 0] {
+        let id = format!("stay-workspace-{index}");
+        let def = catalog.iter().find(|def| def.id == id).expect("stay row");
+        assert!(def.defaults.is_empty(), "{id} unbound by default");
+        assert!(def.implemented, "{id}");
+        assert!(binding_wants_shift(def), "{id}");
+        assert!(!binding_wants_ctrl(def), "{id}");
+        assert_eq!(binding_action(def), ChordAction::WorkspaceStayDigit);
+        assert_eq!(
+            binding_canonical_vk(def),
+            Some(0x30 + u32::from(index)),
+            "{id} shares the digit slot"
+        );
+    }
+    // Relative follow: eight bound rows on the Win+Ctrl+Shift arm.
+    for (id, chord, action) in [
+        (
+            "send-prev-h",
+            "Win+Ctrl+Shift+H",
+            ChordAction::WorkspaceSendPrev,
+        ),
+        (
+            "send-prev-k",
+            "Win+Ctrl+Shift+K",
+            ChordAction::WorkspaceSendPrev,
+        ),
+        (
+            "send-prev-left-arrow",
+            "Win+Ctrl+Shift+Left",
+            ChordAction::WorkspaceSendPrev,
+        ),
+        (
+            "send-prev-up-arrow",
+            "Win+Ctrl+Shift+Up",
+            ChordAction::WorkspaceSendPrev,
+        ),
+        (
+            "send-next-j",
+            "Win+Ctrl+Shift+J",
+            ChordAction::WorkspaceSendNext,
+        ),
+        (
+            "send-next-l",
+            "Win+Ctrl+Shift+L",
+            ChordAction::WorkspaceSendNext,
+        ),
+        (
+            "send-next-down-arrow",
+            "Win+Ctrl+Shift+Down",
+            ChordAction::WorkspaceSendNext,
+        ),
+        (
+            "send-next-right-arrow",
+            "Win+Ctrl+Shift+Right",
+            ChordAction::WorkspaceSendNext,
+        ),
+    ] {
+        let def = catalog.iter().find(|def| def.id == id).expect("row");
+        assert_eq!(def.defaults, &[chord]);
+        assert!(binding_wants_shift(def) && binding_wants_ctrl(def), "{id}");
+        assert_eq!(binding_action(def), action);
+        let conflict = def.conflict.expect("honest ownership text");
+        assert!(
+            conflict.contains("ownership unknown") && conflict.contains("unproven live"),
+            "{id}: {conflict}"
+        );
+    }
+    // Relative stay: eight unbound rows on the same arm with stay actions.
+    for (id, action) in [
+        ("send-stay-prev-h", ChordAction::WorkspaceSendStayPrev),
+        ("send-stay-prev-k", ChordAction::WorkspaceSendStayPrev),
+        (
+            "send-stay-prev-left-arrow",
+            ChordAction::WorkspaceSendStayPrev,
+        ),
+        (
+            "send-stay-prev-up-arrow",
+            ChordAction::WorkspaceSendStayPrev,
+        ),
+        ("send-stay-next-j", ChordAction::WorkspaceSendStayNext),
+        ("send-stay-next-l", ChordAction::WorkspaceSendStayNext),
+        (
+            "send-stay-next-down-arrow",
+            ChordAction::WorkspaceSendStayNext,
+        ),
+        (
+            "send-stay-next-right-arrow",
+            ChordAction::WorkspaceSendStayNext,
+        ),
+    ] {
+        let def = catalog.iter().find(|def| def.id == id).expect("row");
+        assert!(def.defaults.is_empty(), "{id} unbound by default");
+        assert!(binding_wants_shift(def) && binding_wants_ctrl(def), "{id}");
+        assert_eq!(binding_action(def), action);
+        assert!(binding_canonical_vk(def).is_some(), "{id} has a slot");
+    }
+}
+
+#[test]
+fn item2_rebind_arms_and_duplicates_refuse() {
+    use tiler_windows::settings::{Settings, validate_settings};
+    // Stay digits need Win+Shift; relative rows need Win+Ctrl+Shift.
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "stay-workspace-1".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Ctrl+F6".to_owned()),
+        },
+    );
+    let err = validate_settings(&settings).expect_err("wrong arm refuses");
+    assert!(err.to_string().contains("Win+Shift"), "{err}");
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "send-stay-prev-h".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Shift+F6".to_owned()),
+        },
+    );
+    let err = validate_settings(&settings).expect_err("missing Ctrl refuses");
+    assert!(err.to_string().contains("Win+Ctrl+Shift"), "{err}");
+    // Rebinding a stay row onto a follow default chord refuses (duplicate
+    // active chord); two rows onto one fresh chord refuse the second.
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "stay-workspace-1".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Shift+1".to_owned()),
+        },
+    );
+    assert!(validate_settings(&settings).is_err());
+    let mut settings = Settings::default();
+    for id in ["stay-workspace-1", "stay-workspace-2"] {
+        settings.bindings.insert(
+            id.to_owned(),
+            BindingSetting {
+                state: BindingState::Rebind,
+                chord: Some("Win+Shift+F6".to_owned()),
+            },
+        );
+    }
+    assert!(validate_settings(&settings).is_err());
+    // Valid stay rebinds on fresh chords pass, including two stays sharing
+    // one VK across distinct digit slots.
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "stay-workspace-1".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Shift+F6".to_owned()),
+        },
+    );
+    settings.bindings.insert(
+        "send-stay-prev-h".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Ctrl+Shift+F7".to_owned()),
+        },
+    );
+    validate_settings(&settings).expect("fresh stay rebinds validate");
+}
+
+#[test]
+fn item2_numbered_stay_accepts_ctrl_shift_arm() {
+    use tiler_windows::settings::{
+        Settings, binding_arm_text, binding_catalog, binding_modifiers_ok, build_remap,
+        effective_bindings, validate_settings,
+    };
+    // Backlog journey example: stay-workspace-2 rebound to Win+Ctrl+Shift+F6
+    // validates; the plain Win+Shift arm keeps working (see the previous
+    // test). Unshifted and Alt chords refuse with the dual-arm message.
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "stay-workspace-2".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Ctrl+Shift+F6".to_owned()),
+        },
+    );
+    validate_settings(&settings).expect("ctrl+shift stay validates");
+    let catalog = binding_catalog();
+    let def = catalog
+        .iter()
+        .find(|def| def.id == "stay-workspace-2")
+        .expect("stay row");
+    assert!(binding_modifiers_ok(def, true, false, false));
+    assert!(binding_modifiers_ok(def, true, true, false));
+    assert!(!binding_modifiers_ok(def, false, false, false));
+    assert!(!binding_modifiers_ok(def, true, false, true));
+    assert!(!binding_modifiers_ok(def, true, true, true));
+    assert_eq!(binding_arm_text(def), "Win+Shift or Win+Ctrl+Shift");
+    // Digit follow rows still refuse Ctrl through the same helper.
+    let follow = catalog
+        .iter()
+        .find(|def| def.id == "workspace-send-2")
+        .expect("follow row");
+    assert!(!binding_modifiers_ok(follow, true, true, false));
+    // Remap carries the full Ctrl+Shift modifiers into the explicit stay
+    // action at the shared digit slot; the effective row reports the honest
+    // unknown-ownership conflict of the rebound chord.
+    let remap = build_remap(&settings);
+    assert_eq!(remap.len(), 1);
+    assert_eq!(
+        (
+            remap[0].from_vk,
+            remap[0].from_shift,
+            remap[0].from_ctrl,
+            remap[0].from_alt
+        ),
+        (0x75, true, true, false)
+    );
+    let effective = effective_bindings(&settings);
+    let row = effective
+        .iter()
+        .find(|row| row.id == "stay-workspace-2")
+        .expect("row");
+    assert!(row.active && row.effective);
+    let conflict = row.conflict.expect("honest rebound conflict");
+    assert!(
+        conflict.contains("ownership unknown") && conflict.contains("unproven live"),
+        "{conflict}"
+    );
+    // Wrong arms refuse naming both stay arms; Alt never arms stay.
+    for chord in ["Win+F6", "Win+Alt+Shift+F6", "Win+Ctrl+F6"] {
+        let mut settings = Settings::default();
+        settings.bindings.insert(
+            "stay-workspace-2".to_owned(),
+            BindingSetting {
+                state: BindingState::Rebind,
+                chord: Some(chord.to_owned()),
+            },
+        );
+        let err = validate_settings(&settings).expect_err("wrong arm refuses");
+        assert!(
+            err.to_string().contains("Win+Shift or Win+Ctrl+Shift"),
+            "{chord}: {err}"
+        );
+    }
+    // Full-modifier duplicate detection: the same physical chord rebound
+    // twice refuses, while Shift and Ctrl+Shift variants coexist.
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "stay-workspace-2".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Ctrl+Shift+F6".to_owned()),
+        },
+    );
+    settings.bindings.insert(
+        "send-prev-h".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Ctrl+Shift+F6".to_owned()),
+        },
+    );
+    assert!(validate_settings(&settings).is_err());
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "stay-workspace-1".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Shift+F6".to_owned()),
+        },
+    );
+    settings.bindings.insert(
+        "stay-workspace-2".to_owned(),
+        BindingSetting {
+            state: BindingState::Rebind,
+            chord: Some("Win+Ctrl+Shift+F6".to_owned()),
+        },
+    );
+    validate_settings(&settings).expect("shift vs ctrl+shift coexist");
+}
+
+#[test]
+fn item2_keep_empty_is_unbound_not_disabled() {
+    use tiler_windows::settings::{Settings, effective_bindings};
+    // Keep (absent override) on an unbound stay row: active with no chord,
+    // not effective, with the bindable reason - distinctly not disabled.
+    let effective = effective_bindings(&Settings::default());
+    let row = effective
+        .iter()
+        .find(|row| row.id == "stay-workspace-1")
+        .expect("row");
+    assert!(row.active);
+    assert!(row.chords.is_empty());
+    assert!(!row.effective);
+    assert_eq!(row.reason, "unbound: bindable");
+    // Disabled reads differently: inactive with the pass-through reason.
+    let mut settings = Settings::default();
+    settings.bindings.insert(
+        "stay-workspace-1".to_owned(),
+        BindingSetting {
+            state: BindingState::Disabled,
+            chord: None,
+        },
+    );
+    let effective = effective_bindings(&settings);
+    let row = effective
+        .iter()
+        .find(|row| row.id == "stay-workspace-1")
+        .expect("row");
+    assert!(!row.active);
+    assert_eq!(row.reason, "disabled: passes through natively");
 }

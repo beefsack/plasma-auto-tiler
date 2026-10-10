@@ -31,7 +31,7 @@ use windows_sys::Win32::Graphics::Gdi::HFONT;
 
 use crate::settings::{
     BindingDef, BindingSetting, BindingState, LoadOutcome, Settings, apply_preset, binding_catalog,
-    binding_wants_shift, effective_bindings, parse_chord, validate_settings,
+    effective_bindings, parse_chord, validate_settings,
 };
 
 type DynError = Box<dyn std::error::Error>;
@@ -247,6 +247,8 @@ fn refresh_info(app: &App) {
     if let Some(row) = row {
         if row.active && !row.chords.is_empty() {
             info.push_str(&format!("\nChord: {}", row.chords.join(", ")));
+        } else if row.active && row.chords.is_empty() {
+            info.push_str("\nChord: unbound (bindable; passes through until rebound)");
         } else {
             info.push_str("\nChord: disabled (passes through natively)");
         }
@@ -399,7 +401,9 @@ fn collect_draft(app: &mut App) -> Result<Settings, String> {
 
 /// Validate one rebind against the selected row and stage it in the draft.
 /// Resize rows refuse (not intercepted: no fake rebind); the Shift/Ctrl/Alt
-/// arm must match the action's native arm (history rows ride Win+Ctrl).
+/// arm must match one of the action's native arms (history rows ride Win+Ctrl,
+/// relative sends ride Win+Ctrl+Shift, numbered stay rides Win+Shift plus
+/// Win+Ctrl+Shift).
 fn apply_rebind_text(app: &mut App, text: &str) -> Result<(), String> {
     let index = app
         .selected
@@ -422,20 +426,8 @@ fn apply_rebind_text(app: &mut App, text: &str) -> Result<(), String> {
             def.id
         ));
     }
-    if parsed.shift != binding_wants_shift(&def)
-        || parsed.ctrl != crate::settings::binding_wants_ctrl(&def)
-        || parsed.alt != crate::settings::binding_wants_alt(&def)
-    {
-        let want = match (
-            binding_wants_shift(&def),
-            crate::settings::binding_wants_ctrl(&def),
-            crate::settings::binding_wants_alt(&def),
-        ) {
-            (true, false, false) => "Win+Shift",
-            (false, true, false) => "Win+Ctrl",
-            (false, false, false) => "Win without Shift",
-            _ => "the binding's modifier arm",
-        };
+    if !crate::settings::binding_modifiers_ok(&def, parsed.shift, parsed.ctrl, parsed.alt) {
+        let want = crate::settings::binding_arm_text(&def);
         return Err(format!("binding {} rebind needs {want}", def.id));
     }
     let rendered = crate::settings::render_chord(&parsed);
@@ -1087,19 +1079,19 @@ pub fn cmd_settings() -> Result<String, DynError> {
         Ctl { id: 0, class: "BUTTON", text: "Presets".to_owned(), x: 622, y: 140, w: 292, h: 240, style: group },
         Ctl { id: ID_PRESET_AUTHENTIC, class: "BUTTON", text: "Authentic".to_owned(), x: 632, y: 162, w: 132, h: 28, style: push | tab },
         Ctl { id: ID_PRESET_COMPATIBLE, class: "BUTTON", text: "Compatible".to_owned(), x: 772, y: 162, w: 132, h: 28, style: push | tab },
-        Ctl { id: ID_PRESET_EXPLAIN, class: "STATIC", text: "Authentic restores KDE defaults for every binding (Win+L opt-in preserved). Compatible disables every OS-conflicting chord (including Win+Ctrl+Left/Right) and leaves the conflict-free set (letter moves, sticky, Win+Ctrl+Tab/letters/Up/Down). No replacement defaults are invented; manual rebind stays available.".to_owned(), x: 632, y: 196, w: 272, h: 174, style: label },
+        Ctl { id: ID_PRESET_EXPLAIN, class: "STATIC", text: "Authentic restores KDE defaults for every binding (Win+L opt-in preserved). Compatible disables every OS-conflicting chord (including Win+Ctrl+Left/Right) and leaves the conflict-free set (letter moves, sticky, Win+Ctrl+Tab/letters/Up/Down, relative-send follows with unknown ownership). Stay rows stay unbound under both presets. No replacement defaults are invented; manual rebind stays available.".to_owned(), x: 632, y: 196, w: 272, h: 174, style: label },
         Ctl { id: 0, class: "BUTTON", text: "New workspaces".to_owned(), x: 10, y: 388, w: 904, h: 56, style: group },
         Ctl { id: ID_DEFAULT_TILED, class: "BUTTON", text: "Tiled".to_owned(), x: 20, y: 410, w: 140, h: 24, style: radio | tab },
         Ctl { id: ID_DEFAULT_FLOATING, class: "BUTTON", text: "Floating".to_owned(), x: 170, y: 410, w: 140, h: 24, style: radio | tab },
         Ctl { id: 0, class: "STATIC", text: "New workspaces start tiled or floating. Applies to workspaces created after Apply; existing workspaces keep their session tiling. Only the default is saved.".to_owned(), x: 320, y: 408, w: 584, h: 30, style: label },
-        Ctl { id: 0, class: "BUTTON", text: "Shortcuts (57 rows)".to_owned(), x: 10, y: 452, w: 904, h: 268, style: group },
+        Ctl { id: 0, class: "BUTTON", text: "Shortcuts (83 rows)".to_owned(), x: 10, y: 452, w: 904, h: 268, style: group },
         Ctl { id: ID_BINDING_LIST, class: "LISTBOX", text: String::new(), x: 20, y: 474, w: 540, h: 230, style: list_style | tab },
         Ctl { id: ID_BINDING_INFO, class: "EDIT", text: String::new(), x: 570, y: 474, w: 324, h: 100, style: info_style },
         Ctl { id: ID_BIND_KEEP, class: "BUTTON", text: "Keep".to_owned(), x: 570, y: 578, w: 100, h: 26, style: push | tab },
         Ctl { id: ID_BIND_DISABLE, class: "BUTTON", text: "Disable".to_owned(), x: 676, y: 578, w: 100, h: 26, style: push | tab },
         Ctl { id: ID_BIND_CHORD, class: "EDIT", text: String::new(), x: 570, y: 610, w: 150, h: 24, style: edit_style | tab },
         Ctl { id: ID_BIND_REBIND, class: "BUTTON", text: "Set rebind".to_owned(), x: 726, y: 608, w: 120, h: 26, style: push | tab },
-        Ctl { id: ID_REBIND_NOTE, class: "STATIC", text: "Rebind: Win[+Shift][+Ctrl]+Key, keeping this action's modifier arm (focus/select unshifted, move/send shifted, previous/relative Win+Ctrl). Alt refused; Win+L can never be a target. Win+G / Win+F11 cannot fully contain the OS Xbox/Game Bar handlers; Win+Ctrl+Left/Right virtual-desktop ownership is unverified.".to_owned(), x: 570, y: 638, w: 324, h: 74, style: label },
+        Ctl { id: ID_REBIND_NOTE, class: "STATIC", text: "Rebind: Win[+Shift][+Ctrl]+Key, keeping this action's modifier arm (focus/select unshifted, move/send shifted, numbered stay Win+Shift or Win+Ctrl+Shift, previous/relative Win+Ctrl, relative send Win+Ctrl+Shift). Alt refused; Win+L can never be a target. Win+G / Win+F11 cannot fully contain the OS Xbox/Game Bar handlers; Win+Ctrl+Left/Right virtual-desktop and Win+Ctrl+Shift arrow ownership are unverified.".to_owned(), x: 570, y: 638, w: 324, h: 74, style: label },
         Ctl { id: ID_STATUS, class: "STATIC", text: "Status: ready.".to_owned(), x: 20, y: 728, w: 540, h: 60, style: label },
         Ctl { id: ID_APPLY, class: "BUTTON", text: "Apply".to_owned(), x: 580, y: 728, w: 100, h: 30, style: defpush | tab },
         Ctl { id: ID_REVERT, class: "BUTTON", text: "Revert".to_owned(), x: 690, y: 728, w: 100, h: 30, style: push | tab },

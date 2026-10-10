@@ -68,7 +68,13 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   [adapter fixtures](../../../kwin/tests/workspace-send-follow-stay.test.ts),
   [record](../../changes/archive/kde-workspace-send-follow-stay.md);
   `D(D-dec-cos)` + step-3 `D(D-dec-ww)`.
-- Then Ours Windows: Source collapses; target admits at remembered-leaf/focus-history/root; follow on verified transfer; `D(D-dec-cos)` + step-3 `D(D-dec-ww)`
+- Then Ours Windows: explicit numbered/relative follow/stay delivered,
+  same retained Engine admission/geometry. Agent-observed Notepad follow
+  switches/focuses mover; stay keeps source with MRU survivor (null plan
+  issues no setter), target hidden/unwritten. Native gates passed 2026-10-11,
+  base `553c65b` plus [delivery record](../../changes/archive/windows-workspace-send-follow-stay.md).
+  Physical chords and this fixture's exact ordinary target order remain TBD;
+  `D(D-dec-cos)` + step-3 `D(D-dec-ww)`.
 - Variant hook: V-WS-FOLLOW.
 
 <a id="r-ws-02-backfill-send-back-and-return-anchor-scrolling"></a>
@@ -350,7 +356,13 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   implemented offline; physical feel/native journey pending.
   [Fixtures](../../../kwin/tests/workspace-send-follow-stay.test.ts),
   [record](../../changes/archive/kde-workspace-send-follow-stay.md); `D(D-dec-ww)`.
-- Then Ours Windows: Synthetic/native Paint roundtrip preserves floating frame, reflows source before hide and freshly admits on return; [workspace mode record](../../changes/archive/windows-workspace-tiling.md); physical feel TBD
+- Then Ours Windows: agent-observed Notepad numbered follow/stay across
+  both floating boundaries preserves floating frames, reflows only tiled
+  sides and keeps source/native focus for stay. Native gates passed
+  2026-10-11, base `553c65b` plus
+  [delivery record](../../changes/archive/windows-workspace-send-follow-stay.md).
+  Prior [Paint proof](../../changes/archive/windows-workspace-tiling.md)
+  retained; physical feel/chords TBD.
 - Variant hook: V-WS-FOLLOW.
 
 <a id="r-ws-07-backfill-shell-switcher-listing-scrolling"></a>
@@ -489,7 +501,9 @@ verb inventory); selected intent and doc assertions are never evidence.
 - Then Ours Windows: WS2 then WS3 via Win+Ctrl+Tab in portable local
   observed-history tests; delivered offline 2026-10-10, base `91db9d2` plus
   [delivery record](../../changes/archive/windows-workspace-history-ring.md).
-  Native toggle/physical-input result TBD; non-local/multi-output pending.
+  Native exact-owner CLI toggle WS2 then WS3 agent-observed 2026-10-11
+  at base `553c65b` plus [item-2 record](../../changes/archive/windows-workspace-send-follow-stay.md).
+  Physical chord result TBD; non-local/multi-output pending.
 - Variant hook: provisional/TBD (history-toggle hook, to discuss).
 
 ### R-WS-09: select WS2; select WS1 (return focus and viewport)
@@ -696,7 +710,10 @@ verb inventory); selected intent and doc assertions are never evidence.
   >9 without creation. Compatible disables only Left/Right. Portable tests
   and native offline gates passed 2026-10-10, base `91db9d2` plus
   [delivery record](../../changes/archive/windows-workspace-history-ring.md).
-  Native chord/physical/preset outcomes TBD; non-local/multi-output pending.
+  Native CLI wrap/trailing/>9 in an 11-ID ring and native Settings outcomes
+  agent-observed 2026-10-11, base `553c65b` plus
+  [item-2 record](../../changes/archive/windows-workspace-send-follow-stay.md).
+  Physical chord/preset OS outcomes TBD; non-local/multi-output pending.
 - Variant hook: provisional/TBD (relative-switch hook, to discuss).
 
 ### R-WS-12: move whole WS2 to R
@@ -910,8 +927,12 @@ verb inventory); selected intent and doc assertions are never evidence.
   [Fixtures](../../../kwin/tests/workspace-send-follow-stay.test.ts),
   [reconciler](../../../kwin/native-effect/shortcutreconciler.cpp),
   [record](../../changes/archive/kde-workspace-send-follow-stay.md).
-- Then Ours Windows: no-counterpart (index-only `Send`; no relative
-  verb). `S(S-ours-planops)`.
+- Then Ours Windows: relative follow/stay uses the scoped ordinal ring,
+  frozen once; Ctrl+Shift arrows/H/J/K/L follow, stay unbound bindable.
+  Native CLI send-next/stay-next/stay-prev and source MRU/null agent-observed
+  2026-10-11, base `553c65b` plus
+  [delivery record](../../changes/archive/windows-workspace-send-follow-stay.md).
+  Exact fresh WS2 previous-follow fixture and physical chords remain TBD.
 - Variant hook: V-WS-FOLLOW (follow policy for relative sends).
 
 ## Selected additions (USER 2026-10-07; KDE items 1/2 delivered)
@@ -932,10 +953,12 @@ ring, wrapping including trailing empty and ordinals beyond 9, selection
 creates nothing. R-WS-01/14 select numbered/relative follow defaults plus
 bindable unbound stay, same ring resolved once before transfer, normal spare
 maintenance; item 2 repairs KDE's source-view-preserving floating-boundary
-path to the already-decided follow default. Item 2 is implemented offline on
-shared core/KDE; both adapters' additions remain pending on Windows. Decision
-2.3's compile-only `follow: true` fix preserves current Windows behavior;
-stay/relative wiring remains in the [handoff](../../backlog.md).
+path to the already-decided follow default. Shared core/KDE item 2 is
+implemented offline. Windows local items 1/2 delivered with native gates and
+scoped agent-observed CLI/Settings outcomes 2026-10-11, base `553c65b` plus
+[record](../../changes/archive/windows-workspace-send-follow-stay.md).
+Physical shortcut containment and non-local/multi-output runtime remain
+pending in the [handoff](../../backlog.md).
 
 ### R-WS-15: previous on L after a workspace change on R
 
@@ -1260,8 +1283,12 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   next empty; source A survives. Follow goes with B, stay preserves source
   view with focused-removal MRU. Implemented offline (item 2.2), native journey
   pending. Ring/spare and send-flight [fixtures](../../../kwin/tests/workspace-send-follow-stay.test.ts).
-- Then Ours Windows: same selected ring/spare/follow/stay target;
-  implementation pending; items 1.4/2.2.
+- Then Ours Windows: ring/spare/follow/stay implemented; native CLI relative
+  next from ordinal 10 fills the existing spare, supplies a next spare and
+  follows mover (sole-source variant), agent-observed 2026-10-11, base
+  `553c65b` plus [record](../../changes/archive/windows-workspace-send-follow-stay.md).
+  Two-window WS10 stay variant offline-tested; exact native fixture/physical
+  chords TBD (items 1.4/2.2).
 - Variant hook: V-WS-FOLLOW.
 
 ### R-WS-19: relative previous send wraps from the first workspace
@@ -1319,8 +1346,11 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   normal lifecycle supplies next empty. Follow with B, stay on WS1 with A.
   Implemented offline; item 2.2, native journey pending.
   [Fixtures](../../../kwin/tests/workspace-send-follow-stay.test.ts).
-- Then Ours Windows: same selected ordinal-wrap/follow/stay target;
-  implementation pending; item 2.2.
+- Then Ours Windows: first relative previous stay fills pre-transfer trailing
+  E, retains source MRU survivor and supplies next spare, agent-observed
+  via CLI 2026-10-11, base `553c65b` plus
+  [record](../../changes/archive/windows-workspace-send-follow-stay.md).
+  Follow counterpart tested offline; exact native follow/physical chords TBD.
 - Variant hook: V-WS-FOLLOW.
 
 ### R-WS-20: relative edge sends when the source becomes empty
@@ -1416,8 +1446,13 @@ stay/relative wiring remains in the [handoff](../../backlog.md).
   Implemented offline (item 2.2); native journey pending.
   [Core](../../../crates/tiler-core/tests/session_send_to_workspace.rs),
   [ring/flight fixtures](../../../kwin/tests/workspace-send-follow-stay.test.ts).
-- Then Ours Windows: same selected target/spare/follow/stay rule;
-  implementation pending; exact source lifecycle/native focus TBD.
+- Then Ours Windows: target/spare/follow/stay implemented. Agent-observed
+  sole-source next follow fills spare; sole-source stay keeps source view
+  with null focus/no setter (native focus may fall to existing terminal,
+  never explicitly targeted). Offline coverage includes both edge directions.
+  Exact full given lifecycle/focus variants and physical chords remain TBD;
+  2026-10-11, base `553c65b` plus
+  [record](../../changes/archive/windows-workspace-send-follow-stay.md).
 - Variant hook: V-WS-FOLLOW.
 
 ## Selected addition (user-selected NORMATIVE 2026-10-08; delivery status per profile)

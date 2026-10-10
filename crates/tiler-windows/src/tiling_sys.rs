@@ -73,8 +73,9 @@ use crate::native::HeldProcess;
 use crate::settings::LiveSettings;
 use crate::snapkey::{
     KeyboardConfig, MAX_DISPATCH_PER_TICK, OriginVerdict, QueuedSnapEvent,
-    QueuedWorkspaceHistoryIntent, SnapOp, SnapOrigin, VK_LSHIFT, VK_LWIN, VK_MASK, VK_RSHIFT,
-    VK_RWIN, VK_SHIFT, WorkspaceHistoryOp, WorkspaceOp, direction_name, resolve_origin,
+    QueuedWorkspaceHistoryIntent, QueuedWorkspaceSendIntent, SnapOp, SnapOrigin, VK_LSHIFT,
+    VK_LWIN, VK_MASK, VK_RSHIFT, VK_RWIN, VK_SHIFT, WorkspaceHistoryOp, WorkspaceOp,
+    direction_name, resolve_origin,
 };
 use crate::storage::LedgerStore;
 use crate::tiling::{
@@ -3280,6 +3281,48 @@ fn is_zoomed_now(hwnd_u64: u64) -> bool {
     zoomed != 0
 }
 
+/// Live overlay flags for one HWND (item 20): maximized from `IsZoomed`,
+/// fullscreen from the live caption bit plus the live extended frame against
+/// the monitor full rects (same read shape as the foreground veto, without
+/// cloak/visibility). Fullscreen is `None` when the frame is unreadable
+/// (minimized/hidden/foreign): the caller falls back to the retained row
+/// facts, never a fabricated value. Captioned windows are never fullscreen.
+/// No window is touched: three bounded reads, no setters.
+#[must_use]
+pub fn live_overlay_flags(hwnd_u64: u64, fulls: &[Rect]) -> (bool, Option<bool>) {
+    let hwnd = hwnd_u64 as isize as HWND;
+    let maximized = unsafe { IsZoomed(hwnd) } != 0;
+    unsafe {
+        SetLastError(0);
+    }
+    let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) } as u32;
+    let style_err = unsafe { GetLastError() };
+    let style_ok = style != 0 || style_err == 0;
+    if style_ok && style & WS_CAPTION != 0 {
+        return (maximized, Some(false));
+    }
+    let mut visible_raw: RECT = unsafe { std::mem::zeroed() };
+    let dwm_ok = unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            (&mut visible_raw as *mut RECT).cast(),
+            std::mem::size_of::<RECT>() as u32,
+        )
+    } == 0;
+    if !dwm_ok {
+        return (maximized, None);
+    }
+    let covering = rect_from_win(visible_raw)
+        .is_some_and(|visible| is_borderless_fullscreen(true, visible, fulls));
+    if covering {
+        // Fullscreen needs captionless evidence: a covering frame with an
+        // unreadable style stays unknown, never fabricated.
+        return (maximized, if style_ok { Some(true) } else { None });
+    }
+    (maximized, Some(false))
+}
+
 // Probe one armed wake: `(expired, lost, done)` for the routing seam.
 fn restore_wake_probe(state: &TileLoop, wake: &RestoreWake, now: Instant) -> (bool, bool, bool) {
     let expired = now >= wake.until;
@@ -5677,6 +5720,7 @@ fn keyboard_tick(
                 }
                 QueuedSnapEvent::Intent(_) => stale += 1,
                 QueuedSnapEvent::Workspace(_) => stale += 1,
+                QueuedSnapEvent::WorkspaceSend(_) => stale += 1,
                 QueuedSnapEvent::WorkspaceHistory(_) => stale += 1,
                 QueuedSnapEvent::Maximize(_) => stale += 1,
                 QueuedSnapEvent::Fullscreen(_) => stale += 1,
@@ -6885,6 +6929,24 @@ fn keyboard_tick(
                             "edge": intent.edge.as_str(),
                             "disposition": "rerouted",
                             "outcome": "workspace-history-tick",
+                        }),
+                    );
+                }
+            }
+            QueuedSnapEvent::WorkspaceSend(intent) => {
+                // Routed to workspace_relative_send_tick by the caller;
+                // defensive drop here stays trace-only like digits.
+                if state.trace {
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "workspace-send",
+                            "tick": state.tick,
+                            "delta": intent.delta,
+                            "follow": intent.follow,
+                            "edge": intent.edge.as_str(),
+                            "disposition": "rerouted",
+                            "outcome": "workspace-send-tick",
                         }),
                     );
                 }
@@ -10326,14 +10388,121 @@ fn workspace_do_select(
     }
 }
 
+/// Send target selector resolved once before transfer (item 2): numbered
+/// digits resolve through the existing ordinal/trailing resolvers (index 0
+/// reuses or appends the trailing empty); relative steps resolve from the
+/// mover's source workspace through the item 1 scoped ring (wrapping through
+/// the trailing empty and ordinals beyond 9, never MRU, never creating).
+/// Filling the trailing empty invokes ordinary lifecycle for the next spare
+/// after transfer; the frozen target never re-resolves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SendTarget {
+    Numbered(u8),
+    Relative(i32),
+}
+
+impl SendTarget {
+    fn log_index(self) -> u8 {
+        match self {
+            Self::Numbered(index) => index,
+            Self::Relative(_) => 0,
+        }
+    }
+
+    fn log_op(self) -> &'static str {
+        match self {
+            Self::Numbered(_) => "send",
+            Self::Relative(delta) if delta < 0 => "send-prev",
+            Self::Relative(_) => "send-next",
+        }
+    }
+}
+
+/// Carried pre-transfer send fences (item 2 + item 20): the pure fence
+/// snapshot (both gaps, both modes, overlay flags) plus the retained-row
+/// fullscreen fallback for unreadable live frames (never fabricated).
+/// Tails re-verify before source writes AND hide/focus; any drift refuses
+/// with no replay.
+#[derive(Debug, Clone, Copy)]
+struct SendPreflight {
+    fences: crate::workspace_owner::SendFenceSnapshot,
+    fallback_fullscreen: bool,
+}
+
+impl SendPreflight {
+    /// Live tail-time readings for [`crate::workspace_owner::send_fences_hold`]:
+    /// fresh view/mode/gap/scope/lifetime/membership/overlay state. Scope and
+    /// membership are in-memory session reads; lifetime re-reads the live
+    /// member tag; overlay re-reads the live OS flags against the monitor
+    /// full rects with the carried fallback for unreadable frames.
+    #[allow(clippy::too_many_arguments)]
+    fn live(
+        &self,
+        state: &TileLoop,
+        stored: &ProcessIdentity,
+        mover_key: &crate::workspace::WindowKey,
+        mover_hwnd: u64,
+        output: &str,
+        source_id: &str,
+        target_id: &str,
+        fulls: &[Rect],
+    ) -> crate::workspace_owner::SendFenceLive {
+        let active = state.workspaces.active_id(output);
+        let (live_max, live_full_opt) = live_overlay_flags(mover_hwnd, fulls);
+        crate::workspace_owner::SendFenceLive {
+            inner_gap: state.inner_gap,
+            outer_gap: state.outer_gap,
+            source_tiled: state.workspaces.is_tiled(output, source_id),
+            target_tiled: state.workspaces.is_tiled(output, target_id),
+            active_is_source: active.as_deref() == Some(source_id),
+            target_is_active: active.as_deref() == Some(target_id),
+            scope_ok: scope_allows(&state.scope, &stored.exe_path)
+                && hosted_gate_allows(&stored.exe_path, mover_hwnd, stored.pid, &state.scope_hosts),
+            lifetime_ok: {
+                let live_tag = crate::product_hide::sys::read_member_tag(mover_hwnd);
+                state.member_tags.get(mover_key).is_some_and(|tag| {
+                    crate::workspace_owner::visible_lifetime_ok(tag, live_tag.as_deref())
+                })
+            },
+            membership_ok: state
+                .workspaces
+                .member_loc(mover_key)
+                .is_some_and(|loc| loc.workspace == target_id),
+            overlay_maximized: live_max,
+            overlay_fullscreen: live_full_opt.unwrap_or(self.fallback_fullscreen),
+        }
+    }
+
+    /// Live overlay-only recheck before native effects (item 20): fullscreen
+    /// refuses, drift defers. Narrower than [`crate::workspace_owner::send_fences_hold`];
+    /// follow tails (whose selects re-verify everything else) use this.
+    fn overlay_hold(
+        &self,
+        mover_hwnd: u64,
+        fulls: &[Rect],
+    ) -> std::result::Result<(), &'static str> {
+        let (live_max, live_full_opt) = live_overlay_flags(mover_hwnd, fulls);
+        let live_full = live_full_opt.unwrap_or(self.fallback_fullscreen);
+        crate::workspace_owner::send_overlay_gate(
+            self.fences.overlay_maximized,
+            self.fences.overlay_fullscreen,
+            live_max,
+            live_full,
+        )
+    }
+}
+
 /// Native cross-boundary send for any boundary touching a floating
 /// workspace: transfer project native membership (verified exactly like the
 /// Engine route), reflow the tiled source survivors when the source is tiled,
 /// then follow through the shared tail so the target reveals and reconciles
-/// when tiled. No two-domain Engine plan, no floating-side geometry; the
-/// tiled target admits normally through the ordinary follow select.
-/// Sticky movers never transfer as a single-desktop write; intentional
-/// per-window float movers ride along only from an actually floating source.
+/// when tiled (`follow=true`), or hide the mover and keep the source view
+/// with its existing native boundary focus (`follow=false`, no target
+/// selection, no history record). No two-domain Engine plan, no
+/// floating-side geometry; the tiled target admits normally through the
+/// ordinary follow select. Sticky movers never transfer as a
+/// single-desktop write; intentional per-window float movers ride along only
+/// from an actually floating source.
 #[allow(clippy::too_many_arguments)]
 fn workspace_do_send_native(
     state: &mut TileLoop,
@@ -10353,6 +10522,7 @@ fn workspace_do_send_native(
     source_tiled: bool,
     target_tiled: bool,
     ctx: &ActionCtx,
+    follow: bool,
 ) -> SendEffect {
     let fail_at = |outcome: &'static str| SendEffect {
         outcome,
@@ -10380,6 +10550,8 @@ fn workspace_do_send_native(
         .member_loc(mover_key)
         .map(|loc| loc.workspace.clone())
         .unwrap_or_default();
+    let mut snap_overlay = (false, false);
+    let mut fallback_fullscreen = false;
     let mover_minimized = if let Some(fresh) = by_hwnd.get(&mover_hwnd) {
         if !crate::workspace_owner::member_matches(
             mover_key,
@@ -10394,19 +10566,22 @@ fn workspace_do_send_native(
         }
         fresh.facts.minimized
     } else if let Some(row) = retained.iter().find(|r| r.key == *mover_key) {
-        if row.fullscreen {
-            return fail_at("send-refused-fullscreen");
-        }
         if !row.maximized {
             return fail_at("origin-vanished");
         }
-        if !crate::tiling::send_flags_stable(false, true, row.fullscreen, is_zoomed_now(mover_hwnd))
+        // Item 20 live snapshot (not the retained row): fullscreen refuses
+        // outright with retained-row fallback for unreadable frames, never a
+        // fabricated value; any maximized/fullscreen drift defers with no
+        // restore. Maximized carry itself never restores.
+        let (live_max, live_full_opt) = live_overlay_flags(mover_hwnd, fulls);
+        let live_full = live_full_opt.unwrap_or(row.fullscreen);
+        if let Err(outcome) =
+            crate::workspace_owner::send_overlay_gate(true, false, live_max, live_full)
         {
-            return fail_at("deferred");
+            return fail_at(outcome);
         }
-        if !is_zoomed_now(mover_hwnd) {
-            return fail_at("deferred");
-        }
+        snap_overlay = (true, false);
+        fallback_fullscreen = row.fullscreen;
         if stored.pid != mover_key.pid || stored.process_creation != mover_key.creation {
             return fail_at("origin-vanished");
         }
@@ -10422,6 +10597,23 @@ fn workspace_do_send_native(
     {
         return fail_at("identity-changed");
     }
+    // Item 20 pre-transfer overlay gate with live reads (mirrors the Engine
+    // route's pre-assign check): an observed mover that went borderless
+    // fullscreen live refuses here with NO membership change; drift from the
+    // snapshot defers the same way. The post-transfer recheck below stays
+    // for races across the transfer itself.
+    {
+        let (live_max, live_full_opt) = live_overlay_flags(mover_hwnd, fulls);
+        let live_full = live_full_opt.unwrap_or(fallback_fullscreen);
+        if let Err(outcome) = crate::workspace_owner::send_overlay_gate(
+            snap_overlay.0,
+            snap_overlay.1,
+            live_max,
+            live_full,
+        ) {
+            return fail_at(outcome);
+        }
+    }
     if !state
         .workspaces
         .assign(mover_key.clone(), output, target_id, true)
@@ -10434,6 +10626,22 @@ fn workspace_do_send_native(
     let target_now = state.workspaces.workspace_members(output, target_id);
     if !crate::workspace_owner::verify_membership_transfer(mover_key, &source_now, &target_now) {
         return fail_at("unverified");
+    }
+    let preflight = SendPreflight {
+        fences: crate::workspace_owner::SendFenceSnapshot {
+            inner_gap: state.inner_gap,
+            outer_gap: state.outer_gap,
+            source_tiled,
+            target_tiled,
+            overlay_maximized: snap_overlay.0,
+            overlay_fullscreen: snap_overlay.1,
+        },
+        fallback_fullscreen,
+    };
+    // Item 20 pre-effect recheck with live reads: refuse fullscreen, defer
+    // drift, before any reflow/hide/focus.
+    if let Err(outcome) = preflight.overlay_hold(mover_hwnd, fulls) {
+        return fail_at(outcome);
     }
     // Tiled-source survivor reflow before hide/follow: the transfer above
     // already moved the mover out, so a complete reconcile on current
@@ -10523,45 +10731,198 @@ fn workspace_do_send_native(
             );
         }
     }
-    let effect = workspace_send_follow(
-        state,
-        me,
-        store,
-        dir,
-        fulls,
-        areas,
-        observed,
-        mover_key,
-        &stored,
-        mover_minimized,
-        output,
-        target_id,
-        source_token,
-        target_token,
-        ctx,
-        None,
-        0,
-        0,
-    );
+    let effect = if follow {
+        workspace_send_follow(
+            state,
+            me,
+            store,
+            dir,
+            fulls,
+            areas,
+            observed,
+            mover_key,
+            &stored,
+            mover_minimized,
+            output,
+            target_id,
+            source_token,
+            target_token,
+            ctx,
+            None,
+            0,
+            0,
+            preflight,
+        )
+    } else {
+        workspace_send_stay_native(
+            state,
+            me,
+            store,
+            dir,
+            fulls,
+            mover_key,
+            &stored,
+            mover_minimized,
+            mover_hwnd,
+            output,
+            &source_workspace,
+            target_id,
+            source_token,
+            target_token,
+            preflight,
+        )
+    };
     log_json_at(
         &state.log_path,
         serde_json::json!({
             "event": "workspace-send-native",
             "source_tiled": source_tiled,
             "target_tiled": target_tiled,
+            "follow": follow,
             "outcome": effect.outcome,
         }),
     );
     effect
 }
 
-/// Send the focused window to an existing/trailing same-output workspace,
-/// then follow. Tiled-to-tiled sends run the retained Engine
-/// `MoveToWorkspace` route with source reflow; any boundary touching a
-/// floating workspace transfers project native membership instead (no
-/// two-domain Engine plan, no floating-side geometry) and reflows only the
-/// tiled side through the ordinary follow select. Refuses unmanaged focus,
-/// no-op/foreign transfers, and proof modes without workspace hides.
+/// Ordinary trailing lifecycle after a stay send filled the trailing empty:
+/// keep one empty with a minimum of two, preserving the active view. Runs
+/// without activation or selection, so no history records; removal
+/// invalidation still applies (a removed previous clears like any cleanup).
+/// Shared by the Engine and native stay tails.
+fn ensure_trailing_spare(state: &mut TileLoop, output: &str) {
+    let active_id = state.workspaces.active_id(output).unwrap_or_default();
+    let displaced: Vec<String> = state
+        .workspaces
+        .displaced_snapshot()
+        .values()
+        .flat_map(|r| r.workspace_ids.clone())
+        .collect();
+    let sticky_keys: BTreeSet<crate::workspace::WindowKey> = state.sticky.keys().cloned().collect();
+    let (removed, append) = state.workspaces.plan_cleanup_excluding(
+        output,
+        std::slice::from_ref(&active_id),
+        &displaced,
+        &sticky_keys,
+    );
+    state.workspaces.apply_cleanup(output, &removed, append);
+}
+
+/// Native stay tail for a floating-boundary send: the mover is already
+/// transferred (hidden membership) and the tiled source already reflowed by
+/// the caller. Re-verifies the carried fences before hide (item 2 + item 20),
+/// then hides the mover from the source view, keeps the source selected and
+/// visible with its existing native boundary focus (no target selection, no
+/// focus setter, no history record), then runs ordinary trailing lifecycle
+/// for the next spare. Floating frames stay untouched; only the tiled side
+/// reflowed. Partial progress never replays: a failed hide reports without
+/// focus or reveal attempts.
+#[allow(clippy::too_many_arguments)]
+fn workspace_send_stay_native(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    dir: &Path,
+    fulls: &[Rect],
+    mover_key: &crate::workspace::WindowKey,
+    stored: &ProcessIdentity,
+    mover_minimized: bool,
+    mover_hwnd: u64,
+    output: &str,
+    source_id: &str,
+    target_id: &str,
+    source_token: &str,
+    target_token: &str,
+    preflight: SendPreflight,
+) -> SendEffect {
+    // Carried pre-transfer fences before hide (item 2 + item 20). The source
+    // id rides the caller (membership already points at the target).
+    if let Some(outcome) = crate::workspace_owner::send_fences_hold(
+        preflight.fences,
+        preflight.live(
+            state, stored, mover_key, mover_hwnd, output, source_id, target_id, fulls,
+        ),
+    ) {
+        if outcome == "identity-changed" {
+            drop_member_state(state, mover_key);
+        }
+        return SendEffect {
+            outcome,
+            focus: "none",
+            source: None,
+            target: None,
+            transition_ms: 0,
+            observation_ms: 0,
+            source_geometry_ms: 0,
+            target_geometry_ms: 0,
+            hide_ms: 0,
+            reveal_ms: 0,
+            focus_ms: 0,
+            source_plan_ms: 0,
+            target_plan_ms: 0,
+            source_workspace: source_token.to_owned(),
+            target_workspace: target_token.to_owned(),
+        };
+    }
+    let hide_outcome =
+        workspace_hide_one(state, me, store, dir, mover_key, stored, mover_minimized);
+    if state.hidden_claims.contains_key(mover_key) {
+        state.workspaces.set_hidden(mover_key, true);
+    }
+    if hide_outcome != "hidden" {
+        return SendEffect {
+            outcome: hide_outcome,
+            focus: "none",
+            source: None,
+            target: None,
+            transition_ms: 0,
+            observation_ms: 0,
+            source_geometry_ms: 0,
+            target_geometry_ms: 0,
+            hide_ms: 0,
+            reveal_ms: 0,
+            focus_ms: 0,
+            source_plan_ms: 0,
+            target_plan_ms: 0,
+            source_workspace: source_token.to_owned(),
+            target_workspace: target_token.to_owned(),
+        };
+    }
+    // Ordinary lifecycle supplies the next spare when the transfer filled the
+    // trailing empty; the source view stays selected throughout.
+    ensure_trailing_spare(state, output);
+    SendEffect {
+        outcome: "ok",
+        focus: "none",
+        source: None,
+        target: None,
+        transition_ms: 0,
+        observation_ms: 0,
+        source_geometry_ms: 0,
+        target_geometry_ms: 0,
+        hide_ms: 0,
+        reveal_ms: 0,
+        focus_ms: 0,
+        source_plan_ms: 0,
+        target_plan_ms: 0,
+        source_workspace: source_token.to_owned(),
+        target_workspace: target_token.to_owned(),
+    }
+}
+
+/// Send the focused window to a same-output workspace, then follow or stay.
+/// Tiled-to-tiled sends run the retained Engine `MoveToWorkspace` route with
+/// source reflow; any boundary touching a floating workspace transfers
+/// project native membership instead (no two-domain Engine plan, no
+/// floating-side geometry) and reflows only the tiled side through the
+/// ordinary follow select. `target` resolves once before transfer (numbered
+/// ordinal/trailing, or relative ring step from the mover source); `follow`
+/// pins the explicit intent (CLI sends follow). Follow selects/reveals the
+/// target and focuses the mover; stay hides the mover without selecting or
+/// revealing the target, keeps the source selected/visible, applies the
+/// source-bound plan focus (MRU, none for null) and reflows only writable
+/// source rows. Refuses unmanaged focus, no-op/foreign transfers, and proof
+/// modes without workspace hides.
 ///
 /// Source reflow consumes the existing `SendWorkspace` plan while the source
 /// survivors are still visible and eligible in the same action (scoped by the
@@ -10583,7 +10944,8 @@ fn workspace_do_send(
     observed: &mut [ObservedWindow],
     retained: &[RetainedRow],
     output: &str,
-    index: u8,
+    target: SendTarget,
+    follow: bool,
     mover_hwnd: u64,
     origin_token: &str,
     origin_pid: u32,
@@ -10669,16 +11031,31 @@ fn workspace_do_send(
     if state.allowlist.is_some() && !state.workspace_proof {
         return fail("workspace-disabled");
     }
-    let target_id = if index == 0 {
-        // Trailing send reuses or creates without switching first.
-        match state.workspaces.resolve_send_trailing(output) {
-            Some((id, _)) => id,
-            None => return fail("unknown-output"),
+    let target_id = match target {
+        SendTarget::Numbered(0) => {
+            // Trailing send reuses or creates without switching first.
+            match state.workspaces.resolve_send_trailing(output) {
+                Some((id, _)) => id,
+                None => return fail("unknown-output"),
+            }
         }
-    } else {
-        match state.workspaces.resolve_send(output, index) {
+        SendTarget::Numbered(index) => match state.workspaces.resolve_send(output, index) {
             Some(id) => id,
             None => return fail("unknown-target"),
+        },
+        SendTarget::Relative(delta) => {
+            // Frozen once before transfer: the item 1 scoped ring step from
+            // the mover's source workspace (wrapping through the trailing
+            // empty and ordinals beyond 9, never MRU, never creating).
+            // Filling the trailing empty invokes ordinary lifecycle for the
+            // next spare after transfer.
+            match state
+                .workspaces
+                .resolve_relative_from(output, &loc.workspace, delta)
+            {
+                Some(id) => id,
+                None => return fail("unknown-target"),
+            }
         }
     };
     if target_id == loc.workspace {
@@ -10731,6 +11108,7 @@ fn workspace_do_send(
             source_tiled,
             target_tiled,
             ctx,
+            follow,
         );
     }
     // Full source+target observations including hidden snapshots, so the
@@ -10739,27 +11117,46 @@ fn workspace_do_send(
     // One shared hint-query budget across both assemblies: source and target
     // never independently blow the per-operation bound.
     //
-    // Pre-dispatch overlay gate for a retained mover: a maximized member is
-    // retained, never eligible, so it must still read maximized live before
-    // the Engine plans. Fullscreen never sends. The post-plan pre-effect
-    // check below re-verifies for post-plan uncertainty.
-    if !observed.iter().any(|w| w.hwnd == mover_hwnd) {
+    // Pre-dispatch overlay gate (item 20): a retained maximized member is
+    // retained, never eligible, so it must read maximized live (not the
+    // retained row) before the Engine plans; live fullscreen refuses
+    // outright with retained-row fallback for unreadable frames, never a
+    // fabricated value. Observed movers ride the ordinary (false, false)
+    // expectation from observation; the post-plan recheck below gates any
+    // live race before effects. A tiled maximized member sends (maximized
+    // carry, never restore); a fullscreen mover refuses with no writes.
+    let mover_observed = observed.iter().any(|w| w.hwnd == mover_hwnd);
+    let (snap_overlay, fallback_fullscreen) = if mover_observed {
+        ((false, false), false)
+    } else {
         let Some(row) = retained.iter().find(|r| r.key == mover_key) else {
             return fail_at("origin-vanished");
         };
         // Actual KDE wrapper behavior (workspace-send `non-tiled-focus`):
-        // overlay movers never send. A tiled maximized member sends (item 3
-        // contract); a fullscreen mover refuses explicitly with no writes.
-        if row.fullscreen {
-            return fail_at("send-refused-fullscreen");
-        }
+        // overlay movers never send as ordinary.
         if !row.maximized {
             return fail_at("origin-vanished");
         }
-        if !is_zoomed_now(mover_hwnd) {
-            return fail_at("deferred");
+        let (live_max, live_full_opt) = live_overlay_flags(mover_hwnd, fulls);
+        let live_full = live_full_opt.unwrap_or(row.fullscreen);
+        if let Err(outcome) =
+            crate::workspace_owner::send_overlay_gate(true, false, live_max, live_full)
+        {
+            return fail_at(outcome);
         }
-    }
+        ((true, false), row.fullscreen)
+    };
+    let preflight = SendPreflight {
+        fences: crate::workspace_owner::SendFenceSnapshot {
+            inner_gap: state.inner_gap,
+            outer_gap: state.outer_gap,
+            source_tiled,
+            target_tiled,
+            overlay_maximized: snap_overlay.0,
+            overlay_fullscreen: snap_overlay.1,
+        },
+        fallback_fullscreen,
+    };
     let mut hint_cx = HintCx::new();
     let Some(source_rows) = assemble_domain_rows(
         state,
@@ -10881,6 +11278,7 @@ fn workspace_do_send(
         &target_rows,
         origin_token,
         state.outer_gap,
+        follow,
     ) else {
         return fail_at("refused");
     };
@@ -10897,7 +11295,7 @@ fn workspace_do_send(
         .elapsed()
         .as_millis()
         .min(u128::from(u64::MAX)) as u64;
-    let tiler_core::boundary::CoreReply::SendWorkspace(_) = reply else {
+    let tiler_core::boundary::CoreReply::SendWorkspace(plan) = &reply else {
         let outcome: &'static str = match reply {
             tiler_core::boundary::CoreReply::Rejected { kind, .. } => kind,
             tiler_core::boundary::CoreReply::Diverged(reason) => reason.as_str(),
@@ -10909,13 +11307,29 @@ fn workspace_do_send(
     // Project-owned membership change after revalidation and the planned
     // Engine mutation: exact identity table update, never HWND alone. A
     // tiled maximized member sends too (KDE parity): it is retained rather
-    // than eligible, so it resolves through its retained row with a fresh
-    // flag-stability recheck instead of the eligible observation. Its target
-    // allocation is kept by the plan while overlay geometry never writes.
+    // than eligible, so it resolves through its retained row with a live
+    // flag recheck (not the retained row) instead of the eligible
+    // observation. Its target allocation is kept by the plan while overlay
+    // geometry never writes.
     let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
     let Some(stored) = state.member_identity.get(&mover_key).cloned() else {
         return fail_at("unmanaged");
     };
+    // Item 20 post-plan recheck with live OS reads (not the retained row):
+    // fullscreen refuses, drift defers. Before any membership change or
+    // native effect, for follow and stay alike.
+    {
+        let (live_max, live_full_opt) = live_overlay_flags(mover_hwnd, fulls);
+        let live_full = live_full_opt.unwrap_or(preflight.fallback_fullscreen);
+        if let Err(outcome) = crate::workspace_owner::send_overlay_gate(
+            preflight.fences.overlay_maximized,
+            preflight.fences.overlay_fullscreen,
+            live_max,
+            live_full,
+        ) {
+            return fail_at(outcome);
+        }
+    }
     let mover_minimized = if let Some(fresh) = by_hwnd.get(&mover_hwnd) {
         if !crate::workspace_owner::member_matches(
             &mover_key,
@@ -10930,22 +11344,11 @@ fn workspace_do_send(
         }
         fresh.facts.minimized
     } else if let Some(row) = retained.iter().find(|r| r.key == mover_key) {
-        // Retained maximized mover: fullscreen never sends here (item 4
-        // owns fullscreen); only a maximized member proceeds, and
-        // only when its live flags still match the dispatch snapshot (KDE
-        // `flagsStillMatch` parity).
-        if row.fullscreen {
-            return fail_at("send-refused-fullscreen");
-        }
+        // Retained maximized mover: the live overlay gate above already
+        // refused fullscreen and deferred drift; only a maximized member
+        // proceeds, with no restore and no remaximize (maximized carry).
         if !row.maximized {
             return fail_at("origin-vanished");
-        }
-        if !crate::tiling::send_flags_stable(false, true, row.fullscreen, is_zoomed_now(mover_hwnd))
-        {
-            return fail_at("deferred");
-        }
-        if !is_zoomed_now(mover_hwnd) {
-            return fail_at("deferred");
         }
         if stored.pid != mover_key.pid || stored.process_creation != mover_key.creation {
             return fail_at("origin-vanished");
@@ -10970,11 +11373,62 @@ fn workspace_do_send(
     {
         return fail_at("refused");
     }
-    // Verified transfer before follow: absent source, present target.
+    // Verified transfer before follow/stay: absent source, present target.
     let source_now = state.workspaces.workspace_members(output, &loc.workspace);
     let target_now = state.workspaces.workspace_members(output, &target_id);
     if !crate::workspace_owner::verify_membership_transfer(&mover_key, &source_now, &target_now) {
         return fail_at("unverified");
+    }
+    // Carried pre-plan fences before source writes for both intents
+    // (item 2 + item 20): view/mode/gaps/scope/lifetime/membership/overlay
+    // re-verified live; any drift refuses with no further effects and no
+    // replay. A lifetime refusal drops the stale membership like the
+    // dispatch-time gate.
+    if let Some(outcome) = crate::workspace_owner::send_fences_hold(
+        preflight.fences,
+        preflight.live(
+            state,
+            &stored,
+            &mover_key,
+            mover_hwnd,
+            output,
+            &loc.workspace,
+            &target_id,
+            fulls,
+        ),
+    ) {
+        if outcome == "identity-changed" {
+            drop_member_state(state, &mover_key);
+        }
+        return fail_at(outcome);
+    }
+    // The Engine echoes the explicit intent: follow consumes the source plan
+    // while survivors are visible, then selects/reveals the target; stay
+    // fences first, then reflows only writable source rows, hides without
+    // selecting, and applies the source-bound plan focus (never the target).
+    if !plan.follow {
+        return workspace_send_stay(
+            state,
+            me,
+            store,
+            dir,
+            fulls,
+            observed,
+            retained,
+            &mover_key,
+            &stored,
+            mover_minimized,
+            mover_hwnd,
+            output,
+            &loc.workspace,
+            &target_id,
+            &source_token,
+            &target_token,
+            ctx,
+            plan,
+            preflight,
+            source_plan_ms,
+        );
     }
     // Consume the existing source plan while the survivors are still visible
     // and eligible in the same action. The writable set scopes to the source
@@ -11031,12 +11485,16 @@ fn workspace_do_send(
         source,
         source_ms,
         source_plan_ms,
+        preflight,
     )
 }
 
 /// Shared send tail for both the Engine plan route and the native
 /// cross-boundary route: commit-before-hide the mover, then follow by
 /// selecting the target (which reveals it and reconciles it when tiled).
+/// The carried overlay snapshot re-verifies live before hide (item 20):
+/// fullscreen refuses, drift defers, with no restore and no replay. Broader
+/// view/mode/gap races stay with the select's own fresh fences below.
 #[allow(clippy::too_many_arguments)]
 fn workspace_send_follow(
     state: &mut TileLoop,
@@ -11057,7 +11515,27 @@ fn workspace_send_follow(
     source: Option<ApplySummary>,
     source_ms: u64,
     source_plan_ms: u64,
+    preflight: SendPreflight,
 ) -> SendEffect {
+    if let Err(outcome) = preflight.overlay_hold(mover_key.hwnd, fulls) {
+        return SendEffect {
+            outcome,
+            focus: "none",
+            source,
+            target: None,
+            transition_ms: 0,
+            observation_ms: 0,
+            source_geometry_ms: source_ms,
+            target_geometry_ms: 0,
+            hide_ms: 0,
+            reveal_ms: 0,
+            focus_ms: 0,
+            source_plan_ms,
+            target_plan_ms: 0,
+            source_workspace: source_token.to_owned(),
+            target_workspace: target_token.to_owned(),
+        };
+    }
     let hide_outcome =
         workspace_hide_one(state, me, store, dir, mover_key, stored, mover_minimized);
     if state.hidden_claims.contains_key(mover_key) {
@@ -11138,17 +11616,395 @@ fn workspace_send_follow(
     }
 }
 
+/// Source-bound stay focus resolution from the Engine plan (item 2): the
+/// plan's `focus_domain`/`focus_leaf` names the tiled layout focus after a
+/// stay send (source focused-removal MRU, null when no source tiled entry
+/// remains). Gathers the Engine snapshot mapping plus exact source/member
+/// lifetime and fresh focus eligibility, then routes through
+/// [`crate::workspace_owner::classify_stay_focus`]: `Null` is a genuine null
+/// plan (no setter; the native removal focus stands, never a guessed
+/// fallback), `Stale` is a some-but-unusable mapping (no setter either), and
+/// `Ready` carries the MRU token for the single actuation attempt.
+fn stay_focus_token(
+    state: &TileLoop,
+    output: &str,
+    source_id: &str,
+    plan: &tiler_core::boundary::SendWorkspacePlan,
+    observed: &[ObservedWindow],
+    retained: &[RetainedRow],
+) -> (crate::workspace_owner::StayFocusClass, Option<String>) {
+    use crate::workspace_owner::{StayFocusClass, classify_stay_focus};
+    let plan_null = plan.focus_domain.is_none() || plan.focus_leaf.is_none();
+    // Single gather pass (no early returns): every classifier input is real
+    // state, so the decision table below stays causal.
+    let mut mapped_key: Option<crate::workspace::WindowKey> = None;
+    let mut mapped_window: Option<String> = None;
+    if !plan_null {
+        let focus_domain = plan.focus_domain.clone().expect("plan focus domain");
+        let focus_leaf = plan.focus_leaf.clone().expect("plan focus leaf");
+        if focus_domain.output.0 == output
+            && focus_domain.workspace.0 == source_id
+            && let Some(session) = state.engine.session(&focus_domain)
+        {
+            let snapshot = session.snapshot();
+            if let Some(link) = snapshot.windows.iter().find(|link| {
+                link.leaf == focus_leaf
+                    && link.output == focus_domain.output
+                    && link.workspace == focus_domain.workspace
+            }) {
+                let window = link.window.0.clone();
+                if let Some(key) = state
+                    .member_tokens
+                    .iter()
+                    .find(|(_, token)| token.as_str() == window.as_str())
+                    .map(|(key, _)| key.clone())
+                {
+                    mapped_key = Some(key);
+                    mapped_window = Some(window);
+                }
+            }
+        }
+    }
+    let source_members = state.workspaces.workspace_members(output, source_id);
+    let in_source = mapped_key
+        .as_ref()
+        .is_some_and(|key| source_members.contains(key));
+    let hidden = mapped_key
+        .as_ref()
+        .is_some_and(|key| state.workspaces.is_hidden(key));
+    // Exact member lifetime: visible MRU matches its fresh observation plus
+    // the stored tag; a retained-overlay MRU (maximized/fullscreen) matches
+    // its exact session key and rides the actuation's own revalidation.
+    let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
+    let lifetime_ok = match mapped_key.as_ref() {
+        Some(key) => match by_hwnd.get(&key.hwnd) {
+            Some(fresh) => {
+                crate::workspace_owner::member_matches(
+                    key,
+                    fresh.hwnd,
+                    fresh.identity.pid,
+                    &fresh.identity.process_creation,
+                ) && {
+                    let live_tag = crate::product_hide::sys::read_member_tag(key.hwnd);
+                    state.member_tags.get(key).is_some_and(|tag| {
+                        crate::workspace_owner::visible_lifetime_ok(tag, live_tag.as_deref())
+                    })
+                }
+            }
+            None => retained
+                .iter()
+                .any(|row| row.key == *key && (row.maximized || row.fullscreen)),
+        },
+        None => false,
+    };
+    // Fresh focus eligibility mirrors the select path: revealed target focus
+    // set over fresh tokens plus verified retained overlay tokens (focus
+    // carries no write, KDE `requestFocus` parity).
+    let mut fresh_tokens: HashSet<String> = observed.iter().map(|w| w.token.clone()).collect();
+    for row in retained {
+        if row.maximized || row.fullscreen {
+            fresh_tokens.insert(row.token.clone());
+        }
+    }
+    let eligible = mapped_key.as_ref().is_some_and(|key| {
+        state
+            .workspaces
+            .eligible_focus_set(&source_members, &state.member_tokens, &fresh_tokens)
+            .contains(key)
+    });
+    let class = classify_stay_focus(
+        plan_null,
+        mapped_key.is_some(),
+        in_source,
+        hidden,
+        lifetime_ok,
+        eligible,
+    );
+    match (class, mapped_window) {
+        (StayFocusClass::Ready, Some(window)) => (class, Some(window)),
+        (StayFocusClass::Null, _) => (StayFocusClass::Null, None),
+        _ => (StayFocusClass::Stale, None),
+    }
+}
+
+/// Engine stay tail for an explicit send-and-stay: the Engine mutation is
+/// committed and membership verified by the caller. Fences
+/// (lifetime/view/mode/gaps/source-selected) before writes AND focus, then
+/// reflows only writable source rows, hides the mover without selecting or
+/// revealing the target (hidden target takes no writes), keeps the source
+/// selected/visible, applies the source-bound plan focus (MRU; no setter for
+/// null), and runs ordinary trailing lifecycle for the next spare. History
+/// never records (only verified selects record). Destination admission and
+/// structural geometry are identical to follow: only focus and visibility
+/// differ. Partial progress never replays: a fenced refusal reports without
+/// further setters, and a failed focus reports without retry.
+#[allow(clippy::too_many_arguments)]
+fn workspace_send_stay(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    dir: &Path,
+    fulls: &[Rect],
+    observed: &mut [ObservedWindow],
+    retained: &[RetainedRow],
+    mover_key: &crate::workspace::WindowKey,
+    stored: &ProcessIdentity,
+    mover_minimized: bool,
+    mover_hwnd: u64,
+    output: &str,
+    source_id: &str,
+    target_id: &str,
+    source_token: &str,
+    target_token: &str,
+    ctx: &ActionCtx,
+    plan: &tiler_core::boundary::SendWorkspacePlan,
+    preflight: SendPreflight,
+    source_plan_ms: u64,
+) -> SendEffect {
+    let fail_at = |outcome: &'static str| SendEffect {
+        outcome,
+        focus: "none",
+        source: None,
+        target: None,
+        transition_ms: 0,
+        observation_ms: 0,
+        source_geometry_ms: 0,
+        target_geometry_ms: 0,
+        hide_ms: 0,
+        reveal_ms: 0,
+        focus_ms: 0,
+        source_plan_ms,
+        target_plan_ms: 0,
+        source_workspace: source_token.to_owned(),
+        target_workspace: target_token.to_owned(),
+    };
+    // Carried pre-plan fences before source writes: view/mode/gaps/scope/
+    // lifetime/membership/overlay re-verified live (item 2 + item 20). Any
+    // drift refuses with no writes and no focus attempt (the committed
+    // membership stands like the follow hide-failure path; convergence
+    // without replay, never a guessed rollback). A lifetime refusal drops
+    // the stale membership like the dispatch-time gate.
+    if let Some(outcome) = crate::workspace_owner::send_fences_hold(
+        preflight.fences,
+        preflight.live(
+            state, stored, mover_key, mover_hwnd, output, source_id, target_id, fulls,
+        ),
+    ) {
+        if outcome == "identity-changed" {
+            drop_member_state(state, mover_key);
+        }
+        return fail_at(outcome);
+    }
+    // Source reflow while survivors are still visible and eligible, scoped by
+    // the source writable set exactly like follow (mover transferred out,
+    // hidden/retained rows never writable): target entries skip honestly as
+    // retained, and hidden geometry is never written.
+    let source_writable = writable_tokens(state, output, source_id, observed);
+    state.tick += 1;
+    let source_tick = state.tick;
+    let source_start = Instant::now();
+    let source = apply_geometry(
+        state,
+        ApplyInput {
+            me,
+            fulls,
+            reply: &tiler_core::boundary::CoreReply::SendWorkspace(plan.clone()),
+            observed,
+            op: "send-source-stay",
+            tick: source_tick,
+            correlation: ctx.correlation.as_str(),
+            skipped: Vec::new(),
+            writable: &source_writable,
+            output_token: state.workspaces.output_token(output),
+            workspace_token: state.workspaces.workspace_token(output, source_id),
+            revision: revision_for(state, output, source_id),
+        },
+    );
+    let source_ms = source_start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    // Carried fences again before hide (mover still visible: the tag read is
+    // exact). Partial progress never replays.
+    if let Some(outcome) = crate::workspace_owner::send_fences_hold(
+        preflight.fences,
+        preflight.live(
+            state, stored, mover_key, mover_hwnd, output, source_id, target_id, fulls,
+        ),
+    ) {
+        if outcome == "identity-changed" {
+            drop_member_state(state, mover_key);
+        }
+        return SendEffect {
+            outcome,
+            focus: "none",
+            source,
+            target: None,
+            transition_ms: 0,
+            observation_ms: 0,
+            source_geometry_ms: source_ms,
+            target_geometry_ms: 0,
+            hide_ms: 0,
+            reveal_ms: 0,
+            focus_ms: 0,
+            source_plan_ms,
+            target_plan_ms: 0,
+            source_workspace: source_token.to_owned(),
+            target_workspace: target_token.to_owned(),
+        };
+    }
+    // Hide the mover from the source view (commit-before-hide) without
+    // selecting or revealing the target. A committed claim is owned even on
+    // uncertain post-hide readback: flag it hidden and report the stall
+    // without pretending stay success.
+    let hide_outcome =
+        workspace_hide_one(state, me, store, dir, mover_key, stored, mover_minimized);
+    if state.hidden_claims.contains_key(mover_key) {
+        state.workspaces.set_hidden(mover_key, true);
+    }
+    if hide_outcome != "hidden" {
+        return SendEffect {
+            outcome: hide_outcome,
+            focus: "none",
+            source,
+            target: None,
+            transition_ms: 0,
+            observation_ms: 0,
+            source_geometry_ms: source_ms,
+            target_geometry_ms: 0,
+            hide_ms: 0,
+            reveal_ms: 0,
+            focus_ms: 0,
+            source_plan_ms,
+            target_plan_ms: 0,
+            source_workspace: source_token.to_owned(),
+            target_workspace: target_token.to_owned(),
+        };
+    }
+    // Ordinary lifecycle supplies the next spare when the transfer filled the
+    // trailing empty; the source view stays selected throughout (no history
+    // record: only verified selects record; trailing maintenance retains the
+    // null focus by never touching focus).
+    ensure_trailing_spare(state, output);
+    // Exact-lifetime focus plan through the tested classifier: genuine null
+    // (sole-mover stay emptied the source) resolves Null with ok/no-focus
+    // and no setter; a some-but-stale mapping resolves Stale with
+    // focus-unverified and no setter either; only Ready actuates once.
+    let (class, focus_token) = stay_focus_token(state, output, source_id, plan, observed, retained);
+    if class == crate::workspace_owner::StayFocusClass::Null {
+        return SendEffect {
+            outcome: "ok",
+            focus: "no-focus",
+            source,
+            target: None,
+            transition_ms: 0,
+            observation_ms: 0,
+            source_geometry_ms: source_ms,
+            target_geometry_ms: 0,
+            hide_ms: 0,
+            reveal_ms: 0,
+            focus_ms: 0,
+            source_plan_ms,
+            target_plan_ms: 0,
+            source_workspace: source_token.to_owned(),
+            target_workspace: target_token.to_owned(),
+        };
+    }
+    if class != crate::workspace_owner::StayFocusClass::Ready {
+        return SendEffect {
+            outcome: "focus-unverified",
+            focus: "vanished",
+            source,
+            target: None,
+            transition_ms: 0,
+            observation_ms: 0,
+            source_geometry_ms: source_ms,
+            target_geometry_ms: 0,
+            hide_ms: 0,
+            reveal_ms: 0,
+            focus_ms: 0,
+            source_plan_ms,
+            target_plan_ms: 0,
+            source_workspace: source_token.to_owned(),
+            target_workspace: target_token.to_owned(),
+        };
+    }
+    let focus_token = focus_token.expect("ready stay focus carries its token");
+    // Explicit source-selected fence again before focus, then the actuation's
+    // own fresh fences (identity/scope/fullscreen/elevated) decide the
+    // single setter attempt: no replay on refusal.
+    if state.workspaces.active_id(output).as_deref() != Some(source_id) {
+        return SendEffect {
+            outcome: "focus-unverified",
+            focus: "vanished",
+            source,
+            target: None,
+            transition_ms: 0,
+            observation_ms: 0,
+            source_geometry_ms: source_ms,
+            target_geometry_ms: 0,
+            hide_ms: 0,
+            reveal_ms: 0,
+            focus_ms: 0,
+            source_plan_ms,
+            target_plan_ms: 0,
+            source_workspace: source_token.to_owned(),
+            target_workspace: target_token.to_owned(),
+        };
+    }
+    let (focus, focus_ms, outcome) = if crate::workspace_owner::focus_before_geometry(
+        true,
+        suspend_read(state, me, fulls).veto.block,
+        foreground_elevated(me),
+    ) {
+        let focus_start = Instant::now();
+        let actuation = actuate_focus(state, me, fulls, observed, retained, &focus_token);
+        let focus_ms = focus_start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        if actuation.outcome == "focus-ok" {
+            if let Some(key) = state
+                .member_tokens
+                .iter()
+                .find(|(_, token)| token.as_str() == focus_token.as_str())
+                .map(|(key, _)| key.clone())
+            {
+                state.workspaces.note_foreground(&key);
+            }
+            ("focus-ok", focus_ms, "ok")
+        } else {
+            (actuation.outcome, focus_ms, "focus-unverified")
+        }
+    } else {
+        ("focus-skipped-fence", 0, "focus-unverified")
+    };
+    SendEffect {
+        outcome,
+        focus,
+        source,
+        target: None,
+        transition_ms: 0,
+        observation_ms: 0,
+        source_geometry_ms: source_ms,
+        target_geometry_ms: 0,
+        hide_ms: 0,
+        reveal_ms: 0,
+        focus_ms,
+        source_plan_ms,
+        target_plan_ms: 0,
+        source_workspace: source_token.to_owned(),
+        target_workspace: target_token.to_owned(),
+    }
+}
+
 /// Exact-owner out-of-hook workspace control: one bounded `workspace.request`
 /// file consumed once through the existing `workspace_do_select` /
-/// `workspace_do_send` resolvers. Normal `tile` only (proof owners refuse
+/// `workspace_do_send` resolvers (plus the pure history resolvers for the
+/// previous/relative forms). Normal `tile` only (proof owners refuse
 /// without effect); fullscreen and elevated foreground gate like the hook
 /// path; the keyboard takeover switch never gates this (out-of-hook
 /// dogfood/recovery). The request is deleted before dispatch so there is no
 /// replay; a malformed or mismatched body is consumed the same way with a
-/// `refused` outcome. Send carries no chord origin: the mover is the live
+/// `refused` outcome. Sends carry no chord origin: the mover is the live
 /// foreground managed window at dispatch, resolved through the same
 /// `snap_origins` map the hook binds chords against, then the exact same
-/// `workspace_do_send` focus/identity/scope/owner gates. Production log
+/// `workspace_do_send` focus/identity/scope/owner gates with the request's
+/// explicit follow/stay intent. Production log
 /// carries op/index/edge/outcome only (no HWNDs, tokens, or identity bytes);
 /// the client correlation is opaque and never logged.
 fn poll_workspace_cli_request(
@@ -11171,7 +12027,15 @@ fn poll_workspace_cli_request(
         serde_json::from_str::<serde_json::Value>(body)
             .ok()
             .and_then(|v| v.get("action").and_then(|a| a.as_str().map(str::to_owned)))
-            .filter(|a| a == "select" || a == "send")
+            .filter(|a| {
+                a == "select"
+                    || a == "send"
+                    || a == "stay"
+                    || a == "previous"
+                    || a == "relative"
+                    || a == "send-relative"
+                    || a == "stay-relative"
+            })
             .unwrap_or_else(|| "select".to_owned())
     };
     // Proof owners never serve the normal control: consume once with an
@@ -11274,12 +12138,61 @@ fn poll_workspace_cli_request(
         queued_at: start,
         start,
     };
-    if request.action == WorkspaceAction::Send {
+    if request.action.is_send() {
         // Boundary-send testing affordance: the normal loop deliberately
         // rejects injected keys, so the mover is the live foreground managed
         // window at dispatch (same `snap_origins` map the hook binds chords
-        // against), never a carried HWND. Every other gate stays inside the
+        // against), never a carried HWND. The request's explicit follow/stay
+        // intent threads the exact same `workspace_do_send` gates; old
+        // `--send` keeps following. Every other gate stays inside the
         // existing `workspace_do_send`.
+        let (target, follow, dispatch_op): (SendTarget, bool, &'static str) = match request.action {
+            WorkspaceAction::Send => (SendTarget::Numbered(request.index), true, "send"),
+            WorkspaceAction::Stay => (SendTarget::Numbered(request.index), false, "stay"),
+            WorkspaceAction::RelativeSend => match request.direction {
+                Some(direction) => {
+                    let target = SendTarget::Relative(direction.delta());
+                    (target, true, target.log_op())
+                }
+                None => {
+                    log_json_at(
+                        &state.log_path,
+                        workspace_log(state, tick, op, 0, "cli", "refused"),
+                    );
+                    return;
+                }
+            },
+            WorkspaceAction::RelativeStay => match request.direction {
+                Some(direction) => {
+                    let delta = direction.delta();
+                    (
+                        SendTarget::Relative(delta),
+                        false,
+                        if delta < 0 { "stay-prev" } else { "stay-next" },
+                    )
+                }
+                None => {
+                    log_json_at(
+                        &state.log_path,
+                        workspace_log(state, tick, op, 0, "cli", "refused"),
+                    );
+                    return;
+                }
+            },
+            WorkspaceAction::Select
+            | WorkspaceAction::Previous
+            | WorkspaceAction::RelativeHistory => {
+                log_json_at(
+                    &state.log_path,
+                    workspace_log(state, tick, op, request.index, "cli", "refused"),
+                );
+                return;
+            }
+        };
+        let dispatch_index = match request.action {
+            WorkspaceAction::Send | WorkspaceAction::Stay => request.index,
+            _ => 0,
+        };
         let foreground_hwnd = unsafe { GetForegroundWindow() } as usize as u64;
         let origin = state.snap_origins.get(&foreground_hwnd).cloned();
         match origin.filter(|o| !o.token.is_empty()) {
@@ -11294,7 +12207,8 @@ fn poll_workspace_cli_request(
                     &mut observed,
                     &retained,
                     &output,
-                    request.index,
+                    target,
+                    follow,
                     o.hwnd,
                     &o.token,
                     o.pid,
@@ -11303,15 +12217,22 @@ fn poll_workspace_cli_request(
                 );
                 log_json_at(
                     &state.log_path,
-                    workspace_log(state, tick, op, request.index, "cli", effect.outcome),
+                    workspace_log(
+                        state,
+                        tick,
+                        dispatch_op,
+                        dispatch_index,
+                        "cli",
+                        effect.outcome,
+                    ),
                 );
                 log_workspace_action(
                     state,
                     &state.log_path.clone(),
                     &ActionLine {
                         ctx: &ctx,
-                        op,
-                        index: request.index,
+                        op: dispatch_op,
+                        index: dispatch_index,
                         edge: "cli",
                         outcome: effect.outcome,
                         focus: effect.focus,
@@ -11336,31 +12257,75 @@ fn poll_workspace_cli_request(
             _ => {
                 log_json_at(
                     &state.log_path,
-                    workspace_log(state, tick, op, request.index, "cli", "unmanaged"),
+                    workspace_log(state, tick, dispatch_op, dispatch_index, "cli", "unmanaged"),
                 );
             }
         }
         return;
     }
     // Resolve without preactivating (same as the hook select path):
-    // `resolve_send*` never touch ACTIVE; only the transition activates.
-    let target = if request.index == 0 {
-        state
-            .workspaces
-            .resolve_send_trailing(&output)
-            .map(|(id, _)| id)
-    } else {
-        state.workspaces.resolve_send(&output, request.index)
+    // resolvers never touch ACTIVE; only the transition activates. History
+    // forms resolve purely like the hook history path.
+    let (target, none_outcome, dispatch_op, dispatch_index): (
+        Option<String>,
+        &'static str,
+        &'static str,
+        u8,
+    ) = match request.action {
+        WorkspaceAction::Select => {
+            let target = if request.index == 0 {
+                state
+                    .workspaces
+                    .resolve_send_trailing(&output)
+                    .map(|(id, _)| id)
+            } else {
+                state.workspaces.resolve_send(&output, request.index)
+            };
+            let none_outcome = if request.index == 0 {
+                "unknown-output"
+            } else {
+                "unknown-target"
+            };
+            (target, none_outcome, "select", request.index)
+        }
+        WorkspaceAction::Previous => (
+            state.workspaces.resolve_previous(&output),
+            "unknown-target",
+            "previous",
+            0,
+        ),
+        WorkspaceAction::RelativeHistory => match request.direction {
+            Some(direction) => {
+                let delta = direction.delta();
+                (
+                    state.workspaces.resolve_relative(&output, delta),
+                    "unknown-target",
+                    if delta < 0 {
+                        "relative-prev"
+                    } else {
+                        "relative-next"
+                    },
+                    0,
+                )
+            }
+            None => (None, "refused", "relative", 0),
+        },
+        WorkspaceAction::Send
+        | WorkspaceAction::Stay
+        | WorkspaceAction::RelativeSend
+        | WorkspaceAction::RelativeStay => (None, "refused", op, request.index),
     };
     let Some(target) = target else {
-        let outcome = if request.index == 0 {
-            "unknown-output"
-        } else {
-            "unknown-target"
-        };
         log_json_at(
             &state.log_path,
-            workspace_log(state, tick, op, request.index, "cli", outcome),
+            workspace_log(
+                state,
+                tick,
+                dispatch_op,
+                dispatch_index,
+                "cli",
+                none_outcome,
+            ),
         );
         return;
     };
@@ -11379,15 +12344,22 @@ fn poll_workspace_cli_request(
     );
     log_json_at(
         &state.log_path,
-        workspace_log(state, tick, op, request.index, "cli", effect.outcome),
+        workspace_log(
+            state,
+            tick,
+            dispatch_op,
+            dispatch_index,
+            "cli",
+            effect.outcome,
+        ),
     );
     log_workspace_action(
         state,
         &state.log_path.clone(),
         &ActionLine {
             ctx: &ctx,
-            op,
-            index: request.index,
+            op: dispatch_op,
+            index: dispatch_index,
             edge: "cli",
             outcome: effect.outcome,
             focus: effect.focus,
@@ -11649,7 +12621,8 @@ fn workspace_tick(
                             &mut observed,
                             &retained,
                             &output,
-                            index,
+                            SendTarget::Numbered(index),
+                            intent.follow,
                             o.hwnd,
                             &o.token,
                             o.pid,
@@ -11709,6 +12682,217 @@ fn workspace_tick(
                         );
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Drain one bounded batch of item 2 relative workspace-send intents.
+/// Previous/next steps resolve once from the mover's source workspace through
+/// the item 1 scoped ring (wrapping through the trailing empty and ordinals
+/// beyond 9, never MRU, never creating); filling the trailing empty invokes
+/// ordinary lifecycle for the next spare after transfer. Follow/stay ride the
+/// explicit intent exactly like numbered sends (`--no-keyboard-snap-takeover`
+/// off, fullscreen/elevated gates, unmanaged-focus refusal all apply). Only
+/// verified follow selects record history; stay never does.
+#[allow(clippy::too_many_arguments)]
+fn workspace_relative_send_tick(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    dir: &Path,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    events: Vec<QueuedWorkspaceSendIntent>,
+    blocked: Option<&'static str>,
+) {
+    let log_path = state.log_path.clone();
+    if let Some(cause) = blocked {
+        let stale = events.len() as u32;
+        if stale > 0 {
+            log_json_at(
+                &log_path,
+                serde_json::json!({"event":"workspace-send-stale","cause": cause, "dropped": stale}),
+            );
+        }
+        return;
+    }
+    if !state.keyboard.takeover {
+        if !events.is_empty() {
+            log_json_at(
+                &log_path,
+                serde_json::json!({"event":"workspace-send-stale","cause":"takeover-off","dropped": events.len()}),
+            );
+        }
+        return;
+    }
+    for intent in events {
+        if !intent.consumed || !intent.announce {
+            if state.trace {
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": "workspace-send",
+                        "tick": state.tick,
+                        "delta": intent.delta,
+                        "follow": intent.follow,
+                        "edge": intent.edge.as_str(),
+                        "disposition": if intent.consumed { "consumed" } else { "passed" },
+                        "outcome": "key-up",
+                    }),
+                );
+            }
+            continue;
+        }
+        let dispatch_start = Instant::now();
+        if suspend_read(state, me, fulls).veto.block {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "workspace-send",
+                    "delta": intent.delta,
+                    "follow": intent.follow,
+                    "edge": intent.edge.as_str(),
+                    "disposition": "consumed",
+                    "outcome": "suspended",
+                }),
+            );
+            continue;
+        }
+        if foreground_elevated(me) {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "workspace-send",
+                    "delta": intent.delta,
+                    "follow": intent.follow,
+                    "edge": intent.edge.as_str(),
+                    "disposition": "consumed",
+                    "outcome": "elevated-foreground",
+                }),
+            );
+            continue;
+        }
+        let Some(output) = chord_output(state, areas) else {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "workspace-send",
+                    "delta": intent.delta,
+                    "follow": intent.follow,
+                    "edge": intent.edge.as_str(),
+                    "disposition": "consumed",
+                    "outcome": "unknown-output",
+                }),
+            );
+            continue;
+        };
+        state.workspaces.ensure_output(&output);
+        state.tick += 1;
+        let tick = state.tick;
+        let mut skipped: Vec<(String, String)> = Vec::new();
+        let mut retained: Vec<RetainedRow> = Vec::new();
+        let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained) else {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "workspace-send",
+                    "tick": tick,
+                    "delta": intent.delta,
+                    "follow": intent.follow,
+                    "edge": intent.edge.as_str(),
+                    "disposition": "consumed",
+                    "outcome": "observation-failed",
+                }),
+            );
+            continue;
+        };
+        publish_managed(state, me, &observed, &retained);
+        ensure_workspace_assignments(state, me, &mut observed, &retained, areas);
+        clear_maximize_at_admission(state, me, &retained);
+        workspace_close_cleanup(state);
+        let target = SendTarget::Relative(intent.delta);
+        let op = target.log_op();
+        let edge = intent.edge;
+        let ctx = ActionCtx {
+            correlation: format!("act-{tick}"),
+            tick,
+            queued_at: intent.tick,
+            start: dispatch_start,
+        };
+        let foreground_hwnd = unsafe { GetForegroundWindow() } as usize as u64;
+        let origin = intent.origin.clone();
+        match origin.filter(|o| o.hwnd == foreground_hwnd) {
+            Some(o) if !o.token.is_empty() => {
+                let effect = workspace_do_send(
+                    state,
+                    me,
+                    store,
+                    dir,
+                    fulls,
+                    areas,
+                    &mut observed,
+                    &retained,
+                    &output,
+                    target,
+                    intent.follow,
+                    o.hwnd,
+                    &o.token,
+                    o.pid,
+                    &o.creation,
+                    &ctx,
+                );
+                log_json_at(
+                    &log_path,
+                    workspace_log(
+                        state,
+                        tick,
+                        op,
+                        target.log_index(),
+                        edge.as_str(),
+                        effect.outcome,
+                    ),
+                );
+                log_workspace_action(
+                    state,
+                    &log_path,
+                    &ActionLine {
+                        ctx: &ctx,
+                        op,
+                        index: target.log_index(),
+                        edge: edge.as_str(),
+                        outcome: effect.outcome,
+                        focus: effect.focus,
+                        timings: &ActionTimings {
+                            transition_ms: effect.transition_ms,
+                            observation_ms: effect.observation_ms,
+                            source_plan_ms: effect.source_plan_ms,
+                            target_plan_ms: effect.target_plan_ms,
+                            source_geometry_ms: effect.source_geometry_ms,
+                            target_geometry_ms: effect.target_geometry_ms,
+                            hide_ms: effect.hide_ms,
+                            reveal_ms: effect.reveal_ms,
+                            focus_ms: effect.focus_ms,
+                        },
+                        source_workspace: &effect.source_workspace,
+                        target_workspace: &effect.target_workspace,
+                        source: effect.source.as_ref(),
+                        target: effect.target.as_ref(),
+                    },
+                );
+            }
+            _ => {
+                log_json_at(
+                    &log_path,
+                    workspace_log(
+                        state,
+                        tick,
+                        op,
+                        target.log_index(),
+                        edge.as_str(),
+                        "unmanaged",
+                    ),
+                );
             }
         }
     }
@@ -14597,17 +15781,20 @@ fn run_tile_loop(
             } else {
                 Vec::new()
             };
-            // Workspace digits and history ride the same hook/queue/mask
-            // authority but dispatch through the workspace owner, never the
-            // directional Engine route. Partition here so each batch keeps its
-            // verdict vocabulary; `shortcut-proof` keeps workspace hides
-            // disabled inside `workspace_tick` via the proof gate.
+            // Workspace digits, relative sends and history ride the same
+            // hook/queue/mask authority but dispatch through the workspace
+            // owner, never the directional Engine route. Partition here so
+            // each batch keeps its verdict vocabulary; `shortcut-proof` keeps
+            // workspace hides disabled inside `workspace_tick` via the proof
+            // gate.
             let mut workspace_events = Vec::new();
+            let mut send_events = Vec::new();
             let mut history_events = Vec::new();
             let mut directional_events = Vec::new();
             for event in snap_events {
                 match event {
                     QueuedSnapEvent::Workspace(intent) => workspace_events.push(intent),
+                    QueuedSnapEvent::WorkspaceSend(intent) => send_events.push(intent),
                     QueuedSnapEvent::WorkspaceHistory(intent) => history_events.push(intent),
                     QueuedSnapEvent::Mask(_)
                     | QueuedSnapEvent::Intent(_)
@@ -14619,7 +15806,8 @@ fn run_tile_loop(
                     }
                 }
             }
-            if !workspace_events.is_empty() || !history_events.is_empty() {
+            if !workspace_events.is_empty() || !send_events.is_empty() || !history_events.is_empty()
+            {
                 woke = true;
             }
             let snap_events = directional_events;
@@ -14951,6 +16139,18 @@ fn run_tile_loop(
                         Some("suspended"),
                     );
                 }
+                if !send_events.is_empty() {
+                    workspace_relative_send_tick(
+                        &mut state,
+                        me,
+                        store,
+                        dir,
+                        &fulls,
+                        &areas,
+                        send_events,
+                        Some("suspended"),
+                    );
+                }
                 if !history_events.is_empty() {
                     workspace_history_tick(
                         &mut state,
@@ -15185,6 +16385,18 @@ fn run_tile_loop(
                         Some("gesture"),
                     );
                 }
+                if !send_events.is_empty() {
+                    workspace_relative_send_tick(
+                        &mut state,
+                        me,
+                        store,
+                        dir,
+                        &fulls,
+                        &areas,
+                        send_events,
+                        Some("gesture"),
+                    );
+                }
                 if !history_events.is_empty() {
                     workspace_history_tick(
                         &mut state,
@@ -15206,6 +16418,7 @@ fn run_tile_loop(
             if ended.is_empty() {
                 if snap_events.is_empty()
                     && workspace_events.is_empty()
+                    && send_events.is_empty()
                     && history_events.is_empty()
                 {
                     reconcile_tick(&mut state, me, &fulls, &areas);
@@ -15239,6 +16452,18 @@ fn run_tile_loop(
                             None,
                         );
                     }
+                    if !send_events.is_empty() {
+                        workspace_relative_send_tick(
+                            &mut state,
+                            me,
+                            store,
+                            dir,
+                            &fulls,
+                            &areas,
+                            send_events,
+                            None,
+                        );
+                    }
                     if !history_events.is_empty() {
                         workspace_history_tick(
                             &mut state,
@@ -15269,6 +16494,18 @@ fn run_tile_loop(
                         &fulls,
                         &areas,
                         workspace_events,
+                        Some("gesture"),
+                    );
+                }
+                if !send_events.is_empty() {
+                    workspace_relative_send_tick(
+                        &mut state,
+                        me,
+                        store,
+                        dir,
+                        &fulls,
+                        &areas,
+                        send_events,
                         Some("gesture"),
                     );
                 }
@@ -15811,6 +17048,7 @@ pub fn cmd_workspace(options: &WorkspaceOptions) -> Result<String> {
         session_id: record.owner.session_id,
         action: options.action,
         index: options.index,
+        direction: options.direction,
         correlation: correlation.clone(),
     };
     let body = render_workspace_request(&request);
@@ -15835,7 +17073,7 @@ pub fn cmd_workspace(options: &WorkspaceOptions) -> Result<String> {
             return Err(err(format!("error: request write: {e}")));
         }
     }
-    Ok(serde_json::json!({"dispatched": true, "op": options.action.as_str(), "index": options.index}).to_string())
+    Ok(serde_json::json!({"dispatched": true, "op": options.action.as_str(), "index": options.index, "direction": options.direction.map(|d| d.as_str())}).to_string())
 }
 
 /// `tile-proof` command: owned-helpers-only proof loop. Requires a nonempty
@@ -16766,6 +18004,59 @@ mod esc_sequence_tests {
         assert!(!esc_edge_cancels(u64::MAX, u64::MAX));
         // Multiple edges still cancel.
         assert!(esc_edge_cancels(7, 9));
+    }
+}
+
+#[cfg(test)]
+mod send_preflight_tests {
+    use super::SendPreflight;
+    use crate::workspace_owner::SendFenceSnapshot;
+
+    fn preflight(maximized: bool, fullscreen: bool, fallback: bool) -> SendPreflight {
+        SendPreflight {
+            fences: SendFenceSnapshot {
+                inner_gap: 8,
+                outer_gap: 8,
+                source_tiled: true,
+                target_tiled: false,
+                overlay_maximized: maximized,
+                overlay_fullscreen: fullscreen,
+            },
+            fallback_fullscreen: fallback,
+        }
+    }
+
+    #[test]
+    fn overlay_hold_covers_pre_transfer_gate_without_touching_windows() {
+        // Null handle reads (false, None) with no setters and no crash. This
+        // is the exact production-called gate the native pre-assign check
+        // runs before `assign` (mirroring the Engine pre-assign order), so an
+        // observed mover that went borderless fullscreen refuses with NO
+        // membership change; the gate/assign ordering itself is straight-line
+        // code in `workspace_do_send_native`, not a mock.
+        let fulls = [tiler_core::geometry::Rect {
+            x: 0,
+            y: 0,
+            w: 800,
+            h: 600,
+        }];
+        // Ordinary snapshot, unreadable frame, no fallback: holds.
+        assert_eq!(
+            preflight(false, false, false).overlay_hold(0, &fulls),
+            Ok(())
+        );
+        // Unreadable frame with a fullscreen fallback refuses (the retained
+        // native-boundary case): no transfer, no hide, no focus.
+        assert_eq!(
+            preflight(true, false, true).overlay_hold(0, &fulls),
+            Err("send-refused-fullscreen")
+        );
+        // Retained snapshot against a null live read defers drift with no
+        // restore.
+        assert_eq!(
+            preflight(true, false, false).overlay_hold(0, &fulls),
+            Err("deferred")
+        );
     }
 }
 

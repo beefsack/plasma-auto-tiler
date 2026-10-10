@@ -2820,7 +2820,10 @@ pub fn parse_inspect_args(args: &[String]) -> Result<InspectOptions, String> {
 
 /// Exact-owner `workspace` control action (normal `tile` only): `select`
 /// focuses an existing/trailing same-output workspace, `send` moves the
-/// focused managed window there and follows. No synthetic input, no keyboard
+/// focused managed window there and follows, `stay` moves it without
+/// following, `previous` toggles the previous view, and the three `relative`
+/// forms step the item 1 scoped ring (`relative` selects, `send-relative`
+/// follows, `stay-relative` stays). No synthetic input, no keyboard
 /// acceptance, never a proof path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum WorkspaceAction {
@@ -2828,6 +2831,16 @@ pub enum WorkspaceAction {
     Select,
     #[serde(rename = "send")]
     Send,
+    #[serde(rename = "stay")]
+    Stay,
+    #[serde(rename = "previous")]
+    Previous,
+    #[serde(rename = "relative")]
+    RelativeHistory,
+    #[serde(rename = "send-relative")]
+    RelativeSend,
+    #[serde(rename = "stay-relative")]
+    RelativeStay,
 }
 
 impl WorkspaceAction {
@@ -2836,89 +2849,200 @@ impl WorkspaceAction {
         match self {
             Self::Select => "select",
             Self::Send => "send",
+            Self::Stay => "stay",
+            Self::Previous => "previous",
+            Self::RelativeHistory => "relative",
+            Self::RelativeSend => "send-relative",
+            Self::RelativeStay => "stay-relative",
+        }
+    }
+
+    /// True for the three send-family actions (numbered/relative follow/stay):
+    /// they move the focused managed window and require a managed origin.
+    /// Select/history actions work on empty workspaces and unmanaged
+    /// foreground.
+    #[must_use]
+    pub const fn is_send(self) -> bool {
+        match self {
+            Self::Send | Self::RelativeSend | Self::RelativeStay | Self::Stay => true,
+            Self::Select | Self::Previous | Self::RelativeHistory => false,
+        }
+    }
+
+    /// Explicit follow intent for the send family (`send`/`send-relative`
+    /// follow; `stay`/`stay-relative` stay). `None` for select/history.
+    #[must_use]
+    pub const fn follow(self) -> Option<bool> {
+        match self {
+            Self::Send | Self::RelativeSend => Some(true),
+            Self::Stay | Self::RelativeStay => Some(false),
+            Self::Select | Self::Previous | Self::RelativeHistory => None,
         }
     }
 }
 
-/// CLI options for the exact-owner `workspace (--select|--send) INDEX`
-/// control (normal `tile` only): one digit index 0..=9 plus the action. The
-/// CLI only queues a bounded single-pending request file; the owner loop
-/// validates the full owner binding and dispatches through the existing
-/// `workspace_do_select` / `workspace_do_send` resolvers. No synthetic input,
-/// no keyboard acceptance, never a proof path.
+/// Relative direction for the `workspace --relative` / `--send-relative` /
+/// `--stay-relative` forms: an ordinal step in the item 1 scoped ring, never
+/// MRU, resolved once before transfer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum WorkspaceDirection {
+    #[serde(rename = "previous")]
+    Previous,
+    #[serde(rename = "next")]
+    Next,
+}
+
+impl WorkspaceDirection {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Previous => "previous",
+            Self::Next => "next",
+        }
+    }
+
+    /// Ring step: -1 previous, +1 next.
+    #[must_use]
+    pub const fn delta(self) -> i32 {
+        match self {
+            Self::Previous => -1,
+            Self::Next => 1,
+        }
+    }
+}
+
+/// CLI options for the exact-owner `workspace` control (normal `tile` only):
+/// `--select`/`--send`/`--stay` take a digit index 0..=9; `--previous` takes
+/// no value; `--relative`/`--send-relative`/`--stay-relative` take
+/// `previous`|`next`. The CLI only queues a bounded single-pending request
+/// file; the owner loop validates the full owner binding and dispatches
+/// through the existing `workspace_do_select` / `workspace_do_send`
+/// resolvers (plus the pure history resolvers). No synthetic input, no
+/// keyboard acceptance, never a proof path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceOptions {
     pub action: WorkspaceAction,
     pub index: u8,
+    pub direction: Option<WorkspaceDirection>,
 }
 
-/// Parse `workspace (--select|--send) INDEX`. Exactly one flag with a digit
-/// 0..=9; anything else (including a missing value or both flags) refuses.
+/// Parse `workspace` CLI forms. Exactly one action flag; indexed forms take a
+/// digit 0..=9, relative forms take `previous`|`next`, `--previous` takes no
+/// value. Anything else (including a missing value or both flags) refuses.
 pub fn parse_workspace_args(args: &[String]) -> Result<WorkspaceOptions, String> {
-    let usage = "usage: workspace (--select|--send) INDEX";
+    let usage = "usage: workspace (--select|--send|--stay) INDEX | --previous | (--relative|--send-relative|--stay-relative) (previous|next)";
     let mut action: Option<WorkspaceAction> = None;
-    let mut index: Option<u8> = None;
+    let mut index: u8 = 0;
+    let mut direction: Option<WorkspaceDirection> = None;
     let mut i = 0;
     while i < args.len() {
-        match args[i].as_str() {
-            "--select" | "--send" => {
-                let next = if args[i].as_str() == "--select" {
-                    WorkspaceAction::Select
-                } else {
-                    WorkspaceAction::Send
-                };
-                i += 1;
+        let flag = args[i].as_str();
+        let next = match flag {
+            "--select" => WorkspaceAction::Select,
+            "--send" => WorkspaceAction::Send,
+            "--stay" => WorkspaceAction::Stay,
+            "--previous" => WorkspaceAction::Previous,
+            "--relative" => WorkspaceAction::RelativeHistory,
+            "--send-relative" => WorkspaceAction::RelativeSend,
+            "--stay-relative" => WorkspaceAction::RelativeStay,
+            _ => return Err(usage.to_owned()),
+        };
+        if action.is_some() {
+            return Err(usage.to_owned());
+        }
+        i += 1;
+        match next {
+            WorkspaceAction::Select | WorkspaceAction::Send | WorkspaceAction::Stay => {
                 let value = args.get(i).ok_or_else(|| usage.to_owned())?;
-                if action.is_some() {
-                    return Err(usage.to_owned());
-                }
                 let parsed: u8 = value.parse().map_err(|_| usage.to_owned())?;
                 if parsed > 9 {
                     return Err("refuse: workspace index must be 0..=9".to_owned());
                 }
-                action = Some(next);
-                index = Some(parsed);
+                index = parsed;
                 i += 1;
             }
-            _ => return Err(usage.to_owned()),
+            WorkspaceAction::Previous => {}
+            WorkspaceAction::RelativeHistory
+            | WorkspaceAction::RelativeSend
+            | WorkspaceAction::RelativeStay => {
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                direction = Some(match value.as_str() {
+                    "previous" => WorkspaceDirection::Previous,
+                    "next" => WorkspaceDirection::Next,
+                    _ => return Err(usage.to_owned()),
+                });
+                i += 1;
+            }
         }
+        action = Some(next);
     }
-    match (action, index) {
-        (Some(action), Some(index)) => Ok(WorkspaceOptions { action, index }),
-        _ => Err(usage.to_owned()),
+    match action {
+        Some(action) => Ok(WorkspaceOptions {
+            action,
+            index,
+            direction,
+        }),
+        None => Err(usage.to_owned()),
     }
 }
 
 /// Verify the raw received argv against the parsed `workspace` options:
-/// exactly one `--select`/`--send` plus matching INDEX, no unknown flags.
+/// exactly one action flag plus its matching value (none for `--previous`),
+/// no unknown flags.
 pub fn verify_workspace_argv_consistency(
     raw: &[String],
     parsed: &WorkspaceOptions,
 ) -> Result<(), String> {
-    let usage = "usage: workspace (--select|--send) INDEX";
-    if raw.len() != 2 {
-        return Err(usage.to_owned());
-    }
+    let usage = "usage: workspace (--select|--send|--stay) INDEX | --previous | (--relative|--send-relative|--stay-relative) (previous|next)";
     let want = match parsed.action {
         WorkspaceAction::Select => "--select",
         WorkspaceAction::Send => "--send",
+        WorkspaceAction::Stay => "--stay",
+        WorkspaceAction::Previous => "--previous",
+        WorkspaceAction::RelativeHistory => "--relative",
+        WorkspaceAction::RelativeSend => "--send-relative",
+        WorkspaceAction::RelativeStay => "--stay-relative",
     };
+    match parsed.action {
+        WorkspaceAction::Previous => {
+            if raw.len() != 1 {
+                return Err(usage.to_owned());
+            }
+        }
+        WorkspaceAction::Select | WorkspaceAction::Send | WorkspaceAction::Stay => {
+            if raw.len() != 2 {
+                return Err(usage.to_owned());
+            }
+            let got: u8 = raw[1].parse().map_err(|_| usage.to_owned())?;
+            if got != parsed.index {
+                return Err("error: argv/parsed workspace mismatch (impossible)".to_owned());
+            }
+        }
+        WorkspaceAction::RelativeHistory
+        | WorkspaceAction::RelativeSend
+        | WorkspaceAction::RelativeStay => {
+            if raw.len() != 2 {
+                return Err(usage.to_owned());
+            }
+            let want_direction = parsed.direction.ok_or_else(|| usage.to_owned())?;
+            if raw[1] != want_direction.as_str() {
+                return Err("error: argv/parsed workspace mismatch (impossible)".to_owned());
+            }
+        }
+    }
     if raw[0] != want {
         return Err(usage.to_owned());
-    }
-    let got: u8 = raw[1].parse().map_err(|_| usage.to_owned())?;
-    if got != parsed.index {
-        return Err("error: argv/parsed workspace mismatch (impossible)".to_owned());
     }
     Ok(())
 }
 
 /// Versioned exact-owner workspace request body. `creation`/`pid`/`exe_path`/
 /// `user_sid`/`session_id` bind the exact ledger owner; `action` is the
-/// transport op (`select` focuses, `send` moves the focused managed window
-/// and follows); `index` is the digit; `correlation` is a client-generated
-/// opaque token the owner echoes in its dispatch log. No titles, no geometry,
-/// no secrets.
+/// transport op; `index` is the digit for indexed actions (ignored
+/// otherwise, still bounded); `direction` rides the relative step for the
+/// three relative actions (`None` elsewhere); `correlation` is a
+/// client-generated opaque token the owner echoes in its dispatch log. No
+/// titles, no geometry, no secrets.
 pub const WORKSPACE_REQUEST_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -2931,6 +3055,8 @@ pub struct WorkspaceRequest {
     pub session_id: u32,
     pub action: WorkspaceAction,
     pub index: u8,
+    #[serde(default)]
+    pub direction: Option<WorkspaceDirection>,
     pub correlation: String,
 }
 
@@ -2941,9 +3067,11 @@ pub fn render_workspace_request(request: &WorkspaceRequest) -> String {
 }
 
 /// Parse and bound one workspace request body. Refuses malformed JSON,
-/// version drift, empty identity, out-of-range index, and invalid
-/// correlation tokens. Owner equality (exact creation/pid/exe/sid/session)
-/// stays with the caller, which holds the live owner identity.
+/// version drift, empty identity, out-of-range index, missing/misplaced
+/// direction (required exactly for the three relative actions, refused
+/// elsewhere), unknown actions, and invalid correlation tokens. Owner
+/// equality (exact creation/pid/exe/sid/session) stays with the caller, which
+/// holds the live owner identity.
 pub fn parse_workspace_request(json: &str) -> Result<WorkspaceRequest, String> {
     let request: WorkspaceRequest =
         serde_json::from_str(json).map_err(|_| "refuse: malformed workspace request".to_owned())?;
@@ -2960,6 +3088,23 @@ pub fn parse_workspace_request(json: &str) -> Result<WorkspaceRequest, String> {
     }
     if request.index > 9 {
         return Err("refuse: workspace index must be 0..=9".to_owned());
+    }
+    match request.action {
+        WorkspaceAction::RelativeHistory
+        | WorkspaceAction::RelativeSend
+        | WorkspaceAction::RelativeStay => {
+            if request.direction.is_none() {
+                return Err("refuse: malformed workspace request".to_owned());
+            }
+        }
+        WorkspaceAction::Select
+        | WorkspaceAction::Send
+        | WorkspaceAction::Stay
+        | WorkspaceAction::Previous => {
+            if request.direction.is_some() {
+                return Err("refuse: malformed workspace request".to_owned());
+            }
+        }
     }
     if tiler_core::ids::CorrelationId::parse(&request.correlation).is_none() {
         return Err("refuse: malformed workspace request".to_owned());
