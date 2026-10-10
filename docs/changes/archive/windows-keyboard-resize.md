@@ -104,7 +104,7 @@
   HWND2360828 PID27208 creation `01dd58e7cfbc7fe1`; later Paint HWND7995644
   PID18556 creation `01dd58e7de222d8f` supplies the vertical neighbor.
 - Real keyboard drain via exact-owner CLI: Notepad right/outwards width
-  1282->1294 (+12), neighbor -12. Subsequent indices1..5 add 14/16/18/20/20
+  1282->1294 (+12), neighbor -12. Subsequent indices 1..5 add 14/16/18/20/20
   (total +100 including press0). Mode-change inward press0 subtracts12.
   Left outer edge returns Engine `unchanged`, rect bit-identical. Vertical
   down grow adds12 height; top-edge up returns unchanged. Native maximized
@@ -116,25 +116,26 @@
   `C:/Users/beefs/AppData/Local/Temp/opencode/settings-verify/20261011-055349-26792/evidence.json`,
   SHA-256 `98EEBF20B398045649B7D3FC1E76C66A286AA4C86C01EE92DC53AC91441C1827`.
   Settings PID32456 creation `01dd58e8b092ecdb`, same artifact, exact-owned
-  controls. All8 resize rows available with defaults/unknown-owner notes.
+  controls. All 8 resize rows available with defaults/unknown-owner notes.
   Wrong-arm rebind refuses; Disable Apply revision1, Keep Apply revision2,
   Win+Alt+O Rebind Apply revision3 verified saved JSON. Staged Disable then
   Revert reloads Keep without a file write. Preset disclosure read back.
 - Teardown verified: owner stopped/process gone, hooks released through exit,
   independent restore clean, no owned hidden windows remain, settings original
   absence restored, SPI arranging1/pen35 restored, all owned apps and Settings
-  closed. Inventory returned to19 with identical executable groups; terminal
+  closed. Inventory returned to 19 with identical executable groups; terminal
   and pre-existing windows preserved. No registry/policy or forced-loss probes.
 
 ## Failures, discoveries and remaining acceptance
 
 - No product semantic failed approach. Failed fixture/harness runs are not
-  accepted feature evidence: Notepad stub PID/ HWND oracle (inventory discovery
+  accepted feature evidence: Notepad stub PID/HWND oracle (inventory discovery
   repaired it); log scan skipped production line in the CLI poll batch (scan
   from pre-request mark repaired it); Settings UIA custom controls exposed as
   Pane, not List/Text (hybrid int-only native messages + Pane readbacks repaired
-  it). Each failed run stopped/restored and left no owned residue.
-- Three Paint minima (864px each) overconstrain2560px, so an initial fixture
+  it). Each failed run cleaned up its exact-owned actors and settings and left
+  no owned residue; owner runs used stop/restore.
+- Three Paint minima (864px each) overconstrain 2560px, so an initial fixture
   correctly returned unchanged. Successful horizontal fixture uses two apps;
   the later vertical split adds a third without the same-axis overconstraint.
 - Physical Win+Alt/Shift+Alt suppression, alias delivery/hold feel, takeover-off
@@ -145,3 +146,12 @@
 - Tentative preset and test-needed CLI choices above require user review.
   Implementation complete; next acceptance action is the physical item6
   journey in backlog, not another injected-input experiment.
+
+## Publication
+
+- Pushed `241cf7b52dacd697528087344060d6db67659107` (`Add Windows keyboard
+  resize`). Rebase preserved concurrent `9fdfc29`/`37af573` packaging work
+  without conflict; it did not change Windows/core Rust or the live artifact.
+- CI [38077899121](https://github.com/beefsack/plasma-auto-tiler/actions/runs/38077899121)
+  completed success: windows, rust, kwin, shell, native and macos. No failed
+  jobs or repairs. Final evidence-record publication is documentation only.
