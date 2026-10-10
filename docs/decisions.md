@@ -123,7 +123,7 @@ platform API behavior.
   stays alive without a watcher, registers on live-confirmed watcher owner;
   outbound state-snapshot bridge, reconnecting, idempotent, no KWin executable
   allowlist; no shell, input, or general helper-to-KWin action route (narrow
-  exceptions: keyless KGlobalAccel workspace-tiling toggle and
+  exceptions: action-name KGlobalAccel workspace-tiling toggle and
   saved-default/reconfigure writes). Snapshots require the sender's unique
   D-Bus name to equal the current `org.kde.KWin` owner. Ordering (user
   decision C4 option 2, 2026-09-27): reject and
@@ -275,7 +275,7 @@ platform API behavior.
 - KDE: tray writes only `defaultTiled` and requests KWin reconfigure; only a
   running KWin reread/snapshot confirms it. Per-workspace overrides are
   session-only and reset on script reload; shared mode toggles the backing
-  workspace across outputs. Keyless KGlobalAccel workspace-tiling action is
+  workspace across outputs. KGlobalAccel workspace-tiling action is
   invoked by the tray without confirming application. No per-workspace history
   persists.
 - Windows (user decisions 2026-10-02): one normal single per-user/session
@@ -807,8 +807,11 @@ platform API behavior.
   currently unbound actions stay unbound; COSMIC `SendToWorkspace` and
   `MigrateWorkspaceToOutput` also have no binding in that pinned file. KDE
   implementation uses the catalog and existing Authentic/Compatible conflict
-  model; the KDE `Meta+Y` holder is unverified. Windows wiring is handoff
-  item 21; these bindings are selected, implementation pending.
+  model. KDE delivered offline 2026-10-11: registration and native/KCM catalog
+  use `Meta+Y`; no stock Plasma 6.7.5 holder found in static source/shortcut
+  inventory ([record](changes/archive/kde-workspace-tiling-shortcut.md)).
+  Physical delivery, existing-assignment/restart persistence and live presets
+  remain user-owned. Windows wiring remains pending in handoff item 21.
 ## Gaming Safety
 
 - Gaming compatibility must be flawless (see Principles). Provide alternate

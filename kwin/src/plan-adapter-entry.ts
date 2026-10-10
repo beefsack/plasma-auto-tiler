@@ -141,6 +141,9 @@ export interface WorkspaceTilingSnapshot {
 
 export const WORKSPACE_TILING_TOGGLE_ACTION = "plasma-auto-tiler-toggle-workspace-tiling";
 export const WORKSPACE_TILING_TOGGLE_TEXT = "Toggle tiling for current workspace";
+// User decision 2026-10-10: the per-workspace tiling toggle binds Meta+Y by
+// default. Every other currently-unbound action stays unbound.
+export const WORKSPACE_TILING_TOGGLE_SEQUENCE = "Meta+Y";
 
 export interface PlanEntryHandle {
     readonly stop: () => void;
@@ -7255,15 +7258,15 @@ function startPlanAdapterEntryOnce(
                 }
             }
         }
-        // Project-owned keyless toggle for the tray menu (invoked over
-        // KGlobalAccel by action name, never by a physical key). The menu
-        // waits for the next published snapshot rather than assuming
-        // this dispatch applied.
+        // Project-owned toggle for the tray menu (invoked over KGlobalAccel
+        // by action name, never by a physical key) plus the Meta+Y default
+        // binding. The menu waits for the next published snapshot rather
+        // than assuming this dispatch applied.
         try {
-            const ok = registerFn(WORKSPACE_TILING_TOGGLE_ACTION, WORKSPACE_TILING_TOGGLE_TEXT, "", () => toggleWorkspaceTiling());
+            const ok = registerFn(WORKSPACE_TILING_TOGGLE_ACTION, WORKSPACE_TILING_TOGGLE_TEXT, WORKSPACE_TILING_TOGGLE_SEQUENCE, () => toggleWorkspaceTiling());
             if (ok !== true) {
                 try {
-                    log(`plasma-auto-tiler:plan:shortcut-failed action=${WORKSPACE_TILING_TOGGLE_ACTION} sequence=`);
+                    log(`plasma-auto-tiler:plan:shortcut-failed action=${WORKSPACE_TILING_TOGGLE_ACTION} sequence=${WORKSPACE_TILING_TOGGLE_SEQUENCE}`);
                 } catch (error) {
                     void error;
                 }
@@ -7271,7 +7274,7 @@ function startPlanAdapterEntryOnce(
         } catch (error) {
             void error;
             try {
-                log(`plasma-auto-tiler:plan:shortcut-failed action=${WORKSPACE_TILING_TOGGLE_ACTION} sequence=`);
+                log(`plasma-auto-tiler:plan:shortcut-failed action=${WORKSPACE_TILING_TOGGLE_ACTION} sequence=${WORKSPACE_TILING_TOGGLE_SEQUENCE}`);
             } catch (inner) {
                 void inner;
             }

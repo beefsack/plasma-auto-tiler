@@ -50,6 +50,7 @@ constexpr int META_ALT_DOWN = 419430421;
 constexpr int META_G = 268435527;
 constexpr int META_M = 268435533;
 constexpr int META_O = 268435535;
+constexpr int META_Y = 268435545;
 constexpr int META_LEFT = 285212690;
 constexpr int META_DOWN = 285212693;
 constexpr int META_UP = 285212691;
@@ -4194,9 +4195,10 @@ void selectionCatalogCounts()
     // steps) plus 36 item-2 workspace rows (8 bound relative send-follow,
     // 20 unbound numbered stay with aliases plus append rows, 8 unbound
     // relative stay) plus 12 item-5 output rows (8 bound follow, 4 unbound
-    // stay) plus 4 R-WS-12 migrate rows (unbound directional follow).
+    // stay) plus 4 R-WS-12 migrate rows (unbound directional follow) plus 1
+    // workspace-tiling toggle row (Meta+Y bound, no known stock holder).
     const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
-    CHECK(catalog.size() == 128);
+    CHECK(catalog.size() == 129);
     int focus = 0;
     int move = 0;
     int resize = 0;
@@ -4256,7 +4258,7 @@ void selectionCatalogCounts()
     CHECK(focus == 8);
     CHECK(move == 8);
     CHECK(resize == 16);
-    CHECK(toggle == 5);
+    CHECK(toggle == 6);
     CHECK(select == 10);
     CHECK(workspaceMove == 20);
     CHECK(workspacePrevious == 1);
@@ -4267,7 +4269,7 @@ void selectionCatalogCounts()
     CHECK(outputSend == 8);
     CHECK(outputSendStay == 4);
     CHECK(workspaceMigrate == 4);
-    CHECK(keys.size() == 93);
+    CHECK(keys.size() == 94);
     CHECK(keys.contains(0));
     CHECK(!shortcutCatalogContains(QStringLiteral("kwin"), QStringLiteral("other-action")));
     bool found = true;
@@ -4285,7 +4287,9 @@ void selectionCatalogCounts()
         QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-left-stay"))));
     CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
         QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-migrate-workspace-left"))));
-    CHECK(shortcutMaxProjectWrites() == 129);
+    CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
+        QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling"))));
+    CHECK(shortcutMaxProjectWrites() == 130);
     // Displays resolve through the catalog first, table targets preserved.
     CHECK(ShortcutReconciler::keyDisplayName(SHORTCUT_META_1) == QStringLiteral("Meta+1"));
     CHECK(ShortcutReconciler::keyDisplayName(SHORTCUT_META_EXCLAM) == QStringLiteral("Meta+!"));
@@ -4438,7 +4442,7 @@ void selectionForceBindsDraftAndDrift()
     CHECK(preview.forceable);
     CHECK(preview.disabledIds.isEmpty());
     CHECK(preview.authenticStaged);
-    CHECK(preview.liveImages.size() == 129);
+    CHECK(preview.liveImages.size() == 130);
     const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"));
     const ShortcutForceApplyResult staleDraft =
         ShortcutReconciler(&store, &cleared).applyForcedSelected(preview, QSet<QString>{ws1});
@@ -5275,7 +5279,7 @@ void workspaceSendFollowStayRows()
     // numbered stay plus 8 unbound relative stay, in exact TS order.
     CHECK(shortcutConflictTable().size() == 23);
     CHECK(ShortcutReconciler::relevantConflictKeys().size() == 24);
-    CHECK(shortcutProjectCatalog().size() == 128);
+    CHECK(shortcutProjectCatalog().size() == 129);
     const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
     const QList<std::pair<QString, int>> follow = {
         {QStringLiteral("plasma-auto-tiler-send-prev-h"), META_CTRL_SHIFT_H},
@@ -5568,7 +5572,7 @@ void outputSendFollowStayRows()
     // follow rows carry empty known foreign state; both presets Keep.
     CHECK(shortcutConflictTable().size() == 23);
     CHECK(ShortcutReconciler::relevantConflictKeys().size() == 24);
-    CHECK(shortcutProjectCatalog().size() == 128);
+    CHECK(shortcutProjectCatalog().size() == 129);
     const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
     const QList<QString> outputOrder = {
         QStringLiteral("plasma-auto-tiler-send-output-left"),
@@ -5811,7 +5815,7 @@ void migrateWorkspaceFollowRows()
     // rows carry empty known foreign state; both presets Keep.
     CHECK(shortcutConflictTable().size() == 23);
     CHECK(ShortcutReconciler::relevantConflictKeys().size() == 24);
-    CHECK(shortcutProjectCatalog().size() == 128);
+    CHECK(shortcutProjectCatalog().size() == 129);
     const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
     const QList<QString> migrateOrder = {
         QStringLiteral("plasma-auto-tiler-migrate-workspace-left"),
@@ -5977,6 +5981,83 @@ void toggleOrientationCatalogPresetRows()
     }
 }
 
+void workspaceTilingToggleCatalogPresetRows()
+{
+    // User decision 2026-10-10 Meta+Y: no stock KDE holder, so both presets
+    // Keep. Catalog carries the bound toggle row with empty known foreign
+    // state; selection scoping and Apply clear only the project assignment.
+    CHECK(SHORTCUT_META_Y == META_Y);
+    const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
+    const ShortcutCatalogEntry *found = nullptr;
+    for (const ShortcutCatalogEntry &entry : catalog) {
+        if (entry.component == QStringLiteral("kwin")
+            && entry.action == QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling")) {
+            found = &entry;
+            break;
+        }
+    }
+    CHECK(found != nullptr);
+    CHECK(found->canonicalKey == META_Y);
+    CHECK(found->canonicalDisplay == QStringLiteral("Meta+Y"));
+    CHECK(found->kind == QStringLiteral("toggle"));
+    CHECK(found->knownForeignComponent.isEmpty());
+    CHECK(found->knownForeignAction.isEmpty());
+    CHECK(found->knownForeignKey == 0);
+    CHECK(ShortcutReconciler::keyDisplayName(META_Y) == QStringLiteral("Meta+Y"));
+    CHECK(ShortcutReconciler::isProjectAction(QStringLiteral("kwin"),
+                                             QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling")));
+    CHECK(ShortcutReconciler::isProjectOwned(QStringLiteral("kwin"),
+                                             QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling")));
+    CHECK(ShortcutReconciler::isAllowlisted(QStringLiteral("kwin"),
+                                           QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling")));
+    CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
+        QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling"))));
+    // No known holder: neither preset disables the row.
+    const QString toggleId = shortcutCatalogId(QStringLiteral("kwin"),
+                                               QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling"));
+    const QStringList compatibleEmpty = presetCompatibleDisabledIds(
+        catalog, shortcutKnownConflictIds(), QSet<QString>());
+    CHECK(!compatibleEmpty.contains(toggleId));
+    const QStringList compatible = presetCompatibleDisabledIds(
+        catalog, shortcutKnownConflictIds(), QSet<QString>{toggleId});
+    CHECK(compatible.contains(toggleId));
+    // Selection scoping: enabled requires the chord, disabled drops it.
+    CHECK(ShortcutReconciler::conflictingKeysFor(QList<int>{META_Y, 999}, QSet<QString>())
+          == QList<int>{META_Y});
+    CHECK(ShortcutReconciler::remainderAfterClearFor(QList<int>{META_Y, 999}, QSet<QString>())
+          == QList<int>{999});
+    CHECK(ShortcutReconciler::conflictingKeysFor(QList<int>{META_Y, 999}, QSet<QString>{toggleId})
+          .isEmpty());
+    CHECK(ShortcutReconciler::enabledRequiredKeys(QSet<QString>()).contains(META_Y));
+    CHECK(!ShortcutReconciler::enabledRequiredKeys(QSet<QString>{toggleId}).contains(META_Y));
+    // Quiet Apply assigns the chord; disabling clears only the own row.
+    {
+        FakeShortcutStore store;
+        seedFullQuiet(store);
+        FakeClearedActions cleared;
+        CHECK(ShortcutReconciler(&store, &cleared).apply().ok);
+        for (const ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling")) {
+                CHECK(tuple.active == (QList<int>{META_Y}));
+            }
+        }
+    }
+    {
+        FakeShortcutStore store;
+        seedFullQuiet(store);
+        FakeClearedActions cleared;
+        const ShortcutApplyResult result =
+            ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>{toggleId});
+        CHECK(result.ok);
+        CHECK(store.foreignWriteLog.isEmpty());
+        for (const ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling")) {
+                CHECK(tuple.active.isEmpty());
+            }
+        }
+    }
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -6094,6 +6175,7 @@ int main(int argc, char **argv)
         selectionRequiredKeysKeepVsAuthentic();
         selectionRowDisplayShowsActualHolders();
         toggleOrientationCatalogPresetRows();
+        workspaceTilingToggleCatalogPresetRows();
     }
     if (scenario != QStringLiteral("all") && scenario != QStringLiteral("success") && scenario != QStringLiteral("conflict")
         && scenario != QStringLiteral("malformed") && scenario != QStringLiteral("owner") && scenario != QStringLiteral("recovery")

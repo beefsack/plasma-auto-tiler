@@ -438,13 +438,13 @@ function plannedReply(correlation: string, windows: string[]): string {
 }
 
 describe("workspace toggle end to end", () => {
-    it("registers the keyless project-owned toggle action", () => {
+    it("registers the bound project-owned workspace tiling toggle action", () => {
         const world = richWorld(["ws-1"], 2);
         const { handle, mocks } = startTilingEntry(world);
         assert.ok(handle !== null);
         const toggle = mocks.shortcuts.find((row) => row.action === WORKSPACE_TILING_TOGGLE_ACTION);
         assert.ok(toggle !== undefined);
-        assert.equal(toggle.sequence, "");
+        assert.equal(toggle.sequence, "Meta+Y");
         const snapshot = handle?.getWorkspaceTilingSnapshot();
         assert.deepEqual(snapshot, { scope: "ws-1", tiled: true, defaultTiled: true });
         handle?.stop();

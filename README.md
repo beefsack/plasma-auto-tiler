@@ -329,6 +329,7 @@ appear in the registered shortcut set below.
 | plasma-auto-tiler-workspace-0 | Meta+0 |
 | plasma-auto-tiler-move-workspace-1..9 | Meta+Shift+1..9 |
 | plasma-auto-tiler-move-workspace-append | Meta+Shift+0 |
+| plasma-auto-tiler-toggle-workspace-tiling | Meta+Y |
 
 Plasma's default Quick Tile actions occupy `Meta+Arrows` and its next/previous
 screen actions occupy `Meta+Shift+Right/Left`. The unified KCM's explicit

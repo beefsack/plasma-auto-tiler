@@ -531,7 +531,9 @@ const QList<ShortcutCatalogEntry> &shortcutProjectCatalog()
     // Meta+Ctrl+Alt+H/J/K/L and arrows send-and-follow, 4 unbound
     // directional send-and-stay in exact planOutputSendShortcutCatalog
     // order) then 4 R-WS-12 migrate rows (unbound directional follow in
-    // exact planWorkspaceMigrateShortcutCatalog order). Bound canonical
+    // exact planWorkspaceMigrateShortcutCatalog order) then 1
+    // workspace-tiling toggle row (Meta+Y bound by user decision
+    // 2026-10-10; no known stock KDE holder). Bound canonical
     // keys stay unique across the
     // catalog; unbound rows share key 0 with empty display. knownForeign*
     // mirrors the conflict table for its 23 project actions; every other
@@ -824,6 +826,8 @@ const QList<ShortcutCatalogEntry> &shortcutProjectCatalog()
           {}, {}, 0, QStringLiteral("workspace-migrate")},
         {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-migrate-workspace-down"), 0, QStringLiteral(""),
           {}, {}, 0, QStringLiteral("workspace-migrate")},
+        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling"), SHORTCUT_META_Y,
+          QStringLiteral("Meta+Y"), {}, {}, 0, QStringLiteral("toggle")},
     };
     return catalog;
 }

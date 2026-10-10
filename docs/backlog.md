@@ -37,7 +37,9 @@ decisions of 2026-09-24 are under
     split optional effect, Revert-before-removal guidance); accounts/token
     supplied by the user at the start of the next orchestrator session.
   - External NixOS/Home Manager validation (P1 gate).
-  - Workspace tiling toggle default Meta+Y (KDE); Win+Y Windows handoff.
+  - Workspace tiling toggle Meta+Y (KDE) delivered offline 2026-10-11;
+    physical/restart/preset acceptance in Pending live checks. Win+Y remains
+    Windows handoff item 21 ([record](changes/archive/kde-workspace-tiling-shortcut.md)).
   Windows continues as a development preview with its own later release;
   macOS starts after KDE 0.1 ships. KDE current approach retained; no new
   non-native-research items. Lessons persist linked
@@ -2395,7 +2397,9 @@ decisions of 2026-09-24 are under
     Other currently unbound actions stay unbound. Acceptance: shortcut and
     tray checkbox toggle the same per-workspace state; Apply/Revert, presets
     and takeover-off release work; update shortcut records with dated offline
-    evidence, native checks pending. KDE Meta+Y is a separate P1 item below.
+    evidence, native checks pending. KDE Meta+Y delivered offline 2026-10-11
+    ([record](changes/archive/kde-workspace-tiling-shortcut.md)); user-owned
+    physical/restart/preset checks remain below.
 
   ### Source discrepancies to preserve and report
 
@@ -2414,13 +2418,6 @@ decisions of 2026-09-24 are under
   Integrated rebind and KDE first-run prompt deferred. KDE live
   acceptance pending: [checks](live-shortcut-override-verification.md),
   [record](changes/kde-shortcut-conflicts.md).
-- P1 | KDE workspace tiling toggle default Meta+Y | Catalog implementation
-  plus conflict checks under the existing Authentic/Compatible model (user
-  2026-10-10). KDE holder of Meta+Y is unverified; establish it before recording
-  conflict ownership. Verify shortcut/tray state parity, Apply/Force/Revert,
-  presets and the keyless-action path. Windows Win+Y is handoff item 21;
-  all other currently unbound actions stay unbound.
-  [shortcut rule](decisions.md#shortcuts-conflicts-and-presets)
 - P1 | Cross-platform functional specification | After the Windows tiling
   dogfood slice, define window/workspace behavior and keyboard shortcuts as
   the selected behavior contract for Linux, Windows and macOS, except recorded
@@ -2905,9 +2902,21 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
   to new workspaces and to all workspaces after a session restart;
   cross-boundary send is a native move with tiled-side reflow. Red flags:
   geometry changes while floating, menu check disagreeing with KWin, re-tile
-  without confirmed release, `native-failed` sends, a physical key bound to
-  the keyless action.
+  without confirmed release or `native-failed` sends. The same action now
+  defaults to Meta+Y (user 2026-10-10); physical delivery is pending below.
   [change](changes/archive/tray-workspace-toggle.md)
+- KDE workspace tiling Meta+Y (offline delivered 2026-10-11): physical chord
+  and tray checkbox toggle the same current-workspace state, with matching
+  snapshot/menu checks and no effect on another workspace or saved default.
+  Verify the native/KCM row, Keep/custom/empty preservation, Authentic reset,
+  Compatible holder discovery, Apply/Force/Revert isolation and restart
+  persistence, including upgrading an existing empty assignment. No automatic
+  correction is expected: explicitly stage Authentic and confirm Apply/Force
+  to assign the canonical chord to an existing empty/custom row. Other 36
+  unbound rows remain unbound. No stock Plasma 6.7.5 holder found offline;
+  distro/user assignments can differ. User-owned, no live result claimed.
+  [Record](changes/archive/kde-workspace-tiling-shortcut.md),
+  [steps](live-shortcut-override-verification.md#pending-workspace-tiling-default-metay).
 - Active border skips Plasma applet popups (user option A, 2026-09-29;
   KRunner out of scope for now): with an ordinary bordered window active,
   opening the Application Launcher or a tray popup hides the border and logs

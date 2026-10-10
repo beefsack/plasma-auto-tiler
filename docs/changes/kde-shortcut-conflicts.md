@@ -38,6 +38,48 @@
 - Live acceptance remains pending: follow the conflict-list/preset section in `docs/live-shortcut-override-verification.md`. Keep this record active until user-owned KDE acceptance.
 - M13 pending live check: **M13 Keep preserves custom KDE chords across Apply**. Keep now preserves actual assignments; Authentic stages canonical reset and its intent is consumed on successful Apply/Force. Failed/declined attempts retain the staged intent.
 
+## Workspace-tiling toggle default Meta+Y (user 2026-10-10)
+
+- `plasma-auto-tiler-toggle-workspace-tiling` now registers bound to `Meta+Y`
+  (KWin registration plus native catalog/KCM row, kind `toggle`, no
+  conflict-table row). Every other currently-unbound action stays unbound:
+  catalog 128 to 129 rows, bound 92 to 93, unbound still 36.
+- Static conflict evidence, all read-only, no live KWin test (checked
+  2026-10-11):
+  - KDE/kwin tag `v6.7.5`, `src/useractions.cpp`, `Workspace::initShortcuts()`:
+    all 75 stock KWin global shortcuts are registered there with explicit
+    defaults; there is no `Window Shade` entry and no `Key_Y` anywhere in the
+    file, so stock KWin 6.7.5 binds nothing to Meta+Y.
+    (`https://github.com/KDE/kwin/blob/v6.7.5/src/useractions.cpp`,
+    raw `https://raw.githubusercontent.com/KDE/kwin/v6.7.5/src/useractions.cpp`.)
+  - Historical corroboration: KWin 5.x `kwinbindings.cpp` declared
+    `DEF2("Window Shade", I18N_NOOP("Shade Window"), 0, slotWindowShade)` -
+    default key `0`, i.e. unbound even when the action still existed.
+    (`https://invent.kde.org/namedidentity/kwin/-/blob/v5.17.4/kwinbindings.cpp?ref_type=tags`,
+    KWin mirror at tag `v5.17.4`.)
+  - Stock `share/kglobalaccel/*.desktop` shortcut inventory across this host's
+    Nix closure (dolphin `Meta+E`; konsole `Ctrl+Alt+T`; krunner
+    `Alt+Space,Alt+F2`; kscreen `Meta+P`; emojier `Meta+.`;
+    systemmonitor `Meta+Esc`; spectacle print-family chords; systemsettings
+    `Meta+I`): zero `Meta+Y` holders.
+  - This host's `~/.config/kglobalshortcutsrc` (459 lines): no `Meta+Y` string
+    and no Shade entry, so no current holder here either.
+  - Third-party distro customization overlays (not stock) bind Meta+Y to
+    Shade themselves while recording the stock default as empty, e.g.
+    `Window Shade=Meta+Y,none,Shade Window` in
+    `https://github.com/samwhelp/note-about-kde/blob/gh-pages/_demo/howto/demo-keybind-config/demo-keybind-by-kglobalshortcutsrc/kglobalshortcutsrc`,
+    `https://github.com/samwhelp/arcolinux-kde-plasma-adjustment/blob/main/prototype/main/kde-config/locale/en_us/Breeze-Dark/asset/overlay/etc/skel/.config/kglobalshortcutsrc`,
+    `https://github.com/samwhelp/biglinux-adjustment/blob/main/prototype/keybind/kdebiglinux/modern/kglobalshortcutsrc`,
+    and `Shade=Meta+Y,,Shade Window` in
+    `https://github.com/samwhelp/xerolinux-adjustment/blob/main/prototype/de/kde/part/kde-keybind-main/config/kde/kglobalshortcutsrc`.
+- Scope limit: this does not prove every host is free. Distro images and
+  users can and do assign Meta+Y (see the overlays above); on such hosts the
+  existing Compatible discovery surfaces the live collision and stages
+  Disable per the model above. The conflict table stays at 23 rows because
+  no *stock* holder was found.
+- Live acceptance of the physical Meta+Y chord and restart persistence remains
+  user-owned alongside the pending M13 check above.
+
 ## Handover
 
 - Delivered: readable per-binding catalog/current/default/holder list, staged Keep/Disable and Compatible/Authentic presets, selected explicit Apply/Force, native empty-assignment reopen state, and unchanged foreign-default Revert semantics. First-run prompt/in-page rebind are deferred.

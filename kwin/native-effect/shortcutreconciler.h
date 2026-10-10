@@ -124,6 +124,7 @@ inline constexpr int SHORTCUT_META_ALT_SHIFT_RIGHT = 452984852; // Meta+Alt+Shif
 inline constexpr int SHORTCUT_META_SHIFT_G = 301989959; // Meta+Shift+G toggle-sticky
 inline constexpr int SHORTCUT_META_F11 = 285212730; // Meta+F11 toggle-fullscreen
 inline constexpr int SHORTCUT_META_O = 268435535; // Meta+O catalog toggle-orientation
+inline constexpr int SHORTCUT_META_Y = 268435545; // Meta+Y catalog workspace-tiling toggle
 inline constexpr int SHORTCUT_META_0 = 268435504; // Meta+0 workspace select trailing
 inline constexpr int SHORTCUT_META_1 = 268435505; // Meta+1 workspace select 1
 inline constexpr int SHORTCUT_META_2 = 268435506;
@@ -408,7 +409,9 @@ const QList<ShortcutConflictRow> &shortcutConflictTable();
 // item-5 output rows from planOutputSendShortcutCatalog (8 Meta+Ctrl+Alt+H/J/K/L
 // and arrows send-and-follow, 4 unbound directional send-and-stay),
 // followed by 4 R-WS-12 migrate rows from
-// planWorkspaceMigrateShortcutCatalog (unbound directional follow).
+// planWorkspaceMigrateShortcutCatalog (unbound directional follow),
+// followed by 1 workspace-tiling toggle row (Meta+Y bound by user decision
+// 2026-10-10; no known stock KDE holder, so no conflict-table row).
 // Deterministic order, unique action IDs (unbound rows share canonical key 0).
 // kind is one of focus, move, resize, toggle, workspace-select,
 // workspace-move, workspace-previous, workspace-relative,

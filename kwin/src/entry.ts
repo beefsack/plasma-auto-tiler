@@ -13,8 +13,8 @@ import { TrayPublisher } from "./tray-publisher";
 const trayTimers = new Set<QTimer>();
 
 // The plan adapter owns session workspace tiling state; the tray snapshot
-// projects its current scope/tiled/default. The tray invokes the keyless
-// toggle over KGlobalAccel; the menu waits for the next published state.
+// projects its current scope/tiled/default. The tray invokes the toggle over
+// KGlobalAccel; the menu waits for the next published state.
 const trayHolder: { current: TrayPublisher | null } = { current: null };
 const planHandle = startPlanAdapterEntry({
     owner: "kwin-plan-adapter",

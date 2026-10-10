@@ -3835,7 +3835,7 @@ describe("plan entry live observation and shortcuts", () => {
         const toggle = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-toggle-workspace-tiling") as {
             sequence: string;
         };
-        assert.equal(toggle.sequence, "");
+        assert.equal(toggle.sequence, "Meta+Y");
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-float sequence=Meta+G holder_component=kwin holder_action=Grid View"));
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-maximize sequence=Meta+M holder_component=kwin holder_action=KrohnkiteMonocleLayout"));
         assert.ok(!mocks.logs.some((line) => line.includes("plasma-auto-tiler-toggle-fullscreen") && line.includes("shadowed")), "Meta+F11 has no conflicting holder");

@@ -138,7 +138,7 @@ With disposable windows, physically press each chord and confirm:
 ## Conflict List, Disable, and Presets (User-Owned KDE Acceptance)
 
 - Record commit, Plasma/KWin version, keyboard layout, and delivery route.
-  Check all 66 rows appear with readable canonical/current/default chords;
+  Check all 129 rows appear with readable canonical/current/default chords;
   distinguish own holders from foreign conflicts. Missing/unavailable queries
   must not claim a clean or applied state. Include workspace digits and
   shifted-symbol aliases on the actual keyboard layout.
@@ -190,6 +190,23 @@ With disposable windows, physically press each chord and confirm:
   foreign unrelated chord, and stale confirmation refuses. Stage Compatible
   and verify conflicting rows disable while nonconflicting custom rows remain
   unchanged. Ordinary Settings Apply and separate Revert keep their isolation.
+
+### Pending: workspace tiling default Meta+Y
+
+- Record fresh registration separately from upgrading an existing empty/custom
+  assignment. Existing Keep assignments remain authoritative; stage Authentic
+  and explicitly confirm Apply/Force to request the new canonical Meta+Y chord.
+- Press physical Meta+Y twice and compare with the tray checkbox: each toggles
+  only the current workspace's tiled/floating flag, reflected in its snapshot
+  and tray menu. Another workspace and the saved new-workspace default retain
+  their values. Physical input, not `invokeShortcut`, proves delivery.
+- Verify the new KCM row's canonical chord, Keep/custom/empty preservation,
+  Disable, Authentic reset and restart persistence. Other 36 unbound rows stay
+  unbound. Ordinary Save and declined shortcut confirmation never change keys.
+- Compatible keeps Meta+Y when there is no foreign holder; an actual custom
+  holder is discovered and stages Disable. Apply/Force/Revert retain the existing
+  selection, stale-preview and foreign-default-restoration contract above.
+- User-owned pending acceptance; agents run no live KWin cases.
 
 ## Diagnostics
 

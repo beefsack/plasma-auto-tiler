@@ -75,10 +75,10 @@ fn settings_command_for(executable: Option<&str>) -> Option<Command> {
     Some(command)
 }
 
-/// Project-owned keyless KWin action for the current-workspace tiling toggle.
-/// Registered by the KWin script with an empty key sequence (KWin 6.7.5
-/// `src/scripting/scripting.cpp` keyless registration); invoked by the tray
-/// over KGlobalAccel, never by a physical key.
+/// Project-owned KWin action for the current-workspace tiling toggle.
+/// Registered by the KWin script with the `Meta+Y` default key sequence
+/// (user decision 2026-10-10); invoked by the tray over KGlobalAccel by
+/// action name, never by a physical key.
 pub const WORKSPACE_TOGGLE_ACTION: &str = "plasma-auto-tiler-toggle-workspace-tiling";
 /// KGlobalAccel service/path/interface for shortcut invocation. The tray
 /// resolves the `kwin` component via `getComponent` on `/kglobalaccel`, then
@@ -245,8 +245,9 @@ pub fn read_window_conflicts() -> Option<bool> {
 }
 
 /// Real KGlobalAccel toggle dispatch: resolve the `kwin` component, then
-/// invoke the keyless toggle action. Fire-and-forget; any transport failure
-/// is a fixed redacted label, never raw D-Bus detail.
+/// invoke the workspace-tiling toggle action by name (default-bound to
+/// `Meta+Y`; the tray itself sends no key). Fire-and-forget; any transport
+/// failure is a fixed redacted label, never raw D-Bus detail.
 fn invoke_kglobalaccel_toggle() -> Result<(), &'static str> {
     let connection = zbus::blocking::Connection::session().map_err(|_| "invoke-failed")?;
     let component: zbus::zvariant::OwnedObjectPath = connection

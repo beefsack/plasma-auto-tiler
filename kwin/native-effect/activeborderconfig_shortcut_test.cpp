@@ -650,7 +650,7 @@ void selectionPresetsAndDraft()
     QListWidget *list = conflictListByModule(module);
     CHECK(list != nullptr);
     if (list != nullptr) {
-        CHECK(list->count() == 128);
+        CHECK(list->count() == 129);
     }
     QPushButton *compatible = presetButtonByModule(module, "shortcutCompatibleButton");
     QPushButton *authentic = presetButtonByModule(module, "shortcutAuthenticButton");
@@ -920,7 +920,7 @@ void selectionMissingEnabledStatus()
         module.load();
         CHECK(module.shortcutStatusText().contains(QStringLiteral("unavailable"))
               || module.shortcutStatusText().contains(QStringLiteral("missing")));
-        CHECK(!module.shortcutStatusText().contains(QStringLiteral("applied (128 rows")));
+        CHECK(!module.shortcutStatusText().contains(QStringLiteral("applied (129 rows")));
     }
     {
         FakeShortcutStore store;
@@ -967,7 +967,7 @@ void selectionDisabledLockAbsentShowsRows()
     QListWidget *list = conflictListByModule(module);
     CHECK(list != nullptr);
     if (list != nullptr) {
-        CHECK(list->count() == 128);
+        CHECK(list->count() == 129);
     }
 }
 
@@ -1108,7 +1108,7 @@ void stateAndErrorPresentation()
         module.setShortcutStores(&store, &cleared);
         module.load();
         CHECK(module.shortcutStatusText().contains(QStringLiteral("preserved")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("128 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("129 rows")));
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(buttonByName(module, "shortcutFinishApplyButton") == nullptr);
         CHECK(buttonByName(module, "shortcutRestoreButton") == nullptr);
@@ -1147,7 +1147,7 @@ void stateAndErrorPresentation()
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(!module.shortcutAuthenticStaged());
         CHECK(module.shortcutStatusText().contains(QStringLiteral("preserved")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("128 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("129 rows")));
     }
     // Conflict with an unknown foreign holder (Authentic stages the lock
     // relocation chords, so Meta+Esc is in scope).
@@ -1662,7 +1662,7 @@ void selectionKeepPreservesCustomCanonicalEmpty()
         }
     }
     CHECK(module.shortcutStatusText().contains(QStringLiteral("preserved")));
-    CHECK(module.shortcutStatusText().contains(QStringLiteral("128 rows")));
+    CHECK(module.shortcutStatusText().contains(QStringLiteral("129 rows")));
 }
 
 void selectionAuthenticAssignsCanonical()
