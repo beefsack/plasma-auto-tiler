@@ -122,18 +122,26 @@
   tested offline). Non-local/multi-output/cross-output and fullscreen carry
   remain separately pending. No shared-core source change was required.
 - Item 1 CI run 38047125001 completed success for `553c65b` (2026-10-10).
-  Linux/KWin gates for this piece await post-push CI.
+  Linux/KWin gates for this piece passed through CI below, not locally on
+  the Windows host.
 - Publication rebase integrated concurrent commits through `2a3b791`.
   Documentation conflicts were mechanically combined, retaining concurrent
   0.1 scope/triage rows and KDE heuristic note alongside Windows evidence.
   Concurrent shared-core change adds float-focus tests only; core/protocol
   production source is unchanged, so native effect artifact evidence remains
-  applicable. Native gates must also pass on the integrated revision.
+  applicable. All native allowlisted gates also passed on the integrated
+  revision before publication.
 - Integrated revision `4f488e6` passed all local native gates and was pushed.
   CI run 38056399139 found the native null-handle integration test referenced
   Windows-only `tiling_sys` without a cfg guard, breaking Linux compilation.
   One causal test-only repair adds `#[cfg(windows)]`; production and live
   evidence are unchanged. Windows/KWin/macOS jobs passed on that run;
-  full CI verification follows the repair publication.
+  full CI verification followed the repair publication.
+- Repair `0b0fdd5` pushed; native tiling tests (79), fmt, strict allowlisted
+  clippy and diff check passed. CI run
+  [38056677641](https://github.com/beefsack/plasma-auto-tiler/actions/runs/38056677641)
+  completed success 2026-10-11: windows, rust, kwin, shell, native and macos.
+  Item 2/item 20 implementation and verification complete for the scoped
+  single-output handoff; pending user-owned/deferred legs remain above.
 - Environment install incident/accepted tentative decision is recorded in
   item 1; all further mise invocations require `MISE_AUTO_INSTALL=0`.
