@@ -47,7 +47,7 @@
 - Retained Engine tests cover root H/V, nested parent-only, unequal-share exact
   double roundtrip, focus/minimums, lone no-op then long-edge admission,
   float/unknown/overlay refusals and real plan/write scoping. Native regressions
-  exercise actual stale dispatch, production origin/lifetime resolver, suspended
+  exercise actual missing-origin dispatch, production stale-origin/lifetime resolver, suspended
   keyboard queue, matching-kind seam and overlay/retained-only writable guards.
 - Initial direct lifetime-dispatch test failed: publication rebuilds origins from
   observation, so fabricated handles vanish first. One causal test repair pins
@@ -89,7 +89,16 @@
   live flag drift/minimums, held repeat and OS orientation-lock suppression/
   pass-through under Authentic/Compatible/Disable/rebind/takeover-off.
   Product injected-input fence preserved; no helper-proof/CLI bypass introduced.
-- Stale-dispatch offline regression reads host state before the origin fence;
-  foreground suspension/elevation can yield a different refusal on such a host.
-  Resolver and blocked-queue tests are separately direct; positive Win32 geometry
-  actuation is not claimed by those tests or by the Settings live evidence.
+- Pushed implementation `f5801d8`. CI run
+  [38063933730](https://github.com/beefsack/plasma-auto-tiler/actions/runs/38063933730)
+  found the predicted fixture dependency: elevated Windows runner settled
+  `elevated-foreground` before the fabricated stale origin. Production correctly
+  refused; no product behavior failure. Rust/Linux, KWin, shell and macos passed
+  (native completion checked separately).
+- One causal test-only portability repair: direct dispatch now pins missing
+  origin before host reads, plus a separate production resolver regression pins
+  the unknown `Some` origin's exact `origin-vanished` outcome and unchanged
+  Engine/view/advance. Existing lifetime/foreground and suspension assertions
+  preserved; no accepted-outcome widening, skips, production or proof-gate change.
+  Six native orientation-route tests and all native allowlisted gates passed
+  after repair; positive Win32 actuation remains physical-owned pending.

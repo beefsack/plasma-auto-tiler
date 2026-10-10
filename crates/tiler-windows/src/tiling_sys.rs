@@ -19640,20 +19640,13 @@ mod orientation_route_tests {
     }
 
     #[test]
-    fn orientation_stale_origin_settles_without_mutation() {
-        // Unknown origin through the real dispatch route: a fabricated origin
-        // matches nothing the owner publishes and settles `origin-vanished`
-        // with zero Engine, focus, or view mutation. The log outcome pins
-        // the fence so a suspension-gated run fails loudly instead of
-        // passing weakly.
-        // Scope note: full-dispatch coverage stops here by construction.
-        // Offline tests must fabricate `me`, and observation filters every
-        // real window against it, so no live origin can reach the dispatch
-        // resolver and every fabricated one is vanished. The
-        // external-focus (`foreground-changed`) and lifetime
-        // (`identity-changed`) fences are pinned at the production resolver
-        // below with fabricated table state instead.
-        let dir = log_dir("ori-vanished");
+    fn orientation_missing_origin_settles_without_mutation() {
+        // Missing chord origin through the real dispatch route: the `None`
+        // branch runs before the suspension/elevation gate and before any
+        // host read, so it settles `origin-vanished` deterministically on
+        // every runner (including elevated ones) with zero Engine, focus, or
+        // view mutation. The log outcome pins the fence.
+        let dir = log_dir("ori-missing");
         let mut state = test_state();
         state.log_path = dir.join("owner.log");
         let key = seed_pair(&mut state);
@@ -19664,29 +19657,60 @@ mod orientation_route_tests {
         let me = fake_me();
         let fulls: Vec<tiler_core::geometry::Rect> = Vec::new();
         let areas = test_areas();
-        dispatch_orientation_intent(
-            &mut state,
-            &me,
-            &fulls,
-            &areas,
-            ori_intent(Some(fake_origin())),
-        );
+        dispatch_orientation_intent(&mut state, &me, &fulls, &areas, ori_intent(None));
         assert_outcome(&dir, "origin-vanished");
         assert_eq!(
             engine_snapshot(&state, &key),
             before,
-            "stale origin must not mutate the Engine"
+            "missing origin must not mutate the Engine"
         );
         assert_eq!(
             state.workspaces.active_id("mon-9"),
             active_before,
-            "stale origin must not switch the view"
+            "missing origin must not switch the view"
         );
         assert!(
             state.snap_advance.is_none(),
-            "stale origin carries no focus advance"
+            "missing origin carries no focus advance"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn orientation_unknown_origin_refuses_without_mutation() {
+        // Fabricated `Some` origin unknown to the owner tables, checked at
+        // the production resolver (`resolve_chord_target`, called by every
+        // toggle route): the missing-table check refuses `origin-vanished`
+        // before member, lifetime, scope, or any live-eligibility state, so
+        // it is deterministic on every runner. Engine, view, and advance
+        // stay unchanged.
+        let mut state = test_state();
+        let key = seed_pair(&mut state);
+        let output = "mon-9".to_owned();
+        state.workspaces.ensure_output(&output);
+        let active = state.workspaces.active_id(&output).expect("active");
+        let me = fake_me();
+        let areas = test_areas();
+        let before = engine_snapshot(&state, &key);
+        assert!(before.is_some(), "seeded session exists");
+        match resolve_chord_target(&mut state, &me, &areas, &fake_origin()) {
+            Err(reject) => assert_eq!(reject.outcome, "origin-vanished"),
+            Ok(_) => panic!("unknown origin must refuse"),
+        }
+        assert!(
+            state.snap_advance.is_none(),
+            "unknown origin carries no focus advance"
+        );
+        assert_eq!(
+            engine_snapshot(&state, &key),
+            before,
+            "unknown origin must not mutate the Engine"
+        );
+        assert_eq!(
+            state.workspaces.active_id(&output),
+            Some(active),
+            "unknown origin must not switch the view"
+        );
     }
 
     #[test]
