@@ -120,7 +120,13 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
   Shared Engine/protocol and KDE KCM/live reread delivered offline;
   functional IDs [delivered offline](../../changes/archive/admission-and-move-settings.md). Native journey pending;
   `D(D-dec-cos)` + USER 2026-10-07 item 3.
-- Then Ours Windows: Same-orientation wrap per Engine; nested `H[H..]` distinct from flat; `D(D-dec-cos)`
+- Then Ours Windows: `group-with-neighbor` default wraps `H[A,H[B,C],D]`;
+  live `core.same_axis_move=swap-with-neighbor` gives `H[A,C,B*,D]`, shares/focus
+  travel. Windows adapter delivered 2026-10-11, base `fafcd31` + delivery commit
+  ([record](../../changes/archive/windows-same-axis-move.md)): retained Engine H4
+  right/left tests and native gates passed; agent-observed Settings Apply/Revert
+  and Apply-alone no-layout-change passed. Physical move journey pending;
+  `D(D-dec-cos)`.
 - Variant hook: V-MOVE-NARY.
 
 <a id="r-mov-04-backfill-same-axis-ancestor-escape-scrolling"></a>
@@ -473,8 +479,9 @@ default, label `Group with neighbor`, tooltip COSMIC; `swap-with-neighbor`,
 label `Swap with neighbor`, tooltip i3, sway, only for adjacent direct leaf
 siblings in R2c, shares travel with windows). Exact IDs selected 2026-10-08;
 functional rename delivered offline, no migration or aliases; retired IDs
-follow existing invalid handling. Windows compile default is renamed,
-settings wiring remains pending.
+follow existing invalid handling. Windows schema-v1/UI/live move setting
+delivered 2026-10-11 ([record](../../changes/archive/windows-same-axis-move.md));
+physical move journey remains pending.
 Leaf/group rules unchanged. R-MOV-08 selects local restructure/
 swap/escape first, then all-four-direction crossing including sole root
 leaf. Adjacency uses reciprocal edge-touch + positive overlap on FULL
@@ -514,7 +521,11 @@ observation or new reference vote.
   and session tests exercise unequal-share right and left swaps;
   [record](../../changes/archive/same-axis-move-setting.md). Native journey pending.
 - Then Ours Windows: same selected `swap-with-neighbor`/share target;
-  implementation pending; item 3.2.
+  adapter delivered 2026-10-11, base `fafcd31` + delivery commit
+  ([record](../../changes/archive/windows-same-axis-move.md)). Retained Engine H4
+  right/left unequal-share swaps preserve identity widths/shares/focus (projection
+  rounding tolerated); native settings adoption passed. Exact Given 1/10-4/10
+  live frames and physical move journey pending; item 3.2.
 - Variant hook: V-MOVE-NARY.
 
 <a id="r-mov-10-flat-swap-right-beside-a-group-neighbor"></a>
@@ -545,8 +556,11 @@ observation or new reference vote.
   `[1,1]`, root becomes `[1,5,4]`, new H gets `[1,1]`, V stays `[1,1]`.
   No whole-group flat swap. Planner parity and strict apply verified offline;
   [record](../../changes/archive/same-axis-move-setting.md). Native journey pending.
-- Then Ours Windows: same selected restricted setting scope;
-  implementation pending. Exact topology/index/shares TBD.
+- Then Ours Windows: restricted setting scope delivered 2026-10-11, base
+  `fafcd31` + delivery commit ([record](../../changes/archive/windows-same-axis-move.md)).
+  Retained Engine group-neighbor and nested-boundary parity passes across both
+  modes; no whole-group swap. Exact Given live topology/index/shares TBD;
+  physical move journey pending.
 - Variant hook: V-MOVE-NARY.
 
 ### R-MOV-11: sole root leaf moves up to the adjacent output

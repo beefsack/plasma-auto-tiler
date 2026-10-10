@@ -486,7 +486,7 @@ platform API behavior.
     adjacent direct leaf sibling in the same group; shares travel with
     windows (existing swap semantics). Leaf/group neighbors keep current
     rules; add TBD discriminating rows before broadening.
-  - Status: functional rename delivered offline in core/protocol/KDE and Windows compile defaults ([record](changes/archive/admission-and-move-settings.md)); Windows settings wiring and native journey pending.
+  - Status: functional rename delivered offline in core/protocol/KDE ([record](changes/archive/admission-and-move-settings.md)); Windows schema-v1/settings UI/live move routing delivered 2026-10-11, base `fafcd31` + delivery commit ([record](changes/archive/windows-same-axis-move.md)). Native gates and agent-observed Apply/Revert/no-rebuild passed; physical directional journey pending.
 - Item 4, R-LAY-01:
     - 4.1: Meta+O / Win+O (COSMIC parity). No stock KDE holder found in
       `kglobalshortcutsrc`; Windows Win+O is OS orientation lock

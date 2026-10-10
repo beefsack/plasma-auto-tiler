@@ -944,7 +944,8 @@ fn engine_focus_moves_through_nested_topology() {
         other => panic!("focus must plan directionally, got {other:?}"),
     }
     // Move uses the move route with full desired geometry. The moved window
-    // is the focused one, mirroring the owner drain.
+    // is the focused one, mirroring the owner drain. Explicit default-wrap
+    // fixture: production threads the live `core.same_axis_move` here.
     let mut mv = seed.clone();
     mv.focused_window = w2.clone();
     mv.command = CoreCommand::Move {

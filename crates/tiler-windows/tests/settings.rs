@@ -1228,3 +1228,95 @@ fn item2_keep_empty_is_unbound_not_disabled() {
     assert!(!row.active);
     assert_eq!(row.reason, "disabled: passes through natively");
 }
+
+#[test]
+fn same_axis_move_schema_v1_missing_field_defaults_to_group() {
+    use tiler_windows::settings::{SAME_AXIS_MOVE_GROUP, validate_settings};
+    // Pre-item-3 schema-v1 file without the additive field: serde
+    // missing-default supplies the group wrap, schema stays version 1.
+    let temp = Temp::new("same-axis-missing");
+    std::fs::write(
+        temp.file(),
+        br#"{"v":1,"revision":1,"core":{"inner_gap":8,"outer_gap":8},"bindings":{}}"#,
+    )
+    .expect("write");
+    let LoadOutcome::Loaded(settings) = load_from_dir(&temp.path) else {
+        panic!("old file loads");
+    };
+    assert_eq!(settings.v, 1);
+    assert_eq!(settings.core.same_axis_move, SAME_AXIS_MOVE_GROUP);
+    assert!(validate_settings(&settings).is_ok());
+}
+
+#[test]
+fn same_axis_move_both_tokens_round_trip() {
+    use tiler_windows::settings::{SAME_AXIS_MOVE_GROUP, SAME_AXIS_MOVE_SWAP};
+    let temp = Temp::new("same-axis-roundtrip");
+    for token in [SAME_AXIS_MOVE_GROUP, SAME_AXIS_MOVE_SWAP] {
+        let mut settings = Settings::default();
+        settings.core.same_axis_move = token.to_owned();
+        save_to_dir(&temp.path, &mut settings).expect("save");
+        let LoadOutcome::Loaded(back) = load_from_dir(&temp.path) else {
+            panic!("reloads {token}");
+        };
+        assert_eq!(back.core.same_axis_move, token);
+    }
+    // Atomic save leaves only the final name behind.
+    let entries: Vec<String> = std::fs::read_dir(&temp.path)
+        .expect("read dir")
+        .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(entries, vec!["settings.json".to_owned()]);
+}
+
+#[test]
+fn same_axis_move_invalid_value_and_type_refuse() {
+    use tiler_windows::settings::SettingsError;
+    let temp = Temp::new("same-axis-invalid");
+    // Unknown value (including retired aliases): invalid, bytes untouched.
+    std::fs::write(
+        temp.file(),
+        br#"{"v":1,"revision":1,"core":{"same_axis_move":"cosmic-wrap"},"bindings":{}}"#,
+    )
+    .expect("write");
+    assert!(matches!(
+        load_from_dir(&temp.path),
+        LoadOutcome::Invalid(SettingsError::Invalid(_))
+    ));
+    // Wrong JSON type: malformed, bytes untouched.
+    std::fs::write(
+        temp.file(),
+        br#"{"v":1,"revision":1,"core":{"same_axis_move":7},"bindings":{}}"#,
+    )
+    .expect("write");
+    assert!(matches!(
+        load_from_dir(&temp.path),
+        LoadOutcome::Invalid(SettingsError::Malformed)
+    ));
+    // Live poll keeps last-good with a degraded status; the file is never
+    // rewritten, so a later valid save still applies.
+    let mut live_settings = Settings::default();
+    live_settings.core.same_axis_move = tiler_windows::settings::SAME_AXIS_MOVE_SWAP.to_owned();
+    let live = tiler_windows::settings::LiveSettings::fresh(live_settings, None);
+    let outcome = poll_for_change(&temp.path, &live);
+    assert!(
+        matches!(outcome, PollOutcome::InvalidKept(_)),
+        "keeps last-good, got {outcome:?}"
+    );
+    assert_eq!(live.settings.core.same_axis_move, "swap-with-neighbor");
+    let mut valid = Settings::default();
+    valid.core.same_axis_move = tiler_windows::settings::SAME_AXIS_MOVE_SWAP.to_owned();
+    save_to_dir(&temp.path, &mut valid).expect_err("invalid on-disk file blocks save");
+}
+
+#[test]
+fn same_axis_move_presets_leave_core_field_unchanged() {
+    use tiler_windows::settings::{SAME_AXIS_MOVE_SWAP, validate_settings};
+    for preset in [Preset::Authentic, Preset::Compatible] {
+        let mut settings = Settings::default();
+        settings.core.same_axis_move = SAME_AXIS_MOVE_SWAP.to_owned();
+        tiler_windows::settings::apply_preset(&mut settings, preset);
+        assert_eq!(settings.core.same_axis_move, SAME_AXIS_MOVE_SWAP);
+        assert!(validate_settings(&settings).is_ok());
+    }
+}

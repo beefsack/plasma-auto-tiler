@@ -78,6 +78,8 @@ pub const ID_CLOSE: u32 = 129;
 pub const ID_STATUS: u32 = 130;
 pub const ID_DEFAULT_TILED: u32 = 131;
 pub const ID_DEFAULT_FLOATING: u32 = 132;
+pub const ID_SAME_AXIS_GROUP: u32 = 133;
+pub const ID_SAME_AXIS_SWAP: u32 = 134;
 
 const ESCAPE_VK: usize = 0x1B;
 
@@ -149,6 +151,12 @@ struct App {
     selected: Option<usize>,
     /// Set while the on-disk file is invalid: Apply stays disabled.
     invalid: Option<String>,
+    /// R-MOV-03 native tooltip text buffers (wide, NUL-terminated), one per
+    /// radio, built from the shared options table. Owned by the boxed `App`
+    /// so the pointers handed to the tooltip control stay valid for the whole
+    /// window lifetime: the tooltip is a child window, destroyed with its
+    /// parent before `WM_DESTROY` reclaims this box.
+    tip_text: [Vec<u16>; 2],
 }
 
 impl App {
@@ -290,6 +298,94 @@ fn refresh_info(app: &App) {
     set_text(app.ctl(ID_BINDING_INFO), &info.replace('\n', "\r\n"));
 }
 
+/// R-MOV-03 radio selection from saved/draft settings: true selects the
+/// flat-swap radio, false the group default. Unknown values (possible only
+/// in hand-built drafts, never from disk) show the group default.
+fn same_axis_swap_selected(settings: &Settings) -> bool {
+    settings.core.same_axis_move == crate::settings::SAME_AXIS_MOVE_SWAP
+}
+
+/// R-MOV-03 draft staging from the swap radio state: writes the exact wire
+/// token for the selected choice, so Apply persists a validated value.
+fn apply_same_axis_selection(draft: &mut Settings, swap: bool) {
+    draft.core.same_axis_move = if swap {
+        crate::settings::SAME_AXIS_MOVE_SWAP.to_owned()
+    } else {
+        crate::settings::SAME_AXIS_MOVE_GROUP.to_owned()
+    };
+}
+
+/// R-MOV-03 native tooltip text buffers from the shared options table: the
+/// WM reference per choice (`COSMIC` / `i3, sway`), wide-encoded for the
+/// tooltip control. Radio labels stay functional-only per the naming rule.
+fn same_axis_tip_texts() -> [Vec<u16>; 2] {
+    let options = crate::settings::same_axis_move_options();
+    [wide(options[0].2), wide(options[1].2)]
+}
+
+/// Attach native tooltips naming the reference WM to the two R-MOV-03
+/// radios. One `tooltips_class32` child (`TTS_ALWAYSTIP`) with `TTF_SUBCLASS`
+/// tools, so hover tracking needs no manual relay. Text pointers ride the
+/// `App`-owned `tip_text` buffers (see the field docs for the lifetime).
+/// Best-effort: a failed tooltip leaves the functional dialog untouched.
+fn attach_same_axis_tips(app: &App, hwnd: HWND, hinst: windows_sys::Win32::Foundation::HINSTANCE) {
+    use windows_sys::Win32::UI::Controls::{
+        ICC_BAR_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, TTF_IDISHWND, TTF_SUBCLASS,
+        TTM_ADDTOOLW, TTS_ALWAYSTIP, TTTOOLINFOW,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, SendMessageW, WS_POPUP};
+    let icc = INITCOMMONCONTROLSEX {
+        dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
+        dwICC: ICC_BAR_CLASSES,
+    };
+    unsafe {
+        InitCommonControlsEx(&icc);
+    }
+    let class_w = wide("tooltips_class32");
+    let tip = unsafe {
+        CreateWindowExW(
+            0,
+            class_w.as_ptr(),
+            std::ptr::null(),
+            WS_POPUP | TTS_ALWAYSTIP,
+            0,
+            0,
+            0,
+            0,
+            hwnd,
+            std::ptr::null_mut(),
+            hinst,
+            std::ptr::null(),
+        )
+    };
+    if tip.is_null() {
+        return;
+    }
+    for (id, text) in [
+        (ID_SAME_AXIS_GROUP, &app.tip_text[0]),
+        (ID_SAME_AXIS_SWAP, &app.tip_text[1]),
+    ] {
+        let control = app.ctl(id);
+        if control.is_null() {
+            continue;
+        }
+        let info = TTTOOLINFOW {
+            cbSize: std::mem::size_of::<TTTOOLINFOW>() as u32,
+            uFlags: TTF_IDISHWND | TTF_SUBCLASS,
+            hwnd,
+            uId: control as usize,
+            rect: unsafe { std::mem::zeroed() },
+            hinst: std::ptr::null_mut(),
+            lpszText: text.as_ptr() as *mut u16,
+            lParam: 0,
+            lpReserved: std::ptr::null_mut(),
+        };
+        unsafe {
+            SendMessageW(tip, TTM_ADDTOOLW, 0, &info as *const TTTOOLINFOW as isize);
+        }
+    }
+}
+
 /// Push the saved/draft values into every control and rebuild the list.
 fn refresh_all(app: &App) {
     let core = &app.work.core;
@@ -315,6 +411,11 @@ fn refresh_all(app: &App) {
     set_checked(app.ctl(ID_ALLOW_WIN_L), core.keyboard.allow_win_l);
     set_checked(app.ctl(ID_DEFAULT_TILED), core.workspace.default_tiled);
     set_checked(app.ctl(ID_DEFAULT_FLOATING), !core.workspace.default_tiled);
+    // R-MOV-03 two-choice control: functional labels only; the WM
+    // reference lives in the native radio tooltips, not in visible text.
+    let swap = same_axis_swap_selected(&app.work);
+    set_checked(app.ctl(ID_SAME_AXIS_GROUP), !swap);
+    set_checked(app.ctl(ID_SAME_AXIS_SWAP), swap);
     refresh_list(app);
     enable(app.ctl(ID_APPLY), app.invalid.is_none());
 }
@@ -394,6 +495,9 @@ fn collect_draft(app: &mut App) -> Result<Settings, String> {
     // New-workspace default radios: exactly one is checked after any load;
     // a checked Floating wins, otherwise the default stays tiled.
     draft.core.workspace.default_tiled = !checked(app.ctl(ID_DEFAULT_FLOATING));
+    // R-MOV-03: the swap radio stages the exact swap token, otherwise the
+    // exact group token; only these two values can reach validation.
+    apply_same_axis_selection(&mut draft, checked(app.ctl(ID_SAME_AXIS_SWAP)));
     draft.revision = app.base.revision;
     validate_settings(&draft).map_err(|e| e.to_string())?;
     Ok(draft)
@@ -940,7 +1044,7 @@ pub fn cmd_settings() -> Result<String, DynError> {
         ES_MULTILINE, ES_READONLY, GetMessageW, IDC_ARROW, IsDialogMessageW, LBS_NOINTEGRALHEIGHT,
         LBS_NOTIFY, LoadCursorW, RegisterClassW, SW_SHOWNORMAL, ShowWindow, TranslateMessage,
         WM_KEYDOWN, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CLIPCHILDREN, WS_EX_DLGMODALFRAME,
-        WS_HSCROLL, WS_MINIMIZEBOX, WS_SYSMENU, WS_TABSTOP, WS_VSCROLL,
+        WS_GROUP, WS_HSCROLL, WS_MINIMIZEBOX, WS_SYSMENU, WS_TABSTOP, WS_VSCROLL,
     };
     crate::tiling_sys::ensure_pm_v2()?;
     let _singleton = match acquire_settings_singleton()? {
@@ -977,7 +1081,7 @@ pub fn cmd_settings() -> Result<String, DynError> {
 
     let style = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
     let client_w = px(924, dpi);
-    let client_h = px(796, dpi);
+    let client_h = px(860, dpi);
     let mut rect = windows_sys::Win32::Foundation::RECT {
         left: 0,
         top: 0,
@@ -999,6 +1103,7 @@ pub fn cmd_settings() -> Result<String, DynError> {
         work: base,
         selected: Some(catalog_index_of("focus-left").unwrap_or(0)),
         invalid: invalid.clone(),
+        tip_text: same_axis_tip_texts(),
     });
     let raw = Box::into_raw(app);
     let hwnd = unsafe {
@@ -1030,6 +1135,10 @@ pub fn cmd_settings() -> Result<String, DynError> {
     let push = BS_PUSHBUTTON as u32;
     let check = BS_AUTOCHECKBOX as u32;
     let radio = BS_AUTORADIOBUTTON as u32;
+    // First radio of each auto pair starts its own WS_GROUP: without this
+    // every auto radio in the dialog shares one exclusion group, so picking
+    // a same-axis choice would clear the workspace default (and vice versa).
+    let radio_first = radio | WS_GROUP;
     let group = BS_GROUPBOX as u32;
     let defpush = BS_DEFPUSHBUTTON as u32;
     let label = SS_LEFT;
@@ -1081,21 +1190,25 @@ pub fn cmd_settings() -> Result<String, DynError> {
         Ctl { id: ID_PRESET_COMPATIBLE, class: "BUTTON", text: "Compatible".to_owned(), x: 772, y: 162, w: 132, h: 28, style: push | tab },
         Ctl { id: ID_PRESET_EXPLAIN, class: "STATIC", text: "Authentic restores KDE defaults for every binding (Win+L opt-in preserved). Compatible disables every OS-conflicting chord (including Win+Ctrl+Left/Right) and leaves the conflict-free set (letter moves, sticky, Win+Ctrl+Tab/letters/Up/Down, relative-send follows with unknown ownership). Stay rows stay unbound under both presets. No replacement defaults are invented; manual rebind stays available.".to_owned(), x: 632, y: 196, w: 272, h: 174, style: label },
         Ctl { id: 0, class: "BUTTON", text: "New workspaces".to_owned(), x: 10, y: 388, w: 904, h: 56, style: group },
-        Ctl { id: ID_DEFAULT_TILED, class: "BUTTON", text: "Tiled".to_owned(), x: 20, y: 410, w: 140, h: 24, style: radio | tab },
+        Ctl { id: ID_DEFAULT_TILED, class: "BUTTON", text: "Tiled".to_owned(), x: 20, y: 410, w: 140, h: 24, style: radio_first | tab },
         Ctl { id: ID_DEFAULT_FLOATING, class: "BUTTON", text: "Floating".to_owned(), x: 170, y: 410, w: 140, h: 24, style: radio | tab },
         Ctl { id: 0, class: "STATIC", text: "New workspaces start tiled or floating. Applies to workspaces created after Apply; existing workspaces keep their session tiling. Only the default is saved.".to_owned(), x: 320, y: 408, w: 584, h: 30, style: label },
-        Ctl { id: 0, class: "BUTTON", text: "Shortcuts (83 rows)".to_owned(), x: 10, y: 452, w: 904, h: 268, style: group },
-        Ctl { id: ID_BINDING_LIST, class: "LISTBOX", text: String::new(), x: 20, y: 474, w: 540, h: 230, style: list_style | tab },
-        Ctl { id: ID_BINDING_INFO, class: "EDIT", text: String::new(), x: 570, y: 474, w: 324, h: 100, style: info_style },
-        Ctl { id: ID_BIND_KEEP, class: "BUTTON", text: "Keep".to_owned(), x: 570, y: 578, w: 100, h: 26, style: push | tab },
-        Ctl { id: ID_BIND_DISABLE, class: "BUTTON", text: "Disable".to_owned(), x: 676, y: 578, w: 100, h: 26, style: push | tab },
-        Ctl { id: ID_BIND_CHORD, class: "EDIT", text: String::new(), x: 570, y: 610, w: 150, h: 24, style: edit_style | tab },
-        Ctl { id: ID_BIND_REBIND, class: "BUTTON", text: "Set rebind".to_owned(), x: 726, y: 608, w: 120, h: 26, style: push | tab },
-        Ctl { id: ID_REBIND_NOTE, class: "STATIC", text: "Rebind: Win[+Shift][+Ctrl]+Key, keeping this action's modifier arm (focus/select unshifted, move/send shifted, numbered stay Win+Shift or Win+Ctrl+Shift, previous/relative Win+Ctrl, relative send Win+Ctrl+Shift). Alt refused; Win+L can never be a target. Win+G / Win+F11 cannot fully contain the OS Xbox/Game Bar handlers; Win+Ctrl+Left/Right virtual-desktop and Win+Ctrl+Shift arrow ownership are unverified.".to_owned(), x: 570, y: 638, w: 324, h: 74, style: label },
-        Ctl { id: ID_STATUS, class: "STATIC", text: "Status: ready.".to_owned(), x: 20, y: 728, w: 540, h: 60, style: label },
-        Ctl { id: ID_APPLY, class: "BUTTON", text: "Apply".to_owned(), x: 580, y: 728, w: 100, h: 30, style: defpush | tab },
-        Ctl { id: ID_REVERT, class: "BUTTON", text: "Revert".to_owned(), x: 690, y: 728, w: 100, h: 30, style: push | tab },
-        Ctl { id: ID_CLOSE, class: "BUTTON", text: "Close".to_owned(), x: 800, y: 728, w: 100, h: 30, style: push | tab },
+        Ctl { id: 0, class: "BUTTON", text: "Same-axis move".to_owned(), x: 10, y: 452, w: 904, h: 56, style: group },
+        Ctl { id: ID_SAME_AXIS_GROUP, class: "BUTTON", text: "Group with neighbor".to_owned(), x: 20, y: 474, w: 200, h: 24, style: radio_first | tab },
+        Ctl { id: ID_SAME_AXIS_SWAP, class: "BUTTON", text: "Swap with neighbor".to_owned(), x: 230, y: 474, w: 200, h: 24, style: radio | tab },
+        Ctl { id: 0, class: "STATIC", text: "Same-axis moves apply to subsequent moves only; existing trees keep their layout until the next move.".to_owned(), x: 440, y: 472, w: 464, h: 30, style: label },
+        Ctl { id: 0, class: "BUTTON", text: "Shortcuts (83 rows)".to_owned(), x: 10, y: 516, w: 904, h: 268, style: group },
+        Ctl { id: ID_BINDING_LIST, class: "LISTBOX", text: String::new(), x: 20, y: 538, w: 540, h: 230, style: list_style | tab },
+        Ctl { id: ID_BINDING_INFO, class: "EDIT", text: String::new(), x: 570, y: 538, w: 324, h: 100, style: info_style },
+        Ctl { id: ID_BIND_KEEP, class: "BUTTON", text: "Keep".to_owned(), x: 570, y: 642, w: 100, h: 26, style: push | tab },
+        Ctl { id: ID_BIND_DISABLE, class: "BUTTON", text: "Disable".to_owned(), x: 676, y: 642, w: 100, h: 26, style: push | tab },
+        Ctl { id: ID_BIND_CHORD, class: "EDIT", text: String::new(), x: 570, y: 674, w: 150, h: 24, style: edit_style | tab },
+        Ctl { id: ID_BIND_REBIND, class: "BUTTON", text: "Set rebind".to_owned(), x: 726, y: 672, w: 120, h: 26, style: push | tab },
+        Ctl { id: ID_REBIND_NOTE, class: "STATIC", text: "Rebind: Win[+Shift][+Ctrl]+Key, keeping this action's modifier arm (focus/select unshifted, move/send shifted, numbered stay Win+Shift or Win+Ctrl+Shift, previous/relative Win+Ctrl, relative send Win+Ctrl+Shift). Alt refused; Win+L can never be a target. Win+G / Win+F11 cannot fully contain the OS Xbox/Game Bar handlers; Win+Ctrl+Left/Right virtual-desktop and Win+Ctrl+Shift arrow ownership are unverified.".to_owned(), x: 570, y: 702, w: 324, h: 74, style: label },
+        Ctl { id: ID_STATUS, class: "STATIC", text: "Status: ready.".to_owned(), x: 20, y: 792, w: 540, h: 60, style: label },
+        Ctl { id: ID_APPLY, class: "BUTTON", text: "Apply".to_owned(), x: 580, y: 792, w: 100, h: 30, style: defpush | tab },
+        Ctl { id: ID_REVERT, class: "BUTTON", text: "Revert".to_owned(), x: 690, y: 792, w: 100, h: 30, style: push | tab },
+        Ctl { id: ID_CLOSE, class: "BUTTON", text: "Close".to_owned(), x: 800, y: 792, w: 100, h: 30, style: push | tab },
     ];
     // Group/label/statics carry id 0 and skip automation lookup. Groupboxes
     // are pinned behind every sibling (see below); their handles ride here.
@@ -1166,6 +1279,8 @@ pub fn cmd_settings() -> Result<String, DynError> {
         }
     }
     refresh_all(app);
+    // Native tooltips for the R-MOV-03 radios; best-effort (see the helper).
+    attach_same_axis_tips(app, hwnd, hinst);
     if let Some(reason) = invalid {
         status(
             app,
@@ -1210,4 +1325,62 @@ pub fn cmd_settings() -> Result<String, DynError> {
     // WM_DESTROY reclaimed the box and ended the loop; the window is gone
     // and Close never applied. Save counts rode the status line while open.
     Ok("settings closed".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_same_axis_selection, same_axis_swap_selected};
+    use crate::settings::{SAME_AXIS_MOVE_GROUP, SAME_AXIS_MOVE_SWAP, Settings};
+
+    #[test]
+    fn same_axis_radio_round_trips_both_tokens() {
+        let mut draft = Settings::default();
+        assert!(!same_axis_swap_selected(&draft));
+        apply_same_axis_selection(&mut draft, true);
+        assert_eq!(draft.core.same_axis_move, SAME_AXIS_MOVE_SWAP);
+        assert!(same_axis_swap_selected(&draft));
+        apply_same_axis_selection(&mut draft, false);
+        assert_eq!(draft.core.same_axis_move, SAME_AXIS_MOVE_GROUP);
+        assert!(!same_axis_swap_selected(&draft));
+    }
+
+    #[test]
+    fn same_axis_radio_shows_group_for_unknown_hand_built_value() {
+        let mut draft = Settings::default();
+        draft.core.same_axis_move = "retired-alias".to_owned();
+        assert!(!same_axis_swap_selected(&draft));
+    }
+
+    #[test]
+    fn same_axis_selection_validates_after_apply() {
+        for swap in [false, true] {
+            let mut draft = Settings::default();
+            apply_same_axis_selection(&mut draft, swap);
+            crate::settings::validate_settings(&draft).expect("radio stages a valid token");
+        }
+    }
+
+    #[test]
+    fn same_axis_tip_texts_come_from_shared_options() {
+        let options = crate::settings::same_axis_move_options();
+        let tips = super::same_axis_tip_texts();
+        assert_eq!(tips.len(), 2);
+        for (buffer, option) in tips.iter().zip(options.iter()) {
+            assert_eq!(*buffer, super::wide(option.2));
+        }
+        // Exact WM references, functional labels kept out of the tips.
+        assert_eq!(tips[0], super::wide("COSMIC"));
+        assert_eq!(tips[1], super::wide("i3, sway"));
+    }
+
+    #[test]
+    fn dialog_fits_1380_work_area_at_dpi120() {
+        // Lowest control edge is the status line (y792 h60); it must sit
+        // inside the 860-high client area, which itself must fit a
+        // 1380-high work area at DPI 120 (px(860, 120) == 1075, leaving room
+        // for the non-client frame on top).
+        assert_eq!(super::px(860, 120), 1075);
+        assert!(super::px(792 + 60, 120) <= super::px(860, 120));
+        assert!(super::px(860, 120) <= 1380);
+    }
 }

@@ -93,6 +93,42 @@ impl std::fmt::Display for SettingsError {
 
 impl std::error::Error for SettingsError {}
 
+/// R-MOV-03 same-axis move wire values (decisions 3.1/3.2, functional IDs
+/// 2026-10-08). Exact tokens only: no aliases, no migration; unknown or
+/// mistyped values refuse through the existing invalid-file/last-good path.
+pub const SAME_AXIS_MOVE_GROUP: &str = "group-with-neighbor";
+/// R-MOV-03 flat-swap alternative wire value.
+pub const SAME_AXIS_MOVE_SWAP: &str = "swap-with-neighbor";
+/// Functional label for the default (KCM parity).
+pub const SAME_AXIS_MOVE_GROUP_LABEL: &str = "Group with neighbor";
+/// Reference WM named by the default's tooltip (KCM parity: never a setting id).
+pub const SAME_AXIS_MOVE_GROUP_TIP: &str = "COSMIC";
+/// Functional label for the flat-swap alternative (KCM parity).
+pub const SAME_AXIS_MOVE_SWAP_LABEL: &str = "Swap with neighbor";
+/// Reference WMs named by the alternative's tooltip (KCM parity).
+pub const SAME_AXIS_MOVE_SWAP_TIP: &str = "i3, sway";
+
+/// R-MOV-03 two-choice control rows: `(wire token, functional label, WM tooltip)`.
+#[must_use]
+pub const fn same_axis_move_options() -> [(&'static str, &'static str, &'static str); 2] {
+    [
+        (
+            SAME_AXIS_MOVE_GROUP,
+            SAME_AXIS_MOVE_GROUP_LABEL,
+            SAME_AXIS_MOVE_GROUP_TIP,
+        ),
+        (
+            SAME_AXIS_MOVE_SWAP,
+            SAME_AXIS_MOVE_SWAP_LABEL,
+            SAME_AXIS_MOVE_SWAP_TIP,
+        ),
+    ]
+}
+
+fn default_same_axis_move() -> String {
+    SAME_AXIS_MOVE_GROUP.to_owned()
+}
+
 /// Core tiling/visual/takeover settings. All values are validated on load
 /// and on save; out-of-range values refuse instead of clamping.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -101,6 +137,11 @@ pub struct CoreSettings {
     pub inner_gap: i32,
     #[serde(default = "default_outer_gap")]
     pub outer_gap: i32,
+    /// R-MOV-03 global same-axis move mode. Additive schema-v1 field: a
+    /// missing value defaults to [`SAME_AXIS_MOVE_GROUP`]; any other value
+    /// besides the two exact tokens refuses in [`validate_settings`].
+    #[serde(default = "default_same_axis_move")]
+    pub same_axis_move: String,
     #[serde(default)]
     pub border: BorderSettings,
     #[serde(default)]
@@ -126,12 +167,23 @@ impl Default for CoreSettings {
         Self {
             inner_gap: DEFAULT_INNER_GAP,
             outer_gap: DEFAULT_OUTER_GAP,
+            same_axis_move: default_same_axis_move(),
             border: BorderSettings::default(),
             underlay: UnderlaySettings::default(),
             keyboard: KeyboardSettings::default(),
             mouse: MouseSettings::default(),
             workspace: WorkspaceSettings::default(),
         }
+    }
+}
+
+impl CoreSettings {
+    /// Typed R-MOV-03 mode for the next move. Live settings are always
+    /// validated, so the fallback only covers hand-built defaults; invalid
+    /// files never become live (they keep last-good instead).
+    #[must_use]
+    pub fn same_axis_move_mode(&self) -> tiler_core::directional::SameAxisMove {
+        tiler_core::directional::SameAxisMove::parse_wire(&self.same_axis_move).unwrap_or_default()
     }
 }
 
@@ -1745,6 +1797,11 @@ pub fn validate_settings(settings: &Settings) -> Result<(), SettingsError> {
     if !gap_valid(settings.core.outer_gap) {
         return Err(SettingsError::Invalid("outer_gap needs 0..=64".to_owned()));
     }
+    if tiler_core::directional::SameAxisMove::parse_wire(&settings.core.same_axis_move).is_none() {
+        return Err(SettingsError::Invalid(
+            "core.same_axis_move needs group-with-neighbor|swap-with-neighbor".to_owned(),
+        ));
+    }
     validate_border(&settings.core.border)?;
     validate_underlay(&settings.core.underlay)?;
     validate_bindings(settings)?;
@@ -2307,7 +2364,84 @@ mod tests {
         assert!(!settings.core.keyboard.allow_win_l);
         assert!(settings.core.mouse.snap_prevention);
         assert!(settings.core.workspace.default_tiled);
+        assert_eq!(settings.core.same_axis_move, SAME_AXIS_MOVE_GROUP);
+        assert_eq!(
+            settings.core.same_axis_move_mode(),
+            tiler_core::directional::SameAxisMove::GroupWithNeighbor
+        );
         assert!(validate_settings(&settings).is_ok());
+    }
+
+    #[test]
+    fn same_axis_move_tokens_map_exactly_with_group_default() {
+        assert_eq!(
+            tiler_core::directional::SameAxisMove::parse_wire(SAME_AXIS_MOVE_GROUP),
+            Some(tiler_core::directional::SameAxisMove::GroupWithNeighbor)
+        );
+        assert_eq!(
+            tiler_core::directional::SameAxisMove::parse_wire(SAME_AXIS_MOVE_SWAP),
+            Some(tiler_core::directional::SameAxisMove::SwapWithNeighbor)
+        );
+        assert_eq!(
+            tiler_core::directional::SameAxisMove::GroupWithNeighbor.as_wire_str(),
+            SAME_AXIS_MOVE_GROUP
+        );
+        assert_eq!(
+            tiler_core::directional::SameAxisMove::SwapWithNeighbor.as_wire_str(),
+            SAME_AXIS_MOVE_SWAP
+        );
+        // No retired aliases, no case folding, no empty token.
+        for bad in [
+            "",
+            "cosmic-wrap",
+            "flat-swap",
+            "GROUP-WITH-NEIGHBOR",
+            "swap",
+        ] {
+            assert!(
+                tiler_core::directional::SameAxisMove::parse_wire(bad).is_none(),
+                "{bad}"
+            );
+        }
+        let mut settings = Settings::default();
+        settings.core.same_axis_move = SAME_AXIS_MOVE_SWAP.to_owned();
+        assert_eq!(
+            settings.core.same_axis_move_mode(),
+            tiler_core::directional::SameAxisMove::SwapWithNeighbor
+        );
+        assert!(validate_settings(&settings).is_ok());
+    }
+
+    #[test]
+    fn same_axis_move_options_carry_functional_labels_and_wm_tips() {
+        assert_eq!(
+            same_axis_move_options(),
+            [
+                (SAME_AXIS_MOVE_GROUP, "Group with neighbor", "COSMIC"),
+                (SAME_AXIS_MOVE_SWAP, "Swap with neighbor", "i3, sway"),
+            ]
+        );
+    }
+
+    #[test]
+    fn same_axis_move_invalid_value_refuses() {
+        let mut settings = Settings::default();
+        settings.core.same_axis_move = "cosmic-wrap".to_owned();
+        assert!(matches!(
+            validate_settings(&settings),
+            Err(SettingsError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn same_axis_move_presets_leave_core_field_unchanged() {
+        for preset in [Preset::Authentic, Preset::Compatible] {
+            let mut settings = Settings::default();
+            settings.core.same_axis_move = SAME_AXIS_MOVE_SWAP.to_owned();
+            apply_preset(&mut settings, preset);
+            assert_eq!(settings.core.same_axis_move, SAME_AXIS_MOVE_SWAP);
+            assert!(validate_settings(&settings).is_ok());
+        }
     }
 
     #[test]

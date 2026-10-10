@@ -938,9 +938,11 @@ decisions of 2026-09-24 are under
       full-workspace `cargo test`/`clippy` gates; stay/relative adapter wiring
       remains pending. Port follow/stay MRU/null, admission equality, visibility
       fences, relative wrap/spare and floating-boundary regression coverage.
-  - Item 3: shared Rust core/protocol + KDE delivered offline. Windows
-      compile-only defaults preserve current behavior (decision 2.3); actual
-      wiring remains pending. Sites below under `crates/tiler-windows/`:
+  - Item 3: Windows schema-v1/live setting/UI/move routing delivered 2026-10-11
+      (base `fafcd31` + delivery commit, [record](changes/archive/windows-same-axis-move.md));
+      native gates and agent-observed Apply/Revert/no-rebuild passed. Physical
+      directional journey pending; checklist below retained as acceptance detail.
+      Sites below under `crates/tiler-windows/`:
 
      #### Item 3 behavior, references and acceptance
 
