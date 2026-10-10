@@ -20,12 +20,19 @@ decisions of 2026-09-24 are under
   known issues provided none crashes or silently stops tiling; no separate
   dogfood period. Includes these pending pieces:
   - [OPEN-requirement triage and live-check gate](research/release-0.1-triage.md):
-    proposal awaiting user decisions.
-  - Classify pending live checks into must-pass versus known-issue-allowed.
-  - Triage the 60 OPEN requirements into 0.1-relevant (touches a must-pass
+    User 2026-10-10 approved recommendation (a) for 15 units: D02, D04, D05,
+    D06, D07, D08, D11, D14, D15, D17, D18 (no setting), D19, D20 (no lower
+    verb for now), D21, D24; 16 rows promoted, spec now 121 NORMATIVE / 44 OPEN.
+    Remaining 13 units pending: D01, D03, D09, D10, D12, D13, D16, D22, D23,
+    D25, D26, D27, D28. Batch-1 implementation/verification is below.
+  - Proposal B classification (39 must-pass / 12 known-issue-allowed / 2
+    Windows-release) and new checks N1-N4 still await user approval.
+  - Triage the original 60 OPEN requirements into 0.1-relevant (touches a must-pass
     core journey, or current behavior is undefined/refusal/surprising) versus
     post-0.1; decide only the relevant set before 0.1, one at a time with the
     user. Triage and live-check classification are separate follow-up pieces.
+    Raise with D03: do new settings (D03, D09, D10, D12, D13, D27) ship in
+    0.1, or defaults-only with settings later? This remains an open question.
   - P1 0.1 packaging (Nix flake/Home Manager, GitHub Release, OBS packages,
     split optional effect, Revert-before-removal guidance); accounts/token
     supplied by the user at the start of the next orchestrator session.
@@ -37,6 +44,28 @@ decisions of 2026-09-24 are under
   ([candidate lessons](research/non-native-tiler-host-interaction.md#candidate-lessons-for-this-project),
   [cross-cutting findings](research/non-native-tiler-host-interaction.md#cross-cutting-findings),
   [evidence](changes/archive/non-native-tiler-host-interaction.md)).
+- P1 | 0.1 triage decisions - batch 1 implementation (KDE/shared) | User
+  2026-10-10 approved the 15 units above, exactly recommendation (a) in
+  [triage](research/release-0.1-triage.md#user-decisions-2026-10-10).
+  - Implementation: D05 / REQ-INS-05. Shared `world.rs` focus resolution
+    supplies no tiled anchor when an ordinary float is focused; `session.rs`
+    `insert_tiled` root-wraps. Use the nearest tiling neighbor (B, prior tiled
+    focus in R-INS-05) for ordinary long-edge admission. Add the discriminating
+    shared/KDE fixture and then native acceptance; shared repair serves Windows.
+  - Observe-first, contingent implementation: D06 / REQ-OUT-05 currently
+    admits on the newcomer's observed native output, with no focused-output
+    override; verify focused output + newcomer activation. D17 / REQ-WS-09
+    retains shared `last_active`, but KDE return focus is shell-driven; verify
+    remembered B on return. Implement only if these native outcomes mismatch.
+  - Verification-only: D02, D04, D07, D08, D11, D14 (both rows), D15, D18,
+    D19, D20, D21, D24. Existing mechanisms/defaults match; exact native
+    journeys remain pending in Pending live checks. D07 also needs a proving
+    fresh-reopen fixture, not a new restore policy. D18 has no setting; D20
+    needs raise-order proof, not a lower action.
+  - Windows: D05 shares the core gap; D14's keyboard trigger gap is already
+    handoff item 6 (include R-RSZ-02/03 acceptance there). D02's owned-dialog
+    exclusion is the approved divergence; D17 remembered focus and D19 hide/
+    reveal are already wired. No new Windows-specific handoff item warranted.
 - P0 | Windows port | KDE-first core extraction finished at K1 (user
   2026-09-30; K2/K3 revisit when macOS starts, see
   [extraction](research/cross-platform-core/extraction.md),
@@ -2611,6 +2640,47 @@ Unprioritised ideas; not scheduled.
 
 Items below retain their stated pending scope; dated user confirmations are
 recorded separately from unexercised legs. Reference-WM checks test other compositors.
+
+- 0.1 triage batch 1 (User 2026-10-10; user-owned KDE checks, no Proposal B
+  classification approved). These are verification-only except D05 after its
+  shared repair and D06/D17 observe-first; record actual outcomes in existing
+  [reference scenarios](spec/reference-outcomes.md), leaving unsupported legs TBD.
+  - D02 / R-SPC-01: open transient/modeless and modal dialog legs; dialog stays
+    floating, tiles untouched. Record native type mapping and parent-focus/
+    modal fence results separately; those request outcomes remain unselected.
+  - D04 / R-INS-03: open the first ordinary window on an empty shown workspace;
+    full work-area tile and real native newcomer focus, not just desired focus.
+  - D05 / R-INS-05 (after implementation): focus an ordinary float after B was
+    the tiled focus; open a newcomer. Anchor at tiling neighbor B, not root-wrap.
+  - D06 / R-OUT-05 (two outputs, observe-first): occupy both, focus one with
+    pointer on the other; open a newcomer. Focused-output arrival and newcomer
+    activation required; record native mapping before designing any reroute.
+  - D07 / R-CLOSE-02: close, refocus a different tile, fresh-reopen; new admission
+    at current focus, no old-slot restoration. Exact ratio/order/focus evidence TBD.
+  - D08 / R-CLOSE-03: close the sole shown-workspace window; same workspace stays
+    shown empty, with no focused client.
+  - D11 / R-MOV-01: flat-triple perpendicular move produces V[H[A,C],B], changing
+    root orientation rather than refusing; shared R1 is already proven offline.
+  - D14 / R-RSZ-02/03: outward edge resize no-ops; nested resize changes adjacent
+    shares at nearest matching-edge-axis split, not ancestor shares. KDE pixel
+    path exists; Windows keyboard legs await existing handoff item 6.
+  - D15 / R-MOU-01: hover between clients retains focus; plain click focuses at
+    press. Host-native default path; no focus-policy mutation selected.
+  - D17 / R-WS-09 (observe-first): focus B, select WS2 then WS1 with no sends;
+    remembered B must return. KDE shell-driven outcome/viewport remains unverified.
+  - D18 / R-WS-02: use existing send-back/return journey; verify B inserts after
+    remembered A in tall and wide legs. Anchor synthetic proof exists; exact
+    after-order/feel pending, no setting.
+  - D19 / R-FLT-13: switch away from ordinary float F then return; F hides while
+    away, frame retained, remembered focus restored under D17. Desktop membership
+    already scopes KDE floats; Windows hide/reveal is already wired.
+  - D20 / R-FLT-12: focus each overlapping float in turn; native stacking raises
+    the focused float. Existing activation is sourced; relative order TBD.
+    No lower-verb check or implementation is required for now.
+  - D21 / R-FLT-14: native pointer move/resize preserves free float geometry;
+    project resize still refuses. Native journey is verification-only.
+  - D24 / R-CLOSE-04: close focused ordinary float; tiles keep their geometry
+    and MRU survivor B receives focus. Shared exception-drop already sourced.
 
 - Reference comparison decisions 2026-10-10 (shared/core KDE delivered offline,
   Windows wiring pending; user-owned checks):

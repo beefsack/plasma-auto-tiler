@@ -1,8 +1,8 @@
-# Release 0.1 triage - PROPOSALS (nothing decided)
+# Release 0.1 triage - batch 1 decided, remaining proposals pending
 
-Status: draft proposals for user decision, 2026-10-10. Base HEAD `4281e73`.
-No live tests run. Every recommendation awaits user decision; no new decisions
-accepted. Rules: 0.1-relevant = touches must-pass core KDE journey
+Status: 15 decision units approved by User 2026-10-10; 13 units and Proposal B
+await approval. Original proposal base HEAD `4281e73`, report commit `27a97c4`.
+No live tests run. Rules: 0.1-relevant = touches must-pass core KDE journey
 ([decisions](../decisions.md#scope-and-platform-goals)) AND current KDE
 undefined/refusal/no-op/inconsistent/surprising; post-0.1 = niche,
 scrolling-only/COL, Windows/macOS-only, already acceptable, parked (LAY-04).
@@ -12,8 +12,27 @@ take a clear majority over a worse COSMIC mechanism. Alternatives shared by
 outliers, scrolling-only and model-only differences skipped with reason.
 Gaming safety wins; overlap last resort; simplicity. TBD never invented.
 
-Counts: 60/60 OPEN covered (32 relevant / 28 post-0.1); 28 decision units
-(D01-D27 + separate D28 MAX-09); 53/53 pending checks (M39 / K12 / W2).
+Original proposal counts: 60/60 then-OPEN rows covered (32 relevant / 28
+post-0.1); 28 decision units (D01-D27 + separate D28 MAX-09); 53/53 then-pending
+checks (proposed M39 / K12 / W2). Batch 1 promotes 16 rows, leaving 44 OPEN.
+
+## User decisions 2026-10-10
+
+- Approved exactly recommendation (a): D02 (SPC-01), D04 (INS-03), D05
+  (INS-05), D06 (OUT-05), D07 (CLOSE-02), D08 (CLOSE-03), D11 (MOV-01),
+  D14 (RSZ-02, RSZ-03), D15 (MOU-01), D17 (WS-09), D18 (WS-02b, no
+  setting), D19 (FLT-13), D20 (FLT-12, no lower verb for now), D21 (FLT-14),
+  D24 (CLOSE-04). These 15 units / 16 rows are now NORMATIVE in the
+  [spec](../spec/functional-spec.md); implementation and native evidence remain
+  distinct ([batch-1 work](../backlog.md)).
+- Remaining 13 units pending: D01, D03, D09, D10, D12, D13, D16, D22, D23,
+  D25, D26, D27, D28. No selection is implied by the recommendations below.
+- Proposal B live-check classification (39 must-pass / 12 known-issue-allowed /
+  2 Windows-release) and proposed new checks N1-N4 remain pending approval.
+  Batch-1 verification checks added to the backlog are outside that original
+  53-check inventory and are not classified by this unapproved proposal.
+- Open meta-question to raise with D03: do new settings (D03, D09, D10, D12,
+  D13, D27) ship in 0.1, or ship defaults-only with settings later?
 
 Reference key: C = COSMIC, H = Hyprland, B = bspwm, I = i3, X = xmonad,
 S = sway, Q = qtile, A = awesome; `ev` = evidenced profiles, `fam` = families.
@@ -26,9 +45,10 @@ per-WM action fills; observed COSMIC outcomes remain distinct from source
 votes. Scrolling references do not vote. Inventory IDs come from the
 [OPEN index](../spec/functional-spec.md#21-open-decisions-index).
 
-## Proposal A1 - exhaustive inventory (every OPEN row once)
+## Proposal A1 - original exhaustive inventory (every then-OPEN row once)
 
-V: R = relevant (decision unit), P = post-0.1. Spec lines `../spec/functional-spec.md#L<n>`.
+V: R = relevant (decision unit), P = post-0.1. Spec line locators below are
+historical at `27a97c4`; use requirement IDs after edits. Approval status is above.
 
 | # | Row | V | Unit / post reason |
 |---|---|---|---|
@@ -93,9 +113,11 @@ V: R = relevant (decision unit), P = post-0.1. Spec lines `../spec/functional-sp
 | 59 | REQ-COL-09 virtual rows (L378) | P | scrolling-only/COL, no counterpart |
 | 60 | REQ-COL-10 app-native tabs (L379) | P | scrolling-only/COL, no counterpart |
 
-## Proposal A2 - decision units (one row per OPEN row)
+## Proposal A2 - original decision units (one row per then-OPEN row)
 
-Columns: KDE current | COSMIC | tally + action source | options -> recommendation (awaiting user).
+Columns: KDE at proposal | COSMIC | tally + action source | options ->
+recommendation. The User decisions section identifies approved units; others
+await approval. Current implementation status is in the spec/backlog.
 
 ### D01 fullscreen admission + close cleanup (INS-06, CLOSE-05)
 
@@ -409,4 +431,4 @@ MNZ-02 (2/2ev scoped), MNZ-03 (COSMIC source-proven, no multi tally),
 INS-07b (0/8, post). Surprises: WS-05 COSMIC-outlier (majority exception);
 MNZ-01 direction corrected (release, not retain); OUT-02 COSMIC-observed
 wrap (not cross); RST-02 consensus C audit-only supersedes stale spec label
-(spec untouched here).
+(unrelated RST-02 spec label remains unchanged).

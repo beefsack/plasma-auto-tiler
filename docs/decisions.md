@@ -53,7 +53,7 @@ platform API behavior.
     tiling. No separate dogfood period.
   - Classification of pending live checks into must-pass versus
     known-issue-allowed is a separate follow-up piece.
-  - The 60 OPEN requirements get a separate triage into 0.1-relevant
+  - The original 60 OPEN requirements get a separate triage into 0.1-relevant
     (touches a must-pass core journey, or current behavior is undefined,
     refusal or surprising) versus post-0.1. Only the 0.1-relevant set is
     decided before 0.1, one at a time with the user.
@@ -200,6 +200,9 @@ platform API behavior.
 
 ## Workspaces
 
+- R-CLOSE-03: closing the sole window retains the shown workspace empty, with no focused client (User 2026-10-10, 0.1 triage D08).
+- R-WS-09: workspace return restores remembered focus (User 2026-10-10, 0.1 triage D17).
+- R-WS-02: returning B inserts after remembered target anchor A; no before/after setting (User 2026-10-10, 0.1 triage D18).
 - Shared model:
   - Each managed workspace owns a session-local tiled/floating flag. Startup
     seeds all workspaces from the saved default (`true`); live default changes
@@ -428,6 +431,8 @@ platform API behavior.
 
 ## Move, Layout and Output Commands
 
+- R-MOV-01: perpendicular flat-triple move restructures via COSMIC R1, changing root orientation to V[H[A,C],B] in the fixture rather than refusing (User 2026-10-10, 0.1 triage D11).
+- R-RSZ-02/03: outward work-area-edge resize is a no-op; nested resize adjusts adjacent shares at the nearest matching-edge-axis split (User 2026-10-10, 0.1 triage D14).
 - Delivery coordination (user 2026-10-07; [implementation order and Windows
   handoff](backlog.md)): the KDE-side session implements the shared Rust core
   plus KDE adapter; the separate Windows agent wires its adapter later.
@@ -824,6 +829,10 @@ platform API behavior.
 
 ## Placement, Minimums and Startup Adoption
 
+- R-INS-03: first admission fills the work area as a single tile and natively activates the newcomer (User 2026-10-10, 0.1 triage D04).
+- R-INS-05: admission with an ordinary float focused anchors at the nearest tiling neighbor (B, prior tiled focus in the fixture), using ordinary long-edge admission instead of root-wrap (User 2026-10-10, 0.1 triage D05).
+- R-OUT-05: opening with two occupied outputs routes to the focused output and focuses the newcomer, not by pointer (User 2026-10-10, 0.1 triage D06).
+- R-CLOSE-02: a reopened client is fresh admission at current focus, never old-slot restoration (User 2026-10-10, 0.1 triage D07).
 - Shared:
   - User statement 2026-10-03: default split placement is long-edge based: a
     tall target splits vertically (stacked) and a wide target horizontally
@@ -1133,6 +1142,8 @@ platform API behavior.
 
 ## Pointer, Drag and Drop
 
+- R-MOU-01: plain click focuses at press; hover alone does not change focus (User 2026-10-10, 0.1 triage D15).
+- R-FLT-14: host-native pointer move/resize keeps floats free-framed; project resize continues to refuse floats (User 2026-10-10, 0.1 triage D21).
 - Shared:
   - User direction 2026-10-07 (R-DRAG-07): drag presentation follows the host
     platform's native behavior where one exists. KDE Meta+drag keeps KWin's
@@ -1484,6 +1495,10 @@ platform API behavior.
 
 ## Window State: Float, Sticky, Maximize, Fullscreen
 
+- R-SPC-01: transient dialogs float rather than tile; Windows owned-dialog exclusion remains an intentional divergence, with parent-focus/modal legs TBD (User 2026-10-10, 0.1 triage D02).
+- R-FLT-13: ordinary floats hide while their workspace is not shown and retain their frame across the switch (User 2026-10-10, 0.1 triage D19).
+- R-FLT-12: focusing an overlapping float raises it; no project lower verb for now (User 2026-10-10, 0.1 triage D20).
+- R-CLOSE-04: closing a focused ordinary float leaves tiles untouched and refocuses the MRU survivor (User 2026-10-10, 0.1 triage D24).
 - Approved 2026-09-16: background tiling is supported at startup and on window
   open or move for non-visible workspaces, without switching visibility or
   stealing focus. Existing floating, sticky, fullscreen, maximize, and
