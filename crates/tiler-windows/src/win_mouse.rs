@@ -553,6 +553,76 @@ mod tests {
             &Some("tag-2".to_owned())
         ));
     }
+
+    #[test]
+    fn down_arms_before_moves_with_callback_bound_release() {
+        // Hook-arm ordering: moves before the Down change nothing; the Down
+        // binds the exact subject; the Up carries the callback-bound latest
+        // pointer (never a later re-read) into the owner settle vocabulary.
+        let mut arm = WinHookArm::default();
+        arm.on_move(99, 99);
+        assert!(!arm.is_armed());
+        assert!(arm.on_down(7, 10, 10, true, true));
+        arm.on_move(30, 40);
+        let bound = match arm.on_up(30, 40) {
+            UpOutcome::Gesture(bound) => bound,
+            other => panic!("armed up binds, got {other:?}"),
+        };
+        assert_eq!(bound.hwnd, 7);
+        assert_eq!((bound.start_x, bound.start_y), (10, 10));
+        assert_eq!((bound.cur_x, bound.cur_y), (30, 40));
+        // The bound journey classifies as a drop at the release point.
+        assert_eq!(
+            settle_pointer_journey(
+                bound.start_x,
+                bound.start_y,
+                bound.cur_x,
+                bound.cur_y,
+                false
+            ),
+            WinSettle::Drop { x: 30, y: 40 }
+        );
+        // A later move cannot reopen the closed journey.
+        arm.on_move(70, 80);
+        assert!(!arm.is_armed());
+        assert_eq!(arm.on_up(70, 80), UpOutcome::Pass);
+    }
+
+    #[test]
+    fn settle_orders_cancelled_nochange_drop() {
+        // Pure settle classification: Cancelled outranks zero movement (an
+        // Esc-cancelled hold never reads as a no-move), zero reads as
+        // NoChange, and only a real journey reads as Drop.
+        assert_eq!(
+            settle_pointer_journey(10, 10, 10, 10, false),
+            WinSettle::NoChange
+        );
+        assert_eq!(
+            settle_pointer_journey(10, 10, 10, 10, true),
+            WinSettle::Cancelled
+        );
+        assert_eq!(
+            settle_pointer_journey(10, 10, 10, 12, true),
+            WinSettle::Cancelled
+        );
+        assert_eq!(
+            settle_pointer_journey(10, 10, 14, 10, false),
+            WinSettle::Drop { x: 14, y: 10 }
+        );
+    }
+
+    #[test]
+    fn aborted_down_passes_up_through_with_no_strand() {
+        // A Down that armed but could not queue (saturation) carries no
+        // swallow obligation: the Up passes through natively, so no
+        // half-click strands and no queued owner edge follows.
+        let mut arm = WinHookArm::default();
+        assert!(arm.on_down(7, 1, 1, true, true));
+        arm.abort_down();
+        assert!(!arm.is_armed());
+        assert_eq!(arm.on_up(1, 1), UpOutcome::Pass);
+        assert_eq!(arm.on_up(1, 1), UpOutcome::Pass);
+    }
 }
 
 /// Prompt `WH_MOUSE_LL` hook for the project-driven Win+Left gesture

@@ -1427,7 +1427,12 @@ decisions of 2026-09-24 are under
       updated with preset TBD recorded; matrix `R-RSZ-01` Ours Windows cell
       updated with dated offline evidence, native pending.
 
-  - Item 7: press-focus R-DRAG-08. User decision 2026-10-07 (R-DRAG-08;
+  - Item 7: press-focus R-DRAG-08 delivered 2026-10-11, base `9d12c7f`
+    plus delivery commit ([record](changes/archive/windows-drag-press-focus.md));
+    native gates passed; synthetic no-move press, Esc and stationary-preview
+    drop agent-observed. Physical/resize/refusal-race checks user-owned;
+    native title-bar path intact (same-topology apply observed). Historical
+    checklist: User decision 2026-10-07 (R-DRAG-08;
     [decisions](decisions.md#pointer-drag-and-drop)): a Meta/Win client move
     drag focuses the dragged window at press on both platforms. Windows
     changes from activate-on-drop; KDE timing needs a live check ([pending

@@ -94,4 +94,7 @@
 - Physical shortcut effects, relative-stay physical journey, deterministic
   native flag-race injection, managed app-owned native carry, slotless native
   refusal, games/elevation and cross-output remain user-owned/deferred.
-- Publication and CI: pending below.
+- Pushed `9d12c7f`. CI
+  [38069107649](https://github.com/beefsack/plasma-auto-tiler/actions/runs/38069107649)
+  completed success: windows, rust, kwin, shell, native and macos. Linux/KDE
+  checks are hosted evidence, not locally run on the Windows host.

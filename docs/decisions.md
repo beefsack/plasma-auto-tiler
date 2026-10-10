@@ -1213,8 +1213,9 @@ platform API behavior.
     pointer-following frame; Windows title-bar drag stays native. macOS
     follows the same rule when it starts.
   - User decision 2026-10-07 (R-DRAG-08): a Meta/Win client drag focuses the
-    dragged window at press on both platforms. Windows press-focus wiring is
-    pending; drop-only activation is retired. KDE timing needs a live check.
+    dragged window at press on both platforms. Windows delivered and
+    agent-observed 2026-10-11 ([record](changes/archive/windows-drag-press-focus.md));
+    drop-only activation is retired. KDE timing needs a live check.
   - User decision 2026-10-07 (R-DRAG-04): Esc keeps cancelling a drag on both
     platforms (host KWin/Windows move convention; i3 also cancels) despite
     7/8 references dropping at the pointer; a setting may be explored later.
@@ -1242,12 +1243,18 @@ platform API behavior.
     and teardown clear the surface. Physical resize/float exclusion journeys
     remain user checks; deterministic policy/frame gates cover their no-preview
     rule. Evidence: `changes/archive/windows-mouse-drag.md`.
-  - An unfocused project-drag subject keeps the current native
-    foreground during the stationary hold; current code activates through
-    existing identity-gated focus authority on a valid drop (gap: selected
-    press-focus for move drags, see R-DRAG-08 above). Distinct unfocused-subject
-    underlay C remains parked. Completed pointer-drag resize of an inactive
-    tiled window keeps focus unchanged.
+  - An unfocused project-drag mover activates at press through existing
+    identity-gated focus authority; a failed press clears its arm with no
+    geometry/Engine plan. Drop retains fresh focus verification and refusal,
+    skipping the setter when already foreground. Same-output synthetic
+    no-move/Esc/drop agent-observed 2026-10-11, base `9d12c7f` plus delivery
+    commit ([record](changes/archive/windows-drag-press-focus.md)); native gates
+    passed. Physical input/resize feel remain user-owned. Distinct
+    unfocused-subject underlay C remains parked; completed pointer-drag resize
+    of an inactive tiled window keeps focus unchanged.
+    Tentative, pending user review: reuse existing bounded focus settle
+    (up to 500ms per attempted press, callbacks remain prompt; observed 6-10ms),
+    rather than introduce separate press actuation policy.
 - Drag-restore markers (user decision D, option 2, 2026-09-26): on topology-change signals, a validated complete
   desktop-ID or output-name list proves a marker's workspace/output removed if
   absent; settle `outcome=unavailable plan=none` and drop it. A failed or

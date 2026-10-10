@@ -335,7 +335,11 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then paneru: pointer drag is the host macOS journey. `S(S-pan-mouse)`;
   queued.
 - Then Ours KDE: native frame moves and target-slot preview is selected `D(D-dec-drag)`
-- Then Ours Windows: provisional stationary source with visible target-slot preview, three-window synthetic freeze/preview/drop proof; exact row TBD `D(D-win-drag)`
+- Then Ours Windows: stationary source with visible target-slot preview;
+  fresh three-Notepad synthetic hold/preview/drop agreement agent-observed
+  2026-10-11, base `9d12c7f` plus [press-focus delivery](../../changes/archive/windows-drag-press-focus.md).
+  Press-focus changes timing only; native title-bar path stays intact.
+  Physical feel/custom-frame checks remain user-owned. `D(D-win-drag)`
 - Variant hook: V-DRAG-ZONE.
 
 <a id="r-drag-08-backfill-press-focus-on-an-unfocused-column-scrolling"></a>
@@ -373,7 +377,16 @@ Part of the [outcome matrix index](../reference-outcomes.md). Notation, profiles
 - Then paneru: FFM focuses B on pointer entry before the press;
   press delivery and drop-side focus TBD. `S(S-pan-mouse)`; queued.
 - Then Ours KDE: exact focus timing TBD
-- Then Ours Windows: provisional foreground retained during hold, B activated on valid drop; synthetic unfocused-mover proof, C parked `D(D-win-drag)`
+- Then Ours Windows: press-focus delivered and agent-observed 2026-10-11,
+  base `9d12c7f` plus [delivery record](../../changes/archive/windows-drag-press-focus.md):
+  unfocused B becomes exact foreground before movement/Up; no-move and Esc
+  retain focus with stable frames and no drop plan. Moving drop keeps source
+  and siblings stationary during preview, lands on the preview allocation,
+  and keeps B foreground. Actual press setter accepted, 6-10ms observed.
+  Drop still verifies fresh focus and refuses failures; already-foreground
+  skips redundant setter. Native title-bar and inactive resize paths unchanged,
+  underlay C parked. Physical Start-mask/input/resize feel remain user-owned;
+  positive refusal-race native probes not run. `D(D-win-drag)`
 - Variant hook: V-DRAG-ZONE.
 
 ## New scenarios (GWT; fixtures/actions/discriminators per the approved expansion record)
