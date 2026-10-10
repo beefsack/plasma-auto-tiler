@@ -392,7 +392,7 @@ decisions of 2026-09-24 are under
   | 5 | Parked parity-queue multi-output foundation, then handoff item 5 | Per-monitor current-view observation, membership/geometry/visibility/recovery fences first; user live checks need a multi-output Windows setup. Offline topology/Engine tests can precede that. |
   | 6 | Keyboard resize R-RSZ-01 (parity d) | Independent; needs fresh Alt-capable trigger plus dedicated resize intent. No dependency on items 1-5 except shared modifier routing. |
   | 7 | Press-focus R-DRAG-08 | Independent of items 1-5; touches Win-drag arm only. Keep R-DRAG-07 stationary-source/moving-preview split intact. |
-  | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; KDE Q3 plus D7 tile-override store delivered offline. Ordinary/sticky intent must remain distinct from automatic fixed origin and recovery authority; Windows mechanism unselected, REQ-RST-01c stays OPEN. Coordinate D7 membership with item 13. |
+  | 8 | Restart R-RST-01/R-FLT-05 sticky/intentional persistence | Independent of items 1-5; KDE Q3 plus D7 tile-override store delivered offline. Ordinary/sticky intent must remain distinct from automatic fixed origin and recovery authority; Windows mechanism selected 2026-10-10 (prefixed on-window markers, item 8 below), REQ-RST-01c stays OPEN. Coordinate D7 membership with item 13. |
   | 9 | Fullscreen send R-MAX-09 (Windows carry; NOT the parked parity-queue multi-output foundation) | Depends on handoff item 2 follow/stay wiring only; same-output workspace carry, no cross-output claim. |
   | 10 | Float/half-snap parity (a) R-FLT-07..11 | Independent of items 1-5; reuses existing focus/move catalog rows, no new chords. |
   | 11 | Born-max/floating-retile overlay parity (b) incl R-MAX-03 | Replaces one-shot admission clear; first-fullscreen-exit is separate (D5 core/KDE delivered offline, Windows pending). B9 unmaximize/fresh-admit is item 15. Independent of items 1-5. |
@@ -1353,6 +1353,14 @@ decisions of 2026-09-24 are under
     Windows code/behavior unchanged in that delivery. KDE D7 tile-override
     restart store [delivered offline](changes/archive/fixed-window-tile-override-restart.md);
     Windows still lacks float persistence and tile overrides remain a gap.
+    User decision 2026-10-10 (mechanism, option A): on-window `SetProp`
+    markers, same pattern as `PlasmaAutoTilerSticky`; intentional-float and
+    fixed-window tile-override markers added. Names carry the distinctive
+    project prefix to minimise collision with other processes. A marker
+    restores classification only, never authorizes writes or recovery
+    ownership; written after native success, removed on unfloat/sticky-off/
+    re-float; unreadable means no intent, logged. No separate store file and
+    no recovery-ledger change. Post-restart un-stick and REQ-RST-01c stay TBD/OPEN.
 
     #### Item 8 behavior and reference seams
 
@@ -2942,10 +2950,6 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 - Windows package/update channel: final distribution route remains unselected
   (Store/signed installer/winget under evaluation); blocks release packaging,
   not the parity implementation. [Plan](research/windows-port/plan.md).
-- Windows restart intent persistence (handoff item 8): select identity/storage,
-  recovery-journal versus separate-store routing and schema; REQ-RST-01c
-  membership/set/focus remains OPEN. Blocks that persistence piece, not other
-  handoff work. [Spec](spec/functional-spec.md#startup).
 - Remaining accepted-addition bindings: defaults outside items 1-5 remain
   unchosen. Existing send-and-stay/output-stay/migration actions deliberately
   stay bindable and unbound; no default choice is needed to implement them.
