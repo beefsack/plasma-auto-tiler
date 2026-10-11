@@ -5,7 +5,8 @@ use tiler_windows::model::{
 };
 use tiler_windows::product_hide::{
     ProductTeardown, committed_has_same_claim, parse_watcher_ready, product_claim,
-    render_watcher_ready, shell_class_excluded, teardown_keep_ledger, watcher_ready_filename,
+    project_topmost_hide_allowed, render_watcher_ready, shell_class_excluded, teardown_keep_ledger,
+    watcher_ready_filename,
 };
 
 fn owner() -> ProcessIdentity {
@@ -329,4 +330,199 @@ fn v3_product_tag_format_enforced() {
         mouse_snap: None,
     };
     validate_ledger(&ledger).expect("helper nonempty tag still valid on v3");
+}
+
+#[test]
+fn project_topmost_gate_only_authenticates_raised_band() {
+    // Normal tile with no band: no bypass needed or granted.
+    assert!(!project_topmost_hide_allowed(None, false));
+    assert!(!project_topmost_hide_allowed(Some(false), false));
+    assert!(!project_topmost_hide_allowed(Some(true), false));
+    // Project-raised band from a non-topmost prior: the only allowed case.
+    assert!(project_topmost_hide_allowed(Some(false), true));
+    // Preexisting topmost and unknown history refuse even when live.
+    assert!(!project_topmost_hide_allowed(Some(true), true));
+    assert!(!project_topmost_hide_allowed(None, true));
+}
+
+#[cfg(windows)]
+mod native_topmost_hide {
+    use tiler_windows::model::ProcessIdentity;
+    use tiler_windows::product_hide::{project_topmost_hide_allowed, sys};
+
+    const TEST_CLASS: &str = "PlasmaAutoTilerHideTopmostTest";
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain([0]).collect()
+    }
+
+    unsafe extern "system" fn wndproc(
+        hwnd: windows_sys::Win32::Foundation::HWND,
+        msg: u32,
+        wp: windows_sys::Win32::Foundation::WPARAM,
+        lp: windows_sys::Win32::Foundation::LPARAM,
+    ) -> windows_sys::Win32::Foundation::LRESULT {
+        unsafe { windows_sys::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wp, lp) }
+    }
+
+    struct TestWindow {
+        hwnd: u64,
+    }
+
+    impl TestWindow {
+        fn create(topmost: bool) -> TestWindow {
+            use windows_sys::Win32::Foundation::ERROR_CLASS_ALREADY_EXISTS;
+            use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                CreateWindowExW, RegisterClassW, WNDCLASSW, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW,
+            };
+            let class_w = wide(TEST_CLASS);
+            let title_w = wide("hide-topmost-test");
+            let hinst = unsafe { GetModuleHandleW(std::ptr::null()) };
+            let mut cls: WNDCLASSW = unsafe { std::mem::zeroed() };
+            cls.lpfnWndProc = Some(wndproc);
+            cls.hInstance = hinst;
+            cls.lpszClassName = class_w.as_ptr();
+            let atom = unsafe { RegisterClassW(&cls) };
+            assert!(
+                atom != 0
+                    || unsafe { windows_sys::Win32::Foundation::GetLastError() }
+                        == ERROR_CLASS_ALREADY_EXISTS,
+                "test class registers"
+            );
+            let exstyle = if topmost { WS_EX_TOPMOST } else { 0 };
+            let hwnd = unsafe {
+                CreateWindowExW(
+                    exstyle,
+                    class_w.as_ptr(),
+                    title_w.as_ptr(),
+                    WS_OVERLAPPEDWINDOW,
+                    0,
+                    0,
+                    100,
+                    100,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    hinst,
+                    std::ptr::null(),
+                )
+            };
+            assert!(!hwnd.is_null(), "invisible own-process test window creates");
+            TestWindow {
+                hwnd: hwnd as usize as u64,
+            }
+        }
+
+        fn refusal_code(status: sys::CandidateStatus) -> Option<&'static str> {
+            match status {
+                sys::CandidateStatus::Admissible(_)
+                | sys::CandidateStatus::Retained(_)
+                | sys::CandidateStatus::Absent
+                | sys::CandidateStatus::Uncertain => None,
+                sys::CandidateStatus::Refused(code) => Some(code),
+            }
+        }
+    }
+
+    impl Drop for TestWindow {
+        fn drop(&mut self) {
+            use windows_sys::Win32::Foundation::HWND;
+            use windows_sys::Win32::UI::WindowsAndMessaging::DestroyWindow;
+            unsafe {
+                let _ = DestroyWindow(self.hwnd as usize as HWND);
+            }
+        }
+    }
+
+    fn fake_owner() -> ProcessIdentity {
+        let real = tiler_windows::native::current_identity().expect("current identity reads");
+        let pid = real.pid.wrapping_add(0x1_0000).max(1);
+        assert_ne!(pid, real.pid, "fake owner differs from window owner");
+        ProcessIdentity {
+            pid,
+            process_creation: real.process_creation.clone(),
+            user_sid: real.user_sid.clone(),
+            session_id: real.session_id,
+            exe_path: real.exe_path.clone(),
+        }
+    }
+
+    #[test]
+    fn normal_tile_without_band_never_hits_topmost_gate() {
+        let window = TestWindow::create(false);
+        let owner = fake_owner();
+        // Actual classification: an invisible non-topmost window reaches the
+        // visibility gate, proving no topmost refusal without a band.
+        assert_eq!(
+            TestWindow::refusal_code(sys::classify_candidate(window.hwnd, &owner)),
+            Some("not-visible")
+        );
+        assert_eq!(
+            TestWindow::refusal_code(sys::classify_candidate_for_hide(window.hwnd, &owner, false)),
+            Some("not-visible")
+        );
+        assert_eq!(
+            TestWindow::refusal_code(sys::classify_candidate_for_hide(window.hwnd, &owner, true)),
+            Some("not-visible")
+        );
+        assert!(!project_topmost_hide_allowed(None, false));
+    }
+
+    #[test]
+    fn preexisting_band_refuses_without_bypass() {
+        let window = TestWindow::create(true);
+        let owner = fake_owner();
+        // Blanket path and hide path without the flag both refuse topmost.
+        assert_eq!(
+            TestWindow::refusal_code(sys::classify_candidate(window.hwnd, &owner)),
+            Some("topmost")
+        );
+        assert_eq!(
+            TestWindow::refusal_code(sys::classify_candidate_for_hide(window.hwnd, &owner, false)),
+            Some("topmost")
+        );
+        // Unknown history and preexisting prior never authenticate.
+        assert!(!project_topmost_hide_allowed(None, true));
+        assert!(!project_topmost_hide_allowed(Some(true), true));
+    }
+
+    #[test]
+    fn project_raised_band_bypasses_only_with_flag() {
+        let window = TestWindow::create(true);
+        let owner = fake_owner();
+        // Same live topmost window: the flag moves actual classification past
+        // the topmost gate to the next gate (invisible, so not-visible),
+        // proving the bypass without clearing the band.
+        assert_eq!(
+            TestWindow::refusal_code(sys::classify_candidate_for_hide(window.hwnd, &owner, true)),
+            Some("not-visible")
+        );
+        assert!(project_topmost_hide_allowed(Some(false), true));
+    }
+
+    #[test]
+    fn marker_alone_never_authorizes_recycled_identity_refuses() {
+        let window = TestWindow::create(true);
+        let owner = fake_owner();
+        sys::install_float_intent_marker(window.hwnd).expect("float marker installs");
+        // A present float marker without the runtime flag still refuses
+        // topmost: markers never authorize hiding. A recycled identity has no
+        // exact runtime key (`None`), so it refuses the same way.
+        assert_eq!(
+            TestWindow::refusal_code(sys::classify_candidate(window.hwnd, &owner)),
+            Some("topmost")
+        );
+        assert_eq!(
+            TestWindow::refusal_code(sys::classify_candidate_for_hide(window.hwnd, &owner, false)),
+            Some("topmost")
+        );
+        assert!(!project_topmost_hide_allowed(None, true));
+        // The authenticated flag still bypasses with the marker present,
+        // proving the flag (not the marker) is the authority.
+        assert_eq!(
+            TestWindow::refusal_code(sys::classify_candidate_for_hide(window.hwnd, &owner, true)),
+            Some("not-visible")
+        );
+        let _ = sys::remove_float_intent_marker(window.hwnd);
+    }
 }

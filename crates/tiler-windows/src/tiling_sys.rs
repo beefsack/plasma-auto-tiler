@@ -72,10 +72,10 @@ use crate::model::ProcessIdentity;
 use crate::native::HeldProcess;
 use crate::settings::LiveSettings;
 use crate::snapkey::{
-    KeyboardConfig, MAX_DISPATCH_PER_TICK, OriginVerdict, QueuedSnapEvent,
-    QueuedWorkspaceHistoryIntent, QueuedWorkspaceSendIntent, SnapOp, SnapOrigin, VK_LSHIFT,
-    VK_LWIN, VK_MASK, VK_RSHIFT, VK_RWIN, VK_SHIFT, WorkspaceHistoryOp, WorkspaceOp,
-    direction_name, resolve_origin,
+    KeyboardConfig, MAX_DISPATCH_PER_TICK, OriginVerdict, QueuedFloatIntent, QueuedSnapEvent,
+    QueuedStickyIntent, QueuedWorkspaceHistoryIntent, QueuedWorkspaceSendIntent, SnapEdge, SnapOp,
+    SnapOrigin, VK_LSHIFT, VK_LWIN, VK_MASK, VK_RSHIFT, VK_RWIN, VK_SHIFT, WorkspaceHistoryOp,
+    WorkspaceOp, direction_name, resolve_origin,
 };
 use crate::storage::LedgerStore;
 use crate::tiling::{
@@ -4060,15 +4060,16 @@ fn set_topmost_band(hwnd_u64: u64, top: bool) -> bool {
     placed != 0
 }
 
-/// Held ownership gates for one sticky-marker native write (`SetProp` /
-/// `RemoveProp`) on a stored member: the held process identity must equal
-/// the stored full identity with matching creation, same user/session as
-/// the owner, medium integrity, live lifetime tag, plus scope,
-/// hosted-child, and proof fences. The caller keeps the returned hold
-/// across the write and its readback and rechecks pid plus lifetime tag
-/// immediately before the call (a stable process handle never protects
-/// HWND reuse) with a consistent readback after.
-fn hold_sticky_target(
+/// Held ownership gates for one classification-marker native write (`SetProp` /
+/// `RemoveProp` for sticky, float-intent, or the reserved tile override) on
+/// a stored member: the held process identity must equal the stored full
+/// identity with matching creation, same user/session as the owner, medium
+/// integrity, live lifetime tag, plus scope, hosted-child, and proof fences.
+/// The caller keeps the returned hold across the write and its readback and
+/// rechecks pid plus lifetime tag immediately before the call (a stable
+/// process handle never protects HWND reuse) with a consistent readback
+/// after.
+fn hold_marker_target(
     state: &TileLoop,
     me: &ProcessIdentity,
     key: &crate::workspace::WindowKey,
@@ -4119,7 +4120,7 @@ fn hold_sticky_target(
 
 /// Held ownership gates for a band-only topmost effect on a stored member
 /// with no live eligible observation (retained floats, graceful stop).
-/// Same bar as [`hold_sticky_target`]: the caller keeps the returned hold
+/// Same bar as [`hold_marker_target`]: the caller keeps the returned hold
 /// across the effect and rechecks pid plus band readback after.
 /// Geometry effects use `revalidate_target` (fresh eligibility classification);
 /// band effects move, size, and activate nothing.
@@ -4128,14 +4129,14 @@ fn hold_band_target(
     me: &ProcessIdentity,
     key: &crate::workspace::WindowKey,
 ) -> Option<HeldProcess> {
-    hold_sticky_target(state, me, key)
+    hold_marker_target(state, me, key)
 }
 
-/// Fresh pid plus lifetime-tag recheck for one sticky-marker write: the
-/// live member tag must still equal the stored tag and the HWND must still
-/// resolve to the stored pid. Call immediately before the `SetProp` /
+/// Fresh pid plus lifetime-tag recheck for one classification-marker write:
+/// the live member tag must still equal the stored tag and the HWND must
+/// still resolve to the stored pid. Call immediately before the `SetProp` /
 /// `RemoveProp` under the held process and again after the readback.
-fn sticky_tag_pid_fresh(state: &TileLoop, key: &crate::workspace::WindowKey) -> bool {
+fn marker_tag_pid_fresh(state: &TileLoop, key: &crate::workspace::WindowKey) -> bool {
     state.member_tags.get(key).is_some_and(|stored| {
         crate::workspace_owner::visible_lifetime_ok(
             stored,
@@ -4153,22 +4154,47 @@ fn install_sticky_mark_held(
     key: &crate::workspace::WindowKey,
     prior_floating: bool,
 ) -> bool {
-    let Some(held) = hold_sticky_target(state, me, key) else {
+    let Some(held) = hold_marker_target(state, me, key) else {
         return false;
     };
-    if !sticky_tag_pid_fresh(state, key) {
+    if !marker_tag_pid_fresh(state, key) {
         let _ = &held;
         return false;
     }
     let ok = crate::product_hide::sys::install_sticky_marker(key.hwnd, prior_floating).is_ok();
-    let fresh = sticky_tag_pid_fresh(state, key);
+    let fresh = marker_tag_pid_fresh(state, key);
+    let _ = &held;
+    ok && fresh
+}
+
+/// Install one intentional-float marker under the fresh held gate with the
+/// guard kept across the write and its readback. Only call after the Engine
+/// commit plus verified native effects hold: success-only persistence keeps
+/// local intent and native state on failure with no rollback. Returns true
+/// only when the install reads back consistently and the pid plus lifetime
+/// tag stay fresh after.
+fn install_float_mark_held(
+    state: &TileLoop,
+    me: &ProcessIdentity,
+    key: &crate::workspace::WindowKey,
+) -> bool {
+    let Some(held) = hold_marker_target(state, me, key) else {
+        return false;
+    };
+    if !marker_tag_pid_fresh(state, key) {
+        let _ = &held;
+        return false;
+    }
+    let ok = crate::product_hide::sys::install_float_intent_marker(key.hwnd).is_ok();
+    let fresh = marker_tag_pid_fresh(state, key);
     let _ = &held;
     ok && fresh
 }
 
 /// Drop float and sticky runtime state whose membership is gone. No writes,
-/// no ledger; the next tick re-derives float rows from the Engine. Sticky
-/// markers (window properties) are never pruned here: only the runtime map.
+/// no ledger; the next tick re-derives float rows from the Engine.
+/// Classification markers (window properties) are never pruned here: only
+/// the runtime maps. A surviving marker re-adopts on the next preamble.
 fn prune_float_state(state: &mut TileLoop) {
     state
         .float_topmost_prev
@@ -4185,8 +4211,9 @@ fn prune_float_state(state: &mut TileLoop) {
 }
 
 /// Drop every runtime table for one dead member: tokens, rects, bands, sticky,
-/// identity, tags, hints, and workspace membership. No writes, no ledger. Sticky
-/// markers (window properties) are never pruned here: only the runtime map.
+/// identity, tags, hints, and workspace membership. No writes, no ledger.
+/// Classification markers (window properties) die with the window and are
+/// never pruned here: only the runtime maps.
 fn drop_member_state(state: &mut TileLoop, key: &crate::workspace::WindowKey) {
     if let Some(token) = state.member_tokens.remove(key) {
         state.member_rects.remove(&token);
@@ -7789,9 +7816,48 @@ fn apply_float_from_tiled(
     state.float_rects.insert(from.to_owned(), actual);
     // Intentional-float lifetime: row assembly rides this token floating
     // across domain releases and boundary sends even when the Engine session
-    // carries no exception yet. Sticky-on keeps its own lane instead.
+    // carries no exception yet. Sticky-on keeps its own lane instead. The
+    // on-window marker persists only after this verified success so a later
+    // owner restart re-adopts the classification; a failed install keeps
+    // local intent and native state with the degraded outcome below.
     if !mark_sticky {
         state.floated.insert(member_key.clone());
+    }
+    if !mark_sticky && !install_float_mark_held(state, me, member_key) {
+        let focus = retain_float_focus_validated(state, me, fulls, expected, member_key);
+        let writable = writable_tokens(state, &loc.output, &loc.workspace, observed);
+        let summary = apply_geometry(
+            state,
+            ApplyInput {
+                me,
+                fulls,
+                reply: &reply,
+                observed,
+                op,
+                tick,
+                correlation: correlation.as_str(),
+                skipped,
+                writable: &writable,
+                output_token: state.workspaces.output_token(&loc.output),
+                workspace_token: state
+                    .workspaces
+                    .workspace_token(&loc.output, &loc.workspace),
+                revision: revision_for(state, &loc.output, &loc.workspace),
+            },
+        );
+        let outcome: &'static str = match summary {
+            Some(s) if !s.readback_ok => "float-unverified",
+            Some(s) if s.mismatched > 0 || actual != effective => "float-mismatch",
+            Some(_) => "float-unverified",
+            None => reply_outcome(&reply),
+        };
+        let mut line = settle(outcome);
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        line["target"] = serde_json::Value::from(target);
+        line["focus"] = serde_json::Value::from(focus);
+        log_json_at(log_path, line);
+        return;
     }
     if mark_sticky && !install_sticky_mark_held(state, me, member_key, false) {
         let focus = retain_float_focus_validated(state, me, fulls, expected, member_key);
@@ -7978,7 +8044,7 @@ fn clear_sticky_mark(
     settle: &dyn Fn(&'static str) -> serde_json::Value,
     log_path: &Path,
 ) -> bool {
-    let Some(held) = hold_sticky_target(state, me, member_key) else {
+    let Some(held) = hold_marker_target(state, me, member_key) else {
         if unsafe { IsWindow(member_key.hwnd as isize as HWND) } == 0
             || crate::product_hide::sys::read_sticky_marker(member_key.hwnd).is_none()
         {
@@ -7991,7 +8057,7 @@ fn clear_sticky_mark(
         log_json_at(log_path, line);
         return false;
     };
-    if !sticky_tag_pid_fresh(state, member_key) {
+    if !marker_tag_pid_fresh(state, member_key) {
         let _ = &held;
         let mut line = settle("identity-changed");
         line["origin"] = serde_json::Value::from(origin.token.clone());
@@ -8001,7 +8067,7 @@ fn clear_sticky_mark(
         return false;
     }
     let result = crate::product_hide::sys::remove_sticky_marker(member_key.hwnd, expected_prior);
-    let fresh = sticky_tag_pid_fresh(state, member_key);
+    let fresh = marker_tag_pid_fresh(state, member_key);
     let _ = &held;
     match result {
         Ok(true) if fresh => true,
@@ -8032,9 +8098,78 @@ fn clear_sticky_mark(
     }
 }
 
+/// Clear one intentional-float mark under the fresh held gate with the guard
+/// kept across the `RemoveProp` and its readback, on settled unfloat
+/// (ordinary unfloat, sticky-off to tile, cross-domain rehome to tile).
+/// Corrupt residue on our own property name cleans with the same call (it is
+/// inert either way) under the same full identity plus lifetime fences. A
+/// verifiably absent marker (destroyed HWND or no property) needs no native
+/// write, so runtime may still drop without the hold; a present marker
+/// without the hold stays for later recovery. Logs the failure and returns
+/// false without mutating.
+#[allow(clippy::too_many_arguments)]
+fn clear_float_mark(
+    state: &TileLoop,
+    me: &ProcessIdentity,
+    member_key: &crate::workspace::WindowKey,
+    from: &str,
+    target: &str,
+    origin: &SnapOrigin,
+    settle: &dyn Fn(&'static str) -> serde_json::Value,
+    log_path: &Path,
+) -> bool {
+    let Some(held) = hold_marker_target(state, me, member_key) else {
+        if unsafe { IsWindow(member_key.hwnd as isize as HWND) } == 0
+            || !crate::product_hide::sys::read_float_intent_marker(member_key.hwnd)
+        {
+            return true;
+        }
+        let mut line = settle("identity-changed");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        line["target"] = serde_json::Value::from(target);
+        log_json_at(log_path, line);
+        return false;
+    };
+    if !marker_tag_pid_fresh(state, member_key) {
+        let _ = &held;
+        let mut line = settle("identity-changed");
+        line["origin"] = serde_json::Value::from(origin.token.clone());
+        line["window"] = serde_json::Value::from(from.to_owned());
+        line["target"] = serde_json::Value::from(target);
+        log_json_at(log_path, line);
+        return false;
+    }
+    let result = crate::product_hide::sys::remove_float_intent_marker(member_key.hwnd);
+    let fresh = marker_tag_pid_fresh(state, member_key);
+    let _ = &held;
+    match result {
+        Ok(()) if fresh => true,
+        Ok(()) => {
+            let mut line = settle("identity-changed");
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            line["window"] = serde_json::Value::from(from.to_owned());
+            line["target"] = serde_json::Value::from(target);
+            log_json_at(log_path, line);
+            false
+        }
+        Err(_) => {
+            let mut line = settle("float-unverified");
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            line["window"] = serde_json::Value::from(from.to_owned());
+            line["target"] = serde_json::Value::from(target);
+            log_json_at(log_path, line);
+            false
+        }
+    }
+}
+
 /// Shared float-to-tiled transition: project-raised band restored first under
-/// held gates, Engine commit, sibling reflow, exact focus retained. With
-/// `unmark_sticky` the sticky mark clears between the band and the commit.
+/// held gates, classification markers cleared between the band and the
+/// commit, Engine commit, sibling reflow, exact focus retained. With
+/// `unmark_sticky` the sticky mark clears first (sticky-off to tile); the
+/// intentional-float mark always clears here (settled unfloat, including a
+/// prior-float sticky tiling).
 #[allow(clippy::too_many_arguments)]
 fn apply_unfloat_to_tiled(
     state: &mut TileLoop,
@@ -8095,6 +8230,11 @@ fn apply_unfloat_to_tiled(
         ) {
             return;
         }
+    }
+    if !clear_float_mark(
+        state, me, member_key, from, target, origin, settle, log_path,
+    ) {
+        return;
     }
     state.engine = candidate;
     state.sticky.remove(member_key);
@@ -8776,10 +8916,45 @@ fn sticky_rehome_to_current(
     ) {
         return;
     }
+    // Settled rehome to tile clears a carried float marker too (a prior-float
+    // sticky tiling); rehome to float keeps (or repairs) it below.
+    if !floating
+        && !clear_float_mark(
+            state, me, member_key, from, target, origin, settle, log_path,
+        )
+    {
+        return;
+    }
     state.engine = candidate;
     if floating {
+        // Sticky-off preserving a prior float: the float marker rides on.
+        // Repair it when a foreign value crept onto our property; a failed
+        // repair keeps local intent and native state with a degraded log.
+        let float_ok = crate::product_hide::sys::read_float_intent_marker(member_key.hwnd)
+            || install_float_mark_held(state, me, member_key);
         state.float_rects.insert(from.to_owned(), live_frame);
         state.floated.insert(member_key.clone());
+        if !float_ok {
+            let focus = match observed.iter().find(|w| w.hwnd == member_key.hwnd) {
+                Some(expected) => {
+                    retain_float_focus_validated(state, me, fulls, expected, member_key)
+                }
+                None => "float-focus-failed",
+            };
+            let mut line = settle("float-unverified");
+            line["origin"] = serde_json::Value::from(origin.token.clone());
+            line["window"] = serde_json::Value::from(from.to_owned());
+            line["target"] = serde_json::Value::from(target);
+            line["focus"] = serde_json::Value::from(focus);
+            log_json_at(log_path, line);
+            state.sticky.remove(member_key);
+            state.workspaces.remove_window(member_key);
+            state.workspaces.ensure_output(&loc.output);
+            state
+                .workspaces
+                .assign(member_key.clone(), &loc.output, current_ws, false);
+            return;
+        }
     } else {
         state.float_topmost_prev.remove(member_key);
         state.floated.remove(member_key);
@@ -9042,6 +9217,26 @@ fn sticky_off_to_current(
     };
     if to_float {
         if current_ws == loc.workspace {
+            // Settling to an ordinary float keeps the float marker: repair
+            // it first under held gates, so a failed repair mutates nothing
+            // and the window stays sticky with its marker intact.
+            if !crate::product_hide::sys::read_float_intent_marker(member_key.hwnd)
+                && !install_float_mark_held(state, me, member_key)
+            {
+                let focus = match observed.iter().find(|w| w.hwnd == member_key.hwnd) {
+                    Some(expected) => {
+                        retain_float_focus_validated(state, me, fulls, expected, member_key)
+                    }
+                    None => "float-focus-failed",
+                };
+                let mut line = settle("float-unverified");
+                line["origin"] = serde_json::Value::from(origin.token.clone());
+                line["window"] = serde_json::Value::from(from.to_owned());
+                line["target"] = serde_json::Value::from("float");
+                line["focus"] = serde_json::Value::from(focus);
+                log_json_at(log_path, line);
+                return;
+            }
             if clear_sticky_mark(
                 state, me, member_key, true, from, "float", origin, settle, log_path,
             ) {
@@ -9484,37 +9679,60 @@ fn admit_slotless_maximized(
     }
 }
 
-/// Sticky restart adoption: the next owner consumes a surviving
-/// window-lifetime marker and adopts a normal float on its current workspace
-/// with the live frame preserved. No sticky runtime entry afterwards: the
-/// window rides ordinary float occupancy, hiding, and Win+G. Runs in the
+/// Restart marker adoption: the next owner re-adopts every surviving sticky
+/// marker as sticky (keeping its pre-sticky origin) and every surviving
+/// intentional-float marker as an ordinary float, each on its current
+/// workspace with the live frame preserved, before any tiling. Runs in the
 /// shared admission preamble, so every tick and chord adopts before any tile
-/// write. The candidate Engine must already carry the float exception before
-/// the marker clears under fresh held guards; the commit lands only then.
-/// Marker failures keep the durable marker for later recovery and commit
-/// nothing.
-fn adopt_sticky_markers(
+/// write.
+///
+/// All admitted valid markers commit in ONE candidate event per domain:
+/// sequential per-window commits admit the other marker windows as ordinary
+/// tiles first, and flipping the Engine's focused tile to float then rejects
+/// with `focus-mismatch` while the window stays tiled. Batching keeps every
+/// flip on first contact, where no retained focus binding can reject. The
+/// event carries the first tiled row as focus (the fresh-seed anchor rule)
+/// so retained-session commits converge focus onto a surviving tiled member.
+///
+/// Markers restore classification only: admission plus the exact-lifetime
+/// fences below must already hold, so a marker alone never grants
+/// membership, writes, or recovery authority. Adoption performs no native
+/// writes and keeps every durable marker for later restarts; only settled
+/// unfloat/sticky-off removes them. Missing means empty; a wrong value logs
+/// `marker-corrupt` and a failed read logs `marker-unreadable`, both with no
+/// intent. The reserved tile-override marker never adopts here.
+fn adopt_restart_markers(
     state: &mut TileLoop,
     me: &ProcessIdentity,
     observed: &[ObservedWindow],
     retained: &[RetainedRow],
     areas: &[MonitorArea],
 ) {
+    /// One staged marker window: `prior` carries the pre-sticky float state
+    /// for sticky markers and is `None` for an ordinary float.
+    struct Staged {
+        key: crate::workspace::WindowKey,
+        token: String,
+        loc: crate::workspace::MemberLoc,
+        prior: Option<bool>,
+        frame: Rect,
+    }
     let log_path = state.log_path.clone();
     let correlation = state.correlation();
+    // Stage every admitted valid marker before the first domain commit, so
+    // no marker window is ever admitted as an ordinary tile first. No Engine
+    // commits and no map writes in this pass (the already-floating fast path
+    // below excepted).
+    let mut staged: Vec<Staged> = Vec::new();
     for window in observed {
         let key = crate::workspace::WindowKey {
             hwnd: window.hwnd,
             pid: window.identity.pid,
             creation: window.identity.process_creation.clone(),
         };
-        if state.sticky.contains_key(&key) {
+        if state.sticky.contains_key(&key) || state.floated.contains(&key) {
             continue;
         }
-        let marker = crate::product_hide::sys::read_sticky_marker(window.hwnd);
-        let Some(prior) = marker else {
-            continue;
-        };
         if state.hidden_claims.keys().any(|k| k.hwnd == window.hwnd) {
             continue;
         }
@@ -9541,74 +9759,145 @@ fn adopt_sticky_markers(
                 continue;
             }
         }
-        let live_tag = crate::product_hide::sys::read_member_tag(key.hwnd);
-        let tag_ok = state.member_tags.get(&key).is_some_and(|stored| {
-            crate::workspace_owner::visible_lifetime_ok(stored, live_tag.as_deref())
-        });
-        if !tag_ok || !pid_current(key.hwnd, key.pid) {
-            continue;
-        }
-        if engine_is_float(state, &loc.output, &loc.workspace, &token) {
-            let Some(held) = hold_sticky_target(state, me, &key) else {
-                continue;
-            };
-            if !sticky_tag_pid_fresh(state, &key) {
-                let _ = &held;
-                continue;
-            }
-            let cleared = crate::product_hide::sys::remove_sticky_marker(key.hwnd, prior)
-                .is_ok_and(|v| v)
-                && sticky_tag_pid_fresh(state, &key);
-            let _ = &held;
-            if !(marker.is_some() && cleared) {
+        // Shared portable classifier (sticky wins over float and the
+        // reserved tile override); absent is silent, corrupt/unreadable log
+        // no intent.
+        let marker = crate::workspace_owner::classify_restart_marker(
+            crate::product_hide::sys::peek_float_intent_raw(window.hwnd),
+            crate::product_hide::sys::peek_sticky_raw(window.hwnd),
+            // Reserved peek: keeps the priority honest without hydrating.
+            crate::product_hide::sys::peek_tile_override_raw(window.hwnd),
+        );
+        let prior = match marker {
+            crate::workspace_owner::RestartMarker::Sticky(prior) => Some(prior),
+            crate::workspace_owner::RestartMarker::FloatIntent => None,
+            crate::workspace_owner::RestartMarker::Absent
+            | crate::workspace_owner::RestartMarker::TileOverride => continue,
+            crate::workspace_owner::RestartMarker::Corrupt => {
                 log_json_at(
                     &log_path,
                     serde_json::json!({
                         "event": "sticky-adopt",
                         "window": token,
-                        "outcome": "sticky-unverified",
+                        "outcome": "marker-corrupt",
                     }),
                 );
                 continue;
             }
+            crate::workspace_owner::RestartMarker::Unreadable => {
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": "sticky-adopt",
+                        "window": token,
+                        "outcome": "marker-unreadable",
+                    }),
+                );
+                continue;
+            }
+        };
+        let live_tag = crate::product_hide::sys::read_member_tag(key.hwnd);
+        let lifetime_ok = state.member_tags.get(&key).is_some_and(|stored| {
+            crate::workspace_owner::visible_lifetime_ok(stored, live_tag.as_deref())
+        });
+        // Portable hydration gate: admitted (checked above) plus exact
+        // identity plus live lifetime tag. A mismatch fails closed with no
+        // intent and no log: the window is simply not ours.
+        let eligible = match prior {
+            Some(prior) => {
+                crate::workspace_owner::restart_sticky_eligible(true, true, lifetime_ok, marker)
+                    == Some(prior)
+            }
+            None => crate::workspace_owner::restart_float_eligible(true, true, lifetime_ok, marker),
+        };
+        if !eligible || !lifetime_ok || !pid_current(key.hwnd, key.pid) {
+            continue;
+        }
+        if engine_is_float(state, &loc.output, &loc.workspace, &token) {
+            // The Engine already floats this token: track the runtime lane
+            // with the live frame. No marker write, no commit.
+            let lane = match prior {
+                Some(prior) => {
+                    state.sticky.insert(key.clone(), prior);
+                    "sticky-adopted"
+                }
+                None => {
+                    state.floated.insert(key.clone());
+                    "float-adopted"
+                }
+            };
             state.float_rects.insert(token.clone(), window.visible);
             log_json_at(
                 &log_path,
                 serde_json::json!({
-                    "event": "sticky-adopted",
+                    "event": lane,
                     "window": token,
                 }),
             );
             continue;
         }
-        // Temporary candidate lane: the assembled rows ride floating while the
-        // candidate verifies. The sticky map is absent at commit.
-        state.sticky.insert(key.clone(), prior);
+        staged.push(Staged {
+            key,
+            token,
+            loc,
+            prior,
+            frame: window.visible,
+        });
+    }
+    // One candidate commit per domain over the complete staged set, in
+    // first-seen domain order. Every marker window rides floating in a
+    // single first-contact event; the event focus names the first tiled row
+    // so retained sessions converge focus onto a survivor.
+    let mut domains: Vec<(String, String)> = Vec::new();
+    for s in &staged {
+        if !domains
+            .iter()
+            .any(|(o, w)| o == &s.loc.output && w == &s.loc.workspace)
+        {
+            domains.push((s.loc.output.clone(), s.loc.workspace.clone()));
+        }
+    }
+    for (output, workspace) in domains {
+        for s in staged
+            .iter()
+            .filter(|s| s.loc.output == output && s.loc.workspace == workspace)
+        {
+            match s.prior {
+                Some(prior) => {
+                    state.sticky.insert(s.key.clone(), prior);
+                }
+                None => {
+                    state.floated.insert(s.key.clone());
+                }
+            }
+        }
         let rollback = |state: &mut TileLoop| {
-            state.sticky.remove(&key);
-            state.float_rects.remove(&token);
+            for s in staged
+                .iter()
+                .filter(|s| s.loc.output == output && s.loc.workspace == workspace)
+            {
+                state.sticky.remove(&s.key);
+                state.floated.remove(&s.key);
+                state.float_rects.remove(&s.token);
+            }
         };
         let mut hint_cx = HintCx::new();
         let Some(rows) = assemble_domain_rows(
             state,
-            &loc.output,
-            &loc.workspace,
+            &output,
+            &workspace,
             observed,
             retained,
-            "sticky-adopt",
+            "restart-adopt",
             correlation.as_str(),
             &mut hint_cx,
         ) else {
             rollback(state);
             continue;
         };
-        let Some((domain, domain_key)) = workspace_domain_for(
-            &loc.output,
-            &loc.workspace,
-            areas,
-            state.inner_gap,
-            state.outer_gap,
-        ) else {
+        let Some((domain, domain_key)) =
+            workspace_domain_for(&output, &workspace, areas, state.inner_gap, state.outer_gap)
+        else {
             rollback(state);
             continue;
         };
@@ -9622,18 +9911,22 @@ fn adopt_sticky_markers(
                 .map(|r| (r.token.clone(), r.rect))
                 .collect::<Vec<_>>(),
         );
+        let focused = rows
+            .iter()
+            .find(|r| !r.floating)
+            .map(|r| WindowId(r.token.clone()));
         let mut candidate = state.engine.clone();
         let event = crate::tiling::build_reconcile_event_for_floating(
             &state.owner,
             &state.generation,
             &correlation,
-            revision_for(state, &loc.output, &loc.workspace),
+            revision_for(state, &output, &workspace),
             fp,
             &domain,
             &domain_key,
             state.outer_gap,
             &windows,
-            None,
+            focused.as_ref(),
         );
         let reply = candidate.handle(&event);
         if matches!(
@@ -9641,53 +9934,78 @@ fn adopt_sticky_markers(
             CoreReply::Rejected { .. } | CoreReply::Diverged(_) | CoreReply::SnapshotInvalid { .. }
         ) {
             rollback(state);
+            for s in staged
+                .iter()
+                .filter(|s| s.loc.output == output && s.loc.workspace == workspace)
+            {
+                let lane = match s.prior {
+                    Some(_) => "sticky-adopt",
+                    None => "float-adopt",
+                };
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": lane,
+                        "window": s.token,
+                        "correlation": correlation.as_str(),
+                        "outcome": "candidate-rejected",
+                        "reason": reply_outcome(&reply),
+                    }),
+                );
+            }
             continue;
         }
-        let candidate_float = candidate
-            .session(&domain_key)
-            .is_some_and(|s| s.is_exception(&WindowId(token.clone())));
-        if !candidate_float {
-            rollback(state);
-            continue;
+        let mut missing = false;
+        for s in staged
+            .iter()
+            .filter(|s| s.loc.output == output && s.loc.workspace == workspace)
+        {
+            if !candidate
+                .session(&domain_key)
+                .is_some_and(|sess| sess.is_exception(&WindowId(s.token.clone())))
+            {
+                missing = true;
+                let lane = match s.prior {
+                    Some(_) => "sticky-adopt",
+                    None => "float-adopt",
+                };
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": lane,
+                        "window": s.token,
+                        "correlation": correlation.as_str(),
+                        "outcome": "candidate-unfloated",
+                    }),
+                );
+            }
         }
-        // Held guards immediately before the marker write: full identity,
-        // lifetime tag, scope, hosted child, and proof, all live, with the
-        // guard kept across the remove and its readback.
-        let Some(held) = hold_sticky_target(state, me, &key) else {
+        if missing {
             rollback(state);
-            continue;
-        };
-        if !sticky_tag_pid_fresh(state, &key) {
-            let _ = &held;
-            rollback(state);
-            continue;
-        }
-        let cleared = crate::product_hide::sys::remove_sticky_marker(key.hwnd, prior)
-            .is_ok_and(|v| v)
-            && sticky_tag_pid_fresh(state, &key);
-        let _ = &held;
-        if !(marker.is_some() && candidate_float && cleared) {
-            rollback(state);
-            log_json_at(
-                &log_path,
-                serde_json::json!({
-                    "event": "sticky-adopt",
-                    "window": token,
-                    "outcome": "sticky-unverified",
-                }),
-            );
             continue;
         }
         state.engine = candidate;
-        state.sticky.remove(&key);
-        state.float_rects.insert(token.clone(), window.visible);
-        log_json_at(
-            &log_path,
-            serde_json::json!({
-                "event": "sticky-adopted",
-                "window": token,
-            }),
-        );
+        // Kept: the temporary lane entries above are the re-adopted
+        // origins (sticky keeps its prior, never a normal float). Every
+        // durable marker stays for later restarts; only settled
+        // unfloat/sticky-off removes them.
+        for s in staged
+            .iter()
+            .filter(|s| s.loc.output == output && s.loc.workspace == workspace)
+        {
+            state.float_rects.insert(s.token.clone(), s.frame);
+            let lane = match s.prior {
+                Some(_) => "sticky-adopted",
+                None => "float-adopted",
+            };
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": lane,
+                    "window": s.token,
+                }),
+            );
+        }
     }
 }
 
@@ -9843,7 +10161,7 @@ fn ensure_workspace_assignments(
     // First-seen maximized members join slotless the same way (membership
     // without a tile slot); the mode-gated clear restores them on tiled.
     admit_slotless_maximized(state, me, retained, areas);
-    adopt_sticky_markers(state, me, observed, retained, areas);
+    adopt_restart_markers(state, me, observed, retained, areas);
     if state.active_output.is_empty()
         && let Some(first) = state.workspaces.output_keys().into_iter().next()
     {
@@ -9957,7 +10275,12 @@ fn workspace_close_cleanup(state: &mut TileLoop) {
 /// window must equal the stored [`ProcessIdentity`] exactly, so a recycled
 /// HWND refuses with no writes. Fresh proof gate on every write in proof
 /// modes; commit-before-hide through the central watcher/ledger. Outcomes
-/// are typed at the source, never selected by error strings.
+/// are typed at the source, never selected by error strings. The detail
+/// carries the managed-admission refusal code when the outcome is
+/// `refused`, so the select hide loop can log the exact failure.
+///
+/// Bounded per-window hide diagnostics cap for one select transition.
+const MAX_HIDE_DIAG_PER_SELECT: usize = 64;
 fn workspace_hide_one(
     state: &mut TileLoop,
     me: &ProcessIdentity,
@@ -9966,13 +10289,13 @@ fn workspace_hide_one(
     key: &crate::workspace::WindowKey,
     expected: &ProcessIdentity,
     iconic: bool,
-) -> &'static str {
+) -> (&'static str, Option<&'static str>) {
     use crate::product_hide::sys::ManagedAdmitError;
     if state.allowlist.is_some() && !state.workspace_proof {
-        return "workspace-disabled";
+        return ("workspace-disabled", None);
     }
     if !scope_allows(&state.scope, &expected.exe_path) {
-        return "scope-excluded";
+        return ("scope-excluded", None);
     }
     // Listed hosts hide only with a live matching hosted child, re-verified
     // fresh here (not from the tick's observation): a newly appearing hosted
@@ -9983,7 +10306,7 @@ fn workspace_hide_one(
         expected.pid,
         &state.scope_hosts,
     ) {
-        return "scope-excluded";
+        return ("scope-excluded", None);
     }
     // Visible lifetime gate: the live member tag must equal the stored tag.
     // A same-process HWND reuse (same HWND/PID/creation, fresh window)
@@ -9993,24 +10316,42 @@ fn workspace_hide_one(
     let stored_tag = state.member_tags.get(key).cloned().unwrap_or_default();
     if !crate::workspace_owner::visible_lifetime_ok(&stored_tag, live_tag.as_deref()) {
         drop_member_state(state, key);
-        return "identity-changed";
+        return ("identity-changed", None);
     }
     if let Some(entries) = state.allowlist.as_ref() {
         let Some(entry) = entries.iter().find(|e| e.hwnd == key.hwnd) else {
-            return "allowlist-changed";
+            return ("allowlist-changed", None);
         };
         if verify_proof_owned(key.hwnd, entry, me).is_err() {
-            return "identity-changed";
+            return ("identity-changed", None);
         }
     }
-    let claim =
-        match crate::product_hide::sys::admit_managed_claim(key.hwnd, me, expected, &stored_tag) {
-            Ok(claim) => claim,
-            Err(ManagedAdmitError::Absent) => return "origin-vanished",
-            Err(ManagedAdmitError::Uncertain) => return "uncertain",
-            Err(ManagedAdmitError::WrongIdentity) => return "identity-changed",
-            Err(ManagedAdmitError::Refused(_)) => return "refused",
-        };
+    // Project-raised topmost exception: the ordinary intentional float
+    // raises the keep-above band from a non-topmost prior, recorded in
+    // `float_topmost_prev` as exact-key `Some(false)`. Only that fresh
+    // runtime evidence plus the exact member key matching the stored full
+    // identity authorizes the narrow hide-admission bypass below; the float
+    // marker alone never authorizes, preexisting topmost stays refused, and
+    // a replaced member (key/identity drift) refuses in admission as
+    // `identity-changed`. The band is never cleared merely to hide.
+    let allow_project_topmost = crate::product_hide::project_topmost_hide_allowed(
+        state.float_topmost_prev.get(key).copied(),
+        read_topmost_now(key.hwnd),
+    ) && key.pid == expected.pid
+        && key.creation == expected.process_creation;
+    let claim = match crate::product_hide::sys::admit_managed_claim_for_hide(
+        key.hwnd,
+        me,
+        expected,
+        &stored_tag,
+        allow_project_topmost,
+    ) {
+        Ok(claim) => claim,
+        Err(ManagedAdmitError::Absent) => return ("origin-vanished", None),
+        Err(ManagedAdmitError::Uncertain) => return ("uncertain", None),
+        Err(ManagedAdmitError::WrongIdentity) => return ("identity-changed", None),
+        Err(ManagedAdmitError::Refused(code)) => return ("refused", Some(code)),
+    };
     match crate::product_hide::sys::hide_managed_claim(store, me, &claim, dir) {
         Ok(committed) => {
             state.hidden_claims.insert(
@@ -10020,7 +10361,7 @@ fn workspace_hide_one(
                     iconic,
                 },
             );
-            "hidden"
+            ("hidden", None)
         }
         Err(e) => {
             // Commit-before-hide appends the durable enriched claim BEFORE the
@@ -10048,11 +10389,11 @@ fn workspace_hide_one(
             }
             let msg = e.to_string();
             if msg.starts_with("absent:") {
-                "origin-vanished"
+                ("origin-vanished", None)
             } else if msg.starts_with("uncertain:") {
-                "uncertain"
+                ("uncertain", None)
             } else {
-                "refused"
+                ("refused", None)
             }
         }
     }
@@ -10542,6 +10883,9 @@ fn workspace_do_select(
     // partial never leaves a doubled visible set or a lost claim behind.
     let mut newly_hidden: Vec<crate::workspace::WindowKey> = Vec::new();
     let hide_start = Instant::now();
+    // Bounded per-window hide diagnostics for this select: one
+    // `workspace-hide` line per leaving member up to the cap below.
+    let mut hide_diag_logged: usize = 0;
     for key in &leaving {
         if state.workspaces.is_hidden(key) {
             continue;
@@ -10602,7 +10946,29 @@ fn workspace_do_select(
             continue;
         }
         let had_claim = state.hidden_claims.contains_key(key);
-        let outcome = workspace_hide_one(state, me, store, dir, key, &expected, iconic);
+        let project_topmost = crate::product_hide::project_topmost_hide_allowed(
+            state.float_topmost_prev.get(key).copied(),
+            read_topmost_now(key.hwnd),
+        );
+        let (outcome, detail) = workspace_hide_one(state, me, store, dir, key, &expected, iconic);
+        // Correlated bounded per-window hide outcome: opaque token plus
+        // outcome and refusal detail only, no titles, paths, or content.
+        // Proves the exact failing window when a select goes partial.
+        if hide_diag_logged < MAX_HIDE_DIAG_PER_SELECT {
+            let token = state.member_tokens.get(key).cloned().unwrap_or_default();
+            log_json_at(
+                &state.log_path,
+                serde_json::json!({
+                    "event": "workspace-hide",
+                    "correlation": ctx.correlation,
+                    "window": if token.is_empty() { serde_json::Value::Null } else { serde_json::Value::from(token) },
+                    "outcome": outcome,
+                    "detail": detail,
+                    "project_topmost": project_topmost,
+                }),
+            );
+            hide_diag_logged += 1;
+        }
         // A committed claim (exact full identity plus tag) is owned even when
         // the post-hide readback reports uncertain: the ledger and the owner
         // table keep it, never a lost window.
@@ -11490,7 +11856,7 @@ fn workspace_send_stay_native(
             target_workspace: target_token.to_owned(),
         };
     }
-    let hide_outcome =
+    let (hide_outcome, _) =
         workspace_hide_one(state, me, store, dir, mover_key, stored, mover_minimized);
     if state.hidden_claims.contains_key(mover_key) {
         state.workspaces.set_hidden(mover_key, true);
@@ -12168,7 +12534,7 @@ fn workspace_send_follow(
             target_workspace: target_token.to_owned(),
         };
     }
-    let hide_outcome =
+    let (hide_outcome, _) =
         workspace_hide_one(state, me, store, dir, mover_key, stored, mover_minimized);
     if state.hidden_claims.contains_key(mover_key) {
         state.workspaces.set_hidden(mover_key, true);
@@ -12497,7 +12863,7 @@ fn workspace_send_stay(
     // selecting or revealing the target. A committed claim is owned even on
     // uncertain post-hide readback: flag it hidden and report the stall
     // without pretending stay success.
-    let hide_outcome =
+    let (hide_outcome, _) =
         workspace_hide_one(state, me, store, dir, mover_key, stored, mover_minimized);
     if state.hidden_claims.contains_key(mover_key) {
         state.workspaces.set_hidden(mover_key, true);
@@ -13016,25 +13382,181 @@ fn dispatch_fullscreen_cli_toggle(
     );
 }
 
+/// Exact-owner out-of-hook float toggle for the normal `tile` loop only
+/// (item 8 test-needed route, tentative pending user review; the hook still
+/// filters injected Win+G). Reuses the production Win+G authority verbatim
+/// through `dispatch_float_intent`: the suspend/elevated fence, a fresh
+/// observation, the live-foreground `snap_origins` origin (never a carried
+/// HWND), origin re-resolution with member/lifetime/proof/scope fences, the
+/// overlay and workspace-mode fences, and the Engine-candidate commit with
+/// marker persistence. Consume-once, exact-owner, and proof refusal ride the
+/// shared `poll_workspace_cli_request` prefix; this runs only after those
+/// pass. The outer `dispatched` line carries edge `cli`; the dispatched arm
+/// logs its own `float-toggle` outcome lines. No synthetic input accepted.
+fn dispatch_float_cli_toggle(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+) {
+    // Production per-intent fence first, before any observation.
+    if let Some(outcome) = crate::tiling::toggle_gate_outcome(
+        suspend_read(state, me, fulls).veto.block,
+        foreground_elevated(me),
+    ) {
+        state.tick += 1;
+        let tick = state.tick;
+        log_json_at(
+            &state.log_path,
+            serde_json::json!({
+                "event": "float-toggle",
+                "tick": tick,
+                "edge": "cli",
+                "disposition": "consumed",
+                "outcome": outcome,
+            }),
+        );
+        return;
+    }
+    // Live-foreground origin through the same map the hook binds chords
+    // against; never a carried HWND, never a retarget. The dispatch
+    // re-resolves it against its own fresh observation, so a foreground
+    // change between here and there refuses instead of misacting.
+    let foreground_hwnd = unsafe { GetForegroundWindow() } as usize as u64;
+    let origin = state.snap_origins.get(&foreground_hwnd).cloned();
+    let Some(origin) = origin.filter(|o| !o.token.is_empty()) else {
+        state.tick += 1;
+        let tick = state.tick;
+        log_json_at(
+            &state.log_path,
+            serde_json::json!({
+                "event": "float-toggle",
+                "tick": tick,
+                "edge": "cli",
+                "disposition": "consumed",
+                "outcome": "unmanaged",
+            }),
+        );
+        return;
+    };
+    state.tick += 1;
+    let tick = state.tick;
+    let mut queued = serde_json::json!({
+        "event": "float-toggle",
+        "tick": tick,
+        "edge": "cli",
+        "disposition": "consumed",
+        "outcome": "dispatched",
+    });
+    queued["origin"] = serde_json::Value::from(origin.token.clone());
+    log_json_at(&state.log_path, queued);
+    dispatch_float_intent(
+        state,
+        me,
+        fulls,
+        areas,
+        QueuedFloatIntent {
+            edge: SnapEdge::Down,
+            origin: Some(origin),
+            consumed: true,
+            announce: true,
+            tick: Instant::now(),
+        },
+    );
+}
+
+/// Exact-owner out-of-hook sticky toggle for the normal `tile` loop only
+/// (item 8 test-needed route, tentative pending user review; the hook still
+/// filters injected Win+Shift+G). Reuses the production Win+Shift+G
+/// authority verbatim through `dispatch_sticky_intent` with the same fences
+/// and origin contract as the float arm above. Logs `sticky-toggle`.
+fn dispatch_sticky_cli_toggle(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+) {
+    if let Some(outcome) = crate::tiling::toggle_gate_outcome(
+        suspend_read(state, me, fulls).veto.block,
+        foreground_elevated(me),
+    ) {
+        state.tick += 1;
+        let tick = state.tick;
+        log_json_at(
+            &state.log_path,
+            serde_json::json!({
+                "event": "sticky-toggle",
+                "tick": tick,
+                "edge": "cli",
+                "disposition": "consumed",
+                "outcome": outcome,
+            }),
+        );
+        return;
+    }
+    let foreground_hwnd = unsafe { GetForegroundWindow() } as usize as u64;
+    let origin = state.snap_origins.get(&foreground_hwnd).cloned();
+    let Some(origin) = origin.filter(|o| !o.token.is_empty()) else {
+        state.tick += 1;
+        let tick = state.tick;
+        log_json_at(
+            &state.log_path,
+            serde_json::json!({
+                "event": "sticky-toggle",
+                "tick": tick,
+                "edge": "cli",
+                "disposition": "consumed",
+                "outcome": "unmanaged",
+            }),
+        );
+        return;
+    };
+    state.tick += 1;
+    let tick = state.tick;
+    let mut queued = serde_json::json!({
+        "event": "sticky-toggle",
+        "tick": tick,
+        "edge": "cli",
+        "disposition": "consumed",
+        "outcome": "dispatched",
+    });
+    queued["origin"] = serde_json::Value::from(origin.token.clone());
+    log_json_at(&state.log_path, queued);
+    dispatch_sticky_intent(
+        state,
+        me,
+        fulls,
+        areas,
+        QueuedStickyIntent {
+            edge: SnapEdge::Down,
+            origin: Some(origin),
+            consumed: true,
+            announce: true,
+            tick: Instant::now(),
+        },
+    );
+}
+
 /// Exact-owner out-of-hook workspace control: one bounded `workspace.request`
 /// file consumed once through the existing `workspace_do_select` /
 /// `workspace_do_send` resolvers (plus the pure history resolvers for the
-/// previous/relative forms) or, for `fullscreen`, through the existing
-/// project-owned fullscreen toggle below. Normal `tile` only (proof owners
-/// refuse without effect); workspace ops gate fullscreen and elevated
-/// foreground like the hook path while the fullscreen op routes through the
-/// production `toggle_gate_outcome` (owned-fullscreen exemption preserved);
-/// the keyboard takeover switch never gates this (out-of-hook
+/// previous/relative forms), through the existing project-owned fullscreen
+/// toggle below for `fullscreen`, or through the existing hook float/sticky
+/// dispatch arms below for `float`/`sticky`. Normal `tile` only (proof
+/// owners refuse without effect); workspace ops gate fullscreen and elevated
+/// foreground like the hook path while the fullscreen/float/sticky ops route
+/// through the production `toggle_gate_outcome` (owned-fullscreen exemption
+/// preserved); the keyboard takeover switch never gates this (out-of-hook
 /// dogfood/recovery). The request is deleted before dispatch so there is no
 /// replay; a malformed or mismatched body is consumed the same way with a
 /// `refused` outcome. Sends carry no chord origin: the mover is the live
 /// foreground managed window at dispatch, resolved through the same
 /// `snap_origins` map the hook binds chords against, then the exact same
 /// `workspace_do_send` focus/identity/scope/owner gates with the request's
-/// explicit follow/stay intent. Fullscreen carries no HWND either: it toggles
-/// the live foreground managed window through the same `revalidate_target` +
-/// `fullscreen_toggle_decision` authority as the Win+F11 hook (including the
-/// app-owned R-MAX-05 refusal). Production log
+/// explicit follow/stay intent. Fullscreen/float/sticky carry no HWND either:
+/// they toggle the live foreground managed window through the same
+/// `revalidate_target` + toggle authority as their hook chords (including
+/// the app-owned R-MAX-05 refusal for fullscreen). Production log
 /// carries op/index/edge/outcome only (no HWNDs, tokens, or identity bytes);
 /// the client correlation is opaque and never logged.
 fn poll_workspace_cli_request(
@@ -13063,6 +13585,8 @@ fn poll_workspace_cli_request(
                     || a == "stay"
                     || a == "previous"
                     || a == "fullscreen"
+                    || a == "float"
+                    || a == "sticky"
                     || a == "relative"
                     || a == "send-relative"
                     || a == "stay-relative"
@@ -13116,6 +13640,14 @@ fn poll_workspace_cli_request(
     }
     if request.action == WorkspaceAction::Fullscreen {
         dispatch_fullscreen_cli_toggle(state, me, fulls, areas);
+        return;
+    }
+    if request.action == WorkspaceAction::Float {
+        dispatch_float_cli_toggle(state, me, fulls, areas);
+        return;
+    }
+    if request.action == WorkspaceAction::Sticky {
+        dispatch_sticky_cli_toggle(state, me, fulls, areas);
         return;
     }
     if suspend_read(state, me, fulls).veto.block {
@@ -13217,6 +13749,8 @@ fn poll_workspace_cli_request(
             WorkspaceAction::Select
             | WorkspaceAction::Previous
             | WorkspaceAction::Fullscreen
+            | WorkspaceAction::Float
+            | WorkspaceAction::Sticky
             | WorkspaceAction::RelativeHistory => {
                 log_json_at(
                     &state.log_path,
@@ -13349,6 +13883,8 @@ fn poll_workspace_cli_request(
         WorkspaceAction::Send
         | WorkspaceAction::Stay
         | WorkspaceAction::Fullscreen
+        | WorkspaceAction::Float
+        | WorkspaceAction::Sticky
         | WorkspaceAction::RelativeSend
         | WorkspaceAction::RelativeStay => (None, "refused", op, request.index),
     };
@@ -20475,6 +21011,471 @@ mod rmax03_adapter_tests {
             writable_tokens(&state, &output, &active, &refetched),
             std::collections::HashSet::from(["w8".to_owned()]),
             "restored member takes the production tiled write"
+        );
+    }
+}
+
+#[cfg(test)]
+mod restart_adoption_tests {
+    // Production-preamble adoption through a real `TileLoop` against an
+    // owned message-only window: real `SetProp` markers, real `GetProp`
+    // reads, real Engine commits. Message-only windows are invisible,
+    // owned by the test process, and destroyed at test end; the log path
+    // points at NUL so no file is created. No other window is touched.
+    use super::adopt_restart_markers;
+    use super::rmax03_adapter_tests::test_state;
+    use crate::model::ProcessIdentity;
+    use crate::workspace::WindowKey;
+    use tiler_core::directional::{OutputId, WindowId, WorkspaceId};
+    use tiler_core::geometry::Rect;
+    use tiler_core::session::DomainKey;
+
+    const ADOPT_TEST_CLASS: &str = "PlasmaAutoTilerRestartAdoptTest";
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain([0]).collect()
+    }
+
+    unsafe extern "system" fn adopt_wndproc(
+        hwnd: windows_sys::Win32::Foundation::HWND,
+        msg: u32,
+        wp: windows_sys::Win32::Foundation::WPARAM,
+        lp: windows_sys::Win32::Foundation::LPARAM,
+    ) -> windows_sys::Win32::Foundation::LRESULT {
+        unsafe { windows_sys::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wp, lp) }
+    }
+
+    struct AdoptWindow {
+        hwnd: u64,
+    }
+
+    impl AdoptWindow {
+        fn create() -> AdoptWindow {
+            use windows_sys::Win32::Foundation::{ERROR_CLASS_ALREADY_EXISTS, GetLastError};
+            use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                CreateWindowExW, HWND_MESSAGE, RegisterClassW, WNDCLASSW,
+            };
+            let class_w = wide(ADOPT_TEST_CLASS);
+            let title_w = wide("restart-adopt-test");
+            let hinst = unsafe { GetModuleHandleW(std::ptr::null()) };
+            let mut cls: WNDCLASSW = unsafe { std::mem::zeroed() };
+            cls.lpfnWndProc = Some(adopt_wndproc);
+            cls.hInstance = hinst;
+            cls.lpszClassName = class_w.as_ptr();
+            let atom = unsafe { RegisterClassW(&cls) };
+            assert!(
+                atom != 0 || unsafe { GetLastError() } == ERROR_CLASS_ALREADY_EXISTS,
+                "test class registers"
+            );
+            let hwnd = unsafe {
+                CreateWindowExW(
+                    0,
+                    class_w.as_ptr(),
+                    title_w.as_ptr(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    HWND_MESSAGE,
+                    std::ptr::null_mut(),
+                    hinst,
+                    std::ptr::null_mut(),
+                )
+            };
+            assert!(!hwnd.is_null(), "message-only test window creates");
+            AdoptWindow {
+                hwnd: hwnd as usize as u64,
+            }
+        }
+    }
+
+    impl Drop for AdoptWindow {
+        fn drop(&mut self) {
+            use windows_sys::Win32::Foundation::HWND;
+            use windows_sys::Win32::UI::WindowsAndMessaging::DestroyWindow;
+            unsafe {
+                DestroyWindow(self.hwnd as usize as HWND);
+            }
+        }
+    }
+
+    fn fake_me() -> ProcessIdentity {
+        ProcessIdentity {
+            pid: std::process::id(),
+            process_creation: "create-restart-adopt".to_owned(),
+            user_sid: "S-1-5-21-restart".to_owned(),
+            session_id: 1,
+            exe_path: "C:\\test\\app.exe".to_owned(),
+        }
+    }
+
+    fn bounds() -> Rect {
+        Rect {
+            x: 0,
+            y: 0,
+            w: 800,
+            h: 600,
+        }
+    }
+
+    fn frame() -> Rect {
+        Rect {
+            x: 10,
+            y: 10,
+            w: 400,
+            h: 300,
+        }
+    }
+
+    fn observed(hwnd: u64, token: &str) -> super::ObservedWindow {
+        super::ObservedWindow {
+            hwnd,
+            token: token.to_owned(),
+            outer: bounds(),
+            visible: frame(),
+            insets: crate::tiling::FrameInsets {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
+            identity: crate::tiling::ObservedTarget {
+                hwnd,
+                pid: std::process::id(),
+                process_creation: "create-restart-adopt".to_owned(),
+                exe_path: "C:\\test\\app.exe".to_owned(),
+                user_sid: "S-1-5-21-restart".to_owned(),
+                session_id: 1,
+                tag: String::new(),
+            },
+            facts: crate::tiling::WindowFacts {
+                visible: true,
+                minimized: false,
+                maximized: false,
+                cloaked: false,
+                elevated: false,
+                shell: false,
+                tool_window: false,
+                owned: false,
+                captionless_fullscreen: false,
+                no_activate: false,
+                dialog: false,
+            },
+        }
+    }
+
+    /// Seed admitted membership for one owned window and return its key,
+    /// token, output, and active workspace. Mirrors the admission preamble
+    /// tables (tokens, rects, identity, tags, workspace) without geometry.
+    fn seed_member(
+        state: &mut super::TileLoop,
+        hwnd: u64,
+        tag: &str,
+    ) -> (WindowKey, String, String, String) {
+        let me = fake_me();
+        let key = WindowKey {
+            hwnd,
+            pid: me.pid,
+            creation: me.process_creation.clone(),
+        };
+        let token = state.tokens.token_for(hwnd, &key.creation);
+        let output = "mon-restart".to_owned();
+        state.workspaces.ensure_output(&output);
+        let active = state.workspaces.active_id(&output).expect("active");
+        assert!(
+            state
+                .workspaces
+                .assign(key.clone(), &output, &active, false)
+        );
+        state.member_tokens.insert(key.clone(), token.clone());
+        state.member_rects.insert(token.clone(), frame());
+        state.member_identity.insert(key.clone(), me);
+        state.member_tags.insert(key.clone(), tag.to_owned());
+        (key, token, output, active)
+    }
+
+    fn areas_for(output: &str) -> Vec<super::MonitorArea> {
+        vec![super::MonitorArea {
+            device: output.to_owned(),
+            work: bounds(),
+            full: bounds(),
+        }]
+    }
+
+    fn is_float(state: &super::TileLoop, output: &str, ws: &str, token: &str) -> bool {
+        let key = DomainKey {
+            output: OutputId(output.to_owned()),
+            workspace: WorkspaceId(ws.to_owned()),
+        };
+        state
+            .engine
+            .session(&key)
+            .is_some_and(|s| s.is_exception(&WindowId(token.to_owned())))
+    }
+
+    #[test]
+    fn sticky_markers_readopt_through_real_tileloop_twice() {
+        // Both pre-sticky origins re-adopt as sticky through the production
+        // preamble with real markers, and a second fresh owner re-adopts
+        // again off the kept marker. No post-restart un-stick outcome set.
+        for prior in [false, true] {
+            let win = AdoptWindow::create();
+            let pid = std::process::id();
+            let tag = crate::product_hide::sys::install_member_tag(win.hwnd, pid)
+                .expect("member tag installs on the owned window");
+            crate::product_hide::sys::install_sticky_marker(win.hwnd, prior)
+                .expect("sticky marker installs on the owned window");
+            for restart in 1..=2 {
+                let mut state = test_state();
+                state.log_path = std::path::PathBuf::from("NUL");
+                let (key, token, output, active) = seed_member(&mut state, win.hwnd, &tag);
+                let observed = vec![observed(win.hwnd, &token)];
+                adopt_restart_markers(&mut state, &fake_me(), &observed, &[], &areas_for(&output));
+                assert_eq!(
+                    state.sticky.get(&key),
+                    Some(&prior),
+                    "prior {prior} restart {restart}: sticky origin re-adopted"
+                );
+                assert!(
+                    is_float(&state, &output, &active, &token),
+                    "prior {prior} restart {restart}: Engine carries the float"
+                );
+                assert!(
+                    crate::product_hide::sys::peek_sticky_raw(win.hwnd)
+                        == crate::workspace_owner::MarkerSlot::Value(
+                            crate::tiling::sticky_marker_value(prior)
+                        ),
+                    "prior {prior} restart {restart}: durable marker kept"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn float_marker_readopts_through_real_tileloop() {
+        // An intentional-float marker re-adopts as an ordinary float with
+        // the marker kept and no sticky entry.
+        let win = AdoptWindow::create();
+        let pid = std::process::id();
+        let tag = crate::product_hide::sys::install_member_tag(win.hwnd, pid)
+            .expect("member tag installs on the owned window");
+        crate::product_hide::sys::install_float_intent_marker(win.hwnd)
+            .expect("float marker installs on the owned window");
+        let mut state = test_state();
+        state.log_path = std::path::PathBuf::from("NUL");
+        let (key, token, output, active) = seed_member(&mut state, win.hwnd, &tag);
+        let observed = vec![observed(win.hwnd, &token)];
+        adopt_restart_markers(&mut state, &fake_me(), &observed, &[], &areas_for(&output));
+        assert!(
+            state.floated.contains(&key),
+            "float intent re-adopted into the runtime set"
+        );
+        assert!(
+            !state.sticky.contains_key(&key),
+            "ordinary float takes no sticky entry"
+        );
+        assert!(
+            is_float(&state, &output, &active, &token),
+            "Engine carries the re-adopted float"
+        );
+        assert!(
+            crate::product_hide::sys::read_float_intent_marker(win.hwnd),
+            "durable float marker kept for later restarts"
+        );
+    }
+
+    #[test]
+    fn mixed_markers_readopt_through_real_tileloop_in_any_order() {
+        // Live item 8 shape: two sticky markers (both pre-sticky origins),
+        // one ordinary float marker, and one unmarked tile in a single
+        // domain. The production preamble (sticky pass then float pass) must
+        // hydrate all three before any tiling, in either observed order.
+        // Log goes to a temp file so a candidate rejection shows its true
+        // correlated cause instead of a silent rollback.
+        for reverse in [false, true] {
+            let a = AdoptWindow::create();
+            let b = AdoptWindow::create();
+            let c = AdoptWindow::create();
+            let d = AdoptWindow::create();
+            let pid = std::process::id();
+            let install = |win: &AdoptWindow| {
+                crate::product_hide::sys::install_member_tag(win.hwnd, pid)
+                    .expect("member tag installs on the owned window")
+            };
+            let (tag_a, tag_b, tag_c, tag_d) = (install(&a), install(&b), install(&c), install(&d));
+            crate::product_hide::sys::install_sticky_marker(a.hwnd, false)
+                .expect("sticky marker installs");
+            crate::product_hide::sys::install_sticky_marker(b.hwnd, true)
+                .expect("sticky marker installs");
+            crate::product_hide::sys::install_float_intent_marker(c.hwnd)
+                .expect("float marker installs");
+            let mut state = test_state();
+            let log_path = std::env::temp_dir().join(format!(
+                "tiler-windows-mixed-adopt-{}-{}.log",
+                std::process::id(),
+                reverse as u8
+            ));
+            let _ = std::fs::remove_file(&log_path);
+            state.log_path = log_path.clone();
+            let (key_a, token_a, output, active) = seed_member(&mut state, a.hwnd, &tag_a);
+            let (key_b, token_b, _, _) = seed_member(&mut state, b.hwnd, &tag_b);
+            let (key_c, token_c, _, _) = seed_member(&mut state, c.hwnd, &tag_c);
+            let (key_d, token_d, _, _) = seed_member(&mut state, d.hwnd, &tag_d);
+            let mut ordered = vec![
+                observed(a.hwnd, &token_a),
+                observed(b.hwnd, &token_b),
+                observed(c.hwnd, &token_c),
+                observed(d.hwnd, &token_d),
+            ];
+            if reverse {
+                ordered.reverse();
+            }
+            adopt_restart_markers(&mut state, &fake_me(), &ordered, &[], &areas_for(&output));
+            let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+            let _ = std::fs::remove_file(&log_path);
+            assert_eq!(
+                state.sticky.get(&key_a),
+                Some(&false),
+                "reverse {reverse}: ex-tiled sticky re-adopts; log:\n{log}"
+            );
+            assert_eq!(
+                state.sticky.get(&key_b),
+                Some(&true),
+                "reverse {reverse}: ex-float sticky re-adopts; log:\n{log}"
+            );
+            assert!(
+                state.floated.contains(&key_c),
+                "reverse {reverse}: ordinary float re-adopts; log:\n{log}"
+            );
+            assert!(
+                !state.sticky.contains_key(&key_d) && !state.floated.contains(&key_d),
+                "reverse {reverse}: unmarked tile stays tiled; log:\n{log}"
+            );
+            for (token, what) in [
+                (&token_a, "sticky-a"),
+                (&token_b, "sticky-b"),
+                (&token_c, "float-c"),
+            ] {
+                assert!(
+                    is_float(&state, &output, &active, token),
+                    "reverse {reverse}: Engine carries {what}; log:\n{log}"
+                );
+            }
+            assert!(
+                !is_float(&state, &output, &active, &token_d),
+                "reverse {reverse}: Engine keeps the tile tiled; log:\n{log}"
+            );
+        }
+    }
+
+    #[test]
+    fn marker_install_remove_roundtrip_on_owned_window() {
+        // Actual persistence native ops: install reads back, settled removal
+        // verifies absence, and a wrong sticky value refuses without
+        // touching the live marker.
+        let win = AdoptWindow::create();
+        assert!(
+            !crate::product_hide::sys::read_float_intent_marker(win.hwnd),
+            "fresh window carries no float intent"
+        );
+        crate::product_hide::sys::install_float_intent_marker(win.hwnd)
+            .expect("float marker installs on the owned window");
+        assert!(crate::product_hide::sys::read_float_intent_marker(win.hwnd));
+        crate::product_hide::sys::remove_float_intent_marker(win.hwnd)
+            .expect("settled float removal verifies");
+        assert!(
+            !crate::product_hide::sys::read_float_intent_marker(win.hwnd),
+            "settled removal clears the float marker"
+        );
+        crate::product_hide::sys::install_sticky_marker(win.hwnd, true)
+            .expect("sticky marker installs on the owned window");
+        assert!(
+            !crate::product_hide::sys::remove_sticky_marker(win.hwnd, false).expect("readable"),
+            "wrong pre-sticky value refuses without touching"
+        );
+        assert_eq!(
+            crate::product_hide::sys::read_sticky_marker(win.hwnd),
+            Some(true),
+            "refused removal keeps the live marker"
+        );
+        assert!(
+            crate::product_hide::sys::remove_sticky_marker(win.hwnd, true).expect("readable"),
+            "settled removal with the live value verifies"
+        );
+        assert_eq!(
+            crate::product_hide::sys::read_sticky_marker(win.hwnd),
+            None,
+            "settled removal clears the sticky marker"
+        );
+    }
+
+    #[test]
+    fn absent_markers_read_silent_never_unreadable() {
+        // Never-installed marker names read silent-absent on a real owned
+        // window: `GetPropW` documents NULL for a missing string with no
+        // last-error promise, and absent reads report nonzero errors here,
+        // so NULL must never classify as unreadable (else every unmarked
+        // window logs marker-unreadable every tick).
+        let win = AdoptWindow::create();
+        for peek in [
+            crate::product_hide::sys::peek_sticky_raw(win.hwnd),
+            crate::product_hide::sys::peek_float_intent_raw(win.hwnd),
+            crate::product_hide::sys::peek_tile_override_raw(win.hwnd),
+        ] {
+            assert_eq!(peek, crate::workspace_owner::MarkerSlot::Absent);
+        }
+    }
+
+    #[test]
+    fn corrupt_marker_adopts_nothing_without_side_effects() {
+        // A foreign value on our property name classifies corrupt through
+        // the production preamble: diagnosed, no intent, no state change.
+        use windows_sys::Win32::UI::WindowsAndMessaging::SetPropW;
+        fn wide(s: &str) -> Vec<u16> {
+            s.encode_utf16().chain([0]).collect()
+        }
+        let win = AdoptWindow::create();
+        let pid = std::process::id();
+        let tag = crate::product_hide::sys::install_member_tag(win.hwnd, pid)
+            .expect("member tag installs on the owned window");
+        let name = wide(crate::model::FLOAT_INTENT_PROP);
+        let ok = unsafe {
+            SetPropW(
+                win.hwnd as usize as windows_sys::Win32::Foundation::HWND,
+                name.as_ptr(),
+                99usize as _,
+            )
+        };
+        assert_ne!(ok, 0, "foreign value plants on the owned window");
+        let mut state = test_state();
+        state.log_path = std::path::PathBuf::from("NUL");
+        let (key, token, output, _active) = seed_member(&mut state, win.hwnd, &tag);
+        let observed = vec![observed(win.hwnd, &token)];
+        adopt_restart_markers(&mut state, &fake_me(), &observed, &[], &areas_for(&output));
+        assert!(!state.sticky.contains_key(&key), "corrupt never sticks");
+        assert!(!state.floated.contains(&key), "corrupt never floats");
+    }
+
+    #[test]
+    fn absent_markers_adopt_nothing_without_side_effects() {
+        // A fabricated HWND exercises only failing reads: no adoption, no
+        // state change, no writes, no panic.
+        let mut state = test_state();
+        state.log_path = std::path::PathBuf::from("NUL");
+        let hwnd = 0x00BEEF42u64;
+        let (key, token, output, _active) = seed_member(&mut state, hwnd, "9f2c41aa07bd33e0");
+        let observed = vec![observed(hwnd, &token)];
+        adopt_restart_markers(&mut state, &fake_me(), &observed, &[], &areas_for(&output));
+        assert!(
+            !state.sticky.contains_key(&key),
+            "no sticky without a marker"
+        );
+        assert!(!state.floated.contains(&key), "no float without a marker");
+        assert!(
+            !state.float_rects.contains_key(&token),
+            "no float frame without adoption"
         );
     }
 }

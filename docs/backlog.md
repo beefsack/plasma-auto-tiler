@@ -1540,7 +1540,13 @@ decisions of 2026-09-24 are under
       R-DRAG-07 split preserved; matrix `R-DRAG-08` Ours Windows cell
       updated with dated offline evidence, KDE timing still live-TBD.
 
-  - Item 8: restart R-RST-01 plus R-FLT-05 sticky persistence. User
+  - Item 8: R-RST-01/R-FLT-05 delivered 2026-10-11, base `e48aed1` plus
+    delivery commit ([record](changes/archive/windows-restart-intent.md));
+    native gates and owned-helper double-restart/sticky-scope journeys passed.
+    Physical/app dogfood pending; post-restart un-stick TBD, REQ-RST-01c OPEN;
+    D7 marker reserved for item 13. Stronger names and exact-owner float/sticky
+    CLI are tentative, pending user review. Historical checklist follows.
+    Restart R-RST-01 plus R-FLT-05 sticky persistence. User
     decisions 2026-10-07 (R-FLT-05, R-RST-01 float identity;
     [decisions](decisions.md#restart-persistence)): sticky floats stay
     sticky across owner restart including Windows, delivered with the

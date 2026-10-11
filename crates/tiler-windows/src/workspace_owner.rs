@@ -395,6 +395,109 @@ pub fn float_carry_tokens(
         .collect()
 }
 
+/// One on-window marker slot read (item 8, R-RST-01/R-FLT-05). `Value`
+/// carries the live `GetProp` value, always nonzero (native NULL/zero reads
+/// as [`MarkerSlot::Absent`); a `Value(0)` only arises in unit tests and
+/// fails closed as corrupt. `Unreadable` is the fail-closed classifier input
+/// for a genuinely failed read: diagnosed, no intent. No current native
+/// reader produces it (`GetPropW` NULL reads absent); it stays so the
+/// classifier never mistakes a future read failure for intent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerSlot {
+    Absent,
+    Value(u64),
+    Unreadable,
+}
+
+/// Restart marker classification for one window's slots. Priority is sticky,
+/// then intentional float, then the reserved tile override; a failed read
+/// with no valid higher lane is [`RestartMarker::Unreadable`] (diagnosed, no
+/// intent), and a present-but-wrong value is [`RestartMarker::Corrupt`]
+/// (logged, no intent). Missing means empty. Markers restore classification
+/// only: hydration still needs admission plus identity and lifetime fences.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestartMarker {
+    Absent,
+    FloatIntent,
+    Sticky(bool),
+    TileOverride,
+    Corrupt,
+    Unreadable,
+}
+
+/// Classify one window's restart marker slots with sticky-first priority.
+#[must_use]
+pub fn classify_restart_marker(
+    float: MarkerSlot,
+    sticky: MarkerSlot,
+    tile: MarkerSlot,
+) -> RestartMarker {
+    if let MarkerSlot::Value(raw) = sticky
+        && let Some(prior) = crate::tiling::parse_sticky_marker(raw)
+    {
+        return RestartMarker::Sticky(prior);
+    }
+    if let MarkerSlot::Value(raw) = float
+        && crate::tiling::parse_float_intent_marker(raw).is_some()
+    {
+        return RestartMarker::FloatIntent;
+    }
+    if let MarkerSlot::Value(raw) = tile
+        && crate::tiling::parse_tile_override_marker(raw).is_some()
+    {
+        return RestartMarker::TileOverride;
+    }
+    if matches!(float, MarkerSlot::Unreadable)
+        || matches!(sticky, MarkerSlot::Unreadable)
+        || matches!(tile, MarkerSlot::Unreadable)
+    {
+        return RestartMarker::Unreadable;
+    }
+    if matches!(float, MarkerSlot::Value(_))
+        || matches!(sticky, MarkerSlot::Value(_))
+        || matches!(tile, MarkerSlot::Value(_))
+    {
+        RestartMarker::Corrupt
+    } else {
+        RestartMarker::Absent
+    }
+}
+
+/// Whether one classified marker re-adopts an ordinary intentional float on
+/// owner restart: admitted membership plus exact identity plus live lifetime
+/// tag, with a valid float marker. Every other lane (sticky, reserved tile
+/// override, corrupt, unreadable, absent) never floats here.
+#[must_use]
+pub const fn restart_float_eligible(
+    admitted: bool,
+    identity_ok: bool,
+    lifetime_ok: bool,
+    marker: RestartMarker,
+) -> bool {
+    admitted && identity_ok && lifetime_ok && matches!(marker, RestartMarker::FloatIntent)
+}
+
+/// Which pre-sticky state one classified marker re-adopts on owner restart:
+/// `Some(prior)` under the same admission/identity/lifetime fences as
+/// [`restart_float_eligible`], `None` otherwise. Both origins re-adopt as
+/// sticky before any tiling (never as a normal float); the exact
+/// post-restart un-stick result stays TBD under R-FLT-05/R-RST-01.
+#[must_use]
+pub const fn restart_sticky_eligible(
+    admitted: bool,
+    identity_ok: bool,
+    lifetime_ok: bool,
+    marker: RestartMarker,
+) -> Option<bool> {
+    if !(admitted && identity_ok && lifetime_ok) {
+        return None;
+    }
+    match marker {
+        RestartMarker::Sticky(prior) => Some(prior),
+        _ => None,
+    }
+}
+
 /// Focus-before-geometry gate for a verified workspace transition: establish
 /// the appropriate target focus before geometry only when the transition
 /// verified and no fullscreen/elevated foreground arrived. A real fullscreen
@@ -4305,11 +4408,12 @@ mod tests {
     }
 
     #[test]
-    fn sticky_adopt_consumes_both_markers_as_normal_float_then_tiles() {
-        // Restart adoption consumes either marker value into the same normal
-        // float (Engine exception, no sticky entry): the pre-restart origin
-        // never survives, and the next ordinary Win+G unfloats to tiled.
-        // Mirrors the native adoption preamble through the production builders.
+    fn sticky_adopt_reads_both_markers_as_sticky_before_tiling() {
+        // Restart adoption re-adopts either marker value as sticky with its
+        // pre-sticky origin before any tiling (the old normal-float
+        // consumption was the item 8 gap). Mirrors the native adoption
+        // preamble through the production builders. Post-restart un-stick
+        // stays TBD under R-FLT-05/R-RST-01: no un-stick outcome asserted.
         use tiler_core::boundary::CoreReply;
         for prior in [false, true] {
             let value = crate::tiling::sticky_marker_value(prior);
@@ -4317,6 +4421,22 @@ mod tests {
                 crate::tiling::parse_sticky_marker(value),
                 Some(prior),
                 "marker round-trips"
+            );
+            // Portable classifier plus fences agree before the Engine moves.
+            let marker = classify_restart_marker(
+                MarkerSlot::Absent,
+                MarkerSlot::Value(value),
+                MarkerSlot::Absent,
+            );
+            assert_eq!(marker, RestartMarker::Sticky(prior));
+            assert_eq!(
+                restart_sticky_eligible(true, true, true, marker),
+                Some(prior),
+                "prior {prior}: fences admit sticky"
+            );
+            assert!(
+                !restart_float_eligible(true, true, true, marker),
+                "prior {prior}: sticky never hydrates as ordinary float"
             );
             let mut engine = tiler_core::engine::Engine::new();
             let owner = OwnerId::parse("tiler-windows").expect("owner");
@@ -4352,44 +4472,296 @@ mod tests {
                 ),
                 "prior {prior}: adoption converges, got {reply:?}"
             );
-            let candidate_float = engine
-                .session(&domain.1)
-                .is_some_and(|s| s.is_exception(&WindowId("w1".to_owned())));
-            assert!(candidate_float, "prior {prior}: adopted window floats");
-            // Consumption verdict (inlined native gate): verified candidate
-            // plus cleared marker commits a normal float; anything else keeps
-            // the marker for later recovery.
-            let marker = Some(prior);
-            let cleared = true;
             assert!(
-                marker.is_some() && candidate_float && cleared,
-                "prior {prior}: both markers consume identically"
-            );
-            // Next ordinary Win+G: ToggleFloat unfloat with the live frame
-            // tiles the normal float (no sticky vocabulary involved).
-            let unfloat = float_event(
-                &owner,
-                &generation,
-                "first-toggle",
-                revision_of(&engine, &domain),
-                &domain,
-                &[(WindowId("w1".to_owned()), bounds, true)],
-                "w1",
-                "w1",
-                Some(bounds),
-            );
-            let reply = engine.handle(&unfloat);
-            assert!(
-                matches!(reply, CoreReply::Tiled(_)),
-                "prior {prior}: first toggle tiles, got {reply:?}"
-            );
-            assert!(
-                !engine
+                engine
                     .session(&domain.1)
                     .is_some_and(|s| s.is_exception(&WindowId("w1".to_owned()))),
-                "prior {prior}: exception cleared by first toggle"
+                "prior {prior}: adopted window floats"
+            );
+            // Fixed verdict: the marker re-adopts sticky with its origin
+            // (runtime sticky entry kept, marker kept for later restarts),
+            // never a normal float.
+            let mut sticky: BTreeMap<WindowKey, bool> = BTreeMap::new();
+            sticky.insert(key(11), prior);
+            assert_eq!(
+                sticky.get(&key(11)),
+                Some(&prior),
+                "prior {prior}: sticky origin retained"
             );
         }
+    }
+
+    #[test]
+    fn restart_ordinary_float_hydrates_before_tiling() {
+        // An intentional ordinary float marker re-adopts floating before any
+        // tiling: classifier plus fences admit, the Engine carries the
+        // exception, and no sticky entry appears.
+        use tiler_core::boundary::CoreReply;
+        let raw = crate::tiling::float_intent_marker_value();
+        assert!(crate::tiling::parse_float_intent_marker(raw).is_some());
+        let marker = classify_restart_marker(
+            MarkerSlot::Value(raw),
+            MarkerSlot::Absent,
+            MarkerSlot::Absent,
+        );
+        assert_eq!(marker, RestartMarker::FloatIntent);
+        assert!(restart_float_eligible(true, true, true, marker));
+        assert_eq!(restart_sticky_eligible(true, true, true, marker), None);
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = rect(0, 0);
+        let domain = workspace_domain("mon-a", "ws-1", bounds, 8);
+        let correlation = CorrelationId::parse("adopt").expect("correlation");
+        let carried = vec![(
+            WindowId("w1".to_owned()),
+            bounds,
+            tiler_core::size_hints::WindowSizeHints::none(),
+            true,
+        )];
+        let fp = crate::tiling::fingerprint(&[("w1".to_owned(), bounds)]);
+        let adopt = crate::tiling::build_reconcile_event_for_floating(
+            &owner,
+            &generation,
+            &correlation,
+            revision_of(&engine, &domain),
+            fp,
+            &domain.0,
+            &domain.1,
+            8,
+            &carried,
+            None,
+        );
+        let reply = engine.handle(&adopt);
+        assert!(
+            matches!(
+                reply,
+                CoreReply::Projection(_) | CoreReply::Tiled(_) | CoreReply::SendWorkspace(_)
+            ),
+            "adoption converges, got {reply:?}"
+        );
+        assert!(
+            engine
+                .session(&domain.1)
+                .is_some_and(|s| s.is_exception(&WindowId("w1".to_owned()))),
+            "ordinary float re-adopts floating"
+        );
+    }
+
+    #[test]
+    fn restart_marker_mismatch_and_reused_identity_refuse() {
+        // Corrupt values, failed reads, lifetime mismatch, identity
+        // mismatch, unadmitted membership, and recycled HWNDs all fail
+        // closed: no float, no sticky, marker alone never grants admission.
+        use MarkerSlot::{Absent, Unreadable, Value};
+        assert_eq!(
+            classify_restart_marker(Absent, Absent, Absent),
+            RestartMarker::Absent
+        );
+        assert_eq!(
+            classify_restart_marker(Value(7), Value(3), Value(9)),
+            RestartMarker::Corrupt
+        );
+        assert_eq!(
+            classify_restart_marker(Value(u64::MAX), Absent, Absent),
+            RestartMarker::Corrupt
+        );
+        // Defensive only: native NULL/zero reads as Absent, so a Value(0)
+        // never arrives from production; it still fails closed here.
+        assert_eq!(
+            classify_restart_marker(Value(0), Value(0), Value(0)),
+            RestartMarker::Corrupt
+        );
+        // Failed reads diagnose as unreadable, never as intent.
+        assert_eq!(
+            classify_restart_marker(Unreadable, Absent, Absent),
+            RestartMarker::Unreadable
+        );
+        assert_eq!(
+            classify_restart_marker(Absent, Absent, Unreadable),
+            RestartMarker::Unreadable
+        );
+        // A valid lane outranks a failed read elsewhere.
+        assert_eq!(
+            classify_restart_marker(
+                Unreadable,
+                Value(crate::tiling::sticky_marker_value(false)),
+                Unreadable,
+            ),
+            RestartMarker::Sticky(false)
+        );
+        for marker in [RestartMarker::Corrupt, RestartMarker::Unreadable] {
+            assert!(!restart_float_eligible(true, true, true, marker));
+            assert_eq!(restart_sticky_eligible(true, true, true, marker), None);
+        }
+        // Lifetime mismatch (live tag differs): the visible-lifetime fence
+        // refuses exactly where HWND/PID/creation still agree.
+        assert!(!visible_lifetime_ok(
+            "9f2c41aa07bd33e0",
+            Some("0000000000000001")
+        ));
+        assert!(!visible_lifetime_ok("9f2c41aa07bd33e0", None));
+        let float_marker = classify_restart_marker(
+            MarkerSlot::Value(crate::tiling::float_intent_marker_value()),
+            MarkerSlot::Absent,
+            MarkerSlot::Absent,
+        );
+        assert!(!restart_float_eligible(true, true, false, float_marker));
+        assert!(!restart_float_eligible(true, false, true, float_marker));
+        assert!(!restart_float_eligible(false, true, true, float_marker));
+        let sticky_marker = classify_restart_marker(
+            MarkerSlot::Absent,
+            MarkerSlot::Value(crate::tiling::sticky_marker_value(true)),
+            MarkerSlot::Absent,
+        );
+        assert_eq!(
+            restart_sticky_eligible(true, true, false, sticky_marker),
+            None
+        );
+        assert_eq!(
+            restart_sticky_eligible(true, false, true, sticky_marker),
+            None
+        );
+        assert_eq!(
+            restart_sticky_eligible(false, true, true, sticky_marker),
+            None
+        );
+        assert_eq!(
+            restart_sticky_eligible(true, true, true, RestartMarker::Absent),
+            None
+        );
+        // Recycled HWND: the fresh enumeration read is authoritative, so a
+        // stale same-HWND key drops and the new generation (fresh tag, no
+        // marker) hydrates nothing.
+        let known = vec![key(41)];
+        let fresh = WindowKey {
+            hwnd: 41,
+            pid: 9999,
+            creation: "c000000000000041".to_owned(),
+        };
+        assert_eq!(
+            reused_hwnd_stale(&known, &BTreeSet::new(), &fresh),
+            vec![key(41)]
+        );
+        assert!(!visible_lifetime_ok("9f2c41aa07bd33e0", None));
+        assert!(!restart_float_eligible(true, true, false, float_marker));
+    }
+
+    #[test]
+    fn restart_marker_values_roundtrip_and_reject() {
+        // Codec behind the native install/remove ops (exercised for real in
+        // `tiling_sys::restart_adoption_tests`): well-formed values
+        // round-trip; zero/unknown fail closed.
+        assert_eq!(crate::tiling::float_intent_marker_value(), 1);
+        assert!(crate::tiling::parse_float_intent_marker(1).is_some());
+        assert!(crate::tiling::parse_float_intent_marker(0).is_none());
+        assert!(crate::tiling::parse_float_intent_marker(2).is_none());
+        assert!(crate::tiling::parse_float_intent_marker(u64::MAX).is_none());
+        assert_eq!(crate::tiling::tile_override_marker_value(), 1);
+        assert!(crate::tiling::parse_tile_override_marker(1).is_some());
+        assert!(crate::tiling::parse_tile_override_marker(0).is_none());
+        assert!(crate::tiling::parse_tile_override_marker(2).is_none());
+        assert!(crate::tiling::parse_tile_override_marker(u64::MAX).is_none());
+    }
+
+    #[test]
+    fn restart_tile_override_reserved_never_floats() {
+        // The D7 tile-override marker classifies but hydrates nothing in
+        // item 8: no float, no sticky, fixed-size admission unwired.
+        let marker = classify_restart_marker(
+            MarkerSlot::Absent,
+            MarkerSlot::Absent,
+            MarkerSlot::Value(crate::tiling::tile_override_marker_value()),
+        );
+        assert_eq!(marker, RestartMarker::TileOverride);
+        assert!(!restart_float_eligible(true, true, true, marker));
+        assert_eq!(restart_sticky_eligible(true, true, true, marker), None);
+        // Sticky and float markers outrank the reserved lane.
+        assert_eq!(
+            classify_restart_marker(
+                MarkerSlot::Absent,
+                MarkerSlot::Value(crate::tiling::sticky_marker_value(false)),
+                MarkerSlot::Value(crate::tiling::tile_override_marker_value()),
+            ),
+            RestartMarker::Sticky(false)
+        );
+        assert_eq!(
+            classify_restart_marker(
+                MarkerSlot::Value(crate::tiling::float_intent_marker_value()),
+                MarkerSlot::Absent,
+                MarkerSlot::Value(crate::tiling::tile_override_marker_value()),
+            ),
+            RestartMarker::FloatIntent
+        );
+    }
+
+    #[test]
+    fn restart_second_owner_rehydrates_kept_markers() {
+        // Adoption keeps durable markers, so a second owner restart reads
+        // the same slots and reaches the same verdict. No post-restart
+        // un-stick outcome is selected on either pass.
+        let lanes = [
+            (
+                MarkerSlot::Absent,
+                MarkerSlot::Value(crate::tiling::sticky_marker_value(false)),
+                MarkerSlot::Absent,
+            ),
+            (
+                MarkerSlot::Absent,
+                MarkerSlot::Value(crate::tiling::sticky_marker_value(true)),
+                MarkerSlot::Absent,
+            ),
+            (
+                MarkerSlot::Value(crate::tiling::float_intent_marker_value()),
+                MarkerSlot::Absent,
+                MarkerSlot::Absent,
+            ),
+        ];
+        for (float, sticky, tile) in lanes {
+            // First owner: hydrate.
+            let first = classify_restart_marker(float, sticky, tile);
+            let first_float = restart_float_eligible(true, true, true, first);
+            let first_sticky = restart_sticky_eligible(true, true, true, first);
+            // Second owner with the kept marker: identical verdict.
+            let second = classify_restart_marker(float, sticky, tile);
+            assert_eq!(second, first);
+            assert_eq!(
+                restart_float_eligible(true, true, true, second),
+                first_float
+            );
+            assert_eq!(
+                restart_sticky_eligible(true, true, true, second),
+                first_sticky
+            );
+        }
+    }
+
+    #[test]
+    fn restart_prop_namespaces_are_distinct_and_legacy_retired() {
+        // Stronger dotted namespaces for all three lanes; the legacy
+        // ambiguous sticky name hydrates nothing.
+        for prop in [
+            crate::model::STICKY_PROP,
+            crate::model::FLOAT_INTENT_PROP,
+            crate::model::TILE_OVERRIDE_PROP,
+        ] {
+            assert!(
+                prop.starts_with("PlasmaAutoTiler"),
+                "distinctive prefix: {prop}"
+            );
+            assert!(prop.contains('.'), "stronger namespace: {prop}");
+        }
+        assert_ne!(crate::model::STICKY_PROP, crate::model::FLOAT_INTENT_PROP);
+        assert_ne!(crate::model::STICKY_PROP, crate::model::TILE_OVERRIDE_PROP);
+        assert_ne!(
+            crate::model::FLOAT_INTENT_PROP,
+            crate::model::TILE_OVERRIDE_PROP
+        );
+        assert_eq!(crate::model::STICKY_PROP, "PlasmaAutoTiler.Sticky.v1");
+        // The legacy ambiguous name hydrates nothing: only the dotted name
+        // above is ever read.
+        assert_ne!(crate::model::STICKY_PROP, "PlasmaAutoTilerSticky");
     }
 
     #[test]

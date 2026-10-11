@@ -477,6 +477,42 @@ pub const fn parse_sticky_marker(value: u64) -> Option<bool> {
     }
 }
 
+/// Intentional-float marker value: presence with 1 means explicit float.
+/// Nonzero magic only; never a pointer, never trusted across window
+/// generations (a recycled HWND starts without our property).
+#[must_use]
+pub const fn float_intent_marker_value() -> u64 {
+    1
+}
+
+/// Decode one intentional-float marker value. `Some(())` only for 1:
+/// absent, zero, or unknown values fail closed, never guess.
+#[must_use]
+pub const fn parse_float_intent_marker(value: u64) -> Option<()> {
+    match value {
+        1 => Some(()),
+        _ => None,
+    }
+}
+
+/// Reserved fixed-window tile-override marker value (item 13 D7): presence
+/// with 1 will mean a user tile override. Codec only; no admission path
+/// reads it in item 8.
+#[must_use]
+pub const fn tile_override_marker_value() -> u64 {
+    1
+}
+
+/// Decode one reserved tile-override marker value. `Some(())` only for 1;
+/// everything else fails closed. Reserved; never floats a window in item 8.
+#[must_use]
+pub const fn parse_tile_override_marker(value: u64) -> Option<()> {
+    match value {
+        1 => Some(()),
+        _ => None,
+    }
+}
+
 /// Project-owned topmost restore gate for graceful stop and unfloat: only a
 /// band the project raised (`!prior && current`) restores. A pre-existing
 /// topmost stays untouched even if the user later cleared it; crash leaves
@@ -2837,8 +2873,10 @@ pub fn parse_inspect_args(args: &[String]) -> Result<InspectOptions, String> {
 /// focuses an existing/trailing same-output workspace, `send` moves the
 /// focused managed window there and follows, `stay` moves it without
 /// following, `previous` toggles the previous view, `fullscreen` toggles
-/// fullscreen on the focused managed window with no workspace move, and the
-/// three `relative` forms step the item 1 scoped ring (`relative` selects,
+/// fullscreen on the focused managed window with no workspace move, `float`
+/// toggles float and `sticky` toggles sticky on the focused managed window
+/// (both test-needed routes, tentative pending user review), and the three
+/// `relative` forms step the item 1 scoped ring (`relative` selects,
 /// `send-relative` follows, `stay-relative` stays). No synthetic input, no
 /// keyboard acceptance, never a proof path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -2853,6 +2891,10 @@ pub enum WorkspaceAction {
     Previous,
     #[serde(rename = "fullscreen")]
     Fullscreen,
+    #[serde(rename = "float")]
+    Float,
+    #[serde(rename = "sticky")]
+    Sticky,
     #[serde(rename = "relative")]
     RelativeHistory,
     #[serde(rename = "send-relative")]
@@ -2870,6 +2912,8 @@ impl WorkspaceAction {
             Self::Stay => "stay",
             Self::Previous => "previous",
             Self::Fullscreen => "fullscreen",
+            Self::Float => "float",
+            Self::Sticky => "sticky",
             Self::RelativeHistory => "relative",
             Self::RelativeSend => "send-relative",
             Self::RelativeStay => "stay-relative",
@@ -2878,27 +2922,37 @@ impl WorkspaceAction {
 
     /// True for the three send-family actions (numbered/relative follow/stay):
     /// they move the focused managed window and require a managed origin.
-    /// Select/history/fullscreen actions never move workspaces; `fullscreen`
-    /// still requires a managed origin (it toggles the focused managed
-    /// window), while select/history work on empty workspaces and unmanaged
-    /// foreground.
+    /// Select/history/fullscreen/float/sticky actions never move workspaces;
+    /// `fullscreen`/`float`/`sticky` still require a managed origin (they
+    /// toggle the focused managed window), while select/history work on empty
+    /// workspaces and unmanaged foreground.
     #[must_use]
     pub const fn is_send(self) -> bool {
         match self {
             Self::Send | Self::RelativeSend | Self::RelativeStay | Self::Stay => true,
-            Self::Select | Self::Previous | Self::Fullscreen | Self::RelativeHistory => false,
+            Self::Select
+            | Self::Previous
+            | Self::Fullscreen
+            | Self::Float
+            | Self::Sticky
+            | Self::RelativeHistory => false,
         }
     }
 
     /// Explicit follow intent for the send family (`send`/`send-relative`
     /// follow; `stay`/`stay-relative` stay). `None` for select/history/
-    /// fullscreen.
+    /// fullscreen/float/sticky.
     #[must_use]
     pub const fn follow(self) -> Option<bool> {
         match self {
             Self::Send | Self::RelativeSend => Some(true),
             Self::Stay | Self::RelativeStay => Some(false),
-            Self::Select | Self::Previous | Self::Fullscreen | Self::RelativeHistory => None,
+            Self::Select
+            | Self::Previous
+            | Self::Fullscreen
+            | Self::Float
+            | Self::Sticky
+            | Self::RelativeHistory => None,
         }
     }
 }
@@ -2934,16 +2988,19 @@ impl WorkspaceDirection {
 }
 
 /// CLI options for the exact-owner `workspace` control (normal `tile` only):
-/// `--select`/`--send`/`--stay` take a digit index 0..=9; `--previous` and
-/// `--fullscreen` take no value; `--relative`/`--send-relative`/
-/// `--stay-relative` take `previous`|`next`. The CLI only queues a bounded
-/// single-pending request file; the owner loop validates the full owner
-/// binding and dispatches through the existing `workspace_do_select` /
-/// `workspace_do_send` resolvers (plus the pure history resolvers) or, for
-/// `--fullscreen`, through the existing project-owned fullscreen toggle
-/// (`fullscreen_toggle_decision` + `enter_fullscreen`/`exit_fullscreen_owned`
-/// with the `RefuseAppOwned` R-MAX-05 refusal). No synthetic input, no
-/// keyboard acceptance, never a proof path.
+/// `--select`/`--send`/`--stay` take a digit index 0..=9; `--previous`,
+/// `--fullscreen`, `--float`, and `--sticky` take no value;
+/// `--relative`/`--send-relative`/`--stay-relative` take `previous`|`next`.
+/// The CLI only queues a bounded single-pending request file; the owner loop
+/// validates the full owner binding and dispatches through the existing
+/// `workspace_do_select` / `workspace_do_send` resolvers (plus the pure
+/// history resolvers) or, for `--fullscreen`, through the existing
+/// project-owned fullscreen toggle (`fullscreen_toggle_decision` +
+/// `enter_fullscreen`/`exit_fullscreen_owned` with the `RefuseAppOwned`
+/// R-MAX-05 refusal), or, for `--float`/`--sticky`, through the existing
+/// hook float/sticky dispatch arms (`dispatch_float_intent` /
+/// `dispatch_sticky_intent` with every production fence). No synthetic
+/// input, no keyboard acceptance, never a proof path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceOptions {
     pub action: WorkspaceAction,
@@ -2952,11 +3009,11 @@ pub struct WorkspaceOptions {
 }
 
 /// Parse `workspace` CLI forms. Exactly one action flag; indexed forms take a
-/// digit 0..=9, relative forms take `previous`|`next`, `--previous` and
-/// `--fullscreen` take no value. Anything else (including a missing value or
-/// both flags) refuses.
+/// digit 0..=9, relative forms take `previous`|`next`, `--previous`,
+/// `--fullscreen`, `--float`, and `--sticky` take no value. Anything else
+/// (including a missing value or both flags) refuses.
 pub fn parse_workspace_args(args: &[String]) -> Result<WorkspaceOptions, String> {
-    let usage = "usage: workspace (--select|--send|--stay) INDEX | --previous | --fullscreen | (--relative|--send-relative|--stay-relative) (previous|next)";
+    let usage = "usage: workspace (--select|--send|--stay) INDEX | --previous | --fullscreen | --float | --sticky | (--relative|--send-relative|--stay-relative) (previous|next)";
     let mut action: Option<WorkspaceAction> = None;
     let mut index: u8 = 0;
     let mut direction: Option<WorkspaceDirection> = None;
@@ -2969,6 +3026,8 @@ pub fn parse_workspace_args(args: &[String]) -> Result<WorkspaceOptions, String>
             "--stay" => WorkspaceAction::Stay,
             "--previous" => WorkspaceAction::Previous,
             "--fullscreen" => WorkspaceAction::Fullscreen,
+            "--float" => WorkspaceAction::Float,
+            "--sticky" => WorkspaceAction::Sticky,
             "--relative" => WorkspaceAction::RelativeHistory,
             "--send-relative" => WorkspaceAction::RelativeSend,
             "--stay-relative" => WorkspaceAction::RelativeStay,
@@ -2988,7 +3047,10 @@ pub fn parse_workspace_args(args: &[String]) -> Result<WorkspaceOptions, String>
                 index = parsed;
                 i += 1;
             }
-            WorkspaceAction::Previous | WorkspaceAction::Fullscreen => {}
+            WorkspaceAction::Previous
+            | WorkspaceAction::Fullscreen
+            | WorkspaceAction::Float
+            | WorkspaceAction::Sticky => {}
             WorkspaceAction::RelativeHistory
             | WorkspaceAction::RelativeSend
             | WorkspaceAction::RelativeStay => {
@@ -3014,25 +3076,30 @@ pub fn parse_workspace_args(args: &[String]) -> Result<WorkspaceOptions, String>
 }
 
 /// Verify the raw received argv against the parsed `workspace` options:
-/// exactly one action flag plus its matching value (none for `--previous`
-/// and `--fullscreen`), no unknown flags.
+/// exactly one action flag plus its matching value (none for `--previous`,
+/// `--fullscreen`, `--float`, and `--sticky`), no unknown flags.
 pub fn verify_workspace_argv_consistency(
     raw: &[String],
     parsed: &WorkspaceOptions,
 ) -> Result<(), String> {
-    let usage = "usage: workspace (--select|--send|--stay) INDEX | --previous | --fullscreen | (--relative|--send-relative|--stay-relative) (previous|next)";
+    let usage = "usage: workspace (--select|--send|--stay) INDEX | --previous | --fullscreen | --float | --sticky | (--relative|--send-relative|--stay-relative) (previous|next)";
     let want = match parsed.action {
         WorkspaceAction::Select => "--select",
         WorkspaceAction::Send => "--send",
         WorkspaceAction::Stay => "--stay",
         WorkspaceAction::Previous => "--previous",
         WorkspaceAction::Fullscreen => "--fullscreen",
+        WorkspaceAction::Float => "--float",
+        WorkspaceAction::Sticky => "--sticky",
         WorkspaceAction::RelativeHistory => "--relative",
         WorkspaceAction::RelativeSend => "--send-relative",
         WorkspaceAction::RelativeStay => "--stay-relative",
     };
     match parsed.action {
-        WorkspaceAction::Previous | WorkspaceAction::Fullscreen => {
+        WorkspaceAction::Previous
+        | WorkspaceAction::Fullscreen
+        | WorkspaceAction::Float
+        | WorkspaceAction::Sticky => {
             if raw.len() != 1 {
                 return Err(usage.to_owned());
             }
@@ -3129,7 +3196,9 @@ pub fn parse_workspace_request(json: &str) -> Result<WorkspaceRequest, String> {
         | WorkspaceAction::Send
         | WorkspaceAction::Stay
         | WorkspaceAction::Previous
-        | WorkspaceAction::Fullscreen => {
+        | WorkspaceAction::Fullscreen
+        | WorkspaceAction::Float
+        | WorkspaceAction::Sticky => {
             if request.direction.is_some() {
                 return Err("refuse: malformed workspace request".to_owned());
             }

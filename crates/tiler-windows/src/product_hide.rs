@@ -116,6 +116,19 @@ pub fn product_claim(hwnd: u64, process: ProcessIdentity, tag: String) -> Window
     }
 }
 
+/// Pure gate for the narrow project-raised topmost hide exception: true only
+/// when runtime evidence proves the project raised the keep-above band from
+/// a non-topmost prior (`Some(false)`) and the band is live now. A marker
+/// alone never authorizes (no marker input here); preexisting topmost
+/// (`Some(true)`), unknown history (`None`), recycled identity (no exact key),
+/// and a currently non-topmost band all refuse. The caller still enforces the
+/// fresh full admitted identity plus window-lifetime gates; this bit only
+/// selects the topmost bypass.
+#[must_use]
+pub fn project_topmost_hide_allowed(prior_topmost: Option<bool>, live_topmost: bool) -> bool {
+    matches!(prior_topmost, Some(false)) && live_topmost
+}
+
 #[cfg(windows)]
 pub mod sys {
     use super::{
@@ -125,12 +138,14 @@ pub mod sys {
     };
     use crate::lifecycle::{exe_paths_equal, is_medium_rid};
     use crate::model::{
-        MEMBER_TAG_PROP, PRODUCT_CLAIM_PROP, ProcessIdentity, ProductShowRestore, STICKY_PROP,
-        WindowClaimKind, WindowIdentity, WindowShowState, generate_claim_tag, product_show_restore,
-        valid_claim_tag, watcher_may_restore,
+        FLOAT_INTENT_PROP, MEMBER_TAG_PROP, PRODUCT_CLAIM_PROP, ProcessIdentity,
+        ProductShowRestore, STICKY_PROP, TILE_OVERRIDE_PROP, WindowClaimKind, WindowIdentity,
+        WindowShowState, generate_claim_tag, product_show_restore, valid_claim_tag,
+        watcher_may_restore,
     };
     use crate::native::{HeldProcess, IdentityError};
     use crate::storage::{LEDGER_FILE_NAME, LedgerStore};
+    use crate::workspace_owner::MarkerSlot;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
@@ -484,21 +499,66 @@ pub mod sys {
         wide(STICKY_PROP)
     }
 
-    /// Fresh read of the sticky-float marker. `None` means verifiably not
-    /// sticky: absent, zero, or unknown values fail closed. Read-only; never
-    /// mutates the window. A recycled HWND starts without our property, so a
-    /// new generation never inherits stickiness.
-    pub fn read_sticky_marker(hwnd_u64: u64) -> Option<bool> {
+    fn float_intent_prop_name() -> Vec<u16> {
+        wide(FLOAT_INTENT_PROP)
+    }
+
+    fn tile_override_prop_name() -> Vec<u16> {
+        wide(TILE_OVERRIDE_PROP)
+    }
+
+    /// One honest `GetPropW` read of our own property name. The `GetPropW`
+    /// contract promises NULL when the list does not contain the string and
+    /// promises no last-error distinction, so NULL reads as
+    /// [`MarkerSlot::Absent`] unconditionally: absent reads on real windows
+    /// report a nonzero error (e.g. `ERROR_FILE_NOT_FOUND`), which must
+    /// never diagnose as [`MarkerSlot::Unreadable`]. A destroyed HWND reads
+    /// absent (the marker dies with the window). Same convention as
+    /// [`get_nonce`], [`read_member_tag`], and the helper lifetime read.
+    fn read_prop_slot(hwnd_u64: u64, name: &[u16]) -> MarkerSlot {
         use windows_sys::Win32::Foundation::HWND;
-        use windows_sys::Win32::UI::WindowsAndMessaging::GetPropW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GetPropW, IsWindow};
         let hwnd = hwnd_u64 as isize as HWND;
-        let name = sticky_prop_name();
+        if unsafe { IsWindow(hwnd) } == 0 {
+            return MarkerSlot::Absent;
+        }
         let v = unsafe { GetPropW(hwnd, name.as_ptr()) };
         if v.is_null() {
-            return None;
+            MarkerSlot::Absent
+        } else {
+            // Non-NULL handles are nonzero; zero is unrepresentable here
+            // (NULL reads absent above), so `Value(0)` never escapes.
+            MarkerSlot::Value(v as usize as u64)
         }
-        let value = v as usize as u64;
-        crate::tiling::parse_sticky_marker(value)
+    }
+
+    /// Sticky-float marker slot: absent is silent no-intent, a wrong value
+    /// is logged no-intent, a failed read is diagnosed no-intent.
+    /// Read-only. A recycled HWND starts without our property.
+    pub fn peek_sticky_raw(hwnd_u64: u64) -> MarkerSlot {
+        read_prop_slot(hwnd_u64, &sticky_prop_name())
+    }
+
+    /// Intentional-float marker slot. Same honest absences as
+    /// [`peek_sticky_raw`].
+    pub fn peek_float_intent_raw(hwnd_u64: u64) -> MarkerSlot {
+        read_prop_slot(hwnd_u64, &float_intent_prop_name())
+    }
+
+    /// Reserved tile-override marker slot (item 13 D7). No admission path
+    /// reads it in item 8.
+    #[allow(dead_code)]
+    pub fn peek_tile_override_raw(hwnd_u64: u64) -> MarkerSlot {
+        read_prop_slot(hwnd_u64, &tile_override_prop_name())
+    }
+
+    /// Fresh read of the sticky-float marker. `None` means not sticky:
+    /// absent, unreadable, zero, or unknown values fail closed. Read-only.
+    pub fn read_sticky_marker(hwnd_u64: u64) -> Option<bool> {
+        match peek_sticky_raw(hwnd_u64) {
+            MarkerSlot::Value(value) => crate::tiling::parse_sticky_marker(value),
+            MarkerSlot::Absent | MarkerSlot::Unreadable => None,
+        }
     }
 
     /// Stamp the sticky-float marker for one verified managed window, then
@@ -525,9 +585,8 @@ pub mod sys {
     /// Remove the sticky marker only when the live value still equals the
     /// expected pre-sticky state. Returns `true` when verifiably absent
     /// afterwards (removed or already absent), `false` when a different value
-    /// owns the window now (never touch it). Identity fencing (HWND/PID/
-    /// creation, lifetime tag) stays with the caller; this guards only the
-    /// marker value itself plus liveness.
+    /// owns the window now (never touch it). A failed read errors without
+    /// mutating. Identity fencing stays with the caller.
     pub fn remove_sticky_marker(hwnd_u64: u64, expected_prior: bool) -> Result<bool> {
         use windows_sys::Win32::Foundation::HWND;
         use windows_sys::Win32::UI::WindowsAndMessaging::{IsWindow, RemovePropW};
@@ -535,16 +594,145 @@ pub mod sys {
         if unsafe { IsWindow(hwnd) } == 0 {
             return Ok(true);
         }
-        match read_sticky_marker(hwnd_u64) {
-            None => return Ok(true),
-            Some(live) if live != expected_prior => return Ok(false),
-            Some(_) => {}
+        match peek_sticky_raw(hwnd_u64) {
+            MarkerSlot::Absent => return Ok(true),
+            MarkerSlot::Unreadable => return Err(err("error: sticky marker read error")),
+            MarkerSlot::Value(value) => {
+                if crate::tiling::parse_sticky_marker(value) != Some(expected_prior) {
+                    return Ok(false);
+                }
+            }
         }
         let name = sticky_prop_name();
         let _ = unsafe { RemovePropW(hwnd, name.as_ptr()) };
-        match read_sticky_marker(hwnd_u64) {
-            None => Ok(true),
-            Some(_) => Err(err("error: sticky marker remove failed")),
+        match peek_sticky_raw(hwnd_u64) {
+            MarkerSlot::Absent => Ok(true),
+            MarkerSlot::Unreadable => Err(err("error: sticky marker read error")),
+            MarkerSlot::Value(_) => Err(err("error: sticky marker remove failed")),
+        }
+    }
+
+    /// Fresh read of the intentional-float marker. `true` only when the
+    /// value parses (1); everything else fails closed. Read-only.
+    pub fn read_float_intent_marker(hwnd_u64: u64) -> bool {
+        matches!(
+            peek_float_intent_raw(hwnd_u64),
+            MarkerSlot::Value(value)
+                if crate::tiling::parse_float_intent_marker(value).is_some()
+        )
+    }
+
+    /// Fresh read of the reserved tile-override marker. No admission path
+    /// reads it in item 8.
+    #[allow(dead_code)]
+    pub fn read_tile_override_marker(hwnd_u64: u64) -> bool {
+        matches!(
+            peek_tile_override_raw(hwnd_u64),
+            MarkerSlot::Value(value)
+                if crate::tiling::parse_tile_override_marker(value).is_some()
+        )
+    }
+
+    /// Stamp the intentional-float marker for one verified managed window,
+    /// then read it back. Only call after the caller bound the window to its
+    /// expected full identity plus lifetime tag, scope, hosted-child, and
+    /// proof fences, and only after the native float circa Engine commit
+    /// verified. A readback mismatch fails closed with no runtime map change
+    /// and no removal.
+    pub fn install_float_intent_marker(hwnd_u64: u64) -> Result<()> {
+        use windows_sys::Win32::Foundation::HWND;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SetPropW;
+        let hwnd = hwnd_u64 as isize as HWND;
+        let value = crate::tiling::float_intent_marker_value();
+        let name = float_intent_prop_name();
+        let ok = unsafe { SetPropW(hwnd, name.as_ptr(), value as usize as _) };
+        if ok == 0 {
+            return Err(err("error: SetProp failed"));
+        }
+        match peek_float_intent_raw(hwnd_u64) {
+            MarkerSlot::Value(back) if crate::tiling::parse_float_intent_marker(back).is_some() => {
+                Ok(())
+            }
+            MarkerSlot::Unreadable => Err(err("error: float intent marker read error")),
+            _ => Err(err("error: float intent marker readback mismatch")),
+        }
+    }
+
+    /// Stamp the reserved tile-override marker, then read it back. Reserved
+    /// for item 13 D7; no caller in item 8.
+    #[allow(dead_code)]
+    pub fn install_tile_override_marker(hwnd_u64: u64) -> Result<()> {
+        use windows_sys::Win32::Foundation::HWND;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SetPropW;
+        let hwnd = hwnd_u64 as isize as HWND;
+        let value = crate::tiling::tile_override_marker_value();
+        let name = tile_override_prop_name();
+        let ok = unsafe { SetPropW(hwnd, name.as_ptr(), value as usize as _) };
+        if ok == 0 {
+            return Err(err("error: SetProp failed"));
+        }
+        match peek_tile_override_raw(hwnd_u64) {
+            MarkerSlot::Value(back)
+                if crate::tiling::parse_tile_override_marker(back).is_some() =>
+            {
+                Ok(())
+            }
+            MarkerSlot::Unreadable => Err(err("error: tile override marker read error")),
+            _ => Err(err("error: tile override marker readback mismatch")),
+        }
+    }
+
+    /// Remove the intentional-float marker on settled unfloat. Returns
+    /// `Ok(())` when verifiably absent afterwards (removed, already absent,
+    /// or a destroyed HWND); errors on a failed read or remove without
+    /// mutating further. Corrupt residue on our own property name is
+    /// cleaned under the caller's identity plus lifetime fences.
+    pub fn remove_float_intent_marker(hwnd_u64: u64) -> Result<()> {
+        use windows_sys::Win32::Foundation::HWND;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{IsWindow, RemovePropW};
+        let hwnd = hwnd_u64 as isize as HWND;
+        if unsafe { IsWindow(hwnd) } == 0 {
+            return Ok(());
+        }
+        match peek_float_intent_raw(hwnd_u64) {
+            MarkerSlot::Absent => return Ok(()),
+            MarkerSlot::Unreadable => {
+                return Err(err("error: float intent marker read error"));
+            }
+            MarkerSlot::Value(_) => {}
+        }
+        let name = float_intent_prop_name();
+        let _ = unsafe { RemovePropW(hwnd, name.as_ptr()) };
+        match peek_float_intent_raw(hwnd_u64) {
+            MarkerSlot::Absent => Ok(()),
+            MarkerSlot::Unreadable => Err(err("error: float intent marker read error")),
+            MarkerSlot::Value(_) => Err(err("error: float intent marker remove failed")),
+        }
+    }
+
+    /// Remove the reserved tile-override marker. Reserved for item 13 D7;
+    /// no caller in item 8.
+    #[allow(dead_code)]
+    pub fn remove_tile_override_marker(hwnd_u64: u64) -> Result<()> {
+        use windows_sys::Win32::Foundation::HWND;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{IsWindow, RemovePropW};
+        let hwnd = hwnd_u64 as isize as HWND;
+        if unsafe { IsWindow(hwnd) } == 0 {
+            return Ok(());
+        }
+        match peek_tile_override_raw(hwnd_u64) {
+            MarkerSlot::Absent => return Ok(()),
+            MarkerSlot::Unreadable => {
+                return Err(err("error: tile override marker read error"));
+            }
+            MarkerSlot::Value(_) => {}
+        }
+        let name = tile_override_prop_name();
+        let _ = unsafe { RemovePropW(hwnd, name.as_ptr()) };
+        match peek_tile_override_raw(hwnd_u64) {
+            MarkerSlot::Absent => Ok(()),
+            MarkerSlot::Unreadable => Err(err("error: tile override marker read error")),
+            MarkerSlot::Value(_) => Err(err("error: tile override marker remove failed")),
         }
     }
 
@@ -709,6 +897,23 @@ pub mod sys {
     /// iconic) select `Retained` instead of refusal so retained members stay
     /// hideable.
     pub fn classify_candidate(hwnd_u64: u64, owner: &ProcessIdentity) -> CandidateStatus {
+        classify_candidate_for_hide(hwnd_u64, owner, false)
+    }
+
+    /// Hide-path classification with a narrow project-raised topmost
+    /// exception: when `allow_project_topmost` is true the live `TOPMOST`
+    /// band no longer refuses and the remaining identity plus live style
+    /// gates still apply. The caller authenticates the band via
+    /// [`super::project_topmost_hide_allowed`] (exact runtime key
+    /// `Some(false)` plus live band) combined with the fresh full admitted
+    /// identity and window-lifetime gates in the managed admission below; a
+    /// marker alone never sets this bit. All other admission paths keep the
+    /// blanket refusal via [`classify_candidate`].
+    pub fn classify_candidate_for_hide(
+        hwnd_u64: u64,
+        owner: &ProcessIdentity,
+        allow_project_topmost: bool,
+    ) -> CandidateStatus {
         use windows_sys::Win32::Foundation::HWND;
         use windows_sys::Win32::UI::WindowsAndMessaging::{
             GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GetParent, GetWindow, GetWindowLongW, IsIconic,
@@ -770,7 +975,7 @@ pub mod sys {
         if ex & WS_EX_TOOLWINDOW != 0 {
             return CandidateStatus::Refused("tool");
         }
-        if ex & WS_EX_TOPMOST != 0 {
+        if ex & WS_EX_TOPMOST != 0 && !allow_project_topmost {
             return CandidateStatus::Refused("topmost");
         }
         if ex & WS_EX_NOACTIVATE != 0 {
@@ -828,6 +1033,23 @@ pub mod sys {
         expected: &ProcessIdentity,
         member_tag: &str,
     ) -> std::result::Result<WindowIdentity, ManagedAdmitError> {
+        admit_managed_claim_for_hide(hwnd_u64, owner, expected, member_tag, false)
+    }
+
+    /// Managed-workspace hide admission with the narrow project-raised
+    /// topmost exception. When `allow_project_topmost` is true the live
+    /// keep-above band stays set through admission and the native hide: the
+    /// band is never cleared merely to hide. Identity, lifetime, style,
+    /// nonce, and journal gates are otherwise identical; the hide effect
+    /// itself still verifies claim plus journal before acting with
+    /// independent recovery via [`hide_managed_claim`]. No ledger changes.
+    pub fn admit_managed_claim_for_hide(
+        hwnd_u64: u64,
+        owner: &ProcessIdentity,
+        expected: &ProcessIdentity,
+        member_tag: &str,
+        allow_project_topmost: bool,
+    ) -> std::result::Result<WindowIdentity, ManagedAdmitError> {
         use ManagedAdmitError::{Absent, Refused, Uncertain, WrongIdentity};
         if !crate::workspace_owner::visible_lifetime_ok(
             member_tag,
@@ -835,7 +1057,7 @@ pub mod sys {
         ) {
             return Err(WrongIdentity);
         }
-        let snap = match classify_candidate(hwnd_u64, owner) {
+        let snap = match classify_candidate_for_hide(hwnd_u64, owner, allow_project_topmost) {
             CandidateStatus::Admissible(snap) | CandidateStatus::Retained(snap) => snap,
             CandidateStatus::Absent => return Err(Absent),
             CandidateStatus::Uncertain => return Err(Uncertain),

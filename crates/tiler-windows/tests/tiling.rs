@@ -1947,6 +1947,22 @@ fn workspace_request_roundtrip_and_refusals() {
     };
     let parsed = parse_workspace_request(&render_workspace_request(&select)).expect("select");
     assert_eq!(parsed.action, WorkspaceAction::Select);
+    for action in [WorkspaceAction::Float, WorkspaceAction::Sticky] {
+        let routed = WorkspaceRequest {
+            action,
+            ..request.clone()
+        };
+        let body = render_workspace_request(&routed);
+        assert!(body.contains(action.as_str()));
+        assert!(!body.contains("hwnd"));
+        let parsed = parse_workspace_request(&body).expect("float/sticky roundtrip");
+        assert_eq!(parsed, routed);
+        // A direction on an immediate toggle refuses: the transport carries
+        // exactly the grammar, never a default.
+        let mut bad_direction = routed.clone();
+        bad_direction.direction = Some(tiler_windows::tiling::WorkspaceDirection::Next);
+        assert!(parse_workspace_request(&render_workspace_request(&bad_direction)).is_err());
+    }
     let mut bad_version = request.clone();
     bad_version.v = 2;
     assert!(parse_workspace_request(&render_workspace_request(&bad_version)).is_err());
@@ -2048,6 +2064,38 @@ fn workspace_cli_parses_stay_and_relative_forms() {
     assert!(verify_workspace_argv_consistency(&strings(&["--stay", "1"]), &stay).is_err());
     assert!(verify_workspace_argv_consistency(&strings(&["--send", "2"]), &stay).is_err());
     assert!(verify_workspace_argv_consistency(&strings(&["--previous", "x"]), &previous).is_err());
+}
+
+#[test]
+fn workspace_cli_parses_float_and_sticky() {
+    // Test-needed exact-owner float/sticky routes (tentative pending user
+    // review): no-value flags like --fullscreen, never a send, never follow.
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|s| (*s).to_owned()).collect()
+    }
+    let float = parse_workspace_args(&strings(&["--float"])).expect("float");
+    assert_eq!(float.action, WorkspaceAction::Float);
+    assert_eq!(float.action.as_str(), "float");
+    assert_eq!(float.direction, None);
+    assert_eq!(float.action.follow(), None);
+    assert!(!float.action.is_send());
+    assert!(verify_workspace_argv_consistency(&strings(&["--float"]), &float).is_ok());
+    let sticky = parse_workspace_args(&strings(&["--sticky"])).expect("sticky");
+    assert_eq!(sticky.action, WorkspaceAction::Sticky);
+    assert_eq!(sticky.action.as_str(), "sticky");
+    assert_eq!(sticky.direction, None);
+    assert_eq!(sticky.action.follow(), None);
+    assert!(!sticky.action.is_send());
+    assert!(verify_workspace_argv_consistency(&strings(&["--sticky"]), &sticky).is_ok());
+    // Refusals: values, mixing, unknown flags, cross-flag consistency.
+    assert!(parse_workspace_args(&strings(&["--float", "1"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--sticky", "next"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--float", "--sticky"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--sticky", "--float"])).is_err());
+    assert!(parse_workspace_args(&strings(&["--float", "--fullscreen"])).is_err());
+    assert!(verify_workspace_argv_consistency(&strings(&["--sticky"]), &float).is_err());
+    assert!(verify_workspace_argv_consistency(&strings(&["--float"]), &sticky).is_err());
+    assert!(verify_workspace_argv_consistency(&strings(&["--float", "x"]), &float).is_err());
 }
 
 #[test]

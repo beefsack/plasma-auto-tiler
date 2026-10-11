@@ -660,7 +660,9 @@ platform API behavior.
     the next settled membership update rewrites the full set.
   - Status: Linux planner/KDE delivered offline
     ([record](changes/archive/kde-intentional-float-restart.md)).
-    Windows behavior unchanged; native checks remain pending.
+    Windows intentional/sticky identity delivered 2026-10-11 with native
+    agent-owned double-restart/scope evidence ([record](changes/archive/windows-restart-intent.md));
+    Windows fixed tile overrides await item 13. Physical/app checks remain pending.
 - User decisions 2026-10-08 (workspace migration R-WS-12 D1-D9, outcomes
   decided): see Workspaces above.
 - Windows restart intent persistence (user 2026-10-10, handoff item 8,
@@ -672,6 +674,18 @@ platform API behavior.
   intent, logged. No separate store file and no recovery-ledger change.
   REQ-RST-01c membership/set/focus is now PROVISIONAL tentative D25 pending
   user review; post-restart un-stick remains TBD.
+- Windows item 8 delivery 2026-10-11 ([record](changes/archive/windows-restart-intent.md)):
+  intentional float and both sticky origins survive owner restart, verified
+  offline and on owned native helpers through two graceful restarts and scope
+  switches. Batched hydration precedes tiling; markers grant no write/recovery
+  authority. Fixed tile-override marker reserved for item 13/D7.
+  Tentative, pending user review: dotted/versioned `PlasmaAutoTiler.*.v1`
+  classification names replace the old sticky name (old markers not hydrated),
+  and test-needed exact-owner `workspace --float` / `--sticky` controls reuse
+  normal dispatch. Native `GetPropW` NULL cannot distinguish every unreadable
+  read from absence; it means no intent, while invalid nonzero values diagnose.
+  REQ-RST-01c is unresolved OPEN for this delivery; tentative D25 remains
+  pending review. Post-restart un-stick remains TBD.
 
 ## Reference Matrix and Spec Authority
 
