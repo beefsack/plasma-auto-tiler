@@ -143,6 +143,27 @@ decisions of 2026-09-24 are under
   Defaults-only keeps 0.1 small while honoring meaningful alternatives later.
   Shared core policy settings serve Windows; Windows schema/UI/live wiring
   belongs to handoff item 22, coordinated after shared delivery.
+- P0 | Windows dogfood 2026-10-11 | User live run `tile --user-start --trace`
+  at `7f407ca` (log `%LOCALAPPDATA%\plasma-auto-tiler\session-1\run-01dd5920bbba8256.log`).
+  Passed: TOEM 2 unimpeded across exclusive/borderless/maximized/windowed
+  modes and hide/reveal across a workspace switch. Windows order (user):
+  (a) stop blocked by an open first-run preset prompt: stop must cancel the
+  pending prompt with no preset written; (b) DEFECT: returning to WS1 did not
+  refocus the previously focused fullscreen game (Steam took focus; REQ-WS-09);
+  (c) DEFECT: group underlay too short in `V[W1 H[W2 W3]]` with W2 focused
+  (bottom of screen to ~60% of W2); (d) born-maximized setting, default tile
+  ([decision](decisions.md#window-state-float-sticky-maximize-fullscreen)
+  R-MAX-06 CHANGED 2026-10-11); (e) border radius default 6
+  ([decision](decisions.md#visuals-border-underlay-and-grouping)); then
+  handoff items 13+17, 10+18, 11+15. Later: (f) Win+B default browser and
+  Win+T Windows Terminal launchers ([decision](decisions.md#shortcuts-conflicts-and-presets));
+  (g) underlay visibility: user used `#50909090`, needs a brighter default and
+  research into blend options visible on black, white and grey. Win+G/F11
+  leakage observed again (known, parked under gaming coexistence).
+- P1 | KDE follow-ups from 2026-10-11 Windows dogfood | Cross-platform
+  decisions for the KDE session: R-MAX-06 born-maximized setting (default
+  tile) and active border radius default 6; underlay default visibility
+  review shared with Windows (g).
 - P0 | Windows port | KDE-first core extraction finished at K1 (user
   2026-09-30; K2/K3 revisit when macOS starts, see
   [extraction](research/cross-platform-core/extraction.md),

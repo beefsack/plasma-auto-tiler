@@ -763,6 +763,14 @@ platform API behavior.
   release supports standard US keyboards and preserves hardcoded shifted
   aliases; layout detection, omission, opt-in configuration and migration are
   deferred. macOS modifier mapping is decided when macOS starts.
+- Launcher shortcuts (user 2026-10-11, Windows): default-on Win+B opens the
+  user's Windows default web browser (system association, never a named
+  browser) and Win+T opens Windows Terminal. Rationale: auto-tiler users
+  rely on launch shortcuts. Both chords have native Windows holders
+  (notification area / taskbar cycling; general knowledge, unverified in
+  repo) and follow the conflict model
+  (Authentic takes over, Compatible disables). KDE/macOS counterparts are
+  not yet selected.
 - Conflict model (user 2026-10-03, all platforms): a per-binding conflict
   list. Settings show each binding conflicting with an OS/desktop shortcut
   and let the user keep (override), disable or rebind it. Quick-set presets:
@@ -1131,12 +1139,15 @@ platform API behavior.
   its `#402a82da` default. All new keys live in the existing effect group and
   hot-apply through effect reconfigure; existing keys/defaults are unchanged.
 
+- User decision 2026-10-11: active border outline radius defaults to 6 on
+  all platforms (looked right in Windows dogfood); revisit per platform if
+  it does not suit a host. Other border defaults unchanged.
 - Windows active border (selected 2026-10-02): default-on owned per-pixel-alpha layered,
   click-through, nonactivating tool-window surface. Do not mutate foreign
   window attributes. `DWMWA_BORDER_COLOR` controls colour only and cannot
   provide KDE's configurable thickness/gap; the visible-frame thickness
   attribute is Get-only. Use `tiler-core::visual` policy, KDE defaults
-  (width 3.0, gap/radius 0.0) and target-DPI rounding. The border follows
+  (width 3.0, gap 0.0; radius default changed below) and target-DPI rounding. The border follows
   eligible active windows independently of tiling/floating membership, within
   the adapter's scope/identity fences, with maximize/fullscreen/minimize,
   hidden-workspace and targeted shell suppression.
@@ -1908,6 +1919,17 @@ platform API behavior.
   D6 workspace enable leaves fixed automatic clients floating, including
   maximized clients; explicit user tile overrides retain the Q3 slot route.
   - KDE: R-MAX-06 and R-MAX-03 delivered offline, the latter at `29c75fe` ([record](changes/archive/kde-maximized-floating-retile-overlay.md)); Windows parity and native acceptance pending.
+  - CHANGED by user 2026-10-11 (R-MAX-06 born-maximized setting, option B,
+    cross-platform): first-seen maximized admission becomes a setting.
+    Default tiles: one launch unmaximize, then ordinary admission (tooltip
+    names bspwm, i3, xmonad, sway, qtile). Alternative keeps the Q3
+    reserved-slot overlay (tooltip names COSMIC, Hyprland). Functional
+    names per Functional naming; exact IDs chosen at implementation. Reason:
+    a born-maximized launch (e.g. browser session restore) felt janky in
+    Windows dogfood. Fullscreen (exclusive/borderless) stays untouched; game
+    risk of a game launching in maximized-window mode is checked in the
+    user's gaming test. R-MAX-03 floating-to-tiled overlay, D4 fixed
+    born-maximized float and later user maximizes are unchanged.
 - B9 (user decision 2026-10-08): an explicit unfloat of an intentionally
   floating window that is natively maximized unmaximizes then fresh-admits
   (COSMIC). No retained-maximize unfloat. The user's COSMIC R-FLT-06
