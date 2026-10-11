@@ -702,30 +702,383 @@ impl FirstRunOutcome {
     }
 }
 
-/// Modal first-run prompt (Yes = authentic default, No = compatible).
-/// Closed/dismissed boxes report `Dismissed` and persist nothing.
-#[must_use]
-pub fn first_run_prompt() -> FirstRunOutcome {
+/// Owned first-run dialog window class (project-specific, like the tray
+/// class). The dialog is an exact owned `HWND`: creation, dismissal, and
+/// teardown all address that handle, never a title search.
+pub const FIRST_RUN_WINDOW_CLASS: &str = "PlasmaAutoTilerFirstRun";
+
+/// Dialog button: stage the authentic catalog defaults.
+const FIRST_RUN_AUTHENTIC: u32 = 1;
+/// Dialog button: disable every OS-conflicting chord.
+const FIRST_RUN_COMPATIBLE: u32 = 2;
+/// Stop-poll cadence inside the dialog loop (matches the owner tick).
+const FIRST_RUN_STOP_POLL_MS: u32 = 50;
+
+/// Owned dialog state. Boxed before creation and reclaimed in `WM_DESTROY`
+/// (same shape as the settings window); the outcome rides an `Arc` the caller
+/// keeps, so the loop reads the exact choice after teardown with no post-free
+/// access. Same-thread only: the dialog runs on the calling owner thread.
+struct FirstRunBox {
+    font: windows_sys::Win32::Graphics::Gdi::HFONT,
+    outcome: Arc<Mutex<FirstRunOutcome>>,
+}
+
+unsafe extern "system" fn first_run_wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: windows_sys::Win32::Foundation::WPARAM,
+    lparam: windows_sys::Win32::Foundation::LPARAM,
+) -> windows_sys::Win32::Foundation::LRESULT {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        IDNO, IDYES, MB_DEFBUTTON1, MB_ICONQUESTION, MB_SYSTEMMODAL, MB_YESNO, MessageBoxW,
+        CREATESTRUCTW, DefWindowProcW, DestroyWindow, GWLP_USERDATA, GetWindowLongPtrW,
+        PostQuitMessage, SetWindowLongPtrW, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY,
     };
-    let body = wide(&first_run_body());
-    let title = wide(FIRST_RUN_TITLE);
-    let picked = unsafe {
-        MessageBoxW(
-            std::ptr::null_mut(),
-            body.as_ptr(),
-            title.as_ptr(),
-            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON1 | MB_SYSTEMMODAL,
+    match msg {
+        WM_CREATE => {
+            let create = unsafe { &*(lparam as *const CREATESTRUCTW) };
+            unsafe {
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, create.lpCreateParams as isize);
+            }
+            0
+        }
+        WM_COMMAND => {
+            // Push-button clicks only (`BN_CLICKED`): focus/paint
+            // notifications must never stage a preset.
+            let id = (wparam & 0xffff) as u32;
+            let notify = ((wparam >> 16) & 0xffff) as u32;
+            if notify == 0 && (id == FIRST_RUN_AUTHENTIC || id == FIRST_RUN_COMPATIBLE) {
+                let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) };
+                if ptr != 0 {
+                    let boxed = unsafe { &*(ptr as *mut FirstRunBox) };
+                    let outcome = if id == FIRST_RUN_AUTHENTIC {
+                        FirstRunOutcome::Authentic
+                    } else {
+                        FirstRunOutcome::Compatible
+                    };
+                    *boxed
+                        .outcome
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner()) = outcome;
+                }
+                // Own window, own thread: `DestroyWindow` runs `WM_DESTROY`
+                // synchronously, reclaiming the box below.
+                unsafe {
+                    DestroyWindow(hwnd);
+                }
+            }
+            0
+        }
+        WM_CLOSE => {
+            // Dismissed: the outcome stays `Dismissed`, no write follows.
+            unsafe {
+                DestroyWindow(hwnd);
+            }
+            0
+        }
+        WM_DESTROY => {
+            let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) };
+            if ptr != 0 {
+                unsafe {
+                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+                    let boxed = Box::from_raw(ptr as *mut FirstRunBox);
+                    windows_sys::Win32::Graphics::Gdi::DeleteObject(boxed.font);
+                    drop(boxed);
+                }
+            }
+            unsafe {
+                PostQuitMessage(0);
+            }
+            0
+        }
+        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+    }
+}
+
+fn first_run_font(dpi: u32) -> windows_sys::Win32::Graphics::Gdi::HFONT {
+    use windows_sys::Win32::Graphics::Gdi::{CreateFontW, DEFAULT_GUI_FONT, GetStockObject};
+    let height = -((9 * dpi as i32 + 36) / 72);
+    let face = wide("Segoe UI");
+    let font = unsafe { CreateFontW(height, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, face.as_ptr()) };
+    if font.is_null() {
+        unsafe { GetStockObject(DEFAULT_GUI_FONT) }
+    } else {
+        font
+    }
+}
+
+/// Cancellable owned first-run dialog on the calling (owner) thread: one
+/// exact owned top-level window with directly labeled Authentic/Compatible
+/// buttons, no `MessageBoxW` (whose documented dismissal needs a Cancel
+/// button this prompt must not offer) and no title search. The loop pumps the
+/// thread queue and polls `stop` every 50 ms; a stop destroys the owned window
+/// and the loop only returns after the actual `WM_QUIT`, so no UI can outlive
+/// the call. Close/Escape dismisses with no write. Creation failure also
+/// reports `Dismissed` (fail-closed, nothing published). The caller still
+/// rechecks stop before publishing so a stop racing the choice wins.
+pub fn first_run_dialog(stop: impl Fn() -> bool) -> FirstRunOutcome {
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::HiDpi::GetDpiForSystem;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        BS_DEFPUSHBUTTON, BS_PUSHBUTTON, CreateWindowExW, DestroyWindow, DispatchMessageW,
+        ES_AUTOVSCROLL, ES_MULTILINE, ES_READONLY, GetSystemMetrics, IDC_ARROW, IsDialogMessageW,
+        IsWindow, LoadCursorW, MSG, MsgWaitForMultipleObjectsEx, PM_REMOVE, PeekMessageW,
+        QS_ALLINPUT, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_SHOWNORMAL, SetForegroundWindow,
+        ShowWindow, TranslateMessage, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN,
+        WS_EX_DLGMODALFRAME, WS_EX_TOPMOST, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    };
+    let outcome = Arc::new(Mutex::new(FirstRunOutcome::Dismissed));
+    let hinst = unsafe { GetModuleHandleW(std::ptr::null()) };
+    let class_w = wide(FIRST_RUN_WINDOW_CLASS);
+    let mut cls: WNDCLASSW = unsafe { std::mem::zeroed() };
+    cls.lpfnWndProc = Some(first_run_wnd_proc);
+    cls.hInstance = hinst;
+    cls.hCursor = unsafe { LoadCursorW(std::ptr::null_mut(), IDC_ARROW) };
+    cls.hbrBackground = unsafe {
+        windows_sys::Win32::Graphics::Gdi::GetSysColorBrush(
+            windows_sys::Win32::Graphics::Gdi::COLOR_BTNFACE,
         )
     };
-    if picked == IDYES {
-        FirstRunOutcome::Authentic
-    } else if picked == IDNO {
-        FirstRunOutcome::Compatible
-    } else {
-        FirstRunOutcome::Dismissed
+    cls.lpszClassName = class_w.as_ptr();
+    let atom = unsafe { RegisterClassW(&cls) };
+    if atom == 0 {
+        let code = unsafe { windows_sys::Win32::Foundation::GetLastError() };
+        if code != 1410 {
+            return FirstRunOutcome::Dismissed;
+        }
     }
+    let dpi = unsafe { GetDpiForSystem() };
+    let dpi = if dpi == 0 { 96 } else { dpi };
+    let px = |value: i32| ((i64::from(value) * i64::from(dpi) + 48) / 96) as i32;
+    // Client layout at 96-DPI units: wrapped readonly text plus two buttons.
+    let (client_w, client_h) = (px(500), px(268));
+    let style = WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
+    let mut rect = windows_sys::Win32::Foundation::RECT {
+        left: 0,
+        top: 0,
+        right: client_w,
+        bottom: client_h,
+    };
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::AdjustWindowRect(&mut rect, style, 0);
+    }
+    let win_w = rect.right - rect.left;
+    let win_h = rect.bottom - rect.top;
+    let (screen_w, screen_h) =
+        unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
+    let (pos_x, pos_y) = (
+        ((screen_w - win_w) / 2).max(0),
+        ((screen_h - win_h) / 2).max(0),
+    );
+    let font = first_run_font(dpi);
+    let boxed = Box::new(FirstRunBox {
+        font,
+        outcome: Arc::clone(&outcome),
+    });
+    let raw = Box::into_raw(boxed);
+    let title_w = wide(FIRST_RUN_TITLE);
+    let hwnd = unsafe {
+        CreateWindowExW(
+            WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
+            class_w.as_ptr(),
+            title_w.as_ptr(),
+            style,
+            pos_x,
+            pos_y,
+            win_w,
+            win_h,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            hinst,
+            raw.cast(),
+        )
+    };
+    if hwnd.is_null() {
+        // No window exists, so `WM_CREATE` never ran and `WM_DESTROY` never
+        // will: reclaim the box here and release the created font with it.
+        unsafe {
+            let boxed = Box::from_raw(raw);
+            windows_sys::Win32::Graphics::Gdi::DeleteObject(boxed.font);
+            drop(boxed);
+        }
+        return FirstRunOutcome::Dismissed;
+    }
+    // Wrapped readonly text (same control shape as the settings info box) and
+    // the two directly labeled choice buttons. Any control failure tears down
+    // the owned window (reclaiming the box synchronously) and dismisses.
+    let make_child = |class: &str,
+                      text: &str,
+                      id: u32,
+                      button_style: u32,
+                      x: i32,
+                      y: i32,
+                      w: i32,
+                      h: i32| unsafe {
+        CreateWindowExW(
+            0,
+            wide(class).as_ptr(),
+            wide(text).as_ptr(),
+            WS_CHILD | WS_VISIBLE | button_style,
+            px(x),
+            px(y),
+            px(w),
+            px(h),
+            hwnd,
+            id as isize as windows_sys::Win32::UI::WindowsAndMessaging::HMENU,
+            hinst,
+            std::ptr::null(),
+        )
+    };
+    // `wide` temporaries must outlive the call only; each child copies what it
+    // needs at creation, so per-call vectors are sufficient.
+    let text_style = ES_MULTILINE as u32
+        | ES_READONLY as u32
+        | ES_AUTOVSCROLL as u32
+        | WS_VSCROLL
+        | WS_BORDER
+        | WS_TABSTOP;
+    let body = first_run_body();
+    let text_ok = {
+        let class_w = wide("EDIT");
+        let body_w = wide(&body);
+        unsafe {
+            CreateWindowExW(
+                0,
+                class_w.as_ptr(),
+                body_w.as_ptr(),
+                WS_CHILD | WS_VISIBLE | text_style,
+                px(10),
+                px(10),
+                px(480),
+                px(196),
+                hwnd,
+                std::ptr::null_mut(),
+                hinst,
+                std::ptr::null(),
+            )
+        }
+    };
+    let authentic_ok = make_child(
+        "BUTTON",
+        "Authentic",
+        FIRST_RUN_AUTHENTIC,
+        BS_DEFPUSHBUTTON as u32 | WS_TABSTOP,
+        230,
+        218,
+        124,
+        30,
+    );
+    let compatible_ok = make_child(
+        "BUTTON",
+        "Compatible",
+        FIRST_RUN_COMPATIBLE,
+        BS_PUSHBUTTON as u32 | WS_TABSTOP,
+        366,
+        218,
+        124,
+        30,
+    );
+    if text_ok.is_null() || authentic_ok.is_null() || compatible_ok.is_null() {
+        // Owned window torn down before any show; the pump loop below
+        // observes the posted quit at once and exits through the single
+        // drain, so no separate return path is needed here.
+        unsafe {
+            DestroyWindow(hwnd);
+        }
+    } else {
+        let set_font = |child: windows_sys::Win32::Foundation::HWND| unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::SendMessageW(
+                child,
+                windows_sys::Win32::UI::WindowsAndMessaging::WM_SETFONT,
+                font as usize,
+                1,
+            );
+        };
+        set_font(text_ok);
+        set_font(authentic_ok);
+        set_font(compatible_ok);
+        unsafe {
+            ShowWindow(hwnd, SW_SHOWNORMAL);
+            SetForegroundWindow(hwnd);
+        }
+    }
+    // Owner-thread modal loop: pump the queue, then wait (own queue only) so
+    // a stop is observed within 50 ms. A stop destroys the owned window and
+    // the loop keeps pumping until the actual `WM_QUIT`; the only exits are
+    // the observed quit and the destroyed-window backstop, so no UI outlives
+    // this call and no timeout is ever needed.
+    loop {
+        let mut msg: MSG = unsafe { std::mem::zeroed() };
+        let mut quit = false;
+        while unsafe { PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) } != 0 {
+            if msg.message == windows_sys::Win32::UI::WindowsAndMessaging::WM_QUIT {
+                quit = true;
+                break;
+            }
+            if unsafe { IsWindow(hwnd) } == 0 {
+                // Owned window already gone (a stop/Escape destroys, then keeps
+                // pumping to the quit): drop the message, never route a dead
+                // handle to dialog handling or dispatch.
+                continue;
+            }
+            // Escape dismisses through the close path below.
+            if msg.message == windows_sys::Win32::UI::WindowsAndMessaging::WM_KEYDOWN
+                && msg.wParam == 0x1B
+            {
+                unsafe {
+                    DestroyWindow(hwnd);
+                }
+                continue;
+            }
+            let eaten = unsafe { IsDialogMessageW(hwnd, std::ptr::addr_of!(msg)) };
+            if eaten == 0 {
+                unsafe {
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            }
+        }
+        if quit || unsafe { IsWindow(hwnd) } == 0 {
+            break;
+        }
+        if stop() {
+            unsafe {
+                DestroyWindow(hwnd);
+            }
+            continue;
+        }
+        unsafe {
+            MsgWaitForMultipleObjectsEx(
+                0,
+                std::ptr::null(),
+                FIRST_RUN_STOP_POLL_MS,
+                QS_ALLINPUT,
+                0,
+            );
+        }
+    }
+    // Every loop exit destroys the exact owned window first: a pre-existing
+    // `WM_QUIT` can break the loop above while it still lives. The destroy
+    // runs `WM_DESTROY` synchronously and posts its own quit, which the drain
+    // below removes, so later thread-queue waits never observe stale state.
+    if unsafe { IsWindow(hwnd) } != 0 {
+        unsafe {
+            DestroyWindow(hwnd);
+        }
+    }
+    {
+        let mut msg: MSG = unsafe { std::mem::zeroed() };
+        while unsafe {
+            PeekMessageW(
+                &mut msg,
+                std::ptr::null_mut(),
+                windows_sys::Win32::UI::WindowsAndMessaging::WM_QUIT,
+                windows_sys::Win32::UI::WindowsAndMessaging::WM_QUIT,
+                PM_REMOVE,
+            )
+        } != 0
+        {}
+    }
+    *outcome.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
 #[cfg(test)]

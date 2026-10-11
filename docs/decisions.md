@@ -799,10 +799,14 @@ platform API behavior.
   cost is unmeasured. Status in [gaming
   coexistence](changes/windows-gaming-coexistence.md).
 - Windows first-run and rebinding (user 2026-10-08): normal startup with no
-  settings file offers native Yes=Authentic (default), No=Compatible,
+  settings file offers native Authentic (default) / Compatible choices,
   explaining Win+G/F11 implications. The owner lease precedes UI; atomic
   create-if-absent publication never replaces a file appearing during the
-  prompt. Compatible resets to the default catalog then disables the
+  prompt. User-approved 2026-10-11: graceful stop cancels the pending prompt
+  without publishing settings and proceeds through ordinary teardown.
+  Delivered offline with an exact owned, cancellable native dialog
+  ([record](changes/archive/windows-first-run-stop.md)); physical check pending.
+  Compatible resets to the default catalog then disables the
   OS-conflicting physical chords, including Win+G/F11, inventing no
   replacements. Per-binding Keep/Disable/Rebind with separate directional
   letter/arrow rows and actual rebound-chord conflicts. Initial rebind limit

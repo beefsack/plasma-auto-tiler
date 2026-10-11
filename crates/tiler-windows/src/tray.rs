@@ -322,8 +322,8 @@ impl FirstRunChoice {
 }
 
 /// Native prompt body: the two presets plus the brief Win+G/Win+F11 Xbox and
-/// Game Bar implication. Button mapping is explicit because `MB_YESNO`
-/// labels are fixed: Yes stages authentic, No stages compatible.
+/// Game Bar implication. The owned dialog labels its buttons directly, so no
+/// button mapping is encoded here.
 #[must_use]
 pub fn first_run_body() -> String {
     "Choose the shortcut preset for this PC.\n\n\
@@ -334,7 +334,7 @@ pub fn first_run_body() -> String {
      Compatible disables every OS-conflicting chord instead and invents no \
      replacement shortcuts; rows can be re-enabled or rebound later in \
      Settings.\n\n\
-     Yes = Authentic, No = Compatible."
+     Choose Authentic or Compatible."
         .to_owned()
 }
 
@@ -348,6 +348,49 @@ pub fn settings_for_choice(choice: FirstRunChoice) -> Settings {
         apply_preset(&mut settings, crate::settings::Preset::Compatible);
     }
     settings
+}
+
+/// Whether the owner shows the first-run prompt: only when the settings file
+/// is absent and no graceful stop was already requested. A stop racing
+/// startup skips the modal UI so the loop exits promptly.
+#[must_use]
+pub const fn first_run_should_prompt(file_missing_before: bool, stop_before: bool) -> bool {
+    file_missing_before && !stop_before
+}
+
+/// Post-prompt first-run outcome: what the owner does with a prompt result.
+/// `choice` is the prompt outcome (`None` when dismissed), `file_missing_after`
+/// is the lease-held recheck after the prompt, and `stop_during` is the
+/// lease-held stop recheck after the prompt. A stop observed while the prompt
+/// was pending wins over any pending choice: nothing is published.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FirstRunPostDecision {
+    Publish(FirstRunChoice),
+    DiscardPresent,
+    DismissedUnsaved,
+    CancelledStopped,
+}
+
+/// Pure post-prompt decision used by the actual owner path. Order matters:
+/// stop-during wins over a racing choice (no write), then dismissal (no
+/// write), then a file that appeared mid-prompt (discard, no overwrite), else
+/// publish the choice.
+#[must_use]
+pub const fn first_run_post_decision(
+    choice: Option<FirstRunChoice>,
+    file_missing_after: bool,
+    stop_during: bool,
+) -> FirstRunPostDecision {
+    if stop_during {
+        return FirstRunPostDecision::CancelledStopped;
+    }
+    let Some(choice) = choice else {
+        return FirstRunPostDecision::DismissedUnsaved;
+    };
+    if !file_missing_after {
+        return FirstRunPostDecision::DiscardPresent;
+    }
+    FirstRunPostDecision::Publish(choice)
 }
 
 // ---------------------------------------------------------------------------
@@ -816,10 +859,64 @@ mod tests {
     }
 
     #[test]
-    fn first_run_discloses_xbox_chords_and_button_mapping() {
+    fn first_run_discloses_xbox_chords() {
         assert!(first_run_body().contains("Win+G"));
         assert!(first_run_body().contains("Win+F11"));
-        assert!(first_run_body().contains("Yes = Authentic"));
+        assert!(first_run_body().contains("Choose Authentic or Compatible"));
+    }
+
+    #[test]
+    fn first_run_prompt_gate_skips_on_file_or_stop() {
+        assert!(first_run_should_prompt(true, false));
+        assert!(!first_run_should_prompt(false, false));
+        assert!(!first_run_should_prompt(false, true));
+        assert!(!first_run_should_prompt(true, true));
+    }
+
+    #[test]
+    fn first_run_post_decision_routes_stop_choice_and_file() {
+        use FirstRunPostDecision as D;
+        // Ordinary paths: publish either choice when the file is still
+        // absent and no stop arrived; dismissal publishes nothing.
+        assert_eq!(
+            first_run_post_decision(Some(FirstRunChoice::Authentic), true, false),
+            D::Publish(FirstRunChoice::Authentic)
+        );
+        assert_eq!(
+            first_run_post_decision(Some(FirstRunChoice::Compatible), true, false),
+            D::Publish(FirstRunChoice::Compatible)
+        );
+        assert_eq!(
+            first_run_post_decision(None, true, false),
+            D::DismissedUnsaved
+        );
+        // A file appearing mid-prompt discards either choice (no overwrite).
+        assert_eq!(
+            first_run_post_decision(Some(FirstRunChoice::Authentic), false, false),
+            D::DiscardPresent
+        );
+        assert_eq!(
+            first_run_post_decision(Some(FirstRunChoice::Compatible), false, false),
+            D::DiscardPresent
+        );
+        // Stop while pending wins over any pending choice: no publication
+        // even when the user picked a preset and the file is still absent.
+        assert_eq!(
+            first_run_post_decision(Some(FirstRunChoice::Authentic), true, true),
+            D::CancelledStopped
+        );
+        assert_eq!(
+            first_run_post_decision(Some(FirstRunChoice::Compatible), true, true),
+            D::CancelledStopped
+        );
+        assert_eq!(
+            first_run_post_decision(None, true, true),
+            D::CancelledStopped
+        );
+        assert_eq!(
+            first_run_post_decision(Some(FirstRunChoice::Authentic), false, true),
+            D::CancelledStopped
+        );
     }
 
     fn pixel(pixels: &[u8], x: usize, y: usize) -> [u8; 4] {

@@ -160,6 +160,9 @@ decisions of 2026-09-24 are under
   (g) underlay visibility: user used `#50909090`, needs a brighter default and
   research into blend options visible on black, white and grey. Win+G/F11
   leakage observed again (known, parked under gaming coexistence).
+  - (a) Offline-delivered: pending first-run prompt cancels on graceful stop,
+    with no settings publication; native dismissal/teardown live check pending
+    ([record](changes/archive/windows-first-run-stop.md)).
 - P1 | KDE follow-ups from 2026-10-11 Windows dogfood | Cross-platform
   decisions for the KDE session: R-MAX-06 born-maximized setting (default
   tile) and active border radius default 6; underlay default visibility
@@ -704,7 +707,9 @@ decisions of 2026-09-24 are under
   - EACH live journey: record OS build, revision/diff, artifact path/SHA-256,
     exact owner PID/start/session/integrity, display full/work rectangles/DPI
     and permitted windows; prove independent stop/restore first. User starts
-    the authorized owner (`mise exec -- just --justfile windows.justfile dev`),
+    the authorized tiling owner
+    (`mise exec -- just --justfile windows.justfile tile --user-start --trace`;
+    `dev` runs only the lifecycle owner),
     applies the specified preset/settings, performs the steps, then runs
     `mise exec -- just --justfile windows.justfile stop`. Verify hook release,
     hidden-window reveal and owned session-setting restoration. Forced loss
