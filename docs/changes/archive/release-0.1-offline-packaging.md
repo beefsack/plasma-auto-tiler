@@ -104,9 +104,8 @@ scratch commit/tag, leaving the repository's refs/index and three stashes alone.
   Fedora 44's build succeeded; a trailing tray smoke harness returned 1 due
   to pipefail, so full smoke acceptance is not claimed. No live compositor,
   tray, planner activation, KWin upgrade transaction or external Nix tests.
-- Retained local evidence/artifacts: `/tmp/opencode/packaging-verification/`
-  (`EVIDENCE.txt`, per-target logs, packages, file lists and dependency dumps).
-  Temporary paths are local evidence, not durable repository dependencies.
+- Evidence included per-target logs, built packages, file lists and dependency
+  dumps; the substantive verification results are recorded above.
 - `devenv.nix` unchanged; Docker existed, dependencies installed only in
   disposable builder containers. No session restart required. Host
   rpmlint/namcap/actionlint unavailable; distro lint ran in containers as above.

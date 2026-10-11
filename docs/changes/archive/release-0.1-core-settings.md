@@ -36,9 +36,8 @@ consumers and offline distro builds. No live desktop mutation or OBS provisionin
 - User-approved 2026-10-11: core `plasma-auto-tiler` owns both Settings KCMs;
   `plasma-auto-tiler-native-effect` owns only the ABI-bound effect. Core means
   the distro package, not `crates/tiler-core`; no KDE code enters that crate.
-- Recovery verification used one heavy build at a time: Nix `-j1 --cores 4`,
-  Docker `--memory=6g`, in-container parallelism capped at four. No live KWin
-  tests, host dependency installations or `nixos-rebuild`.
+- Recovery verification was offline; no live KWin tests or host dependency
+  installations.
 
 ## Evidence and outcome
 
@@ -64,19 +63,18 @@ consumers and offline distro builds. No live desktop mutation or OBS provisionin
 
 ## Accepted recovery verification (2026-10-11)
 
-Evidence root: `/tmp/opencode/core-settings-verification/` (local artifacts,
-not published releases). Lead inspected diff, representative logs, Debian
-control/payload and Nix check/test logs; independent Worker reviewed contracts.
+Verification artifacts were not published releases. Lead inspected the diff,
+representative logs, Debian control/payload and Nix check/test logs;
+independent Worker reviewed contracts.
 
 - Original exact source archive SHA256:
   `2b0f27ffa81c76fa3266d6a454d317e94b4bd6e7e60a567ff3f65589f8ef416d`.
-  `tracked.diff` matched the resumed implementation byte-for-byte. Container
+  The recorded diff matched the resumed implementation byte-for-byte. Container
   logs record this archive hash and assert recipe identities. Arch and Fedora
   43/44 completed packaging/payload/ELF evidence after the earlier session died;
   reused those artifacts. Core contains two KCMs with no `libkwin` dependency
   or undefined KWin symbols; companions contain one ABI-bound effect.
-- Tumbleweed rerun: `docker run --rm --network none --memory=6g --cpus=4 ...
-  pat-tw-builder bash /inner-rpm.sh tw`, passed in `tw-out/`.
+- Tumbleweed rerun in a network-disabled disposable builder passed.
   Prior RPM verification stopped after `--help` exited 1 under `set -e`;
   temp harness repaired to tolerate that documented exit and explicitly check
   SOURCE_REV. Fedora saved RPMs independently checked for baked SOURCE_REV=1;
@@ -88,38 +86,35 @@ control/payload and Nix check/test logs; independent Worker reviewed contracts.
   New scratch source revision: `d907d3b1ed66fb2d177613c3eeccd0c6f93fc54e`.
   New archive SHA256:
   `01b66632b6ac55927bc4c2abf0cec3ba369646f5cc1290ca480e8b569dc07883`.
-  `dist-v2/` contains archive/builder log; `cmp-v2/` establishes identical
-  consumed RPM/Arch/CMake/Rust/Nix inputs apart from source-revision literals
+  Archive/builder logs and source comparison establish identical consumed
+  RPM/Arch/CMake/Rust/Nix inputs apart from source-revision literals
   and immaterial docs. Reuse remains valid for unaffected distro builds.
-- Ubuntu rerun: `docker run --rm --network none --memory=6g ...
-  pat-ub-kf-builder bash /inner-ub-v2.sh`, with Cargo/CMake/debhelper jobs=4.
-  `ub-out-v2/ub-dpkg-build.log` and console/control/ELF logs pass: ECM/KF6 6.24,
+- Ubuntu rerun in a network-disabled disposable builder passed.
+  Build and console/control/ELF logs pass: ECM/KF6 6.24,
   Qt 6.10, no kwin-dev; two KCMs, no effect, no libkwin; generated Depends
   contains actual Qt/KF6 runtimes plus config/shell helpers and no undefined
   substitution warning. `.deb` SHA256:
   `786f09de9d72329cc0bf753d783cc7b4b1814e7922e1a593852de6c1173ec8da`.
-- Nix gates rerun sequentially with `nix build -j1 --cores 4`:
+- Nix gates rerun with `nix build`:
   `.#checks.x86_64-linux.native-settings-tests` (26/26),
   `.#checks.x86_64-linux.native-effect-tests` (33/33),
   `.#native-settings`, `.#native-effect`, `.#kwin-script`, `.#tray`.
   Shipping installChecks and inspected outputs prove Settings=2 KCMs/0 effect,
-  effect=1 plugin/0 KCMs. Cached test build logs persisted as
-  `nix-native-{settings,effect}-tests-cached-log.txt`.
-- `nix flake check -j1 --cores 4 --print-build-logs` passed
-  (`nix-flake-check.log`): x86_64 package/check/module assertions evaluated;
+  effect=1 plugin/0 KCMs. Cached test build logs were inspected.
+- `nix flake check --print-build-logs` passed:
+  x86_64 package/check/module assertions evaluated;
   zero rebuilds because checks were already realized. aarch64 was omitted.
 - Shell suites: source archive and KPackage passed; rerun dogfood 572/572
-  (`shell-dogfood-rerun.log`), dev-loop 380/380
-  (`shell-dev-loop-rerun.log`). Earlier signal-fixture failures did not recur;
+  and dev-loop 380/380. Earlier signal-fixture failures did not recur;
   dev-loop failures were caused by a leftover Nix `result` symlink. Future
-  verification builds use `--no-link` or output links under `/tmp/opencode`.
+  verification builds use `--no-link` to avoid source-tree output links.
 
 ## Outcome and remaining release work
 
 - Approved ownership implemented; decisions, installation/removal guidance and
   backlog updated. Default full developer build and NixOS effect delivery
-  preserved. Settings-only CI gate added; native CI builds limited to four
-  cores and one Nix job. Commit/rebase/push and CI result reported in handover.
+  preserved. Settings-only CI gate added. Commit/rebase/push and CI result
+  reported in handover.
 - Runtime/solver and missing/failed/removed-effect live acceptance remain
   separate user-owned release gates. RPM/Ubuntu install probes use forced
   dependencies, not full solver acceptance. Arch has harmless empty split-dir

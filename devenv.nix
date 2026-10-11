@@ -6,11 +6,14 @@
   languages.javascript.package = pkgs.nodejs_24;
 
   packages = with pkgs; [
+    cargo-about
+    cargo-deny
     clang-tools
     dbus
     gh
     jq
     just
+    license_finder
     python3
     systemd
     unzip

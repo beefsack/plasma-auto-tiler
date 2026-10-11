@@ -53,6 +53,31 @@ decisions of 2026-09-24 are under
   ([candidate lessons](research/non-native-tiler-host-interaction.md#candidate-lessons-for-this-project),
   [cross-cutting findings](research/non-native-tiler-host-interaction.md#cross-cutting-findings),
   [evidence](changes/archive/non-native-tiler-host-interaction.md)).
+- P1 | Ubuntu native effect research | Pre-0.1: find a shipping route for
+  borders, group underlay and drop preview on Ubuntu 26.04. Core + Settings
+  already build; the effect is blocked by ECM 6.24 versus the 6.26 floor and
+  must build against Ubuntu's KWin. Assess whether 6.26 is genuinely needed,
+  bundling the needed ECM modules in the source tarball, Kubuntu backports PPA,
+  KWin API differences versus 6.7.5, and KDE neon OBS provisioning.
+- Open user decision | Project name | Pre-0.1: `plasma-auto-tiler` no longer
+  describes the cross-platform target. Decide before creating OBS packages or
+  the AUR package; accounts may be created first. Affects package/OBS/AUR names,
+  D-Bus and plugin IDs, and docs.
+- P1 | Licensing | Pre-0.1, user decision pending:
+  [research and dependency inventory](research/licensing.md). Run the pending
+  license tools and finish native linked-library/closure verification; add the
+  LICENSE file, headers and manifest/package declarations after the decision.
+- P1 | OBS release handoff redesign | Pre-0.1 research: narrow OBS tokens
+  (`runservice`, `rebuild`, `release`, `workflow`) cannot upload new sources or
+  checksums. Compare full-credential `osc commit` from GitHub Actions with
+  OBS-side tag fetching (`obs_scm`, `cargo_vendor`, etc.) triggered by a narrow
+  token. Assess credentials, tag/source integrity and execution security for
+  each route; produce a recommendation before implementing the handoff.
+- P2 | Push code down | Recurring post-0.1 passes: move logic from host-coupled
+  `kwin/src` TypeScript and `kwin/native-effect` C++ (including settings and
+  shortcut reconciliation) into system-specific Rust, then into the agnostic
+  shared core where appropriate. First pass after 0.1, aligned with or ahead
+  of deferred K2/K3.
 - P1 | 0.1 triage decisions - batch 1 verification (KDE/shared) | User
   2026-10-10 approved the 15 units above, exactly recommendation (a) in
   [triage](research/release-0.1-triage.md#user-decisions-2026-10-10).
