@@ -11,8 +11,8 @@ window with `scope:active-unobserved`.
   then make them identical if source establishes an unambiguous mismatch.
 - Add focused identity-mismatch coverage without a native QList/QObject harness.
 - Preserve fail-closed eligibility and identity validation behavior.
-- Do not run live KWin/Plasma actions, alter the existing readiness/diagnostic
-  changes, or update backlog and decisions records.
+- Do not run live KWin/Plasma actions or alter the existing readiness/diagnostic
+  changes.
 
 ## Acceptance
 

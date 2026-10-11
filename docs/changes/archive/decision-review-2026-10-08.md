@@ -51,17 +51,16 @@
 
 ## Verification
 
-- Independent muse-spark Worker compared old/new rules and safety boundaries.
+- Independent review compared old/new rules and safety boundaries.
   Seven corrections addressed duplication, obsolete target/gap wording, B9
-  sub-row status, convention provenance and logging safeguards. Lead found
-  and restored the omitted amber-warning/menu-lifecycle semantics; subsequent
+  sub-row status, convention provenance and logging safeguards. The omitted
+  amber-warning/menu-lifecycle semantics found and restored; subsequent
   independent clause-level review confirmed all nine Windows choices and no
   remaining active-rule loss or blocker.
 - Repository-wide decisions/principles anchor check: 204 references, zero
   broken anchors. Requirement counts verified; `git diff --check` clean.
 - No Markdown/link-check recipe exists in the justfiles or CI; an offline
   anchor/count check was used. No product or live-host tests were run.
-- Delegation: one Lead, four sequential muse-spark Workers (register/code
-  investigation, spec/matrix/links, independent review, corrective edits),
-  one active at a time; resumes used for corrections and final review.
+- Four sequential units (register/code
+  investigation, spec/matrix/links, independent review, corrective edits).
 - No unresolved ambiguity or unapplied user selection was identified.

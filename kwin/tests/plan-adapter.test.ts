@@ -8936,7 +8936,7 @@ describe("plan ordinary lifecycle diagnostics", () => {
 });
 
 describe("plan entry sticky workspace-switch regression", () => {
-    // Orchestrator decision 2026-09-25: Meta+G on a sticky window returns it
+    // Decision 2026-09-25: Meta+G on a sticky window returns it
     // to tiling ON THE CURRENT WORKSPACE where sticky-off leaves it,
     // regardless of the prior workspace. Production KWin observer
     // (startPlanAdapterEntry with observeNative on the fake world) against

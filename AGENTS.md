@@ -21,6 +21,10 @@
 
 - Never commit local paths or information about local machines (paths, host names, hardware/resource details); describe test conditions generically.
 
+## Repository Records
+
+- Never record session controls in repository files or commit messages: commit/push permissions, autonomous or supervised modes, agent/model roles and routing, concurrency and approval gates, user availability, or machine-specific resource limits. Record only the work, its evidence, and product decisions.
+
 ## Dependency Management
 
 - Linux: system and toolchain dependencies for this project are managed by

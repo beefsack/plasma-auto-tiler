@@ -6,11 +6,11 @@
   record selection, views/focus, and evidenced absence without guessing.
 - Documentation only: scenario reference cells, required citation keys, and
   the 2026-10-09 consensus supplement. Preserve project rules and Ours cells.
-- No live testing, reference-checkout edits, or stash operations.
+- No live testing or reference-checkout edits.
 
 ## Approach and acceptance
 
-- Sequential muse-spark Workers: one source-fill unit, then a separate
+- Sequential units: one source-fill unit, then a separate
   independent source re-verification sample and structural review.
 - Use pinned repo:path:line citations; KWin is KDE/kwin 8438567a via raw
   GitHub source or its existing temporary export. Unsupported legs stay TBD.
@@ -19,13 +19,11 @@
   largest shared edge, then left/top, without changing approved rules.
 - Inspect actual diff, confirm citation resolution and unchanged Ours/fixture
   text, and run git diff --check. Archive this note after accepted evidence.
-- Stage intended docs only; authorized one-line commit message:
-  `docs: source-fill R-WS-27 reference cells`, then push.
 
 ## Status
 
-- Baseline: clean main at a8e32ce, tracking origin/main. Three user stashes
-  recorded read-only; no stash mutation authorized.
+- Baseline: clean main at a8e32ce, tracking origin/main. Three existing stashes
+  recorded read-only; no stash mutation.
 - Completed 12/12 source-qualified cells, six new citation keys and two
   consensus-supplement predicates. No untouched reference cells; 11 retain
   explicit TBD legs (six partial directional journeys plus five unsupported
@@ -40,16 +38,16 @@
   with its largest-edge leg, not its left/top tie-break. COSMIC's different
   selector remains a deliberate deviation. The "follow the majority"
   rationale is unproven for target selection; no product decision changed.
-- Independent muse-spark Worker retraced COSMIC, Hyprland, bspwm, i3, niri,
+- Independent re-trace of COSMIC, Hyprland, bspwm, i3, niri,
   qtile and awesome (7/12 cells); no factual cell errors. Corrected the
-  implementation Worker's consensus-strength classification and incidental
-  legend whitespace. Lead clarified centre-y distance, Hyprland's partial
-  rule agreement, and the untraced sway mechanism; reviewer rechecked the
+  implementation consensus-strength classification and incidental
+  legend whitespace. Centre-y distance, Hyprland's partial
+  rule agreement, and the untraced sway mechanism clarified; reviewer rechecked the
   final wording and all structural acceptance conditions successfully.
 - Verification: local HEADs match all 12 matrix pins; all 25 cited keys
   resolve; 14 Then identities and Given/When/Observe/Ours/Variant unchanged;
   supplement table columns preserved; git diff --check clean. No KWin source
   required, no live testing or reference mutations. User stashes untouched.
 - Accepted source-fill complete. Remaining native/unsupported legs are
-  explicitly recorded, not delivery gaps. Authorized commit/push follows;
-  backlog handover: R-WS-27 source-fill complete. Exact next action: none.
+  explicitly recorded, not delivery gaps.
+  Backlog handover: R-WS-27 source-fill complete. Exact next action: none.

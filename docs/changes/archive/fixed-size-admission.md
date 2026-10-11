@@ -9,7 +9,7 @@
 
 - Deliver the accepted 2026-10-07 fixed-size admission exception in shared
   core, existing Linux planner and KDE. Delivered offline 2026-10-08 under
-  autonomous Orchestrator PROVISIONAL selections D1-D8, not user decisions.
+  tentative PROVISIONAL selections D1-D8, pending user review (not user decisions).
 - Windows changes may only repair compilation while preserving behavior.
   Real Windows wiring belongs in numbered backlog handoff item 13.
 - No live testing, dependency installs, commits, pulls or adapter extraction.
@@ -26,10 +26,9 @@
   actuation blindly: it writes geometry and keep-above and retains focus.
 - Log the admission decision with bounded structured reason/lifecycle context
   and existing correlation tokens, without native IDs or application content.
-- Sequential muse-spark units: research, core/planner implementation and
+- Units: research, core/planner implementation and
   transactional repair, KDE lifetime integration and failure/entry fixtures,
-  independent review, offline delivery gates. Lead owns evidence review,
-  records and integration; no worker maintained project records.
+  independent review, offline delivery gates, evidence review, records and integration.
 - Required delivery gates: npm tests/typecheck, offline workspace Rust
   tests/clippy, fmt, portable check, affected offline shell tests after build,
   native Nix checks if native code changes, staged diff/ASCII checks.
@@ -94,9 +93,9 @@
   of a KWin script-owner stop/start adoption journey. Float-identity restart
   persistence is separate accepted R-RST-01 work, not a Q2 implementation.
 
-## Autonomous provisional selections (2026-10-08)
+## Tentative provisional selections (2026-10-08), pending user review
 
-These are Orchestrator selections for autonomous implementation, not user
+These are tentative selections for implementation, not user
 decisions. Each is recorded literally "Provisional, to discuss" in
 [decisions](../../decisions.md#fixed-size-admission), with review in backlog.
 
@@ -144,18 +143,18 @@ decisions. Each is recorded literally "Provisional, to discuss" in
 
 ## Review, outcome and verification (2026-10-08, offline)
 
-- Sequential Worker research pins were verified read-only. Lead reviewed actual
+- Sequential research pins were verified read-only. Actual
   COSMIC predicate/getters/admission/toggle/workspace/maximize/fullscreen source,
   Hyprland backend predicates, sway xdg predicate, awesome dynamic updater,
   core admission/convergence/float logic, KDE hint/actuation/startup paths and
-  Windows min-only query/row assembly.
-- Lead corrected initial research claims about partial-zero hints, Hyprland
-  X11 support, dynamic awesome hints, workspace re-enable and fullscreen birth.
-- Lead rejected the initial eager core markers/global binding relaxation and
-  KDE per-domain eviction/hint-change classification. Core metadata now stages
+  Windows min-only query/row assembly reviewed.
+- Initial research claims about partial-zero hints, Hyprland
+  X11 support, dynamic awesome hints, workspace re-enable and fullscreen birth corrected.
+- The initial eager core markers/global binding relaxation and
+  KDE per-domain eviction/hint-change classification rejected. Core metadata now stages
   atomically; opt-out retains original binding/refusal behavior and tests.
   KDE uses exact live-reference identity plus explicit wire provenance.
-- Lead rejected fabricated Planner replies as no-touch evidence. Real Planner
+- Fabricated Planner replies rejected as no-touch evidence. Real Planner
   subprocess fixtures and production-entry release/startup fixtures now assert
   planned/applied terminals, sibling writes, target no-write accounting and
   actual desired slots. Independent review found no proven blocker; follow-up
@@ -193,7 +192,7 @@ decisions. Each is recorded literally "Provisional, to discuss" in
 
 ## Pending user review and live checks
 
-- Review every D1-D8 autonomous choice, especially equal partial-zero hints,
+- Review every D1-D8 tentative choice, especially equal partial-zero hints,
   the deferred either-axis alternative and fixed-size/Q3 maximize boundary.
 - Native fixed/game admission must leave frame, focus and stacking alone;
   gain/loss hints, tile/sticky overrides, hide/show/domain adoption/new refs,
@@ -203,5 +202,5 @@ decisions. Each is recorded literally "Provisional, to discuss" in
   Born-fullscreen exits tiled, prior fixed-floating restores floating.
 - Workspace enable retiles automatic only; intentional/sticky floats preserve
   existing rules. Native/Windows checks remain user-owned in backlog item 13.
-- Next action: Orchestrator reviews the staged delivery and commits it;
-  user reviews provisional choices and performs separately authorized checks.
+- Next action: review the staged delivery;
+  user reviews provisional choices and performs live checks.

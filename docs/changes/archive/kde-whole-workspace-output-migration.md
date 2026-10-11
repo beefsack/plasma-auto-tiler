@@ -8,8 +8,8 @@
 - Reuse item-5 full-output-rectangle adjacency and item-1 stable-ID history
   invalidation. No adapter extraction, dependency installs or live testing.
   Added text is ASCII.
-- The Orchestrator selected the nine clauses below provisionally; they are
-  autonomous choices, not recorded user decisions.
+- The nine clauses below are tentative, pending user review;
+  not recorded user decisions.
 - Deliver offline fixtures, catalog/preset integration,
   correlated lifecycle diagnostics, matrix/spec/decision/dev-loop updates,
   Windows and pending-live handover, all requested offline gates, then archive.
@@ -18,9 +18,8 @@
 ## Accepted research evidence
 
 - Initial worktree clean; root guidance, principles, and live KWin guide read.
-  One sequential muse-spark Worker researched static sources; Lead checked
-  relevant source and corrected hidden-target, collision, and native-capability
-  assumptions. Research preceded implementation; no live tests.
+  Static sources researched; relevant source checked and hidden-target, collision,
+  and native-capability assumptions corrected. Research preceded implementation; no live tests.
 - `docs/spec/functional-spec.md:147` accepts whole-workspace movement but leaves
   destination/focus detail TBD. `docs/spec/reference-outcomes/workspaces.md:587-659`
   explicitly permits active-only no-counterpart on its hidden baseline plus an
@@ -71,11 +70,11 @@
   item-5 archive). Four unbound actions would make 128 / 92 / 36, without new
   default chord conflicts.
 
-## Selected autonomous choices (PROVISIONAL, user review pending)
+## Selected tentative choices (PROVISIONAL, user review pending)
 
-| Topic | Lead recommendation | Alternatives and consequence |
+| Topic | Recommendation | Alternatives and consequence |
 | --- | --- | --- |
-| Binding | Orchestrator-preselected PROVISIONAL: bindable, UNBOUND | A bound arm needs a separate conflict/chord choice; no stock holder invented |
+| Binding | Tentative PROVISIONAL: bindable, UNBOUND | A bound arm needs a separate conflict/chord choice; no stock holder invented |
 | Modes/capability | Support local and global-unique only with strict-true live `options.perOutputVirtualDesktops`; shared/false/missing refuse with reason | Shared consolidation is window movement, not workspace reassignment; automatic native-setting mutation is outside scope |
 | Targeting/verbs | Active workspace, four directions using item-5 adjacency, follow only | Hidden-ID targeting is larger; stay and next/previous add behaviors without COSMIC precedent |
 | Destination/layout | Keep backing ID, tree/order/shares/focus/tiling mode; insert after target current entry, show it; target prior workspace stays hidden | Re-admission loses layout; swapping moves another workspace; refusal just because target current is occupied needlessly limits use |
@@ -114,9 +113,9 @@
 
 ## Bounded units and verification
 
-- Sequential Worker units: core/planner retained-domain migration and tests;
+- Sequential units: core/planner retained-domain migration and tests;
   KDE mapping/native flight and tests; native catalog/presets and offline checks.
-  Lead reviews diffs, contracts, actual evidence, and integrates durable docs.
+  Diffs, contracts, actual evidence reviewed, and durable docs integrated.
 - Native flight must pin source/workspace/output/member identities, prevent
   cleanup/re-admission during transfer, verify every member and both views before
   follow/completion, and distinguish refusal, partial/uncertain, and confirmed

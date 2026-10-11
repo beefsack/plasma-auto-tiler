@@ -9,7 +9,7 @@
 ## Scope and approach
 
 - Limit code to the dev build recipe, tray launch diagnostics, and affected tests. Do not change the native install lifecycle without a user decision.
-- One Worker corrects the justfile launcher export and dev-loop shell fixture; Lead verifies missing-path evaluation, Cargo env rebuild tracking and integration.
+- Correct the justfile launcher export and dev-loop shell fixture; verify missing-path evaluation, Cargo env rebuild tracking and integration.
 - Verify workspace tests, fmt, strict clippy, affected shell suites on a private bus where needed, and `git diff --check`.
 
 ## Outcome

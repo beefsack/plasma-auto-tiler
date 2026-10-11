@@ -8,24 +8,22 @@
 - Preserve substantive evidence, versions, relevant display/test conditions,
   public repository URLs, and functional product or generic temporary paths.
 - Identify pinned reference-WM sources by upstream repository and commit.
-- Add the concise future-agent rule to `AGENTS.md`.
+- Add the concise future rule to `AGENTS.md`.
 
 ## Scope and approach
 
 - Sweep all tracked text, including documentation archives, source comments,
   scripts, packaging, and CI. No behavior changes or history rewriting.
-- Worker sanitizes content; Lead reconciles the backlog and records the
-  durable rule. An independent Worker reviews the broad cleanup.
+- Content sanitized; backlog reconciled and the
+  durable rule recorded. The broad cleanup independently reviewed.
 - Verify with a final tracked-text search and `git diff --check`; explain
   any remaining path or machine-related search hits by their functional role.
-- Publish separately from the Layering principle; rebase only with a clean
-  worktree, stop for non-trivial conflicts, and check CI after publication.
 
 ## Outcome
 
 - Completed: 119 existing Markdown files sanitized, including 85 archive
   records; this archived note makes 120 files in the cleanup commit.
-- Added the exact agent rule to `AGENTS.md` and its dated user decision to
+- Added the exact rule to `AGENTS.md` and its dated user decision to
   `docs/decisions.md`. Updated backlog links for generalized check headings.
 - Reference-WM citations retain upstream repositories and original pins.
   Evidence retains results, versions, checksums and relevant display conditions;

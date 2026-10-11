@@ -17,9 +17,9 @@
 
 ## Approach and bounded units
 
-- Worker adapter/catalog/input/preset/UI implementation accepted after independent
+- Adapter/catalog/input/preset/UI implementation accepted after independent
   review and native production-route regression follow-up; no blocking finding.
-- Scoped native Settings/recovery evidence accepted; Lead native gates passed;
+- Scoped native Settings/recovery evidence accepted; native gates passed;
   publication and CI tracked below/in delivery handover.
 - For live verification read live-windows-testing.md; standing authority only
   owner, new Notepad/Calculator/Paint and synthetic input/cursor. Never touch
@@ -56,7 +56,7 @@
 - Existing Windows flag-clean observation contract retained (item 13 admission
   pending); focused overlays refuse in adapter before Engine mutation, sibling
   overlay geometry uses retained slots and fresh native write-time skip fences.
-- Lead ran all four native allowlisted build/test/fmt/strict clippy gates plus
+- Ran all four native allowlisted build/test/fmt/strict clippy gates plus
   diff check 2026-10-11 on `755aab8` + accepted diff: passed (216 Windows lib
   tests, 71 snapkey, 28 settings). Rust 1.99.0 MSVC, auto-install disabled.
 
@@ -90,7 +90,7 @@
   pass-through under Authentic/Compatible/Disable/rebind/takeover-off.
   Product injected-input fence preserved; no helper-proof/CLI bypass introduced.
 - Pushed implementation `f5801d8`. CI run
-  [38063933730](https://github.com/beefsack/omnitiler/actions/runs/38063933730)
+  [38063933730](https://github.com/beefsack/OmniTiler/actions/runs/38063933730)
   found the predicted fixture dependency: elevated Windows runner settled
   `elevated-foreground` before the fabricated stale origin. Production correctly
   refused; no product behavior failure. All other CI jobs passed.
@@ -102,7 +102,7 @@
   Six native orientation-route tests and all native allowlisted gates passed
   after repair; positive Win32 actuation remains physical-owned pending.
 - Repair pushed `83085a3`; CI
-  [38064624471](https://github.com/beefsack/omnitiler/actions/runs/38064624471)
+  [38064624471](https://github.com/beefsack/OmniTiler/actions/runs/38064624471)
   completed success for windows, rust, kwin, shell, native and macos. No further
   repair required. Implementation/offline/native Settings handoff complete;
   exact next user action is the physical item 3/item 4 journeys in backlog,

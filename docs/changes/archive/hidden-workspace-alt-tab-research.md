@@ -17,12 +17,13 @@ CI jobs passed. This archive is evidence-only.
   public DWM cloak, public native-desktop APIs, parking and private ApplicationView
   cloak. Separate documented/source evidence from untested shell behavior.
 - Bounded research/draft and correction units, one independent source review,
-  then native/documentation verification. Lead integrates evidence and records
-  uncovered cross-platform scenarios with unsupported outcomes TBD.
+  then native/documentation verification. Evidence integrated and
+  uncovered cross-platform scenarios recorded
+  with unsupported outcomes TBD.
 - Prefer primary docs and pinned upstream source; live probing only if needed
   to settle a material fact cheaply within authorized disposable-window scope.
 - Verify documentation links/claims and whitespace, run required native gates,
-  archive this record, commit/push and require hosted CI green.
+  archive this record and require hosted CI green.
 
 ## Outcome
 
@@ -44,8 +45,8 @@ CI jobs passed. This archive is evidence-only.
 
 ## Verification
 
-- Lead inspected primary API docs, the full Glaze discussion, pinned reference
-  activation paths and KWin's configured switch/pull activation implementation.
+- Primary API docs, the full Glaze discussion, pinned reference
+  activation paths and KWin's configured switch/pull activation implementation inspected.
 - Native locked build/tests for tiler-core, tiler-protocol, tiler-kwin-effect-ffi
   and tiler-windows, all-package rustfmt and strict all-target Clippy passed.
   Existing Rust 1.98.1 MSVC via `cargo +stable`; mise unavailable, no installs.
@@ -54,8 +55,8 @@ CI jobs passed. This archive is evidence-only.
 - No project processes or recovery ledger JSON/pending files; only the ordinary
   inactive ledger.lock file remains. Read-only baseline: taskbar present/visible,
   SPI arranging = 1, pen visualization = 35. No experiment-created hidden windows.
-  All four sequential Workers completed; no Worker running.
-- Hosted [CI run 37192477029](https://github.com/beefsack/omnitiler/actions/runs/37192477029)
+  All four sequential units completed.
+- Hosted [CI run 37192477029](https://github.com/beefsack/OmniTiler/actions/runs/37192477029)
   passed Rust, KWin, shell, native, Windows and macOS for `580c766`.
 - Proposed backlog outcome: research complete; keep the optional feature
   deferred, with no design selected. Reopen only when demand warrants a parking

@@ -12,12 +12,12 @@
 
 ## Acceptance and approach
 
-- Shared sway/i3 orientation learned once and passed to each fill Worker.
+- Shared sway/i3 orientation learned once and passed to each fill unit.
 - Trace every N/U candidate; separate independent source verification per slice.
 - Record approved-rule comparisons using prior per-WM table conventions.
 - Reconcile exact occurrence scope, source citations, triage ledgers and totals;
   verify unchanged scenarios/profiles/rules, documentation scope and whitespace.
-- Archive this note and commit/push intended documentation per WM.
+- Archive this note per WM.
 
 ## Bounded units
 
@@ -26,8 +26,6 @@
 3. Workspaces/outputs/mouse (5 N + 3 U, corrected and independently verified).
 4. Session/control/startup (12 U, independently verified).
 5. Final scope/count/comparison audits, triage reconciliation and archive (complete).
-
-Workers use `muse-spark`, one active at a time. The Lead owns records.
 
 ## Accepted evidence
 
@@ -44,7 +42,7 @@ Workers use `muse-spark`, one active at a time. The Lead owns records.
   source review confirmed all 16 cells and legend ranges. Join appends last;
   perpendicular move inserts before the remembered child; fullscreen blocks
   ordinary newcomer focus. Evidence: `sway-slice1-review.md`.
-- Rejected comparison classification: the fill Worker proposed 14 rows, all
+- Rejected comparison classification: the fill proposed 14 rows, all
   convergence, OPEN or absent journeys. Independent review found no genuine
   approved-rule difference in that set; these belong in covered/OPEN notes.
 - Workspace/output/mouse: 1 N + 2 U closed; 4 N + 1 U reclassified F.
@@ -60,7 +58,7 @@ Workers use `muse-spark`, one active at a time. The Lead owns records.
   H1/F5**. Sway residual **41 (H3/F21/L17)**; global **549 reference TBD:
   N13/H77/F297/L140/U22**. No sway N/U remain; only i3 N13/U22 remain.
 - Final source/scope audit confirmed exact changes and proposed five additional
-  policy comparisons. A separate Worker verified all five, corrected the unfloat
+  policy comparisons. A separate check verified all five, corrected the unfloat
   citation, scoped sticky membership to the move operation, limited D1 to the
   equal-partial-zero discriminator and left wlroots internals unclaimed.
 

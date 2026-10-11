@@ -8,9 +8,9 @@
 - Native locked gates, independent review, Notepad/Paint plan/write/matched
   readback and screenshot proof pass. Hosted CI for `ace352c` is green across
   Windows, Linux Rust, KWin, shell, native effect and macOS:
-  <https://github.com/beefsack/omnitiler/actions/runs/37196192226>.
+  <https://github.com/beefsack/OmniTiler/actions/runs/37196192226>.
 - Decisions and R-MAX-03 promoted; record archived. Physical checks remain
-  user-owned. Live cleanup independently verified; no Worker remains running.
+  user-owned. Live cleanup independently verified.
 
 ## Goal and scope
 
@@ -32,11 +32,11 @@
    native runtime/effect/send guards, tray truth, settings store/UI and bounded
    structured logs. Targeted behavior tests and four-package native gates.
 2. Independent review of live/state boundaries; correct concrete findings and
-   verify current gates. Commit/push accepted implementation; hosted CI green.
+   verify current gates; hosted CI green.
 3. Scoped live Notepad/Calculator/Paint proof: tray toggle floating, native move,
    new-window admission, retile, sends across both boundaries, effects, default
    and settings UI. Capture screenshots and actual native effect readbacks.
-4. Promote decisions, matrix evidence, archive this record, commit/push and
+4. Promote decisions, matrix evidence, archive this record and
    verify hosted CI plus final clean tree/live state.
 
 ## Approach and authorization
@@ -46,7 +46,7 @@
   `kwin/src/plan-adapter-entry.ts` keyless registration, shared release-domain.
 - Existing workspaces take saved default at owner startup; live default edits
   affect only newly created workspaces. Overrides reset on owner restart.
-- User standing autonomous authorization permits scoped input, movement,
+- User authorization permits scoped input, movement,
   hiding/restyling, overlays and disposable Notepad/Calculator/Paint actors.
   Never close/kill/type into hosting Terminal; prefer explicit scope filters.
 - Before live work bind artifact/owner/actors to exact identities and capture
@@ -67,19 +67,18 @@
   focus divergence. Correct these before acceptance/live proof. A reported
   Settings stale overwrite is rejected: existing full-content Apply refusal
   already reloads without writing (`settings_ui.rs:517`).
-- Lead verified corrected native locked build/test/clippy/fmt. Live scoped
+- Corrected native locked build/test/clippy/fmt verified. Live scoped
   Notepad/Calculator/Paint evidence confirms floating leaves frames untouched,
   native moves persist, new windows remain native, retile freshly fits, border
   remains, settings default applies live only to future workspaces and startup.
-- First live Worker incorrectly read a menu screenshot as Tiled checked; Lead
-  inspected `shot-menu-boot-floating.png` and rejected that bug claim: Floating
+- First live menu screenshot incorrectly read as Tiled checked; `shot-menu-boot-floating.png` inspected and that bug claim rejected: Floating
   is correctly checked. No product failed approach or correction follows it.
 - Remaining send proof needs a minimal automation `workspace --send` command:
   normal owner intentionally rejects injected keyboard input. Reuse existing
   exact-owner request transport and native send dispatch with all fences.
 - Cross-boundary sends and active gesture effects accepted below. Implementation
   `90ee5c2` pushed; hosted Windows/Linux Rust/KWin/shell/macOS CI green:
-  <https://github.com/beefsack/omnitiler/actions/runs/37181616531>.
+  <https://github.com/beefsack/OmniTiler/actions/runs/37181616531>.
 - Final inspection reproduced first-seen maximized-window restore on a floating
   workspace. Mode-gating the admission clear fixes geometry, but first-seen
   maximized rows also need managed workspace membership so switching hides them.
@@ -132,7 +131,7 @@
 - Tray default picks both ways save only the default and acknowledge live
   adoption; existing workspace stays tiled, subsequently allocated workspace
   starts floating. Settings shows saved Floating and Close preserves file bytes.
-- Lead inspected final menu/UI, floating Paint and tiled/floating drag screenshots.
+- Final menu/UI, floating Paint and tiled/floating drag screenshots inspected.
   Final ignored evidence: `target/windows-workspace-tiling/20261004-163221-live/`.
   Key screenshot SHA-256 values:
   - `shot-menu-ws1-stilltiled.png`:
@@ -152,11 +151,11 @@
   scope before the next probe. An invalid suppression probe on a newly tiled
   workspace was rejected and superseded by a correctly toggled floating drag.
   Owner duration expiry was recovered with restore before further testing.
-- Final stop/restore, extra-window close and Lead independent read-only recheck:
+- Final stop/restore, extra-window close and independent read-only recheck:
   no owner/helpers/UI/overlays or recovery ledger/request; original settings-file
   absence restored; numeric SPI GET success with arranging 1 and pen 35; normal
   taskbar and all baseline apps present/visible. Original hosting Terminal PID
-  18224 creation `01dd512e9194d8b9` survives. No Worker remains running.
+  18224 creation `01dd512e9194d8b9` survives.
 - Provisional decisions: existing JSON field location and minimal exact-owner
   send automation, recorded in `docs/decisions.md`. Runtime behavior follows KDE.
 
@@ -183,7 +182,7 @@
   membership and release on fresh non-maximized observation. Live proof confirms
   untouched floating maximum and select-away/back hide/reveal, one admission
   clear on retile, and no re-clear after subsequent maximize/mode flips. However
-  Lead rejects the claimed fresh tile: after clear, the window stays at native
+  the claimed fresh tile rejected: after clear, the window stays at native
   restore frame `(40,40,1611,725)`, and the next normal observations still omit
   `w7` from every plan. The fixture incorrectly used `inventory` presence as
   managed/tiled proof. The temporary floating observation seeds an Engine
@@ -202,15 +201,14 @@
   summary. Floating mover frame remains unchanged. This part is accepted evidence
   but remains in the uncommitted candidate with the admission correction.
 - No causal evidence-plumbing repair or product retry follows the second failed
-  semantic approach. Stop threshold reached; Orchestrator owns whether to
-  authorize a third correction. Exact next action: distinguish the temporary
+  semantic approach. Stop threshold reached; no third correction attempted. Exact next action: distinguish the temporary
   max-hold Engine exception from intentional float state on release, then assert
   actual tiled plan/write/native readback after retile before accepting it.
 - Final candidate run stopped/restored, exact extras closed, baseline Notepads
   visible, original settings absence restored, project actors/UI/overlays gone,
   SPI numeric arranging 1/pen 35, normal taskbar and original hosting Terminal
   alive. Earlier incorrect SPI action-name readings in this fixture are
-  superseded by explicit numeric GET readbacks. No Worker remains running.
+  superseded by explicit numeric GET readbacks.
 - Main implementation `90ee5c2` is pushed with green CI but the overall change
   is incomplete. Keep this record active; backlog must not mark it complete.
 
@@ -218,9 +216,9 @@
 
 - User authorizes one third semantic correction: retire only the temporary
   max-hold Engine exception; prove actual tiled plan, write and native readback,
-  run gates, commit/push, green CI and archive. If it fails, discard unaccepted
-  source changes, record the known limitation here and in decisions, commit
-  documentation and leave the tree clean. No further semantic iteration.
+  run gates, green CI and archive. If it fails, discard unaccepted
+  source changes, record the known limitation here and in decisions
+  and leave the tree clean. No further semantic iteration.
 - KDE source establishes parity: `plan-adapter.ts:4905-4909` and `5213-5216`
   skip floating domains before admission clear; `5351-5418` restores unslotted
   maxima once and refetches native state for normal admission, while previously
@@ -258,8 +256,8 @@
   or further semantic iteration was attempted.
 - Evidence retained locally under ignored
   `target/windows-workspace-tiling/third-correction/evidence.jsonl` and owner
-  log `run-01dd53cd55933c0b.log`. Lead inspected the final checked-Tiling menu
-  screenshot; that check proves only mode, not tile admission. Screenshot
+  log `run-01dd53cd55933c0b.log`. The final checked-Tiling menu
+  screenshot inspected; that check proves only mode, not tile admission. Screenshot
   `shot-menu-tiled.png` SHA-256:
   `2BF8F34CEA1DA1D978EE804D5423A9A9C1D5E34B5D95A28901AF36990634126A`.
 - Per user fallback, all unaccepted changes in `tiler-windows` source/tests
@@ -277,8 +275,7 @@
 - Stop/restore succeeded, exact newly opened Notepad closed, baseline five
   Notepad HWNDs preserved, settings-file absence restored, project actors and
   recovery effects removed, numeric SPI GET arranging 1/pen 35, normal taskbar,
-  original hosting Terminal alive. No Worker remains running. Final Lead
-  independent recheck confirms owner/UI/ledger/pending/request absent, settings
+  original hosting   Terminal alive. Final independent recheck confirms owner/UI/ledger/pending/request absent, settings
   absent, both SPI GET calls successful with 1/35, and original Terminal PID
   18224 creation `01dd512e9194d8b9` unchanged.
 - After discarding the candidates, the retained `90ee5c2` source passes locked
@@ -292,8 +289,8 @@
 
 - User authorizes fresh investigation, deterministic failing offline reproduction,
   then at most two semantic candidates with live Notepad/Paint plan/write/native
-  readback and screenshots. Native gates, independent live-boundary review,
-  commit/push and green hosted CI are required. Discard unaccepted changes if
+  readback and screenshots. Native gates, independent live-boundary review
+  and green hosted CI are required. Discard unaccepted changes if
   both candidates fail; preserve findings and keep this record active.
 - Candidate 1 follows KDE's separation of workspace membership from Engine
   admission: first-seen maxima join slotless without synthetic floating state;
@@ -306,7 +303,7 @@
 
 ## R-MAX-03 accepted correction
 
-- Candidate 1 accepted after independent review and Lead inspection. Windows
+- Candidate 1 accepted after independent review and inspection. Windows
   classified first-seen maxima as retained, outside normal membership admission;
   its clear ran before the workspace-mode gate. Temporary Engine floats in the
   rejected candidates conflated native maximum state with intentional float.
@@ -319,8 +316,8 @@
   the real Engine and production writable selection. Removing the slot-seed
   guard makes it fail. Portable admission/Engine tests cover one-shot clear,
   slotted skip and intentional float. No shared core/KDE source changes.
-- Lead independently ran locked build/test and strict all-target clippy for all
-  four Windows-built packages, full rustfmt and diff checks after the final
+- Locked build/test and strict all-target clippy for all
+  four Windows-built packages, full rustfmt and diff checks independently run after the final
   source/test edit: all pass. Accepted commit `ace352c` pushed; hosted CI green
   across all six jobs (run linked in Final status).
 - Live 2026-10-04, Windows 11 build 26200, medium/session 1, DISPLAY1
@@ -338,8 +335,8 @@
   Accepted as a no-op restore, not a fresh-admission write claim.
 - Paint owner `01dd53ec4fd098a8`: token `w5`, exactly one clear, `tick-18`
   plan/native write/matched target readback all `[8,8,1268,1364]`, fresh DWM
-  agreement `(8,8,1276,1372)`, stable at tick 33. Lead inspected both tiled-frame
-  screenshots. Accepted local evidence:
+  agreement `(8,8,1276,1372)`, stable at tick 33. Both tiled-frame
+  screenshots inspected. Accepted local evidence:
   `target/windows-workspace-tiling/rmax03-final/` (Notepad) and
   `target/windows-workspace-tiling/rmax03-paint-native/` (Paint).
 - Screenshot SHA-256:
@@ -357,12 +354,12 @@
   Harness-only parsing/marshalling failures were repaired; one semantic candidate,
   zero failed product approaches in this follow-up. Earlier three rejected
   approaches remain historical evidence above.
-- Every owner stopped/restored, all new extras closed by exact identity. Lead
-  read-only recheck confirms baseline five Notepads/one Paint visible, settings
+- Every owner stopped/restored, all new extras closed by exact identity. Read-only
+  recheck confirms baseline five Notepads/one Paint visible, settings
   original absence restored, no owner/helper/UI/overlay/ledger/pending/request,
   successful numeric SPI GET arranging 1/pen 35, normal taskbar, original hosting
-  Terminal alive with unchanged creation. No Worker remains running.
+  Terminal alive with unchanged creation.
 - No new provisional product decision. Physical feel, rapid toggles and other
   DPI/output setups remain user-owned. Decisions/matrix updated and record
   archived after hosted CI green. Exact next action: none for this correction;
-  Orchestrator owns advancing the backlog and its archived-record link.
+  backlog advancement and its archived-record link remain queued.

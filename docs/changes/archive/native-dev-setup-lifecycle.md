@@ -30,7 +30,7 @@
 
 - Isolated fake tests and temp paths only; no live KWin/Plasma/setup/remove/
   dev lifecycle actions.
-- Preserve unrelated/recovered work; the Orchestrator owns backlog disposition.
+- Preserve unrelated/recovered work; backlog disposition recorded here.
 - No parallel lifecycle harness; one lifecycle structure, no durable recovery.
 
 ## Approach

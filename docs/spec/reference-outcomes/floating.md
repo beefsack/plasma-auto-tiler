@@ -305,7 +305,7 @@ Column legs below use separately stated column Givens with the same identities a
   subject). `S(S-pan-cmds)` + `S(S-pan-axfs)`; journey queued.
 - Then Ours KDE: B9 delivered offline 2026-10-09: one native maximize clear under the existing echo fence; fresh exact-ref observation must show clear before the ordinary fresh-admission dispatch and geometry writes. Carries the restored frame, not the maximized frame; refused/unobserved/raced clear logs a narrow refusal, preserves float intent and allows a later press. Real Planner ordinary/fixed fixtures and shared-core pre/post-clear regression pass; fixed unfloat commits the existing explicit tile override. [Record](../../changes/archive/maximized-intentional-unfloat.md); native frame/focus journey TBD.
 - Then Ours Windows: current code refuses `float-refused-maximize` (B9 implementation gap, not target); replace with unmaximize/observe/fresh-admit under [handoff item 15](../../backlog.md). `S(S-ours-overlay-unfloat)`; physical outcome TBD.
-- Discriminating variants: [R-FLT-06 Lead readings](../reference-outcomes.md#r-flt-06-lead-readings); unsupported reference/native outcomes remain TBD.
+- Discriminating variants: [R-FLT-06 readings](../reference-outcomes.md#r-flt-06-readings); unsupported reference/native outcomes remain TBD.
 - Variant hook: V-FLOAT-GEO / V-MAX-MODEL.
 
 <a id="r-flt-07-backfill-tile-origin-focus-over-floats-scrolling"></a>

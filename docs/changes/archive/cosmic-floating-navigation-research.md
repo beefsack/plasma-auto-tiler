@@ -27,14 +27,11 @@
 
 ## Bounded Units And Dependencies
 
-1. Worker: clone inventory and deferred projects; return statuses and pins.
-2. Worker: investigate COSMIC focus/move and current KDE/Windows behavior.
-3. Worker: investigate reference-WM comparison for the agreed minimal rows.
-4. Lead: integrate the matrix evidence, verify, archive this note, and report
+1. Clone inventory and deferred projects; return statuses and pins.
+2. Investigate COSMIC focus/move and current KDE/Windows behavior.
+3. Investigate reference-WM comparison for the agreed minimal rows.
+4. Integrate the matrix evidence, verify, archive this note, and report
    differences/options for the user's decision.
-
-Workers run serially via `muse-spark` at one level below this Lead; no nested
-delegation is needed. Workers do not maintain project records.
 
 ## Decisions And Outcome
 
@@ -70,7 +67,7 @@ delegation is needed. Workers do not maintain project records.
 
 ## Accepted Verification And Handover
 
-- Lead inspected relevant source/citations and final matrix diff; zero-gap
+- Relevant source/citations and final matrix diff inspected; zero-gap
   fixtures establish Hyprland adjacency without a gap-dependent inference.
 - Verified all 33 repository HEADs and non-shallow status; all 32 new clones
   are clean. Verified recursive Hyprland/FancyWM submodule status and existing
@@ -78,6 +75,6 @@ delegation is needed. Workers do not maintain project records.
 - `git diff --check` passed. Protected-file diff SHA256 equals the initial
   value above; all five user-owned files are untouched.
 - Research-only checks; no builds or live desktop tests were run.
-- Research is complete. No backlog update is needed for this unit; a future
+- Research is complete; a future
   behavior change requires the user's choice between COSMIC parity (float-only
   focus and/or floating snap movement) and retaining current refusals.

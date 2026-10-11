@@ -2,7 +2,7 @@
 
 Goal: keep the backlog open-only, decisions current, active change notes active-only, and dev-loop links/commands accurate. Preserve governing decisions, attribution, dates, and uncertain items; no code or protected-document edits.
 
-Plan: (1) classify and archive completed/abandoned change notes in bounded batches, correcting references; (2) condense decisions in section batches with code/history checks; (3) rebuild prioritized backlog with machine-grouped live checks and open decisions; (4) reconcile references and dev-loop, check links and diff. Workers operate sequentially, with Lead review between units.
+Plan: (1) classify and archive completed/abandoned change notes in bounded batches, correcting references; (2) condense decisions in section batches with code/history checks; (3) rebuild prioritized backlog with machine-grouped live checks and open decisions; (4) reconcile references and dev-loop, check links and diff. Units operate sequentially, with review between units.
 
 Acceptance: no lost active work or governing decision; all relative links in docs/*.md resolve; git diff --check; no code changes. No live tests or commit.
 

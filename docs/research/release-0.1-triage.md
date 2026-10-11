@@ -1,7 +1,7 @@
 # Release 0.1 triage - batch 1 approved, remaining decisions tentative
 
 Status: 15 units approved by User 2026-10-10; remaining 13 units, settings scope
-and Proposal B tentative Orchestrator 2026-10-11, pending user review.
+and Proposal B tentative 2026-10-11, pending user review.
 Original proposal base HEAD `4281e73`, report commit `27a97c4`.
 No live tests run. Rules: 0.1-relevant = touches must-pass core KDE journey
 ([decisions](../decisions.md#scope-and-platform-goals)) AND current KDE
@@ -37,7 +37,7 @@ REQ-MAX-09b: current spec 121 NORMATIVE / 17 PROVISIONAL / 28 OPEN.
 - Open meta-question to raise with D03: do new settings (D03, D09, D10, D12,
   D13, D27) ship in 0.1, or ship defaults-only with settings later?
 
-## Tentative orchestrator decisions 2026-10-11 (pending user review)
+## Tentative decisions 2026-10-11 (pending user review)
 
 Tentative only, distinct from approved batch 1 above. No selection is
 approved until user review. No implementation is authorized by this section.

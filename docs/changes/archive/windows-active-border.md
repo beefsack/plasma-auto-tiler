@@ -7,7 +7,7 @@
   low-latency following, diagnostics and owned-process teardown.
 - Practical machine acceptance is complete. Native gates and independent
   live-behavior review pass. Implementation `b5374ce` is pushed; all four jobs
-  in [CI run 37004892347](https://github.com/beefsack/omnitiler/actions/runs/37004892347)
+  in [CI run 37004892347](https://github.com/beefsack/OmniTiler/actions/runs/37004892347)
   pass. This note is archived and parity queue item 1 is done.
 - Scope: Windows adapter/rendering and necessary scoped proof support only;
   no group underlay implementation or KDE/principles changes.
@@ -109,7 +109,7 @@ owned ring, not application content; DIB checksums alone are insufficient.
   View delivery; topmost windows; custom width/gap/radius; other monitors/DPI.
   Synthetic/hosted CI does not establish these observations.
 
-## Next Lead: group underlay
+## Next: group underlay
 
 - Reuse the owned layered carrier's create/alpha-paint/place/hide/destroy paths
   in `active_border_sys.rs`; parameterize fill/alpha and anchor only when
@@ -126,4 +126,4 @@ owned ring, not application content; DIB checksums alone are insufficient.
   Alt+Tab hold-cancel avoids foreign activation. Physical shell occlusion and
   topmost underlay placement still require fresh targeted evidence.
 - Exact next action: start parity queue item 2, group underlay, using the
-  existing active-group route and owned carrier. This Lead is retired.
+  existing active-group route and owned carrier.

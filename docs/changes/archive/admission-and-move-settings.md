@@ -16,19 +16,18 @@
 
 ## Acceptance and bounded units
 
-1. Sequential muse-spark implementation Worker: source/config/UI/test changes,
+1. Implementation: source/config/UI/test changes,
    targeted verification and discovery of full offline gate commands.
-2. Lead: inspect integration and update decisions/spec/matrices/Windows handoff
+2. Inspect integration and update decisions/spec/matrices/Windows handoff
    and backlog as explicitly requested by the user.
-3. Sequential muse-spark verification Worker: full KWin, workspace Rust,
+3. Verification: full KWin, workspace Rust,
    native CTest, clippy, fmt, portable/Windows-target gates and counts.
-4. Fresh independent muse-spark review Worker: diff and acceptance review;
+4. Fresh independent review: diff and acceptance review;
    resolve concrete findings before delivery.
 
 ## Verification and outcome
 
 - Initial HEAD `cd067a6`, clean. Delivered offline; evidence below.
-- Lead owns records; one active Worker at a time.
 
 ## Accepted implementation and decisions
 

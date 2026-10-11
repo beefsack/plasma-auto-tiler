@@ -4,7 +4,8 @@
 
 - Deliver handoff item 1, decisions Workspaces 1.1-1.5: local stable-ID
   previous-view toggle and full existing ordinal ring, exact Ctrl/Tab action
-  routing, settings/UI/presets. Shared core is owned by the concurrent KDE agent.
+  routing, settings/UI/presets. Shared core is a separate KDE/shared
+  implementation this item depends on.
 - Non-local workspace modes, multi-output runtime and physical-input acceptance
   remain pending. No persistent history or separate history control.
 
@@ -18,11 +19,11 @@
   queue saturation and mask reservations. Compatible disables only the new
   Win+Ctrl+Left/Right rows; unknown OS ownership is reported honestly.
 - Bounded units: adapter/input implementation; independent public-contract
-  review; native owned-app live verification; Lead evidence/docs/publication.
+  review; native owned-app live verification; evidence/docs/publication.
 
 ## Verification and accepted evidence
 
-- 2026-10-10, base `91db9d2` plus item-1 adapter diff: Worker reports native
+- 2026-10-10, base `91db9d2` plus item-1 adapter diff: native
   allowlisted build/test/fmt/strict clippy and diff checks green after repairs.
 - Independent review found Previous autorepeat dispatch contradicted the
   promised toggle hold behavior and a removal regression bypassed actual
@@ -57,8 +58,8 @@
 - Owner PID 8784, creation `01dd58a6183c2ad1`, exact copied artifact path
   in the report. Owner session/integrity were not persisted and remain unknown;
   this limits runbook provenance and native acceptance claims.
-- Worker deviated from its narrower brief by also running emergency-stop
-  cycles and a helper hide/restore probe. These are recorded observations,
+- Deviation from the narrower brief: emergency-stop
+  cycles and a helper hide/restore probe also ran. These are recorded observations,
   not expanded standing authority; do not repeat without explicit scope.
 - Final readbacks: actors/ledger residue empty, owned test HWNDs gone,
   pre-existing HWNDs intact, settings preimage (absence) restored,
@@ -70,14 +71,14 @@
 
 - Initial documented `mise exec -- rustc -vV` unexpectedly auto-installed root
   declared tools and updated Rust 1.98.1 to 1.99.0 before installation approval.
-  Lead stopped and reported. Orchestrator accepted those installed tools
-  (tentative, pending user review) as matching mise.toml and pre-1.0 policy.
+  Stopped and reported. Those installed tools accepted as tentative, pending
+  user review, matching mise.toml and pre-1.0 policy.
 - All subsequent mise commands use `MISE_AUTO_INSTALL=0`; new installs block.
   Verified PS7 7.6.6 Core and Rust host x86_64-pc-windows-msvc.
 
 ## Outcome
 
-- Item 1 delivered offline, Windows-adapter-only. Lead independently reran
+- Item 1 delivered offline, Windows-adapter-only. Independently reran
   all four allowlisted build/test/fmt/clippy gates and `git diff --check`
   successfully after the latest repairs (2026-10-10).
 - Matrix/spec evidence is revision-bound to base `91db9d2` plus this record's

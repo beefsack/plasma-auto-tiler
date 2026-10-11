@@ -17,8 +17,8 @@
   and existing citation conventions. Report material approved-rule conflicts.
 - Independently source-verify each slice before acceptance; check diff scope,
   citation resolution, cell counts, unchanged scenarios and whitespace.
-- Update the triage's current PaperWM counts and ledgers; commit and push the
-  accepted slices or complete pass, staging only intended documentation.
+- Update the triage's current PaperWM counts and ledgers for the
+  accepted slices or complete pass.
 
 ## Bounded units
 
@@ -28,10 +28,7 @@
 4. Workspaces, multi-output, activation: 14 N.
 5. Mouse and groups/stacks: 9 N.
 6. Restart/persistence and special windows: 10 N and 8 U.
-7. Reconcile counts, final checks, archive this note, commit and push.
-
-Workers use `muse-spark`, one active at a time; separate verification Workers
-follow each fill unit. The Lead owns this note and the triage report.
+7. Reconcile counts, final checks and archive this note.
 
 ## Accepted evidence and outcome
 

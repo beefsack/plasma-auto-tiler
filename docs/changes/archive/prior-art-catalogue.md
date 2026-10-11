@@ -8,16 +8,16 @@
   workspaces, licence, maintenance evidence, canonical upstream and local path
   for each included tiler; qtile and COSMIC questions answered; existing detailed
   research linked; existing clone status and deferred analysis recorded; docs-only
-  commit pushed with green hosted CI.
-- Units (sequential fresh muse-spark Workers): verify Linux-native entries;
-  verify Windows/KWin/GNOME draft; verify macOS draft; Lead reconcile clone
-  inventory and upstream signals, integrate, verify documentation, commit/push
+  change with green hosted CI.
+- Units (sequential fresh units): verify Linux-native entries;
+  verify Windows/KWin/GNOME draft; verify macOS draft; reconcile clone
+  inventory and upstream signals, integrate, verify documentation
   and hosted CI. This continuation creates no new clones.
 - Verification: upstream metadata plus actual README/docs/source inspection;
   clone origin/HEAD/status checks; documentation links, ASCII and whitespace;
   hosted CI for final commit. No runtime behavior inferred from source inspection.
 - Boundaries: principles and backlog stay owner-maintained; propose backlog
-  completion text in the terminal handover. No new product decisions.
+  completion text on completion. No new product decisions.
 - Accepted evidence: 28 read-only clone remote/status/HEAD/submodule checks;
   all top-level worktrees clean. FancyWM has three uninitialized submodules;
   core analysis deferred. i3 is currently readable and clean. niri remains
@@ -40,7 +40,7 @@
   research remains linked. No new product decisions or live acceptance claims.
 - Verification: independent evidence review resolved; ASCII, local Markdown
   destinations/anchors and whitespace checks pass. Docs-only publication;
-  final pushed commit and hosted CI result are reported in the terminal handover.
+  final pushed commit and hosted CI result reported with publication.
 - Deferred: FancyWM core/submodules and web-only Linux source analysis; other
   unknown details explicitly labelled in the index. No live checks required
-  for this research outcome; all Workers completed.
+  for this research outcome; all units completed.

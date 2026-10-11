@@ -269,7 +269,7 @@
 
 ## Backlog Recommendation
 
-- Proposed factual update for the parent-owned backlog:
+- Proposed factual update for the backlog:
   `P0 | Workspace-send reliability | Legacy comparison found no supported
   parity correction: Rust direct geometry, echo fencing, exact commit gating,
   and post-commit follow are intentional. Diagnose pJOooO's geometry index 1

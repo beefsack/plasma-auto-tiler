@@ -30,7 +30,6 @@
 - No shared-core change needed. Existing bounded difference reconciliation and
   declared-limit clamp assessment must remain authoritative.
 - Learned-limit experiment stays parked; no persistent learned hints introduced.
-- Concurrent Windows work may update main; stop on a conflicting shared-core change.
 
 ## Delivered implementation and review
 
@@ -56,7 +55,7 @@
 - Independent review: false placement logs corrected; pointer echo corrected;
   claimed R4 evidence blocker disproven by post-transfer quiet fixture. Review
   accepted the final diff with no remaining blockers.
-- Review correction: broad quiet-reset suppression was rejected by Lead and
+- Review correction: broad quiet-reset suppression rejected and
   narrowed to minimum-driven domain evidence. Flag-only guarding was insufficient
   for real Engine projections satisfying the minimum without an overconstraint
   flag; plan-at-floor/observed-shortfall guarding covers that case.
@@ -97,6 +96,6 @@
   R-START-03 KDE cell and decisions B6 now point to offline delivery.
 - Backlog handover only: B6 KDE implementation delivered offline; retain the
   user-owned native R-MIN-01..03 convergence/overflow acceptance. No backlog or
-  principles edits made by this Lead.
+  principles edits made here.
 - Exact next action: user runs the bounded native journeys above via
   `docs/dev-loop.md` and records origins, minimum extents and quiet settlement.

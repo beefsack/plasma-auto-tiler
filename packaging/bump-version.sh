@@ -75,7 +75,7 @@ TAB="$(printf '\t')" || die "could not format tab separator"
 # The PKGBUILD must keep interpolating versioned coordinates instead of
 # pinning them: source URL and the native-effect exact core dependency.
 # The generated .SRCINFO carries the expanded pins and is rewritten below.
-grep -Eq '^source=\("https://github\.com/beefsack/omnitiler/releases/download/v\$pkgver/omnitiler-\$pkgver\.tar\.gz"\)$' "$PKGBUILD" \
+grep -Eq '^source=\("https://github\.com/beefsack/OmniTiler/releases/download/v\$pkgver/omnitiler-\$pkgver\.tar\.gz"\)$' "$PKGBUILD" \
   || die "PKGBUILD source does not interpolate \$pkgver in $PKGBUILD"
 grep -Eq '^[[:space:]]*depends=\("omnitiler=\$pkgver-\$pkgrel" kwin\)$' "$PKGBUILD" \
   || die "PKGBUILD native depends does not interpolate \$pkgver-\$pkgrel in $PKGBUILD"

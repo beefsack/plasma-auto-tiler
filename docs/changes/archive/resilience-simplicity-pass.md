@@ -8,7 +8,7 @@ Reduce production complexity introduced by resilience changes `07fb520`, `8178ed
 
 - Inspect small, independent areas in `kwin/src/plan-adapter.ts`, `kwin/src/plan-adapter-entry.ts`, and, if worthwhile, native effect/Rust changes. Consolidate duplicated exact-ref removal work and unnecessary parameter threading only where semantics stay identical.
 - Remove genuinely redundant guards, flags, commentary, or tests pinning internals where behavioral evidence remains.
-- Decline and report any attractive simplification that changes observable behavior. No live tests; do not edit `docs/research/architecture-review/review.md` or `devenv.nix`.
+- Decline and report any attractive simplification that changes observable behavior. No live tests; do not edit `devenv.nix`.
 
 ## Bounded units
 
@@ -19,7 +19,7 @@ Reduce production complexity introduced by resilience changes `07fb520`, `8178ed
 
 ## Verification
 
-KWin `npm test` and typecheck; Rust workspace tests and `cargo fmt --all -- --check`; if native effect files change, `just build-native-effect` and full host-matched native CTest; `git diff --check`. Inspect each Worker diff before accepting.
+KWin `npm test` and typecheck; Rust workspace tests and `cargo fmt --all -- --check`; if native effect files change, `just build-native-effect` and full host-matched native CTest; `git diff --check`. Inspect each diff before accepting.
 
 ## Decisions and evidence
 

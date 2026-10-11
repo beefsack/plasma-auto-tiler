@@ -10,8 +10,8 @@
 ## Scope and plan
 
 - Windows owner/prompt adapter and focused offline tests only.
-- Worker implements and supplies source/test evidence; Lead reviews, runs native
-  gates, records the outcome, and publishes the accepted fix.
+- Implementation supplies source/test evidence; review, native gates,
+  outcome records, and publication of the accepted fix.
 - No live tests, owner launches, window/hook probes, or dependency installs.
 
 ## Verification

@@ -18,13 +18,13 @@
   install/exec commands, and preserve the user-performs-installs rule.
 - Static validation without local mise, native Windows gates and hosted CI pass.
 - Record ordinary reversible choices as provisional in `docs/decisions.md`;
-  archive this record at completion and commit/push accepted work.
+  archive this record at completion.
 
 ## Bounded units
 
 1. Read-only investigation of approved tools, mise syntax and Rust/Nix policy.
 2. Implement the root config, minimal guidance and hosted install checks.
-3. Lead review, verification, accepted evidence and archive.
+3. Review, verification, accepted evidence and archive.
 
 ## Accepted evidence and decisions
 
@@ -42,7 +42,7 @@
 - TOML and workflow YAML parse with existing yq; `git diff --check` passes.
 - Implementation commit `4e95150` passed all five hosted jobs (Rust, KWin,
   shell, Windows, macOS):
-  [CI 37126973606](https://github.com/beefsack/omnitiler/actions/runs/37126973606).
+  [CI 37126973606](https://github.com/beefsack/OmniTiler/actions/runs/37126973606).
 - Hosted logs confirm six installed Windows tools and five on macOS 15 arm64,
   with stable Rust 1.99.0 (`x86_64-pc-windows-msvc` and
   `aarch64-apple-darwin`). Windows mise-selected locked Cargo gates pass;
@@ -56,11 +56,11 @@
 
 - Delivered root configuration, minimal dependency guidance, both runbooks,
   and hosted install coverage. No local installs or live desktop tests were run.
-- No semantic failed approaches or causal repairs. No Worker remains running.
+- No semantic failed approaches or causal repairs.
 - Risks: rolling installs can change versions; local installation/SDK readiness
   remains user-owned. macOS CI is install smoke evidence, not product acceptance.
 - Proposed backlog text: "Cross-platform dev environment (mise): delivered;
   root Windows/macOS config and hosted install checks green. User local mise
   setup pending; Linux remains devenv/Nix."
 - Next action: user installs mise, then runs root `mise trust`, `mise install`
-  and `mise exec -- rustc -vV`; Lead implementation work is complete.
+  and `mise exec -- rustc -vV`; implementation work is complete.

@@ -15,7 +15,7 @@
 - Native implementation: `crates/tiler-windows/src/{snapkey,tiling,tiling_sys,
   workspace_owner}.rs`, focused `tests/{snapkey,tiling}.rs`, shortcut catalog
   row and `scripts/windows-fullscreen.ps1`. Durable choices promoted to
-  `docs/decisions.md#window-state-float-sticky-maximize-fullscreen`; backlog remains Orchestrator-owned.
+  `docs/decisions.md#window-state-float-sticky-maximize-fullscreen`.
 
 ## Material Choices And Review
 
@@ -45,7 +45,7 @@
 
 ## Native And Live Evidence
 
-- Lead reran locked build/test/strict all-target Clippy for `tiler-core`,
+- Reran locked build/test/strict all-target Clippy for `tiler-core`,
   `tiler-protocol`, `tiler-kwin-effect-ffi`, `tiler-windows`: pass. Rustfmt,
   whitespace, fullscreen parse/mock and shortcuts mock: pass. Hosted Windows,
   Rust, KWin and shell checks are required on the pushed commit; their status
@@ -97,8 +97,8 @@
   allocation oracle and does not infer it from style/non-cover geometry.
 - Every live run ended through exact stop/restore and helper cleanup: no
   project actors, overlays, ledger or hidden residue; arranging 1, pen 35.
-  Hosting Terminal survived. No Worker remains running.
-- Lead's final read-only audit at 2026-10-03 06:36:58 +10:00 independently
+  Hosting Terminal survived.
+- Final read-only audit at 2026-10-03 06:36:58 +10:00 independently
   verifies zero project processes/native surfaces, no ledger/stop/workspace
   request, ready false, arranging 1, pen 35 and Windows Terminal present.
 - The follow-up below supersedes the original next acceptance action.
@@ -109,7 +109,7 @@
   foregrounds from suspending tiling; invalid/unreadable reads remain blocked,
   real unmanaged fullscreen still suspends. Independently reviewed; native
   four-package gates and hosted Windows/Rust/KWin/shell
-  [CI 37072709516](https://github.com/beefsack/omnitiler/actions/runs/37072709516)
+  [CI 37072709516](https://github.com/beefsack/OmniTiler/actions/runs/37072709516)
   pass. No blanket ApplicationFrameWindow/Explorer exception.
 - WM_CLOSE and graceful termination did not clear the unidentified shell frame.
   Two authorized exact-identity Explorer restarts removed it and restored the
@@ -140,7 +140,7 @@
   physical input/display/feel and other output/DPI arrangements. Full acceptance
   remains open. First restore a normal desktop session and verify the ownerless
   move gate passes, then rerun OwnedFs/WorkspaceFs/RecoveryFs/NormalSmoke.
-- Lead audit at 09:23:27 +10:00: zero actors/native project surfaces, ready false,
+- Audit at 09:23:27 +10:00: zero actors/native project surfaces, ready false,
   ledger/stop/workspace requests absent, arranging 1, pen 35, taskbar visible,
   hosting Terminal same creation. Follow-up record:
   [Windows foreground acceptance](windows-foreground-acceptance.md).

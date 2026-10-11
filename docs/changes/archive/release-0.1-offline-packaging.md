@@ -18,25 +18,21 @@ External NixOS/Home Manager validation remains a separate P1 gate.
 - Verify with available tools without ad hoc dependency installation or live
   desktop changes; distinguish builds from static checks and unavailable checks.
 - Record tentative technical choices and surface the Settings-without-KCM
-  product question. Publish coherent commits, reconcile concurrent main changes
-  using clean-tree rebases, then inspect CI.
+  product question. Publish coherent commits, then inspect CI.
 
 ## Approach and units
 
-1. Worker: source/build reconnaissance, release archive tooling and tag workflows.
-2. Worker: distro recipes, OBS services and install/uninstall guidance, using the
+1. Source/build reconnaissance, release archive tooling and tag workflows.
+2. Distro recipes, OBS services and install/uninstall guidance, using the
    accepted source archive contract; investigate ABI upgrade and Ubuntu blockers.
-3. Lead: integration, proportionate verification and independent review of public
-   packaging/workflow contracts; project records and archived outcome.
+3. Integration, proportionate verification and independent review of public
+   packaging/workflow contracts; archived outcome.
 
 ## Constraints and current state
 
 - 2026-10-11: initial clean-tree `git pull --rebase` succeeded at `e6f396d`.
-- One muse-spark Worker active at a time; Workers load processed-beef-work-unit.
 - Linux system dependencies only via devenv.nix; changes require session restart.
-- No external accounts/tokens exist. No live KWin tests. Preserve user stashes.
-- User explicitly authorizes implementation, verification, commit and push, and
-  requests backlog updates (overriding the usual Lead/backlog ownership boundary).
+- No external accounts/tokens exist. No live KWin tests.
 
 ## Decisions and evidence
 
@@ -45,7 +41,7 @@ External NixOS/Home Manager validation remains a separate P1 gate.
   sidecar. GitHub Release completes before a credential-gated OBS tag webhook.
 - Tentative layout: packaging/{rpm,arch,debian,obs,systemd}; package names
   omnitiler (core) and omnitiler-native-effect (effect and KCMs).
-- Worker evidence: offline archive Rust build; actual Tumbleweed/Fedora 43 RPM,
+- Evidence: offline archive Rust build; actual Tumbleweed/Fedora 43 RPM,
   Arch split-package and Ubuntu 26.04 core Debian builds in disposable containers.
   Independent integration review is still required before accepting these claims.
 - Native factory embeds the build KWin version in its IID; the loader rejects
@@ -78,7 +74,7 @@ scratch commit/tag, leaving the repository's refs/index and three stashes alone.
   Tumbleweed and Fedora 44 `rpmbuild -bb` produced core/native RPMs; Arch
   `makepkg` produced core/native/debug packages; Ubuntu 26.04
   `dpkg-buildpackage -us -uc` produced the core DEB/source metadata.
-- Fedora 43: prior worker built both RPMs from a contract-shaped source tree;
+- Fedora 43: prior build produced both RPMs from a contract-shaped source tree;
   final exact-archive run used Fedora 44. This distinction remains explicit.
 - RPM requires/file lists inspected: core has unversioned KWin dependency;
   companion adds unversioned KWin SONAME and same-version core dependency.
@@ -138,5 +134,5 @@ scratch commit/tag, leaving the repository's refs/index and three stashes alone.
 
 User decides KCM ownership and Ubuntu/neon scope, and confirms first-party
 licensing. Then provision unpublished OBS targets, resolve/test atomic stable
-source/checksum handoff and only then supply/enable the trigger token. Backlog
-retains P1 delivery acceptance. CI/publish outcome is reported by the Lead.
+  source/checksum handoff and only then supply/enable the trigger token. Backlog
+  retains P1 delivery acceptance. CI/publish outcome is reported in the handover.

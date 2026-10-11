@@ -21,26 +21,25 @@
 
 ## Bounded units and verification
 
-1. One muse-spark Worker: implementation, targeted regression evidence and
+1. Implementation, targeted regression evidence and
    source handover; stop on a material product ambiguity.
-2. Lead: inspect diff and update decisions/spec/reference outcomes, Windows
+2. Inspect diff and update decisions/spec/reference outcomes, Windows
    handoff and backlog (explicitly authorized by user).
-3. One muse-spark Worker: full offline gates with exact commands and counts.
-4. Fresh muse-spark Worker: independent review, then any causal corrections.
-- One active Worker at a time; Workers do not maintain project records.
+3. Full offline gates with exact commands and counts.
+4. Fresh independent review, then any causal corrections.
 - Gates: KWin tests/typecheck/bundle, Rust workspace tests/clippy/fmt, native
   CTest, `just check-portable`, offline shell suites and `git diff --check`.
 - Baseline: KWin 1225, Rust 1269, native CTest 33/33.
-- Archive this note after accepted evidence; stage intended files, commit in
-  repository style and push without force/amend/hook skips.
+- Archive this note after accepted evidence; publish intended files in
+  repository style without force/amend/hook skips.
 
-## Accepted evidence and Lead choices
+## Accepted evidence and choices
 
 - KDE reuses the native maximize echo fence and fresh observation, then falls
   through to ordinary unfloat dispatch with the restored frame. Shared core
   requires no production change: pre-clear observation refuses, post-clear
   ordinary/fixed clients fresh-admit under the existing lifecycle transaction.
-- Lead readings: fixed automatic/intentional unfloat is the D3/D7 explicit
+- Interpretations: fixed automatic/intentional unfloat is the D3/D7 explicit
   tile override; ordinary R-FLT-06 does not change sticky maximize refusals.
   Unconfirmed clear preserves float intent and ends that toggle attempt;
   a later press can retry. Minimal discriminating rows recorded in the
@@ -49,9 +48,9 @@
   new mock suite 4 pass/6 fail, current 10/10 pass. Targeted KWin 249/249 and
   core fixed-size suite 36/36 pass, including real Planner admission/write
   ordering, narrow refusal and subsequent fixed tile-override observation.
-- Implementation Worker accidentally popped an old stash during an attempted
-  reproduction; Lead restored only unrelated tracked paths to the verified
-  clean HEAD and removed only stash-added obsolete files. Intended changes
+- An old stash accidentally popped during an attempted
+  reproduction; only unrelated tracked paths restored to the verified
+  clean HEAD and only stash-added obsolete files removed. Intended changes
   and all three pre-existing stashes preserved; all gates rerun after recovery.
   One fixture sequencing correction kept native float state unchanged until
   reply application. No unresolved semantic failed approach.
@@ -64,12 +63,11 @@
 - Decisions/REQ-FLT-06/06b and Ours KDE cell updated. B9/M09 P0 removed;
   Windows handoff item 15 and named KDE native check added; COSMIC remains
   confirmation only.
-- Fresh independent muse-spark review accepted all behavior/scope conditions
+- Fresh independent review accepted all behavior/scope conditions
   and substantiated full-gate logs, with no source blockers. Its only procedural
   finding was the pending archive move, completed here. Targeted/red counts
-  above are implementation Worker reports, not archived gate logs; acceptance
+  above are implementation reports, not archived gate logs; acceptance
   rests on the independently inspected final full-gate evidence.
-- Delegation: three muse-spark Workers sequentially (implementation resumed
-  once for simplification/integration coverage, full verification, fresh
-  independent review); no nested delegation. Offline delivery complete;
+- Three sequential units (implementation, full verification, fresh
+  independent review). Offline delivery complete;
   native acceptance remains user-owned.

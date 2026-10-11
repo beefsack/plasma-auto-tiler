@@ -18,8 +18,8 @@
 - Sticky and intentional float subjects remain excluded; floating workspace
   boundaries transfer membership only and reflow only tiled sides.
 - Directional crossing retains edge insertion nearest the source.
-- Sequential bounded Workers: Rust implementation/tests, KDE implementation/tests,
-  native catalog/preset integration; Lead reviews and verifies all offline gates.
+- Sequential bounded units: Rust implementation/tests, KDE implementation/tests,
+  native catalog/preset integration; review and verify all offline gates.
 
 ## Verification
 
@@ -39,7 +39,7 @@
   with the protocol. Full output geometry selects the neighbor, while per-
   desktop work areas still drive placement. Forward AND reverse candidate
   uniqueness is required. Directional focus keeps its horizontal policy.
-- Lead rejected initial full-rectangle placement and vertical-focus extension,
+- Initial full-rectangle placement and vertical-focus extension rejected,
   corrected reverse-uniqueness and floating-boundary eligibility/visibility
   gates, and required real Engine fixtures rather than membership-only mocks.
 - Real production-entry/Planner fixtures reproduced a lost-source pin: after

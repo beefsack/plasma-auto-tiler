@@ -13,19 +13,19 @@
 
 ## Approach and bounded units
 
-1. Sequential muse-spark Worker measures HEAD baseline and implements G-05.
-2. Worker implements G-06 and G-D2 with observed native-state discipline.
-3. Worker implements G-37 config/KCM/core selection and retained-history routing.
-4. Lead integrates durable records and exact Windows handoff; independent Worker
-   reviews public behavior and fences; Worker runs final offline gates.
-5. Lead inspects intended diff, commits and pushes (user-authorized).
+1. Measure HEAD baseline and implement G-05.
+2. Implement G-06 and G-D2 with observed native-state discipline.
+3. Implement G-37 config/KCM/core selection and retained-history routing.
+4. Integrate durable records and exact Windows handoff; independently review
+   public behavior and fences; run final offline gates.
+5. Inspect intended diff and publish.
 
 ## Verification and material decisions
 
 - Initial HEAD is ad44ed5; worktree clean. User's three stashes are untouched.
 - Supplied a8e32ce baseline: KWin 1258, Rust 1288, Linux Windows portable
   allowlist 1136, native CTest 33/33; remeasure before implementation.
-- No live KWin testing, dependency installation or public-policy pivots authorized.
+- No live KWin testing, dependency installation or public-policy pivots.
 - Authoritative IDs are `last-remaining-workspace` and
   `most-recently-used-workspace` (decision records), with KDE
   `migrationSourceRefill` and Windows `core.migration_source_refill`.
@@ -55,10 +55,10 @@
   Corrected before acceptance: clear precedes eligible-origin routing, fresh
   directional reread validates domain/reference/focus, independent exclusions
   still refuse. Added race/synchronous-signal and cross-output carry regressions.
-- A Worker added the Windows source-refill schema despite handoff-only scope;
+- The Windows source-refill schema was added despite handoff-only scope;
   all those hunks were removed before acceptance. No Windows source/runtime
   changes remain; shared optional behavior defaults preserve Windows.
-- Independent muse-spark source/public-contract/fence and durable-record review found no findings;
+- Independent source/public-contract/fence and durable-record review found no findings;
   its full KWin and targeted core checks passed. Subsequent fixture-only additions
   prove isolated maximized movement and source default/MRU through production
   entry plus retained real Engine, without canned replies or map-only assertions.

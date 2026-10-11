@@ -6,7 +6,7 @@
 //! coalescing, invalidation, zero-movement, and owner settle vocabulary
 //! without native calls.
 //!
-//! Contract (Orchestrator-selected stationary mover):
+//! Contract (selected stationary mover):
 //! - Win (either side) + left-button binds a managed TILED mover even when
 //!   unfocused. No focused-only restriction, no extra-modifier gate.
 //! - Floating/sticky members stay native titlebar-only: the hook never arms

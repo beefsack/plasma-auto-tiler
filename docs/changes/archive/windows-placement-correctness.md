@@ -35,8 +35,8 @@
   unlogged. D2 changed sibling allocation on maximize and restored asynchronously.
 - Existing overlap centre-fit is explicitly approved KDE policy (2026-09-29);
   any revision must preserve clean pre-tiled adoption and state the shared impact.
-- Live authority: user's 2026-10-03 autonomous assignment and standing brief;
-  ordinary open windows may be controlled but never closed. Disposable
+- Live authority (user 2026-10-03): ordinary open windows may be controlled
+  but never closed. Disposable
   Notepad/Calculator/Paint may be opened/closed. No registry/policy writes.
 - Observability accepted: trace-only bounded startup inputs (8 opaque window
   tokens/rectangles), fit outcome/reason, resulting ordered H/V topology and
@@ -45,7 +45,7 @@
 - Native locked build/test, strict all-target Clippy, rustfmt and diff checks
   passed after the final observability follow-up; no protocol reply changes.
 - Observability commit `174e70b`: hosted Rust/KWin/shell/Windows CI green
-  ([run](https://github.com/beefsack/omnitiler/actions/runs/37120915569)).
+  ([run](https://github.com/beefsack/OmniTiler/actions/runs/37120915569)).
 - Real four/five-window reproduction logs:
   `%LOCALAPPDATA%/omnitiler/session-1/run-01dd532db76a8af6.log` and
   `run-01dd532e5c7fa523.log`, payload SHA256
@@ -86,18 +86,18 @@
   missing-hint overconstraint is unreachable in current assemble/apply paths.
   Residual: minimum-clamped windows can extend beyond work area, not just overlap.
 - D1/D4 commit `2c918d3`: hosted Rust/KWin/shell/Windows CI green
-  ([run](https://github.com/beefsack/omnitiler/actions/runs/37123627664)).
+  ([run](https://github.com/beefsack/OmniTiler/actions/runs/37123627664)).
 - D2 accepted: tiled overlays reuse lifetime-bound last-known minimum hints.
   Async restore arms a bounded completion wake, consumed only after gated
   reconciliation; key-up dispatch/gesture/suspend cannot prematurely clear it.
   Native gates pass. Regression proves removing a binding hint changes all
   four strip allocations, retention preserves them, and completion survives
   a concurrent dispatch before reconciliation. Initial wake implementation
-  cleared before dispatch routing; Lead review caught and corrected this before
+  cleared before dispatch routing; review caught and corrected this before
   acceptance. No failed product semantic approach was accepted.
 - D2 commit `4a636ae` contains the live-verified source diff: hosted
   Rust/KWin/shell/Windows CI green
-  ([run](https://github.com/beefsack/omnitiler/actions/runs/37125264718)).
+  ([run](https://github.com/beefsack/OmniTiler/actions/runs/37125264718)).
 
 ## Live verification outcome
 
@@ -198,15 +198,15 @@
 
 ## Completion and succession
 
-- No Worker remains running. Lead final readback: zero project actors,
+- Final readback: zero project actors,
   no ledger/stop/workspace requests, arranging query=true/value=1,
   pen query=true/value=35, taskbar visible. User application identities and
-  visibility verified by the final live Worker; user windows remain arranged.
+  visibility verified by the final live check; user windows remain arranged.
 - Proposed backlog replacement: "P1 | Windows placement physical acceptance |
   D1/D4 startup and minimum-placement corrections, D2 retained hints/prompt
   restore delivered; D5 remembered projected-long-edge rule verified. Review
   provisional cascade/minimum-overflow choices and physically dogfood Win+M
   and send returns; evidence in archived windows-placement-correctness."
-- Exact next action: Orchestrator moves Candidate matrix rows into the matrix
-  document and advances the backlog; user reviews the provisional choices and
-  runs the physical checks above. No remaining autonomous implementation action.
+- Exact next action: move Candidate matrix rows into the matrix
+  document and advance the backlog; user reviews the provisional choices and
+  runs the physical checks above. No remaining implementation action.

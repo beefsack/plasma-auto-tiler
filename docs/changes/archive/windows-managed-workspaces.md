@@ -71,7 +71,7 @@
 - Independent mutation/recovery review found one uncommitted-nonce cleanup gap;
   fixed with fresh ledger and process/nonce checks before conditional removal.
   Detached setter threads and admission-based recovery exclusions were rejected
-  during Lead review before live testing.
+  during review before live testing.
 - Owned visibility fixture passed
   `target/windows-hide-proof/20261002-051801-26124/hide-report.json`: two helpers,
   graceful automatic reveal, repeat admission, forced exact-owner loss with

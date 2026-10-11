@@ -133,8 +133,8 @@
   host signal timing, focus behavior and pixels during user verification.
 - At completion, promote the delivered lifetime, subject, readiness and resize
   rules to `docs/decisions.md`; record any user-approved scope change,
-  accepted evidence and outcome here, then archive. Backlog remains
-  Orchestrator-owned. Next action: user A/B acceptance; C requires reassessment.
+  accepted evidence and outcome here, then archive.
+  Next action: user A/B acceptance; C requires reassessment.
 
 ## A/B Outcome And Evidence (2026-10-05)
 
@@ -160,7 +160,7 @@
   rebuilt together. Existing POD state/status layouts are unchanged. No new
   JS-to-Rust/D-Bus route. A test-only trigger export/wrapper was removed after
   review because the production group FFI already calls the core trigger.
-- Lead review corrected a start-only matching bug before acceptance: a latched
+- Review corrected a start-only matching bug before acceptance: a latched
   old move could otherwise survive focus-clear followed by a different accepted
   group. `groupMoveMatchesNow()` now revalidates live focus/subject at every
   refresh and diagnostic; rotation/clear/reaccept regression coverage prevents
@@ -194,10 +194,9 @@
   concrete simplicity finding was resolved by deleting the unused trigger
   export. Historical panic fallback can leave subject bytes with `has_group=0`;
   display still fails closed, so no broader panic-state refactor was introduced.
-- Workers: three sequential `muse-spark` sessions: reference research, A/B
-  implementation (resumed for the fresh-match repair and mechanical trim), and
-  independent review. Requested routing is visible; actual provider identity is
-  not exposed. No commits or pushes.
+- Three sequential sessions: reference research, A/B
+  implementation (with fresh-match repair and mechanical trim), and
+  independent review. No commits or pushes.
 
 ### User-Owned Acceptance
 

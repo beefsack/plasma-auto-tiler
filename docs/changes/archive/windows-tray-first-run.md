@@ -34,7 +34,7 @@
 
 ## Material decisions and evidence
 
-- Initial tree clean on main, tracking origin/main. Standing autonomous live
+- Initial tree clean on main, tracking origin/main. Live
   authorization and hosting-Terminal boundary read in full.
 - First-run tests must restore the original absent settings file. Physical
   input and real Explorer restart remain user-owned; use a posted registered
@@ -44,8 +44,8 @@
   panics and a falsely headless tray test. Corrections use one stable icon GUID
   deleted under the existing recovery lease, lease-held prompting, atomic
   create-if-absent publication, MODIFY-first recovery and RAII teardown.
-- Follow-up review accepted lifecycle corrections. Lead removed unused boolean
-  policy helpers and implementation-mirroring tests; actual storage no-overwrite
+- Follow-up review accepted lifecycle corrections. Unused boolean
+  policy helpers and implementation-mirroring tests removed; actual storage no-overwrite
   coverage remains. Current native gates await the final live-verification unit.
 - Provisional choices: Yes=Authentic (default), No=Compatible via native prompt;
   current workspace/default mode controls omitted because Windows runtime has
@@ -81,7 +81,7 @@
   `050812DF93BC6121172349E0F3DA704C6F0B0B010EA00ED40EA0B4DDEBED8758`.
   Live source was baseline `a09ddda` plus this reviewed change. Final owner log
   `run-01dd53b171994141.log`, PID 9972, Explorer-child, 600-second cap.
-- Lead inspected final screenshots: visible warning glyph in overflow, both
+- Final screenshots inspected: visible warning glyph in overflow, both
   menu buttons, conflict/status/Settings/Stop, and full usable Settings client
   (1173x962 at DPI 120). Conflict and Settings rows bring the same singleton UI.
   Compatible/Apply clears the warning row; Authentic/Apply reinstates it.
@@ -98,10 +98,10 @@
     `7800457EB6CCCFBC5383C3FDBF2BC9C7FF7883BA193529B881E41B55B6F5A96F`.
   - `final-overflow-icon.png`:
     `B03B187205AE7A5C2B4E9A5FBCE3EC08FC241389F69781E76E8B4DF95F587993`.
-- Final stop/restore and Lead read-only recheck: no project actor, Settings,
+- Final stop/restore and read-only recheck: no project actor, Settings,
   prompt, tray window or ledger; settings-file absence restored; SPI arranging
   GET succeeds with 1, pen visualization GET succeeds with 35; normal taskbar
-  present and hosting Terminal survived. No Worker remains running.
+  present and hosting Terminal survived.
 - Final acceptance review included the unresolved opt-in Win+L lock chord.
   Projection now uses both effective runtime takeover and allow-Win+L lanes;
   targeted tests cover gate, CLI-over-file policy, rebind-away and disable.
@@ -117,7 +117,7 @@
   `72B6E5A00FA945058E9F85D1676276C77FB336D6B7F8DBD61D9A72D94F2C112C`.
 - Implementation and decisions committed/pushed as `60fd7bb`; all hosted CI
   jobs green (Windows native, Linux Rust/KWin/shell, macOS tooling):
-  <https://github.com/beefsack/omnitiler/actions/runs/37175689240>.
+  <https://github.com/beefsack/OmniTiler/actions/runs/37175689240>.
   Accepted evidence complete; record archived. No implementation next action.
 
 ## Residual user-owned checks

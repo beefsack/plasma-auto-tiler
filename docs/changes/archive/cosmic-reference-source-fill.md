@@ -12,14 +12,14 @@
 
 ## Acceptance and approach
 
-- Learn the codebase once; pass its compact source map to every fill Worker.
+- Learn the codebase once; pass its compact source map to every fill unit.
 - Trace every candidate without guessing and independently source-verify each
   area slice before acceptance.
 - Report COSMIC differences from approved rules with rule locations and source
   citations, including whether a recorded deliberate deviation covers each.
 - Verify occurrence-aware coverage, citation resolution, preserved scenarios,
   diff scope and whitespace; reconcile triage ledgers and global counts.
-- Archive this note, commit and push only intended documentation.
+- Archive this note.
 
 ## Bounded units
 
@@ -29,9 +29,6 @@
 4. Workspaces, multi-output and mouse: 8 N (complete).
 5. Restart/persistence, controls and special windows: 11 N + 8 U (complete).
 6. Final independent reconciliation, triage integration, archive and delivery.
-
-Workers use `muse-spark`, one active at a time; separate source-verification
-Workers follow each fill slice. The Lead owns this note and the triage report.
 
 ## Accepted evidence and outcome
 
@@ -70,7 +67,7 @@ Workers follow each fill slice. The Lead owns this note and the triage report.
   cosmic-session as RST-02's missing host, and traced already-lockfile-pinned
   smithay/x11rb instead of treating incomplete dependency tracing as H.
   SPC-07's remaining F is the X11 encoding of per-axis absent height.
-  Lead review corrected a wrong input-file citation and a checker boolean
+  review corrected a wrong input-file citation and a checker boolean
   bypass; the repaired check asserts occurrence-key uniqueness, exact blocker
   classes, literal TBD accounting and stash object identities.
 - All **49 candidates attempted: 21 N + 8 U closed (29)**; **20 N
@@ -134,7 +131,7 @@ All cosmic-comp locations below are at
   88 rows; COSMIC H/F/L ledger matches all 53 residual occurrences. Other WMs'
   classes/membership unchanged. Source checkout clean at its full pin; all
   three initial stash object identities unchanged. Whitespace/scope passed.
-- Post-archive Lead rerun exposed a temporary checker hardcoded to the active
+- Post-archive rerun exposed a temporary checker hardcoded to the active
   note path; repaired it to require exactly one active/archive note and removed
   a redundant always-true clause in a rule-support assertion. Final archived
   rerun passed all 95 checks before authorized delivery.

@@ -27,8 +27,8 @@
    current supporting docs and adapter seams; revise the plan only.
 2. Independent source review; correct authority/recovery overclaims and inspect
    the newer yabai non-SA Space/focus implementations.
-3. Lead source spot-checks and evidence/link/ASCII/whitespace verification;
-   commit/push, inspect hosted CI, then archive this record.
+3. Source spot-checks and evidence/link/ASCII/whitespace verification;
+   publish, inspect hosted CI, then archive this record.
 
 ## Material decisions
 
@@ -57,17 +57,17 @@
 - Lower-level-first probes remain proposals; parking is conditional fallback.
   No new durable product choice was promoted: the tier-2 default is already
   recorded, and host/floor, Intel, stable signer and modifier mapping stay open.
-- Lead spot-read risky Space-move/focus, overlay ordering, AX geometry,
-  parking, deployment/signing and core entry-point evidence. Reference trees
+- Risky Space-move/focus, overlay ordering, AX geometry,
+  parking, deployment/signing and core entry-point evidence spot-read. Reference trees
   were clean. Static gate: ASCII, 228 local link targets/heading anchors and
   214 source line ranges passed; `git diff --check` passed.
-- No live tests, installs or product-code changes; no Worker remains running.
+- No live tests, installs or product-code changes.
 - Research commit `df018fb` passed all five hosted jobs: Rust, KWin, shell,
   Windows and macOS in
-  [CI 37131056780](https://github.com/beefsack/omnitiler/actions/runs/37131056780).
+  [CI 37131056780](https://github.com/beefsack/OmniTiler/actions/runs/37131056780).
   The macOS job is toolchain smoke evidence, not native-adapter proof.
 - Archived this record after source/static review and hosted CI acceptance.
-  All three sequential Workers completed; no Worker remains running.
+  All three sequential units completed.
 
 ## Handover
 

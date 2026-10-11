@@ -12,13 +12,13 @@
 
 ## Acceptance and approach
 
-- Learn the codebase once; share the compact source map with every fill Worker.
+- Learn the codebase once; share the compact source map with every fill unit.
 - Trace every candidate without guessing; independently source-verify each slice.
 - Record material approved-rule comparisons with rule/source locations, using
   the xmonad/awesome handover format. Reference evidence does not approve rules.
 - Reconcile occurrence-aware coverage, citations, triage ledgers and counts;
   verify unchanged scenarios and documentation-only diff scope/whitespace.
-- Archive this note, commit and push only intended documentation.
+- Archive this note.
 
 ## Bounded units
 
@@ -29,9 +29,6 @@
 5. Workspaces/session/control/startup: 8 N + 12 U (verified).
 6. Corrected-policy/approved-rule comparison audit (complete).
 7. Final reconciliation, triage integration and archive (complete).
-
-Workers use `muse-spark`, one active at a time. A separate source verifier
-follows every fill unit. The Lead owns this note and the triage report.
 
 ## Accepted evidence and outcome
 
@@ -51,7 +48,7 @@ follows every fill unit. The Lead owns this note and the triage report.
 - Slice 1: 8 N + 2 U closed; 4 N reclassified F (FOC-03/04,
   INS-04/06). Review removed unnecessary absolute-frame/live blockers,
   completed cycle/internal-focus and fullscreen-newcomer chains. A fresh
-  independent Worker verified all corrected residuals against the pin.
+  independent review verified all corrected residuals against the pin.
 - Slice 2: 11 N + 5 U closed; SPC-07 reclassified F for the whole-tuple
   X11 hint encoding of height absent. Review corrected the distinction
   between leaf hint clamping and internal 32-based fence constraints.

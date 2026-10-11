@@ -16,13 +16,13 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc='COSMIC-style automatic tiling for KWin (core: script, planner, tray)'
 arch=(x86_64)
-url='https://github.com/beefsack/omnitiler'
+url='https://github.com/beefsack/OmniTiler'
 license=(GPL-2.0-or-later)
 # No release exists yet, so no digest can be pinned. At release time
 # packaging/bump-version.sh fills this from the published .sha256 sidecar;
 # until then the checksum stays SKIP and the prepare() VERSION assertion
 # below is the fail-closed identity check.
-source=("https://github.com/beefsack/omnitiler/releases/download/v$pkgver/omnitiler-$pkgver.tar.gz")
+source=("https://github.com/beefsack/OmniTiler/releases/download/v$pkgver/omnitiler-$pkgver.tar.gz")
 sha256sums=(SKIP)
 # KWin headers ship in the main kwin package on Arch (no -dev split).
 # The rust package provides both rustc and cargo.

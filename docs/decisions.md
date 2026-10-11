@@ -1,7 +1,7 @@
 # Current Decisions
 
 Active, user-approved choices are recorded here. Explicitly flagged tentative
-orchestrator clauses are pending user review, not user-approved current rules.
+clauses are pending user review, not user-approved current rules.
 Historical implementation detail is recoverable in Git history.
 
 ## Scope and Platform Goals
@@ -57,7 +57,7 @@ platform API behavior.
   - The original 60 OPEN requirements get a separate triage into 0.1-relevant
     (touches a must-pass core journey, or current behavior is undefined,
     refusal or surprising) versus post-0.1. Only the 0.1-relevant set is
-    decided before 0.1, one at a time with the user.
+    decided before 0.1 with the user.
   - Install paths: Nix flake/Home Manager, GitHub Release and OBS distro
     packages. KDE Store is excluded from 0.1, replacing the earlier KDE
     Store plus GitHub Release plan. External NixOS/Home Manager delivery
@@ -69,10 +69,10 @@ platform API behavior.
 - Windows package/update channel (user 2026-10-10): deferred to Windows
   release planning, then decided from a short research refresh under the
   existing most-obvious-and-unsurprising criterion.
-- Tentative Orchestrator 2026-10-11, pending user review: remaining 13 0.1
+- Tentative 2026-10-11, pending user review: remaining 13 0.1
   triage units and Proposal B (original 39 must-pass / 12 known-issue-allowed /
   2 Windows-release, plus must-pass N1-N4) are recorded in
-  [tentative triage decisions](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
+  [tentative triage decisions](research/release-0.1-triage.md#tentative-decisions-2026-10-11-pending-user-review).
   They are PROVISIONAL, distinct from the user-approved batch 1; native evidence
   and implementation gaps remain separate.
 
@@ -86,8 +86,11 @@ platform API behavior.
   environment variables/macros `OMNITILER_`; reverse-DNS IDs `com.omnitiler.*`
   and object paths `/com/omnitiler/...`. Preserve functional suffixes. Generic
   internal crate names remain unchanged. No host-format exceptions are needed.
-- GitHub repository: `github.com/beefsack/omnitiler`. OBS/AUR package names:
+- GitHub repository: `github.com/beefsack/OmniTiler`. OBS/AUR package names:
   `omnitiler` and `omnitiler-native-effect`.
+- User decision 2026-10-11: the registered domain `omnitiler.com` belongs to the
+  project and backs its `com.omnitiler.*` reverse-DNS IDs. It is the future
+  project home page, not yet live; package homepage fields retain the GitHub URL.
 - Pre-release rename: no migrations or compatibility shims; old installed state
   stops being used. The local checkout directory is not renamed.
 
@@ -125,7 +128,7 @@ platform API behavior.
   is the user's favourite tiling UX.
 - User rule 2026-10-11: never commit local paths or information about local
   machines (paths, host names, hardware/resource details); describe test
-  conditions generically. [Agent rule](../AGENTS.md#local-system-information).
+  conditions generically. [Rule](../AGENTS.md#local-system-information).
 
 ## Settings, Tray and First-Run
 
@@ -138,11 +141,11 @@ platform API behavior.
   the NixOS module installs both alongside the script. Removing the effect
   leaves Settings/Revert available; recovery after removing core requires
   reinstalling core. [Delivery](changes/archive/release-0.1-core-settings.md).
-- Tentative Orchestrator 2026-10-11, pending user review: defaults-only in
+- Tentative 2026-10-11, pending user review: defaults-only in
   0.1 for D03, D09, D10, D12, D13, D27; defer their already-proposed functional
   settings/options/WM tooltips to P2 `0.1 triage settings follow-up` after 0.1.
   This keeps release scope small while honoring meaningful alternatives later.
-  [Tentative scope](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
+  [Tentative scope](research/release-0.1-triage.md#tentative-decisions-2026-10-11-pending-user-review).
 - Shared:
   - Apply/Force/Revert is the only correction flow; ordinary Save never
     mutates shortcuts or host keys, and installation/startup never mutates
@@ -211,7 +214,7 @@ platform API behavior.
     new-workspace default, Settings, Stop). One stable icon GUID; TaskbarCreated
     revalidates or re-adds; proof owners create no tray or prompt. The
     taskbar workspace indicator (parity 10) and hidden-workspace Alt+Tab/taskbar
-    semantics share one Windows-agent workspace-presentation research piece
+    semantics share one Windows workspace-presentation research piece
     after multi-output, before release, producing options and a recommendation
     for the user (2026-10-10). Existing
     [Alt+Tab research](research/windows-port/alt-tab-hidden-workspaces.md) and
@@ -240,12 +243,12 @@ platform API behavior.
 
 ## Workspaces
 
-- Tentative Orchestrator 2026-10-11, pending user review: D16(a) retains float
+- Tentative 2026-10-11, pending user review: D16(a) retains float
   on transfer, taking the 7/8 cross-family majority over COSMIC fresh-readmit
   for classification continuity and predictable roundtrips. Existing tiled-only
   send eligibility is an implementation gap against this tentative target;
   floating-workspace boundary sends are a distinct approved journey.
-  [D16](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
+  [D16](research/release-0.1-triage.md#tentative-decisions-2026-10-11-pending-user-review).
 - R-CLOSE-03: closing the sole window retains the shown workspace empty, with no focused client (User 2026-10-10, 0.1 triage D08).
 - R-WS-09: workspace return restores remembered focus (User 2026-10-10, 0.1 triage D17).
   Windows dogfood fix delivered offline 2026-10-11: explicit numbered/history/
@@ -488,14 +491,15 @@ platform API behavior.
 
 ## Move, Layout and Output Commands
 
-- Tentative Orchestrator 2026-10-11, pending user review: D09 Geometric middle,
+- Tentative 2026-10-11, pending user review: D09 Geometric middle,
   D10 Wrap, D12 Extract to same axis and D13 Wrap locally are the 0.1 defaults;
-  their settings are post-0.1. [Tentative defaults](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
+  their settings are post-0.1. [Tentative defaults](research/release-0.1-triage.md#tentative-decisions-2026-10-11-pending-user-review).
 - R-MOV-01: perpendicular flat-triple move restructures via COSMIC R1, changing root orientation to V[H[A,C],B] in the fixture rather than refusing (User 2026-10-10, 0.1 triage D11).
 - R-RSZ-02/03: outward work-area-edge resize is a no-op; nested resize adjusts adjacent shares at the nearest matching-edge-axis split (User 2026-10-10, 0.1 triage D14).
 - Delivery coordination (user 2026-10-07; [implementation order and Windows
-  handoff](backlog.md)): the KDE-side session implements the shared Rust core
-  plus KDE adapter; the separate Windows agent wires its adapter later.
+  handoff](backlog.md)): the shared Rust core
+  plus KDE adapter are implemented KDE-side; the separate Windows adapter
+  is wired later.
   Correctness over non-breakage: Windows build/behavior breakage is
   acceptable provided the backlog lists the specific Windows changes needed.
   Compile-only Windows fixes preserving current Windows behavior are allowed;
@@ -648,13 +652,13 @@ platform API behavior.
     delivery; native checks of every user-selected choice remain
     pending.
 ## Restart Persistence
-- Tentative Orchestrator 2026-10-11, pending user review: D25(a) re-observes
+- Tentative 2026-10-11, pending user review: D25(a) re-observes
   membership, keeps the host-owned set and restores only provable focus.
   D26(a) restores owned gaps/settings/intent and re-observes host set/membership/
   maximize; D26(b) permits a listed known limitation if nontrivial. Cross-login
   intent restoration already exceeds approved D1 lifetime below; disclose that
   leg under tentative (b), without expanding the namespace or selecting layout
-  restoration. [D25/D26](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
+  restoration. [D25/D26](research/release-0.1-triage.md#tentative-decisions-2026-10-11-pending-user-review).
 - User decisions 2026-10-08 (intentional-float restart R-RST-01 D1-D4,
   outcomes decided, delivered offline; native checks pending):
   - D1 storage: Rust planner-owned private runtime store under
@@ -712,10 +716,10 @@ platform API behavior.
 
 ## Reference Matrix and Spec Authority
 
-- Tentative Orchestrator clauses dated 2026-10-11 are PROVISIONAL pending user
+- Tentative clauses dated 2026-10-11 are PROVISIONAL pending user
   review, not NORMATIVE selections. Their defaults-only settings schedule is a
   tentative deferral of meaningful alternatives, not a permanent exemption.
-  [Triage authority](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
+  [Triage authority](research/release-0.1-triage.md#tentative-decisions-2026-10-11-pending-user-review).
 - User direction 2026-10-03: the [reference-WM outcome matrix](spec/reference-outcomes.md)
   records minimal action sequences and per-WM outcomes as the evidence source of
   truth feeding the cross-platform functional specification. Existing selections
@@ -861,7 +865,7 @@ platform API behavior.
   the project's KGlobalAccel assignment; native shortcut storage is
   authoritative, no parallel preset file; empty assignments cannot distinguish
   deliberate disabling from earlier unresolved registration; Keep of either
-  stays empty unless Authentic was staged (Lead reading M13). Restart
+  stays empty unless Authentic was staged (M13 interpretation). Restart
   persistence is user-owned live acceptance. Deferred: first-run preset prompt
   and integrated rebind editor; KDE Shortcuts remains the custom-binding
   editor; no startup correction or re-registration. See [KDE conflict
@@ -947,17 +951,17 @@ platform API behavior.
 
 ## Placement, Minimums and Startup Adoption
 
-- Tentative Orchestrator 2026-10-11, pending user review: D03 uses After
+- Tentative 2026-10-11, pending user review: D03 uses After
   focused, reapplying admission policy per chained leg (legs 2-3 live-pending).
   D01(a) admits behind an overlay without forcing its clear; fullscreen remains
   shown/focused with no overlay writes or focus steal. Close removes the overlay
   member and refills/focuses survivors; native cleanup is a joint live leg.
   Maximized admission uses ordinary newcomer focus and native stacking for
   visibility while retaining the overlay flag/slot.
-  [D01/D03](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
+  [D01/D03](research/release-0.1-triage.md#tentative-decisions-2026-10-11-pending-user-review).
 - R-INS-03: first admission fills the work area as a single tile and natively activates the newcomer (User 2026-10-10, 0.1 triage D04).
 - R-INS-05: admission with an ordinary float focused anchors at the nearest tiling neighbor (B, prior tiled focus in the fixture), using ordinary long-edge admission instead of root-wrap (User 2026-10-10, 0.1 triage D05).
-  Verification-only with unchanged admission policy (Orchestrator 2026-10-11):
+  Verification-only with unchanged admission policy (2026-10-11):
   the existing shared Engine convergence route already retains tiled focus B
   while an ordinary float is focused. Keep the offline geometry/focus and KDE
   wire fixtures; native observation/activation acceptance remains user-owned.
@@ -1410,10 +1414,10 @@ platform API behavior.
   floor. A pre-built JS bundle in the source archive may remove the Node
   build requirement as ordinary engineering during the attempt. KDE neon
   needs OBS provisioning, which is unverified.
-- At the start of the next orchestrator session, the user creates the OBS
+- Next, the user creates the OBS
   account/project, GitHub-to-OBS token and AUR account. Packaging prep (spec,
   PKGBUILD, OBS service files) may proceed offline before then.
-- Tentative Lead 2026-10-11, pending user review: offline packaging uses
+- Tentative 2026-10-11, pending user review: offline packaging uses
   `omnitiler` for core and `omnitiler-native-effect` for the
   effect plus both native KCMs, with recipes under `packaging/`. Release
   archives include the tagged-SHA JS bundle and vendored Rust crates; distro
@@ -1667,7 +1671,7 @@ platform API behavior.
 
 ## Window State: Float, Sticky, Maximize, Fullscreen
 
-- Tentative Orchestrator 2026-10-11, pending user review: D22(a) ratio-preserved
+- Tentative 2026-10-11, pending user review: D22(a) ratio-preserved
   float-out reflow follows COSMIC-observed behavior, with thin I/S one-family
   corroboration disclosed. D23(a) releases minimized allocation with stored
   old-slot/no-focus-steal restore; sole minimize retains workspace, focus none.
@@ -1675,7 +1679,7 @@ platform API behavior.
   D27 Switch and focus defaults to urgency-only while fullscreen/game-focused;
   its setting is deferred. D28(a) lists KDE fullscreen-send refusal as a 0.1
   known issue pending observation, without altering approved Windows carry.
-  [D22/D23/D27/D28](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
+  [D22/D23/D27/D28](research/release-0.1-triage.md#tentative-decisions-2026-10-11-pending-user-review).
 - R-SPC-01: transient dialogs float rather than tile; Windows owned-dialog exclusion remains an intentional divergence, with parent-focus/modal legs TBD (User 2026-10-10, 0.1 triage D02).
 - R-FLT-13: ordinary floats hide while their workspace is not shown and retain their frame across the switch (User 2026-10-10, 0.1 triage D19).
 - R-FLT-12: focusing an overlapping float raises it; no project lower verb for now (User 2026-10-10, 0.1 triage D20).

@@ -19,7 +19,7 @@
    build/test/strict all-target Clippy, rustfmt and whitespace gates.
 3. Fresh independent public/live-behavior review, existing float-harness-based
    offline/live proof and clean recovery audit. Fix concrete findings.
-4. Commit/push accepted units, green hosted CI, durable decisions and archive.
+4. Green hosted CI, durable decisions and archive.
 
 - Verify tiled/float sticky-on, origin-sensitive sticky-off on current workspace,
   Win+G clearing sticky and tiling, workspace selection/trailing-empty occupancy,
@@ -111,13 +111,13 @@
 ## Completion
 
 - Implementation/evidence delivered as `292d8c1`, pushed to main. Hosted
-  [CI 37088627986](https://github.com/beefsack/omnitiler/actions/runs/37088627986)
+  [CI 37088627986](https://github.com/beefsack/OmniTiler/actions/runs/37088627986)
   passes Windows, Rust, KWin and shell jobs. Completion archive is a separate
-  documentation-only delivery; its CI receipt is in the terminal handover.
-- Lead read-only audit 2026-10-03 12:06:08 +10:00: zero project actors,
+  documentation-only delivery; its CI receipt reported after publication.
+- Read-only audit 2026-10-03 12:06:08 +10:00: zero project actors,
   ready false, ledger/stop/workspace requests absent, arranging1, pen35;
   real Terminal PID18224 creation `01dd512e9194d8b9` intact. Final live receipt
   additionally verifies zero native owner surfaces and no hidden helper residue.
-  All Workers are completed. No parity item7 work performed.
-- Exact next action: Orchestrator applies the proposed item6 backlog text;
+  No parity item7 work performed.
+- Exact next action: apply the proposed item6 backlog text;
   user physically dogfoods Win+Shift+G/Win+G and the listed remaining rows.

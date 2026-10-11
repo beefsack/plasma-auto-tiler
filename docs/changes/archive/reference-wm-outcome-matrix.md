@@ -18,15 +18,13 @@
   observations, variants and per-WM configuration/version assumptions.
 - Minimal non-overlapping rows; unresolved ambiguity creates a discriminating
   row for later user testing. Distinguish observed, sourced and intended behavior.
-- Sequential fresh Workers author and independently validate the matrix; Lead
-  reviews evidence, integrates decisions/process rule and archives this record.
-  Workers do not edit project records.
-- ASCII, valid local links/anchors, whitespace checks, commit/push and green
+- Authors and independent validators validate the matrix; evidence reviewed
+  and this record archived.
+- ASCII, valid local links/anchors, whitespace checks and green
   hosted CI. Report row/evidence counts and five priority user tests.
 
 ## Material decisions
 
-- User authorization: 2026-10-03 assignment and standing autonomous Lead brief.
 - Provisional, to discuss: one Markdown document with tables by area, stable IDs,
   six outcome columns and variant hooks. Compact citations distinguish dated
   user tests, pinned source and linked docs; unknown cells stay TBD. Recorded in
@@ -51,14 +49,14 @@
   Unknown tested versions/config are not retroactively pinned to local source.
 - Independent validation rejected generic-dispatcher/enum evidence as proof of
   full outcomes, mismatched tested starts, invented ratio-memory claims and
-  unselected labels for already-selected COSMIC behavior. Lead tightened starts,
+  unselected labels for already-selected COSMIC behavior. Tightened starts,
   added source admission-axis evidence and the user's float/send sequence.
 - Root AGENTS.md now requires an ambiguity to produce a minimal discriminating
   matrix row; the decisions entry is the backlog-adjacent discovery link.
 - Verification: ASCII, local links/anchors, unique IDs, eleven-column row shape,
   evidence/variant keys and `git diff --check`. Hosted CI is checked against the
-  pushed commit; the terminal handover supplies the commit/run receipt.
-- No live testing or desktop mutation performed. All Workers completed.
+  pushed commit; the commit/run receipt reported with publication.
+- No live testing or desktop mutation performed.
 
 ## Succession
 
@@ -70,5 +68,5 @@
   format, fill prioritized TBD outcomes, then specify explicitly selected
   user-configurable variants. Entry point: decisions, Cross-Platform Behavior."
 - Exact next action: user confirms the format and records R-WS-02 outcomes with
-  WM version/config, returned anchor, axis/order and focus. Orchestrator advances
+  WM version/config, returned anchor, axis/order and focus. Advance
   the backlog using the proposed text.

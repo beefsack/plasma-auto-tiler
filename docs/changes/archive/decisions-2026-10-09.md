@@ -11,13 +11,13 @@
 
 ## Acceptance and approach
 
-- Sequential bounded muse-spark Workers: behavior/spec/matrix/consensus;
+- Sequential bounded units: behavior/spec/matrix/consensus;
   feasibility/grouped-window archives and toolchain recheck.
-- Lead integrates backlog and Windows handoff, reviews actual diffs and
-  verifies totals, table columns, moved links and `git diff --check`.
+- Integrate backlog and Windows handoff, review actual diffs and
+  verify totals, table columns, moved links and `git diff --check`.
 - Current decisions contain approved rules only, dated provenance and concise
   implementation-gap status. Unsupported reference outcomes remain TBD.
-- Commit and push only intended documentation with the user-specified message.
+- Publish only intended documentation with the user-specified message.
 
 ## Material decisions
 
@@ -43,9 +43,8 @@
 - Closed verdict B and moot grouped-window proof archived, with links fixed.
   Existing ignored Attempt-01 results directory moved beside the archived
   feasibility record; retained live cases are not pending checks.
-- Three sequential muse-spark Workers: behavior alignment, archive/toolchain,
-  independent review; first Worker resumed for review corrections. One active
-  at a time, no nested delegation or stash. Lead integrated backlog and fixes.
+- Three sequential units: behavior alignment, archive/toolchain,
+  independent review, with review corrections. Backlog and fixes integrated.
 - Independent review found stale migration/refusal text and a broken new anchor;
   corrections accepted. No unresolved product ambiguity; whether tabs count as
   L2 deliberately remains a future decision.

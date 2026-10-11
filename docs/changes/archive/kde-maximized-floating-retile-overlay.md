@@ -22,9 +22,9 @@
   share the same overlay rule. No new state, retry mechanism or Engine change.
 - Preserve B6 origin+minimum, born-fullscreen isolation, B9 intentional-float
   semantics and existing signal/debounce/single-flight fences.
-- Sequential unit: one `muse-spark` Worker implemented code/fixtures; Lead
-  reviewed the full diff, simplified the held-exit gate, strengthened allocation
-  and signal-settlement assertions, ran final gates and reconciled records.
+- Sequential unit: code/fixtures implemented; the full diff
+  reviewed, the held-exit gate simplified, allocation
+  and signal-settlement assertions strengthened, final gates run and records reconciled.
 - Recorded decisions and historical delivery records remain authoritative;
   this record supersedes the prior R-MAX-03 one-shot implementation status.
 
@@ -55,8 +55,8 @@
 - `just check-portable`: pass; zero normal core dependencies, no platform leaks.
 - `git diff --check`: pass; added lines ASCII only.
 - No live KWin/Plasma tests, session boundaries, dependency installations or
-  shared Rust/core/Windows edits. Windows parity (b) remains the Windows agent's
-  work; native launch/toggle/restore/session-restore outcomes remain TBD.
+  shared Rust/core/Windows edits. Windows parity (b) remains pending in Windows
+  delivery; native launch/toggle/restore/session-restore outcomes remain TBD.
 
 ## User-owned live acceptance - Pending
 

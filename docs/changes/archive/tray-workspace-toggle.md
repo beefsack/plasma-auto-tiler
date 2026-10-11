@@ -3,7 +3,7 @@
 ## Goal and accepted decisions
 
 - User (2026-09-29): tray icon opens menu, not Settings directly; current workspace tiling checkbox, new-workspace Tiled/Floating default (Tiled initially), Settings opens the existing unified page. Only the default persists. KWin registers a keyless shortcut action and the tray invokes it over KGlobalAccel if KDE source verifies both operations; otherwise use the existing snapshot reply. No extra controls, gates or fallbacks without value.
-- Orchestrator defaults confirmed by the user: KWin script owns per-workspace session state, script reload resets overrides, shared workspace mode toggles all outputs, floating stops management without moving windows, retiling releases Planner domain then uses existing fresh fit, native-only cross-boundary sends, keep active border and clear group underlay.
+- Defaults confirmed by the user: KWin script owns per-workspace session state, script reload resets overrides, shared workspace mode toggles all outputs, floating stops management without moving windows, retiling releases Planner domain then uses existing fresh fit, native-only cross-boundary sends, keep active border and clear group underlay.
 - KDE source verification: KWin v6.7.5 `src/scripting/scripting.cpp:376-388` registers an action with an empty key sequence; kglobalacceld v6.7.5 `src/component.cpp:206-211` invokes it by name. The D-Bus reply is void even for a missing action. A saved shortcut record may autoload a physical key; actual panel presentation and runtime delivery are not yet tested.
 
 ## Implementation and scope

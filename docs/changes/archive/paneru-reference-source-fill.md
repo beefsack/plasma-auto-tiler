@@ -12,12 +12,12 @@
 
 ## Acceptance and approach
 
-- Learn the codebase once and share its short source map with each fill Worker.
+- Learn the codebase once and share its short source map with each fill unit.
 - Trace every candidate without guessing; distinguish policy from host/runtime
   acceptance and list material approved-rule contradictions without changing rules.
 - Independently source-verify each slice, then check occurrence-aware coverage,
   citation resolution, unchanged scenarios, diff scope and whitespace.
-- Reconcile triage counts and ledgers, archive this note, commit and push only
+- Reconcile triage counts and ledgers, archive this note and publish only
   intended documentation with a single-line source-fill message.
 
 ## Bounded units
@@ -28,10 +28,7 @@
 4. Floating, minimize, minimum size, maximize/fullscreen and resize: 16 N + 1 U.
 5. Activation, close and mouse: 8 N.
 6. Restart/persistence, special windows and controls: 5 N + 10 U.
-7. Independent final reconciliation, triage update, archive, commit and push.
-
-Workers use `muse-spark`, one active at a time; separate verification Workers
-follow each fill unit. The Lead owns this note and the triage report.
+7. Independent final reconciliation, triage update and archive.
 
 ## Accepted evidence and outcome
 
@@ -88,8 +85,8 @@ follow each fill unit. The Lead owns this note and the triage report.
 - The initial final-check script had an incorrect exclusion intersection,
   incomplete scope checks and a bypass; its report was rejected. One bounded
   evidence repair produced strict occurrence/scope checks and executable
-  row/column arithmetic with nonzero exit on failure. Lead reran the repaired
-  check after integration: all 29 checks passed. A retained out-of-bounds
+  row/column arithmetic with nonzero exit on failure. The repaired
+  check rerun after integration: all 29 checks passed. A retained out-of-bounds
   reaping citation was corrected to the inspected function's `1351-1383`.
 - All touched citation blocks resolve to real files/ranges at the full pin;
   29 paneru keys are unique and all cell citations resolve. Diff whitespace

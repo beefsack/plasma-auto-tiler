@@ -8,7 +8,7 @@
   Steps are 12/14/16/18/20px, keyed by focus/direction/mode; preserve adjacent
   shares, minima clamps, origin/lifetime/suspension and overlay refusal fences.
 - Preserve existing input pairing, exact modifiers, remapping and E8 masking.
-  No shared-core changes unless demonstrably necessary; concurrent KDE owns it.
+  No shared-core changes unless demonstrably necessary; shared core is delivered KDE-side.
 - Native build/test/fmt/clippy gates, independent review, bounded owned-window
   native checks and clean stop/restore; physical input acceptance is user-owned.
 
@@ -18,8 +18,8 @@
 2. Windows retained Engine/runtime resize dispatch plus semantic fixtures and
    narrowly needed exact-owner test CLI plumbing.
 3. Independent review, native gates and scoped live evidence.
-4. Matrix/spec/decision delivery pointers, concise backlog status, archive,
-   commit/push and verify CI.
+4. Matrix/spec/decision delivery pointers, concise backlog status, archive
+   and verify CI.
 
 ## Material decisions
 
@@ -150,6 +150,6 @@
 - Pushed `241cf7b52dacd697528087344060d6db67659107` (`Add Windows keyboard
   resize`). Rebase preserved concurrent `9fdfc29`/`37af573` packaging work
   without conflict; it did not change Windows/core Rust or the live artifact.
-- CI [38077899121](https://github.com/beefsack/omnitiler/actions/runs/38077899121)
+- CI [38077899121](https://github.com/beefsack/OmniTiler/actions/runs/38077899121)
   completed success: windows, rust, kwin, shell, native and macos. No failed
   jobs or repairs. Final evidence-record publication is documentation only.

@@ -23,9 +23,9 @@
 
 ## Bounded work
 
-1. Worker: provenance and Rust/npm/native dependency inventory; audit-tool setup.
-2. Worker: candidate licenses and current store/platform feasibility, with sources.
-3. Lead: backlog integration, archive cleanup/count, evidence review and publication.
+1. Provenance and Rust/npm/native dependency inventory; audit-tool setup.
+2. Candidate licenses and current store/platform feasibility, with sources.
+3. Backlog integration, archive cleanup/count, evidence review and publication.
 
 ## Decisions and evidence
 
@@ -41,7 +41,7 @@
   LGPL choices; GCC runtime exception avoids application-level GPL propagation.
   Complete distribution-specific native closures remain a release follow-up.
 - Independent review corrected GPL-version election, inventory grouping and
-  Apple Usage Rule scope; pinned KWin header evidence was reproduced by Lead.
+  Apple Usage Rule scope; pinned KWin header evidence was reproduced.
 - Store research distinguishes current listings, grandfathered unsandboxed Moom,
   sandbox/API feasibility, current EULA terms and historical FSF enforcement.
   Recommendation preserves permissive shared-code licensing flexibility with a

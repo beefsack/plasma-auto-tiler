@@ -15,8 +15,7 @@
 ## Acceptance and approach
 
 - Mechanically rename tracked contents and product-named files/directories;
-  regenerate lock metadata and reconcile concurrent main changes by preserving
-  their semantics and reapplying the rename.
+  regenerate lock metadata.
 - Record the durable name decision and close the project-name backlog item.
 - An old-name sweep leaves only the decision's intentional former-name mention.
 - Sequential gates: Rust workspace tests, strict clippy/fmt, portable checks,
@@ -59,6 +58,6 @@
   follow-up; Rust gates and the affected tray Nix build were refreshed and
   passed. No external configuration or live-state mutation was performed.
 - Rename published as `b639878`. All six CI jobs passed:
-  [CI evidence](https://github.com/beefsack/omnitiler/actions/runs/38106207577).
+  [CI evidence](https://github.com/beefsack/OmniTiler/actions/runs/38106207577).
   The follow-up publishes the concurrent class-name correction and archives
   this completed record. Container distro builds were excluded as requested.

@@ -74,8 +74,8 @@ later integrated check caught lost planned replies returning no-pending while
 the exact Engine pending was still live; the revision fence and mismatch
 reply were corrected and re-reviewed. Option B adds three rows for older-
 generation orphan retirement, displaced-owner recovery, and bounded
-no-definitive-reply handoff. A Worker who did not write them independently
-reviewed the rows; reply/oracle precision was tightened before production.
+no-definitive-reply handoff. The rows independently
+reviewed by someone who did not write them; reply/oracle precision was tightened before production.
 After implementation independent review found stale comments and a
 synchronous-deadline reentrancy edge; both were repaired and the edge was
 tested. The ten older skipped AR11 rows remain parked reference only.

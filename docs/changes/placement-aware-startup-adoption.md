@@ -211,7 +211,7 @@
 - User clarified the concern: restarting over a previously tiled, sometimes
   resized nested layout can swap windows when fallback seeds focus-last.
   The user approved replacing flat-strip fitting with a simple recursive-cut
-  heuristic, without rare-case machinery. Orchestrator defaults, user approved:
+  heuristic, without rare-case machinery. Defaults, user approved:
   horizontal-before-vertical cuts, geometry order independent of focus, all
   viable cuts per axis forming N-ary siblings, observed-span shares, orthogonal
   recursion and `max(inner gap, floor(3% of domain axis))` per-window cut
@@ -229,7 +229,7 @@
 ## Centre-Split Outcome 2026-09-29
 
 - User option B extends the recursive fit to eligible overlapping layouts.
-  Orchestrator defaults: if neither axis has a tolerance-valid cut in a piece,
+  Defaults: if neither axis has a tolerance-valid cut in a piece,
   choose the widest adjacent centre gap (horizontal on axis tie), split that
   piece in two, use each side's maximum observed member span as its share, and
   recurse. Identical centres on both axes decline to the unchanged seed path.

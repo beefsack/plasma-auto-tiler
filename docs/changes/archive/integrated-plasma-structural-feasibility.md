@@ -129,10 +129,7 @@ authority.
 
 ## Delivery And Verification
 
-- Two sequential `muse-spark` Workers: research (resumed twice for source-pin
-  verification/correction), then independent evidence review. One active at a
-  time; Lead owns verdict, record/backlog and publication. No nested delegation
-  or `git stash`.
+- Two sequential units: research, then independent evidence review.
 - Acceptance: cited offline verdict, all recorded capability/residual questions
   classified, unsafe path stopped, production decisions preserved, backlog
   disposition explicit; documentation diff/link inspection and `git diff --check`.

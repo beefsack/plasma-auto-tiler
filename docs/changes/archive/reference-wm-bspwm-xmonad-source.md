@@ -8,22 +8,22 @@
 
 ## Acceptance and approach
 
-- Sequential bounded muse-spark Workers source each column, followed by one independent review Worker per column.
+- Sequential bounded units source each column, followed by one independent review per column.
 - Source citations resolve to pinned repo:path:line keys. Unsupported actions, underspecified fixtures and native-only outcomes retain short reasoned TBDs.
 - Decide an explicit xmonad-contrib profile from source if needed for well-defined directional/EWMH rows; clone via authorized SSH route only.
 - Verify 12 consistent 14-column tables, unchanged row IDs/order and protected cells, citation resolution, source pins and git diff --check.
-- Lead commits and pushes each completed column, staging intended docs only; never stage user-owned devenv.nix.
+- Publish each completed column, staging intended docs only; never stage the existing devenv.nix.
 
 ## Units and dependencies
 
-1. bspwm sections 1-6, sections 7-12, independent review, Lead verification and commit/push.
-2. xmonad profile and sections 1-6, sections 7-12, independent review, Lead verification and commit/push.
+1. bspwm sections 1-6, sections 7-12, independent review, verification and publication.
+2. xmonad profile and sections 1-6, sections 7-12, independent review, verification and publication.
 3. Final accounting and archived outcome.
 
 ## Current evidence
 
 - Baseline main is 332afdc; sole initial worktree change is user-owned devenv.nix.
-- Direct sequential Workers are the shallow topology; no nested delegation is needed.
+- Direct sequential units are the shallow topology.
 - No rows added. xmonad profile extension and source outcomes accepted below.
 
 ## Accepted bspwm outcome
@@ -32,7 +32,7 @@
 - Pin/profile unchanged. Source establishes second-child insertion, no-target swap no-op, vacant same-slot float/fullscreen restoration, sticky relocation and full-state restart, cross-monitor directional swaps, and tiled hover-swaps without Escape cancellation.
 - Existing incorrect R-OUT-01 transfer interpretation corrected to cross-output swap under the recorded profile. R-DRAG-01's floating-only claim corrected to tiled hover-swap. Other previously partial cells gain source qualifications; no product decision changes.
 - Independent review passed after adding the close-request function citation and tightening the zero-motion drag mechanism. No unresolved findings.
-- Lead read-only integrity check passed: 12 14-column tables, 58 unchanged IDs/order, all non-bspwm cells/profiles/register/prose preserved against 332afdc, all citation keys resolve and bspwm evidence pins/ranges are valid. git diff --check passes. No live testing or new rows.
+- Read-only integrity check passed: 12 14-column tables, 58 unchanged IDs/order, all non-bspwm cells/profiles/register/prose preserved against 332afdc, all citation keys resolve and bspwm evidence pins/ranges are valid. git diff --check passes. No live testing or new rows.
 - Committed and pushed as e6b71cc, Record source-proven bspwm reference outcomes.
 
 ### bspwm residual TBD accounting
@@ -55,7 +55,7 @@
 - All 58 rows assessed: 57 source-cited, one wholly TBD (R-WS-07, external switcher unspecified); 50 retain partial/full TBDs and eight contain no TBD.
 - Tall can project H[A,B] and H[A,V[C,B]], despite having no user split-tree structure. Admission above B gives H[A,V[C*,B]]; upward swap from B in the three-window projection gives H[A,V[B*,C]]. Flat three-plus-child H and arbitrary nesting remain inapplicable.
 - Other accepted distinctions: same-layer float navigation, sole-float move no-op, no-follow workspace shift, positional close refocus, float-map carry-over on restart, float-based protocol fullscreen, and raw floating mouse movement including zero-motion float-on-release and off-workarea retention.
-- Independent review passed after correcting newcomer focus and sole-float miss behavior. Lead reconciliation caught and resolved a copied ratio assumption, false Tall fixture incompatibility, a swap/remove-reinsert mismatch, an answerable workspace-focus gap, a restart evidence gap, and contradictory off-workarea prose. Source traces and the final review confirm the corrected cells.
+- Independent review passed after correcting newcomer focus and sole-float miss behavior. Reconciliation caught and resolved a copied ratio assumption, false Tall fixture incompatibility, a swap/remove-reinsert mismatch, an answerable workspace-focus gap, a restart evidence gap, and contradictory off-workarea prose. Source traces and the final review confirm the corrected cells.
 - Final float-source reconciliation distinguishes managed native geometry from admission-only centering and the full-screen error fallback; geometry, resize and restart citations now cover the complete relevant implementations.
 - Previously sourced core insertion/shift/minimum policies were not reversed; minimum and admission cells now explicitly use the pinned, extended profile. No product behavior or decision changes.
 - Final read-only integrity checks pass: 12 14-column tables, valid 3-column profile table, 58 unchanged IDs/order, all non-xmonad cells/profiles/register/prose preserved against e6b71cc, all citations resolve, target source pins/ranges valid, old a8055cd pin absent, git diff --check clean.
@@ -72,7 +72,7 @@
 
 ## Handover
 
-- Sequential muse-spark source Workers and one independent review Worker per column completed using the direct Lead-to-Worker topology; nested delegation was unnecessary.
-- No new rows, live testing, product/decision edits or user-owned devenv.nix staging. The note is archived with the completed xmonad column.
-- Orchestrator backlog advancement: bspwm and xmonad reference source passes complete; preserve other reference columns and product decisions.
-- Exact next action: none after the xmonad column commit/push.
+- Sequential source units and one independent review per column completed using the direct topology.
+- No new rows, live testing, product/decision edits or existing devenv.nix staging. The note is archived with the completed xmonad column.
+- Backlog advancement: bspwm and xmonad reference source passes complete; preserve other reference columns and product decisions.
+- Exact next action: none after the xmonad column publication.

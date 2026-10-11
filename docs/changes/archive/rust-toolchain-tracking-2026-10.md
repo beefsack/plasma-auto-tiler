@@ -77,7 +77,7 @@ derivation. Record their separate version baselines and host-check limits.
   mise is absent from this shell's PATH. The four-package locked build/test
   (1004 tests), all-workspace rustfmt check and strict all-target Clippy passed
   via the installed `cargo +stable`. No local Rust lint breakage found.
-- Initial hosted [CI](https://github.com/beefsack/omnitiler/actions/runs/37190113214)
+- Initial hosted [CI](https://github.com/beefsack/OmniTiler/actions/runs/37190113214)
   for `4212456` passed all six jobs. Logs showed mise reusing installed stable:
   Cargo 1.98.1 on Windows/macOS, macOS rustfmt/Clippy from the 1.98.1 compiler.
   Passing that run did not establish latest-stable coverage.
@@ -86,7 +86,7 @@ derivation. Record their separate version baselines and host-check limits.
   version checks, and print full rustc identity while retaining host guards.
   This applies the existing rolling-stable policy; no toolchain-file/overlay
   or local install. `rustup update --help` confirms the flag.
-- Accepted hosted [CI for `929adf5`](https://github.com/beefsack/omnitiler/actions/runs/37190601471):
+- Accepted hosted [CI for `929adf5`](https://github.com/beefsack/OmniTiler/actions/runs/37190601471):
   all six jobs passed. Windows/macOS logs show the refresh from rustc 1.98.1
   to 1.99.0, with the required MSVC/Apple host identities. Windows locked
   build/test (1004 tests), rustfmt and strict all-target Clippy passed on

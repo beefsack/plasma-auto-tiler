@@ -13,14 +13,14 @@
 - Numbered follow bindings stay intact; relative follow uses Ctrl+Shift arrows/HJKL; numbered and relative stay register unbound and remain rebindable.
 - Authentic clears stock Window One Desktop arrow holders; Compatible disables our arrow forms, keeping letters.
 - Floating boundaries remain membership-only with tiled-side reflow and explicit follow/stay.
-- Sequential bounded Workers: Rust contract/tests; KDE routing/tests; native catalog/presets/tests; Lead reviews, reconciles records, verifies offline checks and stages exact paths.
+- Sequential bounded units: Rust contract/tests; KDE routing/tests; native catalog/presets/tests; review, reconcile records and verify offline checks.
 
 ## Review and evidence
 
 - Initial worktree clean. Rust uses an explicit `follow: bool`, wire omission defaults true; this is representation of the recorded pair, not a new behavior.
-- Lead rejected a stay implementation that only validated source focus without applying it; corrected to bind and apply the core MRU survivor after fresh arrival, with no desktop switch. Null focus follows existing adapter no-setter convention.
+- A stay implementation that only validated source focus without applying it rejected; corrected to bind and apply the core MRU survivor after fresh arrival, with no desktop switch. Null focus follows existing adapter no-setter convention.
 - Initial native verification failed because default-empty rows were interpreted as disabled and as key zero. One narrowly causal repair teaches both KCM load paths and post-state checks that canonical key zero means unbound. Bound-row semantics retained; native checks subsequently pass 33/33.
-- Lead review additionally caught pinned-source identity being mistaken for
+- Review additionally caught pinned-source identity being mistaken for
   current source visibility. Both native observation producers now supply the
   actual current workspace; stay fails closed on switched/unreadable source
   before writes and before MRU/null-focus confirmation. Regression fixtures
@@ -28,8 +28,8 @@
 - Floating follow freezes its recording output before membership setters and
   re-proves mover arrival before both switch and focus. Shared mode follows on
   every connected output; floating geometry remains untouched.
-- Independent Worker reviewed the shared contract, flight fences, scoped ring,
-  catalog and Windows sites. Lead accepted the review after inspecting actual
+- Independent review of the shared contract, flight fences, scoped ring,
+  catalog and Windows sites. The review accepted after inspecting actual
   diffs and correcting the visibility gap. Explicit workspace-send plan
   construction now requires matching move intent; no default-intent shim.
 - Shared core stay and focused removal use the same source MRU fallback;

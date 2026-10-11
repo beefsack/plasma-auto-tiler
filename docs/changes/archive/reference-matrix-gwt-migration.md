@@ -10,8 +10,8 @@
   actions, observations, outcomes, evidence tags/citations and variant hooks.
 - Non-goals: outcome research, behavior changes, historical status recensus,
   live tests, principles/decisions/backlog edits or dependency changes.
-- Approach: sequential bounded Workers; Lead reviewed and integrated each
-  group, committed/pushed after rebase, and archived this record at completion.
+- Approach: sequential bounded units; reviewed and integrated each
+  group, published after rebase, and archived this record at completion.
 - Acceptance: unchanged per-file scenario inventory; 14 Then bullets per
   scenario; exact outcome/fixture retention and citation-key multisets with
   explicit accounting for shared Ours citations duplicated into two bullets;
@@ -59,7 +59,7 @@
 - First group: offline baseline comparisons passed for all 13 historical
   scenarios, unchanged new/explicit-swap blocks, scenario inventory and
   citation-key multisets; 14-profile counts, ASCII and whitespace passed.
-- Independent Worker reviewed insertion, nested move/explicit swaps, close
+- Independent review of insertion, nested move/explicit swaps, close
   and all minimum-size platform splits: no lost-content finding.
 - Initial implementation omitted column Given/When/Observe framing; restored
   every original bullet before acceptance and strengthened verification.
@@ -68,7 +68,7 @@
   tree/scrolling cells and framing retained, new scenarios unchanged,
   per-scenario and whole-file citation multisets matched precise shared-key
   duplication allowances; 14 Thens, ID counts, ASCII and whitespace passed.
-- Lead rejected narrowing R-MAX-01's "same" scope; original text restored in
+- Narrowing R-MAX-01's "same" scope rejected; original text restored in
   both bullets before acceptance, with ambiguity retained above.
 - Workspace/output group: nine historical scenarios verified, inventories
   remain 14/6 scenarios. Full-file/scenario citation multisets, exact original
@@ -102,7 +102,7 @@
   verify_matrix_gwt.py --quiet`; checks include every scenario's
   actual 14-profile count, exact reference/scrolling cells and fixtures,
   unchanged new blocks, citation multisets, anchors, links, ASCII and whitespace.
-- Independent Worker reviewed first-group and final cross-area diff samples:
+- Independent review of first-group and final cross-area diff samples:
   no lost-content finding. The framing omission and narrowed "same" wording
   described above were corrected before acceptance; no unresolved preservation
   issue remains. The five unclear Ours IDs retain their original wording.

@@ -422,7 +422,7 @@ does not authorize recovery work, production migration, or a parity claim.
   created before launch. No manifest validation, disposable-client launch,
   client identity/stability observation, stderr/buffer diagnostic, planner,
   probe, adapter, POC3 command, host D-Bus/journal action, or cleanup ran.
-   e1 contains only the bounded worker evidence and is preserved. Since no
+   e1 contains only the bounded evidence and is preserved. Since no
    exact-three live identity checkpoint exists, exact cleanup is unauthorized
    and was not invoked; no host baseline or isolation claim is accepted.
 - 2026-09-05: one authorized fresh-workdir verification at
@@ -1336,7 +1336,7 @@ does not authorize recovery work, production migration, or a parity claim.
 
 ## Host POC Start Prevalidation Failure (2026-09-07)
 
-- Worker 1 did not invoke persistent POC3 `start`. Prevalidation typed planner
+- Persistent POC3 `start` was not invoked. Prevalidation typed planner
   readiness failed while Planner owner/PID/tick/exe `:1.1481` / `3721096` /
   `26266852` /
   `target/debug/omnitiler`

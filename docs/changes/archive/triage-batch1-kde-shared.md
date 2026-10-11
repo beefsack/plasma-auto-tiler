@@ -23,19 +23,15 @@
 
 ## Work units
 
-1. Worker: investigate and verify shared/KDE behavior, fixtures and spec
+1. Investigate and verify shared/KDE behavior, fixtures and spec
    reference cells; report exact commands, counts and material discoveries.
-2. Lead: inspect evidence and diff, update project records, archive this note,
-   commit own files, pull/rebase, push and check CI.
+2. Inspect evidence and diff, update project records and archive this note.
 
 ## Coordination and decisions
 
 - Started from clean `fa6983a`; initial `git pull --rebase` was up to date.
-- Concurrent Windows agent publishes to `main`; commit before the publication
-  pull/rebase, leave all existing stashes untouched, stop on nontrivial conflicts.
-- User approved D05 and D07 on 2026-10-10; ordinary technical choices are
-  authorized, product decisions require a stop and report.
-- Orchestrator 2026-10-11 selected D05 verification-only for simplicity: the
+- User approved D05 and D07 on 2026-10-10; product decisions require a stop and report.
+- 2026-10-11: D05 verification-only for simplicity: the
   approved behavior already holds via the Engine path. Revert the candidate
   remembered-tile fallback and its dependent seed/admission fixtures.
 
@@ -50,7 +46,7 @@
 - The discarded repair changed direct Session propose/seed admission with
   off-domain/unset focus and valid tiled history, rather than the requested
   production float-focus journey. All production source edits and the two
-  dependent fixtures were reverted after the Orchestrator decision.
+  dependent fixtures were reverted after that decision.
 - Independent review rejected the original off-domain-only fixture as proof
   of float-focus behavior and caught an incorrect Horizontal axis assertion.
   Corrected fixtures use B's tall 60x80 target (Vertical) and add actual native

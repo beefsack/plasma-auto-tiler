@@ -32,7 +32,7 @@ merge for UX, superseding the recorded split.
 
 ## Decision
 
-Orchestrator decision applying the user's 2026-09-28 option B: retain tray
+Decision applying the user's 2026-09-28 option B: retain tray
 Settings, KWin Scripts Configure and Desktop Effects Configure, all opening the
 same unified page. Keep both installed KCM IDs, namespaces and staging outputs;
 use one shared page implementation and two thin plugin factories.

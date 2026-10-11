@@ -8,9 +8,8 @@
   behavior and Q2 automatic-fixed restart recomputation remain authoritative.
 - Scope: shared core, Linux planner, KDE adapter and native code if needed.
   Windows behavior changes belong to Windows handoff item 8.
-- No live KWin/Plasma or Windows testing, dependency installs, adapter
-  extraction, commits, pulls or mutations of other agents' work. Initial tree
-  clean; root guidance and live KWin testing guide read.
+- No live KWin/Plasma or Windows testing, dependency installs or adapter
+  extraction. Initial tree clean; root guidance and live KWin testing guide read.
 
 ## Acceptance and approach
 
@@ -19,12 +18,11 @@
 - Persist intentional identity only; automatic fixed floats and Q2 tile
   overrides must not gain persistence. Avoid writes to otherwise untouched
   clients; exclude native IDs and application content from logs.
-- One sequential muse-spark Worker at a time. Lead reviews actual evidence;
-  Workers do not maintain project records.
+- Actual evidence reviewed.
 - Research unit: current sticky/float mechanisms and pinned reference restart
   behavior. Follow-up unit: correct and substantiate marker feasibility.
-- Stop before implementation and send one batched decision package to the
-  Orchestrator for unrecorded design/behavior choices.
+- Stop before implementation with one batched decision package
+  for unrecorded design/behavior choices.
 - After resumption: implementation and offline regression units, required npm,
   Rust, portable and affected shell gates; native Nix gates if native code
   changes; matrix/spec/decision/trace/backlog records and staged ASCII checks.
@@ -41,9 +39,9 @@
   (`crates/omnitiler/src/planner_service.rs:1-14,132-156`). Memory-only
   storage cannot survive that service's own restart; its current boundary
   explicitly excludes persistence.
-- Initial Worker suggestions lacked source proof for script file I/O or
-  durable dynamic properties and proposed an already-used matrix ID. Lead
-  requested corrected feasibility evidence before choosing a recommendation.
+- Initial suggestions lacked source proof for script file I/O or
+  durable dynamic properties and proposed an already-used matrix ID;
+  corrected feasibility evidence requested before choosing a recommendation.
 
 ## Accepted research evidence
 
@@ -93,9 +91,9 @@
   R-RST-01/02 already cover basic restart and logout boundaries. Matrix now
   149 scenarios, restart area 14 scenarios; both new rows have 14 Then cells.
 
-## Autonomous provisional selections (2026-10-08)
+## Tentative provisional selections (2026-10-08), pending user review
 
-- Orchestrator resumed the Lead with D1-D4, all PROVISIONAL and not user
+- D1-D4 are all PROVISIONAL and not user
   decisions. Simplicity overrides the original D4 hold recommendation and
   D3 staging suggestion: no recovery scheduler, retry ledger or hold machinery.
 
@@ -142,9 +140,8 @@
 
 ## Reviewed evidence and corrective work
 
-- Lead reviewed actual store/auth/transport, entry observation/removal/send
-  routes, success point and real Planner fixtures. A separate Worker reviewed
-  security, public IPC and lifecycle correctness once.
+- Actual store/auth/transport, entry observation/removal/send
+  routes, success point and real Planner fixtures reviewed. Security, public IPC and lifecycle correctness reviewed separately once.
 - Initial path-check/read and temp-collision cleanup defects were repaired with
   anchored nofollow handles and cleanup only after successful exclusive create.
   Runtime ancestors also reject symlinks; planted FIFOs refuse without blocking.
@@ -152,7 +149,7 @@
   resurrection, unguarded bootstrap sends and partial-inventory pruning. All
   were corrected with per-domain retirement, a bootstrap-only close fence,
   common send guard and strict inventory proof; no new recovery architecture.
-- Lead then required live-time ownership registration for inventoried excluded
+- Live-time ownership registration then required for inventoried excluded
   clients and counted entry setters. Geometry equality alone is not no-write
   evidence: foreground/hidden/frame-drift/fixed-intersection fixtures now assert
   zero recovered-client setters and zero focus writes under real Planner replies.
@@ -190,11 +187,11 @@
   artefact update belongs to this change.
 - Decisions/spec/matrix/indexes, dev-loop tokens, backlog status/Windows item 8,
   provisional review and pending native checks updated. Delivered offline and
-  archived; no blocking implementation question. Orchestrator owns the commit.
+  archived; no blocking implementation question.
 
 ## Pending review and live acceptance
 
-- User review of every autonomous D1-D4 choice, especially the planner runtime
+- User review of every tentative D1-D4 choice, especially the planner runtime
   store architecture boundary and diagnosed-empty availability tradeoff.
 - Script reload, planner restart, stopped-owner frame drift, automatic-vs-intent
   hint loss, hidden/minimized/excluded clients, relocation, close and unfloat.

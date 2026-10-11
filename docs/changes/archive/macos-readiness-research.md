@@ -19,9 +19,9 @@
   SIP/TCC, keyboard capture, displays, jank, license and maintenance evidence.
 - Plan retains Engine/adapter boundaries and Windows recovery lessons;
   includes native-tiling conflicts, gaming, presets, phases and open decisions.
-- Sequential muse-spark units: survey; development runbook; plan integration.
-  Lead reviews source claims and diffs, reconciles cross-document intent,
-  verifies documentation hygiene, archives outcome, commits/pushes and checks CI.
+- Sequential units: survey; development runbook; plan integration.
+  Review source claims and diffs, reconcile cross-document intent,
+  verify documentation hygiene, archive outcome and check CI.
 
 ## Evidence and decisions
 
@@ -31,16 +31,16 @@
   shortcut slice, minimum sizes, active border, underlay, maximise, fullscreen,
   float/sticky float, latency and send-axis fixes are the parity context.
 - No new approved macOS product decisions; open choices will carry explicit
-  recommendations in the plan and terminal handover.
+  recommendations in the plan.
 
 ## Outcome (2026-10-03)
 
 - Added the native macOS setup runbook and prior-art survey; replaced the
   oversized offline plan with a tentative Windows-informed phased plan.
 - Survey source gaps were repaired with raw license and hotkey/API source
-  inspection plus dated commit feeds. Lead corrected Hammerspoon's private
-  AX-to-window bridge location, scoped TCC resets to the dev bundle, and
-  removed unsupported OS/adoption claims. Unknown closed/internal mechanisms
+  inspection plus dated commit feeds. Hammerspoon's private
+  AX-to-window bridge location corrected, TCC resets scoped to the dev bundle, and
+  unsupported OS/adoption claims removed. Unknown closed/internal mechanisms
   remain explicit, with no platform guarantees inferred from upstream code.
 - Independent read-only review passed with one low-severity Glide commit-feed
   drift finding, corrected. Stock-SIP private APIs, reduced-SIP Dock injection
@@ -48,10 +48,10 @@
   selected. No new durable product decisions to promote to decisions.md.
 - Native locked build/test/strict all-target clippy and fmt passed for the
   four Windows-built packages; diff whitespace and ASCII checks passed.
-  Hosted CI is checked after the authorized docs-only push and reported in
-  the terminal handover; no macOS/runtime acceptance is claimed.
+  Hosted CI is checked after the docs-only publication and reported;
+  no macOS/runtime acceptance is claimed.
 - No live desktop testing, dependency installs, product/config changes,
-  principles or backlog edits. All sequential Workers completed.
+  principles or backlog edits. All sequential units completed.
 - Next implementation input: user confirms Mac/floor/architecture, stable
   development identity, modifier mapping and native-conflict intent; Phase 0
   then establishes the host and permission/recovery probes under new scoped

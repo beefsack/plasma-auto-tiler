@@ -16,8 +16,8 @@ Version:        0.1.0
 Release:        1%{?dist}
 Summary:        COSMIC-style automatic tiling for KWin (core)
 License:        GPL-2.0-or-later
-URL:            https://github.com/beefsack/omnitiler
-Source0:        https://github.com/beefsack/omnitiler/releases/download/v%{version}/omnitiler-%{version}.tar.gz
+URL:            https://github.com/beefsack/OmniTiler
+Source0:        https://github.com/beefsack/OmniTiler/releases/download/v%{version}/omnitiler-%{version}.tar.gz
 
 BuildRequires:  cargo
 BuildRequires:  rust

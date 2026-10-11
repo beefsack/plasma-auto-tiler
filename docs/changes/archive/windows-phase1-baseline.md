@@ -7,13 +7,13 @@
 - Acceptance: user decisions recorded; stable version and build/test/fmt/clippy
   plus whitespace evidence; unchanged Linux jobs; display table awaiting user
   confirmation; concise route/options with explicit future authorization boundaries.
-- Units (fresh muse-spark Workers, sequential): native gate investigation;
+- Units (fresh, sequential): native gate investigation;
   setup documentation; Windows CI; read-only displays; route investigation.
 - Verification: inspect each diff and command evidence; final whitespace/status
   review. Applicable Linux/hosted checks are deferred until the user pushes.
 - Decisions: pre-1.0 latest stable on Windows; Linux/CI Rust from regularly
   bumped nixpkgs pin; revisit at 1.0. No devenv edits.
-- Evidence: fresh sequential muse-spark routing succeeded. Installed stable
+- Evidence: installed stable
   rustc/cargo 1.98.1, MSVC x64, matches official stable channel dated 2026-09-03;
   no override, no toolchain file. Build/test (569 tests)/fmt/strict clippy passed.
 - Docs: settled Rust/setup/dual-boot/Sandbox facts; Windows CI adds explicit
@@ -57,15 +57,15 @@
 - Sandbox evidence covers guest runtime/recovery only. Games, protected/elevated
   apps, secure desktop, overlays/workspaces and Win+L policy are separate later
   scopes. Win+L policy remains Sandbox-only; no host writes.
-- Review: independent fresh muse-spark Worker found no high/critical issues;
+- Review: independent fresh review found no high/critical issues;
   tightened persistence/exclusion wording and labeled the fresh-clone example.
-  The pre-existing Orchestrator backlog edit is preserved.
+  The pre-existing backlog edit is preserved.
 - Outcome: this assignment's docs/CI/native baseline/proposal work is complete;
   implementation and live proof remain unapproved. All changes stay unstaged.
 - Deferred: existing Linux Rust/KWin/shell CI and hosted Windows execution after
   user push. check-portable/native CTest/nix flake check are not required by
   these docs and additive Windows-job changes, and are not existing CI steps.
-- Next action: Orchestrator/user confirms report-only display baseline and
-  reviews this route; then authorize the bounded offline Windows scaffold and
+- Next action: confirm report-only display baseline and
+  review this route; then authorize the bounded offline Windows scaffold and
   ledger/identity unit. No live launch is included. Backlog handover: advance
   Windows Phase 1 to proposal review; retain recurring Rust-tracking P1.

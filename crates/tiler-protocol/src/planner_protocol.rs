@@ -13837,8 +13837,8 @@ mod tests {
     fn output_relocation_ambiguous_source_is_atomic() {
         // Two usable sources with the same workspace never relocate: with no
         // pending, a fresh reconcile seeds the new domain through the same
-        // admission route while both sources stay retained (Orchestrator
-        // ambiguous-source fresh-seed rule).
+        // admission route while both sources stay retained (ambiguous-source
+        // fresh-seed rule).
         let mut planner = Planner::new();
         for (correlation, output, window) in [
             ("reloc-amb-1", "out-a", "win-a"),

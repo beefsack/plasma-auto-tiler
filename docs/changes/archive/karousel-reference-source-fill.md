@@ -17,8 +17,7 @@
   Report material contradictions with approved rules without changing the rules.
 - Independently source-verify every slice before acceptance. Check actual diffs,
   occurrence-aware counts, citation resolution, unchanged scenarios and whitespace.
-- Reconcile triage counts and ledgers, archive this note, commit and push only
-  intended documentation with a single-line source-fill message.
+- Reconcile triage counts and ledgers and archive this note.
 
 ## Bounded units
 
@@ -28,10 +27,7 @@
 4. Workspaces: 8 N (trace pinned host where needed).
 5. Mouse and groups/stacks: 6 N.
 6. Restart/persistence and special windows: 14 N and 1 U; controls: 7 U.
-7. Independent final reconciliation, triage update, archive, commit and push.
-
-Workers use `muse-spark`, one active at a time; separate verification Workers
-follow each fill unit. The Lead owns this note and the triage report.
+7. Independent final reconciliation, triage update and archive.
 
 ## Accepted evidence and outcome
 
@@ -47,12 +43,12 @@ follow each fill unit. The Lead owns this note and the triage report.
   MAX-06, MIN-01/03, RSZ-01), 1 L (MAX-01). Independent native-path
   tracing corrected generic host remainders, unminimize/newcomer confusion,
   sticky transitions, close refocus and unnecessary exact-pixel claims.
-  A separate final Worker source-verified the corrected 19-cell slice.
+  A separate final check source-verified the corrected 19-cell slice.
 - Unit 4: 8 N attempted; all closed after independent verification and
   final integration. Corrected source-vs-target focus recipient, native
   desktop switching, explicit-only desktop lifecycle and tiled-only float
-  return. Final review dropped an unnecessary pixel TBD; Lead corrected
-  WS-02's stale sole-A description to the fixture's retained C then A.
+  return. Final review dropped an unnecessary pixel TBD; WS-02's stale sole-A description corrected
+  to the fixture's retained C then A.
 - Unit 5: 6 N attempted; 5 closed, DRAG-05 reclassified F
   (title-bar hold duration vs host startDragTime). Independent host tracing
   closed the switcher target as unsupported and split zero-move producers.

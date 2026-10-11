@@ -26,7 +26,7 @@ Status: complete, 2026-10-04. Research published as `2b0540c` with hosted CI gre
 1. Inspect our implementation and GlazeWM; collect pinned evidence across areas.
 2. Inspect komorebi, Seelen UI and Whim; targeted official input API research.
 3. Synthesize the research document and recommendations from accepted evidence.
-4. Lead review, documentation gates, archive, commit/push and hosted CI.
+4. Review, documentation gates, archive and publication with hosted CI.
 
 ## Outcome and accepted evidence
 
@@ -58,10 +58,10 @@ Status: complete, 2026-10-04. Research published as `2b0540c` with hosted CI gre
   x86_64-pc-windows-msvc. `mise` was unavailable; explicit `cargo +stable`
   used the existing approved toolchain without installing dependencies.
 - Documentation gate checks ASCII, local links, whitespace, reference-clone
-  pins and cited source-path/line-range existence. Lead reviewed the final diff.
+  pins and cited source-path/line-range existence. The final diff reviewed.
 - No test actors, input hooks, overlays or desktop mutations were launched by
   this research change. All four sequential research/documentation units ended.
-- Hosted [CI run 37134290598](https://github.com/beefsack/omnitiler/actions/runs/37134290598)
+- Hosted [CI run 37134290598](https://github.com/beefsack/OmniTiler/actions/runs/37134290598)
   passed all five jobs (Rust, KWin, shell, Windows, macOS) for `2b0540c`.
   The evidence-only record commit is also gated by hosted CI after push.
 

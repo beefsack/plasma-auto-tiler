@@ -36,7 +36,7 @@
 - Accepted. `toggle-float` now traverses the Rust Session/protocol route and
   applies a validated reply before changing the KWin-side frame or floating
   marker. `Meta+G` and sticky remain unregistered.
-- The parent-owned backlog line to advance or remove is the P1
+- The backlog line to advance or remove is the P1
   intentional-floating entry in `docs/backlog.md`.
 
 ## Accepted Evidence

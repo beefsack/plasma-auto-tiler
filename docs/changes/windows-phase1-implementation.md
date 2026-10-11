@@ -99,8 +99,8 @@
 - Exact helper close and exit passed. Final checks: all five exact actor
   identities absent, zero project actors, `ready:false`, ledger.json and
   stop.request absent; only intentional run.log/ledger.lock and ignored proof
-  artifacts remain. Lead independently re-read report/receipt and rechecked
-  absent project actors/ledger/request. No restoration ambiguity or unowned
+  artifacts remain. Report/receipt independently re-read; absent
+  project actors/ledger/request rechecked. No restoration ambiguity or unowned
   target observed; Terminal-tree windows were never targeted.
 - All five actors passed the script's Explorer-parent assertion. Parent PID/name
   is not persisted in the report, so parentage evidence is the live assertion,

@@ -182,8 +182,8 @@ Additional decisions 2026-10-07 outside Table A
 
 [Recorded decisions D1 and items 1-2](../decisions.md#workspaces),
 [items 3-5](../decisions.md#move-layout-and-output-commands),
-[implementation order / Windows handoff](../backlog.md): KDE-side session
-implements shared Rust core + KDE adapter, Windows agent wires later;
+[implementation order / Windows handoff](../backlog.md): shared Rust core +
+KDE adapter are implemented KDE-side, Windows adapter wiring follows;
 Windows build/behavior breakage acceptable when specific repairs are in the
 handoff, extended by each implementation piece. All eight rows below have
 selected targets, implementation pending; annotations are not reference votes.

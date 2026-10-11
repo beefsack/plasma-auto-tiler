@@ -3,8 +3,8 @@
 ## Goal and scope
 
 Resolve the diagnosed drag-23 Meta+right-drag top-left corner miss without
-changing keyboard or non-pointer focus policy. The user accepted the
-Orchestrator's three recommendations on 2026-09-24: permit an inactive dragged
+changing keyboard or non-pointer focus policy. The user accepted
+three recommendations on 2026-09-24: permit an inactive dragged
 tiled window to resize without changing active/remembered focus; restore the
 retained layout after a rejected drop via one correlated reconcile; classify
 well-interior starts by KWin's exact thirds and keep frame-edge starts on the
@@ -44,14 +44,14 @@ signal can follow drag-distance or delay (`window.cpp:2688-2712,2773-2780,
 resize strip (`breezedecoration.cpp:416-436`); decorated visible borders and
 Qt drag distance vary with font, scale and host settings. A conservative
 interior depth is therefore a heuristic to validate live, not a KWin constant.
-The Orchestrator's coalesced per-domain restore-needed marker (2026-09-24) is a
+The coalesced per-domain restore-needed marker (2026-09-24) is a
 technical choice within the user's rejected-drop convergence rule, not a new
 user decision.
 
 Rust pointer-only focus decoupling and left+up drag-23 Session projection pass
 offline; keyboard focus guard remains. KWin thirds classification sends one
 left+up request from drag-23 and preserves the adapter's active identity.
-The Orchestrator selected a coalesced per-domain restore-needed marker on
+Selected: a coalesced per-domain restore-needed marker on
 rejection: a subsequent complete-geometry plan satisfies it, otherwise one
 reconcile dispatches when the slot is free. Each coalesced drag receives its
 own correlated terminal; failed reconciles are never retried. A new gesture

@@ -43,7 +43,7 @@
 | Storage and long paths | **Settled (user 2026-09-30):** use a short checkout path; Git longpaths enabled per clone. The host long-path setting is optional: probe it read-only, review errors, and never write registry automatically. Keep paths short. | Done. |
 | Credentials | **Settled (user 2026-09-30):** HTTPS + GCM. | Done; do not copy credentials into the runbook. |
 | CLI scope | **Settled (user 2026-09-30; shell/toolchain updated 2026-10-10):** Git, rg, PS7, rustup, VS 2026 toolchain + SDK, just, jq, yq, gh. No Coreutils; qsv skipped. Root `mise.toml` manages Rust (via rustup), rg, just, jq, yq, gh; Git and the shell/toolchain prerequisites stay manual (see §§1, 4 below for routes and validation). | Done. |
-| opencode configuration and plugin version | **Settled (user 2026-09-30):** opencode via winget; transfer the known-working config without an explicit shell path. Verify fresh `muse-spark` Worker routing before work; do not assume independent provider introspection. | Follow the §6 smoke test. Stop/report incompatibility rather than silently changing routing/plugins. |
+| opencode configuration | **Settled (user 2026-09-30):** opencode via winget; transfer the known-working config without an explicit shell path. Smoke-test the transferred configuration before work. | Follow the §6 smoke test. Stop/report incompatibility rather than silently changing configuration. |
 | Isolation | **Settled (user 2026-09-30):** Sandbox for Phase 4 clean runtime plus Win+L guest-only policy; Phase 1-3 live proof is physical-desktop owned windows first. Historical 2026-09-30 preflight state is in the [Phase 1 note](changes/windows-phase1-implementation.md). Never host policy writes. | Physical first under the live protocol. Sandbox only for Phase 4 clean runtime and guest-only Win+L; if unavailable, defer those; no policy experiments on the daily-use system. |
 
 ### Line-ending contract
@@ -209,7 +209,7 @@ and third-party tools), `core.autocrlf=true`, Credential Manager enabled.
 Choose `Cmd`, not `CmdTools` (adds `mingw64\bin` and `usr\bin` GNU/MSYS tools).
 For interactive installation choose "Checkout as-is, commit as-is"; WinGet
 defaults can instead be overridden for this clone as shown. Git Bash remains
-an explicit escape hatch; never the default agent shell or native build path.
+an explicit escape hatch; never the default tool shell or native build path.
 
 ```powershell
 winget install --exact --id Git.Git --source winget
@@ -219,7 +219,7 @@ winget install --exact --id Git.Git --source winget
 The following uses `C:\src\pat` as a fresh-clone example; use a short host path. Verify the selected parent exists before cloning:
 
 ```powershell
-git clone --config core.autocrlf=false --config core.eol=lf --config core.longpaths=true https://github.com/beefsack/omnitiler.git C:\src\pat
+git clone --config core.autocrlf=false --config core.eol=lf --config core.longpaths=true https://github.com/beefsack/OmniTiler.git C:\src\pat
 Set-Location C:\src\pat
 git branch --show-current
 git config --show-origin --get-regexp '^core\.(autocrlf|eol|longpaths)$'
@@ -288,8 +288,8 @@ Get-Command ls, ls.exe, cat, cat.exe, rm, rm.exe
 ```
 
 - **V: W7:** PowerShell aliases shadow utilities; use `.exe` suffixes for
-  native binaries. No sed/awk; use dedicated agent tools, PS7 or jq/yq/qsv.
-  The PSReadLine input wrapper is interactive, not an agent-shell guarantee.
+  native binaries. No sed/awk; use dedicated read/search/edit tools, PS7 or jq/yq/qsv.
+  The PSReadLine input wrapper is interactive, not a tool-shell guarantee.
   Coreutils does not make POSIX scripts native PowerShell scripts.
 
 ### 4. Install the VS toolchain and an explicitly selected Rust MSVC toolchain
@@ -389,7 +389,7 @@ $env:INCLUDE
   No Nix/KWin/live tests in this job. Hosted runner preinstalled tools are
   **not** clean-runtime evidence [W10].
 - **P:** Windows sessions touching shared code must pass these native gates
-  plus all applicable Linux gates via user-authorized push/CI or Linux.
+  plus all applicable Linux gates via CI or Linux.
   Report Linux gates pending until green; physical KDE/Windows acceptance is
   user-owned. Do not claim deferred gates passed. Root `just dev` remains
   Linux-only. Native loop: `just --justfile windows.justfile dev`, `dev trace`,
@@ -400,25 +400,20 @@ $env:INCLUDE
   CLI `stop`/`emergency-stop` exit the verified owner only; call `restore` next
   (the Just `stop` recipe does both). Recovery state is per-user LocalAppData/session.
 
-### 6. Configure opencode and smoke-test the actual agent environment
+### 6. Configure opencode and smoke-test the actual tool environment
 
 - **Settled (user 2026-09-30):** install opencode via winget and transfer the
   known-working configuration. Keep PS7 shell resolution without an explicit
   opencode shell path.
 - **V: O2:** global paths are `~/.config/opencode/opencode.json` and
   `~/.config/opencode/AGENTS.md` (normally `$HOME\.config\opencode\...` on
-  Windows). Transfer the user's existing global rules and named agents,
-  adapt Linux paths and merge the snippets below; preserve provider settings.
-- **V: O3:** processed-beef's documented plugin is
-  `processed-beef@git+https://github.com/beefsack/processed-beef.git`.
-  It registers skills, not agents. Restore the existing `gpt-sol` Lead and
-  `muse-spark` Worker definitions/provider routing; full nesting uses
-  `subagent_depth: 2` and appropriate task permissions. Do not invent model IDs.
-- **O; U: O4:** reports cover Store pwsh -> 5.1 fallback, ripgrep extraction,
+  Windows). Transfer the user's existing global rules,
+  adapt Linux paths; preserve provider settings.
+- **O; U: O3:** reports cover Store pwsh -> 5.1 fallback, ripgrep extraction,
   Windows plugin cache paths containing illegal `:`, and Git/PATH casing.
   Reports are verified, their applicability/fix status on the chosen binary
-  is not fully established. Verify fresh processed-beef Worker routing on the
-  host before work; success does not verify every permission rule. Installing
+  is not fully established. Verify the transferred configuration on the
+  host before work; a passing smoke test does not verify every setting. Installing
   rg on PATH does not prove opencode's internal bootstrap will use it.
 
 ```powershell
@@ -427,7 +422,7 @@ opencode debug config
 ```
 
 - **P:** inspect effective config locally (it can contain secrets); restart
-  opencode after changes. Ask the agent to make a shell tool call executing:
+  opencode after changes. Run a shell tool call executing:
 
 ```powershell
 $PSVersionTable
@@ -440,10 +435,8 @@ git status --short
 ```
 
 - **P:** require `PSEdition = Core` from that **tool call**, not just Terminal;
-  verify paths with spaces, dedicated glob/read/grep on `Cargo.toml`, skill
-  loading, then one fresh read-only `gpt-sol` -> `muse-spark` Worker unit.
-  Confirm effective task routing and permissions for both roles. A harmless
-  `reg.exe query` request should be denied by the proposed rule; never probe
+  verify paths with spaces, dedicated glob/read/grep on `Cargo.toml`, then one
+  fresh read-only smoke-test unit. Never probe
   an actual shutdown, policy write or destructive delete. Report failure.
 
 ### 7. Separate clean runtime from risky experiments
@@ -484,14 +477,13 @@ git status --short
 ### Verification checklist
 
 - [ ] Windows live-test boundary decided; installed tools match this list and the latest-stable Rust policy.
-- [ ] Agent tool call: Core PS7, correct `$PSHOME`, native executable paths.
+- [ ] Tool call: Core PS7, correct `$PSHOME`, native executable paths.
 - [ ] `rustc -vV`: x86_64-pc-windows-msvc; stable default active in checkout, no override.
 - [ ] Native build/test/fmt/strict clippy pass; required Linux gates identified.
 - [ ] `where.exe link` checked in ordinary and x64 VS environments; no foreign
   linker in the VS environment; Coreutils link disabled if installed.
 - [ ] Git settings/origins, LF checkout/attributes, `core.longpaths`, short
   paths, clean status and `git diff --check`; no mass conversion.
-- [ ] processed-beef skills and fresh `muse-spark` Worker routing work with transferred config.
 - [ ] Host OS/boot arrangement recorded; do not change the host boot arrangement.
 - [ ] Sandbox availability confirmed before Phase 4 + Win+L guest-only work; the historical 2026-09-30 preflight state is in the [Phase 1 note](changes/windows-phase1-implementation.md), not current proof.
 - [ ] Host display topology recorded (see top of this doc); initial owned-window proof may be bounded to one display; multi-monitor acceptance needs a multi-monitor Windows setup. Physical input/display/game acceptance remains pending.
@@ -525,62 +517,6 @@ dependency/live-testing amendments remain separate user decisions.
   Use the exact approved resource identity; ask on ownership/restoration ambiguity.
 ```
 
-## Proposed opencode configuration
-
-**V: O2/O5; P:** carry over the existing permission block and plugins
-(`processed-beef@git+https://github.com/beefsack/processed-beef.git` and
-`opencode-claude-auth@latest`), preserving `edit: ask`, `subagent_depth: 2`
-and the existing bounded command allowlist. Merge these additions into the
-user's global `opencode.json`; do not replace the allowlist. `shell` applies to
-agent shell tool calls; the permission key remains `bash` with PowerShell.
-Patterns use literal command text and `*`, not regex alternatives. Keep the
-existing `"*": "ask"` first and the deny rules last: last matching rule wins.
-That catch-all already asks for deletes; `external_directory` defaults to ask.
-
-Replace unavailable or differently behaving Unix command entries with the
-PowerShell read-only equivalents below. **Only if Coreutils is installed**,
-also add `allow` entries for `cat.exe *`, `head.exe *`, `tail.exe *`,
-`ls.exe *`, `wc.exe *`, `sort.exe *`, `find.exe *`, `grep.exe *` and
-`stat.exe *`. Use `Get-Command`/`where.exe` instead of assuming `which` exists.
-
-```json
-{
-  "permission": {
-    "bash": {
-      "cargo fmt *": "allow",
-      "Get-ChildItem*": "allow",
-      "Get-Content*": "allow",
-      "Select-String*": "allow",
-      "Get-Command*": "allow",
-      "Test-Path*": "allow",
-      "Resolve-Path*": "allow",
-      "where.exe *": "allow",
-      "reg *": "deny",
-      "reg.exe *": "deny",
-      "regedit*": "deny",
-      "Set-ItemProperty*": "deny",
-      "New-ItemProperty*": "deny",
-      "Remove-ItemProperty*": "deny",
-      "shutdown*": "deny",
-      "logoff*": "deny",
-      "Stop-Computer*": "deny",
-      "Restart-Computer*": "deny"
-    }
-  }
-}
-```
-
-- **P:** retain the existing bounded allows; no auto-approve mode or blanket
-  `cargo *`/`git *` allow. Review project and per-agent rules; they can override
-  global rules. For commands outside the allowlist, approve once rather than
-  "always" for a broad interpreter/build prefix.
-- **V/U: O5:** permissions are command patterns, not a security sandbox.
-  Aliases, case/path forms, nested interpreters, scripts, native APIs and
-  imperfect directory inference can evade narrow patterns. Default ask is
-  the containment; inspect actual commands and effective version behavior.
-  Registry/lock experiments are user-run inside the guest, not permission
-  exceptions for the host agent. Restart opencode after saving.
-
 ## Windows live testing
 
 Before live Windows work, read and follow [live Windows testing](live-windows-testing.md); it does not grant mutation authorization.
@@ -598,7 +534,7 @@ Before live Windows work, read and follow [live Windows testing](live-windows-te
 | AV block / SmartScreen reputation | Low-prevalence unsigned builds; detection | Keep Defender/SmartScreen on; inspect own hash/detection, submit false positive | Windows Security history and Microsoft submission [W13]; **U** hook-specific keylogger heuristic, not guaranteed |
 | Slow build | Scan-heavy repo/cache | Optional trusted Dev Drive performance mode, no broad exclusions | Drive query, Defender UI, measured build [W3] |
 | Extra runtime dependency | Dynamic CRT/dev DLLs | Future static CRT and artifact-only clean guest/machine | dumpbin imports plus clean launch; hosted CI insufficient |
-| Agent environment mismatch | shell resolution, rg bootstrap, git plugin cache/path issue | PS7 with no explicit opencode shell path, official CLI, fresh smoke before delegation | Tool-call Core/version/path, dedicated search, skills and routing |
+| Tool environment mismatch | shell resolution, rg bootstrap, git cache/path issue | PS7 with no explicit opencode shell path, official CLI, fresh smoke test | Tool-call Core/version/path, dedicated search |
 
 ## Sources
 
@@ -631,9 +567,8 @@ Windows execution result.
 - W13: [Defender false positives](https://learn.microsoft.com/en-us/defender-endpoint/defender-endpoint-false-positives-negatives), [submission](https://www.microsoft.com/wdsi/filesubmission), [SmartScreen reputation](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation).
 - O1: [Native install docs](https://opencode.ai/docs/), [official CLI releases](https://github.com/anomalyco/opencode/releases), [Windows guidance](https://opencode.ai/docs/windows-wsl).
 - O2: [opencode config/shell](https://opencode.ai/docs/config/), [global rules](https://opencode.ai/docs/rules/), [published schema](https://opencode.ai/config.json).
-- O3: [processed-beef integration/roles](https://github.com/beefsack/processed-beef/blob/main/docs/integrations/opencode.md).
-- O4 (**O**): [Store shell resolution #41426](https://github.com/anomalyco/opencode/issues/41426), [rg extraction #24489](https://github.com/anomalyco/opencode/issues/24489), [git plugin cache path #22280](https://github.com/anomalyco/opencode/issues/22280), [Git/PATH #21826](https://github.com/anomalyco/opencode/issues/21826).
-- O5: [opencode permissions/patterns/agent overrides](https://opencode.ai/docs/permissions/), [Windows child-process .cmd limitation](https://nodejs.org/api/child_process.html#spawning-bat-and-cmd-files-on-windows).
+- O3 (**O**): [Store shell resolution #41426](https://github.com/anomalyco/opencode/issues/41426), [rg extraction #24489](https://github.com/anomalyco/opencode/issues/24489), [git plugin cache path #22280](https://github.com/anomalyco/opencode/issues/22280), [Git/PATH #21826](https://github.com/anomalyco/opencode/issues/21826).
+- O4: [Windows child-process .cmd limitation](https://nodejs.org/api/child_process.html#spawning-bat-and-cmd-files-on-windows).
 - **R:** `Cargo.toml`, `crates/*/Cargo.toml`, FFI Rust sources,
   `crates/omnitiler/src/planner_service.rs`, `devenv.nix`, `devenv.yaml`,
   `.github/workflows/ci.yml`, `justfile`, `kwin/package.json`,

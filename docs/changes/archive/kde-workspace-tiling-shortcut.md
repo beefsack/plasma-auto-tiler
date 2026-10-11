@@ -8,9 +8,9 @@
 
 ## Approach and bounded units
 
-1. Worker implementation and static conflict investigation; offline canonical gates.
-2. Lead diff/evidence inspection and spec/decisions/backlog reconciliation.
-3. Independent Worker review of the shortcut catalog/public contract and conflict evidence; publish after resolving findings, then check CI.
+1. Implementation and static conflict investigation; offline canonical gates.
+2. Diff/evidence inspection and spec/decisions/backlog reconciliation.
+3. Independent review of the shortcut catalog/public contract and conflict evidence; publish after resolving findings, then check CI.
 
 ## Accepted evidence and outcome
 
@@ -21,4 +21,4 @@
 - `cargo test --workspace --offline` passes: 1,327 tests, zero failures; Rust changes are tray comments only. Strict workspace clippy, fmt and `just check-portable` pass.
 - Logs inspected (`kwin-npm-test.log`, `kwin-typecheck.log`, `native-ctest.log`, `cargo-test-workspace.log`, `cargo-clippy.log`, `cargo-fmt.log`).
 - Independent review accepted implementation, action-name tray routing and static conflict evidence. Reconciled the spec's stale aggregate counts, archived this record to its linked location, and clarified the new test's Compatible variable name; fresh native CTest passes 32/32 after that rename.
-- KDE piece delivered offline; physical/existing-assignment/restart/preset acceptance is in [Pending live checks](../../backlog.md#pending-live-checks) and [the user-owned procedure](../../live-shortcut-override-verification.md#pending-workspace-tiling-default-metay). Windows `Win+Y` remains handoff item 21. No product questions or live KWin test. Hosted CI is checked after push and reported in the session handover.
+- KDE piece delivered offline; physical/existing-assignment/restart/preset acceptance is in [Pending live checks](../../backlog.md#pending-live-checks) and [the user-owned procedure](../../live-shortcut-override-verification.md#pending-workspace-tiling-default-metay). Windows   `Win+Y` remains handoff item 21. No product questions or live KWin test. Hosted CI is checked after push.

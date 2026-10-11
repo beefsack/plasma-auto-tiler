@@ -6,7 +6,7 @@ Replace strict opposite-edge-fixed inference with the edge(s) grabbed at
 interactive resize start. Route the oracle's final position of those edges to
 pointer-resize, ignoring changes elsewhere. Keep AR8's oracle-removal decision
 pending and host testing offline. Record the 2026-09-24 native-boundary and
-drop-intent user decisions separately from the Orchestrator's reliability
+drop-intent user decisions separately from the reliability
 interpretation in `docs/decisions.md`.
 
 ## Acceptance and approach
@@ -37,7 +37,7 @@ interpretation in `docs/decisions.md`.
   pending slot, checked against the existing response decoder. No native code
   changes; no change to AR8's drag-oracle outcome.
 - Independent read-only review of the dual-axis public request/reply contract.
-  A two-request sequential corner was rejected during Lead review because
+  A two-request sequential corner was rejected during review because
   single-flight deferral could overwrite an axis; one atomic request replaced
   it. A broad outer-third corner zone was likewise replaced with a narrow
   physical-edge proximity, to avoid mistaking edge grabs for corners.
@@ -51,7 +51,7 @@ one revision and one pending transaction. Existing single-axis request/reply
 shapes remain unchanged. Independent read-only contract review found no serious
 correctness defect in the changed path.
 
-Lead verification on the final code: `cargo test --workspace --offline` 590
+Verification on the final code: `cargo test --workspace --offline` 590
 passed; `cargo fmt --all -- --check` passed; `cargo clippy --workspace
 --all-targets` passed with existing warnings and none added; `just
 check-portable` passed. In `kwin/`, `npm run typecheck` passed, `npm test`

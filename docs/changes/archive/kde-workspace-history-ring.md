@@ -17,9 +17,9 @@
 
 ## Approach and bounded units
 
-1. Worker: TypeScript native observation/history/ring, routing and offline tests using existing selection/lifecycle seams.
-2. Worker: native C++ catalog/known holders/preset tests, following TypeScript action IDs.
-3. Lead: independent review, inspect diffs and acceptance evidence, docs reconciliation, full offline checks, stage exact changed files and archive this record.
+1. TypeScript native observation/history/ring, routing and offline tests using existing selection/lifecycle seams.
+2. Native C++ catalog/known holders/preset tests, following TypeScript action IDs.
+3. Independent review, inspect diffs and acceptance evidence, docs reconciliation, full offline checks and archive this record.
 
 ## Decisions and evidence
 
@@ -34,8 +34,8 @@
   new retention pins or history-driven reconnect selection. Shared mode has one
   domain history; output focus/loss alone is not a shared workspace change.
 - Independent review inspected behavior/catalog/fences and identified missing
-  scoped/swap/shared-hotplug coverage, now covered. Lead caught and repaired the
-  disconnected displacement-baseline reuse and the pre-handler observation edge.
+  scoped/swap/shared-hotplug coverage, now covered. The
+  disconnected displacement-baseline reuse and the pre-handler observation edge caught and repaired.
 - First native test run exposed an incorrect table-only key assertion for
   letter/toggle rows; corrected to catalog-scoped key math. Final native suite
   passes; no production workaround or product-intent change.

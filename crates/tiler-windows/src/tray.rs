@@ -10,7 +10,7 @@
 //! status row, conflict warning overlay plus a top `Conflicting KDE
 //! settings...` row opening Settings, left-click opens the menu) and
 //! `docs/reference-cosmic-tray-menu.md` (status/menu/Settings shape). Windows
-//! differences are explicit and reported to the Lead:
+//! differences are explicit:
 //!
 //! - KDE parity: a current-workspace tiled checkbox plus new-workspace
 //!   Tiled/Floating default choices. The checkbox reflects the session-local

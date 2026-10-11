@@ -153,7 +153,7 @@
   DPI 120, full bounds (0,0,2560,1440), work area (0,0,2560,1380).
   Three-helper frames were (1284,8,1268,1364), (8,694,1268,678) and
   (8,8,1268,678). No new HWND creation after owner startup was tested.
-- Lead re-read the mutation audit: seven setter calls, all successful, all
+- Re-read the mutation audit: seven setter calls, all successful, all
   targeting exact frozen helper identities/tags, all using
   `SWP_NOACTIVATE|SWP_NOZORDER`. Zero non-owned setter targets. The repaired
   helper log records zero managed geometry mismatches through these journeys.

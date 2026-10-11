@@ -55,8 +55,7 @@ only.
    lifecycle/resize/drop semantics.
 2. Add focused durable conformance and Session tests, removing shortcut locks.
 3. Independently review the resulting diff and run focused/full static checks.
-4. Record outcome/evidence, update active governance, archive this record, and
-   stage only reviewed change files.
+4. Record outcome/evidence, update active governance and archive this record.
 
 ## Acceptance
 

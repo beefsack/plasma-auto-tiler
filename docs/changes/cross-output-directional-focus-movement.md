@@ -65,8 +65,7 @@ Restore the documented COSMIC output-edge behavior for `Meta+Arrow` focus and
 3. Use the existing KWin per-output current-desktop surface for focus and
    transfer actuation, then add regression coverage for the documented behavior
    and failure boundaries.
-4. Verify, reconcile the active decision, record outcome, and await
-   Orchestrator backlog disposition before committing.
+4. Verify, reconcile the active decision, record outcome and publish.
 
 ## Clarified Scope
 

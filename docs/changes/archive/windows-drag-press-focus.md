@@ -10,7 +10,7 @@
 
 ## Acceptance and units
 
-- Bounded Worker implementation/tests, independent live-contract review,
+- Bounded implementation/tests, independent live-contract review,
   bounded ordinary-app live verification, native gates, records/publication/CI.
 - No-move press focuses with zero layout writes; Esc retains press focus and
   zero writes; failed press refuses arm/no plan; drop preserves verified-focus
@@ -58,7 +58,7 @@
   posted, pending stop honored, independent restore passed, newly created
   settings restored to prior absence. Temporary Authentic choice was tentative,
   pending user review; no persistent user preset selected. No kill/crash probe.
-  Future agents must isolate settings before launch; modal stop remains a
+  Isolate test settings before launch; modal stop remains a
   discovered product risk outside this piece.
 - Prior fixture attempts (Paint path, Notepad PID reuse, helper ordering,
   origin-count and empty eligibility polls) failed before gestures. Two failed
@@ -77,7 +77,7 @@
   `E711D3EF277381A2468DD71783346C9DFE77AA2B311806CBAEA55BB544222456`;
   source diff SHA-256
   `F40CF298BE764CF13F95A3F297B31BFAAF747A7D1CCAF719C5229D2685460390`.
-  Lead's subsequent scoped-cleanup fixture correction is test-only; production
+  Subsequent scoped-cleanup fixture correction is test-only; production
   live evidence remains applicable. Final native gates passed after correction.
 - Evidence: `evidence.jsonl` SHA-256
   `858921AFF252BA923A0EAD13F8A41DCD29A3A905A076DC13775645FEC8392828`;
@@ -109,7 +109,7 @@
 - Pending physical input/feel/Start-mask, inactive resize focus/feel, actuation
   failure/race native journeys and cross-output. No shared-core change required.
 - Pushed `9bb2b6f`. CI
-  [38073331721](https://github.com/beefsack/omnitiler/actions/runs/38073331721)
+  [38073331721](https://github.com/beefsack/OmniTiler/actions/runs/38073331721)
   completed success: windows, rust, kwin, shell, native and macos. Linux/KDE
   gates are hosted evidence; local native gates passed before publication.
 - Exact next implementation action: none for scoped item7 delivery; pending

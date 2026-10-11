@@ -78,7 +78,7 @@
 - `npm run typecheck` passed.
 - `npm test` passed: 937 tests.
 - `cargo fmt --check`, focused tray tests, and full `cargo test` passed.
-- An independent `worker-muse` review found and the implementation resolved
+- An independent review found and the implementation resolved
   endpoint refusal flooding and log writes under endpoint/projection locks; the
   final review found no blocking issue. It checked snapshot-identity claims,
   hostile-token/owner/error redaction, periodic failure/recovery bounds,

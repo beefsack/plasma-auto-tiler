@@ -39,7 +39,7 @@ repository's pinned native Plasma stack.
 2. Implement the host-derived builder and route staging/dogfood paths through it.
 3. Run focused static checks and a real native compile, then remove obsolete
    development dependencies and document the workflow.
-4. Review the final source and give the Orchestrator the backlog disposition.
+4. Review the final source and record the backlog disposition.
 
 ## Outcome
 

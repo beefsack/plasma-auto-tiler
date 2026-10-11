@@ -4,7 +4,8 @@
 
 - Deliver handoff item 2 (Workspaces 2.1-2.3), then verify item 20 G-D2
   retained-maximized carry, same-output only. Reuse item 1 `553c65b` local
-  ring/action infrastructure; shared core remains owned by the KDE agent.
+  ring/action infrastructure; shared core is a separate KDE/shared
+  implementation this item depends on.
 - Numbered follow retains defaults; relative follow uses Win+Ctrl+Shift
   arrows/H/J/K/L. Numbered/relative stay are bindable and unbound by default.
   Windows new arrow ownership is unknown; no new Compatible disables.
@@ -26,7 +27,7 @@
   tests use actual retained Engine replies and visibility/lifetime fences.
 - Units: adapter implementation/offline regressions; independent public/native
   contract review and repairs; ordinary-app live CLI transport verification;
-  Lead native gates, docs and publication.
+  native gates, docs and publication.
 
 ## Material decisions and repairs
 
@@ -46,7 +47,7 @@
 - Final review found native overlay checking after assignment; the narrow
   correction moved the live check before assignment, retaining the later
   check for flag drift across transfer. No restore/remaximize is introduced.
-- Lead found numbered stay rejected the checklist's Win+Ctrl+Shift+F6 example.
+- Found: numbered stay rejected the checklist's Win+Ctrl+Shift+F6 example.
   Corrected only numbered stay to accept both Win+Shift and Win+Ctrl+Shift
   rebind arms, with pinned Ctrl repeat/release and full-key duplicate tests.
   Direct numbered follow still rejects Ctrl. Native UI verified the exact
@@ -71,8 +72,8 @@
 ## Evidence and outcome
 
 - Delivered item 2 and verified item 20 same-output, Windows-adapter-only.
-  Lead independently ran all four native allowlisted build/test/fmt/strict
-  clippy gates and diff check after the final repair: passed 2026-10-11.
+  All four native allowlisted build/test/fmt/strict
+  clippy gates and diff check independently run after the final repair: passed 2026-10-11.
 - Portable regressions use real retained Engine replies: explicit intent,
   identical admission/geometry, source MRU/null, hidden-target no writes,
   frozen ring/spare/wrap/>9, floating carry, lifetime/view/modes/both gaps,
@@ -114,7 +115,7 @@
   and cross-process EDIT reads were pre-effect tooling failures. Final run 12
   demanded A visible after sending A away to WS12 (`ws-verify12.ps1:357`);
   its accepted send checkpoints stand, whole-run status remains failed.
-  Worker initially called this a timing race; Lead inspection corrected that
+  A timing race initially suspected; inspection corrected that
   unsupported diagnosis. No product race is inferred or passing run fabricated.
 - Physical shortcut containment/preset OS effects remain user-owned. Native
   deterministic flag-drift injection remains pending (production-called gates
@@ -138,7 +139,7 @@
   full CI verification followed the repair publication.
 - Repair `0b0fdd5` pushed; native tiling tests (79), fmt, strict allowlisted
   clippy and diff check passed. CI run
-  [38056677641](https://github.com/beefsack/omnitiler/actions/runs/38056677641)
+  [38056677641](https://github.com/beefsack/OmniTiler/actions/runs/38056677641)
   completed success 2026-10-11: windows, rust, kwin, shell, native and macos.
   Item 2/item 20 implementation and verification complete for the scoped
   single-output handoff; pending user-owned/deferred legs remain above.

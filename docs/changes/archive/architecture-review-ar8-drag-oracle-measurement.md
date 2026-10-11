@@ -75,7 +75,7 @@ and `kwin/src/drag-measure.ts`; 17 new regressions in
 `kwin/tests/drag-measure.test.ts` cover record shape, real route-start capture,
 first change, timeout, missing verdict, cancellation, synchronous/overlapping
 finishes, removed windows, absent pull, and throwing logging. Independent
-Worker review accepted the implementation after a follow-up correction for
+review accepted the implementation after a follow-up correction for
 stale starts in the absent-pull fallback. In `kwin/`, `npm run typecheck`,
 `npm test` (732 passing, 0 failing; baseline 715 + 17), and `npm run build`
 passed. `git diff --check` passed. Rust code was untouched; no Rust tests or
@@ -86,7 +86,7 @@ in-flight record. These are capture limitations, not runtime routing changes.
 
 The user explicitly approved closing AR8 on 2026-09-24 after the targeted
 manual capture. Outcome: **keep the shipped oracle integration**, following
-the Lead's recommendation; the user approved closure and did not object to
+the recommendation; the user approved closure and did not object to
 that recommendation. This does not claim complete timed first-change data,
 attributable client increments, or an independent log proof of Esc. Keep the
 opt-in, trace-only `drag-measure` instrumentation: today's drag diagnoses used

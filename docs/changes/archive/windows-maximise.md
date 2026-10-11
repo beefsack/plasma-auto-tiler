@@ -16,7 +16,7 @@
 2. Implement native adapter gaps using official Win32 APIs, with focused
    regression coverage and reusable existing proof-harness patterns.
 3. Independently review public/live behavior; verify native gates and scoped
-   helper plus Notepad/Calculator/Paint journeys, then commit/push and check CI.
+   helper plus Notepad/Calculator/Paint journeys, then check CI.
 4. Promote durable decisions and archive this record at completion.
 
 ## Acceptance And Verification
@@ -58,9 +58,9 @@
 | Evidence | Scope |
 |---|---|
 | `target/windows-maximise/20261003-032549-25592/maximise-report.json` | Current-artifact All journey on Win11 build26200, medium integrity, session1: one-shot admission with unchanged foreground; Win+M max/restore and repeat exclusion; native SC_MAXIMIZE/RESTORE and title-bar double-click; siblings stable and exact restore slot; exact directional focus OUT/INTO max; move refusal; genuinely held Win+Shift underlay show/suppress/reshow; populated ws2 and trailing sends with exact follow foreground and focus-ok, target sibling allocation, hide/return preserving max, restore target slot; graceful frame preservation, hidden-max crash watcher reveal; scoped Notepad/Calculator/Paint native max/hide/reveal/restore. |
-| Final native gates and harness mock | Locked four-package stable build/test, strict all-target Clippy, rustfmt and whitespace pass. Binding/modifier/origin/mask/repeat, overlay allocation/admission/write exclusion and focus eligibility regressions pass. Lead repeated native gates after latest code. |
+| Final native gates and harness mock | Locked four-package stable build/test, strict all-target Clippy, rustfmt and whitespace pass. Binding/modifier/origin/mask/repeat, overlay allocation/admission/write exclusion   and focus eligibility regressions pass. Native gates repeated after latest code. |
 | Independent review and correction follow-up | Admission gates, retained origins, async nonactivating restore, focus-only eligibility and geometry isolation checked. No remaining actionable serious finding. |
-| Lead final read-only audit, 2026-10-03 03:32:51 +10:00 | Zero project actors and global border/underlay HWNDs; ledger/stop/workspace request absent; arranging1, pen35. Harness cleanup verifies helpers gone and approved apps visible. |
+| Final read-only audit, 2026-10-03 03:32:51 +10:00 | Zero project actors and global border/underlay HWNDs; ledger/stop/workspace request absent; arranging1, pen35. Harness cleanup verifies helpers gone and approved apps visible. |
 
 - Accepted run pins baseline e07b84c plus recorded working diff, owner SHA256
   `A9EA04456B6859DB293ED73B52230FE61A35D23855693A1C20912A0A8AFA503C`,
@@ -98,9 +98,9 @@
 ## Completion
 
 - Delivered as `1be97a1`, pushed to main. Hosted
-  [CI 37041636260](https://github.com/beefsack/omnitiler/actions/runs/37041636260)
+  [CI 37041636260](https://github.com/beefsack/OmniTiler/actions/runs/37041636260)
   passed Windows, Rust, KWin and shell jobs. This record is archived at scoped
   completion; physical follow-ups and the provisional choice remain explicit.
 - Backlog proposal: mark item3 maximise delivered with this archived evidence;
   retain physical checks and provisional discrete-toggle choice; next item4
-  belongs to a fresh Lead. No further implementation for this change.
+  belongs to a fresh piece. No further implementation for this change.

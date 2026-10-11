@@ -9,11 +9,10 @@
 
 ## Approach and bounded units
 
-1. Sequential `muse-spark` investigation: locate B-series decisions, fixtures and gate commands.
-2. Sequential implementation Worker: add missing offline repeat fixtures, report exact covered rows and any undecided behavior or reproduced defect.
-3. Lead: inspect actual diff, add a minimal TBD discriminating row for unsupported physical repeat behavior, update backlog as explicitly authorized by the user.
-4. Sequential verification Worker, then fresh independent review Worker; Lead accepts evidence, archives this note, commits intended files and pushes.
-- One active Worker at a time; no nested delegation or `git stash`; Workers do not maintain project records.
+1. Sequential investigation: locate B-series decisions, fixtures and gate commands.
+2. Sequential implementation: add missing offline repeat fixtures, report exact covered rows and any undecided behavior or reproduced defect.
+3. Inspect actual diff, add a minimal TBD discriminating row for unsupported physical repeat behavior and update the backlog.
+4. Sequential verification, then fresh independent review; accept evidence, archive this note and publish intended files.
 
 ## Scoping evidence
 
@@ -29,4 +28,4 @@
 - Physical held-key callback delivery and any required KDE suppression policy remain TBD in a minimal R-MAX-04 / R-FLT-02 discriminator. No physical key fixture or live acceptance claimed. Backlog's offline scope advanced; native repeats and hold/release checks remain pending.
 - Full gates: KWin **1242/1242**, 173 suites; Rust workspace **1270**; native **33/33** (matching cached Nix check log); TS typecheck/bundle, clippy/fmt, `just check-portable`, all nine offline shell suites and `git diff --check` pass. Logs retained. Native non-test derivation rebuilt; the unchanged tests derivation's successful CTest log was inspected.
 - Fresh independent review accepted fixture contracts, source scope, TBD semantics, links and full-gate evidence. Its one minor records finding removed an uncited portable-test count copied from a previous record; the portable gate itself passed.
-- Outcome: offline delivery complete; native repeats and held-key delivery remain user-owned, pending. Four sequential `muse-spark` Workers (investigation, implementation resumed once, verification, independent review); no nested delegation or stash use. Archived after acceptance; commit and push authorized.
+- Outcome: offline delivery complete; native repeats and held-key delivery remain user-owned, pending. Four sequential units (investigation, implementation, verification, independent review). Archived after acceptance.

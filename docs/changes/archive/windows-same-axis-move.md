@@ -32,9 +32,9 @@
 
 - No shared source change required. No new product decision or tentative choice.
 - Native Win32 tooltips name COSMIC / i3, sway; visible text is functional only.
-  Lead-required correction also separated workspace/same-axis radio groups:
+  Required correction also separated workspace/same-axis radio groups:
   otherwise selecting one setting could clear the other setting's radio.
-- Lead ran native allowlisted build/test/fmt/strict clippy and diff check on
+- Ran native allowlisted build/test/fmt/strict clippy and diff check on
   2026-10-11, base `fafcd31` plus accepted diff: passed. Rust 1.99.0 MSVC,
   `MISE_AUTO_INSTALL=0`. Linux/KWin/macOS gates go to publication CI.
 - Portable real Engine regressions cover H4 left/right traveling unequal
@@ -76,5 +76,5 @@
   verification. Publication/CI result follows in the delivery handover.
 - Pushed `755aab8`; publication rebase preserved concurrent `e6f396d` tentative
   triage work (one mechanical adjacent-row spec conflict, no source conflict).
-  CI [38060844283](https://github.com/beefsack/omnitiler/actions/runs/38060844283)
+  CI [38060844283](https://github.com/beefsack/OmniTiler/actions/runs/38060844283)
   completed success: windows, rust, kwin, shell, native and macos. No CI repair.

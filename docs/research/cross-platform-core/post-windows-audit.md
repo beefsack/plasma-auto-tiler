@@ -5,7 +5,7 @@
 - Result: Windows has implemented most single-output parity, but physical acceptance and several product choices remain open. KDE has two stale-toggle-fence defects and needs coverage/acceptance for three shared Engine changes. Windows also independently implemented deferred K2 policy; AR6/AR7 is partially extracted, not complete.
 - Evidence: **V = verified-in-code**, including source/fixture inspection and Git diffs; **R = from-records-only**, including every historical live/physical acceptance claim. No tests or live host operations were run for this audit.
 - Scope: research only. Recommendations below are not selected behavior, architecture or extraction order. S/M/L estimates describe a bounded implementation or verification slice, not calendar time.
-- Governing records: [principles](../../principles.md), [decisions](../../decisions.md#engine-architecture-and-convergence), [previous extraction audit](extraction.md), [K2 boundary audit](../../changes/archive/portable-core-k2-settings-actions.md), [AR6 integration blocker](../../changes/architecture-review-ar6-workspaces.md). No separate change note is created: the request authorizes only this note and matrix rows.
+- Governing records: [principles](../../principles.md), [decisions](../../decisions.md#engine-architecture-and-convergence), [previous extraction audit](extraction.md), [K2 boundary audit](../../changes/archive/portable-core-k2-settings-actions.md), [AR6 integration blocker](../../changes/architecture-review-ar6-workspaces.md). No separate change note is created.
 
 ## A. Windows status
 
@@ -107,8 +107,8 @@ All candidate locations below are **V**. Recommendations are conditional on prer
 - Reused existing rows: R-WS-02/03/04/06 (send/return/boundary), R-START-02/03, R-MAX-03, R-FLT-04, R-DRAG-07/08 and R-CTL-01..07. No duplicate startup/drag/preset scenarios added.
 - Not verified: physical input/repeat delivery, rendered feel, other outputs/DPI, exact new user fixtures, current host min hints during overlays, runtime clean install, and end-to-end settled KDE overlaid-unfloat outcome. Historical test/CI/live claims remain **R**; this audit does not upgrade them.
 - Verification for this documentation-only delivery: source and history cross-checks; final whitespace/diff and cited-path/link checks. Product suites are not rerun because there are no product changes.
-- Workers: three `muse-spark` Worker sessions, sequential: Windows/KDE impact, core comparison (each resumed once), and independent evidence review. Requested subagent routing is visible; actual provider/model identity is not reported by the task tool. Lead corrected claims against source before integration; independent review confirmed the additional B9 divergences and required one citation-range correction.
-- Exact next action: take the decision table to the user; first bounded implementation brief is B1/B2 fixture-first KDE toggle-fence repair, with physical held-key acceptance user-owned. No implementation, commit or push is authorized by this research note.
+- Three sequential sessions: Windows/KDE impact, core comparison, and independent evidence review. Claims corrected against source before integration; independent review confirmed the additional B9 divergences and required one citation-range correction.
+- Exact next action: take the decision table to the user; first bounded implementation brief is B1/B2 fixture-first KDE toggle-fence repair, with physical held-key acceptance user-owned. No implementation follows from this research note.
 
 ## 2026-10-05 follow-up: Q2 minimum infeasibility / Q3 games
 

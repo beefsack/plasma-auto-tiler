@@ -18,8 +18,8 @@
    shell foreground incorrectly suspends tiling. Repair only reproduced defects
    and make fixtures report environment precondition failures explicitly.
 2. Independently review product/live changes; native locked four-package build,
-   test, strict all-target Clippy, rustfmt and relevant harness parse/mock gates.
-   Commit/push accepted units and require hosted Windows/Rust/KWin/shell CI.
+   test, strict all-target Clippy, rustfmt and relevant harness parse/mock gates,
+   requiring hosted Windows/Rust/KWin/shell CI.
 3. Rerun fullscreen repeat/focus/refusal/held-underlay, retained workspace,
    crash/watcher/restart and approved-app cover/exit stages.
 4. Rerun float placement/reflow, focus/repeats, geometry retention, visuals/band,
@@ -58,11 +58,11 @@
   (missing native helper installation and signed-style conversion) repaired and
   independently verified with read-only native probes. Both diagnostics report
   an ordinary uncloaked captioned foreground after recovery.
-- Lead locked four-package build/test/strict all-target Clippy, rustfmt,
+- Locked four-package build/test/strict all-target Clippy, rustfmt,
   whitespace and both fullscreen/float mocks pass after the repairs. Unit 1
   accepted before the bounded live stages.
 - Unit 1 shipped as `3f70136`; hosted Windows/Rust/KWin/shell
-  [CI 37072709516](https://github.com/beefsack/omnitiler/actions/runs/37072709516)
+  [CI 37072709516](https://github.com/beefsack/OmniTiler/actions/runs/37072709516)
   green. Fullscreen bounded stages added held-repeat evidence but did not close
   the full matrices; float admission failed before any toggle. Archive follow-up
   tables retain exact observed scope, limits and local artifact identities.
@@ -86,13 +86,13 @@
   gate cases, four harness parse/mock checks and whitespace gates pass. Earlier
   probe quoting/loader errors were pre-effect tooling failures, not product proof.
 - Remaining fullscreen and all float behavior rows transferred to user-owned
-  acceptance after bounded effort, as authorized. No new provisional product
+  acceptance after bounded effort. No new provisional product
   decision; existing fullscreen metadata and crash-topmost decisions stand.
   No parity item 6 work performed.
-- Lead read-only audit 2026-10-03 09:23:27 +10:00: zero project actors or native
+- Read-only audit 2026-10-03 09:23:27 +10:00: zero project actors or native
   surfaces (including hidden helpers), ready false, ledger/stop/workspace requests
   absent, arranging 1, pen 35, taskbar visible, shell present, hosting Terminal
-  same creation. All Workers completed.
+  same creation.
 - Next action: user restores normal desktop state and passes the ownerless move
   gate, then reruns bounded stages and physical approved-app dogfood. Full live
   acceptance remains open; do not mark parity items 4/5 fully accepted.

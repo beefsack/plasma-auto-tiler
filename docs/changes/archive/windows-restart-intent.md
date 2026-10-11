@@ -90,7 +90,7 @@
   reset `$TileArgs` to empty. Literal native masks and uniquely named launch
   arguments set after sourcing fixed them. Prior keep-above/OS-broker and
   marker-loss explanations were withdrawn. No OS security changes were needed.
-- An early Worker ran forced-loss preflight beyond this unit's graceful-only
+- An early forced-loss preflight ran beyond this unit's graceful-only
   brief. It reported exact-owned cleanup; those probes are not accepted feature
   evidence. Subsequent units explicitly excluded forced loss.
 - Floated foreground can produce existing reconcile focus-mismatch diagnostics;
@@ -107,7 +107,7 @@
   (`Preserve Windows float and sticky intent across restart`). Rebase preserved
   concurrent packaging/licensing `0f5e75e`/`8e04a80` without conflict; no Windows
   or shared Rust production changes entered from that rebase.
-- CI [38100860417](https://github.com/beefsack/omnitiler/actions/runs/38100860417):
+- CI [38100860417](https://github.com/beefsack/OmniTiler/actions/runs/38100860417):
   rust, kwin, shell, native and macos passed; four Windows native hide-classifier
   fixtures failed at the earlier integrity gate. Hosted Windows runs elevated;
   owned invisible windows inherit that integrity. The product correctly refused
@@ -116,4 +116,4 @@
   retains actual topmost/visibility assertions on medium runners. No tests
   ignored, no elevation or product-gate changes. Native four-package tests,
   fmt and strict clippy passed again; production artifact/live evidence above
-  remains current. Follow-up CI outcome is reported in the session handover.
+  remains current. Follow-up CI outcome is reported after publication.

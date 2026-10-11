@@ -12,13 +12,13 @@
 
 ## Acceptance and approach
 
-- Learn the codebase once; share the compact source map with every fill Worker.
+- Learn the codebase once; share the compact source map with every fill unit.
 - Trace every candidate without guessing; independently source-verify each slice.
 - List material differences from approved rules with rule/source locations;
-  do not edit product decisions or infer approval from reference behavior.
+  do not infer approval from reference behavior.
 - Verify occurrence-aware coverage, source citations, unchanged scenarios,
   diff scope and whitespace; reconcile triage ledgers and global totals.
-- Archive this note, commit and push only intended documentation.
+- Archive this note.
 
 ## Bounded units
 
@@ -29,9 +29,6 @@
 5. Mouse (6 N, complete).
 6. Unsupported profile journeys (23 U, complete).
 7. Final independent reconciliation, triage integration and archive (complete).
-
-Workers use `muse-spark`, one active at a time. A separate source verifier
-follows every fill unit. The Lead owns this note and the triage report.
 
 ## Accepted evidence and outcome
 
@@ -70,7 +67,7 @@ follows every fill unit. The Lead owns this note and the triage report.
   verdicts derived from unstated H-to-Tall mapping. Conditional analogues
   remain sourced, but exact Given outcomes retain literal TBD as F.
   SPC-11's classification closes: first/native exits sink to tiled; no
-  beyond-Observe frame/focus blocker. A separate Worker verified all five
+  beyond-Observe frame/focus blocker. A separate check verified all five
   final corrections against pinned source and full scenario wording.
 - All **64 candidates attempted: 25 N + 23 U closed (48)**; **16 N
   reclassified H1/F11/L4**. Original F7/L4 unchanged. xmonad residual
@@ -81,8 +78,8 @@ follows every fill unit. The Lead owns this note and the triage report.
   citations extended at the existing full pins. No new source revision.
 - Initial final-check claims exceeded the executable assertions and were
   rejected. The repaired checker uses exact occurrence keys, literal-TBD
-  membership, all 18 area files and strict baseline scope checks. Lead
-  integration removed bypasses/stale counts and fixed archive/stage handling.
+  membership, all 18 area files and strict baseline scope checks.
+  Integration removed bypasses/stale counts and fixed archive/stage handling.
 - An ad-hoc Ours recount incorrectly included 39 row-footer TBDs; two
   occurrence parsers confirmed the unchanged **169 Ours TBD**, not 208.
 

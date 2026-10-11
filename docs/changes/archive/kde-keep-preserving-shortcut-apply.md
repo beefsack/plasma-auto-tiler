@@ -5,19 +5,19 @@
 - Deliver User 2026-10-08 M13 = B: KDE project Apply/Force preserves current native assignments for Keep; only explicitly staged Authentic requests canonical reset. Compatible resets to Keep and disables known/discovered conflicts without replacements.
 - Native reconciler, KCM staged intent/preview, regression coverage and delivery records only. Ordinary Save isolation, explicit confirmation, owner/foreign-holder revalidation, separate Revert and native-store authority remain acceptance invariants; Windows runtime unchanged.
 
-## Lead readings and approach
+## Readings and approach
 
 - Keep of a present empty assignment stays empty, including unresolved registration. An absent enabled action retains the existing narrow missing-row refusal, never canonical repair.
 - Keep of a conflicting custom assignment shows/scans the actual chord; no silent reset. Canonical/default conflict information remains visible for preset selection.
 - Authentic is one-shot staged intent: confirmed successful Apply/Force consumes it, so later external KDE customization survives the next Apply even with the KCM still open. Failure or decline retains it; Compatible/load/defaults clear it.
 - Use the existing disabled-ID draft plus staged Authentic flag, bind that intent into Force preview/revalidation, skip writes to Keep, and compare final Keep images exactly with preflight/confirmed images. Existing foreign cleared-ID persistence remains unchanged.
-- Minimal action-sequence variants: [R-CTL-05 M13 readings](../../spec/reference-outcomes.md#r-ctl-05-m13-lead-readings). Unsupported reference/live outcomes remain TBD.
+- Minimal action-sequence variants: [R-CTL-05 M13 readings](../../spec/reference-outcomes.md#r-ctl-05-m13-readings). Unsupported reference/live outcomes remain TBD.
 
 ## Bounded units and review
 
-- Lead with four sequential `muse-spark` Workers: implementation (resumed for exact-image verification), full offline verification (resumed for static expectation repair), independent review, and bounded Authentic lifecycle correction. No nested delegation; user stashes untouched. Lead owns records, causal static-test repair and final integration.
+- Four sequential units: implementation, full offline verification, independent review, and bounded Authentic lifecycle correction. Existing stashes untouched.
 - First implementation required a semantic correction: presence-only Keep verification could claim preservation after drift. Exact preflight/confirmed-image comparisons plus selected-write/foreign-clear drift regressions corrected it.
-- Independent mutation-boundary review passed. Lead then corrected persistent post-success Authentic intent with two lifecycle regressions; final focused review verifies the consumed-intent contract.
+- Independent mutation-boundary review passed. Persistent post-success Authentic intent then corrected with two lifecycle regressions; final focused review verifies the consumed-intent contract.
 
 ## Verification and outcome
 

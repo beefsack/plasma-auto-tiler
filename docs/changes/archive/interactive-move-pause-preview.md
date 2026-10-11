@@ -8,7 +8,7 @@ Keep a tiled window under KWin's control throughout an interactive move, includi
 
 - Reproduce the trace's paused move and real focused observation shape in behavior tests; stop ordinary reconcile from writing an observed moving window, using KWin move state rather than a timeout inference. Retain only recovery supported by observation.
 - Preview and drop use the actual mover identity/focus semantics and retain stale/reply fences; explain drag-1 versus drag-4 and missing start, correcting lifecycle issues if necessary.
-- Remove obsolete timer/internal tests; update diagnostic tokens in `docs/dev-loop.md` if changed. Do not touch existing Orchestrator/user edits to `docs/backlog.md` or `devenv.nix`.
+- Remove obsolete timer/internal tests; update diagnostic tokens in `docs/dev-loop.md` if changed. Do not touch `devenv.nix`.
 - Verify KWin npm test and typecheck; Rust workspace tests/fmt/strict clippy if touched; native build and CTest if touched; git diff --check. Record evidence, line deltas, and archive on completion.
 
 ## Bounded units

@@ -18,7 +18,7 @@ semantics. Add bounded effect-side group apply/anchor evidence without raw IDs.
   painting. No new timers, polling, private API, or fallback path.
 - Host-matched native build/CTest, KWin tests/typecheck, Rust checks if changed,
   diff/line deltas and a concise user-owned test-system live check. No agent live
-  testing; leave `devenv.nix` and `docs/backlog.md` untouched.
+  testing; leave `devenv.nix` untouched.
 
 ## Investigation and approach
 

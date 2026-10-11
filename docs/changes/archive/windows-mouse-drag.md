@@ -29,17 +29,17 @@
 
 ## Units And Dependencies
 
-1. Orchestrator split decision: deliver item 7 title-bar slice first, with
+1. Split decision: deliver item 7 title-bar slice first, with
    identity-specific live assertions and a minimum-feasible fixture; discard
-   the unaccepted native-loop Win producer explicitly. Accept, commit/push/CI.
+   the unaccepted native-loop Win producer explicitly. Accept and publish with CI.
 2. One bounded project-driven Win+left movement investigation, never retrying
    SC_MOVE/non-client entry. Deliver a separate accepted unit if simple/correct;
    otherwise discard unaccepted code and park with evidence/options.
-3. Item 8 preview on accepted producers; review, native/live acceptance,
-   commit/push/CI as its own unit. Underlay C stays parked unless trivial.
+3. Item 8 preview on accepted producers; review, native/live acceptance
+   and publication with CI as its own unit. Underlay C stays parked unless trivial.
 4. Promote provisional decisions and matrix evidence, archive record, clean tree.
 
-- Reopened 2026-10-04 by Orchestrator authorization. Prior blocker/evidence below
+- Reopened 2026-10-04. Prior blocker/evidence below
   is historical; new acceptance is measured separately after the split.
 
 ## Current Evidence And Decisions
@@ -76,12 +76,12 @@
 
 - Item 7 is not accepted. Item 8 was not started, preserving the requested
   delivery order. No implementation commit, push or hosted CI run was made;
-  the unaccepted diff is preserved for the Orchestrator's architecture decision.
+  the unaccepted diff is preserved for the architecture decision.
 - Two semantic approaches to Win+drag initiation failed: posted
   `WM_SYSCOMMAND(SC_MOVE|HTCAPTION)` and sent/posted non-client move messages.
   The product path passed owner/window gates and posted successfully but
   produced no move-size events and no displacement. Stop rather than retry.
-- Lead audited the probe evidence: the background jobs in temporary probes
+- Audited the probe evidence: the background jobs in temporary probes
   12/13 passed invalid x64 SendInput size 28 and ignored insertion counts.
   Their stirring/release results are excluded. Other probes also omitted some
   insertion assertions; do not claim an exhaustive eight-variant API proof or
@@ -99,7 +99,7 @@
   and Paint). Caption drops applied in run directories
   `target/windows-mouse-drag/20261004-042436-17816`,
   `20261004-042929-29208`, and `20261004-043420-25304`.
-- Lead inspected the latest log
+- Inspected the latest log
   `%LOCALAPPDATA%/omnitiler/session-1/run-01dd535d6d11b0fe.log`:
   native title drop tick 8 has five writes, six matching native readbacks,
   `drag-drop-applied`, and focused-move underlay show/hide. Later
@@ -113,7 +113,7 @@
 - Six-window minimum-infeasible layout puts Calculator/Paint below the work
   area; this matches the existing minimum-clamp policy and is not repaired here.
   Use a feasible fixture when measuring precise preview/drop geometry later.
-- Final Lead gates: installed native Cargo (mise unavailable), locked
+- Final gates: installed native Cargo (mise unavailable), locked
   four-package build/test, strict all-target Clippy, rustfmt and whitespace
   checks all pass. `scripts/windows-mouse-drag.ps1 -Mock` passes ABI40 and
   positive/negative frame-parser contracts. No shared/KDE source was changed.
@@ -123,7 +123,7 @@
   ledger/stop/workspace request absent, arranging 1, pen visualization 35,
   taskbar visible. Borrowed apps were preserved and baseline geometry restored;
   created Calculator HWNDs were closed. Hosting Terminal tree was preserved.
-- No Worker is running. Tree is intentionally dirty with the blocked source,
+- Tree is intentionally dirty with the blocked source,
   tests, harness, matrix and this archived outcome; no clean-tree claim.
 
 ## Previous Handover (Superseded By Split)
@@ -138,8 +138,8 @@
 - Proposed backlog text: "Windows parity (7) blocked on Win+drag producer;
   caption-drop partial evidence only, cancellation gates pending. (8) pending
   acceptance of (7). Underlay C remains parked with (7)."
-- Exact next action: Orchestrator chooses a bounded replacement-producer
-  investigation or explicitly authorizes a title-bar-only parity slice; preserve
+- Exact next action: choose a bounded replacement-producer
+  investigation or explicitly scope a title-bar-only parity slice; preserve
   this diff and evidence and do not repeat the failed native-entry approaches.
 
 ## Item 7 Title-Bar Slice - Accepted
@@ -168,7 +168,7 @@
   pass. Owner SHA-256:
   `A136B47AEE3936DF3EF9CEF7B145D91C70A751951CE26DB0E429C988BF5F5925`.
 - Earlier sibling-freeze fixture attempts twice misread a numeric-key snapshot
-  table. One Lead causal fixture repair used identity/frame records instead;
+  table. One causal fixture repair used identity/frame records instead;
   the same oracle passed, without product changes. Prior silent borrowed-restore
   mismatch was repaired and readback failure now fails the final verdict after
   all cleanup legs execute. These are not accepted product-success observations.
@@ -193,8 +193,8 @@
   eligible tiled observation, cancel on Esc/zero/invalidation/outside, and retain
   title-bar/native resize behavior. Stage C stays parked. Do not restrict the
   gesture to a pre-focused subject merely to avoid the existing activation gates.
-- This is the one project-driven mechanism investigation selected by the
-  Orchestrator. If it fails the simplicity or acceptance checkpoint, discard
+- This is the one project-driven mechanism investigation selected.
+  If it fails the simplicity or acceptance checkpoint, discard
   its unaccepted code explicitly and continue preview on the accepted title path.
 
 ## Item 7 Project-Driven Win Slice - Accepted
@@ -202,7 +202,7 @@
 - The bounded stationary producer is operational: one prompt WH_MOUSE_LL arm,
   coalesced pointer, bounded Down/Up/Cancel queue, shared owner gesture hold and
   Engine release. No native-loop entry or mid-hold foreign-frame writes.
-- Independent review covered live input/lifecycle. Lead additionally tightened
+- Independent review covered live input/lifecycle. Additionally tightened
   callback-bound full origin/member-tag identity, guaranteed terminal delivery
   on saturation, swallowed Up pairing after cancellation/suspension, synthetic
   mask-state isolation and both-Win terminal release. Deterministic regressions
@@ -254,8 +254,8 @@
   Both producers use fresh Engine preview/hints with opaque sticky prior
   forwarding into the same final drop resolver. No shared/KDE code changed.
 - Independent review resolved actual stacking proof, unfocused mid-hold
-  nonactivation, prior agreement, and source-domain drift. Lead also moved
-  identity/domain/revision invalidation ahead of stationary-pointer handling.
+  nonactivation, prior agreement, and source-domain drift. Identity/domain/revision invalidation also moved
+  ahead of stationary-pointer handling.
   START freezes token/domain/revision; invalidation kills preview eligibility
   until settle, so a later sample cannot rebind to a different domain.
 - Native preview move classification initially failed on caption-border hit
@@ -264,8 +264,8 @@
   tests cover true resize exclusion; no failed native-loop approach was retried.
 - Final source/artifact identity, SHA-256:
   `47662F580D989690AE989158E84F7CB1FB8B0860F61DC848C458152A2AE8A20A`.
-  Lead reran locked four-package build/test, strict all-target Clippy, rustfmt,
-  whitespace and harness mock successfully after the final production changes.
+  Locked four-package build/test, strict all-target Clippy, rustfmt,
+  whitespace and harness mock rerun successfully after the final production changes.
 
 | Report under `target/windows-mouse-drag/` | Accepted evidence |
 |---|---|
@@ -287,7 +287,7 @@
   borrowed apps and the hosting Terminal process tree remain alive.
 - Unaccepted native-loop producer and dormant Win harness code were explicitly
   removed before the title commit; failed resize probes/helpers were removed.
-  No stash or undisclosed discarded work. No Worker is running.
+  No stash or undisclosed discarded work.
 
 ## Final Outcome And Handover
 
@@ -309,5 +309,4 @@
 - Proposed backlog: "Windows parity (7) mouse move and (8) drop preview delivered
   same-output, with provisional stationary Win gesture/focus timing; physical
   checks retained. Underlay C parked. Next (9) multi-output."
-- Exact next implementation action: none for this change. Orchestrator owns
-  backlog advancement, provisional-choice discussion and next item9 assignment.
+- Exact next implementation action: none for this change. Backlog advancement, provisional-choice discussion and next item9 assignment remain queued.

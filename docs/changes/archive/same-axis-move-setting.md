@@ -16,7 +16,7 @@
 
 1. Shared enum, command/protocol propagation, planner/apply validation, core and protocol regression coverage, Windows compile fixes.
 2. KDE config parsing/live reread, move requests, KCM control, existing offline/static/native test coverage.
-3. Lead review/integration, matrix/spec/backlog updates, full requested offline checks, archive and stage intended changes.
+3. Review/integration, matrix/spec/backlog updates, full requested offline checks and archive.
 
 ## Verification
 
@@ -31,8 +31,8 @@
 - Authoritative decisions: `docs/decisions.md`, R-MOV-03 and consensus additions
   item 3.1/3.2; item-3 matrix rows are R-MOV-03, R-MOV-09, R-MOV-10.
   R-MOV-11..13 belong to item 5.
-- Initial worktree clean. Sequential Workers delivered Rust then KDE; an
-  independent read-only Worker reviewed the public contract and apply rules.
+- Initial worktree clean. Sequential units delivered Rust then KDE; an
+  independent read-only review of the public contract and apply rules.
 - Review found acceptance test gaps, now closed: leftward unequal-share apply,
   N-ary protocol missing/default wrap discrimination, root/nested boundary
   parity, and KCM same-axis retry/combined saves.
@@ -50,14 +50,14 @@
   supplies it per move. Reload changes no tree or shortcut registration.
   KCM Save uses the existing reconfigure request/retry path, reports pickup
   unconfirmed, and reserves restart-required state for workspaceMode.
-- Lead's added codec round-trip assertion initially failed compilation because
+- Added codec round-trip assertion initially failed compilation because
   `SyncCommand` is deserialize-only (E0277). One causal test-only repair
   encodes the actual validated enum wire token into JSON and decodes it back;
   no production codec API added. Final full-workspace checks pass.
 - Initial final Nix command exceeded the 120-second tool limit. Retried with
   a 600-second limit; both native builds succeeded, CTest 33/33 confirmed in
-  the final test-enabled derivation log. Worker-created `result` link removed
-  by that Worker; final commands use `--no-link`, no live installation.
+  the final test-enabled derivation log. Created `result` link removed;
+  final commands use `--no-link`, no live installation.
 
 ## Outcome and verification (2026-10-07, offline)
 
@@ -104,5 +104,5 @@
   switching back on existing nested trees. User-owned; no live result claimed.
 - Windows native build/runtime and real settings wiring remain Windows-owned;
   only Linux portable Windows compilation/testing was performed here.
-- No blocking ambiguity or open product question. Orchestrator next action:
-  review the staged change and commit/push using the proposed single-line message.
+- No blocking ambiguity or open product question. Next action:
+  review the staged change and publish using the proposed single-line message.

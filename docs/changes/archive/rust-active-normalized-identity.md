@@ -11,7 +11,6 @@ authority adapter entries with the established normalized native ID.
   Planner, build, or host action.
 - Preserve all eligibility, duplicate-identity, authority, retry, refusal, and
   validation behavior.
-- Do not update backlog or decisions records.
 
 ## Acceptance And Approach
 

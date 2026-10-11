@@ -13,11 +13,11 @@ behavior or ambiguity (reference WMs disagree, or our behavior is undecided).
 Reuse existing coverage rather than duplicating a scenario with a
 trivially different start state.
 
-### R-FLT-06 Lead readings
+### R-FLT-06 readings
 
 Minimal variants of [R-FLT-06](reference-outcomes/floating.md#r-flt-06-float-toggle-over-a-maximized-window), recorded with the [B9 delivery](../changes/archive/maximized-intentional-unfloat.md). These qualify the ordinary-float row without changing fullscreen or sticky policy.
 
-| Variant | Action sequence | Ours KDE offline outcome / Lead reading | References / native |
+| Variant | Action sequence | Ours KDE offline outcome / reading | References / native |
 | --- | --- | --- | --- |
 | Fixed explicit override | Admit fixed B as an automatic float; maximize B; toggle ordinary float off once; observe again | Clear maximize, observe clear, fresh-admit; successful explicit tile commits D3/D7 override, so B does not re-auto-float | Fixed admission floats per profile: COSMIC min-max `S(S-cos-min)`; Hyprland `suggestsFloat` min-max `S(S-hyp-float)`; bspwm fixed admission `S(S-bsp-admit)`; i3 fixed floats `S(S-i3-min)`; xmonad fixed/transient `S(S-xmo-float)`; sway `wants_floating` fixed `S(S-sway-max)`; qtile fixed-size rules `S(S-qti-float)`; awesome fixed implicit `S(S-awe-fixed-dynamic)`; niri `compute_open_floating` `S(S-nir-spc)`; karousel shapeability gate `S(S-kar-spc)`; PaperWM `add_filter` admits Normal non-transient only with rejects floating `S(S-pap-spc)` (fixed-size mapping TBD). Maximize legs per R-MAX-01 (bspwm/i3/xmonad/sway no maximize counterpart; PaperWM width-only `S(S-pap-widthmax)`; paneru host-only `S(S-pan-axfs)`). Toggle legs per R-FLT-06: COSMIC unmaximize-first `S(S-cos-flttoggle)`; Hyprland clear/re-apply retaining `S(S-hyp-float)`; qtile unfloat with maximize dropped `S(S-qti-float)` + `S(S-qti-fs)`; awesome explicit-only flip `S(S-awe-float)` + `S(S-awe-fs)`; i3/sway standard disable `S(S-i3-flt-toggle)` / `S(S-sway-float)`; niri plain move `S(S-nir-flttoggle)`; karousel state flip `S(S-kar-acts)` + `S(S-kar-float)`. Explicit-override commit has no reference counterpart (Ours-only); settled frames/focus TBD |
 | Clear not confirmed | Intentionally float B; maximize B; toggle float off while clear is refused or remains unobserved; press again after normal state is observed | No admission on unconfirmed clear, float intent retained, logged narrow refusal with no stuck flight; later explicit press fresh-admits | No reference profile has an observation gate: each toggle path runs synchronously in source with no pending or refused-clear branch (COSMIC unmaximize-first `S(S-cos-flttoggle)`; Hyprland clear/re-apply `S(S-hyp-float)`; qtile unfloat `S(S-qti-float)`; i3 `floating_disable` `S(S-i3-flt-toggle)`; sway `container_set_floating` `S(S-sway-float)`; awesome `set_floating` `S(S-awe-float)`; niri plain move `S(S-nir-flttoggle)`; karousel state flip `S(S-kar-acts)`). Refused/unobserved-clear hold with later-press recovery is Ours-only; native clear ack and focus visuals TBD in every row (true runtime, live-only) |
@@ -40,11 +40,11 @@ establish KGlobalAccel's held-key delivery or select a repeat-suppression policy
 | --- | --- | --- | --- |
 | Held orientation toggle | Focus B in `H[A,B*]`; hold Win+O past repeat delay; release; press once again | Tentative, pending user review: one toggle on discrete down, consumed repeats do not retoggle; release/repress returns H. Classifier/queue tests 2026-10-11, base `755aab8` + delivery commit ([record](../changes/archive/windows-parent-orientation-toggle.md)) | Windows physical delivery/OS suppression TBD, user-owned. KDE held callback behavior and exact reference-WM held sequence TBD; no unsupported outcome inferred |
 
-### R-CTL-05 M13 Lead readings
+### R-CTL-05 M13 readings
 
 Minimal variants of [R-CTL-05/06](reference-outcomes/restart-persistence.md#r-ctl-05-shortcut-staging-and-apply), User 2026-10-08 M13 = B. Native store stays authoritative; these are offline KDE outcomes, not live acceptance or selected Windows runtime changes.
 
-| Variant | Minimal action sequence | Ours KDE offline outcome / Lead reading | References / native |
+| Variant | Minimal action sequence | Ours KDE offline outcome / reading | References / native |
 | --- | --- | --- | --- |
 | Keep custom / canonical | Assign a custom chord in KDE Shortcuts (repeat with canonical); keep row checked; confirm project Apply | Assignment unchanged; post-write verification compares the preserved image | No counterpart: pinned shortcut inventories define bindings only with no Keep/staging verbs, so a kept custom chord has no native leg; outcome TBD (owner-specific, project-only Keep). COSMIC `S(S-cos-shortcut)`; Hyprland `S(S-hyp-shortcut)`; bspwm `S(S-bsp-ctl)`; i3 `S(S-i3-bind)`; xmonad `S(S-xmo-ctl)`; sway `S(S-sway-bind)`; qtile `S(S-qti-keys)`; awesome `S(S-awe-keys)`; niri `S(S-nir-acts)`; PaperWM `S(S-pap-acts)`; karousel `S(S-kar-acts)`; paneru `S(S-pan-cmds)` |
 | Keep empty | Clear a project's assignment (or observe unresolved empty registration); check Keep; confirm Apply | Stays empty; Keep never repairs or enables it | No counterpart: same binding-only inventories list no Keep/empty-repair verbs; outcome TBD (owner-specific, project-only Keep). `S(S-cos-shortcut)` + `S(S-hyp-shortcut)` + `S(S-bsp-ctl)` + `S(S-i3-bind)` + `S(S-xmo-ctl)` + `S(S-sway-bind)` + `S(S-qti-keys)` + `S(S-awe-keys)` + `S(S-nir-acts)` + `S(S-pap-acts)` + `S(S-kar-acts)` + `S(S-pan-cmds)` |
@@ -68,7 +68,7 @@ outcomes remain pending ([record](../changes/archive/reference-comparison-implem
 | Unconfirmed maximize clear (G-06, R-MAX-08) | Maximize B; move right while native clear refuses or remains unobserved; later press after restore | One attempt per invocation; log refusal, keep structural state, no delayed move. Later press can move. KDE refusal fixtures delivered offline | Exact reference and native failure-timing outcomes TBD |
 | Surviving-empty MRU (G-37, R-WS-23) | Visit empty WS1 then occupied WS2 on L; keep WS1 live, migrate WS2 right with MRU | WS1 qualifies while still in the remaining source ring, even empty. If lifecycle removes it, fall back to last remaining; never recreate. Shared/KDE selector fixtures delivered offline | Exact reference outcomes and native lifecycle timing TBD |
 
-### Tentative orchestrator discriminators 2026-10-11 (pending user review)
+### Tentative discriminators 2026-10-11 (pending user review)
 
 Tentative expected targets only, pending user review; no implementation
 authorized. Ours and reference/native outcome cells below are TBD; no native
@@ -4963,7 +4963,7 @@ minimum-size stays a supplemental file (not nested in resize).
 | Close / reflow | [close.md](reference-outcomes/close.md) | R-CLOSE-01..05 (5) | none (R-CLOSE-03..05 landed with scrolling backfill) |
 | Multi-output | [multi-output.md](reference-outcomes/multi-output.md) | R-OUT-01..07 (7) | R-OUT-07 added 2026-10-07; reference source legs filled, unsupported legs TBD; KDE item 5 R-OUT-01/04/07 delivered offline; native journey/Windows wiring pending |
 | Mouse | [mouse.md](reference-outcomes/mouse.md) | R-DRAG-01..08 + R-MOU-01..03 (11) | none (R-MOU-01..03 landed with scrolling backfill) |
-| Special windows | [special-windows.md](reference-outcomes/special-windows.md) | R-SPC-01..13 (13) | R-SPC-04/06..13 KDE implemented offline under user-selected NORMATIVE D1-D8 (User 2026-10-08; D1/D5/D6 delivered offline, D7 implementation pending); R-SPC-11/12 changed-hint/predicate/repeated-toggle and maximized-enable variants discriminate Lead readings; native, Windows wiring and unsupported reference outcomes TBD |
+| Special windows | [special-windows.md](reference-outcomes/special-windows.md) | R-SPC-01..13 (13) | R-SPC-04/06..13 KDE implemented offline under user-selected NORMATIVE D1-D8 (User 2026-10-08; D1/D5/D6 delivered offline, D7 implementation pending); R-SPC-11/12 changed-hint/predicate/repeated-toggle and maximized-enable variants discriminate readings; native, Windows wiring and unsupported reference outcomes TBD |
 | Activation | [activation.md](reference-outcomes/activation.md) | R-ACT-01..02 (2) | none (landed; no backfill: no prior rows) |
 | Restart / persistence | [restart-persistence.md](reference-outcomes/restart-persistence.md) | R-START-01..03 + R-CTL-01..07 + R-RST-01..04 (14) | Q3 KDE intentional membership implemented offline under user-selected NORMATIVE D1-D4 (User 2026-10-08; fixed-window tile-override persistence pending); R-RST-03/04 cover frame drift and automatic-vs-intent origin; native, Windows and unsupported reference legs TBD |
 | Column mechanics | [column-mechanics.md](reference-outcomes/column-mechanics.md) | R-COL-01..10 (10) | none (landed) |

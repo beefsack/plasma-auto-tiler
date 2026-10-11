@@ -5,8 +5,7 @@
 User-approved 2026-09-24: carry observed min/max size hints through the KWin
 adapter to the portable core; take space from siblings to honor satisfiable
 minimums; mark unsatisfiable windows overconstrained instead of reasserting;
-accept evidence-backed client-clamped geometry without drift/park. The
-Orchestrator also approved bounded correlated diagnostics for geometry-cover
+accept evidence-backed client-clamped geometry without drift/park. Also approved: bounded correlated diagnostics for geometry-cover
 and partial-observation membership skew. Gates and native code remain intact.
 
 ## Approach and acceptance
@@ -38,7 +37,7 @@ and partial-observation membership skew. Gates and native code remain intact.
   counts toward park. Correlated default-visible per-member cover-skew logs
   include observed flags and known floating source; partial-observation
   compares adapter last-good when available, otherwise says retained unknown.
-- The Orchestrator selected option (1), applying the user's approved AR12
+- Selected option (1), applying the user's approved AR12
   language: R4 never writes plan-flagged overconstrained members. Native proof
   reads every member's output, exact desktop membership and geometry; ack and
   verify carry fresh client-held geometry for flagged members and require exact

@@ -6,15 +6,15 @@
   D11, D14, D15, D17-D21 and D24 in the triage report at `27a97c4`.
 - Promote exactly 16 requirement rows: 105/60/0 becomes 121/44/0
   NORMATIVE/OPEN/PROVISIONAL; reconcile current decisions, triage and backlog.
-- Preserve pending decisions, Proposal B approval, native unknowns, user stashes
+- Preserve pending decisions, Proposal B approval, native unknowns, existing stashes
   and `docs/principles.md`. Documentation only; no live testing.
 
 ## Approach and bounded units
 
-1. Read-only muse-spark investigation of selected behaviors and current code.
-2. Lead records rules, implementation/verification work and pending live checks.
-3. Fresh independent muse-spark consistency check of the four durable records.
-4. Inspect intended diff; commit, pull with rebase, push; stop on conflict.
+1. Read-only investigation of selected behaviors and current code.
+2. Record rules, implementation/verification work and pending live checks.
+3. Fresh independent consistency check of the four durable records.
+4. Inspect intended diff.
 
 ## Accepted investigation and material decisions
 
@@ -35,17 +35,16 @@
 
 ## Verification and outcome
 
-- Fresh independent muse-spark review PASS: exactly the approved 16 rows
+- Fresh independent review PASS: exactly the approved 16 rows
   promoted, 121/44/0 totals, 44 OPEN IDs agree with the index (existing in-row
   MAX-09 fullscreen note retained), 15 concise current rules, matching backlog
   and triage approvals/pending units. Links and `git diff --check` pass.
-- Lead inspected the four-file diff; no product implementation, live tests,
+- The four-file diff inspected; no product implementation, live tests,
   new settings approval or Proposal B classification is implied. No findings,
   semantic failed approaches or unresolved documentation acceptance gaps.
 - Added the P1 batch-1 KDE/shared item and one grouped user-owned native-check
   entry. Existing Windows handoff item 6 covers resize; no new handoff number.
-- Documentation outcome complete; publish with the requested commit message,
-  local commit then pull/rebase and push. Next product action: D05 shared/KDE
+- Documentation outcome complete. Next product action: D05 shared/KDE
   admission repair; D06/D17 need user-owned observe-first checks. Next user
   decision queue retains D01, then D28/D03 in the report order; raise the
   settings-timing meta-question with D03.

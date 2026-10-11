@@ -1,6 +1,6 @@
 # KWin resilience fixes (offline, 2026-09-26)
 
-Audit source claims for H, J, B, C, E and U were rechecked against `dbbf822` before editing; all six held. This is an Orchestrator-approved ordinary implementation of the user's Resilience principle, with no product-choice or architecture change. No live KWin/Plasma testing or session mutation was performed.
+Audit source claims for H, J, B, C, E and U were rechecked against `dbbf822` before editing; all six held. This is an ordinary implementation of the user's Resilience principle, with no product-choice or architecture change. No live KWin/Plasma testing or session mutation was performed.
 
 | Row | Outcome and current source | Behavioral evidence |
 | --- | --- | --- |

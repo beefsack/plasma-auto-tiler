@@ -1,19 +1,17 @@
 # Release 0.1 tentative decisions
 
 - Goal: record the remaining 13 triage units, settings scope and Proposal B as
-  tentative orchestrator decisions dated 2026-10-11, pending user review.
+  tentative decisions dated 2026-10-11, pending user review.
 - Scope: triage report, functional spec, current-rule decision pointers and
   backlog, including source-inspected KDE/shared implementation gaps. Docs only;
-  no behavior changes or live testing. User explicitly authorizes backlog edits.
+  no behavior changes or live testing.
 - Acceptance: affected spec rows PROVISIONAL, never NORMATIVE; exact counts and
   indexes reconciled; defaults-only 0.1 with P2 settings follow-up; P1 gap table
   and Windows handoff boundary; tentative M39/K12/W2 and N1-N4 action/oracle queue.
-- Approach: one muse-spark Worker inspects KDE/shared code, then bounded docs
-  reconciliation. Lead integrates backlog and reviews evidence.
+- Approach: inspect KDE/shared code, then bounded docs reconciliation, backlog
+  integration and evidence review.
 - Verification: repository docs/link checks if available, requirement/index
   counts, changed local links and git whitespace check; CI after publication.
-- Coordination: clean-tree pull/rebase at start and after local commit; stage
-  only owned docs, stop on non-trivial conflict, preserve user stashes.
 - Material findings: admission has overlay geometry guards but no fullscreen
   focus fence; ordinary float sends are tiled-only; minimize omission has no
   stored old-slot restoration; activation/urgency routing is absent. Existing
@@ -26,11 +24,10 @@
   Backlog has the P1 per-unit implementation assessment, P2 settings follow-up,
   Windows handoff item 22, N1-N4 action/expected-result queue and listed D26/D28
   tentative limitations. Four minimal discriminators retain native outcomes TBD.
-- Accepted evidence: serial muse-spark source investigation, independent
+- Accepted evidence: serial source investigation, independent
   uncertain-path review and final independent docs review. Counts/indexes and
   changed local link targets/anchors pass; `git diff --check` passes. No dedicated
   docs/link recipe exists in justfile or CI. No behavior or live tests changed.
-- Publication: authorized local commit, clean-tree rebase/push and exact-commit
-  CI check; CI result is reported in the handover after publication.
+- Publication: exact-commit CI check after publication.
 - Next action: user review of tentative decisions, especially D26 fallback;
   approved code units then proceed through KDE/shared work and Windows handoff.

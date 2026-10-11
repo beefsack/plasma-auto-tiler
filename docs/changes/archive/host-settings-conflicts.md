@@ -61,7 +61,7 @@ change to icon click behavior. Shipped offline; panel visuals remain to check.
 
 User decisions 2026-09-29: Fix all three `[Windows]` keys above; Revert restores
 KDE defaults with **no** preimage, ownership tracking, journal, or stale
-refusal. Orchestrator simplification: delete the local key for either boolean
+refusal. Simplification: delete the local key for either boolean
 Revert and `ElectricBorders` Fix, with no duplicate Borders Revert or retry
 state. Settings-page-only alert now; tray indicator/icon opening normal
 Settings later, not here. Uninstall should restore defaults, but its mechanism

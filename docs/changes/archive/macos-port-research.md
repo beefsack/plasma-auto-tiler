@@ -4,14 +4,14 @@
   three-host portable-core comparison.
 - Scope: research and documentation only; no product code, dependencies, live
   desktop mutation or approved product decision. Preserve the user's
-  `devenv.nix` edit and do not edit the architecture review.
+  `devenv.nix` edit.
 - Acceptance: cover development, process, AX/TCC, input, Spaces/managed
   workspaces, visuals, UI, licensing and distribution; cite V/O/I evidence,
   recommend architecture/spikes, expose user decisions and risks. Compare
   KWin/Windows/macOS capability and sharing boundaries in the extraction audit.
 - Approach: four sequential, fresh, bounded macOS API, visuals/upstream,
-  delivery/runtime and local-core Workers returned cited findings; Lead
-  reconciled the plans and source-audited portable boundaries.
+  delivery/runtime and local-core units returned cited findings; plans
+  reconciled and portable boundaries source-audited.
 - Outcome: added `docs/research/macos-port/plan.md`, updated
   `docs/research/cross-platform-core/extraction.md` and cross-linked
   `docs/research/windows-port/plan.md`. Proposed choices remain unapproved;

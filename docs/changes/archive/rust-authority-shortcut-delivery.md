@@ -50,4 +50,4 @@ is `rust-development`, without starting legacy topology or pointer authority.
 1. Separate shortcut registration and mode-gated command dispatch from legacy
    controller lifecycle.
 2. Add focused authority/shortcut/package regressions and verify the bundle.
-3. Record outcome, archive this note, and stage only reviewed files.
+3. Record outcome and archive this note.

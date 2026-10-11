@@ -68,7 +68,7 @@ Revert restores KDE defaults for cleared non-project actions.
 ## Verification (offline, uncommitted tree)
 
 - Recorded interim verification per `docs/changes/archive/multi-output-failures.md`
-  (Lead note, 2026-09-26): `just build-native-effect`, host-matched native
+  (Note, 2026-09-26): `just build-native-effect`, host-matched native
   CTest 29/29 (shortcut subset 15/15 at the transport green point), and
   `git diff --check` pass. Interim tree ~2500 insertions / ~5080 deletions
   vs HEAD, covering transport seam (`defaultShortcutKeys`,

@@ -27,20 +27,20 @@ existing reconfigure path and effect `kwinrc` group.
   effect translates window paint data and the item's whole subtree. The group
   outline is instead a scene overlay painted after windows, so it remains
   stationary. The user's lower-layer hypothesis is not the slide mechanism.
-- Orchestrator decision applying the user's beneath-all requirement: anchor
+- Decision applying the user's beneath-all requirement: anchor
   below the lowest-stacked group member, re-anchor on stacking or membership
   change; reject the active-window anchor. Default underlay colour is
   `#40808080` (translucent grey). Accept painting over the edge of a non-group
   window stacked below the anchor where the extension overlaps it.
-- Orchestrator authorization: add one `SetGroupHighlight` field with the
+- Authorized: add one `SetGroupHighlight` field with the
   already-validated group member IDs (the focused-window identifier kind),
   without logging raw IDs. Native effect can then identify the lowest member
   with public KWin stacking order; re-anchor on stack/membership changes.
-- Orchestrator decision: raise the setter payload limit to the existing 64 KiB
+- Decision: raise the setter payload limit to the existing 64 KiB
   Planner reply bound, with a plain member list and no new storage machinery,
   fences, or fallbacks. Update the existing limit test; no new large-payload
   harness. No size-dependent suppression within the accepted reply bound.
-- Orchestrator size interpretation: extension in px beyond border outer edge;
+- Size interpretation: extension in px beyond border outer edge;
   unset default follows configured border width.
 
 ## Bounded units
@@ -50,7 +50,7 @@ existing reconfigure path and effect `kwinrc` group.
 2. Carry the already-validated group member IDs across the existing setter,
    then choose the lowest stacked member with public KWin APIs and replace
    the group visual, preserving all policy gates.
-3. Verify offline, promote user and Orchestrator decisions to
+3. Verify offline, promote user and technical decisions to
    `docs/decisions.md`, then archive this note (complete).
 
 ## Outcome and evidence

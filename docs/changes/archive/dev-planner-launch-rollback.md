@@ -30,7 +30,7 @@ when `dev-on` fails after disabling it.
 
 - One implementation unit updates recipe lifecycle handling and documentation.
 - One independent review unit assesses the ownership and rollback diff.
-- The Lead verifies static commands, an isolated rollback failure, then the
+- Verifies static commands, an isolated rollback failure, then the
   authorized live dev-on and reload sequence.
 
 ## Verification

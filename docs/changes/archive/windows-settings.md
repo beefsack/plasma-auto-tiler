@@ -65,13 +65,13 @@
 - Owner settings lifecycle logs acknowledge validated configuration adoption;
   native geometry/SPI logs and readbacks remain the effect oracle, not that ack.
 - Unit 1 committed as `df4edc5`; hosted CI green:
-  <https://github.com/beefsack/omnitiler/actions/runs/37164626150>.
+  <https://github.com/beefsack/OmniTiler/actions/runs/37164626150>.
 - Unit 2 accepted: native Win32 settings window, CLI and Explorer-broker just
   recipe, per-user/session singleton, full-content stale-edit refusal,
   Apply/Revert/Close, scrolling conflict detail and preset/binding editors.
   Only feature flags on the existing `windows-sys` dependency were added.
 - Unit 2 committed as `1c97c52`; all hosted CI jobs green:
-  <https://github.com/beefsack/omnitiler/actions/runs/37168520942>.
+  <https://github.com/beefsack/OmniTiler/actions/runs/37168520942>.
 - Final pairing review reproduced two extra rebound-key faults: concurrent
   distinct physical keys sharing a canonical slot could steal each other's
   releases, and an untracked rebound-away key-up could close the held remap.
@@ -82,12 +82,12 @@
   modifier flips and remap removal. Current native gates pass after this fix;
    UI/native-effect evidence below remains the scoped pre-fix live run.
 - Pairing correction committed as `999f2f3`; all hosted CI jobs green:
-  <https://github.com/beefsack/omnitiler/actions/runs/37169854020>.
+  <https://github.com/beefsack/OmniTiler/actions/runs/37169854020>.
 - Initial UI screenshot acceptance failed: opaque topmost groupboxes covered
   their controls. Parent clipping alone did not fix it; native sibling-order
   inspection identified the cause, and lowering the groupboxes before show
-  corrected both screen and PrintWindow output. Final screenshots were inspected
-  by the Lead. CRLF details and saved-state labels were corrected too.
+  corrected both screen and PrintWindow output. Final screenshots inspected.
+  CRLF details and saved-state labels were corrected too.
 - Live proof on 2026-10-04, physical Windows 11 build 26200, medium/session 1,
   one output/DPI 120: two identified owned helpers, normal owner scoped to
   `tiler-test-window.exe`, native Settings window, and our own settings file.
@@ -118,8 +118,8 @@
   gates and macOS tool smoke checks are green for every implementation unit.
 - Final exact-tag helper close, exact-owner stop then restore: no processes,
   overlays, ledger or hidden helper; original settings-file absence restored;
-  SPI arranging 1, pen visualization 35, normal taskbar present. Lead read-only
-  cleanup recheck agrees. No Worker remains running.
+  SPI arranging 1, pen visualization 35, normal taskbar present. Read-only
+  cleanup recheck agrees.
 
 ## User-owned checks and deferred scope
 

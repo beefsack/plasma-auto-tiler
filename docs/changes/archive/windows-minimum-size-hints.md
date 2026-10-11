@@ -33,10 +33,10 @@ Status: complete, physically accepted including populated-workspace send,
 
 1. Implementation and focused offline evidence.
 2. Fresh independent review of integration, observation coverage and bounds.
-3. Fresh live verification Worker, scoped by chat authorization and the live
+3. Fresh live verification, scoped by authorization and the live
    Windows guide; one mechanical harness repair/retry if needed.
-4. Records/evidence validation; Lead promotes decisions, archives this note,
-   advances backlog and stages explicit paths without committing.
+4. Records/evidence validation; promote decisions, archive this note,
+   advance backlog and stage explicit paths without committing.
 
 ## Known evidence
 
@@ -56,17 +56,17 @@ Status: complete, physically accepted including populated-workspace send,
   scheduling are not hard realtime. No persistent hint cache.
 - Independent review identified hidden-destination omission, per-domain log
   pruning, missing action correlation, and a soft query deadline. Corrected
-  coverage and log joins; Lead clamped remaining wait and removed dead
-  same-operation caching/timing fields after Worker dispatch overloads.
+  coverage and log joins; remaining wait clamped and dead
+  same-operation caching/timing fields removed after dispatch overloads.
 - Current native four-package build/test/strict clippy, all-package fmt and
-  whitespace gates pass. Lead's first budget-constant build hit a u32/u64
+  whitespace gates pass. First budget-constant build hit a u32/u64
   mismatch; the direct cast repair restored the gates. No KDE/core source
    changes. Current-artifact live evidence is below; send was pending at that
    stage and was subsequently physically accepted (see closure).
 - Gate transcript: `tool_0fb2522fd001uQtBi2PMJ7Ut4j`.
-- Initial live Worker dispatch failed three times before starting, each with
+- Initial live dispatch failed three times before starting, each with
   backend temporarily overloaded; no desktop experiment ran in that session.
-   Subsequent Workers ran successfully; send acceptance was pending then.
+   Subsequent dispatches ran successfully; send acceptance was pending then.
 - Read-only end check, 2026-10-02 16:25:47 +10:00: zero project processes,
   enumerated Notepad/Paint/ApplicationFrameWindow windows visible; arranging
   raw 1, pen raw 35. Session directory has no ledger JSON, stop request or

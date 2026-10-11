@@ -18,12 +18,12 @@
 
 ## Approach and bounded units
 
-- M13 Keep-preserving Apply delivered offline 2026-10-09; specification, Lead readings, bounded units and evidence are in the [archived M13 record](archive/kde-keep-preserving-shortcut-apply.md). This umbrella record remains active for user-owned KDE acceptance.
+- M13 Keep-preserving Apply delivered offline 2026-10-09; specification, readings, bounded units and evidence are in the [archived M13 record](archive/kde-keep-preserving-shortcut-apply.md). This umbrella record remains active for user-owned KDE acceptance.
 
 1. Investigation: existing KCM is Qt Widgets, not QML; full script catalog has directional, toggle, workspace, and alias actions. Existing correction backend handles a smaller conflict table. Accepted source investigation, no live evidence.
 2. Implementation: extend the existing reconciler to support the full catalog and explicit selected bindings, reuse KGlobalAccel persistence for own cleared assignments, add staged Widgets controls and meaningful hermetic coverage. Keep native transport and cleared-foreign-ID storage.
 3. Independent review: inspect the shortcut mutation boundary and stale confirmation/recovery behavior; resolve concrete findings.
-4. Integration: commit/push accepted units, hosted gates, decisions and live-check documentation, final record.
+4. Integration: hosted gates, decisions and live-check documentation, final record.
 
 ## Verification and outcome
 
@@ -33,8 +33,8 @@
 - Independent mutation-boundary review found unreadable current/default chords, missing-enabled-row success claims, and reopening losing Disable choices. Corrections accepted by source inspection with targeted regression coverage; Force also binds action presence, unknown draft IDs refuse, and disabled focus excludes Lock/Meta+Esc.
 - The first implementation needed a semantic correction for those review findings; no failed live/product experiment occurred. Native gate source fileset/build-directory integration was corrected before its first hosted execution.
 - Hosted native CTest is now wired alongside existing Rust/KWin/shell jobs without changing `devenv.nix`. Local `git diff --check` passes.
-- First hosted run on `e1bb52a` ([37188296548](https://github.com/beefsack/omnitiler/actions/runs/37188296548)): Rust/KWin/shell/Windows/macOS passed; native production/test compilation passed under `-Werror`, but 3 of 33 CTest suites failed. One causal test repair removes duplicate workspace rows already supplied by full-catalog seeds, updates preview assertions to readable chords, and checks both the exempt lock holder and keyed-only foreign holder. Product behavior and mutation oracles unchanged.
-- Accepted final implementation evidence on `cdd4ef4` ([37188768454](https://github.com/beefsack/omnitiler/actions/runs/37188768454)): all six hosted jobs green (Rust, KWin, shell, native, Windows, macOS). Native production/test build under `-Wall -Wextra -Werror` and all 33 CTest suites passed, including both selection suites. KWin tests/typecheck include native/TypeScript catalog parity. No local Linux or live desktop evidence is claimed.
+- First hosted run on `e1bb52a` ([37188296548](https://github.com/beefsack/OmniTiler/actions/runs/37188296548)): Rust/KWin/shell/Windows/macOS passed; native production/test compilation passed under `-Werror`, but 3 of 33 CTest suites failed. One causal test repair removes duplicate workspace rows already supplied by full-catalog seeds, updates preview assertions to readable chords, and checks both the exempt lock holder and keyed-only foreign holder. Product behavior and mutation oracles unchanged.
+- Accepted final implementation evidence on `cdd4ef4` ([37188768454](https://github.com/beefsack/OmniTiler/actions/runs/37188768454)): all six hosted jobs green (Rust, KWin, shell, native, Windows, macOS). Native production/test build under `-Wall -Wextra -Werror` and all 33 CTest suites passed, including both selection suites. KWin tests/typecheck include native/TypeScript catalog parity. No local Linux or live desktop evidence is claimed.
 - Live acceptance remains pending: follow the conflict-list/preset section in `docs/live-shortcut-override-verification.md`. Keep this record active until user-owned KDE acceptance.
 - M13 pending live check: **M13 Keep preserves custom KDE chords across Apply**. Keep now preserves actual assignments; Authentic stages canonical reset and its intent is consumed on successful Apply/Force. Failed/declined attempts retain the staged intent.
 

@@ -31,7 +31,7 @@
 4. Fresh independent review of native mutation/public contracts; scoped live
    harness and automated verification, then material corrections if needed.
 5. Current-tree standard gates, evidence/outcome and backlog update, delivery
-   commit/push and hosted Windows/Linux CI.
+   and hosted Windows/Linux CI.
 
 ## Verification contract
 
@@ -86,8 +86,7 @@
 - Independent native mutation/public-contract review accepted the slice with
   no must-fix findings. Locked stable four-package build/test, strict all-target
   clippy, fmt-all, PowerShell parsing, Just dry-runs, proof mock and whitespace
-  checks passed. Delivery and hosted Windows/Linux CI are recorded in Git and
-  the terminal handover.
+  checks passed. Delivery and hosted Windows/Linux CI are recorded in Git.
 - End readbacks: arranging raw 1, pen visualization raw 35; zero project actors,
   no ledger.json or stop.request; Notepad, Calculator/AFH, Paint and Terminal
   remain open and unmaximized. Firefox was untouched. No hook remains.
@@ -100,7 +99,7 @@
   old receipts are retained unchanged. Final offline gates passed after these
   repairs; the passing live path is unchanged.
 
-## Previous Lead outcome before correction
+## Previous outcome before correction
 
 - Slice is incomplete. Implementation and proof tooling remain in the working
   tree; no feature delivery or physical-input acceptance is claimed. Records
@@ -202,7 +201,7 @@
 
 - Initial hardcoded 0x201E/0x201F targeted pen visualization, not arranging.
   The earlier reports `004351`/`004403` are invalid mouse-Snap evidence.
-  Pen visualization changed from an initial worker-observed raw 35 to 1;
+  Pen visualization changed from an initial observed raw 35 to 1;
   those initial JSON receipts coerced the value to boolean and did not retain
   the raw preimage. Recovery `20261002-004839-35820-pen-recovery` restored raw
   35 with three stable readbacks. The documented pointer-style pen SET yielded
@@ -216,7 +215,7 @@
   restored and the dead-owner ledger cleaned before the two passing repeats.
   This is observed adapter behavior on build 26200, not an API-success claim.
 
-## Previous Lead gates and desktop state
+## Previous gates and desktop state
 
 - Current-tree locked stable four-package build/test, strict all-target clippy,
   fmt-all, pwsh-7 parsing of four scripts, Just evaluation, proof mock and

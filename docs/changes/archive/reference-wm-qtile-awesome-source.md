@@ -8,17 +8,17 @@
 
 ## Acceptance and approach
 
-- Sequential bounded muse-spark Workers assess sections 1-6 and 7-12, followed by an independent review Worker per column. Direct Lead-to-Worker topology requires no nested delegation.
+- Sequential bounded units assess sections 1-6 and 7-12, followed by an independent review per column.
 - Confirm qtile's shipped Columns/Max profile. Select awesome's first shipped tiling layout for tiling scenarios and explicitly retain shipped defaults otherwise.
 - Source citations resolve to pinned repo:path:line evidence keys. Unsupported actions, underspecified fixtures and native outcomes retain short reasoned TBDs.
-- Verify table widths, unchanged row IDs/order and protected cells, citation resolution and source pins, plus git diff --check before each column commit/push.
-- Lead owns this note and, by explicit user authorization, the final backlog update. No new rows unless a finding requires minimal discriminating coverage.
+- Verify table widths, unchanged row IDs/order and protected cells, citation resolution and source pins, plus git diff --check before each column publication.
+- No new rows unless a finding requires minimal discriminating coverage.
 
 ## Units and dependencies
 
-1. qtile profile and sections 1-6; sections 7-12; independent review; Lead verification, commit and push.
-2. awesome profile and sections 1-6; sections 7-12; independent review; Lead verification, commit and push.
-3. Final accounting, archive this note, update the functional-spec backlog line, commit and push.
+1. qtile profile and sections 1-6; sections 7-12; independent review; verification and publication.
+2. awesome profile and sections 1-6; sections 7-12; independent review; verification and publication.
+3. Final accounting, archive this note, update the functional-spec backlog line and publish.
 
 ## Current evidence
 
@@ -31,8 +31,8 @@
 - Shipped default config confirmed: Columns initially, Max available. X11/Wayland differences are qualified in cells, including native maximize restore and owner restart support.
 - Columns admits C above focused B in the right column (`H[A,V[C*,B]]`), uses column-local reorder/carry rather than arbitrary tree restructure, and does not directionally transfer across outputs. Float-origin layout focus walks tiles; floated targets are excluded.
 - Maximize/fullscreen use floating states with fresh tiled re-admission. Shipped drag uses the floating tweak path; explicit tiled pointer-hit swapping is unbound. No tab-stack or workspace floating-layout toggle is in this profile.
-- Independent review corrected native maximize restoration: X11 client unmaximize only echoes the property and leaves MAXIMIZED, so repress toggles it off; Wayland request drives state, so repress maximizes again. Review also closed an answerable insertion-order gap and tightened restart/drag evidence. Lead expanded shorthand paths for unambiguous citation checking.
-- Lead integrity verification passed against 548146d: 12 14-column tables, 58 unchanged IDs/order, protected cells/profiles/register/prose identical, all citation keys resolve and target pins/ranges valid; git diff --check clean. No new rows or live testing.
+- Independent review corrected native maximize restoration: X11 client unmaximize only echoes the property and leaves MAXIMIZED, so repress toggles it off; Wayland request drives state, so repress maximizes again. Review also closed an answerable insertion-order gap and tightened restart/drag evidence. Shorthand paths expanded for unambiguous citation checking.
+- Integrity verification passed against 548146d: 12 14-column tables, 58 unchanged IDs/order, protected cells/profiles/register/prose identical, all citation keys resolve and target pins/ranges valid; git diff --check clean. No new rows or live testing.
 - Committed and pushed as c32eb48, Record source-proven qtile reference outcomes.
 
 ### qtile residual TBD accounting
@@ -53,8 +53,8 @@
 - Focus includes floating and tiled candidates. Tile is stateless master/stack over the global client list; newcomers append last, tag transfers retain list position, close/reopen appends a new client. Maximize/fullscreen exclude the client from tile allocation without a placeholder.
 - Per-tag floating/tile layout selection implements workspace disable/enable: floating layout does not arrange or change per-client floating intent; tile recalculates eligible clients in retained list order, preserving intentional floats. No rectangle-based startup inference.
 - Tiled mouse movement swaps on hover, with no stack join, pickup threshold or Escape cancellation. Mod4 and titlebar producers are source-qualified. Explicit floating state and client order persist; sticky is also restored through EWMH hint roundtrip, with native visibility/origin journey TBD.
-- Independent review corrected Mod1 to Mod4, traced insertion/order and native maximize requests into core C, and completed sticky restart evidence. Lead reconciliation rejected an initial unsupported-enable interpretation (one semantic failed approach): a workspace-scoped action maps to per-tag layout.set, not a nonexistent global flag. Review then corrected START-01..03/FLT-04/MAX-03 consistently. No unresolved findings or causal harness repair.
-- Lead integrity verification passed against c32eb48: 12 14-column tables, 58 unchanged IDs/order, protected cells/profiles/register/prose identical, citations resolve and target pins/ranges valid; git diff --check clean. No new rows or live testing.
+- Independent review corrected Mod1 to Mod4, traced insertion/order and native maximize requests into core C, and completed sticky restart evidence. Reconciliation rejected an initial unsupported-enable interpretation (one semantic failed approach): a workspace-scoped action maps to per-tag layout.set, not a nonexistent global flag. Review then corrected START-01..03/FLT-04/MAX-03 consistently. No unresolved findings or causal harness repair.
+- Integrity verification passed against c32eb48: 12 14-column tables, 58 unchanged IDs/order, protected cells/profiles/register/prose identical, citations resolve and target pins/ranges valid; git diff --check clean. No new rows or live testing.
 - Committed and pushed as 046a1e8, Record source-proven awesome reference outcomes.
 
 ### awesome residual TBD accounting
@@ -67,8 +67,8 @@
 
 ## Handover
 
-- Sequential muse-spark Workers completed two bounded source units and one independent review per column, using direct Lead-to-Worker dispatch without nested delegation.
-- All earlier columns, Ours and Variant preserved; no product/decision changes, new rows, live testing, dependency installs or user-owned devenv.nix staging. No suspected earlier-column source errors confirmed.
-- Backlog advanced by explicit user authorization: all eight reference source passes complete, all eight commits listed, native user testing and reference-variant choices remain open.
+- Sequential units completed two bounded source units and one independent review per column.
+- All earlier columns, Ours and Variant preserved; no product/decision changes, new rows, live testing, dependency installs or existing devenv.nix staging. No suspected earlier-column source errors confirmed.
+- Backlog advanced: all eight reference source passes complete, all eight commits listed, native user testing and reference-variant choices remain open.
 - Reusable gotchas: qtile has backend-specific native maximize handling; awesome floating layout is not per-client floating intent, directional verbs are APIs rather than shipped keys, and EWMH sticky persists independently of the Lua persistent-property register.
 - Exact next action: user tests native priority TBD rows R-WS-02, R-WS-04, R-WS-05, R-START-03 and R-MAX-01, then chooses reference differences to adopt. No further source-column work remains.

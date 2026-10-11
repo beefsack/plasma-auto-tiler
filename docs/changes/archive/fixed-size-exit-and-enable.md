@@ -13,22 +13,22 @@
 
 ## Acceptance and bounded units
 
-1. Sequential muse-spark Worker: shared core/KDE implementation and targeted
+1. Shared core/KDE implementation and targeted
    regressions, including held born-fullscreen exits and both predicates.
-2. Lead: inspect integration and update decisions/spec/reference outcomes,
+2. Inspect integration and update decisions/spec/reference outcomes,
    Windows handoff and backlog as explicitly requested by the user.
-3. Sequential muse-spark Worker: full offline gates and exact evidence/counts.
-4. Fresh independent muse-spark Worker: review diff and acceptance; resolve
-   findings before authorized commit and push.
+3. Full offline gates and exact evidence/counts.
+4. Fresh independent review: review diff and acceptance; resolve
+   findings before delivery.
 
 ## Verification and outcome
 
 - Initial HEAD `844e3ee`, clean; baseline KWin 1195, Rust 1256, native 33/33.
 - Required gates: KWin tests/typecheck/bundle, Rust workspace tests/clippy/fmt,
   native CTest, portable/Windows allowlist and nine offline shell suites.
-- Lead owns records; one active Worker at a time. No live tests or installs.
+- No live tests or installs.
 
-## Accepted implementation and Lead choices
+## Accepted implementation and choices
 
 - Shared convergence holds born-fullscreen clients slotless until exit, then
   classifies with current hints/predicate; adapter automatic-origin assertions
@@ -37,23 +37,23 @@
   clear when fixed. Confirmed-release enable resets sighted automatic and
   ordinary admission pins, preserving omitted identities, explicit user tile
   overrides and float intent.
-- Lead reading of first exit: first observed non-fullscreen state for the
+- Interpretation of first exit: first observed non-fullscreen state for the
   exact live client, using then-current hints/predicate. Subsequent toggles
   retain ordinary admission identity (D2); no birth-time hint snapshot.
-- Lead reading of D6/Q3 intersection: fixed automatic windows remain slotless
+- Interpretation of D6/Q3 intersection: fixed automatic windows remain slotless
   on enable even while maximized, then restore floating; explicit tile
   overrides retain Q3 reserved-slot behavior. This follows D6's every-window
   check and no-touch game-safety rule. Repeated workspace enables recheck.
 - R-SPC-11/12 contain minimal discriminating variants for these readings;
   unsupported reference and native outcomes remain TBD.
-- Lead rejected the first no-op enable approach: it skipped current-hint/
+- The first no-op enable approach rejected: it skipped current-hint/
   predicate rechecks of retained automatic and ordinary admission pins.
   Separate ordinary pins from explicit wins and reset only at confirmed
   enable; regressions cover both. No unresolved failed approach.
 
 ## Offline delivery evidence (2026-10-09)
 
-- Final full verification Worker: KWin 1207 tests / 171 suites, Rust workspace 1264
+- Final full verification: KWin 1207 tests / 171 suites, Rust workspace 1264
   tests, native CTest 33/33, all zero failures. Typecheck and production bundle,
   strict workspace clippy, fmt and `just check-portable` pass.
 - CI Windows portable allowlist build/test/clippy (1116 tests) pass on Linux; no native
@@ -72,4 +72,4 @@
   Keep wire suppression during transfer to preserve D2, with no new schema.
 - Independent reviewer rechecked corrections and accepted the final diff with
   no blockers. Final full gates and `git diff --check` pass after corrections.
-- Ready for user-authorized commit and push; live checks remain user-owned.
+- Ready for publication; live checks remain user-owned.

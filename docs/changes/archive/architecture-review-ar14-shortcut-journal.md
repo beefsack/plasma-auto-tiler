@@ -61,7 +61,7 @@
    completed-to-focus-applied demotion, pending-phase preservation, original
    six preimages, the same error tokens and persist-before-write. Preserve
    v2-only-six-entry Revert and the entire v3 recovery path. No KCM UI change.
-3. Independent Worker reviewed the plan before implementation. If a proposed
+3. Independent review of the plan before implementation. If a proposed
    deletion changes user-visible behavior or recovery, stop rather than make
    that cut. Verify each green slice with focused hermetic native tests, then
    run the documented host-matched
@@ -101,10 +101,10 @@ kcmshell6 recovery contradicts current approvals.
   as unsupported: `git diff --numstat` is 62 added / 68 removed production
   lines (net -6), plus 132 added test lines; no test count changed.
 - Host-matched verification after the source change: `just build-native-effect`
-  passed for host KWin 6.7.5 (host-matched KWin 6.7.5 derivation); the Worker built the
-  shortcut test in the matching derivation shell and ran focused
-  `ctest -R native-effect-shortcut` (9/9); the Lead rebuilt the entire native
-  test target set in the matching host derivation shell with generalized
+  passed for host KWin 6.7.5 (host-matched KWin 6.7.5 derivation); the
+  shortcut test built in the matching derivation shell and ran focused
+  `ctest -R native-effect-shortcut` (9/9); the entire native
+  test target set rebuilt in the matching host derivation shell with generalized
   `nix develop <kwin-derivation> --command bash -c 'cmake --build target/kwin-native-test-build && ctest --test-dir target/kwin-native-test-build --output-on-failure'`
   (27/27). `git diff --check` passed. No live KWin/Plasma testing or host
   configuration mutation occurred.

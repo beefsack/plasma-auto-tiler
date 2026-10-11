@@ -11,26 +11,25 @@
 
 ## Approach and bounded units
 
-- Lead: processed-beef-orchestrate. Sequential muse-spark Workers; no stash,
-  nested delegation, live testing, source-repository edits, or Worker commits.
+- Sequential units; no live testing or source-repository edits.
 - Workspace transfer/history rows; workspace migration discriminators; move;
   layout; multi-output; maximize/floating; special windows; restart/controls.
-- Each Worker edits its bounded area and required legend entries, returns
+- Each unit edits its bounded area and required legend entries, returns
   cell-by-cell evidence, counts and possible consensus impact.
-- Lead checks actual diffs and a citation sample for each unit, reconciles
+- Check actual diffs and a citation sample for each unit, reconcile
   affected consensus counts without selecting new behavior.
 
 ## Acceptance and verification
 
 - Local source HEADs match matrix pins; KWin evidence uses KDE/kwin 8438567a
   raw source or the existing upstream KWin source tree at pinned commit 8438567a.
-- Independent muse-spark review rechecks a random sample of at least 15% of
+- Independent review rechecks a random sample of at least 15% of
   filled cells and at least 10 against sources. Fix errors; if a batch has
   more than one error, re-sample that batch.
 - git diff --check passes; Markdown table column counts stay unchanged;
   Ours outcomes and product decisions stay unchanged.
-- Stage intended docs only; authorized commit message:
-  docs: source-fill reference matrix TBD cells. Push without force/amend.
+- Stage intended docs only with message:
+  docs: source-fill reference matrix TBD cells. Publish without force/amend.
 
 ## Accepted evidence and status
 
@@ -47,11 +46,11 @@
   legs are not established by the pinned source. Product decisions, Ours
   cells, functional specification and all GWT fixture/action bullets are
   unchanged.
-- Nine sequential implementation Workers (muse-spark: two workspace units,
+- Nine sequential implementation units (two workspace units,
   move, layout, output, maximize/floating, two special-window units,
-  restart/controls) plus one independent muse-spark reviewer. No nested
-  delegation, source mutations, stash or live testing.
-- Lead spot-checks corrected bspwm sticky transfer direction, awesome sticky
+  restart/controls) plus one independent reviewer. No
+  source mutations, stash or live testing.
+- Spot-checks corrected bspwm sticky transfer direction, awesome sticky
   membership, bspwm's transient NULL source desktop, and sway's output-active
   query after ownership changes. Independent review corrected three COSMIC
   Up-cross claims: the default first attempts the previous workspace and
@@ -78,7 +77,7 @@
   New layout, explicit-send, fixed-hint/override and overlay-carry counts
   qualify selected NORMATIVE rows without changing them. The historical
   125-row consensus tables remain the dated snapshot.
-- Delivery: authorized per-area commits, each pushed with message
+- Delivery: per-area commits, each pushed with message
   `docs: source-fill reference matrix TBD cells`. No remaining action beyond
   the documented fixture/native/runtime TBD legs and user review of flagged
   evidence.

@@ -104,7 +104,7 @@
   for reassessment with parity item 7; add parity item 11 reminder to decide
   accent/configured colour and remove the temporary yellow development default.
   Physical follow-ups above remain explicit. Next implementation action: none
-  for this change; the next parity item belongs to a fresh Lead.
+  for this change; the next parity item belongs to a fresh piece.
 
 ## Dogfood geometry correction (2026-10-11)
 

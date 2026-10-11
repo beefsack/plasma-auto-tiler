@@ -48,17 +48,15 @@ Ours is counted separately and is out of scope for reference source tracing.
   existing cell/row/profile text and light pinned-source inspection for ambiguity.
 - Report per-WM totals/classes, not-attempted area splits, missing-host-source
   and fixture-gap aggregates, and ranked expected source-pass yields.
-- Independently spot-check a classification sample with a separate Worker.
+- Independently spot-check a classification sample.
 - Verify coverage, counts, unchanged matrix/scenarios, diff scope and whitespace;
-  commit and push this report only.
+  publish this report only.
 
 ## Initial triage bounded units
 
 1. Inventory plus one bounded per-WM classification unit at a time.
 2. Reconcile aggregates and rank per-WM passes split by area.
-3. Independent spot-check, report integration, checks, commit and push.
-
-Workers use muse-spark, one active at a time. The Lead owns this note.
+3. Independent spot-check, report integration, checks and publication.
 
 ## Current evidence and classification method
 
@@ -76,7 +74,7 @@ Workers use muse-spark, one active at a time. The Lead owns this note.
   tokens. Separate explicit-swap cells under MOV-01/MOV-03 count separately.
   Five repeated WM/area/row triples give 1,006 cells but 1,001 distinct triples:
   Hyprland MOV-01/03, PaperWM MOV-01/03, paneru MOV-01.
-- Workers read each remaining cell, its Given/When/Observe, global profile and
+- Each remaining cell read with its Given/When/Observe, global profile and
   existing notes; ambiguous cases received light source inspection, not full
   tracing. Existing source citations support triage but do not prove closure.
   A primary class identifies the selected remaining blocker; compound cells
@@ -103,9 +101,9 @@ Workers use muse-spark, one active at a time. The Lead owns this note.
   Preserve unknown user-tested versions and the distinction between policy
   evidence and runtime acceptance. Approved deliberate deviations remain intact.
 - Source access: some COSMIC/Hyprland/bspwm temporary exports were
-  empty or mismatched and were not accepted as pinned evidence. Workers used
-  existing pinned citations, verified sibling checkouts where available, and
-  pinned raw files for light checks. No sources were cloned or newly pinned.
+  empty or mismatched and were not accepted as pinned evidence. Existing
+  pinned citations used, sibling checkouts verified where available, and
+  pinned raw files used for light checks. No sources were cloned or newly pinned.
 
 ## Per-WM summary
 
@@ -460,7 +458,7 @@ and persistence/special-window slices; U cells were evaluated with their area.
   text; this pass does not reconcile that product decision.
 - No scenario/code/source-checkout/stash changes or live testing.
 - Final executable reconciliation: 95 assertions passed after independent
-  review and the Lead's archived-path checker repair, including
+  review and the archived-path checker repair, including
   every per-WM class partition/actual TBD count, N-area row/column totals,
   occurrence/scope/citation checks, fixture membership and exact COSMIC H/F/L
   ledger reconciliation. Three stash object identities and source pin preserved.
@@ -617,7 +615,7 @@ and persistence/special-window slices; U cells were evaluated with their area.
   all TBD occurrences, including five duplicated row/profile keys.
 - Initial triage aggregates reconciled: WM/area N totals 506; H 37; F 178 across 63 rows;
   L 97; U 188. The fixture table's cell counts sum to 178.
-- Initial triage independent Worker sampled 48 cells, at least three per WM, spanning all
+- Initial triage independent sample of 48 cells, at least three per WM, spanning all
   classes (N17/H9/F15/L4/U3). Forty-seven rationales confirmed; paneru
   MOV-03 was corrected to refer to the actual TBD explicit-swap leg rather
   than the resolved main leg. Its N class is unchanged. Three secondary

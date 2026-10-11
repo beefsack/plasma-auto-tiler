@@ -15,8 +15,8 @@
 - Whole-workspace migration ranks by largest shared edge, then left/top.
 - Unreadable topology refuses; no candidate is a no-op; no wrap.
 - Record deliberate deviation from COSMIC origin-distance selection.
-- Sequential muse-spark units: implementation/regressions, independent contract
-  review, offline verification. Lead owns durable docs and backlog integration.
+- Sequential units: implementation/regressions, independent contract
+  review and offline verification.
 
 ## Verification and decisions
 
@@ -36,16 +36,16 @@
 
 ## Review, corrections and accepted evidence
 
-- Lead rejected initial pinned R4 left/top re-selection: selecting a non-left/top
+- Initial pinned R4 left/top re-selection rejected: selecting a non-left/top
   candidate could otherwise change the pair between transfer and membership.
   Dispatch target identity is now pinned with the source, checked against fresh
   topology without re-ranking the relocated mover. Removal/drift still refuses
   through existing currency/lifetime fences and forces reconciliation.
-- Lead corrected silent skipping of unreadable Rust topology and overlap-ranking
-  within multiple centre-containing edges. Regressions distinguish unreadable
+- Silent skipping of unreadable Rust topology and overlap-ranking
+  within multiple centre-containing edges corrected. Regressions distinguish unreadable
   topology from no candidate, mismatched source rectangles, and direct left/top
   ties from the overlap fallback. No accepted behavior remains in conflict.
-- Independent muse-spark review found no correctness regressions; its real-Engine
+- Independent review found no correctness regressions; its real-Engine
   integration gap was closed with production-entry multi-candidate move/send/
   migration fixtures. They verify selected non-left/top targets, actual planner
   geometry/work-area bounds and native transfer/membership/follow. Separate

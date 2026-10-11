@@ -3,7 +3,7 @@
 - Goal: portable settings semantics and action intent used by KDE without changing saved keys, action names/chords, startup behavior or native configuration/Force/Revert ownership.
 - Scope/acceptance: audit the existing boundary first; stop before implementation if full K2 needs new messages, generated/shared data, build steps or a synchronized TS copy. Compact behavioral fixtures only; core remains dependency-free.
 - Outcome: user decision 2026-09-30, option A below: keep what Rust already owns (gap bounds, typed operations); leave settings and the shortcut catalog in TS until the Windows port needs a shared contract and shows its shape. No product code or fixtures added. K3 (difference classification, also TS-only at `kwin/src/plan-adapter.ts:2360`) is deferred with it; the KDE-first extraction ends at K1.
-- Units: fresh muse-spark audit, Lead source review, unchanged-baseline gates and source-verified future-check handover (complete).
+- Units: fresh audit, source review, unchanged-baseline gates and source-verified future-check handover (complete).
 
 ## Findings
 

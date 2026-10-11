@@ -4,11 +4,11 @@
 - Scope: nested splits/gaps, adoption fit with overlapping-window centre fallback, complete membership/float convergence and incomplete-observation refusal.
 - Non-goals: product changes, new wrappers/dependencies, K1 visual policy, Windows work, agent-run live KDE checks.
 - Acceptance: audit existing coverage; add only missing behavioral evidence; retain the no-normal-dependencies guard; pass all requested offline gates; hand off source-verified manual KDE checks.
-- Approach: one fresh bounded muse-spark Worker at a time; Lead reviews diffs and records accepted evidence. Preserve the user's `devenv.nix` change.
+- Approach: review diffs and record accepted evidence. Preserve the existing `devenv.nix` change.
 - Units: coverage audit, vertical overlapping-adoption fixture and refusal-coverage confirmation, source-verified live-check handover, offline verification (all complete).
 - Audit decision: existing exact nested projections and convergence lifecycle fixtures establish those baselines. Do not add arbitrary-depth, convergence-count or primitive-binding tests merely to exercise internals. Vertical overlapping adoption lacks a matching behavioral projection fixture.
 - Verification: CI Rust workspace tests, fmt and strict clippy; `just check-portable`; devenv KWin tests/typecheck; offline no-build flake check; diff whitespace check. Native build/CTest only if native files change.
-- Outcome (2026-09-30): offline K0 complete. Added only `seed::tests::vertical_overlap_beyond_tolerance_centre_splits`: exact stable-window geometry for both input orders and one centre split. Lead review removed redundant topology/share assertions. No product behavior or dependency changes. User live acceptance remains separate and pending; K1 has not started.
+- Outcome (2026-09-30): offline K0 complete. Added only `seed::tests::vertical_overlap_beyond_tolerance_centre_splits`: exact stable-window geometry for both input orders and one   centre split. Review removed redundant topology/share assertions. No product behavior or dependency changes. User live acceptance remains separate and pending; K1 has not started.
 
 ## Accepted coverage
 
@@ -47,5 +47,5 @@ The initial fmt check rejected only the new fixture's long lines; `cargo fmt --a
 - Incomplete/unreadable refusal remains offline evidence; do not force broken native observations. If naturally encountered, `omnitiler:plan:focus-refused-observe` (`kwin/src/plan-adapter.ts:2186`) means no focus plan was dispatched, not an empty-domain removal.
 
 - Risks/open questions: manual KDE evidence pending; no unresolved implementation question. Save diagnostics are explicitly unconfirmed, and fresh adoption requires the correct lifecycle precondition.
-- Next action: Orchestrator reviews/stages the three intended files, preserving `devenv.nix`, and coordinates user K0 single/multi-output baseline observations before K1.
-- Backlog handover (Orchestrator-owned): K0 offline baseline complete; user KDE baseline pending; K1 remains next and unstarted.
+- Next action: review/stage the three intended files, preserving `devenv.nix`, and coordinate user K0 single/multi-output baseline observations before K1.
+- Backlog handover: K0 offline baseline complete; user KDE baseline pending; K1 remains next and unstarted.

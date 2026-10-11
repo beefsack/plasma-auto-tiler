@@ -48,7 +48,7 @@ shortcuts-stop run_dir:
 
 # Bounded owned-helper visibility proof over the product nonce mechanism
 # (physical, medium, no hooks/policy). Never runs by default; never touches
-# non-owned windows. Callable by the next worker:
+# non-owned windows. Callable directly:
 # `pwsh -NoProfile -File scripts/windows-hide-proof.ps1`.
 hide-proof:
     pwsh -NoProfile -File scripts/windows-hide-proof.ps1

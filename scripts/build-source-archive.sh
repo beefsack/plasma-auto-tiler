@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the offline KDE 0.1 source archive from a tracked release tag.
 #
-# Archive contract (for the distro/OBS packaging worker):
+# Archive contract (for distro/OBS packaging):
 #   - File:   dist/omnitiler-<VERSION>.tar.gz
 #             plus sidecar dist/omnitiler-<VERSION>.tar.gz.sha256
 #             ("<digest>  <basename>", same shape as build-kpackage.sh).

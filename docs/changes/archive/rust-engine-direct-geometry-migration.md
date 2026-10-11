@@ -67,7 +67,7 @@ production behavior through incremental opt-in promotion.
    signals drive observation and pointer resize; no polling. Compare desired,
    applied, and acknowledged state without changing legacy authority. Gate with
    trace replay, static adapter tests, and user-owned manual layout/focus journey.
-5. Promote small direct-geometry slices one at a time: focus/navigation; R1-R4
+5. Promote small direct-geometry slices: focus/navigation; R1-R4
    movement; keyboard resize; pointer resize; drag reconciliation/placement; and
    add/remove. Each promoted path replaces its legacy path with no fallback while
    other production paths remain legacy.

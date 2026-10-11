@@ -3,7 +3,7 @@
 ## Evidence
 
 - `[C-OBS-2]`: refers to direct visual observation of two local screenshot
-  files, read by the agent's image tool during this research task:
+  files, read with an image tool during this research task:
   - `Screenshot_2026-08-20_12-46-44.png`
   - `Screenshot_2026-08-20_12-46-57.png`
   - Both captured 2026-08-20. Both show the COSMIC top panel with the same

@@ -10,7 +10,7 @@
 ## Scope and plan
 
 - Windows adapter only; fullscreen-send suppression stays separately scoped.
-- Worker diagnoses and implements; Lead reviews trace/diff, gates and publishes.
+- Diagnose and implement; review trace/diff, gates and publish.
 - No live tests, owner/hook/window launches, input or dependency installs.
 
 ## Verification

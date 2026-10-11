@@ -1,5 +1,5 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Source: https://github.com/beefsack/omnitiler
+Source: https://github.com/beefsack/OmniTiler
 
 Comment: Tentative offline-preparation metadata, not a complete licensing audit.
  The KPlugin metadata declares the license below. The repository has no

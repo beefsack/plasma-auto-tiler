@@ -73,7 +73,7 @@
   fullscreen/unreadable/invalid classification. Existing recovery suites pass.
 - Independent reviews rejected the initial focus guard as insufficient and
   unused test seams, then required style-error/invalidation and no-plan reporting
-  repairs. Corrections reviewed and accepted by the fresh verification Worker.
+  repairs. Corrections reviewed and accepted by fresh verification.
 - Scoped scripts now require same-action correlated pass/write evidence before
   the terminal action summary. Helper success requires verified focus, no veto,
   zero mismatch and positive source/target writes on the first changed send;
@@ -128,14 +128,14 @@
 - Both helper attempts recovered. Successful graceful/forced-loss cycles kept
   original minimized/maximized show state, then normalized/closed owned helpers.
   Final report says actors absent, ledger clean, arranging 1, pen 35. Independent
-  final read-only Lead probe also reads zero project actors, arranging raw 1,
+  final read-only probe also reads zero project actors, arranging raw 1,
   pen raw 35; no ledger/stop/workspace-request remains. The historical zero-byte
   ledger.lock is a lease file, not recovery residue. Approved apps remain visible,
   unminimized and unmaximized; nothing project-owned remains running.
-- Preflight command error: the first Worker accidentally invoked windows-dev.ps1
-  bare, launching its non-tiling dev owner. Verified stop/restore removed it
+- Preflight command error: windows-dev.ps1 accidentally invoked
+  bare on the first attempt, launching its non-tiling dev owner. Verified stop/restore removed it
   before the helper run. Source confirms that default launches run, not tile;
-  subsequent Workers used parse/Mock only. No unfiltered tiling was launched.
+  subsequent runs used parse/Mock only. No unfiltered tiling was launched.
 
 ## Ordinary-app completion, 2026-10-02
 
@@ -166,7 +166,7 @@
 - Graceful stop/independent restore and exact-owner forced-loss/watcher reveal
   both pass. Calculator's minimized state survives hide/reveal; Terminal stays
   visible outside scope. Admission and exact-tag close of the owned helper pass.
-- Final report and independent Lead read-only probe agree: zero project actors,
+- Final report and independent read-only probe agree: zero project actors,
   no ledger/stop/workspace request, arranging raw 1, pen raw 35. All three approved
   HWNDs still match their recorded PIDs and are visible, unminimized and
   unmaximized. No hidden test window remains.

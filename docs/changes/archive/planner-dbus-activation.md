@@ -40,8 +40,7 @@ changing the public `engineAuthorityMode=legacy` default.
    Home Manager ownership boundary.
 2. Add the KWin one-flight D-Bus activation transport with focused regressions.
 3. Add package descriptor, user unit, Home Manager option, and evaluation checks.
-4. Review, run focused verification, record the approved decision/outcome, and
-   stage only this slice.
+4. Review, run focused verification and record the approved decision/outcome.
 
 ## Outcome
 

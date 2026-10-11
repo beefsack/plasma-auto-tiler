@@ -16,7 +16,7 @@
 - Record real approved-rule comparisons in the preceding table format.
 - Reconcile occurrence-aware scope, citations, triage counts/ledgers and links;
   verify unchanged scenarios/profiles/rules and documentation scope/whitespace.
-- Archive this note, commit/push intended documentation.
+- Archive this note.
 
 ## Bounded units
 
@@ -25,8 +25,6 @@
 3. Workspaces/outputs (5 N + 3 U, corrected and independently verified).
 4. Sticky restart/session/control/startup (1 N + 11 U, corrected and independently verified).
 5. Final residual/comparison audits, triage reconciliation and archive (complete).
-
-Workers use `muse-spark`, one active at a time; Lead owns records.
 
 ## Accepted evidence
 
@@ -63,7 +61,7 @@ Workers use `muse-spark`, one active at a time; Lead owns records.
   global **520 reference TBD: N0/H78/F302/L140/U0**. No N/U remains in any WM.
 - Final scope/source audit verified all latest corrections. Its rejection of
   policy-only comparisons solely for in-fixture convergence was not accepted:
-  prior per-WM tables include such differences. A separate Worker sourced five
+  prior per-WM tables include such differences. A separate check sourced five
   additional comparisons; final audit independently rechecked all five.
   The first OUT-01 comparison used a neighboring focus/wrap path; correction
   traced `move_to_output_directed` and preserved its no-wrap convergence.

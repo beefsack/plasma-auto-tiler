@@ -12,13 +12,13 @@
 
 ## Acceptance and approach
 
-- Learn the codebase once and pass its compact source map to every fill Worker.
+- Learn the codebase once and pass its compact source map to every fill unit.
 - Trace every candidate without guessing; independently source-verify each slice.
 - Record approved-rule comparisons in the preceding per-WM table format;
   reference evidence does not approve changes to Ours.
 - Reconcile occurrence-aware scope, citations, triage ledgers and counts;
   verify unchanged scenarios and documentation-only diff scope/whitespace.
-- Archive this note, commit and push only intended documentation.
+- Archive this note.
 
 ## Bounded units
 
@@ -28,9 +28,6 @@
 4. Workspaces/output/groups: 8 N + 5 U (verified).
 5. Session/control/startup/special windows: 4 N + 11 U (verified).
 6. Residual/comparison audit, reconciliation, triage and archive (integrated).
-
-Workers use `muse-spark`, one active at a time. A separate source verifier
-follows each fill unit. The Lead owns this note and the triage report.
 
 ## Accepted evidence and outcome
 

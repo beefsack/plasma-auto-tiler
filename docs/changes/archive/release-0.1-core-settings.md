@@ -19,20 +19,16 @@ consumers and offline distro builds. No live desktop mutation or OBS provisionin
 
 ## Approach and bounded units
 
-1. Worker investigation: ABI ownership, feasible build split and verification tools.
-2. Worker implementation: CMake, distro/Nix packaging and installation guidance.
-3. Worker verification and independent packaging-contract review as needed.
-4. Lead integration, decisions/evidence, archive and clean-tree rebase/push/CI.
+1. Investigation: ABI ownership, feasible build split and verification tools.
+2. Implementation: CMake, distro/Nix packaging and installation guidance.
+3. Verification and independent packaging-contract review as needed.
+4. Integration, decisions/evidence, archive and CI.
 
 ## Constraints and decisions
 
 - 2026-10-11: clean-tree initial pull succeeded at `37af573`.
-- One muse-spark Worker active at a time; Workers load processed-beef-work-unit.
 - Linux host dependencies only via devenv.nix. Disposable offline builder
   containers may reuse the prior packaging verification environment.
-- Concurrent Windows main pushes: never pull dirty; stage only this change;
-  commit, clean-tree rebase, push; stop on non-trivial conflict. Preserve stashes.
-- Implementation, verification, commit and push authorized in autonomous mode.
 - User-approved 2026-10-11: core `omnitiler` owns both Settings KCMs;
   `omnitiler-native-effect` owns only the ABI-bound effect. Core means
   the distro package, not `crates/tiler-core`; no KDE code enters that crate.
@@ -43,8 +39,8 @@ consumers and offline distro builds. No live desktop mutation or OBS provisionin
 
 - ABI finding accepted: both KCM targets link only Qt/KF6; extracted Arch ELF
   KCMs have no libkwin NEEDED or undefined KWin symbols. The effect control has
-  libkwin NEEDED and 100 undefined KWin symbols. Lead reproduced script KCM
-  readelf dependencies. Sources use D-Bus, not KWin headers.
+  libkwin NEEDED and 100 undefined KWin symbols. Script KCM
+  readelf dependencies reproduced. Sources use D-Bus, not KWin headers.
 - Implement both existing KCM identities in core without changing discovery
   paths or UI. Preserve default NixOS effect delivery and add independent Settings.
 - Settings-only ECM floor 6.24 proven on Ubuntu; effect retains 6.26 and
@@ -54,7 +50,7 @@ consumers and offline distro builds. No live desktop mutation or OBS provisionin
   Debian builds Settings without effect; Nix exports independent Settings and
   module installs it. Required helpers made hard dependencies. Existing full
   native CI coverage retained and settings-only check added.
-- Worker built full native on Tumbleweed (32/32 CTest) and settings-only on
+- Full native built on Tumbleweed (32/32 CTest) and settings-only on
   Tumbleweed and Ubuntu (26/26 each). Ubuntu used ECM/KF6 6.24, Qt 6.10 and
   no kwin-dev. These CTest runs were reused after confirming the consumed
   source files predate the runs and have no later changes.
@@ -63,9 +59,9 @@ consumers and offline distro builds. No live desktop mutation or OBS provisionin
 
 ## Accepted recovery verification (2026-10-11)
 
-Verification artifacts were not published releases. Lead inspected the diff,
+Verification artifacts were not published releases. The diff inspected,
 representative logs, Debian control/payload and Nix check/test logs;
-independent Worker reviewed contracts.
+contracts independently reviewed.
 
 - Original exact source archive SHA256:
   `2b0f27ffa81c76fa3266d6a454d317e94b4bd6e7e60a567ff3f65589f8ef416d`.

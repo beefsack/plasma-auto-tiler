@@ -12,13 +12,13 @@
 
 ## Acceptance and approach
 
-- Learn the codebase once; share the compact source map with every fill Worker.
+- Learn the codebase once; share the compact source map with every fill unit.
 - Trace every candidate without guessing; independently source-verify each slice.
 - Record approved-rule comparisons in the xmonad/awesome/bspwm table format;
   reference evidence does not approve changes to Ours.
 - Reconcile occurrence-aware scope, citations, triage ledgers and counts;
   verify unchanged scenarios and documentation-only diff scope/whitespace.
-- Archive this note, commit and push only intended documentation.
+- Archive this note.
 
 ## Bounded units
 
@@ -29,9 +29,6 @@
 5. Workspaces: 11 N + 1 U (verified, including audit corrections).
 6. Session/control/startup: 1 N + 11 U (verified).
 7. Comparison audit, final reconciliation, triage integration and archive (complete).
-
-Workers use `muse-spark`, one active at a time. A separate source verifier
-follows each fill unit. The Lead owns this note and the triage report.
 
 ## Accepted evidence and outcome
 

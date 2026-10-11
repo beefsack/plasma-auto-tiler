@@ -6,7 +6,7 @@ Own `workspaceMode`, `shortcutProfile`, `innerGap`, and `outerGap` on the KWin s
 
 ## Approach and evidence
 
-Orchestrator direction, 2026-09-24: select the save-hook route as a technical detail of the approved AR15 outcome. Host KWin 6.7.5 `genericscriptedconfig.cpp` has an empty `ScriptingConfig::reload()` after Save; its `Options` watcher handles only KDE animation and Xwayland settings. Use a project-owned native script KCM, independent of whether the effect is enabled, installed alongside the existing native components. Save to the existing kwinrc group and request `/KWin reconfigure` after changed gaps are saved. The existing JS `Options.configChanged` subscription validates and resyncs gaps; startup-only values remain startup-only. A generic KCM cannot auto-reconfigure; an effect-resident watcher requires the effect to be loaded and depends on notification semantics. The script-only KPackage needs the native KCM installed for its configure page; document this delivery dependency.
+Direction, 2026-09-24: select the save-hook route as a technical detail of the approved AR15 outcome. Host KWin 6.7.5 `genericscriptedconfig.cpp` has an empty `ScriptingConfig::reload()` after Save; its `Options` watcher handles only KDE animation and Xwayland settings. Use a project-owned native script KCM, independent of whether the effect is enabled, installed alongside the existing native components. Save to the existing kwinrc group and request `/KWin reconfigure` after changed gaps are saved. The existing JS `Options.configChanged` subscription validates and resyncs gaps; startup-only values remain startup-only. A generic KCM cannot auto-reconfigure; an effect-resident watcher requires the effect to be loaded and depends on notification semantics. The script-only KPackage needs the native KCM installed for its configure page; document this delivery dependency.
 
 The project-owned native script KCM is referenced by `X-KDE-ConfigModule`, saves the four existing script-group keys and sends one `/KWin reconfigure` request after changed gaps. The effect KCM now owns only border and explicit shortcut overrides. The script-only KDE Store KPackage retains its metadata, config schema/UI, and needs the host-built native companion to expose Configure. Dev, dogfood and Nix delivery include the new `kwin/scripts/configs` plugin. Neither script page discovery nor visible gap application has live acceptance yet.
 
@@ -23,4 +23,4 @@ User-owned live acceptance: install the script plus host-matched native companio
 
 ## Constraints
 
-No live KWin/Plasma mutation, install, host changes, devenv.nix changes, session staging, commit, or push. Do not edit the architecture review document. Physical/session acceptance is user-owned.
+No live KWin/Plasma mutation, install, host changes or devenv.nix changes. Physical/session acceptance is user-owned.

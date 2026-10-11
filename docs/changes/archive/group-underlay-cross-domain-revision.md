@@ -17,7 +17,7 @@ focus and visibility gates, and same-script late-setter protection.
   direction-dependent observation in `FeTnf4`.
 - Native Rust group policy also compares revisions globally within one script
   stream, so removing only the script gate would still reject domain B.
-- Orchestrator direction: do not add domain-keyed state to both. The script's
+- Direction: do not add domain-keyed state to both. The script's
   pending correlation/epoch and observed domain/focus fences already reject
   superseded async replies. Remove its redundant revision/correlation high-water
   gate and dead helpers. Retain native same-stream stale-setter protection by
@@ -32,7 +32,7 @@ focus and visibility gates, and same-script late-setter protection.
 - KWin tests/typecheck, native host build/CTest for FFI change, Rust workspace
   tests/fmt/strict clippy, relevant shell checks if needed; production/test
   line deltas. No live agent testing; leave `devenv.nix`, `docs/backlog.md`,
-  user stashes and branches untouched. Stage only intended files when complete.
+  user stashes and branches untouched.
 - Update the earlier archived restart note with the newly established cause,
   then archive this note with offline evidence and a user-owned live-check
   table (Meta-held and panel switches in both directions).

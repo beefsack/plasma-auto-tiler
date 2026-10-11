@@ -19,7 +19,7 @@
 2. Smallest adapter closure plus meaningful regression coverage and native gates.
 3. Fresh independent public/live-behavior review; existing-harness-based helper
    and Notepad/Calculator/Paint proof, with exact cleanup and artifact binding.
-4. Commit/push accepted units, hosted CI; promote durable decisions and archive.
+4. Hosted CI; promote durable decisions and archive.
 
 - Verify centered first float, sibling reflow, retained moved/resized frame,
   admission-axis unfloat, exact focus, repeat exclusion and overlay refusals.
@@ -59,22 +59,22 @@
   and hidden-snapshot regressions. KDE and shared core are unchanged.
 - Independent review found hidden born-row loss, premature Engine commit,
   ignored topmost effects, stale unfloat focus and runtime cleanup leaks.
-  Corrected and independently checked. Lead additionally preserved original
-  band preimages before optional readback and across later attempts, and
-  removed automatic band retries. Local Engine candidate commits only after
+  Corrected and independently checked. Original
+  band preimages preserved before optional readback and across later attempts, and
+  automatic band retries removed. Local Engine candidate commits only after
   target native effects verify; pre-existing topmost remains untouched.
-- Lead native locked four-package build/test/strict all-target Clippy,
+- Native locked four-package build/test/strict all-target Clippy,
   rustfmt and whitespace pass. `scripts/windows-float.ps1` parse/mock passes;
   its status regression distinguishes partial/unexecuted rows from pass.
   Hosted CI status is recorded with the delivery commit below.
 - Scoped completion ships the reviewed implementation with explicitly open
-  live acceptance, as authorized by the current user. Durable choices are in
+  live acceptance. Durable choices are in
   `docs/decisions.md#window-state-float-sticky-maximize-fullscreen`. No sticky/workspace-wide float delivered.
 
 | Local receipt under `target/windows-float/` | Actual evidence |
 | --- | --- |
 | `20261003-075159-8020/float-report.json` | Honest `partial`, Win11 build 26200, medium/session1. Three helpers created; owner suspended at `fullscreen-foreground`; graceful stop preserves frames, restore and inter-stage cleanup succeed. Approved Notepad/Calculator/Paint read-only visible-frame snapshots. Prime extra identified before activation failure and closed by exact HWND; originals survive. No float action accepted. |
-| `20261003-075159-8020/float-audit.json` | Actors absent, zero known-owner surfaces, clean ledger, arranging1, pen35, original approved apps intact. Historical `terminal_alive` field checked the harness itself; corrected to captured WindowsTerminal PID/start identities before final shipment. Lead independently audits the real Terminal. |
+| `20261003-075159-8020/float-audit.json` | Actors absent, zero known-owner surfaces, clean ledger, arranging1, pen35,   original approved apps intact. Historical `terminal_alive` field checked the harness itself; corrected to captured WindowsTerminal PID/start identities before final shipment. The real Terminal independently audited. |
 
 - Receipt binds baseline 778e72e plus production/test diff SHA256
   `8368771414B059716947203A9A8CE0BA72E0723950A0BB433CA0174300BA4DA7`, owner
@@ -83,7 +83,7 @@
   harness `D13AA573C3FF35EF42D9BD745A624C63595E836C2BAE1EAF02679039B6A22BC5`.
   The later no-retry and Terminal-audit corrections have offline gates, not
   new live float evidence. Scoped identifiers stay local, not production logs.
-- Lead read-only audit 2026-10-03 07:55:55 +10:00: zero project actors;
+- Read-only audit 2026-10-03 07:55:55 +10:00: zero project actors;
   ledger/stop/workspace requests absent; no owner/surfaces; arranging1, pen35;
   actual hosting WindowsTerminal PID18224/start identity survives. No hidden
   project residue reported; approved-app visibility confirmed in the live audit.
@@ -115,11 +115,11 @@
 ## Completion And Handover
 
 - Implementation and evidence delivered as `d8329e3`, pushed to main. Hosted
-  [CI 37069767244](https://github.com/beefsack/omnitiler/actions/runs/37069767244)
-  passed Windows, Rust, KWin and shell jobs. No Worker remains running.
+  [CI 37069767244](https://github.com/beefsack/OmniTiler/actions/runs/37069767244)
+  passed Windows, Rust, KWin and shell jobs.
 - Backlog proposal: item5 float shipped (Win+G), gated/independently reviewed;
   full live acceptance open under the Explorer activation blocker, crash band
-  semantics provisional. Link this archive; next item6 belongs to another Lead.
+  semantics provisional. Link this archive; next item6 belongs to another piece.
 - The follow-up below supersedes the original next acceptance action.
 
 ## Foreground Recovery And Acceptance Follow-Up
@@ -127,7 +127,7 @@
 - 2026-10-03, `3f70136`: cloak-aware foreground veto fixes the invisible-cover
   suspension defect without bypassing admission or shell safety. Native gates,
   independent review and hosted Windows/Rust/KWin/shell
-  [CI 37072709516](https://github.com/beefsack/omnitiler/actions/runs/37072709516)
+  [CI 37072709516](https://github.com/beefsack/OmniTiler/actions/runs/37072709516)
   pass. Narrow WM_CLOSE failed; authorized exact-identity Explorer restarts
   cleared the foreground surface, taskbar returned and Terminal survived.
 - New receipts under `target/windows-float/`; owner SHA256
@@ -155,6 +155,6 @@
 - Exact next acceptance action: restore normal desktop state, verify a fresh
   ownerless helper move remains uncloaked, then rerun OwnedFloat/WorkspaceFloat
   and physically dogfood approved-app Win+G. Do not start item6 in this change.
-- Lead audit 09:23:27 +10:00: no project actors/surfaces/ledger/requests, ready
+- Audit 09:23:27 +10:00: no project actors/surfaces/ledger/requests, ready
   false, arranging 1, pen 35, taskbar visible, Terminal same creation. Follow-up
   record: [Windows foreground acceptance](windows-foreground-acceptance.md).

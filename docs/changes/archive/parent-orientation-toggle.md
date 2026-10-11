@@ -11,9 +11,9 @@
 
 ## Units and acceptance
 
-1. Worker: shared Rust command/protocol/Engine/Session, meaningful regression tests, compile-only Windows fixes.
-2. Worker: KDE routing/reply validation, shortcut catalog/native presets and offline tests.
-3. Lead: inspect implementation and evidence, integrate docs/matrix/backlog, run required offline gates, archive and stage changed files.
+1. Shared Rust command/protocol/Engine/Session, meaningful regression tests, compile-only Windows fixes.
+2. KDE routing/reply validation, shortcut catalog/native presets and offline tests.
+3. Inspect implementation and evidence, integrate docs/matrix/backlog, run required offline gates, archive and stage changed files.
 
 ## Verification
 
@@ -25,9 +25,9 @@
 ## Evidence and outcome
 
 - Initial worktree clean. Root AGENTS.md and live KWin testing guide read; user explicitly prohibits all live testing.
-- Sequential Workers delivered Rust then KDE; Lead inspected source/diffs,
+- Sequential units delivered Rust then KDE; source/diffs inspected,
   strengthened discriminating acceptance fixtures and corrected one overlay
-  scope error. Independent read-only Worker review accepted the final public
+  scope error. Independent read-only review accepted the final public
   command/protocol contract, transactional core and KDE routing/validation.
 - Session resolves the direct parent with `direct_parent_of_leaf`, flips only
   its axis and preserves children/shares/focus. Projection uses the existing
@@ -43,7 +43,7 @@
   `kwin/src/plan-adapter.ts:2602-2626` helpers and `requestResize:3203-3209`.
   Sibling overlays dispatch and reproject reserved slots but receive no native
   geometry/state writes. Floating workspace uses existing `isTiledDomain`
-  gate. Worker initially added a domain-wide fence; Lead review identified
+  gate. A domain-wide fence initially added; review identified
   that semantic error and one correction replaced it with the existing helpers
   and sibling-overlay dispatch/write-skip fixtures. No unresolved approach.
 - New valid-reply test initially expected redundant activation of the already
@@ -113,6 +113,6 @@
 - Windows action/catalog/input/presets/owner wiring and native build/runtime
   remain Windows-owned; no physical Win+O suppression claim.
 - Open product questions: none. Not done: user-owned KDE native journey,
-  Windows wiring/native verification, commit/push (Orchestrator-owned).
-- Orchestrator next action: review staged change, commit and push using the
+  Windows wiring/native verification and publication.
+- Next action: review staged change and publish using the
   proposed single-line message. No blocker remains.

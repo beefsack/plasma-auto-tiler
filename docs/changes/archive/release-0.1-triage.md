@@ -7,8 +7,7 @@
 - Classify every pending live-check entry against the approved release gate;
   identify missing gate coverage and propose concise checks.
 - Deliver `docs/research/release-0.1-triage.md` and a proposal link in the
-  backlog release item. No live testing, source changes, principles edits,
-  stash operations, or interference with concurrent Windows work.
+  backlog release item. No live testing, source changes or principles edits.
 
 ## Acceptance
 
@@ -17,18 +16,17 @@
   consequences and product-rule-aligned recommendations.
 - Complete pending-live-check coverage with must-pass, known-issue-allowed
   or Windows-release labels and reasons; explicit coverage gaps and new checks.
-- Independent Worker spot-checks classifications and verifies every
+- Independent spot-checks of classifications and verification of every
   recommendation's reference tally. Resolve findings before publication.
-- Documentation links and diff checks pass; stage only owned files, commit,
-  pull with rebase, push. Stop on conflict; preserve the user's stashes.
+- Documentation links and diff checks pass.
 
 ## Approach and bounded units
 
-1. One muse-spark Worker investigates evidence and drafts the research proposal.
-2. Lead inspects the result and links the proposal from the release item.
-3. Fresh muse-spark Worker independently checks tallies, sampled triage,
+1. Investigate evidence and draft the research proposal.
+2. Inspect the result and link the proposal from the release item.
+3. Independently check tallies, sampled triage,
    coverage, live-check gate mapping and links; integrate corrections.
-4. Record evidence, archive this note, verify, commit and synchronize/push.
+4. Record evidence, archive this note and verify.
 
 ## Evidence
 
@@ -38,10 +36,9 @@
 
 ## Verification and outcome
 
-- One muse-spark Worker drafted the proposal; a separate muse-spark Worker
-  independently checked every recommendation's reference tally, sampled
-  classifications against records/source, all row coverage and local links.
-  Workers ran sequentially. Final independent acceptance passed.
+- The proposal drafted; every recommendation's reference tally, sampled
+  classifications against records/source, all row coverage and local links
+  independently checked. Final independent acceptance passed.
 - Accepted coverage: 60 unique OPEN rows, 32 relevant and 28 post-0.1;
   separate relevant MAX-09 leg. There are 28 decision units (27 covering
   OPEN rows plus MAX-09), including four genuinely grouped units.
@@ -59,7 +56,6 @@
   and asks for approval to ship the current refusal as a listed issue.
 - Backlog release item links the proposal as awaiting user decisions. No
   product choices promoted to decisions; no live tests or source changes.
-- Final documentation checks and owned-file staging precede the requested
-  local commit, pull with rebase and push. Stop on conflict; no stash actions.
+- Final documentation checks precede publication.
 - Exact next action: user decides D01 fullscreen admission/close cleanup in
-  the proposal's impact-ordered summary, then the remaining units one at a time.
+  the proposal's impact-ordered summary, then the remaining units.

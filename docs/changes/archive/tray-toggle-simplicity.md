@@ -9,7 +9,7 @@
 ## Approach and acceptance
 
 - Review constants, diagnostics, stale-scope refusal, menu fingerprint caching/poison recovery and writer path check. Stop for user choice before any visible behavior, protocol, security or noticeable failure-semantics change.
-- Implement bounded tray-only simplifications; delete tests tied only to removed internals, retain behavior tests. Skim Worker diffs for unnecessary defenses, fallbacks, retries, comments or accessors before accepting.
+- Implement bounded tray-only simplifications; delete tests tied only to removed internals, retain behavior tests. Skim diffs for unnecessary defenses, fallbacks, retries, comments or accessors before accepting.
 - Verify Rust workspace tests, fmt, strict clippy, diff check and diff stat. If changes outside `crates/` require it, verify KWin typecheck/tests and `nix flake check --no-build --offline`.
 
 ## Outcome and evidence

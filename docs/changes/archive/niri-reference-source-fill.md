@@ -12,12 +12,12 @@
 
 ## Acceptance and approach
 
-- Learn the codebase once; pass its compact orientation to each fill Worker.
+- Learn the codebase once; pass its compact orientation to each fill unit.
 - Trace every candidate without guessing; independently source-verify each slice.
 - Record approved-rule comparisons in the preceding per-WM table format.
 - Reconcile occurrence-aware scope, citations, triage ledgers and counts;
   verify unchanged scenarios and documentation-only diff scope/whitespace.
-- Archive this note, commit and push only intended documentation.
+- Archive this note and publish only intended documentation.
 
 ## Bounded units
 
@@ -28,9 +28,6 @@
 5. Mouse (9 N, corrected branches independently verified).
 6. Session/control/startup (1 N + 10 U, verified).
 7. Independent residual/comparison audit, reconciliation, triage and archive (complete).
-
-Workers use `muse-spark`, one active at a time. A separate source verifier
-follows each fill unit. The Lead owns this note and the triage report.
 
 ## Accepted evidence
 
@@ -58,7 +55,7 @@ follows each fill unit. The Lead owns this note and the triage report.
 - Mouse slice: 4 N closed; DRAG-01/02/07 and MOU-02/03 reclassified F.
   The original single-path approach and initial review missed competing
   InColumn/Floating commits, overview targeting, initiating client click
-  delivery and per-frame edge auto-scroll. The Lead rejected that evidence;
+  delivery and per-frame edge auto-scroll. That evidence rejected;
   one bounded correction round used those new causal source branches, followed
   by a fresh independent source review of every mouse cell. Corrected review
   passed. The earlier 8-closure mouse report is not accepted evidence.
@@ -136,11 +133,11 @@ exist despite in-fixture convergence; fixture-bound outcomes stay TBD.
   pre-mouse-correction result is not final evidence. The repaired checker adds
   exact closure/blocker sets, all per-WM/area/fixture reconciliation, real
   triage/archive checks, object identities and corrected source-operation
-  checks. The Lead also required restored full non-niri index preservation
-  and every cited/changed niri source-key pin/path/range check after noticing
+  checks. Restored full non-niri index preservation
+  also required, with every cited/changed niri source-key pin/path/range check after noticing
   their omission in the repaired checker. Independent manual reviews
   establish policy/comparison semantics.
-- Lead citation cleanup names update removal versus end reinsertion precisely
+- Citation cleanup names update removal versus end reinsertion precisely
   and distinguishes absent keyboard consume/expel calls from actual InColumn
   member-add. This does not change any outcome or count.
 - Exact next action for this source-fill pass: none.

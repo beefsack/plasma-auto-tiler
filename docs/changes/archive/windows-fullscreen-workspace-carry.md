@@ -11,9 +11,9 @@
 
 ## Acceptance and units
 
-- Bounded Worker implementation and retained-Engine regression coverage;
+- Bounded implementation and retained-Engine regression coverage;
   independent review of live/public behavior; bounded ordinary-app CLI live
-  verification; Lead integration, native gates, records, commit/push and CI.
+  verification; integration, native gates, records and publication with CI.
 - Follow/stay source reflow, target allocation, hidden target, flag drift,
   lifetime/recovery, maximized regression and fullscreen exit verified.
 - Native four-package build/test, fmt, strict clippy and diff check pass.
@@ -93,6 +93,6 @@
   native flag-race injection, managed app-owned native carry, slotless native
   refusal, games/elevation and cross-output remain user-owned/deferred.
 - Pushed `9d12c7f`. CI
-  [38069107649](https://github.com/beefsack/omnitiler/actions/runs/38069107649)
+  [38069107649](https://github.com/beefsack/OmniTiler/actions/runs/38069107649)
   completed success: windows, rust, kwin, shell, native and macos. Linux/KDE
   checks are hosted evidence, not locally run on the Windows host.

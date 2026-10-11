@@ -11,19 +11,18 @@
 
 ## Acceptance and approach
 
-- Sequential bounded muse-spark Workers: insertion/workspace/removal;
+- Sequential bounded units: insertion/workspace/removal;
   floating/maximize/startup/minimums; groups/drag/owner controls.
-- Workers edit only the matrix and its evidence register. Cite pinned file:line
+- Edit only the matrix and its evidence register. Cite pinned file:line
   source, qualify unsupported fixture outcomes, and report discrepancies with
   current KDE/Windows behavior. New minimal rows only for uncovered ambiguities.
-- Lead reviews diffs and source evidence, reconciles coverage/counts, verifies
-  unchanged protected cells and `git diff --check`, then archives this note.
-- Commit and push only intended files on main after status/diff/log inspection.
+- Review diffs and source evidence, reconcile coverage/counts, verify
+  unchanged protected cells and `git diff --check`, then archive this note.
+- Publish only intended files on main after status/diff/log inspection.
 
 ## Outcome
 
-- Completed sequential implementation units and an independent evidence review
-  using muse-spark Workers at one level, without nested delegation.
+- Completed sequential implementation units and an independent evidence review.
 - 43 COSMIC cells updated: 37 have source-proven policy evidence; six clarify
   owner-specific applicability (R-CTL-01/02/03/05/06/07). Across all 58 rows,
   35 retain explicit partial/fixture/native TBD; no bare COSMIC TBD remains.

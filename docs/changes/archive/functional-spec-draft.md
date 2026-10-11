@@ -7,7 +7,7 @@
 - Normative requirements require a recorded selected user decision and matrix test links. Pending choices stay OPEN; provisional decisions stay PROVISIONAL.
 - Record KDE/Windows/macOS applicability and implementation gaps per requirement; collect default shortcuts and an end-of-spec open-decision index.
 - Report source contradictions without changing product behavior. No live testing.
-- Do not edit principles, backlog or decisions. Use one specification file if readable.
+- Use one specification file if readable.
 
 ## Sources
 
@@ -18,10 +18,10 @@
 
 ## Bounded units and verification
 
-1. Read-only Worker source mapping informed the draft; sources were checked during drafting and review.
-2. Draft Worker wrote `docs/spec/functional-spec.md`; an independent Worker sampled decision fidelity, scenario alignment, shortcuts and platform scope.
+1. Read-only source mapping informed the draft; sources were checked during drafting and review.
+2. Draft wrote `docs/spec/functional-spec.md`; an independent sample checked decision fidelity, scenario alignment, shortcuts and platform scope.
 3. Review initially blocked acceptance: over-claimed choices, mismatched scenarios, incomplete chords and missing precise links. Corrections demoted unsupported claims, separated platform scope and selected targets from pending choices, and fixed citations. Final independent sample: ACCEPT, no residual serious findings in the sample.
-4. Lead integrated the corrections and checked all 125 scenario IDs, all 24 Table A predicates, unique requirement IDs/table shape, 323 local links and fragments, normative/provisional decision anchors, ASCII and complete OPEN/PROVISIONAL index coverage. All passed. `git diff --check` passed; no live tests.
+4. Integrated the corrections and checked all 125 scenario IDs, all 24 Table A predicates, unique requirement IDs/table shape, 323 local links and fragments, normative/provisional decision anchors, ASCII and complete OPEN/PROVISIONAL index coverage. All passed. `git diff --check` passed; no live tests.
 
 ## Flagged contradictions
 

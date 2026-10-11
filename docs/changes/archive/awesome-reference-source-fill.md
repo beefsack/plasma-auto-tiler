@@ -12,13 +12,13 @@
 
 ## Acceptance and approach
 
-- Learn the codebase once; share the compact source map with every fill Worker.
+- Learn the codebase once; share the compact source map with every fill unit.
 - Trace every candidate without guessing; independently source-verify each slice.
 - Record material approved-rule comparisons with rule/source locations, using
   the xmonad handover format. Reference evidence does not approve rule changes.
 - Reconcile occurrence-aware coverage, citations, triage ledgers and counts;
   verify unchanged scenarios and documentation-only diff scope/whitespace.
-- Archive this note, commit and push only intended documentation.
+- Archive this note.
 
 ## Bounded units
 
@@ -30,9 +30,6 @@
 6. Corrected-source audit and approved-rule comparison audit (complete).
 7. Final independent reconciliation, triage integration and archive (complete).
 
-Workers use `muse-spark`, one active at a time. A separate source verifier
-follows every fill unit. The Lead owns this note and the triage report.
-
 ## Accepted evidence and outcome
 
 - Workspace clean on `main`, tracking `origin/main`; pinned awesome checkout clean.
@@ -43,7 +40,7 @@ follows every fill unit. The Lead owns this note and the triage report.
   byidx keybindings. Tags are fixed sets with native multi-tag/sticky support;
   sends do not themselves switch view. Default rc starts each tag floating.
 - Inventory: 89 awesome TBDs, 50 N/12 U/19 F/8 L. Exact candidate occurrences
-  enumerated by the orientation Worker; no duplicate N occurrences.
+  enumerated during orientation; no duplicate N occurrences.
 - Shared source map: `lib/awful/layout/suit/tile.lua`, `lib/awful/client.lua`,
   `lib/awful/client/focus.lua`, `lib/gears/geometry.lua`,
   `lib/awful/permissions/init.lua`, `lib/awful/tag.lua`, `lib/awful/screen.lua`,
@@ -71,7 +68,7 @@ follows every fill unit. The Lead owns this note and the triage report.
   `client_array_push` as append. The persistence review inspected
   `common/array.h:110-122` and proved index-zero prepend. A bounded correction
   unit fixed INS-01/04/06, MIN-01, MAX-06, FOC-03 and `S-awe-tile`; a fresh
-  independent Worker verified all affected outcomes plus corrected delayed
+  independent review verified all affected outcomes plus corrected delayed
   screen/tag focus and restart chains. No repeat of the append assumption.
 - Fresh audit rejected an invented secondary missing-host blocker for X
   query-tree listing direction and restored literal TBD on RST-02.
@@ -144,7 +141,7 @@ These are reference differences, not authorization to change Ours.
   Initial executable reconciliation had 10 failures; the scope/format repair
   restored strict checks without changing the candidate set. The checker also
   repaired its non-awesome filter and extra-change assertion, without bypasses.
-- Lead diff review found ambiguous WS-05 "focus stays B throughout" wording.
+- Diff review found ambiguous WS-05 "focus stays B throughout" wording.
   The slice verifier traced synchronous banning before delayed refocus: forward
   send clears B then refocuses A; return clears B on empty WS2; final WS1
   selection refocuses B. Added C banning citations, scoped the local-versus-global
@@ -153,7 +150,7 @@ These are reference differences, not authorization to change Ours.
   allocation (1/2 to 1/4), consistent with the independently verified frames.
 - Temporary executable evidence: `awesome-final-reconcile.py`
   and `awesome-final-reconcile.json`. Archived integrated check:
-  **111 assertions passed, zero failures**, rerun by the Lead.
+  **111 assertions passed, zero failures**, rerun.
 - Reference cells remain 1,896; Ours remains 169 TBD. Every per-WM partition
   and actual count, N-area row/column sum and exact awesome H/F/L ledger
   reconciles. Fixture ledger totals 258 across 89 rows; other WM memberships

@@ -27,10 +27,10 @@ script development loop without obscuring which runtime components are active.
 
 ## Approach And Dependencies
 
-- Delegate one bounded implementation unit for the recipe shell logic,
+- One bounded implementation unit for the recipe shell logic,
   dependency declaration, documentation, and hermetic script test.
-- Lead reviews all changed shell paths, updates the backlog, statically parses
-  the justfile, records evidence, archives this change note, and commits.
+- Reviews all changed shell paths, updates the backlog, statically parses
+  the justfile, records evidence and archives this change note.
 
 ## Verification
 

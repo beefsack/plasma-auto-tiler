@@ -8,7 +8,7 @@ Build-Depends: build-essential, debhelper-compat (= 13), cargo:native, rustc:nat
  libkf6i18n-dev, libkf6widgetsaddons-dev
 Standards-Version: 4.7.2
 Rules-Requires-Root: no
-Homepage: https://github.com/beefsack/omnitiler
+Homepage: https://github.com/beefsack/OmniTiler
 
 Package: omnitiler
 Architecture: any

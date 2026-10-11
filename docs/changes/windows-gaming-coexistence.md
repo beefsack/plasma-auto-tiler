@@ -97,8 +97,8 @@
   behavior, binding, registry/policy or architecture change was made.
 - Continuation verification: independent review accepted the corrected evidence
   and parking record. Locked four-package native build/test and strict all-target
-  clippy, full rustfmt and diff checks pass. Delivery/hosted CI is reported in
-  the terminal handover; acceptance is documentation of the blocker, not gaming
+  clippy, full rustfmt and diff checks pass. Delivery/hosted CI reported with
+  publication; acceptance is documentation of the blocker, not gaming
   shortcut containment or complete desktop cleanup.
 
 ### Parked choices and recommendation
@@ -142,7 +142,7 @@
   observing OS surfaces, stopping/recovering on first leak; (3) evidence-directed
   supported fix or install-order comparison; (4) independent review, native/CI
   gates and handover. Extend conflict coverage only after the gaming taps pass.
-- Live authority: standing autonomous brief permits hooks, injection and owned
+- Live authority: user permits hooks, injection and owned
   windows on this physical host. Preserve the hosting Terminal process tree.
   End every run with no project process/overlay/ledger/hidden test window,
   SPI 0x0082=1 and 0x201E=35, and close only disposable apps opened for this work.
@@ -161,15 +161,15 @@
   remain diagnosable. Downstream-hook latency and time waiting for the owner to
   pump messages remain outside this metric.
 - Independent review found diagnostic edge/privacy-overhead and concurrent-log
-  writer/recovery gaps. One correction resolved them before acceptance. Lead
-  inspected the final diff and ran locked four-package native tests, strict
+  writer/recovery gaps. One correction resolved them before acceptance.
+  The final diff inspected; locked four-package native tests run, strict
   all-target clippy, full rustfmt and diff checks; the explicit locked build also
   passed. Snapkey: 58 tests. No shortcut behavior changed in this unit.
 - `2c9c11c` hosted CI [37113756434][diagnostic-ci] passed all four jobs.
 - Fixture contract accepted after correcting stop-after-recovery, consumed-action
   versus interception eligibility, project-overlay exclusion and newly-uncloaked
-  observation. Lead additionally bounded post-tap sampling to two seconds and
-  fenced recovery to the exact newly observed foreground shell/gaming surface.
+  observation. Post-tap sampling additionally bounded to two seconds and
+  recovery fenced to the exact newly observed foreground shell/gaming surface.
   Mock: 44 negative gates pass. Test observer selectors are evidence-only;
   they are not a product Xbox-mode detector. Subsequent screenshot evidence
   invalidated their clean-desktop inference; the fixture remains an unaccepted
@@ -283,15 +283,15 @@
   The mask survives consumed holds and its actual send result is recorded.
   Bare swallowed repeats after Win-up do not rearm it, so a subsequent naked
   Win tap retains normal Start behavior. This follow-up regression was found
-  during Lead integration and fixed across every classifier arm.
+  during integration and fixed across every classifier arm.
 - Fresh Shift state binds supported preheld move/send/sticky combinations;
   fresh Ctrl/Alt combinations remain unowned. The callback stays bounded with
   no synchronous logging, Engine work or window mutations.
 - Maximize/fullscreen/float/sticky dispatch now rechecks suspension and elevated
   foreground per intent. The existing verified managed-fullscreen exemption
   preserves exiting project-owned fullscreen. Its native behavior needs live proof.
-- Independent review exposed toggle fencing and coverage/contract gaps. Lead
-  inspection additionally exposed modifier/Win guards ahead of armed repeats;
+- Independent review exposed toggle fencing and coverage/contract gaps.
+  Inspection additionally exposed modifier/Win guards ahead of armed repeats;
   one corrective unit fixed these before acceptance. Superseded managed-only
   assertions failed during migration and were updated to the authorized contract.
   No arbitrary missing-key-up timeout was accepted.
@@ -457,15 +457,15 @@
 
 - Baseline: `de213b2`, clean working tree, aligned with `origin/main`.
 - Native gates: the four packages in `.github/workflows/ci.yml` Windows job.
-- Latest native verification passed after the corrective unit and Lead gate-repeat
+- Latest native verification passed after the corrective unit and gate-repeat
   integration: locked build/test for `tiler-core`, `tiler-protocol`,
   `tiler-kwin-effect-ffi`, `tiler-windows`; strict all-target clippy; full rustfmt;
   `git diff --check`. Snapkey suite: 55 passing, including modifier/Win ordering,
   unmanaged interception, disabled-gate pairs and saturated queues. Three pure
   Shift-sync tests pass. First delivered unit `962b0f3` passed all four hosted
   jobs (Windows, Rust, KWin, shell), [run 37109086579][first-ci]. The follow-up
-  mask correction passed native gates; delivered-head CI is checked in the
-  terminal handover.
+  mask correction passed native gates; delivered-head CI is checked after
+  publication.
 - No live run was performed for this change. Required normal-desktop test, only
   after the user frees the desktop and authorizes the bounded run:
   1. Read the live guide, confirm taskbar/normal desktop, no game/anti-cheat or
@@ -523,8 +523,8 @@
 [set-window-pos]: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos
 [show-window]: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow
 [dwm-attributes]: https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute
-[first-ci]: https://github.com/beefsack/omnitiler/actions/runs/37109086579
-[diagnostic-ci]: https://github.com/beefsack/omnitiler/actions/runs/37113756434
+[first-ci]: https://github.com/beefsack/OmniTiler/actions/runs/37109086579
+[diagnostic-ci]: https://github.com/beefsack/OmniTiler/actions/runs/37113756434
 [hook-order]: https://learn.microsoft.com/en-us/windows/win32/winmsg/about-hooks
 [register-hotkey]: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey
 [game-shortcut-hook]: https://learn.microsoft.com/en-us/windows/win32/dxtecharts/disabling-shortcut-keys-in-games

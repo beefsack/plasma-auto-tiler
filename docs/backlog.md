@@ -23,7 +23,7 @@ decisions of 2026-09-24 are under
     User 2026-10-10 approved recommendation (a) for 15 units: D02, D04, D05,
     D06, D07, D08, D11, D14, D15, D17, D18 (no setting), D19, D20 (no lower
     verb for now), D21, D24; 16 rows approved. Remaining 13 units are
-    tentative, awaiting user review (Orchestrator 2026-10-11): D01, D03,
+    tentative, awaiting user review (2026-10-11): D01, D03,
     D09, D10, D12, D13, D16, D22, D23, D25, D26, D27, D28.
     Spec now 121 NORMATIVE / 17 PROVISIONAL / 28 OPEN; batch-1 verification
     and tentative implementation gaps are below.
@@ -34,7 +34,7 @@ decisions of 2026-09-24 are under
   - Original 60 OPEN rows triaged: 32 relevant / 28 post-0.1. Tentative
     defaults-only 0.1 for D03, D09, D10, D12, D13, D27; meaningful alternative
     settings deferred to P2 `0.1 triage settings follow-up`, awaiting review.
-    [Tentative decisions](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
+    [Tentative decisions](research/release-0.1-triage.md#tentative-decisions-2026-10-11-pending-user-review).
   - P1 0.1 packaging: offline recipes/archive/tag workflows and
     Revert-before-removal guidance prepared 2026-10-11; distro offline
     builds passed. Core Settings ownership approved and delivered 2026-10-11
@@ -78,7 +78,7 @@ decisions of 2026-09-24 are under
 - P1 | 0.1 triage decisions - batch 1 verification (KDE/shared) | User
   2026-10-10 approved the 15 units above, exactly recommendation (a) in
   [triage](research/release-0.1-triage.md#user-decisions-2026-10-10).
-  - D05 / REQ-INS-05: verification-only (Orchestrator 2026-10-11). The existing
+  - D05 / REQ-INS-05: verification-only (2026-10-11). The existing
     shared Engine convergence route retains prior tiled focus B while an
     ordinary float is focused; newcomer admission splits B's long edge rather
     than root-wrapping. Shared geometry/focus and KDE PlanAdapter wire fixtures
@@ -102,7 +102,7 @@ decisions of 2026-09-24 are under
     reveal are already wired. No new Windows-specific handoff item warranted.
 - P1 | 0.1 triage tentative decisions - implementation (KDE/shared) |
   Tentative, awaiting user review; docs-only assessment at `fafcd31`, no behavior
-  implemented by this record. [Selections and caveats](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
+  implemented by this record. [Selections and caveats](research/release-0.1-triage.md#tentative-decisions-2026-10-11-pending-user-review).
   Verification-only means a matching mechanism exists, not native acceptance;
   implement only after review, including contingent fixes if live outcomes differ.
   Paths below are repository-relative; line locators are revision-bound.
@@ -265,7 +265,7 @@ decisions of 2026-09-24 are under
   10/11, then the multi-output foundation and dependent items 5, 12, 14, 16,
   19. Live work needs a multi-output Windows setup;
   (10) taskbar workspace indicator is combined with hidden-workspace Alt+Tab/
-  taskbar semantics in Windows-agent workspace-presentation research after
+  taskbar semantics in Windows workspace-presentation research after
   multi-output, as a Windows release gate
   ([note](research/windows-port/alt-tab-hidden-workspaces.md));
   (11) settings core slice delivered (`df4edc5`, `1c97c52`, `999f2f3`,
@@ -337,7 +337,7 @@ decisions of 2026-09-24 are under
   semantics plus taskbar indicator parity 10), restart persistence (item 8,
   on-window markers selected 2026-10-10) and package/update channel decision (short research refresh
   during Windows release planning; most obvious and unsurprising for users).
-  Gaming and Windows-agent presentation research run after multi-output,
+  Gaming and Windows presentation research run after multi-output,
   before release; presentation produces options plus a recommendation for
   the user. Non-native lessons and evidence stay linked:
   [event/pump boundary](research/non-native-tiler-host-interaction.md#layer-layout-authority-events-and-reconciliation-dim-1),
@@ -345,7 +345,7 @@ decisions of 2026-09-24 are under
   [candidate lessons](research/non-native-tiler-host-interaction.md#candidate-lessons-for-this-project),
   [evidence](changes/archive/non-native-tiler-host-interaction.md).
 - P0 | Windows workspace presentation research | After multi-output, before
-  Windows release (user 2026-10-10). Windows agent combines hidden-workspace
+  Windows release (user 2026-10-10). Windows work combines hidden-workspace
   Alt+Tab/taskbar semantics and taskbar workspace indicator (parity 10),
   producing options plus a recommendation for the user. Existing Alt+Tab
   research (`580c766`, `8129b37`;
@@ -414,7 +414,7 @@ decisions of 2026-09-24 are under
   covers the R-MAX-03 floating-to-tiled case (stays maximized over a
   reserved slot). KDE R-MAX-03 and R-MAX-06 delivered offline, native checks
   pending ([scope record](changes/archive/kde-maximized-floating-retile-overlay.md));
-  Windows parity (b) remains pending for the Windows agent.
+  Windows parity (b) remains pending in Windows delivery.
   (c) B9 overlaid unfloat: unmaximize then fresh-admit, selected 2026-10-08;
   remove the Windows refusal, with the user's COSMIC check as confirmation
   only (handoff item 15; KDE delivered offline); (d) keyboard resize delivered
@@ -425,7 +425,7 @@ decisions of 2026-09-24 are under
   [decisions](decisions.md#window-state-float-sticky-maximize-fullscreen)
   [audit](research/cross-platform-core/post-windows-audit.md)
 - P1 | Adopt reference-consensus additions | User 2026-10-07 accepted the
-  Orchestrator recommendations from the consensus Table A; items 1-5 shared
+  recommendations from the consensus Table A; items 1-5 shared
   core/KDE delivered (item 1 single-output user-confirmed, items 2-5 offline),
   each through the shared Engine where possible, KDE and Windows unless
   noted ([consensus](research/reference-wm-consensus.md)):
@@ -473,8 +473,8 @@ decisions of 2026-09-24 are under
   [record](changes/archive/kde-whole-workspace-output-migration.md),
   [D8](changes/archive/migration-overlay-carry.md).
   Windows changes are compile-only `maximized: false`; item 14 wires behavior.
-  KDE-side session owns shared Rust core + KDE adapter; separate Windows
-  agent wires later. Correctness over non-breakage: Windows build/behavior
+  Shared Rust core + KDE adapter are delivered KDE-side; separate Windows
+  adapter wiring follows. Correctness over non-breakage: Windows build/behavior
   may break provided the handoff below lists the specific changes needed.
   Implementation order:
   1. R-WS-08 + R-WS-11 (KDE delivered; single-output native journey
@@ -547,7 +547,7 @@ decisions of 2026-09-24 are under
      source-MRU stay, with pinned source/target current-view arrival fences.
   Bindings for other accepted additions remain to be chosen.
 - P1 | Windows handoff: reference-consensus additions | D1, user 2026-10-07:
-  Windows agent wires each adapter piece after its KDE-side delivery.
+  Windows adapter pieces are wired after their KDE-side delivery.
   ### How to use this handoff
 
   - Historical source checks 2026-10-08 at
@@ -564,20 +564,13 @@ decisions of 2026-09-24 are under
     SINGLE-output live acceptance (2026-10-07, unspecified edge cases/presets).
     Items 2-5 are offline-delivered; multi-output/hotplug/preset and native
     journeys remain pending. None of this proves Windows native behavior.
-  - D1: KDE session owns shared core plus KDE; Windows session owns its adapter.
-    Correctness wins over Windows non-breakage, with exact repairs recorded
-    here. Decision 2.3 permits behavior-preserving compile-only Windows fixes
-    for items 2-5; those fixes are not completed Windows implementations.
-  - Git coordination: inspect `git status` and the diff; on a clean Windows
-    clone use `git pull --rebase` before starting and before an authorized
-    publication. A concurrent KDE agent may advance shared files/docs. On dirty
-    state or rebase conflict, report to the Orchestrator; do not stash/reset/
-    checkout or overwrite another agent's work. Stage only your files, propose
-    one single-line message, and hand the staged change to the Orchestrator to
-    commit/push unless separately authorized.
-  - Progress: own one `docs/changes/<piece>.md` per implementation piece with
-    scope, acceptance, exact pending work and evidence; archive on completion.
-    Give the Orchestrator the handoff/backlog status to advance. Update linked
+  - D1: shared core plus KDE are delivered KDE-side; Windows adapter is
+    delivered Windows-side. Correctness wins over Windows non-breakage, with
+    exact repairs recorded here. Decision 2.3 permits behavior-preserving
+    compile-only Windows fixes for items 2-5; those fixes are not completed
+    Windows implementations.
+  - Progress: scope, acceptance, exact pending work and evidence per
+    implementation piece; archive on completion. Update linked
     Ours Windows matrix cells and spec Win cells with dated, revision-bound
     offline evidence; native outcomes stay TBD until user-tested. Preserve
     reference outcomes and product decisions; add decision delivery pointers.
@@ -691,12 +684,12 @@ decisions of 2026-09-24 are under
 
   - [ ] CI `.github/workflows/ci.yml`: `windows` :95-128, `rust` :32-47 and
     applicable `kwin` :13-30, `shell` :49-80, `native` :82-93 green after
-    Orchestrator-authorized publication; `macos` :130-148 remains green.
+    publication; `macos` :130-148 remains green.
     Linux handback: `devenv shell --impure -- cargo test --workspace`,
     `devenv shell --impure -- cargo clippy --workspace --all-targets -- -D warnings`,
     `devenv shell --impure -- cargo fmt --all -- --check`; shared changes also
     need applicable KWin/mock-shell/native checks and `just check-portable`
-    through Linux agent/CI. Record unrun gates as pending.
+    through Linux/CI. Record unrun gates as pending.
   - [ ] Update the linked Ours Windows matrix cells, spec `REQ-*` Win/status/
     shortcut rows, decision delivery pointers and one archived change record
     per piece. Keep native pending separate from offline completion. Preserve
@@ -2530,9 +2523,9 @@ decisions of 2026-09-24 are under
     ([record](changes/archive/kde-workspace-tiling-shortcut.md)); user-owned
     physical/restart/preset checks remain below.
 
-  - Item 22: tentative 0.1 triage Windows follow-ups (Orchestrator 2026-10-11,
+  - Item 22: tentative 0.1 triage Windows follow-ups (2026-10-11,
     awaiting user review; not an approved implementation queue). Shared core
-    delivery serves Windows; Windows agent owns adapter/native work after the
+    delivery serves Windows; Windows work owns adapter/native work after the
     shared contract is available. D01 needs fullscreen admission focus/visibility
     verification and any adapter guard; D16 needs ordinary float transfer
     eligibility/class preservation with existing follow/stay fences; D23 needs
@@ -2647,7 +2640,7 @@ decisions of 2026-09-24 are under
   plus follow-on command trace), and one requested `2032x1092` became
   `1920x1036` while another primary Ghostty accepted full size (per-window
   native cap or stale output-derived cap unproven). Hypothesis
-  (Orchestrator, 2026-09-28): 1920x1036 equals another output's work area, so the
+  (2026-09-28): 1920x1036 equals another output's work area, so the
   window may be constrained to the other output. Next: `just dev trace`
   with one tall tiled window on the source output; check output, bounds and constraints.
   Gates reconciliation phase 2.
@@ -2666,8 +2659,8 @@ decisions of 2026-09-24 are under
   challenging. Ubuntu blockers: ECM 6.24 below our 6.26 floor, Node 22 below
   our 24 floor (pre-built JS bundle in source archive may remove Node need as
   ordinary engineering); neon OBS provisioning unverified. User creates OBS
-  account/project, GitHub-to-OBS token and AUR account at the start of the next
-  orchestrator session; spec, PKGBUILD and OBS service prep may proceed offline.
+  account/project, GitHub-to-OBS token and AUR account next; spec, PKGBUILD
+  and OBS service prep may proceed offline.
   Acceptance: core script/planner/tray independent of optional ABI-bound effect;
   never block KWin updates; mismatched/absent effect degrades borders/drag preview
   until rebuild. Must-pass missing/failed/removed effect check keeps tiling working
@@ -2746,7 +2739,7 @@ decisions of 2026-09-24 are under
   [native boundary](decisions.md#engine-architecture-and-convergence)
 - P3 | Stale branches | Twelve stale branches need explicit user
   authorization before deletion.
-  [branches](https://github.com/beefsack/omnitiler/branches)
+  [branches](https://github.com/beefsack/OmniTiler/branches)
 - P3 | Other compositor validation | bspwm, Hyprland, COSMIC runtime
   validation only; pinned-semantics research is not a substitute.
   [comparison](reference-wm-comparison.md)
@@ -2809,8 +2802,8 @@ Unprioritised ideas; not scheduled.
 Items below retain their stated pending scope; dated user confirmations are
 recorded separately from unexercised legs. Reference-WM checks test other compositors.
 
-- Proposal B classification: tentative, awaiting user review (Orchestrator
-  2026-10-11): original 53 checks = 39 must-pass / 12 known-issue-allowed /
+- Proposal B classification: tentative, awaiting user review
+  (2026-10-11): original 53 checks = 39 must-pass / 12 known-issue-allowed /
   2 Windows-release. Per-check classifications remain in
   [Proposal B](research/release-0.1-triage.md#proposal-b---pending-live-checks-53-top-level-m39--k12--w2).
   Known-issue-allowed still requires a listed issue and no crash/silent tiling
@@ -3309,14 +3302,14 @@ recorded separately from unexercised legs. Reference-WM checks test other compos
 - Windows package/update channel: deferred to Windows release planning;
   short research refresh then user decision, most obvious and unsurprising
   for users. Blocks release packaging, not parity. [plan](research/windows-port/plan.md)
-- Windows workspace presentation: after multi-output, Windows-agent options
+- Windows workspace presentation: after multi-output, Windows options
   and recommendation for hidden-workspace Alt+Tab/taskbar semantics plus
   taskbar workspace indicator (parity 10), as a Windows release gate.
   [note](research/windows-port/alt-tab-hidden-workspaces.md)
 - 0.1 remaining 13 triage units, settings meta-question and Proposal B:
-  tentative, awaiting user review (Orchestrator 2026-10-11), distinct from
+  tentative, awaiting user review (2026-10-11), distinct from
   the 15 user-approved batch-1 units. Review
-  [tentative decisions](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review),
+  [tentative decisions](research/release-0.1-triage.md#tentative-decisions-2026-10-11-pending-user-review),
   especially D01 focus/visibility, D16 majority exception, D23 Windows
   divergence, D26 cross-login fallback, D27 gaming guard, D28 listed refusal,
   defaults-only scope and M39/K12/W2 plus N1-N4 classification.

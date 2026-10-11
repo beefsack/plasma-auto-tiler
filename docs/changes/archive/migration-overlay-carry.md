@@ -12,15 +12,15 @@
 
 ## Units and verification
 
-- One sequential muse-spark implementation Worker: inspect migration paths,
+- One sequential implementation unit: inspect migration paths,
   make the smallest core/KDE change and meaningful regression coverage.
-- Lead integrates decisions/spec/reference/backlog and Windows handoff docs.
-- One independent muse-spark review Worker; resolve concrete findings.
+- Integrate decisions/spec/reference/backlog and Windows handoff docs.
+- One independent review; resolve concrete findings.
 - Full KWin TS, Rust workspace, native CTest, clippy, fmt, portable,
   typecheck/bundle and offline shell gates; whitespace check.
-- After accepted evidence and review, archive this note, commit and push.
+- After accepted evidence and review, archive this note and publish.
 
-## Lead choices
+## Choices
 
 - D8's fullscreen no-focus-write rule takes precedence over an explicit D6
   activation write for an already-active fullscreen member. Follow/verification
@@ -56,5 +56,5 @@
   handoff updated. Empty P0 decision-changes item removed. Q4 live check now
   explicitly includes D8 fullscreen/maximized migration, native focus/re-fit,
   slot restoration, affected views and mid-flight state changes (all TBD).
-- Topology: Lead plus two sequential muse-spark Workers (implementation,
-  independent review/verification), resumed for fixes; one active at a time.
+- Topology: two sequential units (implementation,
+  independent review/verification).
