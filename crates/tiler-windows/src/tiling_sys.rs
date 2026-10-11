@@ -10823,6 +10823,62 @@ fn pending_topology_fingerprint(state: &TileLoop, areas: &[MonitorArea]) -> u64 
     )
 }
 
+/// REQ-WS-09 departure memory for an explicit workspace select: the
+/// chord-time origin still holds live foreground at dispatch, so the source
+/// workspace remembers it before hiding. Exact member key (HWND/PID/creation)
+/// plus source membership plus stay-mirrored liveness (fresh observed match,
+/// else a verified retained maximized/fullscreen row). Returns the remembered
+/// opaque token for one bounded log line; no windows, geometry, or
+/// suppression change.
+fn remember_select_departure(
+    state: &mut TileLoop,
+    origin: &crate::snapkey::SnapOrigin,
+    output: &str,
+    source_id: &str,
+    foreground_hwnd: u64,
+    observed: &[ObservedWindow],
+    retained: &[RetainedRow],
+) -> Option<String> {
+    if origin.token.is_empty() || foreground_hwnd != origin.hwnd {
+        return None;
+    }
+    let key = state
+        .member_tokens
+        .iter()
+        .find(|(_, token)| token.as_str() == origin.token.as_str())
+        .map(|(key, _)| key.clone())?;
+    if !crate::workspace_owner::member_matches(&key, origin.hwnd, origin.pid, &origin.creation) {
+        return None;
+    }
+    let in_source = state
+        .workspaces
+        .member_loc(&key)
+        .is_some_and(|loc| loc.output == output && loc.workspace == source_id);
+    if !in_source {
+        return None;
+    }
+    let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
+    let live = match by_hwnd.get(&key.hwnd) {
+        Some(fresh) => {
+            fresh.token == origin.token
+                && crate::workspace_owner::member_matches(
+                    &key,
+                    fresh.hwnd,
+                    fresh.identity.pid,
+                    &fresh.identity.process_creation,
+                )
+        }
+        None => retained
+            .iter()
+            .any(|row| row.key == key && (row.maximized || row.fullscreen)),
+    };
+    if !live {
+        return None;
+    }
+    state.workspaces.note_foreground(&key);
+    Some(origin.token.clone())
+}
+
 /// Switch the visible set from the output's active workspace to `target`:
 /// hide the prior set, reveal the target set, preserve Engine sessions for
 /// both, prune trailing empties, then re-enumerate fresh, establish the
@@ -11181,6 +11237,7 @@ fn workspace_do_select(
     // the select still reveals/reconciles the target, and a fresh foreground
     // readback reports observed focus honestly below.
     let mut focus_outcome: &'static str = "no-focus";
+    let mut focus_window: Option<String> = None;
     // Focus duration covers the bounded pumped settle when it runs, so a
     // dominating 500 ms settle attributes to focus, not geometry.
     let mut focus_ms: u64 = 0;
@@ -11193,6 +11250,7 @@ fn workspace_do_select(
         if observed {
             focus_outcome = "focus-ok";
             if let Some(hint) = focus_hint {
+                focus_window = state.member_tokens.get(hint).cloned();
                 state.workspaces.note_foreground(hint);
             }
         } else {
@@ -11227,6 +11285,7 @@ fn workspace_do_select(
                 .cloned()
                 .unwrap_or_default();
             if !token.is_empty() {
+                focus_window = Some(token.clone());
                 if crate::workspace_owner::focus_before_geometry(
                     true,
                     suspend_read(state, me, fulls).veto.block,
@@ -11249,6 +11308,12 @@ fn workspace_do_select(
             }
         }
     }
+    // Bounded focus reconstruction for the next trace: opaque chosen token
+    // (null when none) plus outcome under the action correlation.
+    log_json_at(
+        &state.log_path.clone(),
+        serde_json::json!({"event":"select-focus","correlation":ctx.correlation,"window":focus_window,"focus":focus_outcome}),
+    );
     let mut geometry: Option<ApplySummary> = None;
     // One shared hint-query budget for the select's row assembly. Floating
     // targets take no geometry: hide/reveal and focus above already ran, and
@@ -13902,6 +13967,28 @@ fn poll_workspace_cli_request(
         );
         return;
     };
+    // REQ-WS-09 departure memory for the CLI select/previous/relative path:
+    // the live foreground resolves through the same `snap_origins` map the
+    // hook binds chords against (never a carried HWND).
+    let foreground_hwnd = unsafe { GetForegroundWindow() } as usize as u64;
+    if let Some(source_id) = state.workspaces.active_id(&output)
+        && let Some(origin) = state.snap_origins.get(&foreground_hwnd).cloned()
+        && !origin.token.is_empty()
+        && let Some(token) = remember_select_departure(
+            state,
+            &origin,
+            &output,
+            &source_id,
+            foreground_hwnd,
+            &observed,
+            &retained,
+        )
+    {
+        log_json_at(
+            &state.log_path.clone(),
+            serde_json::json!({"event":"select-departure","correlation":ctx.correlation,"window":token}),
+        );
+    }
     let effect = workspace_do_select(
         state,
         me,
@@ -14115,6 +14202,27 @@ fn workspace_tick(
                 };
                 match target {
                     Some(id) => {
+                        // REQ-WS-09 departure memory: the chord-time origin
+                        // still holds live foreground, so the source
+                        // remembers it before hiding.
+                        let foreground_hwnd = unsafe { GetForegroundWindow() } as usize as u64;
+                        if let Some(source_id) = state.workspaces.active_id(&output)
+                            && let Some(origin) = intent.origin.as_ref()
+                            && let Some(token) = remember_select_departure(
+                                state,
+                                origin,
+                                &output,
+                                &source_id,
+                                foreground_hwnd,
+                                &observed,
+                                &retained,
+                            )
+                        {
+                            log_json_at(
+                                &state.log_path.clone(),
+                                serde_json::json!({"event":"select-departure","correlation":ctx.correlation,"window":token}),
+                            );
+                        }
                         let effect = workspace_do_select(
                             state,
                             me,
@@ -14614,6 +14722,25 @@ fn workspace_history_tick(
         };
         match target {
             Some(id) => {
+                // REQ-WS-09 departure memory, same as the numbered select.
+                let foreground_hwnd = unsafe { GetForegroundWindow() } as usize as u64;
+                if let Some(source_id) = state.workspaces.active_id(&output)
+                    && let Some(origin) = intent.origin.as_ref()
+                    && let Some(token) = remember_select_departure(
+                        state,
+                        origin,
+                        &output,
+                        &source_id,
+                        foreground_hwnd,
+                        &observed,
+                        &retained,
+                    )
+                {
+                    log_json_at(
+                        &state.log_path.clone(),
+                        serde_json::json!({"event":"select-departure","correlation":ctx.correlation,"window":token}),
+                    );
+                }
                 let effect = workspace_do_select(
                     state,
                     me,
@@ -21071,6 +21198,274 @@ mod rmax03_adapter_tests {
             writable_tokens(&state, &output, &active, &refetched),
             std::collections::HashSet::from(["w8".to_owned()]),
             "restored member takes the production tiled write"
+        );
+    }
+
+    #[test]
+    fn select_departure_remembers_live_fullscreen_game_for_return() {
+        // REQ-WS-09: the chord-time game origin still holds live foreground
+        // at dispatch, so the source remembers it before hiding. A slotless
+        // born-fullscreen game carries membership (`admit_born_fullscreen`)
+        // and rides the retained overlay row, so the return `focus_target`
+        // restores it while `writable_tokens` still excludes it. Table
+        // negatives pin exact identity, source membership, and liveness.
+        // Hermetic: fabricated keys/tokens/rows only.
+        use std::collections::HashSet;
+        let output = "mon-9".to_owned();
+        let game_key = crate::workspace::WindowKey {
+            hwnd: 501,
+            pid: 7,
+            creation: "creation-game".to_owned(),
+        };
+        let steam_key = crate::workspace::WindowKey {
+            hwnd: 502,
+            pid: 8,
+            creation: "creation-steam".to_owned(),
+        };
+        let other_key = crate::workspace::WindowKey {
+            hwnd: 503,
+            pid: 9,
+            creation: "creation-other".to_owned(),
+        };
+        let game_token = "tok-game".to_owned();
+        let steam_token = "tok-steam".to_owned();
+        let other_token = "tok-other".to_owned();
+        let game_origin = crate::snapkey::SnapOrigin {
+            hwnd: 501,
+            token: game_token.clone(),
+            pid: 7,
+            creation: "creation-game".to_owned(),
+        };
+        let rect = tiler_core::geometry::Rect {
+            x: 0,
+            y: 0,
+            w: 800,
+            h: 600,
+        };
+        let mk_observed =
+            |hwnd: u64, token: String, pid: u32, creation: &str| super::ObservedWindow {
+                hwnd,
+                token,
+                outer: rect,
+                visible: rect,
+                insets: crate::tiling::FrameInsets {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                },
+                identity: crate::tiling::ObservedTarget {
+                    hwnd,
+                    pid,
+                    process_creation: creation.to_owned(),
+                    exe_path: "C:\\test\\app.exe".to_owned(),
+                    user_sid: "S-1-5-test".to_owned(),
+                    session_id: 1,
+                    tag: String::new(),
+                },
+                facts: crate::tiling::WindowFacts {
+                    visible: true,
+                    minimized: false,
+                    maximized: false,
+                    cloaked: false,
+                    elevated: false,
+                    shell: false,
+                    tool_window: false,
+                    owned: false,
+                    captionless_fullscreen: false,
+                    no_activate: false,
+                    dialog: false,
+                },
+            };
+        let mk_game_row = || RetainedRow {
+            key: game_key.clone(),
+            token: game_token.clone(),
+            rect: None,
+            maximized: false,
+            fullscreen: true,
+            facts: None,
+        };
+        // Stale sibling memory on ws1 plus a bystander on ws2.
+        let setup = || {
+            let mut state = test_state();
+            state.workspaces.ensure_output(&output);
+            let ws1 = state.workspaces.active_id(&output).expect("active");
+            let ws2 = state.workspaces.resolve_send(&output, 2).expect("ws2");
+            assert!(
+                state
+                    .workspaces
+                    .assign(game_key.clone(), &output, &ws1, false)
+            );
+            assert!(
+                state
+                    .workspaces
+                    .assign(steam_key.clone(), &output, &ws1, false)
+            );
+            assert!(
+                state
+                    .workspaces
+                    .assign(other_key.clone(), &output, &ws2, false)
+            );
+            state
+                .member_tokens
+                .insert(game_key.clone(), game_token.clone());
+            state
+                .member_tokens
+                .insert(steam_key.clone(), steam_token.clone());
+            state
+                .member_tokens
+                .insert(other_key.clone(), other_token.clone());
+            state.workspaces.note_foreground(&steam_key);
+            (state, ws1)
+        };
+        // Production return-target assembly: source members plus the
+        // retained-inclusive fresh token union (focus only).
+        let return_target = |state: &TileLoop,
+                             ws1: &str,
+                             observed: &[super::ObservedWindow],
+                             retained: &[RetainedRow]| {
+            let members = state.workspaces.workspace_members(&output, ws1);
+            let mut fresh: HashSet<String> = observed.iter().map(|w| w.token.clone()).collect();
+            for row in retained {
+                if row.maximized || row.fullscreen {
+                    fresh.insert(row.token.clone());
+                }
+            }
+            let eligible =
+                state
+                    .workspaces
+                    .eligible_focus_set(&members, &state.member_tokens, &fresh);
+            state.workspaces.focus_target(&output, ws1, &eligible)
+        };
+        // Live game: remembered, restored, and still geometry-exempt.
+        let (mut state, ws1) = setup();
+        let observed = [mk_observed(502, steam_token.clone(), 8, "creation-steam")];
+        let retained = [mk_game_row()];
+        assert_eq!(
+            super::remember_select_departure(
+                &mut state,
+                &game_origin,
+                &output,
+                &ws1,
+                501,
+                &observed,
+                &retained
+            ),
+            Some(game_token.clone())
+        );
+        assert_eq!(
+            return_target(&state, &ws1, &observed, &retained),
+            Some(game_key.clone()),
+            "departure memory restores the live fullscreen game"
+        );
+        let writable = writable_tokens(&state, &output, &ws1, &observed);
+        assert!(writable.contains(&steam_token));
+        assert!(
+            !writable.contains(&game_token),
+            "fullscreen game takes no geometry writes"
+        );
+        // Changed foreground remembers nothing.
+        let (mut state, ws1) = setup();
+        let observed = [mk_observed(502, steam_token.clone(), 8, "creation-steam")];
+        let retained = [mk_game_row()];
+        assert_eq!(
+            super::remember_select_departure(
+                &mut state,
+                &game_origin,
+                &output,
+                &ws1,
+                502,
+                &observed,
+                &retained
+            ),
+            None
+        );
+        assert_eq!(
+            return_target(&state, &ws1, &observed, &retained),
+            Some(steam_key.clone())
+        );
+        // Wrong token: no member maps, nothing remembered.
+        let (mut state, ws1) = setup();
+        let observed = [mk_observed(502, steam_token.clone(), 8, "creation-steam")];
+        let retained = [mk_game_row()];
+        let evil = crate::snapkey::SnapOrigin {
+            hwnd: 501,
+            token: "tok-evil".to_owned(),
+            pid: 7,
+            creation: "creation-game".to_owned(),
+        };
+        assert_eq!(
+            super::remember_select_departure(
+                &mut state, &evil, &output, &ws1, 501, &observed, &retained
+            ),
+            None
+        );
+        assert_eq!(
+            return_target(&state, &ws1, &observed, &retained),
+            Some(steam_key.clone())
+        );
+        // PID mismatch: a recycled identity never matches.
+        let (mut state, ws1) = setup();
+        let observed = [mk_observed(502, steam_token.clone(), 8, "creation-steam")];
+        let retained = [mk_game_row()];
+        let recycled = crate::snapkey::SnapOrigin {
+            hwnd: 501,
+            token: game_token.clone(),
+            pid: 999,
+            creation: "creation-game".to_owned(),
+        };
+        assert_eq!(
+            super::remember_select_departure(
+                &mut state, &recycled, &output, &ws1, 501, &observed, &retained
+            ),
+            None
+        );
+        assert_eq!(
+            return_target(&state, &ws1, &observed, &retained),
+            Some(steam_key.clone())
+        );
+        // Other-workspace origin: source membership required.
+        let (mut state, ws1) = setup();
+        let observed = [
+            mk_observed(502, steam_token.clone(), 8, "creation-steam"),
+            mk_observed(503, other_token.clone(), 9, "creation-other"),
+        ];
+        let retained = [mk_game_row()];
+        let elsewhere = crate::snapkey::SnapOrigin {
+            hwnd: 503,
+            token: other_token.clone(),
+            pid: 9,
+            creation: "creation-other".to_owned(),
+        };
+        assert_eq!(
+            super::remember_select_departure(
+                &mut state, &elsewhere, &output, &ws1, 503, &observed, &retained
+            ),
+            None
+        );
+        assert_eq!(
+            return_target(&state, &ws1, &observed, &retained),
+            Some(steam_key.clone())
+        );
+        // Vanished: game live nowhere (absent observed, no retained row).
+        let (mut state, ws1) = setup();
+        let observed = [mk_observed(502, steam_token.clone(), 8, "creation-steam")];
+        let retained: [RetainedRow; 0] = [];
+        assert_eq!(
+            super::remember_select_departure(
+                &mut state,
+                &game_origin,
+                &output,
+                &ws1,
+                501,
+                &observed,
+                &retained
+            ),
+            None
+        );
+        assert_eq!(
+            return_target(&state, &ws1, &observed, &retained),
+            Some(steam_key.clone())
         );
     }
 }

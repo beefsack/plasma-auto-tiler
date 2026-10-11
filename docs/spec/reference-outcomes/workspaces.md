@@ -569,7 +569,11 @@ verb inventory); selected intent and doc assertions are never evidence.
   `S(S-ours-planops)` + `S(S-ours-ws)`; return-focus queued.
 - Then Ours Windows: focuses the remembered `last_focus` member (B),
   else the first visible member, via `focus_target` on select.
-  `S(S-ours-ws)`.
+  `S(S-ours-ws)`. Windows adapter regression 2026-10-11 (base `94fa4ef`
+  plus delivery commit) records verified departure foreground, including
+  retained fullscreen members, before numbered/history/CLI selects; offline
+  return-target and no-fullscreen-geometry coverage passed. Native game/fixture
+  outcome remains pending ([record](../../changes/archive/windows-workspace-fullscreen-focus.md)).
 - Variant hook: provisional/TBD (return-focus hook, to discuss).
 
 ### R-WS-10: send B away; empty middle retained vs removed

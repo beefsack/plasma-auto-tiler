@@ -233,6 +233,10 @@ platform API behavior.
   [D16](research/release-0.1-triage.md#tentative-orchestrator-decisions-2026-10-11-pending-user-review).
 - R-CLOSE-03: closing the sole window retains the shown workspace empty, with no focused client (User 2026-10-10, 0.1 triage D08).
 - R-WS-09: workspace return restores remembered focus (User 2026-10-10, 0.1 triage D17).
+  Windows dogfood fix delivered offline 2026-10-11: explicit numbered/history/
+  CLI departure records verified live foreground, including fullscreen members;
+  return restores it without fullscreen geometry writes. Native game check
+  pending ([record](changes/archive/windows-workspace-fullscreen-focus.md)).
 - R-WS-02: returning B inserts after remembered target anchor A; no before/after setting (User 2026-10-10, 0.1 triage D18).
 - Shared model:
   - Each managed workspace owns a session-local tiled/floating flag. Startup

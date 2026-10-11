@@ -45,7 +45,8 @@
   `mixed_markers_readopt_through_real_tileloop_in_any_order`,
   `marker_install_remove_roundtrip_on_owned_window`). No live actions ran.
 - Windows-only publication regression file is platform-gated because its real
-  owner outcome path is Windows-only. CI result follows publication.
+  owner outcome path is Windows-only. CI passed for delivery `94fa4ef`
+  ([run](https://github.com/beefsack/OmniTiler/actions/runs/38104575289)).
 - User live check: preserve existing settings, arrange an absent settings file,
   start `tile --user-start --trace`, leave the dialog unclicked, and request
   `just --justfile windows.justfile stop` from a second shell. Verify dismissal,

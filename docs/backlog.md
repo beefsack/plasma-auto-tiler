@@ -163,6 +163,9 @@ decisions of 2026-09-24 are under
   - (a) Offline-delivered: pending first-run prompt cancels on graceful stop,
     with no settings publication; native dismissal/teardown live check pending
     ([record](changes/archive/windows-first-run-stop.md)).
+  - (b) Offline-delivered: verified departure focus now feeds remembered return
+    focus, including fullscreen members; game focus/display-mode live check
+    pending ([record](changes/archive/windows-workspace-fullscreen-focus.md)).
 - P1 | KDE follow-ups from 2026-10-11 Windows dogfood | Cross-platform
   decisions for the KDE session: R-MAX-06 born-maximized setting (default
   tile) and active border radius default 6; underlay default visibility
