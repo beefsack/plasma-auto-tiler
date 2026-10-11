@@ -332,7 +332,7 @@ function hiddenObservedWithGap(
 function refreshLines(logs: string[], route: "foreground" | "hidden"): string[] {
     return logs.filter((line) =>
         line.startsWith(
-            `plasma-auto-tiler:route-diag component=cosmic-plan route=plan stage=refresh event=${route} `,
+            `omnitiler:route-diag component=cosmic-plan route=plan stage=refresh event=${route} `,
         ),
     );
 }
@@ -392,7 +392,7 @@ describe("background sticky multi-home quiet", () => {
         assert.equal(freshHidden.length, 4, `two quiet hidden visits per round, got ${JSON.stringify(freshHidden)}`);
         for (const line of freshHidden) {
             assert.ok(
-                line === "plasma-auto-tiler:route-diag component=cosmic-plan route=plan stage=refresh event=hidden outcome=equal reason=applied-evidence-equal terminal=quiet correlation=none generation=gen-1",
+                line === "omnitiler:route-diag component=cosmic-plan route=plan stage=refresh event=hidden outcome=equal reason=applied-evidence-equal terminal=quiet correlation=none generation=gen-1",
                 `bounded hidden equal classification, got:\n${line}`,
             );
             assert.ok(!line.includes("win-s"), `window id leaked in:\n${line}`);
@@ -437,7 +437,7 @@ describe("background hidden gap reload", () => {
         assert.equal(freshHidden.length, 1, `one classification per hidden decision, got ${JSON.stringify(freshHidden)}`);
         const gapCorr = String(gapCall["correlation_id"]);
         assert.ok(
-            freshHidden[0] === `plasma-auto-tiler:route-diag component=cosmic-plan route=plan stage=refresh event=hidden outcome=change reason=gap-change terminal=dispatch correlation=${gapCorr} generation=gen-1`,
+            freshHidden[0] === `omnitiler:route-diag component=cosmic-plan route=plan stage=refresh event=hidden outcome=change reason=gap-change terminal=dispatch correlation=${gapCorr} generation=gen-1`,
             `bounded hidden gap-change classification, got:\n${freshHidden[0]}`,
         );
         assert.ok(!(freshHidden[0] as string).includes("win-h"), `window id leaked in:\n${freshHidden[0]}`);

@@ -1,5 +1,5 @@
 {
-  description = "Plasma Auto Tiler packages";
+  description = "OmniTiler packages";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/54ba4bcec4043e72a4006d825e0d7aff5562008f";
 
@@ -30,14 +30,14 @@
           ./Cargo.lock
           ./crates
           ./test-fixtures
-          ./assets/icons/plasma-auto-tiler.svg
+          ./assets/icons/omnitiler.svg
           ./home-manager-module.nix
         ];
       };
 
       plannerDbusServiceSource = pkgs: pkgs.lib.fileset.toSource {
         root = ./.;
-        fileset = ./nix/org.plasmaautotiler.Planner.service;
+        fileset = ./nix/com.omnitiler.Planner.service;
       };
 
       nativeEffectSource = pkgs: pkgs.lib.fileset.toSource {
@@ -58,7 +58,7 @@
           ./crates/tiler-kwin-effect-ffi
           ./crates/tiler-core
           ./crates/tiler-protocol
-          ./crates/plasma-auto-tiler
+          ./crates/omnitiler
           ./crates/tiler-windows
         ];
       };
@@ -80,7 +80,7 @@
           };
         in
         pkgs.stdenv.mkDerivation {
-          pname = "plasma-auto-tiler-native-effect";
+          pname = "omnitiler-native-effect";
           version = "0.1.0";
           src = nativeEffectSource pkgs;
           sourceRoot = "source/kwin/native-effect";
@@ -123,11 +123,11 @@
 
           cmakeFlags = [
             "-DBUILD_TESTING=${if withTests then "ON" else "OFF"}"
-            "-DPLASMA_AUTO_TILER_BUILD_EFFECT=ON"
+            "-DOMNITILER_BUILD_EFFECT=ON"
             # withTests builds the original full tree (settings ON) so the
             # combined FFI assertions stay gated; the shipping derivation
             # stays effect-only (settings OFF).
-            "-DPLASMA_AUTO_TILER_BUILD_SETTINGS=${if withTests then "ON" else "OFF"}"
+            "-DOMNITILER_BUILD_SETTINGS=${if withTests then "ON" else "OFF"}"
             "-DKDE_INSTALL_PLUGINDIR=lib/qt-6/plugins"
             "-DKWin_DIR=${kwinDev}/lib/cmake/KWin"
           ];
@@ -135,19 +135,19 @@
           doInstallCheck = true;
           installCheckPhase = ''
             runHook preInstallCheck
-            test -f "$out/lib/qt-6/plugins/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+            test -f "$out/lib/qt-6/plugins/kwin/effects/plugins/omnitiler-active-border.so"
             ${if withTests then ''
               # Test-only derivation: the full tree ships both KCMs as test
               # artifacts alongside the effect.
-              test -f "$out/lib/qt-6/plugins/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
-              test -f "$out/lib/qt-6/plugins/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+              test -f "$out/lib/qt-6/plugins/kwin/effects/configs/omnitiler-active-border_config.so"
+              test -f "$out/lib/qt-6/plugins/kwin/scripts/configs/omnitiler-kwin_config.so"
             '' else ''
               # Shipping derivation: effect only, never the KCMs.
-              test ! -e "$out/lib/qt-6/plugins/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
-              test ! -e "$out/lib/qt-6/plugins/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+              test ! -e "$out/lib/qt-6/plugins/kwin/effects/configs/omnitiler-active-border_config.so"
+              test ! -e "$out/lib/qt-6/plugins/kwin/scripts/configs/omnitiler-kwin_config.so"
             ''}
-            test ! -e "$out/lib/qt-6/plugins/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
-            test ! -e "$out/lib/qt-6/plugins/kwin/scripts/configs/plasma-auto-tiler-drag-oracle_config.so"
+            test ! -e "$out/lib/qt-6/plugins/kwin/effects/plugins/omnitiler-drag-oracle.so"
+            test ! -e "$out/lib/qt-6/plugins/kwin/scripts/configs/omnitiler-drag-oracle_config.so"
             ${if withTests then ''
               # Hermetic full gates: offscreen platform, isolated config
               # home; the test binaries isolate the session bus themselves.
@@ -172,7 +172,7 @@
           kde = pkgs.kdePackages;
         in
         pkgs.stdenv.mkDerivation {
-          pname = "plasma-auto-tiler-native-settings";
+          pname = "omnitiler-native-settings";
           version = "0.1.0";
           src = nativeEffectSource pkgs;
           sourceRoot = "source/kwin/native-effect";
@@ -195,19 +195,19 @@
 
           cmakeFlags = [
             "-DBUILD_TESTING=${if withTests then "ON" else "OFF"}"
-            "-DPLASMA_AUTO_TILER_BUILD_EFFECT=OFF"
-            "-DPLASMA_AUTO_TILER_BUILD_SETTINGS=ON"
+            "-DOMNITILER_BUILD_EFFECT=OFF"
+            "-DOMNITILER_BUILD_SETTINGS=ON"
             "-DKDE_INSTALL_PLUGINDIR=lib/qt-6/plugins"
           ];
 
           doInstallCheck = true;
           installCheckPhase = ''
             runHook preInstallCheck
-            test -f "$out/lib/qt-6/plugins/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
-            test -f "$out/lib/qt-6/plugins/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
-            test ! -e "$out/lib/qt-6/plugins/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-            test ! -e "$out/lib/qt-6/plugins/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
-            test ! -e "$out/lib/qt-6/plugins/kwin/scripts/configs/plasma-auto-tiler-drag-oracle_config.so"
+            test -f "$out/lib/qt-6/plugins/kwin/effects/configs/omnitiler-active-border_config.so"
+            test -f "$out/lib/qt-6/plugins/kwin/scripts/configs/omnitiler-kwin_config.so"
+            test ! -e "$out/lib/qt-6/plugins/kwin/effects/plugins/omnitiler-active-border.so"
+            test ! -e "$out/lib/qt-6/plugins/kwin/effects/plugins/omnitiler-drag-oracle.so"
+            test ! -e "$out/lib/qt-6/plugins/kwin/scripts/configs/omnitiler-drag-oracle_config.so"
             ${if withTests then ''
               # Hermetic settings gates: offscreen platform, isolated config
               # home; the test binaries isolate the session bus themselves.
@@ -227,37 +227,37 @@
         , sourceRev ? "local-dev"
         }:
         pkgs.buildNpmPackage {
-          pname = "plasma-auto-tiler-kwin";
+          pname = "omnitiler-kwin";
           version = "0.1.0";
           src = kwinScriptSource pkgs;
           sourceRoot = "source/kwin";
-          npmDepsHash = "sha256-IWhNnM3IfAVLFQBOC+l9XssLOcIUcGCEa4RHv6BZ3cM=";
+          npmDepsHash = "sha256-6V4SnPLw4sqYE5QRtx6vr8UQ7nHaLq1nAOgzR1P6bGY=";
           # Installed build only; ordinary npm build stays define-free.
           npmBuildScript = "build:installed";
           # Shared compile-time identity: self.rev or local-dev.
-          env.PLASMA_AUTO_TILER_SOURCE_REV = sourceRev;
+          env.OMNITILER_SOURCE_REV = sourceRev;
 
           installPhase = ''
             runHook preInstall
-            installRoot="$out/share/kwin/scripts/plasma-auto-tiler-kwin"
+            installRoot="$out/share/kwin/scripts/omnitiler-kwin"
             mkdir -p "$installRoot"
             cp -a metadata.json contents "$installRoot/"
             # Static build-id marker, no paths.
-            printf '%s\n' "package=plasma-auto-tiler-kwin" "version=0.1.0" "source=${sourceRev}" > "$installRoot/build-id"
+            printf '%s\n' "package=omnitiler-kwin" "version=0.1.0" "source=${sourceRev}" > "$installRoot/build-id"
             runHook postInstall
           '';
 
           doInstallCheck = true;
           installCheckPhase = ''
             runHook preInstallCheck
-            installRoot="$out/share/kwin/scripts/plasma-auto-tiler-kwin"
-            grep -Fx "package=plasma-auto-tiler-kwin" "$installRoot/build-id"
+            installRoot="$out/share/kwin/scripts/omnitiler-kwin"
+            grep -Fx "package=omnitiler-kwin" "$installRoot/build-id"
             grep -Fx "version=0.1.0" "$installRoot/build-id"
             grep -Fx "source=${sourceRev}" "$installRoot/build-id"
             # Script-only package keeps the qualified native script KCM
             # reference; the Configure page resolves only alongside the
             # companion ABI-matched native-effect delivery.
-            grep -F "kwin/scripts/configs/plasma-auto-tiler-kwin_config" "$installRoot/metadata.json"
+            grep -F "kwin/scripts/configs/omnitiler-kwin_config" "$installRoot/metadata.json"
             runHook postInstallCheck
           '';
         };
@@ -267,45 +267,45 @@
         , sourceRev ? "local-dev"
         }:
         pkgs.rustPlatform.buildRustPackage {
-          pname = "plasma-auto-tiler";
+          pname = "omnitiler";
           version = "0.1.0";
           src = traySource pkgs;
           cargoLock.lockFile = ./Cargo.lock;
-          cargoBuildFlags = [ "-p" "plasma-auto-tiler" ];
+          cargoBuildFlags = [ "-p" "omnitiler" ];
           buildInputs = [ pkgs.kdePackages.kcmutils ];
           dontWrapQtApps = true;
-          env.PLASMA_AUTO_TILER_KCMSHELL6 =
+          env.OMNITILER_KCMSHELL6 =
             "${pkgs.kdePackages.kcmutils}/bin/kcmshell6";
-          env.PLASMA_AUTO_TILER_KWRITECONFIG6 =
+          env.OMNITILER_KWRITECONFIG6 =
             "${pkgs.kdePackages.kconfig}/bin/kwriteconfig6";
-          env.PLASMA_AUTO_TILER_KREADCONFIG6 =
+          env.OMNITILER_KREADCONFIG6 =
             "${pkgs.kdePackages.kconfig}/bin/kreadconfig6";
           # Shared compile-time identity: self.rev or local-dev.
-          env.PLASMA_AUTO_TILER_SOURCE_REV = sourceRev;
+          env.OMNITILER_SOURCE_REV = sourceRev;
           preCheck = ''
             export HOME="$NIX_BUILD_TOP"
           '';
           postInstall = ''
             mkdir -p "$out/share/icons/hicolor/scalable/apps"
-            cp ${./assets/icons/plasma-auto-tiler.svg} "$out/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg"
+            cp ${./assets/icons/omnitiler.svg} "$out/share/icons/hicolor/scalable/apps/omnitiler.svg"
             mkdir -p "$out/share/dbus-1/services"
-            substitute "${plannerDbusServiceSource pkgs}/nix/org.plasmaautotiler.Planner.service" "$out/share/dbus-1/services/org.plasmaautotiler.Planner.service" --replace-fail "@out@" "$out"
+            substitute "${plannerDbusServiceSource pkgs}/nix/com.omnitiler.Planner.service" "$out/share/dbus-1/services/com.omnitiler.Planner.service" --replace-fail "@out@" "$out"
             # Static build-id marker, no paths.
-            mkdir -p "$out/share/plasma-auto-tiler"
-            printf '%s\n' "package=plasma-auto-tiler" "version=0.1.0" "source=${sourceRev}" > "$out/share/plasma-auto-tiler/build-id"
+            mkdir -p "$out/share/omnitiler"
+            printf '%s\n' "package=omnitiler" "version=0.1.0" "source=${sourceRev}" > "$out/share/omnitiler/build-id"
           '';
           doInstallCheck = true;
           installCheckPhase = ''
             runHook preInstallCheck
-            test -s "$out/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg"
-            test -s "$out/share/dbus-1/services/org.plasmaautotiler.Planner.service"
-            grep -Fx "[D-BUS Service]" "$out/share/dbus-1/services/org.plasmaautotiler.Planner.service"
-            grep -Fx "Name=org.plasmaautotiler.Planner" "$out/share/dbus-1/services/org.plasmaautotiler.Planner.service"
-            grep -Fx "Exec=$out/bin/plasma-auto-tiler planner-service" "$out/share/dbus-1/services/org.plasmaautotiler.Planner.service"
-            grep -Fx "SystemdService=plasma-auto-tiler-planner.service" "$out/share/dbus-1/services/org.plasmaautotiler.Planner.service"
-            grep -Fx "package=plasma-auto-tiler" "$out/share/plasma-auto-tiler/build-id"
-            grep -Fx "version=0.1.0" "$out/share/plasma-auto-tiler/build-id"
-            grep -Fx "source=${sourceRev}" "$out/share/plasma-auto-tiler/build-id"
+            test -s "$out/share/icons/hicolor/scalable/apps/omnitiler.svg"
+            test -s "$out/share/dbus-1/services/com.omnitiler.Planner.service"
+            grep -Fx "[D-BUS Service]" "$out/share/dbus-1/services/com.omnitiler.Planner.service"
+            grep -Fx "Name=com.omnitiler.Planner" "$out/share/dbus-1/services/com.omnitiler.Planner.service"
+            grep -Fx "Exec=$out/bin/omnitiler planner-service" "$out/share/dbus-1/services/com.omnitiler.Planner.service"
+            grep -Fx "SystemdService=omnitiler-planner.service" "$out/share/dbus-1/services/com.omnitiler.Planner.service"
+            grep -Fx "package=omnitiler" "$out/share/omnitiler/build-id"
+            grep -Fx "version=0.1.0" "$out/share/omnitiler/build-id"
+            grep -Fx "source=${sourceRev}" "$out/share/omnitiler/build-id"
             runHook postInstallCheck
           '';
         };
@@ -352,7 +352,7 @@
             inherit system;
             modules = [
               self.nixosModules.default
-              { programs.plasma-auto-tiler.enable = true; }
+              { programs.omnitiler.enable = true; }
             ];
           };
           disabledNixos = nixpkgs.lib.nixosSystem {
@@ -399,8 +399,8 @@
               homeModuleOptions
               self.homeManagerModules.default
               {
-                programs.plasma-auto-tiler.tray.enable = true;
-                programs.plasma-auto-tiler.planner.enable = true;
+                programs.omnitiler.tray.enable = true;
+                programs.omnitiler.planner.enable = true;
               }
             ];
           };
@@ -411,36 +411,36 @@
             modules = [
               homeModuleOptions
               self.homeManagerModules.default
-              { programs.plasma-auto-tiler.planner.enable = false; }
+              { programs.omnitiler.planner.enable = false; }
             ];
           };
           customPlanner = pkgs.runCommand "custom-planner-test" { } ''
             mkdir -p "$out/bin"
-            touch "$out/bin/plasma-auto-tiler"
-            chmod +x "$out/bin/plasma-auto-tiler"
+            touch "$out/bin/omnitiler"
+            chmod +x "$out/bin/omnitiler"
           '';
           customPlannerHome = nixpkgs.lib.evalModules {
             modules = [
               homeModuleOptions
               self.homeManagerModules.default
               {
-                programs.plasma-auto-tiler.planner.enable = true;
-                programs.plasma-auto-tiler.planner.package = customPlanner;
+                programs.omnitiler.planner.enable = true;
+                programs.omnitiler.planner.package = customPlanner;
               }
             ];
           };
           activation = enabledNixos.config.environment.etc."xdg/kwinrc".text;
-          desktopFile = ".config/autostart/plasma-auto-tiler.desktop";
-          trayUnit = enabledHome.config.systemd.user.services."plasma-auto-tiler-tray";
-          descriptorTemplate = builtins.readFile ./nix/org.plasmaautotiler.Planner.service;
-          expectedTemplate = "[D-BUS Service]\nName=org.plasmaautotiler.Planner\nExec=@out@/bin/plasma-auto-tiler planner-service\nSystemdService=plasma-auto-tiler-planner.service\n";
-          expectedDescriptor = "[D-BUS Service]\nName=org.plasmaautotiler.Planner\nExec=${tray}/bin/plasma-auto-tiler planner-service\nSystemdService=plasma-auto-tiler-planner.service\n";
-          plannerUnit = enabledHome.config.systemd.user.services."plasma-auto-tiler-planner";
-          defaultPlannerUnit = disabledHome.config.systemd.user.services."plasma-auto-tiler-planner";
-          customPlannerUnit = customPlannerHome.config.systemd.user.services."plasma-auto-tiler-planner";
+          desktopFile = ".config/autostart/omnitiler.desktop";
+          trayUnit = enabledHome.config.systemd.user.services."omnitiler-tray";
+          descriptorTemplate = builtins.readFile ./nix/com.omnitiler.Planner.service;
+          expectedTemplate = "[D-BUS Service]\nName=com.omnitiler.Planner\nExec=@out@/bin/omnitiler planner-service\nSystemdService=omnitiler-planner.service\n";
+          expectedDescriptor = "[D-BUS Service]\nName=com.omnitiler.Planner\nExec=${tray}/bin/omnitiler planner-service\nSystemdService=omnitiler-planner.service\n";
+          plannerUnit = enabledHome.config.systemd.user.services."omnitiler-planner";
+          defaultPlannerUnit = disabledHome.config.systemd.user.services."omnitiler-planner";
+          customPlannerUnit = customPlannerHome.config.systemd.user.services."omnitiler-planner";
         in
-        assert activation == "[Plugins]\nplasma-auto-tiler-kwinEnabled=true\n";
-        assert !(nixpkgs.lib.hasInfix "plasma-auto-tiler-active-borderEnabled" activation);
+        assert activation == "[Plugins]\nomnitiler-kwinEnabled=true\n";
+        assert !(nixpkgs.lib.hasInfix "omnitiler-active-borderEnabled" activation);
         assert !(nixpkgs.lib.hasInfix "Planner" activation);
         assert !(nixpkgs.lib.hasInfix "planner" activation);
         assert builtins.elem kwinScript enabledNixos.config.environment.systemPackages;
@@ -451,27 +451,27 @@
         assert !(builtins.hasAttr desktopFile enabledHome.config.home.file);
         assert !(builtins.hasAttr desktopFile disabledHome.config.home.file);
         assert !(builtins.hasAttr "activation" enabledHome.config.home);
-        assert !(builtins.hasAttr ".config/autostart/plasma-auto-tiler-planner.desktop" enabledHome.config.home.file);
-        assert !(builtins.hasAttr ".config/autostart/plasma-auto-tiler-planner.desktop" disabledHome.config.home.file);
-        assert builtins.hasAttr "plasma-auto-tiler-tray" enabledHome.config.systemd.user.services;
-        assert !(builtins.hasAttr "plasma-auto-tiler-tray" disabledHome.config.systemd.user.services);
+        assert !(builtins.hasAttr ".config/autostart/omnitiler-planner.desktop" enabledHome.config.home.file);
+        assert !(builtins.hasAttr ".config/autostart/omnitiler-planner.desktop" disabledHome.config.home.file);
+        assert builtins.hasAttr "omnitiler-tray" enabledHome.config.systemd.user.services;
+        assert !(builtins.hasAttr "omnitiler-tray" disabledHome.config.systemd.user.services);
         assert trayUnit.Unit.PartOf == [ "graphical-session.target" ];
-        assert trayUnit.Service.ExecStart == "${tray}/bin/plasma-auto-tiler tray";
+        assert trayUnit.Service.ExecStart == "${tray}/bin/omnitiler tray";
         assert trayUnit.Service.Restart == "on-failure";
         assert trayUnit.Install.WantedBy == [ "graphical-session.target" ];
         assert descriptorTemplate == expectedTemplate;
         assert !(nixpkgs.lib.hasInfix "/nix/store" descriptorTemplate);
         assert builtins.replaceStrings [ "@out@" ] [ "${tray}" ] descriptorTemplate == expectedDescriptor;
         assert !(nixpkgs.lib.hasInfix (toString ./.) expectedDescriptor);
-        assert disabledHome.config.programs.plasma-auto-tiler.planner.enable == true;
-        assert enabledHome.config.programs.plasma-auto-tiler.planner.enable == true;
-        assert plannerDisabledHome.config.programs.plasma-auto-tiler.planner.enable == false;
-        assert builtins.hasAttr "plasma-auto-tiler-planner" enabledHome.config.systemd.user.services;
-        assert builtins.hasAttr "plasma-auto-tiler-planner" disabledHome.config.systemd.user.services;
-        assert !(builtins.hasAttr "plasma-auto-tiler-planner" plannerDisabledHome.config.systemd.user.services);
+        assert disabledHome.config.programs.omnitiler.planner.enable == true;
+        assert enabledHome.config.programs.omnitiler.planner.enable == true;
+        assert plannerDisabledHome.config.programs.omnitiler.planner.enable == false;
+        assert builtins.hasAttr "omnitiler-planner" enabledHome.config.systemd.user.services;
+        assert builtins.hasAttr "omnitiler-planner" disabledHome.config.systemd.user.services;
+        assert !(builtins.hasAttr "omnitiler-planner" plannerDisabledHome.config.systemd.user.services);
         assert plannerUnit.Service.Type == "dbus";
-        assert plannerUnit.Service.BusName == "org.plasmaautotiler.Planner";
-        assert plannerUnit.Service.ExecStart == "${tray}/bin/plasma-auto-tiler planner-service";
+        assert plannerUnit.Service.BusName == "com.omnitiler.Planner";
+        assert plannerUnit.Service.ExecStart == "${tray}/bin/omnitiler planner-service";
         assert plannerUnit.Service.Restart == "no";
         assert builtins.attrNames plannerUnit.Service == [ "BusName" "ExecStart" "Restart" "StandardError" "StandardOutput" "Type" ];
         assert !(builtins.hasAttr "ProtectSystem" plannerUnit.Service);
@@ -482,21 +482,21 @@
         assert !(nixpkgs.lib.hasInfix "/bin/sh" plannerUnit.Service.ExecStart);
         assert !(nixpkgs.lib.hasInfix "sh -c" plannerUnit.Service.ExecStart);
         assert !(nixpkgs.lib.hasInfix (toString ./.) plannerUnit.Service.ExecStart);
-        assert nixpkgs.lib.hasInfix "/bin/plasma-auto-tiler planner-service" plannerUnit.Service.ExecStart;
-        assert plannerUnit.Unit.Description == "Plasma Auto Tiler Planner (on-demand D-Bus service)";
+        assert nixpkgs.lib.hasInfix "/bin/omnitiler planner-service" plannerUnit.Service.ExecStart;
+        assert plannerUnit.Unit.Description == "OmniTiler Planner (on-demand D-Bus service)";
         assert plannerUnit.Install == { };
-        assert defaultPlannerUnit.Service.ExecStart == "${tray}/bin/plasma-auto-tiler planner-service";
+        assert defaultPlannerUnit.Service.ExecStart == "${tray}/bin/omnitiler planner-service";
         assert builtins.elem tray enabledHome.config.home.packages;
         assert builtins.elem tray disabledHome.config.home.packages;
         assert plannerDisabledHome.config.home.packages == [ ];
-        assert customPlannerUnit.Service.ExecStart == "${customPlanner}/bin/plasma-auto-tiler planner-service";
+        assert customPlannerUnit.Service.ExecStart == "${customPlanner}/bin/omnitiler planner-service";
         assert builtins.elem customPlanner customPlannerHome.config.home.packages;
         assert !(builtins.elem tray customPlannerHome.config.home.packages);
         assert customPlannerUnit.Service.Type == "dbus";
-        assert customPlannerUnit.Service.BusName == "org.plasmaautotiler.Planner";
+        assert customPlannerUnit.Service.BusName == "com.omnitiler.Planner";
         assert customPlannerUnit.Service.Restart == "no";
         {
-          module-boundary = pkgs.runCommand "plasma-auto-tiler-module-boundary" { } ''
+          module-boundary = pkgs.runCommand "omnitiler-module-boundary" { } ''
             touch "$out"
           '';
           native-effect = nativeEffect;

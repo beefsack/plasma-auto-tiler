@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Authority: the actual host Nix KWin package at
 #   /run/current-system/sw/bin/kwin_wayland
-# (override for hermetic tests only via PLASMA_AUTO_TILER_HOST_KWIN_BIN).
+# (override for hermetic tests only via OMNITILER_HOST_KWIN_BIN).
 # Resolution is read-only and provenance-bound:
 #   host bin -> realpath under /nix/store -> exact derivation via
 #   `nix path-info --derivation` -> exact `dev` output path from the SAME
@@ -30,7 +30,7 @@ set -euo pipefail
 # output before configure, and asserts the inner cmake is host-native (not
 # an injected pinned cmake) while cargo and rustc resolve from the explicit
 # injected path(s).
-# The legacy PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR (and DOGFOOD_KWIN_DEV_CMAKE_DIR)
+# The legacy OMNITILER_KWIN_DEV_CMAKE_DIR (and DOGFOOD_KWIN_DEV_CMAKE_DIR)
 # can neither drive nor leak into the native build: it is unset on entry,
 # stripped from the `nix develop` environment, and unset again inside the
 # dev shell; cmake receives only the resolved dev output.
@@ -67,7 +67,7 @@ DEFAULT_STORE_ROOT="/nix/store"
 # (cmake must come from `nix develop <drv>` itself). CARGO_BIN is a
 # legitimate explicit cargo path (like RUSTC_BIN) and is resolved in
 # cmd_build; only the legacy pinned env plus CMAKE_BIN are stripped here.
-unset PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
+unset OMNITILER_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
 unset DOGFOOD_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
 unset CMAKE_BIN 2>/dev/null || true
 
@@ -112,16 +112,16 @@ Commands:
     nixpkgs Rust (verified under /nix/store, no channel/target change).
     Inside that environment, the exact KWinConfig.cmake from the selected
     realized dev output is required before configure. The legacy
-    PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR / DOGFOOD_KWIN_DEV_CMAKE_DIR are
+    OMNITILER_KWIN_DEV_CMAKE_DIR / DOGFOOD_KWIN_DEV_CMAKE_DIR are
     stripped and never passed to cmake. First use may realize the selected dev
     output closure (network/store cost).
 
   --help  show this help and exit
 
 Environment (test-only overrides; production defaults are NixOS paths):
-  PLASMA_AUTO_TILER_HOST_KWIN_BIN  host kwin_wayland path
-  PLASMA_AUTO_TILER_STORE_ROOT     store prefix (default /nix/store)
-  PLASMA_AUTO_TILER_REPO_ROOT      repo root for default dirs
+  OMNITILER_HOST_KWIN_BIN  host kwin_wayland path
+  OMNITILER_STORE_ROOT     store prefix (default /nix/store)
+  OMNITILER_REPO_ROOT      repo root for default dirs
   NIX_BIN, JQ_BIN, RUSTC_BIN, CARGO_BIN
     explicit tool paths (must be executable); otherwise PATH lookup.
     Cargo and rustc are both required for the AR10 Cargo workspace
@@ -200,7 +200,7 @@ do_resolve() {
   fi
 
   local drv=""
-  if ! drv="$(env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN "$nix_bin" path-info --derivation -- "$store_path" 2>/dev/null)"; then
+  if ! drv="$(env -u OMNITILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN "$nix_bin" path-info --derivation -- "$store_path" 2>/dev/null)"; then
     echo "error: could not identify exact derivation for host store path: $store_path (nix path-info --derivation failed); refusing" >&2
     return 1
   fi
@@ -223,7 +223,7 @@ do_resolve() {
   fi
 
   local drv_json=""
-  if ! drv_json="$(env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN "$nix_bin" derivation show -- "$drv" 2>/dev/null)"; then
+  if ! drv_json="$(env -u OMNITILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN "$nix_bin" derivation show -- "$drv" 2>/dev/null)"; then
     echo "error: could not read derivation metadata for: $drv (nix derivation show failed); refusing" >&2
     return 1
   fi
@@ -311,9 +311,9 @@ print_resolve() {
 }
 
 cmd_resolve() {
-  local host_bin="${PLASMA_AUTO_TILER_HOST_KWIN_BIN:-$DEFAULT_HOST_BIN}"
-  local store_root="${PLASMA_AUTO_TILER_STORE_ROOT:-$DEFAULT_STORE_ROOT}"
-  local repo_root="${PLASMA_AUTO_TILER_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
+  local host_bin="${OMNITILER_HOST_KWIN_BIN:-$DEFAULT_HOST_BIN}"
+  local store_root="${OMNITILER_STORE_ROOT:-$DEFAULT_STORE_ROOT}"
+  local repo_root="${OMNITILER_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --host-bin)
@@ -333,7 +333,7 @@ cmd_resolve() {
   # Outer cmake is unsupported: strip so it cannot leak. CARGO_BIN/RUSTC_BIN
   # are legitimate explicit tool paths and are left alone (resolve needs
   # neither; build resolves them).
-  unset PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
+  unset OMNITILER_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
   unset DOGFOOD_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
   unset CMAKE_BIN 2>/dev/null || true
   require_tool NIX_BIN nix
@@ -345,9 +345,9 @@ cmd_resolve() {
 }
 
 cmd_build() {
-  local host_bin="${PLASMA_AUTO_TILER_HOST_KWIN_BIN:-$DEFAULT_HOST_BIN}"
-  local store_root="${PLASMA_AUTO_TILER_STORE_ROOT:-$DEFAULT_STORE_ROOT}"
-  local repo_root="${PLASMA_AUTO_TILER_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
+  local host_bin="${OMNITILER_HOST_KWIN_BIN:-$DEFAULT_HOST_BIN}"
+  local store_root="${OMNITILER_STORE_ROOT:-$DEFAULT_STORE_ROOT}"
+  local repo_root="${OMNITILER_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
   local source_dir="" build_dir="" expected_identity=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -381,7 +381,7 @@ cmd_build() {
     echo "error: malformed --expected-identity: '$expected_identity'; refusing" >&2
     exit 1
   fi
-  unset PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
+  unset OMNITILER_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
   unset DOGFOOD_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
   unset CMAKE_BIN 2>/dev/null || true
   require_tool NIX_BIN nix
@@ -439,7 +439,7 @@ cmd_build() {
 
   # Realize the exact selected output before entering the original host dev
   # shell. `nix develop <drv>` alone does not necessarily realize split outputs.
-  if ! env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN "$nix_bin" build "$RES_DRV^dev" --no-link; then
+  if ! env -u OMNITILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN "$nix_bin" build "$RES_DRV^dev" --no-link; then
     echo "error: could not realize exact dev output: $RES_DEV_OUT (nix build $RES_DRV^dev failed); refusing (no fallback attempted)" >&2
     exit 1
   fi
@@ -452,12 +452,12 @@ cmd_build() {
   # resolve from the explicit injected /nix/store bin dir(s). KWinConfig is
   # required inside after the exact dev output has been realized. No
   # toolchain channel/target change: no RUSTUP_TOOLCHAIN, no --target.
-  if ! env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN \
+  if ! env -u OMNITILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN \
     "$nix_bin" develop "$RES_DRV" --command bash -c '
       set -euo pipefail
       injected="$1"; src="$2"; bdir="$3"; kwin_dir="$4"
       export PATH="$injected:${PATH:-}"
-      unset PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
+      unset OMNITILER_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
       unset DOGFOOD_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
       unset CMAKE_BIN 2>/dev/null || true
       unset CARGO_BIN 2>/dev/null || true
@@ -469,8 +469,8 @@ cmd_build() {
         done
         return 1
       }
-      if [[ -n "${PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR:-}" ]]; then
-        echo "error: pinned PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR leaked into host dev shell; refusing" >&2
+      if [[ -n "${OMNITILER_KWIN_DEV_CMAKE_DIR:-}" ]]; then
+        echo "error: pinned OMNITILER_KWIN_DEV_CMAKE_DIR leaked into host dev shell; refusing" >&2
         exit 1
       fi
       if [[ -n "${DOGFOOD_KWIN_DEV_CMAKE_DIR:-}" ]]; then

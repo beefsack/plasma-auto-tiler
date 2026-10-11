@@ -1,9 +1,9 @@
-# Pacman install scriptlet for plasma-auto-tiler-native-effect.
+# Pacman install scriptlet for omnitiler-native-effect.
 # Effect plugin only: Settings (with Revert) lives in core, so removing
 # this package alone leaves Revert available there.
 
 post_remove() {
-  echo "plasma-auto-tiler-native-effect removed. Settings and Revert remain"
+  echo "omnitiler-native-effect removed. Settings and Revert remain"
   echo "available in the core package: removal does not restore host keys"
   echo "or shortcut overrides, so press Revert in the core Settings if needed"
   echo "(Revert Shortcuts, plus Revert to KDE default on changed host rows)."

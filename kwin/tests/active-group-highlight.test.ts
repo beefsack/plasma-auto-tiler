@@ -269,7 +269,7 @@ describe("active-group highlight bridge behavior", () => {
         const body = JSON.parse(firstPayload) as Record<string, unknown>;
         assert.deepEqual(body["command"], { op: "active-group" });
         assert.equal(f.logs.length, 1);
-        assert.equal(f.logs[0] as string, `plasma-auto-tiler:group-highlight:dispatch correlation=${CORRELATION}`);
+        assert.equal(f.logs[0] as string, `omnitiler:group-highlight:dispatch correlation=${CORRELATION}`);
         answer(f, 0, activeGroupReply(CORRELATION));
         assert.equal(f.sets.length, 1);
         const firstSet = f.sets[0];
@@ -279,7 +279,7 @@ describe("active-group highlight bridge behavior", () => {
         assert.deepEqual(forwarded["members"], ["win-1", "win-2"]);
         assert.deepEqual(forwarded["bounds"], { x: 0, y: 0, w: 1200, h: 800 });
         assert.ok(
-            f.logs.some((line) => line === `plasma-auto-tiler:group-highlight:setter-submitted correlation=${CORRELATION} revision=2`),
+            f.logs.some((line) => line === `omnitiler:group-highlight:setter-submitted correlation=${CORRELATION} revision=2`),
         );
     });
 
@@ -288,7 +288,7 @@ describe("active-group highlight bridge behavior", () => {
         f.bridge.refresh();
         answer(f, 0, noGroupReply(CORRELATION, "no-parent-group"));
         assert.equal(f.sets.length, 0);
-        assert.ok(f.logs.some((line) => line === "plasma-auto-tiler:group-highlight:cleared reason=no-parent-group"));
+        assert.ok(f.logs.some((line) => line === "omnitiler:group-highlight:cleared reason=no-parent-group"));
     });
 
     it("clears on malformed replies and identity mismatch", () => {
@@ -296,7 +296,7 @@ describe("active-group highlight bridge behavior", () => {
         bad.bridge.refresh();
         answer(bad, 0, "garbage");
         assert.equal(bad.sets.length, 0);
-        assert.ok(bad.logs.some((line) => line === "plasma-auto-tiler:group-highlight:cleared reason=reply-invalid"));
+        assert.ok(bad.logs.some((line) => line === "omnitiler:group-highlight:cleared reason=reply-invalid"));
 
         const mismatch = fixture();
         mismatch.bridge.refresh();
@@ -352,7 +352,7 @@ describe("active-group highlight bridge behavior", () => {
         assert.ok(old !== undefined);
         old(activeGroupReply("gen-1-g0"));
         assert.equal(clearCount, clearsAfterInvalidate);
-        assert.ok(logs.some((line) => line === "plasma-auto-tiler:group-highlight:dropped reason=stale-dropped"));
+        assert.ok(logs.some((line) => line === "omnitiler:group-highlight:dropped reason=stale-dropped"));
         assert.equal(sets.length, 0);
         // Newer flight still resolves and displays.
         const current = replies[1];
@@ -417,7 +417,7 @@ describe("active-group highlight bridge behavior", () => {
         assert.equal(sets.length, 2);
         assert.equal((JSON.parse(sets[1] as string) as Record<string, unknown>)["group"], "group-b");
         assert.equal(clears, 1);
-        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:group-highlight:dropped reason=stale-revision"));
+        assert.ok(!logs.some((line) => line === "omnitiler:group-highlight:dropped reason=stale-revision"));
         // A superseded earlier flight is still ignored without clearing.
         bridge.refresh();
         bridge.refresh();
@@ -427,7 +427,7 @@ describe("active-group highlight bridge behavior", () => {
         superseded(atRevision("gen-1-g2", 2));
         assert.equal(sets.length, 2);
         assert.equal(clears, 1);
-        assert.ok(logs.some((line) => line === "plasma-auto-tiler:group-highlight:dropped reason=stale-dropped"));
+        assert.ok(logs.some((line) => line === "omnitiler:group-highlight:dropped reason=stale-dropped"));
         current(atRevision("gen-1-g3", 2));
         assert.equal(sets.length, 3);
     });
@@ -528,7 +528,7 @@ describe("active-group highlight bridge behavior", () => {
         superseded(atRevision(`${GENERATION}-g1r0`, 7));
         assert.equal(sets.length, 2);
         assert.equal(clears, 0);
-        assert.ok(logs.some((line) => line === "plasma-auto-tiler:group-highlight:dropped reason=stale-dropped"));
+        assert.ok(logs.some((line) => line === "omnitiler:group-highlight:dropped reason=stale-dropped"));
         // Rolled-over epoch flight still displays at the same revision.
         const current = replies[3];
         assert.ok(current !== undefined);
@@ -541,7 +541,7 @@ describe("active-group highlight bridge behavior", () => {
         const missing = fixture(() => null);
         missing.bridge.refresh();
         assert.equal(missing.payloads.length, 0);
-        assert.ok(missing.logs.some((line) => line === "plasma-auto-tiler:group-highlight:cleared reason=observe-invalid"));
+        assert.ok(missing.logs.some((line) => line === "omnitiler:group-highlight:cleared reason=observe-invalid"));
 
         const logs: string[] = [];
         let clears = 0;
@@ -563,7 +563,7 @@ describe("active-group highlight bridge behavior", () => {
         });
         bridge.refresh();
         assert.equal(clears, 1);
-        assert.ok(logs.some((line) => line === "plasma-auto-tiler:group-highlight:cleared reason=dbus-failed"));
+        assert.ok(logs.some((line) => line === "omnitiler:group-highlight:cleared reason=dbus-failed"));
     });
 
     it("clears on effect service loss instead of throwing", () => {
@@ -592,7 +592,7 @@ describe("active-group highlight bridge behavior", () => {
         const callback = replies[0];
         assert.ok(callback !== undefined);
         callback(activeGroupReply(CORRELATION));
-        assert.ok(logs.some((line) => line === "plasma-auto-tiler:group-highlight:cleared reason=service-loss"));
+        assert.ok(logs.some((line) => line === "omnitiler:group-highlight:cleared reason=service-loss"));
     });
 
     it("accepts more than sixty-four members", () => {
@@ -719,10 +719,10 @@ describe("active-group highlight bridge behavior", () => {
         f.bridge.refresh();
         assert.equal(f.payloads.length, 0, "an over-cap request must never dispatch");
         assert.ok(
-            f.logs.some((line) => line === "plasma-auto-tiler:group-highlight:request-refused correlation=gen-1-g0 reason=request-over-cap"),
+            f.logs.some((line) => line === "omnitiler:group-highlight:request-refused correlation=gen-1-g0 reason=request-over-cap"),
             f.logs.join("\n"),
         );
-        assert.ok(f.logs.some((line) => line === "plasma-auto-tiler:group-highlight:cleared reason=request-invalid"));
+        assert.ok(f.logs.some((line) => line === "omnitiler:group-highlight:cleared reason=request-invalid"));
     });
 
     it("establishes current revision from the initial snapshot", () => {
@@ -767,7 +767,7 @@ describe("active-group highlight bridge behavior", () => {
         detail["focused_window"] = "win-9";
         answer(f, 0, JSON.stringify(mismatched));
         assert.equal(f.sets.length, 0);
-        assert.ok(f.logs.some((line) => line === "plasma-auto-tiler:group-highlight:cleared reason=identity-mismatch"));
+        assert.ok(f.logs.some((line) => line === "omnitiler:group-highlight:cleared reason=identity-mismatch"));
     });
 
     it("clears when a non-focused group member is currently fullscreen", () => {
@@ -809,7 +809,7 @@ describe("active-group highlight bridge behavior", () => {
         callback(activeGroupReply(CORRELATION));
         assert.equal(sets.length, 0);
         assert.ok(clears >= 1);
-        assert.ok(logs.some((line) => line === "plasma-auto-tiler:group-highlight:cleared reason=fullscreen"));
+        assert.ok(logs.some((line) => line === "omnitiler:group-highlight:cleared reason=fullscreen"));
     });
 
     it("drops a duplicate delivery without destroying the display", () => {
@@ -846,7 +846,7 @@ describe("active-group highlight bridge behavior", () => {
         first(activeGroupReply("gen-1-g0"));
         assert.equal(sets.length, 1);
         assert.equal(clears, 0);
-        assert.ok(logs.some((line) => line === "plasma-auto-tiler:group-highlight:dropped reason=stale-dropped"));
+        assert.ok(logs.some((line) => line === "omnitiler:group-highlight:dropped reason=stale-dropped"));
     });
 
     it("accepts a no-group reply lacking base_revision as a conserving clear", () => {
@@ -896,7 +896,7 @@ describe("active-group highlight bridge behavior", () => {
             }),
         );
         assert.equal(sets.length, 0);
-        assert.ok(logs.some((line) => line === "plasma-auto-tiler:group-highlight:cleared reason=no-parent-group"));
+        assert.ok(logs.some((line) => line === "omnitiler:group-highlight:cleared reason=no-parent-group"));
         // Identity preserved: next request still carries revision 0.
         bridge.refresh();
         const secondPayload = JSON.parse(payloads[1] as string) as Record<string, unknown>;
@@ -1042,9 +1042,9 @@ describe("active-group highlight lifecycle wiring", () => {
     });
 
     it("uses the owned effect endpoint constants and the existing DescribePlan op", () => {
-        assert.equal(GROUP_HIGHLIGHT_SERVICE, "org.plasmaautotiler.ActiveBorder");
-        assert.equal(GROUP_HIGHLIGHT_OBJECT, "/org/plasmaautotiler/ActiveBorder");
-        assert.equal(GROUP_HIGHLIGHT_INTERFACE, "org.plasmaautotiler.ActiveBorder1");
+        assert.equal(GROUP_HIGHLIGHT_SERVICE, "com.omnitiler.ActiveBorder");
+        assert.equal(GROUP_HIGHLIGHT_OBJECT, "/com/omnitiler/ActiveBorder");
+        assert.equal(GROUP_HIGHLIGHT_INTERFACE, "com.omnitiler.ActiveBorder1");
         assert.equal(GROUP_HIGHLIGHT_SET_METHOD, "SetGroupHighlight");
         assert.equal(GROUP_HIGHLIGHT_CLEAR_METHOD, "ClearGroupHighlight");
         const module = readFileSync("src/active-group-highlight.ts", "utf8");

@@ -17,7 +17,7 @@ effect-absent session before committing to an 80-90% coverage claim.
   `kwin/package.json` requires Node >=24 to build; KWin runs the generated JS,
   not Node. A distribution package can install the built script directly, but
   how to produce/verify that bundle in OBS without Node 24 is unresolved.
-- `crates/plasma-auto-tiler` supplies the Rust Planner/tray binary, communicating
+- `crates/omnitiler` supplies the Rust Planner/tray binary, communicating
   over D-Bus. `kwin/native-effect/CMakeLists.txt` builds a C++ effect linked to
   `KWin::kwin` and a Rust static library from
   `crates/tiler-kwin-effect-ffi`. It also builds **two KCM plugins**: effect
@@ -114,7 +114,7 @@ packaging work, not solved by Rust vendoring alone.
 
 | Deliverable | Minimum recipe shape | Estimated work (inference) |
 | --- | --- | --- |
-| openSUSE + Fedora RPM | `plasma-auto-tiler.spec`, `.changes`, source archive and vendor archive; optional `_service` for fetching/vendoring; subpackages for core/effect | First working RPM + offline Rust/JS/CMake and runtime smoke: several developer days; Fedora adds dependency/name/path conditionals and its own validation. |
+| openSUSE + Fedora RPM | `omnitiler.spec`, `.changes`, source archive and vendor archive; optional `_service` for fetching/vendoring; subpackages for core/effect | First working RPM + offline Rust/JS/CMake and runtime smoke: several developer days; Fedora adds dependency/name/path conditionals and its own validation. |
 | Debian + Ubuntu deb | `.dsc`, `debian.control`, `debian.rules`, `debian.changelog`, source/vendor inputs; per-target dependency versions | Additional days per distribution family/ABI target, subject to ECM and neon/PPA resolution. |
 | Arch | `PKGBUILD` + offline inputs, repo config/signing; separate AUR PKGBUILD only if AUR consumption is chosen | Additional days and upgrade-window validation. |
 | SCM CI | `.obs/workflows.yml` in a future packaging change and OBS `_service`/SCM source link, or an optional GitHub Actions workflow driving `osc` | Additional setup and credentials; native OBS workflow is simpler for build status. |

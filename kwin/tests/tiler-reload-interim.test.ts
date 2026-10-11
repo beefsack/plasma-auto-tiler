@@ -130,7 +130,7 @@ describe("interim tiler reload contract", () => {
         assert.match(entry, /options.*configChanged|configChanged.*options/);
         assert.match(entry, /readDomainGaps\(\{/);
         assert.match(entry, /requestResync\(\)/);
-        assert.match(entry, /plasma-auto-tiler:plan:config-reloaded/);
+        assert.match(entry, /omnitiler:plan:config-reloaded/);
         assert.match(entry, /stage=re-read-queued/);
         assert.match(entry, /applied-unconfirmed/);
         assert.match(entry, /stage=restart-required/);
@@ -326,7 +326,7 @@ describe("deliberate tiler reload behavior", () => {
             fire();
         }
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:config-reloaded stage=re-read-queued innerGap=12 outerGap=14 applied-unconfirmed"),
+            mocks.logs.some((line) => line === "omnitiler:plan:config-reloaded stage=re-read-queued innerGap=12 outerGap=14 applied-unconfirmed"),
         );
         // requestResync is debounce-coalesced with the startup resync while its
         // timer is still pending in this harness, so timer growth is not
@@ -392,7 +392,7 @@ describe("deliberate tiler reload behavior", () => {
         for (const fire of [...optionsChanged.handlers]) {
             fire();
         }
-        assert.ok(!mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:config-reloaded")));
+        assert.ok(!mocks.logs.some((line) => line.includes("omnitiler:plan:config-reloaded")));
         assert.equal(mocks.timers.length, timersAtStart);
         assert.equal(mocks.dbusCalls.length, 0);
         assert.equal(mocks.shortcuts.length, shortcutCount);
@@ -651,7 +651,7 @@ describe("deliberate reload forwards gaps to subsequent workspace sends", () => 
         for (const fire of [...optionsChanged.handlers]) {
             fire();
         }
-        assert.ok(logs.some((line) => line === "plasma-auto-tiler:plan:config-reloaded stage=re-read-queued innerGap=12 outerGap=14 applied-unconfirmed"));
+        assert.ok(logs.some((line) => line === "omnitiler:plan:config-reloaded stage=re-read-queued innerGap=12 outerGap=14 applied-unconfirmed"));
         settlePlans();
         const planAfter = planPayloads();
         const gapUpdate = planAfter.find(
@@ -737,7 +737,7 @@ describe("deliberate reload forwards gaps to subsequent workspace sends", () => 
         }
         assert.ok(
             logs.some(
-                (line) => line === "plasma-auto-tiler:plan:config-reloaded stage=re-read-queued innerGap=12 outerGap=14 applied-unconfirmed",
+                (line) => line === "omnitiler:plan:config-reloaded stage=re-read-queued innerGap=12 outerGap=14 applied-unconfirmed",
             ),
             logs.join("\n"),
         );
@@ -857,7 +857,7 @@ describe("deliberate reload forwards gaps to subsequent workspace sends", () => 
         assert.ok(!logs.some((line) => line.includes("stage=applied")), logs.join("\n"));
         assert.ok(
             logs.some(
-                (line) => line === "plasma-auto-tiler:plan:config-reloaded stage=re-read-queued innerGap=12 outerGap=14 applied-unconfirmed",
+                (line) => line === "omnitiler:plan:config-reloaded stage=re-read-queued innerGap=12 outerGap=14 applied-unconfirmed",
             ),
             logs.join("\n"),
         );
@@ -915,7 +915,7 @@ describe("deliberate reload forwards gaps to subsequent workspace sends", () => 
         }
         assert.ok(
             logs.some(
-                (line) => line === "plasma-auto-tiler:plan:config-reloaded stage=restart-required keys=workspaceMode",
+                (line) => line === "omnitiler:plan:config-reloaded stage=restart-required keys=workspaceMode",
             ),
             logs.join("\n"),
         );

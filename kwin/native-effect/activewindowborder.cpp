@@ -37,7 +37,7 @@
 namespace KWin
 {
 
-Q_LOGGING_CATEGORY(lcActiveBorder, "plasmaautotiler.activeborder");
+Q_LOGGING_CATEGORY(lcActiveBorder, "omnitiler.activeborder");
 
 namespace
 {
@@ -45,7 +45,7 @@ namespace
 class GroupHighlightObject : public QObject
 {
     Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "org.plasmaautotiler.ActiveBorder1")
+    Q_CLASSINFO("D-Bus Interface", "com.omnitiler.ActiveBorder1")
 
 public:
     explicit GroupHighlightObject(ActiveWindowBorderEffect *effect, QObject *parent = nullptr)
@@ -91,7 +91,7 @@ private:
 class LastVerdictObject : public QObject
 {
     Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "org.plasmaautotiler.DragOracle1")
+    Q_CLASSINFO("D-Bus Interface", "com.omnitiler.DragOracle1")
 
 public:
     using QObject::QObject;
@@ -345,12 +345,12 @@ ActiveWindowBorderEffect::~ActiveWindowBorderEffect()
     // elsewhere after a failed or partial registration.
     QDBusConnection bus = QDBusConnection::sessionBus();
     if (m_oracleDbusAvailable) {
-        bus.unregisterObject(QStringLiteral("/org/plasmaautotiler/DragOracle"));
-        bus.unregisterService(QStringLiteral("org.plasmaautotiler.DragOracle"));
+        bus.unregisterObject(QStringLiteral("/com/omnitiler/DragOracle"));
+        bus.unregisterService(QStringLiteral("com.omnitiler.DragOracle"));
     }
     if (m_groupDbusAvailable) {
-        bus.unregisterObject(QStringLiteral("/org/plasmaautotiler/ActiveBorder"));
-        bus.unregisterService(QStringLiteral("org.plasmaautotiler.ActiveBorder"));
+        bus.unregisterObject(QStringLiteral("/com/omnitiler/ActiveBorder"));
+        bus.unregisterService(QStringLiteral("com.omnitiler.ActiveBorder"));
     }
 }
 
@@ -552,7 +552,7 @@ void ActiveWindowBorderEffect::subscribeMaximize(EffectWindow *window)
     // Bounded per-window observation seed log: two scalars only, no native
     // identifiers, geometry, or payload.
     try {
-        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:active-border:observe-seed maximized=%1 fullscreen=%2")
+        logActiveBorderDiag(QStringLiteral("omnitiler:active-border:observe-seed maximized=%1 fullscreen=%2")
                 .arg(seededMaximized ? 1 : 0)
                 .arg(seedFullScreen ? 1 : 0));
     } catch (...) {
@@ -647,7 +647,7 @@ void ActiveWindowBorderEffect::emitOraclePressDiag(const char *outcome, bool con
     // Redacted transition diagnostic only: outcome plus the closed-vocabulary
     // binding source. Never carries coordinates, identities, or geometry.
     try {
-        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:drag-oracle:press outcome=%1 binding=%2")
+        logActiveBorderDiag(QStringLiteral("omnitiler:drag-oracle:press outcome=%1 binding=%2")
                 .arg(QString::fromUtf8(outcome))
                 .arg(QString::fromUtf8(oraclePressBindingName(configured))));
     } catch (...) {
@@ -862,7 +862,7 @@ void ActiveWindowBorderEffect::logActiveBorderDiag(const QString &message)
 void ActiveWindowBorderEffect::emitActiveBorderEndpoint()
 {
     try {
-        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:active-border:endpoint available=%1")
+        logActiveBorderDiag(QStringLiteral("omnitiler:active-border:endpoint available=%1")
                 .arg(m_groupDbusAvailable ? 1 : 0));
     } catch (...) {
     }
@@ -871,7 +871,7 @@ void ActiveWindowBorderEffect::emitActiveBorderEndpoint()
 void ActiveWindowBorderEffect::emitOracleEndpoint()
 {
     try {
-        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:drag-oracle:endpoint available=%1")
+        logActiveBorderDiag(QStringLiteral("omnitiler:drag-oracle:endpoint available=%1")
                 .arg(m_oracleDbusAvailable ? 1 : 0));
     } catch (...) {
     }
@@ -926,7 +926,7 @@ void ActiveWindowBorderEffect::ensureOraclePressSpy()
     m_oraclePressSpy = new OraclePressSpy(this);
     input()->installInputEventSpy(m_oraclePressSpy);
     if (m_pressSpyFailedLogged) {
-        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:drag-oracle:press-spy available=1"));
+        logActiveBorderDiag(QStringLiteral("omnitiler:drag-oracle:press-spy available=1"));
     }
 }
 
@@ -937,15 +937,15 @@ void ActiveWindowBorderEffect::ensureEndpointsRegistered()
     if (!m_groupDbusAvailable) {
         bool serviceOk = false;
         bool objectOk = false;
-        if (ensureDbusEndpoint(QStringLiteral("org.plasmaautotiler.ActiveBorder"),
-                QStringLiteral("/org/plasmaautotiler/ActiveBorder"), m_groupDbusObject, &serviceOk, &objectOk)) {
+        if (ensureDbusEndpoint(QStringLiteral("com.omnitiler.ActiveBorder"),
+                QStringLiteral("/com/omnitiler/ActiveBorder"), m_groupDbusObject, &serviceOk, &objectOk)) {
             m_groupDbusAvailable = true;
             // Transition diagnostic only: initial success or recovery once.
             // Never affects gate, visibility, or repaint decisions.
             emitActiveBorderEndpoint();
         } else if (!m_groupEndpointFailedLogged) {
             m_groupEndpointFailedLogged = true;
-            logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:active-border:endpoint stage=failed service=%1 object=%2")
+            logActiveBorderDiag(QStringLiteral("omnitiler:active-border:endpoint stage=failed service=%1 object=%2")
                     .arg(serviceOk ? 1 : 0)
                     .arg(objectOk ? 1 : 0));
             emitActiveBorderEndpoint();
@@ -956,13 +956,13 @@ void ActiveWindowBorderEffect::ensureEndpointsRegistered()
     if (!m_oracleDbusAvailable) {
         bool serviceOk = false;
         bool objectOk = false;
-        if (ensureDbusEndpoint(QStringLiteral("org.plasmaautotiler.DragOracle"),
-                QStringLiteral("/org/plasmaautotiler/DragOracle"), m_oracleDbusObject, &serviceOk, &objectOk)) {
+        if (ensureDbusEndpoint(QStringLiteral("com.omnitiler.DragOracle"),
+                QStringLiteral("/com/omnitiler/DragOracle"), m_oracleDbusObject, &serviceOk, &objectOk)) {
             m_oracleDbusAvailable = true;
             emitOracleEndpoint();
         } else if (!m_oracleEndpointFailedLogged) {
             m_oracleEndpointFailedLogged = true;
-            logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:drag-oracle:endpoint stage=failed service=%1 object=%2")
+            logActiveBorderDiag(QStringLiteral("omnitiler:drag-oracle:endpoint stage=failed service=%1 object=%2")
                     .arg(serviceOk ? 1 : 0)
                     .arg(objectOk ? 1 : 0));
             emitOracleEndpoint();
@@ -971,7 +971,7 @@ void ActiveWindowBorderEffect::ensureEndpointsRegistered()
     if (m_oraclePressSpy == nullptr && input() == nullptr) {
         if (!m_pressSpyFailedLogged) {
             m_pressSpyFailedLogged = true;
-            logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:drag-oracle:press-spy available=0"));
+            logActiveBorderDiag(QStringLiteral("omnitiler:drag-oracle:press-spy available=0"));
         }
         return;
     }
@@ -987,7 +987,7 @@ void ActiveWindowBorderEffect::emitActiveBorderVisible(bool visible, const char 
         }
         m_borderDiagEmitted = true;
         m_borderDiagVisible = visible;
-        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:active-border:visible vis=%1 reason=%2 appletPopup=%3")
+        logActiveBorderDiag(QStringLiteral("omnitiler:active-border:visible vis=%1 reason=%2 appletPopup=%3")
                 .arg(visible ? 1 : 0)
                 .arg(QString::fromUtf8(reason))
                 .arg(appletPopup ? 1 : 0));
@@ -1000,7 +1000,7 @@ void ActiveWindowBorderEffect::emitGroupSetterDiag(const char *outcome)
     // Every SetGroupHighlight receipt: Rust outcome plus bounded scalars.
     try {
         const int members = m_groupMemberIds.size() > 9999 ? 9999 : static_cast<int>(m_groupMemberIds.size());
-        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:group-highlight:setter outcome=%1 members=%2 anchor=%3 first=%4 chord=%5 move=%6 foc=%7 ep=%8 vis=%9")
+        logActiveBorderDiag(QStringLiteral("omnitiler:group-highlight:setter outcome=%1 members=%2 anchor=%3 first=%4 chord=%5 move=%6 foc=%7 ep=%8 vis=%9")
                 .arg(QString::fromUtf8(outcome))
                 .arg(members)
                 .arg(QString::fromUtf8(m_groupAnchorDiag))
@@ -1034,7 +1034,7 @@ void ActiveWindowBorderEffect::emitGroupTransitionDiag()
         m_groupTransDiagVisible = m_groupVisible;
         m_groupTransDiagEmitted = true;
         const int members = m_groupMemberIds.size() > 9999 ? 9999 : static_cast<int>(m_groupMemberIds.size());
-        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:group-highlight:transition anchor=%1 members=%2 first=%3 chord=%4 move=%5 foc=%6 ep=%7 vis=%8")
+        logActiveBorderDiag(QStringLiteral("omnitiler:group-highlight:transition anchor=%1 members=%2 first=%3 chord=%4 move=%5 foc=%6 ep=%7 vis=%8")
                 .arg(curAnchor)
                 .arg(members)
                 .arg(m_firstMouseSeen ? 1 : 0)

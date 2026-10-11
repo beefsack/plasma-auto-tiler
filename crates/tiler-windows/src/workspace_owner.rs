@@ -4746,10 +4746,7 @@ mod tests {
             crate::model::FLOAT_INTENT_PROP,
             crate::model::TILE_OVERRIDE_PROP,
         ] {
-            assert!(
-                prop.starts_with("PlasmaAutoTiler"),
-                "distinctive prefix: {prop}"
-            );
+            assert!(prop.starts_with("OmniTiler"), "distinctive prefix: {prop}");
             assert!(prop.contains('.'), "stronger namespace: {prop}");
         }
         assert_ne!(crate::model::STICKY_PROP, crate::model::FLOAT_INTENT_PROP);
@@ -4758,10 +4755,10 @@ mod tests {
             crate::model::FLOAT_INTENT_PROP,
             crate::model::TILE_OVERRIDE_PROP
         );
-        assert_eq!(crate::model::STICKY_PROP, "PlasmaAutoTiler.Sticky.v1");
+        assert_eq!(crate::model::STICKY_PROP, "OmniTiler.Sticky.v1");
         // The legacy ambiguous name hydrates nothing: only the dotted name
         // above is ever read.
-        assert_ne!(crate::model::STICKY_PROP, "PlasmaAutoTilerSticky");
+        assert_ne!(crate::model::STICKY_PROP, "OmniTilerSticky");
     }
 
     #[test]

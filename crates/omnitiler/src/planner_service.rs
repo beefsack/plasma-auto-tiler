@@ -1,7 +1,7 @@
 //! Planner service boundary: retained live-tree manually invoked D-Bus service.
 //!
-//! Contract identity: service `org.plasmaautotiler.Planner`, object
-//! `/org/plasmaautotiler/Planner`, interface `org.plasmaautotiler.Planner1`,
+//! Contract identity: service `com.omnitiler.Planner`, object
+//! `/com/omnitiler/Planner`, interface `com.omnitiler.Planner1`,
 //! method `DescribePlan`. It is the sole general-N protocol route over the
 //! retained session/reconcile/directional/cosmic_v1 policy.
 //!
@@ -32,9 +32,9 @@ use crate::float_intent_store::{
     FloatIntentStore, INTENT_MAX_REPLY_BYTES, INTENT_MAX_REQUEST_BYTES, IntentNamespace,
 };
 
-pub const SERVICE: &str = "org.plasmaautotiler.Planner";
-pub const OBJECT: &str = "/org/plasmaautotiler/Planner";
-pub const INTERFACE: &str = "org.plasmaautotiler.Planner1";
+pub const SERVICE: &str = "com.omnitiler.Planner";
+pub const OBJECT: &str = "/com/omnitiler/Planner";
+pub const INTERFACE: &str = "com.omnitiler.Planner1";
 /// Well-known KWin service name for intent caller authorization and
 /// namespace derivation. Never accepted from the caller.
 pub const KWIN_SERVICE: &str = "org.kde.KWin";
@@ -82,7 +82,7 @@ pub fn caller_uid_authorized(caller_uid: Option<u32>, expected_uid: u32) -> bool
 /// The bounded summaries below preserve the debugging uses (op, correlation,
 /// outcome, kind, revisions, carried-entry counts, fingerprint) without
 /// payload bytes.
-pub const PLANNER_TRACE_ENV_VAR: &str = "PLASMA_AUTO_TILER_TRACE";
+pub const PLANNER_TRACE_ENV_VAR: &str = "OMNITILER_TRACE";
 
 /// Whether structural trace logging is enabled (`1` only).
 #[must_use]
@@ -113,16 +113,16 @@ enum PlanEarlyExit {
 fn plan_early_exit_summary(exit: PlanEarlyExit) -> &'static str {
     match exit {
         PlanEarlyExit::Busy => {
-            "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=busy base_revision=- detail=early-exit"
+            "omnitiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=busy base_revision=- detail=early-exit"
         }
         PlanEarlyExit::Closed => {
-            "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=connection-closed base_revision=- detail=early-exit"
+            "omnitiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=connection-closed base_revision=- detail=early-exit"
         }
         PlanEarlyExit::Oversize => {
-            "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=request-oversize base_revision=- detail=early-exit"
+            "omnitiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=request-oversize base_revision=- detail=early-exit"
         }
         PlanEarlyExit::Unauthorized => {
-            "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=rejected kind=unauthorized base_revision=- detail=early-exit"
+            "omnitiler:plan-summary direction=egress op=unknown correlation=- outcome=rejected kind=unauthorized base_revision=- detail=early-exit"
         }
     }
 }
@@ -132,7 +132,7 @@ fn emit_plan_early_exit(exit: PlanEarlyExit) {
 }
 
 #[derive(Debug, zbus::DBusError, PartialEq, Eq)]
-#[zbus(prefix = "org.plasmaautotiler.Planner1")]
+#[zbus(prefix = "com.omnitiler.Planner1")]
 pub enum PlannerError {
     Unauthorized,
     Unavailable(String),
@@ -210,9 +210,7 @@ impl PlannerEndpoint {
                     planner.evaluate(request)
                 };
                 self.planner.clear_poison();
-                eprintln!(
-                    "plasma-auto-tiler:planner-fault kind=poisoned-lock detail=replaced-with-fresh"
-                );
+                eprintln!("omnitiler:planner-fault kind=poisoned-lock detail=replaced-with-fresh");
                 reply
             }
         };
@@ -342,7 +340,7 @@ async fn authorize_intent_sender(
     Ok(namespace)
 }
 
-#[zbus::interface(name = "org.plasmaautotiler.Planner1")]
+#[zbus::interface(name = "com.omnitiler.Planner1")]
 impl PlannerEndpoint {
     async fn describe_plan(
         &self,
@@ -414,7 +412,7 @@ impl PlannerEndpoint {
         // The reply is returned with the lock released and no
         // logging beyond these lines, so output never triggers bus activation
         // and never holds the operation lock. Opt-in trace mode
-        // (`PLASMA_AUTO_TILER_TRACE=1`) appends the bounded structural shape
+        // (`OMNITILER_TRACE=1`) appends the bounded structural shape
         // line (carried-entry counts plus fingerprint; still no ids, rects,
         // domains, owner, or payload bytes) to the Planner's own log file
         // (stderr); the KWin journal surface stays exactly one bounded line
@@ -759,11 +757,11 @@ fn serving_connection_lost_error() -> zbus::Error {
 }
 
 fn owner_signal_malformed_line() -> &'static str {
-    "plasma-auto-tiler:route-diag component=planner stage=owner event=signal outcome=malformed-signal"
+    "omnitiler:route-diag component=planner stage=owner event=signal outcome=malformed-signal"
 }
 
 fn owner_signal_args_invalid_line() -> &'static str {
-    "plasma-auto-tiler:route-diag component=planner stage=owner event=signal outcome=invalid-args"
+    "omnitiler:route-diag component=planner stage=owner event=signal outcome=invalid-args"
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -895,9 +893,9 @@ mod tests {
 
     #[test]
     fn contract_identity_is_exact() {
-        assert_eq!(SERVICE, "org.plasmaautotiler.Planner");
-        assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
-        assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");
+        assert_eq!(SERVICE, "com.omnitiler.Planner");
+        assert_eq!(OBJECT, "/com/omnitiler/Planner");
+        assert_eq!(INTERFACE, "com.omnitiler.Planner1");
     }
 
     #[test]
@@ -1048,9 +1046,9 @@ mod tests {
     #[test]
     fn plan_method_identity_is_exact_and_distinct() {
         assert_eq!(PLAN_METHOD, "DescribePlan");
-        assert_eq!(SERVICE, "org.plasmaautotiler.Planner");
-        assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
-        assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");
+        assert_eq!(SERVICE, "com.omnitiler.Planner");
+        assert_eq!(OBJECT, "/com/omnitiler/Planner");
+        assert_eq!(INTERFACE, "com.omnitiler.Planner1");
         assert_eq!(PLAN_MAX_REPLY, 64 * 1024);
         assert_eq!(PLAN_MAX_REQUEST, 1_048_576);
         assert_eq!(
@@ -1134,7 +1132,7 @@ mod tests {
     impl PrivateBus {
         fn start() -> Option<Self> {
             let socket_dir = std::env::temp_dir().join(format!(
-                "plasma-auto-tiler-test-intent-{}-{}",
+                "omnitiler-test-intent-{}-{}",
                 std::process::id(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -1188,7 +1186,7 @@ mod tests {
 
     fn fresh_intent_root() -> Option<std::path::PathBuf> {
         let root = std::env::temp_dir().join(format!(
-            "plasma-auto-tiler-test-intent-root-{}-{}",
+            "omnitiler-test-intent-root-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1269,7 +1267,7 @@ mod tests {
         assert_eq!(write["outcome"], "unavailable");
         assert_eq!(write["reason"], "namespace-unavailable");
         assert!(
-            !root.join("plasma-auto-tiler").exists(),
+            !root.join("omnitiler").exists(),
             "refused writes persist nothing"
         );
         let _ = std::fs::remove_dir_all(&root);
@@ -1630,7 +1628,7 @@ mod tests {
         let line = super::plan_egress_for_error("{\"v\":1}");
         assert_eq!(
             line,
-            "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=unknown kind=- base_revision=- detail=-"
+            "omnitiler:plan-summary direction=egress op=unknown correlation=- outcome=unknown kind=- base_revision=- detail=-"
         );
         let hostile = super::plan_egress_for_error(
             "{\"correlation_id\":\"evil!!\",\"owner\":\"owner-9\",\"command\":{\"op\":\"Bogus OP\"}}",
@@ -1656,10 +1654,10 @@ mod tests {
         assert_eq!(
             lines,
             [
-                "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=busy base_revision=- detail=early-exit",
-                "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=connection-closed base_revision=- detail=early-exit",
-                "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=request-oversize base_revision=- detail=early-exit",
-                "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=rejected kind=unauthorized base_revision=- detail=early-exit",
+                "omnitiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=busy base_revision=- detail=early-exit",
+                "omnitiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=connection-closed base_revision=- detail=early-exit",
+                "omnitiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=request-oversize base_revision=- detail=early-exit",
+                "omnitiler:plan-summary direction=egress op=unknown correlation=- outcome=rejected kind=unauthorized base_revision=- detail=early-exit",
             ]
         );
         for line in lines {

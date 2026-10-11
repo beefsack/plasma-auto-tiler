@@ -260,8 +260,8 @@ route to add a compositor-owned transaction; it is not an available option.
 ### Proposed Boundary And Contract
 
 - Use a new service identity, object, interface, and method, separate from the
-  tray: `org.plasmaautotiler.Planner`, `/org/plasmaautotiler/Planner`,
-  `org.plasmaautotiler.Planner1`, and `EvaluateMove`.
+  tray: `com.omnitiler.Planner`, `/com/omnitiler/Planner`,
+  `com.omnitiler.Planner1`, and `EvaluateMove`.
 - Use one bounded JSON string argument and one JSON string reply:
   `EvaluateMove(s request_json) -> (s verdict_json)`. This avoids assuming a
   lossless `QJSValue`/`QVariant` mapping for nested D-Bus structures. The
@@ -371,15 +371,15 @@ diagnostic artifacts as restoration or transport evidence.
   lints.
 - One authorized current-session `[Tiling]` gate wrote a disposable
   `gate=gate-ok` sentinel only under
-  `[Tiling][plasma-auto-tiler-poc2-gate-7f3a9c2e]`. It read the sentinel, then
+  `[Tiling][omnitiler-poc2-gate-7f3a9c2e]`. It read the sentinel, then
   restored `host ~/.config/kwinrc` from its exact preimage. Independent
   post-checks matched its whole-file SHA-256, mode, owner, group, size, and
   nanosecond mtime; `[Tiling]*` remained 111 headers, 444 lines, 17831 bytes,
   with SHA-256 `0c75c825d4001916f2a4722bfd6d70b42589a6ecb6797e46dcd08d06a65b22d1`.
 - One exact planner service process acquired
-  `org.plasmaautotiler.Planner`; one uniquely named disposable KWin probe was
+  `com.omnitiler.Planner`; one uniquely named disposable KWin probe was
   loaded as the returned `Script1`, introspected, and run once. It emitted only
-  `plasma-auto-tiler:planner-shadow-probe-ready`. No authenticated
+  `omnitiler:planner-shadow-probe-ready`. No authenticated
   `EvaluateMove` request/reply, eligible `H[A,B]` observation,
   correlation/generation/revision/precondition evidence, or advisory result
   occurred. This establishes only partial service/script lifecycle mechanics,
@@ -407,7 +407,7 @@ diagnostic artifacts as restoration or transport evidence.
   current-session baseline, then stopped before service start or probe lifecycle.
   The accepted preflight failed on stale persisted tiling state
   (`setup_ready=false`) and one project KGlobalAccel drift
-  (`plasma-auto-tiler-focus-right` active `469762124`, expected `268435532`).
+  (`omnitiler-focus-right` active `469762124`, expected `268435532`).
   Existing retained `w3-*`/`planner-w3.log` artifacts were not
   reused as evidence or removed.
 - Independent review accepts that no planner process started, no probe loaded,

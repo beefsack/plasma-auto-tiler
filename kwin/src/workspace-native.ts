@@ -105,7 +105,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
     const rows: WorkspaceShortcutRow[] = [];
     for (let index = 1; index <= 9; index += 1) {
         rows.push({
-            action: `plasma-auto-tiler-workspace-${String(index)}`,
+            action: `omnitiler-workspace-${String(index)}`,
             text: `Focus workspace ${String(index)}`,
             sequence: `Meta+${String(index)}`,
             kind: "select",
@@ -113,7 +113,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         });
     }
     rows.push({
-        action: "plasma-auto-tiler-workspace-0",
+        action: "omnitiler-workspace-0",
         text: "Focus or create the trailing empty workspace",
         sequence: "Meta+0",
         kind: "select",
@@ -121,7 +121,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
     });
     for (let index = 1; index <= 9; index += 1) {
         rows.push({
-            action: `plasma-auto-tiler-move-workspace-${String(index)}`,
+            action: `omnitiler-move-workspace-${String(index)}`,
             text: `Move window to workspace ${String(index)}`,
             sequence: `Meta+Shift+${String(index)}`,
             kind: "move",
@@ -130,7 +130,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         const symbol = symbolForDigit(index);
         if (symbol !== null) {
             rows.push({
-                action: `plasma-auto-tiler-move-workspace-${String(index)}-symbol`,
+                action: `omnitiler-move-workspace-${String(index)}-symbol`,
                 text: `Move window to workspace ${String(index)} (shifted-symbol alias)`,
                 sequence: `Meta+${symbol}`,
                 kind: "move",
@@ -139,7 +139,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         }
     }
     rows.push({
-        action: "plasma-auto-tiler-move-workspace-append",
+        action: "omnitiler-move-workspace-append",
         text: "Move window to a newly appended workspace",
         sequence: "Meta+Shift+0",
         kind: "move",
@@ -148,7 +148,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
     const zeroSymbol = symbolForDigit(0);
     if (zeroSymbol !== null) {
         rows.push({
-            action: "plasma-auto-tiler-move-workspace-append-symbol",
+            action: "omnitiler-move-workspace-append-symbol",
             text: "Move window to a newly appended workspace (shifted-symbol alias)",
             sequence: `Meta+${zeroSymbol}`,
             kind: "move",
@@ -156,14 +156,14 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         });
     }
     rows.push({
-        action: "plasma-auto-tiler-workspace-previous",
+        action: "omnitiler-workspace-previous",
         text: "Toggle to the previous workspace",
         sequence: "Meta+Ctrl+Tab",
         kind: "previous",
         index: 0,
     });
     rows.push({
-        action: "plasma-auto-tiler-workspace-prev-h",
+        action: "omnitiler-workspace-prev-h",
         text: "Previous workspace",
         sequence: "Meta+Ctrl+H",
         kind: "relative",
@@ -171,7 +171,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: -1,
     });
     rows.push({
-        action: "plasma-auto-tiler-workspace-prev-k",
+        action: "omnitiler-workspace-prev-k",
         text: "Previous workspace",
         sequence: "Meta+Ctrl+K",
         kind: "relative",
@@ -179,7 +179,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: -1,
     });
     rows.push({
-        action: "plasma-auto-tiler-workspace-prev-left-arrow",
+        action: "omnitiler-workspace-prev-left-arrow",
         text: "Previous workspace",
         sequence: "Meta+Ctrl+Left",
         kind: "relative",
@@ -187,7 +187,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: -1,
     });
     rows.push({
-        action: "plasma-auto-tiler-workspace-prev-up-arrow",
+        action: "omnitiler-workspace-prev-up-arrow",
         text: "Previous workspace",
         sequence: "Meta+Ctrl+Up",
         kind: "relative",
@@ -195,7 +195,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: -1,
     });
     rows.push({
-        action: "plasma-auto-tiler-workspace-next-j",
+        action: "omnitiler-workspace-next-j",
         text: "Next workspace",
         sequence: "Meta+Ctrl+J",
         kind: "relative",
@@ -203,7 +203,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: 1,
     });
     rows.push({
-        action: "plasma-auto-tiler-workspace-next-l",
+        action: "omnitiler-workspace-next-l",
         text: "Next workspace",
         sequence: "Meta+Ctrl+L",
         kind: "relative",
@@ -211,7 +211,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: 1,
     });
     rows.push({
-        action: "plasma-auto-tiler-workspace-next-down-arrow",
+        action: "omnitiler-workspace-next-down-arrow",
         text: "Next workspace",
         sequence: "Meta+Ctrl+Down",
         kind: "relative",
@@ -219,7 +219,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: 1,
     });
     rows.push({
-        action: "plasma-auto-tiler-workspace-next-right-arrow",
+        action: "omnitiler-workspace-next-right-arrow",
         text: "Next workspace",
         sequence: "Meta+Ctrl+Right",
         kind: "relative",
@@ -229,7 +229,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
     // R-WS-01/14 relative send-and-follow: same scoped ring as selection,
     // resolved once before transfer at the entry. Bound chords.
     rows.push({
-        action: "plasma-auto-tiler-send-prev-h",
+        action: "omnitiler-send-prev-h",
         text: "Send window to the previous workspace",
         sequence: "Meta+Ctrl+Shift+H",
         kind: "send-relative",
@@ -237,7 +237,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: -1,
     });
     rows.push({
-        action: "plasma-auto-tiler-send-prev-k",
+        action: "omnitiler-send-prev-k",
         text: "Send window to the previous workspace",
         sequence: "Meta+Ctrl+Shift+K",
         kind: "send-relative",
@@ -245,7 +245,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: -1,
     });
     rows.push({
-        action: "plasma-auto-tiler-send-prev-left-arrow",
+        action: "omnitiler-send-prev-left-arrow",
         text: "Send window to the previous workspace",
         sequence: "Meta+Ctrl+Shift+Left",
         kind: "send-relative",
@@ -253,7 +253,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: -1,
     });
     rows.push({
-        action: "plasma-auto-tiler-send-prev-up-arrow",
+        action: "omnitiler-send-prev-up-arrow",
         text: "Send window to the previous workspace",
         sequence: "Meta+Ctrl+Shift+Up",
         kind: "send-relative",
@@ -261,7 +261,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: -1,
     });
     rows.push({
-        action: "plasma-auto-tiler-send-next-j",
+        action: "omnitiler-send-next-j",
         text: "Send window to the next workspace",
         sequence: "Meta+Ctrl+Shift+J",
         kind: "send-relative",
@@ -269,7 +269,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: 1,
     });
     rows.push({
-        action: "plasma-auto-tiler-send-next-l",
+        action: "omnitiler-send-next-l",
         text: "Send window to the next workspace",
         sequence: "Meta+Ctrl+Shift+L",
         kind: "send-relative",
@@ -277,7 +277,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: 1,
     });
     rows.push({
-        action: "plasma-auto-tiler-send-next-down-arrow",
+        action: "omnitiler-send-next-down-arrow",
         text: "Send window to the next workspace",
         sequence: "Meta+Ctrl+Shift+Down",
         kind: "send-relative",
@@ -285,7 +285,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: 1,
     });
     rows.push({
-        action: "plasma-auto-tiler-send-next-right-arrow",
+        action: "omnitiler-send-next-right-arrow",
         text: "Send window to the next workspace",
         sequence: "Meta+Ctrl+Shift+Right",
         kind: "send-relative",
@@ -297,7 +297,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
     // including shifted-symbol aliases.
     for (let index = 1; index <= 9; index += 1) {
         rows.push({
-            action: `plasma-auto-tiler-stay-workspace-${String(index)}`,
+            action: `omnitiler-stay-workspace-${String(index)}`,
             text: `Send window to workspace ${String(index)} without following`,
             sequence: "",
             kind: "move-stay",
@@ -306,7 +306,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         const symbol = symbolForDigit(index);
         if (symbol !== null) {
             rows.push({
-                action: `plasma-auto-tiler-stay-workspace-${String(index)}-symbol`,
+                action: `omnitiler-stay-workspace-${String(index)}-symbol`,
                 text: `Send window to workspace ${String(index)} without following (shifted-symbol alias)`,
                 sequence: "",
                 kind: "move-stay",
@@ -315,7 +315,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         }
     }
     rows.push({
-        action: "plasma-auto-tiler-stay-workspace-append",
+        action: "omnitiler-stay-workspace-append",
         text: "Send window to a newly appended workspace without following",
         sequence: "",
         kind: "move-stay",
@@ -324,7 +324,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
     const stayZeroSymbol = symbolForDigit(0);
     if (stayZeroSymbol !== null) {
         rows.push({
-            action: "plasma-auto-tiler-stay-workspace-append-symbol",
+            action: "omnitiler-stay-workspace-append-symbol",
             text: "Send window to a newly appended workspace without following (shifted-symbol alias)",
             sequence: "",
             kind: "move-stay",
@@ -333,7 +333,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
     }
     // R-WS-14 relative send-and-stay: bindable but unbound by default.
     rows.push({
-        action: "plasma-auto-tiler-send-stay-prev-h",
+        action: "omnitiler-send-stay-prev-h",
         text: "Send window to the previous workspace without following",
         sequence: "",
         kind: "send-relative-stay",
@@ -341,7 +341,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: -1,
     });
     rows.push({
-        action: "plasma-auto-tiler-send-stay-prev-k",
+        action: "omnitiler-send-stay-prev-k",
         text: "Send window to the previous workspace without following",
         sequence: "",
         kind: "send-relative-stay",
@@ -349,7 +349,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: -1,
     });
     rows.push({
-        action: "plasma-auto-tiler-send-stay-prev-left-arrow",
+        action: "omnitiler-send-stay-prev-left-arrow",
         text: "Send window to the previous workspace without following",
         sequence: "",
         kind: "send-relative-stay",
@@ -357,7 +357,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: -1,
     });
     rows.push({
-        action: "plasma-auto-tiler-send-stay-prev-up-arrow",
+        action: "omnitiler-send-stay-prev-up-arrow",
         text: "Send window to the previous workspace without following",
         sequence: "",
         kind: "send-relative-stay",
@@ -365,7 +365,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: -1,
     });
     rows.push({
-        action: "plasma-auto-tiler-send-stay-next-j",
+        action: "omnitiler-send-stay-next-j",
         text: "Send window to the next workspace without following",
         sequence: "",
         kind: "send-relative-stay",
@@ -373,7 +373,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: 1,
     });
     rows.push({
-        action: "plasma-auto-tiler-send-stay-next-l",
+        action: "omnitiler-send-stay-next-l",
         text: "Send window to the next workspace without following",
         sequence: "",
         kind: "send-relative-stay",
@@ -381,7 +381,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: 1,
     });
     rows.push({
-        action: "plasma-auto-tiler-send-stay-next-down-arrow",
+        action: "omnitiler-send-stay-next-down-arrow",
         text: "Send window to the next workspace without following",
         sequence: "",
         kind: "send-relative-stay",
@@ -389,7 +389,7 @@ export function workspaceShortcutCatalog(): ReadonlyArray<WorkspaceShortcutRow> 
         delta: 1,
     });
     rows.push({
-        action: "plasma-auto-tiler-send-stay-next-right-arrow",
+        action: "omnitiler-send-stay-next-right-arrow",
         text: "Send window to the next workspace without following",
         sequence: "",
         kind: "send-relative-stay",
@@ -404,7 +404,7 @@ const MAX_DESKTOPS = 32;
 const MAX_ID_LEN = 128;
 const MIN_GLOBAL_DESKTOPS = 2;
 
-const LOG_PREFIX = "plasma-auto-tiler:workspace";
+const LOG_PREFIX = "omnitiler:workspace";
 
 function readProp(value: object, property: string): unknown {
     try {

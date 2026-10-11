@@ -54,7 +54,7 @@ backing desktop, Windows' HWND or macOS' accessibility window.
 - [O] `kwin/src/workspace-native.ts:1-15` manages KWin desktops;
   `kwin/src/plan-adapter.ts:2321-2450` retains native applied evidence and
   schedules event responses.
-- [O] `crates/plasma-auto-tiler/src/planner_service.rs:1-46` owns Linux
+- [O] `crates/omnitiler/src/planner_service.rs:1-46` owns Linux
   D-Bus name, endpoint and caller checks. The plain-old-data (POD) C ABI and
   panic containment in `crates/tiler-kwin-effect-ffi/src/drag_oracle.rs:176-262`
   and `crates/tiler-kwin-effect-ffi/src/group_highlight.rs:520-548` serve the
@@ -76,7 +76,7 @@ documented limits [V]. References M/U and W/U resolve in the linked plans.
 
 | Capability | KWin | Windows | macOS |
 | --- | --- | --- | --- |
-| Process | [O: `crates/plasma-auto-tiler/src/planner_service.rs:1-46`, `docs/decisions.md:50-54`] KWin script + D-Bus Rust Engine, native effect and tray. | [I: Windows plan, W1,W2] One per-user interactive Rust process; no Session 0 service. | [I: macOS plan, M4] One signed GUI-login app/Engine, registered through `SMAppService`; no KWin D-Bus hop. |
+| Process | [O: `crates/omnitiler/src/planner_service.rs:1-46`, `docs/decisions.md:50-54`] KWin script + D-Bus Rust Engine, native effect and tray. | [I: Windows plan, W1,W2] One per-user interactive Rust process; no Session 0 service. | [I: macOS plan, M4] One signed GUI-login app/Engine, registered through `SMAppService`; no KWin D-Bus hop. |
 | Observation | [O: `kwin/src/plan-adapter.ts:2321-2450`] KWin complete domains, native signals and applied evidence. | [V/I: Windows plan, W2,W16] WinEvent + `EnumWindows`, DPI and DWM visible-frame readback. | [V/I: macOS plan, M6-M8] TCC-authorized per-PID AX observers, fresh AX enumeration + Quartz supplemental list; Space/Stage Manager uncertainty. |
 | Actuation | [O: `docs/decisions.md:563-663`] KWin frame/desktop setters, exact-scope follow, no setter replay. | [V/I: Windows plan, W2,W16] `SetWindowPos`, conditional focus, batch/readback and visibility recovery. | [V/I: macOS plan, M6] AX position/size/focus best effort; no atomic batch, per-app clamp/refusal and readback. |
 | Workspaces | [O: `kwin/src/workspace-native.ts:19-37,409-556`, `docs/decisions.md:689-727`] Native backing desktops implement three logical modes. | [V/I: Windows plan, W5,W6] Public virtual desktops lack full lifecycle; managed hide/reveal proposed. | [V/O/I: macOS plan, M8,U1,U2] Public native Spaces lack lifecycle/send; AX corner parking is a proposed managed route. |

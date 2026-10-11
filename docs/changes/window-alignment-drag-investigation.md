@@ -63,12 +63,12 @@
 
 - Read-only inspection found KWin 6.7.5 at PID 16891. Its D-Bus
   `listOfEffects` and `loadedEffects` omit both project effects;
-  `isEffectSupported("plasma-auto-tiler-drag-oracle")` is false and
-  `org.plasmaautotiler.DragOracle` has no owner.
+  `isEffectSupported("omnitiler-drag-oracle")` is false and
+  `com.omnitiler.DragOracle` has no owner.
 - The staged oracle exists at
-  `target/kwin-native-effect-stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so`,
+  `target/kwin-native-effect-stage/kwin/effects/plugins/omnitiler-drag-oracle.so`,
   but the exact documented delivery script
-  `~/.config/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh` is
+  `~/.config/plasma-workspace/env/60-omnitiler-native-effect.sh` is
   absent. The oracle enable key is also absent. Its metadata is
   `EnabledByDefault: false`.
 - Reading this KWin process's `/proc/16891/environ` was denied, so its actual

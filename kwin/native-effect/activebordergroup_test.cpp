@@ -335,7 +335,7 @@ int main(int argc, char **argv)
 {
     // Offline hard gate: isolate from the live session bus before any Qt
     // D-Bus initialization, mirroring the native KCM tests.
-    qputenv("DBUS_SESSION_BUS_ADDRESS", QByteArray("unix:path=/dev/null/plasma-auto-tiler-group-test-isolated-bus"));
+    qputenv("DBUS_SESSION_BUS_ADDRESS", QByteArray("unix:path=/dev/null/omnitiler-group-test-isolated-bus"));
     QCoreApplication app(argc, argv);
 
     validPayloadAppliesWithUnionBounds();

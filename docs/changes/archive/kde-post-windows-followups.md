@@ -59,7 +59,7 @@
 
 ### Supplied test-system trace investigation
 
-- Input: `plasma-auto-tiler-dev.4bsEWE.log`. Workspace 2, Ghostty T running the trace and C running Claude Code: focus C; plain float/unfloat retain focus; sticky-on loses focus to T underneath; refocus C and sticky-off/unfloat retain focus.
+- Input: `omnitiler-dev.4bsEWE.log`. Workspace 2, Ghostty T running the trace and C running Claude Code: focus C; plain float/unfloat retain focus; sticky-on loses focus to T underneath; refocus C and sticky-off/unfloat retain focus.
 - Plan: one sequential `muse-spark` investigation unit extracts correlated ordering and identifies the activating component, adding a failing trace-faithful fixture if supported. Lead accepts the fixture contract before a bounded adapter repair/gates unit. Existing constraints and material stop conditions remain in force; logs are read-only inputs, no live testing.
 - Acceptance: source-grounded causal trace quotes, red/green regression matching the observed ordering, smallest synchronous repair and final offline gates. If native assignment/activation timing remains unobservable or needs deferred retention, stop with the exact evidence gap/options.
 - Accepted cause/fixture: p5 sticky-on finishes retention; p6's foreground flag reconcile begins while the request fingerprint still matches C-focused p5/g2, then active-group fingerprints switch to the T-focused p0 value during p6 apply. The real observer/Engine replay reproduces p6 naming the tiled survivor and the adapter activating it via the generic focus gate. The new regression fails only at the post-reconcile focus assertion. This extends the investigation beyond the first Worker's incomplete p5-only suspect set; native membership/ignored assignment are not the reproduced cause.
@@ -76,11 +76,11 @@
 - p5 reply arrives/validates at log lines 151-153, before the native sticky write (160-163). The echo is consumed inside that write, then both retention checks complete (164-165), then p5 applies (168). Existing logs do not distinguish a retention assignment from an already-active no-op; the next request's C-focused fingerprint confirms C remained focused after this turn.
 
 ```text
-[kwin] plasma-auto-tiler:plan:sticky-echo-consumed
-[kwin] plasma-auto-tiler:plan:cmd=plan-1-p5 kind=toggle-float windows=2 outcome=planned-applied
-[planner] plasma-auto-tiler:plan-summary direction=shape op=reconcile correlation=plan-1-p6 windows=2 target_windows=0 domains=0 fingerprint=3500958695
-[kwin] plasma-auto-tiler:group-highlight:transition anchor=no-group members=0 first=1 meta=1 foc=1 ep=1 vis=0
-[planner] plasma-auto-tiler:plan-summary direction=shape op=active-group correlation=plan-1-g3 windows=2 target_windows=0 domains=0 fingerprint=750347070
+[kwin] omnitiler:plan:sticky-echo-consumed
+[kwin] omnitiler:plan:cmd=plan-1-p5 kind=toggle-float windows=2 outcome=planned-applied
+[planner] omnitiler:plan-summary direction=shape op=reconcile correlation=plan-1-p6 windows=2 target_windows=0 domains=0 fingerprint=3500958695
+[kwin] omnitiler:group-highlight:transition anchor=no-group members=0 first=1 meta=1 foc=1 ep=1 vis=0
+[planner] omnitiler:plan-summary direction=shape op=active-group correlation=plan-1-g3 windows=2 target_windows=0 domains=0 fingerprint=750347070
 ```
 
 - These excerpts are log lines 162,168,132,185,135 respectively; the dev stream buffers/interleaves Planner and KWin output, so display order across components is not a timestamp. KWin's own ordering places the focus transition inside p6 apply: reply 180, apply-start 183, equal geometry skip 184, focus-triggered highlight dispatch 185-187, setters-applied 188. The subsequent g3/g4 requests have T-focused fingerprints (135,138). The real Engine replay supplies the redacted survivor reply and reproduces the activation at the generic adapter gate (`kwin/src/plan-adapter.ts:7784-7824`). p7 is hidden and cannot actuate focus; p8 follows the already T-focused observation. The activating component is the KWin plan adapter processing the follow-up reconcile reply, after sticky write/echo/retention, not Rust's bookkeeping by itself.

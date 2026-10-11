@@ -268,13 +268,13 @@ describe("workspace mode parsing and chord catalog", () => {
         assert.equal(catalog.length, 75);
         const byAction = new Map(catalog.map((row) => [row.action, row]));
         for (let index = 1; index <= 9; index += 1) {
-            assert.equal(byAction.get(`plasma-auto-tiler-workspace-${String(index)}`)?.sequence, `Meta+${String(index)}`);
-            assert.equal(byAction.get(`plasma-auto-tiler-workspace-${String(index)}`)?.kind, "select");
-            assert.equal(byAction.get(`plasma-auto-tiler-move-workspace-${String(index)}`)?.sequence, `Meta+Shift+${String(index)}`);
-            assert.equal(byAction.get(`plasma-auto-tiler-move-workspace-${String(index)}`)?.kind, "move");
+            assert.equal(byAction.get(`omnitiler-workspace-${String(index)}`)?.sequence, `Meta+${String(index)}`);
+            assert.equal(byAction.get(`omnitiler-workspace-${String(index)}`)?.kind, "select");
+            assert.equal(byAction.get(`omnitiler-move-workspace-${String(index)}`)?.sequence, `Meta+Shift+${String(index)}`);
+            assert.equal(byAction.get(`omnitiler-move-workspace-${String(index)}`)?.kind, "move");
         }
-        assert.equal(byAction.get("plasma-auto-tiler-workspace-0")?.sequence, "Meta+0");
-        assert.equal(byAction.get("plasma-auto-tiler-move-workspace-append")?.sequence, "Meta+Shift+0");
+        assert.equal(byAction.get("omnitiler-workspace-0")?.sequence, "Meta+0");
+        assert.equal(byAction.get("omnitiler-move-workspace-append")?.sequence, "Meta+Shift+0");
         const expectedSymbols: ReadonlyArray<[number, string]> = [
             [1, "!"], [2, "@"], [3, "#"], [4, "$"], [5, "%"],
             [6, "^"], [7, "&"], [8, "*"], [9, "("], [0, ")"],
@@ -282,10 +282,10 @@ describe("workspace mode parsing and chord catalog", () => {
         for (const [digit, symbol] of expectedSymbols) {
             assert.equal(symbolForDigit(digit), symbol);
         }
-        assert.equal(byAction.get("plasma-auto-tiler-move-workspace-1-symbol")?.sequence, "Meta+!");
-        assert.equal(byAction.get("plasma-auto-tiler-move-workspace-2-symbol")?.sequence, "Meta+@");
-        assert.equal(byAction.get("plasma-auto-tiler-move-workspace-9-symbol")?.sequence, "Meta+(");
-        assert.equal(byAction.get("plasma-auto-tiler-move-workspace-append-symbol")?.sequence, "Meta+)");
+        assert.equal(byAction.get("omnitiler-move-workspace-1-symbol")?.sequence, "Meta+!");
+        assert.equal(byAction.get("omnitiler-move-workspace-2-symbol")?.sequence, "Meta+@");
+        assert.equal(byAction.get("omnitiler-move-workspace-9-symbol")?.sequence, "Meta+(");
+        assert.equal(byAction.get("omnitiler-move-workspace-append-symbol")?.sequence, "Meta+)");
         for (const row of catalog) {
             assert.ok(!row.action.includes("focus") && !row.action.includes("resize"), row.action);
         }
@@ -679,10 +679,10 @@ describe("workspace production entry routing and handoff", () => {
         const { handle, mocks } = startRichEntry("per-output-local");
         assert.ok(handle !== null);
         const byAction = new Map(mocks.shortcuts.map((row) => [row.action, row]));
-        assert.equal(byAction.get("plasma-auto-tiler-move-workspace-2")?.sequence, "Meta+Shift+2");
-        assert.equal(byAction.get("plasma-auto-tiler-move-workspace-2-symbol")?.sequence, "Meta+@");
+        assert.equal(byAction.get("omnitiler-move-workspace-2")?.sequence, "Meta+Shift+2");
+        assert.equal(byAction.get("omnitiler-move-workspace-2-symbol")?.sequence, "Meta+@");
         const callsBefore = mocks.dbusCalls.length;
-        byAction.get("plasma-auto-tiler-move-workspace-2")?.callback();
+        byAction.get("omnitiler-move-workspace-2")?.callback();
         assert.ok(mocks.dbusCalls.length > callsBefore);
         // First call pins the owner; feed it so the structural request is issued.
         mocks.callbacks[0]?.(":1.7");
@@ -699,7 +699,7 @@ describe("workspace production entry routing and handoff", () => {
         const first = startRichEntry("per-output-local");
         assert.ok(first.handle !== null);
         const byFirst = new Map(first.mocks.shortcuts.map((row) => [row.action, row]));
-        byFirst.get("plasma-auto-tiler-move-workspace-2-symbol")?.callback();
+        byFirst.get("omnitiler-move-workspace-2-symbol")?.callback();
         first.mocks.callbacks[0]?.(":1.7");
         const aliasCall = first.mocks.dbusCalls.find((call) => call.payload.includes("send-to-workspace"));
         assert.ok(aliasCall !== undefined);
@@ -708,7 +708,7 @@ describe("workspace production entry routing and handoff", () => {
         const second = startRichEntry("per-output-local");
         assert.ok(second.handle !== null);
         const bySecond = new Map(second.mocks.shortcuts.map((row) => [row.action, row]));
-        bySecond.get("plasma-auto-tiler-move-workspace-2")?.callback();
+        bySecond.get("omnitiler-move-workspace-2")?.callback();
         second.mocks.callbacks[0]?.(":1.7");
         const digitCall = second.mocks.dbusCalls.find((call) => call.payload.includes("send-to-workspace"));
         assert.ok(digitCall !== undefined);
@@ -727,7 +727,7 @@ describe("workspace production entry routing and handoff", () => {
         const targetDesktop = world.desktops[1];
         assert.ok(targetDesktop !== undefined);
         const byAction = new Map(mocks.shortcuts.map((row) => [row.action, row]));
-        byAction.get("plasma-auto-tiler-move-workspace-2")?.callback();
+        byAction.get("omnitiler-move-workspace-2")?.callback();
         // Activation pins the owner, then the structural request is issued.
         mocks.callbacks[0]?.(":1.7");
         const request = mocks.dbusCalls.find((call) => call.payload.includes("send-to-workspace"));
@@ -791,7 +791,7 @@ describe("workspace production entry routing and handoff", () => {
         }
         const moverBefore = world.workspace["activeWindow"];
         const byAction = new Map(mocks.shortcuts.map((row) => [row.action, row]));
-        byAction.get("plasma-auto-tiler-move-workspace-append")?.callback();
+        byAction.get("omnitiler-move-workspace-append")?.callback();
         mocks.callbacks[0]?.(":1.7");
         const request = mocks.dbusCalls.find((call) => call.payload.includes("send-to-workspace"));
         assert.ok(request !== undefined);
@@ -863,7 +863,7 @@ describe("workspace production entry routing and handoff", () => {
         const activeBefore = world.workspace["activeWindow"];
         const currentBefore = world.currentByOutput.get(world.outputs[0] as never);
         const byAction = new Map(mocks.shortcuts.map((row) => [row.action, row]));
-        byAction.get("plasma-auto-tiler-move-workspace-2")?.callback();
+        byAction.get("omnitiler-move-workspace-2")?.callback();
         mocks.callbacks[0]?.(":1.7");
         const request = mocks.dbusCalls.find((call) => call.payload.includes("send-to-workspace"));
         assert.ok(request !== undefined);
@@ -884,8 +884,8 @@ describe("workspace production entry routing and handoff", () => {
         // Absent logical position never reaches the transport.
         handle?.requestWorkspaceMove(5);
         assert.equal(mocks.dbusCalls.length, callsBefore);
-        assert.ok(byAction.get("plasma-auto-tiler-move-workspace-5") !== undefined);
-        byAction.get("plasma-auto-tiler-move-workspace-5")?.callback();
+        assert.ok(byAction.get("omnitiler-move-workspace-5") !== undefined);
+        byAction.get("omnitiler-move-workspace-5")?.callback();
         assert.equal(mocks.dbusCalls.length, callsBefore);
         // Missing target after resolve fails closed inside the transport.
         world.desktops.splice(1, 1);
@@ -906,7 +906,7 @@ describe("workspace production entry routing and handoff", () => {
         const byAction = new Map(mocks.shortcuts.map((row) => [row.action, row]));
         // Same-target no-op through shortcut routing: logical 1 is ws-1, the
         // current workspace holding the focused mover.
-        byAction.get("plasma-auto-tiler-move-workspace-1")?.callback();
+        byAction.get("omnitiler-move-workspace-1")?.callback();
         assert.ok(
             mocks.logs.some((line) => line.includes("event=refuse") && line.includes("outcome=same-workspace")),
             mocks.logs.join("\n"),

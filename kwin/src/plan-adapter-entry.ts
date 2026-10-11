@@ -139,7 +139,7 @@ export interface WorkspaceTilingSnapshot {
     readonly defaultTiled: boolean;
 }
 
-export const WORKSPACE_TILING_TOGGLE_ACTION = "plasma-auto-tiler-toggle-workspace-tiling";
+export const WORKSPACE_TILING_TOGGLE_ACTION = "omnitiler-toggle-workspace-tiling";
 export const WORKSPACE_TILING_TOGGLE_TEXT = "Toggle tiling for current workspace";
 // User decision 2026-10-10: the per-workspace tiling toggle binds Meta+Y by
 // default. Every other currently-unbound action stays unbound.
@@ -197,21 +197,21 @@ export function planOutputSendShortcutCatalog(): ReadonlyArray<PlanOutputSendSho
     ];
     for (const entry of dirs) {
         rows.push({
-            action: `plasma-auto-tiler-send-output-${entry.direction}`,
+            action: `omnitiler-send-output-${entry.direction}`,
             text: `Send window to output ${entry.direction} (follow)`,
             sequence: `Meta+Ctrl+Alt+${entry.key}`,
             direction: entry.direction,
             follow: true,
         });
         rows.push({
-            action: `plasma-auto-tiler-send-output-${entry.direction}-arrow`,
+            action: `omnitiler-send-output-${entry.direction}-arrow`,
             text: `Send window to output ${entry.direction} (follow)`,
             sequence: `Meta+Ctrl+Alt+${entry.arrow}`,
             direction: entry.direction,
             follow: true,
         });
         rows.push({
-            action: `plasma-auto-tiler-send-output-${entry.direction}-stay`,
+            action: `omnitiler-send-output-${entry.direction}-stay`,
             text: `Send window to output ${entry.direction} (stay)`,
             sequence: "",
             direction: entry.direction,
@@ -236,7 +236,7 @@ export function planWorkspaceMigrateShortcutCatalog(): ReadonlyArray<PlanWorkspa
     const dirs: ReadonlyArray<PlanDirection> = ["left", "right", "up", "down"];
     for (const direction of dirs) {
         rows.push({
-            action: `plasma-auto-tiler-migrate-workspace-${direction}`,
+            action: `omnitiler-migrate-workspace-${direction}`,
             text: `Migrate workspace to output ${direction} (follow)`,
             sequence: "",
             direction,
@@ -394,7 +394,7 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
     ];
     for (const entry of dirs) {
         rows.push({
-            action: `plasma-auto-tiler-focus-${entry.direction}`,
+            action: `omnitiler-focus-${entry.direction}`,
             text: `Focus window ${entry.direction}`,
             sequence: `Meta+${entry.key}`,
             op: "focus",
@@ -402,7 +402,7 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
             mode: null,
         });
         rows.push({
-            action: `plasma-auto-tiler-focus-${entry.direction}-arrow`,
+            action: `omnitiler-focus-${entry.direction}-arrow`,
             text: `Focus window ${entry.direction}`,
             sequence: `Meta+${entry.arrow}`,
             op: "focus",
@@ -410,7 +410,7 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
             mode: null,
         });
         rows.push({
-            action: `plasma-auto-tiler-move-${entry.direction}`,
+            action: `omnitiler-move-${entry.direction}`,
             text: `Move window ${entry.direction}`,
             sequence: `Meta+Shift+${entry.key}`,
             op: "move",
@@ -418,7 +418,7 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
             mode: null,
         });
         rows.push({
-            action: `plasma-auto-tiler-move-${entry.direction}-arrow`,
+            action: `omnitiler-move-${entry.direction}-arrow`,
             text: `Move window ${entry.direction}`,
             sequence: `Meta+Shift+${entry.arrow}`,
             op: "move",
@@ -426,7 +426,7 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
             mode: null,
         });
         rows.push({
-            action: `plasma-auto-tiler-resize-outwards-${entry.direction}`,
+            action: `omnitiler-resize-outwards-${entry.direction}`,
             text: `Grow window towards ${entry.direction}`,
             sequence: `Meta+Alt+${entry.key}`,
             op: "resize",
@@ -434,7 +434,7 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
             mode: "outwards",
         });
         rows.push({
-            action: `plasma-auto-tiler-resize-inwards-${entry.direction}`,
+            action: `omnitiler-resize-inwards-${entry.direction}`,
             text: `Shrink window from ${entry.direction}`,
             sequence: `Meta+Alt+Shift+${entry.key}`,
             op: "resize",
@@ -442,7 +442,7 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
             mode: "inwards",
         });
         rows.push({
-            action: `plasma-auto-tiler-resize-inwards-${entry.direction}-arrow`,
+            action: `omnitiler-resize-inwards-${entry.direction}-arrow`,
             text: `Shrink window from ${entry.direction}`,
             sequence: `Meta+Alt+Shift+${entry.arrow}`,
             op: "resize",
@@ -450,7 +450,7 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
             mode: "inwards",
         });
         rows.push({
-            action: `plasma-auto-tiler-resize-outwards-${entry.direction}-arrow`,
+            action: `omnitiler-resize-outwards-${entry.direction}-arrow`,
             text: `Grow window towards ${entry.direction}`,
             sequence: `Meta+Alt+${entry.arrow}`,
             op: "resize",
@@ -460,7 +460,7 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
     }
     rows.push(
         {
-            action: "plasma-auto-tiler-toggle-float",
+            action: "omnitiler-toggle-float",
             text: "Toggle floating window",
             sequence: "Meta+G",
             op: "float",
@@ -468,7 +468,7 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
             mode: null,
         },
         {
-            action: "plasma-auto-tiler-toggle-sticky",
+            action: "omnitiler-toggle-sticky",
             text: "Toggle sticky floating window",
             sequence: "Meta+Shift+G",
             op: "sticky",
@@ -476,7 +476,7 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
             mode: null,
         },
         {
-            action: "plasma-auto-tiler-toggle-maximize",
+            action: "omnitiler-toggle-maximize",
             text: "Toggle maximize window",
             sequence: "Meta+M",
             op: "maximize",
@@ -484,7 +484,7 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
             mode: null,
         },
         {
-            action: "plasma-auto-tiler-toggle-fullscreen",
+            action: "omnitiler-toggle-fullscreen",
             text: "Toggle fullscreen window",
             sequence: "Meta+F11",
             op: "fullscreen",
@@ -492,7 +492,7 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
             mode: null,
         },
         {
-            action: "plasma-auto-tiler-toggle-orientation",
+            action: "omnitiler-toggle-orientation",
             text: "Toggle split orientation",
             sequence: "Meta+O",
             op: "toggle-orientation",
@@ -4312,7 +4312,7 @@ function startPlanAdapterEntryOnce(
                             maximizeMissingLogged = true;
                             try {
                                 log(
-                                    "plasma-auto-tiler:plan:maximize-signal-unavailable cause=maximizedChanged-unconnectable recovery=fresh-maximizeMode-read",
+                                    "omnitiler:plan:maximize-signal-unavailable cause=maximizedChanged-unconnectable recovery=fresh-maximizeMode-read",
                                 );
                             } catch (error) {
                                 void error;
@@ -4487,7 +4487,7 @@ function startPlanAdapterEntryOnce(
         if (id === null) {
             if (reason !== null) {
                 try {
-                    log(`plasma-auto-tiler:plan:observe-excluded reason=${reason} window=unknown resource_class=unknown`);
+                    log(`omnitiler:plan:observe-excluded reason=${reason} window=unknown resource_class=unknown`);
                 } catch (error) {
                     void error;
                 }
@@ -4503,7 +4503,7 @@ function startPlanAdapterEntryOnce(
         }
         eligibilityReasons.set(id, reason);
         try {
-            log(`plasma-auto-tiler:plan:observe-excluded reason=${reason} window=${id} resource_class=${readResourceClass(ref)}`);
+            log(`omnitiler:plan:observe-excluded reason=${reason} window=${id} resource_class=${readResourceClass(ref)}`);
         } catch (error) {
             void error;
         }
@@ -5104,7 +5104,7 @@ function startPlanAdapterEntryOnce(
                 return detach;
             }
             if (kind === "maximize") {
-                const detach = subWindowRequiredSignal("maximizedChanged", "plasma-auto-tiler:plan:maximize-refused-signal", handler, true);
+                const detach = subWindowRequiredSignal("maximizedChanged", "omnitiler:plan:maximize-refused-signal", handler, true);
                 if (detach === null) {
                     // Infrastructure failure (e.g. unreadable window list):
                     // refuse fail-closed with the exact maximize-specific
@@ -5113,7 +5113,7 @@ function startPlanAdapterEntryOnce(
                     // tiled on fresh `maximizeMode` reads with a single
                     // best-effort unavailable line from the subscription.
                     try {
-                        log("plasma-auto-tiler:plan:maximize-refused-signal");
+                        log("omnitiler:plan:maximize-refused-signal");
                     } catch (error) {
                         void error;
                     }
@@ -5123,7 +5123,7 @@ function startPlanAdapterEntryOnce(
                 return detach;
             }
             if (kind === "desktops") {
-                const detach = subWindowRequiredSignal("desktopsChanged", "plasma-auto-tiler:plan:sticky-refused-signal", handler, false);
+                const detach = subWindowRequiredSignal("desktopsChanged", "omnitiler:plan:sticky-refused-signal", handler, false);
                 if (detach === null) {
                     return (): void => {};
                 }
@@ -5221,7 +5221,7 @@ function startPlanAdapterEntryOnce(
         // Keep the observer so the next complete window observation can tile.
         try {
             log(
-                `plasma-auto-tiler:plan:empty-startup owner=${String(overrides.owner)} generation=${String(overrides.generation)} cause=no-eligible-windows recovery=await-next-window`,
+                `omnitiler:plan:empty-startup owner=${String(overrides.owner)} generation=${String(overrides.generation)} cause=no-eligible-windows recovery=await-next-window`,
             );
         } catch (error) {
             void error;
@@ -5233,7 +5233,7 @@ function startPlanAdapterEntryOnce(
     // line is attributable.
     try {
         log(
-            `plasma-auto-tiler:plan:ready owner=${String(overrides.owner)} generation=${String(overrides.generation)} source=${PLAN_SOURCE_REV}`,
+            `omnitiler:plan:ready owner=${String(overrides.owner)} generation=${String(overrides.generation)} source=${PLAN_SOURCE_REV}`,
         );
     } catch (error) {
         void error;
@@ -5251,7 +5251,7 @@ function startPlanAdapterEntryOnce(
                 // only shortcut registration. Re-register on explicit reload.
                 try {
                     log(
-                        `plasma-auto-tiler:plan:shortcut-catalog-unavailable owner=${String(overrides.owner)} generation=${String(overrides.generation)} cause=register-shortcut-missing recovery=automatic-tiling-continue`,
+                        `omnitiler:plan:shortcut-catalog-unavailable owner=${String(overrides.owner)} generation=${String(overrides.generation)} cause=register-shortcut-missing recovery=automatic-tiling-continue`,
                     );
                 } catch (error) {
                     void error;
@@ -5269,7 +5269,7 @@ function startPlanAdapterEntryOnce(
             void error;
             try {
                 log(
-                    `plasma-auto-tiler:plan:shortcut-catalog-unavailable owner=${String(overrides.owner)} generation=${String(overrides.generation)} cause=register-shortcut-threw recovery=automatic-tiling-continue`,
+                    `omnitiler:plan:shortcut-catalog-unavailable owner=${String(overrides.owner)} generation=${String(overrides.generation)} cause=register-shortcut-threw recovery=automatic-tiling-continue`,
                 );
             } catch (inner) {
                 void inner;
@@ -5303,23 +5303,23 @@ function startPlanAdapterEntryOnce(
                                     : registerFn(action, text, sequence, () => adapter.requestFocus(direction));
                 if (ok !== true) {
                     try {
-                        log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
+                        log(`omnitiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
                     } catch (error) {
                         void error;
                     }
-                } else if (action === "plasma-auto-tiler-toggle-float") {
+                } else if (action === "omnitiler-toggle-float") {
                     // KGlobalAccel keeps both registrations and dispatches the
                     // earliest serial holder. Grid View is already registered by
                     // KWin, so this new action is visible in Settings but cannot
                     // receive Meta+G until the user resolves that conflict there.
                     try {
-                        log("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-float sequence=Meta+G holder_component=kwin holder_action=Grid View");
+                        log("omnitiler:plan:shortcut-dispatch-shadowed action=omnitiler-toggle-float sequence=Meta+G holder_component=kwin holder_action=Grid View");
                     } catch (error) {
                         void error;
                     }
-                } else if (action === "plasma-auto-tiler-toggle-maximize") {
+                } else if (action === "omnitiler-toggle-maximize") {
                     try {
-                        log("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-maximize sequence=Meta+M holder_component=kwin holder_action=KrohnkiteMonocleLayout");
+                        log("omnitiler:plan:shortcut-dispatch-shadowed action=omnitiler-toggle-maximize sequence=Meta+M holder_component=kwin holder_action=KrohnkiteMonocleLayout");
                     } catch (error) {
                         void error;
                     }
@@ -5327,7 +5327,7 @@ function startPlanAdapterEntryOnce(
             } catch (error) {
                 void error;
                 try {
-                    log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
+                    log(`omnitiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
                 } catch (inner) {
                     void inner;
                 }
@@ -5344,7 +5344,7 @@ function startPlanAdapterEntryOnce(
                 );
                 if (ok !== true) {
                     try {
-                        log(`plasma-auto-tiler:plan:shortcut-failed action=${row.action} sequence=${row.sequence}`);
+                        log(`omnitiler:plan:shortcut-failed action=${row.action} sequence=${row.sequence}`);
                     } catch (error) {
                         void error;
                     }
@@ -5352,7 +5352,7 @@ function startPlanAdapterEntryOnce(
             } catch (error) {
                 void error;
                 try {
-                    log(`plasma-auto-tiler:plan:shortcut-failed action=${row.action} sequence=${row.sequence}`);
+                    log(`omnitiler:plan:shortcut-failed action=${row.action} sequence=${row.sequence}`);
                 } catch (inner) {
                     void inner;
                 }
@@ -5369,7 +5369,7 @@ function startPlanAdapterEntryOnce(
                 );
                 if (ok !== true) {
                     try {
-                        log(`plasma-auto-tiler:plan:shortcut-failed action=${row.action} sequence=${row.sequence}`);
+                        log(`omnitiler:plan:shortcut-failed action=${row.action} sequence=${row.sequence}`);
                     } catch (error) {
                         void error;
                     }
@@ -5377,7 +5377,7 @@ function startPlanAdapterEntryOnce(
             } catch (error) {
                 void error;
                 try {
-                    log(`plasma-auto-tiler:plan:shortcut-failed action=${row.action} sequence=${row.sequence}`);
+                    log(`omnitiler:plan:shortcut-failed action=${row.action} sequence=${row.sequence}`);
                 } catch (inner) {
                     void inner;
                 }
@@ -5478,7 +5478,7 @@ function startPlanAdapterEntryOnce(
         } catch (error) {
             void error;
         }
-        log(`plasma-auto-tiler:plan:workspace-floating tiled=true awaiting-release=0 confirmed=true`);
+        log(`omnitiler:plan:workspace-floating tiled=true awaiting-release=0 confirmed=true`);
         adapter.requestResync();
         highlightRefresh?.();
     };
@@ -5492,9 +5492,9 @@ function startPlanAdapterEntryOnce(
                 dispatchedReleases.delete(key);
                 if (outcome === "released") {
                     confirmedReleases.add(key);
-                    log(`plasma-auto-tiler:plan:workspace-released outcome=released windows=${String(snapshot.windows.length)}`);
+                    log(`omnitiler:plan:workspace-released outcome=released windows=${String(snapshot.windows.length)}`);
                 } else {
-                    log(`plasma-auto-tiler:plan:workspace-released outcome=${outcome} recovery=retry-on-event`);
+                    log(`omnitiler:plan:workspace-released outcome=${outcome} recovery=retry-on-event`);
                     return;
                 }
                 if (!pendingRetiles.has(key)) {
@@ -5545,7 +5545,7 @@ function startPlanAdapterEntryOnce(
         try {
             const scope = workspaceNative.currentScopeId();
             if (scope === null) {
-                log("plasma-auto-tiler:plan:workspace-tiling-refused reason=no-scope");
+                log("omnitiler:plan:workspace-tiling-refused reason=no-scope");
                 return;
             }
             const ids = [scope];
@@ -5566,7 +5566,7 @@ function startPlanAdapterEntryOnce(
                 }
                 if (snapshots.length === 0) {
                     try {
-                        log("plasma-auto-tiler:plan:workspace-floating windows=0 release=none");
+                        log("omnitiler:plan:workspace-floating windows=0 release=none");
                     } catch (error) {
                         void error;
                     }
@@ -5585,7 +5585,7 @@ function startPlanAdapterEntryOnce(
                     dispatchRelease(snapshot, key);
                 }
                 try {
-                    log(`plasma-auto-tiler:plan:workspace-floating tiled=false domains=${String(snapshots.length)}`);
+                    log(`omnitiler:plan:workspace-floating tiled=false domains=${String(snapshots.length)}`);
                 } catch (error) {
                     void error;
                 }
@@ -5628,7 +5628,7 @@ function startPlanAdapterEntryOnce(
                 dispatchRelease(snapshot, key);
             }
             try {
-                log(`plasma-auto-tiler:plan:workspace-floating tiled=false awaiting-release=${String(unconfirmed.length)} pending-retile=true`);
+                log(`omnitiler:plan:workspace-floating tiled=false awaiting-release=${String(unconfirmed.length)} pending-retile=true`);
             } catch (error) {
                 void error;
             }
@@ -5659,7 +5659,7 @@ function startPlanAdapterEntryOnce(
         }
         try {
             log(
-                `plasma-auto-tiler:route-diag component=cosmic-send stage=follow correlation=${diagnostic.correlation} generation=${String(overrides.generation)} revision=${String(diagnostic.revision)} event=${event} outcome=${outcome} diag_seq=${String(diagnostic.nextSequence())} api=${detail.api} return_kind=${detail.returnKind} call_ord=${String(detail.callOrdinal)} call_total=${String(detail.callTotal)} selection=${detail.selection} mode=${detail.mode} outputs=${String(detail.outputs)} tgt_ord=${String(detail.targetOrdinal)} cur_id_eq=${String(detail.currentIdEq)} active_id_eq=${String(detail.activeIdEq)} exception=${detail.exception}`,
+                `omnitiler:route-diag component=cosmic-send stage=follow correlation=${diagnostic.correlation} generation=${String(overrides.generation)} revision=${String(diagnostic.revision)} event=${event} outcome=${outcome} diag_seq=${String(diagnostic.nextSequence())} api=${detail.api} return_kind=${detail.returnKind} call_ord=${String(detail.callOrdinal)} call_total=${String(detail.callTotal)} selection=${detail.selection} mode=${detail.mode} outputs=${String(detail.outputs)} tgt_ord=${String(detail.targetOrdinal)} cur_id_eq=${String(detail.currentIdEq)} active_id_eq=${String(detail.activeIdEq)} exception=${detail.exception}`,
             );
         } catch (error) {
             void error;
@@ -6406,8 +6406,8 @@ function startPlanAdapterEntryOnce(
             return false;
         }
         try {
-            log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=${event} outcome=intent-bootstrap-deferred follow=not-reached gate=pre-commit phase=entry reason=intent-bootstrap-pending req_ord=${String(reqOrd)} inflight_stage=idle`);
-            log(`plasma-auto-tiler:plan:intent-bootstrap-deferred kind=${kind}`);
+            log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=${event} outcome=intent-bootstrap-deferred follow=not-reached gate=pre-commit phase=entry reason=intent-bootstrap-pending req_ord=${String(reqOrd)} inflight_stage=idle`);
+            log(`omnitiler:plan:intent-bootstrap-deferred kind=${kind}`);
         } catch (error) {
             void error;
         }
@@ -6418,7 +6418,7 @@ function startPlanAdapterEntryOnce(
             const follow = parseFollowFlag(followRaw);
             if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 9) {
                 try {
-                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=invalid-logical-target follow=not-reached gate=pre-commit phase=entry reason=invalid-logical-target req_ord=-1 inflight_stage=idle`);
+                    log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=invalid-logical-target follow=not-reached gate=pre-commit phase=entry reason=invalid-logical-target req_ord=-1 inflight_stage=idle`);
                 } catch (error) {
                     void error;
                 }
@@ -6442,8 +6442,8 @@ function startPlanAdapterEntryOnce(
                     } catch (error) {
                         void error;
                     }
-                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation=${correlation} generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=${String(index)} inflight_stage=${inflightStage}`);
-                    log("plasma-auto-tiler:plan:busy-refused kind=workspace-move");
+                    log(`omnitiler:route-diag component=cosmic-send stage=entry correlation=${correlation} generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=${String(index)} inflight_stage=${inflightStage}`);
+                    log("omnitiler:plan:busy-refused kind=workspace-move");
                 } catch (error) {
                     void error;
                 }
@@ -6453,7 +6453,7 @@ function startPlanAdapterEntryOnce(
                 index === 0 ? workspaceNative.resolveOrAppendMoveTarget() : workspaceNative.resolveMoveTarget(index);
             if (target === null) {
                 try {
-                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=target-unresolved follow=not-reached gate=pre-commit phase=entry reason=target-unresolved req_ord=${String(index)} inflight_stage=idle`);
+                    log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=target-unresolved follow=not-reached gate=pre-commit phase=entry reason=target-unresolved req_ord=${String(index)} inflight_stage=idle`);
                 } catch (error) {
                     void error;
                 }
@@ -6561,7 +6561,7 @@ function startPlanAdapterEntryOnce(
             const follow = parseFollowFlag(followRaw);
             if (delta !== -1 && delta !== 1) {
                 try {
-                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=invalid-logical-target follow=not-reached gate=pre-commit phase=entry reason=invalid-logical-target req_ord=-1 inflight_stage=idle`);
+                    log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=invalid-logical-target follow=not-reached gate=pre-commit phase=entry reason=invalid-logical-target req_ord=-1 inflight_stage=idle`);
                 } catch (error) {
                     void error;
                 }
@@ -6585,8 +6585,8 @@ function startPlanAdapterEntryOnce(
                     } catch (error) {
                         void error;
                     }
-                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation=${correlation} generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=-1 inflight_stage=${inflightStage}`);
-                    log("plasma-auto-tiler:plan:busy-refused kind=workspace-move");
+                    log(`omnitiler:route-diag component=cosmic-send stage=entry correlation=${correlation} generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=-1 inflight_stage=${inflightStage}`);
+                    log("omnitiler:plan:busy-refused kind=workspace-move");
                 } catch (error) {
                     void error;
                 }
@@ -6597,7 +6597,7 @@ function startPlanAdapterEntryOnce(
             const target = workspaceNative.resolveRelativeMoveTarget(delta);
             if (target === null) {
                 try {
-                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=target-unresolved follow=not-reached gate=pre-commit phase=entry reason=target-unresolved req_ord=-1 inflight_stage=idle`);
+                    log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=target-unresolved follow=not-reached gate=pre-commit phase=entry reason=target-unresolved req_ord=-1 inflight_stage=idle`);
                 } catch (error) {
                     void error;
                 }
@@ -6633,8 +6633,8 @@ function startPlanAdapterEntryOnce(
                     } catch (error) {
                         void error;
                     }
-                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation=${correlation} generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=${String(reqOrd)} inflight_stage=${inflightStage}`);
-                    log("plasma-auto-tiler:plan:busy-refused kind=workspace-move");
+                    log(`omnitiler:route-diag component=cosmic-send stage=entry correlation=${correlation} generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=${String(reqOrd)} inflight_stage=${inflightStage}`);
+                    log("omnitiler:plan:busy-refused kind=workspace-move");
                 } catch (error) {
                     void error;
                 }
@@ -6662,7 +6662,7 @@ function startPlanAdapterEntryOnce(
                     const targetRef = resolveDesktopRef(target);
                     if (mover === null || targetRef === null) {
                         try {
-                            log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=native-unavailable follow=not-reached gate=pre-commit phase=entry reason=native-unavailable req_ord=${String(reqOrd)} inflight_stage=idle`);
+                            log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=native-unavailable follow=not-reached gate=pre-commit phase=entry reason=native-unavailable req_ord=${String(reqOrd)} inflight_stage=idle`);
                         } catch (error) {
                             void error;
                         }
@@ -6690,7 +6690,7 @@ function startPlanAdapterEntryOnce(
                     }
                     if (refusal !== null) {
                         try {
-                            log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=native-refused follow=not-reached gate=floating-boundary phase=entry reason=${refusal} req_ord=${String(reqOrd)} inflight_stage=idle`);
+                            log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=native-refused follow=not-reached gate=floating-boundary phase=entry reason=${refusal} req_ord=${String(reqOrd)} inflight_stage=idle`);
                         } catch (error) {
                             void error;
                         }
@@ -6737,13 +6737,13 @@ function startPlanAdapterEntryOnce(
                     // never switches or focuses, follow reports its readback.
                     const nativeOutcome = moved ? "native-moved" : "native-failed";
                     try {
-                        log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=${nativeOutcome} follow=${followToken} gate=floating-boundary phase=entry reason=floating-boundary req_ord=${String(reqOrd)} inflight_stage=idle`);
+                        log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=${nativeOutcome} follow=${followToken} gate=floating-boundary phase=entry reason=floating-boundary req_ord=${String(reqOrd)} inflight_stage=idle`);
                     } catch (error) {
                         void error;
                     }
                     if (!moved) {
                         try {
-                            log("plasma-auto-tiler:plan:workspace-send-native-failed");
+                            log("omnitiler:plan:workspace-send-native-failed");
                         } catch (error) {
                             void error;
                         }
@@ -6770,7 +6770,7 @@ function startPlanAdapterEntryOnce(
             const direction = directionRaw as string;
             if (direction !== "left" && direction !== "right" && direction !== "up" && direction !== "down") {
                 try {
-                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=invalid-direction follow=not-reached gate=pre-commit phase=entry reason=invalid-direction req_ord=-1 inflight_stage=idle`);
+                    log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=invalid-direction follow=not-reached gate=pre-commit phase=entry reason=invalid-direction req_ord=-1 inflight_stage=idle`);
                 } catch (error) {
                     void error;
                 }
@@ -6797,8 +6797,8 @@ function startPlanAdapterEntryOnce(
                     } catch (error) {
                         void error;
                     }
-                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation=${correlation} generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=-1 inflight_stage=${inflightStage}`);
-                    log("plasma-auto-tiler:plan:busy-refused kind=output-send");
+                    log(`omnitiler:route-diag component=cosmic-send stage=entry correlation=${correlation} generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=-1 inflight_stage=${inflightStage}`);
+                    log("omnitiler:plan:busy-refused kind=output-send");
                 } catch (error) {
                     void error;
                 }
@@ -6809,7 +6809,7 @@ function startPlanAdapterEntryOnce(
             const topology = readOutputTopology(liveWorkspace);
             if (topology === null || topology.length === 0) {
                 try {
-                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=scope-invalid follow=not-reached gate=pre-commit phase=entry reason=topology-unreadable req_ord=-1 inflight_stage=idle`);
+                    log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=scope-invalid follow=not-reached gate=pre-commit phase=entry reason=topology-unreadable req_ord=-1 inflight_stage=idle`);
                 } catch (error) {
                     void error;
                 }
@@ -6836,7 +6836,7 @@ function startPlanAdapterEntryOnce(
             const sourceEntry = topology.find((entry) => entry.name === sourceName);
             if (sourceEntry === undefined) {
                 try {
-                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=scope-invalid follow=not-reached gate=pre-commit phase=entry reason=source-unknown req_ord=-1 inflight_stage=idle`);
+                    log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=scope-invalid follow=not-reached gate=pre-commit phase=entry reason=source-unknown req_ord=-1 inflight_stage=idle`);
                 } catch (error) {
                     void error;
                 }
@@ -6857,7 +6857,7 @@ function startPlanAdapterEntryOnce(
                 // No candidate is a no-op: log the quiet no-target outcome
                 // with no write and no flight.
                 try {
-                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=no-target follow=not-reached gate=pre-commit phase=entry reason=no-adjacent-output req_ord=-1 inflight_stage=idle`);
+                    log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=no-target follow=not-reached gate=pre-commit phase=entry reason=no-adjacent-output req_ord=-1 inflight_stage=idle`);
                 } catch (error) {
                     void error;
                 }
@@ -6865,8 +6865,8 @@ function startPlanAdapterEntryOnce(
             }
             if (selected === "ambiguous") {
                 try {
-                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=refused follow=not-reached gate=pre-commit phase=entry reason=ambiguous-topology req_ord=-1 inflight_stage=idle`);
-                    log("plasma-auto-tiler:plan:output-send-refused-ambiguous");
+                    log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=refused follow=not-reached gate=pre-commit phase=entry reason=ambiguous-topology req_ord=-1 inflight_stage=idle`);
+                    log("omnitiler:plan:output-send-refused-ambiguous");
                 } catch (error) {
                     void error;
                 }
@@ -6888,7 +6888,7 @@ function startPlanAdapterEntryOnce(
             );
             if (probed === null || probed.targetWorkspace !== targetWorkspace) {
                 try {
-                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=scope-invalid follow=not-reached gate=pre-commit phase=entry reason=scope-unreadable req_ord=-1 inflight_stage=idle`);
+                    log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=scope-invalid follow=not-reached gate=pre-commit phase=entry reason=scope-unreadable req_ord=-1 inflight_stage=idle`);
                 } catch (error) {
                     void error;
                 }
@@ -6931,7 +6931,7 @@ function startPlanAdapterEntryOnce(
                     sourceOutputRef === null
                 ) {
                     try {
-                        log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=native-refused follow=not-reached gate=floating-boundary phase=entry reason=non-tiled-focus req_ord=-1 inflight_stage=idle`);
+                        log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=native-refused follow=not-reached gate=floating-boundary phase=entry reason=non-tiled-focus req_ord=-1 inflight_stage=idle`);
                     } catch (error) {
                         void error;
                     }
@@ -6953,7 +6953,7 @@ function startPlanAdapterEntryOnce(
                 }
                 if (refusal !== null) {
                     try {
-                        log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=native-refused follow=not-reached gate=floating-boundary phase=entry reason=${refusal} req_ord=-1 inflight_stage=idle`);
+                        log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=native-refused follow=not-reached gate=floating-boundary phase=entry reason=${refusal} req_ord=-1 inflight_stage=idle`);
                     } catch (error) {
                         void error;
                     }
@@ -6963,7 +6963,7 @@ function startPlanAdapterEntryOnce(
                 // setter: the active window must still be the probe mover.
                 if (readActiveMover() !== mover) {
                     try {
-                        log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=native-refused follow=not-reached gate=floating-boundary phase=entry reason=active-changed req_ord=-1 inflight_stage=idle`);
+                        log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=native-refused follow=not-reached gate=floating-boundary phase=entry reason=active-changed req_ord=-1 inflight_stage=idle`);
                     } catch (error) {
                         void error;
                     }
@@ -7024,13 +7024,13 @@ function startPlanAdapterEntryOnce(
                 emitWorkspaceTiling();
                 const nativeOutcome = moved ? "native-moved" : "native-failed";
                 try {
-                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=${nativeOutcome} follow=${followToken} gate=floating-boundary phase=entry reason=floating-boundary req_ord=-1 inflight_stage=idle`);
+                    log(`omnitiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=output-send outcome=${nativeOutcome} follow=${followToken} gate=floating-boundary phase=entry reason=floating-boundary req_ord=-1 inflight_stage=idle`);
                 } catch (error) {
                     void error;
                 }
                 if (!moved) {
                     try {
-                        log("plasma-auto-tiler:plan:workspace-send-native-failed");
+                        log("omnitiler:plan:workspace-send-native-failed");
                     } catch (error) {
                         void error;
                     }
@@ -7055,7 +7055,7 @@ function startPlanAdapterEntryOnce(
             const direction = directionRaw as string;
             if (!isMigrateDirection(direction)) {
                 try {
-                    log(`plasma-auto-tiler:route-diag component=workspace-migrate stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=invalid-direction follow=not-reached gate=pre-commit phase=entry reason=invalid-direction req_ord=-1 inflight_stage=idle`);
+                    log(`omnitiler:route-diag component=workspace-migrate stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=invalid-direction follow=not-reached gate=pre-commit phase=entry reason=invalid-direction req_ord=-1 inflight_stage=idle`);
                 } catch (error) {
                     void error;
                 }
@@ -7079,8 +7079,8 @@ function startPlanAdapterEntryOnce(
                     } catch (error) {
                         void error;
                     }
-                    log(`plasma-auto-tiler:route-diag component=workspace-migrate stage=entry correlation=${correlation} generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=-1 inflight_stage=${inflightStage}`);
-                    log("plasma-auto-tiler:plan:busy-refused kind=workspace-migrate");
+                    log(`omnitiler:route-diag component=workspace-migrate stage=entry correlation=${correlation} generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=-1 inflight_stage=${inflightStage}`);
+                    log("omnitiler:plan:busy-refused kind=workspace-migrate");
                 } catch (error) {
                     void error;
                 }
@@ -7113,7 +7113,7 @@ function startPlanAdapterEntryOnce(
             if (policy.mode !== "per-output-local" && policy.mode !== "global-unique") {
                 const outcome = policy.mode === "shared" ? "mode-shared" : "mode-invalid";
                 try {
-                    log(`plasma-auto-tiler:route-diag component=workspace-migrate stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=-1 inflight_stage=idle`);
+                    log(`omnitiler:route-diag component=workspace-migrate stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=-1 inflight_stage=idle`);
                 } catch (error) {
                     void error;
                 }
@@ -7122,7 +7122,7 @@ function startPlanAdapterEntryOnce(
             if (policy.perOutput !== true) {
                 const outcome = policy.perOutput === false ? "per-output-disabled" : "per-output-unreadable";
                 try {
-                    log(`plasma-auto-tiler:route-diag component=workspace-migrate stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=-1 inflight_stage=idle`);
+                    log(`omnitiler:route-diag component=workspace-migrate stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=-1 inflight_stage=idle`);
                 } catch (error) {
                     void error;
                 }
@@ -7140,7 +7140,7 @@ function startPlanAdapterEntryOnce(
             );
             if (probed.status === "no-target") {
                 try {
-                    log(`plasma-auto-tiler:route-diag component=workspace-migrate stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=no-target follow=not-reached gate=pre-commit phase=entry reason=no-adjacent-output req_ord=-1 inflight_stage=idle`);
+                    log(`omnitiler:route-diag component=workspace-migrate stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=no-target follow=not-reached gate=pre-commit phase=entry reason=no-adjacent-output req_ord=-1 inflight_stage=idle`);
                 } catch (error) {
                     void error;
                 }
@@ -7148,8 +7148,8 @@ function startPlanAdapterEntryOnce(
             }
             if (probed.status !== "ready" || probed.observed === null) {
                 try {
-                    log(`plasma-auto-tiler:route-diag component=workspace-migrate stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=refused follow=not-reached gate=pre-commit phase=entry reason=scope-unreadable req_ord=-1 inflight_stage=idle`);
-                    log("plasma-auto-tiler:plan:workspace-migrate-refused-scope");
+                    log(`omnitiler:route-diag component=workspace-migrate stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-migrate outcome=refused follow=not-reached gate=pre-commit phase=entry reason=scope-unreadable req_ord=-1 inflight_stage=idle`);
+                    log("omnitiler:plan:workspace-migrate-refused-scope");
                 } catch (error) {
                     void error;
                 }
@@ -7244,7 +7244,7 @@ function startPlanAdapterEntryOnce(
                                   : registerFn(action, text, sequence, () => requestWorkspaceSelect(index));
                 if (ok !== true) {
                     try {
-                        log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
+                        log(`omnitiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
                     } catch (error) {
                         void error;
                     }
@@ -7252,7 +7252,7 @@ function startPlanAdapterEntryOnce(
             } catch (error) {
                 void error;
                 try {
-                    log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
+                    log(`omnitiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
                 } catch (inner) {
                     void inner;
                 }
@@ -7266,7 +7266,7 @@ function startPlanAdapterEntryOnce(
             const ok = registerFn(WORKSPACE_TILING_TOGGLE_ACTION, WORKSPACE_TILING_TOGGLE_TEXT, WORKSPACE_TILING_TOGGLE_SEQUENCE, () => toggleWorkspaceTiling());
             if (ok !== true) {
                 try {
-                    log(`plasma-auto-tiler:plan:shortcut-failed action=${WORKSPACE_TILING_TOGGLE_ACTION} sequence=${WORKSPACE_TILING_TOGGLE_SEQUENCE}`);
+                    log(`omnitiler:plan:shortcut-failed action=${WORKSPACE_TILING_TOGGLE_ACTION} sequence=${WORKSPACE_TILING_TOGGLE_SEQUENCE}`);
                 } catch (error) {
                     void error;
                 }
@@ -7274,7 +7274,7 @@ function startPlanAdapterEntryOnce(
         } catch (error) {
             void error;
             try {
-                log(`plasma-auto-tiler:plan:shortcut-failed action=${WORKSPACE_TILING_TOGGLE_ACTION} sequence=${WORKSPACE_TILING_TOGGLE_SEQUENCE}`);
+                log(`omnitiler:plan:shortcut-failed action=${WORKSPACE_TILING_TOGGLE_ACTION} sequence=${WORKSPACE_TILING_TOGGLE_SEQUENCE}`);
             } catch (inner) {
                 void inner;
             }
@@ -7548,7 +7548,7 @@ function startPlanAdapterEntryOnce(
             const session = movePreviewSessions.get(ref);
             if (session !== undefined) {
                 if (session.overlay) {
-                    log(`plasma-auto-tiler:route-diag:drag-preview-cleared correlation=${session.correlation} reason=terminal`);
+                    log(`omnitiler:route-diag:drag-preview-cleared correlation=${session.correlation} reason=terminal`);
                 }
                 movePreviewSessions.delete(ref);
                 adapter.clearDragPreview(session.correlation);
@@ -7572,7 +7572,7 @@ function startPlanAdapterEntryOnce(
                 return;
             }
             if (session.overlay) {
-                log(`plasma-auto-tiler:route-diag:drag-preview-cleared correlation=${session.correlation} reason=finish`);
+                log(`omnitiler:route-diag:drag-preview-cleared correlation=${session.correlation} reason=finish`);
             }
             session.finished = true;
             session.pending = null;
@@ -7762,12 +7762,12 @@ function startPlanAdapterEntryOnce(
             if (result === null) {
                 if (session.overlay) {
                     session.overlay = false;
-                    log(`plasma-auto-tiler:route-diag:drag-preview-cleared correlation=${session.correlation} reason=refused`);
+                    log(`omnitiler:route-diag:drag-preview-cleared correlation=${session.correlation} reason=refused`);
                     overlayCall(DRAG_PREVIEW_CLEAR_METHOD);
                 }
             } else if (overlayCall(DRAG_PREVIEW_SET_METHOD, result.rect.x, result.rect.y, result.rect.w, result.rect.h)) {
                 if (!session.overlay) {
-                    log(`plasma-auto-tiler:route-diag:drag-preview-shown correlation=${session.correlation}`);
+                    log(`omnitiler:route-diag:drag-preview-shown correlation=${session.correlation}`);
                 }
                 session.overlay = true;
             }
@@ -8213,7 +8213,7 @@ function startPlanAdapterEntryOnce(
                             try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
                         }
                         clearMovePreviewFull(ref);
-                        try { log(`plasma-auto-tiler:route-diag:drag-move-timeout correlation=none`); } catch (error) { void error; }
+                        try { log(`omnitiler:route-diag:drag-move-timeout correlation=none`); } catch (error) { void error; }
                     } catch (error) {
                         void error;
                     }
@@ -8295,13 +8295,13 @@ function startPlanAdapterEntryOnce(
     const routeOracleVerdict = (verdict: DragOracleVerdict, ctx: DragOracleFinishContext | undefined): void => {
         try {
             if (ctx === undefined) {
-                try { log(`plasma-auto-tiler:route-diag:drag-context-invalid correlation=${verdict.correlation}`); } catch (error) { void error; }
+                try { log(`omnitiler:route-diag:drag-context-invalid correlation=${verdict.correlation}`); } catch (error) { void error; }
                 return;
             }
             const observed = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners);
             if (observed === null) {
                 takeOwnStart(ctx);
-                try { log(`plasma-auto-tiler:route-diag:drag-scope-invalid correlation=${verdict.correlation}`); } catch (error) { void error; }
+                try { log(`omnitiler:route-diag:drag-scope-invalid correlation=${verdict.correlation}`); } catch (error) { void error; }
                 return;
             }
             let ref: object | null = null;
@@ -8313,24 +8313,24 @@ function startPlanAdapterEntryOnce(
             }
             if (ref === null) {
                 takeOwnStart(ctx);
-                try { log(`plasma-auto-tiler:route-diag:drag-unknown-window correlation=${verdict.correlation}`); } catch (error) { void error; }
+                try { log(`omnitiler:route-diag:drag-unknown-window correlation=${verdict.correlation}`); } catch (error) { void error; }
                 return;
             }
             if (ref !== ctx.ref) {
                 takeOwnStart(ctx);
-                try { log(`plasma-auto-tiler:route-diag:drag-ref-mismatch correlation=${verdict.correlation}`); } catch (error) { void error; }
+                try { log(`omnitiler:route-diag:drag-ref-mismatch correlation=${verdict.correlation}`); } catch (error) { void error; }
                 return;
             }
             // A premature Finished/verdict must not turn a live native move
             // into a geometry-writing drop. Retain the hold and Start until
             // KWin reports idle or a later, genuine Finish arrives.
             if (interactiveMoveRefs.has(ctx.ref) && isLiveMoveStillActive(ctx.ref)) {
-                try { log(`plasma-auto-tiler:route-diag:drag-move-ignored correlation=${verdict.correlation}`); } catch (error) { void error; }
+                try { log(`omnitiler:route-diag:drag-move-ignored correlation=${verdict.correlation}`); } catch (error) { void error; }
                 return;
             }
             const start = takeOwnStart(ctx);
             if (start === null || start.id !== verdict.windowIdentity) {
-                try { log(`plasma-auto-tiler:route-diag:drag-start-missing correlation=${verdict.correlation}`); } catch (error) { void error; }
+                try { log(`omnitiler:route-diag:drag-start-missing correlation=${verdict.correlation}`); } catch (error) { void error; }
                 return;
             }
             if (start.move === true) {
@@ -8365,7 +8365,7 @@ function startPlanAdapterEntryOnce(
                 }
                 const floatingStart = start.floatingStart === true;
                 if (floatingStart !== floatingFinish) {
-                    try { log(`plasma-auto-tiler:route-diag:drag-move-floating-mismatch correlation=${verdict.correlation} start=${floatingStart ? "floating" : "tiled"} finish=${floatingFinish ? "floating" : "tiled"}`); } catch (error) { void error; }
+                    try { log(`omnitiler:route-diag:drag-move-floating-mismatch correlation=${verdict.correlation} start=${floatingStart ? "floating" : "tiled"} finish=${floatingFinish ? "floating" : "tiled"}`); } catch (error) { void error; }
                 }
                 if (floatingFinish || floatingStart) {
                     const cancel = moveGuardCancels.get(ctx);
@@ -8379,7 +8379,7 @@ function startPlanAdapterEntryOnce(
                             try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
                         }
                     }
-                    try { log(`plasma-auto-tiler:route-diag:drag-move-ignored correlation=${verdict.correlation}`); } catch (error) { void error; }
+                    try { log(`omnitiler:route-diag:drag-move-ignored correlation=${verdict.correlation}`); } catch (error) { void error; }
                     return;
                 }
                 try {
@@ -8417,18 +8417,18 @@ function startPlanAdapterEntryOnce(
                         adapter.clearDragPreview(previewArg);
                     }
                     try {
-                        log(`plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=${verdict.correlation} accepted=${accepted === true ? "true" : "false"}`);
+                        log(`omnitiler:route-diag:drag-drop-dispatched correlation=${verdict.correlation} accepted=${accepted === true ? "true" : "false"}`);
                     } catch (error) {
                         void error;
                     }
                 } catch (error) {
                     void error;
-                    try { log(`plasma-auto-tiler:route-diag:drag-drop-thrown correlation=${verdict.correlation}`); } catch (_ignored) { /* fail-closed */ }
+                    try { log(`omnitiler:route-diag:drag-drop-thrown correlation=${verdict.correlation}`); } catch (_ignored) { /* fail-closed */ }
                 }
                 return;
             }
             if (!(start.move === false && start.resize === true)) {
-                try { log(`plasma-auto-tiler:route-diag:drag-start-invalid correlation=${verdict.correlation}`); } catch (error) { void error; }
+                try { log(`omnitiler:route-diag:drag-start-invalid correlation=${verdict.correlation}`); } catch (error) { void error; }
                 return;
             }
             // Grabbed-edge routing: the grabbed edge(s) captured at Started
@@ -8471,24 +8471,24 @@ function startPlanAdapterEntryOnce(
                     grabbed = identified.grabbed;
                     grabSource = identified.source;
                 } else {
-                    try { log(`plasma-auto-tiler:route-diag:drag-press-fallback correlation=${verdict.correlation} source=${start.grabSource}`); } catch (error) { void error; }
+                    try { log(`omnitiler:route-diag:drag-press-fallback correlation=${verdict.correlation} source=${start.grabSource}`); } catch (error) { void error; }
                 }
             } else {
-                try { log(`plasma-auto-tiler:route-diag:drag-press-fallback correlation=${verdict.correlation} source=${start.grabSource}`); } catch (error) { void error; }
+                try { log(`omnitiler:route-diag:drag-press-fallback correlation=${verdict.correlation} source=${start.grabSource}`); } catch (error) { void error; }
             }
             if (grabbed === null) {
-                try { log(`plasma-auto-tiler:route-diag:drag-no-grabbed-edge correlation=${verdict.correlation} source=${grabSource}`); } catch (error) { void error; }
+                try { log(`omnitiler:route-diag:drag-no-grabbed-edge correlation=${verdict.correlation} source=${grabSource}`); } catch (error) { void error; }
                 return;
             }
             const resolved = resolveOracleResizeTargets(start.rect, verdict.finalRect, grabbed);
             if (resolved === null) {
-                try { log(`plasma-auto-tiler:route-diag:drag-zero-move correlation=${verdict.correlation} grabbed=${formatGrabbed(grabbed)} source=${grabSource}`); } catch (error) { void error; }
+                try { log(`omnitiler:route-diag:drag-zero-move correlation=${verdict.correlation} grabbed=${formatGrabbed(grabbed)} source=${grabSource}`); } catch (error) { void error; }
                 return;
             }
             try {
                 const targetText = resolved.targets.map((t) => `${t.direction}:${String(t.boundary)}`).join(",");
                 const ignoredText = resolved.ignored.length > 0 ? resolved.ignored.join(",") : "none";
-                log(`plasma-auto-tiler:route-diag:drag-route correlation=${verdict.correlation} grabbed=${formatGrabbed(grabbed)} source=${grabSource} targets=${targetText} ignored=${ignoredText}`);
+                log(`omnitiler:route-diag:drag-route correlation=${verdict.correlation} grabbed=${formatGrabbed(grabbed)} source=${grabSource} targets=${targetText} ignored=${ignoredText}`);
             } catch (error) {
                 void error;
             }
@@ -8521,17 +8521,17 @@ function startPlanAdapterEntryOnce(
                 }
                 try {
                     const targetText = resolved.targets.map((t) => `${t.direction}:${String(t.boundary)}`).join(",");
-                    log(`plasma-auto-tiler:route-diag:drag-dispatched correlation=${verdict.correlation} targets=${targetText} accepted=${accepted === true ? "true" : "false"}`);
+                    log(`omnitiler:route-diag:drag-dispatched correlation=${verdict.correlation} targets=${targetText} accepted=${accepted === true ? "true" : "false"}`);
                 } catch (error) {
                     void error;
                 }
             } catch (error) {
                 void error;
-                try { log(`plasma-auto-tiler:route-diag:drag-dispatch-thrown correlation=${verdict.correlation}`); } catch (_ignored) { /* fail-closed */ }
+                try { log(`omnitiler:route-diag:drag-dispatch-thrown correlation=${verdict.correlation}`); } catch (_ignored) { /* fail-closed */ }
             }
         } catch (error) {
             void error;
-            try { log(`plasma-auto-tiler:route-diag:drag-route-thrown correlation=${verdict.correlation}`); } catch (_ignored) { /* fail-closed */ }
+            try { log(`omnitiler:route-diag:drag-route-thrown correlation=${verdict.correlation}`); } catch (_ignored) { /* fail-closed */ }
         }
     };
     const oracleSeen = new Set<object>();
@@ -8901,7 +8901,7 @@ function startPlanAdapterEntryOnce(
                         if (highlightAttachFailed) {
                             highlightAttachFailed = false;
                             try {
-                                log("plasma-auto-tiler:plan:highlight-attach stage=recovered");
+                                log("omnitiler:plan:highlight-attach stage=recovered");
                             } catch (error) {
                                 void error;
                             }
@@ -8909,7 +8909,7 @@ function startPlanAdapterEntryOnce(
                     } else if (!highlightAttachFailed) {
                         highlightAttachFailed = true;
                         try {
-                            log("plasma-auto-tiler:plan:highlight-attach stage=failed reason=bridge-unavailable");
+                            log("omnitiler:plan:highlight-attach stage=failed reason=bridge-unavailable");
                         } catch (error) {
                             void error;
                         }
@@ -8930,7 +8930,7 @@ function startPlanAdapterEntryOnce(
                 if (bridgeExpected) {
                     highlightAttachFailed = true;
                     try {
-                        log("plasma-auto-tiler:plan:highlight-attach stage=failed reason=bridge-unavailable");
+                        log("omnitiler:plan:highlight-attach stage=failed reason=bridge-unavailable");
                     } catch (logError) {
                         void logError;
                     }
@@ -8978,7 +8978,7 @@ function startPlanAdapterEntryOnce(
                         if (drifted.length > 0) {
                             try {
                                 log(
-                                    `plasma-auto-tiler:plan:config-reloaded stage=restart-required keys=${drifted.join(",")}`,
+                                    `omnitiler:plan:config-reloaded stage=restart-required keys=${drifted.join(",")}`,
                                 );
                             } catch (error) {
                                 void error;
@@ -9000,7 +9000,7 @@ function startPlanAdapterEntryOnce(
                             }
                             emitWorkspaceTiling();
                             try {
-                                log(`plasma-auto-tiler:plan:config-reloaded stage=default-tiled tiled=${parsed ? "true" : "false"}`);
+                                log(`omnitiler:plan:config-reloaded stage=default-tiled tiled=${parsed ? "true" : "false"}`);
                             } catch (error) {
                                 void error;
                             }
@@ -9017,7 +9017,7 @@ function startPlanAdapterEntryOnce(
                         if (reread !== sameAxisMove) {
                             sameAxisMove = reread;
                             try {
-                                log(`plasma-auto-tiler:plan:config-reloaded stage=same-axis-move mode=${reread}`);
+                                log(`omnitiler:plan:config-reloaded stage=same-axis-move mode=${reread}`);
                             } catch (error) {
                                 void error;
                             }
@@ -9037,7 +9037,7 @@ function startPlanAdapterEntryOnce(
                         if (reread !== fixedSizePredicate) {
                             fixedSizePredicate = reread;
                             try {
-                                log(`plasma-auto-tiler:plan:config-reloaded stage=fixed-size-predicate predicate=${reread}`);
+                                log(`omnitiler:plan:config-reloaded stage=fixed-size-predicate predicate=${reread}`);
                             } catch (error) {
                                 void error;
                             }
@@ -9056,7 +9056,7 @@ function startPlanAdapterEntryOnce(
                             )
                         ) {
                             try {
-                                log(`plasma-auto-tiler:plan:config-reloaded stage=migration-source-refill refill=${workspaceNative.getMigrationSourceRefill()}`);
+                                log(`omnitiler:plan:config-reloaded stage=migration-source-refill refill=${workspaceNative.getMigrationSourceRefill()}`);
                             } catch (error) {
                                 void error;
                             }
@@ -9092,7 +9092,7 @@ function startPlanAdapterEntryOnce(
                     // restart the session to guarantee pickup.
                     try {
                         log(
-                            `plasma-auto-tiler:plan:config-reloaded stage=re-read-queued innerGap=${String(next.innerGap)} outerGap=${String(next.outerGap)} applied-unconfirmed`,
+                            `omnitiler:plan:config-reloaded stage=re-read-queued innerGap=${String(next.innerGap)} outerGap=${String(next.outerGap)} applied-unconfirmed`,
                         );
                     } catch (error) {
                         void error;
@@ -9408,7 +9408,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         current = next;
         detachWait();
         try {
-            log("plasma-auto-tiler:plan:entry-attach stage=recovered");
+            log("omnitiler:plan:entry-attach stage=recovered");
         } catch (error) {
             void error;
         }
@@ -9453,7 +9453,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     }
     const failedCause = firstCause ?? "enable-refused";
     try {
-        log(`plasma-auto-tiler:plan:entry-attach stage=failed cause=${failedCause} recovery=retry-on-native-event`);
+        log(`omnitiler:plan:entry-attach stage=failed cause=${failedCause} recovery=retry-on-native-event`);
     } catch (error) {
         void error;
     }

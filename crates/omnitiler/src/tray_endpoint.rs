@@ -12,9 +12,9 @@ use zbus::{MatchRule, fdo::NameOwnerChanged, message::Type};
 
 use crate::tray::{DbusMenu, StatusNotifierItem, TrayProjection};
 
-pub const SERVICE: &str = "org.plasmaautotiler.Tray";
-pub const OBJECT: &str = "/org/plasmaautotiler/Tray";
-pub const INTERFACE: &str = "org.plasmaautotiler.Tray1";
+pub const SERVICE: &str = "com.omnitiler.Tray";
+pub const OBJECT: &str = "/com/omnitiler/Tray";
+pub const INTERFACE: &str = "com.omnitiler.Tray1";
 pub const METHOD: &str = "PublishSnapshot";
 pub const KWIN_SERVICE: &str = "org.kde.KWin";
 pub const FRESHNESS_MS: u64 = 30_000;
@@ -50,7 +50,7 @@ pub struct StateView {
 }
 
 #[derive(Debug, zbus::DBusError, PartialEq, Eq)]
-#[zbus(prefix = "org.plasmaautotiler.Tray1")]
+#[zbus(prefix = "com.omnitiler.Tray1")]
 pub enum TrayError {
     InvalidSnapshot(String),
     UnauthorizedPublisher,
@@ -466,7 +466,7 @@ impl TrayDiagTracker {
     }
 }
 
-pub(crate) const TRAY_DIAG_PREFIX: &str = "plasma-auto-tiler:route-diag";
+pub(crate) const TRAY_DIAG_PREFIX: &str = "omnitiler:route-diag";
 const TRAY_DIAG_COMPONENT: &str = "tray-endpoint";
 
 /// Bounded owner-transition record. Presence transitions only: the raw owner
@@ -878,7 +878,7 @@ impl TrayEndpoint {
     }
 }
 
-#[zbus::interface(name = "org.plasmaautotiler.Tray1")]
+#[zbus::interface(name = "com.omnitiler.Tray1")]
 impl TrayEndpoint {
     // Schema-2 D-Bus arity is the wire contract (7 args + header/emitter).
     #[allow(clippy::too_many_arguments)]
@@ -955,7 +955,7 @@ fn user_kwinrc_mtime(path: &std::path::Path) -> Option<std::time::SystemTime> {
         .ok()
 }
 
-/// Single-instance tray endpoint. Acquires `org.plasmaautotiler.Tray` with
+/// Single-instance tray endpoint. Acquires `com.omnitiler.Tray` with
 /// `DoNotQueue`: a taken name means another tray is already serving, so this
 /// instance logs one bounded record and exits 0. No PID records, no locks, no
 /// executable allowlist. Snapshots are accepted only from the sender unique
@@ -1555,15 +1555,15 @@ mod tests {
     fn service_name_lines_are_bounded_without_identity() {
         assert_eq!(
             service_name_acquired_line(),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=name event=acquire outcome=acquired"
+            "omnitiler:route-diag component=tray-endpoint stage=name event=acquire outcome=acquired"
         );
         assert_eq!(
             service_name_taken_line(),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=name event=acquire outcome=taken"
+            "omnitiler:route-diag component=tray-endpoint stage=name event=acquire outcome=taken"
         );
         assert_eq!(
             service_name_lost_line(),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=name event=name-lost outcome=lost"
+            "omnitiler:route-diag component=tray-endpoint stage=name event=name-lost outcome=lost"
         );
     }
 
@@ -1581,11 +1581,11 @@ mod tests {
         // loop continues; own-name loss stays terminal (covered above).
         assert_eq!(
             owner_signal_malformed_line(),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=owner event=signal outcome=malformed-signal"
+            "omnitiler:route-diag component=tray-endpoint stage=owner event=signal outcome=malformed-signal"
         );
         assert_eq!(
             owner_signal_args_invalid_line(),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=owner event=signal outcome=invalid-args"
+            "omnitiler:route-diag component=tray-endpoint stage=owner event=signal outcome=invalid-args"
         );
         for line in [
             owner_signal_malformed_line(),
@@ -1613,7 +1613,7 @@ mod tests {
         let emission = super::signal_emission_failed_line();
         assert_eq!(
             emission,
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=signal event=emit outcome=emission-failed"
+            "omnitiler:route-diag component=tray-endpoint stage=signal event=emit outcome=emission-failed"
         );
         assert!(!emission.contains('\n'));
     }
@@ -2103,7 +2103,7 @@ mod tests {
         assert_eq!(
             pending,
             Some(
-                "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=alpha revision=1 enabled=true tiled=true defaultTiled=true"
+                "omnitiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=alpha revision=1 enabled=true tiled=true defaultTiled=true"
                     .to_owned()
             )
         );
@@ -2369,19 +2369,19 @@ mod tests {
     fn watcher_lines_are_bounded_without_identity() {
         assert_eq!(
             watcher_registered_line(),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=watcher event=register outcome=registered"
+            "omnitiler:route-diag component=tray-endpoint stage=watcher event=register outcome=registered"
         );
         assert_eq!(
             watcher_lost_line(),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=watcher event=owner-changed outcome=lost"
+            "omnitiler:route-diag component=tray-endpoint stage=watcher event=owner-changed outcome=lost"
         );
         assert_eq!(
             watcher_registration_failed_line(),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=watcher event=register outcome=registration-failed"
+            "omnitiler:route-diag component=tray-endpoint stage=watcher event=register outcome=registration-failed"
         );
         assert_eq!(
             watcher_query_failed_line(),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=watcher event=query outcome=query-failed"
+            "omnitiler:route-diag component=tray-endpoint stage=watcher event=query outcome=query-failed"
         );
         for line in [
             watcher_registered_line(),
@@ -2514,7 +2514,7 @@ mod tests {
         let failure = kwin_startup_query_failed_line();
         assert_eq!(
             failure,
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=owner event=startup outcome=query-failed"
+            "omnitiler:route-diag component=tray-endpoint stage=owner event=startup outcome=query-failed"
         );
         assert!(!failure.contains(":1."));
         assert!(!failure.contains('\n'));
@@ -2633,21 +2633,21 @@ mod tests {
         assert_eq!(
             owner_outcome_line(true, false, true),
             Some(
-                "plasma-auto-tiler:route-diag component=tray-endpoint stage=owner event=owner-changed outcome=acquired"
+                "omnitiler:route-diag component=tray-endpoint stage=owner event=owner-changed outcome=acquired"
                     .to_owned()
             )
         );
         assert_eq!(
             owner_outcome_line(true, true, false),
             Some(
-                "plasma-auto-tiler:route-diag component=tray-endpoint stage=owner event=owner-changed outcome=lost"
+                "omnitiler:route-diag component=tray-endpoint stage=owner event=owner-changed outcome=lost"
                     .to_owned()
             )
         );
         assert_eq!(
             owner_outcome_line(true, true, true),
             Some(
-                "plasma-auto-tiler:route-diag component=tray-endpoint stage=owner event=owner-changed outcome=replaced"
+                "omnitiler:route-diag component=tray-endpoint stage=owner event=owner-changed outcome=replaced"
                     .to_owned()
             )
         );
@@ -2668,7 +2668,7 @@ mod tests {
         assert_eq!(
             publish_outcome_line(true, &Ok(()), Some("beta"), 2, false, true, true),
             Some(
-                "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=beta revision=2 enabled=false tiled=true defaultTiled=true"
+                "omnitiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=beta revision=2 enabled=false tiled=true defaultTiled=true"
                     .to_owned()
             )
         );
@@ -2681,7 +2681,7 @@ mod tests {
             .expect("refusal is logged");
         assert_eq!(
             line,
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=invalid-transition generation=alpha revision=3 enabled=true tiled=true defaultTiled=true"
+            "omnitiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=invalid-transition generation=alpha revision=3 enabled=true tiled=true defaultTiled=true"
         );
         assert!(!line.contains("valid state transition"));
         // Schema/generation refusal carries no generation: the token failed
@@ -2705,7 +2705,7 @@ mod tests {
         assert_eq!(
             publish_outcome_line(false, &unauthorized, None, 4, true, true, true),
             Some(
-                "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=not-current-KWin-owner revision=4"
+                "omnitiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=not-current-KWin-owner revision=4"
                     .to_owned()
             )
         );
@@ -2731,17 +2731,17 @@ mod tests {
     fn early_refusal_and_projection_lines_use_fixed_labels() {
         assert_eq!(
             publish_early_refusal_line("not-current-KWin-owner", 7),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=not-current-KWin-owner revision=7"
+            "omnitiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=not-current-KWin-owner revision=7"
         );
         assert_eq!(
             publish_early_refusal_line("missing-sender", 7),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=missing-sender revision=7"
+            "omnitiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=missing-sender revision=7"
         );
         for status in ["Active", "Passive", "NeedsAttention"] {
             assert_eq!(
                 status_projected_line(status),
                 format!(
-                    "plasma-auto-tiler:route-diag component=tray-endpoint stage=projection event=projected outcome={status}"
+                    "omnitiler:route-diag component=tray-endpoint stage=projection event=projected outcome={status}"
                 )
             );
         }
@@ -2782,7 +2782,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             publish_outcome_line(true, &Ok(()), Some("alpha"), 0, true, true, true).unwrap(),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=alpha revision=0 enabled=true tiled=true defaultTiled=true"
+            "omnitiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=alpha revision=0 enabled=true tiled=true defaultTiled=true"
         );
 
         let before = triple(&state);
@@ -2815,7 +2815,7 @@ mod tests {
         assert_ne!(triple(&state), before);
         assert_eq!(
             publish_outcome_line(true, &Ok(()), Some("alpha"), 1, false, true, true).unwrap(),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=alpha revision=1 enabled=false tiled=true defaultTiled=true"
+            "omnitiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=alpha revision=1 enabled=false tiled=true defaultTiled=true"
         );
 
         let (refusal, refusal_line) = state.publish_snapshot_from(
@@ -2852,7 +2852,7 @@ mod tests {
         );
         assert_eq!(
             publish_early_refusal_line("not-current-KWin-owner", 2),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=not-current-KWin-owner revision=2"
+            "omnitiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=not-current-KWin-owner revision=2"
         );
     }
 
@@ -2888,7 +2888,7 @@ mod tests {
         assert_eq!(
             line,
             Some(
-                "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=alpha revision=0 enabled=true tiled=true defaultTiled=true"
+                "omnitiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=alpha revision=0 enabled=true tiled=true defaultTiled=true"
                     .to_owned()
             )
         );
@@ -2899,7 +2899,7 @@ mod tests {
         assert_eq!(
             line,
             Some(
-                "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=invalid-transition generation=alpha revision=0 enabled=false tiled=true defaultTiled=true"
+                "omnitiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=invalid-transition generation=alpha revision=0 enabled=false tiled=true defaultTiled=true"
                     .to_owned()
             )
         );
@@ -2978,7 +2978,7 @@ mod tests {
         assert_eq!(
             line,
             Some(
-                "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=not-current-KWin-owner revision=1"
+                "omnitiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=not-current-KWin-owner revision=1"
                     .to_owned()
             )
         );
@@ -3026,7 +3026,7 @@ mod tests {
         assert_eq!(
             state.collect_early_refusal("missing-sender", 3),
             Some(
-                "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=missing-sender revision=3"
+                "omnitiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=missing-sender revision=3"
                     .to_owned()
             )
         );
@@ -3079,7 +3079,7 @@ mod tests {
         let signal = super::signal_emission_failed_line();
         assert_eq!(
             signal,
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=signal event=emit outcome=emission-failed"
+            "omnitiler:route-diag component=tray-endpoint stage=signal event=emit outcome=emission-failed"
         );
         assert_eq!(tracker.failure_line(signal.clone()), Some(signal.clone()));
         assert_eq!(tracker.failure_line(signal.clone()), None);
@@ -3169,7 +3169,7 @@ mod tests {
     impl PrivateBus {
         fn start() -> Option<Self> {
             let socket_dir = std::env::temp_dir().join(format!(
-                "plasma-auto-tiler-test-bus-{}-{}",
+                "omnitiler-test-bus-{}-{}",
                 std::process::id(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)

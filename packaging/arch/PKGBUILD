@@ -8,21 +8,21 @@
 # contains the prebuilt KWin bundle and vendored Rust crates, so the build
 # never runs npm and never touches the network. A VCS checkout would lack
 # both and must not be substituted here.
-# Maintainer: Plasma Auto Tiler Contributors (tentative; replace with the
+# Maintainer: OmniTiler Contributors (tentative; replace with the
 # publishing maintainer at release time)
-pkgbase=plasma-auto-tiler
-pkgname=(plasma-auto-tiler plasma-auto-tiler-native-effect)
+pkgbase=omnitiler
+pkgname=(omnitiler omnitiler-native-effect)
 pkgver=0.1.0
 pkgrel=1
 pkgdesc='COSMIC-style automatic tiling for KWin (core: script, planner, tray)'
 arch=(x86_64)
-url='https://github.com/beefsack/plasma-auto-tiler'
+url='https://github.com/beefsack/omnitiler'
 license=(GPL-2.0-or-later)
 # No release exists yet, so no digest can be pinned. At release time
 # packaging/bump-version.sh fills this from the published .sha256 sidecar;
 # until then the checksum stays SKIP and the prepare() VERSION assertion
 # below is the fail-closed identity check.
-source=("https://github.com/beefsack/plasma-auto-tiler/releases/download/v$pkgver/plasma-auto-tiler-$pkgver.tar.gz")
+source=("https://github.com/beefsack/omnitiler/releases/download/v$pkgver/omnitiler-$pkgver.tar.gz")
 sha256sums=(SKIP)
 # KWin headers ship in the main kwin package on Arch (no -dev split).
 # The rust package provides both rustc and cargo.
@@ -49,10 +49,10 @@ build() {
   local vendor_dir="$PWD/vendor"
   cargo --config 'source.crates-io.replace-with="vendored-sources"' \
         --config "source.vendored-sources.directory=\"$vendor_dir\"" \
-        build --release --locked --offline -p plasma-auto-tiler
+        build --release --locked --offline -p omnitiler
   # Native effect against Arch's own KWin headers. Same vendor tree via
-  # PLASMA_AUTO_TILER_VENDOR_DIR (see kwin/native-effect/CMakeLists.txt).
-  export PLASMA_AUTO_TILER_VENDOR_DIR="$PWD/vendor"
+  # OMNITILER_VENDOR_DIR (see kwin/native-effect/CMakeLists.txt).
+  export OMNITILER_VENDOR_DIR="$PWD/vendor"
   cmake -S kwin/native-effect -B build-native \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_TESTING=OFF \
@@ -60,52 +60,52 @@ build() {
   cmake --build build-native
 }
 
-package_plasma-auto-tiler() {
+package_omnitiler() {
   pkgdesc='COSMIC-style automatic tiling for KWin with Settings pages; press Revert in Settings before removing'
   # Core ships the KCMs, so their direct Qt/KF6 runtimes plus the
   # enable/Settings journey helpers (kwriteconfig6/kreadconfig6 in kconfig,
   # kcmshell6 in kcmutils) are hard requirements, not optionals. kwin stays
   # as the script host; hicolor-icon-theme for the icon layout.
   depends=(kwin hicolor-icon-theme qt6-base kconfig kcoreaddons kcmutils ki18n kwidgetsaddons)
-  install=plasma-auto-tiler.install
-  optdepends=('plasma-auto-tiler-native-effect: ABI-matched active-border effect (Settings live in core)')
+  install=omnitiler.install
+  optdepends=('omnitiler-native-effect: ABI-matched active-border effect (Settings live in core)')
   cd "$pkgbase-$pkgver"
-  install -Dm755 target/release/plasma-auto-tiler "$pkgdir/usr/bin/plasma-auto-tiler"
+  install -Dm755 target/release/omnitiler "$pkgdir/usr/bin/omnitiler"
   # KWin script: the exact prebuilt four-file set, no npm involved.
-  local scriptdir="$pkgdir/usr/share/kwin/scripts/plasma-auto-tiler-kwin"
+  local scriptdir="$pkgdir/usr/share/kwin/scripts/omnitiler-kwin"
   install -Dm644 kwin/metadata.json "$scriptdir/metadata.json"
   install -Dm644 kwin/contents/code/main.js "$scriptdir/contents/code/main.js"
   install -Dm644 kwin/contents/config/main.xml "$scriptdir/contents/config/main.xml"
   install -Dm644 kwin/contents/ui/config.ui "$scriptdir/contents/ui/config.ui"
   # D-Bus activation descriptor (template carries @out@, Nix-style).
   install -d "$pkgdir/usr/share/dbus-1/services"
-  sed 's|@out@|/usr|' nix/org.plasmaautotiler.Planner.service \
-    > "$pkgdir/usr/share/dbus-1/services/org.plasmaautotiler.Planner.service"
+  sed 's|@out@|/usr|' nix/com.omnitiler.Planner.service \
+    > "$pkgdir/usr/share/dbus-1/services/com.omnitiler.Planner.service"
   # Systemd user units (mirrors home-manager-module.nix; never auto-enabled).
-  install -Dm644 packaging/systemd/plasma-auto-tiler-tray.service \
-    "$pkgdir/usr/lib/systemd/user/plasma-auto-tiler-tray.service"
-  install -Dm644 packaging/systemd/plasma-auto-tiler-planner.service \
-    "$pkgdir/usr/lib/systemd/user/plasma-auto-tiler-planner.service"
-  install -Dm644 assets/icons/plasma-auto-tiler.svg \
-    "$pkgdir/usr/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg"
+  install -Dm644 packaging/systemd/omnitiler-tray.service \
+    "$pkgdir/usr/lib/systemd/user/omnitiler-tray.service"
+  install -Dm644 packaging/systemd/omnitiler-planner.service \
+    "$pkgdir/usr/lib/systemd/user/omnitiler-planner.service"
+  install -Dm644 assets/icons/omnitiler.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/omnitiler.svg"
   # KWin-independent settings pages (Qt/KF6 only; JSON metadata is embedded
   # in the .so files at compile time, so no .json ships alongside).
   # Installed via the full native tree, minus the ABI-bound effect plugin
   # (which belongs to the companion below).
   DESTDIR="$pkgdir" cmake --install build-native
-  rm -f "$pkgdir/usr/lib/qt6/plugins/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+  rm -f "$pkgdir/usr/lib/qt6/plugins/kwin/effects/plugins/omnitiler-active-border.so"
 }
 
-package_plasma-auto-tiler-native-effect() {
-  pkgdesc='Plasma Auto Tiler native KWin effect, active border only (optional, ABI-bound)'
+package_omnitiler-native-effect() {
+  pkgdesc='OmniTiler native KWin effect, active border only (optional, ABI-bound)'
   # Deliberately unversioned KWin dependency: this package must never hold a
   # KWin upgrade back (a pinned dependency makes pacman -Su fail until the
   # effect is rebuilt/removed), and an exact dependency still would not prove
   # the loaded .so matches the running KWin. Rebuilds track KWin via the
   # kwin makedepends above; see docs/installation.md for the upgrade-window
   # limitation and the versioned factory IID check.
-  depends=("plasma-auto-tiler=$pkgver-$pkgrel" kwin)
-  install=plasma-auto-tiler-native-effect.install
+  depends=("omnitiler=$pkgver-$pkgrel" kwin)
+  install=omnitiler-native-effect.install
   cd "$pkgbase-$pkgver"
   # Effect plugin only; Settings/Revert live in core, so removing this
   # package alone leaves them available. The exact-version core dependency
@@ -113,8 +113,8 @@ package_plasma-auto-tiler-native-effect() {
   # in core, effect plugin here) is new and pre-release: no predecessor was
   # ever published, so no file-ownership migration across updates is claimed.
   DESTDIR="$pkgdir" cmake --install build-native
-  rm -f "$pkgdir/usr/lib/qt6/plugins/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" \
-    "$pkgdir/usr/lib/qt6/plugins/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+  rm -f "$pkgdir/usr/lib/qt6/plugins/kwin/effects/configs/omnitiler-active-border_config.so" \
+    "$pkgdir/usr/lib/qt6/plugins/kwin/scripts/configs/omnitiler-kwin_config.so"
 }
 
 # vim: ft=sh

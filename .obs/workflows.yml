@@ -20,6 +20,6 @@ workflows:
           # TODO(provisioning): replace with the real OBS project/package
           # once the maintainer creates them (unpublished test repo first).
           project: home:TODO
-          package: plasma-auto-tiler
+          package: omnitiler
     filters:
       event: tag_push

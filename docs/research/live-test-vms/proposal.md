@@ -24,7 +24,7 @@
 | PaperWM | `PaperWM` | `8bf6dd2` | shipped GSettings schema |
 | karousel | `karousel` | `8b9f0b6` | shipped `definition.ts` |
 | paneru | `paneru` | `b1b6abb` | shipped defaults |
-| Ours KDE/Windows | `plasma-auto-tiler` | repo HEAD at run time | per-output-local / 2560x1440 125% |
+| Ours KDE/Windows | `omnitiler` | repo HEAD at run time | per-output-local / 2560x1440 125% |
 
 ## Evidence policy: exploratory baselines vs pin-equivalent evidence
 

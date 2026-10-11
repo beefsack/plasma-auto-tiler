@@ -53,13 +53,13 @@ assert_not_contains() {
 part1_setup() {
   local root="$WORK/p1"
   mkdir -p "$root/stage/kwin/effects/plugins" "$root/stage/kwin/effects/configs" "$root/stage/kwin/scripts/configs" "$root/config"
-  printf 'border-so' > "$root/stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-  printf 'effect-kcm-so' > "$root/stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
-  printf 'script-kcm-so' > "$root/stage/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
-  printf 'oracle-so' > "$root/stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
-  export PLASMA_AUTO_TILER_NATIVE_STAGE="$root/stage"
+  printf 'border-so' > "$root/stage/kwin/effects/plugins/omnitiler-active-border.so"
+  printf 'effect-kcm-so' > "$root/stage/kwin/effects/configs/omnitiler-active-border_config.so"
+  printf 'script-kcm-so' > "$root/stage/kwin/scripts/configs/omnitiler-kwin_config.so"
+  printf 'oracle-so' > "$root/stage/kwin/effects/plugins/omnitiler-drag-oracle.so"
+  export OMNITILER_NATIVE_STAGE="$root/stage"
   export XDG_CONFIG_HOME="$root/config"
-  local env_file="$root/config/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+  local env_file="$root/config/plasma-workspace/env/60-omnitiler-native-effect.sh"
 
   set +e
   bash "$HELPER" setup >"$OUTPUT" 2>&1
@@ -120,19 +120,19 @@ part1_setup() {
   bash "$HELPER" setup >"$OUTPUT" 2>&1
   local other="$WORK/p1-other"
   mkdir -p "$other/stage/kwin/effects/plugins" "$other/stage/kwin/effects/configs" "$other/stage/kwin/scripts/configs"
-  printf 'b' > "$other/stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-  printf 'k' > "$other/stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
-  printf 's' > "$other/stage/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
-  printf 'o' > "$other/stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
+  printf 'b' > "$other/stage/kwin/effects/plugins/omnitiler-active-border.so"
+  printf 'k' > "$other/stage/kwin/effects/configs/omnitiler-active-border_config.so"
+  printf 's' > "$other/stage/kwin/scripts/configs/omnitiler-kwin_config.so"
+  printf 'o' > "$other/stage/kwin/effects/plugins/omnitiler-drag-oracle.so"
   set +e
-  PLASMA_AUTO_TILER_NATIVE_STAGE="$other/stage" bash "$HELPER" setup >"$OUTPUT" 2>&1
+  OMNITILER_NATIVE_STAGE="$other/stage" bash "$HELPER" setup >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
   check_exit 1 "setup refuses alternate checkout"
   assert_contains "unfamiliar" "setup alternate msg"
 
   # Missing staged .so fails actionable.
-  rm -f "$root/stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+  rm -f "$root/stage/kwin/effects/plugins/omnitiler-active-border.so"
   rm -f "$env_file"
   set +e
   bash "$HELPER" setup >"$OUTPUT" 2>&1
@@ -140,10 +140,10 @@ part1_setup() {
   set -e
   check_exit 1 "setup missing stage fails"
   assert_contains "just build-native-effect" "setup missing actionable"
-  printf 'border-so' > "$root/stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+  printf 'border-so' > "$root/stage/kwin/effects/plugins/omnitiler-active-border.so"
 
   # Missing staged effect KCM fails actionable even when the effect is staged.
-  rm -f "$root/stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+  rm -f "$root/stage/kwin/effects/configs/omnitiler-active-border_config.so"
   set +e
   bash "$HELPER" setup >"$OUTPUT" 2>&1
   EXIT=$?
@@ -151,10 +151,10 @@ part1_setup() {
   check_exit 1 "setup missing effect KCM fails"
   assert_contains "staged effect KCM missing" "setup missing effect KCM actionable"
   assert_contains "just build-native-effect" "setup missing effect KCM build hint"
-  printf 'effect-kcm-so' > "$root/stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+  printf 'effect-kcm-so' > "$root/stage/kwin/effects/configs/omnitiler-active-border_config.so"
 
   # Missing staged script settings KCM fails actionable even when the effect is staged.
-  rm -f "$root/stage/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+  rm -f "$root/stage/kwin/scripts/configs/omnitiler-kwin_config.so"
   set +e
   bash "$HELPER" setup >"$OUTPUT" 2>&1
   EXIT=$?
@@ -162,7 +162,7 @@ part1_setup() {
   check_exit 1 "setup missing script KCM fails"
   assert_contains "staged script settings KCM missing" "setup missing script KCM actionable"
   assert_contains "just build-native-effect" "setup missing script KCM build hint"
-  printf 'script-kcm-so' > "$root/stage/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+  printf 'script-kcm-so' > "$root/stage/kwin/scripts/configs/omnitiler-kwin_config.so"
 
   # No kwinrc writes, no D-Bus use: setup must not create kwinrc.
   [[ ! -e "$root/config/kwinrc" ]] && PASS=$((PASS + 1)) || { echo "FAIL [setup no kwinrc]" >&2; FAIL=$((FAIL + 1)); }
@@ -207,7 +207,7 @@ part1_setup() {
   rm -f "$env_file"
   bash "$HELPER" setup >"$OUTPUT" 2>&1
   set +e
-  PLASMA_AUTO_TILER_NATIVE_STAGE="$other/stage" bash "$HELPER" remove >"$OUTPUT" 2>&1
+  OMNITILER_NATIVE_STAGE="$other/stage" bash "$HELPER" remove >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
   check_exit 1 "remove refuses alternate"
@@ -219,13 +219,13 @@ part1_quoting() {
   local root="$WORK/p1q"
   local weird="$root/a b'\$x\"y;z&|()!"
   mkdir -p "$weird/kwin/effects/plugins" "$weird/kwin/effects/configs" "$weird/kwin/scripts/configs" "$root/config"
-  printf 'b' > "$weird/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-  printf 'k' > "$weird/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
-  printf 's' > "$weird/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
-  printf 'o' > "$weird/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
-  export PLASMA_AUTO_TILER_NATIVE_STAGE="$weird"
+  printf 'b' > "$weird/kwin/effects/plugins/omnitiler-active-border.so"
+  printf 'k' > "$weird/kwin/effects/configs/omnitiler-active-border_config.so"
+  printf 's' > "$weird/kwin/scripts/configs/omnitiler-kwin_config.so"
+  printf 'o' > "$weird/kwin/effects/plugins/omnitiler-drag-oracle.so"
+  export OMNITILER_NATIVE_STAGE="$weird"
   export XDG_CONFIG_HOME="$root/config"
-  local env_file="$root/config/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+  local env_file="$root/config/plasma-workspace/env/60-omnitiler-native-effect.sh"
   set +e
   bash "$HELPER" setup >"$OUTPUT" 2>&1
   EXIT=$?
@@ -254,13 +254,13 @@ part1_quoting() {
 part1_canonical_and_collision() {
   local root="$WORK/p1c"
   mkdir -p "$root/stage/kwin/effects/plugins" "$root/stage/kwin/effects/configs" "$root/stage/kwin/scripts/configs" "$root/config"
-  printf 'b' > "$root/stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-  printf 'k' > "$root/stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
-  printf 's' > "$root/stage/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
-  printf 'o' > "$root/stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
-  export PLASMA_AUTO_TILER_NATIVE_STAGE="$root/stage"
+  printf 'b' > "$root/stage/kwin/effects/plugins/omnitiler-active-border.so"
+  printf 'k' > "$root/stage/kwin/effects/configs/omnitiler-active-border_config.so"
+  printf 's' > "$root/stage/kwin/scripts/configs/omnitiler-kwin_config.so"
+  printf 'o' > "$root/stage/kwin/effects/plugins/omnitiler-drag-oracle.so"
+  export OMNITILER_NATIVE_STAGE="$root/stage"
   export XDG_CONFIG_HOME="$root/config"
-  local env_file="$root/config/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+  local env_file="$root/config/plasma-workspace/env/60-omnitiler-native-effect.sh"
 
   set +e
   bash "$HELPER" setup >"$OUTPUT" 2>&1
@@ -280,7 +280,7 @@ part1_canonical_and_collision() {
   check_exit 1 "missing newline not current"
   assert_contains "refusing to overwrite unfamiliar" "missing newline unfamiliar"
   # Dogfood/alternate content refused by both setup and remove.
-  printf 'export QT_PLUGIN_PATH="/fake/data/plasma-auto-tiler-native-effect${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"\n' > "$env_file"
+  printf 'export QT_PLUGIN_PATH="/fake/data/omnitiler-native-effect${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"\n' > "$env_file"
   set +e
   bash "$HELPER" setup >"$OUTPUT" 2>&1
   EXIT=$?
@@ -305,20 +305,20 @@ part1_canonical_and_collision() {
   rmdir "$env_file"
   # Friendly fail-closed for missing option values (no bare shift failure).
   set +e
-  bash "$HELPER" load plasma-auto-tiler-active-border --expect-owner >"$OUTPUT" 2>&1
+  bash "$HELPER" load omnitiler-active-border --expect-owner >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
   check_exit 1 "load missing owner value friendly"
   assert_contains "expect-owner requires a value" "load missing owner friendly msg"
   assert_not_contains "can't shift" "load no bare shift"
   set +e
-  bash "$HELPER" unload plasma-auto-tiler-active-border --expect-pid >"$OUTPUT" 2>&1
+  bash "$HELPER" unload omnitiler-active-border --expect-pid >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
   check_exit 1 "unload missing pid value friendly"
   assert_contains "expect-pid requires a value" "unload missing pid friendly msg"
   set +e
-  bash "$HELPER" load plasma-auto-tiler-active-border --expect-owner :1.99 --expect-pid 5151 --expect-start >"$OUTPUT" 2>&1
+  bash "$HELPER" load omnitiler-active-border --expect-owner :1.99 --expect-pid 5151 --expect-start >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
   check_exit 1 "load missing start value friendly"
@@ -349,7 +349,7 @@ case "$*" in
   *"isEffectSupported"*)
     if [[ -f "$state/supported-fail" ]]; then exit 1; fi
     if [[ -f "$state/supported-malformed" ]]; then printf '{"type":"b","data":[true,false]}\n'; exit 0; fi
-    if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then
+    if [[ "$*" == *"omnitiler-active-border"* ]]; then
       printf '{"type":"b","data":[%s]}\n' "$(cat "$state/border-supported" 2>/dev/null || printf 'true')"
     else
       exit 1
@@ -357,7 +357,7 @@ case "$*" in
   *"isEffectLoaded"*)
     if [[ -f "$state/loaded-fail" ]]; then exit 1; fi
     if [[ -f "$state/loaded-malformed" ]]; then printf '{"type":"b","data":[true,false]}\n'; exit 0; fi
-    if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then
+    if [[ "$*" == *"omnitiler-active-border"* ]]; then
       printf '{"type":"b","data":[%s]}\n' "$(cat "$state/border-loaded" 2>/dev/null || printf 'false')"
     else
       exit 1
@@ -382,10 +382,10 @@ EOF
   export FAKE_STATE_DIR="$WORK/p2/state"
   export FAKE_CALL_LOG="$WORK/p2/calls.log"
   export PROC_ROOT="$WORK/p2/proc"
-  export PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/p2/stage"
-  mkdir -p "$PLASMA_AUTO_TILER_NATIVE_STAGE/kwin/effects/plugins" "$PLASMA_AUTO_TILER_NATIVE_STAGE/kwin/scripts/configs"
-  printf 'x\0org.kde.kwin.EffectPluginFactory6.7.4\0' > "$PLASMA_AUTO_TILER_NATIVE_STAGE/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-  printf 'x' > "$PLASMA_AUTO_TILER_NATIVE_STAGE/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+  export OMNITILER_NATIVE_STAGE="$WORK/p2/stage"
+  mkdir -p "$OMNITILER_NATIVE_STAGE/kwin/effects/plugins" "$OMNITILER_NATIVE_STAGE/kwin/scripts/configs"
+  printf 'x\0org.kde.kwin.EffectPluginFactory6.7.4\0' > "$OMNITILER_NATIVE_STAGE/kwin/effects/plugins/omnitiler-active-border.so"
+  printf 'x' > "$OMNITILER_NATIVE_STAGE/kwin/scripts/configs/omnitiler-kwin_config.so"
   mkdir -p "$PROC_ROOT/5151"
   printf '5151 (kwin_wayland) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 777888\n' > "$PROC_ROOT/5151/stat"
   printf '5151\n' > "$WORK/p2/state/kwin-pid"
@@ -417,8 +417,8 @@ part2_tests() {
   check_exit 0 "preflight ok"
   assert_contains "kwin_owner=:1.99" "preflight owner"
   assert_contains "kwin_pid=5151" "preflight pid"
-  assert_contains "effect plasma-auto-tiler-active-border supported=true loaded=false" "preflight border"
-  assert_not_contains "plasma-auto-tiler-drag-oracle" "preflight single effect"
+  assert_contains "effect omnitiler-active-border supported=true loaded=false" "preflight border"
+  assert_not_contains "omnitiler-drag-oracle" "preflight single effect"
 
   # Unsupported ABI skew is actionable without incorrectly repeating setup.
   p2_reset
@@ -477,7 +477,7 @@ part2_tests() {
   # Load owned.
   p2_reset
   set +e
-  bash "$HELPER" load plasma-auto-tiler-active-border --expect-owner :1.99 --expect-pid 5151 --expect-start 777888 >"$OUTPUT" 2>&1
+  bash "$HELPER" load omnitiler-active-border --expect-owner :1.99 --expect-pid 5151 --expect-start 777888 >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
   check_exit 0 "load owned"
@@ -497,7 +497,7 @@ part2_tests() {
   p2_reset
   printf 'true\n' > "$WORK/p2/state/border-loaded"
   set +e
-  bash "$HELPER" unload plasma-auto-tiler-active-border --expect-owner :1.99 --expect-pid 5151 --expect-start 777888 >"$OUTPUT" 2>&1
+  bash "$HELPER" unload omnitiler-active-border --expect-owner :1.99 --expect-pid 5151 --expect-start 777888 >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
   check_exit 0 "unload owned"
@@ -510,7 +510,7 @@ part2_tests() {
   printf 'true\n' > "$WORK/p2/state/border-loaded"
   : > "$WORK/p2/calls.log"
   set +e
-  bash "$HELPER" unload plasma-auto-tiler-active-border --expect-owner :1.99 --expect-pid 9999 --expect-start 777888 >"$OUTPUT" 2>&1
+  bash "$HELPER" unload omnitiler-active-border --expect-owner :1.99 --expect-pid 9999 --expect-start 777888 >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
   check_exit 1 "unload owner guard pid"
@@ -524,7 +524,7 @@ part2_tests() {
   printf '5151 (kwin_wayland) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 999999\n' > "$PROC_ROOT/5151/stat"
   : > "$WORK/p2/calls.log"
   set +e
-  bash "$HELPER" unload plasma-auto-tiler-active-border --expect-owner :1.99 --expect-pid 5151 --expect-start 777888 >"$OUTPUT" 2>&1
+  bash "$HELPER" unload omnitiler-active-border --expect-owner :1.99 --expect-pid 5151 --expect-start 777888 >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
   check_exit 1 "unload owner guard start"
@@ -536,7 +536,7 @@ part2_tests() {
   printf ':1.100\n' > "$WORK/p2/state/kwin-owner"
   : > "$WORK/p2/calls.log"
   set +e
-  bash "$HELPER" load plasma-auto-tiler-active-border --expect-owner :1.99 --expect-pid 5151 --expect-start 777888 >"$OUTPUT" 2>&1
+  bash "$HELPER" load omnitiler-active-border --expect-owner :1.99 --expect-pid 5151 --expect-start 777888 >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
   check_exit 1 "load owner guard unique owner"
@@ -550,7 +550,7 @@ part2_tests() {
   printf ':1.100\n' > "$WORK/p2/state/kwin-owner"
   : > "$WORK/p2/calls.log"
   set +e
-  bash "$HELPER" unload plasma-auto-tiler-active-border --expect-owner :1.99 --expect-pid 5151 --expect-start 777888 >"$OUTPUT" 2>&1
+  bash "$HELPER" unload omnitiler-active-border --expect-owner :1.99 --expect-pid 5151 --expect-start 777888 >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
   check_exit 1 "unload owner guard unique owner"
@@ -571,13 +571,13 @@ part2_tests() {
   p2_reset
   : > "$WORK/p2/calls.log"
   set +e
-  bash "$HELPER" load plasma-auto-tiler-active-border --expect-pid 5151 --expect-start 777888 >"$OUTPUT" 2>&1
+  bash "$HELPER" load omnitiler-active-border --expect-pid 5151 --expect-start 777888 >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
   check_exit 1 "load missing owner fails closed"
   if grep -Fq "loadEffect" "$WORK/p2/calls.log"; then echo "FAIL [load missing owner no mutate]" >&2; FAIL=$((FAIL + 1)); else PASS=$((PASS + 1)); fi
   set +e
-  bash "$HELPER" load plasma-auto-tiler-active-border --expect-owner bogus --expect-pid 5151 --expect-start 777888 >"$OUTPUT" 2>&1
+  bash "$HELPER" load omnitiler-active-border --expect-owner bogus --expect-pid 5151 --expect-start 777888 >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
   check_exit 1 "load malformed owner fails closed"
@@ -588,7 +588,7 @@ part2_tests() {
   printf 'true\n' > "$WORK/p2/state/border-loaded"
   touch "$WORK/p2/state/unload-fail"
   set +e
-  bash "$HELPER" unload plasma-auto-tiler-active-border --expect-owner :1.99 --expect-pid 5151 --expect-start 777888 >"$OUTPUT" 2>&1
+  bash "$HELPER" unload omnitiler-active-border --expect-owner :1.99 --expect-pid 5151 --expect-start 777888 >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
   check_exit 1 "unload fail unresolved"
@@ -651,19 +651,19 @@ dst = os.environ.get("ISOLATED_DST", "")
 src = pathlib.Path(repo) / "justfile"
 text = src.read_text()
 text = text.replace('REPO_ROOT="{{ justfile_directory() }}"', f'REPO_ROOT="{repo}"')
-text = text.replace('KWIN_DIR="$REPO_ROOT/kwin"', 'KWIN_DIR="${PLASMA_AUTO_TILER_KWIN_DIR:-$REPO_ROOT/kwin}"')
-text = text.replace('SOURCE_DIR="$REPO_ROOT/kwin/native-effect"', 'SOURCE_DIR="${PLASMA_AUTO_TILER_NATIVE_SOURCE:-$REPO_ROOT/kwin/native-effect}"')
-text = text.replace('BUILD_DIR="$REPO_ROOT/target/kwin-native-effect-build"', 'BUILD_DIR="${PLASMA_AUTO_TILER_NATIVE_BUILD:-$REPO_ROOT/target/kwin-native-effect-build}"')
-text = text.replace('STAGE="$REPO_ROOT/target/kwin-native-effect-stage"', 'STAGE="${PLASMA_AUTO_TILER_NATIVE_STAGE:-$REPO_ROOT/target/kwin-native-effect-stage}"')
-text = text.replace('TARGET_DIR="$REPO_ROOT/target"', 'TARGET_DIR="${PLASMA_AUTO_TILER_TARGET_DIR:-$REPO_ROOT/target}"')
+text = text.replace('KWIN_DIR="$REPO_ROOT/kwin"', 'KWIN_DIR="${OMNITILER_KWIN_DIR:-$REPO_ROOT/kwin}"')
+text = text.replace('SOURCE_DIR="$REPO_ROOT/kwin/native-effect"', 'SOURCE_DIR="${OMNITILER_NATIVE_SOURCE:-$REPO_ROOT/kwin/native-effect}"')
+text = text.replace('BUILD_DIR="$REPO_ROOT/target/kwin-native-effect-build"', 'BUILD_DIR="${OMNITILER_NATIVE_BUILD:-$REPO_ROOT/target/kwin-native-effect-build}"')
+text = text.replace('STAGE="$REPO_ROOT/target/kwin-native-effect-stage"', 'STAGE="${OMNITILER_NATIVE_STAGE:-$REPO_ROOT/target/kwin-native-effect-stage}"')
+text = text.replace('TARGET_DIR="$REPO_ROOT/target"', 'TARGET_DIR="${OMNITILER_TARGET_DIR:-$REPO_ROOT/target}"')
 text = text.replace('/proc', '$PROC_ROOT')
 text = text.replace(
-  'BIN="$REPO_ROOT/target/debug/plasma-auto-tiler"',
-  'BIN="${PLASMA_AUTO_TILER_BIN:-$REPO_ROOT/target/debug/plasma-auto-tiler}"\n    PROC_ROOT="${PROC_ROOT:-/proc}"\n    START_TEST_BIN="${DEV_LOOP_START_TEST:-$REPO_ROOT/scripts/start-test.sh}"\n    DOGFOOD_BIN="${DEV_LOOP_DOGFOOD:-$REPO_ROOT/scripts/dogfood-install.sh}"',
+  'BIN="$REPO_ROOT/target/debug/omnitiler"',
+  'BIN="${OMNITILER_BIN:-$REPO_ROOT/target/debug/omnitiler}"\n    PROC_ROOT="${PROC_ROOT:-/proc}"\n    START_TEST_BIN="${DEV_LOOP_START_TEST:-$REPO_ROOT/scripts/start-test.sh}"\n    DOGFOOD_BIN="${DEV_LOOP_DOGFOOD:-$REPO_ROOT/scripts/dogfood-install.sh}"',
 )
 text = text.replace('bash "$REPO_ROOT/scripts/start-test.sh"', 'bash "$START_TEST_BIN"')
 text = text.replace('bash "$REPO_ROOT/scripts/dogfood-install.sh"', 'bash "$DOGFOOD_BIN"')
-text = text.replace('/tmp/plasma-auto-tiler-planner-dev.XXXXXX.log', '$RUNTIME_DIR/plasma-auto-tiler-planner-dev.XXXXXX.log')
+text = text.replace('/tmp/omnitiler-planner-dev.XXXXXX.log', '$RUNTIME_DIR/omnitiler-planner-dev.XXXXXX.log')
 text = text.replace(
   'for _ in $(seq 1 50); do [[ -d "$PROC_ROOT/$RECORDED_PID" ]] || break; sleep 0.2; done',
   'for _ in $(seq 1 50); do kill -0 "$RECORDED_PID" 2>/dev/null || break; sleep 0.2; done',
@@ -690,13 +690,13 @@ PYEOF
 set -euo pipefail
 state="${FAKE_STATE_DIR:?}"
 case "$*" in
-  *"GetNameOwner s org.plasmaautotiler.Planner"*)
+  *"GetNameOwner s com.omnitiler.Planner"*)
     if [[ -f "$state/planner-owned" ]]; then printf 's ":1.50"\n'; exit 0; fi
     if grep -Fq "setsid " "${FAKE_CALL_LOG:?}" 2>/dev/null; then printf 's ":1.50"\n'; exit 0; else exit 1; fi ;;
   *"GetConnectionUnixProcessID s :1.50"*)
     pid="$(cat "$state/owner-pid" 2>/dev/null || printf '4242')"
     printf '{"type":"u","data":[%s]}\n' "$pid" ;;
-  *"GetNameOwner s org.plasmaautotiler.Tray"*)
+  *"GetNameOwner s com.omnitiler.Tray"*)
     # Native-only integration exercises pre-owned tray preservation; the
     # foreground tray launch/teardown belongs to dev-loop-split.test.sh.
     printf 's ":1.60"\n' ;;
@@ -708,10 +708,10 @@ case "$*" in
     printf '{"type":"u","data":[5151]}\n' ;;
   *"isEffectSupported"*)
     if [[ -f "$state/supported-fail" ]]; then exit 1; fi
-    if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then printf '{"type":"b","data":[%s]}\n' "$(cat "$state/border-supported" 2>/dev/null || printf 'true')"
+    if [[ "$*" == *"omnitiler-active-border"* ]]; then printf '{"type":"b","data":[%s]}\n' "$(cat "$state/border-supported" 2>/dev/null || printf 'true')"
     else exit 1; fi ;;
   *"isEffectLoaded"*)
-    if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then printf '{"type":"b","data":[%s]}\n' "$(cat "$state/border-loaded" 2>/dev/null || printf 'false')"
+    if [[ "$*" == *"omnitiler-active-border"* ]]; then printf '{"type":"b","data":[%s]}\n' "$(cat "$state/border-loaded" 2>/dev/null || printf 'false')"
     else exit 1; fi ;;
   *"unloadEffect"*)
     printf 'unloadEffect %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
@@ -725,7 +725,7 @@ case "$*" in
     printf '{"type":"b","data":[true]}\n'; exit 0 ;;
   *"isScriptLoaded"*)
     printf '{"type":"b","data":[%s]}\n' "$(cat "$state/loaded" 2>/dev/null || printf 'false')" ;;
-  *"status org.plasmaautotiler.Planner"*) exit 0 ;;
+  *"status com.omnitiler.Planner"*) exit 0 ;;
   *) exit 1 ;;
 esac
 EOF
@@ -738,20 +738,20 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'npm build\n' >> "${FAKE_CALL_LOG:?}"
-mkdir -p "${PLASMA_AUTO_TILER_KWIN_DIR:-}/contents/code"
-printf '// fake\n' > "${PLASMA_AUTO_TILER_KWIN_DIR:-}/contents/code/main.js"
+mkdir -p "${OMNITILER_KWIN_DIR:-}/contents/code"
+printf '// fake\n' > "${OMNITILER_KWIN_DIR:-}/contents/code/main.js"
 exit 0
 EOF
   cat > "$fbin/cmake" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'cmake build\n' >> "${FAKE_CALL_LOG:?}"
-build_dir="${PLASMA_AUTO_TILER_NATIVE_BUILD:-}"
+build_dir="${OMNITILER_NATIVE_BUILD:-}"
 if [[ -n "$build_dir" ]]; then
   mkdir -p "$build_dir/bin/kwin/effects/plugins" "$build_dir/bin/kwin/effects/configs" "$build_dir/bin/kwin/scripts/configs"
-  printf 'x' > "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-  printf 'x' > "$build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
-  printf 'x' > "$build_dir/bin/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+  printf 'x' > "$build_dir/bin/kwin/effects/plugins/omnitiler-active-border.so"
+  printf 'x' > "$build_dir/bin/kwin/effects/configs/omnitiler-active-border_config.so"
+  printf 'x' > "$build_dir/bin/kwin/scripts/configs/omnitiler-kwin_config.so"
 fi
 exit 0
 EOF
@@ -782,7 +782,7 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'journalctl call\n' >> "${FAKE_CALL_LOG:?}"
-echo "plasma-auto-tiler:plan:cmd=x kind=admit windows=1 outcome=planned-applied"
+echo "omnitiler:plan:cmd=x kind=admit windows=1 outcome=planned-applied"
 exit 0
 EOF
   chmod +x "$fbin/"*
@@ -823,7 +823,7 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'cargo build\n' >> "${FAKE_CALL_LOG:?}"
-bin="${PLASMA_AUTO_TILER_BIN:?}"
+bin="${OMNITILER_BIN:?}"
 mkdir -p "${bin%/*}"
 [[ -x "$bin" ]] || { printf '#!/usr/bin/env bash\nexit 0\n' > "$bin"; chmod +x "$bin"; }
 exit 0
@@ -880,14 +880,14 @@ EOF
     export FAKE_STATE_DIR="$jwork/state"
     export FAKE_CALL_LOG="$jwork/calls.log"
     export PROC_ROOT="$jwork/proc"
-    export PLASMA_AUTO_TILER_BIN="$jwork/fakebin-dir/plasma-auto-tiler"
-    export PLASMA_AUTO_TILER_KWIN_DIR="$jwork/fake-kwin"
-    export PLASMA_AUTO_TILER_NATIVE_BUILD="$jwork/fake-native-build"
-    export PLASMA_AUTO_TILER_NATIVE_STAGE="$jwork/fake-native-stage"
-    export PLASMA_AUTO_TILER_TARGET_DIR="$jwork/fake-target"
-    export PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$jwork/fake-kwin-cmake"
-    export PLASMA_AUTO_TILER_HOST_KWIN_BIN="$jwork/fake-host/kwin_wayland"
-    export PLASMA_AUTO_TILER_STORE_ROOT="$jwork/fake-store"
+    export OMNITILER_BIN="$jwork/fakebin-dir/omnitiler"
+    export OMNITILER_KWIN_DIR="$jwork/fake-kwin"
+    export OMNITILER_NATIVE_BUILD="$jwork/fake-native-build"
+    export OMNITILER_NATIVE_STAGE="$jwork/fake-native-stage"
+    export OMNITILER_TARGET_DIR="$jwork/fake-target"
+    export OMNITILER_KWIN_DEV_CMAKE_DIR="$jwork/fake-kwin-cmake"
+    export OMNITILER_HOST_KWIN_BIN="$jwork/fake-host/kwin_wayland"
+    export OMNITILER_STORE_ROOT="$jwork/fake-store"
     export NIX_BIN="$fbin/nix"
     export RUSTC_BIN="$jwork/fake-store/hash-rustc/bin/rustc"
     export CARGO_BIN="$jwork/fake-store/hash-cargo/bin/cargo"
@@ -897,19 +897,19 @@ EOF
     export DEV_LOOP_DOGFOOD="$jwork/fake-dogfood.sh"
     export PATH="$fbin:$PATH"
     mkdir -p "$jwork/fakebin-dir" "$jwork/fake-native-build" "$jwork/fake-target" "$jwork/fake-kwin-cmake"
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$PLASMA_AUTO_TILER_BIN"
-    chmod +x "$PLASMA_AUTO_TILER_BIN"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$OMNITILER_BIN"
+    chmod +x "$OMNITILER_BIN"
     sleep 300 &
     JPLANNER=$!
     mkdir -p "$jwork/proc/$JPLANNER"
     printf '%s (fake-planner) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 888111\n' "$JPLANNER" > "$jwork/proc/$JPLANNER/stat"
-    ln -sfn -- "$PLASMA_AUTO_TILER_BIN" "$jwork/proc/$JPLANNER/exe"
+    ln -sfn -- "$OMNITILER_BIN" "$jwork/proc/$JPLANNER/exe"
     printf 'fake\0planner-service\0' > "$jwork/proc/$JPLANNER/cmdline"
     printf '%s\n' "$JPLANNER" > "$jwork/state/owner-pid"
   }
   jrun() {
     set +e
-    FAKE_STATE_DIR="$jwork/state" FAKE_CALL_LOG="$jwork/calls.log" PROC_ROOT="$jwork/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$jwork/fake-kwin" PLASMA_AUTO_TILER_NATIVE_BUILD="$jwork/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$jwork/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$jwork/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$jwork/fake-kwin-cmake" PLASMA_AUTO_TILER_HOST_KWIN_BIN="$jwork/fake-host/kwin_wayland" PLASMA_AUTO_TILER_STORE_ROOT="$jwork/fake-store" NIX_BIN="$fbin/nix" RUSTC_BIN="$jwork/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$jwork/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$jwork/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$jwork/runtime" DEV_LOOP_START_TEST="$jwork/fake-start.sh" DEV_LOOP_DOGFOOD="$jwork/fake-dogfood.sh" PATH="$jwork/fake-store/hash-cargo/bin:$fbin:$PATH" just --justfile "$isolated" "$@" >"$OUTPUT" 2>&1
+    FAKE_STATE_DIR="$jwork/state" FAKE_CALL_LOG="$jwork/calls.log" PROC_ROOT="$jwork/proc" OMNITILER_BIN="$OMNITILER_BIN" OMNITILER_KWIN_DIR="$jwork/fake-kwin" OMNITILER_NATIVE_BUILD="$jwork/fake-native-build" OMNITILER_NATIVE_STAGE="$jwork/fake-native-stage" OMNITILER_TARGET_DIR="$jwork/fake-target" OMNITILER_KWIN_DEV_CMAKE_DIR="$jwork/fake-kwin-cmake" OMNITILER_HOST_KWIN_BIN="$jwork/fake-host/kwin_wayland" OMNITILER_STORE_ROOT="$jwork/fake-store" NIX_BIN="$fbin/nix" RUSTC_BIN="$jwork/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$jwork/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$jwork/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$jwork/runtime" DEV_LOOP_START_TEST="$jwork/fake-start.sh" DEV_LOOP_DOGFOOD="$jwork/fake-dogfood.sh" PATH="$jwork/fake-store/hash-cargo/bin:$fbin:$PATH" just --justfile "$isolated" "$@" >"$OUTPUT" 2>&1
     EXIT=$?
     set -e
   }
@@ -945,7 +945,7 @@ EOF
   jstop_planner
   EXIT="$jexit"
   check_exit 0 "just dev preloaded cycle"
-  assert_contains "preserving preloaded effect plasma-auto-tiler-active-border" "preloaded preserved msg"
+  assert_contains "preserving preloaded effect omnitiler-active-border" "preloaded preserved msg"
   assert_contains "skipping native rebuild" "preloaded skip rebuild"
   if grep -Fq "cmake build" "$jwork/calls.log"; then echo "FAIL [preloaded no native rebuild]" >&2; FAIL=$((FAIL + 1)); else PASS=$((PASS + 1)); fi
   if grep -Eq "unloadEffect.*active-border" "$jwork/calls.log"; then echo "FAIL [preloaded border never unloaded]" >&2; FAIL=$((FAIL + 1)); else PASS=$((PASS + 1)); fi

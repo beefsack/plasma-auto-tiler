@@ -36,7 +36,7 @@ orientation predicate a user must correct.
 
 - Every exact-three bootstrap attempt now emits one line per lexical opaque-ID
   slot after its existing summary line:
-  `plasma-auto-tiler:route-diag:scope:detail=trio-slot-{0|1|2}:kind={landscape|portrait|square}:result={pass|fail}:wid=<8-lowercase-hex>`.
+  `omnitiler:route-diag:scope:detail=trio-slot-{0|1|2}:kind={landscape|portrait|square}:result={pass|fail}:wid=<8-lowercase-hex>`.
 - `result` mirrors only the existing slot rule: slot 0 always passes, slot 1
   requires landscape, and slot 2 requires portrait or square. The diagnostic
   does not participate in the bootstrap decision.

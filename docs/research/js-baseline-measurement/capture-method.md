@@ -268,7 +268,7 @@ Non-interactive portal negotiation attempt (this is what crashed the
 portal frontend - see section 8):
 
 ```
-timeout 8s busctl --user call org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop org.freedesktop.portal.ScreenCast CreateSession oosa{sv} "/org/freedesktop/portal/desktop/request/research/one" "/org/freedesktop/portal/desktop/session/research/two" org.plasmaautotiler.research 0
+timeout 8s busctl --user call org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop org.freedesktop.portal.ScreenCast CreateSession oosa{sv} "/org/freedesktop/portal/desktop/request/research/one" "/org/freedesktop/portal/desktop/session/research/two" com.omnitiler.research 0
 ```
 Outcome: method error "Type of message, (oosa{sv}), does not match expected
 type (a{sv})" - signature mismatch, no effect (modern frontend exposes the
@@ -325,8 +325,8 @@ Outcome: "Invalid member name: oa{sv}" - argument-placement mistake in the
 command, nothing was sent.
 
 ```
-timeout 8s dbus-send --session --print-reply --dest=org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop org.freedesktop.portal.ScreenCast.CreateSession objpath:/org/freedesktop/portal/desktop/request/research/one objpath:/org/freedesktop/portal/desktop/session/research/two string:org.plasmaautotiler.research dict:0
-timeout 8s dbus-send --session --print-reply --dest=org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop org.freedesktop.portal.ScreenCast.CreateSession objpath:/org/freedesktop/portal/desktop/request/research/one objpath:/org/freedesktop/portal/desktop/session/research/two string:org.plasmaautotiler.research dict:string:variant:0
+timeout 8s dbus-send --session --print-reply --dest=org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop org.freedesktop.portal.ScreenCast.CreateSession objpath:/org/freedesktop/portal/desktop/request/research/one objpath:/org/freedesktop/portal/desktop/session/research/two string:com.omnitiler.research dict:0
+timeout 8s dbus-send --session --print-reply --dest=org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop org.freedesktop.portal.ScreenCast.CreateSession objpath:/org/freedesktop/portal/desktop/request/research/one objpath:/org/freedesktop/portal/desktop/session/research/two string:com.omnitiler.research dict:string:variant:0
 ```
 Outcome: "Data item '0' is badly formed" / "Malformed dictionary" - `dbus-send`
 cannot construct empty or nested containers (its man page states this
@@ -364,7 +364,7 @@ required authorization.
 Setup (one-time, human interaction, outside the sweep):
 
 - For a fixed app identity for the harness (for example
-  `org.plasmaautotiler.measurement`), run a portal client once, select the
+  `com.omnitiler.measurement`), run a portal client once, select the
   eDP-1 output in the ScreenChooserDialog, and check "Allow restoring on
   future sessions". Save the `restore_data` blob and `persist_mode`
   returned by `Start`. This is the only human click the whole measurement

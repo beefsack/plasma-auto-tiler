@@ -1,11 +1,11 @@
 {
     "KPlugin": {
-        "Id": "plasma-auto-tiler-active-border",
-        "Name": "Plasma Auto Tiler",
-        "Description": "Plasma Auto Tiler active border with group overlay and drag oracle.",
+        "Id": "omnitiler-active-border",
+        "Name": "OmniTiler",
+        "Description": "OmniTiler active border with group overlay and drag oracle.",
         "EnabledByDefault": false,
         "Icon": "preferences-system-windows",
         "License": "GPL-2.0-or-later"
     },
-    "X-KDE-ConfigModule": "plasma-auto-tiler-active-border_config"
+    "X-KDE-ConfigModule": "omnitiler-active-border_config"
 }

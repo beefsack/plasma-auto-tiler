@@ -33,7 +33,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          archive="dist/plasma-auto-tiler-${TAG#v}.tar.gz"
+          archive="dist/omnitiler-${TAG#v}.tar.gz"
           test -f "$archive"
           test -f "$archive.sha256"
           {
@@ -45,13 +45,13 @@ jobs:
             echo ""
             cat "$archive.sha256"
           } > "$RUNNER_TEMP/release-notes.md"
-          gh release create "$TAG" --title "Plasma Auto Tiler $TAG" \
+          gh release create "$TAG" --title "OmniTiler $TAG" \
             --notes-file "$RUNNER_TEMP/release-notes.md" \
             "$archive" "$archive.sha256"
           # Fail closed unless the release and both assets are visible back.
           names="$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort)"
-          printf '%s\n' "$names" | grep -Fxq "plasma-auto-tiler-${TAG#v}.tar.gz"
-          printf '%s\n' "$names" | grep -Fxq "plasma-auto-tiler-${TAG#v}.tar.gz.sha256"
+          printf '%s\n' "$names" | grep -Fxq "omnitiler-${TAG#v}.tar.gz"
+          printf '%s\n' "$names" | grep -Fxq "omnitiler-${TAG#v}.tar.gz.sha256"
 
   # OBS delivery runs only after the release above is published, so the
   # release asset exists before any webhook fires. OBS source/checksum

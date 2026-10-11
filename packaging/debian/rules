@@ -1,7 +1,7 @@
 #!/usr/bin/make -f
 # Tentative 0.1 core-with-Settings recipe for Ubuntu 26.04 (see
 # docs/installation.md). Core ships both native settings pages, built
-# settings-only (PLASMA_AUTO_TILER_BUILD_EFFECT=OFF): no kwin-dev, no Cargo
+# settings-only (OMNITILER_BUILD_EFFECT=OFF): no kwin-dev, no Cargo
 # effect staticlib, ECM floor 6.24 matching resolute's extra-cmake-modules
 # and KF6 6.24 stack. The native effect itself stays absent (needs the 6.26
 # CMake floor plus ABI-matched KWin headers).
@@ -45,35 +45,35 @@ override_dh_auto_build:
 	# CLI expression parser requires quoted strings.)
 	cargo --config 'source.crates-io.replace-with="vendored-sources"' \
 	      --config "source.vendored-sources.directory=\"$$PWD/vendor\"" \
-	      build --release --locked --offline -p plasma-auto-tiler
+	      build --release --locked --offline -p omnitiler
 	# Settings-only native KCMs (Qt/KF6 only): no KWin, no Cargo effect
 	# staticlib, no network. Default CMake build would require kwin-dev.
 	cmake -S kwin/native-effect -B build-settings \
 	      -DCMAKE_BUILD_TYPE=Release \
 	      -DBUILD_TESTING=OFF \
-	      -DPLASMA_AUTO_TILER_BUILD_EFFECT=OFF \
-	      -DPLASMA_AUTO_TILER_BUILD_SETTINGS=ON \
+	      -DOMNITILER_BUILD_EFFECT=OFF \
+	      -DOMNITILER_BUILD_SETTINGS=ON \
 	      -DCMAKE_INSTALL_PREFIX=/usr
 	cmake --build build-settings
 
 override_dh_auto_install:
-	install -Dm755 target/release/plasma-auto-tiler debian/plasma-auto-tiler/usr/bin/plasma-auto-tiler
-	scriptdir=debian/plasma-auto-tiler/usr/share/kwin/scripts/plasma-auto-tiler-kwin; \
+	install -Dm755 target/release/omnitiler debian/omnitiler/usr/bin/omnitiler
+	scriptdir=debian/omnitiler/usr/share/kwin/scripts/omnitiler-kwin; \
 	install -Dm644 kwin/metadata.json "$$scriptdir/metadata.json"; \
 	install -Dm644 kwin/contents/code/main.js "$$scriptdir/contents/code/main.js"; \
 	install -Dm644 kwin/contents/config/main.xml "$$scriptdir/contents/config/main.xml"; \
 	install -Dm644 kwin/contents/ui/config.ui "$$scriptdir/contents/ui/config.ui"
-	install -d debian/plasma-auto-tiler/usr/share/dbus-1/services
-	sed 's|@out@|/usr|' nix/org.plasmaautotiler.Planner.service \
-	  > debian/plasma-auto-tiler/usr/share/dbus-1/services/org.plasmaautotiler.Planner.service
-	chmod 644 debian/plasma-auto-tiler/usr/share/dbus-1/services/org.plasmaautotiler.Planner.service
-	install -Dm644 packaging/systemd/plasma-auto-tiler-tray.service \
-	  debian/plasma-auto-tiler/usr/lib/systemd/user/plasma-auto-tiler-tray.service
-	install -Dm644 packaging/systemd/plasma-auto-tiler-planner.service \
-	  debian/plasma-auto-tiler/usr/lib/systemd/user/plasma-auto-tiler-planner.service
-	install -Dm644 assets/icons/plasma-auto-tiler.svg \
-	  debian/plasma-auto-tiler/usr/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg
+	install -d debian/omnitiler/usr/share/dbus-1/services
+	sed 's|@out@|/usr|' nix/com.omnitiler.Planner.service \
+	  > debian/omnitiler/usr/share/dbus-1/services/com.omnitiler.Planner.service
+	chmod 644 debian/omnitiler/usr/share/dbus-1/services/com.omnitiler.Planner.service
+	install -Dm644 packaging/systemd/omnitiler-tray.service \
+	  debian/omnitiler/usr/lib/systemd/user/omnitiler-tray.service
+	install -Dm644 packaging/systemd/omnitiler-planner.service \
+	  debian/omnitiler/usr/lib/systemd/user/omnitiler-planner.service
+	install -Dm644 assets/icons/omnitiler.svg \
+	  debian/omnitiler/usr/share/icons/hicolor/scalable/apps/omnitiler.svg
 	# KWin-independent settings pages (JSON metadata is embedded in the
 	# .so files at compile time, so no .json ships alongside). Runtime KF
 	# dependencies resolve via shlibdeps into ${shlibs:Depends}.
-	DESTDIR=$$(pwd)/debian/plasma-auto-tiler cmake --install build-settings
+	DESTDIR=$$(pwd)/debian/omnitiler cmake --install build-settings

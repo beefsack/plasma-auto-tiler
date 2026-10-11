@@ -108,17 +108,17 @@ describe("shipped artifact smoke execution", () => {
         // bridge send line carries the production snapshot identity
         // (generation token, revision 0, enabled true); the token is random
         // per process, so it is matched by pattern, never by value.
-        const routeDiag = stub.diagnostics.filter((entry) => entry.includes("plasma-auto-tiler:route-diag"));
+        const routeDiag = stub.diagnostics.filter((entry) => entry.includes("omnitiler:route-diag"));
         const dragDiag = routeDiag.filter((entry) => !entry.includes("component=tray "));
         assert.ok(dragDiag.length <= 1);
-        assert.ok(dragDiag.every((entry) => entry === "plasma-auto-tiler:route-diag:drag-entry-no-windows"));
+        assert.ok(dragDiag.every((entry) => entry === "omnitiler:route-diag:drag-entry-no-windows"));
         const trayDiag = routeDiag.filter((entry) => entry.includes("component=tray "));
         assert.equal(trayDiag.length, 2);
-        assert.equal(trayDiag[0], "plasma-auto-tiler:route-diag component=tray stage=tray event=started outcome=ok");
+        assert.equal(trayDiag[0], "omnitiler:route-diag component=tray stage=tray event=started outcome=ok");
         assert.ok(trayDiag[1] !== undefined);
         assert.match(
             trayDiag[1],
-            /^plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=[a-z0-9-]{1,32} revision=0 enabled=true tiled=true defaultTiled=true$/,
+            /^omnitiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=[a-z0-9-]{1,32} revision=0 enabled=true tiled=true defaultTiled=true$/,
         );
         assert.ok(!stub.diagnostics.some((entry) => entry.includes("drag-attach")));
         assert.ok(!bundle.includes("TileController"));

@@ -1,12 +1,12 @@
 { config, lib, trayPackage, ... }:
 
 let
-  trayCfg = config.programs.plasma-auto-tiler.tray;
-  plannerCfg = config.programs.plasma-auto-tiler.planner;
+  trayCfg = config.programs.omnitiler.tray;
+  plannerCfg = config.programs.omnitiler.planner;
 in
 {
-  options.programs.plasma-auto-tiler.tray = {
-    enable = lib.mkEnableOption "the Plasma Auto Tiler tray session item";
+  options.programs.omnitiler.tray = {
+    enable = lib.mkEnableOption "the OmniTiler tray session item";
 
     package = lib.mkOption {
       type = lib.types.package;
@@ -15,7 +15,7 @@ in
     };
   };
 
-  options.programs.plasma-auto-tiler.planner = {
+  options.programs.omnitiler.planner = {
     enable = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -31,14 +31,14 @@ in
 
   config = lib.mkMerge [
     (lib.mkIf trayCfg.enable {
-      systemd.user.services."plasma-auto-tiler-tray" = {
+      systemd.user.services."omnitiler-tray" = {
         Unit = {
-          Description = "Plasma Auto Tiler Tray";
+          Description = "OmniTiler Tray";
           PartOf = [ "graphical-session.target" ];
           After = [ "graphical-session.target" ];
         };
         Service = {
-          ExecStart = "${trayCfg.package}/bin/plasma-auto-tiler tray";
+          ExecStart = "${trayCfg.package}/bin/omnitiler tray";
           Restart = "on-failure";
         };
         Install = {
@@ -50,12 +50,12 @@ in
     (lib.mkIf plannerCfg.enable {
       home.packages = [ plannerCfg.package ];
 
-      systemd.user.services."plasma-auto-tiler-planner" = {
-        Unit.Description = "Plasma Auto Tiler Planner (on-demand D-Bus service)";
+      systemd.user.services."omnitiler-planner" = {
+        Unit.Description = "OmniTiler Planner (on-demand D-Bus service)";
         Service = {
           Type = "dbus";
-          BusName = "org.plasmaautotiler.Planner";
-          ExecStart = "${plannerCfg.package}/bin/plasma-auto-tiler planner-service";
+          BusName = "com.omnitiler.Planner";
+          ExecStart = "${plannerCfg.package}/bin/omnitiler planner-service";
           Restart = "no";
           # Explicitly retain stdout/stderr in the user journal. Same as the
           # systemd default; no behavior change, no new service, no activation.

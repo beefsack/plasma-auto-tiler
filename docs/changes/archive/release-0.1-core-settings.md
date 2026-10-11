@@ -33,8 +33,8 @@ consumers and offline distro builds. No live desktop mutation or OBS provisionin
 - Concurrent Windows main pushes: never pull dirty; stage only this change;
   commit, clean-tree rebase, push; stop on non-trivial conflict. Preserve stashes.
 - Implementation, verification, commit and push authorized in autonomous mode.
-- User-approved 2026-10-11: core `plasma-auto-tiler` owns both Settings KCMs;
-  `plasma-auto-tiler-native-effect` owns only the ABI-bound effect. Core means
+- User-approved 2026-10-11: core `omnitiler` owns both Settings KCMs;
+  `omnitiler-native-effect` owns only the ABI-bound effect. Core means
   the distro package, not `crates/tiler-core`; no KDE code enters that crate.
 - Recovery verification was offline; no live KWin tests or host dependency
   installations.

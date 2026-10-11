@@ -28,7 +28,7 @@ foreach(FACTORY_PART "ActiveWindowBorderEffect" "metadata.json")
         message(FATAL_ERROR "unified lifecycle validation failed: '${FACTORY_PART}' missing from survivor factory")
     endif()
 endforeach()
-foreach(SECOND_PLUGIN "DragOracleEffect" "dragoracle-metadata.json" "plasma-auto-tiler-drag-oracle")
+foreach(SECOND_PLUGIN "DragOracleEffect" "dragoracle-metadata.json" "omnitiler-drag-oracle")
     string(FIND "${IMPL}" "${SECOND_PLUGIN}" SECOND_IMPL_POS)
     if(NOT SECOND_IMPL_POS EQUAL -1)
         message(FATAL_ERROR "unified lifecycle validation failed: second-plugin residue '${SECOND_PLUGIN}' must not exist in survivor implementation")
@@ -40,7 +40,7 @@ foreach(SECOND_PLUGIN "DragOracleEffect" "dragoracle-metadata.json" "plasma-auto
 endforeach()
 
 # Exactly one D-Bus service/object pair per endpoint, each unregistered.
-foreach(ENDPOINT "org.plasmaautotiler.ActiveBorder" "/org/plasmaautotiler/ActiveBorder" "org.plasmaautotiler.DragOracle" "/org/plasmaautotiler/DragOracle")
+foreach(ENDPOINT "com.omnitiler.ActiveBorder" "/com/omnitiler/ActiveBorder" "com.omnitiler.DragOracle" "/com/omnitiler/DragOracle")
     string(FIND "${IMPL}" "${ENDPOINT}" ENDPOINT_POS)
     if(ENDPOINT_POS EQUAL -1)
         message(FATAL_ERROR "unified service validation failed: '${ENDPOINT}' not found")
@@ -128,13 +128,13 @@ endif()
 
 # CMake builds only the effect plus the KCM: no second plugin target,
 # factory source, standalone metadata, or validation script.
-foreach(LEGACY_TOKEN "dragoracle.h" "dragoracle.cpp" "dragoracle-metadata.json" "validate-dragoracle.cmake" "native-effect-drag-oracle-validation" "EXPECTED_PLUGIN_ID=plasma-auto-tiler-drag-oracle" "kcoreaddons_add_plugin(plasma-auto-tiler-drag-oracle")
+foreach(LEGACY_TOKEN "dragoracle.h" "dragoracle.cpp" "dragoracle-metadata.json" "validate-dragoracle.cmake" "native-effect-drag-oracle-validation" "EXPECTED_PLUGIN_ID=omnitiler-drag-oracle" "kcoreaddons_add_plugin(omnitiler-drag-oracle")
     string(FIND "${CMAKE}" "${LEGACY_TOKEN}" LEGACY_POS)
     if(NOT LEGACY_POS EQUAL -1)
         message(FATAL_ERROR "unified build validation failed: legacy token '${LEGACY_TOKEN}' must not remain in CMakeLists.txt")
     endif()
 endforeach()
-foreach(SURVIVOR_TOKEN "plasma-auto-tiler-active-border" "libtiler_kwin_effect_ffi.a" "Qt6::DBus" "drag_oracle_ffi.h" "plasma-auto-tiler-effect-ffi-rs" "native-effect-drag-oracle-rs" "native-effect-group-highlight-rs" "native-effect-unified-lifecycle")
+foreach(SURVIVOR_TOKEN "omnitiler-active-border" "libtiler_kwin_effect_ffi.a" "Qt6::DBus" "drag_oracle_ffi.h" "omnitiler-effect-ffi-rs" "native-effect-drag-oracle-rs" "native-effect-group-highlight-rs" "native-effect-unified-lifecycle")
     string(FIND "${CMAKE}" "${SURVIVOR_TOKEN}" SURVIVOR_POS)
     if(SURVIVOR_POS EQUAL -1)
         message(FATAL_ERROR "unified build validation failed: '${SURVIVOR_TOKEN}' missing from CMakeLists.txt")

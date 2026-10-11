@@ -426,7 +426,7 @@ function Get-OverlayHwndsForOwnerAb([int]$OwnerPid) {
       $pidOut = [uint32]0
       $null = [ActiveBorderNative]::GetWindowThreadProcessId($h, [ref]$pidOut)
       if ([uint32]$pidOut -eq [uint32]$script:abOwnerPid) {
-        if ([ActiveBorderNative]::ClassOf($h.ToInt64()) -eq "PlasmaAutoTilerActiveBorder") {
+        if ([ActiveBorderNative]::ClassOf($h.ToInt64()) -eq "OmniTilerActiveBorder") {
           $null = $script:abFound.Add($h.ToInt64())
         }
       }
@@ -1286,7 +1286,7 @@ function Invoke-BorderLive {
       run_dir = $runDir
       spi = @{ arranging_raw = $spiEnd.arranging_raw; pen_raw = $spiEnd.pen_raw; arranging_ok = ([int]$spiEnd.arranging_raw -eq 1); pen_ok = ([int]$spiEnd.pen_raw -eq 35) }
       dpi_note = $sysDpiNote
-      overlay_class_PlasmaAutoTilerActiveBorder = @{ total = 0; visible = 0 }
+      overlay_class_OmniTilerActiveBorder = @{ total = 0; visible = 0 }
       actors_path_bound = @{ count = 0; actors = @() }
       ledger = @{ dir = (Invoke-Native $ownerCopy @("identity") | ConvertFrom-Json).ledger_directory }
     }
@@ -1582,7 +1582,7 @@ function Get-FuOverlayHwnds([int]$OwnerPid) {
       $pidOut = [uint32]0
       $null = [ActiveBorderNative]::GetWindowThreadProcessId($h, [ref]$pidOut)
       if ([uint32]$pidOut -eq [uint32]$script:fuOwnerPid) {
-        if ([ActiveBorderNative]::ClassOf($h.ToInt64()) -eq "PlasmaAutoTilerActiveBorder") {
+        if ([ActiveBorderNative]::ClassOf($h.ToInt64()) -eq "OmniTilerActiveBorder") {
           $null = $script:fuFound.Add($h.ToInt64())
         }
       }

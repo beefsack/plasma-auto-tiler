@@ -8,7 +8,7 @@
 //! intent membership only. Float and tile memberships stay disjoint and
 //! bounded; overlap rejects before disk and persisted overlap reads corrupt.
 //!
-//! Layout: `<root>/plasma-auto-tiler/float-intent.json` (`XDG_RUNTIME_DIR`
+//! Layout: `<root>/omnitiler/float-intent.json` (`XDG_RUNTIME_DIR`
 //! in production, a private temp root in tests). Every access is anchored:
 //! the absolute root is opened component-by-component from `/`, each
 //! ancestor with `O_DIRECTORY|O_NOFOLLOW`, so a symlink anywhere in the
@@ -33,7 +33,7 @@
 //! unreadable, corrupt, or oversize content degrades with a fixed reason and
 //! zero counts. Write failures retain local intent; no retry machinery.
 //!
-//! Wire contract on `org.plasmaautotiler.Planner1` (see planner_service):
+//! Wire contract on `com.omnitiler.Planner1` (see planner_service):
 //! `ReadFloatIntent({"v":1,"correlation_id":..,"live"?[..]})` returns
 //! `ok` with `members`/`stored`/`returned` plus `tile`/`tile_stored`/
 //! `tile_returned` (absent `tile` in old replies reads as empty), or
@@ -84,7 +84,7 @@ pub(crate) const MAX_MEMBER_ID_LEN: usize = 128;
 pub(crate) const MAX_NAMESPACE_FIELD_LEN: usize = 256;
 pub(crate) const MAX_STORE_FILE_BYTES: u64 = 256 * 1024;
 pub(crate) const INTENT_STORE_VERSION: u32 = 1;
-pub(crate) const STORE_DIR_NAME: &str = "plasma-auto-tiler";
+pub(crate) const STORE_DIR_NAME: &str = "omnitiler";
 pub(crate) const STORE_FILE_NAME: &str = "float-intent.json";
 const TEMP_FILE_PREFIX: &str = ".float-intent.json.tmp.";
 const S_IFMT: u32 = 0o170000;
@@ -785,7 +785,7 @@ pub(crate) fn intent_egress_summary(
     reason: Option<&str>,
 ) -> String {
     format!(
-        "plasma-auto-tiler:intent-summary direction=egress op={op} correlation={} outcome={outcome} stored={} returned={} tile_stored={} tile_returned={} reason={}",
+        "omnitiler:intent-summary direction=egress op={op} correlation={} outcome={outcome} stored={} returned={} tile_stored={} tile_returned={} reason={}",
         sanitize_correlation(correlation),
         stored.map_or_else(|| "-".to_owned(), |count| count.to_string()),
         returned.map_or_else(|| "-".to_owned(), |count| count.to_string()),

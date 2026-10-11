@@ -36,7 +36,7 @@ void check(bool condition, const char *expression, const char *file, int line)
 
 KConfigGroup borderGroup()
 {
-    return KConfigGroup(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("Effect-plasma-auto-tiler-active-border"));
+    return KConfigGroup(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("Effect-omnitiler-active-border"));
 }
 
 QDoubleSpinBox *borderWidthSpinBox(KWin::ActiveBorderConfigModule &module)
@@ -91,7 +91,7 @@ void dbusTargetIsExact()
     CHECK(KWin::ActiveBorderConfigModule::effectInterface() == QStringLiteral("org.kde.kwin.Effects"));
     CHECK(KWin::ActiveBorderConfigModule::effectInterface() != QStringLiteral("org.kde.KWin.Effects"));
     CHECK(KWin::ActiveBorderConfigModule::effectMethod() == QStringLiteral("reconfigureEffect"));
-    CHECK(KWin::ActiveBorderConfigModule::effectName() == QStringLiteral("plasma-auto-tiler-active-border"));
+    CHECK(KWin::ActiveBorderConfigModule::effectName() == QStringLiteral("omnitiler-active-border"));
 }
 
 void dbusErrorClassification()
@@ -601,7 +601,7 @@ void groupUnderlayExtensionDefaultsToBorderWidth()
     // Effect FFI policy: the default sentinel follows the current border
     // width. Gated out of settings-only builds (no Cargo staticlib there);
     // the full effect build keeps these gates.
-#ifdef PLASMA_AUTO_TILER_HAVE_EFFECT_FFI
+#ifdef OMNITILER_HAVE_EFFECT_FFI
     // Default sentinel follows the current border width: changing the
     // border width to 5 while the extension stays at default resolves to 5.
     CHECK(KWin::groupUnderlayEffectiveExtension(KWin::ActiveBorderConfig::groupUnderlayExtension(), 3.0) == 3.0);
@@ -659,7 +659,7 @@ int main(int argc, char **argv)
     // Unit 1 hard gate: isolate from the live session bus before any
     // QDBusConnection::sessionBus() initialization (ActiveBorderConfigModule
     // creates the live KGlobalAccelStore in its constructor).
-    qputenv("DBUS_SESSION_BUS_ADDRESS", QByteArray("unix:path=/dev/null/plasma-auto-tiler-kcm-test-isolated-bus"));
+    qputenv("DBUS_SESSION_BUS_ADDRESS", QByteArray("unix:path=/dev/null/omnitiler-kcm-test-isolated-bus"));
     QTemporaryDir configHome;
     if (!configHome.isValid()) {
         std::fprintf(stderr, "failed to create temporary config directory\n");

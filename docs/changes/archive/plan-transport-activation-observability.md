@@ -26,7 +26,7 @@
 
 ## Normal Contract
 
-- Every normal record uses the existing `plasma-auto-tiler:plan:cmd=` sink with
+- Every normal record uses the existing `omnitiler:plan:cmd=` sink with
   `component`, `route`, `stage=activate`, `correlation`, `generation`,
   `revision`, `event`, `outcome`, and `cause`.
 - Initiations are `presence/presence-requested`, `resolve/resolve-requested`,

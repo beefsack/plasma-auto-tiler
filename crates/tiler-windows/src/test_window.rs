@@ -2,8 +2,8 @@ use serde::Serialize;
 
 use crate::model::ProcessIdentity;
 
-pub const TEST_WINDOW_CLASS: &str = "PlasmaAutoTilerOwnedTest";
-pub const TEST_WINDOW_PROP: &str = "PlasmaAutoTilerLifetime";
+pub const TEST_WINDOW_CLASS: &str = "OmniTilerOwnedTest";
+pub const TEST_WINDOW_PROP: &str = "OmniTilerLifetime";
 pub const TEST_WINDOW_X: i32 = 200;
 pub const TEST_WINDOW_Y: i32 = 200;
 pub const TEST_WINDOW_W: i32 = 640;
@@ -654,7 +654,7 @@ pub mod sys {
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(1);
         let token = if nanos == 0 { 1 } else { nanos };
-        let title = wide("PlasmaAutoTiler owned test");
+        let title = wide("OmniTiler owned test");
         let style = if passive {
             WS_OVERLAPPEDWINDOW
         } else {

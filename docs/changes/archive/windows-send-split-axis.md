@@ -53,7 +53,7 @@ Status: complete, 2026-10-03. Implementation: `c4a837b`.
   this KWin fixture plus the corrected placement documentation.
 - Hosted Windows/Rust/KWin/shell CI passed for `c4a837b`, including the new
   KWin Engine fixture and typecheck:
-  [CI run 37094726063](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37094726063).
+  [CI run 37094726063](https://github.com/beefsack/omnitiler/actions/runs/37094726063).
 
 ## Current-artifact live evidence, 2026-10-03
 

@@ -147,7 +147,7 @@
   preserved. Windows 11 Pro build 26200; owner/helper hashes match the successful
   helper proof above. The normal script supplied its explicit Notepad, Paint and
   Calculator host/child scope, with bounded 240-second owners.
-- Owner logs under local app data `plasma-auto-tiler/session-1/`:
+- Owner logs under local app data `omnitiler/session-1/`:
   `run-01dd52230cef7a77.log` (graceful) and
   `run-01dd5223150ae362.log` (forced-loss).
 

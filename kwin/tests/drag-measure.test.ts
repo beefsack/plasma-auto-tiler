@@ -133,7 +133,7 @@ function startMeasureEntry(world: MeasureWorld, opts: { throwOnMeasureLog?: bool
             };
         },
         log: (message): void => {
-            if (opts.throwOnMeasureLog === true && message.startsWith("plasma-auto-tiler:route-diag:drag-measure")) {
+            if (opts.throwOnMeasureLog === true && message.startsWith("omnitiler:route-diag:drag-measure")) {
                 throw new Error("injected measurement log failure");
             }
             mocks.logs.push(message);
@@ -269,7 +269,7 @@ function cancelledWinA(correlation: string): string {
 }
 
 function measureLines(mocks: MeasureMocks): string[] {
-    return mocks.logs.filter((line) => line.startsWith("plasma-auto-tiler:route-diag:drag-measure"));
+    return mocks.logs.filter((line) => line.startsWith("omnitiler:route-diag:drag-measure"));
 }
 
 function settleBaseline(mocks: MeasureMocks): void {
@@ -553,7 +553,7 @@ describe("ar8 drag measurement record shape", () => {
         assert.ok(line.includes("pointerStart=20,20"), line);
         assert.ok(line.includes("pointerFinish=30,10"), line);
         assert.ok(
-            mocks.logs.some((entry) => entry === "plasma-auto-tiler:route-diag:drag-start-missing correlation=drag-1"),
+            mocks.logs.some((entry) => entry === "omnitiler:route-diag:drag-start-missing correlation=drag-1"),
             "route agrees it holds no start for this finish",
         );
         for (const call of mocks.planCalls) {
@@ -759,7 +759,7 @@ describe("ar8 drag measurement pure helpers", () => {
             pointerStart: { x: 1, y: 2 },
             pointerFinish: { x: 3, y: 4 },
         });
-        assert.ok(line.startsWith("plasma-auto-tiler:route-diag:drag-measure"), line);
+        assert.ok(line.startsWith("omnitiler:route-diag:drag-measure"), line);
         assert.ok(!line.includes("win-a"), line);
         const untrusted = formatDragMeasureLine({
             seq: -1,

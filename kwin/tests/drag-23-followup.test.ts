@@ -475,7 +475,7 @@ describe("drag-23 rejected-drop converge", () => {
         (mocks.oracleCalls[0] as (reply: unknown) => void)(verdict({ x: 0, y: 0, w: 1000, h: 800 }, "drag-31"));
         assert.equal(mocks.planCalls.length, 2, "refused pointer still converges once");
         assert.deepEqual(commandOf(mocks.planCalls[1]), { op: "reconcile" });
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-fullscreen"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:pointer-refused-fullscreen"));
         assert.ok(mocks.logs.some((line) => line.includes("drag-dispatched") && line.includes("correlation=drag-31") && line.includes("accepted=false")));
         assert.ok(mocks.logs.some((line) => line.includes("drag-rejected") && line.includes("correlation=drag-31") && line.includes("reason=fullscreen")));
         assert.ok(mocks.logs.some((line) => line.includes("drag-reconcile") && line.includes("correlation=drag-31") && line.includes("dispatch=dispatched")));
@@ -829,7 +829,7 @@ describe("drag restore marker scope", () => {
         // No observation, no retained baseline, no exact id: no domain
         // evidence at all, so no plan may ever claim this drop.
         assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-85"), false);
-        assert.ok(w.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-observe"));
+        assert.ok(w.logs.some((line) => line === "omnitiler:plan:pointer-refused-observe"));
         assert.ok(w.logs.some((line) => line.includes("drag-rejected") && line.includes("correlation=drag-85") && line.includes("reason=observe")));
         assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-85") && line.includes("outcome=unavailable") && line.includes("plan=none")), "truthful terminal, never fabricated success");
         assert.equal(w.sent.length, 0, "nothing dispatched without a scope");
@@ -1128,7 +1128,7 @@ describe("drag restore marker interactive-suppression race", () => {
         assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-440") && line.includes("outcome=unavailable") && line.includes("plan=none")));
         // Invalid (non-opaque) window identity: never a marker either.
         assert.equal(w.adapter.requestPointerResize(123, "right", 1000, undefined, undefined, "drag-442"), false);
-        assert.ok(w.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-identity"));
+        assert.ok(w.logs.some((line) => line === "omnitiler:plan:pointer-refused-identity"));
         assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-442") && line.includes("outcome=unavailable") && line.includes("plan=none")));
         assert.equal(markersOf(w).size, 0, "no unrelated marker lingers");
         assert.equal(w.sent.length, 0, "nothing dispatched without a scope");

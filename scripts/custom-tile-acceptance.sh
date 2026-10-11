@@ -27,29 +27,29 @@ if len(data) > 65536:
 sys.stdout.buffer.write(data)'
 
 readonly PROJECT_SHORTCUTS_JSON='{
-  "plasma-auto-tiler-focus-left":268435528,
-  "plasma-auto-tiler-focus-down":268435530,
-  "plasma-auto-tiler-focus-up":268435531,
-  "plasma-auto-tiler-focus-right":268435532,
-  "plasma-auto-tiler-focus-left-arrow":285212690,
-  "plasma-auto-tiler-focus-down-arrow":285212693,
-  "plasma-auto-tiler-focus-up-arrow":285212691,
-  "plasma-auto-tiler-focus-right-arrow":285212692,
-  "plasma-auto-tiler-move-left":301989960,
-  "plasma-auto-tiler-move-down":301989962,
-  "plasma-auto-tiler-move-up":301989963,
-  "plasma-auto-tiler-move-right":301989964,
-  "plasma-auto-tiler-move-left-arrow":318767122,
-  "plasma-auto-tiler-move-down-arrow":318767125,
-  "plasma-auto-tiler-move-up-arrow":318767123,
-  "plasma-auto-tiler-move-right-arrow":318767124,
-  "plasma-auto-tiler-detach":301989920,
-  "plasma-auto-tiler-attach":436207648,
-  "plasma-auto-tiler-fill-scope":419430404,
-  "plasma-auto-tiler-apply-columns":402653233,
-  "plasma-auto-tiler-apply-rows":402653234,
-  "plasma-auto-tiler-apply-balanced-grid":402653235,
-  "plasma-auto-tiler-apply-dwindle":402653236
+  "omnitiler-focus-left":268435528,
+  "omnitiler-focus-down":268435530,
+  "omnitiler-focus-up":268435531,
+  "omnitiler-focus-right":268435532,
+  "omnitiler-focus-left-arrow":285212690,
+  "omnitiler-focus-down-arrow":285212693,
+  "omnitiler-focus-up-arrow":285212691,
+  "omnitiler-focus-right-arrow":285212692,
+  "omnitiler-move-left":301989960,
+  "omnitiler-move-down":301989962,
+  "omnitiler-move-up":301989963,
+  "omnitiler-move-right":301989964,
+  "omnitiler-move-left-arrow":318767122,
+  "omnitiler-move-down-arrow":318767125,
+  "omnitiler-move-up-arrow":318767123,
+  "omnitiler-move-right-arrow":318767124,
+  "omnitiler-detach":301989920,
+  "omnitiler-attach":436207648,
+  "omnitiler-fill-scope":419430404,
+  "omnitiler-apply-columns":402653233,
+  "omnitiler-apply-rows":402653234,
+  "omnitiler-apply-balanced-grid":402653235,
+  "omnitiler-apply-dwindle":402653236
 }'
 
 BUSCTL_BIN=""
@@ -443,7 +443,7 @@ check_shortcut_contract() {
     collision="$($JQ_BIN -r --arg action "$action" --argjson expected "$expected" '[.[] | select(.[0] != $action and .[6] == [$expected])] | length' <<<"$RECORDS_JSON")"
     [[ "$collision" == 0 ]] || fail "shortcut collision detected for $action"
   done < <($JQ_BIN -r 'keys[]' <<<"$PROJECT_SHORTCUTS_JSON")
-  unknown="$($JQ_BIN -r --argjson expected "$PROJECT_SHORTCUTS_JSON" '[.[] | .[0] as $id | select(($id | startswith("plasma-auto-tiler-")) and (($expected | has($id)) | not))] | length' <<<"$RECORDS_JSON")"
+  unknown="$($JQ_BIN -r --argjson expected "$PROJECT_SHORTCUTS_JSON" '[.[] | .[0] as $id | select(($id | startswith("omnitiler-")) and (($expected | has($id)) | not))] | length' <<<"$RECORDS_JSON")"
   [[ "$unknown" == 0 ]] || fail 'unknown project shortcut record was returned'
 }
 

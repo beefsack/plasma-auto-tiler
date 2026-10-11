@@ -1,8 +1,8 @@
 {
   "contract": {
-    "service": "org.plasmaautotiler.Tray",
-    "object": "/org/plasmaautotiler/Tray",
-    "interface": "org.plasmaautotiler.Tray1",
+    "service": "com.omnitiler.Tray",
+    "object": "/com/omnitiler/Tray",
+    "interface": "com.omnitiler.Tray1",
     "method": "PublishSnapshot",
     "signature": "isibsbb",
     "schema": 2,
@@ -11,33 +11,33 @@
   },
   "routes": {
     "accepted": {
-      "service": "org.plasmaautotiler.Tray",
-      "object": "/org/plasmaautotiler/Tray",
-      "interface": "org.plasmaautotiler.Tray1",
+      "service": "com.omnitiler.Tray",
+      "object": "/com/omnitiler/Tray",
+      "interface": "com.omnitiler.Tray1",
       "method": "PublishSnapshot"
     },
     "rejected": [
       {
-        "service": "org.plasmaautotiler.Tray",
-        "object": "/org/plasmaautotiler/Tray",
-        "interface": "org.plasmaautotiler.Tray1",
+        "service": "com.omnitiler.Tray",
+        "object": "/com/omnitiler/Tray",
+        "interface": "com.omnitiler.Tray1",
         "method": "OtherMethod"
       },
       {
         "service": "org.other.Service",
-        "object": "/org/plasmaautotiler/Tray",
-        "interface": "org.plasmaautotiler.Tray1",
+        "object": "/com/omnitiler/Tray",
+        "interface": "com.omnitiler.Tray1",
         "method": "PublishSnapshot"
       },
       {
-        "service": "org.plasmaautotiler.Tray",
+        "service": "com.omnitiler.Tray",
         "object": "/org/other/Object",
-        "interface": "org.plasmaautotiler.Tray1",
+        "interface": "com.omnitiler.Tray1",
         "method": "PublishSnapshot"
       },
       {
-        "service": "org.plasmaautotiler.Tray",
-        "object": "/org/plasmaautotiler/Tray",
+        "service": "com.omnitiler.Tray",
+        "object": "/com/omnitiler/Tray",
         "interface": "org.other.Interface",
         "method": "PublishSnapshot"
       }

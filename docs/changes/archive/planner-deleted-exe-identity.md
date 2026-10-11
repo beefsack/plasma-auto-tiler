@@ -55,7 +55,7 @@ form without weakening process ownership verification.
   `reload`, `dev-off`, and `dev-status` passed.
 - Authorized `just reload` built current `d6bb014`, replaced stale PID `19616`
   with PID `56802`, and left the KWin script loaded. `just dev-status` showed
-  `56802` owns `org.plasmaautotiler.Planner` with the plain worktree exe and
+  `56802` owns `com.omnitiler.Planner` with the plain worktree exe and
   recorded script ID `0`. Its new log contains
   `event=started:gen=local-dev:version=0.1.0:result=ok`.
 

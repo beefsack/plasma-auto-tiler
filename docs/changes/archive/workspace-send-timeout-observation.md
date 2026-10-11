@@ -69,7 +69,7 @@
   KWin, D-Bus, window, desktop, focus, or session action occurred.
 
 - The later exact authorized capture
-  `plasma-auto-tiler-dev.pJOooO.log` resolves the former opaque
+  `omnitiler-dev.pJOooO.log` resolves the former opaque
   settlement branch. `plan-1-w0` and `plan-1-w1` both commit and complete
   state-confirmed follow (lines 27, 44, 51-52 and 65, 80, 87-88). The later
   `plan-1-w2` has two planned geometry entries (line 91), consumes its mover
@@ -197,7 +197,7 @@
   correction does not attribute or repair that native geometry cause, select
   recovery, or claim rendered success.
 - Subsequent USER VISUAL/MANUAL acceptance is: "The issue appears to be fixed, I spam moved a window between many workspaces and it never failed. ... reinforces ... graceful handling ... actually feel really good even when spamming." The supplied
-  `plasma-auto-tiler-dev.E2E0QJ.log` is NOT ANALYZED. This accepts
+  `omnitiler-dev.E2E0QJ.log` is NOT ANALYZED. This accepts
   move/follow usability only, not a machine protocol, native-cause, layout
   commit, rendered-visibility, or recovery claim.
 - Background tiling for non-visible workspaces is now selected separately for
@@ -354,7 +354,7 @@
 
 ## Retained-Window Client Trace Follow-Up
 
-- Evidence: `plasma-auto-tiler-dev.UDmtET.log` and
+- Evidence: `omnitiler-dev.UDmtET.log` and
   `ghostty-wayland-sibFLh.log`, with the user's workspace-2
   retained-terminal and workspace-4 mover reproduction.
 - The user identifies the authorized isolated Ghostty trace as the retained

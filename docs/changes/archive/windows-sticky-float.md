@@ -111,7 +111,7 @@
 ## Completion
 
 - Implementation/evidence delivered as `292d8c1`, pushed to main. Hosted
-  [CI 37088627986](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37088627986)
+  [CI 37088627986](https://github.com/beefsack/omnitiler/actions/runs/37088627986)
   passes Windows, Rust, KWin and shell jobs. Completion archive is a separate
   documentation-only delivery; its CI receipt is in the terminal handover.
 - Lead read-only audit 2026-10-03 12:06:08 +10:00: zero project actors,

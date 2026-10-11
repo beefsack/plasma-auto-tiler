@@ -50,7 +50,7 @@ grouped verbatim; each package appears exactly once
 | `tiler-core` | Portable planning core, no dependencies |
 | `tiler-protocol` | Planner protocol over `tiler-core` (serde) |
 | `tiler-kwin-effect-ffi` | Staticlib behind the KWin effect C ABI (serde) |
-| `plasma-auto-tiler` | Linux planner/service binary (zbus, rustix, serde) |
+| `omnitiler` | Linux planner/service binary (zbus, rustix, serde) |
 | `tiler-windows` | Windows binary (serde; `windows-sys`/`windows-link` on `cfg(windows)`) |
 
 Metadata gap to close at license selection (section 9).
@@ -201,7 +201,7 @@ dynamic dependencies; they do not audit statically embedded code.
 ### 4.3 Tray, planner, script binaries; C/C++ runtime
 
 No C++ tray. Linux tray/planner are `tray`/`planner-service` subcommands
-of the `plasma-auto-tiler` Rust binary (`src/main.rs`); KWin-side
+of the `omnitiler` Rust binary (`src/main.rs`); KWin-side
 `tray-publisher.ts` ships in the script bundle. D-Bus via pure-Rust
 `zbus` 5.19 (`#[zbus::interface]`); no `libdbus` linked. Windows via
 Win32/COM through `windows-sys`. No macOS binary. Native closure beyond

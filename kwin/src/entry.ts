@@ -39,9 +39,9 @@ const trayPublisher = new TrayPublisher({
     getDefaultTiled: () => planHandle?.getWorkspaceTilingSnapshot().defaultTiled ?? true,
     publishSnapshot: (schema, generation, revision, enabled, currentScope, tiled, defaultTiled) => {
         callDBus(
-            "org.plasmaautotiler.Tray",
-            "/org/plasmaautotiler/Tray",
-            "org.plasmaautotiler.Tray1",
+            "com.omnitiler.Tray",
+            "/com/omnitiler/Tray",
+            "com.omnitiler.Tray1",
             "PublishSnapshot",
             schema,
             generation,

@@ -341,7 +341,7 @@ describe("tiled drag-drop through the Planner", () => {
         assert.equal(mocks.oracleCalls.length, 1);
         (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
         (mocks.oracleCalls[0] as (reply: unknown) => void)(moveVerdict({ x: 900, y: 5, w: 600, h: 800 }, "win-a", "drag-60"));
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-60 accepted=true"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:route-diag:drag-drop-dispatched correlation=drag-60 accepted=true"));
         assert.equal(mocks.planCalls.length - callsAtStart, 1, "exactly one drag-drop dispatch");
         const dropCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
         const dropPayload = JSON.parse(dropCall.payload) as Record<string, unknown>;
@@ -380,7 +380,7 @@ describe("tiled drag-drop through the Planner", () => {
         const activeBefore = world.workspace["activeWindow"];
         const callsAtStart = mocks.planCalls.length;
         dropWinA(world, mocks, { x: 900, y: 400 }, "drag-61");
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-61 accepted=true"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:route-diag:drag-drop-dispatched correlation=drag-61 accepted=true"));
         assert.equal(mocks.planCalls.length - callsAtStart, 1, "exactly one drag-drop dispatch");
         const dropCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
         const dropCorr = planCorrelation(JSON.parse(dropCall.payload) as Record<string, unknown>);
@@ -568,7 +568,7 @@ describe("tiled drag-drop through the Planner", () => {
         assert.equal(mocks.oracleCalls.length, 2);
         (world.wins["win-b"] as Record<string, unknown>)["move"] = false;
         (mocks.oracleCalls[1] as (reply: unknown) => void)(moveVerdict({ x: 100, y: 100, w: 600, h: 800 }, "win-b", "drag-66"));
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-66 accepted=true"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:route-diag:drag-drop-dispatched correlation=drag-66 accepted=true"));
         assert.equal(mocks.planCalls.length - callsAtStart, 1, "overlapping drop defers without dispatching");
         assert.ok(!mocks.logs.some((l) => l.includes("drag-rejected") && l.includes("correlation=drag-66")), "deferred drop is not a refusal");
         // The first drop is refused: its marker arms, then the deferred drop
@@ -618,7 +618,7 @@ describe("tiled drag-drop through the Planner", () => {
         (world.wins["win-a"] as Record<string, unknown>)["onAllDesktops"] = true;
         (mocks.oracleCalls[0] as (reply: unknown) => void)(moveVerdict({ x: 120, y: 40, w: 600, h: 800 }, "win-a", "drag-70"));
         assert.ok(
-            mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-move-floating-mismatch correlation=drag-70 start=tiled finish=floating"),
+            mocks.logs.some((l) => l === "omnitiler:route-diag:drag-move-floating-mismatch correlation=drag-70 start=tiled finish=floating"),
             "bounded start/finish mismatch without ids or coordinates",
         );
         assert.ok(mocks.logs.some((l) => l.includes("drag-move-ignored") && l.includes("correlation=drag-70")));
@@ -680,7 +680,7 @@ describe("tiled drag-drop through the Planner", () => {
         (world.wins["win-a"] as Record<string, unknown>)["onAllDesktops"] = false;
         (mocks.oracleCalls[0] as (reply: unknown) => void)(moveVerdict({ x: 60, y: 0, w: 600, h: 800 }, "win-a", "drag-71"));
         assert.ok(
-            mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-move-floating-mismatch correlation=drag-71 start=floating finish=tiled"),
+            mocks.logs.some((l) => l === "omnitiler:route-diag:drag-move-floating-mismatch correlation=drag-71 start=floating finish=tiled"),
             "bounded start/finish mismatch without ids or coordinates",
         );
         assert.ok(mocks.logs.some((l) => l.includes("drag-move-ignored") && l.includes("correlation=drag-71")));
@@ -988,7 +988,7 @@ describe("tiled drag-drop through the Planner", () => {
             moveVerdict({ x: 900, y: 5, w: 600, h: 800 }, "win-a", "drag-91"),
         );
         assert.ok(
-            mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-91 accepted=true"),
+            mocks.logs.some((l) => l === "omnitiler:route-diag:drag-drop-dispatched correlation=drag-91 accepted=true"),
             "cross-output drop dispatches accepted through the destination",
         );
         assert.ok(
@@ -1049,7 +1049,7 @@ describe("tiled drag-drop through the Planner", () => {
         (mocks.oracleCalls[mocks.oracleCalls.length - 1] as (reply: unknown) => void)(
             moveVerdict({ x: 850, y: 10, w: 800, h: 1000 }, "win-a", "drag-95"),
         );
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-95 accepted=true"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:route-diag:drag-drop-dispatched correlation=drag-95 accepted=true"));
         assert.equal(mocks.planCalls.length - callsBeforeSecond, 1, "destination same-domain drop dispatches after source removal");
         stop();
     });
@@ -1070,7 +1070,7 @@ describe("tiled drag-drop through the Planner", () => {
             moveVerdict({ x: 900, y: 5, w: 600, h: 800 }, "win-a", "drag-92"),
         );
         assert.ok(
-            mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-92 accepted=true"),
+            mocks.logs.some((l) => l === "omnitiler:route-diag:drag-drop-dispatched correlation=drag-92 accepted=true"),
             "cross-output drop without retained evidence still dispatches the destination",
         );
         assert.ok(
@@ -1120,7 +1120,7 @@ describe("tiled drag-drop through the Planner", () => {
         const { stop, mocks } = startDropEntry(world);
         const callsAtStart = mocks.planCalls.length;
         dropWinA(world, mocks, { x: 900, y: 5 }, "drag-93");
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-93 accepted=true"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:route-diag:drag-drop-dispatched correlation=drag-93 accepted=true"));
         assert.equal(mocks.planCalls.length - callsAtStart, 1, "same-domain drop without retained evidence dispatches");
         assert.deepEqual(
             (JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"],
@@ -1144,7 +1144,7 @@ describe("tiled drag-drop through the Planner", () => {
         }
         const callsAtStart = mocks.planCalls.length;
         dropWinA(world, mocks, { x: 900, y: 5 }, "drag-94");
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-94 accepted=true"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:route-diag:drag-drop-dispatched correlation=drag-94 accepted=true"));
         assert.ok(!mocks.logs.some((l) => l.includes("drag-drop-refused-cross-domain")), "stale evidence refuses nothing");
         assert.equal(mocks.planCalls.length - callsAtStart, 1, "Started-bound same-domain drop dispatches");
         assert.deepEqual(
@@ -1198,7 +1198,7 @@ describe("tiled drag-drop through the Planner", () => {
             moveVerdict({ x: 400, y: 400, w: 600, h: 800 }, "win-a", "drag-80"),
         );
         assert.ok(
-            mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-80 accepted=false"),
+            mocks.logs.some((l) => l === "omnitiler:route-diag:drag-drop-dispatched correlation=drag-80 accepted=false"),
             "stale workspace-1 drop ignored",
         );
         assert.ok(mocks.logs.some((l) => l.includes("drag-drop-refused-stale-workspace")), "stale refusal logged");
@@ -1253,7 +1253,7 @@ describe("tiled drag-drop through the Planner", () => {
             moveVerdict({ x: 900, y: 5, w: 600, h: 800 }, "win-b", "drag-81"),
         );
         assert.ok(
-            mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-81 accepted=true"),
+            mocks.logs.some((l) => l === "omnitiler:route-diag:drag-drop-dispatched correlation=drag-81 accepted=true"),
             "cross-output drop still dispatches",
         );
         assert.equal(mocks.planCalls.length - callsBeforeCross, 1, "exactly one cross-output dispatch");

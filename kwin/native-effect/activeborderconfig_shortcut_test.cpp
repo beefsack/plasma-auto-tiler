@@ -437,33 +437,33 @@ void seedReady(FakeShortcutStore &store)
     // succeeds. Full-catalog extras fill the remaining rows at canonical
     // (empty for unbound stay rows).
     store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-right"), QList<int>{419430420}),
         makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-up"), QList<int>{7}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-right"), QList<int>{8}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-left-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-up"), QList<int>{7}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-right"), QList<int>{8}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-left-arrow"),
                   QList<int>{11}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-down-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-down-arrow"),
                   QList<int>{12}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-up-arrow"),
                   QList<int>{13}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-right-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-right-arrow"),
                   QList<int>{14}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-float"), QList<int>{9}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-maximize"), QList<int>{10}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-left-arrow"), QList<int>{21}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-down-arrow"), QList<int>{22}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-up-arrow"), QList<int>{23}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right-arrow"), QList<int>{24}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-left-arrow"), QList<int>{25}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-right-arrow"), QList<int>{26}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-prev-left-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle-float"), QList<int>{9}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle-maximize"), QList<int>{10}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-left-arrow"), QList<int>{21}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-down-arrow"), QList<int>{22}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-up-arrow"), QList<int>{23}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-right-arrow"), QList<int>{24}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-move-left-arrow"), QList<int>{25}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-move-right-arrow"), QList<int>{26}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-prev-left-arrow"),
                   QList<int>{27}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-prev-up-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-prev-up-arrow"),
                   QList<int>{28}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-next-down-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-next-down-arrow"),
                   QList<int>{29}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-next-right-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-next-right-arrow"),
                   QList<int>{30}),
     };
     seedFullCatalogQuietExtras(store);
@@ -576,12 +576,12 @@ void selectionPresetsAndDraft()
     // existing route, and load must not auto-stage it. Item 5 stay rows
     // share the same zero-key support.
     {
-        const QString stayId = QStringLiteral("kwin/plasma-auto-tiler-stay-workspace-1");
+        const QString stayId = QStringLiteral("kwin/omnitiler-stay-workspace-1");
         CHECK(!module.shortcutDisabledIds().contains(stayId));
         bool stayFound = false;
         for (const ShortcutTuple &tuple : store.tuples) {
             if (tuple.component == QStringLiteral("kwin")
-                && tuple.action == QStringLiteral("plasma-auto-tiler-stay-workspace-1")) {
+                && tuple.action == QStringLiteral("omnitiler-stay-workspace-1")) {
                 stayFound = true;
                 CHECK(tuple.active.isEmpty());
             }
@@ -589,59 +589,59 @@ void selectionPresetsAndDraft()
         CHECK(stayFound);
         QString writeError;
         QList<int> confirmed;
-        CHECK(store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-1"),
+        CHECK(store.writeKeys(QStringLiteral("kwin"), QStringLiteral("omnitiler-stay-workspace-1"),
                               QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{999}, &confirmed,
                               &writeError));
         CHECK(confirmed == QList<int>{999});
         for (ShortcutTuple &tuple : store.tuples) {
             if (tuple.component == QStringLiteral("kwin")
-                && tuple.action == QStringLiteral("plasma-auto-tiler-stay-workspace-1")) {
+                && tuple.action == QStringLiteral("omnitiler-stay-workspace-1")) {
                 tuple.active.clear();
             }
         }
         store.writeLog.clear();
-        const QString outStayId = QStringLiteral("kwin/plasma-auto-tiler-send-output-left-stay");
+        const QString outStayId = QStringLiteral("kwin/omnitiler-send-output-left-stay");
         CHECK(!module.shortcutDisabledIds().contains(outStayId));
         bool outStayFound = false;
         for (const ShortcutTuple &tuple : store.tuples) {
             if (tuple.component == QStringLiteral("kwin")
-                && tuple.action == QStringLiteral("plasma-auto-tiler-send-output-left-stay")) {
+                && tuple.action == QStringLiteral("omnitiler-send-output-left-stay")) {
                 outStayFound = true;
                 CHECK(tuple.active.isEmpty());
             }
         }
         CHECK(outStayFound);
         CHECK(store.writeKeys(QStringLiteral("kwin"),
-                              QStringLiteral("plasma-auto-tiler-send-output-left-stay"),
+                              QStringLiteral("omnitiler-send-output-left-stay"),
                               QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{999}, &confirmed,
                               &writeError));
         CHECK(confirmed == QList<int>{999});
         for (ShortcutTuple &tuple : store.tuples) {
             if (tuple.component == QStringLiteral("kwin")
-                && tuple.action == QStringLiteral("plasma-auto-tiler-send-output-left-stay")) {
+                && tuple.action == QStringLiteral("omnitiler-send-output-left-stay")) {
                 tuple.active.clear();
             }
         }
         store.writeLog.clear();
-        const QString migrateId = QStringLiteral("kwin/plasma-auto-tiler-migrate-workspace-left");
+        const QString migrateId = QStringLiteral("kwin/omnitiler-migrate-workspace-left");
         CHECK(!module.shortcutDisabledIds().contains(migrateId));
         bool migrateFound = false;
         for (const ShortcutTuple &tuple : store.tuples) {
             if (tuple.component == QStringLiteral("kwin")
-                && tuple.action == QStringLiteral("plasma-auto-tiler-migrate-workspace-left")) {
+                && tuple.action == QStringLiteral("omnitiler-migrate-workspace-left")) {
                 migrateFound = true;
                 CHECK(tuple.active.isEmpty());
             }
         }
         CHECK(migrateFound);
         CHECK(store.writeKeys(QStringLiteral("kwin"),
-                              QStringLiteral("plasma-auto-tiler-migrate-workspace-left"),
+                              QStringLiteral("omnitiler-migrate-workspace-left"),
                               QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{999}, &confirmed,
                               &writeError));
         CHECK(confirmed == QList<int>{999});
         for (ShortcutTuple &tuple : store.tuples) {
             if (tuple.component == QStringLiteral("kwin")
-                && tuple.action == QStringLiteral("plasma-auto-tiler-migrate-workspace-left")) {
+                && tuple.action == QStringLiteral("omnitiler-migrate-workspace-left")) {
                 tuple.active.clear();
             }
         }
@@ -659,8 +659,8 @@ void selectionPresetsAndDraft()
     if (compatible != nullptr) {
         compatible->click();
     }
-    const QString focusId = QStringLiteral("kwin/plasma-auto-tiler-focus-right");
-    const QString ws1 = QStringLiteral("kwin/plasma-auto-tiler-workspace-1");
+    const QString focusId = QStringLiteral("kwin/omnitiler-focus-right");
+    const QString ws1 = QStringLiteral("kwin/omnitiler-workspace-1");
     const QStringList draft = module.shortcutDisabledIds();
     CHECK(draft.size() == 24);
     CHECK(draft.contains(focusId));
@@ -668,35 +668,35 @@ void selectionPresetsAndDraft()
     CHECK(draft.indexOf(focusId) < draft.indexOf(ws1));
     // Item 1 Compatible: the four workspace arrow rows disable, letters and
     // the previous toggle stay Keep.
-    CHECK(draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-prev-left-arrow")));
-    CHECK(draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-prev-up-arrow")));
-    CHECK(draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-next-down-arrow")));
-    CHECK(draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-next-right-arrow")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-previous")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-prev-h")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-prev-k")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-next-j")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-next-l")));
+    CHECK(draft.contains(QStringLiteral("kwin/omnitiler-workspace-prev-left-arrow")));
+    CHECK(draft.contains(QStringLiteral("kwin/omnitiler-workspace-prev-up-arrow")));
+    CHECK(draft.contains(QStringLiteral("kwin/omnitiler-workspace-next-down-arrow")));
+    CHECK(draft.contains(QStringLiteral("kwin/omnitiler-workspace-next-right-arrow")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-workspace-previous")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-workspace-prev-h")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-workspace-prev-k")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-workspace-next-j")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-workspace-next-l")));
     // Item 5 Compatible: the eight follow rows and four stay rows keep with
     // no stock KDE holder for the Meta+Ctrl+Alt arms.
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-left")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-left-arrow")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-left-stay")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-down")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-down-arrow")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-down-stay")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-up")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-up-arrow")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-up-stay")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-right")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-right-arrow")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-send-output-right-stay")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-send-output-left")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-send-output-left-arrow")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-send-output-left-stay")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-send-output-down")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-send-output-down-arrow")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-send-output-down-stay")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-send-output-up")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-send-output-up-arrow")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-send-output-up-stay")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-send-output-right")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-send-output-right-arrow")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-send-output-right-stay")));
     // R-WS-12 Compatible: the four unbound migrate rows keep with no stock
     // KDE holder.
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-migrate-workspace-left")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-migrate-workspace-right")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-migrate-workspace-up")));
-    CHECK(!draft.contains(QStringLiteral("kwin/plasma-auto-tiler-migrate-workspace-down")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-migrate-workspace-left")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-migrate-workspace-right")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-migrate-workspace-up")));
+    CHECK(!draft.contains(QStringLiteral("kwin/omnitiler-migrate-workspace-down")));
     CHECK(store.totalWrites() == 0);
     CHECK(cleared.saves == 0);
     CHECK(!module.isShortcutForceApplyVisible());
@@ -733,14 +733,14 @@ void selectionDisabledApplyIgnoresForeign()
     module.setShortcutStores(&store, &cleared);
     module.load();
     CHECK(module.shortcutStatusText().contains(QStringLiteral("Conflict")));
-    setRowDisabled(module, QStringLiteral("kwin/plasma-auto-tiler-workspace-1"), true);
-    CHECK(module.shortcutDisabledIds() == QStringList{QStringLiteral("kwin/plasma-auto-tiler-workspace-1")});
+    setRowDisabled(module, QStringLiteral("kwin/omnitiler-workspace-1"), true);
+    CHECK(module.shortcutDisabledIds() == QStringList{QStringLiteral("kwin/omnitiler-workspace-1")});
     CHECK(!module.shortcutStatusText().contains(QStringLiteral("Conflict")));
     module.requestShortcutApply();
     CHECK(module.shortcutErrorText().isEmpty());
     CHECK(store.foreignWriteLog.isEmpty());
     for (const ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+        if (tuple.action == QStringLiteral("omnitiler-workspace-1")) {
             CHECK(tuple.active.isEmpty());
         }
         if (tuple.action == QStringLiteral("other-ws")) {
@@ -776,7 +776,7 @@ void selectionDraftEditCancelsPreview()
     CHECK(confirms == 1);
     CHECK(module.isShortcutForceApplyVisible());
     CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("Grid View")));
-    setRowDisabled(module, QStringLiteral("kwin/plasma-auto-tiler-workspace-1"), true);
+    setRowDisabled(module, QStringLiteral("kwin/omnitiler-workspace-1"), true);
     CHECK(!module.isShortcutForceApplyVisible());
     CHECK(confirms == 1);
     CHECK(store.totalWrites() == 0);
@@ -803,7 +803,7 @@ void selectionStaleDraftRefusesForce()
     }
     module.requestShortcutApply();
     CHECK(module.isShortcutForceApplyVisible());
-    setRowDisabled(module, QStringLiteral("kwin/plasma-auto-tiler-workspace-1"), true);
+    setRowDisabled(module, QStringLiteral("kwin/omnitiler-workspace-1"), true);
     CHECK(!module.isShortcutForceApplyVisible());
     CHECK(store.totalWrites() == 0);
     CHECK(cleared.saves == 0);
@@ -821,7 +821,7 @@ void selectionSaveIsolationWithDraft()
     module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
     module.setShortcutStores(&store, &cleared);
     module.load();
-    setRowDisabled(module, QStringLiteral("kwin/plasma-auto-tiler-workspace-1"), true);
+    setRowDisabled(module, QStringLiteral("kwin/omnitiler-workspace-1"), true);
     CHECK(module.shortcutDisabledIds().size() == 1);
     module.save();
     CHECK(store.totalWrites() == 0);
@@ -859,7 +859,7 @@ void selectionRevertKeepsOwnAssignment()
         if (tuple.action == QStringLiteral("other-launch")) {
             CHECK(tuple.active == (QList<int>{999}));
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             CHECK(tuple.active == (QList<int>{META_G}));
         }
     }
@@ -870,7 +870,7 @@ void selectionRevertKeepsOwnAssignment()
         if (tuple.action == QStringLiteral("other-launch")) {
             CHECK(tuple.active == (QList<int>{2222}));
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             CHECK(tuple.active == (QList<int>{META_G}));
         }
     }
@@ -883,12 +883,12 @@ void selectionLiveDisabledReopen()
     FakeShortcutStore store;
     seedReady(store);
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+        if (tuple.action == QStringLiteral("omnitiler-workspace-1")) {
             tuple.active.clear();
         }
     }
     for (int i = store.tuples.size() - 1; i >= 0; --i) {
-        if (store.tuples.at(i).action == QStringLiteral("plasma-auto-tiler-move-workspace-1")) {
+        if (store.tuples.at(i).action == QStringLiteral("omnitiler-move-workspace-1")) {
             store.tuples.removeAt(i);
         }
     }
@@ -897,8 +897,8 @@ void selectionLiveDisabledReopen()
     module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
     module.setShortcutStores(&store, &cleared);
     module.load();
-    CHECK(module.shortcutDisabledIds().contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-1")));
-    CHECK(!module.shortcutDisabledIds().contains(QStringLiteral("kwin/plasma-auto-tiler-move-workspace-1")));
+    CHECK(module.shortcutDisabledIds().contains(QStringLiteral("kwin/omnitiler-workspace-1")));
+    CHECK(!module.shortcutDisabledIds().contains(QStringLiteral("kwin/omnitiler-move-workspace-1")));
 }
 
 void selectionMissingEnabledStatus()
@@ -909,7 +909,7 @@ void selectionMissingEnabledStatus()
         FakeShortcutStore store;
         seedReady(store);
         for (int i = store.tuples.size() - 1; i >= 0; --i) {
-            if (store.tuples.at(i).action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+            if (store.tuples.at(i).action == QStringLiteral("omnitiler-workspace-1")) {
                 store.tuples.removeAt(i);
             }
         }
@@ -926,7 +926,7 @@ void selectionMissingEnabledStatus()
         FakeShortcutStore store;
         seedReady(store);
         for (int i = store.tuples.size() - 1; i >= 0; --i) {
-            if (store.tuples.at(i).action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+            if (store.tuples.at(i).action == QStringLiteral("omnitiler-workspace-1")) {
                 store.tuples.removeAt(i);
             }
         }
@@ -939,8 +939,8 @@ void selectionMissingEnabledStatus()
         // must not claim missing success for enabled rows (none missing
         // enabled here because the only absent row is disabled).
         module.load();
-        setRowDisabled(module, QStringLiteral("kwin/plasma-auto-tiler-workspace-1"), true);
-        CHECK(module.shortcutDisabledIds().contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-1")));
+        setRowDisabled(module, QStringLiteral("kwin/omnitiler-workspace-1"), true);
+        CHECK(module.shortcutDisabledIds().contains(QStringLiteral("kwin/omnitiler-workspace-1")));
     }
 }
 
@@ -962,7 +962,7 @@ void selectionDisabledLockAbsentShowsRows()
             store.tuples.removeAt(i);
         }
     }
-    setRowDisabled(module, QStringLiteral("kwin/plasma-auto-tiler-focus-right"), true);
+    setRowDisabled(module, QStringLiteral("kwin/omnitiler-focus-right"), true);
     CHECK(!module.shortcutStatusText().contains(QStringLiteral("project bindings are missing")));
     QListWidget *list = conflictListByModule(module);
     CHECK(list != nullptr);
@@ -1010,7 +1010,7 @@ void selectionForeignDefaultCompatibleAfterClear()
     if (compatible != nullptr) {
         compatible->click();
     }
-    CHECK(module.shortcutDisabledIds().contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-1")));
+    CHECK(module.shortcutDisabledIds().contains(QStringLiteral("kwin/omnitiler-workspace-1")));
 }
 
 void selectionReadableRowText()
@@ -1451,7 +1451,7 @@ void legacyMigrationDeferredFromOpen()
     CHECK(!clearedPath.isEmpty());
     CHECK(QDir::isAbsolutePath(clearedPath));
     CHECK(clearedPath.endsWith(QStringLiteral("shortcut-clearedrc")));
-    CHECK(clearedPath.contains(QStringLiteral("plasma-auto-tiler")));
+    CHECK(clearedPath.contains(QStringLiteral("omnitiler")));
     CHECK(!QFile::exists(clearedPath));
 }
 
@@ -1601,11 +1601,11 @@ void terminalFailureLogIncludesReason()
     for (const QString &message : messages) {
         // Backend diagnostics redact foreign identities: any "claimed by"
         // detail becomes reason=key-conflict (writes count redacted with it).
-        if (message.contains(QStringLiteral("plasmaautotiler.shortcut op=apply stage=result outcome=failed"))
+        if (message.contains(QStringLiteral("omnitiler.shortcut op=apply stage=result outcome=failed"))
             && message.contains(QStringLiteral("reason=key-conflict"))) {
             sawTerminalFailure = true;
         }
-        if (message.contains(QStringLiteral("plasmaautotiler.shortcut op=force-apply stage=result outcome=failed"))
+        if (message.contains(QStringLiteral("omnitiler.shortcut op=force-apply stage=result outcome=failed"))
             && message.contains(QStringLiteral("confirmed force image is stale"))
             && message.contains(QStringLiteral("writes=0"))) {
             sawStaleForceFailure = true;
@@ -1624,10 +1624,10 @@ void selectionKeepPreservesCustomCanonicalEmpty()
     FakeShortcutStore store;
     seedReady(store);
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             tuple.active = QList<int>{777001};
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+        if (tuple.action == QStringLiteral("omnitiler-workspace-1")) {
             tuple.active.clear();
         }
     }
@@ -1639,22 +1639,22 @@ void selectionKeepPreservesCustomCanonicalEmpty()
     CHECK(!module.shortcutAuthenticStaged());
     // The live-empty row auto-stages Disable; restage it to Keep so empty
     // means leave empty.
-    CHECK(module.shortcutDisabledIds().contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-1")));
-    setRowDisabled(module, QStringLiteral("kwin/plasma-auto-tiler-workspace-1"), false);
-    CHECK(!module.shortcutDisabledIds().contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-1")));
+    CHECK(module.shortcutDisabledIds().contains(QStringLiteral("kwin/omnitiler-workspace-1")));
+    setRowDisabled(module, QStringLiteral("kwin/omnitiler-workspace-1"), false);
+    CHECK(!module.shortcutDisabledIds().contains(QStringLiteral("kwin/omnitiler-workspace-1")));
     module.requestShortcutApply();
     CHECK(module.shortcutErrorText().isEmpty());
     CHECK(!module.isShortcutForceApplyVisible());
     CHECK(store.totalWrites() == 0);
     CHECK(cleared.saves == 0);
     for (const ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             CHECK(tuple.active == (QList<int>{777001}));
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+        if (tuple.action == QStringLiteral("omnitiler-workspace-1")) {
             CHECK(tuple.active.isEmpty());
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-maximize")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-maximize")) {
             CHECK(tuple.active == (QList<int>{10}));
         }
         if (tuple.action == QStringLiteral("Lock Session")) {
@@ -1690,13 +1690,13 @@ void selectionAuthenticAssignsCanonical()
     CHECK(store.totalWrites() > 0);
     CHECK(store.foreignWriteLog.isEmpty());
     for (const ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             CHECK(tuple.active == (QList<int>{META_G}));
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-up")) {
+        if (tuple.action == QStringLiteral("omnitiler-resize-outwards-up")) {
             CHECK(tuple.active == (QList<int>{META_ALT_K}));
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+        if (tuple.action == QStringLiteral("omnitiler-focus-right")) {
             CHECK(tuple.active == (QList<int>{META_L}));
         }
         if (tuple.action == QStringLiteral("Lock Session")) {
@@ -1714,7 +1714,7 @@ void selectionCompatibleKeepsCustomNonconflict()
     FakeShortcutStore store;
     seedReady(store);
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-2")) {
+        if (tuple.action == QStringLiteral("omnitiler-workspace-2")) {
             tuple.active = QList<int>{888001};
         }
     }
@@ -1730,16 +1730,16 @@ void selectionCompatibleKeepsCustomNonconflict()
         compatible->click();
     }
     CHECK(!module.shortcutAuthenticStaged());
-    CHECK(module.shortcutDisabledIds().contains(QStringLiteral("kwin/plasma-auto-tiler-toggle-float")));
-    CHECK(!module.shortcutDisabledIds().contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-2")));
+    CHECK(module.shortcutDisabledIds().contains(QStringLiteral("kwin/omnitiler-toggle-float")));
+    CHECK(!module.shortcutDisabledIds().contains(QStringLiteral("kwin/omnitiler-workspace-2")));
     module.requestShortcutApply();
     CHECK(module.shortcutErrorText().isEmpty());
     CHECK(store.foreignWriteLog.isEmpty());
     for (const ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-2")) {
+        if (tuple.action == QStringLiteral("omnitiler-workspace-2")) {
             CHECK(tuple.active == (QList<int>{888001}));
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             CHECK(tuple.active.isEmpty());
         }
         if (tuple.action == QStringLiteral("Grid View")) {
@@ -1757,7 +1757,7 @@ void selectionKeepCustomConflictPreviewForce()
     FakeShortcutStore store;
     seedReady(store);
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             tuple.active = QList<int>{777001};
         }
     }
@@ -1788,7 +1788,7 @@ void selectionKeepCustomConflictPreviewForce()
         if (tuple.action == QStringLiteral("other-app")) {
             CHECK(tuple.active.isEmpty());
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             CHECK(tuple.active == (QList<int>{777001}));
         }
     }
@@ -1801,7 +1801,7 @@ void selectionForceRevalidationKeepDrift()
     FakeShortcutStore store;
     seedReady(store);
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             tuple.active = QList<int>{777001};
         }
     }
@@ -1818,7 +1818,7 @@ void selectionForceRevalidationKeepDrift()
     // so revalidation still sees a holder, but the live image differs and
     // Force must refuse as stale before any persist.
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             tuple.active = QList<int>{777001, 888002};
         }
     }
@@ -1847,7 +1847,7 @@ void selectionSaveIsolationWithAuthentic()
     if (authentic != nullptr) {
         authentic->click();
     }
-    setRowDisabled(module, QStringLiteral("kwin/plasma-auto-tiler-workspace-1"), true);
+    setRowDisabled(module, QStringLiteral("kwin/omnitiler-workspace-1"), true);
     CHECK(module.shortcutAuthenticStaged());
     CHECK(module.shortcutDisabledIds().size() == 1);
     module.save();
@@ -1886,14 +1886,14 @@ void selectionAuthenticApplyConsumesPreservesLaterCustom()
     CHECK(!module.shortcutAuthenticStaged());
     CHECK(store.totalWrites() > 0);
     for (const ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             CHECK(tuple.active == (QList<int>{META_G}));
         }
     }
     // Still-open KCM: the user customizes the current native chord in KDE
     // Shortcuts (external mutation, no KCM reload, draft untouched).
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             tuple.active = QList<int>{777001};
         }
     }
@@ -1907,7 +1907,7 @@ void selectionAuthenticApplyConsumesPreservesLaterCustom()
     CHECK(store.totalWrites() == writesAfterFirst);
     CHECK(cleared.saves == 0);
     for (const ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             CHECK(tuple.active == (QList<int>{777001}));
         }
     }
@@ -1963,7 +1963,7 @@ void selectionAuthenticForceConsumesRetainsOnFailure()
     CHECK(!module.isShortcutForceApplyVisible());
     CHECK(cleared.saves == 1);
     for (const ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             CHECK(tuple.active == (QList<int>{META_G}));
         }
         if (tuple.action == QStringLiteral("other-launch")) {
@@ -1973,7 +1973,7 @@ void selectionAuthenticForceConsumesRetainsOnFailure()
     // Still-open KCM: external customization then a confirmed Keep Apply
     // preserves it with no additional writes and no reset.
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             tuple.active = QList<int>{777002};
         }
     }
@@ -1984,7 +1984,7 @@ void selectionAuthenticForceConsumesRetainsOnFailure()
     CHECK(!module.shortcutAuthenticStaged());
     CHECK(store.totalWrites() == writesAfterForce);
     for (const ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             CHECK(tuple.active == (QList<int>{777002}));
         }
     }
@@ -1994,7 +1994,7 @@ void selectionAuthenticForceConsumesRetainsOnFailure()
 
 int main(int argc, char **argv)
 {
-    qputenv("DBUS_SESSION_BUS_ADDRESS", QByteArray("unix:path=/dev/null/plasma-auto-tiler-kcm-test-isolated-bus"));
+    qputenv("DBUS_SESSION_BUS_ADDRESS", QByteArray("unix:path=/dev/null/omnitiler-kcm-test-isolated-bus"));
     QTemporaryDir configHome;
     if (!configHome.isValid()) {
         std::fprintf(stderr, "failed to create temporary config directory\n");

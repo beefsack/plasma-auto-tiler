@@ -22,51 +22,51 @@ const QDBusArgument &operator>>(const QDBusArgument &argument, QSet<QKeySequence
 // Bounded KCM shortcut-override backend/state machine.
 //
 // Closed ordered conflict-resolution table (only):
-//   row 0 relocate: kwin/plasma-auto-tiler-focus-right -> Meta+L post;
+//   row 0 relocate: kwin/omnitiler-focus-right -> Meta+L post;
 //     ksmserver/Lock Session Meta+L replaced by Meta+Esc post
-//   row 1 clear: kwin/plasma-auto-tiler-resize-outwards-up -> Meta+Alt+K;
+//   row 1 clear: kwin/omnitiler-resize-outwards-up -> Meta+Alt+K;
 //     KDE Keyboard Layout Switcher/Switch to Next Keyboard Layout cleared
-//   row 2 clear: kwin/plasma-auto-tiler-resize-outwards-right -> Meta+Alt+L;
+//   row 2 clear: kwin/omnitiler-resize-outwards-right -> Meta+Alt+L;
 //     KDE Keyboard Layout Switcher/Switch to Last-Used Keyboard Layout cleared
-//   row 3 clear: kwin/plasma-auto-tiler-resize-outwards-left-arrow -> Meta+Alt+Left;
+//   row 3 clear: kwin/omnitiler-resize-outwards-left-arrow -> Meta+Alt+Left;
 //     kwin/Switch Window Left cleared
-//   row 4 clear: kwin/plasma-auto-tiler-resize-outwards-down-arrow -> Meta+Alt+Down;
+//   row 4 clear: kwin/omnitiler-resize-outwards-down-arrow -> Meta+Alt+Down;
 //     kwin/Switch Window Down cleared
-//   row 5 clear: kwin/plasma-auto-tiler-resize-outwards-up-arrow -> Meta+Alt+Up;
+//   row 5 clear: kwin/omnitiler-resize-outwards-up-arrow -> Meta+Alt+Up;
 //     kwin/Switch Window Up cleared
-//   row 6 clear: kwin/plasma-auto-tiler-resize-outwards-right-arrow -> Meta+Alt+Right;
+//   row 6 clear: kwin/omnitiler-resize-outwards-right-arrow -> Meta+Alt+Right;
 //     kwin/Switch Window Right cleared
-//   row 7 clear: kwin/plasma-auto-tiler-toggle-float -> Meta+G;
+//   row 7 clear: kwin/omnitiler-toggle-float -> Meta+G;
 //     kwin/Grid View cleared
-//   row 8 clear: kwin/plasma-auto-tiler-toggle-maximize -> Meta+M;
+//   row 8 clear: kwin/omnitiler-toggle-maximize -> Meta+M;
 //     kwin/KrohnkiteMonocleLayout cleared
-//   row 9 clear: kwin/plasma-auto-tiler-focus-left-arrow -> Meta+Left;
+//   row 9 clear: kwin/omnitiler-focus-left-arrow -> Meta+Left;
 //     kwin/Window Quick Tile Left cleared
-//   row 10 clear: kwin/plasma-auto-tiler-focus-down-arrow -> Meta+Down;
+//   row 10 clear: kwin/omnitiler-focus-down-arrow -> Meta+Down;
 //     kwin/Window Quick Tile Bottom cleared
-//   row 11 clear: kwin/plasma-auto-tiler-focus-up-arrow -> Meta+Up;
+//   row 11 clear: kwin/omnitiler-focus-up-arrow -> Meta+Up;
 //     kwin/Window Quick Tile Top cleared
-//   row 12 clear: kwin/plasma-auto-tiler-focus-right-arrow -> Meta+Right;
+//   row 12 clear: kwin/omnitiler-focus-right-arrow -> Meta+Right;
 //     kwin/Window Quick Tile Right cleared
-//   row 13 clear: kwin/plasma-auto-tiler-move-left-arrow -> Meta+Shift+Left;
+//   row 13 clear: kwin/omnitiler-move-left-arrow -> Meta+Shift+Left;
 //     kwin/Window to Previous Screen cleared
-//   row 14 clear: kwin/plasma-auto-tiler-move-right-arrow -> Meta+Shift+Right;
+//   row 14 clear: kwin/omnitiler-move-right-arrow -> Meta+Shift+Right;
 //     kwin/Window to Next Screen cleared
-//   row 15 clear: kwin/plasma-auto-tiler-workspace-prev-left-arrow -> Meta+Ctrl+Left;
+//   row 15 clear: kwin/omnitiler-workspace-prev-left-arrow -> Meta+Ctrl+Left;
 //     kwin/Switch One Desktop to the Left cleared
-//   row 16 clear: kwin/plasma-auto-tiler-workspace-prev-up-arrow -> Meta+Ctrl+Up;
+//   row 16 clear: kwin/omnitiler-workspace-prev-up-arrow -> Meta+Ctrl+Up;
 //     kwin/Switch One Desktop Up cleared
-//   row 17 clear: kwin/plasma-auto-tiler-workspace-next-down-arrow -> Meta+Ctrl+Down;
+//   row 17 clear: kwin/omnitiler-workspace-next-down-arrow -> Meta+Ctrl+Down;
 //     kwin/Switch One Desktop Down cleared
-//   row 18 clear: kwin/plasma-auto-tiler-workspace-next-right-arrow -> Meta+Ctrl+Right;
+//   row 18 clear: kwin/omnitiler-workspace-next-right-arrow -> Meta+Ctrl+Right;
 //     kwin/Switch One Desktop to the Right cleared
-//   row 19 clear: kwin/plasma-auto-tiler-send-prev-left-arrow -> Meta+Ctrl+Shift+Left;
+//   row 19 clear: kwin/omnitiler-send-prev-left-arrow -> Meta+Ctrl+Shift+Left;
 //     kwin/Window One Desktop to the Left cleared
-//   row 20 clear: kwin/plasma-auto-tiler-send-prev-up-arrow -> Meta+Ctrl+Shift+Up;
+//   row 20 clear: kwin/omnitiler-send-prev-up-arrow -> Meta+Ctrl+Shift+Up;
 //     kwin/Window One Desktop Up cleared
-//   row 21 clear: kwin/plasma-auto-tiler-send-next-down-arrow -> Meta+Ctrl+Shift+Down;
+//   row 21 clear: kwin/omnitiler-send-next-down-arrow -> Meta+Ctrl+Shift+Down;
 //     kwin/Window One Desktop Down cleared
-//   row 22 clear: kwin/plasma-auto-tiler-send-next-right-arrow -> Meta+Ctrl+Shift+Right;
+//   row 22 clear: kwin/omnitiler-send-next-right-arrow -> Meta+Ctrl+Shift+Right;
 //     kwin/Window One Desktop to the Right cleared
 //
 // Uses only the KGlobalAccel D-Bus APIs proven on live Plasma 6.7.4:
@@ -268,7 +268,7 @@ inline const QString &shortcutFocusComponent()
 }
 inline const QString &shortcutFocusAction()
 {
-    static const QString value = QStringLiteral("plasma-auto-tiler-focus-right");
+    static const QString value = QStringLiteral("omnitiler-focus-right");
     return value;
 }
 inline const QString &shortcutLockComponent()
@@ -282,75 +282,75 @@ inline const QString &shortcutLockAction()
     return value;
 }
 inline const QString &shortcutResizeUpComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutResizeUpAction() { static const QString v = QStringLiteral("plasma-auto-tiler-resize-outwards-up"); return v; }
+inline const QString &shortcutResizeUpAction() { static const QString v = QStringLiteral("omnitiler-resize-outwards-up"); return v; }
 inline const QString &shortcutResizeRightComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutResizeRightAction() { static const QString v = QStringLiteral("plasma-auto-tiler-resize-outwards-right"); return v; }
+inline const QString &shortcutResizeRightAction() { static const QString v = QStringLiteral("omnitiler-resize-outwards-right"); return v; }
 inline const QString &shortcutSwitchNextComponent() { static const QString v = QStringLiteral("KDE Keyboard Layout Switcher"); return v; }
 inline const QString &shortcutSwitchNextAction() { static const QString v = QStringLiteral("Switch to Next Keyboard Layout"); return v; }
 inline const QString &shortcutSwitchLastComponent() { static const QString v = QStringLiteral("KDE Keyboard Layout Switcher"); return v; }
 inline const QString &shortcutSwitchLastAction() { static const QString v = QStringLiteral("Switch to Last-Used Keyboard Layout"); return v; }
 inline const QString &shortcutResizeLeftArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutResizeLeftArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-resize-outwards-left-arrow"); return v; }
+inline const QString &shortcutResizeLeftArrowAction() { static const QString v = QStringLiteral("omnitiler-resize-outwards-left-arrow"); return v; }
 inline const QString &shortcutSwitchLeftComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutSwitchLeftAction() { static const QString v = QStringLiteral("Switch Window Left"); return v; }
 inline const QString &shortcutResizeDownArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutResizeDownArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-resize-outwards-down-arrow"); return v; }
+inline const QString &shortcutResizeDownArrowAction() { static const QString v = QStringLiteral("omnitiler-resize-outwards-down-arrow"); return v; }
 inline const QString &shortcutSwitchDownComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutSwitchDownAction() { static const QString v = QStringLiteral("Switch Window Down"); return v; }
 inline const QString &shortcutResizeUpArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutResizeUpArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow"); return v; }
+inline const QString &shortcutResizeUpArrowAction() { static const QString v = QStringLiteral("omnitiler-resize-outwards-up-arrow"); return v; }
 inline const QString &shortcutSwitchUpComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutSwitchUpAction() { static const QString v = QStringLiteral("Switch Window Up"); return v; }
 inline const QString &shortcutResizeRightArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutResizeRightArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-resize-outwards-right-arrow"); return v; }
+inline const QString &shortcutResizeRightArrowAction() { static const QString v = QStringLiteral("omnitiler-resize-outwards-right-arrow"); return v; }
 inline const QString &shortcutSwitchRightComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutSwitchRightAction() { static const QString v = QStringLiteral("Switch Window Right"); return v; }
 inline const QString &shortcutFloatComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutFloatAction() { static const QString v = QStringLiteral("plasma-auto-tiler-toggle-float"); return v; }
+inline const QString &shortcutFloatAction() { static const QString v = QStringLiteral("omnitiler-toggle-float"); return v; }
 inline const QString &shortcutGridViewComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutGridViewAction() { static const QString v = QStringLiteral("Grid View"); return v; }
 inline const QString &shortcutMaximizeComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutMaximizeAction() { static const QString v = QStringLiteral("plasma-auto-tiler-toggle-maximize"); return v; }
+inline const QString &shortcutMaximizeAction() { static const QString v = QStringLiteral("omnitiler-toggle-maximize"); return v; }
 inline const QString &shortcutMonocleComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutMonocleAction() { static const QString v = QStringLiteral("KrohnkiteMonocleLayout"); return v; }
 inline const QString &shortcutFocusLeftArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutFocusLeftArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-focus-left-arrow"); return v; }
+inline const QString &shortcutFocusLeftArrowAction() { static const QString v = QStringLiteral("omnitiler-focus-left-arrow"); return v; }
 inline const QString &shortcutQuickTileLeftComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutQuickTileLeftAction() { static const QString v = QStringLiteral("Window Quick Tile Left"); return v; }
 inline const QString &shortcutFocusDownArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutFocusDownArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-focus-down-arrow"); return v; }
+inline const QString &shortcutFocusDownArrowAction() { static const QString v = QStringLiteral("omnitiler-focus-down-arrow"); return v; }
 inline const QString &shortcutQuickTileBottomComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutQuickTileBottomAction() { static const QString v = QStringLiteral("Window Quick Tile Bottom"); return v; }
 inline const QString &shortcutFocusUpArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutFocusUpArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-focus-up-arrow"); return v; }
+inline const QString &shortcutFocusUpArrowAction() { static const QString v = QStringLiteral("omnitiler-focus-up-arrow"); return v; }
 inline const QString &shortcutQuickTileTopComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutQuickTileTopAction() { static const QString v = QStringLiteral("Window Quick Tile Top"); return v; }
 inline const QString &shortcutFocusRightArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutFocusRightArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-focus-right-arrow"); return v; }
+inline const QString &shortcutFocusRightArrowAction() { static const QString v = QStringLiteral("omnitiler-focus-right-arrow"); return v; }
 inline const QString &shortcutQuickTileRightComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutQuickTileRightAction() { static const QString v = QStringLiteral("Window Quick Tile Right"); return v; }
 inline const QString &shortcutMoveLeftArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutMoveLeftArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-move-left-arrow"); return v; }
+inline const QString &shortcutMoveLeftArrowAction() { static const QString v = QStringLiteral("omnitiler-move-left-arrow"); return v; }
 inline const QString &shortcutToPrevScreenComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutToPrevScreenAction() { static const QString v = QStringLiteral("Window to Previous Screen"); return v; }
 inline const QString &shortcutMoveRightArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutMoveRightArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-move-right-arrow"); return v; }
+inline const QString &shortcutMoveRightArrowAction() { static const QString v = QStringLiteral("omnitiler-move-right-arrow"); return v; }
 inline const QString &shortcutToNextScreenComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutToNextScreenAction() { static const QString v = QStringLiteral("Window to Next Screen"); return v; }
 inline const QString &shortcutWorkspacePrevLeftArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutWorkspacePrevLeftArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-workspace-prev-left-arrow"); return v; }
+inline const QString &shortcutWorkspacePrevLeftArrowAction() { static const QString v = QStringLiteral("omnitiler-workspace-prev-left-arrow"); return v; }
 inline const QString &shortcutSwitchOneDesktopLeftComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutSwitchOneDesktopLeftAction() { static const QString v = QStringLiteral("Switch One Desktop to the Left"); return v; }
 inline const QString &shortcutWorkspacePrevUpArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutWorkspacePrevUpArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-workspace-prev-up-arrow"); return v; }
+inline const QString &shortcutWorkspacePrevUpArrowAction() { static const QString v = QStringLiteral("omnitiler-workspace-prev-up-arrow"); return v; }
 inline const QString &shortcutSwitchOneDesktopUpComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutSwitchOneDesktopUpAction() { static const QString v = QStringLiteral("Switch One Desktop Up"); return v; }
 inline const QString &shortcutWorkspaceNextDownArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutWorkspaceNextDownArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-workspace-next-down-arrow"); return v; }
+inline const QString &shortcutWorkspaceNextDownArrowAction() { static const QString v = QStringLiteral("omnitiler-workspace-next-down-arrow"); return v; }
 inline const QString &shortcutSwitchOneDesktopDownComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutSwitchOneDesktopDownAction() { static const QString v = QStringLiteral("Switch One Desktop Down"); return v; }
 inline const QString &shortcutWorkspaceNextRightArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
-inline const QString &shortcutWorkspaceNextRightArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-workspace-next-right-arrow"); return v; }
+inline const QString &shortcutWorkspaceNextRightArrowAction() { static const QString v = QStringLiteral("omnitiler-workspace-next-right-arrow"); return v; }
 inline const QString &shortcutSwitchOneDesktopRightComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutSwitchOneDesktopRightAction() { static const QString v = QStringLiteral("Switch One Desktop to the Right"); return v; }
 inline const QString &shortcutWindowOneDesktopLeftComponent() { static const QString v = QStringLiteral("kwin"); return v; }
@@ -579,7 +579,7 @@ struct ShortcutForceApplyResult
 };
 
 // Bounded structured diagnostics through QLoggingCategory
-// "plasmaautotiler.shortcut" (visible in the kcmshell6/System Settings
+// "omnitiler.shortcut" (visible in the kcmshell6/System Settings
 // journald log). Only safe fields are ever logged: operation, stage,
 // outcome, allowlisted component/action identity, and key images. Logging
 // never affects behavior: the sink is void, exceptions are swallowed, and
@@ -760,7 +760,7 @@ public:
     ShortcutApplyResult applySelected(const QSet<QString> &disabledIds);
     ShortcutApplyResult applySelected(const QSet<QString> &disabledIds, bool authenticStaged);
     // Revert restores defaults for every non-project ID in the durable
-    // cleared list (project-owned kwin/plasma-auto-tiler-* IDs, including
+    // cleared list (project-owned kwin/omnitiler-* IDs, including
     // legacy ones, stay cleared) and empties the list only after all of
     // them are restored. Each persisted ID is resolved to its fresh
     // current tuple from readAll to supply the current friendly labels
@@ -805,9 +805,9 @@ public:
     // Current project-owned action: any full-catalog project row. Never
     // cleared by Force, never restored by Revert.
     static bool isProjectAction(const QString &component, const QString &action);
-    // Any own-prefix action: kwin/plasma-auto-tiler-*, covering the current
-    // project rows and legacy IDs (e.g. plasma-auto-tiler-float-toggle,
-    // plasma-auto-tiler-toggle). Force may clear them; Revert leaves them
+    // Any own-prefix action: kwin/omnitiler-*, covering the current
+    // project rows and legacy IDs (e.g. omnitiler-float-toggle,
+    // omnitiler-toggle). Force may clear them; Revert leaves them
     // cleared.
     static bool isProjectOwned(const QString &component, const QString &action);
     static bool isLockAction(const QString &component, const QString &action);

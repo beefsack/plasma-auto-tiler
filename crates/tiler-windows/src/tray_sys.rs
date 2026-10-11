@@ -25,9 +25,9 @@
 //! no live icon can be disturbed). The single-owner ledger lease guarantees
 //! at most one live owner (hence at most one live icon).
 //!
-//! Stable automation surface: window class `PlasmaAutoTilerTray`, menu ids
+//! Stable automation surface: window class `OmniTilerTray`, menu ids
 //! 1001 (conflict), 1003 (Settings), 1004 (Stop), first-run prompt title
-//! `Plasma Auto-Tiler - First Run`.
+//! `OmniTiler - First Run`.
 //!
 //! GUID cross-process semantics (Microsoft Learn, `NOTIFYICONDATAW` plus the
 //! `NotificationIcon` classic sample): once an icon is added with `NIF_GUID`

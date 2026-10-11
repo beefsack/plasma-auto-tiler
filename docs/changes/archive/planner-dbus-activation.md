@@ -7,7 +7,7 @@ changing the public `engineAuthorityMode=legacy` default.
 
 ## Scope
 
-- Package `plasma-auto-tiler planner-service` with a session D-Bus activation
+- Package `omnitiler planner-service` with a session D-Bus activation
   descriptor and Home Manager-owned user `systemd` `Type=dbus` unit.
 - Make selected KWin Rust adapters request one bounded activation before their
   existing unique-owner pin and planner request when the Planner name is absent.
@@ -22,7 +22,7 @@ changing the public `engineAuthorityMode=legacy` default.
 
 ## Acceptance
 
-- The activation descriptor names `org.plasmaautotiler.Planner` and links the
+- The activation descriptor names `com.omnitiler.Planner` and links the
   exact user unit; that unit uses an immutable package `ExecStart`, `Type=dbus`,
   the exact `BusName`, no shell, and bounded failure restart behavior.
 - Home Manager owns the user-session files and package discovery. Its explicit

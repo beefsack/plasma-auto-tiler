@@ -391,7 +391,7 @@ describe("G-06 isolated maximized move through production entry + real Planner",
             }
             assert.ok(h.logs.some((l) => l.includes("move-maximize-clear") && l.includes("outcome=invoked")), "clear invoked logged");
             assert.ok(h.logs.some((l) => l.includes("outcome=observed-cleared")), "observed clear logged");
-            assert.ok(h.logs.includes("plasma-auto-tiler:plan:maximize-admission-echo-consumed"), "synchronous signal consumes the echo");
+            assert.ok(h.logs.includes("omnitiler:plan:maximize-admission-echo-consumed"), "synchronous signal consumes the echo");
             // Real Planner reply: ordinary local move applies and settles.
             await h.flushAll();
             const moves = moveOps(h);

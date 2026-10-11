@@ -2,15 +2,15 @@
 # Builds the offline KDE 0.1 source archive from a tracked release tag.
 #
 # Archive contract (for the distro/OBS packaging worker):
-#   - File:   dist/plasma-auto-tiler-<VERSION>.tar.gz
-#             plus sidecar dist/plasma-auto-tiler-<VERSION>.tar.gz.sha256
+#   - File:   dist/omnitiler-<VERSION>.tar.gz
+#             plus sidecar dist/omnitiler-<VERSION>.tar.gz.sha256
 #             ("<digest>  <basename>", same shape as build-kpackage.sh).
 #   - The archive extracts to exactly one top-level directory:
-#             plasma-auto-tiler-<VERSION>/
+#             omnitiler-<VERSION>/
 #   - Contents: the exact tracked source at tag v<VERSION> (via git archive)
 #     plus only these generated additions:
 #       kwin/contents/code/main.js   prebuilt KWin bundle with the tag commit
-#                                    SHA baked in as PLASMA_AUTO_TILER_SOURCE_REV
+#                                    SHA baked in as OMNITILER_SOURCE_REV
 #       vendor/                      cargo vendor output for fully offline Rust builds
 #       VERSION                      <VERSION> (e.g. 0.1.0)
 #       SOURCE_REV                   full commit SHA of the tag
@@ -20,13 +20,13 @@
 #       core Rust:  cargo --locked --offline with source replacement, e.g.
 #         cargo --config 'source.crates-io.replace-with="vendored-sources"' \
 #               --config 'source.vendored-sources.directory="<abs path>/vendor"' \
-#               build --locked --offline -p plasma-auto-tiler
+#               build --locked --offline -p omnitiler
 #       native CMake: kwin/native-effect/CMakeLists.txt applies the same
-#         replacement automatically when PLASMA_AUTO_TILER_VENDOR_DIR points at
+#         replacement automatically when OMNITILER_VENDOR_DIR points at
 #         the archive vendor/ directory; also export CARGO_NET_OFFLINE=true.
 #       KWin script: install kwin/contents/code/main.js directly, no npm needed.
 #         scripts/build-kpackage.sh skips its npm build step when
-#         PLASMA_AUTO_TILER_PREBUILT_BUNDLE=1.
+#         OMNITILER_PREBUILT_BUNDLE=1.
 #   - Build identity: the tag must be vX.Y.Z and match kwin/package.json plus
 #     every workspace crate version. The baked SOURCE_REV is the tag commit
 #     SHA, never the tag name: kwin/src/source-rev.ts only accepts 40/64
@@ -91,7 +91,7 @@ NPM_VERSION="$(tagged_version kwin/package.json | node -e "let d='';process.stdi
   || die "tagged kwin/package.json has no usable version"
 [[ "$NPM_VERSION" == "$VERSION" ]] \
   || die "tagged kwin/package.json version $NPM_VERSION does not match tag $TAG"
-for member in tiler-core tiler-protocol plasma-auto-tiler tiler-kwin-effect-ffi tiler-windows; do
+for member in tiler-core tiler-protocol omnitiler tiler-kwin-effect-ffi tiler-windows; do
   CRATE_VERSION="$(tagged_version "crates/$member/Cargo.toml" | grep -E '^version = "' | head -n 1 | sed -E 's/^version = "(.*)"$/\1/')"
   [[ "$CRATE_VERSION" == "$VERSION" ]] \
     || die "tagged crates/$member/Cargo.toml version '${CRATE_VERSION:-missing}' does not match tag $TAG"
@@ -100,7 +100,7 @@ done
 mkdir -p -- "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd -- "$OUTPUT_DIR" && pwd -P)"
 
-TOP_DIR="plasma-auto-tiler-$VERSION"
+TOP_DIR="omnitiler-$VERSION"
 ARCHIVE_NAME="$TOP_DIR.tar.gz"
 ARCHIVE_OUTPUT="$OUTPUT_DIR/$ARCHIVE_NAME"
 SIDECAR_OUTPUT="$OUTPUT_DIR/$ARCHIVE_NAME.sha256"
@@ -165,7 +165,7 @@ command -v -- cargo >/dev/null 2>&1 || die "required tool 'cargo' not found in P
 
 # Prebuilt KWin bundle with the tag commit SHA baked in as build identity.
 npm ci --prefix "$TREE/kwin" --no-audit --no-fund || die "npm ci failed for tagged kwin source"
-PLASMA_AUTO_TILER_SOURCE_REV="$TAG_SHA" npm --prefix "$TREE/kwin" run build:installed \
+OMNITILER_SOURCE_REV="$TAG_SHA" npm --prefix "$TREE/kwin" run build:installed \
   || die "prebuilt KWin bundle build failed"
 BUNDLE="$TREE/kwin/contents/code/main.js"
 [[ -f "$BUNDLE" && ! -L "$BUNDLE" ]] || die "prebuilt KWin bundle missing after build"
@@ -189,7 +189,7 @@ replace-with = "vendored-sources"
 directory = "$VENDOR_ABS"
 EOF
 (cd -- "$TREE" && CARGO_HOME="$CARGO_HOME_TMP" CARGO_NET_OFFLINE=true \
-  cargo build --locked --offline -p plasma-auto-tiler -p tiler-kwin-effect-ffi \
+  cargo build --locked --offline -p omnitiler -p tiler-kwin-effect-ffi \
   --target-dir "$TARGET_TMP") || die "offline Rust self-check build failed"
 
 printf '%s\n' "$VERSION" > "$TREE/VERSION"

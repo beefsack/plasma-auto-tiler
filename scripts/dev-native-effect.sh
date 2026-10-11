@@ -13,15 +13,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-REPO_ROOT="${PLASMA_AUTO_TILER_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
-STAGE="${PLASMA_AUTO_TILER_NATIVE_STAGE:-$REPO_ROOT/target/kwin-native-effect-stage}"
+REPO_ROOT="${OMNITILER_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
+STAGE="${OMNITILER_NATIVE_STAGE:-$REPO_ROOT/target/kwin-native-effect-stage}"
 CONFIG_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}"
-ENV_FILE="$CONFIG_ROOT/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+ENV_FILE="$CONFIG_ROOT/plasma-workspace/env/60-omnitiler-native-effect.sh"
 PROC_ROOT="${PROC_ROOT:-/proc}"
 
-BORDER_EFFECT="plasma-auto-tiler-active-border"
-EFFECT_KCM="plasma-auto-tiler-active-border_config"
-SCRIPT_KCM="plasma-auto-tiler-kwin_config"
+BORDER_EFFECT="omnitiler-active-border"
+EFFECT_KCM="omnitiler-active-border_config"
+SCRIPT_KCM="omnitiler-kwin_config"
 
 BORDER_SO="$STAGE/kwin/effects/plugins/$BORDER_EFFECT.so"
 EFFECT_KCM_SO="$STAGE/kwin/effects/configs/$EFFECT_KCM.so"
@@ -110,7 +110,7 @@ cmd_setup() {
     exit 1
   fi
   local tmp
-  tmp="$(mktemp "$(dirname -- "$ENV_FILE")/.60-plasma-auto-tiler-native-effect.XXXXXX")" || {
+  tmp="$(mktemp "$(dirname -- "$ENV_FILE")/.60-omnitiler-native-effect.XXXXXX")" || {
     echo "error: could not create temp env script" >&2
     exit 1
   }

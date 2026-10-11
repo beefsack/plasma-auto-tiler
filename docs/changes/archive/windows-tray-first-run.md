@@ -117,7 +117,7 @@
   `72B6E5A00FA945058E9F85D1676276C77FB336D6B7F8DBD61D9A72D94F2C112C`.
 - Implementation and decisions committed/pushed as `60fd7bb`; all hosted CI
   jobs green (Windows native, Linux Rust/KWin/shell, macOS tooling):
-  <https://github.com/beefsack/plasma-auto-tiler/actions/runs/37175689240>.
+  <https://github.com/beefsack/omnitiler/actions/runs/37175689240>.
   Accepted evidence complete; record archived. No implementation next action.
 
 ## Residual user-owned checks

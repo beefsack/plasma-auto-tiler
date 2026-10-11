@@ -13,7 +13,7 @@
 //! with shifted-symbol aliases), and `kwin/src/domain-gap.ts`
 //! (`innerGap`/`outerGap` default 8 each, bounded 0..64).
 //!
-//! The file lives at `%LOCALAPPDATA%\plasma-auto-tiler\settings.json`
+//! The file lives at `%LOCALAPPDATA%\omnitiler\settings.json`
 //! (known-folder root, no session suffix). Reads are bounded; writes are
 //! validated then atomically replaced with the existing Win32
 //! `MoveFileExW` replace pattern (see [`crate::storage`]). A malformed or

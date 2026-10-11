@@ -37,7 +37,7 @@ logging for remaining snapshot diagnostics.
   counter; successive same-chord callbacks advance it.
 - A successful retained remove then admit followed by a well-formed move
   reproduces successfully. No retained membership inconsistency was found.
-  `PLASMA_AUTO_TILER_PLANNER_VERBOSE=1` logs full request and reply JSON to
+  `OMNITILER_PLANNER_VERBOSE=1` logs full request and reply JSON to
   Planner stderr, captured in the dev Planner log. `just dev verbose` sets
   that environment variable for its launch.
 - Evidence: `cargo build`, `cargo test` (221 library tests plus all integration

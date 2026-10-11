@@ -36,18 +36,18 @@ if(ERROR OR NOT PLUGIN_ID STREQUAL EXPECTED_PLUGIN_ID)
     message(FATAL_ERROR "metadata validation failed: KPlugin/Id '${PLUGIN_ID}' does not match expected '${EXPECTED_PLUGIN_ID}'")
 endif()
 
-# One plugin visibly branded Plasma Auto Tiler; the stable plugin,
+# One plugin visibly branded OmniTiler; the stable plugin,
 # KCM, and config identifiers never change.
 string(JSON PLUGIN_NAME ERROR_VARIABLE ERROR GET "${METADATA}" "KPlugin" "Name")
-if(ERROR OR NOT PLUGIN_NAME STREQUAL "Plasma Auto Tiler")
-    message(FATAL_ERROR "metadata validation failed: KPlugin/Name '${PLUGIN_NAME}' must be the visible 'Plasma Auto Tiler' brand")
+if(ERROR OR NOT PLUGIN_NAME STREQUAL "OmniTiler")
+    message(FATAL_ERROR "metadata validation failed: KPlugin/Name '${PLUGIN_NAME}' must be the visible 'OmniTiler' brand")
 endif()
-if(PLUGIN_ID STREQUAL "plasma-auto-tiler-drag-oracle")
+if(PLUGIN_ID STREQUAL "omnitiler-drag-oracle")
     message(FATAL_ERROR "metadata validation failed: the standalone drag-oracle plugin id must not survive consolidation")
 endif()
 
 string(JSON CONFIG_MODULE ERROR_VARIABLE ERROR GET "${METADATA}" "X-KDE-ConfigModule")
-if(ERROR OR NOT CONFIG_MODULE STREQUAL "plasma-auto-tiler-active-border_config")
+if(ERROR OR NOT CONFIG_MODULE STREQUAL "omnitiler-active-border_config")
     message(FATAL_ERROR "metadata validation failed: X-KDE-ConfigModule must route to the native KCM plugin")
 endif()
 
@@ -60,7 +60,7 @@ foreach(FIELD IN LISTS REQUIRED_KCM_FIELDS)
 endforeach()
 
 string(JSON KCM_ID ERROR_VARIABLE ERROR GET "${KCM_METADATA}" "KPlugin" "Id")
-if(ERROR OR NOT KCM_ID STREQUAL "plasma-auto-tiler-active-border_config")
+if(ERROR OR NOT KCM_ID STREQUAL "omnitiler-active-border_config")
     message(FATAL_ERROR "KCM metadata validation failed: KPlugin/Id must match the configured module plugin")
 endif()
 
@@ -185,7 +185,7 @@ foreach(GROUP_METHOD SetGroupHighlight ClearGroupHighlight GetGroupHighlightStat
         message(FATAL_ERROR "group-highlight D-Bus validation failed: ${GROUP_METHOD} not found")
     endif()
 endforeach()
-foreach(GROUP_ENDPOINT "org.plasmaautotiler.ActiveBorder" "/org/plasmaautotiler/ActiveBorder" "org.plasmaautotiler.ActiveBorder1" "ExportScriptableContents" "sessionBus" "unregisterObject" "unregisterService")
+foreach(GROUP_ENDPOINT "com.omnitiler.ActiveBorder" "/com/omnitiler/ActiveBorder" "com.omnitiler.ActiveBorder1" "ExportScriptableContents" "sessionBus" "unregisterObject" "unregisterService")
     string(FIND "${GROUP_IMPL_TEXT}" "${GROUP_ENDPOINT}" GROUP_ENDPOINT_POS)
     if(GROUP_ENDPOINT_POS EQUAL -1)
         message(FATAL_ERROR "group-highlight endpoint validation failed: '${GROUP_ENDPOINT}' not found")
@@ -295,7 +295,7 @@ file(READ "${DRAG_IMPL}" DRAG_IMPL_TEXT)
 file(READ "${DRAG_FFI}" DRAG_FFI_TEXT)
 file(READ "${DRAG_RUST}" DRAG_RUST_TEXT)
 
-foreach(DRAG_ENDPOINT "org.plasmaautotiler.DragOracle" "/org/plasmaautotiler/DragOracle" "org.plasmaautotiler.DragOracle1" "LastVerdict" "ExportScriptableContents" "unregisterObject" "unregisterService")
+foreach(DRAG_ENDPOINT "com.omnitiler.DragOracle" "/com/omnitiler/DragOracle" "com.omnitiler.DragOracle1" "LastVerdict" "ExportScriptableContents" "unregisterObject" "unregisterService")
     string(FIND "${DRAG_IMPL_TEXT}" "${DRAG_ENDPOINT}" DRAG_ENDPOINT_POS)
     if(DRAG_ENDPOINT_POS EQUAL -1)
         message(FATAL_ERROR "drag-oracle endpoint validation failed: '${DRAG_ENDPOINT}' not found in survivor implementation")

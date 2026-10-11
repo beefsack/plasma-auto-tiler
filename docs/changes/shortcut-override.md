@@ -21,9 +21,9 @@ Revert restores KDE defaults for cleared non-project actions.
   are preserved. Revert restores the full KDE default set for non-project
   cleared actions via `defaultShortcutKeys`/`setForeignShortcutKeys`;
   custom cleared bindings are lost (user-accepted). Project-owned IDs
-  (`kwin/plasma-auto-tiler-*`, current and legacy) stay cleared.
+  (`kwin/omnitiler-*`, current and legacy) stay cleared.
 - Durable state is the minimal cleared component/action ID list at
-  `~/.config/plasma-auto-tiler/shortcut-clearedrc` (Components+Actions
+  `~/.config/omnitiler/shortcut-clearedrc` (Components+Actions
   only, no cosmetic labels), union-persisted by ID BEFORE Force clearing
   and emptied only after successful Revert. Force preview transient
   labels are never persisted. Revert resolves each persisted ID to its
@@ -57,10 +57,10 @@ Revert restores KDE defaults for cleared non-project actions.
 - Revert on an empty list is a no-op success; partial failure retains the
   list for resume, including absent/duplicate-ID resolution failures with
   zero unrelated writes. Owner drift fails closed.
-- Bounded structured diagnostics on `plasmaautotiler.shortcut` only
+- Bounded structured diagnostics on `omnitiler.shortcut` only
   (`op=`, `stage=`, `outcome=`, allowlisted identity, key images); foreign
   occupants redacted, logging never gates behavior. Query with
-  `journalctl --user --no-pager -g "plasmaautotiler.shortcut op="`.
+  `journalctl --user --no-pager -g "omnitiler.shortcut op="`.
 - KCM: Force Apply/Cancel appear only for a pending preview; Cancel discards
   without writes; Revert confirms the recorded cleared count and the loss of
   custom bindings. No Finish/Restore controls.

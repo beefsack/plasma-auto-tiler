@@ -139,7 +139,7 @@
   passes. One mechanical formatting reflow, then clean. Earlier `051706`
   key-name oracle repair stands as prior history.
 - Independent review: HWND-reuse stale membership fixed via same-process
-  visible lifetime property `PlasmaAutoTilerMember` plus token reissue;
+  visible lifetime property `OmniTilerMember` plus token reissue;
   effect tag gates; hidden claims carry a separate nonce; scope send runs
   pre-Engine/fresh host-child effect fences; atomic publish no-overwrite
   reviewed and upheld. Uncertainty claims stay durably recoverable.

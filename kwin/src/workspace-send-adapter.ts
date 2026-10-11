@@ -50,7 +50,7 @@
 // `target-mismatch` is a drifted output-send destination; `transfer-unavailable`
 // is missing output-transfer capabilities. Pre-flight refusals
 // (scope-invalid plus the requestSend validation tokens above) log one
-// structured best-effort `plasma-auto-tiler:route-diag` line and return false
+// structured best-effort `omnitiler:route-diag` line and return false
 // with the adapter still enabled, so a later valid send can proceed.
 //
 // All logs carry fixed fields (component, stage, correlation, generation,
@@ -59,9 +59,9 @@
 import { DOMAIN_GAP_DEFAULT, DomainGaps, normalizeGap, OUTER_DOMAIN_GAP_DEFAULT, readDomainGaps } from "./domain-gap";
 import { orderGeometryWrites } from "./geometry-order";
 
-export const WORKSPACE_SEND_SERVICE = "org.plasmaautotiler.Planner";
-export const WORKSPACE_SEND_OBJECT = "/org/plasmaautotiler/Planner";
-export const WORKSPACE_SEND_INTERFACE = "org.plasmaautotiler.Planner1";
+export const WORKSPACE_SEND_SERVICE = "com.omnitiler.Planner";
+export const WORKSPACE_SEND_OBJECT = "/com/omnitiler/Planner";
+export const WORKSPACE_SEND_INTERFACE = "com.omnitiler.Planner1";
 export const WORKSPACE_SEND_METHOD = "DescribePlan";
 
 // Session D-Bus activation transport (one-flight, bounded, no poll/retry).
@@ -104,7 +104,7 @@ export const WORKSPACE_SEND_MAX_SEQ = 1000000;
 
 export const WORKSPACE_SEND_COMPONENT = "cosmic-send";
 
-const LOG_PREFIX = "plasma-auto-tiler:route-diag";
+const LOG_PREFIX = "omnitiler:route-diag";
 
 export interface WorkspaceSendRect {
     readonly x: number;

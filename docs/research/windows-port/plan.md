@@ -470,7 +470,7 @@ download of the same MSIX still needs its own trusted signature [V: W20].
 identity stable across EXE, installer and update metadata.
 
 [I: `docs/principles.md:50-66`, W29] Write bounded structured `tracing`
-summaries under `%LOCALAPPDATA%\plasma-auto-tiler\logs`; enable redacted
+summaries under `%LOCALAPPDATA%\omnitiler\logs`; enable redacted
 event detail with `trace`. Correlate command, observation, setter, readback
 and recovery; distinguish dispatch, acceptance, application and uncertainty.
 Exclude titles, app content, raw HWND/process IDs, executable paths and

@@ -1194,14 +1194,14 @@ Legend:
 - `D-min-games` [minimums and game admission](../research/cross-platform-core/post-windows-audit.md#2026-10-05-follow-up-q2-minimum-infeasibility--q3-games)
   (2026-10-05 current project source and pinned upstream comparison;
   unsupported exact native outcomes remain TBD, not inferred from source policy)
-- `S-ours-toggle` plasma-auto-tiler:kwin/src/plan-adapter.ts:2873-2899,4793-4801
+- `S-ours-toggle` omnitiler:kwin/src/plan-adapter.ts:2873-2899,4793-4801
   and crates/tiler-windows/src/tiling_sys.rs:6482-6491 @ad6d69c
   (persistent KDE attempted-state fence vs discrete Windows dispatch;
   source paths, not physical repeat-delivery proof)
-- `S-ours-fs-exit` plasma-auto-tiler:kwin/src/plan-adapter.ts:2926-2938
+- `S-ours-fs-exit` omnitiler:kwin/src/plan-adapter.ts:2926-2938
   and crates/tiler-windows/src/tiling.rs:635-677 @ad6d69c
   (public KDE fullscreen setter vs Windows project-preimage exit gate)
-- `S-ours-ovref` overlay isolation parity: plasma-auto-tiler:
+- `S-ours-ovref` overlay isolation parity: omnitiler:
   crates/tiler-windows/src/tiling.rs:377-394 (`overlay_refusal` for
   directional/pointer routes; focus carries no write and stays allowed) +
   crates/tiler-windows/src/tiling_sys.rs:5983-5998 (maximized focused
@@ -1209,23 +1209,23 @@ Legend:
   2538-2563 (KDE focus-exempt fullscreen/maximize isolation with carried
   applied rects)
   @9241c94
-- `S-ours-winsend` plasma-auto-tiler:crates/tiler-windows/src/
+- `S-ours-winsend` omnitiler:crates/tiler-windows/src/
   tiling_sys.rs:10532-10548 (tiled-to-tiled Engine send with source reflow
   and follow) and :10720-10731 (tiled maximized member sends; fullscreen
   mover refuses with no writes) and :10883-10910 (retained maximized
   mover proceeds with flag recheck; target allocation kept, overlay
   geometry never writes)
   @9241c94
-- `S-ours-send-boundary` plasma-auto-tiler:kwin/src/plan-adapter.ts:661-666
+- `S-ours-send-boundary` omnitiler:kwin/src/plan-adapter.ts:661-666
   (retired `isSendActive` coordination hook only; R4 cross-output still
   writes `setDesktops` per :7778) + kwin/src/workspace-send-adapter.ts:1-9
   (standalone same-output prototype is dev-only, not a production route;
   the host-native desktop-send journey remains untraced)
   @9241c94
-- `S-ours-sticky-restart` plasma-auto-tiler:kwin/src/plan-adapter.ts:3007-3036
+- `S-ours-sticky-restart` omnitiler:kwin/src/plan-adapter.ts:3007-3036
   and crates/tiler-windows/src/tiling_sys.rs:8867-8898,8981-8999 @ad6d69c
   (native-sticky unknown-float adoption vs marker consumption into normal float)
-- `S-ours-overlay-unfloat` plasma-auto-tiler:kwin/src/plan-adapter.ts:2815-2841,7645-7648,7750-7765
+- `S-ours-overlay-unfloat` omnitiler:kwin/src/plan-adapter.ts:2815-2841,7645-7648,7750-7765
   and crates/tiler-windows/src/tiling.rs:395-410,
   crates/tiler-windows/src/tiling_sys.rs:7788-7813 @ad6d69c
   (KDE floating target bypasses overlay dispatch refusal; Windows refuses;
@@ -1698,7 +1698,7 @@ Legend:
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
   (removal and nearest-center policy; exact focus target stays TBD
   where stated)
-- `S-ours-close` plasma-auto-tiler:crates/tiler-core/src/session.rs:2163-2230
+- `S-ours-close` omnitiler:crates/tiler-core/src/session.rs:2163-2230
   (`remove_leaf_from_tree`/`remove_node` collapse with proportional
   shares) and crates/tiler-core/src/session/ops/lifecycle.rs:450-485
   (`propose_remove` focus-stack fallback, unfocused removal preserves
@@ -1792,12 +1792,12 @@ Legend:
   (`doFullFloat` fullscreen float `RationalRect 0 0 1 1`, `doSink`)
   @5097a457e7a409bc9a7584dc5aa82b34c69d6dda
   (event-path fullscreen only; `ewmh` alone excludes fullscreen handling)
-- `S-ours-flt-target` plasma-auto-tiler:crates/tiler-core/src/session/world.rs:769-835
+- `S-ours-flt-target` omnitiler:crates/tiler-core/src/session/world.rs:769-835
   and crates/tiler-core/src/directional.rs:1108-1135
   @2bdd944536fa2608f60b68686f8ec57d61663726
   (floating windows hold exceptions, not tile leaves; directional focus
   selects only tree siblings/descendants)
-- `S-ours-flt-subject` plasma-auto-tiler:kwin/src/plan-adapter-entry.ts:1697,
+- `S-ours-flt-subject` omnitiler:kwin/src/plan-adapter-entry.ts:1697,
   kwin/src/plan-adapter.ts:2155-2200,2639-2645 and
   crates/tiler-windows/src/tiling_sys.rs:5904-5954
   @2bdd944536fa2608f60b68686f8ec57d61663726
@@ -1974,7 +1974,7 @@ Legend:
   0.25-2.0) and :799-808 (focus-follows-mouse and mouse-follows-focus
   enabled) and :822-828 (native tabs enabled) and :856-862 (one workspace,
   append admission) @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
-- `S-ours-ins` plasma-auto-tiler:crates/tiler-core/src/session.rs:2124-2161
+- `S-ours-ins` omnitiler:crates/tiler-core/src/session.rs:2124-2161
   (`insert_tiled`: empty tree returns the single new leaf; focused leaf
   wraps old/new in an ordered binary group, no same-axis N-ary append) and
   crates/tiler-core/src/cosmic_v1.rs:63-69 (`admission_axis`: wide selects
@@ -1986,7 +1986,7 @@ Legend:
   (`admit_managed_claim` managed-claim gate) @9241c94
   (shared Engine plus adapter integration; newcomer focus, order, and exact
   frames are separate TBD sub-legs, never read from this tag)
-- `S-ours-admit` plasma-auto-tiler:crates/tiler-core/src/session/world.rs:529-545
+- `S-ours-admit` omnitiler:crates/tiler-core/src/session/world.rs:529-545
   (`eligible_focus_in`: anchor is the focused leaf only when the focused
   domain is the target domain and the leaf is still a linked tile leaf) and
   crates/tiler-core/src/session/ops/lifecycle.rs:249 (normal admission
@@ -2318,7 +2318,7 @@ Legend:
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
   (host-observed focus follow with guards; activation/urgency marker
   policy stays host-owned)
-- `S-ours-focus` plasma-auto-tiler:crates/tiler-core/src/directional.rs:50-64
+- `S-ours-focus` omnitiler:crates/tiler-core/src/directional.rs:50-64
   (axis/step for direction) and :1068-1135 (`descend_focus_target`
   plus `plan_focus`: matching-axis climb, same-axis edge child else
   perpendicular first child, exhausted edges `Edge`; targets are
@@ -2411,7 +2411,7 @@ Legend:
   src/con.c:2580-2659 (`con_swap` leaf exchange)
   @903bcd518df32b0e055b17f5da3f988a0187fd3d
   (targeted swap only; directional swap has no counterpart)
-- `S-ours-move` plasma-auto-tiler:crates/tiler-core/src/directional.rs:786-929
+- `S-ours-move` omnitiler:crates/tiler-core/src/directional.rs:786-929
   (`plan_local`: perpendicular R1 wrap, 2-child R2a leaf swap, R2b
   group insert/split, N-ary R2c wrap, R3 escape with same-axis insert
   vs R1 continuation) and :945-1021 (`plan_move_with_capabilities`:
@@ -2889,14 +2889,14 @@ Legend:
   equality, so fixed-hint fixtures cannot classify; rule-assigned float
   only; app-owned geometry observed with no re-float)
 - `S-ours-spc-kde` KDE observer gate at this HEAD:
-  plasma-auto-tiler:kwin/src/plan-adapter-entry.ts:781 (non-`normalWindow`
+  omnitiler:kwin/src/plan-adapter-entry.ts:781 (non-`normalWindow`
   snapshots skipped before observation) + kwin/src/kwin-globals.d.ts:131
   (`normalWindow` is KWin `src/window.h` state)
   @f0969090a810ce85937728630f9b69ed2601dbe9
   (kind gate only; dialog/splash/utility type-eligibility mapping is
   untraced with no pinned KWin source in-repo, so typed fixtures stay TBD)
 - `S-ours-spc-win` Windows candidate gates at this HEAD:
-  plasma-auto-tiler:crates/tiler-windows/src/tiling_sys.rs:163-166
+  omnitiler:crates/tiler-windows/src/tiling_sys.rs:163-166
   (unowned `#32770` dialogs never tile targets; owned ones excluded as
   owned) and :3656-3666 (shell/dialog-class plus owner plus
   tool/no-activate exclusion) and :3785-3794
@@ -2907,7 +2907,7 @@ Legend:
   (owned/dialog/tool/no-activate exclusion plus hint carrying; PiP and
   standalone-splash eligibility stay TBD)
 - `S-ours-resize`
-  plasma-auto-tiler:crates/tiler-core/src/session/ops/resize.rs:9-48
+  omnitiler:crates/tiler-core/src/session/ops/resize.rs:9-48
   (nearest matching-edge-axis ancestor, adjacent shares only, Unchanged
   refusal) and :49 (`propose_resize`) and :160-183 (step derivation via
   `derive_keyboard_pixel_shares` into `apply_resize_shares`; Unchanged and
@@ -2925,7 +2925,7 @@ Legend:
   @9241c94
   (shared Engine plus KDE adapter dispatch; no equalize verb in either
   inventory)
-- `S-ours-winbind` plasma-auto-tiler:crates/tiler-windows/src/settings.rs:773-775
+- `S-ours-winbind` omnitiler:crates/tiler-windows/src/settings.rs:773-775
   (resize rows `implemented: false`) and :1892-1898 (resize rows are the
   only unimplemented ones) and :1167,1216 (unimplemented guards) +
   crates/tiler-windows/src/settings_ui.rs:284-287 (keyboard
@@ -2948,7 +2948,7 @@ Legend:
   | Given | When | Ours Windows | Unsupported outcome |
   | --- | --- | --- | --- |
   | Default resize rows; Windows chord ownership unknown | Apply Compatible, then Authentic | Both keep Win+Alt and Win+Shift+Alt resize defaults with unknown-ownership / unproven-containment notes; Compatible disables known conflicts only (2026-10-11, base `f794cf9` + delivery commit, preset fixtures) | Actual foreign owner and physical OS containment TBD |
-- `S-ours-mou` plasma-auto-tiler:crates/tiler-windows/src/tiling_sys.rs:13017-13045
+- `S-ours-mou` omnitiler:crates/tiler-windows/src/tiling_sys.rs:13017-13045
   (pointer gestures map to `CoreCommand::DragDrop`/`PointerResize`) +
   kwin/src/plan-adapter.ts:90 (`PlanOp` incl `pointer-resize`/`drag-drop`)
   and :1784-1789 (drop-intent correlation for both families)
@@ -3258,14 +3258,14 @@ Legend:
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
   (shapeability decides tileability, not monitor coverage)
 - `S-ours-planops` shared Engine operation inventory:
-  plasma-auto-tiler:crates/tiler-core/src/session/ops/mod.rs:8-15 (families:
+  omnitiler:crates/tiler-core/src/session/ops/mod.rs:8-15 (families:
   drag/float/focus/lifecycle/move/resize/workspace only) +
   crates/tiler-core/src/directional.rs:236 (`MoveOperation` is
   directional-only) and :517 (`FocusPlan` is directional leaf-or-Edge only);
-  KDE adapter dispatch: plasma-auto-tiler:kwin/src/plan-adapter.ts:90
+  KDE adapter dispatch: omnitiler:kwin/src/plan-adapter.ts:90
   (`PlanOp`: admit/remove/move/focus/resize/reconcile/update-gaps/
   pointer-resize/toggle-float/drag-drop/release-domain);
-  Windows dispatch: plasma-auto-tiler:crates/tiler-windows/src/snapkey.rs:104-107
+  Windows dispatch: omnitiler:crates/tiler-windows/src/snapkey.rs:104-107
   (`SnapOp`: Focus/Move only) and :427-430 (`WorkspaceOp`: Select/Send only)
   @a77dd341f311da080ba94347c82a34d1d1c57893
   (no layout/orient/rotate/mirror/master/layout-select verb in any of the three
@@ -3704,7 +3704,7 @@ Legend:
   defaults off) + `S(S-pan-cmds)` (no history verb; `Virtual` is directional)
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
 - `S-ours-ws` workspace mechanics at this HEAD:
-  plasma-auto-tiler:crates/tiler-core/src/session/ops/workspace.rs:37-47
+  omnitiler:crates/tiler-core/src/session/ops/workspace.rs:37-47
   (explicit same-output send proposal only) and :92-101 (`Unchanged` /
   `CrossDomainMismatch` / `UnknownDomain` refusals) and :121-192
   (remembered-leaf / focus-MRU / root anchor plus follow-on-commit)
@@ -3718,7 +3718,7 @@ Legend:
   trailing) and :400-415 (`focus_target` prefers `last_focus`, else first
   visible) and crates/tiler-windows/src/snapkey.rs:427-447 (`WorkspaceOp`
   Select/Send, index only) + KDE:
-  plasma-auto-tiler:kwin/src/plan-adapter.ts:7699 (`resolveDesktop`) and
+  omnitiler:kwin/src/plan-adapter.ts:7699 (`resolveDesktop`) and
   :7778 (`setDesktops` membership write; desktops themselves are
   Plasma-owned) @60771bd
   (Engine/KDE have no select verb; Windows has index-only Select;
@@ -3954,7 +3954,7 @@ Legend:
   (minimize-mark path; old-slot restore only same-workspace without an
   insertion override; strip reflow and focus target stay TBD)
 - `S-ours-minkde` KDE production observer at this HEAD:
-  plasma-auto-tiler:kwin/src/entry.ts:19 (production uses
+  omnitiler:kwin/src/entry.ts:19 (production uses
   `startPlanAdapterEntry`; one bounded DescribePlan adapter owns
   observation) and kwin/src/plan-adapter-entry.ts:1484-1750
   (`observeNative`: `normalWindow`/output/desktop/frame gates only, no
@@ -4029,7 +4029,7 @@ Legend:
   arrange vs visible heights)
   @8b9f0b62b2922703d7c25a79d5d49ae93cd3f93b
   (membership/order/focus-taker legs)
-- `S-ours-grp` plasma-auto-tiler:crates/tiler-core/src/directional.rs:107-123
+- `S-ours-grp` omnitiler:crates/tiler-core/src/directional.rs:107-123
   (`Node` is Leaf or split-axis Group only, no tab/stack variant) +
   crates/tiler-core/src/session/ops/mod.rs:8-15 (families:
   drag/float/focus/lifecycle/move/resize/workspace only) +
@@ -4369,21 +4369,21 @@ Legend:
   (float model, toggle and raise semantics; arbitrary-F raise and lower
   have no verb path)
 - `S-ours-fltrefuse` shared Engine float refusal:
-  plasma-auto-tiler:crates/tiler-core/src/session/ops/resize.rs:102-104
+  omnitiler:crates/tiler-core/src/session/ops/resize.rs:102-104
   (keyboard resize refuses exceptions as `NotTiled`) and :454-456
   (pointer resize refuses exceptions as `NotTiled`) +
   kwin/src/plan-adapter.ts:3669-3676 (adapter gates fullscreen/maximize
   only, so float intents reach the Engine refusal) @9241c94
   (project float resize has no path on either platform; host journeys stay TBD)
 - `S-ours-fltsel` Windows float workspace select:
-  plasma-auto-tiler:crates/tiler-windows/src/tiling_sys.rs:9840-9900
+  omnitiler:crates/tiler-windows/src/tiling_sys.rs:9840-9900
   (leaving members hide through identity or recovery read, reveal on
   return) + crates/tiler-windows/src/workspace.rs:400-412
   (`focus_target` prefers `last_focus` when still a member and visible)
   @9241c94
   (float hide/reveal with last-focus return; frames TBD)
 - `S-ours-fltstack` float stacking on both Ours platforms:
-  plasma-auto-tiler:kwin/src/plan-adapter.ts:3459 (sticky keepAbove) and
+  omnitiler:kwin/src/plan-adapter.ts:3459 (sticky keepAbove) and
   :8083-8115 (float apply sets keepAbove plus geometry; unfloat restores)
   + crates/tiler-windows/src/tiling_sys.rs:7263-7280 (admission places
   non-topmost floats with `HWND_TOPMOST`) and :3993-4014
@@ -4462,7 +4462,7 @@ Legend:
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
   (Follow/Stay forms distinguished; each display owns its strip)
 - `S-ours-out` Ours cross-output production paths:
-  plasma-auto-tiler:crates/tiler-core/src/session/ops/focus.rs:233-245
+  omnitiler:crates/tiler-core/src/session/ops/focus.rs:233-245
   (`propose_cross_output_focus`: exhausted horizontal directional focus
   crosses to the adjacent output's selected domain workspace, then to
   that domain's valid last-focused tiled leaf; a sole occupant is that
@@ -4661,7 +4661,7 @@ Legend:
   (serial-less requests mark without focusing, invalid ones are
   denied; focus clears)
 - `S-ours-act` Ours activation/urgency position at this HEAD:
-  plasma-auto-tiler:crates/tiler-core/src/session/world.rs:380-389
+  omnitiler:crates/tiler-core/src/session/world.rs:380-389
   (`sync_focus_from_window` only resyncs focus for ordinary
   activation of a known tiled window in an existing domain, failing
   closed otherwise) + kwin/src/plan-adapter.ts:89 (observed
@@ -4767,7 +4767,7 @@ Legend:
   @b1b6abbd3f1a4be138152b6f0389c9ff1b27a269
   (grace-windowed startup matching; exact strips/widths/focus untraced)
 - `S-ours-kde-rst` Ours KDE restart position at this HEAD:
-  plasma-auto-tiler:crates/tiler-core/src/session/world.rs:677-700
+  omnitiler:crates/tiler-core/src/session/world.rs:677-700
   (`converge_observation` converges each session from a fresh complete
   observation; the session object holds no layout store) +
   kwin/src/plan-adapter-entry.ts:3221-3222 (startup observes the live
@@ -4781,7 +4781,7 @@ Legend:
   floats reset because the id set is session-local; native focus and
   host-max restore untraced)
 - `S-ours-win-rst` Ours Windows restart position at this HEAD:
-  plasma-auto-tiler:crates/tiler-windows/src/tiling_sys.rs:3 (product
+  omnitiler:crates/tiler-windows/src/tiling_sys.rs:3 (product
   loop runs a full `EnumWindows` observation) and :1202-1204 (saved
   settings supply the startup base for gaps/preset only, never a
   layout reseed) + crates/tiler-windows/src/main.rs:24 (`tile` stop

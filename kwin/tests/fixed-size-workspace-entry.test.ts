@@ -363,7 +363,7 @@ function domainOf(payload: Record<string, unknown>): Record<string, unknown> {
 }
 
 function toggleWorkspaceTiling(mocks: EntryMocks): void {
-    const toggle = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-toggle-workspace-tiling");
+    const toggle = mocks.shortcuts.find((row) => row.action === "omnitiler-toggle-workspace-tiling");
     assert.ok(toggle !== undefined, "workspace tiling toggle registered");
     toggle.callback();
 }

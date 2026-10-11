@@ -274,7 +274,7 @@ describe("same-axis move live reread on Options configChanged", () => {
             fire();
         }
         assert.ok(
-            logs.some((line) => line === "plasma-auto-tiler:plan:config-reloaded stage=same-axis-move mode=swap-with-neighbor"),
+            logs.some((line) => line === "omnitiler:plan:config-reloaded stage=same-axis-move mode=swap-with-neighbor"),
         );
         // No tree rebuild: no shortcut re-registration, no resync timer, no
         // restart or gap reload lines, and no synchronous dispatch.
@@ -322,7 +322,7 @@ describe("same-axis move live reread on Options configChanged", () => {
         for (const fire of [...handlers]) {
             fire();
         }
-        assert.ok(!logs.some((line) => line.includes("plasma-auto-tiler:plan:config-reloaded")));
+        assert.ok(!logs.some((line) => line.includes("omnitiler:plan:config-reloaded")));
         handle?.stop();
     });
 });

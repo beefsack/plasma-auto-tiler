@@ -343,12 +343,12 @@ describe("background review fixes", () => {
         const second = startEntry(emptyWorld);
         assert.ok(second.handle !== null, "empty startup keeps an enabled observer for the next window");
         assert.ok(
-            second.mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready owner=owner-1 generation=gen-1")),
+            second.mocks.logs.some((line) => line.includes("omnitiler:plan:ready owner=owner-1 generation=gen-1")),
             "empty startup still logs the truthful ready line",
         );
         assert.ok(
             second.mocks.logs.some((line) =>
-                line.includes("plasma-auto-tiler:plan:empty-startup") &&
+                line.includes("omnitiler:plan:empty-startup") &&
                 line.includes("cause=no-eligible-windows") &&
                 line.includes("recovery=await-next-window"),
             ),
@@ -765,7 +765,7 @@ describe("background review fixes", () => {
         // No domain-count gate: the twenty-second domain is retained and the
         // foreground stays usable with no parking.
         assert.ok(
-            !logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"),
+            !logs.some((line) => line === "omnitiler:plan:reconcile-parked"),
             "admission beyond sixteen domains must not park",
         );
 

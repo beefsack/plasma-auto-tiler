@@ -139,14 +139,14 @@ exposed at the workspace level as `windowStartUserMovedResized` /
 ### B3: Diagnostics design and live-proof boundary
 
 - Per-signal connect under `try/catch`, emitting exactly
-  `plasma-auto-tiler:drag-attach-ok:<signal>` or
-  `plasma-auto-tiler:drag-attach-failed:<signal>:<detail>` for each attempted
+  `omnitiler:drag-attach-ok:<signal>` or
+  `omnitiler:drag-attach-failed:<signal>:<detail>` for each attempted
   connect, so "never attached" and "attached but never fires" stay distinct.
-- Every attach guard skip logs `plasma-auto-tiler:drag-attach-skipped:<reason>`
+- Every attach guard skip logs `omnitiler:drag-attach-skipped:<reason>`
   (window-list decode, max-windows, not-window, duplicate, no-scope,
   out-of-scope).
 - Exactly one startup existing-window
-  `plasma-auto-tiler:drag-attach-summary:<attempted>:<ok>:<failed>` after the
+  `omnitiler:drag-attach-summary:<attempted>:<ok>:<failed>` after the
   initial attachment pass (`attempted = ok + failed`); later-window and
   scope-change attachments emit none, making the two kinds diagnosable.
 - Diagnostic-only event logs `drag-started`, `drag-stepped`,

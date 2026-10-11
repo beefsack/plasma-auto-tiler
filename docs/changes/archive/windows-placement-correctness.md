@@ -45,9 +45,9 @@
 - Native locked build/test, strict all-target Clippy, rustfmt and diff checks
   passed after the final observability follow-up; no protocol reply changes.
 - Observability commit `174e70b`: hosted Rust/KWin/shell/Windows CI green
-  ([run](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37120915569)).
+  ([run](https://github.com/beefsack/omnitiler/actions/runs/37120915569)).
 - Real four/five-window reproduction logs:
-  `%LOCALAPPDATA%/plasma-auto-tiler/session-1/run-01dd532db76a8af6.log` and
+  `%LOCALAPPDATA%/omnitiler/session-1/run-01dd532db76a8af6.log` and
   `run-01dd532e5c7fa523.log`, payload SHA256
   `0C5C5E314F3242FC5D97E1831D1A6B16FEF13C12AE4703DDBF043748FAA59149`.
   Five-window cascade fitted with four centre splits, but Paint's 448px tile
@@ -86,7 +86,7 @@
   missing-hint overconstraint is unreachable in current assemble/apply paths.
   Residual: minimum-clamped windows can extend beyond work area, not just overlap.
 - D1/D4 commit `2c918d3`: hosted Rust/KWin/shell/Windows CI green
-  ([run](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37123627664)).
+  ([run](https://github.com/beefsack/omnitiler/actions/runs/37123627664)).
 - D2 accepted: tiled overlays reuse lifetime-bound last-known minimum hints.
   Async restore arms a bounded completion wake, consumed only after gated
   reconciliation; key-up dispatch/gesture/suspend cannot prematurely clear it.
@@ -97,7 +97,7 @@
   acceptance. No failed product semantic approach was accepted.
 - D2 commit `4a636ae` contains the live-verified source diff: hosted
   Rust/KWin/shell/Windows CI green
-  ([run](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37125264718)).
+  ([run](https://github.com/beefsack/omnitiler/actions/runs/37125264718)).
 
 ## Live verification outcome
 

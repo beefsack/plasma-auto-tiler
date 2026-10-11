@@ -39,14 +39,14 @@
 
 - Slice 1: `cargo test`, `npm test --prefix kwin` (409 pass),
   `npm run typecheck --prefix kwin`, `git diff --check`, CMake configure/build
-  of `plasma-auto-tiler-drag-oracle`, and `ctest -R drag-oracle` (2 pass).
+  of `omnitiler-drag-oracle`, and `ctest -R drag-oracle` (2 pass).
 - Slice 2: `cargo test`, `npm test --prefix kwin` (426 pass),
   `npm run typecheck --prefix kwin`, and `git diff --check`.
 
 ## Follow-Up Diagnostics
 
 - Every dispatched pull now logs exactly
-  `plasma-auto-tiler:route-diag:drag-pull action=dispatch` before `callDBus`.
+  `omnitiler:route-diag:drag-pull action=dispatch` before `callDBus`.
   The line is constant, bounded, redacted, and best-effort. It changes neither
   the no-timeout pull contract nor fail-closed routing; a dispatch without a
   later `drag-verdict` or `drag-unavailable` directly identifies a

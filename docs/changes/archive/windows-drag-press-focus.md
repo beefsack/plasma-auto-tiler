@@ -109,7 +109,7 @@
 - Pending physical input/feel/Start-mask, inactive resize focus/feel, actuation
   failure/race native journeys and cross-output. No shared-core change required.
 - Pushed `9bb2b6f`. CI
-  [38073331721](https://github.com/beefsack/plasma-auto-tiler/actions/runs/38073331721)
+  [38073331721](https://github.com/beefsack/omnitiler/actions/runs/38073331721)
   completed success: windows, rust, kwin, shell, native and macos. Linux/KDE
   gates are hosted evidence; local native gates passed before publication.
 - Exact next implementation action: none for scoped item7 delivery; pending

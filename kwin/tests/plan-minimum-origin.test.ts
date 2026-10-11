@@ -235,7 +235,7 @@ describe("plan adapter B6 minimum origin placement", () => {
             mocks.logs.some(
                 (line) =>
                     line ===
-                    `plasma-auto-tiler:plan:minimum-placed correlation=${correlation} window=win-a resource_class=unknown op=move rect=0,0,900,800`,
+                    `omnitiler:plan:minimum-placed correlation=${correlation} window=win-a resource_class=unknown op=move rect=0,0,900,800`,
             ),
             "structured minimum-placed diagnostic carries the actual written rect",
         );
@@ -561,7 +561,7 @@ describe("plan adapter B6 minimum origin placement", () => {
             mocks.logs.some(
                 (line) =>
                     line ===
-                    `plasma-auto-tiler:plan:minimum-placed correlation=${correlation} window=win-a resource_class=unknown op=reconcile rect=0,0,900,800`,
+                    `omnitiler:plan:minimum-placed correlation=${correlation} window=win-a resource_class=unknown op=reconcile rect=0,0,900,800`,
             ),
         );
         assert.ok(

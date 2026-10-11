@@ -22,7 +22,7 @@ semantics. Add bounded effect-side group apply/anchor evidence without raw IDs.
 
 ## Investigation and approach
 
-- Long trace `plasma-auto-tiler-dev.FeTnf4.log:3308-3312`
+- Long trace `omnitiler-dev.FeTnf4.log:3308-3312`
   ends with a group setter submitted at native revision 60. After a `just dev`
   restart, `y3jVs3.log:848-852` still submits but reaches revision 19. Both
   script runs use the fixed `plan-1` generation from `kwin/src/entry.ts:55`.

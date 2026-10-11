@@ -62,7 +62,7 @@
   whitespace and both fullscreen/float mocks pass after the repairs. Unit 1
   accepted before the bounded live stages.
 - Unit 1 shipped as `3f70136`; hosted Windows/Rust/KWin/shell
-  [CI 37072709516](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37072709516)
+  [CI 37072709516](https://github.com/beefsack/omnitiler/actions/runs/37072709516)
   green. Fullscreen bounded stages added held-repeat evidence but did not close
   the full matrices; float admission failed before any toggle. Archive follow-up
   tables retain exact observed scope, limits and local artifact identities.

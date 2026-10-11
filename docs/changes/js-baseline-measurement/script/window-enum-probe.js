@@ -1,6 +1,6 @@
-var LOG_SERVICE = "com.plasmaAutoTiler.LogSink";
-var LOG_PATH = "/com/plasmaAutoTiler/LogSink";
-var LOG_INTERFACE = "com.plasmaAutoTiler.LogSink";
+var LOG_SERVICE = "com.omniTiler.LogSink";
+var LOG_PATH = "/com/omniTiler/LogSink";
+var LOG_INTERFACE = "com.omniTiler.LogSink";
 var LOG_METHOD = "append";
 
 function emit(line) {

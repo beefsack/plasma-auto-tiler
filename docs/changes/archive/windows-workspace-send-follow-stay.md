@@ -138,7 +138,7 @@
   full CI verification followed the repair publication.
 - Repair `0b0fdd5` pushed; native tiling tests (79), fmt, strict allowlisted
   clippy and diff check passed. CI run
-  [38056677641](https://github.com/beefsack/plasma-auto-tiler/actions/runs/38056677641)
+  [38056677641](https://github.com/beefsack/omnitiler/actions/runs/38056677641)
   completed success 2026-10-11: windows, rust, kwin, shell, native and macos.
   Item 2/item 20 implementation and verification complete for the scoped
   single-output handoff; pending user-owned/deferred legs remain above.

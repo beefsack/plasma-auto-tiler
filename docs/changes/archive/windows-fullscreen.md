@@ -109,7 +109,7 @@
   foregrounds from suspending tiling; invalid/unreadable reads remain blocked,
   real unmanaged fullscreen still suspends. Independently reviewed; native
   four-package gates and hosted Windows/Rust/KWin/shell
-  [CI 37072709516](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37072709516)
+  [CI 37072709516](https://github.com/beefsack/omnitiler/actions/runs/37072709516)
   pass. No blanket ApplicationFrameWindow/Explorer exception.
 - WM_CLOSE and graceful termination did not clear the unidentified shell frame.
   Two authorized exact-identity Explorer restarts removed it and restored the

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.19)
 
-project(plasma-auto-tiler-native-effect LANGUAGES CXX)
+project(omnitiler-native-effect LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,13 +10,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # active-border effect is ABI-bound to KWin headers plus the Cargo
 # staticlib. Both default ON to keep the existing full developer build;
 # distro/Nix settings-only consumers configure with
-# -DPLASMA_AUTO_TILER_BUILD_EFFECT=OFF (needs only ECM 6.24 + Qt6/KF6),
+# -DOMNITILER_BUILD_EFFECT=OFF (needs only ECM 6.24 + Qt6/KF6),
 # and effect-only companions with
-# -DPLASMA_AUTO_TILER_BUILD_SETTINGS=OFF.
-option(PLASMA_AUTO_TILER_BUILD_EFFECT "Build the ABI-bound KWin effect" ON)
-option(PLASMA_AUTO_TILER_BUILD_SETTINGS "Build the KWin-independent settings KCMs" ON)
+# -DOMNITILER_BUILD_SETTINGS=OFF.
+option(OMNITILER_BUILD_EFFECT "Build the ABI-bound KWin effect" ON)
+option(OMNITILER_BUILD_SETTINGS "Build the KWin-independent settings KCMs" ON)
 
-if(PLASMA_AUTO_TILER_BUILD_EFFECT)
+if(OMNITILER_BUILD_EFFECT)
     find_package(ECM 6.26.0 REQUIRED NO_MODULE)
 else()
     find_package(ECM 6.24.0 REQUIRED NO_MODULE)
@@ -25,18 +25,18 @@ set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
 
 include(KDEInstallDirs)
 include(KDECMakeSettings)
-if(PLASMA_AUTO_TILER_BUILD_EFFECT)
+if(OMNITILER_BUILD_EFFECT)
     include(ECMSetupQtPluginMacroNames)
 endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Core DBus Gui Widgets)
 
-if(PLASMA_AUTO_TILER_BUILD_EFFECT)
+if(OMNITILER_BUILD_EFFECT)
     find_package(KWin REQUIRED)
 endif()
 find_package(KF6CoreAddons REQUIRED)
 find_package(KF6Config REQUIRED)
-if(PLASMA_AUTO_TILER_BUILD_EFFECT)
+if(OMNITILER_BUILD_EFFECT)
     find_package(KF6ColorScheme REQUIRED)
 endif()
 find_package(KF6I18n REQUIRED)
@@ -44,7 +44,7 @@ find_package(KF6KCMUtils REQUIRED)
 find_package(KF6WidgetsAddons REQUIRED)
 include("${KF6I18n_DIR}/KF6I18nMacros.cmake")
 
-if(PLASMA_AUTO_TILER_BUILD_EFFECT)
+if(OMNITILER_BUILD_EFFECT)
     ecm_setup_qtplugin_macro_names(
         MACRO_NAMES
             KWIN_EFFECT_FACTORY
@@ -67,7 +67,7 @@ kconfig_add_kcfg_files(config_SOURCES activeborderconfig.kcfgc)
 # find_program/find_package stay before all consumers so linkage never
 # relies on transitive libs. Effect-only: skipped for settings-only builds,
 # which must not find KWin/Cargo/effect dependencies.
-if(PLASMA_AUTO_TILER_BUILD_EFFECT)
+if(OMNITILER_BUILD_EFFECT)
 find_program(CARGO_PROGRAM cargo REQUIRED)
 # The Rust staticlib references pthread/dl (std thread internals, backtrace
 # symbolization). Link them explicitly and portably so the shared plugins
@@ -91,15 +91,15 @@ if(DEFINED ENV{CARGO_NET_OFFLINE} AND "$ENV{CARGO_NET_OFFLINE}" STREQUAL "true")
 else()
     set(EFFECT_CARGO_OFFLINE_ARG "")
 endif()
-# Release-archive offline vendor: when PLASMA_AUTO_TILER_VENDOR_DIR points at
+# Release-archive offline vendor: when OMNITILER_VENDOR_DIR points at
 # the source archive's vendor/ directory (absolute path), pass cargo --config
 # source replacement so the workspace resolves crates-io from that directory
 # with no network and no CARGO_HOME setup. Distro recipes set this alongside
 # CARGO_NET_OFFLINE=true; unset keeps host/Nix behavior unchanged.
-if(DEFINED ENV{PLASMA_AUTO_TILER_VENDOR_DIR} AND NOT "$ENV{PLASMA_AUTO_TILER_VENDOR_DIR}" STREQUAL "")
+if(DEFINED ENV{OMNITILER_VENDOR_DIR} AND NOT "$ENV{OMNITILER_VENDOR_DIR}" STREQUAL "")
     set(EFFECT_CARGO_VENDOR_ARGS
         --config source.crates-io.replace-with="vendored-sources"
-        --config source.vendored-sources.directory="$ENV{PLASMA_AUTO_TILER_VENDOR_DIR}")
+        --config source.vendored-sources.directory="$ENV{OMNITILER_VENDOR_DIR}")
 else()
     set(EFFECT_CARGO_VENDOR_ARGS "")
 endif()
@@ -131,11 +131,11 @@ add_custom_command(
     COMMENT "Building tiler-kwin-effect-ffi staticlib with Cargo"
     VERBATIM
 )
-add_custom_target(plasma-auto-tiler-effect-ffi-rs DEPENDS "${EFFECT_STATICLIB}")
+add_custom_target(omnitiler-effect-ffi-rs DEPENDS "${EFFECT_STATICLIB}")
 endif()
 
-if(PLASMA_AUTO_TILER_BUILD_EFFECT)
-kcoreaddons_add_plugin(plasma-auto-tiler-active-border
+if(OMNITILER_BUILD_EFFECT)
+kcoreaddons_add_plugin(omnitiler-active-border
     INSTALL_NAMESPACE "kwin/effects/plugins"
     SOURCES
         activewindowborder.h
@@ -145,8 +145,8 @@ kcoreaddons_add_plugin(plasma-auto-tiler-active-border
         visual_policy_ffi.h
         ${config_SOURCES}
 )
-add_dependencies(plasma-auto-tiler-active-border plasma-auto-tiler-effect-ffi-rs)
-target_link_libraries(plasma-auto-tiler-active-border PRIVATE
+add_dependencies(omnitiler-active-border omnitiler-effect-ffi-rs)
+target_link_libraries(omnitiler-active-border PRIVATE
     "${EFFECT_STATICLIB}"
     Threads::Threads
     ${CMAKE_DL_LIBS}
@@ -158,10 +158,10 @@ target_link_libraries(plasma-auto-tiler-active-border PRIVATE
     Qt6::Gui
     Qt6::DBus
 )
-target_compile_options(plasma-auto-tiler-active-border PRIVATE -Wall -Wextra -Werror)
+target_compile_options(omnitiler-active-border PRIVATE -Wall -Wextra -Werror)
 endif()
 
-if(PLASMA_AUTO_TILER_BUILD_SETTINGS)
+if(OMNITILER_BUILD_SETTINGS)
 set(unified_kcm_SOURCES
     unifiedsettings_module.cpp
     unifiedsettings_module.h
@@ -171,15 +171,15 @@ set(unified_kcm_SOURCES
 )
 ki18n_wrap_ui(unified_kcm_SOURCES unifiedsettings.ui)
 
-kcoreaddons_add_plugin(plasma-auto-tiler-active-border_config
+kcoreaddons_add_plugin(omnitiler-active-border_config
     INSTALL_NAMESPACE "kwin/effects/configs"
     SOURCES
         activeborderconfig_module.cpp
         activeborderconfig_module.h
         ${unified_kcm_SOURCES}
 )
-target_compile_definitions(plasma-auto-tiler-active-border_config PRIVATE -DTRANSLATION_DOMAIN="kwin")
-target_link_libraries(plasma-auto-tiler-active-border_config PRIVATE
+target_compile_definitions(omnitiler-active-border_config PRIVATE -DTRANSLATION_DOMAIN="kwin")
+target_link_libraries(omnitiler-active-border_config PRIVATE
     KF6::CoreAddons
     KF6::ConfigCore
     KF6::ConfigGui
@@ -190,21 +190,21 @@ target_link_libraries(plasma-auto-tiler-active-border_config PRIVATE
     Qt6::DBus
     Qt6::Widgets
 )
-target_compile_options(plasma-auto-tiler-active-border_config PRIVATE -Wall -Wextra -Werror)
+target_compile_options(omnitiler-active-border_config PRIVATE -Wall -Wextra -Werror)
 
 # Unified settings page: both existing plugin IDs/namespace entries display
 # the identical shared QWidget page via two thin factories. Script settings
 # (workspace mode, tiling gaps) live on the same page; no separate script
 # page internals remain.
-kcoreaddons_add_plugin(plasma-auto-tiler-kwin_config
+kcoreaddons_add_plugin(omnitiler-kwin_config
     INSTALL_NAMESPACE "kwin/scripts/configs"
     SOURCES
         scriptconfig_module.cpp
         scriptconfig_module.h
         ${unified_kcm_SOURCES}
 )
-target_compile_definitions(plasma-auto-tiler-kwin_config PRIVATE -DTRANSLATION_DOMAIN="kwin")
-target_link_libraries(plasma-auto-tiler-kwin_config PRIVATE
+target_compile_definitions(omnitiler-kwin_config PRIVATE -DTRANSLATION_DOMAIN="kwin")
+target_link_libraries(omnitiler-kwin_config PRIVATE
     KF6::CoreAddons
     KF6::ConfigCore
     KF6::ConfigGui
@@ -215,46 +215,46 @@ target_link_libraries(plasma-auto-tiler-kwin_config PRIVATE
     Qt6::DBus
     Qt6::Widgets
 )
-target_compile_options(plasma-auto-tiler-kwin_config PRIVATE -Wall -Wextra -Werror)
+target_compile_options(omnitiler-kwin_config PRIVATE -Wall -Wextra -Werror)
 endif()
 
 include(CTest)
 
 if(BUILD_TESTING)
-    if(PLASMA_AUTO_TILER_BUILD_EFFECT)
-    add_executable(plasma-auto-tiler-active-border-logic-test
+    if(OMNITILER_BUILD_EFFECT)
+    add_executable(omnitiler-active-border-logic-test
         activeborderlogic_test.cpp
     )
-    add_dependencies(plasma-auto-tiler-active-border-logic-test plasma-auto-tiler-effect-ffi-rs)
-    target_link_libraries(plasma-auto-tiler-active-border-logic-test PRIVATE
+    add_dependencies(omnitiler-active-border-logic-test omnitiler-effect-ffi-rs)
+    target_link_libraries(omnitiler-active-border-logic-test PRIVATE
         "${EFFECT_STATICLIB}"
         Threads::Threads
         ${CMAKE_DL_LIBS}
         Qt6::Core Qt6::Gui)
-    target_compile_options(plasma-auto-tiler-active-border-logic-test PRIVATE -Wall -Wextra -Werror)
+    target_compile_options(omnitiler-active-border-logic-test PRIVATE -Wall -Wextra -Werror)
 
     add_test(NAME native-effect-logic
-        COMMAND plasma-auto-tiler-active-border-logic-test)
+        COMMAND omnitiler-active-border-logic-test)
 
-    add_executable(plasma-auto-tiler-active-border-group-test
+    add_executable(omnitiler-active-border-group-test
         activebordergroup_test.cpp
     )
-    add_dependencies(plasma-auto-tiler-active-border-group-test plasma-auto-tiler-effect-ffi-rs)
-    target_link_libraries(plasma-auto-tiler-active-border-group-test PRIVATE
+    add_dependencies(omnitiler-active-border-group-test omnitiler-effect-ffi-rs)
+    target_link_libraries(omnitiler-active-border-group-test PRIVATE
         "${EFFECT_STATICLIB}"
         Threads::Threads
         ${CMAKE_DL_LIBS}
         Qt6::Core
         Qt6::Gui
     )
-    target_compile_options(plasma-auto-tiler-active-border-group-test PRIVATE -Wall -Wextra -Werror)
+    target_compile_options(omnitiler-active-border-group-test PRIVATE -Wall -Wextra -Werror)
 
     add_test(NAME native-effect-group-highlight
-        COMMAND plasma-auto-tiler-active-border-group-test)
+        COMMAND omnitiler-active-border-group-test)
 
     endif()
 
-    if(PLASMA_AUTO_TILER_BUILD_SETTINGS)
+    if(OMNITILER_BUILD_SETTINGS)
     set(kcm_config_test_SOURCES
         activeborderconfig_module_test.cpp
         activeborderconfig_module.cpp
@@ -263,13 +263,13 @@ if(BUILD_TESTING)
         ${config_SOURCES}
     )
     ki18n_wrap_ui(kcm_config_test_SOURCES unifiedsettings.ui)
-    add_executable(plasma-auto-tiler-active-border-kcm-config-test
+    add_executable(omnitiler-active-border-kcm-config-test
         ${kcm_config_test_SOURCES}
     )
-    if(PLASMA_AUTO_TILER_BUILD_EFFECT)
-        add_dependencies(plasma-auto-tiler-active-border-kcm-config-test plasma-auto-tiler-effect-ffi-rs)
+    if(OMNITILER_BUILD_EFFECT)
+        add_dependencies(omnitiler-active-border-kcm-config-test omnitiler-effect-ffi-rs)
     endif()
-    target_link_libraries(plasma-auto-tiler-active-border-kcm-config-test PRIVATE
+    target_link_libraries(omnitiler-active-border-kcm-config-test PRIVATE
         KF6::CoreAddons
         KF6::ConfigCore
         KF6::ConfigGui
@@ -280,30 +280,30 @@ if(BUILD_TESTING)
         Qt6::DBus
         Qt6::Widgets
     )
-    target_compile_definitions(plasma-auto-tiler-active-border-kcm-config-test PRIVATE
+    target_compile_definitions(omnitiler-active-border-kcm-config-test PRIVATE
         -DTRANSLATION_DOMAIN="kwin"
         -DKPLUGINFACTORY_PLUGIN_CLASS_INTERNAL_NAME=ActiveBorderConfigModuleFactory
     )
-    if(PLASMA_AUTO_TILER_BUILD_EFFECT)
-        target_link_libraries(plasma-auto-tiler-active-border-kcm-config-test PRIVATE
+    if(OMNITILER_BUILD_EFFECT)
+        target_link_libraries(omnitiler-active-border-kcm-config-test PRIVATE
             "${EFFECT_STATICLIB}"
             Threads::Threads
             ${CMAKE_DL_LIBS}
         )
-        target_compile_definitions(plasma-auto-tiler-active-border-kcm-config-test PRIVATE
-            -DPLASMA_AUTO_TILER_HAVE_EFFECT_FFI=1
+        target_compile_definitions(omnitiler-active-border-kcm-config-test PRIVATE
+            -DOMNITILER_HAVE_EFFECT_FFI=1
         )
     endif()
-    target_compile_options(plasma-auto-tiler-active-border-kcm-config-test PRIVATE -Wall -Wextra -Werror)
+    target_compile_options(omnitiler-active-border-kcm-config-test PRIVATE -Wall -Wextra -Werror)
 
     add_test(NAME native-effect-kcm-dbus
-        COMMAND plasma-auto-tiler-active-border-kcm-config-test dbus)
+        COMMAND omnitiler-active-border-kcm-config-test dbus)
     add_test(NAME native-effect-kcm-hotapply
-        COMMAND plasma-auto-tiler-active-border-kcm-config-test hotapply)
+        COMMAND omnitiler-active-border-kcm-config-test hotapply)
     add_test(NAME native-effect-kcm-border
-        COMMAND plasma-auto-tiler-active-border-kcm-config-test border)
+        COMMAND omnitiler-active-border-kcm-config-test border)
     add_test(NAME native-effect-kcm-config-reload
-        COMMAND plasma-auto-tiler-active-border-kcm-config-test config)
+        COMMAND omnitiler-active-border-kcm-config-test config)
     set_tests_properties(
         native-effect-kcm-dbus
         native-effect-kcm-hotapply
@@ -320,10 +320,10 @@ if(BUILD_TESTING)
         ${config_SOURCES}
     )
     ki18n_wrap_ui(kcm_shortcut_test_SOURCES unifiedsettings.ui)
-    add_executable(plasma-auto-tiler-active-border-kcm-shortcut-test
+    add_executable(omnitiler-active-border-kcm-shortcut-test
         ${kcm_shortcut_test_SOURCES}
     )
-    target_link_libraries(plasma-auto-tiler-active-border-kcm-shortcut-test PRIVATE
+    target_link_libraries(omnitiler-active-border-kcm-shortcut-test PRIVATE
         KF6::CoreAddons
         KF6::ConfigCore
         KF6::ConfigGui
@@ -334,26 +334,26 @@ if(BUILD_TESTING)
         Qt6::DBus
         Qt6::Widgets
     )
-    target_compile_definitions(plasma-auto-tiler-active-border-kcm-shortcut-test PRIVATE
+    target_compile_definitions(omnitiler-active-border-kcm-shortcut-test PRIVATE
         -DTRANSLATION_DOMAIN="kwin"
         -DKPLUGINFACTORY_PLUGIN_CLASS_INTERNAL_NAME=ActiveBorderConfigModuleFactory
     )
-    target_compile_options(plasma-auto-tiler-active-border-kcm-shortcut-test PRIVATE -Wall -Wextra -Werror)
+    target_compile_options(omnitiler-active-border-kcm-shortcut-test PRIVATE -Wall -Wextra -Werror)
 
     add_test(NAME native-effect-kcm-shortcut-ordinary
-        COMMAND plasma-auto-tiler-active-border-kcm-shortcut-test ordinary)
+        COMMAND omnitiler-active-border-kcm-shortcut-test ordinary)
     add_test(NAME native-effect-kcm-shortcut-recovery
-        COMMAND plasma-auto-tiler-active-border-kcm-shortcut-test recovery)
+        COMMAND omnitiler-active-border-kcm-shortcut-test recovery)
     add_test(NAME native-effect-kcm-shortcut-confirm
-        COMMAND plasma-auto-tiler-active-border-kcm-shortcut-test confirm)
+        COMMAND omnitiler-active-border-kcm-shortcut-test confirm)
     add_test(NAME native-effect-kcm-shortcut-state
-        COMMAND plasma-auto-tiler-active-border-kcm-shortcut-test state)
+        COMMAND omnitiler-active-border-kcm-shortcut-test state)
     add_test(NAME native-effect-kcm-shortcut-force
-        COMMAND plasma-auto-tiler-active-border-kcm-shortcut-test force)
+        COMMAND omnitiler-active-border-kcm-shortcut-test force)
     add_test(NAME native-effect-kcm-shortcut-migration
-        COMMAND plasma-auto-tiler-active-border-kcm-shortcut-test migration)
+        COMMAND omnitiler-active-border-kcm-shortcut-test migration)
     add_test(NAME native-effect-kcm-shortcut-selection
-        COMMAND plasma-auto-tiler-active-border-kcm-shortcut-test selection)
+        COMMAND omnitiler-active-border-kcm-shortcut-test selection)
     set_tests_properties(
         native-effect-kcm-shortcut-ordinary
         native-effect-kcm-shortcut-recovery
@@ -373,10 +373,10 @@ if(BUILD_TESTING)
         ${config_SOURCES}
     )
     ki18n_wrap_ui(script_config_test_SOURCES unifiedsettings.ui)
-    add_executable(plasma-auto-tiler-script-config-test
+    add_executable(omnitiler-script-config-test
         ${script_config_test_SOURCES}
     )
-    target_link_libraries(plasma-auto-tiler-script-config-test PRIVATE
+    target_link_libraries(omnitiler-script-config-test PRIVATE
         KF6::CoreAddons
         KF6::ConfigCore
         KF6::ConfigGui
@@ -387,20 +387,20 @@ if(BUILD_TESTING)
         Qt6::DBus
         Qt6::Widgets
     )
-    target_compile_definitions(plasma-auto-tiler-script-config-test PRIVATE
+    target_compile_definitions(omnitiler-script-config-test PRIVATE
         -DTRANSLATION_DOMAIN="kwin"
         -DKPLUGINFACTORY_PLUGIN_CLASS_INTERNAL_NAME=ScriptConfigModuleFactory
     )
-    target_compile_options(plasma-auto-tiler-script-config-test PRIVATE -Wall -Wextra -Werror)
+    target_compile_options(omnitiler-script-config-test PRIVATE -Wall -Wextra -Werror)
 
     add_test(NAME native-script-config-dbus
-        COMMAND plasma-auto-tiler-script-config-test dbus)
+        COMMAND omnitiler-script-config-test dbus)
     add_test(NAME native-script-config-gaps
-        COMMAND plasma-auto-tiler-script-config-test gaps)
+        COMMAND omnitiler-script-config-test gaps)
     add_test(NAME native-script-config-save
-        COMMAND plasma-auto-tiler-script-config-test save)
+        COMMAND omnitiler-script-config-test save)
     add_test(NAME native-script-config-windows
-        COMMAND plasma-auto-tiler-script-config-test windows)
+        COMMAND omnitiler-script-config-test windows)
     set_tests_properties(
         native-script-config-dbus
         native-script-config-gaps
@@ -415,42 +415,42 @@ if(BUILD_TESTING)
             -DSCRIPT_KCM_METADATA_FILE=${CMAKE_CURRENT_SOURCE_DIR}/scriptconfig_module.json
             -DSCRIPT_KCM_SOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/scriptconfig_module.cpp
             -DSCRIPT_CMAKE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt
-            -DEXPECTED_SCRIPT_CONFIG_REFERENCE=kwin/scripts/configs/plasma-auto-tiler-kwin_config
-            -DEXPECTED_SCRIPT_KCM_ID=plasma-auto-tiler-kwin_config
+            -DEXPECTED_SCRIPT_CONFIG_REFERENCE=kwin/scripts/configs/omnitiler-kwin_config
+            -DEXPECTED_SCRIPT_KCM_ID=omnitiler-kwin_config
             -P ${CMAKE_CURRENT_SOURCE_DIR}/validate-scriptconfig.cmake)
 
-    add_executable(plasma-auto-tiler-shortcut-reconciler-test
+    add_executable(omnitiler-shortcut-reconciler-test
         shortcutreconciler_test.cpp
         shortcutreconciler.cpp
     )
-    target_link_libraries(plasma-auto-tiler-shortcut-reconciler-test PRIVATE
+    target_link_libraries(omnitiler-shortcut-reconciler-test PRIVATE
         KF6::ConfigCore
         Qt6::Core
         Qt6::DBus
         Qt6::Gui
     )
-    target_compile_options(plasma-auto-tiler-shortcut-reconciler-test PRIVATE -Wall -Wextra -Werror)
+    target_compile_options(omnitiler-shortcut-reconciler-test PRIVATE -Wall -Wextra -Werror)
 
     add_test(NAME native-effect-shortcut-success
-        COMMAND plasma-auto-tiler-shortcut-reconciler-test success)
+        COMMAND omnitiler-shortcut-reconciler-test success)
     add_test(NAME native-effect-shortcut-conflict
-        COMMAND plasma-auto-tiler-shortcut-reconciler-test conflict)
+        COMMAND omnitiler-shortcut-reconciler-test conflict)
     add_test(NAME native-effect-shortcut-malformed
-        COMMAND plasma-auto-tiler-shortcut-reconciler-test malformed)
+        COMMAND omnitiler-shortcut-reconciler-test malformed)
     add_test(NAME native-effect-shortcut-owner
-        COMMAND plasma-auto-tiler-shortcut-reconciler-test owner)
+        COMMAND omnitiler-shortcut-reconciler-test owner)
     add_test(NAME native-effect-shortcut-recovery
-        COMMAND plasma-auto-tiler-shortcut-reconciler-test recovery)
+        COMMAND omnitiler-shortcut-reconciler-test recovery)
     add_test(NAME native-effect-shortcut-external
-        COMMAND plasma-auto-tiler-shortcut-reconciler-test external)
+        COMMAND omnitiler-shortcut-reconciler-test external)
     add_test(NAME native-effect-shortcut-journal
-        COMMAND plasma-auto-tiler-shortcut-reconciler-test journal)
+        COMMAND omnitiler-shortcut-reconciler-test journal)
     add_test(NAME native-effect-shortcut-force
-        COMMAND plasma-auto-tiler-shortcut-reconciler-test force)
+        COMMAND omnitiler-shortcut-reconciler-test force)
     add_test(NAME native-effect-shortcut-diag
-        COMMAND plasma-auto-tiler-shortcut-reconciler-test diag)
+        COMMAND omnitiler-shortcut-reconciler-test diag)
     add_test(NAME native-effect-shortcut-selection
-        COMMAND plasma-auto-tiler-shortcut-reconciler-test selection)
+        COMMAND omnitiler-shortcut-reconciler-test selection)
     set_tests_properties(
         native-effect-shortcut-success
         native-effect-shortcut-conflict
@@ -467,7 +467,7 @@ if(BUILD_TESTING)
 
     endif()
 
-    if(PLASMA_AUTO_TILER_BUILD_EFFECT)
+    if(OMNITILER_BUILD_EFFECT)
     add_test(NAME native-effect-metadata-factory-validation
         COMMAND ${CMAKE_COMMAND}
             -DMETADATA_FILE=${CMAKE_CURRENT_SOURCE_DIR}/metadata.json
@@ -484,7 +484,7 @@ if(BUILD_TESTING)
             -DDRAG_IMPL=${CMAKE_CURRENT_SOURCE_DIR}/activewindowborder.cpp
             -DDRAG_FFI=${CMAKE_CURRENT_SOURCE_DIR}/drag_oracle_ffi.h
             -DDRAG_RUST=${EFFECT_FFI_CRATE_DIR}/src/drag_oracle.rs
-            -DEXPECTED_PLUGIN_ID=plasma-auto-tiler-active-border
+            -DEXPECTED_PLUGIN_ID=omnitiler-active-border
             -P ${CMAKE_CURRENT_SOURCE_DIR}/validate-metadata.cmake)
 
     add_test(NAME native-effect-unified-lifecycle

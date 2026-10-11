@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Plasma Auto Tiler structural-feasibility proof harness, staged
+# OmniTiler structural-feasibility proof harness, staged
 # (unit-04/attempt-02 protocol research/proof-protocol.md).
 #
 # One bounded, self-contained stage command per invocation. No harness session
@@ -25,20 +25,20 @@ PROOF_DIR="$BASE_DIR/proof"
 SCRIPT_PATH="$PROOF_DIR/structural-proof.js"
 RESULTS_DIR="$BASE_DIR/results"
 
-PROOF_ID="plasma-auto-tiler-structural-proof"
-PROOF_DESKTOP_NAME="plasma-auto-tiler-proof"
-SENTINEL_PREFIX="plasma-auto-tiler-kb-"
+PROOF_ID="omnitiler-structural-proof"
+PROOF_DESKTOP_NAME="omnitiler-proof"
+SENTINEL_PREFIX="omnitiler-kb-"
 SENTINEL_SEQUENCE="Meta+Ctrl+Shift+Alt+P"
 SENTINEL_KEYCODE="503316560"
-XTERM_CLASS="PlasmaAutoTilerTestWindow"
-KONSOLE_DESKTOPFILE="plasma-auto-tiler-test"
+XTERM_CLASS="OmniTilerTestWindow"
+KONSOLE_DESKTOPFILE="omnitiler-test"
 WATCHDOG_SECONDS=300
 
-DBUS_MONITOR_FILTER="type='method_call',interface='com.plasmaAutoTiler.LogSink'"
+DBUS_MONITOR_FILTER="type='method_call',interface='com.omniTiler.LogSink'"
 
 REQUIRED_TOOLS="qdbus busctl dbus-monitor awk stdbuf setsid pgrep ps mkfifo mkdir rm sleep seq date sha256sum kreadconfig6 kwriteconfig6 kscreen-doctor xterm konsole node jq"
 
-LOG_DIR="/tmp/plasma-auto-tiler/structural-proof"
+LOG_DIR="/tmp/omnitiler/structural-proof"
 SINK_FIFO="$LOG_DIR/sink.fifo"
 
 STAGE=""
@@ -124,7 +124,7 @@ run_cmd() {
 # ---------------------------------------------------------------------------
 
 DEMUX_PROGRAM='{
-    if (/interface=com.plasmaAutoTiler.LogSink; member=append/) {
+    if (/interface=com.omniTiler.LogSink; member=append/) {
         getline
         line = $0
         if (line !~ /^[ \t]*string "/) next

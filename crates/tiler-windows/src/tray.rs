@@ -6,7 +6,7 @@
 //! the icon add/remove gate (duplicate-add refusal plus MODIFY-first
 //! TaskbarCreated recovery).
 //!
-//! KDE parity sources: `crates/plasma-auto-tiler/src/tray.rs` (disabled
+//! KDE parity sources: `crates/omnitiler/src/tray.rs` (disabled
 //! status row, conflict warning overlay plus a top `Conflicting KDE
 //! settings...` row opening Settings, left-click opens the menu) and
 //! `docs/reference-cosmic-tray-menu.md` (status/menu/Settings shape). Windows
@@ -41,13 +41,13 @@ use crate::settings::{Settings, apply_preset, effective_bindings};
 // ---------------------------------------------------------------------------
 
 /// Hidden owner-pump top-level window class for the tray icon.
-pub const TRAY_WINDOW_CLASS: &str = "PlasmaAutoTilerTray";
+pub const TRAY_WINDOW_CLASS: &str = "OmniTilerTray";
 /// Broadcast name re-registering the icon after Explorer restarts.
 pub const TASKBAR_CREATED_MESSAGE: &str = "TaskbarCreated";
 /// First-run prompt title (stable for UI Automation lookup).
-pub const FIRST_RUN_TITLE: &str = "Plasma Auto-Tiler - First Run";
+pub const FIRST_RUN_TITLE: &str = "OmniTiler - First Run";
 /// Tray tooltip title.
-pub const TRAY_TOOLTIP_TITLE: &str = "Plasma Auto-Tiler";
+pub const TRAY_TOOLTIP_TITLE: &str = "OmniTiler";
 
 /// Tray callback message id (`WM_APP + 100`, private to the owner window).
 pub const TRAY_CALLBACK_MESSAGE: u32 = 0x8000 + 100;

@@ -18,8 +18,8 @@
 #include <QPushButton>
 #include <QSpinBox>
 
-Q_LOGGING_CATEGORY(lcScriptConfig, "plasmaautotiler.script-config", QtInfoMsg)
-Q_LOGGING_CATEGORY(lcWindowConflicts, "plasmaautotiler.window-conflicts", QtInfoMsg)
+Q_LOGGING_CATEGORY(lcScriptConfig, "omnitiler.script-config", QtInfoMsg)
+Q_LOGGING_CATEGORY(lcWindowConflicts, "omnitiler.window-conflicts", QtInfoMsg)
 
 namespace KWin
 {
@@ -105,7 +105,7 @@ void logScriptConfig(const char *operation, const char *stage, const char *outco
     if (bounded.size() > 256) {
         bounded.truncate(256);
     }
-    qCInfo(lcScriptConfig).noquote() << QStringLiteral("plasmaautotiler.script-config op=%1 stage=%2 outcome=%3 %4")
+    qCInfo(lcScriptConfig).noquote() << QStringLiteral("omnitiler.script-config op=%1 stage=%2 outcome=%3 %4")
                                             .arg(QString::fromUtf8(operation), QString::fromUtf8(stage),
                                                  QString::fromUtf8(outcome), bounded);
 }
@@ -260,7 +260,7 @@ QString UnifiedSettingsModule::effectMethod()
 
 QString UnifiedSettingsModule::effectName()
 {
-    return QStringLiteral("plasma-auto-tiler-active-border");
+    return QStringLiteral("omnitiler-active-border");
 }
 
 bool UnifiedSettingsModule::isEffectReconfigureFailed(const QDBusMessage &reply)
@@ -1195,7 +1195,7 @@ void UnifiedSettingsModule::load()
     refreshWindowConflicts();
 
     const KConfigGroup group(KSharedConfig::openConfig(QStringLiteral("kwinrc")),
-                             QStringLiteral("Script-plasma-auto-tiler-kwin"));
+                             QStringLiteral("Script-omnitiler-kwin"));
     const auto select = [](QComboBox *combo, const QString &value, const QString &fallback) {
         const int index = combo->findData(value);
         const int fallbackIndex = combo->findData(fallback);
@@ -1273,7 +1273,7 @@ void UnifiedSettingsModule::save()
     // pure retry save (pending request, unchanged widgets) skips
     // persistence: the loaded values already match the widgets.
     KConfigGroup group(KSharedConfig::openConfig(QStringLiteral("kwinrc")),
-                       QStringLiteral("Script-plasma-auto-tiler-kwin"));
+                       QStringLiteral("Script-omnitiler-kwin"));
     QStringList written;
     if (widgetsChanged) {
         if (workspaceModeChanged) {

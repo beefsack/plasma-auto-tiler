@@ -219,7 +219,7 @@
 - Rust now fits flat strips and nested/T layouts through the same fresh-adoption
   lifecycle, projects configured gaps, and falls back to unchanged seed/reflow
   on exclusions, invalid geometry, no cut or invalid projection. One bounded
-  `plasma-auto-tiler:adoption-fit outcome=... windows=... reason=... correlation=...`
+  `omnitiler:adoption-fit outcome=... windows=... reason=... correlation=...`
   line reports each fresh fit attempt; retained reconciles do not repeat it.
   No adapter or native changes. Offline tests cover focus-independent exact
   nested adoption, resized shares, N-ary axes, configured gaps and tolerance

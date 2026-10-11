@@ -133,7 +133,7 @@ function refreshLogs(define: string | null): string[] {
         `--outfile=${outFile}`,
     ];
     if (define !== null) {
-        args.push(`--define:__PLASMA_AUTO_TILER_TRACE__=${JSON.stringify(define)}`);
+        args.push(`--define:__OMNITILER_TRACE__=${JSON.stringify(define)}`);
     }
     execFileSync("npx", args, { cwd: process.cwd(), stdio: "pipe" });
     const context = createContext({});
@@ -145,7 +145,7 @@ function refreshLogs(define: string | null): string[] {
 
 function refreshLines(logs: string[]): string[] {
     return logs.filter((line) =>
-        line.startsWith("plasma-auto-tiler:route-diag component=cosmic-plan route=plan stage=refresh "),
+        line.startsWith("omnitiler:route-diag component=cosmic-plan route=plan stage=refresh "),
     );
 }
 

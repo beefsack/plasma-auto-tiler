@@ -18,10 +18,10 @@ native safety boundary.
 
 - Added the native effect-scoped QWidget KCM and shared KConfigXT border
   settings. Existing script keys, values, defaults, and config group are
-  preserved and saved through the original `Script-plasma-auto-tiler-kwin`
+  preserved and saved through the original `Script-omnitiler-kwin`
   group.
 - Added native color, width, radius, and gap settings under
-  `Effect-plasma-auto-tiler-active-border`. The effect uses the theme highlight
+  `Effect-omnitiler-active-border`. The effect uses the theme highlight
   color with the configured color as fallback and reconfigures through KWin
   D-Bus after KCM Apply.
 - Added native KCM staging to the reversible dogfood installer.

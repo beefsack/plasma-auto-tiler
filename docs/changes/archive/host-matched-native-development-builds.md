@@ -57,11 +57,11 @@ Accepted real host compile proof (2026-09-20, current system):
   - `default_build_dir=target/kwin-native-host-<kwin-derivation-identity>-build`
   - `default_stage_dir=target/kwin-native-effect-stage`
 - Proof artifacts (host-matched build dir, prior accepted compile):
-  - `...-build/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so`
+  - `...-build/bin/kwin/effects/plugins/omnitiler-active-border.so`
     (2688800 bytes, 2026-09-20 13:48:58 +1000)
-  - `...-build/bin/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so`
+  - `...-build/bin/kwin/effects/plugins/omnitiler-drag-oracle.so`
     (2455664 bytes, 2026-09-20 13:49:05 +1000)
-  - `...-build/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so`
+  - `...-build/bin/kwin/effects/configs/omnitiler-active-border_config.so`
     (2574536 bytes, 2026-09-20 13:49:23 +1000)
 - Bounded substitutions/environment derivation: identity derived opaquely
   from the derivation basename (sanitized, no version parsing); justfile
@@ -73,7 +73,7 @@ Accepted real host compile proof (2026-09-20, current system):
   then runs `nix develop <host-drv> --command bash -c 'cmake -S ... -B ... -DKWin_DIR=<resolved-dev>/lib/cmake/KWin -DBUILD_TESTING=OFF; cmake --build ...'`
   with explicit `/nix/store` rustc bin dir on `PATH`; outer cmake/cargo
   never required or injected; cmake must resolve host-native inside the dev
-  shell; legacy `PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR` /
+  shell; legacy `OMNITILER_KWIN_DEV_CMAKE_DIR` /
   `DOGFOOD_KWIN_DEV_CMAKE_DIR` / `CMAKE_BIN` / `CARGO_BIN` are stripped
   outer and inner; `KWinConfig.cmake` is required inside the dev shell after
   Nix has realized the exact dev output.
@@ -91,7 +91,7 @@ Accepted real host compile proof (2026-09-20, current system):
   `kdePackages.kconfig`, `kdePackages.kcmutils`,
   `kdePackages.kwidgetsaddons`, `pkgs.kdePackages.kwin`,
   `pkgs.kdePackages.kwin.dev`, and the locked
-  `PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR` export. Retained portable/test
+  `OMNITILER_KWIN_DEV_CMAKE_DIR` export. Retained portable/test
   and unrelated tooling: `clang-tools`, `just`, `python3`, `zip`,
   `kdePackages.kpackage`, `weston`, plus Rust/JS languages.
 - Tool decision: `jq` stays portable repo system tooling, declared in
@@ -113,8 +113,8 @@ Accepted real host compile proof (2026-09-20, current system):
   the same host derivation environment. The staged active-border and
    drag-oracle libraries both link `libkwin.so.6` with a RUNPATH beginning
    `<host KWin 6.7.5 store package>/lib`; their plugin
-   IDs are respectively `plasma-auto-tiler-active-border` and
-   `plasma-auto-tiler-drag-oracle`.
+   IDs are respectively `omnitiler-active-border` and
+   `omnitiler-drag-oracle`.
 - User manual acceptance (2026-09-20): "It's working perfectly now and the
   active border is back too." This accepts the reported startup result and
   visible active border only. It does not establish oracle protocol, cleanup,

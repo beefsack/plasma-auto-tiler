@@ -34,7 +34,7 @@
 ## Normal Contract
 
 - Records use the existing
-  `plasma-auto-tiler:plan:cmd=<correlation> ... component=<component>
+  `omnitiler:plan:cmd=<correlation> ... component=<component>
   route=<route> stage=<stage> correlation=<correlation>
   generation=<generation> revision=<revision> event=<event>
   outcome=<outcome> cause=<cause>` KWin sink.

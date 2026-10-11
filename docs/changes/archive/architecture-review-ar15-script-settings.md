@@ -2,7 +2,7 @@
 
 ## Goal and scope
 
-Own `workspaceMode`, `shortcutProfile`, `innerGap`, and `outerGap` on the KWin script's Configure page. Preserve their `Script-plasma-auto-tiler-kwin` storage, defaults and gap bounds. A page Save requests KWin reconfigure so changed gaps reach the running controller's validated, debounced retained `update-gaps` route without a second user action. State truthfully that workspace and shortcut profile changes require a session restart. Leave border and explicit shortcut overrides in the native effect KCM. Do not revive the removed ineffective controls or change startup-only behavior.
+Own `workspaceMode`, `shortcutProfile`, `innerGap`, and `outerGap` on the KWin script's Configure page. Preserve their `Script-omnitiler-kwin` storage, defaults and gap bounds. A page Save requests KWin reconfigure so changed gaps reach the running controller's validated, debounced retained `update-gaps` route without a second user action. State truthfully that workspace and shortcut profile changes require a session restart. Leave border and explicit shortcut overrides in the native effect KCM. Do not revive the removed ineffective controls or change startup-only behavior.
 
 ## Approach and evidence
 
@@ -12,7 +12,7 @@ The project-owned native script KCM is referenced by `X-KDE-ConfigModule`, saves
 
 Offline evidence: Rust 662 tests, format, and portable check pass; KWin typecheck, 816 tests and build pass; fresh KWin 6.7.5 host-matched native build and 29/29 CTest pass. KPackage shell contract passes; dogfood 572/0, dev-native 163/0, host-builder 93/0. Strict Clippy reports four pre-existing lints in untouched `tiler-core` files (no Rust files changed). Independent review found inaccurate pure-retry UI/persistence and startup-key logging and a missing effect-KCM dev-stage guard; all three were corrected, followed by native/KWin/shell verification. No live KWin/Plasma mutation, host install or session change occurred.
 
-User-owned live acceptance: install the script plus host-matched native companion and start a new session for module discovery; with the effect disabled, open KWin Scripts -> Plasma Auto Tiler -> Configure, save inner/outer gap changes and verify visible retained gaps without another action; check unchanged save makes no request, mixed startup+gap save states restart-required while gaps converge, and a fresh session picks up `workspaceMode`/`shortcutProfile`. Distinguish queued D-Bus request from observed applied result; inspect `plasmaautotiler.script-config` and `plasma-auto-tiler:plan:config-reloaded` diagnostics. No live claim is made.
+User-owned live acceptance: install the script plus host-matched native companion and start a new session for module discovery; with the effect disabled, open KWin Scripts -> OmniTiler -> Configure, save inner/outer gap changes and verify visible retained gaps without another action; check unchanged save makes no request, mixed startup+gap save states restart-required while gaps converge, and a fresh session picks up `workspaceMode`/`shortcutProfile`. Distinguish queued D-Bus request from observed applied result; inspect `omnitiler.script-config` and `omnitiler:plan:config-reloaded` diagnostics. No live claim is made.
 
 ## Units and acceptance
 

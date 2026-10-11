@@ -441,7 +441,7 @@ fn serialize_bounded(reply: &PlanReply) -> String {
 /// raw payloads never appear. Both functions are pure and total over
 /// arbitrary input: unparseable or out-of-shape sides degrade to bounded
 /// placeholders, so malformed and unauthorized-shaped inputs cannot echo.
-pub const PLAN_SUMMARY_PREFIX: &str = "plasma-auto-tiler:plan-summary";
+pub const PLAN_SUMMARY_PREFIX: &str = "omnitiler:plan-summary";
 
 /// Sanitize one free-form token for summary lines: lowercase dashes only,
 /// capped at 64 chars, else `unknown`. Mirrors the adapter-side rejection
@@ -622,7 +622,7 @@ fn emit_engine_convergence(engine: &Engine) {
 }
 
 /// Bounded fresh adoption-fit prefix (normal-level, log-only).
-pub const ADOPTION_FIT_PREFIX: &str = "plasma-auto-tiler:adoption-fit";
+pub const ADOPTION_FIT_PREFIX: &str = "omnitiler:adoption-fit";
 
 /// Sanitize one adoption-fit token: lowercase/digits with dashes or
 /// underscores, capped at 64 chars, else `unknown`. Covers the `ok` and
@@ -668,7 +668,7 @@ pub fn summarize_adoption_fit(
 }
 
 /// Bounded fixed-size admission prefix (normal-level, log-only, D1-D8).
-pub const FIXED_ADMISSION_PREFIX: &str = "plasma-auto-tiler:fixed-size-admission";
+pub const FIXED_ADMISSION_PREFIX: &str = "omnitiler:fixed-size-admission";
 
 /// Normal-level fixed-size admission summary: exactly one per op that
 /// admitted automatic fixed floats with the opt-in enabled, owned by the
@@ -781,7 +781,7 @@ fn emit_engine_adoption_fit(engine: &Engine) {
 }
 
 /// Trace-only placement prefix (opt-in trace wiring only, never normal logs).
-pub const PLACEMENT_TRACE_PREFIX: &str = "plasma-auto-tiler:placement-trace";
+pub const PLACEMENT_TRACE_PREFIX: &str = "omnitiler:placement-trace";
 
 /// Whether trace-only placement diagnostics are enabled (`1` only).
 /// Mirrors the Planner service trace gate so the protocol choke point can
@@ -789,7 +789,7 @@ pub const PLACEMENT_TRACE_PREFIX: &str = "plasma-auto-tiler:placement-trace";
 #[must_use]
 pub fn placement_trace_enabled() -> bool {
     matches!(
-        std::env::var("PLASMA_AUTO_TILER_TRACE"),
+        std::env::var("OMNITILER_TRACE"),
         Ok(value) if value == "1"
     )
 }
@@ -9850,7 +9850,7 @@ mod tests {
         let line = summarize_plan_convergence("conv-sum-1", "reconcile", 1, 2, 3);
         assert_eq!(
             line,
-            "plasma-auto-tiler:plan-summary direction=convergence op=reconcile correlation=conv-sum-1 reason=observation-mismatch removed=1 admitted=2 flags_adopted=3"
+            "omnitiler:plan-summary direction=convergence op=reconcile correlation=conv-sum-1 reason=observation-mismatch removed=1 admitted=2 flags_adopted=3"
         );
         // Malformed sides degrade to bounded placeholders without echoing
         // anything caller-controlled: no window ids, rects, owner, or
@@ -9858,7 +9858,7 @@ mod tests {
         let garbage = summarize_plan_convergence("evil correlation!!", "Reconcile!!", 0, 0, 0);
         assert_eq!(
             garbage,
-            "plasma-auto-tiler:plan-summary direction=convergence op=unknown correlation=- reason=observation-mismatch removed=0 admitted=0 flags_adopted=0"
+            "omnitiler:plan-summary direction=convergence op=unknown correlation=- reason=observation-mismatch removed=0 admitted=0 flags_adopted=0"
         );
         assert!(!garbage.contains("evil"), "{garbage}");
     }
@@ -10724,7 +10724,7 @@ mod tests {
         // Structured correlated log line at the planner boundary.
         assert_eq!(
             summarize_plan_migration("migrate-1", "right", 2, 1, false),
-            "plasma-auto-tiler:plan-summary direction=migration op=migrate-workspace correlation=migrate-1 migrate_direction=right members=2 floats=1 empty=false",
+            "omnitiler:plan-summary direction=migration op=migrate-workspace correlation=migrate-1 migrate_direction=right members=2 floats=1 empty=false",
         );
     }
 
@@ -11092,7 +11092,7 @@ mod tests {
         assert!(reply.get("desired_focus").is_none(), "{reply}");
         assert_eq!(
             summarize_plan_migration("migrate-empty-1", "left", 0, 0, true),
-            "plasma-auto-tiler:plan-summary direction=migration op=migrate-workspace correlation=migrate-empty-1 migrate_direction=left members=0 floats=0 empty=true",
+            "omnitiler:plan-summary direction=migration op=migrate-workspace correlation=migrate-empty-1 migrate_direction=left members=0 floats=0 empty=true",
         );
     }
 
@@ -11604,14 +11604,14 @@ mod tests {
         let line = summarize_plan_ingress(&request);
         assert_eq!(
             line,
-            "plasma-auto-tiler:plan-summary direction=ingress op=send-to-workspace correlation=ws-sum-1 revision=0"
+            "omnitiler:plan-summary direction=ingress op=send-to-workspace correlation=ws-sum-1 revision=0"
         );
         // Malformed input degrades to placeholders without echoing anything
         // caller-controlled: no window ids, rects, owner, or payload bytes.
         let garbage = summarize_plan_ingress("{not-json!! owner-1 win-1");
         assert_eq!(
             garbage,
-            "plasma-auto-tiler:plan-summary direction=ingress op=unknown correlation=- revision=-"
+            "omnitiler:plan-summary direction=ingress op=unknown correlation=- revision=-"
         );
         // An invalid correlation shape never echoes, even when well-formed.
         let bad_corr = summarize_plan_ingress(
@@ -11644,7 +11644,7 @@ mod tests {
         let send_reply = r#"{"v":1,"correlation_id":"ws-sum-2","outcome":"planned","kind":"send-to-workspace","base_revision":3}"#;
         assert_eq!(
             summarize_plan_egress(&send_request, send_reply),
-            "plasma-auto-tiler:plan-summary direction=egress op=send-to-workspace correlation=ws-sum-2 outcome=planned kind=send-to-workspace base_revision=3 detail=-"
+            "omnitiler:plan-summary direction=egress op=send-to-workspace correlation=ws-sum-2 outcome=planned kind=send-to-workspace base_revision=3 detail=-"
         );
         // A garbage reply degrades without echoing it.
         let garbage = summarize_plan_egress(&send_request, "{not-json!!");
@@ -13321,7 +13321,7 @@ mod tests {
         let line = summarize_adoption_fit("adopt-log-1", "fitted", 3, "ok", 0);
         assert_eq!(
             line,
-            "plasma-auto-tiler:adoption-fit outcome=fitted windows=3 reason=ok centre_splits=0 correlation=adopt-log-1"
+            "omnitiler:adoption-fit outcome=fitted windows=3 reason=ok centre_splits=0 correlation=adopt-log-1"
         );
         let fallback = summarize_adoption_fit("adopt-log-2", "fallback", 2, "single_window", 0);
         assert!(fallback.contains("outcome=fallback"), "{fallback}");
@@ -13355,7 +13355,7 @@ mod tests {
                 single_report.reason,
                 single_report.centre_splits,
             ),
-            "plasma-auto-tiler:adoption-fit outcome=fallback windows=1 reason=single_window centre_splits=0 correlation=adopt-log-single-1"
+            "omnitiler:adoption-fit outcome=fallback windows=1 reason=single_window centre_splits=0 correlation=adopt-log-single-1"
         );
 
         let mut excluded = Planner::new();

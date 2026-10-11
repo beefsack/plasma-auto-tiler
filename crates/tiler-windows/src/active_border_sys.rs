@@ -23,15 +23,15 @@ fn err(msg: impl Into<String>) -> DynError {
     Box::new(std::io::Error::other(msg.into()))
 }
 
-pub const OVERLAY_CLASS: &str = "PlasmaAutoTilerActiveBorder";
+pub const OVERLAY_CLASS: &str = "OmniTilerActiveBorder";
 /// Owned group-underlay surface class: distinct from the border class so the
 /// read-only inspect commands and residue audits count each carrier exactly.
-pub const UNDERLAY_CLASS: &str = "PlasmaAutoTilerGroupUnderlay";
+pub const UNDERLAY_CLASS: &str = "OmniTilerGroupUnderlay";
 /// Owned drop-preview surface class: distinct from the border and underlay
 /// classes so inspect commands and residue audits count each carrier exactly.
 /// Separate Z-plane above windows (KWin overlay-item analogue); never mixed
 /// with the border/underlay below-target plane.
-pub const PREVIEW_CLASS: &str = "PlasmaAutoTilerDropPreview";
+pub const PREVIEW_CLASS: &str = "OmniTilerDropPreview";
 
 /// Default drop-preview fill (KDE parity): `#2A82DA` at alpha 64, i.e. ARGB
 /// `#402A82DA`. Stored as `(alpha, r, g, b)` like the underlay carrier.
@@ -1435,7 +1435,7 @@ mod tests {
         // Distinct carrier class: inspect and residue audits count each
         // surface exactly; the preview never shares the border/underlay
         // below-target plane.
-        assert_eq!(PREVIEW_CLASS, "PlasmaAutoTilerDropPreview");
+        assert_eq!(PREVIEW_CLASS, "OmniTilerDropPreview");
         assert_ne!(PREVIEW_CLASS, OVERLAY_CLASS);
         assert_ne!(PREVIEW_CLASS, UNDERLAY_CLASS);
     }

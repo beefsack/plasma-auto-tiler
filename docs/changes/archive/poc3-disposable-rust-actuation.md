@@ -769,9 +769,9 @@ does not authorize recovery work, production migration, or a parity claim.
   slots 1-3 `689128`, `689129`, and `689130`/`16015683` were identity-bound.
   Each slot reached `first-map 320x240`; manual validation and readiness passed.
   Slot colors and app IDs were red `0xFFC02020`
-  (`org.plasma-auto-tiler.poc3-diag-1`), green `0xFF20A020`
-  (`org.plasma-auto-tiler.poc3-diag-2`), and blue `0xFF2040C0`
-  (`org.plasma-auto-tiler.poc3-diag-3`).
+  (`com.omnitiler.poc3-diag-1`), green `0xFF20A020`
+  (`com.omnitiler.poc3-diag-2`), and blue `0xFF2040C0`
+  (`com.omnitiler.poc3-diag-3`).
 - The single corrected canonical-jq read-only probe, with owner
   `lead-f7ff3848`, generation `g20260906f7ff`, and nonce `n20260906f7ff`,
   built its bundle and returned partial script ID `0`, but did not emit its
@@ -816,7 +816,7 @@ does not authorize recovery work, production migration, or a parity claim.
   `1061841`/`16232457`, trio supervisor `1064132`/`16233290`, slots
   `1064140`/`1064141`/`1064142`/`16233300`. Three `first-map 320x240` and
   source red/green/blue mappings with app IDs
-  `org.plasma-auto-tiler.poc3-diag-1/2/3` verified.
+  `com.omnitiler.poc3-diag-1/2/3` verified.
 - The sole canonical store-jq read-only probe (owner `live-unit2-worker`,
   generation `gen-20260906-w2`, nonce `probe-20260906-w2a`) returned partial
   script ID `0` with no bounded post-run private-log success marker/payload.
@@ -995,13 +995,13 @@ does not authorize recovery work, production migration, or a parity claim.
   KWin 6.7.4 APIs without violating its exact production restoration boundary.
   Read-only current-session inspection found `org.kde.KWin` owner `:1.9`, PID
   `3568836`, start tick `13991576`, and
-  `isScriptLoaded("plasma-auto-tiler-kwin") == true`. `/Scripting` exposes only
+  `isScriptLoaded("omnitiler-kwin") == true`. `/Scripting` exposes only
   `isScriptLoaded`, `loadScript`, `loadDeclarativeScript`, `start`, and
   `unloadScript`; `Script0` exposes only `run` and `stop`. Neither object has
   properties or an enumeration that maps a loaded script to plugin ID, source,
   hash, count, or running state.
 - `scripts/poc3-host-baseline.sh` records the bounded read-only host baseline
-  under `$XDG_RUNTIME_DIR/plasma-auto-tiler-host-pilot/`; it labels object and
+  under `$XDG_RUNTIME_DIR/omnitiler-host-pilot/`; it labels object and
   running identity unavailable rather than guessing. `scripts/poc3-host-suspend.sh`
   records the same validated blocker and never sends lifecycle mutation. Their
   fixture suites cover owner/PID/source/load/shortcut drift and unsafe paths.
@@ -1014,7 +1014,7 @@ does not authorize recovery work, production migration, or a parity claim.
 ## Pragmatic Host Pilot (2026-09-06)
 
 - The user explicitly authorized a bounded pragmatic exception to the preceding
-  exact-restoration conclusion. It accepts `isScriptLoaded("plasma-auto-tiler-kwin")`,
+  exact-restoration conclusion. It accepts `isScriptLoaded("omnitiler-kwin")`,
   exact plugin-ID unload/reload, one uniquely resolved active Nix-store
   production source/package, exact KWin owner/PID/start-tick/canonical-executable
   pinning, and user-observable behavior as the operational authority. It does
@@ -1100,10 +1100,10 @@ does not authorize recovery work, production migration, or a parity claim.
 - One authorized `POC3_HOST_PILOT_ALLOW=1 bash
   scripts/poc3-host-pilot.sh suspend` invocation succeeded. Its retained
   `suspend-receipt.json` records
-  `verdict: suspended`, exact plugin `plasma-auto-tiler-kwin`,
+  `verdict: suspended`, exact plugin `omnitiler-kwin`,
   `loaded_before: loaded`, `loaded_after: not-loaded`, `unload_reply: true`,
   and `verified_not_loaded: true`. The exact later-resume binding is its Nix
-  `plasma-auto-tiler-kwin-0.1.0` package,
+  `omnitiler-kwin-0.1.0` package,
   source `contents/code/main.js`, metadata SHA-256
   `ceb49666a22cd18afa8ab5381eb997df1608dbcfc1bd8049d45823757474903f`, and
   bundle SHA-256 `37688bc5df45ab82f0407fa788322aca364dd13f4c6fc10788f3eda09bbf5f58`.
@@ -1168,7 +1168,7 @@ does not authorize recovery work, production migration, or a parity claim.
   host runtime directory / `wayland-0`.
 - Supervisor PID/tick `3592922`/`23352227`; client PIDs/ticks
   `3592938`/`23352240`, `3592939`/`23352240`, `3592940`/`23352240`; app IDs
-  `org.plasma-auto-tiler.poc3-diag-1/2/3`.
+  `com.omnitiler.poc3-diag-1/2/3`.
 - Read-only `poc3-host-trio.sh validate` reported manifest valid with three
   slots; production `isScriptLoaded` false; Planner owner absent.
 - Static evidence: host client/supervisor host-scope argv/path repair tests
@@ -1203,13 +1203,13 @@ does not authorize recovery work, production migration, or a parity claim.
   Direct `/proc/3568836/exe` remains permission-denied; the existing
   receipt-bound direct-parent compound identity remains the accepted authority.
 - The suspend receipt remains `verdict=suspended`; live
-  `isScriptLoaded("plasma-auto-tiler-kwin")` is false. The live trio still
+  `isScriptLoaded("omnitiler-kwin")` is false. The live trio still
   matches its receipt and scope `f18245bc-0b73-4cda-9647-091f85aab333` /
   `eDP-1`: supervisor `3592922`/`23352227`; diagnostic clients
   `3592938`, `3592939`, and `3592940`, each tick `23352240`, with respective
-  app IDs `org.plasma-auto-tiler.poc3-diag-1`,
-  `org.plasma-auto-tiler.poc3-diag-2`, and
-  `org.plasma-auto-tiler.poc3-diag-3`, slots `1`, `2`, and `3`. Their
+  app IDs `com.omnitiler.poc3-diag-1`,
+  `com.omnitiler.poc3-diag-2`, and
+  `com.omnitiler.poc3-diag-3`, slots `1`, `2`, and `3`. Their
   canonical executables match the receipt and none collides with the
   controlling shell.
 - Independent post-failure verification found no Planner D-Bus owner,
@@ -1258,7 +1258,7 @@ does not authorize recovery work, production migration, or a parity claim.
   owner's `/proc/exe` remains permission-denied, while the readable MainPID
   wrapped executable matches the recorded canonical path, SHA-256,
   device/inode, and mode. Production remains `verdict=suspended` with live
-  `isScriptLoaded("plasma-auto-tiler-kwin") == false`.
+  `isScriptLoaded("omnitiler-kwin") == false`.
 - The block is a source-level fail-closed contract mismatch, not a host-state
   surprise. `poc3-host-kwin-identity.sh` documents and emits 21-line systemd
   and 25-line direct-parent wrapper-pair identities, but
@@ -1323,9 +1323,9 @@ does not authorize recovery work, production migration, or a parity claim.
   keeps injection-like environment and argv payloads literal, and proves the
   obsolete delimiter form fails.
 - One authorized planner launch succeeded. The retained planner state binds
-  service `org.plasmaautotiler.Planner`, unique owner `:1.1481`, PID
+  service `com.omnitiler.Planner`, unique owner `:1.1481`, PID
   `3721096`, start tick `26266852`, and exact executable
-  `target/debug/plasma-auto-tiler`.
+  `target/debug/omnitiler`.
   Post-launch planner and trio validation passed against the existing receipt
   scope `f18245bc-0b73-4cda-9647-091f85aab333` / `eDP-1`; KWin remains
   `:1.9`/`3568836`/`13991576` and production remains suspended.
@@ -1339,13 +1339,13 @@ does not authorize recovery work, production migration, or a parity claim.
 - Worker 1 did not invoke persistent POC3 `start`. Prevalidation typed planner
   readiness failed while Planner owner/PID/tick/exe `:1.1481` / `3721096` /
   `26266852` /
-  `target/debug/plasma-auto-tiler`
+  `target/debug/omnitiler`
   was live: `EvaluatePoc3 status` returned `Call failed: Input/output error`.
   No retry or other lifecycle command ran. No initial layout succeeded.
 - KWin direct-parent identity remains owner `:1.9`, PID/tick
   `3568836`/`13991576`, parent `3568829`/`13991575`, boot ID
   `2e63db46-c4ae-4552-a899-fb864e3cbbc6`; live
-  `isScriptLoaded("plasma-auto-tiler-kwin")` false and suspend verdict remains
+  `isScriptLoaded("omnitiler-kwin")` false and suspend verdict remains
   suspended.
 - Trio receipt `host-trio-receipt.json`,
   scope `f18245bc-0b73-4cda-9647-091f85aab333` / `eDP-1`: supervisor
@@ -1458,7 +1458,7 @@ does not authorize recovery work, production migration, or a parity claim.
   identity exactly matched receipt: owner `:1.9`, PID/tick
   `3568836`/`13991576`, direct parent `3568829`/`13991575`, boot
   `2e63db46-c4ae-4552-a899-fb864e3cbbc6`, and the recorded immutable wrapper
-  pair. `isScriptLoaded("plasma-auto-tiler-kwin")` returned false; the Planner
+  pair. `isScriptLoaded("omnitiler-kwin")` returned false; the Planner
   name had no owner. Current desktop/output matched receipt scope
   `f18245bc-0b73-4cda-9647-091f85aab333` / `eDP-1`.
 - The retained supervisor `3592922`/`23352227` and clients
@@ -1579,15 +1579,15 @@ exist first. Production remains suspended (`isScriptLoaded` false), Planner
   The launch receipt records KWin owner/PID/tick `:1.9`/`3568836`/`13991576`,
   direct-parent source, scope `f18245bc-0b73-4cda-9647-091f85aab333`/`eDP-1`,
   display `wayland-0`, and supervisor `509390`/`28326302`.
-- Fresh client receipt IDs were slot 1 `509404` / `org.plasma-auto-tiler.poc3-diag-1`,
-  slot 2 `509405` / `org.plasma-auto-tiler.poc3-diag-2`, and slot 3 `509406` /
-  `org.plasma-auto-tiler.poc3-diag-3`. `kill -0` succeeded for the three
+- Fresh client receipt IDs were slot 1 `509404` / `com.omnitiler.poc3-diag-1`,
+  slot 2 `509405` / `com.omnitiler.poc3-diag-2`, and slot 3 `509406` /
+  `com.omnitiler.poc3-diag-3`. `kill -0` succeeded for the three
   clients and supervisor after the one-shot.
-- Before the write, `isScriptLoaded("plasma-auto-tiler-kwin")` returned `b false`.
+- Before the write, `isScriptLoaded("omnitiler-kwin")` returned `b false`.
   The one IIFE used the literal PID/app-ID pairs, required exactly one normal,
   managed, resizable matching KWin window for each pair, then required one
   common output/current desktop before its first geometry write.
-- KWin completion marker: `plasma-auto-tiler:poc3-host-poc:f57ae4eff231bc2fe6685fb44038cb2d:applied:A=0,44,764,980;B=772,44,764,486;C=772,538,764,486;focus=A`.
+- KWin completion marker: `omnitiler:poc3-host-poc:f57ae4eff231bc2fe6685fb44038cb2d:applied:A=0,44,764,980;B=772,44,764,486;C=772,538,764,486;focus=A`.
   The observed work area was `0,44,1536,980`; expected and reported rectangles
   were red A `(0,44 764x980)`, green B `(772,44 764x486)`, blue C
   `(772,538 764x486)`, focus A.
@@ -1629,7 +1629,7 @@ exist first. Production remains suspended (`isScriptLoaded` false), Planner
   (direct parent `3568829`, matching `plasma-kwin_wayland.service` MainPID;
   systemd-direct-parent topology as in prior receipts), verified identical
   before and after the probe. Production `isScriptLoaded
-  ("plasma-auto-tiler-kwin")` false; planner `org.plasmaautotiler.Planner`
+  ("omnitiler-kwin")` false; planner `com.omnitiler.Planner`
   has no owner; `isScriptLoaded` false for `poc3-host-pilot-action`,
   `poc3-host-persistent`, and `poc3-host-poc-f57ae4eff231bc2fe6685fb44038cb2d`;
   `/Scripting/Script0` absent before and after.
@@ -1637,7 +1637,7 @@ exist first. Production remains suspended (`isScriptLoaded` false), Planner
   `host-trio-receipt.json`:
   supervisor `509390`/`28326302`, clients slot 1 `509404`, slot 2 `509405`,
   slot 3 `509406`, all tick `28326312`, app IDs
-  `org.plasma-auto-tiler.poc3-diag-1/2/3`. All four PIDs alive via `kill -0`
+  `com.omnitiler.poc3-diag-1/2/3`. All four PIDs alive via `kill -0`
   with matching `/proc` ticks and receipt-bound exe readlinks. Frozen3 PIDs
   `162156`/`162172`/`162173`/`162174` absent; frozen3 receipt is historical
   only.
@@ -1649,7 +1649,7 @@ exist first. Production remains suspended (`isScriptLoaded` false), Planner
   `stop` exited 0; `unloadScript` under the probe plugin names returned
   `b false` while `/Scripting/Script0` is absent and all probe
   `isScriptLoaded` checks are false (no residue per the public API); temp file
-  removed. Journal tag `plasma-auto-tiler:readonly-probe-20260907` under KWin
+  removed. Journal tag `omnitiler:readonly-probe-20260907` under KWin
   PID `3568836`.
 - Current KWin state: exactly one normal/managed/resizeable window per
   PID/app-ID pair; all on output `eDP-1`, desktop
@@ -1688,7 +1688,7 @@ exist first. Production remains suspended (`isScriptLoaded` false), Planner
 ## Host Keyboard POC Recovery Check (2026-09-07)
 
 - After the host KWin restart, the exact production plugin
-  `plasma-auto-tiler-kwin` was observed loaded, unloaded through the public
+  `omnitiler-kwin` was observed loaded, unloaded through the public
   `/Scripting` API, and rechecked not loaded. Production is suspended; no
   configuration was written.
 - The fresh resize-aware trio launch stopped before spawning: its guard found
@@ -1782,9 +1782,9 @@ exist first. Production remains suspended (`isScriptLoaded` false), Planner
   `pat-live-resize-20260907-p554898`, and `pat-live-poc-20260907`; no recorded
   POC swap/action plugin was loaded. All exact recorded POC
   planner/supervisor/client processes were absent. It then resumed
-   `plasma-auto-tiler-kwin` from
-  the `plasma-auto-tiler-kwin-0.1.0` store package
-  `share/kwin/scripts/plasma-auto-tiler-kwin/contents/code/main.js`:
+   `omnitiler-kwin` from
+  the `omnitiler-kwin-0.1.0` store package
+  `share/kwin/scripts/omnitiler-kwin/contents/code/main.js`:
   `loadScript` returned `2`, `run` succeeded, and `isScriptLoaded` returned
   true. This is operational resume evidence, not a new receipt or exact
   in-memory source-attribution proof. User windows were neither closed nor
@@ -1798,7 +1798,7 @@ exist first. Production remains suspended (`isScriptLoaded` false), Planner
 ## Moved Evidence (from docs/decisions.md)
 
 - POC3's bounded host-only pilot used temporary production suspend/resume
-  authority that was pragmatic only: `isScriptLoaded("plasma-auto-tiler-kwin")`,
+  authority that was pragmatic only: `isScriptLoaded("omnitiler-kwin")`,
   exact plugin-ID unload/reload, one accepted active Nix-store package/source
   resolution, exact KWin owner/PID/start-tick/canonical-executable pinning, and
   observable behavior. KWin 6.7.4 still cannot prove Script-object-to-plugin/source

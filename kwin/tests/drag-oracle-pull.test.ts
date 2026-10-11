@@ -246,7 +246,7 @@ describe("drag-oracle pull verdict parsing", () => {
 
     it("formats a bounded route-diag line without geometry or identity bytes", () => {
         const line = formatDragOracleVerdict({ cancelled: false, correlation: "drag-3", reason: "ok-moved" });
-        assert.equal(line, "plasma-auto-tiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved");
+        assert.equal(line, "omnitiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved");
     });
 });
 
@@ -276,11 +276,11 @@ describe("drag-oracle pull transport", () => {
         assert.ok(pending !== null);
         (pending as (reply: unknown) => void)(movedVerdict());
         assert.deepEqual(logs, [
-            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
-            "plasma-auto-tiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved",
-            "plasma-auto-tiler:route-diag:drag-route-missing",
+            "omnitiler:route-diag:drag-pull action=dispatch",
+            "omnitiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved",
+            "omnitiler:route-diag:drag-route-missing",
         ]);
-        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-unavailable"));
+        assert.ok(!logs.some((line) => line === "omnitiler:route-diag:drag-unavailable"));
     });
 
     it("logs a bounded dispatch when the endpoint never answers", () => {
@@ -292,7 +292,7 @@ describe("drag-oracle pull transport", () => {
             },
         });
         pull.pullVerdict();
-        assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-pull action=dispatch"]);
+        assert.deepEqual(logs, ["omnitiler:route-diag:drag-pull action=dispatch"]);
     });
 
     it("logs dispatch before the verdict callback and remains bounded", () => {
@@ -308,10 +308,10 @@ describe("drag-oracle pull transport", () => {
         });
         pull.pullVerdict();
         assert.deepEqual(order, [
-            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
+            "omnitiler:route-diag:drag-pull action=dispatch",
             "call",
-            "plasma-auto-tiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved",
-            "plasma-auto-tiler:route-diag:drag-route-missing",
+            "omnitiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved",
+            "omnitiler:route-diag:drag-route-missing",
         ]);
         assert.ok(order.every((line) => line.length <= 128));
     });
@@ -342,10 +342,10 @@ describe("drag-oracle pull transport", () => {
         });
         pull.pullVerdict();
         assert.deepEqual(logs, [
-            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
-            "plasma-auto-tiler:route-diag:drag-reply-invalid correlation=none",
+            "omnitiler:route-diag:drag-pull action=dispatch",
+            "omnitiler:route-diag:drag-reply-invalid correlation=none",
         ]);
-        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-unavailable"));
+        assert.ok(!logs.some((line) => line === "omnitiler:route-diag:drag-unavailable"));
     });
 
     it("fails closed to one bounded call-thrown token when the transport throws", () => {
@@ -360,10 +360,10 @@ describe("drag-oracle pull transport", () => {
         });
         pull.pullVerdict();
         assert.deepEqual(logs, [
-            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
-            "plasma-auto-tiler:route-diag:drag-call-thrown",
+            "omnitiler:route-diag:drag-pull action=dispatch",
+            "omnitiler:route-diag:drag-call-thrown",
         ]);
-        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-unavailable"));
+        assert.ok(!logs.some((line) => line === "omnitiler:route-diag:drag-unavailable"));
     });
 
     it("fails closed to one bounded call-missing token when no call binding exists", () => {
@@ -374,8 +374,8 @@ describe("drag-oracle pull transport", () => {
             },
         } as DragOraclePullEnv);
         pull.pullVerdict();
-        assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-call-missing"]);
-        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-unavailable"));
+        assert.deepEqual(logs, ["omnitiler:route-diag:drag-call-missing"]);
+        assert.ok(!logs.some((line) => line === "omnitiler:route-diag:drag-unavailable"));
     });
 
     it("fails closed to one bounded route-missing token for a non-cancelled verdict without a route", () => {
@@ -390,11 +390,11 @@ describe("drag-oracle pull transport", () => {
         });
         pull.pullVerdict();
         assert.deepEqual(logs, [
-            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
-            "plasma-auto-tiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved",
-            "plasma-auto-tiler:route-diag:drag-route-missing",
+            "omnitiler:route-diag:drag-pull action=dispatch",
+            "omnitiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved",
+            "omnitiler:route-diag:drag-route-missing",
         ]);
-        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-unavailable"));
+        assert.ok(!logs.some((line) => line === "omnitiler:route-diag:drag-unavailable"));
     });
 });
 
@@ -429,9 +429,9 @@ describe("drag-oracle pull entry wiring", () => {
         assert.equal(replies.length, 1);
         (replies[0] as (reply: unknown) => void)(cancelledVerdict());
         assert.deepEqual(logs, [
-            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
-            "plasma-auto-tiler:route-diag:drag-verdict cancelled=true correlation=drag-4 reason=no-change",
-            "plasma-auto-tiler:route-diag:drag-cancelled correlation=drag-4 reason=no-change",
+            "omnitiler:route-diag:drag-pull action=dispatch",
+            "omnitiler:route-diag:drag-verdict cancelled=true correlation=drag-4 reason=no-change",
+            "omnitiler:route-diag:drag-cancelled correlation=drag-4 reason=no-change",
         ]);
         (handle as { stop: () => void }).stop();
         assert.equal(first.disconnects(), 1);
@@ -476,9 +476,9 @@ describe("drag-oracle pull entry wiring", () => {
         assert.equal(calls.length, 1);
         (replies[0] as (reply: unknown) => void)(movedVerdict());
         assert.deepEqual(logs, [
-            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
-            "plasma-auto-tiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved",
-            "plasma-auto-tiler:route-diag:drag-route-missing",
+            "omnitiler:route-diag:drag-pull action=dispatch",
+            "omnitiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved",
+            "omnitiler:route-diag:drag-route-missing",
         ]);
         (handle as { stop: () => void }).stop();
         assert.equal(first.disconnects(), 1);
@@ -501,8 +501,8 @@ describe("drag-oracle pull entry wiring", () => {
             },
         });
         assert.equal(handle, null);
-        assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-entry-added-invalid"]);
-        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-entry-invalid"));
+        assert.deepEqual(logs, ["omnitiler:route-diag:drag-entry-added-invalid"]);
+        assert.ok(!logs.some((line) => line === "omnitiler:route-diag:drag-entry-invalid"));
         assert.equal(first.disconnects(), 1);
     });
 
@@ -518,8 +518,8 @@ describe("drag-oracle pull entry wiring", () => {
             },
         });
         assert.equal(handle, null);
-        assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-entry-no-finished"]);
-        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-entry-invalid"));
+        assert.deepEqual(logs, ["omnitiler:route-diag:drag-entry-no-finished"]);
+        assert.ok(!logs.some((line) => line === "omnitiler:route-diag:drag-entry-invalid"));
     });
 
     it("refuses each distinct startup branch with its own exact drag-entry token", () => {
@@ -539,25 +539,25 @@ describe("drag-oracle pull entry wiring", () => {
             const logs: string[] = [];
             reject(workspace, logs);
             assert.deepEqual(logs, [token]);
-            assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-entry-invalid"));
+            assert.ok(!logs.some((line) => line === "omnitiler:route-diag:drag-entry-invalid"));
         };
-        expectToken(null, "plasma-auto-tiler:route-diag:drag-entry-workspace-missing");
-        expectToken({}, "plasma-auto-tiler:route-diag:drag-entry-list-missing");
+        expectToken(null, "omnitiler:route-diag:drag-entry-workspace-missing");
+        expectToken({}, "omnitiler:route-diag:drag-entry-list-missing");
         expectToken(
             {
                 windowList: (): unknown[] => {
                     throw new Error("list-boom");
                 },
             },
-            "plasma-auto-tiler:route-diag:drag-entry-list-thrown",
+            "omnitiler:route-diag:drag-entry-list-thrown",
         );
         expectToken(
             { windowList: (): unknown => "garbage" },
-            "plasma-auto-tiler:route-diag:drag-entry-list-invalid",
+            "omnitiler:route-diag:drag-entry-list-invalid",
         );
         expectToken(
             { windowList: (): unknown[] => [] },
-            "plasma-auto-tiler:route-diag:drag-entry-no-windows",
+            "omnitiler:route-diag:drag-entry-no-windows",
         );
         const connectThrows = {
             connect: (): void => {
@@ -569,7 +569,7 @@ describe("drag-oracle pull entry wiring", () => {
             {
                 windowList: (): unknown[] => [{ interactiveMoveResizeFinished: connectThrows }],
             },
-            "plasma-auto-tiler:route-diag:drag-entry-finished-invalid",
+            "omnitiler:route-diag:drag-entry-finished-invalid",
         );
         const addedThrows = {
             connect: (): void => {
@@ -583,7 +583,7 @@ describe("drag-oracle pull entry wiring", () => {
                 windowList: (): unknown[] => [{ interactiveMoveResizeFinished: finished.signal }],
                 windowAdded: addedThrows,
             },
-            "plasma-auto-tiler:route-diag:drag-entry-added-connect-failed",
+            "omnitiler:route-diag:drag-entry-added-connect-failed",
         );
     });
 
@@ -598,7 +598,7 @@ describe("drag-oracle pull entry wiring", () => {
                 },
             });
             assert.equal(handle, null);
-            assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-entry-call-missing"]);
+            assert.deepEqual(logs, ["omnitiler:route-diag:drag-entry-call-missing"]);
         } finally {
             delete (globalThis as Record<string, unknown>)["callDBus"];
         }
@@ -615,7 +615,7 @@ describe("drag-oracle pull entry wiring", () => {
                 },
             });
             assert.equal(handle, null);
-            assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-entry-call-thrown"]);
+            assert.deepEqual(logs, ["omnitiler:route-diag:drag-entry-call-thrown"]);
         } finally {
             delete (globalThis as Record<string, unknown>)["callDBus"];
         }
@@ -632,7 +632,7 @@ describe("drag-oracle pull entry wiring", () => {
         assert.ok(module.includes("interactiveMoveResizeFinished"));
         assert.ok(module.includes("windowAdded"));
         assert.ok(module.includes("LastVerdict"));
-        assert.ok(module.includes("plasma-auto-tiler:route-diag"));
+        assert.ok(module.includes("omnitiler:route-diag"));
         assert.ok(module.includes("finalRect"));
         assert.ok(module.includes("windowIdentity"));
         assert.ok(module.includes("routePointer"));

@@ -31,7 +31,7 @@ touching KWin, D-Bus, config, or user paths (`README.md`, `justfile:build-native
 just dev-native-setup
 ```
 
-It writes only `$XDG_CONFIG_HOME/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh`
+It writes only `$XDG_CONFIG_HOME/plasma-workspace/env/60-omnitiler-native-effect.sh`
 for this checkout, then requires logout/login, and again after every rebuild
 (`README.md`, `docs/decisions.md`).
 - Packaging/install beyond that staging path (NixOS module, Home Manager,
@@ -44,12 +44,12 @@ used rather than inventing store or system install steps.
 - Open the project KCM (verified route in `README.md`):
 
 ```sh
-kcmshell6 kwin/effects/configs/plasma-auto-tiler-active-border_config
+kcmshell6 kwin/effects/configs/omnitiler-active-border_config
 ```
 
 - In its `Shortcuts` group, capture the status label verbatim before any click.
 - Read-only cleared-list state lives at
-`~/.config/plasma-auto-tiler/shortcut-clearedrc`
+`~/.config/omnitiler/shortcut-clearedrc`
 (`kwin/native-effect/shortcutreconciler.cpp:defaultClearedActionsPath`).
 Inspect only; do not create, edit, or delete it.
 - Ordinary Settings Apply never changes shortcuts
@@ -82,7 +82,7 @@ and `Cancel` visible only for that pending preview
 - Require the preview to list every active holder with component/action,
 found keys, exact required keys removed, and unrelated keys kept
 (`unifiedsettings_module.cpp:buildForcePreviewText`).
-This includes unknown and legacy `kwin/plasma-auto-tiler-*` IDs.
+This includes unknown and legacy `kwin/omnitiler-*` IDs.
 Exempt only: project actions, Lock Session, and the authorized System Monitor
 `Meta+Esc` holder. A `.desktop`-default-only claimant with nothing to clear
 blocks Force until unbound manually.
@@ -213,7 +213,7 @@ With disposable windows, physically press each chord and confirm:
 Bounded shortcut diagnostics only:
 
 ```sh
-journalctl --user --no-pager -g "plasmaautotiler.shortcut op="
+journalctl --user --no-pager -g "omnitiler.shortcut op="
 ```
 
 Records carry `op=`, `stage=`, `outcome=` with allowlisted identity and key

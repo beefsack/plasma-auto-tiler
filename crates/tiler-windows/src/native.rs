@@ -258,15 +258,15 @@ fn local_app_data() -> Result<PathBuf, IdentityError> {
 pub fn ledger_directory() -> Result<PathBuf, IdentityError> {
     let session = session_of(unsafe { GetCurrentProcessId() })?;
     Ok(local_app_data()?
-        .join("plasma-auto-tiler")
+        .join("omnitiler")
         .join(format!("session-{session}")))
 }
 
-/// Per-user settings directory (`%LOCALAPPDATA%\plasma-auto-tiler`, no
+/// Per-user settings directory (`%LOCALAPPDATA%\omnitiler`, no
 /// session suffix): the product root proven by the known-folder path above.
 /// The settings file lives here so every session owner shares one store.
 pub fn settings_directory() -> Result<PathBuf, IdentityError> {
-    Ok(local_app_data()?.join("plasma-auto-tiler"))
+    Ok(local_app_data()?.join("omnitiler"))
 }
 
 pub struct HeldProcess {

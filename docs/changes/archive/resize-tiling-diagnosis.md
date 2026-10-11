@@ -24,10 +24,10 @@
   the adapter, not by a later resize.
 - That route is not the loaded KWin entry. The production entry starts only
   `startPlanAdapterEntry` (`kwin/src/entry.ts:1, 51`). The current dev log has
-  only `plasma-auto-tiler:plan` records, including applied plan operations and
+  only `omnitiler:plan` records, including applied plan operations and
   recoverable `duplicate-window` rejections; it contains no resize-adapter,
   mismatch, disable, divergence, or eligibility event
-  (`plasma-auto-tiler-dev.qLvCX5.log:1-38`).
+  (`omnitiler-dev.qLvCX5.log:1-38`).
 - The active plan adapter does not post-observe geometry after writes and does
   not disable after a failed flight: it clears the flight and can dispatch the
   next deferred operation (`kwin/src/plan-adapter.ts:1064-1188`). Therefore the
@@ -86,8 +86,8 @@
    existing tiled scope and resize it by dragging an edge, then release it.
 2. Read the existing development log without restarting or reloading anything.
 3. PASS for the diagnosis: the window stays visibly at its manually changed
-   rectangle and the log records only `plasma-auto-tiler:plan` activity, with
-   no `plasma-auto-tiler:resize` or `resize-post-mismatch` token. A different
+   rectangle and the log records only `omnitiler:plan` activity, with
+   no `omnitiler:resize` or `resize-post-mismatch` token. A different
    result is evidence for a different route and must be captured before a fix.
 
 ## Outcome

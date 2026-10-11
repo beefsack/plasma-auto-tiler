@@ -73,7 +73,7 @@ grant authorization beyond [Current Decisions](decisions.md#live-kwinplasma-boun
 
 - KWin runs as `plasma-kwin_wayland.service`; use `journalctl --user` and filter
   by the recorded KWin PID. `journalctl --system` is not a valid KWin capture.
-- Production diagnostics use the `plasma-auto-tiler:` prefix. Keep the separate
+- Production diagnostics use the `omnitiler:` prefix. Keep the separate
   `QT_CATEGORY=kwin_scripting` error check; neither substitutes for direct
   authoritative state evidence.
 - A journal cursor is opaque: strip the `-- cursor: ` display prefix before
@@ -126,7 +126,7 @@ grant authorization beyond [Current Decisions](decisions.md#live-kwinplasma-boun
 
 ## Preserved Residue
 
-- The unidentified prior `plasma-auto-tiler-advisory-*` runtime-directory
+- The unidentified prior `omnitiler-advisory-*` runtime-directory
   residue is preserved untouched. Do not search for, enumerate, inspect,
   identify heuristically, modify, or delete it. No stale POC2/POC3 harness
   or checkpoint retry is authorized; recovery requires explicit user

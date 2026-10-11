@@ -10,11 +10,11 @@ MEMBERS=(
   contents/ui/config.ui
 )
 NATIVE_MEMBERS=(
-  kwin/effects/plugins/plasma-auto-tiler-active-border.so
-  kwin/effects/configs/plasma-auto-tiler-active-border_config.so
-  kwin/scripts/configs/plasma-auto-tiler-kwin_config.so
+  kwin/effects/plugins/omnitiler-active-border.so
+  kwin/effects/configs/omnitiler-active-border_config.so
+  kwin/scripts/configs/omnitiler-kwin_config.so
 )
-PLUGIN_ID="plasma-auto-tiler-kwin"
+PLUGIN_ID="omnitiler-kwin"
 
 WORK="$(mktemp -d)"
 FIXTURE="$WORK/fixture"
@@ -416,7 +416,7 @@ else
     # Script-only artifact keeps the qualified native script KCM reference:
     # the Configure page resolves only when the companion ABI-matched
     # native-effect delivery is installed alongside this package.
-    "$UNZIP_BIN" -p "$ARCHIVE_ONE" metadata.json | grep -Fq "kwin/scripts/configs/plasma-auto-tiler-kwin_config" \
+    "$UNZIP_BIN" -p "$ARCHIVE_ONE" metadata.json | grep -Fq "kwin/scripts/configs/omnitiler-kwin_config" \
       || fail "archived metadata does not reference the native script KCM companion"
   fi
 fi

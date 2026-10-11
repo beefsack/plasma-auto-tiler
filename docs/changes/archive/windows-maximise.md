@@ -98,7 +98,7 @@
 ## Completion
 
 - Delivered as `1be97a1`, pushed to main. Hosted
-  [CI 37041636260](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37041636260)
+  [CI 37041636260](https://github.com/beefsack/omnitiler/actions/runs/37041636260)
   passed Windows, Rust, KWin and shell jobs. This record is archived at scoped
   completion; physical follow-ups and the provisional choice remain explicit.
 - Backlog proposal: mark item3 maximise delivered with this archived evidence;

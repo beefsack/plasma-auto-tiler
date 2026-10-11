@@ -38,7 +38,7 @@
   float today (`crates/tiler-windows/src/model.rs:19-27`); accepted sticky
   retention is still pending Windows work, not already implemented.
 - The Linux planner is a retained D-Bus service, not a per-request subprocess
-  (`crates/plasma-auto-tiler/src/planner_service.rs:1-14,132-156`). Memory-only
+  (`crates/omnitiler/src/planner_service.rs:1-14,132-156`). Memory-only
   storage cannot survive that service's own restart; its current boundary
   explicitly excludes persistence.
 - Initial Worker suggestions lacked source proof for script file I/O or
@@ -174,7 +174,7 @@
   results, zero failed; private-bus auth tests ran without skip messages.
 - `cargo clippy --workspace --all-targets --offline -- -D warnings`,
   `cargo fmt --all -- --check`, `just check-portable`: pass.
-- `cargo build -p plasma-auto-tiler --offline` passes, then all nine hermetic
+- `cargo build -p omnitiler --offline` passes, then all nine hermetic
   shell suites pass: tray 29 fixture + 16 self-test, dev-loop 380, dogfood 572,
   native-dev 163, host-build 93, live-harness 237, Custom Tile 131, floor-ratio
   92, plus build-kpackage contracts; 1713 counted assertions.

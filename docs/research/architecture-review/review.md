@@ -1,4 +1,4 @@
-# Architecture Review: plasma-auto-tiler
+# Architecture Review: omnitiler
 
 Date: 2026-09-23. Status: review only; no decision is selected by this
 document.
@@ -29,10 +29,10 @@ checked by building: which TypeScript modules end up in the shipped bundle
 
 | Component | Language | Prod size | Role | IPC |
 |---|---|---|---|---|
-| Planner (`plasma-auto-tiler planner-service`) | Rust | ~25k prod lines (all `src/`) | Tiling authority | D-Bus `org.plasmaautotiler.Planner` (JSON in a string) |
+| Planner (`omnitiler planner-service`) | Rust | ~25k prod lines (all `src/`) | Tiling authority | D-Bus `com.omnitiler.Planner` (JSON in a string) |
 | KWin script (`kwin/src/entry.ts` bundle) | TS | ~20k (bundled modules) | Observe, actuate, shortcuts, workspaces | `callDBus` to Planner, ActiveBorder, DragOracle, Tray |
 | Native effect and KCM | C++ plus bare-`rustc` Rust staticlibs | ~7k C++, ~2.5k Rust | Border, group outline, drag oracle, initial maximize, shortcut override | D-Bus `ActiveBorder`, `DragOracle` |
-| Tray | Rust (same crate) | ~5.8k | Status icon, launches Settings | D-Bus `org.plasmaautotiler.Tray` |
+| Tray | Rust (same crate) | ~5.8k | Status icon, launches Settings | D-Bus `com.omnitiler.Tray` |
 | Tooling | sh/just | 14.5k | Dev loop, dogfood install, live tests | - |
 
 ## 3. What is good (keep)
@@ -419,7 +419,7 @@ parser, stream ordering, and `should_show`.
 - Verify on the host that the KWin Scripts page then shows Configure. Whether
   saving there triggers the existing gap resync path is unknown.
 - The effect KCM keeps border and shortcut settings. Both already use
-  `kwinrc` group `Script-plasma-auto-tiler-kwin`
+  `kwinrc` group `Script-omnitiler-kwin`
   (`activeborderconfig_module.cpp:749`), so there is no duplicate storage.
 
 ### 7.5 Cargo workspace layout
@@ -432,7 +432,7 @@ crates/tiler-core/            no dependencies (serde behind an optional "serde" 
   src/engine/...              (from session.rs + Planner internals, see 7.6/7.9)
 crates/tiler-protocol/        serde, serde_json, tiler-core
   src/lib.rs                  (DTOs + codec from planner_protocol.rs)
-crates/plasma-auto-tiler/     bin; zbus, rustix, async-lock, tiler-protocol
+crates/omnitiler/     bin; zbus, rustix, async-lock, tiler-protocol
   src/main.rs, planner_service.rs, tray.rs, tray_endpoint.rs, tray_lifecycle.rs
 ```
 
@@ -446,7 +446,7 @@ crates/plasma-auto-tiler/     bin; zbus, rustix, async-lock, tiler-protocol
   must be added to the Rust toolchain in `devenv.nix`, which requires a
   session restart. This makes Linux-only leakage into core a build failure
   instead of a review finding.
-- **Nix:** `packages.tray` builds `-p plasma-auto-tiler`. After 7.3 the
+- **Nix:** `packages.tray` builds `-p omnitiler`. After 7.3 the
   effect derivation needs no Rust.
 
 ### 7.6 Typed `Engine` API and protocol
@@ -679,7 +679,7 @@ pub enum WorkspaceCapability { Native { create: bool, per_output_current: bool }
 
 ### 7.12 Tray and threat model (decision needed)
 
-- **Single instance:** request `org.plasmaautotiler.Tray` with `DoNotQueue`
+- **Single instance:** request `com.omnitiler.Tray` with `DoNotQueue`
   (the same pattern as the Planner). If the name is taken, exit 0. This
   replaces the lock and PID files, pidfd, and inode/content binding.
 - **Delivery:** XDG autostart (Home Manager already writes one) or a user

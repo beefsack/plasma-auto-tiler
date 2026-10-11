@@ -64,7 +64,7 @@
 - No live tests, installs or product-code changes; no Worker remains running.
 - Research commit `df018fb` passed all five hosted jobs: Rust, KWin, shell,
   Windows and macOS in
-  [CI 37131056780](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37131056780).
+  [CI 37131056780](https://github.com/beefsack/omnitiler/actions/runs/37131056780).
   The macOS job is toolchain smoke evidence, not native-adapter proof.
 - Archived this record after source/static review and hosted CI acceptance.
   All three sequential Workers completed; no Worker remains running.

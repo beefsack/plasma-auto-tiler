@@ -16,14 +16,14 @@ set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-LOG_DIR="/tmp/plasma-auto-tiler"
-TEST_WINDOW_CLASS="PlasmaAutoTilerTestWindow"
+LOG_DIR="/tmp/omnitiler"
+TEST_WINDOW_CLASS="OmniTilerTestWindow"
 XTERM_HOLD_SECONDS="3600"
 SPAWN_SETTLE_SECONDS="0.5"
 SETTLE_AFTER_SPAWN_SECONDS="2"
 RSS_SETTLE_SECONDS="1"
 SETTLE_AFTER_TEARDOWN_SECONDS="2"
-DBUS_MONITOR_FILTER="type='method_call',interface='com.plasmaAutoTiler.LogSink'"
+DBUS_MONITOR_FILTER="type='method_call',interface='com.omniTiler.LogSink'"
 SINK_FIFO="$LOG_DIR/sink.fifo"
 AMP_LOG_A="$LOG_DIR/variant-a-amplified.log"
 AMP_LOG_B="$LOG_DIR/variant-b-amplified.log"
@@ -42,7 +42,7 @@ window count. --dry-run only prints the exact sequence of commands that a
 real run would execute, without executing any of them.
 
 Options:
-  --variant a|b   variant to measure (plugin plasma-auto-tiler-variant-a/-b)
+  --variant a|b   variant to measure (plugin omnitiler-variant-a/-b)
   -n, --count N   number of test windows to spawn (any positive integer)
   --dry-run       print the trace only; execute nothing
   -h, --help      show this help
@@ -60,8 +60,8 @@ while [ $# -gt 0 ]; do
 done
 
 case "$VARIANT" in
-    a) PLUGIN_NAME="plasma-auto-tiler-variant-a"; SCRIPT_PATH="$BASE_DIR/script/variant-a.js"; REAL_LOG="$LOG_DIR/variant-a.log" ;;
-    b) PLUGIN_NAME="plasma-auto-tiler-variant-b"; SCRIPT_PATH="$BASE_DIR/script/variant-b.js"; REAL_LOG="$LOG_DIR/variant-b.log" ;;
+    a) PLUGIN_NAME="omnitiler-variant-a"; SCRIPT_PATH="$BASE_DIR/script/variant-a.js"; REAL_LOG="$LOG_DIR/variant-a.log" ;;
+    b) PLUGIN_NAME="omnitiler-variant-b"; SCRIPT_PATH="$BASE_DIR/script/variant-b.js"; REAL_LOG="$LOG_DIR/variant-b.log" ;;
     *) echo "error: --variant must be 'a' or 'b'" >&2; usage >&2; exit 2 ;;
 esac
 
@@ -81,7 +81,7 @@ AMP_LOG="$LOG_DIR/variant-$VARIANT-amplified.log"
 # Every line is flushed immediately so no data is lost when the process is
 # killed at teardown.
 DEMUX_PROGRAM='{
-    if (/interface=com.plasmaAutoTiler.LogSink; member=append/) {
+    if (/interface=com.omniTiler.LogSink; member=append/) {
         getline
         line = $0
         if (line !~ /^[ \t]*string "/) next
@@ -101,7 +101,7 @@ note() { printf '    # %s\n' "$*"; }
 step() { printf '\n[Step %s] %s\n' "$1" "$2"; }
 
 echo "=========================================================================="
-echo "plasma-auto-tiler baseline sweep"
+echo "omnitiler baseline sweep"
 echo "  variant:             $VARIANT"
 echo "  plugin name:         $PLUGIN_NAME"
 echo "  script path:         $SCRIPT_PATH"

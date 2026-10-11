@@ -55,7 +55,7 @@ CI jobs passed. This archive is evidence-only.
   inactive ledger.lock file remains. Read-only baseline: taskbar present/visible,
   SPI arranging = 1, pen visualization = 35. No experiment-created hidden windows.
   All four sequential Workers completed; no Worker running.
-- Hosted [CI run 37192477029](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37192477029)
+- Hosted [CI run 37192477029](https://github.com/beefsack/omnitiler/actions/runs/37192477029)
   passed Rust, KWin, shell, native, Windows and macOS for `580c766`.
 - Proposed backlog outcome: research complete; keep the optional feature
   deferred, with no design selected. Reopen only when demand warrants a parking

@@ -219,7 +219,7 @@ winget install --exact --id Git.Git --source winget
 The following uses `C:\src\pat` as a fresh-clone example; use a short host path. Verify the selected parent exists before cloning:
 
 ```powershell
-git clone --config core.autocrlf=false --config core.eol=lf --config core.longpaths=true https://github.com/beefsack/plasma-auto-tiler.git C:\src\pat
+git clone --config core.autocrlf=false --config core.eol=lf --config core.longpaths=true https://github.com/beefsack/omnitiler.git C:\src\pat
 Set-Location C:\src\pat
 git branch --show-current
 git config --show-origin --get-regexp '^core\.(autocrlf|eol|longpaths)$'
@@ -328,7 +328,7 @@ mise exec -- where.exe cargo
 | `tiler-core`, `tiler-protocol` | Build/test: pure Rust policy; zero normal core dependencies, protocol serde/serde_json. |
 | `tiler-kwin-effect-ffi` | Include Rust tests/staticlib build: only portable Rust/core/serde/POD exports. Its Qt/KWin C++ consumer is Linux-only. |
 | `tiler-windows` | Include build/tests/clippy; native APIs are Windows-gated, ledger tests portable. Build also produces the owned test-window binary. |
-| `plasma-auto-tiler` | Exclude: unguarded `rustix::process::geteuid` plus D-Bus/KDE service/tray integration. It cannot compile as-is on MSVC; Windows needs its own adapter. |
+| `omnitiler` | Exclude: unguarded `rustix::process::geteuid` plus D-Bus/KDE service/tray integration. It cannot compile as-is on MSVC; Windows needs its own adapter. |
 | fmt / strict clippy | fmt all packages without compilation; clippy only the allowlist. |
 | KWin npm | `npm ci` and `typecheck` can use native Node >= 24. Current build/test scripts use POSIX `rm -rf`/`VAR=value`; tests also invoke `npx` with `execFileSync` (Windows `.cmd` issue). Keep build/tests on Linux unchanged. |
 | Linux gates | Workspace Rust tests/clippy, `just check-portable` (bash/jq/grep), shell suites, Nix checks, native KWin build/CTest and user live tests stay on Linux. |
@@ -635,7 +635,7 @@ Windows execution result.
 - O4 (**O**): [Store shell resolution #41426](https://github.com/anomalyco/opencode/issues/41426), [rg extraction #24489](https://github.com/anomalyco/opencode/issues/24489), [git plugin cache path #22280](https://github.com/anomalyco/opencode/issues/22280), [Git/PATH #21826](https://github.com/anomalyco/opencode/issues/21826).
 - O5: [opencode permissions/patterns/agent overrides](https://opencode.ai/docs/permissions/), [Windows child-process .cmd limitation](https://nodejs.org/api/child_process.html#spawning-bat-and-cmd-files-on-windows).
 - **R:** `Cargo.toml`, `crates/*/Cargo.toml`, FFI Rust sources,
-  `crates/plasma-auto-tiler/src/planner_service.rs`, `devenv.nix`, `devenv.yaml`,
+  `crates/omnitiler/src/planner_service.rs`, `devenv.nix`, `devenv.yaml`,
   `.github/workflows/ci.yml`, `justfile`, `kwin/package.json`,
   `kwin/tests/{trace,source-rev,artifact-smoke,refresh-quiet-trace}.test.ts`;
   `git ls-files --eol`; verify target/sysroot inventory on the host.

@@ -42,31 +42,31 @@ inventory before publishing. The Debian copyright file is a partial template.
 
 | Path | Purpose |
 | --- | --- |
-| `packaging/rpm/plasma-auto-tiler.spec` | One spec, two binaries: `plasma-auto-tiler` (core with Settings) and `plasma-auto-tiler-native-effect` (effect only). Conditionals cover openSUSE Tumbleweed and Fedora 43/44. |
-| `packaging/arch/PKGBUILD`, `.SRCINFO`, `plasma-auto-tiler*.install` | Split package (`plasma-auto-tiler` with Settings, `plasma-auto-tiler-native-effect` effect only) for AUR-only consumption. No OBS pacman repo: Arch scope is AUR. |
+| `packaging/rpm/omnitiler.spec` | One spec, two binaries: `omnitiler` (core with Settings) and `omnitiler-native-effect` (effect only). Conditionals cover openSUSE Tumbleweed and Fedora 43/44. |
+| `packaging/arch/PKGBUILD`, `.SRCINFO`, `omnitiler*.install` | Split package (`omnitiler` with Settings, `omnitiler-native-effect` effect only) for AUR-only consumption. No OBS pacman repo: Arch scope is AUR. |
 | `packaging/debian/` | Core-with-Settings `debian/` source dir for Ubuntu 26.04. Native effect intentionally absent (blocker below). |
 | `packaging/obs/_service` | Pins the immutable GitHub Release tarball per version and its SHA-256; never a raw git checkout. |
-| `packaging/systemd/` | `plasma-auto-tiler-tray.service` and `plasma-auto-tiler-planner.service` user units, mirroring `home-manager-module.nix`. Never auto-enabled by any recipe. |
+| `packaging/systemd/` | `omnitiler-tray.service` and `omnitiler-planner.service` user units, mirroring `home-manager-module.nix`. Never auto-enabled by any recipe. |
 | `packaging/bump-version.sh` | Rewrites the pinned version across all recipes for a release (`--version X.Y.Z [--sha256 ...]`). |
 | `.obs/workflows.yml` | Single `tag_push` workflow running `trigger_services`. Inert until OBS provisioning exists. |
 
 ## What gets installed
 
-Core (`plasma-auto-tiler`): `/usr/bin/plasma-auto-tiler`, the KWin script
-at `/usr/share/kwin/scripts/plasma-auto-tiler-kwin/` (exactly
+Core (`omnitiler`): `/usr/bin/omnitiler`, the KWin script
+at `/usr/share/kwin/scripts/omnitiler-kwin/` (exactly
 `metadata.json`, `contents/code/main.js`, `contents/config/main.xml`,
 `contents/ui/config.ui`; the bundle is prebuilt, recipes never run npm),
-`/usr/share/dbus-1/services/org.plasmaautotiler.Planner.service`,
-`/usr/lib/systemd/user/plasma-auto-tiler-{tray,planner}.service`, the
+`/usr/share/dbus-1/services/com.omnitiler.Planner.service`,
+`/usr/lib/systemd/user/omnitiler-{tray,planner}.service`, the
 hicolor SVG icon, and both native settings pages (KWin-independent,
 Qt/KF6 only) under the Qt6 plugin dir -
-`kwin/effects/configs/plasma-auto-tiler-active-border_config.so` and
-`kwin/scripts/configs/plasma-auto-tiler-kwin_config.so` (the Configure page
+`kwin/effects/configs/omnitiler-active-border_config.so` and
+`kwin/scripts/configs/omnitiler-kwin_config.so` (the Configure page
 referenced by the KWin script).
 
-Native effect (`plasma-auto-tiler-native-effect`, where offered): exactly
+Native effect (`omnitiler-native-effect`, where offered): exactly
 one plugin under the Qt6 plugin dir -
-`kwin/effects/plugins/plasma-auto-tiler-active-border.so`. JSON metadata is
+`kwin/effects/plugins/omnitiler-active-border.so`. JSON metadata is
 embedded in the `.so` files at compile time (`K_PLUGIN_CLASS_WITH_JSON` /
 `KWIN_EFFECT_FACTORY`), so no `.json` ships alongside; this matches the
 flake `installCheck` file sets (effect-only vs settings-only).
@@ -76,11 +76,11 @@ flake `installCheck` file sets (effect-only vs settings-only).
 Recipes install files only. To use them:
 
 1. Enable the script: `kwriteconfig6 --file kwinrc --group Plugins --key
-   plasma-auto-tiler-kwinEnabled true`, then `qdbus org.kde.KWin /KWin
+   omnitiler-kwinEnabled true`, then `qdbus org.kde.KWin /KWin
    reconfigure`.
 2. Tray (optional): `systemctl --user enable --now
-   plasma-auto-tiler-tray.service`. The planner needs no enabling; D-Bus
-   activates `plasma-auto-tiler-planner.service` on demand.
+   omnitiler-tray.service`. The planner needs no enabling; D-Bus
+   activates `omnitiler-planner.service` on demand.
 
 ## Revert before removing (all managers)
 
@@ -92,7 +92,7 @@ per-row Revert to KDE default (removes the local host key so the KDE
 default takes effect again). Removal does not
 restore host keys or shortcut overrides. If you already removed
 core without reverting, reinstall core and press Revert.
-Disabling the script (setting `plasma-auto-tiler-kwinEnabled=false` and
+Disabling the script (setting `omnitiler-kwinEnabled=false` and
 reconfiguring KWin) is a separate step and does not restore host settings.
 
 Each recipe repeats this in its idiomatic post-removal message (RPM
@@ -115,7 +115,7 @@ matches the running KWin. So:
   companion ships the effect plugin only. RPM keeps the companion's
   exact-version core requirement (`Requires: %{name} =
   %{version}-%{release}`) and Arch keeps
-  `depends=("plasma-auto-tiler=$pkgver-$pkgrel" ...)` on the companion to
+  `depends=("omnitiler=$pkgver-$pkgrel" ...)` on the companion to
   keep installs paired; neither is claimed to migrate file ownership across
   updates (no predecessor was ever published). Removing the effect
   companion alone always leaves Settings/Revert in core.
@@ -174,7 +174,7 @@ the NixOS module).
   Native effect blocked only by its 6.26 CMake floor (resolute ships
   extra-cmake-modules 6.24); the distro `kwin-dev` 6.6.x headers match the
   distro runtime and are not themselves the blocker. The `Recommends:
-  plasma-auto-tiler-native-effect` in
+  omnitiler-native-effect` in
   `debian/control` is aspirational until an effect package exists; apt
   ignores unresolvable Recommends. Runtime KF dependencies for the
   core-shipped KCMs resolve via shlibdeps into `${shlibs:Depends}`, and the
@@ -193,7 +193,7 @@ a usable release pipeline even if the token is supplied. Keep OBS_TOKEN
 unset until the source handoff is resolved and tested.
 
 1. Maintainer creates the OBS account, one stable project, and the
-   `plasma-auto-tiler` package (unpublished test repo first), uploading
+   `omnitiler` package (unpublished test repo first), uploading
    the spec, `debian/` files, and `_service` manually. (No PKGBUILD: Arch
    is AUR-only.)
 2. With OBS_TOKEN still unset, push the release tag. GitHub publishes the
@@ -225,12 +225,12 @@ transaction/rebuild verification; no solver simulation of those cases was run.
 
 ## Building locally (no OBS needed)
 
-- RPM: `rpmbuild -bs packaging/rpm/plasma-auto-tiler.spec` (needs the
+- RPM: `rpmbuild -bs packaging/rpm/omnitiler.spec` (needs the
   release tarball as `Source0`; full builds need the distro deps above).
 - Arch: `makepkg --printsrcinfo` / `makepkg -s` from `packaging/arch/`
   with the release tarball URL reachable.
 - Debian: place the release tarball beside the build directory, renamed to
-  `plasma-auto-tiler_0.1.0.orig.tar.gz` (adjust the version for later
+  `omnitiler_0.1.0.orig.tar.gz` (adjust the version for later
   releases; the rename is required by the `3.0 (quilt)` source format),
   extract it, overlay `packaging/debian/` as `debian/` inside the extracted
   directory, then run `dpkg-buildpackage -us -uc` there.

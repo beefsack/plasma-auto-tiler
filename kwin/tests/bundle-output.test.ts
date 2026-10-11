@@ -31,7 +31,7 @@ describe("production bundle compatibility", () => {
     it("routes the script metadata to the native script KCM, never the retired generic link", () => {
         const metadata = readFileSync("metadata.json", "utf8");
         const schema = readFileSync("contents/config/main.xml", "utf8");
-        assert.match(metadata, /"X-KDE-ConfigModule": "kwin\/scripts\/configs\/plasma-auto-tiler-kwin_config"/);
+        assert.match(metadata, /"X-KDE-ConfigModule": "kwin\/scripts\/configs\/omnitiler-kwin_config"/);
         assert.doesNotMatch(metadata, /kcm_kwin4_genericscripted/);
         assert.match(schema, /<entry name="workspaceMode" type="Enum">/);
         assert.match(schema, /<entry name="shortcutProfile" type="Enum">/);

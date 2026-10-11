@@ -16,7 +16,7 @@ interface RevBundle {
 }
 
 // Fresh esbuild bundle of the source-rev module only. A non-null define
-// models the installed build's PLASMA_AUTO_TILER_SOURCE_REV bake-in; null
+// models the installed build's OMNITILER_SOURCE_REV bake-in; null
 // models an ordinary define-free npm build.
 function buildRevBundle(define: string | null): RevBundle {
     const outDir = mkdtempSync(join(tmpdir(), "pat-source-rev-"));
@@ -31,7 +31,7 @@ function buildRevBundle(define: string | null): RevBundle {
         `--outfile=${outFile}`,
     ];
     if (define !== null) {
-        args.push(`--define:__PLASMA_AUTO_TILER_SOURCE_REV__=${JSON.stringify(define)}`);
+        args.push(`--define:__OMNITILER_SOURCE_REV__=${JSON.stringify(define)}`);
     }
     execFileSync("npx", args, { cwd: process.cwd(), stdio: "pipe" });
     const text = readFileSync(outFile, "utf8");
@@ -60,7 +60,7 @@ describe("compile-time source revision identity", () => {
         assert.equal(bundle.read().PLAN_SOURCE_REV, REV);
         assert.ok(bundle.text.includes(`"${REV}"`), "release revision must be compiled into the bundle");
         assert.ok(
-            !bundle.text.includes("__PLASMA_AUTO_TILER_SOURCE_REV__"),
+            !bundle.text.includes("__OMNITILER_SOURCE_REV__"),
             "the define must fully replace the compile-time sentinel",
         );
         assert.doesNotMatch(bundle.text, /process\.env/);
@@ -89,7 +89,7 @@ describe("compile-time source revision identity", () => {
         const manifest = readFileSync("package.json", "utf8");
         const buildScript = (manifest.match(/"build": "((?:[^"\\]|\\.)*)"/) ?? [])[1] ?? "";
         const installedScript = (manifest.match(/"build:installed": "((?:[^"\\]|\\.)*)"/) ?? [])[1] ?? "";
-        assert.ok(installedScript.includes("--define:__PLASMA_AUTO_TILER_SOURCE_REV__="));
+        assert.ok(installedScript.includes("--define:__OMNITILER_SOURCE_REV__="));
         assert.ok(!buildScript.includes("--define:"), "ordinary npm build must stay define-free");
     });
 });

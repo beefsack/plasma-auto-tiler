@@ -19,7 +19,7 @@
 // mover focus, no retry) only after a fresh exact native membership proof.
 // There is no ack/verify protocol and no blocksPlan.
 //
-// The single D-Bus transport is org.plasmaautotiler.Planner DescribePlan; no
+// The single D-Bus transport is com.omnitiler.Planner DescribePlan; no
 // other method is invoked and same-UID authorization stays the Planner's own
 // single check (never duplicated here).
 
@@ -64,7 +64,7 @@ export interface WorkspaceSendEntryHandle {
     readonly isEnabled: () => boolean;
 }
 
-const ENTRY_LOG = "plasma-auto-tiler:route-diag";
+const ENTRY_LOG = "omnitiler:route-diag";
 const ENTRY_READY = `${ENTRY_LOG} component=cosmic-send stage=start event=ready outcome=ready`;
 const ENTRY_REJECT = `${ENTRY_LOG} component=cosmic-send stage=start event=refuse outcome=entry-invalid`;
 

@@ -34,13 +34,13 @@ describe("active-group native static contract", () => {
         assert.doesNotMatch(effectImpl, /initial_maximize_/);
         assert.doesNotMatch(effectImpl, /InitialMaximize/);
         assert.match(effectHeader, /groupHighlightStatus\(\) const/);
-        assert.match(effectImpl, /Q_CLASSINFO\("D-Bus Interface", "org\.plasmaautotiler\.ActiveBorder1"\)/);
+        assert.match(effectImpl, /Q_CLASSINFO\("D-Bus Interface", "com\.omnitiler\.ActiveBorder1"\)/);
         assert.match(effectImpl, /QDBusConnection::sessionBus/);
-        assert.match(effectImpl, /registerService\(QStringLiteral\("org\.plasmaautotiler\.ActiveBorder"\)\)/);
-        assert.match(effectImpl, /registerObject\(QStringLiteral\("\/org\/plasmaautotiler\/ActiveBorder"\)/);
+        assert.match(effectImpl, /registerService\(QStringLiteral\("com\.omnitiler\.ActiveBorder"\)\)/);
+        assert.match(effectImpl, /registerObject\(QStringLiteral\("\/com\/omnitiler\/ActiveBorder"\)/);
         assert.match(effectImpl, /ExportScriptableContents/);
-        assert.match(effectImpl, /unregisterObject\(QStringLiteral\("\/org\/plasmaautotiler\/ActiveBorder"\)\)/);
-        assert.match(effectImpl, /unregisterService\(QStringLiteral\("org\.plasmaautotiler\.ActiveBorder"\)\)/);
+        assert.match(effectImpl, /unregisterObject\(QStringLiteral\("\/com\/omnitiler\/ActiveBorder"\)\)/);
+        assert.match(effectImpl, /unregisterService\(QStringLiteral\("com\.omnitiler\.ActiveBorder"\)\)/);
         // The generic effect bus cannot dispatch effect-defined setters.
         assert.doesNotMatch(effectImpl, /\/Effects/);
         assert.doesNotMatch(effectImpl, /reconfigureEffect/);
@@ -317,11 +317,11 @@ describe("active-group native static contract", () => {
 
     it("folds the drag oracle into the survivor with one shared lifecycle and no second plugin", () => {
         // Oracle D-Bus endpoint and LastVerdict contract survive unchanged.
-        assert.match(effectImpl, /Q_CLASSINFO\("D-Bus Interface", "org\.plasmaautotiler\.DragOracle1"\)/);
-        assert.match(effectImpl, /registerService\(QStringLiteral\("org\.plasmaautotiler\.DragOracle"\)\)/);
-        assert.match(effectImpl, /registerObject\(QStringLiteral\("\/org\/plasmaautotiler\/DragOracle"\)/);
-        assert.match(effectImpl, /unregisterObject\(QStringLiteral\("\/org\/plasmaautotiler\/DragOracle"\)\)/);
-        assert.match(effectImpl, /unregisterService\(QStringLiteral\("org\.plasmaautotiler\.DragOracle"\)\)/);
+        assert.match(effectImpl, /Q_CLASSINFO\("D-Bus Interface", "com\.omnitiler\.DragOracle1"\)/);
+        assert.match(effectImpl, /registerService\(QStringLiteral\("com\.omnitiler\.DragOracle"\)\)/);
+        assert.match(effectImpl, /registerObject\(QStringLiteral\("\/com\/omnitiler\/DragOracle"\)/);
+        assert.match(effectImpl, /unregisterObject\(QStringLiteral\("\/com\/omnitiler\/DragOracle"\)\)/);
+        assert.match(effectImpl, /unregisterService\(QStringLiteral\("com\.omnitiler\.DragOracle"\)\)/);
         // Copied verdict before the D-Bus return; never a borrowed view.
         assert.match(effectImpl, /drag_oracle_last_copy/);
         assert.doesNotMatch(effectImpl, /drag_oracle_last\(/);
@@ -349,7 +349,7 @@ describe("active-group native static contract", () => {
         // No second plugin effect or factory.
         assert.doesNotMatch(effectImpl, /DragOracleEffect/);
         assert.doesNotMatch(effectImpl, /dragoracle-metadata\.json/);
-        assert.doesNotMatch(effectImpl, /plasma-auto-tiler-drag-oracle/);
+        assert.doesNotMatch(effectImpl, /omnitiler-drag-oracle/);
         assert.doesNotMatch(effectHeader, /DragOracleEffect/);
         assert.match(effectHeader, /m_oracleDbusObject/);
         assert.match(effectHeader, /m_oracleStartRects/);
@@ -379,11 +379,11 @@ describe("active-border visibility diagnostics", () => {
     }
 
     it("emits bounded endpoint, observe-seed, and visible shapes from fixed sites", () => {
-        assert.match(effectImpl, /Q_LOGGING_CATEGORY\(lcActiveBorder,\s*"plasmaautotiler\.activeborder"\)/);
+        assert.match(effectImpl, /Q_LOGGING_CATEGORY\(lcActiveBorder,\s*"omnitiler\.activeborder"\)/);
         assert.match(effectImpl, /qCInfo\(lcActiveBorder\)\.noquote\(\)/);
-        assert.match(effectImpl, /plasma-auto-tiler:active-border:endpoint available=/);
-        assert.match(effectImpl, /plasma-auto-tiler:active-border:observe-seed maximized=/);
-        assert.match(effectImpl, /plasma-auto-tiler:active-border:visible vis=%1 reason=%2 appletPopup=%3/);
+        assert.match(effectImpl, /omnitiler:active-border:endpoint available=/);
+        assert.match(effectImpl, /omnitiler:active-border:observe-seed maximized=/);
+        assert.match(effectImpl, /omnitiler:active-border:visible vis=%1 reason=%2 appletPopup=%3/);
         assert.match(effectImpl, /emitActiveBorderEndpoint\(\)/);
         assert.match(effectImpl, /emitActiveBorderVisible\(visible,/);
         assert.doesNotMatch(effectImpl, /initial-apply/);
@@ -408,14 +408,14 @@ describe("active-border visibility diagnostics", () => {
         // visible inside updateBorder.
         const ctorEndpoint = effectImpl.indexOf("emitActiveBorderEndpoint();");
         assert.ok(ctorEndpoint > effectImpl.indexOf("m_groupDbusAvailable = groupRegistered"));
-        const seedLog = effectImpl.indexOf("plasma-auto-tiler:active-border:observe-seed");
+        const seedLog = effectImpl.indexOf("omnitiler:active-border:observe-seed");
         assert.ok(seedLog > effectImpl.indexOf("void ActiveWindowBorderEffect::subscribeMaximize("));
         const updateBorderBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::updateBorder()");
         assert.match(updateBorderBody, /emitActiveBorderVisible\(visible,/);
     });
 
     it("emits visible edge-only on first evaluation and visibility flips", () => {
-        assert.equal(countMatches(effectImpl, /plasma-auto-tiler:active-border:visible/g), 1);
+        assert.equal(countMatches(effectImpl, /omnitiler:active-border:visible/g), 1);
         assert.equal(countMatches(effectImpl, /emitActiveBorderVisible/g), 2);
         const visibleBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::emitActiveBorderVisible(");
         assert.match(visibleBody, /m_borderDiagEmitted/);
@@ -448,7 +448,7 @@ describe("active-border visibility diagnostics", () => {
     });
 
     it("uses fixed bounded fields with no identity, payload, or geometry", () => {
-        const seedMarker = "plasma-auto-tiler:active-border:observe-seed";
+        const seedMarker = "omnitiler:active-border:observe-seed";
         const seedAt = effectImpl.indexOf(seedMarker);
         assert.ok(seedAt >= 0, seedMarker);
         const subscribeBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::subscribeMaximize(");

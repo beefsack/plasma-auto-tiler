@@ -56,8 +56,8 @@
 1. The user follows `docs/live-kwin-testing.md`, obtains the required session
    authorization, and records a restorable baseline for a tiled scope on two
    outputs, including per-output current desktops, frame geometries, active
-   output/workspace, and `plasma-auto-tiler:plan` plus
-   `plasma-auto-tiler:workspace` journal lines.
+   output/workspace, and `omnitiler:plan` plus
+   `omnitiler:workspace` journal lines.
 2. The user unplugs (or disables) the secondary output, waits for the
    debounced refresh, and records all Plan requests, frame geometries, current
    desktops, active window, and journal lines. The user replugs the output and
@@ -101,7 +101,7 @@
 1. The user follows `docs/live-kwin-testing.md`, obtains the required session
    authorization, and records a restorable baseline for a disposable two-window
    normal tiled scope on one existing output, including frame geometries,
-   active output/workspace, and `plasma-auto-tiler:plan` journal lines.
+   active output/workspace, and `omnitiler:plan` journal lines.
 2. The user changes only that output's resolution, waits for the debounced
    refresh, and records all Plan requests, frame geometries, and journal lines.
    The user restores the original resolution and records the same evidence.
@@ -111,7 +111,7 @@
 4. The user repeats one resolution or scaling change with one member fullscreen,
    records the Planner trace request/reply, bounded plan diagnostics, and all
    member frames, then exits fullscreen and restores the exact baseline. The
-    trace per-member `plasma-auto-tiler:plan:write` lines prove the fullscreen member
+    trace per-member `omnitiler:plan:write` lines prove the fullscreen member
    carried `disposition=skip-fullscreen` while every sibling carried
    `disposition=written`.
 5. Pass only if each bounds change issues one retained projection to the new
@@ -163,7 +163,7 @@
    for a session boundary.
 2. In a disposable three-window normal tiled scope, record the current Planner
    owner, one successful `DescribePlan` result, the three frame geometries, and
-   the current `plasma-auto-tiler:plan` journal lines.
+   the current `omnitiler:plan` journal lines.
 3. Suspend and wake the host manually. Make no tiling input for 10 seconds.
    Record Planner owner/name state, frame geometries, and new journal lines. If
    loss was confirmed, record whether the selected automatic bounded fresh
@@ -194,7 +194,7 @@
   exit compares the restored frame against the retained projection and reconciles
   only if restoration is imperfect. Direct move, keyboard resize, and pointer
   resize of a fullscreen target refuse fail-closed; the pointer route's
-  adapter records the exact `plasma-auto-tiler:plan:pointer-refused-fullscreen`
+  adapter records the exact `omnitiler:plan:pointer-refused-fullscreen`
   token rather than a shared derivation failure.
 - Hermetic KWin coverage proves admission with a fullscreen member, enter and
   exit restoration, sibling reflow, reconciliation isolation, out-of-bounds
@@ -217,7 +217,7 @@
   `kwin/src/plan-adapter-entry.ts:975-1027`.
 - The reply can include a fullscreen member's retained geometry, but reply
   actuation skips its native geometry write. The per-member
-  `plasma-auto-tiler:plan:write window=<id> disposition=skip-fullscreen
+  `omnitiler:plan:write window=<id> disposition=skip-fullscreen
   rect=<...>` line proves that skip in a live log for the fullscreen member,
   while every applied sibling logs `disposition=written`. The recurring tray
   D-Bus work continues during fullscreen. Its measurable gaming cost, and the

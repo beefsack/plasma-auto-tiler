@@ -523,8 +523,8 @@
 [set-window-pos]: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos
 [show-window]: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow
 [dwm-attributes]: https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute
-[first-ci]: https://github.com/beefsack/plasma-auto-tiler/actions/runs/37109086579
-[diagnostic-ci]: https://github.com/beefsack/plasma-auto-tiler/actions/runs/37113756434
+[first-ci]: https://github.com/beefsack/omnitiler/actions/runs/37109086579
+[diagnostic-ci]: https://github.com/beefsack/omnitiler/actions/runs/37113756434
 [hook-order]: https://learn.microsoft.com/en-us/windows/win32/winmsg/about-hooks
 [register-hotkey]: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey
 [game-shortcut-hook]: https://learn.microsoft.com/en-us/windows/win32/dxtecharts/disabling-shortcut-keys-in-games

@@ -7,7 +7,7 @@ FAKE_BIN="$(mktemp -d)"
 WORK="$(mktemp -d)"
 OUTPUT="$(mktemp)"
 LIVE_ROOT="$WORK/live-root"
-LIVE_BASE="$LIVE_ROOT/plasma-auto-tiler-live"
+LIVE_BASE="$LIVE_ROOT/omnitiler-live"
 FAKE_DOGFOOD="$WORK/dogfood-install.sh"
 FAKE_START_TEST="$WORK/start-test.sh"
 PASS=0
@@ -117,7 +117,7 @@ elif [[ "$args" == *" -f"* ]]; then
     sleep 30
     exit 0
   fi
-  printf '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:keyboard-completed"}\n'
+  printf '{"_PID":"2517","MESSAGE":"omnitiler:keyboard-completed"}\n'
   printf '{"_PID":"2517","SYSLOG_IDENTIFIER":"kwin_scripting","MESSAGE":"script evaluation error"}\n'
   exit 0
 else
@@ -158,7 +158,7 @@ printf 'dogfood %s\n' "$cmd" >> "${FAKE_CALL_LOG:?}"
     fi
     touch "$state/enabled"
     [[ "${RESTORE_LOADED:-}" == loaded ]] && touch "$state/loaded"
-    printf 'enabled: plasma-auto-tiler-kwinEnabled set to true and KWin reconfigured\n'
+    printf 'enabled: omnitiler-kwinEnabled set to true and KWin reconfigured\n'
     ;;
   disable)
     if [[ -f "$state/disable-fail" ]]; then
@@ -172,7 +172,7 @@ printf 'dogfood %s\n' "$cmd" >> "${FAKE_CALL_LOG:?}"
     if [[ ! -f "$state/residual-loaded" && ! -f "$state/delayed-unload" ]]; then
       rm -f "$state/loaded"
     fi
-    printf 'disabled: plasma-auto-tiler-kwinEnabled set to false and KWin reconfigured\n'
+    printf 'disabled: omnitiler-kwinEnabled set to false and KWin reconfigured\n'
     ;;
 esac
 EOF
@@ -215,8 +215,8 @@ case "$cmd" in
   start)
     if [[ -f "$state/start-disabled" ]]; then
       printf 'controller diagnostics (current attempt, after-cursor, same-KWin-PID):\n' >&2
-      printf '  plasma-auto-tiler:disabled:shortcut-registration-failed\n' >&2
-      printf '  plasma-auto-tiler:shortcut-register-failed:plasma-auto-tiler-focus-left\n' >&2
+      printf '  omnitiler:disabled:shortcut-registration-failed\n' >&2
+      printf '  omnitiler:shortcut-register-failed:omnitiler-focus-left\n' >&2
       printf 'error: controller disabled itself during startup\n' >&2
       exit 1
     fi
@@ -228,10 +228,10 @@ case "$cmd" in
       echo "error: fake start failed" >&2
       exit 1
     fi
-    printf 'started: plugin plasma-auto-tiler-kwin loaded; controller readiness confirmed; script-id=7\n'
+    printf 'started: plugin omnitiler-kwin loaded; controller readiness confirmed; script-id=7\n'
     ;;
   provenance)
-    plugin="${PROVENANCE_PLUGIN_ID:-plasma-auto-tiler-checkout-provenance-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
+    plugin="${PROVENANCE_PLUGIN_ID:-omnitiler-checkout-provenance-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
     if [[ -f "$state/carrier-loaded" ]]; then
       printf 'provenance-baseline: plugin=%s loaded=loaded\n' "$plugin"
       exit 1
@@ -272,9 +272,9 @@ case "$cmd" in
     printf 'provenance: ready nonce=%s build=%s pid=2517 script-id=19 plugin=%s receipt=%s\n' "${2:?}" "${FAKE_PROVENANCE_BUILD:?}" "$plugin" "$receipt"
     ;;
   provenance-stop)
-    plugin="${PROVENANCE_PLUGIN_ID:-plasma-auto-tiler-checkout-provenance-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
+    plugin="${PROVENANCE_PLUGIN_ID:-omnitiler-checkout-provenance-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
     if [[ -f "$state/replace-lock-on-stop" ]]; then
-      lock="${LIVE_TEST_ROOT:?}/plasma-auto-tiler-live/.lock/plugin-id"
+      lock="${LIVE_TEST_ROOT:?}/omnitiler-live/.lock/plugin-id"
       rm -f -- "$lock"
       ln -s -- "${FAKE_REPLACEMENT_TARGET:?}" "$lock"
     fi
@@ -291,7 +291,7 @@ case "$cmd" in
     snapshot_count=$((snapshot_count + 1))
     printf '%s\n' "$snapshot_count" > "$state/snapshot-count"
     if [[ -f "$state/shortcut-drift" && "$snapshot_count" -gt 1 ]]; then
-      printf '[["plasma-auto-tiler-focus-left","Focus","other","Other","default","Default",[1],[]]]\n'
+      printf '[["omnitiler-focus-left","Focus","other","Other","default","Default",[1],[]]]\n'
     else
       printf '[]\n'
     fi
@@ -307,7 +307,7 @@ case "$cmd" in
   stop)
     rm -f "$state/loaded"
     rm -f "$state/delayed-unload"
-    printf 'stop: plugin plasma-auto-tiler-kwin unloaded\n'
+    printf 'stop: plugin omnitiler-kwin unloaded\n'
     ;;
   diagnostics)
     printf 'diagnostics epoch: current\n'
@@ -345,7 +345,7 @@ run_script() {
   DOGFOOD_SH="$FAKE_DOGFOOD" START_TEST_SH="$FAKE_START_TEST" \
     NPM_BIN="$FAKE_BIN/bin/npm" BUSCTL_BIN="$FAKE_BIN/bin/busctl" PGREP_BIN="$FAKE_BIN/bin/pgrep" STAT_BIN="$FAKE_BIN/bin/stat" \
     JOURNALCTL_BIN="$FAKE_BIN/bin/journalctl" JQ_BIN="$REAL_JQ" \
-    LIVE_TEST_ROOT="$LIVE_ROOT" HOME="$WORK/home" XDG_CONFIG_HOME="$WORK/config" PROC_ROOT="$WORK/proc" FAKE_PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_HERMETIC_TEST=1 FAKE_PROVENANCE_BUILD="$FAKE_PROVENANCE_BUILD" FAKE_PACKAGE_PATH="$WORK/state/package" PATH="$FAKE_BIN/bin:$PATH" \
+    LIVE_TEST_ROOT="$LIVE_ROOT" HOME="$WORK/home" XDG_CONFIG_HOME="$WORK/config" PROC_ROOT="$WORK/proc" FAKE_PROC_ROOT="$WORK/proc" OMNITILER_HERMETIC_TEST=1 FAKE_PROVENANCE_BUILD="$FAKE_PROVENANCE_BUILD" FAKE_PACKAGE_PATH="$WORK/state/package" PATH="$FAKE_BIN/bin:$PATH" \
     FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" FAKE_TOOL_LOG="$WORK/tools.log" FAKE_REPLACEMENT_TARGET="$WORK/replacement-target" FAKE_KWIN_IDENTITY_SEQUENCE="${FAKE_KWIN_IDENTITY_SEQUENCE:-}" \
     "$BASH_PATH" "$SCRIPT" "$@" >"$OUTPUT" 2>&1
   EXIT=$?
@@ -604,14 +604,14 @@ assert_file_contains "$MANIFEST" "baseline-restore: unverified"
 # and content drift both fail restoration.
 reset_state
 mkdir -p "$WORK/config"
-printf '[Plugins]\nplasma-auto-tiler-kwinEnabled=false\n' > "$WORK/config/kwinrc"
+printf '[Plugins]\nomnitiler-kwinEnabled=false\n' > "$WORK/config/kwinrc"
 touch "$WORK/state/config-mtime-drift"
 run_script run --quick
 check_exit 1
 assert_contains "baseline verification failed: KWin config"
 
 reset_state
-printf '[Plugins]\nplasma-auto-tiler-kwinEnabled=false\n' > "$WORK/config/kwinrc"
+printf '[Plugins]\nomnitiler-kwinEnabled=false\n' > "$WORK/config/kwinrc"
 touch "$WORK/state/config-content-drift"
 run_script run --quick
 check_exit 1
@@ -974,15 +974,15 @@ set +e
   DOGFOOD_SH="$FAKE_DOGFOOD" START_TEST_SH="$FAKE_START_TEST" \
   NPM_BIN="$FAKE_BIN/bin/npm" BUSCTL_BIN="$FAKE_BIN/bin/busctl" PGREP_BIN="$FAKE_BIN/bin/pgrep" \
   JOURNALCTL_BIN="$FAKE_BIN/bin/journalctl" JQ_BIN="$REAL_JQ" \
-  LIVE_TEST_ROOT="$SPACE_ROOT" HOME="$WORK/home" XDG_CONFIG_HOME="$WORK/config" PROC_ROOT="$WORK/proc" FAKE_PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_HERMETIC_TEST=1 FAKE_PROVENANCE_BUILD="$FAKE_PROVENANCE_BUILD" FAKE_PACKAGE_PATH="$WORK/state/package" PATH="$FAKE_BIN/bin:$PATH" \
+  LIVE_TEST_ROOT="$SPACE_ROOT" HOME="$WORK/home" XDG_CONFIG_HOME="$WORK/config" PROC_ROOT="$WORK/proc" FAKE_PROC_ROOT="$WORK/proc" OMNITILER_HERMETIC_TEST=1 FAKE_PROVENANCE_BUILD="$FAKE_PROVENANCE_BUILD" FAKE_PACKAGE_PATH="$WORK/state/package" PATH="$FAKE_BIN/bin:$PATH" \
   FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" FAKE_TOOL_LOG="$WORK/tools.log" \
   "$BASH_PATH" "$SCRIPT" run >"$OUTPUT" 2>&1
 EXIT=$?
 set -e
 check_exit 0
 assert_contains "evidence retained at:"
-assert_file "$(find "$SPACE_ROOT/plasma-auto-tiler-live" -name final-status.txt | head -1)"
-assert_not_exists "$SPACE_ROOT/plasma-auto-tiler-live/.lock"
+assert_file "$(find "$SPACE_ROOT/omnitiler-live" -name final-status.txt | head -1)"
+assert_not_exists "$SPACE_ROOT/omnitiler-live/.lock"
 
 # concise preflight: one pass/fail line per step, per-step logs retained
 reset_state
@@ -1022,7 +1022,7 @@ assert_file_contains "$MANIFEST" "enabled-before: no"
 assert_file_contains "$MANIFEST" "loaded-before: not-loaded"
 assert_file_contains "$MANIFEST" "provenance-loaded-before: not-loaded"
 assert_file_contains "$MANIFEST" "operational-binding: proven"
-assert_file_contains "$MANIFEST" "provenance-plugin-id: plasma-auto-tiler-checkout-provenance-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+assert_file_contains "$MANIFEST" "provenance-plugin-id: omnitiler-checkout-provenance-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 assert_file_contains "$MANIFEST" "cleanup-provenance: verified"
 assert_file_contains "$MANIFEST" "provenance-loaded-after: not-loaded"
 assert_file_contains "$MANIFEST" "baseline-restore: verified"
@@ -1037,7 +1037,7 @@ set +e
   DOGFOOD_SH="$FAKE_DOGFOOD" START_TEST_SH="$FAKE_START_TEST" \
   NPM_BIN="$FAKE_BIN/bin/npm" BUSCTL_BIN="$FAKE_BIN/bin/busctl" PGREP_BIN="$FAKE_BIN/bin/pgrep" \
   JOURNALCTL_BIN="$FAKE_BIN/bin/journalctl" JQ_BIN="$REAL_JQ" \
-  LIVE_TEST_ROOT="$LIVE_ROOT" HOME="$WORK/home" XDG_CONFIG_HOME="$WORK/config" PROC_ROOT="$WORK/proc" FAKE_PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_HERMETIC_TEST=1 FAKE_PROVENANCE_BUILD="$FAKE_PROVENANCE_BUILD" FAKE_PACKAGE_PATH="$WORK/state/package" PATH="$FAKE_BIN/bin:$PATH" \
+  LIVE_TEST_ROOT="$LIVE_ROOT" HOME="$WORK/home" XDG_CONFIG_HOME="$WORK/config" PROC_ROOT="$WORK/proc" FAKE_PROC_ROOT="$WORK/proc" OMNITILER_HERMETIC_TEST=1 FAKE_PROVENANCE_BUILD="$FAKE_PROVENANCE_BUILD" FAKE_PACKAGE_PATH="$WORK/state/package" PATH="$FAKE_BIN/bin:$PATH" \
   FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" FAKE_TOOL_LOG="$WORK/tools.log" \
   "$BASH_PATH" "$SCRIPT" run >/dev/null
 EXIT=$?

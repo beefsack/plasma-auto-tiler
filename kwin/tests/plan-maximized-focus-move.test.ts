@@ -200,7 +200,7 @@ describe("G-06 maximized directional focus fence", () => {
         const adapter = enableAdapter(mocks);
         adapter.requestFocus("left");
         assert.equal(mocks.dbusCalls.length, 0, "fenced focus dispatches nothing");
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:focus-refused-maximize"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:focus-refused-maximize"));
     });
 
     it("leaves ordinary tile-origin focus unchanged", () => {
@@ -220,7 +220,7 @@ describe("G-06 maximized directional focus fence", () => {
         const adapter = enableAdapter(mocks);
         adapter.requestFocus("left");
         assert.equal(mocks.dbusCalls.length, 1, "fullscreen focus still dispatches");
-        assert.ok(!mocks.logs.includes("plasma-auto-tiler:plan:focus-refused-maximize"));
+        assert.ok(!mocks.logs.includes("omnitiler:plan:focus-refused-maximize"));
     });
 
     it("fences float-origin focus for a maximized float subject", () => {
@@ -237,7 +237,7 @@ describe("G-06 maximized directional focus fence", () => {
         adapter.requestFocus("left");
         assert.equal(mocks.dbusCalls.length, 0, "fenced float focus dispatches nothing");
         assert.deepEqual(mocks.actives, [], "fenced float focus actuates nothing");
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:focus-refused-maximize"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:focus-refused-maximize"));
     });
 
     it("leaves ordinary float-origin focus unchanged", () => {
@@ -331,7 +331,7 @@ describe("G-06 maximized directional move unmaximizes first", () => {
         adapter.requestMove("right");
         assert.deepEqual(mocks.maximizeClears, [], "fullscreen path never clears maximize");
         assert.equal(mocks.dbusCalls.length, 0);
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:move-refused-fullscreen"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:move-refused-fullscreen"));
     });
 
     it("degrades a refused native clear narrowly with no structural move", () => {
@@ -440,7 +440,7 @@ describe("G-06 maximized directional move unmaximizes first", () => {
         adapter.requestMove("right");
         assert.deepEqual(mocks.maximizeClears, [], "unmanaged subjects never clear");
         assert.equal(mocks.dbusCalls.length, 0);
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:move-refused-floating"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:move-refused-floating"));
     });
 
     it("fences a domain-raced settlement with no structural move", () => {
@@ -537,9 +537,9 @@ describe("G-06 maximized directional move unmaximizes first", () => {
         };
         const adapter = enableAdapter(mocks);
         adapter.requestMove("right");
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-admission-echo-consumed"), "synchronous signal consumes the echo");
+        assert.ok(mocks.logs.includes("omnitiler:plan:maximize-admission-echo-consumed"), "synchronous signal consumes the echo");
         assert.ok(
-            !mocks.logs.includes("plasma-auto-tiler:plan:maximize-admission-echo-cleared-no-signal"),
+            !mocks.logs.includes("omnitiler:plan:maximize-admission-echo-cleared-no-signal"),
             "consumed echo is never cleared as missing",
         );
         assert.equal(mocks.dbusCalls.length, 1, "observed-clear still continues the ordinary move");
@@ -557,6 +557,6 @@ describe("G-06 maximized directional move unmaximizes first", () => {
         adapter.requestMove("right");
         assert.deepEqual(mocks.maximizeClears, [], "busy refuses before any clear");
         assert.equal(mocks.dbusCalls.length, 1, "busy dispatches nothing further");
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:busy-refused kind=move"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:busy-refused kind=move"));
     });
 });

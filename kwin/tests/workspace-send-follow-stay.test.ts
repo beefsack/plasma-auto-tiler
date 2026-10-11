@@ -278,7 +278,7 @@ function requestCommand(mocks: FlightMocks): Record<string, unknown> {
 
 function assertFlightRedacted(mocks: FlightMocks): void {
     for (const line of mocks.logs) {
-        assert.ok(line.startsWith("plasma-auto-tiler:route-diag component=cosmic-send "), line);
+        assert.ok(line.startsWith("omnitiler:route-diag component=cosmic-send "), line);
         for (const raw of ["win-a", "win-b", "win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
             assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
         }
@@ -1029,14 +1029,14 @@ describe("item 2 shortcut catalog rows", () => {
         assert.equal(catalog.length, 75);
         const byAction = new Map(catalog.map((row) => [row.action, row]));
         const expectedFollow: ReadonlyArray<[string, string, -1 | 1]> = [
-            ["plasma-auto-tiler-send-prev-h", "Meta+Ctrl+Shift+H", -1],
-            ["plasma-auto-tiler-send-prev-k", "Meta+Ctrl+Shift+K", -1],
-            ["plasma-auto-tiler-send-prev-left-arrow", "Meta+Ctrl+Shift+Left", -1],
-            ["plasma-auto-tiler-send-prev-up-arrow", "Meta+Ctrl+Shift+Up", -1],
-            ["plasma-auto-tiler-send-next-j", "Meta+Ctrl+Shift+J", 1],
-            ["plasma-auto-tiler-send-next-l", "Meta+Ctrl+Shift+L", 1],
-            ["plasma-auto-tiler-send-next-down-arrow", "Meta+Ctrl+Shift+Down", 1],
-            ["plasma-auto-tiler-send-next-right-arrow", "Meta+Ctrl+Shift+Right", 1],
+            ["omnitiler-send-prev-h", "Meta+Ctrl+Shift+H", -1],
+            ["omnitiler-send-prev-k", "Meta+Ctrl+Shift+K", -1],
+            ["omnitiler-send-prev-left-arrow", "Meta+Ctrl+Shift+Left", -1],
+            ["omnitiler-send-prev-up-arrow", "Meta+Ctrl+Shift+Up", -1],
+            ["omnitiler-send-next-j", "Meta+Ctrl+Shift+J", 1],
+            ["omnitiler-send-next-l", "Meta+Ctrl+Shift+L", 1],
+            ["omnitiler-send-next-down-arrow", "Meta+Ctrl+Shift+Down", 1],
+            ["omnitiler-send-next-right-arrow", "Meta+Ctrl+Shift+Right", 1],
         ];
         for (const [action, sequence, delta] of expectedFollow) {
             const row = byAction.get(action);
@@ -1046,16 +1046,16 @@ describe("item 2 shortcut catalog rows", () => {
             assert.equal(row.delta, delta);
         }
         const expectedStayPrev = [
-            "plasma-auto-tiler-send-stay-prev-h",
-            "plasma-auto-tiler-send-stay-prev-k",
-            "plasma-auto-tiler-send-stay-prev-left-arrow",
-            "plasma-auto-tiler-send-stay-prev-up-arrow",
+            "omnitiler-send-stay-prev-h",
+            "omnitiler-send-stay-prev-k",
+            "omnitiler-send-stay-prev-left-arrow",
+            "omnitiler-send-stay-prev-up-arrow",
         ];
         const expectedStayNext = [
-            "plasma-auto-tiler-send-stay-next-j",
-            "plasma-auto-tiler-send-stay-next-l",
-            "plasma-auto-tiler-send-stay-next-down-arrow",
-            "plasma-auto-tiler-send-stay-next-right-arrow",
+            "omnitiler-send-stay-next-j",
+            "omnitiler-send-stay-next-l",
+            "omnitiler-send-stay-next-down-arrow",
+            "omnitiler-send-stay-next-right-arrow",
         ];
         for (const action of [...expectedStayPrev, ...expectedStayNext]) {
             const row = byAction.get(action);
@@ -1065,8 +1065,8 @@ describe("item 2 shortcut catalog rows", () => {
         }
         for (let index = 1; index <= 9; index += 1) {
             for (const action of [
-                `plasma-auto-tiler-stay-workspace-${String(index)}`,
-                `plasma-auto-tiler-stay-workspace-${String(index)}-symbol`,
+                `omnitiler-stay-workspace-${String(index)}`,
+                `omnitiler-stay-workspace-${String(index)}-symbol`,
             ]) {
                 const row = byAction.get(action);
                 assert.ok(row !== undefined, action);
@@ -1075,7 +1075,7 @@ describe("item 2 shortcut catalog rows", () => {
                 assert.equal(row.index, index);
             }
         }
-        for (const action of ["plasma-auto-tiler-stay-workspace-append", "plasma-auto-tiler-stay-workspace-append-symbol"]) {
+        for (const action of ["omnitiler-stay-workspace-append", "omnitiler-stay-workspace-append-symbol"]) {
             const row = byAction.get(action);
             assert.ok(row !== undefined, action);
             assert.equal(row.sequence, "", `${action} stays unbound`);
@@ -1084,10 +1084,10 @@ describe("item 2 shortcut catalog rows", () => {
         }
         // Numbered follow keeps its chords and shifted-symbol aliases.
         for (let index = 1; index <= 9; index += 1) {
-            assert.equal(byAction.get(`plasma-auto-tiler-move-workspace-${String(index)}`)?.sequence, `Meta+Shift+${String(index)}`);
-            assert.equal(byAction.get(`plasma-auto-tiler-move-workspace-${String(index)}`)?.kind, "move");
+            assert.equal(byAction.get(`omnitiler-move-workspace-${String(index)}`)?.sequence, `Meta+Shift+${String(index)}`);
+            assert.equal(byAction.get(`omnitiler-move-workspace-${String(index)}`)?.kind, "move");
         }
-        assert.equal(byAction.get("plasma-auto-tiler-move-workspace-append")?.sequence, "Meta+Shift+0");
+        assert.equal(byAction.get("omnitiler-move-workspace-append")?.sequence, "Meta+Shift+0");
         // Action ids stay unique across the full catalog.
         assert.equal(byAction.size, catalog.length);
     });
@@ -1541,45 +1541,45 @@ describe("entry send follow/stay routing", () => {
     it("registers every item 2 row after the legacy rows in catalog order", () => {
         const fixture = setupEntrySendFixture();
         const actions = fixture.mocks.shortcuts.map((row) => row.action);
-        const legacyTail = actions.indexOf("plasma-auto-tiler-workspace-next-right-arrow");
+        const legacyTail = actions.indexOf("omnitiler-workspace-next-right-arrow");
         assert.ok(legacyTail >= 0);
         const expectedNew = [
-            "plasma-auto-tiler-send-prev-h",
-            "plasma-auto-tiler-send-prev-k",
-            "plasma-auto-tiler-send-prev-left-arrow",
-            "plasma-auto-tiler-send-prev-up-arrow",
-            "plasma-auto-tiler-send-next-j",
-            "plasma-auto-tiler-send-next-l",
-            "plasma-auto-tiler-send-next-down-arrow",
-            "plasma-auto-tiler-send-next-right-arrow",
-            "plasma-auto-tiler-stay-workspace-1",
-            "plasma-auto-tiler-stay-workspace-1-symbol",
-            "plasma-auto-tiler-stay-workspace-2",
-            "plasma-auto-tiler-stay-workspace-2-symbol",
-            "plasma-auto-tiler-stay-workspace-3",
-            "plasma-auto-tiler-stay-workspace-3-symbol",
-            "plasma-auto-tiler-stay-workspace-4",
-            "plasma-auto-tiler-stay-workspace-4-symbol",
-            "plasma-auto-tiler-stay-workspace-5",
-            "plasma-auto-tiler-stay-workspace-5-symbol",
-            "plasma-auto-tiler-stay-workspace-6",
-            "plasma-auto-tiler-stay-workspace-6-symbol",
-            "plasma-auto-tiler-stay-workspace-7",
-            "plasma-auto-tiler-stay-workspace-7-symbol",
-            "plasma-auto-tiler-stay-workspace-8",
-            "plasma-auto-tiler-stay-workspace-8-symbol",
-            "plasma-auto-tiler-stay-workspace-9",
-            "plasma-auto-tiler-stay-workspace-9-symbol",
-            "plasma-auto-tiler-stay-workspace-append",
-            "plasma-auto-tiler-stay-workspace-append-symbol",
-            "plasma-auto-tiler-send-stay-prev-h",
-            "plasma-auto-tiler-send-stay-prev-k",
-            "plasma-auto-tiler-send-stay-prev-left-arrow",
-            "plasma-auto-tiler-send-stay-prev-up-arrow",
-            "plasma-auto-tiler-send-stay-next-j",
-            "plasma-auto-tiler-send-stay-next-l",
-            "plasma-auto-tiler-send-stay-next-down-arrow",
-            "plasma-auto-tiler-send-stay-next-right-arrow",
+            "omnitiler-send-prev-h",
+            "omnitiler-send-prev-k",
+            "omnitiler-send-prev-left-arrow",
+            "omnitiler-send-prev-up-arrow",
+            "omnitiler-send-next-j",
+            "omnitiler-send-next-l",
+            "omnitiler-send-next-down-arrow",
+            "omnitiler-send-next-right-arrow",
+            "omnitiler-stay-workspace-1",
+            "omnitiler-stay-workspace-1-symbol",
+            "omnitiler-stay-workspace-2",
+            "omnitiler-stay-workspace-2-symbol",
+            "omnitiler-stay-workspace-3",
+            "omnitiler-stay-workspace-3-symbol",
+            "omnitiler-stay-workspace-4",
+            "omnitiler-stay-workspace-4-symbol",
+            "omnitiler-stay-workspace-5",
+            "omnitiler-stay-workspace-5-symbol",
+            "omnitiler-stay-workspace-6",
+            "omnitiler-stay-workspace-6-symbol",
+            "omnitiler-stay-workspace-7",
+            "omnitiler-stay-workspace-7-symbol",
+            "omnitiler-stay-workspace-8",
+            "omnitiler-stay-workspace-8-symbol",
+            "omnitiler-stay-workspace-9",
+            "omnitiler-stay-workspace-9-symbol",
+            "omnitiler-stay-workspace-append",
+            "omnitiler-stay-workspace-append-symbol",
+            "omnitiler-send-stay-prev-h",
+            "omnitiler-send-stay-prev-k",
+            "omnitiler-send-stay-prev-left-arrow",
+            "omnitiler-send-stay-prev-up-arrow",
+            "omnitiler-send-stay-next-j",
+            "omnitiler-send-stay-next-l",
+            "omnitiler-send-stay-next-down-arrow",
+            "omnitiler-send-stay-next-right-arrow",
         ];
         assert.deepEqual(actions.slice(legacyTail + 1, legacyTail + 1 + expectedNew.length), expectedNew);
         fixture.handle?.stop();
@@ -1587,8 +1587,8 @@ describe("entry send follow/stay routing", () => {
 
     it("routes absolute follow and stay into the payload selection", () => {
         for (const [action, follow] of [
-            ["plasma-auto-tiler-move-workspace-2", true],
-            ["plasma-auto-tiler-stay-workspace-2", false],
+            ["omnitiler-move-workspace-2", true],
+            ["omnitiler-stay-workspace-2", false],
         ] as const) {
             const fixture = setupEntrySendFixture();
             fireShortcut(fixture.mocks, action);
@@ -1603,9 +1603,9 @@ describe("entry send follow/stay routing", () => {
 
     it("resolves relative targets once and routes follow versus stay", () => {
         for (const [action, follow, expectedTarget] of [
-            ["plasma-auto-tiler-send-next-l", true, "ws-2"],
-            ["plasma-auto-tiler-send-stay-next-l", false, "ws-2"],
-            ["plasma-auto-tiler-send-prev-h", true, "ws-e"],
+            ["omnitiler-send-next-l", true, "ws-2"],
+            ["omnitiler-send-stay-next-l", false, "ws-2"],
+            ["omnitiler-send-prev-h", true, "ws-e"],
         ] as const) {
             const fixture = setupEntrySendFixture();
             const currentBefore = (fixture.world.workspace["currentDesktop"] as EntryDesktop).id;
@@ -1685,7 +1685,7 @@ describe("entry floating-boundary follow/stay", () => {
         flushEntryTimers(mocks);
         answerReleaseDomains(mocks);
         flushEntryTimers(mocks);
-        fireShortcut(mocks, "plasma-auto-tiler-move-workspace-2");
+        fireShortcut(mocks, "omnitiler-move-workspace-2");
         assert.deepEqual(members, [ws2], `membership lands on the target:\n${mocks.logs.join("\n")}`);
         assert.deepEqual(
             world.switchRecords,
@@ -1726,7 +1726,7 @@ describe("entry floating-boundary follow/stay", () => {
         });
         world.switchRecords.length = 0;
         const activeBefore = world.workspace["activeWindow"];
-        fireShortcut(mocks, "plasma-auto-tiler-move-workspace-2");
+        fireShortcut(mocks, "omnitiler-move-workspace-2");
         const line = workspaceMoveOutcome(mocks);
         assert.ok(line.includes("follow=arrival-unconfirmed"), line);
         assert.deepEqual(world.switchRecords, [], "stale arrival never switches");
@@ -1762,7 +1762,7 @@ describe("entry floating-boundary follow/stay", () => {
             },
         });
         world.switchRecords.length = 0;
-        fireShortcut(mocks, "plasma-auto-tiler-move-workspace-2");
+        fireShortcut(mocks, "omnitiler-move-workspace-2");
         const line = workspaceMoveOutcome(mocks);
         assert.ok(line.includes("follow=arrival-unconfirmed"), line);
         assert.deepEqual(
@@ -1781,7 +1781,7 @@ describe("entry floating-boundary follow/stay", () => {
         const mover = world.wins[0] as EntryWindow;
         const geoBefore = { ...(mover.frameGeometry as { x: number; y: number; width: number; height: number }) };
         world.switchRecords.length = 0;
-        fireShortcut(mocks, "plasma-auto-tiler-stay-workspace-2");
+        fireShortcut(mocks, "omnitiler-stay-workspace-2");
         assert.deepEqual(
             (mover.desktops as unknown[]).map((entry) => (entry as EntryDesktop).id),
             ["ws-2"],

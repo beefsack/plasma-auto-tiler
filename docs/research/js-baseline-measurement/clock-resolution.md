@@ -176,29 +176,29 @@ Manual-recovery command verification (before any load, against a name that
 is not loaded):
 
 ```
-qdbus org.kde.KWin /Scripting isScriptLoaded plasma-auto-tiler-clock-probe
+qdbus org.kde.KWin /Scripting isScriptLoaded omnitiler-clock-probe
 ```
 Outcome: `false`, exit 0.
 
 ```
-busctl --user call org.kde.KWin /Scripting org.kde.kwin.Scripting isScriptLoaded s plasma-auto-tiler-clock-probe
+busctl --user call org.kde.KWin /Scripting org.kde.kwin.Scripting isScriptLoaded s omnitiler-clock-probe
 ```
 Outcome: `b false`, exit 0.
 
 ```
-qdbus org.kde.KWin /Scripting unloadScript plasma-auto-tiler-clock-probe
+qdbus org.kde.KWin /Scripting unloadScript omnitiler-clock-probe
 ```
 Outcome: `false`, exit 0 (no error; syntax and bus reachability confirmed).
 
 ```
-busctl --user call org.kde.KWin /Scripting org.kde.kwin.Scripting unloadScript s plasma-auto-tiler-clock-probe
+busctl --user call org.kde.KWin /Scripting org.kde.kwin.Scripting unloadScript s omnitiler-clock-probe
 ```
 Outcome: `b false`, exit 0.
 
 Capture-start (background, output to a temp file):
 
 ```
-dbus-monitor --session "type='method_call',interface='com.plasmaAutoTiler.LogSink'" > /tmp/plasma-auto-tiler/clock-probe.raw 2>&1 &
+dbus-monitor --session "type='method_call',interface='com.omniTiler.LogSink'" > /tmp/omnitiler/clock-probe.raw 2>&1 &
 ```
 Outcome: process alive; the controlled capture-path test below proved the
 filter captures LogSink-interface method calls.
@@ -206,7 +206,7 @@ filter captures LogSink-interface method calls.
 Live load/start/unload cycle:
 
 ```
-qdbus org.kde.KWin /Scripting loadScript /path/to/clock-probe.js plasma-auto-tiler-clock-probe
+qdbus org.kde.KWin /Scripting loadScript /path/to/clock-probe.js omnitiler-clock-probe
 ```
 Outcome: `0` (script id), exit 0; `isScriptLoaded` then `true`; zero LogSink
 calls captured (code not yet run).
@@ -215,13 +215,13 @@ calls captured (code not yet run).
 qdbus org.kde.KWin /Scripting start
 ```
 Outcome: exit 0; all 201 facts captured and parsed to
-`/tmp/plasma-auto-tiler/clock-probe.log`.
+`/tmp/omnitiler/clock-probe.log`.
 
 Capture parse (one line per fact, the string argument of each LogSink
 `append` method call):
 
 ```
-awk '/interface=com.plasmaAutoTiler.LogSink; member=append/{getline; gsub(/^ +string "/, "", $0); gsub(/"$/, "", $0); print}' /tmp/plasma-auto-tiler/clock-probe.raw > /tmp/plasma-auto-tiler/clock-probe.log
+awk '/interface=com.omniTiler.LogSink; member=append/{getline; gsub(/^ +string "/, "", $0); gsub(/"$/, "", $0); print}' /tmp/omnitiler/clock-probe.raw > /tmp/omnitiler/clock-probe.log
 ```
 Outcome: 203 lines including one deliberate `capture-path-test` artifact
 (dropped from the final log; 202 clean lines remain).
@@ -230,7 +230,7 @@ Controlled capture-path proof (dbus-monitor sees LogSink method calls even
 with no service owning the name):
 
 ```
-dbus-send --session --print-reply --dest=com.plasmaAutoTiler.LogSink /com/plasmaAutoTiler/LogSink com.plasmaAutoTiler.LogSink.append string:capture-path-test
+dbus-send --session --print-reply --dest=com.omniTiler.LogSink /com/omniTiler/LogSink com.omniTiler.LogSink.append string:capture-path-test
 ```
 Outcome: D-Bus error `org.freedesktop.DBus.Error.ServiceUnknown: The name is
 not activatable` (expected - no owner), but the method call was captured by
@@ -240,7 +240,7 @@ proving the monitor-based capture works live.
 Re-run test (second bounded cycle, inert probe):
 
 ```
-qdbus org.kde.KWin /Scripting loadScript .../clock-probe.js plasma-auto-tiler-clock-probe
+qdbus org.kde.KWin /Scripting loadScript .../clock-probe.js omnitiler-clock-probe
 qdbus org.kde.KWin /Scripting start
 qdbus org.kde.KWin /Scripting start
 ```
@@ -250,12 +250,12 @@ exactly once (1x `probe_complete`, 1x `probe_flush`).
 Reversal (both cycles):
 
 ```
-qdbus org.kde.KWin /Scripting unloadScript plasma-auto-tiler-clock-probe
+qdbus org.kde.KWin /Scripting unloadScript omnitiler-clock-probe
 ```
 Outcome: `true`, exit 0.
 
 ```
-qdbus org.kde.KWin /Scripting isScriptLoaded plasma-auto-tiler-clock-probe
+qdbus org.kde.KWin /Scripting isScriptLoaded omnitiler-clock-probe
 ```
 Outcome: `false`, exit 0.
 
@@ -273,7 +273,7 @@ ps aux | grep '[d]bus-monitor'
 Outcome: no dbus-monitor process remains.
 
 ```
-for n in plasma-auto-tiler-variant-a plasma-auto-tiler-variant-b plasma-auto-tiler-clock-probe; do qdbus org.kde.KWin /Scripting isScriptLoaded $n; done
+for n in omnitiler-variant-a omnitiler-variant-b omnitiler-clock-probe; do qdbus org.kde.KWin /Scripting isScriptLoaded $n; done
 ```
 Outcome: `false` for all three. `variant-a.js` and `variant-b.js` were never
 loaded or modified.

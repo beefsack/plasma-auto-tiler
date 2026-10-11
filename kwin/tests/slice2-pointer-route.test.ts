@@ -175,10 +175,10 @@ describe("slice 2 verdict routing contract", () => {
         pull.pullVerdict();
         assert.equal(routed, 0);
         assert.deepEqual(logs, [
-            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
-            "plasma-auto-tiler:route-diag:drag-reply-invalid correlation=none",
+            "omnitiler:route-diag:drag-pull action=dispatch",
+            "omnitiler:route-diag:drag-reply-invalid correlation=none",
         ]);
-        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-unavailable"));
+        assert.ok(!logs.some((line) => line === "omnitiler:route-diag:drag-unavailable"));
     });
 });
 
@@ -204,9 +204,9 @@ describe("slice 2 plan adapter pointer route", () => {
         assert.equal(adapter.requestPointerResize("win-a", "sideways", 1000), false);
         assert.equal(adapter.requestPointerResize("win-a", "right", 999999), false);
         assert.equal(mocks.dbusCalls.length, 0);
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-absent"));
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-direction"));
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-boundary"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:pointer-refused-absent"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:pointer-refused-direction"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:pointer-refused-boundary"));
     });
 
     it("reasserts the drag source and preserves the planned sibling gap", () => {
@@ -231,13 +231,13 @@ describe("slice 2 plan adapter pointer route", () => {
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line === "plasma-auto-tiler:plan:write window=win-a resource_class=unknown disposition=written rect=8,8,884,784",
+                    line === "omnitiler:plan:write window=win-a resource_class=unknown disposition=written rect=8,8,884,784",
             ),
         );
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line === "plasma-auto-tiler:plan:write window=win-b resource_class=unknown disposition=written rect=900,8,292,784",
+                    line === "omnitiler:plan:write window=win-b resource_class=unknown disposition=written rect=900,8,292,784",
             ),
         );
         // Neighbour echo with planned rectangles is consumed with no new D-Bus.
@@ -671,7 +671,7 @@ describe("slice 2 entry finish consumes the captured start", () => {
             mocks.logs.some((line) => line.includes("drag-verdict cancelled=true correlation=drag-1")),
         );
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-cancelled correlation=drag-1 reason=no-change"),
+            mocks.logs.some((line) => line === "omnitiler:route-diag:drag-cancelled correlation=drag-1 reason=no-change"),
             "cancelled verdict carries a normal-mode correlated rejection log",
         );
         // A second finish without a new start must not route: the cancelled
@@ -683,7 +683,7 @@ describe("slice 2 entry finish consumes the captured start", () => {
         for (const call of mocks.planCalls) {
             assert.ok(!call.payload.includes("pointer-resize"), call.payload);
         }
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-start-missing correlation=drag-2"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:route-diag:drag-start-missing correlation=drag-2"));
         stop();
     });
 
@@ -730,7 +730,7 @@ describe("slice 2 entry finish consumes the captured start", () => {
         for (const call of mocks.planCalls) {
             assert.ok(!call.payload.includes("pointer-resize"), call.payload);
         }
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-start-missing correlation=drag-1"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:route-diag:drag-start-missing correlation=drag-1"));
         // The fresh reply routes exactly once from the newer start.
         (mocks.oracleCalls[1] as (reply: unknown) => void)(movedWinA("drag-2"));
         assert.equal(mocks.planCalls.length, 1);
@@ -779,7 +779,7 @@ describe("slice 2 entry finish consumes the captured start", () => {
         assert.equal(mocks.planCalls.length, 1, "refused drop converges once via a correlated reconcile");
         assert.deepEqual((JSON.parse(mocks.planCalls[0]?.payload as string) as Record<string, unknown>)["command"], { op: "reconcile" });
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-fullscreen"),
+            mocks.logs.some((line) => line === "omnitiler:plan:pointer-refused-fullscreen"),
             "exact source-grounded refusal token from the adapter",
         );
         assert.ok(
@@ -791,11 +791,11 @@ describe("slice 2 entry finish consumes the captured start", () => {
             "correlated refusal reason for the follow-up",
         );
         assert.ok(
-            !mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-derive-invalid"),
+            !mocks.logs.some((line) => line === "omnitiler:route-diag:drag-derive-invalid"),
             "no generic derive-invalid for the fullscreen refusal",
         );
         assert.ok(
-            !mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-pointer-refused"),
+            !mocks.logs.some((line) => line === "omnitiler:route-diag:drag-pointer-refused"),
             "no catch-all pointer-refused line from the entry",
         );
         stop();
@@ -815,11 +815,11 @@ describe("slice 2 entry finish consumes the captured start", () => {
         );
         assert.equal(mocks.planCalls.length, 1, "refused drop converges once via a correlated reconcile");
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-maximize"),
+            mocks.logs.some((line) => line === "omnitiler:plan:pointer-refused-maximize"),
             "exact source-grounded refusal token from the adapter",
         );
         assert.ok(
-            !mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-derive-invalid"),
+            !mocks.logs.some((line) => line === "omnitiler:route-diag:drag-derive-invalid"),
             "no generic derive-invalid for the maximized refusal",
         );
         stop();
@@ -864,7 +864,7 @@ describe("slice 2 entry finish consumes the captured start", () => {
         (mocks.oracleCalls[0] as (reply: unknown) => void)(movedWinA("drag-1"));
         assert.equal(mocks.planCalls.length, 1);
         assert.deepEqual((JSON.parse(mocks.planCalls[0]?.payload as string) as Record<string, unknown>)["command"], { op: "drag-drop", window: "win-a", x: 600, y: 400 });
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-1 accepted=true"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:route-diag:drag-drop-dispatched correlation=drag-1 accepted=true"));
         assert.ok(
             mocks.planCalls.every((call) => !(call.payload.includes("pointer-resize"))),
             "tiled move never dispatches a pointer plan",
@@ -884,7 +884,7 @@ describe("slice 2 entry finish consumes the captured start", () => {
         assert.equal(mocks.oracleCalls.length, 1);
         (mocks.oracleCalls[0] as (reply: unknown) => void)(movedWinA("drag-1"));
         assert.equal(mocks.planCalls.length, 0);
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-start-invalid correlation=drag-1"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:route-diag:drag-start-invalid correlation=drag-1"));
         stop();
     });
 });
@@ -1042,7 +1042,7 @@ describe("slice 2 pointer echo fence", () => {
         const refs = makeRefs();
         const mocks = echoMockEnv(refs);
         seedPointerEcho(mocks);
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:echo-fence-armed"), "fence armed on apply");
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:echo-fence-armed"), "fence armed on apply");
         // Native neighbour rects never matched the planned ones.
         mocks.current = {
             "win-a": { x: 0, y: 0, w: 600, h: 800 },
@@ -1053,7 +1053,7 @@ describe("slice 2 pointer echo fence", () => {
         assert.equal(mocks.dbusCalls.length, 3);
         const command = (JSON.parse(mocks.dbusCalls[2]?.payload as string) as Record<string, unknown>)["command"] as Record<string, unknown>;
         assert.deepEqual(command, { op: "reconcile" });
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:echo-fence-mismatched"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:echo-fence-mismatched"));
     });
 
     it("consumes a matching echo one-shot and reconciles later drift", () => {
@@ -1070,7 +1070,7 @@ describe("slice 2 pointer echo fence", () => {
         runEchoDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, 2);
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:echo-fence-cleared-equality"),
+            mocks.logs.some((line) => line === "omnitiler:plan:echo-fence-cleared-equality"),
             "armed fence cleared on equality",
         );
         // The expectation was one-shot: repeating the same observation stays
@@ -1105,8 +1105,8 @@ describe("slice 2 pointer echo fence", () => {
         fireEcho(mocks, "geometry");
         runEchoDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, 2);
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:echo-fence-consumed"));
-        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:echo-fence-mismatched"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:echo-fence-consumed"));
+        assert.ok(!mocks.logs.some((line) => line === "omnitiler:plan:echo-fence-mismatched"));
         // A later neighbour drift is no longer covered by the consumed fence.
         mocks.current = {
             "win-a": { x: 0, y: 0, w: 601, h: 800 },
@@ -1134,7 +1134,7 @@ describe("slice 2 pointer echo fence", () => {
         runEchoDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, 2);
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:echo-fence-cleared-equality"),
+            mocks.logs.some((line) => line === "omnitiler:plan:echo-fence-cleared-equality"),
             "armed fence cleared on full equality",
         );
         // A later source-only drift is not the neighbour-write echo and must
@@ -1333,7 +1333,7 @@ describe("grabbed-edge oracle routing", () => {
             JSON.stringify({ v: 1, cancelled: false, finalRect: { x: 0, y: 0, w: 1000, h: 800 }, windowIdentity: "win-zzz", correlation: "drag-7", reason: "ok-moved" }),
         );
         assert.equal(mocks.planCalls.length, 0);
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-unknown-window correlation=drag-7"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:route-diag:drag-unknown-window correlation=drag-7"));
         stop();
     });
 });

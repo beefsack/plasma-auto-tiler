@@ -10,12 +10,12 @@
 ## Scope
 
 - `scripts/dev-native-effect.sh` setup/remove manage only the project-owned
-  `plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh` for this
+  `plasma-workspace/env/60-omnitiler-native-effect.sh` for this
   checkout's `target/kwin-native-effect-stage`. They never touch kwinrc,
   D-Bus, or a running KWin, and never remove parent dirs.
 - `scripts/dogfood-install.sh` effect-install/effect-remove manage the same
   env-script path with dogfood double-quoted content for
-  `$DATA_ROOT/plasma-auto-tiler-native-effect`. The two paths cannot coexist
+  `$DATA_ROOT/omnitiler-native-effect`. The two paths cannot coexist
   at that path: dogfood refuses dev-owned content and preserves it;
   the dev helper refuses dogfood/alternate content.
 - preflight/load/unload perform transient D-Bus lifecycle against /Effects

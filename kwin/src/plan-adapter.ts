@@ -25,9 +25,9 @@ import {
 } from "./fixed-size-predicate";
 import { KWIN_TRACE_ENABLED } from "./trace";
 
-export const PLAN_SERVICE = "org.plasmaautotiler.Planner";
-export const PLAN_OBJECT = "/org/plasmaautotiler/Planner";
-export const PLAN_INTERFACE = "org.plasmaautotiler.Planner1";
+export const PLAN_SERVICE = "com.omnitiler.Planner";
+export const PLAN_OBJECT = "/com/omnitiler/Planner";
+export const PLAN_INTERFACE = "com.omnitiler.Planner1";
 export const PLAN_METHOD = "DescribePlan";
 
 // Session D-Bus activation transport (one-flight, bounded, no poll/retry).
@@ -113,7 +113,7 @@ export function crossOutputTransferSupported(env: PlanAdapterEnv): boolean {
     );
 }
 
-const LOG_PREFIX = "plasma-auto-tiler:plan";
+const LOG_PREFIX = "omnitiler:plan";
 
 export type PlanDirection = "left" | "right" | "up" | "down";
 export type PlanResizeMode = "inwards" | "outwards";
@@ -3114,7 +3114,7 @@ export class PlanAdapter {
         const correlation = this.pending?.correlation ?? "none";
         const generation = this.generation.length > 0 ? this.generation : "-";
         this.logToken(
-            `plasma-auto-tiler:route-diag component=cosmic-plan route=plan stage=refresh event=${route} outcome=${outcome} reason=${sanitizeKind(reason)} terminal=${sanitizeKind(terminal)} correlation=${correlation} generation=${generation}`,
+            `omnitiler:route-diag component=cosmic-plan route=plan stage=refresh event=${route} outcome=${outcome} reason=${sanitizeKind(reason)} terminal=${sanitizeKind(terminal)} correlation=${correlation} generation=${generation}`,
         );
     }
 

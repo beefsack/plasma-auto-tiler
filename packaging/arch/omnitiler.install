@@ -1,4 +1,4 @@
-# Pacman install scriptlet for plasma-auto-tiler (core).
+# Pacman install scriptlet for omnitiler (core).
 # Removal never touches host settings: press Revert in Settings before
 # removing, or reinstall this package and press Revert after.
 
@@ -9,7 +9,7 @@ post_install() {
 }
 
 post_remove() {
-  echo "plasma-auto-tiler removed (including Settings). Removal does not restore host keys or shortcut"
+  echo "omnitiler removed (including Settings). Removal does not restore host keys or shortcut"
   echo "overrides: if you did not press Revert in Settings first, reinstall this"
   echo "package and press"
   echo "Revert (Revert Shortcuts, plus Revert to KDE default on changed host rows)."

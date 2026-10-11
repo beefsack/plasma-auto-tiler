@@ -717,7 +717,7 @@ function Get-MdOverlayHwnds([int]$OwnerPid) {
       $null = [MouseDragNative]::GetWindowThreadProcessId($h, [ref]$pidOut)
       if ([uint32]$pidOut -eq [uint32]$script:mdOwnerPid) {
         $cls = [MouseDragNative]::ClassOf($h.ToInt64())
-        if ($cls -eq "PlasmaAutoTilerActiveBorder" -or $cls -eq "PlasmaAutoTilerGroupUnderlay" -or $cls -eq "PlasmaAutoTilerDropPreview") {
+        if ($cls -eq "OmniTilerActiveBorder" -or $cls -eq "OmniTilerGroupUnderlay" -or $cls -eq "OmniTilerDropPreview") {
           $null = $script:mdFound.Add($h.ToInt64())
         }
       }
@@ -2000,7 +2000,7 @@ function Invoke-MdPreviewCrashStage($Owner, [string]$ProofDir, $Start, [array]$A
     param([IntPtr]$h, [IntPtr]$l)
     try {
       $cls = [MouseDragNative]::ClassOf($h.ToInt64())
-      if ($cls -eq "PlasmaAutoTilerActiveBorder" -or $cls -eq "PlasmaAutoTilerGroupUnderlay" -or $cls -eq "PlasmaAutoTilerDropPreview") {
+      if ($cls -eq "OmniTilerActiveBorder" -or $cls -eq "OmniTilerGroupUnderlay" -or $cls -eq "OmniTilerDropPreview") {
         $null = $script:mdStray.Add($h.ToInt64())
       }
     } catch {}

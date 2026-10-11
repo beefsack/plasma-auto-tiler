@@ -22,7 +22,7 @@ with native ownership.
 Reference paths below are repository-prefixed, resolved under
 a local development directory at the listed pin (verified with
 `git rev-parse HEAD`; all match the matrix pins). Product paths are relative
-to `plasma-auto-tiler` at `59572c7`. Findings are source-only, not live tests.
+to `omnitiler` at `59572c7`. Findings are source-only, not live tests.
 
 | Repo (local root) | Pin verified |
 |---|---|

@@ -2,7 +2,7 @@ import { deriveOracleEdge, DragOracleVerdict } from "./drag-oracle-pull";
 
 export const DRAG_MEASURE_LATER_TIMEOUT_MS = 500;
 export const DRAG_MEASURE_VERDICT_TIMEOUT_MS = 2000;
-const MEASURE_LINE = "plasma-auto-tiler:route-diag:drag-measure";
+const MEASURE_LINE = "omnitiler:route-diag:drag-measure";
 const COORD_LIMIT = 16384;
 
 export interface DragMeasureRect {

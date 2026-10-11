@@ -20,9 +20,9 @@ node id from the `Start` response, then attach `gst-launch-1.0 pipewiresrc`
 directly to that node (no `OpenPipeWireRemote` fd-passing attempt, on the
 theory that a local unsandboxed client may already have PipeWire access).
 Only after a live portal session existed would `variant-a.js` be loaded
-(plugin name `plasma-auto-tiler-variant-a`, `managedResourceClass` set to
-the sentinel `plasma-auto-tiler-test`, matching unit-D's already-verified
-Wayland-native `konsole --separate --desktopfile plasma-auto-tiler-test`
+(plugin name `omnitiler-variant-a`, `managedResourceClass` set to
+the sentinel `omnitiler-test`, matching unit-D's already-verified
+Wayland-native `konsole --separate --desktopfile omnitiler-test`
 spawn pattern) and exactly one test window spawned mid-recording.
 
 None of the capture, script-load, or window-spawn steps were reached.
@@ -165,10 +165,10 @@ was nothing invasive to reverse. Verified directly after this attempt:
   exit 0.
 - `busctl --user call org.freedesktop.portal.Desktop
   /org/freedesktop/portal/desktop org.freedesktop.DBus.Peer Ping` -- exit 0.
-- `qdbus org.kde.KWin /Scripting isScriptLoaded plasma-auto-tiler-variant-a`
+- `qdbus org.kde.KWin /Scripting isScriptLoaded omnitiler-variant-a`
   and `...-variant-b` -- both `false`.
 - `pgrep -x dbus-monitor`, `pgrep -x gst-launch-1.0`, `pgrep -f
-  'konsole.*plasma-auto-tiler'` -- all no match (no leaked processes).
+  'konsole.*omnitiler'` -- all no match (no leaked processes).
 - `busctl --user tree org.freedesktop.portal.Desktop` -- no `request`
   objects remain; the portal object tree is clean.
 - No repository file other than this one was modified by this attempt; no

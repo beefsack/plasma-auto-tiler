@@ -180,7 +180,7 @@ decisions. Each is recorded literally "Provisional, to discuss" in
 - `cargo clippy --workspace --all-targets --offline -- -D warnings`,
   `cargo fmt --all -- --check`, `just check-portable`: pass; no warnings,
   formatting errors, normal core dependencies or platform leaks.
-- `cargo build -p plasma-auto-tiler --offline`, then all nine verified offline
+- `cargo build -p omnitiler --offline`, then all nine verified offline
   `scripts/*.test.sh`: pass. Counted assertions 1713 (tray 29 fixture + 16
   self-test, dev-loop 380, dogfood 572, native-dev 163, host-build 93,
   live-harness 237, Custom Tile 131, floor-ratio 92); build-kpackage contracts

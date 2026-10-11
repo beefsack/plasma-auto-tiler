@@ -4,7 +4,7 @@
       xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
                           http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
     <kcfgfile arg="true"/>
-    <group name="Effect-plasma-auto-tiler-active-border">
+    <group name="Effect-omnitiler-active-border">
         <entry name="BorderColor" type="Color">
             <label>Fallback border color</label>
             <default>#2a82da</default>

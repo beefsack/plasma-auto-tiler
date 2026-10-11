@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=com.omnitiler.Planner
+Exec=@out@/bin/omnitiler planner-service
+SystemdService=omnitiler-planner.service

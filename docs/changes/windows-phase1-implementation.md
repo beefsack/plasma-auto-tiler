@@ -43,7 +43,7 @@
   `Win32_Graphics_Gdi` remains required by `WNDCLASSW`/`RegisterClassW` even with
   custom painting removed. Remaining tests cover identity, bounds and recovery.
 - Normal `run` remains a bounded poll loop without a message loop.
-  Recovery state: `%LOCALAPPDATA%/plasma-auto-tiler/session-<id>`.
+  Recovery state: `%LOCALAPPDATA%/omnitiler/session-<id>`.
 
 ## Verification after simplification
 

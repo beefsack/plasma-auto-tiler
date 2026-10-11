@@ -100,5 +100,5 @@
 - Offline implementation coverage includes production `startPlanAdapterEntry` tests for JavaScript property rejection, frame-geometry subscription, fresh focus wrappers, `NameHasOwner` absence activation with flags `0`, unique-owner pinning, stale reply rejection, and no accepted acknowledgement after a rejected membership write. Adapter tests cover the activation and existing signal-fence reentrant/no-op paths.
 - The production-wiring corrections above are not inferred from the separately
   exportable isolated entry. The subsequent user acceptance is recorded in
-  `docs/decisions.md`; `plasma-auto-tiler-dev.E2E0QJ.log` is NOT
+  `docs/decisions.md`; `omnitiler-dev.E2E0QJ.log` is NOT
   ANALYZED and supplies no API-contract or native-cause evidence.

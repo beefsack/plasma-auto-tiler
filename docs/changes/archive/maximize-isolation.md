@@ -19,7 +19,7 @@
   fullscreen refusal tokens and the `skip-fullscreen` disposition win.
 - Maximize observation is a hard startup requirement: a missing per-window
   `maximizedChanged` attachment refuses with the exact
-  `plasma-auto-tiler:plan:maximize-refused-signal` token, unlike best-effort
+  `omnitiler:plan:maximize-refused-signal` token, unlike best-effort
   fullscreen.
 
 ## Implementation

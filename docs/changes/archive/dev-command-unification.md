@@ -24,7 +24,7 @@ independently editable component retains a cheap direct command.
   starts. It cannot alter the environment or plugin loader of the already
   running KWin.
 - Therefore every successful `just dev` prints exactly:
-  `warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin; plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login.`
+  `warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin; omnitiler-active-border.so and omnitiler-drag-oracle.so remain stale until logout/login.`
 - A logout/login is unavoidable after a native rebuild before KWin can use the
   staged binaries. The drag oracle has no KCM in the current CMake targets;
   the three staged artifacts are its effect plus the active-border effect and
@@ -49,11 +49,11 @@ independently editable component retains a cheap direct command.
 ## Follow-Up Diagnostics
 
 - `just dev` now tails every KWin journal line containing the exact shared
-  prefix `plasma-auto-tiler:` rather than only `plasma-auto-tiler:plan`.
+  prefix `omnitiler:` rather than only `omnitiler:plan`.
   The existing `grep --line-buffered`, `[kwin]` label, FIFO streams, and
   combined-log flow remain unchanged.
 - Hermetic dev-loop coverage feeds a
-  `plasma-auto-tiler:route-diag:drag-pull action=dispatch` line through the
+  `omnitiler:route-diag:drag-pull action=dispatch` line through the
   journal fixture and proves it reaches the labelled KWin stream.
 - Follow-up static verification: `scripts/dev-loop-split.test.sh` passed
   `PASS=277 FAIL=0`; `just --fmt --check` passed.
@@ -63,7 +63,7 @@ independently editable component retains a cheap direct command.
 - `just dev` and `just dev verbose` retain bounded lifecycle, terminal,
   rejection, and refusal diagnostics. `just dev trace` compiles the KWin trace
   bundle and enables bounded structural Planner request/reply detail through
-  `PLASMA_AUTO_TILER_TRACE=1`.
+  `OMNITILER_TRACE=1`.
 - Trace-only output includes Plan dispatch/per-window geometry dispositions,
   exclusion observations, workspace-send geometry and native-hook detail, and
   normal drag pull/verdict records. Failures and transaction/follow summaries

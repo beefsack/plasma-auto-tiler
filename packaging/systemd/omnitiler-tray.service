@@ -1,10 +1,10 @@
 [Unit]
-Description=Plasma Auto Tiler Tray
+Description=OmniTiler Tray
 PartOf=graphical-session.target
 After=graphical-session.target
 
 [Service]
-ExecStart=/usr/bin/plasma-auto-tiler tray
+ExecStart=/usr/bin/omnitiler tray
 Restart=on-failure
 
 [Install]

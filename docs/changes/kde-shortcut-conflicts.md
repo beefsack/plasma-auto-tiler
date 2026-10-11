@@ -33,14 +33,14 @@
 - Independent mutation-boundary review found unreadable current/default chords, missing-enabled-row success claims, and reopening losing Disable choices. Corrections accepted by source inspection with targeted regression coverage; Force also binds action presence, unknown draft IDs refuse, and disabled focus excludes Lock/Meta+Esc.
 - The first implementation needed a semantic correction for those review findings; no failed live/product experiment occurred. Native gate source fileset/build-directory integration was corrected before its first hosted execution.
 - Hosted native CTest is now wired alongside existing Rust/KWin/shell jobs without changing `devenv.nix`. Local `git diff --check` passes.
-- First hosted run on `e1bb52a` ([37188296548](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37188296548)): Rust/KWin/shell/Windows/macOS passed; native production/test compilation passed under `-Werror`, but 3 of 33 CTest suites failed. One causal test repair removes duplicate workspace rows already supplied by full-catalog seeds, updates preview assertions to readable chords, and checks both the exempt lock holder and keyed-only foreign holder. Product behavior and mutation oracles unchanged.
-- Accepted final implementation evidence on `cdd4ef4` ([37188768454](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37188768454)): all six hosted jobs green (Rust, KWin, shell, native, Windows, macOS). Native production/test build under `-Wall -Wextra -Werror` and all 33 CTest suites passed, including both selection suites. KWin tests/typecheck include native/TypeScript catalog parity. No local Linux or live desktop evidence is claimed.
+- First hosted run on `e1bb52a` ([37188296548](https://github.com/beefsack/omnitiler/actions/runs/37188296548)): Rust/KWin/shell/Windows/macOS passed; native production/test compilation passed under `-Werror`, but 3 of 33 CTest suites failed. One causal test repair removes duplicate workspace rows already supplied by full-catalog seeds, updates preview assertions to readable chords, and checks both the exempt lock holder and keyed-only foreign holder. Product behavior and mutation oracles unchanged.
+- Accepted final implementation evidence on `cdd4ef4` ([37188768454](https://github.com/beefsack/omnitiler/actions/runs/37188768454)): all six hosted jobs green (Rust, KWin, shell, native, Windows, macOS). Native production/test build under `-Wall -Wextra -Werror` and all 33 CTest suites passed, including both selection suites. KWin tests/typecheck include native/TypeScript catalog parity. No local Linux or live desktop evidence is claimed.
 - Live acceptance remains pending: follow the conflict-list/preset section in `docs/live-shortcut-override-verification.md`. Keep this record active until user-owned KDE acceptance.
 - M13 pending live check: **M13 Keep preserves custom KDE chords across Apply**. Keep now preserves actual assignments; Authentic stages canonical reset and its intent is consumed on successful Apply/Force. Failed/declined attempts retain the staged intent.
 
 ## Workspace-tiling toggle default Meta+Y (user 2026-10-10)
 
-- `plasma-auto-tiler-toggle-workspace-tiling` now registers bound to `Meta+Y`
+- `omnitiler-toggle-workspace-tiling` now registers bound to `Meta+Y`
   (KWin registration plus native catalog/KCM row, kind `toggle`, no
   conflict-table row). Every other currently-unbound action stays unbound:
   catalog 128 to 129 rows, bound 92 to 93, unbound still 36.

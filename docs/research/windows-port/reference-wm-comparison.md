@@ -13,7 +13,7 @@ activation; it is not proof of suppressing Xbox/Game Bar (section 4).
 
 | Repo | HEAD | Origin |
 | ---- | ---- | ------ |
-| ours (plasma-auto-tiler) | `a20e8e8efded9b84892778e9c292b5b09cad68b8` | local |
+| ours (omnitiler) | `a20e8e8efded9b84892778e9c292b5b09cad68b8` | local |
 | GlazeWM | `5709ad0a3c7c386bbc3e38166a865ffc12937515` | https://github.com/glzr-io/glazewm |
 | komorebi | `e0709f02bfae4e503bf4640f58ee75ecbbfdbb97` | https://github.com/LGUG2Z/komorebi |
 | Seelen-UI | `56c1d75dae814bd5c3d03d5eea3d6f0428b02db1` | https://github.com/eythaann/Seelen-UI.git |

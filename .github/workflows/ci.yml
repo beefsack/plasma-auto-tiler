@@ -67,7 +67,7 @@ jobs:
           devenv shell --impure -- bash -euo pipefail -c '
             log="$(mktemp)"
             for suite in scripts/*.test.sh; do
-              if ! TRAY_05B_BINARY="$PWD/target/debug/plasma-auto-tiler" bash "$suite" 2>&1 | tee "$log"; then
+              if ! TRAY_05B_BINARY="$PWD/target/debug/omnitiler" bash "$suite" 2>&1 | tee "$log"; then
                 echo "::error::${suite} failed"
                 while IFS= read -r line; do
                   echo "::error::${line//%/%25}"

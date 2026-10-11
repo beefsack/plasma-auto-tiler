@@ -37,12 +37,12 @@ void check(bool condition, const char *expression, const char *file, int line)
 
 KConfigGroup scriptGroup()
 {
-    return KConfigGroup(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("Script-plasma-auto-tiler-kwin"));
+    return KConfigGroup(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("Script-omnitiler-kwin"));
 }
 
 KConfigGroup borderGroup()
 {
-    return KConfigGroup(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("Effect-plasma-auto-tiler-active-border"));
+    return KConfigGroup(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("Effect-omnitiler-active-border"));
 }
 
 QComboBox *workspaceModeCombo(KWin::ScriptConfigModule &module)
@@ -1449,7 +1449,7 @@ int main(int argc, char **argv)
 {
     // Isolate from the live session bus before any
     // QDBusConnection::sessionBus() initialization.
-    qputenv("DBUS_SESSION_BUS_ADDRESS", QByteArray("unix:path=/dev/null/plasma-auto-tiler-scriptconfig-test-isolated-bus"));
+    qputenv("DBUS_SESSION_BUS_ADDRESS", QByteArray("unix:path=/dev/null/omnitiler-scriptconfig-test-isolated-bus"));
     QTemporaryDir configHome;
     if (!configHome.isValid()) {
         std::fprintf(stderr, "failed to create temporary config directory\n");

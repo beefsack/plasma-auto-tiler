@@ -8,7 +8,7 @@
 - Native locked gates, independent review, Notepad/Paint plan/write/matched
   readback and screenshot proof pass. Hosted CI for `ace352c` is green across
   Windows, Linux Rust, KWin, shell, native effect and macOS:
-  <https://github.com/beefsack/plasma-auto-tiler/actions/runs/37196192226>.
+  <https://github.com/beefsack/omnitiler/actions/runs/37196192226>.
 - Decisions and R-MAX-03 promoted; record archived. Physical checks remain
   user-owned. Live cleanup independently verified; no Worker remains running.
 
@@ -79,7 +79,7 @@
   exact-owner request transport and native send dispatch with all fences.
 - Cross-boundary sends and active gesture effects accepted below. Implementation
   `90ee5c2` pushed; hosted Windows/Linux Rust/KWin/shell/macOS CI green:
-  <https://github.com/beefsack/plasma-auto-tiler/actions/runs/37181616531>.
+  <https://github.com/beefsack/omnitiler/actions/runs/37181616531>.
 - Final inspection reproduced first-seen maximized-window restore on a floating
   workspace. Mode-gating the admission clear fixes geometry, but first-seen
   maximized rows also need managed workspace membership so switching hides them.

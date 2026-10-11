@@ -141,7 +141,7 @@
   establish that an active workspace visit is required. Deferred hidden-window
   convergence remains one compatible explanation, alongside client constraints
   or other native state not exposed by this record.
-- The authorized `plasma-auto-tiler-dev.Aoekoz.log` does not
+- The authorized `omnitiler-dev.Aoekoz.log` does not
   label which correlations were physically visible successes or failures, so it
   cannot correlate the reported intermittent visible failure to a particular
   flight. `plan-1-w0`, `plan-1-w1`, and `plan-1-w2` each reach the normal
@@ -182,4 +182,4 @@
 
 ## Closure
 
-- Subsequent USER VISUAL/MANUAL acceptance is: "The issue appears to be fixed, I spam moved a window between many workspaces and it never failed. ... reinforces ... graceful handling ... actually feel really good even when spamming." It accepts repeated same-session move/follow usability across many workspaces. The supplied `plasma-auto-tiler-dev.E2E0QJ.log` is NOT ANALYZED, so it does not alter this record's native-cause, protocol, or rendered-visibility limits.
+- Subsequent USER VISUAL/MANUAL acceptance is: "The issue appears to be fixed, I spam moved a window between many workspaces and it never failed. ... reinforces ... graceful handling ... actually feel really good even when spamming." It accepts repeated same-session move/follow usability across many workspaces. The supplied `omnitiler-dev.E2E0QJ.log` is NOT ANALYZED, so it does not alter this record's native-cause, protocol, or rendered-visibility limits.

@@ -25,8 +25,8 @@ just dev-off     # unload exact script, stop recorded Planner, re-enable package
   Malformed `isScriptLoaded` fails closed before mutation. On DOWN it runs
   `just dev-on`; on bring-up failure it exits non-zero with no logs tailed
   and no extra teardown (rollback stays owned by `dev-on`). On success it
-  starts the worktree tray (`target/debug/plasma-auto-tiler tray`) as the
-  only tray owner in this session: when `org.plasmaautotiler.Tray` is
+  starts the worktree tray (`target/debug/omnitiler tray`) as the
+  only tray owner in this session: when `com.omnitiler.Tray` is
   already owned, it logs the name-taken owner plainly, preserves the
   installed tray, and runs without a worktree tray instead of claiming one.
   Only a D-Bus owner that verifies as this worktree `$BIN tray` (exe,
@@ -37,7 +37,7 @@ just dev-off     # unload exact script, stop recorded Planner, re-enable package
   log from `$STATE_DIR/planner-log` prefixed `[planner]`, the tray stderr
   log prefixed `[tray]` when owned, and the KWin
    journal plugin lines (`journalctl --user -f _PID=<kwin-pid>` from the
-    receipt `.pid`, filtered to `plasma-auto-tiler:`) prefixed `[kwin]`.
+    receipt `.pid`, filtered to `omnitiler:`) prefixed `[kwin]`.
    The labeled stream is also captured at `$STATE_DIR/dev-log`'s path; the
    durable file persists after teardown.
    `Ctrl-C` stops the tails, stops only the verified owned tray pid
@@ -51,9 +51,9 @@ just dev-off     # unload exact script, stop recorded Planner, re-enable package
    directed through logout/login. Detached `dev-on`/`dev-off` never start,
    stop, or record the tray.
 - `dev-on` disables the packaged KWin script, verifies `isScriptLoaded`
-  `false`, requires `org.plasmaautotiler.Planner` to be unowned (it does not
+  `false`, requires `com.omnitiler.Planner` to be unowned (it does not
   stop units for you), builds, launches exactly
-  `target/debug/plasma-auto-tiler planner-service` detached with
+  `target/debug/omnitiler planner-service` detached with
   `setsid nohup ... </dev/null &`, then proves identity from D-Bus rather
   than `$!`. `$!` is a launch hint only and never authoritative (setsid may
   fork when it is a process-group leader). After a bounded wait the owner
@@ -107,8 +107,8 @@ Single engine: the worktree KWin bundle (`kwin/src/entry.ts` via
 `startPlanAdapterEntry` with owner `kwin-plan-adapter`, generation `plan-1`)
 is the only observer/actuator. Rust owns all tiling, order, membership, and
 rejection decisions through the stateless `DescribePlan` D-Bus route
-(`org.plasmaautotiler.Planner` / `/org/plasmaautotiler/Planner` /
-`org.plasmaautotiler.Planner1`). Normal windows are observed in the active
+(`com.omnitiler.Planner` / `/com/omnitiler/Planner` /
+`com.omnitiler.Planner1`). Normal windows are observed in the active
 foreground domain and every other readable background `(output, workspace)`
 domain. Background replies write only their exact domain and never request
 native focus or desktop visibility changes; reply geometries use shared
@@ -128,25 +128,25 @@ loader. Tray systemd user delivery remains unchanged.
 devenv shell --impure -- bash scripts/dogfood-install.sh disable
 # Verify KWin unloaded the packaged script before continuing.
 busctl --user --json=short call org.kde.KWin /Scripting org.kde.kwin.Scripting \
-  isScriptLoaded s plasma-auto-tiler-kwin
+  isScriptLoaded s omnitiler-kwin
 
 # The service must be unowned before starting the worktree Planner.
 busctl --user call org.freedesktop.DBus /org/freedesktop/DBus \
-  org.freedesktop.DBus GetNameOwner s org.plasmaautotiler.Planner
-# Only if the owner is verified as plasma-auto-tiler-planner.service:
-# systemctl --user stop plasma-auto-tiler-planner.service
+  org.freedesktop.DBus GetNameOwner s com.omnitiler.Planner
+# Only if the owner is verified as omnitiler-planner.service:
+# systemctl --user stop omnitiler-planner.service
 # Then repeat GetNameOwner and require it to fail before proceeding.
 
 devenv shell --impure -- cargo build
-PLANNER_OUT="$(mktemp /tmp/plasma-auto-tiler-planner-dev.XXXXXX.log)"
-setsid nohup "$PWD/target/debug/plasma-auto-tiler" planner-service >"$PLANNER_OUT" 2>&1 </dev/null &
+PLANNER_OUT="$(mktemp /tmp/omnitiler-planner-dev.XXXXXX.log)"
+setsid nohup "$PWD/target/debug/omnitiler" planner-service >"$PLANNER_OUT" 2>&1 </dev/null &
 # $! is a launch hint only, never authoritative (setsid may fork). Derive the
 # owner PID from D-Bus and verify it before trusting it.
-busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s org.plasmaautotiler.Planner
+busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s com.omnitiler.Planner
 busctl --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "<owner-name-from-above>"
 readlink "/proc/<owner-pid>/exe"
 tr '\0' ' ' < "/proc/<owner-pid>/cmdline"
-busctl --user --no-pager status org.plasmaautotiler.Planner
+busctl --user --no-pager status com.omnitiler.Planner
 devenv shell --impure -- bash scripts/start-test.sh start
 # Retain the printed CONTROLLER_OWNERSHIP_FILE receipt path and script ID.
 # Every later stop must bind both: CONTROLLER_OWNERSHIP_FILE=<receipt> bash
@@ -155,12 +155,12 @@ devenv shell --impure -- bash scripts/start-test.sh start
 
 1. Disable packaged KWin script.
 2. Verify `isScriptLoaded` is `false`; reconfiguration can settle asynchronously.
-3. Require `org.plasmaautotiler.Planner` to be unowned. If it is owned, confirm
-   its PID belongs to `plasma-auto-tiler-planner.service`, stop only that unit,
+3. Require `com.omnitiler.Planner` to be unowned. If it is owned, confirm
+   its PID belongs to `omnitiler-planner.service`, stop only that unit,
    and recheck. If it is unmanaged or still owns the name, stop and report its
    PID and parent. Do not mask units: the D-Bus descriptor `Exec=` fallback can
    still activate the installed Planner.
-4. Build and start only `target/debug/plasma-auto-tiler planner-service` from
+4. Build and start only `target/debug/omnitiler planner-service` from
    this worktree. Record its output; derive the Planner PID from the D-Bus
    owner (`GetNameOwner` plus `GetConnectionUnixProcessID`), never from `$!`,
    and require `/proc/<pid>/exe` to be that worktree path or its exact
@@ -176,9 +176,9 @@ devenv shell --impure -- bash scripts/start-test.sh start
 
 ### Verify
 
-- Observe `org.plasmaautotiler.Planner` owned by the verified worktree Planner
+- Observe `com.omnitiler.Planner` owned by the verified worktree Planner
   (`GetNameOwner` plus `GetConnectionUnixProcessID`, exe/cmdline/start checks).
-- Confirm `isScriptLoaded s plasma-auto-tiler-kwin` decodes to the strict
+- Confirm `isScriptLoaded s omnitiler-kwin` decodes to the strict
   `{"type":"b","data":[true]}` envelope.
 - Confirm `just dev-status` reports `dev mode: UP`.
 - Confirm the single-engine journal shapes below appear under the recorded
@@ -265,13 +265,13 @@ Output move/send (item 5, offline verified; two-output native journey pending):
 
 - Multiple readable adjacent outputs now select by window-centre projection,
   else span overlap, then left/top; reverse multiplicity is accepted.
-  `plasma-auto-tiler:plan:output-send-refused-ambiguous` is a retained refusal
+  `omnitiler:plan:output-send-refused-ambiguous` is a retained refusal
   token for unreadable mover selection evidence, not candidate multiplicity;
   zero transfer writes. Unreadable topology reports
   `event=output-send outcome=scope-invalid reason=topology-unreadable`.
-- `plasma-auto-tiler:plan:busy-refused kind=output-send`: existing plan/send
+- `omnitiler:plan:busy-refused kind=output-send`: existing plan/send
   flight holds the route; no second dispatch.
-- `plasma-auto-tiler:route-diag component=cosmic-send stage=entry ... event=output-send`:
+- `omnitiler:route-diag component=cosmic-send stage=entry ... event=output-send`:
   `outcome=no-target` is a no-op; `refused`, `scope-invalid`,
   `native-refused` and `native-failed` describe refusals/failures.
   `gate=floating-boundary outcome=native-moved` is membership-only;
@@ -288,7 +288,7 @@ Output move/send (item 5, offline verified; two-output native journey pending):
 
 Workspace send follow/stay (item 2, offline verified; native journey pending):
 
-- `plasma-auto-tiler:route-diag component=cosmic-send stage=follow ... event=follow outcome=stay-confirmed`:
+- `omnitiler:route-diag component=cosmic-send stage=follow ... event=follow outcome=stay-confirmed`:
   fresh transfer arrived, source still selected; core-bound source MRU focus
   applied, or null desired focus required no setter. No desktop switch.
 - The same stage emits `event=stay-pre|stay-focused` with existing redacted
@@ -302,7 +302,7 @@ Workspace send follow/stay (item 2, offline verified; native journey pending):
   relative/no numbered ordinal, `0` is append/trailing. Stay source-view drift
   before a reply produces `stale-revision` with zero writes; drift after the
   membership write produces `arrival-unconfirmed`, no hidden-source focus.
-- `plasma-auto-tiler:workspace:workspace-send-relative-absent:<reason>`:
+- `omnitiler:workspace:workspace-send-relative-absent:<reason>`:
   target resolution refused (`empty-ring`, `current-unknown`,
   `current-out-of-ring`, `no-active-output`, `unknown-output`, `target-removed`).
 
@@ -310,32 +310,32 @@ Workspace previous/relative diagnostics (opaque stable workspace IDs and
 session-local output keys; native selection attempt completion is not visual
 acceptance):
 
-- `plasma-auto-tiler:workspace:workspace-previous-recorded:<id>`: a changed
+- `omnitiler:workspace:workspace-previous-recorded:<id>`: a changed
   current view was observed; `<id>` is the new current view, previous is the
   preceding observed ID. Native/send-follow/hotplug use the same observation.
-- `plasma-auto-tiler:workspace:workspace-previous-discarded:<key>`: disconnected
+- `omnitiler:workspace:workspace-previous-discarded:<key>`: disconnected
   output history and its observation baseline discarded.
-- `plasma-auto-tiler:workspace:workspace-previous-invalidated:<removed|out-of-scope>`.
-- `plasma-auto-tiler:workspace:workspace-previous-completed:<id>` and
-  `plasma-auto-tiler:workspace:workspace-relative-completed:<id>`: native
+- `omnitiler:workspace:workspace-previous-invalidated:<removed|out-of-scope>`.
+- `omnitiler:workspace:workspace-previous-completed:<id>` and
+  `omnitiler:workspace:workspace-relative-completed:<id>`: native
   selection seam invoked; recording follows observation, not setter return.
-- `plasma-auto-tiler:workspace:workspace-previous-absent:<no-active-output|unknown-output|no-history>`.
-- `plasma-auto-tiler:workspace:workspace-relative-absent:<no-active-output|unknown-output|empty-ring|current-unknown|current-out-of-ring|target-removed>`.
-- `plasma-auto-tiler:workspace:workspace-previous-no-op:already-there` and
-  `plasma-auto-tiler:workspace:workspace-relative-no-op:already-there`.
+- `omnitiler:workspace:workspace-previous-absent:<no-active-output|unknown-output|no-history>`.
+- `omnitiler:workspace:workspace-relative-absent:<no-active-output|unknown-output|empty-ring|current-unknown|current-out-of-ring|target-removed>`.
+- `omnitiler:workspace:workspace-previous-no-op:already-there` and
+  `omnitiler:workspace:workspace-relative-no-op:already-there`.
 
 Whole-workspace output migration (R-WS-12, follow-only, current
 offline-delivered baseline verified; native journey pending):
 
-- `plasma-auto-tiler:route-diag component=workspace-migrate stage=entry correlation=<correlation> generation=<generation> revision=0 diag_seq=-1 event=workspace-migrate outcome=<outcome> follow=not-reached gate=pre-commit phase=entry reason=<reason> req_ord=-1 inflight_stage=<stage>`:
+- `omnitiler:route-diag component=workspace-migrate stage=entry correlation=<correlation> generation=<generation> revision=0 diag_seq=-1 event=workspace-migrate outcome=<outcome> follow=not-reached gate=pre-commit phase=entry reason=<reason> req_ord=-1 inflight_stage=<stage>`:
   entry outcomes `invalid-direction`, `disabled`, `busy-send`,
   `busy-plan`, `mode-shared`, `mode-invalid`, `per-output-disabled`,
   `per-output-unreadable`, `no-target` (quiet no-op,
   `reason=no-adjacent-output`), `refused` (`reason=scope-unreadable`).
-  A busy entry also emits `plasma-auto-tiler:plan:busy-refused
+  A busy entry also emits `omnitiler:plan:busy-refused
   kind=workspace-migrate`; an unreadable scope also emits
-  `plasma-auto-tiler:plan:workspace-migrate-refused-scope`.
-- `plasma-auto-tiler:route-diag component=workspace-migrate
+  `omnitiler:plan:workspace-migrate-refused-scope`.
+- `omnitiler:route-diag component=workspace-migrate
   route=migrate-workspace stage=<stage> correlation=<correlation>
   generation=<generation> revision=<revision> diag_seq=<seq>
   event=<event> outcome=<outcome>`: pre-commit refusals carry
@@ -352,10 +352,10 @@ offline-delivered baseline verified; native journey pending):
   baseline and is still implemented. User decision D8 2026-10-08 selects
   fullscreen+maximized carry instead; implementation pending, so no carry
   trace is claimed here.
-- `plasma-auto-tiler:workspace:workspace-migrate-refused:<shared-mode|unknown-output|unknown-workspace|out-of-scope|target-current|duplicate-target>`,
-  `plasma-auto-tiler:workspace:workspace-previous-invalidated:migrated`,
-  `plasma-auto-tiler:workspace:workspace-migrate-undisplaced`, and
-  `plasma-auto-tiler:workspace:workspace-migrate-completed` (map commit only,
+- `omnitiler:workspace:workspace-migrate-refused:<shared-mode|unknown-output|unknown-workspace|out-of-scope|target-current|duplicate-target>`,
+  `omnitiler:workspace:workspace-previous-invalidated:migrated`,
+  `omnitiler:workspace:workspace-migrate-undisplaced`, and
+  `omnitiler:workspace:workspace-migrate-completed` (map commit only,
   never a native-arrival claim).
 - Terminals settle `release` (the settled refresh reconciles both
   domains from native observation) or `arrival`: `arrived` only after
@@ -370,7 +370,7 @@ offline-delivered baseline verified; native journey pending):
 
 Filter by the recorded KWin PID only: `journalctl --user --no-pager _PID=<kwin-pid>`
 (never `journalctl --system`). All emitted production diagnostics carry the
-fixed `plasma-auto-tiler:` prefix. `just dev` and `just dev verbose` retain
+fixed `omnitiler:` prefix. `just dev` and `just dev verbose` retain
 bounded lifecycle, terminal, refusal, and rejection evidence. `just dev trace`
 additionally enables redacted per-window and hook detail plus the Planner's
 bounded structural request/reply JSON. It does not capture raw native D-Bus
@@ -381,11 +381,11 @@ is not a caption and cannot contain document or page content.
 Native effect endpoint transitions (one initial state and, after initial
 failure, one recovery on a later activation/reconfigure; no retry spam):
 
-- `plasma-auto-tiler:active-border:endpoint stage=failed service=<0|1> object=<0|1>` (first failed registration, including partial success before rollback)
-- `plasma-auto-tiler:active-border:endpoint available=<0|1>` (initial availability, then recovery if initially unavailable)
-- `plasma-auto-tiler:drag-oracle:endpoint stage=failed service=<0|1> object=<0|1>` (first failed registration, including partial success before rollback)
-- `plasma-auto-tiler:drag-oracle:endpoint available=<0|1>` (initial availability, then recovery if initially unavailable)
-- `plasma-auto-tiler:drag-oracle:press-spy available=<0|1>` (only if input was initially unavailable; late installation reports `1` once)
+- `omnitiler:active-border:endpoint stage=failed service=<0|1> object=<0|1>` (first failed registration, including partial success before rollback)
+- `omnitiler:active-border:endpoint available=<0|1>` (initial availability, then recovery if initially unavailable)
+- `omnitiler:drag-oracle:endpoint stage=failed service=<0|1> object=<0|1>` (first failed registration, including partial success before rollback)
+- `omnitiler:drag-oracle:endpoint available=<0|1>` (initial availability, then recovery if initially unavailable)
+- `omnitiler:drag-oracle:press-spy available=<0|1>` (only if input was initially unavailable; late installation reports `1` once)
 
 The name and object scalars describe that registration attempt only; `available=1`
 requires both to succeed. These lines contain no native identities or payloads.
@@ -395,17 +395,17 @@ existing owner/generation provenance plus the compiled-in source revision;
 `<source-rev>` is the installed build's bounded git revision, else
 `local-dev`):
 
-- `plasma-auto-tiler:plan:ready owner=<owner> generation=<generation> source=<source-rev>`
+- `omnitiler:plan:ready owner=<owner> generation=<generation> source=<source-rev>`
 
 Same-axis setting reload (ordinary output, only when the validated value changes
 on `Options.configChanged`; affects subsequent move requests, no tree rebuild):
 
-- `plasma-auto-tiler:plan:config-reloaded stage=same-axis-move mode=<group-with-neighbor|swap-with-neighbor>`
+- `omnitiler:plan:config-reloaded stage=same-axis-move mode=<group-with-neighbor|swap-with-neighbor>`
 
 Fixed-size predicate reload (same trigger; subsequent admissions only, no
 reclassification of existing windows):
 
-- `plasma-auto-tiler:plan:config-reloaded stage=fixed-size-predicate predicate=<both-axes-fixed|either-axis-fixed>`
+- `omnitiler:plan:config-reloaded stage=fixed-size-predicate predicate=<both-axes-fixed|either-axis-fixed>`
 
 An unknown protocol `fixed_size_predicate` returns
 `snapshot-invalid/fixed-predicate-invalid`; invalid KDE config falls back to
@@ -414,8 +414,8 @@ An unknown protocol `fixed_size_predicate` returns
 Fixed-size automatic admission (normal output, only new classifications or
 committed automatic membership, not per-frame polling):
 
-- `[kwin] plasma-auto-tiler:plan:fixed-size-classification op=<op> correlation=<correlation> evaluated=<N> classified=<N> reason=fixed-equal phase=classify`
-- `[planner] plasma-auto-tiler:fixed-size-admission op=<op> correlation=<correlation> evaluated=<N> admitted=<N> reason=fixed-equal`
+- `[kwin] omnitiler:plan:fixed-size-classification op=<op> correlation=<correlation> evaluated=<N> classified=<N> reason=fixed-equal phase=classify`
+- `[planner] omnitiler:fixed-size-admission op=<op> correlation=<correlation> evaluated=<N> admitted=<N> reason=fixed-equal`
 
 The KDE line identifies classification before dispatch, not application.
 The Planner line reports committed automatic membership; it does not prove
@@ -427,10 +427,10 @@ stacking or keep-above writes to the automatically floating client.
 Intentional-float/fixed-window tile-override owner restart (ordinary output; one startup read and settled
 membership writes, not per-frame snapshots):
 
-- `[kwin] plasma-auto-tiler:plan:intent-read correlation=<generation>-i<seq> outcome=<ok|degraded|rejected> stored=<N> returned=<N> tile_stored=<N> tile_returned=<N> reason=<fixed-token|->`
-- `[kwin] plasma-auto-tiler:plan:intent-write correlation=<generation>-i<seq> outcome=<stored|rejected|unavailable> stored=<N|-> tile_stored=<N|-> reason=<fixed-token|->`
-- `[planner] plasma-auto-tiler:intent-summary direction=egress op=<read|write> correlation=<correlation|-> outcome=<outcome> stored=<N|-> returned=<N|-> tile_stored=<N|-> tile_returned=<N|-> reason=<fixed-token|->`
-- `[kwin] plasma-auto-tiler:plan:intent-bootstrap-deferred kind=<operation>`
+- `[kwin] omnitiler:plan:intent-read correlation=<generation>-i<seq> outcome=<ok|degraded|rejected> stored=<N> returned=<N> tile_stored=<N> tile_returned=<N> reason=<fixed-token|->`
+- `[kwin] omnitiler:plan:intent-write correlation=<generation>-i<seq> outcome=<stored|rejected|unavailable> stored=<N|-> tile_stored=<N|-> reason=<fixed-token|->`
+- `[planner] omnitiler:intent-summary direction=egress op=<read|write> correlation=<correlation|-> outcome=<outcome> stored=<N|-> returned=<N|-> tile_stored=<N|-> tile_returned=<N|-> reason=<fixed-token|->`
+- `[kwin] omnitiler:plan:intent-bootstrap-deferred kind=<operation>`
 
 `stored` on the write terminal is a separate storage acknowledgement, not
 `planned-applied` and not an atomic native/store commit. Read hydration occurs
@@ -451,14 +451,14 @@ When a complete startup signal attachment fails, the entry remains inert and
 retries on a later `windowAdded` or `Options.configChanged` event (one attempt
 per event, no timer or attempt cap). Only transitions are logged:
 
-- `plasma-auto-tiler:plan:entry-attach stage=failed cause=<added|removed|activated|geometry|scope|maximize|enable-refused> recovery=retry-on-native-event`
-- `plasma-auto-tiler:plan:entry-attach stage=recovered`
+- `omnitiler:plan:entry-attach stage=failed cause=<added|removed|activated|geometry|scope|maximize|enable-refused> recovery=retry-on-native-event`
+- `omnitiler:plan:entry-attach stage=recovered`
 
 Per dispatched `DescribePlan` flight, ordinary output retains one terminal
 verdict line. Trace also records its route entry:
 
-- `plasma-auto-tiler:plan:cmd=<correlation> kind=<op> windows=<N> outcome=dispatch`
-- `plasma-auto-tiler:plan:cmd=<correlation> kind=<op> windows=<N> outcome=<outcome>`
+- `omnitiler:plan:cmd=<correlation> kind=<op> windows=<N> outcome=dispatch`
+- `omnitiler:plan:cmd=<correlation> kind=<op> windows=<N> outcome=<outcome>`
 
 The `outcome=dispatch` form is trace-only; the terminal form is ordinary.
 
@@ -469,16 +469,16 @@ is the observed window count, and terminal outcomes are `planned-applied`,
 `timeout`, `service-fault`, `correlation-mismatch`, `stale-dropped`,
 `precondition-mismatch`, `stale-scope`, `write-failed`. Example pair:
 
-- `plasma-auto-tiler:plan:cmd=plan-1-p3 kind=admit windows=4 outcome=dispatch`
-- `plasma-auto-tiler:plan:cmd=plan-1-p3 kind=admit windows=4 outcome=planned-applied`
+- `omnitiler:plan:cmd=plan-1-p3 kind=admit windows=4 outcome=dispatch`
+- `omnitiler:plan:cmd=plan-1-p3 kind=admit windows=4 outcome=planned-applied`
 
 Per Rust rejection (one `rejected` kind line following the `outcome=rejected`
 command line). `snapshot-invalid` includes its bounded Planner detail so the
 invalid request cause is directly observable:
 
-- `plasma-auto-tiler:plan:rejected kind=<kind>`
-- `plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=<detail>`
-- `plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=window-out-of-bounds window=<id> resource_class=<class> rect=<rect> bounds=<rect>`
+- `omnitiler:plan:rejected kind=<kind>`
+- `omnitiler:plan:rejected kind=snapshot-invalid detail=<detail>`
+- `omnitiler:plan:rejected kind=snapshot-invalid detail=window-out-of-bounds window=<id> resource_class=<class> rect=<rect> bounds=<rect>`
 
 The third form is emitted when the adapter can identify the invalid carried
 rectangle. It uses the same stable opaque id, resource class, and integer
@@ -488,15 +488,15 @@ Trace only: per applied geometry command (every member exactly one line, non-foc
 `<id>` is the stable opaque normalized window id, `<class>` is KWin's bounded
 non-sensitive resource class, and `<rect>` is `x,y,w,h`):
 
-- `plasma-auto-tiler:plan:write window=<id> resource_class=<class> disposition=<written|skip-fullscreen|skip-maximized|skip-floating|skip-already-equal|write-failed|float-written|float-write-failed> rect=<rect>`
+- `omnitiler:plan:write window=<id> resource_class=<class> disposition=<written|skip-fullscreen|skip-maximized|skip-floating|skip-already-equal|write-failed|float-written|float-write-failed> rect=<rect>`
 
 `write-failed` and `float-write-failed` remain ordinary failure evidence.
 
 Per initially fullscreen window (once on hold and once on its first
 non-fullscreen observation; `<id>` is the same opaque normalized window id):
 
-- `plasma-auto-tiler:plan:initial-fullscreen-held window=<id>`
-- `plasma-auto-tiler:plan:initial-fullscreen-released window=<id>`
+- `omnitiler:plan:initial-fullscreen-held window=<id>`
+- `omnitiler:plan:initial-fullscreen-released window=<id>`
 
 Held windows are planner-only floating exceptions with no tile slot and no
 geometry write. A subsequent fullscreen of a tiled window still retains its
@@ -504,15 +504,15 @@ slot and reports `skip-fullscreen` when a plan reflows siblings.
 
 Per work-area/scope change (dedicated pair, never the generic reconcile line):
 
-- `plasma-auto-tiler:plan:scope-transition old=<old-rect> new=<new-rect>`
-- `plasma-auto-tiler:plan:work-area-reprojection selected=retained`
+- `omnitiler:plan:scope-transition old=<old-rect> new=<new-rect>`
+- `omnitiler:plan:work-area-reprojection selected=retained`
 
 Per slice-2 pointer echo fence transition (one fixed token each):
 
-- `plasma-auto-tiler:plan:echo-fence-armed`
-- `plasma-auto-tiler:plan:echo-fence-consumed`
-- `plasma-auto-tiler:plan:echo-fence-cleared-equality`
-- `plasma-auto-tiler:plan:echo-fence-mismatched`
+- `omnitiler:plan:echo-fence-armed`
+- `omnitiler:plan:echo-fence-consumed`
+- `omnitiler:plan:echo-fence-cleared-equality`
+- `omnitiler:plan:echo-fence-mismatched`
 
 Per maximize-at-admission clear (first exit of a held born-fullscreen window
 only; one attempt per live window identity, never a retry). Q3 first-seen
@@ -520,19 +520,19 @@ maximized admission, including R-MAX-03 floating-to-tiled, reserves a slot and
 preserves maximize, so it emits no clear/echo lines; an applied
 overlay reports `skip-maximized` with its reserved rectangle:
 
-- `plasma-auto-tiler:plan:maximize-admission-clear window=<id> resource_class=<class> outcome=<issued|invoked|missing|threw|observed-cleared|observed-maximized|observed-absent>`
-- `plasma-auto-tiler:plan:maximize-admission-echo-armed`
-- `plasma-auto-tiler:plan:maximize-admission-echo-consumed`
-- `plasma-auto-tiler:plan:maximize-admission-echo-mismatched`
-- `plasma-auto-tiler:plan:maximize-admission-echo-cleared-no-signal`
+- `omnitiler:plan:maximize-admission-clear window=<id> resource_class=<class> outcome=<issued|invoked|missing|threw|observed-cleared|observed-maximized|observed-absent>`
+- `omnitiler:plan:maximize-admission-echo-armed`
+- `omnitiler:plan:maximize-admission-echo-consumed`
+- `omnitiler:plan:maximize-admission-echo-mismatched`
+- `omnitiler:plan:maximize-admission-echo-cleared-no-signal`
 
 Explicit native state writes arm before their native call, consume only the
 same Window object, and clear immediately when no synchronous echo arrives:
 
-- `plasma-auto-tiler:plan:maximize-toggle window=<id> resource_class=<class> target=<maximized|restored> outcome=<issued|invoked|missing|threw>`
-- `plasma-auto-tiler:plan:maximize-toggle-echo-armed|consumed|mismatched|cleared-no-signal`
-- `plasma-auto-tiler:plan:sticky-toggle window=<id> resource_class=<class> target=<all-desktops|current-desktop> outcome=<issued|invoked|missing|threw>`
-- `plasma-auto-tiler:plan:sticky-echo-armed|consumed|mismatched|cleared-no-signal`
+- `omnitiler:plan:maximize-toggle window=<id> resource_class=<class> target=<maximized|restored> outcome=<issued|invoked|missing|threw>`
+- `omnitiler:plan:maximize-toggle-echo-armed|consumed|mismatched|cleared-no-signal`
+- `omnitiler:plan:sticky-toggle window=<id> resource_class=<class> target=<all-desktops|current-desktop> outcome=<issued|invoked|missing|threw>`
+- `omnitiler:plan:sticky-echo-armed|consumed|mismatched|cleared-no-signal`
 
 `observed-cleared` confirms that the immediate re-observation saw restore.
 `observed-maximized` records that KWin still reported maximize after the one
@@ -544,67 +544,67 @@ exception.
 Per refusal/rejection path (exact distinct tokens, one per cause; every
 shortcut and pointer-route refusal carries its own fixed token):
 
-- `plasma-auto-tiler:plan:focus-refused-disabled` (shortcut focus while the adapter is disabled)
-- `plasma-auto-tiler:plan:focus-refused-invalid-direction`
-- `plasma-auto-tiler:plan:focus-refused-observe`
-- `plasma-auto-tiler:plan:focus-refused-floating` (directional focus on an intentionally floating active window)
-- `plasma-auto-tiler:plan:move-refused-disabled`
-- `plasma-auto-tiler:plan:move-refused-invalid-direction`
-- `plasma-auto-tiler:plan:move-refused-observe`
-- `plasma-auto-tiler:plan:move-refused-floating` (directional move on an intentionally floating active window)
-- `plasma-auto-tiler:plan:move-refused-fullscreen` (directional move refused on a fullscreen focused window)
-- `plasma-auto-tiler:plan:move-refused-maximize` (directional move refused on a maximized focused window; fullscreen wins when both)
-- `plasma-auto-tiler:plan:resize-refused-disabled`
-- `plasma-auto-tiler:plan:resize-refused-invalid-direction`
-- `plasma-auto-tiler:plan:resize-refused-invalid-mode`
-- `plasma-auto-tiler:plan:resize-refused-observe`
-- `plasma-auto-tiler:plan:resize-refused-floating` (directional resize on an intentionally floating active window)
-- `plasma-auto-tiler:plan:resize-refused-fullscreen` (directional resize refused on a fullscreen focused window)
-- `plasma-auto-tiler:plan:resize-refused-maximize` (directional resize refused on a maximized focused window; fullscreen wins when both)
-- `plasma-auto-tiler:plan:toggle-orient-refused-disabled`
-- `plasma-auto-tiler:plan:toggle-orient-refused-observe` (no valid observation or tiled focused target)
-- `plasma-auto-tiler:plan:toggle-orient-refused-floating` (floating or excluded active subject)
-- `plasma-auto-tiler:plan:toggle-orient-refused-workspace-floating`
-- `plasma-auto-tiler:plan:toggle-orient-refused-fullscreen` (focused overlay only, like resize)
-- `plasma-auto-tiler:plan:toggle-orient-refused-maximize` (focused overlay only; fullscreen wins when both)
-- `plasma-auto-tiler:plan:pointer-refused-disabled`
-- `plasma-auto-tiler:plan:pointer-refused-identity`
-- `plasma-auto-tiler:plan:pointer-refused-direction`
-- `plasma-auto-tiler:plan:pointer-refused-boundary`
-- `plasma-auto-tiler:plan:pointer-refused-observe`
-- `plasma-auto-tiler:plan:pointer-refused-absent`
-- `plasma-auto-tiler:plan:pointer-refused-fullscreen` (pointer-resize target refused while fullscreen)
-- `plasma-auto-tiler:plan:pointer-refused-maximize` (pointer-resize target refused while maximized; fullscreen wins when both)
-- `plasma-auto-tiler:plan:maximize-signal-unavailable` (logged once if an eligible window lacks `maximizedChanged`; tiling continues using fresh `maximizeMode` reads)
-- `plasma-auto-tiler:plan:maximize-refused-signal` (maximize subscription infrastructure unavailable)
-- `plasma-auto-tiler:plan:float-refused-disabled` (toggle-float while the adapter is disabled)
-- `plasma-auto-tiler:plan:float-refused-observe` (toggle-float target not found in the observation)
-- `plasma-auto-tiler:plan:float-refused-not-tiled` (toggle-float on an active-excluded or otherwise non-tiled target)
-- `plasma-auto-tiler:plan:float-refused-fullscreen` (toggle-float on a fullscreen focused window)
-- `plasma-auto-tiler:plan:float-refused-maximize` (toggle-float on a maximized focused window; fullscreen wins when both)
-- `plasma-auto-tiler:plan:sticky-refused-disabled|observe`
-- `plasma-auto-tiler:plan:sticky-refused-fullscreen|maximize|untracked|attempted window=<id> resource_class=<class>`
-- `plasma-auto-tiler:plan:maximize-refused-disabled|observe`
-- `plasma-auto-tiler:plan:maximize-refused-fullscreen|attempted window=<id> resource_class=<class>`
-- `plasma-auto-tiler:plan:drag-drop-refused-disabled|identity|coords|observe|absent|fullscreen|maximize|floating|cross-domain` (one per tiled move-drop refusal cause; `coords` covers a missing or out-of-range finish pointer capture)
-- `plasma-auto-tiler:plan:busy-refused kind=<focus|move|resize|toggle-float|toggle-orientation|toggle-sticky|toggle-maximize|drag-drop|drag-preview>` (shortcuts refuse busy; a move drop refuses during an R4 flight, otherwise defers behind an ordinary flight; preview backs off without queuing)
-- `plasma-auto-tiler:plan:reconcile-accepted windows=<count> cause=stable-drift recovery=accept-client-rect` (bounded reassertions exhausted; exact per-window geometry accepted)
- - `plasma-auto-tiler:plan:stale-replan` (pre-write stale reply replanned once against fresh complete observation)
-- `plasma-auto-tiler:plan:shortcut-failed action=<action> sequence=<sequence>` (per failed shortcut registration)
-- `plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=<action> sequence=<sequence> holder_component=<component> holder_action=<action>`
+- `omnitiler:plan:focus-refused-disabled` (shortcut focus while the adapter is disabled)
+- `omnitiler:plan:focus-refused-invalid-direction`
+- `omnitiler:plan:focus-refused-observe`
+- `omnitiler:plan:focus-refused-floating` (directional focus on an intentionally floating active window)
+- `omnitiler:plan:move-refused-disabled`
+- `omnitiler:plan:move-refused-invalid-direction`
+- `omnitiler:plan:move-refused-observe`
+- `omnitiler:plan:move-refused-floating` (directional move on an intentionally floating active window)
+- `omnitiler:plan:move-refused-fullscreen` (directional move refused on a fullscreen focused window)
+- `omnitiler:plan:move-refused-maximize` (directional move refused on a maximized focused window; fullscreen wins when both)
+- `omnitiler:plan:resize-refused-disabled`
+- `omnitiler:plan:resize-refused-invalid-direction`
+- `omnitiler:plan:resize-refused-invalid-mode`
+- `omnitiler:plan:resize-refused-observe`
+- `omnitiler:plan:resize-refused-floating` (directional resize on an intentionally floating active window)
+- `omnitiler:plan:resize-refused-fullscreen` (directional resize refused on a fullscreen focused window)
+- `omnitiler:plan:resize-refused-maximize` (directional resize refused on a maximized focused window; fullscreen wins when both)
+- `omnitiler:plan:toggle-orient-refused-disabled`
+- `omnitiler:plan:toggle-orient-refused-observe` (no valid observation or tiled focused target)
+- `omnitiler:plan:toggle-orient-refused-floating` (floating or excluded active subject)
+- `omnitiler:plan:toggle-orient-refused-workspace-floating`
+- `omnitiler:plan:toggle-orient-refused-fullscreen` (focused overlay only, like resize)
+- `omnitiler:plan:toggle-orient-refused-maximize` (focused overlay only; fullscreen wins when both)
+- `omnitiler:plan:pointer-refused-disabled`
+- `omnitiler:plan:pointer-refused-identity`
+- `omnitiler:plan:pointer-refused-direction`
+- `omnitiler:plan:pointer-refused-boundary`
+- `omnitiler:plan:pointer-refused-observe`
+- `omnitiler:plan:pointer-refused-absent`
+- `omnitiler:plan:pointer-refused-fullscreen` (pointer-resize target refused while fullscreen)
+- `omnitiler:plan:pointer-refused-maximize` (pointer-resize target refused while maximized; fullscreen wins when both)
+- `omnitiler:plan:maximize-signal-unavailable` (logged once if an eligible window lacks `maximizedChanged`; tiling continues using fresh `maximizeMode` reads)
+- `omnitiler:plan:maximize-refused-signal` (maximize subscription infrastructure unavailable)
+- `omnitiler:plan:float-refused-disabled` (toggle-float while the adapter is disabled)
+- `omnitiler:plan:float-refused-observe` (toggle-float target not found in the observation)
+- `omnitiler:plan:float-refused-not-tiled` (toggle-float on an active-excluded or otherwise non-tiled target)
+- `omnitiler:plan:float-refused-fullscreen` (toggle-float on a fullscreen focused window)
+- `omnitiler:plan:float-refused-maximize` (toggle-float on a maximized focused window; fullscreen wins when both)
+- `omnitiler:plan:sticky-refused-disabled|observe`
+- `omnitiler:plan:sticky-refused-fullscreen|maximize|untracked|attempted window=<id> resource_class=<class>`
+- `omnitiler:plan:maximize-refused-disabled|observe`
+- `omnitiler:plan:maximize-refused-fullscreen|attempted window=<id> resource_class=<class>`
+- `omnitiler:plan:drag-drop-refused-disabled|identity|coords|observe|absent|fullscreen|maximize|floating|cross-domain` (one per tiled move-drop refusal cause; `coords` covers a missing or out-of-range finish pointer capture)
+- `omnitiler:plan:busy-refused kind=<focus|move|resize|toggle-float|toggle-orientation|toggle-sticky|toggle-maximize|drag-drop|drag-preview>` (shortcuts refuse busy; a move drop refuses during an R4 flight, otherwise defers behind an ordinary flight; preview backs off without queuing)
+- `omnitiler:plan:reconcile-accepted windows=<count> cause=stable-drift recovery=accept-client-rect` (bounded reassertions exhausted; exact per-window geometry accepted)
+ - `omnitiler:plan:stale-replan` (pre-write stale reply replanned once against fresh complete observation)
+- `omnitiler:plan:shortcut-failed action=<action> sequence=<sequence>` (per failed shortcut registration)
+- `omnitiler:plan:shortcut-dispatch-shadowed action=<action> sequence=<sequence> holder_component=<component> holder_action=<action>`
 
 Additional ordinary lifecycle terminals and transitions:
 
-- `plasma-auto-tiler:plan:drag-reconcile-settled correlation=<drag-N> outcome=unavailable plan=none` (no observed domain or proven workspace/output removal from a complete topology list; never an applied claim)
-- `plasma-auto-tiler:plan:highlight-attach stage=failed reason=bridge-unavailable` (group bridge startup failed; logged once until recovery)
-- `plasma-auto-tiler:plan:highlight-attach stage=recovered` (later Plan-applied/config event reattached the group bridge; logged once)
+- `omnitiler:plan:drag-reconcile-settled correlation=<drag-N> outcome=unavailable plan=none` (no observed domain or proven workspace/output removal from a complete topology list; never an applied claim)
+- `omnitiler:plan:highlight-attach stage=failed reason=bridge-unavailable` (group bridge startup failed; logged once until recovery)
+- `omnitiler:plan:highlight-attach stage=recovered` (later Plan-applied/config event reattached the group bridge; logged once)
 
 Rust owner-monitor and tray startup diagnostics use fixed, redacted records:
 
-- `plasma-auto-tiler:route-diag component=planner stage=owner event=signal outcome=<malformed-signal|invalid-args>` (one malformed signal skipped; a later valid signal is processed)
-- `plasma-auto-tiler:route-diag component=tray-endpoint stage=owner event=startup outcome=query-failed` (startup KWin owner unknown; later authenticated live-owner publish can recover)
-- `plasma-auto-tiler:route-diag component=tray-endpoint stage=watcher event=query outcome=query-failed` (startup or later query failed; the watcher retry remains active)
-- `plasma-auto-tiler:route-diag component=tray-endpoint stage=watcher event=register outcome=registered` (live-confirmed watcher recovery)
+- `omnitiler:route-diag component=planner stage=owner event=signal outcome=<malformed-signal|invalid-args>` (one malformed signal skipped; a later valid signal is processed)
+- `omnitiler:route-diag component=tray-endpoint stage=owner event=startup outcome=query-failed` (startup KWin owner unknown; later authenticated live-owner publish can recover)
+- `omnitiler:route-diag component=tray-endpoint stage=watcher event=query outcome=query-failed` (startup or later query failed; the watcher retry remains active)
+- `omnitiler:route-diag component=tray-endpoint stage=watcher event=register outcome=registered` (live-confirmed watcher recovery)
 
 Intentional-float Planner snapshot-invalid details:
 
@@ -627,47 +627,47 @@ an identified window; `<id>` is the normalized window id, or `unknown` when
 KWin cannot provide one. `<class>` is KWin's non-sensitive resource class, or
 `unknown` when unavailable):
 
-- `plasma-auto-tiler:plan:observe-excluded reason=<active-normal-window|normal-window|output-missing|output-mismatch|desktop-mismatch|frame-rect-missing|frame-rect-coordinate-invalid|frame-rect-size-invalid|frame-rect-coordinate-out-of-range|frame-rect-size-out-of-range> window=<id> resource_class=<class>`
+- `omnitiler:plan:observe-excluded reason=<active-normal-window|normal-window|output-missing|output-mismatch|desktop-mismatch|frame-rect-missing|frame-rect-coordinate-invalid|frame-rect-size-invalid|frame-rect-coordinate-out-of-range|frame-rect-size-out-of-range> window=<id> resource_class=<class>`
 
 Trace only: normal drag pull and verdict lines. Ordinary output retains the
 failure tokens below plus the `drag-drop-refused-*` tokens above; the pointer
 route's adapter emits the exact `pointer-refused-*` token above per cause:
 
-- `plasma-auto-tiler:route-diag:drag-pull action=dispatch`
-- `plasma-auto-tiler:route-diag:drag-verdict cancelled=<true|false> correlation=<drag-N> reason=<reason>`
-- `plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=<drag-N> accepted=<true|false>` (tiled move finish routed to `kind=drag-drop`; `accepted=true` means the intent entered or deferred into the single flight, not that geometry applied; `false` means refused or failed before entering it, with a cause token and drag-rejection marker)
-- `plasma-auto-tiler:plan:drag-preview-backed-off correlation=<drag-N> reason=busy` (a sampled read-only preview yielded to the command flight; no queued request)
-- `plasma-auto-tiler:plan:drag-preview-settled correlation=<drag-N> outcome=<applied|refused|stale> reason=<token>` (only `applied` supplies a slot; refusal hides it)
-- `plasma-auto-tiler:route-diag:drag-preview-shown correlation=<drag-N>` / `drag-preview-cleared correlation=<drag-N> reason=<finish|refused|terminal>` (edge-only native setter/clear requests; no visual-delivery claim)
-- `plasma-auto-tiler:plan:drag-drop-cross-output correlation=<drag-N> source=cross-output dest=destination` / `drag-drop-cross-applied correlation=<drag-N> plan=<plan-id>` / `drag-drop-cross-refused correlation=<drag-N> reason=<token>` (cross-output destination dispatch, actual applied plan or terminal failure; no raw output or workspace IDs)
-- `plasma-auto-tiler:route-diag:drag-drop-thrown correlation=<drag-N>` (synchronous routing exception, fail-closed)
-- `plasma-auto-tiler:route-diag:drag-call-missing` (pull with no call binding)
-- `plasma-auto-tiler:route-diag:drag-call-thrown` (pull whose D-Bus call threw)
-- `plasma-auto-tiler:route-diag:drag-reply-invalid` (any malformed or unparseable reply)
-- `plasma-auto-tiler:route-diag:drag-route-missing` (non-cancelled verdict with no pointer route installed)
-- `plasma-auto-tiler:route-diag:drag-context-invalid`
-- `plasma-auto-tiler:route-diag:drag-scope-invalid`
-- `plasma-auto-tiler:route-diag:drag-unknown-window`
-- `plasma-auto-tiler:route-diag:drag-ref-mismatch`
-- `plasma-auto-tiler:route-diag:drag-start-missing`
-- `plasma-auto-tiler:route-diag:drag-move-ignored`
-- `plasma-auto-tiler:route-diag:drag-start-invalid`
-- `plasma-auto-tiler:route-diag:drag-edge-invalid`
+- `omnitiler:route-diag:drag-pull action=dispatch`
+- `omnitiler:route-diag:drag-verdict cancelled=<true|false> correlation=<drag-N> reason=<reason>`
+- `omnitiler:route-diag:drag-drop-dispatched correlation=<drag-N> accepted=<true|false>` (tiled move finish routed to `kind=drag-drop`; `accepted=true` means the intent entered or deferred into the single flight, not that geometry applied; `false` means refused or failed before entering it, with a cause token and drag-rejection marker)
+- `omnitiler:plan:drag-preview-backed-off correlation=<drag-N> reason=busy` (a sampled read-only preview yielded to the command flight; no queued request)
+- `omnitiler:plan:drag-preview-settled correlation=<drag-N> outcome=<applied|refused|stale> reason=<token>` (only `applied` supplies a slot; refusal hides it)
+- `omnitiler:route-diag:drag-preview-shown correlation=<drag-N>` / `drag-preview-cleared correlation=<drag-N> reason=<finish|refused|terminal>` (edge-only native setter/clear requests; no visual-delivery claim)
+- `omnitiler:plan:drag-drop-cross-output correlation=<drag-N> source=cross-output dest=destination` / `drag-drop-cross-applied correlation=<drag-N> plan=<plan-id>` / `drag-drop-cross-refused correlation=<drag-N> reason=<token>` (cross-output destination dispatch, actual applied plan or terminal failure; no raw output or workspace IDs)
+- `omnitiler:route-diag:drag-drop-thrown correlation=<drag-N>` (synchronous routing exception, fail-closed)
+- `omnitiler:route-diag:drag-call-missing` (pull with no call binding)
+- `omnitiler:route-diag:drag-call-thrown` (pull whose D-Bus call threw)
+- `omnitiler:route-diag:drag-reply-invalid` (any malformed or unparseable reply)
+- `omnitiler:route-diag:drag-route-missing` (non-cancelled verdict with no pointer route installed)
+- `omnitiler:route-diag:drag-context-invalid`
+- `omnitiler:route-diag:drag-scope-invalid`
+- `omnitiler:route-diag:drag-unknown-window`
+- `omnitiler:route-diag:drag-ref-mismatch`
+- `omnitiler:route-diag:drag-start-missing`
+- `omnitiler:route-diag:drag-move-ignored`
+- `omnitiler:route-diag:drag-start-invalid`
+- `omnitiler:route-diag:drag-edge-invalid`
 
 Drag-oracle entry startup refusal (exactly one token per refused
 `startDragOraclePullEntry` start, one per cause; the entry returns null):
 
-- `plasma-auto-tiler:route-diag:drag-entry-workspace-missing`
-- `plasma-auto-tiler:route-diag:drag-entry-call-missing`
-- `plasma-auto-tiler:route-diag:drag-entry-call-thrown`
-- `plasma-auto-tiler:route-diag:drag-entry-list-missing`
-- `plasma-auto-tiler:route-diag:drag-entry-list-thrown`
-- `plasma-auto-tiler:route-diag:drag-entry-list-invalid`
-- `plasma-auto-tiler:route-diag:drag-entry-finished-invalid` (a connectable finished signal that failed to attach)
-- `plasma-auto-tiler:route-diag:drag-entry-no-windows` (empty window list)
-- `plasma-auto-tiler:route-diag:drag-entry-no-finished` (windows exist but none expose a connectable finished signal)
-- `plasma-auto-tiler:route-diag:drag-entry-added-invalid` (missing or non-connectable windowAdded signal)
-- `plasma-auto-tiler:route-diag:drag-entry-added-connect-failed` (windowAdded attach returned null or threw)
+- `omnitiler:route-diag:drag-entry-workspace-missing`
+- `omnitiler:route-diag:drag-entry-call-missing`
+- `omnitiler:route-diag:drag-entry-call-thrown`
+- `omnitiler:route-diag:drag-entry-list-missing`
+- `omnitiler:route-diag:drag-entry-list-thrown`
+- `omnitiler:route-diag:drag-entry-list-invalid`
+- `omnitiler:route-diag:drag-entry-finished-invalid` (a connectable finished signal that failed to attach)
+- `omnitiler:route-diag:drag-entry-no-windows` (empty window list)
+- `omnitiler:route-diag:drag-entry-no-finished` (windows exist but none expose a connectable finished signal)
+- `omnitiler:route-diag:drag-entry-added-invalid` (missing or non-connectable windowAdded signal)
+- `omnitiler:route-diag:drag-entry-added-connect-failed` (windowAdded attach returned null or threw)
 
 Tiled move-drop lifecycle (shipped offline, live check pending): the finish context captures
 `workspace.cursorPos` synchronously at FINISH before the async oracle pull;

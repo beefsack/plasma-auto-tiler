@@ -74,7 +74,7 @@ Status: complete, KDE/core parity confirmed, 2026-10-02. Baseline: `49d4191`.
   `replay-output.json`, `control-output.json`, saved reproducer
   `tmp-replay-test.rs.txt`, and `manifest.md`. The temporary integration test
   passed 2/2 and was removed; the saved text can reproduce the investigation.
-- Trace: `%LOCALAPPDATA%/plasma-auto-tiler/session-1/run-01dd52415c2991a6.log`,
+- Trace: `%LOCALAPPDATA%/omnitiler/session-1/run-01dd52415c2991a6.log`,
   602 lines; SHA-256
   `B32C059D26D3D9D2F18CAEF081BA2F94C293BCE5DBAF52B440D2C7EBD0F46EDF`.
 - Current-source native build/test/strict clippy for `tiler-core`,

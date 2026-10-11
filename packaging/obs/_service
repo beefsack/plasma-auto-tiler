@@ -33,12 +33,12 @@
 -->
 <services>
   <service name="download_url">
-    <param name="url">https://github.com/beefsack/plasma-auto-tiler/releases/download/v0.1.0/plasma-auto-tiler-0.1.0.tar.gz</param>
+    <param name="url">https://github.com/beefsack/omnitiler/releases/download/v0.1.0/omnitiler-0.1.0.tar.gz</param>
   </service>
   <service name="verify_file">
-    <param name="file">_service:download_url:plasma-auto-tiler-0.1.0.tar.gz</param>
+    <param name="file">_service:download_url:omnitiler-0.1.0.tar.gz</param>
     <param name="verifier">sha256</param>
-    <!-- Filled from the published dist/plasma-auto-tiler-0.1.0.tar.gz.sha256
+    <!-- Filled from the published dist/omnitiler-0.1.0.tar.gz.sha256
          sidecar at release time via the bump-version.sh sha256 option.
          Non-hex on purpose until then: the service fails closed instead of
          silently trusting any download. -->

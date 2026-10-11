@@ -61,7 +61,7 @@ Status: complete, 2026-10-04. Research published as `2b0540c` with hosted CI gre
   pins and cited source-path/line-range existence. Lead reviewed the final diff.
 - No test actors, input hooks, overlays or desktop mutations were launched by
   this research change. All four sequential research/documentation units ended.
-- Hosted [CI run 37134290598](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37134290598)
+- Hosted [CI run 37134290598](https://github.com/beefsack/omnitiler/actions/runs/37134290598)
   passed all five jobs (Rust, KWin, shell, Windows, macOS) for `2b0540c`.
   The evidence-only record commit is also gated by hosted CI after push.
 

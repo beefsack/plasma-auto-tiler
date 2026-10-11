@@ -1007,7 +1007,7 @@ describe("plan adapter R4 immediate transfer (lean, no wire protocol)", () => {
             mocks.logs.some(
                 (line) =>
                     line ===
-                    `plasma-auto-tiler:plan:minimum-placed correlation=${correlation} window=win-a resource_class=unknown op=move rect=810,10,400,600`,
+                    `omnitiler:plan:minimum-placed correlation=${correlation} window=win-a resource_class=unknown op=move rect=810,10,400,600`,
             ),
             "successful R4 placement logs the actual rect",
         );

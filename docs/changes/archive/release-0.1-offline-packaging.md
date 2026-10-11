@@ -44,7 +44,7 @@ External NixOS/Home Manager validation remains a separate P1 gate.
   vendored crates, VERSION and SOURCE_REV; deterministic gzip archive and SHA-256
   sidecar. GitHub Release completes before a credential-gated OBS tag webhook.
 - Tentative layout: packaging/{rpm,arch,debian,obs,systemd}; package names
-  plasma-auto-tiler (core) and plasma-auto-tiler-native-effect (effect and KCMs).
+  omnitiler (core) and omnitiler-native-effect (effect and KCMs).
 - Worker evidence: offline archive Rust build; actual Tumbleweed/Fedora 43 RPM,
   Arch split-package and Ubuntu 26.04 core Debian builds in disposable containers.
   Independent integration review is still required before accepting these claims.

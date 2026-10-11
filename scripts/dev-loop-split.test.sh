@@ -22,7 +22,7 @@ make_fake_tools() {
 set -euo pipefail
 state="${FAKE_STATE_DIR:?}"
 case "$*" in
-  *"GetNameOwner s org.plasmaautotiler.Planner"*)
+  *"GetNameOwner s com.omnitiler.Planner"*)
     if [[ -f "$state/planner-owned" ]]; then
       printf 's ":1.50"\n'
       exit 0
@@ -35,7 +35,7 @@ case "$*" in
   *"GetConnectionUnixProcessID s :1.50"*)
     pid="$(cat "$state/owner-pid" 2>/dev/null || printf '4242')"
     printf '{"type":"u","data":[%s]}\n' "$pid" ;;
-  *"GetNameOwner s org.plasmaautotiler.Tray"*)
+  *"GetNameOwner s com.omnitiler.Tray"*)
     if [[ -f "$state/tray-never-owned" ]]; then
       exit 1
     elif [[ -f "$state/tray-owned" ]]; then
@@ -67,7 +67,7 @@ case "$*" in
       printf '{"type":"b","data":[true,false]}\n'
       exit 0
     fi
-    if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then
+    if [[ "$*" == *"omnitiler-active-border"* ]]; then
       printf '{"type":"b","data":[%s]}\n' "$(cat "$state/effect-border-supported" 2>/dev/null || printf 'true')"
     else
       exit 1
@@ -80,7 +80,7 @@ case "$*" in
       printf '{"type":"b","data":[true,false]}\n'
       exit 0
     fi
-    if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then
+    if [[ "$*" == *"omnitiler-active-border"* ]]; then
       printf '{"type":"b","data":[%s]}\n' "$(cat "$state/effect-border-loaded" 2>/dev/null || printf 'false')"
     else
       exit 1
@@ -90,7 +90,7 @@ case "$*" in
     if [[ -f "$state/effect-unload-fail" ]]; then
       exit 1
     fi
-    if [[ "$*" != *"plasma-auto-tiler-active-border"* ]]; then
+    if [[ "$*" != *"omnitiler-active-border"* ]]; then
       exit 1
     fi
     printf 'false\n' > "$state/effect-border-loaded"
@@ -101,7 +101,7 @@ case "$*" in
     if [[ -f "$state/effect-load-fail" ]]; then
       exit 1
     fi
-    if [[ "$*" != *"plasma-auto-tiler-active-border"* ]]; then
+    if [[ "$*" != *"omnitiler-active-border"* ]]; then
       exit 1
     fi
     printf 'true\n' > "$state/effect-border-loaded"
@@ -117,7 +117,7 @@ case "$*" in
     else
       printf '{"type":"b","data":[false]}\n'
     fi ;;
-  *"status org.plasmaautotiler.Planner"*)
+  *"status com.omnitiler.Planner"*)
     exit 0 ;;
   *)
     exit 1 ;;
@@ -127,12 +127,12 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'cargo %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
-printf 'cargo-plasma-kcmshell6=%s\n' "${PLASMA_AUTO_TILER_KCMSHELL6:-empty}" >> "${FAKE_CALL_LOG:?}"
+printf 'cargo-plasma-kcmshell6=%s\n' "${OMNITILER_KCMSHELL6:-empty}" >> "${FAKE_CALL_LOG:?}"
 if [[ -f "${FAKE_STATE_DIR:?}/cargo-fails" ]]; then
   echo "fake cargo: simulated build failure" >&2
   exit 1
 fi
-bin="${PLASMA_AUTO_TILER_BIN:?}"
+bin="${OMNITILER_BIN:?}"
 mkdir -p "${bin%/*}"
 [[ -x "$bin" ]] || { printf '#!/usr/bin/env bash\nexit 0\n' > "$bin"; chmod +x "$bin"; }
 exit 0
@@ -145,7 +145,7 @@ if [[ -f "${FAKE_STATE_DIR:?}/npm-fails" ]]; then
   echo "fake npm: simulated build failure" >&2
   exit 1
 fi
-kwin_dir="${PLASMA_AUTO_TILER_KWIN_DIR:-}"
+kwin_dir="${OMNITILER_KWIN_DIR:-}"
 prev=""
 for a in "$@"; do
   if [[ "$prev" == "--prefix" ]]; then
@@ -167,7 +167,7 @@ if [[ -f "${FAKE_STATE_DIR:?}/cmake-fails" ]]; then
   echo "fake cmake: simulated build failure" >&2
   exit 1
 fi
-build_dir="${PLASMA_AUTO_TILER_NATIVE_BUILD:-}"
+build_dir="${OMNITILER_NATIVE_BUILD:-}"
 if [[ -z "$build_dir" ]]; then
   prev=""
   for a in "$@"; do
@@ -183,9 +183,9 @@ if [[ -z "$build_dir" ]]; then
 fi
 if [[ -n "$build_dir" ]]; then
   mkdir -p "$build_dir/bin/kwin/effects/plugins" "$build_dir/bin/kwin/effects/configs" "$build_dir/bin/kwin/scripts/configs"
-  [[ -f "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so" ]] || printf 'fake-effect' > "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-  [[ -f "$build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" ]] || printf 'fake-kcm' > "$build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
-  [[ -f "$build_dir/bin/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so" ]] || printf 'fake-script-kcm' > "$build_dir/bin/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+  [[ -f "$build_dir/bin/kwin/effects/plugins/omnitiler-active-border.so" ]] || printf 'fake-effect' > "$build_dir/bin/kwin/effects/plugins/omnitiler-active-border.so"
+  [[ -f "$build_dir/bin/kwin/effects/configs/omnitiler-active-border_config.so" ]] || printf 'fake-kcm' > "$build_dir/bin/kwin/effects/configs/omnitiler-active-border_config.so"
+  [[ -f "$build_dir/bin/kwin/scripts/configs/omnitiler-kwin_config.so" ]] || printf 'fake-script-kcm' > "$build_dir/bin/kwin/scripts/configs/omnitiler-kwin_config.so"
 fi
 exit 0
 EOF
@@ -199,7 +199,7 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'setsid %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
-printf 'setsid-env TRACE=%s\n' "${PLASMA_AUTO_TILER_TRACE:-0}" >> "${FAKE_CALL_LOG:?}"
+printf 'setsid-env TRACE=%s\n' "${OMNITILER_TRACE:-0}" >> "${FAKE_CALL_LOG:?}"
 exit 0
 EOF
   cat > "$FAKE_BIN/bin/systemctl" <<'EOF'
@@ -238,8 +238,8 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'journalctl %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
-echo "plasma-auto-tiler:plan:cmd=plan-1-p1 kind=admit windows=1 outcome=planned-applied"
-echo "plasma-auto-tiler:route-diag:drag-pull action=dispatch"
+echo "omnitiler:plan:cmd=plan-1-p1 kind=admit windows=1 outcome=planned-applied"
+echo "omnitiler:route-diag:drag-pull action=dispatch"
 exit 0
 EOF
   cat > "$FAKE_BIN/bin/kcmshell6" <<'EOF'
@@ -297,12 +297,12 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'cargo %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
-printf 'cargo-plasma-kcmshell6=%s\n' "${PLASMA_AUTO_TILER_KCMSHELL6:-empty}" >> "${FAKE_CALL_LOG:?}"
+printf 'cargo-plasma-kcmshell6=%s\n' "${OMNITILER_KCMSHELL6:-empty}" >> "${FAKE_CALL_LOG:?}"
 if [[ -f "${FAKE_STATE_DIR:?}/cargo-fails" ]]; then
   echo "fake cargo: simulated build failure" >&2
   exit 1
 fi
-bin="${PLASMA_AUTO_TILER_BIN:?}"
+bin="${OMNITILER_BIN:?}"
 mkdir -p "${bin%/*}"
 [[ -x "$bin" ]] || { printf '#!/usr/bin/env bash\nexit 0\n' > "$bin"; chmod +x "$bin"; }
 exit 0
@@ -323,7 +323,7 @@ set -euo pipefail
 state="${FAKE_STATE_DIR:?}"
 calllog="${FAKE_CALL_LOG:?}"
 if [[ "${1:-}" == "start" ]]; then
-  printf 'start-test start TRACE=%s\n' "${PLASMA_AUTO_TILER_TRACE:-0}" >> "$calllog"
+  printf 'start-test start TRACE=%s\n' "${OMNITILER_TRACE:-0}" >> "$calllog"
   if [[ -f "$state/block-start" ]]; then
     for _ in $(seq 1 100); do sleep 0.2; done
   fi
@@ -332,7 +332,7 @@ if [[ "${1:-}" == "start" ]]; then
     exit 1
   fi
   if [[ "$(cat "$state/loaded" 2>/dev/null || printf 'false')" == "true" ]]; then
-    echo "error: plugin 'plasma-auto-tiler-kwin' is already loaded; refusing to load again" >&2
+    echo "error: plugin 'omnitiler-kwin' is already loaded; refusing to load again" >&2
     exit 1
   fi
   receipt="${CONTROLLER_OWNERSHIP_FILE:?missing receipt}"
@@ -353,7 +353,7 @@ if [[ "${1:-}" == "stop" ]]; then
   sid="$(jq -r '.script_id // empty' "$receipt" 2>/dev/null || true)"
   [[ "$sid" == "${2:-}" ]] || { echo "fake start-test: receipt mismatch" >&2; exit 1; }
   if [[ "$(cat "$state/loaded" 2>/dev/null || printf 'false')" != "true" ]]; then
-    echo "error: plugin 'plasma-auto-tiler-kwin' is not loaded; refusing to use stale script id ${2:-}" >&2
+    echo "error: plugin 'omnitiler-kwin' is not loaded; refusing to use stale script id ${2:-}" >&2
     exit 1
   fi
   printf 'false\n' > "$state/loaded"
@@ -388,19 +388,19 @@ dst = os.environ.get("ISOLATED_DST", "")
 src = pathlib.Path(repo) / "justfile"
 text = src.read_text()
 text = text.replace('REPO_ROOT="{{ justfile_directory() }}"', f'REPO_ROOT="{repo}"')
-text = text.replace('KWIN_DIR="$REPO_ROOT/kwin"', 'KWIN_DIR="${PLASMA_AUTO_TILER_KWIN_DIR:-$REPO_ROOT/kwin}"')
-text = text.replace('SOURCE_DIR="$REPO_ROOT/kwin/native-effect"', 'SOURCE_DIR="${PLASMA_AUTO_TILER_NATIVE_SOURCE:-$REPO_ROOT/kwin/native-effect}"')
-text = text.replace('BUILD_DIR="$REPO_ROOT/target/kwin-native-effect-build"', 'BUILD_DIR="${PLASMA_AUTO_TILER_NATIVE_BUILD:-$REPO_ROOT/target/kwin-native-effect-build}"')
-text = text.replace('STAGE="$REPO_ROOT/target/kwin-native-effect-stage"', 'STAGE="${PLASMA_AUTO_TILER_NATIVE_STAGE:-$REPO_ROOT/target/kwin-native-effect-stage}"')
-text = text.replace('TARGET_DIR="$REPO_ROOT/target"', 'TARGET_DIR="${PLASMA_AUTO_TILER_TARGET_DIR:-$REPO_ROOT/target}"')
+text = text.replace('KWIN_DIR="$REPO_ROOT/kwin"', 'KWIN_DIR="${OMNITILER_KWIN_DIR:-$REPO_ROOT/kwin}"')
+text = text.replace('SOURCE_DIR="$REPO_ROOT/kwin/native-effect"', 'SOURCE_DIR="${OMNITILER_NATIVE_SOURCE:-$REPO_ROOT/kwin/native-effect}"')
+text = text.replace('BUILD_DIR="$REPO_ROOT/target/kwin-native-effect-build"', 'BUILD_DIR="${OMNITILER_NATIVE_BUILD:-$REPO_ROOT/target/kwin-native-effect-build}"')
+text = text.replace('STAGE="$REPO_ROOT/target/kwin-native-effect-stage"', 'STAGE="${OMNITILER_NATIVE_STAGE:-$REPO_ROOT/target/kwin-native-effect-stage}"')
+text = text.replace('TARGET_DIR="$REPO_ROOT/target"', 'TARGET_DIR="${OMNITILER_TARGET_DIR:-$REPO_ROOT/target}"')
 text = text.replace('/proc', '$PROC_ROOT')
 text = text.replace(
-  'BIN="$REPO_ROOT/target/debug/plasma-auto-tiler"',
-  'BIN="${PLASMA_AUTO_TILER_BIN:-$REPO_ROOT/target/debug/plasma-auto-tiler}"\n    PROC_ROOT="${PROC_ROOT:-/proc}"\n    START_TEST_BIN="${DEV_LOOP_START_TEST:-$REPO_ROOT/scripts/start-test.sh}"\n    DOGFOOD_BIN="${DEV_LOOP_DOGFOOD:-$REPO_ROOT/scripts/dogfood-install.sh}"',
+  'BIN="$REPO_ROOT/target/debug/omnitiler"',
+  'BIN="${OMNITILER_BIN:-$REPO_ROOT/target/debug/omnitiler}"\n    PROC_ROOT="${PROC_ROOT:-/proc}"\n    START_TEST_BIN="${DEV_LOOP_START_TEST:-$REPO_ROOT/scripts/start-test.sh}"\n    DOGFOOD_BIN="${DEV_LOOP_DOGFOOD:-$REPO_ROOT/scripts/dogfood-install.sh}"',
 )
 text = text.replace('bash "$REPO_ROOT/scripts/start-test.sh"', 'bash "$START_TEST_BIN"')
 text = text.replace('bash "$REPO_ROOT/scripts/dogfood-install.sh"', 'bash "$DOGFOOD_BIN"')
-text = text.replace('/tmp/plasma-auto-tiler-planner-dev.XXXXXX.log', '$RUNTIME_DIR/plasma-auto-tiler-planner-dev.XXXXXX.log')
+text = text.replace('/tmp/omnitiler-planner-dev.XXXXXX.log', '$RUNTIME_DIR/omnitiler-planner-dev.XXXXXX.log')
 text = text.replace(
   'for _ in $(seq 1 50); do [[ -d "$PROC_ROOT/$RECORDED_PID" ]] || break; sleep 0.2; done',
   'for _ in $(seq 1 50); do kill -0 "$RECORDED_PID" 2>/dev/null || break; sleep 0.2; done',
@@ -438,15 +438,15 @@ reset_state() {
   export FAKE_STATE_DIR="$WORK/state"
   export FAKE_CALL_LOG="$WORK/calls.log"
   export PROC_ROOT="$WORK/proc"
-  export PLASMA_AUTO_TILER_BIN="$WORK/fakebin/plasma-auto-tiler"
-  export PLASMA_AUTO_TILER_KWIN_DIR="$WORK/fake-kwin"
-  export PLASMA_AUTO_TILER_NATIVE_SOURCE="$WORK/fake-native-source"
-  export PLASMA_AUTO_TILER_NATIVE_BUILD="$WORK/fake-native-build"
-  export PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage"
-  export PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target"
-  export PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake"
-  export PLASMA_AUTO_TILER_HOST_KWIN_BIN="$WORK/fake-host/kwin_wayland"
-  export PLASMA_AUTO_TILER_STORE_ROOT="$WORK/fake-store"
+  export OMNITILER_BIN="$WORK/fakebin/omnitiler"
+  export OMNITILER_KWIN_DIR="$WORK/fake-kwin"
+  export OMNITILER_NATIVE_SOURCE="$WORK/fake-native-source"
+  export OMNITILER_NATIVE_BUILD="$WORK/fake-native-build"
+  export OMNITILER_NATIVE_STAGE="$WORK/fake-native-stage"
+  export OMNITILER_TARGET_DIR="$WORK/fake-target"
+  export OMNITILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake"
+  export OMNITILER_HOST_KWIN_BIN="$WORK/fake-host/kwin_wayland"
+  export OMNITILER_STORE_ROOT="$WORK/fake-store"
   export NIX_BIN="$FAKE_BIN/bin/nix"
   export RUSTC_BIN="$WORK/fake-store/hash-rustc/bin/rustc"
   export CARGO_BIN="$WORK/fake-store/hash-cargo/bin/cargo"
@@ -456,24 +456,24 @@ reset_state() {
   export DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh"
   export PATH="$FAKE_BIN/bin:$PATH"
   mkdir -p "$WORK/fakebin"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$PLASMA_AUTO_TILER_BIN"
-  chmod +x "$PLASMA_AUTO_TILER_BIN"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$OMNITILER_BIN"
+  chmod +x "$OMNITILER_BIN"
   mkdir -p "$PROC_ROOT/4242"
   printf '4242 (fake-planner) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 101010\n' > "$PROC_ROOT/4242/stat"
-  ln -sfn -- "$PLASMA_AUTO_TILER_BIN" "$PROC_ROOT/4242/exe"
+  ln -sfn -- "$OMNITILER_BIN" "$PROC_ROOT/4242/exe"
   printf 'fake\0planner-service\0' > "$PROC_ROOT/4242/cmdline"
   printf '4242\n' > "$WORK/state/owner-pid"
   mkdir -p "$PROC_ROOT/5151"
   printf '5151 (kwin_wayland) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 777888\n' > "$PROC_ROOT/5151/stat"
   mkdir -p "$PROC_ROOT/434343"
   printf '434343 (fake-tray) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 404040\n' > "$PROC_ROOT/434343/stat"
-  ln -sfn -- "$PLASMA_AUTO_TILER_BIN" "$PROC_ROOT/434343/exe"
+  ln -sfn -- "$OMNITILER_BIN" "$PROC_ROOT/434343/exe"
   printf 'fake\0tray\0' > "$PROC_ROOT/434343/cmdline"
   printf '434343\n' > "$WORK/state/tray-owner-pid"
 }
 
 make_planner_proc() {
-  local pid="$1" start="$2" exe_target="${3:-$PLASMA_AUTO_TILER_BIN}" cmdline="${4:-planner-service}"
+  local pid="$1" start="$2" exe_target="${3:-$OMNITILER_BIN}" cmdline="${4:-planner-service}"
   mkdir -p "$PROC_ROOT/$pid"
   printf '%s (fake-planner) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 %s\n' "$pid" "$start" > "$PROC_ROOT/$pid/stat"
   ln -sfn -- "$exe_target" "$PROC_ROOT/$pid/exe"
@@ -481,7 +481,7 @@ make_planner_proc() {
 }
 
 make_tray_proc() {
-  local pid="$1" start="$2" exe_target="${3:-$PLASMA_AUTO_TILER_BIN}"
+  local pid="$1" start="$2" exe_target="${3:-$OMNITILER_BIN}"
   mkdir -p "$PROC_ROOT/$pid"
   printf '%s (fake-tray) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 %s\n' "$pid" "$start" > "$PROC_ROOT/$pid/stat"
   ln -sfn -- "$exe_target" "$PROC_ROOT/$pid/exe"
@@ -506,7 +506,7 @@ set_controller() {
 
 run_just() {
   set +e
-  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$WORK/fake-kwin" PLASMA_AUTO_TILER_NATIVE_SOURCE="$WORK/fake-native-source" PLASMA_AUTO_TILER_NATIVE_BUILD="$WORK/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" PLASMA_AUTO_TILER_HOST_KWIN_BIN="$WORK/fake-host/kwin_wayland" PLASMA_AUTO_TILER_STORE_ROOT="$WORK/fake-store" NIX_BIN="$FAKE_BIN/bin/nix" RUSTC_BIN="$WORK/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$WORK/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$WORK/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" PATH="$WORK/fake-store/hash-cargo/bin:$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1
+  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" OMNITILER_BIN="$OMNITILER_BIN" OMNITILER_KWIN_DIR="$WORK/fake-kwin" OMNITILER_NATIVE_SOURCE="$WORK/fake-native-source" OMNITILER_NATIVE_BUILD="$WORK/fake-native-build" OMNITILER_NATIVE_STAGE="$WORK/fake-native-stage" OMNITILER_TARGET_DIR="$WORK/fake-target" OMNITILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" OMNITILER_HOST_KWIN_BIN="$WORK/fake-host/kwin_wayland" OMNITILER_STORE_ROOT="$WORK/fake-store" NIX_BIN="$FAKE_BIN/bin/nix" RUSTC_BIN="$WORK/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$WORK/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$WORK/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" PATH="$WORK/fake-store/hash-cargo/bin:$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
 }
@@ -514,7 +514,7 @@ run_just() {
 run_just_async() {
   set +e
   set -m
-  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$WORK/fake-kwin" PLASMA_AUTO_TILER_NATIVE_SOURCE="$WORK/fake-native-source" PLASMA_AUTO_TILER_NATIVE_BUILD="$WORK/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" PLASMA_AUTO_TILER_HOST_KWIN_BIN="$WORK/fake-host/kwin_wayland" PLASMA_AUTO_TILER_STORE_ROOT="$WORK/fake-store" NIX_BIN="$FAKE_BIN/bin/nix" RUSTC_BIN="$WORK/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$WORK/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$WORK/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" FAKE_TAIL_FOLLOW_BLOCK="${FAKE_TAIL_FOLLOW_BLOCK:-0}" PATH="$WORK/fake-store/hash-cargo/bin:$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1 &
+  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" OMNITILER_BIN="$OMNITILER_BIN" OMNITILER_KWIN_DIR="$WORK/fake-kwin" OMNITILER_NATIVE_SOURCE="$WORK/fake-native-source" OMNITILER_NATIVE_BUILD="$WORK/fake-native-build" OMNITILER_NATIVE_STAGE="$WORK/fake-native-stage" OMNITILER_TARGET_DIR="$WORK/fake-target" OMNITILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" OMNITILER_HOST_KWIN_BIN="$WORK/fake-host/kwin_wayland" OMNITILER_STORE_ROOT="$WORK/fake-store" NIX_BIN="$FAKE_BIN/bin/nix" RUSTC_BIN="$WORK/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$WORK/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$WORK/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" FAKE_TAIL_FOLLOW_BLOCK="${FAKE_TAIL_FOLLOW_BLOCK:-0}" PATH="$WORK/fake-store/hash-cargo/bin:$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1 &
   JUST_ASYNC_PID=$!
   set +m
   set -e
@@ -567,7 +567,7 @@ run_just_without_kcmshell6() {
   else
     PASS=$((PASS + 1))
   fi
-  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$WORK/fake-kwin" PLASMA_AUTO_TILER_NATIVE_SOURCE="$WORK/fake-native-source" PLASMA_AUTO_TILER_NATIVE_BUILD="$WORK/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" PLASMA_AUTO_TILER_HOST_KWIN_BIN="$WORK/fake-host/kwin_wayland" PLASMA_AUTO_TILER_STORE_ROOT="$WORK/fake-store" NIX_BIN="$FAKE_BIN/bin/nix" RUSTC_BIN="$WORK/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$WORK/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$WORK/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" PATH="$no_kcm_path" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1
+  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" OMNITILER_BIN="$OMNITILER_BIN" OMNITILER_KWIN_DIR="$WORK/fake-kwin" OMNITILER_NATIVE_SOURCE="$WORK/fake-native-source" OMNITILER_NATIVE_BUILD="$WORK/fake-native-build" OMNITILER_NATIVE_STAGE="$WORK/fake-native-stage" OMNITILER_TARGET_DIR="$WORK/fake-target" OMNITILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" OMNITILER_HOST_KWIN_BIN="$WORK/fake-host/kwin_wayland" OMNITILER_STORE_ROOT="$WORK/fake-store" NIX_BIN="$FAKE_BIN/bin/nix" RUSTC_BIN="$WORK/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$WORK/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$WORK/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" PATH="$no_kcm_path" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
 }
@@ -698,19 +698,19 @@ assert_calls_contain "dogfood disable" "dev-on both down disable"
 assert_calls_contain "setsid" "dev-on both down launch"
 assert_calls_contain "start-test start" "dev-on both down start"
 assert_calls_contain "cargo-plasma-kcmshell6=/" "dev-on both down absolute baked launcher"
-[[ -f "$WORK/runtime/plasma-auto-tiler-dev/planner-pid" ]] && PASS=$((PASS + 1)) || { echo "FAIL [dev-on both down state]" >&2; FAIL=$((FAIL + 1)); }
-[[ -f "$WORK/runtime/plasma-auto-tiler-dev/controller-receipt-path" ]] && PASS=$((PASS + 1)) || { echo "FAIL [dev-on both down receipt ptr]" >&2; FAIL=$((FAIL + 1)); }
+[[ -f "$WORK/runtime/omnitiler-dev/planner-pid" ]] && PASS=$((PASS + 1)) || { echo "FAIL [dev-on both down state]" >&2; FAIL=$((FAIL + 1)); }
+[[ -f "$WORK/runtime/omnitiler-dev/controller-receipt-path" ]] && PASS=$((PASS + 1)) || { echo "FAIL [dev-on both down receipt ptr]" >&2; FAIL=$((FAIL + 1)); }
 
 # dev-on: Planner up/controller down recovers without launching/killing.
 reset_state
 make_planner_proc 4243 222222
 set_planner_owned 4243
 set_controller false
-mkdir -p "$WORK/runtime/plasma-auto-tiler-dev"
-STALE_DIR="$(mktemp -d "$WORK/runtime/plasma-auto-tiler-controller.XXXXXX")"
+mkdir -p "$WORK/runtime/omnitiler-dev"
+STALE_DIR="$(mktemp -d "$WORK/runtime/omnitiler-controller.XXXXXX")"
 printf '{"script_id":3}\n' > "$STALE_DIR/ownership"
 STALE_CONTENT="$(cat "$STALE_DIR/ownership")"
-printf '%s\n' "$STALE_DIR/ownership" > "$WORK/runtime/plasma-auto-tiler-dev/controller-receipt-path"
+printf '%s\n' "$STALE_DIR/ownership" > "$WORK/runtime/omnitiler-dev/controller-receipt-path"
 run_just dev-on
 check_exit 0 "dev-on recovery exit"
 assert_contains "recover" "dev-on recovery msg"
@@ -719,9 +719,9 @@ assert_calls_missing "setsid" "dev-on recovery no launch"
 assert_calls_missing "dogfood disable" "dev-on recovery no disable"
 assert_calls_missing "dogfood enable" "dev-on recovery no re-enable"
 [[ "$(cat "$STALE_DIR/ownership")" == "$STALE_CONTENT" ]] && PASS=$((PASS + 1)) || { echo "FAIL [recovery overwrote immutable receipt]" >&2; FAIL=$((FAIL + 1)); }
-NEW_PTR="$(cat "$WORK/runtime/plasma-auto-tiler-dev/controller-receipt-path")"
+NEW_PTR="$(cat "$WORK/runtime/omnitiler-dev/controller-receipt-path")"
 [[ "$NEW_PTR" != "$STALE_DIR/ownership" && -f "$NEW_PTR" ]] && PASS=$((PASS + 1)) || { echo "FAIL [recovery pointer not updated to new receipt]" >&2; FAIL=$((FAIL + 1)); }
-[[ "$(cat "$WORK/runtime/plasma-auto-tiler-dev/planner-pid")" == "4243" ]] && PASS=$((PASS + 1)) || { echo "FAIL [recovery planner state]" >&2; FAIL=$((FAIL + 1)); }
+[[ "$(cat "$WORK/runtime/omnitiler-dev/planner-pid")" == "4243" ]] && PASS=$((PASS + 1)) || { echo "FAIL [recovery planner state]" >&2; FAIL=$((FAIL + 1)); }
 
 # dev-on: recovery failure leaves pre-existing Planner alone.
 reset_state
@@ -764,10 +764,10 @@ reset_state
 sleep 300 &
 OFF_PID=$!
 make_planner_proc "$OFF_PID" 444444
-mkdir -p "$WORK/runtime/plasma-auto-tiler-dev"
-printf '%s\n' "$OFF_PID" > "$WORK/runtime/plasma-auto-tiler-dev/planner-pid"
-printf '%s\n' "$PLASMA_AUTO_TILER_BIN" > "$WORK/runtime/plasma-auto-tiler-dev/planner-exe"
-printf '444444\n' > "$WORK/runtime/plasma-auto-tiler-dev/planner-start"
+mkdir -p "$WORK/runtime/omnitiler-dev"
+printf '%s\n' "$OFF_PID" > "$WORK/runtime/omnitiler-dev/planner-pid"
+printf '%s\n' "$OMNITILER_BIN" > "$WORK/runtime/omnitiler-dev/planner-exe"
+printf '444444\n' > "$WORK/runtime/omnitiler-dev/planner-start"
 set_controller false
 run_just dev-off
 check_exit 0 "dev-off split up/down exit"
@@ -780,10 +780,10 @@ if kill -0 "$OFF_PID" 2>/dev/null; then echo "FAIL [dev-off did not stop planner
 # dev-off: Planner down/controller up unloads controller without killing.
 reset_state
 set_controller true
-mkdir -p "$WORK/runtime/plasma-auto-tiler-dev"
-RDIR="$(mktemp -d "$WORK/runtime/plasma-auto-tiler-controller.XXXXXX")"
+mkdir -p "$WORK/runtime/omnitiler-dev"
+RDIR="$(mktemp -d "$WORK/runtime/omnitiler-controller.XXXXXX")"
 printf '{"script_id":7}\n' > "$RDIR/ownership"
-printf '%s\n' "$RDIR/ownership" > "$WORK/runtime/plasma-auto-tiler-dev/controller-receipt-path"
+printf '%s\n' "$RDIR/ownership" > "$WORK/runtime/omnitiler-dev/controller-receipt-path"
 run_just dev-off
 check_exit 0 "dev-off split down/up exit"
 assert_contains "no verified planner" "dev-off split down/up skip kill"
@@ -796,12 +796,12 @@ sleep 300 &
 BAD_PID=$!
 mkdir -p "$PROC_ROOT/$BAD_PID"
 printf '%s (fake) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 555555\n' "$BAD_PID" > "$PROC_ROOT/$BAD_PID/stat"
-ln -sfn -- "/nix/store/fake/plasma-auto-tiler" "$PROC_ROOT/$BAD_PID/exe"
+ln -sfn -- "/nix/store/fake/omnitiler" "$PROC_ROOT/$BAD_PID/exe"
 printf 'x\0planner-service\0' > "$PROC_ROOT/$BAD_PID/cmdline"
-mkdir -p "$WORK/runtime/plasma-auto-tiler-dev"
-printf '%s\n' "$BAD_PID" > "$WORK/runtime/plasma-auto-tiler-dev/planner-pid"
-printf '%s\n' "$PLASMA_AUTO_TILER_BIN" > "$WORK/runtime/plasma-auto-tiler-dev/planner-exe"
-printf '555555\n' > "$WORK/runtime/plasma-auto-tiler-dev/planner-start"
+mkdir -p "$WORK/runtime/omnitiler-dev"
+printf '%s\n' "$BAD_PID" > "$WORK/runtime/omnitiler-dev/planner-pid"
+printf '%s\n' "$OMNITILER_BIN" > "$WORK/runtime/omnitiler-dev/planner-exe"
+printf '555555\n' > "$WORK/runtime/omnitiler-dev/planner-start"
 set_controller false
 run_just dev-off
 assert_calls_missing "start-test stop" "dev-off unverified no stop"
@@ -814,10 +814,10 @@ reset_state
 sleep 300 &
 MAL_PID=$!
 make_planner_proc "$MAL_PID" 666666
-mkdir -p "$WORK/runtime/plasma-auto-tiler-dev"
-printf '%s\n' "$MAL_PID" > "$WORK/runtime/plasma-auto-tiler-dev/planner-pid"
-printf '%s\n' "$PLASMA_AUTO_TILER_BIN" > "$WORK/runtime/plasma-auto-tiler-dev/planner-exe"
-printf '666666\n' > "$WORK/runtime/plasma-auto-tiler-dev/planner-start"
+mkdir -p "$WORK/runtime/omnitiler-dev"
+printf '%s\n' "$MAL_PID" > "$WORK/runtime/omnitiler-dev/planner-pid"
+printf '%s\n' "$OMNITILER_BIN" > "$WORK/runtime/omnitiler-dev/planner-exe"
+printf '666666\n' > "$WORK/runtime/omnitiler-dev/planner-start"
 touch "$WORK/state/loaded-malformed"
 run_just dev-off
 check_exit 1 "dev-off malformed exit"
@@ -873,7 +873,7 @@ assert_not_contains "dev mode: UP" "dev-status unknown not up"
 
 # D5: stale (deleted) owner exe is refused by dev-on and never reported UP.
 reset_state
-make_planner_proc 4247 101010 "$PLASMA_AUTO_TILER_BIN (deleted)"
+make_planner_proc 4247 101010 "$OMNITILER_BIN (deleted)"
 set_planner_owned 4247
 set_controller true
 run_just dev-on
@@ -884,7 +884,7 @@ assert_calls_missing "setsid" "dev-on stale no launch"
 assert_calls_missing "dogfood" "dev-on stale no dogfood"
 
 reset_state
-make_planner_proc 4248 202020 "$PLASMA_AUTO_TILER_BIN (deleted)"
+make_planner_proc 4248 202020 "$OMNITILER_BIN (deleted)"
 set_planner_owned 4248
 set_controller false
 run_just dev-on
@@ -894,7 +894,7 @@ assert_calls_missing "start-test start" "dev-on stale recovery no start"
 assert_calls_missing "setsid" "dev-on stale recovery no launch"
 
 reset_state
-make_planner_proc 4249 303030 "$PLASMA_AUTO_TILER_BIN (deleted)"
+make_planner_proc 4249 303030 "$OMNITILER_BIN (deleted)"
 set_planner_owned 4249
 set_controller true
 run_just dev-status
@@ -951,7 +951,7 @@ assert_calls_missing "cmake " "dev split down/up no cmake"
 
 # dev: refuses stale (deleted) owner without mutating.
 reset_state
-make_planner_proc 4247 101010 "$PLASMA_AUTO_TILER_BIN (deleted)"
+make_planner_proc 4247 101010 "$OMNITILER_BIN (deleted)"
 set_planner_owned 4247
 set_controller false
 run_just dev
@@ -1059,12 +1059,12 @@ check_exit 0 "dev down cycle exit"
 assert_contains "[planner]" "dev down planner label"
 assert_contains "[kwin]" "dev down kwin label"
 assert_contains "[tray]" "dev down tray label"
-assert_contains "tray pid 434343 acquired org.plasmaautotiler.Tray" "dev down tray acquired"
+assert_contains "tray pid 434343 acquired com.omnitiler.Tray" "dev down tray acquired"
 assert_contains "owned tray pid 434343 already exited; nothing to stop" "dev down tray teardown branch"
 assert_not_contains "tray running" "dev down no tray-running claim"
-assert_contains "plasma-auto-tiler:plan" "dev down kwin plugin line"
-assert_contains "[kwin] plasma-auto-tiler:route-diag:drag-pull action=dispatch" "dev down kwin route diagnostic line"
-assert_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so remains stale until logout/login." "dev down native warning"
+assert_contains "omnitiler:plan" "dev down kwin plugin line"
+assert_contains "[kwin] omnitiler:route-diag:drag-pull action=dispatch" "dev down kwin route diagnostic line"
+assert_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. omnitiler-active-border.so remains stale until logout/login." "dev down native warning"
 assert_calls_contain "cargo " "dev down cargo build"
 assert_calls_contain "cargo-plasma-kcmshell6=/" "dev down absolute baked launcher"
 assert_calls_contain "npm " "dev down npm build"
@@ -1095,7 +1095,7 @@ DEV_LOG_PATH="$(grep -F "combined log:" "$OUTPUT" | head -n 1 | sed 's/.*combine
 if [[ -n "${DEV_LOG_PATH:-}" && -f "$DEV_LOG_PATH" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev down durable log retained]" >&2; FAIL=$((FAIL + 1)); fi
 if [[ -n "${DEV_LOG_PATH:-}" ]] && grep -Fq "[planner]" "$DEV_LOG_PATH" && grep -Fq "[kwin]" "$DEV_LOG_PATH" && grep -Fq "[tray]" "$DEV_LOG_PATH"; then PASS=$((PASS + 1)); else echo "FAIL [dev down durable log labeled content]" >&2; FAIL=$((FAIL + 1)); fi
 if [[ "$(grep -c -F "combined log:" "$OUTPUT" || true)" -ge 2 ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev down combined log teardown reprint]" >&2; FAIL=$((FAIL + 1)); fi
-if [[ ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-log" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-planner-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-kwin-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-tray-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/tray-pid" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/tray-log" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev down stream state removed]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ ! -e "$WORK/runtime/omnitiler-dev/dev-log" && ! -e "$WORK/runtime/omnitiler-dev/dev-stream" && ! -e "$WORK/runtime/omnitiler-dev/dev-planner-stream" && ! -e "$WORK/runtime/omnitiler-dev/dev-kwin-stream" && ! -e "$WORK/runtime/omnitiler-dev/dev-tray-stream" && ! -e "$WORK/runtime/omnitiler-dev/tray-pid" && ! -e "$WORK/runtime/omnitiler-dev/tray-log" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev down stream state removed]" >&2; FAIL=$((FAIL + 1)); fi
 
 # dev: pre-owned tray name is preserved, never launched or killed.
 reset_state
@@ -1104,7 +1104,7 @@ sleep 300 &
 FOREIGN_TRAY_PID=$!
 mkdir -p "$PROC_ROOT/$FOREIGN_TRAY_PID"
 printf '%s (fake-tray) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 606060\n' "$FOREIGN_TRAY_PID" > "$PROC_ROOT/$FOREIGN_TRAY_PID/stat"
-ln -sfn -- "/nix/store/fake/plasma-auto-tiler" "$PROC_ROOT/$FOREIGN_TRAY_PID/exe"
+ln -sfn -- "/nix/store/fake/omnitiler" "$PROC_ROOT/$FOREIGN_TRAY_PID/exe"
 printf 'fake\0tray\0' > "$PROC_ROOT/$FOREIGN_TRAY_PID/cmdline"
 set_tray_owned "$FOREIGN_TRAY_PID"
 sleep 300 &
@@ -1304,8 +1304,8 @@ assert_calls_contain "cargo " "isolated build cargo"
 assert_calls_contain "cargo-plasma-kcmshell6=/" "isolated build absolute baked launcher"
 assert_calls_contain "npm " "isolated build npm"
 assert_calls_contain "cmake " "isolated build cmake"
-if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so" && -f "$WORK/fake-native-stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [isolated build 2 staged artifacts]" >&2; FAIL=$((FAIL + 1)); fi
-if [[ ! -e "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [isolated build no oracle artifact]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/omnitiler-active-border.so" && -f "$WORK/fake-native-stage/kwin/effects/configs/omnitiler-active-border_config.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [isolated build 2 staged artifacts]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ ! -e "$WORK/fake-native-stage/kwin/effects/plugins/omnitiler-drag-oracle.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [isolated build no oracle artifact]" >&2; FAIL=$((FAIL + 1)); fi
 assert_calls_missing "dogfood" "isolated build no dogfood"
 assert_calls_missing "start-test" "isolated build no start-test"
 assert_calls_missing "setsid" "isolated build no setsid"
@@ -1326,7 +1326,7 @@ check_exit 0 "build-rust missing exit"
 assert_calls_contain "cargo " "build-rust missing cargo attempted"
 assert_calls_contain "cargo-plasma-kcmshell6=empty" "build-rust missing empty baked launcher"
 set +e
-MISSING_EVAL="$(PATH="$(path_without_kcmshell6)" just --justfile "$ISOLATED_JUSTFILE" --evaluate PLASMA_AUTO_TILER_KCMSHELL6 2>/dev/null)"
+MISSING_EVAL="$(PATH="$(path_without_kcmshell6)" just --justfile "$ISOLATED_JUSTFILE" --evaluate OMNITILER_KCMSHELL6 2>/dev/null)"
 MISSING_EVAL_RC=$?
 set -e
 if [[ "$MISSING_EVAL_RC" -ne 0 ]]; then
@@ -1346,12 +1346,12 @@ fi
 reset_state
 run_just build-native-effect
 check_exit 0 "native build exit"
-assert_contains "plasma-auto-tiler-active-border.so" "native build effect msg"
-assert_not_contains "plasma-auto-tiler-drag-oracle.so" "native build no drag msg"
-assert_contains "plasma-auto-tiler-active-border_config.so" "native build kcm msg"
-if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [native staged effect]" >&2; FAIL=$((FAIL + 1)); fi
-if [[ ! -e "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [native no staged drag]" >&2; FAIL=$((FAIL + 1)); fi
-if [[ -f "$WORK/fake-native-stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [native staged kcm]" >&2; FAIL=$((FAIL + 1)); fi
+assert_contains "omnitiler-active-border.so" "native build effect msg"
+assert_not_contains "omnitiler-drag-oracle.so" "native build no drag msg"
+assert_contains "omnitiler-active-border_config.so" "native build kcm msg"
+if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/omnitiler-active-border.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [native staged effect]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ ! -e "$WORK/fake-native-stage/kwin/effects/plugins/omnitiler-drag-oracle.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [native no staged drag]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ -f "$WORK/fake-native-stage/kwin/effects/configs/omnitiler-active-border_config.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [native staged kcm]" >&2; FAIL=$((FAIL + 1)); fi
 assert_calls_contain "cmake " "native build cmake"
 assert_calls_missing "dogfood" "native build no dogfood"
 assert_calls_missing "start-test" "native build no start-test"
@@ -1366,12 +1366,12 @@ assert_calls_missing "tail " "native build no tail"
 reset_state
 run_just build-native-effect
 check_exit 0 "native restage first exit"
-STAGE_BORDER="$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+STAGE_BORDER="$WORK/fake-native-stage/kwin/effects/plugins/omnitiler-active-border.so"
 if [[ -f "$STAGE_BORDER" ]]; then PASS=$((PASS + 1)); else echo "FAIL [restage first staged]" >&2; FAIL=$((FAIL + 1)); fi
 OLD_INODE="$(stat -c %i "$STAGE_BORDER")"
 OLD_CONTENT="$(cat "$STAGE_BORDER")"
 exec 9< "$STAGE_BORDER" || { echo "FAIL [restage open old fd]" >&2; FAIL=$((FAIL + 1)); }
-printf 'fake-effect-v2' > "$WORK/fake-native-build/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+printf 'fake-effect-v2' > "$WORK/fake-native-build/bin/kwin/effects/plugins/omnitiler-active-border.so"
 run_just build-native-effect
 RESTAGE_EXIT="$EXIT"
 check_exit 0 "native restage second exit"
@@ -1395,9 +1395,9 @@ SETUP_EXIT="$EXIT"
 EXIT="$SETUP_EXIT"
 check_exit 0 "dev-native-setup exit"
 assert_calls_contain "cmake " "dev-native-setup runs native build"
-if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so" && -f "$WORK/fake-native-stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev-native-setup 2 staged artifacts]" >&2; FAIL=$((FAIL + 1)); fi
-if [[ ! -e "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev-native-setup no oracle artifact]" >&2; FAIL=$((FAIL + 1)); fi
-SETUP_ENV="$XDG_CONFIG_HOME/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/omnitiler-active-border.so" && -f "$WORK/fake-native-stage/kwin/effects/configs/omnitiler-active-border_config.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev-native-setup 2 staged artifacts]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ ! -e "$WORK/fake-native-stage/kwin/effects/plugins/omnitiler-drag-oracle.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev-native-setup no oracle artifact]" >&2; FAIL=$((FAIL + 1)); fi
+SETUP_ENV="$XDG_CONFIG_HOME/plasma-workspace/env/60-omnitiler-native-effect.sh"
 if [[ -f "$SETUP_ENV" ]] && grep -Fq "$WORK/fake-native-stage" "$SETUP_ENV"; then PASS=$((PASS + 1)); else echo "FAIL [dev-native-setup env script]" >&2; cat "$OUTPUT" >&2; FAIL=$((FAIL + 1)); fi
 assert_calls_missing "dogfood" "dev-native-setup no dogfood"
 assert_calls_missing "start-test" "dev-native-setup no start-test"
@@ -1411,7 +1411,7 @@ touch "$WORK/state/cargo-fails"
 run_just dev
 check_exit 1 "dev rust fail exit"
 assert_contains "build failed" "dev rust fail msg"
-assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so remains stale until logout/login." "dev rust fail no warning"
+assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. omnitiler-active-border.so remains stale until logout/login." "dev rust fail no warning"
 assert_calls_contain "cargo " "dev rust fail cargo attempted"
 assert_calls_missing "dogfood disable" "dev rust fail no disable"
 assert_calls_missing "setsid" "dev rust fail no launch"
@@ -1428,7 +1428,7 @@ touch "$WORK/state/npm-fails"
 run_just dev
 check_exit 1 "dev ts fail exit"
 assert_contains "build failed" "dev ts fail msg"
-assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so remains stale until logout/login." "dev ts fail no warning"
+assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. omnitiler-active-border.so remains stale until logout/login." "dev ts fail no warning"
 assert_calls_contain "npm " "dev ts fail npm attempted"
 assert_calls_missing "dogfood disable" "dev ts fail no disable"
 assert_calls_missing "setsid" "dev ts fail no launch"
@@ -1445,7 +1445,7 @@ touch "$WORK/state/cmake-fails"
 run_just dev
 check_exit 1 "dev native fail exit"
 assert_contains "build failed" "dev native fail msg"
-assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so remains stale until logout/login." "dev native fail no warning"
+assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. omnitiler-active-border.so remains stale until logout/login." "dev native fail no warning"
 assert_calls_contain "cmake " "dev native fail cmake attempted"
 assert_calls_missing "dogfood disable" "dev native fail no disable"
 assert_calls_missing "setsid" "dev native fail no launch"
@@ -1497,7 +1497,7 @@ else
   assert_calls_contain "start-test stop 7" "dev SIGINT teardown stop"
   assert_calls_contain "dogfood enable" "dev SIGINT teardown enable"
   assert_calls_contain "unloadEffect" "dev SIGINT teardown native unload"
-  if [[ ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-log" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-planner-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-kwin-stream" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev SIGINT stream state removed]" >&2; FAIL=$((FAIL + 1)); fi
+  if [[ ! -e "$WORK/runtime/omnitiler-dev/dev-log" && ! -e "$WORK/runtime/omnitiler-dev/dev-stream" && ! -e "$WORK/runtime/omnitiler-dev/dev-planner-stream" && ! -e "$WORK/runtime/omnitiler-dev/dev-kwin-stream" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev SIGINT stream state removed]" >&2; FAIL=$((FAIL + 1)); fi
 fi
 unset FAKE_TAIL_FOLLOW_BLOCK
 kill "$DEV_INT_PID" 2>/dev/null || true
@@ -1586,7 +1586,7 @@ assert_calls_missing "cmake " "dev bogus no cmake"
 # dev trace: DOWN bring-up exports exactly 1 to the Planner and KWin builds.
 reset_state
 set_controller false
-unset PLASMA_AUTO_TILER_TRACE 2>/dev/null || true
+unset OMNITILER_TRACE 2>/dev/null || true
 sleep 300 &
 DEV_VERBOSE_PID=$!
 make_planner_proc "$DEV_VERBOSE_PID" 999001
@@ -1600,12 +1600,12 @@ check_exit 0 "dev trace cycle exit"
 assert_calls_contain "setsid-env TRACE=1" "dev trace exports planner opt-in"
 assert_calls_contain "start-test start TRACE=1" "dev trace exports KWin opt-in"
 assert_calls_contain "start-test stop 7" "dev trace teardown stop"
-unset PLASMA_AUTO_TILER_TRACE 2>/dev/null || true
+unset OMNITILER_TRACE 2>/dev/null || true
 
 # dev verbose: explicit troubleshooting mode stays bounded and non-trace.
 reset_state
 set_controller false
-unset PLASMA_AUTO_TILER_TRACE 2>/dev/null || true
+unset OMNITILER_TRACE 2>/dev/null || true
 sleep 300 &
 DEV_VERBOSE_PID=$!
 make_planner_proc "$DEV_VERBOSE_PID" 999003
@@ -1623,7 +1623,7 @@ assert_calls_contain "start-test stop 7" "dev verbose teardown stop"
 # dev default: no mode arg leaves trace disabled.
 reset_state
 set_controller false
-unset PLASMA_AUTO_TILER_TRACE 2>/dev/null || true
+unset OMNITILER_TRACE 2>/dev/null || true
 sleep 300 &
 DEV_QUIET_PID=$!
 make_planner_proc "$DEV_QUIET_PID" 999004
@@ -1636,12 +1636,12 @@ EXIT="$DEV_QUIET_EXIT"
 check_exit 0 "dev default cycle exit"
 assert_calls_contain "setsid-env TRACE=0" "dev default stays non-trace"
 assert_calls_contain "start-test stop 7" "dev default teardown stop"
-unset PLASMA_AUTO_TILER_TRACE 2>/dev/null || true
+unset OMNITILER_TRACE 2>/dev/null || true
 
 # dev env passthrough: exported 1 without the arg still reaches both builds.
 reset_state
 set_controller false
-export PLASMA_AUTO_TILER_TRACE=1
+export OMNITILER_TRACE=1
 sleep 300 &
 DEV_PASS_PID=$!
 make_planner_proc "$DEV_PASS_PID" 999005
@@ -1655,7 +1655,7 @@ check_exit 0 "dev passthrough cycle exit"
 assert_calls_contain "setsid-env TRACE=1" "dev passthrough exports opt-in"
 assert_calls_contain "start-test start TRACE=1" "dev passthrough exports KWin opt-in"
 assert_calls_contain "start-test stop 7" "dev passthrough teardown stop"
-unset PLASMA_AUTO_TILER_TRACE 2>/dev/null || true
+unset OMNITILER_TRACE 2>/dev/null || true
 
 # start-test.sh: unloadScript=false verifies only with strict post false + receipt identity.
 START_STATE="$WORK/start-false-state"
@@ -1699,7 +1699,7 @@ case "$*" in
     printf 'stop\n' >> "$calls"
     touch "$state/post-unload"
     exit 0 ;;
-  *"unloadScript s plasma-auto-tiler-kwin"*)
+  *"unloadScript s omnitiler-kwin"*)
     printf 'unloadScript\n' >> "$calls"
     printf '{"type":"b","data":[false]}\n' ;;
   *"allComponents"*)
@@ -1715,7 +1715,7 @@ rm -rf "$START_RDIR"
 mkdir -p "$START_RDIR"
 START_BUILD="controller-v1-$(printf 'a%.0s' $(seq 1 64))"
 START_RECEIPT="$START_RDIR/ownership"
-jq -cn --arg nonce "testnonce-12345678" --arg build "$START_BUILD" --arg plugin "plasma-auto-tiler-kwin" --argjson sid 9 --argjson pid "$START_KWIN_PID" --arg start "$START_KWIN_START" '{kind:"controller",nonce:$nonce,build:$build,plugin:$plugin,script_id:$sid,pid:$pid,start_identity:$start}' > "$START_RECEIPT"
+jq -cn --arg nonce "testnonce-12345678" --arg build "$START_BUILD" --arg plugin "omnitiler-kwin" --argjson sid 9 --argjson pid "$START_KWIN_PID" --arg start "$START_KWIN_START" '{kind:"controller",nonce:$nonce,build:$build,plugin:$plugin,script_id:$sid,pid:$pid,start_identity:$start}' > "$START_RECEIPT"
 set +e
 FAKE_START_STATE="$START_STATE" FAKE_START_CALLS="$START_CALLS" PROC_ROOT="$START_PROC" CONTROLLER_OWNERSHIP_FILE="$START_RECEIPT" PATH="$START_FAKE/bin:$PATH" bash "$REPO_ROOT/scripts/start-test.sh" stop 9 >"$OUTPUT" 2>&1
 EXIT=$?
@@ -1729,7 +1729,7 @@ if grep -Fq "isScriptLoaded" "$START_CALLS"; then PASS=$((PASS + 1)); else echo 
 # Failed/malformed postcondition must remain unverified: same setup but malformed post.
 rm -f "$START_STATE/post-unload"
 touch "$START_STATE/post-malformed"
-jq -cn --arg nonce "testnonce-12345678" --arg build "$START_BUILD" --arg plugin "plasma-auto-tiler-kwin" --argjson sid 9 --argjson pid "$START_KWIN_PID" --arg start "$START_KWIN_START" '{kind:"controller",nonce:$nonce,build:$build,plugin:$plugin,script_id:$sid,pid:$pid,start_identity:$start}' > "$START_RECEIPT"
+jq -cn --arg nonce "testnonce-12345678" --arg build "$START_BUILD" --arg plugin "omnitiler-kwin" --argjson sid 9 --argjson pid "$START_KWIN_PID" --arg start "$START_KWIN_START" '{kind:"controller",nonce:$nonce,build:$build,plugin:$plugin,script_id:$sid,pid:$pid,start_identity:$start}' > "$START_RECEIPT"
 : > "$START_CALLS"
 set +e
 FAKE_START_STATE="$START_STATE" FAKE_START_CALLS="$START_CALLS" PROC_ROOT="$START_PROC" CONTROLLER_OWNERSHIP_FILE="$START_RECEIPT" PATH="$START_FAKE/bin:$PATH" bash "$REPO_ROOT/scripts/start-test.sh" stop 9 >"$OUTPUT" 2>&1
@@ -1743,16 +1743,16 @@ rm -f "$START_STATE/post-malformed" "$START_STATE/post-fail" "$START_STATE/post-
 # dev-off: controller failure still terminates a verified Planner, then fails without re-enable.
 reset_state
 set_controller true
-mkdir -p "$WORK/runtime/plasma-auto-tiler-dev"
-CTRL_FAIL_RDIR="$(mktemp -d "$WORK/runtime/plasma-auto-tiler-controller.XXXXXX")"
+mkdir -p "$WORK/runtime/omnitiler-dev"
+CTRL_FAIL_RDIR="$(mktemp -d "$WORK/runtime/omnitiler-controller.XXXXXX")"
 printf '{"script_id":7}\n' > "$CTRL_FAIL_RDIR/ownership"
-printf '%s\n' "$CTRL_FAIL_RDIR/ownership" > "$WORK/runtime/plasma-auto-tiler-dev/controller-receipt-path"
+printf '%s\n' "$CTRL_FAIL_RDIR/ownership" > "$WORK/runtime/omnitiler-dev/controller-receipt-path"
 sleep 300 &
 CTRL_FAIL_PID=$!
 make_planner_proc "$CTRL_FAIL_PID" 999888
-printf '%s\n' "$CTRL_FAIL_PID" > "$WORK/runtime/plasma-auto-tiler-dev/planner-pid"
-printf '%s\n' "$PLASMA_AUTO_TILER_BIN" > "$WORK/runtime/plasma-auto-tiler-dev/planner-exe"
-printf '999888\n' > "$WORK/runtime/plasma-auto-tiler-dev/planner-start"
+printf '%s\n' "$CTRL_FAIL_PID" > "$WORK/runtime/omnitiler-dev/planner-pid"
+printf '%s\n' "$OMNITILER_BIN" > "$WORK/runtime/omnitiler-dev/planner-exe"
+printf '999888\n' > "$WORK/runtime/omnitiler-dev/planner-start"
 touch "$WORK/state/stop-fails"
 run_just dev-off
 check_exit 1 "dev-off controller-fail exit"
@@ -1762,7 +1762,7 @@ assert_calls_contain "start-test stop 7" "dev-off controller-fail stop attempted
 assert_calls_missing "dogfood enable" "dev-off controller-fail no enable"
 assert_not_contains "re-enabled" "dev-off controller-fail no re-enable claim"
 if kill -0 "$CTRL_FAIL_PID" 2>/dev/null; then echo "FAIL [dev-off controller-fail planner still running]" >&2; FAIL=$((FAIL + 1)); kill "$CTRL_FAIL_PID" 2>/dev/null || true; wait "$CTRL_FAIL_PID" 2>/dev/null || true; else PASS=$((PASS + 1)); fi
-if [[ -f "$WORK/runtime/plasma-auto-tiler-dev/planner-pid" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev-off controller-fail state retained]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ -f "$WORK/runtime/omnitiler-dev/planner-pid" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev-off controller-fail state retained]" >&2; FAIL=$((FAIL + 1)); fi
 kill "$CTRL_FAIL_PID" 2>/dev/null || true
 wait "$CTRL_FAIL_PID" 2>/dev/null || true
 rm -f "$WORK/state/stop-fails"

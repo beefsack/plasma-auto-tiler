@@ -315,7 +315,7 @@ impl SkipReason {
 /// Native window class of the project's own Settings UI. Must stay in sync
 /// with `crate::settings_ui::SETTINGS_WINDOW_CLASS` (duplicated here so this
 /// portable policy compiles everywhere).
-pub const OWN_SETTINGS_WINDOW_CLASS: &str = "PlasmaAutoTilerSettings";
+pub const OWN_SETTINGS_WINDOW_CLASS: &str = "OmniTilerSettings";
 
 /// True when a top-level window is the project's own Settings UI: its class
 /// is the settings class and its executable matches the owner's exactly
@@ -814,7 +814,7 @@ pub const fn inspect_stateless_verdict(
 }
 
 /// Portable observed target identity for frozen-allowlist matching.
-/// `tag` is the owned-helper lifetime token (`PlasmaAutoTilerLifetime`
+/// `tag` is the owned-helper lifetime token (`OmniTilerLifetime`
 /// property): nonempty for owned helpers, required in every allowlist entry
 /// so a recycled HWND in the same process never matches its predecessor.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -5,7 +5,7 @@ REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 KWIN_DIR="$REPO_ROOT/kwin"
 BUNDLE="$KWIN_DIR/contents/code/main.js"
 
-PLUGIN_ID="plasma-auto-tiler-kwin"
+PLUGIN_ID="omnitiler-kwin"
 
 BUS_SCOPE="--user"
 BUS_DEST="org.kde.KWin"
@@ -24,7 +24,7 @@ PROC_ROOT="${PROC_ROOT:-/proc}"
 
 # Lock and nonce-owned evidence live under a base outside the repository
 # (never under the protected test-output path). Override for tests.
-LIVE_BASE="${LIVE_TEST_ROOT:-${XDG_RUNTIME_DIR:-/tmp}}/plasma-auto-tiler-live"
+LIVE_BASE="${LIVE_TEST_ROOT:-${XDG_RUNTIME_DIR:-/tmp}}/omnitiler-live"
 
 # Run-owned state.
 NONCE=""
@@ -61,7 +61,7 @@ usage() {
   cat <<'EOF'
 usage: live-test.sh <command> [--help]
 
-Interactive manual live-runner for the plasma-auto-tiler-kwin KWin script.
+Interactive manual live-runner for the omnitiler-kwin KWin script.
 
 Commands:
   run           concise full preflight (typecheck, build, tests, static
@@ -593,7 +593,7 @@ setup_provenance() {
   done <<<"$output"
   [[ "$count" -eq 1 && "$nonce" == "$NONCE" && "$pid" == "$KWIN_PID" ]] || fail "checkout provenance setup was not tied to the captured KWin identity"
   [[ "$build" == "$expected_build" ]] || fail "checkout provenance build identity does not match the current source"
-  [[ "$plugin" =~ ^plasma-auto-tiler-checkout-provenance-[[:xdigit:]]{32}$ ]] || fail "checkout provenance did not return its unique plugin identity"
+  [[ "$plugin" =~ ^omnitiler-checkout-provenance-[[:xdigit:]]{32}$ ]] || fail "checkout provenance did not return its unique plugin identity"
   [[ "$baseline_count" -eq 1 && "$baseline_plugin" == "$plugin" && "$baseline_loaded" == not-loaded ]] || fail "checkout provenance baseline was not proven not-loaded"
   if [[ "$script_id" != unknown ]]; then
     [[ "$script_id" -le 2147483647 ]] || fail "checkout provenance returned an invalid script ID"

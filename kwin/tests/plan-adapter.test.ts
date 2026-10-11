@@ -329,9 +329,9 @@ function runDebounce(mocks: Mocks): void {
 
 describe("plan adapter route identity and request shape", () => {
     it("invokes only DescribePlan with a single JSON string payload", () => {
-        assert.equal(PLAN_SERVICE, "org.plasmaautotiler.Planner");
-        assert.equal(PLAN_OBJECT, "/org/plasmaautotiler/Planner");
-        assert.equal(PLAN_INTERFACE, "org.plasmaautotiler.Planner1");
+        assert.equal(PLAN_SERVICE, "com.omnitiler.Planner");
+        assert.equal(PLAN_OBJECT, "/com/omnitiler/Planner");
+        assert.equal(PLAN_INTERFACE, "com.omnitiler.Planner1");
         assert.equal(PLAN_METHOD, "DescribePlan");
         assert.equal(PLAN_CONTRACT_VERSION, 1);
         const refs = makeRefs();
@@ -398,7 +398,7 @@ describe("plan adapter route identity and request shape", () => {
         mocks.observeImpl = () => makeObserved(refs, { maximized: { "win-a": true } });
         adapter.requestFocus("left");
         assert.equal(mocks.dbusCalls.length, classes.length, "fenced maximized focus dispatches nothing");
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:focus-refused-maximize"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:focus-refused-maximize"));
         mocks.observeImpl = () => makeObserved(refs, { maximized: { "win-b": true } });
         adapter.requestFocus("left");
         const overlay = plannerPayload(mocks, classes.length);
@@ -542,14 +542,14 @@ describe("plan adapter geometry application", () => {
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line === "plasma-auto-tiler:plan:write window=win-a resource_class=unknown disposition=skip-already-equal rect=0,0,100,100",
+                    line === "omnitiler:plan:write window=win-a resource_class=unknown disposition=skip-already-equal rect=0,0,100,100",
             ),
             "unchanged member carries skip-already-equal disposition",
         );
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line === "plasma-auto-tiler:plan:write window=win-b resource_class=unknown disposition=written rect=100,0,400,500",
+                    line === "omnitiler:plan:write window=win-b resource_class=unknown disposition=written rect=100,0,400,500",
             ),
             "changed member carries written disposition with the target rect",
         );
@@ -607,14 +607,14 @@ describe("plan adapter geometry application", () => {
             mocks.logs.some(
                 (line) =>
                     line ===
-                    `plasma-auto-tiler:plan:constraint-trace corr=${correlation} phase=plan window=win-b output=out-1 resource_class=unknown resizeable=true min=80,60 max=1600,900 workarea=0,0,1200,800 requested=100,0,400,500 observed=100,0,500,500`,
+                    `omnitiler:plan:constraint-trace corr=${correlation} phase=plan window=win-b output=out-1 resource_class=unknown resizeable=true min=80,60 max=1600,900 workarea=0,0,1200,800 requested=100,0,400,500 observed=100,0,500,500`,
             ),
         );
         assert.ok(
             mocks.logs.some(
                 (line) =>
                     line ===
-                    `plasma-auto-tiler:plan:constraint-trace corr=${correlation} phase=write window=win-b output=out-1 resource_class=unknown resizeable=true min=80,60 max=1600,900 workarea=0,0,1200,800 requested=100,0,400,500 observed=100,0,400,500`,
+                    `omnitiler:plan:constraint-trace corr=${correlation} phase=write window=win-b output=out-1 resource_class=unknown resizeable=true min=80,60 max=1600,900 workarea=0,0,1200,800 requested=100,0,400,500 observed=100,0,400,500`,
             ),
         );
         // Auto no longer emits pre-plan/post-signal: the bounded trace is
@@ -662,7 +662,7 @@ describe("plan adapter geometry application", () => {
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line === "plasma-auto-tiler:plan:write window=win-a resource_class=unknown disposition=write-failed rect=0,0,600,800",
+                    line === "omnitiler:plan:write window=win-a resource_class=unknown disposition=write-failed rect=0,0,600,800",
             ),
             "failed member carries write-failed disposition",
         );
@@ -683,7 +683,7 @@ describe("plan adapter recovery and fencing", () => {
         assert.ok(
             mocks.logs.some((line) => line.includes("outcome=rejected") && line.includes(`cmd=${first}`)),
         );
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:rejected kind=snapshot-invalid"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:rejected kind=snapshot-invalid"));
         adapter.requestMove("right");
         assert.equal(mocks.dbusCalls.length, 2);
     });
@@ -767,7 +767,7 @@ describe("plan adapter recovery and fencing", () => {
         );
         assert.ok(
             mocks.logs.some(
-                (line) => line === "plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=window-out-of-bounds",
+                (line) => line === "omnitiler:plan:rejected kind=snapshot-invalid detail=window-out-of-bounds",
             ),
         );
 
@@ -909,9 +909,9 @@ describe("plan adapter recovery and fencing", () => {
         adapter.requestResize("left", "outwards");
         assert.equal(mocks.dbusCalls.length, 1);
         assert.equal(mocks.logs.length, logsBefore + 2);
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:busy-refused kind=move"));
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:busy-refused kind=resize"));
-        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:busy-refused kind=focus"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:busy-refused kind=move"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:busy-refused kind=resize"));
+        assert.ok(!mocks.logs.some((line) => line === "omnitiler:plan:busy-refused kind=focus"));
     });
 
     it("drives reconcile from debounced membership diffs", () => {
@@ -1059,7 +1059,7 @@ describe("plan adapter recovery and fencing", () => {
         fire(mocks, "scope");
         runTimers(mocks);
         assert.equal(mocks.dbusCalls.length, 3, "a rejected reconcile in another workspace cannot discard this baseline");
-        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:rejected kind=duplicate-window"));
+        assert.ok(!mocks.logs.some((line) => line === "omnitiler:plan:rejected kind=duplicate-window"));
         assert.equal(adapter.isEnabled, true);
     });
 });
@@ -1381,7 +1381,7 @@ describe("plan adapter explicit-only floating", () => {
         }));
         assert.deepEqual(mocks.floatingCalls, []);
         assert.ok(mocks.geometries.every((entry) => entry.target !== refs.a));
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:keep-above window=win-a resource_class=unknown target=above outcome=refused"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:keep-above window=win-a resource_class=unknown target=above outcome=refused"));
     });
 
     it("restores keep-above if float geometry cannot be written", () => {
@@ -1457,12 +1457,12 @@ describe("plan adapter client self-resize reconcile", () => {
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line === "plasma-auto-tiler:plan:scope-transition old=0,0,1200,800 new=0,0,1800,1200",
+                    line === "omnitiler:plan:scope-transition old=0,0,1200,800 new=0,0,1800,1200",
             ),
             "dedicated old-bounds to new-bounds scope transition",
         );
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:work-area-reprojection selected=retained"),
+            mocks.logs.some((line) => line === "omnitiler:plan:work-area-reprojection selected=retained"),
             "distinct retained reprojection event, not the generic reconcile line",
         );
         mocks.callbacks[1]?.(
@@ -1646,13 +1646,13 @@ describe("plan adapter client self-resize reconcile", () => {
             mocks.callbacks[index]?.(plannedReply(correlation, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], "win-a-leaf"));
         }
         assert.ok(
-            !mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"),
+            !mocks.logs.some((line) => line === "omnitiler:plan:reconcile-parked"),
             "no domain-wide park remains",
         );
         fire(mocks, "geometry");
         runDebounce(mocks);
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-accepted windows=1 cause=stable-drift recovery=accept-client-rect"),
+            mocks.logs.some((line) => line === "omnitiler:plan:reconcile-accepted windows=1 cause=stable-drift recovery=accept-client-rect"),
             "third post-finish drift accepts the exact client rect",
         );
         assert.equal(mocks.dbusCalls.length, 5, "acceptance quiets without dispatching");
@@ -1739,14 +1739,14 @@ describe("plan adapter client self-resize reconcile", () => {
                 assert.ok(mocks.logs.some((l) => l.includes(`cmd=gen-1-p${String(index)}`) && l.includes("outcome=planned-applied")));
             }
             assert.ok(
-                !mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"),
+                !mocks.logs.some((line) => line === "omnitiler:plan:reconcile-parked"),
                 "no domain-wide park remains",
             );
             const acceptedBefore = mocks.dbusCalls.length;
             fire(mocks, "geometry");
             runDebounce(mocks);
             assert.ok(
-                mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-accepted windows=1 cause=stable-drift recovery=accept-client-rect"),
+                mocks.logs.some((line) => line === "omnitiler:plan:reconcile-accepted windows=1 cause=stable-drift recovery=accept-client-rect"),
                 "bounded acceptance transition token",
             );
             assert.equal(mocks.dbusCalls.length, acceptedBefore, "acceptance quiets without dispatching");
@@ -1761,7 +1761,7 @@ describe("plan adapter client self-resize reconcile", () => {
             const quietNew = mocks.logs.slice(acceptedLogs);
             assert.ok(
                 quietNew.every((line) =>
-                    line.startsWith("plasma-auto-tiler:route-diag component=cosmic-plan route=plan stage=refresh event=foreground outcome=equal"),
+                    line.startsWith("omnitiler:route-diag component=cosmic-plan route=plan stage=refresh event=foreground outcome=equal"),
                 ),
                 "quiet accepted drift logs only equal refresh classifications",
             );
@@ -1791,7 +1791,7 @@ describe("plan adapter client self-resize reconcile", () => {
         fire(mocks, "geometry");
         runDebounce(mocks);
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-accepted windows=2 cause=stable-drift recovery=accept-client-rect"),
+            mocks.logs.some((line) => line === "omnitiler:plan:reconcile-accepted windows=2 cause=stable-drift recovery=accept-client-rect"),
             "two-window stable drift accepts per-window",
         );
         const acceptedCalls = mocks.dbusCalls.length;
@@ -1860,11 +1860,11 @@ describe("plan adapter client self-resize reconcile", () => {
         mocks.callbacks[1]?.(rejectedReply(corr, "snapshot-invalid"));
         const freshLogs = mocks.logs.slice(logsBefore);
         assert.equal(freshLogs.length, 5);
-        assert.equal(freshLogs[0], `plasma-auto-tiler:plan:cmd=${corr} kind=reconcile windows=2 component=cosmic-plan route=plan stage=reply correlation=${corr} generation=gen-1 revision=0 event=reply outcome=received cause=-`);
-        assert.equal(freshLogs[1], `plasma-auto-tiler:plan:cmd=${corr} kind=reconcile windows=2 component=cosmic-plan route=plan stage=reply correlation=${corr} generation=gen-1 revision=0 event=validate outcome=rejected cause=snapshot-invalid`);
-        assert.equal(freshLogs[2], `plasma-auto-tiler:plan:cmd=${corr} kind=reconcile windows=2 component=cosmic-plan route=plan stage=terminal correlation=${corr} generation=gen-1 revision=0 event=settled outcome=rejected cause=validate`);
+        assert.equal(freshLogs[0], `omnitiler:plan:cmd=${corr} kind=reconcile windows=2 component=cosmic-plan route=plan stage=reply correlation=${corr} generation=gen-1 revision=0 event=reply outcome=received cause=-`);
+        assert.equal(freshLogs[1], `omnitiler:plan:cmd=${corr} kind=reconcile windows=2 component=cosmic-plan route=plan stage=reply correlation=${corr} generation=gen-1 revision=0 event=validate outcome=rejected cause=snapshot-invalid`);
+        assert.equal(freshLogs[2], `omnitiler:plan:cmd=${corr} kind=reconcile windows=2 component=cosmic-plan route=plan stage=terminal correlation=${corr} generation=gen-1 revision=0 event=settled outcome=rejected cause=validate`);
         assert.ok(freshLogs[3]?.includes("kind=reconcile") && freshLogs[3]?.includes("outcome=rejected"));
-        assert.equal(freshLogs[4], "plasma-auto-tiler:plan:rejected kind=snapshot-invalid");
+        assert.equal(freshLogs[4], "omnitiler:plan:rejected kind=snapshot-invalid");
         fire(mocks, "geometry");
         runDebounce(mocks);
         const corr2 = plannerPayload(mocks, 2)["correlation_id"] as string;
@@ -1872,20 +1872,20 @@ describe("plan adapter client self-resize reconcile", () => {
         mocks.callbacks[2]?.(plannedReply(corr2, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], "win-a-leaf"));
         const fresh2 = mocks.logs.slice(logsBefore2);
         assert.equal(fresh2.length, 9);
-        assert.equal(fresh2[0], `plasma-auto-tiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=reply correlation=${corr2} generation=gen-1 revision=0 event=reply outcome=received cause=-`);
-        assert.equal(fresh2[1], `plasma-auto-tiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=reply correlation=${corr2} generation=gen-1 revision=2 event=validate outcome=validated cause=-`);
-        assert.equal(fresh2[2], `plasma-auto-tiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=observe correlation=${corr2} generation=gen-1 revision=2 event=observe outcome=matched cause=-`);
-        assert.equal(fresh2[3], `plasma-auto-tiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=apply correlation=${corr2} generation=gen-1 revision=2 event=apply outcome=started cause=-`);
-        assert.equal(fresh2[4], "plasma-auto-tiler:plan:write window=win-b resource_class=unknown disposition=skip-already-equal rect=600,0,600,800");
-        assert.equal(fresh2[5], "plasma-auto-tiler:plan:write window=win-a resource_class=unknown disposition=written rect=0,0,600,800");
-        assert.equal(fresh2[6], `plasma-auto-tiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=apply correlation=${corr2} generation=gen-1 revision=2 event=setters outcome=applied cause=skipped-equal`);
-        assert.equal(fresh2[7], `plasma-auto-tiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=terminal correlation=${corr2} generation=gen-1 revision=2 event=settled outcome=applied cause=setters`);
+        assert.equal(fresh2[0], `omnitiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=reply correlation=${corr2} generation=gen-1 revision=0 event=reply outcome=received cause=-`);
+        assert.equal(fresh2[1], `omnitiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=reply correlation=${corr2} generation=gen-1 revision=2 event=validate outcome=validated cause=-`);
+        assert.equal(fresh2[2], `omnitiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=observe correlation=${corr2} generation=gen-1 revision=2 event=observe outcome=matched cause=-`);
+        assert.equal(fresh2[3], `omnitiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=apply correlation=${corr2} generation=gen-1 revision=2 event=apply outcome=started cause=-`);
+        assert.equal(fresh2[4], "omnitiler:plan:write window=win-b resource_class=unknown disposition=skip-already-equal rect=600,0,600,800");
+        assert.equal(fresh2[5], "omnitiler:plan:write window=win-a resource_class=unknown disposition=written rect=0,0,600,800");
+        assert.equal(fresh2[6], `omnitiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=apply correlation=${corr2} generation=gen-1 revision=2 event=setters outcome=applied cause=skipped-equal`);
+        assert.equal(fresh2[7], `omnitiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=terminal correlation=${corr2} generation=gen-1 revision=2 event=settled outcome=applied cause=setters`);
         assert.ok(fresh2[8]?.includes("kind=reconcile") && fresh2[8]?.includes("outcome=planned-applied"));
         assert.ok(
             mocks.logs.some(
                 (line) =>
                     line ===
-                    `plasma-auto-tiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=request correlation=${corr2} generation=gen-1 revision=0 event=dispatch outcome=started cause=-`,
+                    `omnitiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=request correlation=${corr2} generation=gen-1 revision=0 event=dispatch outcome=started cause=-`,
             ),
             "route entry line for the dispatched reconcile",
         );
@@ -1908,7 +1908,7 @@ describe("plan adapter client self-resize reconcile", () => {
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, acceptedCalls, "stable rejected drift accepts without dispatching");
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-accepted windows=1 cause=stable-drift recovery=accept-client-rect"),
+            mocks.logs.some((line) => line === "omnitiler:plan:reconcile-accepted windows=1 cause=stable-drift recovery=accept-client-rect"),
             "bounded acceptance token for stable rejected drift",
         );
         fire(mocks, "geometry");
@@ -2062,7 +2062,7 @@ describe("plan adapter bounded diagnostics", () => {
         for (const line of mocks.logs) {
             assert.match(
                 line,
-                /^plasma-auto-tiler:(?:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile|pointer-resize) windows=\d+ outcome=\S+|cmd=(gen-1-p\d+) kind=(focus|move) windows=2 component=cosmic-plan route=plan stage=(request correlation=\3 generation=gen-1 revision=0 event=dispatch outcome=started|activate correlation=\3 generation=gen-1 revision=0 event=(presence outcome=(presence-requested|present)|resolve outcome=(resolve-requested|owner-pinned)|send outcome=(send-requested|request-sent))) cause=-|cmd=(gen-1-p\d+) kind=(focus|move) windows=2 component=cosmic-plan route=plan stage=(?:reply correlation=\10 generation=gen-1 revision=0 event=reply outcome=received cause=-|reply correlation=\10 generation=gen-1 revision=(?:0|2|unavailable) event=validate outcome=validated cause=-|reply correlation=\10 generation=gen-1 revision=0 event=validate outcome=rejected cause=snapshot-invalid|reply correlation=\10 generation=gen-1 revision=0 event=validate outcome=(?:malformed|stale) cause=(?:service-fault|precondition-mismatch|correlation-mismatch|stale-dropped)|observe correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=observe outcome=(?:matched cause=-|mismatched cause=stale-scope)|apply correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=apply outcome=started cause=-|apply correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=setters outcome=applied cause=(?:-|skipped-fullscreen|skipped-maximized|skipped-floating|skipped-overconstrained|skipped-clamped|skipped-equal|skipped-mixed)|apply correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=setters outcome=write-failed cause=(?:write-failed|precondition-mismatch)|terminal correlation=\10 generation=gen-1 revision=(?:0|2|unavailable) event=settled outcome=(?:applied cause=(?:setters|apply)|rejected cause=validate|timeout cause=reply|uncertain cause=(?:validate|observe|apply|setters)))|rejected kind=[a-z-]+( detail=[a-z-]+)?|write window=\S+ resource_class=\S+ disposition=(written|skip-fullscreen|skip-maximized|skip-floating|skip-overconstrained|skip-clamped|skip-already-equal|write-failed|float-written|float-write-failed) rect=[^ ]+|busy-refused kind=(focus|move|resize)|(focus|move|resize|pointer)-refused-[a-z-]+|maximize-refused-signal|scope-transition [^ ]+|work-area-reprojection selected=retained|echo-fence-(armed|consumed|cleared-equality|mismatched)|reconcile-parked|clamp-accepted correlation=\S+ window=\S+ resource_class=\S+ op=[a-z-]+|overconstrained-skipped correlation=\S+ window=\S+ resource_class=\S+ op=[a-z-]+|minimum-placed correlation=\S+ window=\S+ resource_class=\S+ op=[a-z-]+ rect=\S+|membership-skew correlation=\S+ op=[a-z-]+ reason=[a-z-]+ wanted=\d+ planned=(\d+|unknown) missing=(\d+|unknown) extra=(\d+|unknown) floating=\d+ sticky=\d+ fullscreen=\d+ maximized=\d+ retained=(known|unknown) retained-wanted=(\d+|-) retained-ids=\S+|membership-skew-member correlation=\S+ window=\S+ side=(missing|extra) floating=(true|false|unknown) sticky=(true|false|unknown) fullscreen=(true|false|unknown) maximized=(true|false|unknown) float-src=(float-set|all-desktops|none|unknown))|route-diag component=cosmic-plan route=plan stage=refresh event=(?:foreground|hidden) outcome=(?:equal|change|uncertain) reason=[a-z-]+ terminal=[a-z-]+ correlation=\S+ generation=\S+)$/,
+                /^omnitiler:(?:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile|pointer-resize) windows=\d+ outcome=\S+|cmd=(gen-1-p\d+) kind=(focus|move) windows=2 component=cosmic-plan route=plan stage=(request correlation=\3 generation=gen-1 revision=0 event=dispatch outcome=started|activate correlation=\3 generation=gen-1 revision=0 event=(presence outcome=(presence-requested|present)|resolve outcome=(resolve-requested|owner-pinned)|send outcome=(send-requested|request-sent))) cause=-|cmd=(gen-1-p\d+) kind=(focus|move) windows=2 component=cosmic-plan route=plan stage=(?:reply correlation=\10 generation=gen-1 revision=0 event=reply outcome=received cause=-|reply correlation=\10 generation=gen-1 revision=(?:0|2|unavailable) event=validate outcome=validated cause=-|reply correlation=\10 generation=gen-1 revision=0 event=validate outcome=rejected cause=snapshot-invalid|reply correlation=\10 generation=gen-1 revision=0 event=validate outcome=(?:malformed|stale) cause=(?:service-fault|precondition-mismatch|correlation-mismatch|stale-dropped)|observe correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=observe outcome=(?:matched cause=-|mismatched cause=stale-scope)|apply correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=apply outcome=started cause=-|apply correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=setters outcome=applied cause=(?:-|skipped-fullscreen|skipped-maximized|skipped-floating|skipped-overconstrained|skipped-clamped|skipped-equal|skipped-mixed)|apply correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=setters outcome=write-failed cause=(?:write-failed|precondition-mismatch)|terminal correlation=\10 generation=gen-1 revision=(?:0|2|unavailable) event=settled outcome=(?:applied cause=(?:setters|apply)|rejected cause=validate|timeout cause=reply|uncertain cause=(?:validate|observe|apply|setters)))|rejected kind=[a-z-]+( detail=[a-z-]+)?|write window=\S+ resource_class=\S+ disposition=(written|skip-fullscreen|skip-maximized|skip-floating|skip-overconstrained|skip-clamped|skip-already-equal|write-failed|float-written|float-write-failed) rect=[^ ]+|busy-refused kind=(focus|move|resize)|(focus|move|resize|pointer)-refused-[a-z-]+|maximize-refused-signal|scope-transition [^ ]+|work-area-reprojection selected=retained|echo-fence-(armed|consumed|cleared-equality|mismatched)|reconcile-parked|clamp-accepted correlation=\S+ window=\S+ resource_class=\S+ op=[a-z-]+|overconstrained-skipped correlation=\S+ window=\S+ resource_class=\S+ op=[a-z-]+|minimum-placed correlation=\S+ window=\S+ resource_class=\S+ op=[a-z-]+ rect=\S+|membership-skew correlation=\S+ op=[a-z-]+ reason=[a-z-]+ wanted=\d+ planned=(\d+|unknown) missing=(\d+|unknown) extra=(\d+|unknown) floating=\d+ sticky=\d+ fullscreen=\d+ maximized=\d+ retained=(known|unknown) retained-wanted=(\d+|-) retained-ids=\S+|membership-skew-member correlation=\S+ window=\S+ side=(missing|extra) floating=(true|false|unknown) sticky=(true|false|unknown) fullscreen=(true|false|unknown) maximized=(true|false|unknown) float-src=(float-set|all-desktops|none|unknown))|route-diag component=cosmic-plan route=plan stage=refresh event=(?:foreground|hidden) outcome=(?:equal|change|uncertain) reason=[a-z-]+ terminal=[a-z-]+ correlation=\S+ generation=\S+)$/,
                 line,
             );
             assert.ok(!line.includes("owner-1"), line);
@@ -2079,10 +2079,10 @@ describe("plan adapter bounded diagnostics", () => {
         adapter.requestMove("right");
         adapter.requestResize("left", "outwards");
         adapter.requestPointerResize("win-a", "right", 1000);
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:focus-refused-disabled"));
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:move-refused-disabled"));
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:resize-refused-disabled"));
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:pointer-refused-disabled"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:focus-refused-disabled"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:move-refused-disabled"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:resize-refused-disabled"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:pointer-refused-disabled"));
 
         assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
         adapter.requestFocus("sideways");
@@ -2092,27 +2092,27 @@ describe("plan adapter bounded diagnostics", () => {
         adapter.requestPointerResize("win-a", "sideways", 1000);
         adapter.requestPointerResize("win-a", "right", 999999);
         adapter.requestPointerResize("bad-id-!@#", "right", 1000);
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:focus-refused-invalid-direction"));
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:move-refused-invalid-direction"));
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:resize-refused-invalid-direction"));
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:resize-refused-invalid-mode"));
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:pointer-refused-direction"));
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:pointer-refused-boundary"));
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:pointer-refused-identity"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:focus-refused-invalid-direction"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:move-refused-invalid-direction"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:resize-refused-invalid-direction"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:resize-refused-invalid-mode"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:pointer-refused-direction"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:pointer-refused-boundary"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:pointer-refused-identity"));
 
         mocks.observeImpl = () => null;
         adapter.requestFocus("left");
         adapter.requestMove("right");
         adapter.requestResize("left", "outwards");
         adapter.requestPointerResize("win-a", "right", 1000);
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:focus-refused-observe"));
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:move-refused-observe"));
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:resize-refused-observe"));
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:pointer-refused-observe"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:focus-refused-observe"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:move-refused-observe"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:resize-refused-observe"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:pointer-refused-observe"));
 
         mocks.observeImpl = () => makeObserved(refs, { focused: refs.a });
         adapter.requestPointerResize("win-zzz", "right", 1000);
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:pointer-refused-absent"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:pointer-refused-absent"));
 
         mocks.observeImpl = () =>
             makeObserved(refs, {
@@ -2121,7 +2121,7 @@ describe("plan adapter bounded diagnostics", () => {
                 fullscreen: { "win-b": true },
             });
         adapter.requestPointerResize("win-b", "left", 600);
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:pointer-refused-fullscreen"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:pointer-refused-fullscreen"));
     });
 
     it("dispatches a corner as one dual-axis intent and refuses malformed pairs exactly", () => {
@@ -2148,9 +2148,9 @@ describe("plan adapter bounded diagnostics", () => {
         assert.equal(adapter.requestPointerResize("win-a", "right", 700, "down", 999999), false);
         assert.equal(adapter.requestPointerResize("win-a", "right", 700, "down", undefined), false);
         assert.equal(mocks.dbusCalls.length, callsBefore, "refused corners dispatch nothing");
-        const directionRefusals = mocks.logs.filter((l) => l === "plasma-auto-tiler:plan:pointer-refused-direction");
+        const directionRefusals = mocks.logs.filter((l) => l === "omnitiler:plan:pointer-refused-direction");
         assert.equal(directionRefusals.length, 3, "missing direction2, bad direction2, and same-axis pair bind the direction refusal");
-        const boundaryRefusals = mocks.logs.filter((l) => l === "plasma-auto-tiler:plan:pointer-refused-boundary");
+        const boundaryRefusals = mocks.logs.filter((l) => l === "omnitiler:plan:pointer-refused-boundary");
         assert.equal(boundaryRefusals.length, 2, "out-of-range and missing boundary2 bind the boundary refusal");
 
         mocks.callbacks[0]?.(
@@ -2181,7 +2181,7 @@ describe("plan adapter sticky and maximize toggles", () => {
         adapter.requestMaximize();
         adapter.requestMaximize();
         assert.deepEqual(mocks.maximizeToggles, [{ target: refs.a, maximized: true }, { target: refs.a, maximized: false }]);
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-toggle-echo-consumed"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:maximize-toggle-echo-consumed"));
         assert.equal(mocks.maximizeClears.length, 0, "post-admission explicit maximize never uses admission clearing");
     });
 
@@ -2194,8 +2194,8 @@ describe("plan adapter sticky and maximize toggles", () => {
         adapter.requestSticky();
         assert.equal(mocks.maximizeToggles.length, 0);
         assert.equal(mocks.desktopToggles.length, 0);
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-refused-fullscreen window=win-a resource_class=steam"));
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-refused-fullscreen window=win-a resource_class=steam"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:maximize-refused-fullscreen window=win-a resource_class=steam"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:sticky-refused-fullscreen window=win-a resource_class=steam"));
     });
 
     it("floats a tiled member before sticky and freshly admits it after the fenced unsticky echo", () => {
@@ -2227,7 +2227,7 @@ describe("plan adapter sticky and maximize toggles", () => {
         assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: true }, { target: refs.a, allDesktops: false }]);
         assert.equal(mocks.dbusCalls.length, 2, "unsticky restores prior tiled placement by fresh admission");
         assert.deepEqual(plannerPayload(mocks, 1)["command"], { op: "toggle-float", window: "win-a", float_rect: { x: 0, y: 0, w: 100, h: 100 } });
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-echo-consumed"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:sticky-echo-consumed"));
     });
 
     it("keeps sticky floats above, retains above on return to a prior float, and restores before fresh tiled admission", () => {
@@ -2301,7 +2301,7 @@ describe("plan adapter sticky and maximize toggles", () => {
         mocks.observeImpl = () => makeObserved(refs, { workspaces: { "win-b": "ws-2" } });
         const adapter = enableAdapter(mocks);
         adapter.requestSticky();
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-refused-observe"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:sticky-refused-observe"));
         assert.equal(mocks.dbusCalls.length, 0);
         assert.equal(mocks.desktopToggles.length, 0);
         // Same-domain sticky-on for the tiled focused window.
@@ -2342,7 +2342,7 @@ describe("plan adapter sticky and maximize toggles", () => {
         assert.equal(mocks.actives.length, 0, "sticky-on changes no focus");
         assert.equal(mocks.desktopsWrites.length, 0, "sticky-on writes no desktop membership");
         assert.equal(mocks.dbusCalls.length, 1, "sticky-on issues no follow-up planner commands");
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-echo-consumed"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:sticky-echo-consumed"));
     });
 
     it("keeps an already floating sticky member floating and makes a deliberate maximize block float", () => {
@@ -2370,7 +2370,7 @@ describe("plan adapter sticky and maximize toggles", () => {
         floating = false;
         adapter.requestMaximize();
         adapter.requestFloat();
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:float-refused-maximize"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:float-refused-maximize"));
     });
 
     it("clears a native-state fence without retry when its setter emits no echo", () => {
@@ -2380,7 +2380,7 @@ describe("plan adapter sticky and maximize toggles", () => {
         adapter.requestMaximize();
         adapter.requestMaximize();
         assert.equal(mocks.maximizeToggles.length, 2, "each discrete activation issues one native write");
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-toggle-echo-cleared-no-signal"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:maximize-toggle-echo-cleared-no-signal"));
         assert.ok(!mocks.logs.some((line) => line.includes("maximize-refused-attempted")), "per-activation semantics never refuse an attempted repeat");
     });
 
@@ -2424,7 +2424,7 @@ describe("plan adapter sticky and maximize toggles", () => {
         const adapter = enableAdapter(mocks);
         adapter.requestMaximize();
         assert.equal(mocks.maximizeToggles.length, 1);
-        const retryLine = mocks.logs.find((line) => line.includes("plasma-auto-tiler:plan:maximize-retry-armed"));
+        const retryLine = mocks.logs.find((line) => line.includes("omnitiler:plan:maximize-retry-armed"));
         assert.ok(retryLine !== undefined, "failed write logs bounded retry recovery");
         assert.ok(retryLine.includes("window=win-a"));
         assert.ok(retryLine.includes("cause=native-write-missing"));
@@ -2749,7 +2749,7 @@ describe("plan adapter sticky and maximize toggles", () => {
             float_geometry: { window: "win-a", rect: { x: 100, y: 100, w: 600, h: 400 } },
         }));
         assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: true }], "sticky stays on until the Meta+G call");
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-echo-consumed"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:sticky-echo-consumed"));
         // Meta+G on the sticky window clears all-desktops via the existing sticky-off path.
         adapter.requestFloat();
         assert.ok(
@@ -2940,7 +2940,7 @@ describe("plan adapter sticky and maximize toggles", () => {
             assert.equal(mocks.desktopToggles.length, 0, `sticky ${overlay} issues no native all-desktops write`);
             assert.equal(mocks.dbusCalls.length, 0, `sticky ${overlay} dispatches no planner command`);
             assert.ok(
-                mocks.logs.includes(`plasma-auto-tiler:plan:${token} window=win-a resource_class=steam`),
+                mocks.logs.includes(`omnitiler:plan:${token} window=win-a resource_class=steam`),
                 `sticky ${overlay} refuses with the sticky overlay token`,
             );
         }
@@ -3050,7 +3050,7 @@ describe("plan adapter sticky adoption", () => {
         assert.equal(mocks.geometries.length, 0, "adopted unstick preserves native geometry");
         assert.equal(mocks.desktopsWrites.length, 0, "adopted unstick switches no workspace");
         assert.deepEqual(mocks.floatingCalls, [{ id: "win-a", floating: true }], "adopted unstick leaves a normal float");
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-echo-consumed"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:sticky-echo-consumed"));
         assert.ok(mocks.logs.some((line) => line.includes("sticky-focus-retained window=win-a")));
         sticky = false;
         adapter.requestFloat();
@@ -3193,7 +3193,7 @@ describe("plan adapter sticky adoption", () => {
         assert.equal(mocks.desktopToggles.length, 2, "one later explicit retry writes once more");
         assert.deepEqual(mocks.floatingCalls, [{ id: "win-a", floating: true }]);
         assert.equal(mocks.dbusCalls.length, 0);
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-echo-consumed"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:sticky-echo-consumed"));
     });
 
     it("a stale desktops echo for another window never fabricates unstick", () => {
@@ -3210,7 +3210,7 @@ describe("plan adapter sticky adoption", () => {
         };
         const adapter = enableAdapter(mocks);
         adapter.requestSticky();
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-echo-mismatched"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:sticky-echo-mismatched"));
         assert.equal(mocks.floatingCalls.length, 0, "stale echo marks no float");
         assert.equal(mocks.dbusCalls.length, 0, "stale echo dispatches no planner admission");
         assert.equal(sticky, false, "native write itself is not rolled back by the test double");
@@ -3227,7 +3227,7 @@ describe("plan adapter sticky adoption", () => {
         });
         const adapter = enableAdapter(mocks);
         adapter.requestSticky();
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-refused-untracked window=win-a resource_class=firefox"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:sticky-refused-untracked window=win-a resource_class=firefox"));
         assert.equal(mocks.desktopToggles.length, 0, "no native desktop write without empty-list proof");
         assert.equal(mocks.dbusCalls.length, 0, "no planner call without adoption");
         assert.equal(mocks.floatingCalls.length, 0, "no float canonical mark without adoption");
@@ -3248,7 +3248,7 @@ describe("plan adapter sticky adoption", () => {
         assert.equal(mocks.desktopToggles.length, 0);
         mocks.observeImpl = () => null;
         adapter.requestSticky();
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-refused-observe"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:sticky-refused-observe"));
     });
 
     it("adopts an already-sticky native window at entry startup with an empty desktop list", () => {
@@ -3553,8 +3553,8 @@ describe("plan adapter fullscreen toggle", () => {
         adapter.requestFullscreen();
         adapter.requestFullscreen();
         assert.deepEqual(mocks.fullscreenToggles, [{ target: refs.a, fullscreen: true }, { target: refs.a, fullscreen: false }]);
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:fullscreen-toggle window=win-a resource_class=ghostty target=fullscreen outcome=invoked"));
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:fullscreen-toggle window=win-a resource_class=ghostty target=restored outcome=invoked"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:fullscreen-toggle window=win-a resource_class=ghostty target=fullscreen outcome=invoked"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:fullscreen-toggle window=win-a resource_class=ghostty target=restored outcome=invoked"));
         assert.equal(mocks.dbusCalls.length, 0, "fullscreen toggle issues no planner commands");
         assert.equal(mocks.geometries.length, 0, "fullscreen toggle writes no geometry");
         assert.equal(mocks.actives.length, 0, "fullscreen toggle changes no focus");
@@ -3569,14 +3569,14 @@ describe("plan adapter fullscreen toggle", () => {
         const adapter = enableAdapter(mocks);
         adapter.requestFullscreen();
         assert.equal(mocks.fullscreenToggles.length, 0);
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:fullscreen-refused-observe"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:fullscreen-refused-observe"));
         mocks.observeImpl = () => makeObserved(refs, { resourceClasses: { "win-a": "firefox" } });
         mocks.fullscreenToggleImpl = (): MaximizeClearOutcome => {
             throw new Error("native write threw");
         };
         adapter.requestFullscreen();
         assert.equal(mocks.fullscreenToggles.length, 1);
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:fullscreen-toggle window=win-a resource_class=firefox target=fullscreen outcome=threw"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:fullscreen-toggle window=win-a resource_class=firefox target=fullscreen outcome=threw"));
         assert.equal(mocks.dbusCalls.length, 0);
     });
 });
@@ -3808,7 +3808,7 @@ describe("plan entry live observation and shortcuts", () => {
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:ready owner=owner-1 generation=gen-1 source=local-dev"),
+            mocks.logs.some((line) => line === "omnitiler:plan:ready owner=owner-1 generation=gen-1 source=local-dev"),
             "startup session-identifying context from the existing owner/generation provenance plus the local-dev source fallback",
         );
         handle?.stop();
@@ -3821,25 +3821,25 @@ describe("plan entry live observation and shortcuts", () => {
         assert.equal(mocks.shortcuts.length, 129);
         const actions = mocks.shortcuts.map((row) => row.action);
         assert.equal(new Set(actions).size, 129);
-        assert.ok(actions.includes("plasma-auto-tiler-focus-left"));
-        assert.ok(actions.includes("plasma-auto-tiler-focus-right-arrow"));
-        assert.ok(actions.includes("plasma-auto-tiler-move-up"));
-        assert.ok(actions.includes("plasma-auto-tiler-resize-outwards-right"));
-        assert.ok(actions.includes("plasma-auto-tiler-resize-inwards-down"));
-        assert.ok(actions.includes("plasma-auto-tiler-resize-inwards-down-arrow"));
-        assert.ok(actions.includes("plasma-auto-tiler-toggle-float"));
-        assert.ok(actions.includes("plasma-auto-tiler-toggle-sticky"));
-        assert.ok(actions.includes("plasma-auto-tiler-toggle-maximize"));
-        assert.ok(actions.includes("plasma-auto-tiler-toggle-fullscreen"));
-        assert.ok(actions.includes("plasma-auto-tiler-toggle-workspace-tiling"));
-        const toggle = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-toggle-workspace-tiling") as {
+        assert.ok(actions.includes("omnitiler-focus-left"));
+        assert.ok(actions.includes("omnitiler-focus-right-arrow"));
+        assert.ok(actions.includes("omnitiler-move-up"));
+        assert.ok(actions.includes("omnitiler-resize-outwards-right"));
+        assert.ok(actions.includes("omnitiler-resize-inwards-down"));
+        assert.ok(actions.includes("omnitiler-resize-inwards-down-arrow"));
+        assert.ok(actions.includes("omnitiler-toggle-float"));
+        assert.ok(actions.includes("omnitiler-toggle-sticky"));
+        assert.ok(actions.includes("omnitiler-toggle-maximize"));
+        assert.ok(actions.includes("omnitiler-toggle-fullscreen"));
+        assert.ok(actions.includes("omnitiler-toggle-workspace-tiling"));
+        const toggle = mocks.shortcuts.find((row) => row.action === "omnitiler-toggle-workspace-tiling") as {
             sequence: string;
         };
         assert.equal(toggle.sequence, "Meta+Y");
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-float sequence=Meta+G holder_component=kwin holder_action=Grid View"));
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-maximize sequence=Meta+M holder_component=kwin holder_action=KrohnkiteMonocleLayout"));
-        assert.ok(!mocks.logs.some((line) => line.includes("plasma-auto-tiler-toggle-fullscreen") && line.includes("shadowed")), "Meta+F11 has no conflicting holder");
-        const focus = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-focus-left") as {
+        assert.ok(mocks.logs.includes("omnitiler:plan:shortcut-dispatch-shadowed action=omnitiler-toggle-float sequence=Meta+G holder_component=kwin holder_action=Grid View"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:shortcut-dispatch-shadowed action=omnitiler-toggle-maximize sequence=Meta+M holder_component=kwin holder_action=KrohnkiteMonocleLayout"));
+        assert.ok(!mocks.logs.some((line) => line.includes("omnitiler-toggle-fullscreen") && line.includes("shadowed")), "Meta+F11 has no conflicting holder");
+        const focus = mocks.shortcuts.find((row) => row.action === "omnitiler-focus-left") as {
             callback: () => void;
         };
         focus.callback();
@@ -3865,7 +3865,7 @@ describe("plan entry live observation and shortcuts", () => {
         const world = fakeWorld();
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
-        const focusLeft = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-focus-left") as {
+        const focusLeft = mocks.shortcuts.find((row) => row.action === "omnitiler-focus-left") as {
             callback: () => void;
         };
         const windowsOf = (payload: string): string =>
@@ -3984,8 +3984,8 @@ describe("plan entry live observation and shortcuts", () => {
     });
 
         it("refuses float on fullscreen and maximized targets without native writes", () => {        for (const [property, value, token] of [
-            ["fullScreen", true, "plasma-auto-tiler:plan:float-refused-fullscreen"],
-            ["maximizeMode", 3, "plasma-auto-tiler:plan:float-refused-maximize"],
+            ["fullScreen", true, "omnitiler:plan:float-refused-fullscreen"],
+            ["maximizeMode", 3, "omnitiler:plan:float-refused-maximize"],
         ] as const) {
             const world = fakeWorld();
             const active = world.wins[0] as Record<string, unknown>;
@@ -4005,7 +4005,7 @@ describe("plan entry live observation and shortcuts", () => {
         const world = fakeWorld();
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
-        const row = mocks.shortcuts.find((entry) => entry.action === "plasma-auto-tiler-toggle-fullscreen") as {
+        const row = mocks.shortcuts.find((entry) => entry.action === "omnitiler-toggle-fullscreen") as {
             sequence: string;
             callback: () => void;
         };
@@ -4014,11 +4014,11 @@ describe("plan entry live observation and shortcuts", () => {
         row.callback();
         assert.equal(active["fullScreen"], true);
         assert.equal(mocks.dbusCalls.length, 0);
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:fullscreen-toggle window=win-a resource_class=test-app target=fullscreen outcome=invoked"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:fullscreen-toggle window=win-a resource_class=test-app target=fullscreen outcome=invoked"));
         row.callback();
         assert.equal(active["fullScreen"], false);
         assert.equal(mocks.dbusCalls.length, 0);
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:fullscreen-toggle window=win-a resource_class=test-app target=restored outcome=invoked"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:fullscreen-toggle window=win-a resource_class=test-app target=restored outcome=invoked"));
         handle?.stop();
     });
 
@@ -4038,7 +4038,7 @@ describe("plan entry live observation and shortcuts", () => {
         };
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
-        const row = mocks.shortcuts.find((entry) => entry.action === "plasma-auto-tiler-toggle-maximize") as {
+        const row = mocks.shortcuts.find((entry) => entry.action === "omnitiler-toggle-maximize") as {
             sequence: string;
             callback: () => void;
         };
@@ -4060,29 +4060,29 @@ describe("plan entry live observation and shortcuts", () => {
             const catalog = planShortcutCatalog(profile);
             assert.equal(catalog.length, 37);
             const byAction = new Map(catalog.map((row) => [row.action, row]));
-            assert.equal(byAction.get("plasma-auto-tiler-focus-up")?.direction, "up");
-            assert.equal(byAction.get("plasma-auto-tiler-focus-up")?.op, "focus");
-            assert.equal(byAction.get("plasma-auto-tiler-move-down-arrow")?.direction, "down");
-            assert.equal(byAction.get("plasma-auto-tiler-move-down-arrow")?.op, "move");
-            assert.equal(byAction.get("plasma-auto-tiler-resize-outwards-left")?.mode, "outwards");
-            assert.equal(byAction.get("plasma-auto-tiler-resize-outwards-left-arrow")?.mode, "outwards");
-            assert.equal(byAction.get("plasma-auto-tiler-resize-outwards-left-arrow")?.op, "resize");
-            assert.equal(byAction.get("plasma-auto-tiler-resize-outwards-left-arrow")?.direction, "left");
-            assert.equal(byAction.get("plasma-auto-tiler-resize-outwards-left-arrow")?.sequence, "Meta+Alt+Left");
-            assert.equal(byAction.get("plasma-auto-tiler-resize-inwards-left")?.mode, "inwards");
-            assert.equal(byAction.get("plasma-auto-tiler-resize-inwards-left-arrow")?.mode, "inwards");
-            assert.equal(byAction.get("plasma-auto-tiler-resize-inwards-left-arrow")?.op, "resize");
-            assert.equal(byAction.get("plasma-auto-tiler-resize-inwards-left-arrow")?.direction, "left");
-            assert.deepEqual(byAction.get("plasma-auto-tiler-toggle-float"), {
-                action: "plasma-auto-tiler-toggle-float", text: "Toggle floating window", sequence: "Meta+G", op: "float", direction: null, mode: null,
+            assert.equal(byAction.get("omnitiler-focus-up")?.direction, "up");
+            assert.equal(byAction.get("omnitiler-focus-up")?.op, "focus");
+            assert.equal(byAction.get("omnitiler-move-down-arrow")?.direction, "down");
+            assert.equal(byAction.get("omnitiler-move-down-arrow")?.op, "move");
+            assert.equal(byAction.get("omnitiler-resize-outwards-left")?.mode, "outwards");
+            assert.equal(byAction.get("omnitiler-resize-outwards-left-arrow")?.mode, "outwards");
+            assert.equal(byAction.get("omnitiler-resize-outwards-left-arrow")?.op, "resize");
+            assert.equal(byAction.get("omnitiler-resize-outwards-left-arrow")?.direction, "left");
+            assert.equal(byAction.get("omnitiler-resize-outwards-left-arrow")?.sequence, "Meta+Alt+Left");
+            assert.equal(byAction.get("omnitiler-resize-inwards-left")?.mode, "inwards");
+            assert.equal(byAction.get("omnitiler-resize-inwards-left-arrow")?.mode, "inwards");
+            assert.equal(byAction.get("omnitiler-resize-inwards-left-arrow")?.op, "resize");
+            assert.equal(byAction.get("omnitiler-resize-inwards-left-arrow")?.direction, "left");
+            assert.deepEqual(byAction.get("omnitiler-toggle-float"), {
+                action: "omnitiler-toggle-float", text: "Toggle floating window", sequence: "Meta+G", op: "float", direction: null, mode: null,
             });
-            assert.equal(byAction.get("plasma-auto-tiler-toggle-sticky")?.sequence, "Meta+Shift+G");
-            assert.equal(byAction.get("plasma-auto-tiler-toggle-maximize")?.sequence, "Meta+M");
-            assert.deepEqual(byAction.get("plasma-auto-tiler-toggle-fullscreen"), {
-                action: "plasma-auto-tiler-toggle-fullscreen", text: "Toggle fullscreen window", sequence: "Meta+F11", op: "fullscreen", direction: null, mode: null,
+            assert.equal(byAction.get("omnitiler-toggle-sticky")?.sequence, "Meta+Shift+G");
+            assert.equal(byAction.get("omnitiler-toggle-maximize")?.sequence, "Meta+M");
+            assert.deepEqual(byAction.get("omnitiler-toggle-fullscreen"), {
+                action: "omnitiler-toggle-fullscreen", text: "Toggle fullscreen window", sequence: "Meta+F11", op: "fullscreen", direction: null, mode: null,
             });
-            assert.deepEqual(byAction.get("plasma-auto-tiler-toggle-orientation"), {
-                action: "plasma-auto-tiler-toggle-orientation", text: "Toggle split orientation", sequence: "Meta+O", op: "toggle-orientation", direction: null, mode: null,
+            assert.deepEqual(byAction.get("omnitiler-toggle-orientation"), {
+                action: "omnitiler-toggle-orientation", text: "Toggle split orientation", sequence: "Meta+O", op: "toggle-orientation", direction: null, mode: null,
             });
         }
     });
@@ -4098,13 +4098,13 @@ describe("plan entry live observation and shortcuts", () => {
                 { direction: "right", arrow: "Right" },
             ];
             for (const entry of expected) {
-                const shrink = byAction.get(`plasma-auto-tiler-resize-inwards-${entry.direction}-arrow`);
+                const shrink = byAction.get(`omnitiler-resize-inwards-${entry.direction}-arrow`);
                 assert.ok(shrink !== undefined, `${profile}:${entry.direction}:shrink`);
                 assert.equal(shrink?.mode, "inwards");
                 assert.equal(shrink?.op, "resize");
                 assert.equal(shrink?.direction, entry.direction);
                 assert.equal(shrink?.sequence, `Meta+Alt+Shift+${entry.arrow}`);
-                const grow = byAction.get(`plasma-auto-tiler-resize-outwards-${entry.direction}-arrow`);
+                const grow = byAction.get(`omnitiler-resize-outwards-${entry.direction}-arrow`);
                 assert.ok(grow !== undefined, `${profile}:${entry.direction}:grow`);
                 assert.equal(grow?.mode, "outwards");
                 assert.equal(grow?.op, "resize");
@@ -4121,7 +4121,7 @@ describe("plan entry live observation and shortcuts", () => {
             const { handle, mocks } = startEntry(fakeWorld());
             assert.ok(handle !== null);
             const shortcut = mocks.shortcuts.find(
-                (row) => row.action === `plasma-auto-tiler-resize-inwards-${direction}-arrow`,
+                (row) => row.action === `omnitiler-resize-inwards-${direction}-arrow`,
             ) as { callback: () => void };
             shortcut.callback();
             assert.equal(mocks.dbusCalls[0]?.method, "DescribePlan");
@@ -4142,7 +4142,7 @@ describe("plan entry live observation and shortcuts", () => {
             const { handle, mocks } = startEntry(fakeWorld());
             assert.ok(handle !== null);
             const shortcut = mocks.shortcuts.find(
-                (row) => row.action === `plasma-auto-tiler-resize-outwards-${direction}-arrow`,
+                (row) => row.action === `omnitiler-resize-outwards-${direction}-arrow`,
             ) as { callback: () => void };
             shortcut.callback();
             assert.equal(mocks.dbusCalls[0]?.method, "DescribePlan");
@@ -4162,7 +4162,7 @@ describe("plan entry live observation and shortcuts", () => {
         const first = startEntry(fakeWorld());
         assert.ok(first.handle !== null);
         const shortcut = first.mocks.shortcuts.find(
-            (row) => row.action === "plasma-auto-tiler-toggle-orientation",
+            (row) => row.action === "omnitiler-toggle-orientation",
         ) as { sequence: string; callback: () => void };
         assert.equal(shortcut.sequence, "Meta+O");
         shortcut.callback();
@@ -4183,7 +4183,7 @@ describe("plan entry live observation and shortcuts", () => {
         const first = startEntry(fakeWorld());
         assert.ok(first.handle !== null);
         const moves = first.mocks.shortcuts.filter(
-            (row) => row.action.startsWith("plasma-auto-tiler-move-") && !row.action.includes("workspace") && !row.action.includes("append"),
+            (row) => row.action.startsWith("omnitiler-move-") && !row.action.includes("workspace") && !row.action.includes("append"),
         );
         assert.equal(moves.length, 8);
         const sequences = moves.map((row) => row.sequence);
@@ -4191,7 +4191,7 @@ describe("plan entry live observation and shortcuts", () => {
         for (const row of moves) {
             assert.ok(row.sequence.startsWith("Meta+Shift+"), row.action);
         }
-        const letter = moves.find((row) => row.action === "plasma-auto-tiler-move-left") as {
+        const letter = moves.find((row) => row.action === "omnitiler-move-left") as {
             callback: () => void;
         };
         letter.callback();
@@ -4201,7 +4201,7 @@ describe("plan entry live observation and shortcuts", () => {
         first.handle?.stop();
         const second = startEntry(fakeWorld());
         assert.ok(second.handle !== null);
-        const arrow = second.mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-move-right-arrow") as {
+        const arrow = second.mocks.shortcuts.find((row) => row.action === "omnitiler-move-right-arrow") as {
             callback: () => void;
         };
         arrow.callback();
@@ -4226,18 +4226,18 @@ describe("plan entry live observation and shortcuts", () => {
         const byAction = new Map(live.mocks.shortcuts.map((row) => [row.action, row]));
         assert.equal(live.mocks.shortcuts.length, 129);
         for (let index = 1; index <= 9; index += 1) {
-            assert.equal(byAction.get(`plasma-auto-tiler-workspace-${String(index)}`)?.sequence, `Meta+${String(index)}`);
-            assert.equal(byAction.get(`plasma-auto-tiler-move-workspace-${String(index)}`)?.sequence, `Meta+Shift+${String(index)}`);
+            assert.equal(byAction.get(`omnitiler-workspace-${String(index)}`)?.sequence, `Meta+${String(index)}`);
+            assert.equal(byAction.get(`omnitiler-move-workspace-${String(index)}`)?.sequence, `Meta+Shift+${String(index)}`);
         }
-        assert.equal(byAction.get("plasma-auto-tiler-workspace-0")?.sequence, "Meta+0");
-        assert.equal(byAction.get("plasma-auto-tiler-move-workspace-append")?.sequence, "Meta+Shift+0");
+        assert.equal(byAction.get("omnitiler-workspace-0")?.sequence, "Meta+0");
+        assert.equal(byAction.get("omnitiler-move-workspace-append")?.sequence, "Meta+Shift+0");
         const symbols: ReadonlyArray<[number, string]> = [[1, "!"], [2, "@"], [3, "#"], [4, "$"], [5, "%"], [6, "^"], [7, "&"], [8, "*"], [9, "("]];
         for (const [digit, symbol] of symbols) {
-            assert.equal(byAction.get(`plasma-auto-tiler-move-workspace-${String(digit)}-symbol`)?.sequence, `Meta+${symbol}`);
+            assert.equal(byAction.get(`omnitiler-move-workspace-${String(digit)}-symbol`)?.sequence, `Meta+${symbol}`);
         }
-        assert.equal(byAction.get("plasma-auto-tiler-move-workspace-append-symbol")?.sequence, "Meta+)");
+        assert.equal(byAction.get("omnitiler-move-workspace-append-symbol")?.sequence, "Meta+)");
         for (const direction of ["left", "right", "up", "down"]) {
-            assert.equal(byAction.get(`plasma-auto-tiler-migrate-workspace-${direction}`)?.sequence, "");
+            assert.equal(byAction.get(`omnitiler-migrate-workspace-${direction}`)?.sequence, "");
         }
         live.handle?.stop();
         const entrySrc = readFileSync(join(kwinSrcDir(), "plan-adapter-entry.ts"), "utf8");
@@ -4279,7 +4279,7 @@ describe("plan entry live observation and shortcuts", () => {
         assert.deepEqual(ids, ["win-a", "win-b", "12345678-1234-1234-1234-1234567890ab"]);
         assert.ok(
             mocks.logs.some(
-                (line) => line === "plasma-auto-tiler:plan:observe-excluded reason=normal-window window=dock-1 resource_class=org.kde.plasmashell",
+                (line) => line === "omnitiler:plan:observe-excluded reason=normal-window window=dock-1 resource_class=org.kde.plasmashell",
             ),
             "a non-normal window is excluded with its exact reason",
         );
@@ -4321,11 +4321,11 @@ describe("plan entry live observation and shortcuts", () => {
         handle?.requestFocus("right");
         handle?.requestFocus("left");
         assert.equal(
-            mocks.logs.filter((line) => line === "plasma-auto-tiler:plan:observe-excluded reason=output-mismatch window=other-output resource_class=org.mozilla.firefox").length,
+            mocks.logs.filter((line) => line === "omnitiler:plan:observe-excluded reason=output-mismatch window=other-output resource_class=org.mozilla.firefox").length,
             1,
         );
         assert.equal(
-            mocks.logs.filter((line) => line === "plasma-auto-tiler:plan:observe-excluded reason=desktop-mismatch window=other-desktop resource_class=ghostty").length,
+            mocks.logs.filter((line) => line === "omnitiler:plan:observe-excluded reason=desktop-mismatch window=other-desktop resource_class=ghostty").length,
             1,
         );
         handle?.stop();
@@ -4342,7 +4342,7 @@ describe("plan entry live observation and shortcuts", () => {
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null, "null-active startup keeps the enabled observer for the next window");
         assert.ok(
-            mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")),
+            mocks.logs.some((line) => line.includes("omnitiler:plan:ready")),
             "null-active startup still logs the truthful ready line",
         );
         handle?.stop();
@@ -4368,7 +4368,7 @@ describe("plan entry live observation and shortcuts", () => {
                 attempts.push(action);
                 void callback;
                 void sequence;
-                if (action === "plasma-auto-tiler-focus-left") {
+                if (action === "omnitiler-focus-left") {
                     return false;
                 }
                 return true;
@@ -4376,13 +4376,13 @@ describe("plan entry live observation and shortcuts", () => {
         });
         assert.ok(handle !== null);
         assert.equal(attempts.length, 129);
-        assert.ok(attempts.includes("plasma-auto-tiler-focus-right-arrow"));
-        assert.ok(attempts.includes("plasma-auto-tiler-resize-inwards-right-arrow"));
+        assert.ok(attempts.includes("omnitiler-focus-right-arrow"));
+        assert.ok(attempts.includes("omnitiler-resize-inwards-right-arrow"));
         const line = mocks.logs.find((entry) => entry.includes("shortcut-failed"));
         assert.ok(line !== undefined);
         assert.equal(
             line,
-            "plasma-auto-tiler:plan:shortcut-failed action=plasma-auto-tiler-focus-left sequence=Meta+H",
+            "omnitiler:plan:shortcut-failed action=omnitiler-focus-left sequence=Meta+H",
         );
         handle?.stop();
     });
@@ -4435,14 +4435,14 @@ describe("plan entry live observation and shortcuts", () => {
             const missing = startWithoutShortcuts(missingWorld);
             assert.ok(missing.handle !== null, "missing catalog keeps observation-driven tiling enabled");
             const missingLine = missing.mocks.logs.find((entry) =>
-                entry.includes("plasma-auto-tiler:plan:shortcut-catalog-unavailable"),
+                entry.includes("omnitiler:plan:shortcut-catalog-unavailable"),
             );
             assert.ok(missingLine !== undefined, "missing catalog logs unavailable catalog");
             assert.ok(missingLine.includes("cause=register-shortcut-missing"));
             assert.ok(missingLine.includes("recovery=automatic-tiling-continue"));
             assert.ok(!missingLine.includes("window="), "catalog log carries no native ids");
             assert.ok(
-                missing.mocks.logs.some((entry) => entry.includes("plasma-auto-tiler:plan:ready")),
+                missing.mocks.logs.some((entry) => entry.includes("omnitiler:plan:ready")),
                 "ready line still identifies the session",
             );
             missing.handle?.requestFocus("left");
@@ -4455,7 +4455,7 @@ describe("plan entry live observation and shortcuts", () => {
             const throwing = startWithoutShortcuts(throwingWorld);
             assert.ok(throwing.handle !== null, "throwing lookup keeps observation-driven tiling enabled");
             const throwingLine = throwing.mocks.logs.find((entry) =>
-                entry.includes("plasma-auto-tiler:plan:shortcut-catalog-unavailable"),
+                entry.includes("omnitiler:plan:shortcut-catalog-unavailable"),
             );
             assert.ok(throwingLine !== undefined, "throwing lookup logs unavailable catalog");
             assert.ok(
@@ -4660,7 +4660,7 @@ describe("plan entry live observation and shortcuts", () => {
             (world.wins[0] as Record<string, unknown>)["maximizeMode"] = mode;
             const { handle, mocks } = startEntry(world);
             assert.ok(handle !== null);
-            const move = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-move-left") as {
+            const move = mocks.shortcuts.find((row) => row.action === "omnitiler-move-left") as {
                 callback: () => void;
             };
             move.callback();
@@ -4678,7 +4678,7 @@ describe("plan entry live observation and shortcuts", () => {
         (world.wins[0] as Record<string, unknown>)["maximizeMode"] = 0;
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
-        const move = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-move-left") as {
+        const move = mocks.shortcuts.find((row) => row.action === "omnitiler-move-left") as {
             callback: () => void;
         };
         move.callback();
@@ -4697,11 +4697,11 @@ describe("plan entry live observation and shortcuts", () => {
         const unavailable = mocks.logs.filter(
             (line) =>
                 line ===
-                "plasma-auto-tiler:plan:maximize-signal-unavailable cause=maximizedChanged-unconnectable recovery=fresh-maximizeMode-read",
+                "omnitiler:plan:maximize-signal-unavailable cause=maximizedChanged-unconnectable recovery=fresh-maximizeMode-read",
         );
         assert.equal(unavailable.length, 1, "single bounded unavailable line for all missing windows");
         assert.ok(
-            !mocks.logs.some((line) => line === "plasma-auto-tiler:plan:maximize-refused-signal"),
+            !mocks.logs.some((line) => line === "omnitiler:plan:maximize-refused-signal"),
             "no global refusal token for a missing per-window signal",
         );
         assert.ok(
@@ -4725,7 +4725,7 @@ describe("plan entry live observation and shortcuts", () => {
             mocks.logs.filter(
                 (line) =>
                     line ===
-                    "plasma-auto-tiler:plan:maximize-signal-unavailable cause=maximizedChanged-unconnectable recovery=fresh-maximizeMode-read",
+                    "omnitiler:plan:maximize-signal-unavailable cause=maximizedChanged-unconnectable recovery=fresh-maximizeMode-read",
             ).length,
             1,
             "single bounded unavailable line",
@@ -4735,7 +4735,7 @@ describe("plan entry live observation and shortcuts", () => {
             1,
             "connectable window keeps its subscription",
         );
-        const move = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-move-left") as {
+        const move = mocks.shortcuts.find((row) => row.action === "omnitiler-move-left") as {
             callback: () => void;
         };
         move.callback();
@@ -4821,13 +4821,13 @@ describe("plan entry live observation and shortcuts", () => {
             mocks.logs.filter(
                 (line) =>
                     line ===
-                    "plasma-auto-tiler:plan:maximize-signal-unavailable cause=maximizedChanged-unconnectable recovery=fresh-maximizeMode-read",
+                    "omnitiler:plan:maximize-signal-unavailable cause=maximizedChanged-unconnectable recovery=fresh-maximizeMode-read",
             ).length,
             1,
             "added-window misses share the single bounded line",
         );
         assert.ok(
-            !mocks.logs.some((line) => line === "plasma-auto-tiler:plan:maximize-refused-signal"),
+            !mocks.logs.some((line) => line === "omnitiler:plan:maximize-refused-signal"),
             "no global refusal token for an added window without the signal",
         );
         assert.equal(
@@ -4839,7 +4839,7 @@ describe("plan entry live observation and shortcuts", () => {
         handle?.requestFocus("left");
         assert.equal(mocks.dbusCalls.length, callsBefore + 1, "enabled adapter still dispatches");
         assert.ok(
-            !mocks.logs.some((line) => line === "plasma-auto-tiler:plan:focus-refused-disabled"),
+            !mocks.logs.some((line) => line === "omnitiler:plan:focus-refused-disabled"),
             "adapter stays enabled, never disabled by the missing signal",
         );
         handle?.stop();
@@ -4910,8 +4910,8 @@ describe("plan entry live observation and shortcuts", () => {
     });
 
     it("retries a failed highlight attach on later applied/config events, logging once per transition", () => {
-        const FAILED = "plasma-auto-tiler:plan:highlight-attach stage=failed reason=bridge-unavailable";
-        const RECOVERED = "plasma-auto-tiler:plan:highlight-attach stage=recovered";
+        const FAILED = "omnitiler:plan:highlight-attach stage=failed reason=bridge-unavailable";
+        const RECOVERED = "omnitiler:plan:highlight-attach stage=recovered";
         const countActiveGroup = (mocks: EntryMocks): number =>
             mocks.dbusCalls.filter((call) => {
                 try {
@@ -5091,8 +5091,8 @@ describe("plan entry live observation and shortcuts", () => {
 });
 
 describe("plan entry startup attach recovery", () => {
-    const FAILED_PREFIX = "plasma-auto-tiler:plan:entry-attach stage=failed";
-    const RECOVERED = "plasma-auto-tiler:plan:entry-attach stage=recovered";
+    const FAILED_PREFIX = "omnitiler:plan:entry-attach stage=failed";
+    const RECOVERED = "omnitiler:plan:entry-attach stage=recovered";
     const fireAdded = (world: FakeWorld): void => {
         for (const handler of [...world.added.handlers]) (handler as () => void)();
     };
@@ -5110,14 +5110,14 @@ describe("plan entry startup attach recovery", () => {
         const failed = mocks.logs.filter((line) => line.startsWith(FAILED_PREFIX));
         assert.equal(failed.length, 1, "one bounded failed line");
         assert.ok(failed[0]?.includes("cause=geometry"), "failed line names the refused subscribe kind");
-        assert.ok(!mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "no ready line while unavailable");
+        assert.ok(!mocks.logs.some((line) => line.includes("omnitiler:plan:ready")), "no ready line while unavailable");
         assert.equal(mocks.shortcuts.length, 0, "no shortcut registration while unavailable");
         handle?.requestFocus("left");
         assert.equal(mocks.dbusCalls.length, 0, "no actuation while unavailable");
         failLister = false;
         fireAdded(world);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "one bounded recovery line");
-        assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "ready line after recovery");
+        assert.ok(mocks.logs.some((line) => line.includes("omnitiler:plan:ready")), "ready line after recovery");
         assert.equal(mocks.shortcuts.length, 129, "shortcuts register exactly once on recovery");
         handle?.requestFocus("left");
         assert.equal(mocks.dbusCalls.length, 1, "actuation resumes after recovery");
@@ -5149,7 +5149,7 @@ describe("plan entry startup attach recovery", () => {
         failLister = false;
         fireScreens(screens);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "screensChanged alone recovers");
-        assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "ready line after screens recovery");
+        assert.ok(mocks.logs.some((line) => line.includes("omnitiler:plan:ready")), "ready line after screens recovery");
         assert.equal(mocks.shortcuts.length, 129, "shortcuts register exactly once on screens recovery");
         fireScreens(screens);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "no duplicate recovery on later screen change");
@@ -5176,7 +5176,7 @@ describe("plan entry startup attach recovery", () => {
         delete (world.workspace as Record<string, unknown>)["windowList"];
         const { handle, mocks } = startEntry(world);
         assert.equal(handle, null, "genuinely missing lister stays terminal");
-        assert.ok(!mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:entry-attach")), "terminal path stays silent");
+        assert.ok(!mocks.logs.some((line) => line.includes("omnitiler:plan:entry-attach")), "terminal path stays silent");
     });
 
     it("stays terminal silent when native callDBus is missing and no override supplies it", () => {
@@ -5194,9 +5194,9 @@ describe("plan entry startup attach recovery", () => {
             readProfileFn: (): string => "cosmic",
         });
         assert.equal(handle, null, "missing transport stays terminal");
-        assert.ok(!logs.some((line) => line.includes("plasma-auto-tiler:plan:entry-attach")), "missing transport never logs attach");
+        assert.ok(!logs.some((line) => line.includes("omnitiler:plan:entry-attach")), "missing transport never logs attach");
         for (const handler of [...world.added.handlers]) (handler as () => void)();
-        assert.ok(!logs.some((line) => line.includes("plasma-auto-tiler:plan:entry-attach")), "missing transport never retries");
+        assert.ok(!logs.some((line) => line.includes("omnitiler:plan:entry-attach")), "missing transport never retries");
     });
 
     it("stays terminal silent when native QTimer is missing and no override supplies it", () => {
@@ -5216,9 +5216,9 @@ describe("plan entry startup attach recovery", () => {
             readProfileFn: (): string => "cosmic",
         });
         assert.equal(handle, null, "missing timer stays terminal");
-        assert.ok(!logs.some((line) => line.includes("plasma-auto-tiler:plan:entry-attach")), "missing timer never logs attach");
+        assert.ok(!logs.some((line) => line.includes("omnitiler:plan:entry-attach")), "missing timer never logs attach");
         for (const handler of [...world.added.handlers]) (handler as () => void)();
-        assert.ok(!logs.some((line) => line.includes("plasma-auto-tiler:plan:entry-attach")), "missing timer never retries");
+        assert.ok(!logs.some((line) => line.includes("omnitiler:plan:entry-attach")), "missing timer never retries");
     });
 
     it("recovers a transient scope-signal failure and names the scope kind", () => {
@@ -5240,7 +5240,7 @@ describe("plan entry startup attach recovery", () => {
         const world = fakeWorld();
         const bad = startEntry(world, { owner: "OWNER BANG", generation: "gen-1" });
         assert.equal(bad.handle, null);
-        assert.ok(!bad.mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:entry-attach")), "auth refusal stays silent");
+        assert.ok(!bad.mocks.logs.some((line) => line.includes("omnitiler:plan:entry-attach")), "auth refusal stays silent");
     });
 
     it("recovers after more than five failed events with bounded transition logs", () => {
@@ -5262,7 +5262,7 @@ describe("plan entry startup attach recovery", () => {
         failLister = false;
         fireAdded(world);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "one bounded recovery line");
-        assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "ready line after recovery");
+        assert.ok(mocks.logs.some((line) => line.includes("omnitiler:plan:ready")), "ready line after recovery");
         assert.equal(mocks.shortcuts.length, 129, "shortcuts register exactly once on recovery");
         handle?.requestFocus("left");
         assert.equal(mocks.dbusCalls.length, 1, "actuation resumes after recovery");
@@ -5286,7 +5286,7 @@ describe("plan entry startup attach recovery", () => {
         fireAdded(world);
         assert.ok(!mocks.logs.some((line) => line === RECOVERED), "no recovery after stop");
         assert.equal(mocks.dbusCalls.length, 0, "no actuation after stop");
-        assert.ok(!mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "no ready line after stop");
+        assert.ok(!mocks.logs.some((line) => line.includes("omnitiler:plan:ready")), "no ready line after stop");
     });
 });
 
@@ -5571,12 +5571,12 @@ describe("plan native identity sharing and string-keyed cache", () => {
 describe("plan native id ownership on exact removal", () => {
     const exclusionCount = (mocks: EntryMocks, id: string): number =>
         mocks.logs.filter(
-            (line) => line.includes("plasma-auto-tiler:plan:observe-excluded") && line.includes(`window=${id}`),
+            (line) => line.includes("omnitiler:plan:observe-excluded") && line.includes(`window=${id}`),
         ).length;
     const windowsOf = (payload: string): string =>
         JSON.stringify((JSON.parse(payload) as Record<string, unknown>)["windows"] ?? payload);
     const focusLeft = (mocks: EntryMocks): (() => void) =>
-        (mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-focus-left") as { callback: () => void })
+        (mocks.shortcuts.find((row) => row.action === "omnitiler-focus-left") as { callback: () => void })
             .callback;
 
     it("evicts a pre-apply id on exact removal without reading the removed object", () => {
@@ -5783,9 +5783,9 @@ describe("plan adapter fullscreen isolation", () => {
         assert.equal(adapter.requestPointerResize("win-b", "left", 600), false);
         assert.equal(mocks.dbusCalls.length, callsBefore);
         assert.equal(mocks.geometries.length, 0);
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:move-refused-fullscreen"));
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:resize-refused-fullscreen"));
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-fullscreen"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:move-refused-fullscreen"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:resize-refused-fullscreen"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:pointer-refused-fullscreen"));
     });
 
     it("holds a born-fullscreen member without a slot, then admits it on first exit", () => {
@@ -5822,7 +5822,7 @@ describe("plan adapter fullscreen isolation", () => {
             },
             "born-fullscreen rides as a synthetic floating exception with no slot",
         );
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:initial-fullscreen-held window=win-c"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:initial-fullscreen-held window=win-c"));
         // Siblings fill the space alone: the reply covers only them.
         const corr = plannerPayload(mocks, 1)["correlation_id"] as string;
         const writesBefore = mocks.geometries.length;
@@ -5839,7 +5839,7 @@ describe("plan adapter fullscreen isolation", () => {
         assert.ok(mocks.logs.some((line) => line.includes(`cmd=${corr}`) && line.includes("outcome=planned-applied")));
         assert.ok(!mocks.geometries.slice(writesBefore).some((entry) => entry.target === refs.c), "held member never actuated");
         assert.ok(
-            !mocks.logs.some((line) => line.startsWith("plasma-auto-tiler:plan:write window=win-c")),
+            !mocks.logs.some((line) => line.startsWith("omnitiler:plan:write window=win-c")),
             "held member without a slot carries no write disposition",
         );
         // First exit admits at normal placement through one reconcile.
@@ -5857,7 +5857,7 @@ describe("plan adapter fullscreen isolation", () => {
         assert.equal(mocks.dbusCalls.length, 3);
         const admitIndex = mocks.dbusCalls.length - 1;
         assert.deepEqual((plannerPayload(mocks, admitIndex)["command"] as Record<string, unknown>)["op"], "reconcile");
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:initial-fullscreen-released window=win-c"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:initial-fullscreen-released window=win-c"));
         const admitted = (plannerPayload(mocks, admitIndex)["windows"] as Array<Record<string, unknown>>).find((entry) => entry["window"] === "win-c");
         assert.equal(admitted?.["floating"], undefined, "released member rides as a normal tile");
         const admitCorr = plannerPayload(mocks, admitIndex)["correlation_id"] as string;
@@ -5923,7 +5923,7 @@ describe("plan adapter fullscreen isolation", () => {
         assert.ok(!mocks.geometries.slice(slotWrites).some((entry) => entry.target === refs.c), "retained slot never actuated");
         assert.ok(
             mocks.logs.some(
-                (line) => line === "plasma-auto-tiler:plan:write window=win-c resource_class=unknown disposition=skip-fullscreen rect=800,0,400,800",
+                (line) => line === "omnitiler:plan:write window=win-c resource_class=unknown disposition=skip-fullscreen rect=800,0,400,800",
             ),
             "later fullscreen retains its slot with a skip-fullscreen disposition",
         );
@@ -6010,11 +6010,11 @@ describe("plan adapter fullscreen isolation", () => {
         );
         assert.ok(!mocks.geometries.slice(repeatWrites).some((entry) => entry.target === refs.c), "held member never actuated");
         assert.ok(
-            !mocks.logs.some((line) => line.startsWith("plasma-auto-tiler:plan:write window=win-c")),
+            !mocks.logs.some((line) => line.startsWith("omnitiler:plan:write window=win-c")),
             "held member stays excluded from desired_geometry with no write disposition",
         );
         assert.equal(
-            mocks.logs.filter((line) => line === "plasma-auto-tiler:plan:initial-fullscreen-held window=win-c").length,
+            mocks.logs.filter((line) => line === "omnitiler:plan:initial-fullscreen-held window=win-c").length,
             1,
             "held exception logs exactly once",
         );
@@ -6047,7 +6047,7 @@ describe("plan adapter fullscreen isolation", () => {
                 "win-a-leaf",
             ),
         );
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:initial-fullscreen-held window=win-c"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:initial-fullscreen-held window=win-c"));
         // Close while held: the departed member leaves no slot or hold behind.
         mocks.observeImpl = () =>
             makeObserved(refs, {
@@ -6844,7 +6844,7 @@ describe("plan adapter maximize isolation", () => {
                 mocks.logs.some(
                     (line) =>
                         line ===
-                        `plasma-auto-tiler:plan:write window=win-a resource_class=firefox disposition=skip-maximized rect=${String(reserved.x)},${String(reserved.y)},${String(reserved.w)},${String(reserved.h)}`,
+                        `omnitiler:plan:write window=win-a resource_class=firefox disposition=skip-maximized rect=${String(reserved.x)},${String(reserved.y)},${String(reserved.w)},${String(reserved.h)}`,
                 ),
                 "overlay carries skip-maximized with its reserved rect",
             );
@@ -7068,7 +7068,7 @@ describe("plan adapter maximize isolation", () => {
                 mocks.logs.some(
                     (line) =>
                         line ===
-                        `plasma-auto-tiler:plan:write window=win-a resource_class=firefox disposition=skip-maximized rect=${String(reserved.x)},${String(reserved.y)},${String(reserved.w)},${String(reserved.h)}`,
+                        `omnitiler:plan:write window=win-a resource_class=firefox disposition=skip-maximized rect=${String(reserved.x)},${String(reserved.y)},${String(reserved.w)},${String(reserved.h)}`,
                 ),
                 "overlay carries skip-maximized with its reserved rect",
             );
@@ -7453,7 +7453,7 @@ describe("plan adapter maximize isolation", () => {
         assert.ok(mocks.logs.some((line) => line.includes(`cmd=${correlation}`) && line.includes("outcome=planned-applied")));
         assert.ok(!mocks.geometries.some((entry) => entry.target === refs.a), "held member never actuated");
         assert.ok(
-            !mocks.logs.some((line) => line.startsWith("plasma-auto-tiler:plan:write window=win-a")),
+            !mocks.logs.some((line) => line.startsWith("omnitiler:plan:write window=win-a")),
             "held member without a slot carries no write disposition",
         );
     });
@@ -7484,7 +7484,7 @@ describe("plan adapter maximize isolation", () => {
         fire(mocks, "added");
         runDebounce(mocks);
         assert.equal(mocks.maximizeClears.length, 0, "no clear while fullscreen");
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:initial-fullscreen-held window=win-c"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:initial-fullscreen-held window=win-c"));
         const heldCorr = plannerPayload(mocks, 1)["correlation_id"] as string;
         mocks.callbacks[1]?.(
             plannedReply(
@@ -7504,9 +7504,9 @@ describe("plan adapter maximize isolation", () => {
         fire(mocks, "fullscreen");
         runDebounce(mocks);
         assert.deepEqual(mocks.maximizeClears, [refs.c], "exactly one admission clear on first exit");
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:initial-fullscreen-released window=win-c"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:initial-fullscreen-released window=win-c"));
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:maximize-admission-clear window=win-c resource_class=unknown outcome=observed-cleared"),
+            mocks.logs.some((line) => line === "omnitiler:plan:maximize-admission-clear window=win-c resource_class=unknown outcome=observed-cleared"),
             "clear observed before fresh admission",
         );
         assert.equal(mocks.dbusCalls.length, 3);
@@ -7609,9 +7609,9 @@ describe("plan adapter maximize isolation", () => {
             ),
             "unconfirmed clear refuses narrowly with no structural move",
         );
-        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:move-refused-maximize"));
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:resize-refused-maximize"));
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-maximize"));
+        assert.ok(!mocks.logs.some((line) => line === "omnitiler:plan:move-refused-maximize"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:resize-refused-maximize"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:pointer-refused-maximize"));
     });
 
     it("prefers fullscreen over maximize for action refusal tokens", () => {
@@ -7630,12 +7630,12 @@ describe("plan adapter maximize isolation", () => {
         adapter.requestResize("left", "outwards");
         assert.equal(adapter.requestPointerResize("win-b", "left", 600), false);
         assert.equal(mocks.dbusCalls.length, callsBefore);
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:move-refused-fullscreen"));
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:resize-refused-fullscreen"));
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-fullscreen"));
-        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:move-refused-maximize"));
-        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:resize-refused-maximize"));
-        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-maximize"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:move-refused-fullscreen"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:resize-refused-fullscreen"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:plan:pointer-refused-fullscreen"));
+        assert.ok(!mocks.logs.some((line) => line === "omnitiler:plan:move-refused-maximize"));
+        assert.ok(!mocks.logs.some((line) => line === "omnitiler:plan:resize-refused-maximize"));
+        assert.ok(!mocks.logs.some((line) => line === "omnitiler:plan:pointer-refused-maximize"));
     });
 
     it("admits a maximized member into the tree but never writes its geometry", () => {
@@ -7677,7 +7677,7 @@ describe("plan adapter maximize isolation", () => {
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line === "plasma-auto-tiler:plan:write window=win-c resource_class=unknown disposition=skip-maximized rect=800,0,400,800",
+                    line === "omnitiler:plan:write window=win-c resource_class=unknown disposition=skip-maximized rect=800,0,400,800",
             ),
             "maximized member carries skip-maximized disposition with its retained target rect",
         );
@@ -7826,7 +7826,7 @@ describe("plan adapter maximize isolation", () => {
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line === "plasma-auto-tiler:plan:write window=win-c resource_class=unknown disposition=skip-fullscreen rect=800,0,400,800",
+                    line === "omnitiler:plan:write window=win-c resource_class=unknown disposition=skip-fullscreen rect=800,0,400,800",
             ),
             "fullscreen disposition wins when both fullscreen and maximized",
         );
@@ -8387,7 +8387,7 @@ describe("plan entry workspace-send echo wiring", () => {
         const world = fakeWorld();
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
-        const move = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-move-workspace-2");
+        const move = mocks.shortcuts.find((row) => row.action === "omnitiler-move-workspace-2");
         assert.ok(move !== undefined, "current Meta+Shift+2 move chord must exist");
         assert.equal(move.sequence, "Meta+Shift+2");
         handle.stop();
@@ -8811,7 +8811,7 @@ describe("plan ordinary lifecycle diagnostics", () => {
             const lines = lifecycle(mocks);
             const terminals = lines.filter((l) => l.includes("stage=terminal"));
             assert.equal(terminals.length, 1, `exactly one ordinary terminal: ${lines.join("\n")}`);
-            assert.equal(terminals[0], `plasma-auto-tiler:plan:cmd=${correlation} kind=move windows=2 component=cosmic-plan route=plan stage=terminal correlation=${correlation} generation=gen-1 revision=0 event=settled outcome=timeout cause=reply`);
+            assert.equal(terminals[0], `omnitiler:plan:cmd=${correlation} kind=move windows=2 component=cosmic-plan route=plan stage=terminal correlation=${correlation} generation=gen-1 revision=0 event=settled outcome=timeout cause=reply`);
             assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")));
             assert.ok(!mocks.logs.some((l) => l.includes("ack") || l.includes("verify") || l.includes("verified")), "timeout path has no ack/verify");
             assert.equal(adapter.isInFlight, false);
@@ -9141,13 +9141,13 @@ describe("plan entry sticky workspace-switch regression", () => {
         const floatReply = await flushPlan(mocks, engine, firstIndex);
         assert.equal(floatReply["outcome"], "planned", `setup: sticky-on float plans, engine replied ${JSON.stringify(floatReply)}`);
         assert.equal(winA["onAllDesktops"], true, "setup: sticky-on takes native all-desktops");
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-echo-consumed"), "setup: sticky-on echo consumed synchronously");
+        assert.ok(mocks.logs.includes("omnitiler:plan:sticky-echo-consumed"), "setup: sticky-on echo consumed synchronously");
         current.desktop = d2;
         handle.requestFloat();
         assert.equal(winA["onAllDesktops"], false, "Meta+G clears native all-desktops on the current workspace");
         assert.deepEqual(winA["desktops"], [d2], "KWin re-homes sticky-off onto the current desktop");
         assert.ok(
-            mocks.logs.filter((line) => line === "plasma-auto-tiler:plan:sticky-echo-consumed").length >= 2,
+            mocks.logs.filter((line) => line === "omnitiler:plan:sticky-echo-consumed").length >= 2,
             `sticky-off echo consumed synchronously, logs: ${tailLogs(mocks)}`,
         );
         assert.equal(mocks.dbusCalls.length, firstIndex + 2, `sticky-off re-invokes tiling on the current workspace, logs: ${tailLogs(mocks)}`);
@@ -9809,7 +9809,7 @@ describe("plan adapter refresh classification", () => {
     }
     function refreshLines(mocks: Mocks): string[] {
         return mocks.logs.filter((line) =>
-            line.startsWith("plasma-auto-tiler:route-diag component=cosmic-plan route=plan stage=refresh event=foreground "),
+            line.startsWith("omnitiler:route-diag component=cosmic-plan route=plan stage=refresh event=foreground "),
         );
     }
     it("quiet equal emits one bounded equal classification with no dispatch", () => {
@@ -9824,7 +9824,7 @@ describe("plan adapter refresh classification", () => {
         const fresh = refreshLines(mocks).slice(logsBefore);
         assert.equal(fresh.length, 1, `one classification per decision, got ${JSON.stringify(fresh)}`);
         assert.ok(
-            fresh[0] === `plasma-auto-tiler:route-diag component=cosmic-plan route=plan stage=refresh event=foreground outcome=equal reason=applied-evidence-equal terminal=quiet correlation=none generation=gen-1`,
+            fresh[0] === `omnitiler:route-diag component=cosmic-plan route=plan stage=refresh event=foreground outcome=equal reason=applied-evidence-equal terminal=quiet correlation=none generation=gen-1`,
             fresh[0] as string,
         );
         for (const raw of ["win-a", "win-b", "600,800", "0,0"]) {
@@ -9863,7 +9863,7 @@ describe("plan adapter refresh classification", () => {
         fire(mocks, "geometry");
         runDebounce(mocks);
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:scope-transition old=0,0,1200,800 new=0,0,1800,1200"),
+            mocks.logs.some((line) => line === "omnitiler:plan:scope-transition old=0,0,1200,800 new=0,0,1800,1200"),
             "flag-differing transition still takes the window-set reprojection path",
         );
         const fresh = refreshLines(mocks).slice(logsBefore);

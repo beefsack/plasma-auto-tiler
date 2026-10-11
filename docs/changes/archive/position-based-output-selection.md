@@ -70,7 +70,7 @@
 - `cargo test --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi
   -p tiler-windows --offline`: Windows portable Linux allowlist 1136 passed,
   0 failed (1118, +18). No Windows runtime edits or native target locally.
-- `cargo build -p plasma-auto-tiler --offline` passes. All nine offline shell
+- `cargo build -p omnitiler --offline` passes. All nine offline shell
   suites pass: build-kpackage contracts; Custom Tile 131, dev-loop 380,
   native-dev 163, dogfood 572, floor-ratio 92, live-harness 237, host-build 93,
   tray 29 fixture + 16 self-test assertions. Mock host tools only, no live tests.

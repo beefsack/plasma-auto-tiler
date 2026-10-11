@@ -607,7 +607,7 @@ describe("migrate engine fixture", () => {
         try {
             await harness.settlePlan();
             const targetFrameBefore = harness.frameOf(harness.winById("m-win-t"));
-            const shortcut = harness.shortcuts.find((entry) => entry.action === "plasma-auto-tiler-migrate-workspace-right");
+            const shortcut = harness.shortcuts.find((entry) => entry.action === "omnitiler-migrate-workspace-right");
             assert.notEqual(shortcut, undefined, "migrate-right shortcut is registered");
             assert.equal(shortcut?.sequence, "");
             (shortcut as { callback: () => void }).callback();

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.invalid/plasma-auto-tiler/floor-ratio-static-contract-fixture-v2.schema.json",
+  "$id": "https://example.invalid/omnitiler/floor-ratio-static-contract-fixture-v2.schema.json",
   "title": "Floor ratio static-contract-fixture, not runtime/live evidence",
   "type": "object",
   "additionalProperties": false,

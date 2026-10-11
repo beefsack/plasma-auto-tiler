@@ -31,7 +31,7 @@
   setter write. A completed v2 upgrade demotes to the resumable phase only
   after old rows match their postimage. This cannot simply be deleted while an
   existing three-row journal may remain (`decisions.md` Shortcuts).
-- The canonical journal is in `GenericConfigLocation/plasma-auto-tiler`, not a
+- The canonical journal is in `GenericConfigLocation/omnitiler`, not a
   KCM-host-specific directory. The single old `kcmshell6` location is consulted
   read-only for preview and copied after a confirmed mutation, with path, UID,
   validity and readback checks. Removing the migration would strand an existing
@@ -39,7 +39,7 @@
 - Force Apply is confirmed only for compiled foreign clear-row third images.
   It rechecks the entire live and journal image and owner before writing and
   records the confirmed actuals as reversible preimages. The operation and
-  failure logs on `plasmaautotiler.shortcut op=` are required observability.
+  failure logs on `omnitiler.shortcut op=` are required observability.
   Neither Force nor its full-image fence may be removed.
 - Incidental code includes repeated v2-to-v3 entry construction and persistence,
   and manually expanded 10-entry journal readback equality. The path-based

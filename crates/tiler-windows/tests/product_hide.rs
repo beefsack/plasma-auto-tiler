@@ -350,7 +350,7 @@ mod native_topmost_hide {
     use tiler_windows::model::ProcessIdentity;
     use tiler_windows::product_hide::{project_topmost_hide_allowed, sys};
 
-    const TEST_CLASS: &str = "PlasmaAutoTilerHideTopmostTest";
+    const TEST_CLASS: &str = "OmniTilerHideTopmostTest";
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain([0]).collect()

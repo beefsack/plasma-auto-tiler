@@ -1,4 +1,4 @@
-use plasma_auto_tiler::tray_endpoint::{FRESHNESS_MS, Snapshot, StateView, TrayError, TrayState};
+use omnitiler::tray_endpoint::{FRESHNESS_MS, Snapshot, StateView, TrayError, TrayState};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -73,9 +73,9 @@ struct SnapshotExpectation {
 #[test]
 fn fixture_defines_the_fixed_route_and_signature() {
     let fixture = fixture();
-    assert_eq!(fixture.contract.service, "org.plasmaautotiler.Tray");
-    assert_eq!(fixture.contract.object, "/org/plasmaautotiler/Tray");
-    assert_eq!(fixture.contract.interface, "org.plasmaautotiler.Tray1");
+    assert_eq!(fixture.contract.service, "com.omnitiler.Tray");
+    assert_eq!(fixture.contract.object, "/com/omnitiler/Tray");
+    assert_eq!(fixture.contract.interface, "com.omnitiler.Tray1");
     assert_eq!(fixture.contract.method, "PublishSnapshot");
     assert_eq!(fixture.contract.signature, "isibsbb");
     assert_eq!(fixture.contract.schema, 2);
@@ -136,7 +136,7 @@ fn semantic_invalid_input_surfaces_invalid_snapshot_and_preserves_trusted_state(
             1,
         )
         .unwrap_err();
-    assert_eq!(error.name(), "org.plasmaautotiler.Tray1.InvalidSnapshot");
+    assert_eq!(error.name(), "com.omnitiler.Tray1.InvalidSnapshot");
     assert_eq!(
         state.view(1).snapshot,
         Some(snapshot("alpha", 1, true, "", true, true))
@@ -154,7 +154,7 @@ fn semantic_invalid_input_surfaces_invalid_snapshot_and_preserves_trusted_state(
             2,
         )
         .unwrap_err();
-    assert_eq!(error.name(), "org.plasmaautotiler.Tray1.InvalidSnapshot");
+    assert_eq!(error.name(), "com.omnitiler.Tray1.InvalidSnapshot");
     assert_eq!(
         state.view(2).snapshot,
         Some(snapshot("alpha", 1, true, "", true, true))
@@ -165,7 +165,7 @@ fn semantic_invalid_input_surfaces_invalid_snapshot_and_preserves_trusted_state(
     let error = state
         .publish_snapshot(1, "alpha".to_owned(), 1, true, String::new(), true, true, 3)
         .unwrap_err();
-    assert_eq!(error.name(), "org.plasmaautotiler.Tray1.InvalidSnapshot");
+    assert_eq!(error.name(), "com.omnitiler.Tray1.InvalidSnapshot");
 }
 
 #[test]
@@ -212,7 +212,7 @@ fn schema2_workspace_fields_drive_menu_state_without_identity_logging() {
     let error = state
         .publish_snapshot(2, "alpha".to_owned(), 1, true, long_scope, true, true, 2)
         .unwrap_err();
-    assert_eq!(error.name(), "org.plasmaautotiler.Tray1.InvalidSnapshot");
+    assert_eq!(error.name(), "com.omnitiler.Tray1.InvalidSnapshot");
 }
 
 #[test]

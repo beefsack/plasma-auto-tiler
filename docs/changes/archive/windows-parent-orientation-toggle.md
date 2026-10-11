@@ -90,7 +90,7 @@
   pass-through under Authentic/Compatible/Disable/rebind/takeover-off.
   Product injected-input fence preserved; no helper-proof/CLI bypass introduced.
 - Pushed implementation `f5801d8`. CI run
-  [38063933730](https://github.com/beefsack/plasma-auto-tiler/actions/runs/38063933730)
+  [38063933730](https://github.com/beefsack/omnitiler/actions/runs/38063933730)
   found the predicted fixture dependency: elevated Windows runner settled
   `elevated-foreground` before the fabricated stale origin. Production correctly
   refused; no product behavior failure. All other CI jobs passed.
@@ -102,7 +102,7 @@
   Six native orientation-route tests and all native allowlisted gates passed
   after repair; positive Win32 actuation remains physical-owned pending.
 - Repair pushed `83085a3`; CI
-  [38064624471](https://github.com/beefsack/plasma-auto-tiler/actions/runs/38064624471)
+  [38064624471](https://github.com/beefsack/omnitiler/actions/runs/38064624471)
   completed success for windows, rust, kwin, shell, native and macos. No further
   repair required. Implementation/offline/native Settings handoff complete;
   exact next user action is the physical item 3/item 4 journeys in backlog,

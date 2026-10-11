@@ -115,7 +115,7 @@
 ## Completion And Handover
 
 - Implementation and evidence delivered as `d8329e3`, pushed to main. Hosted
-  [CI 37069767244](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37069767244)
+  [CI 37069767244](https://github.com/beefsack/omnitiler/actions/runs/37069767244)
   passed Windows, Rust, KWin and shell jobs. No Worker remains running.
 - Backlog proposal: item5 float shipped (Win+G), gated/independently reviewed;
   full live acceptance open under the Explorer activation blocker, crash band
@@ -127,7 +127,7 @@
 - 2026-10-03, `3f70136`: cloak-aware foreground veto fixes the invisible-cover
   suspension defect without bypassing admission or shell safety. Native gates,
   independent review and hosted Windows/Rust/KWin/shell
-  [CI 37072709516](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37072709516)
+  [CI 37072709516](https://github.com/beefsack/omnitiler/actions/runs/37072709516)
   pass. Narrow WM_CLOSE failed; authorized exact-identity Explorer restarts
   cleared the foreground surface, taskbar returned and Terminal survived.
 - New receipts under `target/windows-float/`; owner SHA256

@@ -138,7 +138,7 @@ describe("fixed-size predicate live setting on Options configChanged", () => {
         }
         assert.ok(
             logs.some((line) =>
-                line === "plasma-auto-tiler:plan:config-reloaded stage=fixed-size-predicate predicate=either-axis-fixed"
+                line === "omnitiler:plan:config-reloaded stage=fixed-size-predicate predicate=either-axis-fixed"
             ),
         );
         assert.ok(!logs.some((line) => line.includes("restart-required")));

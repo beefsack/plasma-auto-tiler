@@ -296,12 +296,12 @@ describe("hidden terminal isolation", () => {
             const correlation = payload(mocks, index)["correlation_id"] as string;
             mocks.callbacks[index]?.(rejectedReply(correlation));
         }
-        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"), "no domain-wide park remains");
+        assert.ok(!mocks.logs.some((line) => line === "omnitiler:plan:reconcile-parked"), "no domain-wide park remains");
         mocks.observeHiddenImpl = () => [hiddenObserved("ws-2", "win-ws-2", hiddenRef, HIDDEN_DRIFT)];
         mocks.observeImpl = () => fgObserved(world.fgA, world.fgB, ALLOC_A);
         fire(mocks, "geometry");
         runDebounce(mocks);
-        assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:reconcile-accepted") && line.includes("cause=stable-drift")), "stable hidden drift accepts");
+        assert.ok(mocks.logs.some((line) => line.includes("omnitiler:plan:reconcile-accepted") && line.includes("cause=stable-drift")), "stable hidden drift accepts");
         const acceptedCalls = mocks.dbusCalls.length;
         fire(mocks, "geometry");
         runDebounce(mocks);
@@ -406,7 +406,7 @@ describe("hidden terminal isolation", () => {
         assert.equal(mocks.dbusCalls.length, 0, "an over-cap request must not reach D-Bus");
         assert.ok(
             mocks.logs.some(
-                (line) => line === "plasma-auto-tiler:plan:request-refused correlation=gen-1-p0 reason=request-over-cap",
+                (line) => line === "omnitiler:plan:request-refused correlation=gen-1-p0 reason=request-over-cap",
             ),
             mocks.logs.join("\n"),
         );
@@ -444,11 +444,11 @@ describe("hidden terminal isolation", () => {
             }));
         }
         assert.equal(mocks.dbusCalls.length, settled + 3, "exactly three successful background reconciles");
-        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"), "no domain-wide park remains");
+        assert.ok(!mocks.logs.some((line) => line === "omnitiler:plan:reconcile-parked"), "no domain-wide park remains");
         mocks.observeHiddenImpl = () => [hiddenObserved("ws-2", "win-ws-2", hiddenRef, HIDDEN_DRIFT)];
         fire(mocks, "geometry");
         runDebounce(mocks);
-        assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:reconcile-accepted") && line.includes("cause=stable-drift")), "stable hidden drift accepts");
+        assert.ok(mocks.logs.some((line) => line.includes("omnitiler:plan:reconcile-accepted") && line.includes("cause=stable-drift")), "stable hidden drift accepts");
         const acceptedCalls = mocks.dbusCalls.length;
         assert.equal(acceptedCalls, settled + 3, "acceptance quiets without dispatching");
         fire(mocks, "geometry");

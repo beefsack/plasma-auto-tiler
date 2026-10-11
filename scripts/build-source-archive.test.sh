@@ -11,14 +11,14 @@
 #
 # Real-toolchain integration (network npm ci, cargo vendor, offline
 # self-check build, prebuilt kpackage) is opt-in and runs separately:
-#   PLASMA_AUTO_TILER_RELEASE_INTEGRATION=1 bash scripts/build-source-archive.test.sh
+#   OMNITILER_RELEASE_INTEGRATION=1 bash scripts/build-source-archive.test.sh
 set -uo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 ARCHIVE_SCRIPT_SRC="$REPO_ROOT/scripts/build-source-archive.sh"
 KPACKAGE_SCRIPT_SRC="$REPO_ROOT/scripts/build-kpackage.sh"
 WEBHOOK_SCRIPT="$REPO_ROOT/scripts/trigger-obs-webhook.sh"
-INTEGRATION="${PLASMA_AUTO_TILER_RELEASE_INTEGRATION:-0}"
+INTEGRATION="${OMNITILER_RELEASE_INTEGRATION:-0}"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/release-archive-test.XXXXXX")"
 CLONE="$WORK/clone"
@@ -87,7 +87,7 @@ VERSION="$(node -e "process.stdout.write(require('$CLONE/kwin/package.json').ver
   || { fail "could not read clone kwin version"; exit 1; }
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { fail "clone version is not X.Y.Z: $VERSION"; exit 1; }
 TAG="v$VERSION"
-TOP_DIR="plasma-auto-tiler-$VERSION"
+TOP_DIR="omnitiler-$VERSION"
 git -C "$CLONE" tag "$TAG" >/dev/null 2>&1 || { fail "could not tag clone"; exit 1; }
 TAG_SHA="$(git -C "$CLONE" rev-parse "$TAG^{commit}")" || { fail "could not resolve clone tag"; exit 1; }
 ARCHIVE_SCRIPT="$CLONE/scripts/build-source-archive.sh"
@@ -108,7 +108,7 @@ for a in "$@"; do
 done
 [[ -n "$prefix" && -d "$prefix" ]] || exit 1
 if [[ " $* " == *" run build:installed "* ]]; then
-  rev="${PLASMA_AUTO_TILER_SOURCE_REV:-}"
+  rev="${OMNITILER_SOURCE_REV:-}"
   [[ "$rev" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || exit 1
   mkdir -p "$prefix/contents/code"
   printf '// stub bundle for %s\n' "$rev" > "$prefix/contents/code/main.js"
@@ -149,7 +149,7 @@ expect_failure "unknown tag" bash "$ARCHIVE_SCRIPT" --tag v9.9.9 --output-dir "$
 git -C "$CLONE" tag "v9.9.9" >/dev/null 2>&1 \
   || fail "could not tag clone for mismatch check"
 expect_failure "version mismatch" bash "$ARCHIVE_SCRIPT" --tag v9.9.9 --output-dir "$OUT"
-[[ ! -e "$OUT/plasma-auto-tiler-9.9.9.tar.gz" ]] || fail "failed run left an archive behind"
+[[ ! -e "$OUT/omnitiler-9.9.9.tar.gz" ]] || fail "failed run left an archive behind"
 
 # Success contract on the scratch clone tag.
 bash "$ARCHIVE_SCRIPT" --tag "$TAG" --output-dir "$OUT" >/dev/null 2>&1 \
@@ -321,12 +321,12 @@ if [[ "$INTEGRATION" == "1" ]]; then
       || fail "integration kwin bundle build failed"
     KPACKAGE_OUT="$WORK/kpackage"
     mkdir -p -- "$KPACKAGE_OUT"
-    if PLASMA_AUTO_TILER_PREBUILT_BUNDLE=1 NPM_BIN=/bin/false \
+    if OMNITILER_PREBUILT_BUNDLE=1 NPM_BIN=/bin/false \
       bash "$KPACKAGE_SCRIPT" --output-dir "$KPACKAGE_OUT" >/dev/null 2>&1; then
-      [[ -f "$KPACKAGE_OUT/plasma-auto-tiler-kwin.kwinscript" ]] \
+      [[ -f "$KPACKAGE_OUT/omnitiler-kwin.kwinscript" ]] \
         || fail "integration prebuilt kpackage artifact missing"
     else
-      fail "integration build-kpackage.sh failed with PLASMA_AUTO_TILER_PREBUILT_BUNDLE=1"
+      fail "integration build-kpackage.sh failed with OMNITILER_PREBUILT_BUNDLE=1"
     fi
   else
     printf 'SKIP: integration prebuilt kpackage check (kpackagetool6 unavailable)\n'

@@ -6,7 +6,7 @@ Identify Plasma 6 host settings that interfere with the tiler, implement the
 approved settings-page controls offline, and research uninstall behavior.
 No live KWin mutation or host config writes were used for verification. Installed
 `kwin_wayland --version` and `plasmashell --version` both report 6.7.5. The test-system report
-(`plasma-auto-tiler-dev.H28tD1.log` and user visual observation) is
+(`omnitiler-dev.H28tD1.log` and user visual observation) is
 native edge preview/move competing with our Meta-drag preview, followed by our
 correct retile; this research does not independently replay or attribute that
 log. Source defaults below are upstream 6.7.5, **not measured host values**.
@@ -74,7 +74,7 @@ exactly one Fix/Revert button; `ElectricBorders` shows only when nonzero with
 Fix alone. Boolean Fix writes `false`; boolean Revert and Borders Fix remove
 the local key. The immediate operation syncs, sends `/KWin reconfigure`,
 reparses/readbacks, and logs exactly one normal-level
-`plasmaautotiler.window-conflicts: op=<fix|revert> setting=<key>
+`omnitiler.window-conflicts: op=<fix|revert> setting=<key>
 outcome=<ok|failed> reason=<ok|write-failed|send-failed|readback-mismatch>`
 line. `outcome=ok` means persisted/readback matched and a reconfigure send was
 queued, **not** proof that the running compositor applied it. Error text is
@@ -121,7 +121,7 @@ reads the overlay for normal and attention icons and refreshes on
 keeps OverlayIconName independent of Status. No `NewStatus` is emitted for a
 conflict-only change. Snapshot loss still reports NeedsAttention; left-click
 still opens the menu. The tray emits one
-`plasma-auto-tiler:route-diag component=tray-endpoint stage=projection
+`omnitiler:route-diag component=tray-endpoint stage=projection
 event=projected outcome=conflict-updated conflict=<true|false>` line per
 observed transition, never per heartbeat; no clean-start false transition.
 
@@ -180,7 +180,7 @@ and the native edge preview/desktop jump no longer competes. Both bool rows
 stay visible, switching from Fix to Revert; the Borders row disappears. Revert
 each boolean, verify its local key is absent and effective `true` returns, and
 confirm edge preview returns. The KCM process (not `[kwin]` dev logs) should emit one
-`plasmaautotiler.window-conflicts: op=fix|revert setting=... outcome=ok reason=ok`
+`omnitiler.window-conflicts: op=fix|revert setting=... outcome=ok reason=ok`
 line per click. Red flags: an absent/wrong row, shortcut or ordinary Save
 changing these keys, a success claim on a failed request, more than one
 operation log per click, or native preview persisting after a successful

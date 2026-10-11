@@ -20,9 +20,9 @@
   state behind a panic-contained byte/POD C ABI. C++ is only the QObject/D-Bus
   QString-to-UTF-8 boundary, native identity and signal observation, and
   automatic-lifetime outline/repaint shim. An effect-owned D-Bus object
-  exposes `org.plasmaautotiler.ActiveBorder` /
-  `/org/plasmaautotiler/ActiveBorder` /
-  `org.plasmaautotiler.ActiveBorder1` with `SetGroupHighlight(QString)` and
+  exposes `com.omnitiler.ActiveBorder` /
+  `/com/omnitiler/ActiveBorder` /
+  `com.omnitiler.ActiveBorder1` with `SetGroupHighlight(QString)` and
   `ClearGroupHighlight()`. This is not a `/Effects` method.
 - The group outline is visible only after passive public
   `EffectsHandler::mouseChanged` reports Meta held. It hides on release and
@@ -34,7 +34,7 @@
 
 ## Read-Only Native Diagnostic
 
-- `org.plasmaautotiler.ActiveBorder1` additionally exposes the read-only,
+- `com.omnitiler.ActiveBorder1` additionally exposes the read-only,
   no-argument `GetGroupHighlightStatus() -> QString` method on its existing
   service and object. It has no setter, repaint, input, timer, or scene side
   effect. The status is fixed-order ASCII, never includes a native identifier,
@@ -56,8 +56,8 @@
   no-argument query:
 
   ```sh
-  busctl --user introspect org.plasmaautotiler.ActiveBorder /org/plasmaautotiler/ActiveBorder
-  busctl --user call org.plasmaautotiler.ActiveBorder /org/plasmaautotiler/ActiveBorder org.plasmaautotiler.ActiveBorder1 GetGroupHighlightStatus
+  busctl --user introspect com.omnitiler.ActiveBorder /com/omnitiler/ActiveBorder
+  busctl --user call com.omnitiler.ActiveBorder /com/omnitiler/ActiveBorder com.omnitiler.ActiveBorder1 GetGroupHighlightStatus
   ```
 
 - The first command must list `GetGroupHighlightStatus` with no input and one
@@ -67,7 +67,7 @@
   nested-group member, then hold Meta until the query completes:
 
   ```sh
-  sleep 3; busctl --user call org.plasmaautotiler.ActiveBorder /org/plasmaautotiler/ActiveBorder org.plasmaautotiler.ActiveBorder1 GetGroupHighlightStatus
+  sleep 3; busctl --user call com.omnitiler.ActiveBorder /com/omnitiler/ActiveBorder com.omnitiler.ActiveBorder1 GetGroupHighlightStatus
   ```
 
 - This is not polling or simulated input: it makes one exact query after a
@@ -83,10 +83,10 @@
 ## Current Session Read-Only Evidence
 
 - This troubleshooting performed bounded reads against one current KWin 6.7.4
-  session only. The existing `org.plasmaautotiler.ActiveBorder` service was
+  session only. The existing `com.omnitiler.ActiveBorder` service was
   owned by that KWin process; its exact object introspected with the existing
   `SetGroupHighlight(QString)` and `ClearGroupHighlight()` methods; and
-  `/Effects` reported `plasma-auto-tiler-active-border` loaded. Current-PID
+  `/Effects` reported `omnitiler-active-border` loaded. Current-PID
   journal lines included script `setter-submitted` entries.
 - This establishes the then-current existing endpoint ownership/signature,
   loaded-effect state, and script submission only. It does not prove native
@@ -99,7 +99,7 @@
   suites passed.
 - `devenv shell --impure -- rustc --test kwin/native-effect/group_highlight.rs`:
   15 policy/FFI tests passed.
-- The offline native build compiled `plasma-auto-tiler-active-border`; focused
+- The offline native build compiled `omnitiler-active-border`; focused
   CTest `native-effect-(logic|group-highlight|group-highlight-rs|metadata-factory-validation)`
   passed 4/4. The group test poisons D-Bus before Qt setup.
 - `nix build .#native-effect --no-link` passed with the Rust FFI sources in
@@ -158,7 +158,7 @@
    and confirm it stages the native binaries at
    `target/kwin-native-effect-stage`.
 2. The exact existing project env script at
-   `$XDG_CONFIG_HOME/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh`
+   `$XDG_CONFIG_HOME/plasma-workspace/env/60-omnitiler-native-effect.sh`
    (defaulting `XDG_CONFIG_HOME` to `$HOME/.config`) currently points to that
    stage path. Do not overwrite it. The current KWin environment was unreadable
    due to permission denial, so its active delivery path is unproven. If the

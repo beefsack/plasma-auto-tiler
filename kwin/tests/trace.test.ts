@@ -21,7 +21,7 @@ function traceValue(define: string | null): boolean {
         `--outfile=${outFile}`,
     ];
     if (define !== null) {
-        args.push(`--define:__PLASMA_AUTO_TILER_TRACE__=${JSON.stringify(define)}`);
+        args.push(`--define:__OMNITILER_TRACE__=${JSON.stringify(define)}`);
     }
     execFileSync("npx", args, { cwd: process.cwd(), stdio: "pipe" });
     const context = createContext({});
@@ -44,7 +44,7 @@ function dragLogs(define: string | null, cancelled = false): string[] {
         `--outfile=${outFile}`,
     ];
     if (define !== null) {
-        args.push(`--define:__PLASMA_AUTO_TILER_TRACE__=${JSON.stringify(define)}`);
+        args.push(`--define:__OMNITILER_TRACE__=${JSON.stringify(define)}`);
     }
     execFileSync("npx", args, { cwd: process.cwd(), stdio: "pipe" });
     const context = createContext({});
@@ -83,27 +83,27 @@ describe("compile-time KWin trace gate", () => {
     it("keeps trace build opt-in from the development launcher", () => {
         const manifest = readFileSync("package.json", "utf8");
         const start = readFileSync("../scripts/start-test.sh", "utf8");
-        assert.match(manifest, /"build:trace":.*__PLASMA_AUTO_TILER_TRACE__/);
-        assert.match(start, /PLASMA_AUTO_TILER_TRACE/);
+        assert.match(manifest, /"build:trace":.*__OMNITILER_TRACE__/);
+        assert.match(start, /OMNITILER_TRACE/);
         assert.match(start, /build:trace/);
     });
 
     it("suppresses ordinary drag hook detail while retaining it in a trace bundle", () => {
         assert.deepEqual(dragLogs(null), []);
         assert.deepEqual(dragLogs("1"), [
-            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
-            "plasma-auto-tiler:route-diag:drag-verdict cancelled=false correlation=drag-1 reason=ok-moved",
+            "omnitiler:route-diag:drag-pull action=dispatch",
+            "omnitiler:route-diag:drag-verdict cancelled=false correlation=drag-1 reason=ok-moved",
         ]);
     });
 
     it("emits the cancelled rejection in normal mode with correlation and reason", () => {
         assert.deepEqual(dragLogs(null, true), [
-            "plasma-auto-tiler:route-diag:drag-cancelled correlation=drag-1 reason=no-change",
+            "omnitiler:route-diag:drag-cancelled correlation=drag-1 reason=no-change",
         ]);
         assert.deepEqual(dragLogs("1", true), [
-            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
-            "plasma-auto-tiler:route-diag:drag-verdict cancelled=true correlation=drag-1 reason=no-change",
-            "plasma-auto-tiler:route-diag:drag-cancelled correlation=drag-1 reason=no-change",
+            "omnitiler:route-diag:drag-pull action=dispatch",
+            "omnitiler:route-diag:drag-verdict cancelled=true correlation=drag-1 reason=no-change",
+            "omnitiler:route-diag:drag-cancelled correlation=drag-1 reason=no-change",
         ]);
     });
 });

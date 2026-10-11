@@ -34,9 +34,9 @@
 ## Outcome
 
 - KWin lifecycle records use
-  `plasma-auto-tiler:route-diag component=tray stage=tray event={started|enabled-changed|stopped} outcome=ok`.
+  `omnitiler:route-diag component=tray stage=tray event={started|enabled-changed|stopped} outcome=ok`.
   Bridge records use
-  `plasma-auto-tiler:route-diag component=tray stage=bridge event={send-initiated|send-failed} outcome={ok|failed} generation=<token> revision=<i32> enabled=<bool>`.
+  `omnitiler:route-diag component=tray stage=bridge event={send-initiated|send-failed} outcome={ok|failed} generation=<token> revision=<i32> enabled=<bool>`.
   The generation field is included only when it matches the existing
   `[a-z0-9-]{1,32}` protocol validation; revision and enabled are typed values.
   `send-initiated` means only that fire-and-forget `callDBus` was invoked, not
@@ -64,7 +64,7 @@
   `console.log`. `just dev` redirects only Planner stderr at `justfile:299-300`
   and follows only Planner plus KWin streams at `justfile:1095-1099`; it neither
   starts nor captures the tray endpoint. Home Manager's tray autostart executes
-  `plasma-auto-tiler tray-managed` without stdout/stderr routing
+  `omnitiler tray-managed` without stdout/stderr routing
   (`home-manager-module.nix:34-44`), and the legacy desktop entry similarly has
   only `Exec=<binary>` (`src/tray_lifecycle.rs:3004`). Regular and managed CLI
   modes inherit stderr (`src/main.rs:5-11`). Source establishes no retained or

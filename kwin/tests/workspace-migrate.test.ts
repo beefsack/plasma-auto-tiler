@@ -36,10 +36,10 @@ describe("migrate catalog", () => {
         assert.deepEqual(
             rows.map((row) => row.action),
             [
-                "plasma-auto-tiler-migrate-workspace-left",
-                "plasma-auto-tiler-migrate-workspace-right",
-                "plasma-auto-tiler-migrate-workspace-up",
-                "plasma-auto-tiler-migrate-workspace-down",
+                "omnitiler-migrate-workspace-left",
+                "omnitiler-migrate-workspace-right",
+                "omnitiler-migrate-workspace-up",
+                "omnitiler-migrate-workspace-down",
             ],
         );
         assert.deepEqual(
@@ -1501,7 +1501,7 @@ function answerMigrate(world: AWorld, index: number, reply: string): void {
 
 function assertMigrateRedacted(world: AWorld): void {
     for (const line of world.logs) {
-        assert.ok(line.startsWith("plasma-auto-tiler:route-diag component=workspace-migrate "), line);
+        assert.ok(line.startsWith("omnitiler:route-diag component=workspace-migrate "), line);
         for (const raw of ["win-a", "win-b", "win-f", "win-s", "win-t", "win-m", "win-x", "win-d", "win-new", "win-ghost", "ws-1", "ws-2", "ws-9", "out-1", "out-2", ":1.9"]) {
             assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
         }

@@ -16,7 +16,7 @@ acknowledgement, and terminal result without exposing window data.
 
 ## Log Contract
 
-- Every line starts with `plasma-auto-tiler:route-diag`. KWin records use a
+- Every line starts with `omnitiler:route-diag`. KWin records use a
   closed `stage` plus bounded `key=value` fields; Planner records use bounded
   `route`, `action` or `result`, `corr`, and optional `rev`. Lifecycle records
   add closed `comp`, `event`, `gen`, and `result` fields.
@@ -30,7 +30,7 @@ acknowledgement, and terminal result without exposing window data.
   coalesced summaries only.
 - View existing current-boot logs without activation:
   `scripts/route-diag-follow.sh --follow`
-  The `plasma-auto-tiler route-diag` command prints the same source filters.
+  The `omnitiler route-diag` command prints the same source filters.
 
 ## Acceptance
 

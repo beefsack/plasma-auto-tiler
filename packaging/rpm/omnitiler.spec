@@ -11,13 +11,13 @@
 # offline. A raw git checkout (tar_scm) would lack both and must not be
 # substituted here.
 
-Name:           plasma-auto-tiler
+Name:           omnitiler
 Version:        0.1.0
 Release:        1%{?dist}
 Summary:        COSMIC-style automatic tiling for KWin (core)
 License:        GPL-2.0-or-later
-URL:            https://github.com/beefsack/plasma-auto-tiler
-Source0:        https://github.com/beefsack/plasma-auto-tiler/releases/download/v%{version}/plasma-auto-tiler-%{version}.tar.gz
+URL:            https://github.com/beefsack/omnitiler
+Source0:        https://github.com/beefsack/omnitiler/releases/download/v%{version}/omnitiler-%{version}.tar.gz
 
 BuildRequires:  cargo
 BuildRequires:  rust
@@ -72,7 +72,7 @@ Requires:       hicolor-icon-theme
 Recommends:     %{name}-native-effect
 
 %description
-Core of Plasma Auto Tiler: the KWin script (prebuilt, no Node needed at
+Core of OmniTiler: the KWin script (prebuilt, no Node needed at
 packaging time), the Rust planner/tray binary with on-demand D-Bus plus
 systemd user activation, the application icon, and both native settings
 pages (the effect settings page and the native script settings page, the
@@ -81,7 +81,7 @@ KWin-independent (Qt/KF6 only); the effect reconfigure tolerates an absent
 effect.
 
 Tiling and Settings work with this package alone. Only the active-border
-effect itself needs the companion plasma-auto-tiler-native-effect package
+effect itself needs the companion omnitiler-native-effect package
 (ABI-matched to your KWin).
 
 Revert before removing: open Settings and press Revert (Revert Shortcuts,
@@ -89,11 +89,11 @@ plus Revert to KDE default on any changed host row) to restore host keys
 and shortcut overrides. Removal does not restore them; Settings lives in
 this package, so press Revert before removing it. If you already removed
 without reverting, reinstall this package and press Revert. Disabling the
-script is separate (set plasma-auto-tiler-kwinEnabled=false and reconfigure
+script is separate (set omnitiler-kwinEnabled=false and reconfigure
 KWin).
 
 %package native-effect
-Summary:        Plasma Auto Tiler native KWin effect (active border)
+Summary:        OmniTiler native KWin effect (active border)
 Requires:       %{name} = %{version}-%{release}
 # Deliberately unversioned: this package must never hold a KWin upgrade
 # back (a pinned Requires would block host security updates), and an exact
@@ -142,9 +142,9 @@ export CARGO_NET_OFFLINE=true
 VENDOR_DIR="$PWD/vendor"
 cargo --config 'source.crates-io.replace-with="vendored-sources"' \
       --config "source.vendored-sources.directory=\"$VENDOR_DIR\"" \
-      build --release --locked --offline -p plasma-auto-tiler
+      build --release --locked --offline -p omnitiler
 # Native effect against this target's own KWin headers. The CMake project
-# reuses the same vendor tree via PLASMA_AUTO_TILER_VENDOR_DIR with
+# reuses the same vendor tree via OMNITILER_VENDOR_DIR with
 # CARGO_NET_OFFLINE=true (see kwin/native-effect/CMakeLists.txt), so no
 # network either. Plain cmake here, not the distro cmake macro (spelled
 # %%cmake in this comment because rpm expands even that): the macro hardcodes
@@ -153,7 +153,7 @@ cargo --config 'source.crates-io.replace-with="vendored-sources"' \
 # and distro-independent. PLUGINDIR is pinned explicitly because the
 # flake's lib/qt-6/plugins layout is Nix-specific; distro Qt resolves
 # qt6/plugins.
-export PLASMA_AUTO_TILER_VENDOR_DIR="$PWD/vendor"
+export OMNITILER_VENDOR_DIR="$PWD/vendor"
 cmake -S kwin/native-effect -B build-native \
   -DCMAKE_INSTALL_PREFIX=%{_prefix} \
   -DCMAKE_INSTALL_LIBDIR=%{_lib} \
@@ -164,27 +164,27 @@ cmake --build build-native
 
 %install
 # Core binary.
-install -Dm755 target/release/plasma-auto-tiler %{buildroot}%{_bindir}/plasma-auto-tiler
+install -Dm755 target/release/omnitiler %{buildroot}%{_bindir}/omnitiler
 # KWin script: install the exact prebuilt four-file set, no npm involved.
-scriptdir=%{buildroot}%{_datadir}/kwin/scripts/plasma-auto-tiler-kwin
+scriptdir=%{buildroot}%{_datadir}/kwin/scripts/omnitiler-kwin
 install -Dm644 kwin/metadata.json "$scriptdir/metadata.json"
 install -Dm644 kwin/contents/code/main.js "$scriptdir/contents/code/main.js"
 install -Dm644 kwin/contents/config/main.xml "$scriptdir/contents/config/main.xml"
 install -Dm644 kwin/contents/ui/config.ui "$scriptdir/contents/ui/config.ui"
 # D-Bus activation descriptor (template carries @out@, Nix-style).
 install -d %{buildroot}%{_datadir}/dbus-1/services
-sed 's|@out@|%{_prefix}|' nix/org.plasmaautotiler.Planner.service \
-  > %{buildroot}%{_datadir}/dbus-1/services/org.plasmaautotiler.Planner.service
-chmod 644 %{buildroot}%{_datadir}/dbus-1/services/org.plasmaautotiler.Planner.service
+sed 's|@out@|%{_prefix}|' nix/com.omnitiler.Planner.service \
+  > %{buildroot}%{_datadir}/dbus-1/services/com.omnitiler.Planner.service
+chmod 644 %{buildroot}%{_datadir}/dbus-1/services/com.omnitiler.Planner.service
 # Systemd user units (mirrors home-manager-module.nix; never auto-enabled
 # by this package, the user opts in with systemctl --user enable).
-install -Dm644 packaging/systemd/plasma-auto-tiler-tray.service \
-  %{buildroot}%{_userunitdir}/plasma-auto-tiler-tray.service
-install -Dm644 packaging/systemd/plasma-auto-tiler-planner.service \
-  %{buildroot}%{_userunitdir}/plasma-auto-tiler-planner.service
+install -Dm644 packaging/systemd/omnitiler-tray.service \
+  %{buildroot}%{_userunitdir}/omnitiler-tray.service
+install -Dm644 packaging/systemd/omnitiler-planner.service \
+  %{buildroot}%{_userunitdir}/omnitiler-planner.service
 # Icon.
-install -Dm644 assets/icons/plasma-auto-tiler.svg \
-  %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/plasma-auto-tiler.svg
+install -Dm644 assets/icons/omnitiler.svg \
+  %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/omnitiler.svg
 # Native effect plus settings pages (three plugins; JSON metadata is
 # embedded in the .so files at compile time, so no .json ships alongside).
 # %files splits them: the two KCMs belong to core, the effect plugin to the
@@ -196,40 +196,40 @@ DESTDIR=%{buildroot} cmake --install build-native
 # neither unit needs enabling for on-demand planner activation.
 
 %preun
-%systemd_user_preun plasma-auto-tiler-tray.service plasma-auto-tiler-planner.service
+%systemd_user_preun omnitiler-tray.service omnitiler-planner.service
 
 %postun
-%systemd_user_postun plasma-auto-tiler-tray.service plasma-auto-tiler-planner.service
+%systemd_user_postun omnitiler-tray.service omnitiler-planner.service
 # Final erase only ($1=0): upgrades ($1=1) keep host settings untouched.
 if [ $1 -eq 0 ]; then
-  echo "plasma-auto-tiler removed (including Settings). Press Revert in Settings before removing:"
+  echo "omnitiler removed (including Settings). Press Revert in Settings before removing:"
   echo "that step restores host keys and shortcut overrides, removal does not."
   echo "If you already removed without reverting, reinstall this package and press Revert."
 fi
 
 %postun native-effect
 if [ $1 -eq 0 ]; then
-  echo "plasma-auto-tiler-native-effect removed. Settings and Revert remain"
+  echo "omnitiler-native-effect removed. Settings and Revert remain"
   echo "available in the core package: removal does not restore host keys or"
   echo "shortcut overrides, so press Revert in the core Settings if needed."
 fi
 
 %files
-%{_bindir}/plasma-auto-tiler
-%{_datadir}/kwin/scripts/plasma-auto-tiler-kwin/
-%{_datadir}/dbus-1/services/org.plasmaautotiler.Planner.service
-%{_userunitdir}/plasma-auto-tiler-tray.service
-%{_userunitdir}/plasma-auto-tiler-planner.service
-%{_datadir}/icons/hicolor/scalable/apps/plasma-auto-tiler.svg
+%{_bindir}/omnitiler
+%{_datadir}/kwin/scripts/omnitiler-kwin/
+%{_datadir}/dbus-1/services/com.omnitiler.Planner.service
+%{_userunitdir}/omnitiler-tray.service
+%{_userunitdir}/omnitiler-planner.service
+%{_datadir}/icons/hicolor/scalable/apps/omnitiler.svg
 # KWin-independent settings pages (Qt/KF6 only; JSON metadata is embedded in
 # the .so files at compile time, so no .json ships alongside).
-%{kwin_plugindir}/kwin/effects/configs/plasma-auto-tiler-active-border_config.so
-%{kwin_plugindir}/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so
+%{kwin_plugindir}/kwin/effects/configs/omnitiler-active-border_config.so
+%{kwin_plugindir}/kwin/scripts/configs/omnitiler-kwin_config.so
 
 %files native-effect
-%{kwin_plugindir}/kwin/effects/plugins/plasma-auto-tiler-active-border.so
+%{kwin_plugindir}/kwin/effects/plugins/omnitiler-active-border.so
 
 %changelog
-* Sat Oct 10 2026 Plasma Auto Tiler Contributors - 0.1.0-1
+* Sat Oct 10 2026 OmniTiler Contributors - 0.1.0-1
 - Tentative 0.1 offline-preparation recipe: core plus optional native
   effect, offline Cargo/CMake against the release tarball, no KWin pin.

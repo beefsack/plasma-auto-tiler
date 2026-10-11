@@ -51,7 +51,7 @@ mkdir -p -- "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd -- "$OUTPUT_DIR" && pwd -P)"
 
 NPM=""
-if [[ "${PLASMA_AUTO_TILER_PREBUILT_BUNDLE:-0}" != "1" ]]; then
+if [[ "${OMNITILER_PREBUILT_BUNDLE:-0}" != "1" ]]; then
   NPM="$(require_tool NPM_BIN npm)"
 fi
 ZIP="$(require_tool ZIP_BIN zip)"
@@ -138,9 +138,9 @@ restore_previous_outputs() {
 # archives ship kwin/contents/code/main.js ready-made, so distro builds do
 # not need the Node >=24 toolchain; any Node that parses metadata.json
 # still suffices for the plugin-id check above).
-if [[ "${PLASMA_AUTO_TILER_PREBUILT_BUNDLE:-0}" == "1" ]]; then
+if [[ "${OMNITILER_PREBUILT_BUNDLE:-0}" == "1" ]]; then
   [[ -f "$KWIN_DIR/contents/code/main.js" && ! -L "$KWIN_DIR/contents/code/main.js" ]] \
-    || die "PLASMA_AUTO_TILER_PREBUILT_BUNDLE=1 but contents/code/main.js is not a regular non-symlink file"
+    || die "OMNITILER_PREBUILT_BUNDLE=1 but contents/code/main.js is not a regular non-symlink file"
 else
   "$NPM" --prefix "$KWIN_DIR" run build || die "npm run build failed"
 fi

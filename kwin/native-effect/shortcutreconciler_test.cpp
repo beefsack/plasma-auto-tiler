@@ -549,36 +549,36 @@ void seedReady6(FakeShortcutStore &store, const QList<int> &focusPre, const QLis
     // View and Monocle hold the exact conflicting preimages, so fresh flows
     // refuse on exactly the two foreign letter chords.
     store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), focusPre),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-right"), focusPre),
         makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), lockPre),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-up"), QList<int>{7}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-up"), QList<int>{7}),
         makeTuple(QStringLiteral("KDE Keyboard Layout Switcher"), QStringLiteral("Switch to Next Keyboard Layout"),
                   QList<int>{META_ALT_K}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-right"), QList<int>{8}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-right"), QList<int>{8}),
         makeTuple(QStringLiteral("KDE Keyboard Layout Switcher"), QStringLiteral("Switch to Last-Used Keyboard Layout"),
                   QList<int>{META_ALT_L}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-left-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-left-arrow"),
                   QList<int>{META_ALT_LEFT}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-down-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-down-arrow"),
                   QList<int>{META_ALT_DOWN}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-up-arrow"),
                   QList<int>{META_ALT_UP}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-right-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-right-arrow"),
                   QList<int>{META_ALT_RIGHT}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-float"), QList<int>{META_G}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle-float"), QList<int>{META_G}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("Grid View"), QList<int>{META_G}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-maximize"), QList<int>{META_M}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle-maximize"), QList<int>{META_M}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("KrohnkiteMonocleLayout"), QList<int>{META_M}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-left-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-left-arrow"),
                   QList<int>{META_LEFT}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-down-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-down-arrow"),
                   QList<int>{META_DOWN}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-up-arrow"), QList<int>{META_UP}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-up-arrow"), QList<int>{META_UP}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-right-arrow"),
                   QList<int>{META_RIGHT}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-left-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-move-left-arrow"),
                   QList<int>{META_SHIFT_LEFT}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-right-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-move-right-arrow"),
                   QList<int>{META_SHIFT_RIGHT}),
     };
     seedFullCatalogQuietExtras(store);
@@ -590,43 +590,43 @@ void seedReady6(FakeShortcutStore &store, const QList<int> &focusPre, const QLis
 void seedQuietState(FakeShortcutStore &store, const QList<int> &focusPre, const QList<int> &lockPre)
 {
     store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), focusPre),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-right"), focusPre),
         makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), lockPre),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-up"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-up"),
                   QList<int>{META_ALT_K}),
         makeTuple(QStringLiteral("KDE Keyboard Layout Switcher"), QStringLiteral("Switch to Next Keyboard Layout"),
                   QList<int>{}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-right"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-right"),
                   QList<int>{META_ALT_L}),
         makeTuple(QStringLiteral("KDE Keyboard Layout Switcher"), QStringLiteral("Switch to Last-Used Keyboard Layout"),
                   QList<int>{}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-left-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-left-arrow"),
                   QList<int>{META_ALT_LEFT}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-down-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-down-arrow"),
                   QList<int>{META_ALT_DOWN}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-up-arrow"),
                   QList<int>{META_ALT_UP}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-right-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-resize-outwards-right-arrow"),
                   QList<int>{META_ALT_RIGHT}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-float"), QList<int>{META_G}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle-float"), QList<int>{META_G}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("Grid View"), QList<int>{}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-maximize"), QList<int>{META_M}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle-maximize"), QList<int>{META_M}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("KrohnkiteMonocleLayout"), QList<int>{}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-left-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-left-arrow"),
                   QList<int>{META_LEFT}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("Window Quick Tile Left"), QList<int>{}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-down-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-down-arrow"),
                   QList<int>{META_DOWN}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("Window Quick Tile Bottom"), QList<int>{}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-up-arrow"), QList<int>{META_UP}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-up-arrow"), QList<int>{META_UP}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("Window Quick Tile Top"), QList<int>{}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-right-arrow"),
                   QList<int>{META_RIGHT}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("Window Quick Tile Right"), QList<int>{}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-left-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-move-left-arrow"),
                   QList<int>{META_SHIFT_LEFT}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("Window to Previous Screen"), QList<int>{}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-right-arrow"),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-move-right-arrow"),
                   QList<int>{META_SHIFT_RIGHT}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("Window to Next Screen"), QList<int>{}),
     };
@@ -958,13 +958,13 @@ void friendlyLabelsValidated()
         seedReady6(store, QList<int>{1}, QList<int>{META_L});
         QString error;
         QList<int> confirmed;
-        CHECK(store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"),
+        CHECK(store.writeKeys(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-right"),
                               QString(), QStringLiteral("friendly"), QList<int>{META_L}, &confirmed, &error));
         CHECK(confirmed == QList<int>{META_L});
-        CHECK(store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"),
+        CHECK(store.writeKeys(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-right"),
                               QStringLiteral("KWin"), QString(), QList<int>{META_L}, &confirmed, &error));
         CHECK(confirmed == QList<int>{META_L});
-        CHECK(!store.writeKeys(QString(), QStringLiteral("plasma-auto-tiler-focus-right"),
+        CHECK(!store.writeKeys(QString(), QStringLiteral("omnitiler-focus-right"),
                                QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{META_L}, nullptr,
                                &error));
         CHECK(error == QStringLiteral("refusing write outside the exact allowlist"));
@@ -972,13 +972,13 @@ void friendlyLabelsValidated()
                                QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{META_L}, nullptr,
                                &error));
         CHECK(error == QStringLiteral("refusing write outside the exact allowlist"));
-        CHECK(!store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"),
+        CHECK(!store.writeKeys(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-right"),
                                oversizedString(), QStringLiteral("friendly"), QList<int>{META_L}, nullptr, &error));
         CHECK(error == QStringLiteral("refusing write with unbounded tuple"));
-        CHECK(!store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"),
+        CHECK(!store.writeKeys(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-right"),
                                QStringLiteral("KWin"), oversizedString(), QList<int>{META_L}, nullptr, &error));
         CHECK(error == QStringLiteral("refusing write with unbounded tuple"));
-        CHECK(!store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"),
+        CHECK(!store.writeKeys(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-right"),
                                QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{-1}, nullptr, &error));
         CHECK(error == QStringLiteral("refusing write with unbounded tuple"));
         CHECK(!store.writeKeys(QStringLiteral("kwin"), QStringLiteral("other-action"), QStringLiteral("KWin"),
@@ -1003,7 +1003,7 @@ void duplicateMetaEscDeduped()
     CHECK(result.writes == 2);
     CHECK(store.writeLog.size() == 2);
     if (store.writeLog.size() == 2) {
-        CHECK(store.writeLog.at(0).action == QStringLiteral("plasma-auto-tiler-focus-right"));
+        CHECK(store.writeLog.at(0).action == QStringLiteral("omnitiler-focus-right"));
         CHECK(store.writeLog.at(0).keys == QList<int>{META_L});
         CHECK(store.writeLog.at(1).action == QStringLiteral("Lock Session"));
         CHECK(store.writeLog.at(1).keys == (QList<int>{META_ESC, 42}));
@@ -3102,10 +3102,10 @@ void defaultAndForeignTransportSeam()
         KGlobalAccelStore store;
         QList<int> out;
         CHECK(!store.defaultShortcutKeys(QStringLiteral("kwin"),
-                                         QStringLiteral("plasma-auto-tiler-focus-right"), oversizedString(),
+                                         QStringLiteral("omnitiler-focus-right"), oversizedString(),
                                          QStringLiteral("friendly"), &out, &error));
         CHECK(error == QStringLiteral("refusing default keys with unbounded tuple"));
-        CHECK(!store.defaultShortcutKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle"),
+        CHECK(!store.defaultShortcutKeys(QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle"),
                                          QStringLiteral("KWin"), QStringLiteral("friendly"), &out, &error));
         CHECK(error == QStringLiteral("refusing default keys without a pinned KGlobalAccel owner"));
         CHECK(!store.defaultShortcutKeys(QStringLiteral("org.example"), QStringLiteral("arbitrary-action"),
@@ -3115,10 +3115,10 @@ void defaultAndForeignTransportSeam()
     {
         KGlobalAccelStore store;
         CHECK(!store.setForeignShortcutKeys(QStringLiteral("kwin"),
-                                            QStringLiteral("plasma-auto-tiler-focus-right"), QStringLiteral("KWin"),
+                                            QStringLiteral("omnitiler-focus-right"), QStringLiteral("KWin"),
                                             QStringLiteral("friendly"), QList<int>{-1}, &error));
         CHECK(error == QStringLiteral("refusing foreign write with unbounded tuple"));
-        CHECK(!store.setForeignShortcutKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle"),
+        CHECK(!store.setForeignShortcutKeys(QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle"),
                                             QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{META_L},
                                             &error));
         CHECK(error == QStringLiteral("refusing foreign write without a pinned KGlobalAccel owner"));
@@ -3136,12 +3136,12 @@ void defaultAndForeignTransportSeam()
         store.tuples.append(makeTuple(QStringLiteral("org.example"), QStringLiteral("arbitrary-action"),
                                       QList<int>{META_L}));
         store.defaultKeysById[QStringLiteral("org.example/arbitrary-action")] = QList<int>{META_G};
-        store.defaultKeysById[QStringLiteral("kwin/plasma-auto-tiler-toggle")] = QList<int>{META_L};
+        store.defaultKeysById[QStringLiteral("kwin/omnitiler-toggle")] = QList<int>{META_L};
         QList<int> out;
         CHECK(store.defaultShortcutKeys(QStringLiteral("org.example"), QStringLiteral("arbitrary-action"),
                                         QStringLiteral("Example"), QStringLiteral("Arbitrary"), &out, &error));
         CHECK(out == QList<int>{META_G});
-        CHECK(store.defaultShortcutKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle"),
+        CHECK(store.defaultShortcutKeys(QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle"),
                                         QStringLiteral("KWin"), QStringLiteral("legacy"), &out, &error));
         CHECK(out == QList<int>{META_L});
         CHECK(store.setForeignShortcutKeys(QStringLiteral("org.example"), QStringLiteral("arbitrary-action"),
@@ -3242,7 +3242,7 @@ void diagSinkCapturesOperations()
         CHECK(message.contains(QStringLiteral("op=")));
         CHECK(message.contains(QStringLiteral("stage=")));
         CHECK(message.contains(QStringLiteral("outcome=")));
-        CHECK(message.contains(QStringLiteral("plasmaautotiler.shortcut")));
+        CHECK(message.contains(QStringLiteral("omnitiler.shortcut")));
         CHECK(!message.contains(QStringLiteral("/home")));
         CHECK(!message.contains(QStringLiteral(".config")));
         if (message.contains(QStringLiteral("op=apply"))
@@ -3276,7 +3276,7 @@ void diagPrefixAndForeignDataAreSafe()
     ShortcutDiag::log(QtWarningMsg, "apply", "preflight", "refused",
                       QStringLiteral("Meta+G claimed by org.example.foreign/Untrusted Action"));
     ShortcutDiag::resetSink();
-    CHECK(message.startsWith(QStringLiteral("plasmaautotiler.shortcut op=apply stage=preflight outcome=refused")));
+    CHECK(message.startsWith(QStringLiteral("omnitiler.shortcut op=apply stage=preflight outcome=refused")));
     CHECK(message.contains(QStringLiteral("reason=key-conflict")));
     CHECK(!message.contains(QStringLiteral("org.example.foreign")));
 }
@@ -3299,10 +3299,10 @@ void applyAssignsProjectsAndRelocatesLock()
     FakeShortcutStore store;
     seedQuietState(store, QList<int>{1}, QList<int>{META_L, 42});
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-up")) {
+        if (tuple.action == QStringLiteral("omnitiler-resize-outwards-up")) {
             tuple.active = QList<int>{7};
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             tuple.active = QList<int>{8};
         }
     }
@@ -3312,13 +3312,13 @@ void applyAssignsProjectsAndRelocatesLock()
     CHECK(result.writes == 4);
     CHECK(store.writeLog.size() == 4);
     if (store.writeLog.size() == 4) {
-        CHECK(store.writeLog.at(0).action == QStringLiteral("plasma-auto-tiler-focus-right"));
+        CHECK(store.writeLog.at(0).action == QStringLiteral("omnitiler-focus-right"));
         CHECK(store.writeLog.at(0).keys == QList<int>{META_L});
         CHECK(store.writeLog.at(1).action == QStringLiteral("Lock Session"));
         CHECK(store.writeLog.at(1).keys == (QList<int>{META_ESC, 42}));
-        CHECK(store.writeLog.at(2).action == QStringLiteral("plasma-auto-tiler-resize-outwards-up"));
+        CHECK(store.writeLog.at(2).action == QStringLiteral("omnitiler-resize-outwards-up"));
         CHECK(store.writeLog.at(2).keys == QList<int>{META_ALT_K});
-        CHECK(store.writeLog.at(3).action == QStringLiteral("plasma-auto-tiler-toggle-float"));
+        CHECK(store.writeLog.at(3).action == QStringLiteral("omnitiler-toggle-float"));
         CHECK(store.writeLog.at(3).keys == QList<int>{META_G});
     }
     CHECK(store.foreignWriteLog.isEmpty());
@@ -3344,13 +3344,13 @@ void unknownAndLegacyHoldersRefuseApply()
     seedQuietState(store, QList<int>{META_L}, QList<int>{META_ESC});
     store.tuples.append(makeTuple(QStringLiteral("org.example"), QStringLiteral("other-action"), QList<int>{META_G}));
     store.tuples.append(
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle"), QList<int>{META_L}));
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle"), QList<int>{META_L}));
     FakeClearedActions cleared;
     const ShortcutApplyResult result = ShortcutReconciler(&store, &cleared).apply();
     CHECK(!result.ok);
     // Sorted rows put the legacy kwin holder first; its removal is Meta+L.
     CHECK(result.error.contains(QStringLiteral("Meta+L")));
-    CHECK(result.error.contains(QStringLiteral("plasma-auto-tiler-toggle")));
+    CHECK(result.error.contains(QStringLiteral("omnitiler-toggle")));
     CHECK(result.writes == 0);
     CHECK(store.writeCount() == 0);
     CHECK(cleared.stored.isEmpty());
@@ -3363,9 +3363,9 @@ void forceUnknownAndLegacyPreviewAndClear()
     store.tuples.append(
         makeTuple(QStringLiteral("org.example"), QStringLiteral("other-action"), QList<int>{META_G, 999}));
     store.tuples.append(
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle"), QList<int>{META_L}));
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle"), QList<int>{META_L}));
     store.defaultKeysById[QStringLiteral("org.example/other-action")] = QList<int>{META_G};
-    store.defaultKeysById[QStringLiteral("kwin/plasma-auto-tiler-toggle")] = QList<int>{META_L};
+    store.defaultKeysById[QStringLiteral("kwin/omnitiler-toggle")] = QList<int>{META_L};
     FakeClearedActions cleared;
     CHECK(!ShortcutReconciler(&store, &cleared).apply().ok);
     const ShortcutForcePreview preview = ShortcutReconciler(&store, &cleared).previewForceApply();
@@ -3374,7 +3374,7 @@ void forceUnknownAndLegacyPreviewAndClear()
     // Sorted by component/action: the legacy kwin holder first.
     const ShortcutForceMismatch &legacy = preview.mismatches.at(0);
     CHECK(legacy.component == QStringLiteral("kwin"));
-    CHECK(legacy.action == QStringLiteral("plasma-auto-tiler-toggle"));
+    CHECK(legacy.action == QStringLiteral("omnitiler-toggle"));
     CHECK(legacy.actual == (QList<int>{META_L}));
     CHECK(legacy.expectedPre == (QList<int>{META_L}));
     CHECK(legacy.post.isEmpty());
@@ -3395,10 +3395,10 @@ void forceUnknownAndLegacyPreviewAndClear()
         if (tuple.action == QStringLiteral("other-action")) {
             CHECK(tuple.active == (QList<int>{999}));
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle")) {
             CHECK(tuple.active.isEmpty());
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+        if (tuple.action == QStringLiteral("omnitiler-focus-right")) {
             CHECK(tuple.active == (QList<int>{META_L}));
         }
     }
@@ -3411,7 +3411,7 @@ void forceUnknownAndLegacyPreviewAndClear()
         if (tuple.action == QStringLiteral("other-action")) {
             CHECK(tuple.active == (QList<int>{META_G}));
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle")) {
             CHECK(tuple.active.isEmpty());
         }
     }
@@ -3480,7 +3480,7 @@ void forceStaleConfirmationZeroWrites()
         const ShortcutForcePreview preview = ShortcutReconciler(&store, &cleared).previewForceApply();
         CHECK(preview.forceable);
         for (ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+            if (tuple.action == QStringLiteral("omnitiler-focus-right")) {
                 tuple.active = QList<int>{1};
             }
         }
@@ -3582,7 +3582,7 @@ void forceInterruptedListRetainedThenRevert()
         if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
             CHECK(tuple.active.isEmpty());
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+        if (tuple.action == QStringLiteral("omnitiler-focus-right")) {
             CHECK(tuple.active == QList<int>{1});
         }
     }
@@ -3599,7 +3599,7 @@ void forceInterruptedListRetainedThenRevert()
     CHECK(retry.forceable);
     CHECK(ShortcutReconciler(&store, &cleared).applyForced(retry).ok);
     for (const ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+        if (tuple.action == QStringLiteral("omnitiler-focus-right")) {
             CHECK(tuple.active == (QList<int>{META_L}));
         }
         if (tuple.action == QStringLiteral("Lock Session")) {
@@ -3665,7 +3665,7 @@ void knownForeignHoldersAreConflicts()
     CHECK(!ShortcutReconciler::isHolderExempt(QStringLiteral("kwin"),
                                               QStringLiteral("KrohnkiteMonocleLayout"), META_M));
     CHECK(ShortcutReconciler::isHolderExempt(QStringLiteral("kwin"),
-                                             QStringLiteral("plasma-auto-tiler-toggle-float"), META_G));
+                                             QStringLiteral("omnitiler-toggle-float"), META_G));
     CHECK(ShortcutReconciler::isHolderExempt(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), META_L));
     CHECK(ShortcutReconciler::isHolderExempt(shortcutAuthorizedEscComponent(), shortcutAuthorizedEscAction(),
                                              META_ESC));
@@ -3702,10 +3702,10 @@ void growArrowSwitchWindowClearRows()
     CHECK(shortcutConflictTable().size() == 23);
     CHECK(ShortcutReconciler::relevantConflictKeys().size() == 24);
     const QList<std::pair<QString, int>> arrows = {
-        {QStringLiteral("plasma-auto-tiler-resize-outwards-left-arrow"), META_ALT_LEFT},
-        {QStringLiteral("plasma-auto-tiler-resize-outwards-down-arrow"), META_ALT_DOWN},
-        {QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow"), META_ALT_UP},
-        {QStringLiteral("plasma-auto-tiler-resize-outwards-right-arrow"), META_ALT_RIGHT},
+        {QStringLiteral("omnitiler-resize-outwards-left-arrow"), META_ALT_LEFT},
+        {QStringLiteral("omnitiler-resize-outwards-down-arrow"), META_ALT_DOWN},
+        {QStringLiteral("omnitiler-resize-outwards-up-arrow"), META_ALT_UP},
+        {QStringLiteral("omnitiler-resize-outwards-right-arrow"), META_ALT_RIGHT},
     };
     const QList<std::pair<QString, int>> switches = {
         {QStringLiteral("Switch Window Left"), META_ALT_LEFT},
@@ -3755,7 +3755,7 @@ void growArrowSwitchWindowClearRows()
         FakeShortcutStore store;
         seedQuietState(store, QList<int>{META_L}, QList<int>{META_ESC});
         for (ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow")) {
+            if (tuple.action == QStringLiteral("omnitiler-resize-outwards-up-arrow")) {
                 tuple.active = QList<int>{7};
             }
         }
@@ -3778,7 +3778,7 @@ void growArrowSwitchWindowClearRows()
             if (tuple.action == QStringLiteral("Switch Window Up")) {
                 CHECK(tuple.active == (QList<int>{4242}));
             }
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow")) {
+            if (tuple.action == QStringLiteral("omnitiler-resize-outwards-up-arrow")) {
                 CHECK(tuple.active == (QList<int>{META_ALT_UP}));
             }
         }
@@ -3788,7 +3788,7 @@ void growArrowSwitchWindowClearRows()
             if (tuple.action == QStringLiteral("Switch Window Up")) {
                 CHECK(tuple.active == (QList<int>{META_ALT_UP}));
             }
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow")) {
+            if (tuple.action == QStringLiteral("omnitiler-resize-outwards-up-arrow")) {
                 CHECK(tuple.active == (QList<int>{META_ALT_UP}));
             }
         }
@@ -3804,12 +3804,12 @@ void focusMoveArrowQuickTileClearRows()
     CHECK(shortcutConflictTable().size() == 23);
     CHECK(ShortcutReconciler::relevantConflictKeys().size() == 24);
     const QList<std::pair<QString, int>> projects = {
-        {QStringLiteral("plasma-auto-tiler-focus-left-arrow"), META_LEFT},
-        {QStringLiteral("plasma-auto-tiler-focus-down-arrow"), META_DOWN},
-        {QStringLiteral("plasma-auto-tiler-focus-up-arrow"), META_UP},
-        {QStringLiteral("plasma-auto-tiler-focus-right-arrow"), META_RIGHT},
-        {QStringLiteral("plasma-auto-tiler-move-left-arrow"), META_SHIFT_LEFT},
-        {QStringLiteral("plasma-auto-tiler-move-right-arrow"), META_SHIFT_RIGHT},
+        {QStringLiteral("omnitiler-focus-left-arrow"), META_LEFT},
+        {QStringLiteral("omnitiler-focus-down-arrow"), META_DOWN},
+        {QStringLiteral("omnitiler-focus-up-arrow"), META_UP},
+        {QStringLiteral("omnitiler-focus-right-arrow"), META_RIGHT},
+        {QStringLiteral("omnitiler-move-left-arrow"), META_SHIFT_LEFT},
+        {QStringLiteral("omnitiler-move-right-arrow"), META_SHIFT_RIGHT},
     };
     const QList<std::pair<QString, int>> foreigns = {
         {QStringLiteral("Window Quick Tile Left"), META_LEFT},
@@ -3888,7 +3888,7 @@ void focusMoveArrowQuickTileClearRows()
         FakeShortcutStore store;
         seedQuietState(store, QList<int>{META_L}, QList<int>{META_ESC});
         for (ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-move-left-arrow")) {
+            if (tuple.action == QStringLiteral("omnitiler-move-left-arrow")) {
                 tuple.active = QList<int>{7};
             }
         }
@@ -3915,7 +3915,7 @@ void focusMoveArrowQuickTileClearRows()
             if (tuple.action == QStringLiteral("Window to Previous Screen")) {
                 CHECK(tuple.active == (QList<int>{4242}));
             }
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-move-left-arrow")) {
+            if (tuple.action == QStringLiteral("omnitiler-move-left-arrow")) {
                 CHECK(tuple.active == (QList<int>{META_SHIFT_LEFT}));
             }
         }
@@ -3925,7 +3925,7 @@ void focusMoveArrowQuickTileClearRows()
             if (tuple.action == QStringLiteral("Window to Previous Screen")) {
                 CHECK(tuple.active == (QList<int>{META_SHIFT_LEFT}));
             }
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-move-left-arrow")) {
+            if (tuple.action == QStringLiteral("omnitiler-move-left-arrow")) {
                 CHECK(tuple.active == (QList<int>{META_SHIFT_LEFT}));
             }
         }
@@ -3936,7 +3936,7 @@ void focusMoveArrowQuickTileClearRows()
         FakeShortcutStore store;
         seedQuietState(store, QList<int>{META_L}, QList<int>{META_ESC});
         for (ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right-arrow")) {
+            if (tuple.action == QStringLiteral("omnitiler-focus-right-arrow")) {
                 tuple.active = QList<int>{7};
             }
         }
@@ -3944,7 +3944,7 @@ void focusMoveArrowQuickTileClearRows()
         const ShortcutApplyResult result = ShortcutReconciler(&store, &cleared).apply();
         CHECK(result.ok);
         for (const ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right-arrow")) {
+            if (tuple.action == QStringLiteral("omnitiler-focus-right-arrow")) {
                 CHECK(tuple.active == (QList<int>{META_RIGHT}));
             }
         }
@@ -4118,7 +4118,7 @@ void clearedStoreRoundtrip()
     CHECK(loaded.isEmpty());
     const QList<ClearedAction> actions = {
         {QStringLiteral("org.example"), QStringLiteral("other-action")},
-        {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle")},
+        {QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle")},
     };
     CHECK(backend.save(actions, &error));
     CHECK(backend.load(&loaded, &error));
@@ -4162,7 +4162,7 @@ void clearedPathIsNewAndAbsolute()
     CHECK(!path.isEmpty());
     CHECK(QDir::isAbsolutePath(path));
     CHECK(path.endsWith(QStringLiteral("shortcut-clearedrc")));
-    CHECK(path.contains(QStringLiteral("plasma-auto-tiler")));
+    CHECK(path.contains(QStringLiteral("omnitiler")));
     ClearedActionsStore *live = createLiveClearedActionsStore(path);
     CHECK(live != nullptr);
     delete live;
@@ -4278,17 +4278,17 @@ void selectionCatalogCounts()
     // Known conflicts are exactly the 23 conflict-table project rows.
     CHECK(shortcutKnownConflictIds().size() == 23);
     CHECK(shortcutKnownConflictIds().contains(
-        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"))));
+        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-right"))));
     CHECK(!shortcutKnownConflictIds().contains(
-        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"))));
+        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-1"))));
     CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
-        QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-left"))));
+        QStringLiteral("kwin"), QStringLiteral("omnitiler-send-output-left"))));
     CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
-        QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-left-stay"))));
+        QStringLiteral("kwin"), QStringLiteral("omnitiler-send-output-left-stay"))));
     CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
-        QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-migrate-workspace-left"))));
+        QStringLiteral("kwin"), QStringLiteral("omnitiler-migrate-workspace-left"))));
     CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
-        QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling"))));
+        QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle-workspace-tiling"))));
     CHECK(shortcutMaxProjectWrites() == 130);
     // Displays resolve through the catalog first, table targets preserved.
     CHECK(ShortcutReconciler::keyDisplayName(SHORTCUT_META_1) == QStringLiteral("Meta+1"));
@@ -4301,13 +4301,13 @@ void selectionCatalogCounts()
           == QList<int>{SHORTCUT_META_1});
     CHECK(ShortcutReconciler::remainderAfterClearFor(QList<int>{SHORTCUT_META_1, 999}, QSet<QString>())
           == QList<int>{999});
-    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"));
+    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-1"));
     CHECK(ShortcutReconciler::conflictingKeysFor(QList<int>{SHORTCUT_META_1, 999}, QSet<QString>{ws1}).isEmpty());
     CHECK(ShortcutReconciler::enabledRequiredKeys(QSet<QString>()).contains(SHORTCUT_META_1));
     CHECK(ShortcutReconciler::enabledRequiredKeys(QSet<QString>()).contains(META_ESC));
     CHECK(ShortcutReconciler::enabledRequiredKeys(QSet<QString>{ws1}).contains(SHORTCUT_META_1) == false);
     const QString focusId =
-        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"));
+        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-right"));
     CHECK(ShortcutReconciler::enabledRequiredKeys(QSet<QString>{focusId}).contains(META_L) == false);
     CHECK(ShortcutReconciler::enabledRequiredKeys(QSet<QString>{focusId}).contains(META_ESC) == false);
     // Preset seam is a deterministic catalog-ordered union.
@@ -4319,9 +4319,9 @@ void selectionCatalogCounts()
     CHECK(preset.indexOf(focusId) < preset.indexOf(ws1));
     // Project identity covers the full catalog for writes and exemptions.
     CHECK(ShortcutReconciler::isProjectAction(QStringLiteral("kwin"),
-                                              QStringLiteral("plasma-auto-tiler-workspace-1")));
+                                              QStringLiteral("omnitiler-workspace-1")));
     CHECK(ShortcutReconciler::isAllowlisted(QStringLiteral("kwin"),
-                                            QStringLiteral("plasma-auto-tiler-workspace-1")));
+                                            QStringLiteral("omnitiler-workspace-1")));
     CHECK(!ShortcutReconciler::isAllowlisted(QStringLiteral("kwin"), QStringLiteral("other-action")));
 }
 
@@ -4338,7 +4338,7 @@ void selectionDisabledSkipsRefusalAndClearsOwn()
         }
     }
     const QString floatId =
-        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-float"));
+        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle-float"));
     FakeClearedActions cleared;
     const ShortcutApplyResult result =
         ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>{floatId});
@@ -4349,7 +4349,7 @@ void selectionDisabledSkipsRefusalAndClearsOwn()
     CHECK(cleared.stored.isEmpty());
     CHECK(cleared.saves == 0);
     for (const ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             CHECK(tuple.active.isEmpty());
         }
         if (tuple.action == QStringLiteral("Grid View")) {
@@ -4372,7 +4372,7 @@ void selectionDisabledFocusSkipsLockAndEsc()
     }
     store.tuples.append(makeTuple(QStringLiteral("kwin"), QStringLiteral("other-action"), QList<int>{META_ESC}));
     const QString focusId =
-        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"));
+        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-right"));
     FakeClearedActions cleared;
     const ShortcutApplyResult result =
         ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>{focusId});
@@ -4380,7 +4380,7 @@ void selectionDisabledFocusSkipsLockAndEsc()
     CHECK(result.error.isEmpty());
     CHECK(store.foreignWriteLog.isEmpty());
     for (const ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+        if (tuple.action == QStringLiteral("omnitiler-focus-right")) {
             CHECK(tuple.active.isEmpty());
         }
         if (tuple.action == QStringLiteral("Lock Session")) {
@@ -4405,7 +4405,7 @@ void selectionMixedRefusesEnabledOnly()
     }
     store.tuples.append(
         makeTuple(QStringLiteral("org.example"), QStringLiteral("other-ws"), QList<int>{SHORTCUT_META_1}));
-    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"));
+    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-1"));
     FakeClearedActions cleared;
     const ShortcutApplyResult refused =
         ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>{ws1});
@@ -4443,7 +4443,7 @@ void selectionForceBindsDraftAndDrift()
     CHECK(preview.disabledIds.isEmpty());
     CHECK(preview.authenticStaged);
     CHECK(preview.liveImages.size() == 130);
-    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"));
+    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-1"));
     const ShortcutForceApplyResult staleDraft =
         ShortcutReconciler(&store, &cleared).applyForcedSelected(preview, QSet<QString>{ws1});
     CHECK(!staleDraft.ok);
@@ -4502,7 +4502,7 @@ void selectionDefaultsCarried()
     // Wire defaults survive into tuples and holder views so defaults stay
     // visible even after Force clears the active list.
     ShortcutInfoFields info;
-    info.action = QStringLiteral("plasma-auto-tiler-workspace-1");
+    info.action = QStringLiteral("omnitiler-workspace-1");
     info.friendly = QString();
     info.compUnique = QStringLiteral("kwin");
     info.compFriendly = QStringLiteral("KWin");
@@ -4526,12 +4526,12 @@ void selectionMissingEnabledFailsClosed()
 {
     // Missing enabled rows fail closed with zero writes; missing disabled
     // rows stay allowed.
-    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"));
+    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-1"));
     {
         FakeShortcutStore store;
         seedFullQuiet(store);
         for (int i = static_cast<int>(store.tuples.size()) - 1; i >= 0; --i) {
-            if (store.tuples.at(i).action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+            if (store.tuples.at(i).action == QStringLiteral("omnitiler-workspace-1")) {
                 store.tuples.removeAt(i);
             }
         }
@@ -4545,7 +4545,7 @@ void selectionMissingEnabledFailsClosed()
         FakeShortcutStore store;
         seedFullQuiet(store);
         for (int i = static_cast<int>(store.tuples.size()) - 1; i >= 0; --i) {
-            if (store.tuples.at(i).action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+            if (store.tuples.at(i).action == QStringLiteral("omnitiler-workspace-1")) {
                 store.tuples.removeAt(i);
             }
         }
@@ -4589,12 +4589,12 @@ void selectionForeignDefaultConflictAfterClear()
     CHECK(ids.contains(QStringLiteral("org.example/other-ws")));
     // Own project defaults are never listed.
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+        if (tuple.action == QStringLiteral("omnitiler-workspace-1")) {
             tuple.defaults = QList<int>{SHORTCUT_META_1};
         }
     }
     const QStringList ownIds = ShortcutReconciler::foreignDefaultIdsForKey(SHORTCUT_META_1, store.tuples);
-    CHECK(!ownIds.contains(QStringLiteral("kwin/plasma-auto-tiler-workspace-1")));
+    CHECK(!ownIds.contains(QStringLiteral("kwin/omnitiler-workspace-1")));
     CHECK(ownIds.contains(QStringLiteral("org.example/other-ws")));
     // Readable chord image for UI rows.
     CHECK(ShortcutReconciler::keysDisplayNames(QList<int>{SHORTCUT_META_1}) == QStringLiteral("Meta+1"));
@@ -4610,12 +4610,12 @@ void selectionDisabledTableRowAbsentAllowed()
     // zero writes, disabled missing stays allowed, duplicates fail even
     // when disabled.
     const QString floatId =
-        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-float"));
+        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle-float"));
     {
         FakeShortcutStore store;
         seedFullQuiet(store);
         for (int i = static_cast<int>(store.tuples.size()) - 1; i >= 0; --i) {
-            if (store.tuples.at(i).action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            if (store.tuples.at(i).action == QStringLiteral("omnitiler-toggle-float")) {
                 store.tuples.removeAt(i);
             }
         }
@@ -4630,7 +4630,7 @@ void selectionDisabledTableRowAbsentAllowed()
         FakeShortcutStore store;
         seedFullQuiet(store);
         for (int i = static_cast<int>(store.tuples.size()) - 1; i >= 0; --i) {
-            if (store.tuples.at(i).action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            if (store.tuples.at(i).action == QStringLiteral("omnitiler-toggle-float")) {
                 store.tuples.removeAt(i);
             }
         }
@@ -4643,7 +4643,7 @@ void selectionDisabledTableRowAbsentAllowed()
         FakeShortcutStore store;
         seedFullQuiet(store);
         store.tuples.append(
-            makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-float"),
+            makeTuple(QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle-float"),
                       QList<int>{META_G}));
         FakeClearedActions cleared;
         const ShortcutApplyResult result =
@@ -4659,7 +4659,7 @@ void selectionFocusDisabledLockAbsentAllowed()
     // A disabled focus-right leaves the lock out of scope: an absent lock
     // still applies cleanly and clears only the disabled focus row.
     const QString focusId =
-        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"));
+        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-focus-right"));
     FakeShortcutStore store;
     seedFullQuiet(store);
     for (int i = static_cast<int>(store.tuples.size()) - 1; i >= 0; --i) {
@@ -4673,7 +4673,7 @@ void selectionFocusDisabledLockAbsentAllowed()
     CHECK(result.ok);
     CHECK(cleared.stored.isEmpty());
     for (const ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+        if (tuple.action == QStringLiteral("omnitiler-focus-right")) {
             CHECK(tuple.active.isEmpty());
         }
     }
@@ -4692,7 +4692,7 @@ void selectionPresenceBindsForceSnapshot()
     }
     store.defaultKeysById[QStringLiteral("kwin/Window Quick Tile Left")] = QList<int>{META_LEFT};
     FakeClearedActions cleared;
-    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"));
+    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-1"));
     const ShortcutForcePreview preview =
         ShortcutReconciler(&store, &cleared).previewForceApplySelected(QSet<QString>{ws1});
     CHECK(preview.forceable);
@@ -4700,7 +4700,7 @@ void selectionPresenceBindsForceSnapshot()
     // Simulate the disabled row appearing live after preview: remove it, then
     // re-add as present-empty and require stale.
     for (int i = static_cast<int>(store.tuples.size()) - 1; i >= 0; --i) {
-        if (store.tuples.at(i).action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+        if (store.tuples.at(i).action == QStringLiteral("omnitiler-workspace-1")) {
             store.tuples.removeAt(i);
         }
     }
@@ -4727,7 +4727,7 @@ public:
         if (driftKeepOnWrite) {
             driftKeepOnWrite = false;
             for (ShortcutTuple &tuple : tuples) {
-                if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+                if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
                     tuple.active = QList<int>{888002};
                 }
             }
@@ -4743,7 +4743,7 @@ public:
         if (driftKeepOnForeign) {
             driftKeepOnForeign = false;
             for (ShortcutTuple &tuple : tuples) {
-                if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+                if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
                     tuple.active = QList<int>{888002};
                 }
             }
@@ -4762,10 +4762,10 @@ void selectionKeepPreservesCustomCanonicalEmpty()
     FakeShortcutStore store;
     seedFullQuiet(store);
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             tuple.active = QList<int>{777001};
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+        if (tuple.action == QStringLiteral("omnitiler-workspace-1")) {
             tuple.active.clear();
         }
     }
@@ -4778,13 +4778,13 @@ void selectionKeepPreservesCustomCanonicalEmpty()
     CHECK(store.writeCount() == 0);
     CHECK(cleared.saves == 0);
     for (const ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             CHECK(tuple.active == (QList<int>{777001}));
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+        if (tuple.action == QStringLiteral("omnitiler-workspace-1")) {
             CHECK(tuple.active.isEmpty());
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-maximize")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-maximize")) {
             CHECK(tuple.active == (QList<int>{META_M}));
         }
         if (tuple.action == QStringLiteral("Lock Session")) {
@@ -4797,10 +4797,10 @@ void selectionKeepPreservesCustomCanonicalEmpty()
     CHECK(authentic.ok);
     CHECK(authentic.writes > 0);
     for (const ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             CHECK(tuple.active == (QList<int>{META_G}));
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+        if (tuple.action == QStringLiteral("omnitiler-workspace-1")) {
             CHECK(tuple.active == (QList<int>{SHORTCUT_META_1}));
         }
     }
@@ -4815,7 +4815,7 @@ void selectionKeepCustomConflictPreviewForcePreserves()
     FakeShortcutStore store;
     seedFullQuiet(store);
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             tuple.active = QList<int>{777001};
         }
     }
@@ -4848,7 +4848,7 @@ void selectionKeepCustomConflictPreviewForcePreserves()
         if (tuple.action == QStringLiteral("other-app")) {
             CHECK(tuple.active.isEmpty());
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             CHECK(tuple.active == (QList<int>{777001}));
         }
     }
@@ -4861,12 +4861,12 @@ void selectionKeepDriftDuringWriteFailsWithoutReset()
     // an unchanged custom preserves and succeeds. With drift, the Keep row
     // no longer matches the preflight image, so verification fails without
     // reset (the drifted custom stays, never silently canonical).
-    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-1"));
+    const QString ws1 = shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-1"));
     {
         KeepDriftShortcutStore store;
         seedFullQuiet(store);
         for (ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
                 tuple.active = QList<int>{777001};
             }
         }
@@ -4876,10 +4876,10 @@ void selectionKeepDriftDuringWriteFailsWithoutReset()
         CHECK(result.ok);
         CHECK(result.writes == 1);
         for (const ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
                 CHECK(tuple.active == (QList<int>{777001}));
             }
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+            if (tuple.action == QStringLiteral("omnitiler-workspace-1")) {
                 CHECK(tuple.active.isEmpty());
             }
         }
@@ -4888,7 +4888,7 @@ void selectionKeepDriftDuringWriteFailsWithoutReset()
         KeepDriftShortcutStore store;
         seedFullQuiet(store);
         for (ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
                 tuple.active = QList<int>{777001};
             }
         }
@@ -4901,10 +4901,10 @@ void selectionKeepDriftDuringWriteFailsWithoutReset()
         CHECK(result.writes == 1);
         CHECK(store.writeLog.size() == 1);
         for (const ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+            if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
                 CHECK(tuple.active == (QList<int>{888002}));
             }
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-1")) {
+            if (tuple.action == QStringLiteral("omnitiler-workspace-1")) {
                 CHECK(tuple.active.isEmpty());
             }
         }
@@ -4920,7 +4920,7 @@ void selectionForceKeepDriftDuringClearFailsWithoutReset()
     KeepDriftShortcutStore store;
     seedFullQuiet(store);
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             tuple.active = QList<int>{777001};
         }
     }
@@ -4942,7 +4942,7 @@ void selectionForceKeepDriftDuringClearFailsWithoutReset()
         if (tuple.action == QStringLiteral("other-app")) {
             CHECK(tuple.active.isEmpty());
         }
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             CHECK(tuple.active == (QList<int>{888002}));
         }
     }
@@ -4956,7 +4956,7 @@ void selectionForceIntentMismatchStale()
     FakeShortcutStore store;
     seedFullQuiet(store);
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             tuple.active = QList<int>{777001};
         }
     }
@@ -5001,7 +5001,7 @@ void selectionKeepOccupancyGate()
     FakeShortcutStore store;
     seedFullQuiet(store);
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             tuple.active = QList<int>{777001};
         }
     }
@@ -5057,7 +5057,7 @@ void selectionRowDisplayShowsActualHolders()
     FakeShortcutStore store;
     seedFullQuiet(store);
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (tuple.action == QStringLiteral("omnitiler-toggle-float")) {
             tuple.active = QList<int>{777001};
         }
     }
@@ -5067,7 +5067,7 @@ void selectionRowDisplayShowsActualHolders()
     CHECK(ShortcutReconciler::collectRowDisplays(&store, &rows, &error));
     bool found = false;
     for (const ShortcutRowDisplay &row : rows) {
-        if (row.catalog.action == QStringLiteral("plasma-auto-tiler-toggle-float")) {
+        if (row.catalog.action == QStringLiteral("omnitiler-toggle-float")) {
             found = true;
             CHECK(row.present);
             CHECK(row.current == (QList<int>{777001}));
@@ -5093,15 +5093,15 @@ void workspaceRelativeDesktopSwitchRows()
     CHECK(shortcutConflictTable().size() == 23);
     CHECK(ShortcutReconciler::relevantConflictKeys().size() == 24);
     const QList<std::pair<QString, int>> projects = {
-        {QStringLiteral("plasma-auto-tiler-workspace-previous"), META_CTRL_TAB},
-        {QStringLiteral("plasma-auto-tiler-workspace-prev-h"), META_CTRL_H},
-        {QStringLiteral("plasma-auto-tiler-workspace-prev-k"), META_CTRL_K},
-        {QStringLiteral("plasma-auto-tiler-workspace-prev-left-arrow"), META_CTRL_LEFT},
-        {QStringLiteral("plasma-auto-tiler-workspace-prev-up-arrow"), META_CTRL_UP},
-        {QStringLiteral("plasma-auto-tiler-workspace-next-j"), META_CTRL_J},
-        {QStringLiteral("plasma-auto-tiler-workspace-next-l"), META_CTRL_L},
-        {QStringLiteral("plasma-auto-tiler-workspace-next-down-arrow"), META_CTRL_DOWN},
-        {QStringLiteral("plasma-auto-tiler-workspace-next-right-arrow"), META_CTRL_RIGHT},
+        {QStringLiteral("omnitiler-workspace-previous"), META_CTRL_TAB},
+        {QStringLiteral("omnitiler-workspace-prev-h"), META_CTRL_H},
+        {QStringLiteral("omnitiler-workspace-prev-k"), META_CTRL_K},
+        {QStringLiteral("omnitiler-workspace-prev-left-arrow"), META_CTRL_LEFT},
+        {QStringLiteral("omnitiler-workspace-prev-up-arrow"), META_CTRL_UP},
+        {QStringLiteral("omnitiler-workspace-next-j"), META_CTRL_J},
+        {QStringLiteral("omnitiler-workspace-next-l"), META_CTRL_L},
+        {QStringLiteral("omnitiler-workspace-next-down-arrow"), META_CTRL_DOWN},
+        {QStringLiteral("omnitiler-workspace-next-right-arrow"), META_CTRL_RIGHT},
     };
     for (const auto &[projectAction, key] : projects) {
         CHECK(ShortcutReconciler::isProjectAction(QStringLiteral("kwin"), projectAction));
@@ -5140,11 +5140,11 @@ void workspaceRelativeDesktopSwitchRows()
     }
     // Letters and toggle carry no compiled holder and stay Keep.
     CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
-        QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-previous"))));
+        QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-previous"))));
     CHECK(!shortcutKnownConflictIds().contains(
-        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-prev-h"))));
+        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-prev-h"))));
     CHECK(!shortcutKnownConflictIds().contains(
-        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-next-j"))));
+        shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-next-j"))));
     // Table rows carry exact posts, preimages, clear resolution, and
     // displays in appended order (rows 15-18).
     {
@@ -5156,10 +5156,10 @@ void workspaceRelativeDesktopSwitchRows()
             {QStringLiteral("workspace-next-right-arrow"), QStringLiteral("Meta+Ctrl+Right")},
         };
         const QList<QString> projectActions = {
-            QStringLiteral("plasma-auto-tiler-workspace-prev-left-arrow"),
-            QStringLiteral("plasma-auto-tiler-workspace-prev-up-arrow"),
-            QStringLiteral("plasma-auto-tiler-workspace-next-down-arrow"),
-            QStringLiteral("plasma-auto-tiler-workspace-next-right-arrow"),
+            QStringLiteral("omnitiler-workspace-prev-left-arrow"),
+            QStringLiteral("omnitiler-workspace-prev-up-arrow"),
+            QStringLiteral("omnitiler-workspace-next-down-arrow"),
+            QStringLiteral("omnitiler-workspace-next-right-arrow"),
         };
         for (int i = 0; i < diag.size(); ++i) {
             const ShortcutConflictRow &row = table.at(15 + i);
@@ -5204,7 +5204,7 @@ void workspaceRelativeDesktopSwitchRows()
             if (tuple.action == QStringLiteral("Switch One Desktop to the Left")) {
                 CHECK(tuple.active == (QList<int>{4242}));
             }
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-prev-left-arrow")) {
+            if (tuple.action == QStringLiteral("omnitiler-workspace-prev-left-arrow")) {
                 CHECK(tuple.active == (QList<int>{META_CTRL_LEFT}));
             }
         }
@@ -5223,23 +5223,23 @@ void workspaceRelativeDesktopSwitchRows()
         const QSet<QString> known = shortcutKnownConflictIds();
         const QStringList compatible = presetCompatibleDisabledIds(catalog, known, QSet<QString>());
         CHECK(compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-prev-left-arrow"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-prev-left-arrow"))));
         CHECK(compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-prev-up-arrow"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-prev-up-arrow"))));
         CHECK(compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-next-down-arrow"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-next-down-arrow"))));
         CHECK(compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-next-right-arrow"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-next-right-arrow"))));
         CHECK(!compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-previous"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-previous"))));
         CHECK(!compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-prev-h"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-prev-h"))));
         CHECK(!compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-prev-k"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-prev-k"))));
         CHECK(!compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-next-j"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-next-j"))));
         CHECK(!compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-workspace-next-l"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-workspace-next-l"))));
         // Disabled arrows skip refusal and clear only their own assignment.
         FakeShortcutStore store;
         seedFullQuiet(store);
@@ -5252,7 +5252,7 @@ void workspaceRelativeDesktopSwitchRows()
         for (const ShortcutCatalogEntry &entry : catalog) {
             const QString id = shortcutCatalogId(entry.component, entry.action);
             if (known.contains(id)
-                && entry.action.startsWith(QStringLiteral("plasma-auto-tiler-workspace-"))) {
+                && entry.action.startsWith(QStringLiteral("omnitiler-workspace-"))) {
                 disabled.insert(id);
             }
         }
@@ -5263,7 +5263,7 @@ void workspaceRelativeDesktopSwitchRows()
         CHECK(result.ok);
         CHECK(store.foreignWriteLog.isEmpty());
         for (const ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-workspace-prev-left-arrow")) {
+            if (tuple.action == QStringLiteral("omnitiler-workspace-prev-left-arrow")) {
                 CHECK(tuple.active.isEmpty());
             }
             if (tuple.action == QStringLiteral("Switch One Desktop to the Left")) {
@@ -5282,14 +5282,14 @@ void workspaceSendFollowStayRows()
     CHECK(shortcutProjectCatalog().size() == 129);
     const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
     const QList<std::pair<QString, int>> follow = {
-        {QStringLiteral("plasma-auto-tiler-send-prev-h"), META_CTRL_SHIFT_H},
-        {QStringLiteral("plasma-auto-tiler-send-prev-k"), META_CTRL_SHIFT_K},
-        {QStringLiteral("plasma-auto-tiler-send-prev-left-arrow"), META_CTRL_SHIFT_LEFT},
-        {QStringLiteral("plasma-auto-tiler-send-prev-up-arrow"), META_CTRL_SHIFT_UP},
-        {QStringLiteral("plasma-auto-tiler-send-next-j"), META_CTRL_SHIFT_J},
-        {QStringLiteral("plasma-auto-tiler-send-next-l"), META_CTRL_SHIFT_L},
-        {QStringLiteral("plasma-auto-tiler-send-next-down-arrow"), META_CTRL_SHIFT_DOWN},
-        {QStringLiteral("plasma-auto-tiler-send-next-right-arrow"), META_CTRL_SHIFT_RIGHT},
+        {QStringLiteral("omnitiler-send-prev-h"), META_CTRL_SHIFT_H},
+        {QStringLiteral("omnitiler-send-prev-k"), META_CTRL_SHIFT_K},
+        {QStringLiteral("omnitiler-send-prev-left-arrow"), META_CTRL_SHIFT_LEFT},
+        {QStringLiteral("omnitiler-send-prev-up-arrow"), META_CTRL_SHIFT_UP},
+        {QStringLiteral("omnitiler-send-next-j"), META_CTRL_SHIFT_J},
+        {QStringLiteral("omnitiler-send-next-l"), META_CTRL_SHIFT_L},
+        {QStringLiteral("omnitiler-send-next-down-arrow"), META_CTRL_SHIFT_DOWN},
+        {QStringLiteral("omnitiler-send-next-right-arrow"), META_CTRL_SHIFT_RIGHT},
     };
     const QList<QString> followDisplays = {
         QStringLiteral("Meta+Ctrl+Shift+H"), QStringLiteral("Meta+Ctrl+Shift+K"),
@@ -5323,26 +5323,26 @@ void workspaceSendFollowStayRows()
           == QStringLiteral("Meta+Ctrl+Shift+Right"));
     // Numbered stay: 1..9 plus symbol aliases plus append rows, all unbound.
     const QList<QString> stayActions = {
-        QStringLiteral("plasma-auto-tiler-stay-workspace-1"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-1-symbol"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-2"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-2-symbol"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-3"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-3-symbol"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-4"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-4-symbol"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-5"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-5-symbol"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-6"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-6-symbol"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-7"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-7-symbol"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-8"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-8-symbol"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-9"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-9-symbol"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-append"),
-        QStringLiteral("plasma-auto-tiler-stay-workspace-append-symbol"),
+        QStringLiteral("omnitiler-stay-workspace-1"),
+        QStringLiteral("omnitiler-stay-workspace-1-symbol"),
+        QStringLiteral("omnitiler-stay-workspace-2"),
+        QStringLiteral("omnitiler-stay-workspace-2-symbol"),
+        QStringLiteral("omnitiler-stay-workspace-3"),
+        QStringLiteral("omnitiler-stay-workspace-3-symbol"),
+        QStringLiteral("omnitiler-stay-workspace-4"),
+        QStringLiteral("omnitiler-stay-workspace-4-symbol"),
+        QStringLiteral("omnitiler-stay-workspace-5"),
+        QStringLiteral("omnitiler-stay-workspace-5-symbol"),
+        QStringLiteral("omnitiler-stay-workspace-6"),
+        QStringLiteral("omnitiler-stay-workspace-6-symbol"),
+        QStringLiteral("omnitiler-stay-workspace-7"),
+        QStringLiteral("omnitiler-stay-workspace-7-symbol"),
+        QStringLiteral("omnitiler-stay-workspace-8"),
+        QStringLiteral("omnitiler-stay-workspace-8-symbol"),
+        QStringLiteral("omnitiler-stay-workspace-9"),
+        QStringLiteral("omnitiler-stay-workspace-9-symbol"),
+        QStringLiteral("omnitiler-stay-workspace-append"),
+        QStringLiteral("omnitiler-stay-workspace-append-symbol"),
     };
     for (int i = 0; i < stayActions.size(); ++i) {
         const ShortcutCatalogEntry &entry = catalog.at(84 + i);
@@ -5357,14 +5357,14 @@ void workspaceSendFollowStayRows()
               || true);
     }
     const QList<QString> stayRelativeActions = {
-        QStringLiteral("plasma-auto-tiler-send-stay-prev-h"),
-        QStringLiteral("plasma-auto-tiler-send-stay-prev-k"),
-        QStringLiteral("plasma-auto-tiler-send-stay-prev-left-arrow"),
-        QStringLiteral("plasma-auto-tiler-send-stay-prev-up-arrow"),
-        QStringLiteral("plasma-auto-tiler-send-stay-next-j"),
-        QStringLiteral("plasma-auto-tiler-send-stay-next-l"),
-        QStringLiteral("plasma-auto-tiler-send-stay-next-down-arrow"),
-        QStringLiteral("plasma-auto-tiler-send-stay-next-right-arrow"),
+        QStringLiteral("omnitiler-send-stay-prev-h"),
+        QStringLiteral("omnitiler-send-stay-prev-k"),
+        QStringLiteral("omnitiler-send-stay-prev-left-arrow"),
+        QStringLiteral("omnitiler-send-stay-prev-up-arrow"),
+        QStringLiteral("omnitiler-send-stay-next-j"),
+        QStringLiteral("omnitiler-send-stay-next-l"),
+        QStringLiteral("omnitiler-send-stay-next-down-arrow"),
+        QStringLiteral("omnitiler-send-stay-next-right-arrow"),
     };
     for (int i = 0; i < stayRelativeActions.size(); ++i) {
         const ShortcutCatalogEntry &entry = catalog.at(104 + i);
@@ -5394,13 +5394,13 @@ void workspaceSendFollowStayRows()
         CHECK(ShortcutReconciler::conflictingKeys(QList<int>{key, 999}).isEmpty());
     }
     CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
-        QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-prev-h"))));
+        QStringLiteral("kwin"), QStringLiteral("omnitiler-send-prev-h"))));
     CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
-        QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-next-j"))));
+        QStringLiteral("kwin"), QStringLiteral("omnitiler-send-next-j"))));
     CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
-        QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-1"))));
+        QStringLiteral("kwin"), QStringLiteral("omnitiler-stay-workspace-1"))));
     CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
-        QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-stay-prev-h"))));
+        QStringLiteral("kwin"), QStringLiteral("omnitiler-send-stay-prev-h"))));
     // Table rows carry exact posts, preimages, clear resolution, and
     // displays in appended order (rows 19-22).
     {
@@ -5412,10 +5412,10 @@ void workspaceSendFollowStayRows()
             {QStringLiteral("send-next-right-arrow"), QStringLiteral("Meta+Ctrl+Shift+Right")},
         };
         const QList<QString> projectActions = {
-            QStringLiteral("plasma-auto-tiler-send-prev-left-arrow"),
-            QStringLiteral("plasma-auto-tiler-send-prev-up-arrow"),
-            QStringLiteral("plasma-auto-tiler-send-next-down-arrow"),
-            QStringLiteral("plasma-auto-tiler-send-next-right-arrow"),
+            QStringLiteral("omnitiler-send-prev-left-arrow"),
+            QStringLiteral("omnitiler-send-prev-up-arrow"),
+            QStringLiteral("omnitiler-send-next-down-arrow"),
+            QStringLiteral("omnitiler-send-next-right-arrow"),
         };
         for (int i = 0; i < diag.size(); ++i) {
             const ShortcutConflictRow &row = table.at(19 + i);
@@ -5460,7 +5460,7 @@ void workspaceSendFollowStayRows()
             if (tuple.action == QStringLiteral("Window One Desktop to the Left")) {
                 CHECK(tuple.active == (QList<int>{4242}));
             }
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-send-prev-left-arrow")) {
+            if (tuple.action == QStringLiteral("omnitiler-send-prev-left-arrow")) {
                 CHECK(tuple.active == (QList<int>{META_CTRL_SHIFT_LEFT}));
             }
         }
@@ -5478,25 +5478,25 @@ void workspaceSendFollowStayRows()
         const QSet<QString> known = shortcutKnownConflictIds();
         const QStringList compatible = presetCompatibleDisabledIds(catalog, known, QSet<QString>());
         CHECK(compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-prev-left-arrow"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-send-prev-left-arrow"))));
         CHECK(compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-prev-up-arrow"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-send-prev-up-arrow"))));
         CHECK(compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-next-down-arrow"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-send-next-down-arrow"))));
         CHECK(compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-next-right-arrow"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-send-next-right-arrow"))));
         CHECK(!compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-prev-h"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-send-prev-h"))));
         CHECK(!compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-prev-k"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-send-prev-k"))));
         CHECK(!compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-next-j"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-send-next-j"))));
         CHECK(!compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-next-l"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-send-next-l"))));
         CHECK(!compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-1"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-stay-workspace-1"))));
         CHECK(!compatible.contains(shortcutCatalogId(
-            QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-stay-prev-h"))));
+            QStringLiteral("kwin"), QStringLiteral("omnitiler-send-stay-prev-h"))));
         // Disabled send arrows skip refusal and clear only their own assignment.
         FakeShortcutStore store;
         seedFullQuiet(store);
@@ -5508,7 +5508,7 @@ void workspaceSendFollowStayRows()
         QSet<QString> disabled;
         for (const ShortcutCatalogEntry &entry : catalog) {
             const QString id = shortcutCatalogId(entry.component, entry.action);
-            if (known.contains(id) && entry.action.startsWith(QStringLiteral("plasma-auto-tiler-send-"))) {
+            if (known.contains(id) && entry.action.startsWith(QStringLiteral("omnitiler-send-"))) {
                 disabled.insert(id);
             }
         }
@@ -5519,7 +5519,7 @@ void workspaceSendFollowStayRows()
         CHECK(result.ok);
         CHECK(store.foreignWriteLog.isEmpty());
         for (const ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-send-prev-left-arrow")) {
+            if (tuple.action == QStringLiteral("omnitiler-send-prev-left-arrow")) {
                 CHECK(tuple.active.isEmpty());
             }
             if (tuple.action == QStringLiteral("Window One Desktop to the Left")) {
@@ -5537,7 +5537,7 @@ void workspaceSendFollowStayRows()
         CHECK(ShortcutReconciler::collectRowDisplays(&store, &rows, &error));
         bool sawStay = false;
         for (const ShortcutRowDisplay &row : rows) {
-            if (row.catalog.action == QStringLiteral("plasma-auto-tiler-stay-workspace-1")) {
+            if (row.catalog.action == QStringLiteral("omnitiler-stay-workspace-1")) {
                 sawStay = true;
                 CHECK(row.present);
                 CHECK(row.current.isEmpty());
@@ -5548,7 +5548,7 @@ void workspaceSendFollowStayRows()
         CHECK(sawStay);
         QString writeError;
         QList<int> confirmed;
-        CHECK(store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-stay-workspace-1"),
+        CHECK(store.writeKeys(QStringLiteral("kwin"), QStringLiteral("omnitiler-stay-workspace-1"),
                               QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{999}, &confirmed,
                               &writeError));
         CHECK(confirmed == QList<int>{999});
@@ -5556,7 +5556,7 @@ void workspaceSendFollowStayRows()
         const ShortcutApplyResult result = ShortcutReconciler(&store, &cleared).apply();
         CHECK(result.ok);
         for (const ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-stay-workspace-1")) {
+            if (tuple.action == QStringLiteral("omnitiler-stay-workspace-1")) {
                 CHECK(tuple.active.isEmpty());
             }
         }
@@ -5575,18 +5575,18 @@ void outputSendFollowStayRows()
     CHECK(shortcutProjectCatalog().size() == 129);
     const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
     const QList<QString> outputOrder = {
-        QStringLiteral("plasma-auto-tiler-send-output-left"),
-        QStringLiteral("plasma-auto-tiler-send-output-left-arrow"),
-        QStringLiteral("plasma-auto-tiler-send-output-left-stay"),
-        QStringLiteral("plasma-auto-tiler-send-output-down"),
-        QStringLiteral("plasma-auto-tiler-send-output-down-arrow"),
-        QStringLiteral("plasma-auto-tiler-send-output-down-stay"),
-        QStringLiteral("plasma-auto-tiler-send-output-up"),
-        QStringLiteral("plasma-auto-tiler-send-output-up-arrow"),
-        QStringLiteral("plasma-auto-tiler-send-output-up-stay"),
-        QStringLiteral("plasma-auto-tiler-send-output-right"),
-        QStringLiteral("plasma-auto-tiler-send-output-right-arrow"),
-        QStringLiteral("plasma-auto-tiler-send-output-right-stay"),
+        QStringLiteral("omnitiler-send-output-left"),
+        QStringLiteral("omnitiler-send-output-left-arrow"),
+        QStringLiteral("omnitiler-send-output-left-stay"),
+        QStringLiteral("omnitiler-send-output-down"),
+        QStringLiteral("omnitiler-send-output-down-arrow"),
+        QStringLiteral("omnitiler-send-output-down-stay"),
+        QStringLiteral("omnitiler-send-output-up"),
+        QStringLiteral("omnitiler-send-output-up-arrow"),
+        QStringLiteral("omnitiler-send-output-up-stay"),
+        QStringLiteral("omnitiler-send-output-right"),
+        QStringLiteral("omnitiler-send-output-right-arrow"),
+        QStringLiteral("omnitiler-send-output-right-stay"),
     };
     for (int i = 0; i < outputOrder.size(); ++i) {
         const ShortcutCatalogEntry &entry = catalog.at(112 + i);
@@ -5594,14 +5594,14 @@ void outputSendFollowStayRows()
         CHECK(entry.action == outputOrder.at(i));
     }
     const QList<std::pair<QString, int>> follow = {
-        {QStringLiteral("plasma-auto-tiler-send-output-left"), META_CTRL_ALT_H},
-        {QStringLiteral("plasma-auto-tiler-send-output-left-arrow"), META_CTRL_ALT_LEFT},
-        {QStringLiteral("plasma-auto-tiler-send-output-down"), META_CTRL_ALT_J},
-        {QStringLiteral("plasma-auto-tiler-send-output-down-arrow"), META_CTRL_ALT_DOWN},
-        {QStringLiteral("plasma-auto-tiler-send-output-up"), META_CTRL_ALT_K},
-        {QStringLiteral("plasma-auto-tiler-send-output-up-arrow"), META_CTRL_ALT_UP},
-        {QStringLiteral("plasma-auto-tiler-send-output-right"), META_CTRL_ALT_L},
-        {QStringLiteral("plasma-auto-tiler-send-output-right-arrow"), META_CTRL_ALT_RIGHT},
+        {QStringLiteral("omnitiler-send-output-left"), META_CTRL_ALT_H},
+        {QStringLiteral("omnitiler-send-output-left-arrow"), META_CTRL_ALT_LEFT},
+        {QStringLiteral("omnitiler-send-output-down"), META_CTRL_ALT_J},
+        {QStringLiteral("omnitiler-send-output-down-arrow"), META_CTRL_ALT_DOWN},
+        {QStringLiteral("omnitiler-send-output-up"), META_CTRL_ALT_K},
+        {QStringLiteral("omnitiler-send-output-up-arrow"), META_CTRL_ALT_UP},
+        {QStringLiteral("omnitiler-send-output-right"), META_CTRL_ALT_L},
+        {QStringLiteral("omnitiler-send-output-right-arrow"), META_CTRL_ALT_RIGHT},
     };
     const QList<QString> followDisplays = {
         QStringLiteral("Meta+Ctrl+Alt+H"), QStringLiteral("Meta+Ctrl+Alt+Left"),
@@ -5654,10 +5654,10 @@ void outputSendFollowStayRows()
           == QStringLiteral("Meta+Ctrl+Alt+Right"));
     // Stay rows: bindable unbound, zero-key support preserved.
     const QList<QString> stayActions = {
-        QStringLiteral("plasma-auto-tiler-send-output-left-stay"),
-        QStringLiteral("plasma-auto-tiler-send-output-down-stay"),
-        QStringLiteral("plasma-auto-tiler-send-output-up-stay"),
-        QStringLiteral("plasma-auto-tiler-send-output-right-stay"),
+        QStringLiteral("omnitiler-send-output-left-stay"),
+        QStringLiteral("omnitiler-send-output-down-stay"),
+        QStringLiteral("omnitiler-send-output-up-stay"),
+        QStringLiteral("omnitiler-send-output-right-stay"),
     };
     for (const QString &action : stayActions) {
         bool found = false;
@@ -5687,7 +5687,7 @@ void outputSendFollowStayRows()
             CHECK(!quiet.contains(shortcutCatalogId(QStringLiteral("kwin"), action)));
         }
         const QString outLeft =
-            shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-left"));
+            shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-send-output-left"));
         const QStringList colliding =
             presetCompatibleDisabledIds(catalog, known, QSet<QString>{outLeft});
         CHECK(colliding.contains(outLeft));
@@ -5719,13 +5719,13 @@ void outputSendFollowStayRows()
         seedFullQuiet(store);
         FakeClearedActions cleared;
         const QString outLeft =
-            shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-send-output-left"));
+            shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-send-output-left"));
         const ShortcutApplyResult result =
             ShortcutReconciler(&store, &cleared).applySelected(QSet<QString>{outLeft});
         CHECK(result.ok);
         CHECK(store.foreignWriteLog.isEmpty());
         for (const ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-send-output-left")) {
+            if (tuple.action == QStringLiteral("omnitiler-send-output-left")) {
                 CHECK(tuple.active.isEmpty());
             }
         }
@@ -5759,7 +5759,7 @@ void outputSendFollowStayRows()
             if (tuple.action == QStringLiteral("other-output")) {
                 CHECK(tuple.active == (QList<int>{4242}));
             }
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-send-output-left")) {
+            if (tuple.action == QStringLiteral("omnitiler-send-output-left")) {
                 CHECK(tuple.active == (QList<int>{META_CTRL_ALT_H}));
             }
         }
@@ -5780,7 +5780,7 @@ void outputSendFollowStayRows()
         CHECK(ShortcutReconciler::collectRowDisplays(&store, &rows, &error));
         bool sawStay = false;
         for (const ShortcutRowDisplay &row : rows) {
-            if (row.catalog.action == QStringLiteral("plasma-auto-tiler-send-output-left-stay")) {
+            if (row.catalog.action == QStringLiteral("omnitiler-send-output-left-stay")) {
                 sawStay = true;
                 CHECK(row.present);
                 CHECK(row.current.isEmpty());
@@ -5792,7 +5792,7 @@ void outputSendFollowStayRows()
         QString writeError;
         QList<int> confirmed;
         CHECK(store.writeKeys(QStringLiteral("kwin"),
-                              QStringLiteral("plasma-auto-tiler-send-output-left-stay"),
+                              QStringLiteral("omnitiler-send-output-left-stay"),
                               QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{999}, &confirmed,
                               &writeError));
         CHECK(confirmed == QList<int>{999});
@@ -5800,7 +5800,7 @@ void outputSendFollowStayRows()
         const ShortcutApplyResult result = ShortcutReconciler(&store, &cleared).apply();
         CHECK(result.ok);
         for (const ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-send-output-left-stay")) {
+            if (tuple.action == QStringLiteral("omnitiler-send-output-left-stay")) {
                 CHECK(tuple.active.isEmpty());
             }
         }
@@ -5818,10 +5818,10 @@ void migrateWorkspaceFollowRows()
     CHECK(shortcutProjectCatalog().size() == 129);
     const QList<ShortcutCatalogEntry> &catalog = shortcutProjectCatalog();
     const QList<QString> migrateOrder = {
-        QStringLiteral("plasma-auto-tiler-migrate-workspace-left"),
-        QStringLiteral("plasma-auto-tiler-migrate-workspace-right"),
-        QStringLiteral("plasma-auto-tiler-migrate-workspace-up"),
-        QStringLiteral("plasma-auto-tiler-migrate-workspace-down"),
+        QStringLiteral("omnitiler-migrate-workspace-left"),
+        QStringLiteral("omnitiler-migrate-workspace-right"),
+        QStringLiteral("omnitiler-migrate-workspace-up"),
+        QStringLiteral("omnitiler-migrate-workspace-down"),
     };
     for (int i = 0; i < migrateOrder.size(); ++i) {
         const ShortcutCatalogEntry &entry = catalog.at(124 + i);
@@ -5849,7 +5849,7 @@ void migrateWorkspaceFollowRows()
             CHECK(!quiet.contains(shortcutCatalogId(QStringLiteral("kwin"), action)));
         }
         const QString migrateLeft =
-            shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-migrate-workspace-left"));
+            shortcutCatalogId(QStringLiteral("kwin"), QStringLiteral("omnitiler-migrate-workspace-left"));
         const QStringList colliding =
             presetCompatibleDisabledIds(catalog, known, QSet<QString>{migrateLeft});
         CHECK(colliding.contains(migrateLeft));
@@ -5877,7 +5877,7 @@ void migrateWorkspaceFollowRows()
         CHECK(ShortcutReconciler::collectRowDisplays(&store, &rows, &error));
         bool sawMigrate = false;
         for (const ShortcutRowDisplay &row : rows) {
-            if (row.catalog.action == QStringLiteral("plasma-auto-tiler-migrate-workspace-left")) {
+            if (row.catalog.action == QStringLiteral("omnitiler-migrate-workspace-left")) {
                 sawMigrate = true;
                 CHECK(row.present);
                 CHECK(row.current.isEmpty());
@@ -5889,7 +5889,7 @@ void migrateWorkspaceFollowRows()
         QString writeError;
         QList<int> confirmed;
         CHECK(store.writeKeys(QStringLiteral("kwin"),
-                              QStringLiteral("plasma-auto-tiler-migrate-workspace-left"),
+                              QStringLiteral("omnitiler-migrate-workspace-left"),
                               QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{999}, &confirmed,
                               &writeError));
         CHECK(confirmed == QList<int>{999});
@@ -5897,7 +5897,7 @@ void migrateWorkspaceFollowRows()
         const ShortcutApplyResult result = ShortcutReconciler(&store, &cleared).apply();
         CHECK(result.ok);
         for (const ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-migrate-workspace-left")) {
+            if (tuple.action == QStringLiteral("omnitiler-migrate-workspace-left")) {
                 CHECK(tuple.active.isEmpty());
             }
         }
@@ -5914,7 +5914,7 @@ void toggleOrientationCatalogPresetRows()
     const ShortcutCatalogEntry *found = nullptr;
     for (const ShortcutCatalogEntry &entry : catalog) {
         if (entry.component == QStringLiteral("kwin")
-            && entry.action == QStringLiteral("plasma-auto-tiler-toggle-orientation")) {
+            && entry.action == QStringLiteral("omnitiler-toggle-orientation")) {
             found = &entry;
             break;
         }
@@ -5928,16 +5928,16 @@ void toggleOrientationCatalogPresetRows()
     CHECK(found->knownForeignKey == 0);
     CHECK(ShortcutReconciler::keyDisplayName(META_O) == QStringLiteral("Meta+O"));
     CHECK(ShortcutReconciler::isProjectAction(QStringLiteral("kwin"),
-                                             QStringLiteral("plasma-auto-tiler-toggle-orientation")));
+                                             QStringLiteral("omnitiler-toggle-orientation")));
     CHECK(ShortcutReconciler::isProjectOwned(QStringLiteral("kwin"),
-                                             QStringLiteral("plasma-auto-tiler-toggle-orientation")));
+                                             QStringLiteral("omnitiler-toggle-orientation")));
     CHECK(ShortcutReconciler::isAllowlisted(QStringLiteral("kwin"),
-                                           QStringLiteral("plasma-auto-tiler-toggle-orientation")));
+                                           QStringLiteral("omnitiler-toggle-orientation")));
     CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
-        QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-orientation"))));
+        QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle-orientation"))));
     // No known holder: neither preset disables the row.
     const QString orientId = shortcutCatalogId(QStringLiteral("kwin"),
-                                               QStringLiteral("plasma-auto-tiler-toggle-orientation"));
+                                               QStringLiteral("omnitiler-toggle-orientation"));
     const QStringList authentic = presetCompatibleDisabledIds(catalog, shortcutKnownConflictIds(),
                                                               QSet<QString>());
     CHECK(!authentic.contains(orientId));
@@ -5960,7 +5960,7 @@ void toggleOrientationCatalogPresetRows()
         FakeClearedActions cleared;
         CHECK(ShortcutReconciler(&store, &cleared).apply().ok);
         for (const ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-orientation")) {
+            if (tuple.action == QStringLiteral("omnitiler-toggle-orientation")) {
                 CHECK(tuple.active == (QList<int>{META_O}));
             }
         }
@@ -5974,7 +5974,7 @@ void toggleOrientationCatalogPresetRows()
         CHECK(result.ok);
         CHECK(store.foreignWriteLog.isEmpty());
         for (const ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-orientation")) {
+            if (tuple.action == QStringLiteral("omnitiler-toggle-orientation")) {
                 CHECK(tuple.active.isEmpty());
             }
         }
@@ -5991,7 +5991,7 @@ void workspaceTilingToggleCatalogPresetRows()
     const ShortcutCatalogEntry *found = nullptr;
     for (const ShortcutCatalogEntry &entry : catalog) {
         if (entry.component == QStringLiteral("kwin")
-            && entry.action == QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling")) {
+            && entry.action == QStringLiteral("omnitiler-toggle-workspace-tiling")) {
             found = &entry;
             break;
         }
@@ -6005,16 +6005,16 @@ void workspaceTilingToggleCatalogPresetRows()
     CHECK(found->knownForeignKey == 0);
     CHECK(ShortcutReconciler::keyDisplayName(META_Y) == QStringLiteral("Meta+Y"));
     CHECK(ShortcutReconciler::isProjectAction(QStringLiteral("kwin"),
-                                             QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling")));
+                                             QStringLiteral("omnitiler-toggle-workspace-tiling")));
     CHECK(ShortcutReconciler::isProjectOwned(QStringLiteral("kwin"),
-                                             QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling")));
+                                             QStringLiteral("omnitiler-toggle-workspace-tiling")));
     CHECK(ShortcutReconciler::isAllowlisted(QStringLiteral("kwin"),
-                                           QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling")));
+                                           QStringLiteral("omnitiler-toggle-workspace-tiling")));
     CHECK(!shortcutKnownConflictIds().contains(shortcutCatalogId(
-        QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling"))));
+        QStringLiteral("kwin"), QStringLiteral("omnitiler-toggle-workspace-tiling"))));
     // No known holder: neither preset disables the row.
     const QString toggleId = shortcutCatalogId(QStringLiteral("kwin"),
-                                               QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling"));
+                                               QStringLiteral("omnitiler-toggle-workspace-tiling"));
     const QStringList compatibleEmpty = presetCompatibleDisabledIds(
         catalog, shortcutKnownConflictIds(), QSet<QString>());
     CHECK(!compatibleEmpty.contains(toggleId));
@@ -6037,7 +6037,7 @@ void workspaceTilingToggleCatalogPresetRows()
         FakeClearedActions cleared;
         CHECK(ShortcutReconciler(&store, &cleared).apply().ok);
         for (const ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling")) {
+            if (tuple.action == QStringLiteral("omnitiler-toggle-workspace-tiling")) {
                 CHECK(tuple.active == (QList<int>{META_Y}));
             }
         }
@@ -6051,7 +6051,7 @@ void workspaceTilingToggleCatalogPresetRows()
         CHECK(result.ok);
         CHECK(store.foreignWriteLog.isEmpty());
         for (const ShortcutTuple &tuple : store.tuples) {
-            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-workspace-tiling")) {
+            if (tuple.action == QStringLiteral("omnitiler-toggle-workspace-tiling")) {
                 CHECK(tuple.active.isEmpty());
             }
         }
@@ -6065,7 +6065,7 @@ int main(int argc, char **argv)
     // Unit 1 hard gate: isolate from the live session bus before any
     // QDBusConnection::sessionBus() initialization (this test constructs
     // the live KGlobalAccelStore).
-    qputenv("DBUS_SESSION_BUS_ADDRESS", QByteArray("unix:path=/dev/null/plasma-auto-tiler-kcm-test-isolated-bus"));
+    qputenv("DBUS_SESSION_BUS_ADDRESS", QByteArray("unix:path=/dev/null/omnitiler-kcm-test-isolated-bus"));
     const QString scenario = argc == 2 ? QString::fromLocal8Bit(argv[1]) : QStringLiteral("all");
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("success")) {
         applyAssignsProjectsAndRelocatesLock();

@@ -306,7 +306,7 @@
   settled/opened/restored and pre/post-stop frame receipts in the same directory.
   Owner artifact was `target/windows-dev/tiler-windows.exe`, same SHA-256 as the
   owned proof, medium integrity/session 1. Product log:
-  `%LOCALAPPDATA%/plasma-auto-tiler/session-1/run-01dd51a0f442e4a5.log`.
+  `%LOCALAPPDATA%/omnitiler/session-1/run-01dd51a0f442e4a5.log`.
 - Notepad, Calculator, Paint and Terminal were admitted. Terminal initially
   maximized was correctly skipped, then admitted after native restore. At tick
   22, Notepad/Calculator/Terminal readbacks matched canonical plans and 8px gaps.

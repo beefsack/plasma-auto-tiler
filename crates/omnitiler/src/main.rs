@@ -2,12 +2,12 @@ fn main() {
     let args: Vec<_> = std::env::args().collect();
     let result = match args.as_slice() {
         [] => Err("missing executable argument".to_owned()),
-        [_] => plasma_auto_tiler::tray_endpoint::run().map_err(|error| error.to_string()),
+        [_] => omnitiler::tray_endpoint::run().map_err(|error| error.to_string()),
         [_, command] => match command.as_str() {
             "planner-service" => {
-                plasma_auto_tiler::planner_service::run().map_err(|error| error.to_string())
+                omnitiler::planner_service::run().map_err(|error| error.to_string())
             }
-            "tray" => plasma_auto_tiler::tray_endpoint::run().map_err(|error| error.to_string()),
+            "tray" => omnitiler::tray_endpoint::run().map_err(|error| error.to_string()),
             command => Err(format!("unknown command: {command}")),
         },
         [_, command, ..] if command == "planner-service" => {

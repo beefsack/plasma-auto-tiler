@@ -195,7 +195,7 @@ describe("B9 maximized intentional unfloat", () => {
         adapter.requestFloat();
         assert.deepEqual(mocks.maximizeClears, [], "tiled maximize still refuses before any clear");
         assert.equal(mocks.dbusCalls.length, 0);
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:float-refused-maximize"));
+        assert.ok(mocks.logs.includes("omnitiler:plan:float-refused-maximize"));
     });
 
     it("degrades a refused native clear narrowly and allows a later press to retry", () => {

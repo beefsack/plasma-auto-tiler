@@ -1,6 +1,6 @@
 # Reference: Window Manager Behaviour Comparison (bspwm / Hyprland / COSMIC)
 
-Purpose: decision-support reference for the plasma-auto-tiler product surface.
+Purpose: decision-support reference for the omnitiler product surface.
 Compares bspwm, Hyprland, and COSMIC across ten window-management behaviours so
 that product decisions follow established Hyprland/COSMIC precedent over bspwm.
 

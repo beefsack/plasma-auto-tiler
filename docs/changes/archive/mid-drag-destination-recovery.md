@@ -4,7 +4,7 @@
 
 Ensure a sent tiled window is re-tiled when its Meta drag releases on the destination workspace after the send. Keep the prior decision to ignore stale drop placement and converge from complete destination observation, without new timers, fences or product policy.
 
-In `plasma-auto-tiler-dev.llROHi.log`, release routes `drag-1` through the stale-workspace refusal (`:1869-1874`), but `drag-reconcile ... dispatch=deferred` marks the departed source. The destination is foreground (`:1809-1811` desktop mismatch for source survivors, `:1815-1817` four-window destination preview); no destination reconcile appears after release, and the final frame remains `0,660,756,478` (`:1875`). The file contains one `drag-drop-refused-stale-workspace` and no `snapshot-invalid` line.
+In `omnitiler-dev.llROHi.log`, release routes `drag-1` through the stale-workspace refusal (`:1869-1874`), but `drag-reconcile ... dispatch=deferred` marks the departed source. The destination is foreground (`:1809-1811` desktop mismatch for source survivors, `:1815-1817` four-window destination preview); no destination reconcile appears after release, and the final frame remains `0,660,756,478` (`:1875`). The file contains one `drag-drop-refused-stale-workspace` and no `snapshot-invalid` line.
 
 ## Acceptance
 

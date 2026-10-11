@@ -42,7 +42,7 @@
 - TOML and workflow YAML parse with existing yq; `git diff --check` passes.
 - Implementation commit `4e95150` passed all five hosted jobs (Rust, KWin,
   shell, Windows, macOS):
-  [CI 37126973606](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37126973606).
+  [CI 37126973606](https://github.com/beefsack/omnitiler/actions/runs/37126973606).
 - Hosted logs confirm six installed Windows tools and five on macOS 15 arm64,
   with stable Rust 1.99.0 (`x86_64-pc-windows-msvc` and
   `aarch64-apple-darwin`). Windows mise-selected locked Cargo gates pass;

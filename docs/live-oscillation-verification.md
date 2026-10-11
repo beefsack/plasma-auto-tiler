@@ -70,7 +70,7 @@ three `workspaceMode`s funnel their append through one primitive,
 
 ## Log substring reference
 
-All diagnostics carry the fixed prefix `plasma-auto-tiler:`
+All diagnostics carry the fixed prefix `omnitiler:`
 (`kwin/src/controller.ts:66`).
 
 | Substring | Meaning | Source line |
@@ -100,7 +100,7 @@ Monitoring command (run in its own terminal, left open through every
 scenario, Ctrl-C to stop):
 
 ```
-journalctl --user -f | grep --line-buffered 'plasma-auto-tiler:'
+journalctl --user -f | grep --line-buffered 'omnitiler:'
 ```
 
 ## Preconditions (read-only, record fresh results every session)
@@ -117,7 +117,7 @@ output before starting any scenario.
     required authorization under the Safety Boundary before proceeding.
 3. Confirm the installed bundle matches the current repository checkout -
    do not assume it does:
-   `sha256sum ~/.local/share/kwin/scripts/plasma-auto-tiler-kwin/contents/code/main.js kwin/contents/code/main.js`
+   `sha256sum ~/.local/share/kwin/scripts/omnitiler-kwin/contents/code/main.js kwin/contents/code/main.js`
    If the hashes differ, rebuild and reinstall before proceeding:
    `devenv shell --impure -- bash scripts/dogfood-install.sh setup`
    then re-run this hash check until it matches.
@@ -130,7 +130,7 @@ output before starting any scenario.
    and which one is the trailing empty on each output. This is the baseline
    to restore at cleanup.
 
-The config group for this script is `Script-plasma-auto-tiler-kwin`
+The config group for this script is `Script-omnitiler-kwin`
 (confirmed by sibling groups in `~/.config/kwinrc`). The default
 `workspaceMode` when unset is `per-output-local`
 (`kwin/src/controller.ts:159`).
@@ -138,7 +138,7 @@ The config group for this script is `Script-plasma-auto-tiler-kwin`
 ## Mode switching
 
 ```
-devenv shell --impure -- bash -c 'kwriteconfig6 --file ~/.config/kwinrc --group Script-plasma-auto-tiler-kwin --key workspaceMode <mode>'
+devenv shell --impure -- bash -c 'kwriteconfig6 --file ~/.config/kwinrc --group Script-omnitiler-kwin --key workspaceMode <mode>'
 devenv shell --impure -- bash scripts/dogfood-install.sh disable
 devenv shell --impure -- bash scripts/dogfood-install.sh enable
 devenv shell --impure -- bash scripts/dogfood-install.sh status
@@ -148,7 +148,7 @@ devenv shell --impure -- bash scripts/dogfood-install.sh status
 the default with:
 
 ```
-devenv shell --impure -- bash -c 'kwriteconfig6 --file ~/.config/kwinrc --group Script-plasma-auto-tiler-kwin --key workspaceMode --delete'
+devenv shell --impure -- bash -c 'kwriteconfig6 --file ~/.config/kwinrc --group Script-omnitiler-kwin --key workspaceMode --delete'
 devenv shell --impure -- bash scripts/dogfood-install.sh disable
 devenv shell --impure -- bash scripts/dogfood-install.sh enable
 ```

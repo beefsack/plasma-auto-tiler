@@ -1,21 +1,21 @@
-Source: plasma-auto-tiler
+Source: omnitiler
 Section: kde
 Priority: optional
-Maintainer: Plasma Auto Tiler Contributors <noreply@example.com>
+Maintainer: OmniTiler Contributors <noreply@example.com>
 Build-Depends: build-essential, debhelper-compat (= 13), cargo:native, rustc:native,
  cmake, extra-cmake-modules (>= 6.24), qt6-base-dev,
  libkf6config-dev, libkf6coreaddons-dev, libkf6kcmutils-dev,
  libkf6i18n-dev, libkf6widgetsaddons-dev
 Standards-Version: 4.7.2
 Rules-Requires-Root: no
-Homepage: https://github.com/beefsack/plasma-auto-tiler
+Homepage: https://github.com/beefsack/omnitiler
 
-Package: plasma-auto-tiler
+Package: omnitiler
 Architecture: any
 Depends: ${shlibs:Depends}, kwin-wayland | kwin-x11, hicolor-icon-theme, libkf6config-bin, libkf6kcmutils-bin
-Recommends: plasma-auto-tiler-native-effect
+Recommends: omnitiler-native-effect
 Description: COSMIC-style automatic tiling for KWin (core with Settings)
- Core of Plasma Auto Tiler: the KWin script (prebuilt, no Node needed at
+ Core of OmniTiler: the KWin script (prebuilt, no Node needed at
  packaging time), the Rust planner/tray binary with on-demand D-Bus plus
  systemd user activation, the application icon, and both native settings
  pages (the effect settings page and the native script settings page, the

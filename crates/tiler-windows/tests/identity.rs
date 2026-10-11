@@ -33,6 +33,6 @@ fn ledger_path_is_private_session_dir() {
         dir.parent()
             .and_then(|p| p.file_name())
             .and_then(|s| s.to_str()),
-        Some("plasma-auto-tiler")
+        Some("omnitiler")
     );
 }

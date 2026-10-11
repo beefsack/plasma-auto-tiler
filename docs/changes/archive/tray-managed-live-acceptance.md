@@ -59,7 +59,7 @@ the item, show its status, and open its fixed Settings target.
 
 - Read-only current-session inspection found the exact current immutable
   `tray-managed` process owns and is registered as
-  `org.plasmaautotiler.Tray/StatusNotifierItem`, but every SNI object request,
+  `com.omnitiler.Tray/StatusNotifierItem`, but every SNI object request,
   including `org.freedesktop.DBus.Peer.Ping`, times out. The process is alive.
   Plasma therefore cannot obtain its icon, tooltip, menu, or activation method.
 - The leading source hypothesis is that the endpoint blocks its object-server
@@ -90,14 +90,14 @@ the item, show its status, and open its fixed Settings target.
 
 - One current-session manual start of the current-generation immutable store
   `tray-managed` binary proved only exact managed process/runtime binding under
-  `$XDG_RUNTIME_DIR/plasma-auto-tiler-managed`, SNI registration with
+  `$XDG_RUNTIME_DIR/omnitiler-managed`, SNI registration with
   `unavailable` status, and one fixed Settings action with exact
   Settings-process cleanup. No KWin snapshot authority is claimed from that run.
 - That run claims no visual panel behavior, no watcher-ordering/login-autostart
   delivery, no native ABI/plugin load, no baseline-restoration proof, and no
   KWin Script1 identity or cleanup.
 - The pre-repair current immutable process held
-  `org.plasmaautotiler.Tray/StatusNotifierItem` but timed out on every SNI
+  `com.omnitiler.Tray/StatusNotifierItem` but timed out on every SNI
   object request, including `Peer.Ping`; Plasma could not obtain its icon,
   tooltip, menu, or activation from that process.
 - One bounded disposable repaired candidate answered SNI `Peer.Ping`,

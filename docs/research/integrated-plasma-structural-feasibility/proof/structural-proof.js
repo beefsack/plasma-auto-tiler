@@ -1,19 +1,19 @@
-// Plasma Auto Tiler structural-feasibility proof script.
+// OmniTiler structural-feasibility proof script.
 // Loaded via org.kde.kwin.Scripting.loadScript and run by org.kde.kwin.Scripting.start.
 // Inert until setup() completes: if the proof desktop is missing it stays inert
 // for its whole lifetime. Manages ONLY sentinel-class windows on exactly the
-// proof desktop. Emits every fact through the com.plasmaAutoTiler.LogSink D-Bus
+// proof desktop. Emits every fact through the com.omniTiler.LogSink D-Bus
 // method call, captured by the host harness with dbus-monitor.
 
-var PROOF_DESKTOP_NAME = "plasma-auto-tiler-proof";
-var SENTINEL_PREFIX = "plasma-auto-tiler-kb-";
+var PROOF_DESKTOP_NAME = "omnitiler-proof";
+var SENTINEL_PREFIX = "omnitiler-kb-";
 var SENTINEL_SEQUENCE = "Meta+Ctrl+Shift+Alt+P";
-var SHORTCUT_TEXT = "Plasma Auto Tiler Proof";
+var SHORTCUT_TEXT = "OmniTiler Proof";
 var WATCHDOG_MS = 300000;
 var COLLAPSE_DELAY_MS = 1000;
-var LOG_SERVICE = "com.plasmaAutoTiler.LogSink";
-var LOG_PATH = "/com/plasmaAutoTiler/LogSink";
-var LOG_IFACE = "com.plasmaAutoTiler.LogSink";
+var LOG_SERVICE = "com.omniTiler.LogSink";
+var LOG_PATH = "/com/omniTiler/LogSink";
+var LOG_IFACE = "com.omniTiler.LogSink";
 var LAYOUT_FLAGS = ["floating", "horizontal", "vertical"];
 
 // Fail-inert: every mutable target starts __unset__ and stays inert until
@@ -76,7 +76,7 @@ function gated(window) {
         return false;
     }
     var rc = window.resourceClass;
-    if (rc !== "PlasmaAutoTilerTestWindow" && rc !== "plasma-auto-tiler-test") {
+    if (rc !== "OmniTilerTestWindow" && rc !== "omnitiler-test") {
         return false;
     }
     if (!window.normalWindow || !window.managed) {

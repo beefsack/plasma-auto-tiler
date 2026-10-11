@@ -1,10 +1,10 @@
-# Plasma Auto Tiler
+# OmniTiler
 
 Guarded Custom Tile automation for KWin.
 
 ## Quickstart
 
-Package and manage the `plasma-auto-tiler-kwin` KWin script from this
+Package and manage the `omnitiler-kwin` KWin script from this
 repository with `scripts/dogfood-install.sh`. There is no build step other than
 what the script performs; `install` builds the bundle first. The same script
 also contains commands to build, stage, and request reload of the experimental
@@ -21,11 +21,11 @@ Create the reproducible KPackage release artifact and its checksum sidecar:
 
 ```sh
 bash scripts/build-kpackage.sh
-sha256sum -c dist/plasma-auto-tiler-kwin.kwinscript.sha256
+sha256sum -c dist/omnitiler-kwin.kwinscript.sha256
 ```
 
-The command writes `dist/plasma-auto-tiler-kwin.kwinscript` and
-`dist/plasma-auto-tiler-kwin.kwinscript.sha256`; both are ignored. The archive
+The command writes `dist/omnitiler-kwin.kwinscript` and
+`dist/omnitiler-kwin.kwinscript.sha256`; both are ignored. The archive
 contains only `metadata.json`, `contents/code/main.js`,
 `contents/config/main.xml`, and `contents/ui/config.ui`. Use
 `--output-dir <dir>` to write elsewhere. The build validates only in disposable
@@ -72,7 +72,7 @@ external consumer must make this repository's nixpkgs input follow the host
 nixpkgs to align the native KWin ABI:
 
 ```nix
-inputs.plasma-auto-tiler.inputs.nixpkgs.follows = "nixpkgs";
+inputs.omnitiler.inputs.nixpkgs.follows = "nixpkgs";
 ```
 
 `lib.mkNativeEffect { pkgs = hostPkgs; }` instead builds with the consumer's
@@ -81,16 +81,16 @@ factory with its caller `pkgs`, and the exported modules/factories are
 host-pkgs safe on that path.
 
 Add the NixOS module to the system `modules` list and enable
-`programs.plasma-auto-tiler.enable`. Add the Home Manager module to the Home
-Manager modules and enable `programs.plasma-auto-tiler.tray.enable` only when
+`programs.omnitiler.enable`. Add the Home Manager module to the Home
+Manager modules and enable `programs.omnitiler.tray.enable` only when
 the tray is wanted. NixOS owns the script/effect/settings packages and writes
-only `[Plugins] plasma-auto-tiler-kwinEnabled=true`; it does not enable the
+only `[Plugins] omnitiler-kwinEnabled=true`; it does not enable the
 border or mutate shortcuts. Home Manager owns only the optional immutable
-tray systemd user unit (`plasma-auto-tiler-tray.service`, bound to
+tray systemd user unit (`omnitiler-tray.service`, bound to
 `graphical-session.target` with `Restart=on-failure`), whose `ExecStart`
 points to the Nix store.
 The tray provides basic status and the fixed Settings action
-`kcmshell6 kwin/effects/configs/plasma-auto-tiler-active-border_config`; this
+`kcmshell6 kwin/effects/configs/omnitiler-active-border_config`; this
 opens the unified border, shortcut, gap and workspace settings page also shown
 by both Configure entries. The tray has no direct tiling controls or shortcut
 mutation. Its static bridge contract includes authenticated snapshots, freshness
@@ -137,7 +137,7 @@ observed and verified, never disabled, enabled, or reconfigured. The checkout
 carrier is bound operationally through its unguessable per-attempt plugin
 identity, exact `Script<ID>`, receipt, diagnostic, and unchanged KWin identity;
 this is not direct evaluated-memory source proof. Evidence is retained under
-`${XDG_RUNTIME_DIR:-/tmp}/plasma-auto-tiler-live/<nonce>`. The carrier setup
+`${XDG_RUNTIME_DIR:-/tmp}/omnitiler-live/<nonce>`. The carrier setup
 output is retained at `provenance.txt`; if no exact script ID is returned,
 cleanup refuses stale handle use. A `manifest.txt` retains the nonce, KWin PID,
 journal cursor, mode, observed controller state, carrier identity and cleanup,
@@ -215,7 +215,7 @@ run:
   checks; no current-host result is claimed.
 
 `effect-install` also writes the persistent
-`[Plugins] plasma-auto-tiler-active-borderEnabled=true` key to `kwinrc`. The
+`[Plugins] omnitiler-active-borderEnabled=true` key to `kwinrc`. The
 key write is statically covered; automatic loading after a session boundary
 and in-session reload remain pending live checks. See [Native effect
 (dogfood)](#native-effect-dogfood) below for the full mechanism.
@@ -223,8 +223,8 @@ and in-session reload remain pending live checks. See [Native effect
 ### Install
 
 Builds the bundle and copies the package into
-`$XDG_DATA_HOME/kwin/scripts/plasma-auto-tiler-kwin/` (or
-`$HOME/.local/share/kwin/scripts/plasma-auto-tiler-kwin/` when `XDG_DATA_HOME`
+`$XDG_DATA_HOME/kwin/scripts/omnitiler-kwin/` (or
+`$HOME/.local/share/kwin/scripts/omnitiler-kwin/` when `XDG_DATA_HOME`
 is unset), replacing any existing plugin directory. It does not enable the
 plugin.
 
@@ -234,7 +234,7 @@ bash scripts/dogfood-install.sh install
 
 ### Enable
 
-Writes `[Plugins] plasma-auto-tiler-kwinEnabled=true` through `kwriteconfig6`
+Writes `[Plugins] omnitiler-kwinEnabled=true` through `kwriteconfig6`
 and reconfigures the running KWin via `qdbus org.kde.KWin /KWin reconfigure`.
 
 ```sh
@@ -264,7 +264,7 @@ bash scripts/dogfood-install.sh status
 
 Read-only inspection before a mutating install. Reports whether the source
 package metadata is valid (the `KPlugin.Id` in `kwin/metadata.json` is parsed
-and must match `plasma-auto-tiler-kwin`), whether the built bundle and the
+and must match `omnitiler-kwin`), whether the built bundle and the
 required KCM schema/UI (`kwin/contents/code/main.js`,
 `kwin/contents/config/main.xml`, `kwin/contents/ui/config.ui`) are present,
 the current destination install state, the enabled state through the same
@@ -284,7 +284,7 @@ bash scripts/dogfood-install.sh dry-run
 Shortcut registration uses one COSMIC-style catalog. The startup read of the
 saved `shortcutProfile` key remains, but the script Configure page hides this
 setting until distinct profiles exist. Every implemented catalog row registers
-under a stable `plasma-auto-tiler-*` shortcut ID, so reload/restart re-registers
+under a stable `omnitiler-*` shortcut ID, so reload/restart re-registers
 the same IDs and a user-customized KGlobalAccel sequence survives without being
 silently overwritten. This is KWin-local registration: it never displaces or
 reassigns a Plasma-global binding, and a row that collides with Plasma stays
@@ -293,7 +293,7 @@ is not implemented here; it must assign a displaced Plasma action only to the
 selected reference environment's documented equivalent (otherwise record it
 unassigned), take an atomic snapshot with rollback, and require live evidence
 before claiming activation. `Meta+0` (workspace-append/focus) registers in every
-profile as `plasma-auto-tiler-workspace-0` unless an exact in-profile conflict
+profile as `omnitiler-workspace-0` unless an exact in-profile conflict
 exists; `Meta+Shift+0` (move-workspace-append) remains a
 catalog row.
 
@@ -307,38 +307,38 @@ appear in the registered shortcut set below.
 
 | Identifier | Shortcut |
 |---|---|
-| plasma-auto-tiler-resize-outwards-left-arrow | Meta+Alt+Left |
-| plasma-auto-tiler-resize-outwards-down-arrow | Meta+Alt+Down |
-| plasma-auto-tiler-resize-outwards-up-arrow | Meta+Alt+Up |
-| plasma-auto-tiler-resize-outwards-right-arrow | Meta+Alt+Right |
-| plasma-auto-tiler-focus-left | Meta+H |
-| plasma-auto-tiler-focus-down | Meta+J |
-| plasma-auto-tiler-focus-up | Meta+K |
-| plasma-auto-tiler-focus-right | Meta+L |
-| plasma-auto-tiler-focus-left-arrow | Meta+Left |
-| plasma-auto-tiler-focus-down-arrow | Meta+Down |
-| plasma-auto-tiler-focus-up-arrow | Meta+Up |
-| plasma-auto-tiler-focus-right-arrow | Meta+Right |
-| plasma-auto-tiler-move-left | Meta+Shift+H |
-| plasma-auto-tiler-move-down | Meta+Shift+J |
-| plasma-auto-tiler-move-up | Meta+Shift+K |
-| plasma-auto-tiler-move-right | Meta+Shift+L |
-| plasma-auto-tiler-move-left-arrow | Meta+Shift+Left |
-| plasma-auto-tiler-move-down-arrow | Meta+Shift+Down |
-| plasma-auto-tiler-move-up-arrow | Meta+Shift+Up |
-| plasma-auto-tiler-move-right-arrow | Meta+Shift+Right |
-| plasma-auto-tiler-detach | Meta+Shift+Space |
-| plasma-auto-tiler-attach | Meta+Alt+Shift+Space |
-| plasma-auto-tiler-fill-scope | Meta+Alt+Return |
-| plasma-auto-tiler-apply-columns | Meta+Alt+1 |
-| plasma-auto-tiler-apply-rows | Meta+Alt+2 |
-| plasma-auto-tiler-apply-balanced-grid | Meta+Alt+3 |
-| plasma-auto-tiler-apply-dwindle | Meta+Alt+4 |
-| plasma-auto-tiler-workspace-1..9 | Meta+1..9 |
-| plasma-auto-tiler-workspace-0 | Meta+0 |
-| plasma-auto-tiler-move-workspace-1..9 | Meta+Shift+1..9 |
-| plasma-auto-tiler-move-workspace-append | Meta+Shift+0 |
-| plasma-auto-tiler-toggle-workspace-tiling | Meta+Y |
+| omnitiler-resize-outwards-left-arrow | Meta+Alt+Left |
+| omnitiler-resize-outwards-down-arrow | Meta+Alt+Down |
+| omnitiler-resize-outwards-up-arrow | Meta+Alt+Up |
+| omnitiler-resize-outwards-right-arrow | Meta+Alt+Right |
+| omnitiler-focus-left | Meta+H |
+| omnitiler-focus-down | Meta+J |
+| omnitiler-focus-up | Meta+K |
+| omnitiler-focus-right | Meta+L |
+| omnitiler-focus-left-arrow | Meta+Left |
+| omnitiler-focus-down-arrow | Meta+Down |
+| omnitiler-focus-up-arrow | Meta+Up |
+| omnitiler-focus-right-arrow | Meta+Right |
+| omnitiler-move-left | Meta+Shift+H |
+| omnitiler-move-down | Meta+Shift+J |
+| omnitiler-move-up | Meta+Shift+K |
+| omnitiler-move-right | Meta+Shift+L |
+| omnitiler-move-left-arrow | Meta+Shift+Left |
+| omnitiler-move-down-arrow | Meta+Shift+Down |
+| omnitiler-move-up-arrow | Meta+Shift+Up |
+| omnitiler-move-right-arrow | Meta+Shift+Right |
+| omnitiler-detach | Meta+Shift+Space |
+| omnitiler-attach | Meta+Alt+Shift+Space |
+| omnitiler-fill-scope | Meta+Alt+Return |
+| omnitiler-apply-columns | Meta+Alt+1 |
+| omnitiler-apply-rows | Meta+Alt+2 |
+| omnitiler-apply-balanced-grid | Meta+Alt+3 |
+| omnitiler-apply-dwindle | Meta+Alt+4 |
+| omnitiler-workspace-1..9 | Meta+1..9 |
+| omnitiler-workspace-0 | Meta+0 |
+| omnitiler-move-workspace-1..9 | Meta+Shift+1..9 |
+| omnitiler-move-workspace-append | Meta+Shift+0 |
+| omnitiler-toggle-workspace-tiling | Meta+Y |
 
 Plasma's default Quick Tile actions occupy `Meta+Arrows` and its next/previous
 screen actions occupy `Meta+Shift+Right/Left`. The unified KCM's explicit
@@ -401,7 +401,7 @@ documented limitation, not an error.
 
 ### Disable
 
-Writes `[Plugins] plasma-auto-tiler-kwinEnabled=false` through `kwriteconfig6`
+Writes `[Plugins] omnitiler-kwinEnabled=false` through `kwriteconfig6`
 and reconfigures the running KWin. It does not remove the installed package.
 
 ```sh
@@ -410,7 +410,7 @@ bash scripts/dogfood-install.sh disable
 
 ### Uninstall
 
-Removes only the installed `plasma-auto-tiler-kwin` directory; it never touches
+Removes only the installed `omnitiler-kwin` directory; it never touches
 KWin configuration.
 
 ```sh
@@ -420,9 +420,9 @@ bash scripts/dogfood-install.sh uninstall
 ### Native effect (dogfood)
 
 `scripts/dogfood-install.sh` also builds and stages the experimental,
-disabled-by-default native `plasma-auto-tiler-active-border` effect and two
+disabled-by-default native `omnitiler-active-border` effect and two
 namespaced KCM plugins. The script's Configure entry
-(`kwin/scripts/configs/plasma-auto-tiler-kwin_config`), Desktop Effects
+(`kwin/scripts/configs/omnitiler-kwin_config`), Desktop Effects
 Configure, and tray Settings all open the same page, with border, shortcuts,
 tiling gaps and workspace mode. The page uses the existing groups and values;
 the script settings work without enabling the effect. These commands describe
@@ -433,7 +433,7 @@ results remain pending live evidence.
 **Two related but separate things are involved: the env-script delivery
 mechanism above, and the effect's own enabled state.** The effect metadata sets
 `"EnabledByDefault": false`. The installer writes the separate `[Plugins]
-plasma-auto-tiler-active-borderEnabled=true` key, but discovery, auto-load
+omnitiler-active-borderEnabled=true` key, but discovery, auto-load
 after login, and live reload are pending current-host evidence. The key write
 does not itself prove a KWin load or a session boundary.
 `effect-remove` first reads whether KWin has the effect loaded. If it cannot
@@ -457,16 +457,16 @@ current-system KWin derivation via `scripts/nix-host-kwin-build.sh`
 (read-only `resolve` proves derivation metadata only, then `build` runs
 `nix develop <host-drv>` where `cmake` must resolve host-native and only
 explicit `/nix/store` `rustc` is injected; outer `cmake`/`cargo` are never
-required and the legacy pinned `PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR` never
+required and the legacy pinned `OMNITILER_KWIN_DEV_CMAKE_DIR` never
 drives or leaks) and stages them under
-`$XDG_DATA_HOME/plasma-auto-tiler-native-effect/kwin/effects/plugins/`,
-`$XDG_DATA_HOME/plasma-auto-tiler-native-effect/kwin/effects/configs/`, and
-`$XDG_DATA_HOME/plasma-auto-tiler-native-effect/kwin/scripts/configs/` (or the
+`$XDG_DATA_HOME/omnitiler-native-effect/kwin/effects/plugins/`,
+`$XDG_DATA_HOME/omnitiler-native-effect/kwin/effects/configs/`, and
+`$XDG_DATA_HOME/omnitiler-native-effect/kwin/scripts/configs/` (or the
 `$HOME/.local/share` equivalents), then writes a `QT_PLUGIN_PATH` export
-to `$XDG_CONFIG_HOME/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh`
+to `$XDG_CONFIG_HOME/plasma-workspace/env/60-omnitiler-native-effect.sh`
 (sourced by `startplasma-wayland` at session start) so the staged directory
 is discoverable, and finally writes `[Plugins]
-plasma-auto-tiler-active-borderEnabled=true` to `kwinrc`; the write is
+omnitiler-active-borderEnabled=true` to `kwinrc`; the write is
 idempotent. Whether this reaches and persists in the running KWin session is
 pending live evidence.
 `effect-status` is a staged diagnostic: it reports staging, the env script,
@@ -504,7 +504,7 @@ devenv shell --impure -- just dev-native-setup
 
 `just dev-native-setup` builds/stages as necessary (via `build-native-effect`)
 then creates only the project-owned
-`$XDG_CONFIG_HOME/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh`
+`$XDG_CONFIG_HOME/plasma-workspace/env/60-omnitiler-native-effect.sh`
 for this checkout, with robust quoting for paths containing spaces or shell
 metacharacters. It prepends the stage to `QT_PLUGIN_PATH` while retaining any
 existing value, writes no `kwinrc` keys, uses no D-Bus, and is idempotent only
@@ -519,7 +519,7 @@ just dev-native-remove
 removes parent directories. Neither command touches the running KWin.
 
 The dogfood `effect-install`/`effect-remove` path and this dev path share the
-exact `$XDG_CONFIG_HOME/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh`
+exact `$XDG_CONFIG_HOME/plasma-workspace/env/60-omnitiler-native-effect.sh`
 path and cannot coexist there: dogfood refuses a dev-owned script and preserves
 it, and the dev helper refuses dogfood/alternate content.
 
@@ -581,7 +581,7 @@ These observations remain pending and require the reviewed live-test protocol:
 - `install` and `uninstall` affect only the local package directory
   (`$XDG_DATA_HOME`/`$HOME/.local/share` under `kwin/scripts/`).
 - `enable` and `disable` touch only the exact `[Plugins]
-   plasma-auto-tiler-kwinEnabled` setting in `kwinrc` and request KWin
+   omnitiler-kwinEnabled` setting in `kwinrc` and request KWin
    reconfiguration; they never modify the installed package.
 - `reload` composes `disable` then `enable` to replace the running KWin script
   instance, leaving the plugin enabled.
@@ -593,7 +593,7 @@ These observations remain pending and require the reviewed live-test protocol:
   create/remove only the project's own `plasma-workspace/env/` script
   (`effect-remove` also
   migrates away any legacy `environment.d` entry), and write/remove exactly
-  the one `kwinrc [Plugins] plasma-auto-tiler-active-borderEnabled` key
+  the one `kwinrc [Plugins] omnitiler-active-borderEnabled` key
   (`effect-remove` deletes it only when present). `effect-remove` performs a
   read-only loaded-state query and never loads, unloads, or reconfigures KWin.
 - `effect-reload` is intended to reconfigure the running KWin session via

@@ -39,38 +39,38 @@ START_NONCE="${START_NONCE:-}"
 
 # The exact project action IDs this lifecycle interface owns.
 PROJECT_ACTIONS=(
-  plasma-auto-tiler-focus-left
-  plasma-auto-tiler-focus-down
-  plasma-auto-tiler-focus-up
-  plasma-auto-tiler-focus-right
-  plasma-auto-tiler-focus-left-arrow
-  plasma-auto-tiler-focus-down-arrow
-  plasma-auto-tiler-focus-up-arrow
-  plasma-auto-tiler-focus-right-arrow
-  plasma-auto-tiler-move-left
-  plasma-auto-tiler-move-down
-  plasma-auto-tiler-move-up
-  plasma-auto-tiler-move-right
-  plasma-auto-tiler-move-left-arrow
-  plasma-auto-tiler-move-down-arrow
-  plasma-auto-tiler-move-up-arrow
-  plasma-auto-tiler-move-right-arrow
-  plasma-auto-tiler-resize-outwards-left
-  plasma-auto-tiler-resize-outwards-down
-  plasma-auto-tiler-resize-outwards-up
-  plasma-auto-tiler-resize-outwards-right
-  plasma-auto-tiler-resize-inwards-left
-  plasma-auto-tiler-resize-inwards-down
-  plasma-auto-tiler-resize-inwards-up
-  plasma-auto-tiler-resize-inwards-right
-  plasma-auto-tiler-resize-inwards-left-arrow
-  plasma-auto-tiler-resize-inwards-down-arrow
-  plasma-auto-tiler-resize-inwards-up-arrow
-  plasma-auto-tiler-resize-inwards-right-arrow
-  plasma-auto-tiler-toggle-float
-  plasma-auto-tiler-toggle-sticky
-  plasma-auto-tiler-toggle-maximize
-  plasma-auto-tiler-toggle-fullscreen
+  omnitiler-focus-left
+  omnitiler-focus-down
+  omnitiler-focus-up
+  omnitiler-focus-right
+  omnitiler-focus-left-arrow
+  omnitiler-focus-down-arrow
+  omnitiler-focus-up-arrow
+  omnitiler-focus-right-arrow
+  omnitiler-move-left
+  omnitiler-move-down
+  omnitiler-move-up
+  omnitiler-move-right
+  omnitiler-move-left-arrow
+  omnitiler-move-down-arrow
+  omnitiler-move-up-arrow
+  omnitiler-move-right-arrow
+  omnitiler-resize-outwards-left
+  omnitiler-resize-outwards-down
+  omnitiler-resize-outwards-up
+  omnitiler-resize-outwards-right
+  omnitiler-resize-inwards-left
+  omnitiler-resize-inwards-down
+  omnitiler-resize-inwards-up
+  omnitiler-resize-inwards-right
+  omnitiler-resize-inwards-left-arrow
+  omnitiler-resize-inwards-down-arrow
+  omnitiler-resize-inwards-up-arrow
+  omnitiler-resize-inwards-right-arrow
+  omnitiler-toggle-float
+  omnitiler-toggle-sticky
+  omnitiler-toggle-maximize
+  omnitiler-toggle-fullscreen
 )
 PROJECT_ACTIONS_JSON=""
 
@@ -80,38 +80,38 @@ PROJECT_ACTIONS_JSON=""
 # Provenance: controller action defaults, encoded with the pinned Qt 6
 # KeyboardModifier bits and verified against the live collector on 2026-08-12.
 declare -A EXPECTED_SEQUENCES=(
-  [plasma-auto-tiler-focus-left]="268435528"
-  [plasma-auto-tiler-focus-down]="268435530"
-  [plasma-auto-tiler-focus-up]="268435531"
-  [plasma-auto-tiler-focus-right]="268435532"
-  [plasma-auto-tiler-focus-left-arrow]="285212690"
-  [plasma-auto-tiler-focus-down-arrow]="285212693"
-  [plasma-auto-tiler-focus-up-arrow]="285212691"
-  [plasma-auto-tiler-focus-right-arrow]="285212692"
-  [plasma-auto-tiler-move-left]="301989960"
-  [plasma-auto-tiler-move-down]="301989962"
-  [plasma-auto-tiler-move-up]="301989963"
-  [plasma-auto-tiler-move-right]="301989964"
-  [plasma-auto-tiler-move-left-arrow]="318767122"
-  [plasma-auto-tiler-move-down-arrow]="318767125"
-  [plasma-auto-tiler-move-up-arrow]="318767123"
-  [plasma-auto-tiler-move-right-arrow]="318767124"
-  [plasma-auto-tiler-resize-outwards-left]="402653256"
-  [plasma-auto-tiler-resize-outwards-down]="402653258"
-  [plasma-auto-tiler-resize-outwards-up]="402653259"
-  [plasma-auto-tiler-resize-outwards-right]="402653260"
-  [plasma-auto-tiler-resize-inwards-left]="436207688"
-  [plasma-auto-tiler-resize-inwards-down]="436207690"
-  [plasma-auto-tiler-resize-inwards-up]="436207691"
-  [plasma-auto-tiler-resize-inwards-right]="436207692"
-  [plasma-auto-tiler-resize-inwards-left-arrow]="452984850"
-  [plasma-auto-tiler-resize-inwards-down-arrow]="452984853"
-  [plasma-auto-tiler-resize-inwards-up-arrow]="452984851"
-  [plasma-auto-tiler-resize-inwards-right-arrow]="452984852"
-  [plasma-auto-tiler-toggle-float]="268435527"
-  [plasma-auto-tiler-toggle-sticky]="301989959"
-  [plasma-auto-tiler-toggle-maximize]="268435533"
-  [plasma-auto-tiler-toggle-fullscreen]="285212730"
+  [omnitiler-focus-left]="268435528"
+  [omnitiler-focus-down]="268435530"
+  [omnitiler-focus-up]="268435531"
+  [omnitiler-focus-right]="268435532"
+  [omnitiler-focus-left-arrow]="285212690"
+  [omnitiler-focus-down-arrow]="285212693"
+  [omnitiler-focus-up-arrow]="285212691"
+  [omnitiler-focus-right-arrow]="285212692"
+  [omnitiler-move-left]="301989960"
+  [omnitiler-move-down]="301989962"
+  [omnitiler-move-up]="301989963"
+  [omnitiler-move-right]="301989964"
+  [omnitiler-move-left-arrow]="318767122"
+  [omnitiler-move-down-arrow]="318767125"
+  [omnitiler-move-up-arrow]="318767123"
+  [omnitiler-move-right-arrow]="318767124"
+  [omnitiler-resize-outwards-left]="402653256"
+  [omnitiler-resize-outwards-down]="402653258"
+  [omnitiler-resize-outwards-up]="402653259"
+  [omnitiler-resize-outwards-right]="402653260"
+  [omnitiler-resize-inwards-left]="436207688"
+  [omnitiler-resize-inwards-down]="436207690"
+  [omnitiler-resize-inwards-up]="436207691"
+  [omnitiler-resize-inwards-right]="436207692"
+  [omnitiler-resize-inwards-left-arrow]="452984850"
+  [omnitiler-resize-inwards-down-arrow]="452984853"
+  [omnitiler-resize-inwards-up-arrow]="452984851"
+  [omnitiler-resize-inwards-right-arrow]="452984852"
+  [omnitiler-toggle-float]="268435527"
+  [omnitiler-toggle-sticky]="301989959"
+  [omnitiler-toggle-maximize]="268435533"
+  [omnitiler-toggle-fullscreen]="285212730"
 )
 
 # KGlobalAccelD::SetShortcutFlag values (pinned kglobalacceld 6.7.3 source):
@@ -140,10 +140,10 @@ usage() {
   cat <<'EOF'
 usage: start-test.sh <command> [--help]
 
-Manual lifecycle interface for the plasma-auto-tiler-kwin KWin script.
+Manual lifecycle interface for the omnitiler-kwin KWin script.
 
 Commands:
-  start    build the kwin bundle, load and run plasma-auto-tiler through
+  start    build the kwin bundle, load and run omnitiler through
             KWin's /Scripting D-Bus interface, and confirm the exact
             loaded state bound to the captured KWin PID/start identity
   status   report the exact plugin load state and persisted KGlobalAccel
@@ -208,8 +208,8 @@ read_plugin_id() {
     echo "error: missing KPlugin.Id in $META" >&2
     exit 1
   fi
-  if [[ "$PLUGIN_ID" != "plasma-auto-tiler-kwin" ]]; then
-    echo "error: refusing to operate on unexpected plugin id '$PLUGIN_ID' (expected plasma-auto-tiler-kwin)" >&2
+  if [[ "$PLUGIN_ID" != "omnitiler-kwin" ]]; then
+    echo "error: refusing to operate on unexpected plugin id '$PLUGIN_ID' (expected omnitiler-kwin)" >&2
     exit 1
   fi
 }
@@ -255,9 +255,9 @@ write_ownership() {
 ensure_controller_receipt() {
   [[ -z "$CONTROLLER_OWNERSHIP_FILE" ]] || return 0
   local runtime_dir="${XDG_RUNTIME_DIR:-/tmp}"
-  safe_output_path "$runtime_dir/.plasma-auto-tiler-controller-receipt" || return 1
+  safe_output_path "$runtime_dir/.omnitiler-controller-receipt" || return 1
   local receipt_dir
-  receipt_dir="$(mktemp -d -- "$runtime_dir/plasma-auto-tiler-controller.XXXXXX")" || return 1
+  receipt_dir="$(mktemp -d -- "$runtime_dir/omnitiler-controller.XXXXXX")" || return 1
   chmod 700 "$receipt_dir" || { rmdir -- "$receipt_dir"; return 1; }
   CONTROLLER_OWNERSHIP_FILE="$receipt_dir/ownership"
 }
@@ -644,7 +644,7 @@ cmd_start() {
   controller_build="controller-v1-$source_digest"
 
   local build_script="build"
-  if [[ "${PLASMA_AUTO_TILER_TRACE:-}" == "1" ]]; then
+  if [[ "${OMNITILER_TRACE:-}" == "1" ]]; then
     build_script="build:trace"
   fi
   if ! ( cd "$KWIN_DIR" && npm run "$build_script" ); then

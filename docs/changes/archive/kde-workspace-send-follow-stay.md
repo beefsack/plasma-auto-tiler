@@ -69,8 +69,8 @@
 - `nix build --no-link .#checks.x86_64-linux.native-effect-tests .#checks.x86_64-linux.native-effect`:
   test-enabled effect/KCM and delivery build pass, hermetic CTest 33/33
   verified from the build log.
-- `cargo build -p plasma-auto-tiler --offline`, then all 9 `scripts/*.test.sh`
-  (tray uses `TRAY_05B_BINARY="$PWD/target/debug/plasma-auto-tiler"`): pass.
+- `cargo build -p omnitiler --offline`, then all 9 `scripts/*.test.sh`
+  (tray uses `TRAY_05B_BINARY="$PWD/target/debug/omnitiler"`): pass.
   Counts: tray 29 fixture + 16 self-test, dev-loop 380, dogfood 572,
   native-dev 163, host-build 93, live-harness 237, Custom Tile harness 131,
   floor-ratio 92; 1713 counted assertions plus uncounted build-kpackage

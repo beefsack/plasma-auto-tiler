@@ -4,7 +4,7 @@
 set -e
 
 if [ "$1" = remove ] || [ "$1" = purge ]; then
-  echo "plasma-auto-tiler removed (including Settings). Removal does not restore host keys or shortcut"
+  echo "omnitiler removed (including Settings). Removal does not restore host keys or shortcut"
   echo "overrides: if you did not press Revert in Settings first (Revert Shortcuts,"
   echo "plus Revert to KDE default on changed host rows), reinstall this package"
   echo "and press Revert."

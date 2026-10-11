@@ -352,9 +352,9 @@ public static class FsPropNative {
 
 function Get-FsPropState([long]$Hwnd) {
   Install-FsPropNative
-  $p1 = [FsPropNative]::GetPropW([IntPtr]$Hwnd, "PlasmaAutoTilerFullscreen")
-  $p2 = [FsPropNative]::GetPropW([IntPtr]$Hwnd, "PlasmaAutoTilerFullscreenStyle")
-  $p3 = [FsPropNative]::GetPropW([IntPtr]$Hwnd, "PlasmaAutoTilerFullscreenMax")
+  $p1 = [FsPropNative]::GetPropW([IntPtr]$Hwnd, "OmniTilerFullscreen")
+  $p2 = [FsPropNative]::GetPropW([IntPtr]$Hwnd, "OmniTilerFullscreenStyle")
+  $p3 = [FsPropNative]::GetPropW([IntPtr]$Hwnd, "OmniTilerFullscreenMax")
   return @{ marker = [uint64]$p1.ToInt64(); style = [uint64]$p2.ToInt64(); max = [uint64]$p3.ToInt64() }
 }
 

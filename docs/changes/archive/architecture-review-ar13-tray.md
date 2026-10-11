@@ -8,7 +8,7 @@
 
 ## Delivery and lifecycle choice
 
-- Use XDG autostart, already delivered by Home Manager; dev/dogfood use `cargo run -p plasma-auto-tiler -- tray` on demand. Dogfood's KWin installer has no tray binary/package lifecycle; a persistent dogfood autostart would require a second installer and duplicate the Home Manager-owned entry. A second invocation exits successfully when the name is taken.
+- Use XDG autostart, already delivered by Home Manager; dev/dogfood use `cargo run -p omnitiler -- tray` on demand. Dogfood's KWin installer has no tray binary/package lifecycle; a persistent dogfood autostart would require a second installer and duplicate the Home Manager-owned entry. A second invocation exits successfully when the name is taken.
 - The tray remains running on KWin owner loss, clears the stale snapshot, and accepts the new owner's first valid snapshot. It stops on its own name/connection loss or session teardown. No automatic restart of a crashed tray before the next login.
 
 ## Acceptance and units

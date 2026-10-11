@@ -119,9 +119,9 @@ mise exec -- rustup which cargo
 ### 4. Prove the portable offline Cargo baseline (allowlist only)
 
 **R:** `Cargo.toml` workspace members are `tiler-core`,
-`tiler-protocol`, `plasma-auto-tiler`, `tiler-kwin-effect-ffi`, and
+`tiler-protocol`, `omnitiler`, `tiler-kwin-effect-ffi`, and
 `tiler-windows`. Only the three portable crates below are the Mac
-baseline. `plasma-auto-tiler` is the Linux/KDE service (rustix plus
+baseline. `omnitiler` is the Linux/KDE service (rustix plus
 zbus/D-Bus integration), not a supported Mac target; `tiler-windows`
 is the Windows adapter. This is a supported-gate boundary, not a claim
 that every excluded crate necessarily fails to compile on macOS.
@@ -274,5 +274,5 @@ tccutil reset ScreenCapture '<actual-dev-bundle-id>'
 - R: `Cargo.toml`, `crates/tiler-core/Cargo.toml`,
   `crates/tiler-protocol/Cargo.toml`,
   `crates/tiler-kwin-effect-ffi/Cargo.toml`,
-  `crates/plasma-auto-tiler/Cargo.toml`,
+  `crates/omnitiler/Cargo.toml`,
   `docs/research/macos-port/prior-art.md`, root `AGENTS.md`.

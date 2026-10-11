@@ -75,7 +75,7 @@ project code or reintroducing the experimental native active-border effect.
 ### Question 2: Native-Effect Crash Evidence
 
 - Verdict: exonerated under the requested fault-stack criterion. Two retained
-  live-compositor dumps list `plasma-auto-tiler-active-border.so` only as a
+  live-compositor dumps list `omnitiler-active-border.so` only as a
   loaded module, never in a faulting frame or any thread backtrace.
 - PID 2090 (2026-09-11, SIGSEGV) reaches `KCrash::defaultCrashHandler` from
   Qt QML `QV4::Value::sameValueZero`, `QV4::ESTable::get`, and
@@ -93,7 +93,7 @@ project code or reintroducing the experimental native active-border effect.
 - To load it in a development session after the host installation removal, the
   loop needs an explicit native-effect build, staging its two `.so` outputs in a
   `QT_PLUGIN_PATH` root, a new Plasma session boundary to consume that env
-  script, and the separate `[Plugins] plasma-auto-tiler-active-borderEnabled`
+  script, and the separate `[Plugins] omnitiler-active-borderEnabled`
   setting. The existing `just` loop manages only the Planner and KWin script
   (`docs/dev-loop.md:38-89`); `effect-install` describes the missing staging
   lifecycle but has not been live-verified (`scripts/dogfood-install.sh:428-449`,

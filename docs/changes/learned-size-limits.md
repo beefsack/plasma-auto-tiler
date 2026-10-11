@@ -19,7 +19,7 @@ change note is there.
 ## Why parked
 
 The recorded unexplained shortfalls are from the multi-output test system, not the
-single-output test system (test-system trace `plasma-auto-tiler-dev.uE1S5n.log` shows only
+single-output test system (test-system trace `omnitiler-dev.uE1S5n.log` shows only
 1-2 px work-area settling). DP-6 writes of `8,52,2032,1092` were observed at
 `1920x1036`, and Ghostty-class requests of height 1092 held 1036. 1920x1036
 equals HDMI-A-2's work area (`2048,116,1920,1036`), which suggests the window

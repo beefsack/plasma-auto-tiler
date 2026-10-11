@@ -1162,18 +1162,18 @@ describe("output-send shortcut catalog (item 5.3)", () => {
         }
         const actions = rows.map((row) => row.action).sort();
         assert.deepEqual(actions, [
-            "plasma-auto-tiler-send-output-down",
-            "plasma-auto-tiler-send-output-down-arrow",
-            "plasma-auto-tiler-send-output-down-stay",
-            "plasma-auto-tiler-send-output-left",
-            "plasma-auto-tiler-send-output-left-arrow",
-            "plasma-auto-tiler-send-output-left-stay",
-            "plasma-auto-tiler-send-output-right",
-            "plasma-auto-tiler-send-output-right-arrow",
-            "plasma-auto-tiler-send-output-right-stay",
-            "plasma-auto-tiler-send-output-up",
-            "plasma-auto-tiler-send-output-up-arrow",
-            "plasma-auto-tiler-send-output-up-stay",
+            "omnitiler-send-output-down",
+            "omnitiler-send-output-down-arrow",
+            "omnitiler-send-output-down-stay",
+            "omnitiler-send-output-left",
+            "omnitiler-send-output-left-arrow",
+            "omnitiler-send-output-left-stay",
+            "omnitiler-send-output-right",
+            "omnitiler-send-output-right-arrow",
+            "omnitiler-send-output-right-stay",
+            "omnitiler-send-output-up",
+            "omnitiler-send-output-up-arrow",
+            "omnitiler-send-output-up-stay",
         ]);
     });
 });
@@ -1377,10 +1377,10 @@ describe("output-send entry route", () => {
         const world = makeEntryWorld(false);
         const { mocks } = startEntryWorld(world);
         const actions = mocks.shortcuts.map((entry) => entry.action);
-        assert.ok(actions.includes("plasma-auto-tiler-send-output-right"));
-        assert.ok(actions.includes("plasma-auto-tiler-send-output-right-arrow"));
-        assert.ok(actions.includes("plasma-auto-tiler-send-output-right-stay"));
-        const stay = mocks.shortcuts.find((entry) => entry.action === "plasma-auto-tiler-send-output-up-stay");
+        assert.ok(actions.includes("omnitiler-send-output-right"));
+        assert.ok(actions.includes("omnitiler-send-output-right-arrow"));
+        assert.ok(actions.includes("omnitiler-send-output-right-stay"));
+        const stay = mocks.shortcuts.find((entry) => entry.action === "omnitiler-send-output-up-stay");
         assert.equal(stay?.sequence, "");
     });
 

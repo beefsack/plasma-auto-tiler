@@ -785,7 +785,7 @@ pub mod sys {
         let v = unsafe {
             GetPropW(
                 st.helper_hwnd as isize as HWND,
-                windows_sys::w!("PlasmaAutoTilerLifetime"),
+                windows_sys::w!("OmniTilerLifetime"),
             )
         };
         if v.is_null() {

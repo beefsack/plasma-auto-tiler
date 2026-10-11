@@ -99,7 +99,7 @@
   scope. Invoke one same-output send of the focused tiled window to the other
   desktop. Confirm exactly one window changes desktop membership, source and
   target geometry settle to the planned projection, source-domain focus follows
-  its remaining tiled MRU stack, and `plasma-auto-tiler:route-diag` records one
+  its remaining tiled MRU stack, and `omnitiler:route-diag` records one
   pinned-owner request, accepted acknowledgement, and verified completion. Do
   not create or remove desktops. Stop on any refusal, unexpected desktop switch,
   geometry divergence, or missing terminal diagnostic.

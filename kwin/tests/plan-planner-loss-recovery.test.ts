@@ -480,7 +480,7 @@ describe("plan planner-loss recovery", () => {
         assert.ok(timeoutLines[0]?.includes(`correlation=${correlation}`));
         assert.ok(timeoutLines[0]?.includes("cause=probe-silence"));
         assert.ok(timeoutLines[0]?.includes("outcome=pump-resumed"));
-        for (const token of [":1.5", "org.plasmaautotiler", "org.freedesktop", "win-a", "drag-1"]) {
+        for (const token of [":1.5", "com.omnitiler", "org.freedesktop", "win-a", "drag-1"]) {
             assert.ok(!timeoutLines[0]?.includes(token), `${token} leaked in: ${timeoutLines[0]}`);
         }
         assert.ok(!mocks.logs.some((l) => l.includes("plan:recovery")));
@@ -520,7 +520,7 @@ describe("plan planner-loss recovery", () => {
         assert.equal(timeoutLines.length, 1);
         assert.ok(timeoutLines[0]?.includes("cause=probe-silence"));
         assert.ok(timeoutLines[0]?.includes("outcome=pump-resumed"));
-        for (const token of [":1.5", ":1.9", "org.plasmaautotiler", "org.freedesktop"]) {
+        for (const token of [":1.5", ":1.9", "com.omnitiler", "org.freedesktop"]) {
             assert.ok(!timeoutLines[0]?.includes(token), `${token} leaked in: ${timeoutLines[0]}`);
         }
         assert.ok(!mocks.logs.some((l) => l.includes("plan:recovery")));
@@ -1004,7 +1004,7 @@ describe("plan activation correlated diagnostics", () => {
         mocks.callbacks[0]?.(false);
         mocks.callbacks[1]?.(1);
         mocks.callbacks[2]?.(":1.9");
-        const forbidden = [":1.9", ":1.5", "org.plasmaautotiler", "org.freedesktop", "DescribePlan", "win-a", "win-b", "fp-1", "600,0", "resolve-boom", "start-boom", "send-boom", "presence-boom", "logger-boom"];
+        const forbidden = [":1.9", ":1.5", "com.omnitiler", "org.freedesktop", "DescribePlan", "win-a", "win-b", "fp-1", "600,0", "resolve-boom", "start-boom", "send-boom", "presence-boom", "logger-boom"];
         for (const line of activateLines(mocks)) {
             for (const token of forbidden) {
                 assert.ok(!line.includes(token), `${token} leaked in: ${line}`);

@@ -99,9 +99,9 @@ case "$7" in
       malformed-shortcuts) printf '{"type":"a(ssssssaiai)","data":[[["bad"]]]}\n' ;;
       oversized-reply) printf '{"type":"a(ssssssaiai)","data":[[['; printf '%*s' 1100000 x; printf ']]]}\n' ;;
       duplicate-json) printf '{"type":"a(ssssssaiai)","type":"a(ssssssaiai)","data":[[]]}\n' ;;
-      unknown-project) "$REAL_JQ_BIN" -c '.data[0] += [["plasma-auto-tiler-unknown", "unknown", "kwin", "KWin", "default", "Default", [99], []]]' "$FAKE_SHORTCUTS" ;;
-      missing-project) "$REAL_JQ_BIN" -c '.data[0] |= map(select(.[0] != "plasma-auto-tiler-focus-left"))' "$FAKE_SHORTCUTS" ;;
-      post-enumeration-drift) if [[ "$shortcut_count" -gt 1 ]]; then "$REAL_JQ_BIN" -c '(.data[0] | map(if .[0] == "plasma-auto-tiler-focus-left" then .[6] = [1] else . end)) as $r | {type:.type,data:[$r]}' "$FAKE_SHORTCUTS"; else "$REAL_JQ_BIN" -c . "$FAKE_SHORTCUTS"; fi ;;
+      unknown-project) "$REAL_JQ_BIN" -c '.data[0] += [["omnitiler-unknown", "unknown", "kwin", "KWin", "default", "Default", [99], []]]' "$FAKE_SHORTCUTS" ;;
+      missing-project) "$REAL_JQ_BIN" -c '.data[0] |= map(select(.[0] != "omnitiler-focus-left"))' "$FAKE_SHORTCUTS" ;;
+      post-enumeration-drift) if [[ "$shortcut_count" -gt 1 ]]; then "$REAL_JQ_BIN" -c '(.data[0] | map(if .[0] == "omnitiler-focus-left" then .[6] = [1] else . end)) as $r | {type:.type,data:[$r]}' "$FAKE_SHORTCUTS"; else "$REAL_JQ_BIN" -c . "$FAKE_SHORTCUTS"; fi ;;
       *) "$REAL_JQ_BIN" -c . "$FAKE_SHORTCUTS" ;;
     esac ;;
   *) bad_shape "$@" ;;
@@ -261,7 +261,7 @@ run_case() {
   : > "$FAKE_SHORTCUT_COUNT"
   set +e
     DBUS_SESSION_BUS_ADDRESS=unix:path=/private/wrong-bus \
-    PLASMA_AUTO_TILER_PROC_ROOT="$PROC_FIXTURE_ROOT" \
+    OMNITILER_PROC_ROOT="$PROC_FIXTURE_ROOT" \
     HOME="$HOME_ROOT" XDG_CONFIG_HOME="${TEST_XDG_CONFIG_HOME:-}" PATH="$FAKE_BIN:$PATH" FAKE_MODE="$mode" \
     FAKE_KWIN_PID="$$" FAKE_KG_PID="$PPID" \
     bash "$HARNESS" preflight > "$OUTPUT" 2> "$DIAGNOSTICS"
@@ -274,18 +274,18 @@ expect_status() { [[ "$EXIT_STATUS" -eq "$1" ]] || fail_test "expected status $1
 make_fixture() {
   "$JQ_BIN" -n '
     {
-      "plasma-auto-tiler-focus-left":268435528,"plasma-auto-tiler-focus-down":268435530,
-      "plasma-auto-tiler-focus-up":268435531,"plasma-auto-tiler-focus-right":268435532,
-      "plasma-auto-tiler-focus-left-arrow":285212690,"plasma-auto-tiler-focus-down-arrow":285212693,
-      "plasma-auto-tiler-focus-up-arrow":285212691,"plasma-auto-tiler-focus-right-arrow":285212692,
-      "plasma-auto-tiler-move-left":301989960,"plasma-auto-tiler-move-down":301989962,
-      "plasma-auto-tiler-move-up":301989963,"plasma-auto-tiler-move-right":301989964,
-      "plasma-auto-tiler-move-left-arrow":318767122,"plasma-auto-tiler-move-down-arrow":318767125,
-      "plasma-auto-tiler-move-up-arrow":318767123,"plasma-auto-tiler-move-right-arrow":318767124,
-      "plasma-auto-tiler-detach":301989920,"plasma-auto-tiler-attach":436207648,
-      "plasma-auto-tiler-fill-scope":419430404,"plasma-auto-tiler-apply-columns":402653233,
-      "plasma-auto-tiler-apply-rows":402653234,"plasma-auto-tiler-apply-balanced-grid":402653235,
-      "plasma-auto-tiler-apply-dwindle":402653236
+      "omnitiler-focus-left":268435528,"omnitiler-focus-down":268435530,
+      "omnitiler-focus-up":268435531,"omnitiler-focus-right":268435532,
+      "omnitiler-focus-left-arrow":285212690,"omnitiler-focus-down-arrow":285212693,
+      "omnitiler-focus-up-arrow":285212691,"omnitiler-focus-right-arrow":285212692,
+      "omnitiler-move-left":301989960,"omnitiler-move-down":301989962,
+      "omnitiler-move-up":301989963,"omnitiler-move-right":301989964,
+      "omnitiler-move-left-arrow":318767122,"omnitiler-move-down-arrow":318767125,
+      "omnitiler-move-up-arrow":318767123,"omnitiler-move-right-arrow":318767124,
+      "omnitiler-detach":301989920,"omnitiler-attach":436207648,
+      "omnitiler-fill-scope":419430404,"omnitiler-apply-columns":402653233,
+      "omnitiler-apply-rows":402653234,"omnitiler-apply-balanced-grid":402653235,
+      "omnitiler-apply-dwindle":402653236
     } as $expected |
     {type:"a(ssssssaiai)",data:[[$expected|to_entries[]|[.key,.key,"kwin","KWin","default","Default Context",[.value],[]]]]} ' > "$WORK/shortcuts.json"
 }
@@ -309,10 +309,10 @@ assert_true bash -n "$HARNESS"
 assert_true bash -n "$BASH_SOURCE"
 assert_contains 'readonly SCHEMA_VERSION=' "$HARNESS"
 assert_contains 'readonly COMMAND_ALLOWLIST=' "$HARNESS"
-assert_absent 'PLASMA_AUTO_TILER_PROC_ROOT' "$HARNESS"
+assert_absent 'OMNITILER_PROC_ROOT' "$HARNESS"
 assert_contains 'loginctl' "$HARNESS"
 assert_contains 'session scope' "$HARNESS"
-assert_absent 'PLASMA_AUTO_TILER_BUSCTL' "$HARNESS"
+assert_absent 'OMNITILER_BUSCTL' "$HARNESS"
 assert_absent 'kglobalaccel5' "$HARNESS"
 assert_absent 'kglobalaccel6' "$HARNESS"
 assert_absent 'resolve_optional_tool' "$HARNESS"
@@ -400,8 +400,8 @@ unset TEST_XDG_CONFIG_HOME
 for mutation in collision ownership drift-shortcut duplicate-shortcut; do
   case "$mutation" in
     collision) "$JQ_BIN" '.data[0] += [["unrelated", "unrelated", "other", "Other", "default", "Default", [268435528], []]]' "$WORK/shortcuts.json" > "$WORK/changed.json" ;;
-    ownership) "$JQ_BIN" '(.data[0] | map(if .[0] == "plasma-auto-tiler-focus-left" then .[2] = "other" else . end)) as $r | {type:.type,data:[$r]}' "$WORK/shortcuts.json" > "$WORK/changed.json" ;;
-    drift-shortcut) "$JQ_BIN" '(.data[0] | map(if .[0] == "plasma-auto-tiler-focus-left" then .[6] = [1] else . end)) as $r | {type:.type,data:[$r]}' "$WORK/shortcuts.json" > "$WORK/changed.json" ;;
+    ownership) "$JQ_BIN" '(.data[0] | map(if .[0] == "omnitiler-focus-left" then .[2] = "other" else . end)) as $r | {type:.type,data:[$r]}' "$WORK/shortcuts.json" > "$WORK/changed.json" ;;
+    drift-shortcut) "$JQ_BIN" '(.data[0] | map(if .[0] == "omnitiler-focus-left" then .[6] = [1] else . end)) as $r | {type:.type,data:[$r]}' "$WORK/shortcuts.json" > "$WORK/changed.json" ;;
     duplicate-shortcut) "$JQ_BIN" '.data[0] += [.data[0][0]]' "$WORK/shortcuts.json" > "$WORK/changed.json" ;;
   esac
   export FAKE_SHORTCUTS="$WORK/changed.json"

@@ -2,7 +2,7 @@
 
 ## Goal and scope
 
-- Simplify tray workspace-toggle Rust code, primarily `crates/plasma-auto-tiler/src/tray.rs` and tray-only tests/helpers. Prefer deletion where complexity brings no meaningful value.
+- Simplify tray workspace-toggle Rust code, primarily `crates/omnitiler/src/tray.rs` and tray-only tests/helpers. Prefer deletion where complexity brings no meaningful value.
 - Preserve visible menu and action behavior, schema-2 D-Bus/snapshot protocol, security and noticeable failure semantics. Retain the `stage=persist ... outcome=written`, `plan:config-reloaded stage=default-tiled`, `native-failed` and `stage=toggle ... outcome=sent-unconfirmed` evidence paths.
 - No live KWin/Plasma runs or changes to the KWin script, `devenv.nix`, `docs/backlog.md`, or `docs/research/architecture-review/review.md`.
 

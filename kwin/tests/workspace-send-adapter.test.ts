@@ -295,7 +295,7 @@ function dispatch(mocks: Mocks, adapter: WorkspaceSendAdapter): string {
 
 function assertRedacted(mocks: Mocks): void {
     for (const line of mocks.logs) {
-        assert.ok(line.startsWith("plasma-auto-tiler:route-diag component=cosmic-send "), line);
+        assert.ok(line.startsWith("omnitiler:route-diag component=cosmic-send "), line);
         for (const raw of ["win-a", "win-b", "win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
             assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
         }

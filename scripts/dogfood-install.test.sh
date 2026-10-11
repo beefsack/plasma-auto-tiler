@@ -219,12 +219,12 @@ for ((i=0; i<${#args[@]}; i++)); do
   elif [[ "${args[$i]}" == "--build" ]]; then
     build_dir="${args[$((i+1))]:?}"
     mkdir -p "$build_dir/bin/kwin/effects/plugins" "$build_dir/bin/kwin/effects/configs" "$build_dir/bin/kwin/scripts/configs"
-    printf 'fake-so\n' > "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+    printf 'fake-so\n' > "$build_dir/bin/kwin/effects/plugins/omnitiler-active-border.so"
     if [[ ! -f "${FAKE_STATE_DIR:?}/cmake-missing-kcm" ]]; then
-      printf 'fake-kcm\n' > "$build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+      printf 'fake-kcm\n' > "$build_dir/bin/kwin/effects/configs/omnitiler-active-border_config.so"
     fi
     if [[ ! -f "${FAKE_STATE_DIR:?}/cmake-missing-script-kcm" ]]; then
-      printf 'fake-script-kcm\n' > "$build_dir/bin/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+      printf 'fake-script-kcm\n' > "$build_dir/bin/kwin/scripts/configs/omnitiler-kwin_config.so"
     fi
   fi
 done
@@ -302,8 +302,8 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'nix %s\n' "$*" >> "${FAKE_NIX_LOG:?}"
-if [[ -n "${PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR:-}" ]]; then
-  printf 'LEAKED_PINNED=%s\n' "$PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR" >> "${FAKE_NIX_LOG:?}"
+if [[ -n "${OMNITILER_KWIN_DEV_CMAKE_DIR:-}" ]]; then
+  printf 'LEAKED_PINNED=%s\n' "$OMNITILER_KWIN_DEV_CMAKE_DIR" >> "${FAKE_NIX_LOG:?}"
 fi
 if [[ -n "${DOGFOOD_KWIN_DEV_CMAKE_DIR:-}" ]]; then
   printf 'LEAKED_DOGFOOD=%s\n' "$DOGFOOD_KWIN_DEV_CMAKE_DIR" >> "${FAKE_NIX_LOG:?}"
@@ -445,7 +445,7 @@ run_script() {
   fi
   local cmd=(env -u NPM_BIN -u KWRITECONFIG6_BIN -u KREADCONFIG6_BIN -u QDBUS_BIN -u JQ_BIN -u CMAKE_BIN -u CARGO_BIN -u NIX_BIN -u RUSTC_BIN -u XDG_DATA_HOME -u XDG_CONFIG_HOME \
     -u DOGFOOD_KWIN_ENVIRON_FILE -u DOGFOOD_KWIN_NOT_RUNNING -u DOGFOOD_KWIN_DEV_CMAKE_DIR \
-    -u PLASMA_AUTO_TILER_HOST_KWIN_BIN -u PLASMA_AUTO_TILER_STORE_ROOT -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR \
+    -u OMNITILER_HOST_KWIN_BIN -u OMNITILER_STORE_ROOT -u OMNITILER_KWIN_DEV_CMAKE_DIR \
     "DOGFOOD_DATA_ROOT=$DATA" "DOGFOOD_CONFIG_ROOT=$CONFIG" "HOME=$FAKE_HOME" "PATH=$effective_path")
   [[ -z "$TEST_NPM_BIN" ]] || cmd+=("NPM_BIN=$TEST_NPM_BIN")
   [[ -z "$TEST_KWRITECONFIG6_BIN" ]] || cmd+=("KWRITECONFIG6_BIN=$TEST_KWRITECONFIG6_BIN")
@@ -456,8 +456,8 @@ run_script() {
   [[ -z "${TEST_RUSTC_BIN:-}" ]] || cmd+=("RUSTC_BIN=$TEST_RUSTC_BIN")
   [[ -z "${TEST_CARGO_BIN:-}" ]] || cmd+=("CARGO_BIN=$TEST_CARGO_BIN")
   [[ -z "${TEST_CMAKE_BIN:-}" ]] || cmd+=("CMAKE_BIN=$TEST_CMAKE_BIN")
-  [[ -z "${TEST_HOST_KWIN_BIN:-}" ]] || cmd+=("PLASMA_AUTO_TILER_HOST_KWIN_BIN=$TEST_HOST_KWIN_BIN")
-  [[ -z "${TEST_STORE_ROOT:-}" ]] || cmd+=("PLASMA_AUTO_TILER_STORE_ROOT=$TEST_STORE_ROOT")
+  [[ -z "${TEST_HOST_KWIN_BIN:-}" ]] || cmd+=("OMNITILER_HOST_KWIN_BIN=$TEST_HOST_KWIN_BIN")
+  [[ -z "${TEST_STORE_ROOT:-}" ]] || cmd+=("OMNITILER_STORE_ROOT=$TEST_STORE_ROOT")
   [[ -z "${JQ_FAKE_OUTPUT:-}" ]] || cmd+=("JQ_FAKE_OUTPUT=$JQ_FAKE_OUTPUT")
   [[ -z "${FAKE_QDBUS_SUPPORTED:-}" ]] || cmd+=("FAKE_QDBUS_SUPPORTED=$FAKE_QDBUS_SUPPORTED")
   [[ -z "${FAKE_QDBUS_LOADED:-}" ]] || cmd+=("FAKE_QDBUS_LOADED=$FAKE_QDBUS_LOADED")
@@ -609,7 +609,7 @@ assert_qdbus_calls() {
 setup_dry_source() {
   rm -rf "$WORK/kwin" "$WORK/scripts"
   mkdir -p "$WORK/kwin/contents/code" "$WORK/kwin/contents/config" "$WORK/kwin/contents/ui" "$WORK/scripts"
-  printf '{"KPackageStructure":"KWin/Script","KPlugin":{"Id":"plasma-auto-tiler-kwin"}}\n' > "$WORK/kwin/metadata.json"
+  printf '{"KPackageStructure":"KWin/Script","KPlugin":{"Id":"omnitiler-kwin"}}\n' > "$WORK/kwin/metadata.json"
   printf 'bundle\n' > "$WORK/kwin/contents/code/main.js"
   printf '<xml/>\n' > "$WORK/kwin/contents/config/main.xml"
   printf '<ui/>\n' > "$WORK/kwin/contents/ui/config.ui"
@@ -728,30 +728,30 @@ assert_contains "error: NPM_BIN is set but is not an executable: $WORK/notexec"
 reset_state
 run_script install
 check_exit 0
-assert_contains "installed: plasma-auto-tiler-kwin -> $DATA/kwin/scripts/plasma-auto-tiler-kwin"
+assert_contains "installed: omnitiler-kwin -> $DATA/kwin/scripts/omnitiler-kwin"
 assert_contains "install does not enable the plugin"
 assert_grep_file "npm --prefix $KWIN_DIR run build" "$WORK/npm.log"
-assert_file "$DATA/kwin/scripts/plasma-auto-tiler-kwin/metadata.json"
-assert_file "$DATA/kwin/scripts/plasma-auto-tiler-kwin/contents/code/main.js"
-assert_file "$DATA/kwin/scripts/plasma-auto-tiler-kwin/contents/config/main.xml"
-assert_file "$DATA/kwin/scripts/plasma-auto-tiler-kwin/contents/ui/config.ui"
-assert_cmp "$META" "$DATA/kwin/scripts/plasma-auto-tiler-kwin/metadata.json"
-assert_cmp "$BUNDLE" "$DATA/kwin/scripts/plasma-auto-tiler-kwin/contents/code/main.js"
-assert_cmp "$KWIN_DIR/contents/config/main.xml" "$DATA/kwin/scripts/plasma-auto-tiler-kwin/contents/config/main.xml"
-assert_cmp "$KWIN_DIR/contents/ui/config.ui" "$DATA/kwin/scripts/plasma-auto-tiler-kwin/contents/ui/config.ui"
+assert_file "$DATA/kwin/scripts/omnitiler-kwin/metadata.json"
+assert_file "$DATA/kwin/scripts/omnitiler-kwin/contents/code/main.js"
+assert_file "$DATA/kwin/scripts/omnitiler-kwin/contents/config/main.xml"
+assert_file "$DATA/kwin/scripts/omnitiler-kwin/contents/ui/config.ui"
+assert_cmp "$META" "$DATA/kwin/scripts/omnitiler-kwin/metadata.json"
+assert_cmp "$BUNDLE" "$DATA/kwin/scripts/omnitiler-kwin/contents/code/main.js"
+assert_cmp "$KWIN_DIR/contents/config/main.xml" "$DATA/kwin/scripts/omnitiler-kwin/contents/config/main.xml"
+assert_cmp "$KWIN_DIR/contents/ui/config.ui" "$DATA/kwin/scripts/omnitiler-kwin/contents/ui/config.ui"
 assert_find_count 1 "$DATA/kwin/scripts" "entries under data root kwin/scripts" -mindepth 1 -maxdepth 1
-assert_find_count 4 "$DATA/kwin/scripts/plasma-auto-tiler-kwin" "files in installed package" -type f
+assert_find_count 4 "$DATA/kwin/scripts/omnitiler-kwin" "files in installed package" -type f
 assert_not_grep_file "kwriteconfig6" "$WORK/tools.log"
 assert_not_grep_file "qdbus" "$WORK/tools.log"
 assert_qdbus_calls 0
 assert_not_exists "$CONFIG/kwinrc"
 
 # install: replaces any existing plugin directory
-echo "stale" > "$DATA/kwin/scripts/plasma-auto-tiler-kwin/stale.txt"
+echo "stale" > "$DATA/kwin/scripts/omnitiler-kwin/stale.txt"
 run_script install
 check_exit 0
-assert_not_exists "$DATA/kwin/scripts/plasma-auto-tiler-kwin/stale.txt"
-assert_file "$DATA/kwin/scripts/plasma-auto-tiler-kwin/metadata.json"
+assert_not_exists "$DATA/kwin/scripts/omnitiler-kwin/stale.txt"
+assert_file "$DATA/kwin/scripts/omnitiler-kwin/metadata.json"
 
 # install: a failed build aborts before any copy
 reset_state
@@ -759,7 +759,7 @@ touch "$WORK/state/npm-fail"
 run_script install
 check_exit 1
 assert_contains "error: npm --prefix kwin run build failed in $KWIN_DIR"
-assert_not_exists "$DATA/kwin/scripts/plasma-auto-tiler-kwin"
+assert_not_exists "$DATA/kwin/scripts/omnitiler-kwin"
 assert_grep_file "npm --prefix $KWIN_DIR run build" "$WORK/npm.log"
 
 # uninstall: removes only the installed package and nothing else
@@ -768,34 +768,34 @@ run_script install
 check_exit 0
 run_script uninstall
 check_exit 0
-assert_contains "uninstalled: removed $DATA/kwin/scripts/plasma-auto-tiler-kwin"
-assert_not_exists "$DATA/kwin/scripts/plasma-auto-tiler-kwin"
+assert_contains "uninstalled: removed $DATA/kwin/scripts/omnitiler-kwin"
+assert_not_exists "$DATA/kwin/scripts/omnitiler-kwin"
 assert_find_count 0 "$DATA" "files left under the data root after uninstall" -type f
 
 # uninstall: idempotent when nothing is installed
 reset_state
 run_script uninstall
 check_exit 0
-assert_contains "uninstall: nothing installed at $DATA/kwin/scripts/plasma-auto-tiler-kwin"
+assert_contains "uninstall: nothing installed at $DATA/kwin/scripts/omnitiler-kwin"
 
 # enable: writes the exact plugin key and reconfigures via fake qdbus
 reset_state
 run_script enable
 check_exit 0
-assert_contains "enabled: plasma-auto-tiler-kwinEnabled set to true and KWin reconfigured"
-assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-kwinEnabled true" "$WORK/tools.log"
+assert_contains "enabled: omnitiler-kwinEnabled set to true and KWin reconfigured"
+assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-kwinEnabled true" "$WORK/tools.log"
 assert_qdbus_calls 1
 assert_grep_file "[Plugins]" "$CONFIG/kwinrc"
-assert_grep_file "plasma-auto-tiler-kwinEnabled=true" "$CONFIG/kwinrc"
+assert_grep_file "omnitiler-kwinEnabled=true" "$CONFIG/kwinrc"
 
 # disable: writes false and reconfigures
 reset_state
 run_script disable
 check_exit 0
-assert_contains "disabled: plasma-auto-tiler-kwinEnabled set to false and KWin reconfigured"
-assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-kwinEnabled false" "$WORK/tools.log"
+assert_contains "disabled: omnitiler-kwinEnabled set to false and KWin reconfigured"
+assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-kwinEnabled false" "$WORK/tools.log"
 assert_qdbus_calls 1
-assert_grep_file "plasma-auto-tiler-kwinEnabled=false" "$CONFIG/kwinrc"
+assert_grep_file "omnitiler-kwinEnabled=false" "$CONFIG/kwinrc"
 
 # enable then disable: exact reconfigure calls each time, final value false
 reset_state
@@ -805,27 +805,27 @@ assert_qdbus_calls 1
 run_script disable
 check_exit 0
 assert_qdbus_calls 2
-assert_grep_file "plasma-auto-tiler-kwinEnabled=false" "$CONFIG/kwinrc"
+assert_grep_file "omnitiler-kwinEnabled=false" "$CONFIG/kwinrc"
 
 # reload: disables then re-enables so KWin replaces the in-memory script
 # instance, leaving the plugin enabled.
 reset_state
 run_script reload
 check_exit 0
-assert_contains "disabled: plasma-auto-tiler-kwinEnabled set to false and KWin reconfigured"
-assert_contains "enabled: plasma-auto-tiler-kwinEnabled set to true and KWin reconfigured"
-assert_contains "reloaded: plasma-auto-tiler-kwin is enabled with a fresh KWin script instance"
-assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-kwinEnabled false" "$WORK/tools.log"
-assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-kwinEnabled true" "$WORK/tools.log"
+assert_contains "disabled: omnitiler-kwinEnabled set to false and KWin reconfigured"
+assert_contains "enabled: omnitiler-kwinEnabled set to true and KWin reconfigured"
+assert_contains "reloaded: omnitiler-kwin is enabled with a fresh KWin script instance"
+assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-kwinEnabled false" "$WORK/tools.log"
+assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-kwinEnabled true" "$WORK/tools.log"
 assert_qdbus_calls 2
-assert_grep_file "plasma-auto-tiler-kwinEnabled=true" "$CONFIG/kwinrc"
+assert_grep_file "omnitiler-kwinEnabled=true" "$CONFIG/kwinrc"
 
 # enable: kwriteconfig6 failure fails closed before any reconfigure
 reset_state
 touch "$WORK/state/kwrite-fail"
 run_script enable
 check_exit 1
-assert_contains "error: kwriteconfig6 failed to set plasma-auto-tiler-kwinEnabled=true in $CONFIG/kwinrc"
+assert_contains "error: kwriteconfig6 failed to set omnitiler-kwinEnabled=true in $CONFIG/kwinrc"
 assert_qdbus_calls 0
 
 # enable: qdbus failure fails closed after the key was written
@@ -834,7 +834,7 @@ touch "$WORK/state/qdbus-fail"
 run_script enable
 check_exit 1
 assert_contains "error: qdbus failed to reconfigure KWin (org.kde.KWin /KWin reconfigure)"
-assert_grep_file "plasma-auto-tiler-kwinEnabled=true" "$CONFIG/kwinrc"
+assert_grep_file "omnitiler-kwinEnabled=true" "$CONFIG/kwinrc"
 assert_qdbus_calls 1
 
 # status: kreadconfig6 failure fails closed
@@ -842,7 +842,7 @@ reset_state
 touch "$WORK/state/kread-fail"
 run_script status
 check_exit 1
-assert_contains "error: kreadconfig6 failed to read plasma-auto-tiler-kwinEnabled from $CONFIG/kwinrc"
+assert_contains "error: kreadconfig6 failed to read omnitiler-kwinEnabled from $CONFIG/kwinrc"
 
 # status: fresh root is not installed and not enabled, read-only, no reconfigure
 reset_state
@@ -851,7 +851,7 @@ check_exit 0
 assert_contains "installed: no"
 assert_contains "enabled: no"
 assert_contains "status is read-only and never reconfigures KWin"
-assert_grep_file "kreadconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-kwinEnabled" "$WORK/tools.log"
+assert_grep_file "kreadconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-kwinEnabled" "$WORK/tools.log"
 assert_not_grep_file "kwriteconfig6" "$WORK/tools.log"
 assert_not_grep_file "qdbus" "$WORK/tools.log"
 assert_qdbus_calls 0
@@ -862,7 +862,7 @@ run_script install
 check_exit 0
 run_script status
 check_exit 0
-assert_contains "installed: yes ($DATA/kwin/scripts/plasma-auto-tiler-kwin)"
+assert_contains "installed: yes ($DATA/kwin/scripts/omnitiler-kwin)"
 assert_contains "enabled: no"
 assert_qdbus_calls 0
 
@@ -875,13 +875,13 @@ check_exit 0
 assert_qdbus_calls 1
 run_script status
 check_exit 0
-assert_contains "installed: yes ($DATA/kwin/scripts/plasma-auto-tiler-kwin)"
+assert_contains "installed: yes ($DATA/kwin/scripts/omnitiler-kwin)"
 assert_contains "enabled: yes"
 assert_qdbus_calls 1
 
 # status: a plugin directory without metadata.json reports not installed
 reset_state
-mkdir -p "$DATA/kwin/scripts/plasma-auto-tiler-kwin"
+mkdir -p "$DATA/kwin/scripts/omnitiler-kwin"
 run_script status
 check_exit 0
 assert_contains "installed: no"
@@ -891,7 +891,7 @@ reset_state
 setup_dry_source
 run_script dry-run
 check_exit 0
-assert_contains "source metadata: valid (KPlugin.Id=plasma-auto-tiler-kwin)"
+assert_contains "source metadata: valid (KPlugin.Id=omnitiler-kwin)"
 assert_contains "source bundle: present ($WORK/kwin/contents/code/main.js)"
 assert_contains "KCM schema: present ($WORK/kwin/contents/config/main.xml)"
 assert_contains "KCM UI: present ($WORK/kwin/contents/ui/config.ui)"
@@ -899,10 +899,10 @@ assert_contains "installed: no"
 assert_contains "enabled: no"
 assert_contains "intended actions:"
 assert_contains "- build the kwin bundle (npm --prefix $WORK/kwin run build)"
-assert_contains "- replace any existing plugin directory at $DATA/kwin/scripts/plasma-auto-tiler-kwin"
+assert_contains "- replace any existing plugin directory at $DATA/kwin/scripts/omnitiler-kwin"
 assert_contains "dry-run is read-only and never builds, copies, writes configuration, reconfigures KWin, or reconciles shortcuts"
 assert_grep_file "jq -r .KPlugin.Id" "$WORK/tools.log"
-assert_grep_file "kreadconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-kwinEnabled" "$WORK/tools.log"
+assert_grep_file "kreadconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-kwinEnabled" "$WORK/tools.log"
 assert_not_grep_file "kwriteconfig6" "$WORK/tools.log"
 assert_not_grep_file "qdbus" "$WORK/tools.log"
 assert_not_grep_file "npm" "$WORK/tools.log"
@@ -913,15 +913,15 @@ assert_find_count 0 "$DATA" "files under data root after dry-run" -type f
 # dry-run: installed and enabled state is reported through the kreadconfig6 convention
 reset_state
 setup_dry_source
-mkdir -p "$DATA/kwin/scripts/plasma-auto-tiler-kwin"
-cp "$WORK/kwin/metadata.json" "$DATA/kwin/scripts/plasma-auto-tiler-kwin/metadata.json"
+mkdir -p "$DATA/kwin/scripts/omnitiler-kwin"
+cp "$WORK/kwin/metadata.json" "$DATA/kwin/scripts/omnitiler-kwin/metadata.json"
 mkdir -p "$CONFIG"
-printf '[Plugins]\nplasma-auto-tiler-kwinEnabled=true\n' > "$CONFIG/kwinrc"
+printf '[Plugins]\nomnitiler-kwinEnabled=true\n' > "$CONFIG/kwinrc"
 run_script dry-run
 check_exit 0
-assert_contains "installed: yes ($DATA/kwin/scripts/plasma-auto-tiler-kwin)"
+assert_contains "installed: yes ($DATA/kwin/scripts/omnitiler-kwin)"
 assert_contains "enabled: yes"
-assert_grep_file "kreadconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-kwinEnabled" "$WORK/tools.log"
+assert_grep_file "kreadconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-kwinEnabled" "$WORK/tools.log"
 assert_not_grep_file "kwriteconfig6" "$WORK/tools.log"
 assert_not_grep_file "qdbus" "$WORK/tools.log"
 assert_qdbus_calls 0
@@ -970,7 +970,7 @@ setup_dry_source
 JQ_FAKE_OUTPUT="not-the-plugin"
 run_script dry-run
 check_exit 1
-assert_contains "error: metadata.json KPlugin.Id is 'not-the-plugin'; expected 'plasma-auto-tiler-kwin'"
+assert_contains "error: metadata.json KPlugin.Id is 'not-the-plugin'; expected 'omnitiler-kwin'"
 
 # dry-run: kreadconfig6 failure fails closed
 reset_state
@@ -978,23 +978,23 @@ setup_dry_source
 touch "$WORK/state/kread-fail"
 run_script dry-run
 check_exit 1
-assert_contains "error: kreadconfig6 failed to read plasma-auto-tiler-kwinEnabled from $CONFIG/kwinrc"
+assert_contains "error: kreadconfig6 failed to read omnitiler-kwinEnabled from $CONFIG/kwinrc"
 
 # effect-install: fresh run builds via cmake and stages the fake .so
 reset_state
-EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
-EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-EFFECT_STAGED_KCM="$EFFECT_ROOT/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
-EFFECT_STAGED_SCRIPT_KCM="$EFFECT_ROOT/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
-EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
-LEGACY_EFFECT_ENV_FILE="$CONFIG/environment.d/60-plasma-auto-tiler-native-effect.conf"
+EFFECT_ROOT="$DATA/omnitiler-native-effect"
+EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/omnitiler-active-border.so"
+EFFECT_STAGED_KCM="$EFFECT_ROOT/kwin/effects/configs/omnitiler-active-border_config.so"
+EFFECT_STAGED_SCRIPT_KCM="$EFFECT_ROOT/kwin/scripts/configs/omnitiler-kwin_config.so"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-omnitiler-native-effect.sh"
+LEGACY_EFFECT_ENV_FILE="$CONFIG/environment.d/60-omnitiler-native-effect.conf"
 run_script effect-install
 check_exit 0
 assert_contains "staged: $EFFECT_STAGED_SO"
 assert_contains "env script: $EFFECT_ENV_FILE"
 assert_contains "a logout/login (or new session) is required"
-assert_grep_file "-B $DATA/.plasma-auto-tiler-native-effect." "$WORK/cmake.log"
-assert_grep_file "--build $DATA/.plasma-auto-tiler-native-effect." "$WORK/cmake.log"
+assert_grep_file "-B $DATA/.omnitiler-native-effect." "$WORK/cmake.log"
+assert_grep_file "--build $DATA/.omnitiler-native-effect." "$WORK/cmake.log"
 assert_file "$EFFECT_STAGED_SO"
 assert_grep_file "fake-so" "$EFFECT_STAGED_SO"
 assert_file "$EFFECT_STAGED_KCM"
@@ -1012,8 +1012,8 @@ assert_not_exists "$EFFECT_ROOT/kwin/effects/scripts"
 assert_file "$EFFECT_ENV_FILE"
 assert_grep_file 'export QT_PLUGIN_PATH="'"$EFFECT_ROOT"'${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"' "$EFFECT_ENV_FILE"
 assert_count 1 "$(grep -c QT_PLUGIN_PATH "$EFFECT_ENV_FILE")" "QT_PLUGIN_PATH lines in fresh env script"
-assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-active-borderEnabled true" "$WORK/tools.log"
-assert_contains "kwinrc: plasma-auto-tiler-active-borderEnabled set to true"
+assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-active-borderEnabled true" "$WORK/tools.log"
+assert_contains "kwinrc: omnitiler-active-borderEnabled set to true"
 if sh -n "$EFFECT_ENV_FILE" 2>/dev/null; then
   PASS=$((PASS + 1))
 else
@@ -1029,7 +1029,7 @@ chmod +x "$WORK/failing-cmake"
 TEST_CMAKE_BIN="$WORK/failing-cmake"
 run_script effect-install
 check_exit 0
-assert_contains "staged: $DATA/plasma-auto-tiler-native-effect/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+assert_contains "staged: $DATA/omnitiler-native-effect/kwin/effects/plugins/omnitiler-active-border.so"
 assert_grep_file "-DKWin_DIR=$FAKE_DEV_OUT/lib/cmake/KWin" "$WORK/cmake.log"
 
 # effect-install: host-matched build failure fails closed (via builder, no fallback)
@@ -1077,11 +1077,11 @@ reset_state
 touch "$WORK/state/kwrite-fail"
 run_script effect-install
 check_exit 1
-assert_contains "error: kwriteconfig6 failed to set plasma-auto-tiler-active-borderEnabled=true"
+assert_contains "error: kwriteconfig6 failed to set omnitiler-active-borderEnabled=true"
 assert_not_exists "$EFFECT_ROOT"
 assert_not_exists "$EFFECT_ENV_FILE"
 assert_not_exists "$CONFIG/kwinrc"
-assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-active-borderEnabled true" "$WORK/tools.log"
+assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-active-borderEnabled true" "$WORK/tools.log"
 
 # effect-install: idempotent re-run does not duplicate or corrupt the env script
 reset_state
@@ -1092,7 +1092,7 @@ run_script effect-install
 check_exit 0
 assert_cmp "$WORK/env-first.sh" "$EFFECT_ENV_FILE"
 assert_count 1 "$(grep -c QT_PLUGIN_PATH "$EFFECT_ENV_FILE")" "QT_PLUGIN_PATH lines in env script after re-run"
-assert_count 1 "$(grep -c '^plasma-auto-tiler-active-borderEnabled=' "$CONFIG/kwinrc")" "plasma-auto-tiler-active-borderEnabled lines in kwinrc after re-run"
+assert_count 1 "$(grep -c '^omnitiler-active-borderEnabled=' "$CONFIG/kwinrc")" "omnitiler-active-borderEnabled lines in kwinrc after re-run"
 assert_not_contains "logout/login"
 
 # effect-install: staging publishes only the survivor .so plus both KCMs; no
@@ -1100,10 +1100,10 @@ assert_not_contains "logout/login"
 reset_state
 run_script effect-install
 check_exit 0
-EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
-assert_not_exists "$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
-assert_not_exists "$EFFECT_ROOT/kwin/scripts/configs/plasma-auto-tiler-drag-oracle_config.so"
-assert_file "$EFFECT_ROOT/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+EFFECT_ROOT="$DATA/omnitiler-native-effect"
+assert_not_exists "$EFFECT_ROOT/kwin/effects/plugins/omnitiler-drag-oracle.so"
+assert_not_exists "$EFFECT_ROOT/kwin/scripts/configs/omnitiler-drag-oracle_config.so"
+assert_file "$EFFECT_ROOT/kwin/scripts/configs/omnitiler-kwin_config.so"
 assert_find_count 1 "$EFFECT_ROOT/kwin/effects/plugins" "files in the staged native plugin namespace after consolidation" -mindepth 1 -maxdepth 1 -type f
 assert_find_count 2 "$EFFECT_ROOT/kwin/effects" "files in the complete staged native namespace after consolidation" -type f
 assert_find_count 1 "$EFFECT_ROOT/kwin/scripts/configs" "files in the staged native script KCM namespace after consolidation" -mindepth 1 -maxdepth 1 -type f
@@ -1113,29 +1113,29 @@ assert_find_count 3 "$EFFECT_ROOT/kwin" "files in the complete staged native tre
 # survivor and then sets the legacy oracle key false; other keys are
 # preserved and nothing else is deleted.
 reset_state
-EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
+EFFECT_ROOT="$DATA/omnitiler-native-effect"
 mkdir -p "$CONFIG"
-printf '[Plugins]\nplasma-auto-tiler-drag-oracleEnabled=true\nplasma-auto-tiler-active-borderEnabled=false\nunrelated=true\n' > "$CONFIG/kwinrc"
+printf '[Plugins]\nomnitiler-drag-oracleEnabled=true\nomnitiler-active-borderEnabled=false\nunrelated=true\n' > "$CONFIG/kwinrc"
 run_script effect-install
 check_exit 0
-assert_contains "kwinrc: plasma-auto-tiler-drag-oracleEnabled set to false"
-assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
-assert_grep_file "plasma-auto-tiler-drag-oracleEnabled=false" "$CONFIG/kwinrc"
+assert_contains "kwinrc: omnitiler-drag-oracleEnabled set to false"
+assert_grep_file "omnitiler-active-borderEnabled=true" "$CONFIG/kwinrc"
+assert_grep_file "omnitiler-drag-oracleEnabled=false" "$CONFIG/kwinrc"
 assert_grep_file "unrelated=true" "$CONFIG/kwinrc"
-assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-active-borderEnabled true" "$WORK/tools.log"
-assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-drag-oracleEnabled false" "$WORK/tools.log"
+assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-active-borderEnabled true" "$WORK/tools.log"
+assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-drag-oracleEnabled false" "$WORK/tools.log"
 
 # effect-install migration truth table: legacy "false" is left untouched.
 reset_state
 mkdir -p "$CONFIG"
-printf '[Plugins]\nplasma-auto-tiler-drag-oracleEnabled=false\nunrelated=true\n' > "$CONFIG/kwinrc"
+printf '[Plugins]\nomnitiler-drag-oracleEnabled=false\nunrelated=true\n' > "$CONFIG/kwinrc"
 run_script effect-install
 check_exit 0
-assert_not_contains "plasma-auto-tiler-drag-oracleEnabled set to false"
-assert_grep_file "plasma-auto-tiler-drag-oracleEnabled=false" "$CONFIG/kwinrc"
-assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
+assert_not_contains "omnitiler-drag-oracleEnabled set to false"
+assert_grep_file "omnitiler-drag-oracleEnabled=false" "$CONFIG/kwinrc"
+assert_grep_file "omnitiler-active-borderEnabled=true" "$CONFIG/kwinrc"
 assert_grep_file "unrelated=true" "$CONFIG/kwinrc"
-assert_not_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-drag-oracleEnabled" "$WORK/tools.log"
+assert_not_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-drag-oracleEnabled" "$WORK/tools.log"
 
 # effect-install migration truth table: absent legacy key is left absent.
 reset_state
@@ -1143,34 +1143,34 @@ mkdir -p "$CONFIG"
 printf '[Plugins]\nunrelated=true\n' > "$CONFIG/kwinrc"
 run_script effect-install
 check_exit 0
-assert_not_contains "plasma-auto-tiler-drag-oracleEnabled set to false"
-assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
+assert_not_contains "omnitiler-drag-oracleEnabled set to false"
+assert_grep_file "omnitiler-active-borderEnabled=true" "$CONFIG/kwinrc"
 assert_grep_file "unrelated=true" "$CONFIG/kwinrc"
-assert_not_grep_file "plasma-auto-tiler-drag-oracleEnabled=" "$CONFIG/kwinrc"
-assert_not_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-drag-oracleEnabled" "$WORK/tools.log"
+assert_not_grep_file "omnitiler-drag-oracleEnabled=" "$CONFIG/kwinrc"
+assert_not_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-drag-oracleEnabled" "$WORK/tools.log"
 
 # effect-install migration truth table: non-exact legacy value is left
 # untouched (only the exact string "true" migrates).
 reset_state
 mkdir -p "$CONFIG"
-printf '[Plugins]\nplasma-auto-tiler-drag-oracleEnabled=True\nunrelated=true\n' > "$CONFIG/kwinrc"
+printf '[Plugins]\nomnitiler-drag-oracleEnabled=True\nunrelated=true\n' > "$CONFIG/kwinrc"
 run_script effect-install
 check_exit 0
-assert_not_contains "plasma-auto-tiler-drag-oracleEnabled set to false"
-assert_grep_file "plasma-auto-tiler-drag-oracleEnabled=True" "$CONFIG/kwinrc"
-assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
-assert_not_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-drag-oracleEnabled" "$WORK/tools.log"
+assert_not_contains "omnitiler-drag-oracleEnabled set to false"
+assert_grep_file "omnitiler-drag-oracleEnabled=True" "$CONFIG/kwinrc"
+assert_grep_file "omnitiler-active-borderEnabled=true" "$CONFIG/kwinrc"
+assert_not_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-drag-oracleEnabled" "$WORK/tools.log"
 
 # effect-install migration rollback: SIGTERM after migration restores the
 # exact pre-existing survivor and legacy values plus unrelated keys.
 reset_state
-EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
-EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+EFFECT_ROOT="$DATA/omnitiler-native-effect"
+EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/omnitiler-active-border.so"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-omnitiler-native-effect.sh"
 mkdir -p "$(dirname "$EFFECT_STAGED_SO")" "$(dirname "$EFFECT_ENV_FILE")"
 printf 'previous-so\n' > "$EFFECT_STAGED_SO"
 printf 'previous-env\n' > "$EFFECT_ENV_FILE"
-printf '[Plugins]\nplasma-auto-tiler-active-borderEnabled=false\nplasma-auto-tiler-drag-oracleEnabled=true\nunrelated=true\n' > "$CONFIG/kwinrc"
+printf '[Plugins]\nomnitiler-active-borderEnabled=false\nomnitiler-drag-oracleEnabled=true\nunrelated=true\n' > "$CONFIG/kwinrc"
 cp "$CONFIG/kwinrc" "$WORK/migration-old-kwinrc"
 touch "$WORK/state/signal-on-move"
 FAKE_MOVE_SIGNAL_MATCH="$EFFECT_ROOT"
@@ -1182,25 +1182,25 @@ check_exit 143
 assert_contains "error: interrupted by SIGTERM"
 assert_not_contains "rollback failed"
 assert_cmp "$WORK/migration-old-kwinrc" "$CONFIG/kwinrc"
-assert_grep_file "plasma-auto-tiler-active-borderEnabled=false" "$CONFIG/kwinrc"
-assert_grep_file "plasma-auto-tiler-drag-oracleEnabled=true" "$CONFIG/kwinrc"
+assert_grep_file "omnitiler-active-borderEnabled=false" "$CONFIG/kwinrc"
+assert_grep_file "omnitiler-drag-oracleEnabled=true" "$CONFIG/kwinrc"
 assert_grep_file "unrelated=true" "$CONFIG/kwinrc"
 
 # effect-install migration: kreadconfig6 failure fails closed before any
 # staging or kwinrc mutation.
 reset_state
 mkdir -p "$CONFIG"
-printf '[Plugins]\nplasma-auto-tiler-drag-oracleEnabled=true\n' > "$CONFIG/kwinrc"
+printf '[Plugins]\nomnitiler-drag-oracleEnabled=true\n' > "$CONFIG/kwinrc"
 touch "$WORK/state/kread-fail"
 run_script effect-install
 check_exit 1
-assert_grep_file "plasma-auto-tiler-drag-oracleEnabled=true" "$CONFIG/kwinrc"
-assert_not_grep_file "^plasma-auto-tiler-active-borderEnabled=" "$CONFIG/kwinrc"
-assert_not_exists "$DATA/plasma-auto-tiler-native-effect"
+assert_grep_file "omnitiler-drag-oracleEnabled=true" "$CONFIG/kwinrc"
+assert_not_grep_file "^omnitiler-active-borderEnabled=" "$CONFIG/kwinrc"
+assert_not_exists "$DATA/omnitiler-native-effect"
 
 # static: the legacy oracle key literal exists exactly once and is never
 # derived, deleted, or applied outside the transactional effect-install.
-if [[ "$(grep -c 'LEGACY_ORACLE_CONFIG_KEY="plasma-auto-tiler-drag-oracleEnabled"' "$SCRIPT")" -eq 1 ]]; then
+if [[ "$(grep -c 'LEGACY_ORACLE_CONFIG_KEY="omnitiler-drag-oracleEnabled"' "$SCRIPT")" -eq 1 ]]; then
   PASS=$((PASS + 1))
 else
   echo "FAIL: scripts/dogfood-install.sh must define LEGACY_ORACLE_CONFIG_KEY exactly once" >&2
@@ -1221,14 +1221,14 @@ fi
 # effect-install: SIGTERM during replacement publication restores the exact
 # pre-existing root, environment script, and kwinrc state
 reset_state
-EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
-EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+EFFECT_ROOT="$DATA/omnitiler-native-effect"
+EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/omnitiler-active-border.so"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-omnitiler-native-effect.sh"
 mkdir -p "$(dirname "$EFFECT_STAGED_SO")" "$(dirname "$EFFECT_ENV_FILE")"
 printf 'previous-so\n' > "$EFFECT_STAGED_SO"
 printf 'previous-extra\n' > "$EFFECT_ROOT/previous-extra"
 printf 'previous-env\n' > "$EFFECT_ENV_FILE"
-printf '[Plugins]\nplasma-auto-tiler-active-borderEnabled=false\nunrelated=true\n' > "$CONFIG/kwinrc"
+printf '[Plugins]\nomnitiler-active-borderEnabled=false\nunrelated=true\n' > "$CONFIG/kwinrc"
 cp -R "$EFFECT_ROOT" "$WORK/install-old-root"
 cp "$EFFECT_ENV_FILE" "$WORK/install-old-env"
 cp "$CONFIG/kwinrc" "$WORK/install-old-kwinrc"
@@ -1241,22 +1241,22 @@ run_script effect-install
 check_exit 143
 assert_contains "error: interrupted by SIGTERM"
 assert_not_contains "rollback failed"
-assert_cmp "$WORK/install-old-root/kwin/effects/plugins/plasma-auto-tiler-active-border.so" "$EFFECT_STAGED_SO"
+assert_cmp "$WORK/install-old-root/kwin/effects/plugins/omnitiler-active-border.so" "$EFFECT_STAGED_SO"
 assert_cmp "$WORK/install-old-root/previous-extra" "$EFFECT_ROOT/previous-extra"
 assert_cmp "$WORK/install-old-env" "$EFFECT_ENV_FILE"
 assert_cmp "$WORK/install-old-kwinrc" "$CONFIG/kwinrc"
-assert_not_exists "$DATA/.plasma-auto-tiler-native-effect"
+assert_not_exists "$DATA/.omnitiler-native-effect"
 
 # effect-install: catchable-signal rollback preserves an exact pre-existing
 # empty native enablement key rather than treating it as absent
 reset_state
-EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
-EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+EFFECT_ROOT="$DATA/omnitiler-native-effect"
+EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/omnitiler-active-border.so"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-omnitiler-native-effect.sh"
 mkdir -p "$(dirname "$EFFECT_STAGED_SO")" "$(dirname "$EFFECT_ENV_FILE")"
 printf 'previous-so\n' > "$EFFECT_STAGED_SO"
 printf 'previous-env\n' > "$EFFECT_ENV_FILE"
-printf '[Plugins]\nplasma-auto-tiler-active-borderEnabled=\nunrelated=true\n' > "$CONFIG/kwinrc"
+printf '[Plugins]\nomnitiler-active-borderEnabled=\nunrelated=true\n' > "$CONFIG/kwinrc"
 cp "$CONFIG/kwinrc" "$WORK/install-empty-key-old-kwinrc"
 touch "$WORK/state/signal-on-move"
 FAKE_MOVE_SIGNAL_MATCH="$EFFECT_ROOT"
@@ -1268,15 +1268,15 @@ check_exit 143
 assert_contains "error: interrupted by SIGTERM"
 assert_not_contains "rollback failed"
 assert_cmp "$WORK/install-empty-key-old-kwinrc" "$CONFIG/kwinrc"
-assert_count 1 "$(grep -Fx -c 'plasma-auto-tiler-active-borderEnabled=' "$CONFIG/kwinrc")" "empty native enablement key after rollback"
+assert_count 1 "$(grep -Fx -c 'omnitiler-active-borderEnabled=' "$CONFIG/kwinrc")" "empty native enablement key after rollback"
 assert_grep_file "unrelated=true" "$CONFIG/kwinrc"
-assert_find_count 0 "$DATA" "native-effect transaction directories after empty-key rollback" -mindepth 1 -maxdepth 1 -type d -name '.plasma-auto-tiler-native-effect.*'
+assert_find_count 0 "$DATA" "native-effect transaction directories after empty-key rollback" -mindepth 1 -maxdepth 1 -type d -name '.omnitiler-native-effect.*'
 
 # effect-install: SIGHUP during first publication rolls back a fresh install
 reset_state
-EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
-EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+EFFECT_ROOT="$DATA/omnitiler-native-effect"
+EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/omnitiler-active-border.so"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-omnitiler-native-effect.sh"
 touch "$WORK/state/signal-on-move"
 FAKE_MOVE_SIGNAL_MATCH="$EFFECT_ROOT"
 FAKE_MOVE_SIGNAL=HUP
@@ -1293,9 +1293,9 @@ assert_not_exists "$CONFIG/kwinrc"
 # effect-remove: SIGINT after staging the environment entry restores the exact
 # pre-existing native state rather than leaving a partial removal
 reset_state
-EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
-EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+EFFECT_ROOT="$DATA/omnitiler-native-effect"
+EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/omnitiler-active-border.so"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-omnitiler-native-effect.sh"
 run_script effect-install
 check_exit 0
 cp -R "$EFFECT_ROOT" "$WORK/remove-old-root"
@@ -1310,7 +1310,7 @@ run_script effect-remove
 check_exit 130
 assert_contains "error: interrupted by SIGINT"
 assert_not_contains "rollback failed"
-assert_cmp "$WORK/remove-old-root/kwin/effects/plugins/plasma-auto-tiler-active-border.so" "$EFFECT_STAGED_SO"
+assert_cmp "$WORK/remove-old-root/kwin/effects/plugins/omnitiler-active-border.so" "$EFFECT_STAGED_SO"
 assert_cmp "$WORK/remove-old-env" "$EFFECT_ENV_FILE"
 assert_cmp "$WORK/remove-old-kwinrc" "$CONFIG/kwinrc"
 assert_file "$EFFECT_STAGED_KCM"
@@ -1318,13 +1318,13 @@ assert_file "$EFFECT_STAGED_SCRIPT_KCM"
 
 # effect-install: a failed rollback operation is reported as rollback failure
 reset_state
-EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
-EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+EFFECT_ROOT="$DATA/omnitiler-native-effect"
+EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/omnitiler-active-border.so"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-omnitiler-native-effect.sh"
 mkdir -p "$(dirname "$EFFECT_STAGED_SO")" "$(dirname "$EFFECT_ENV_FILE")"
 printf 'previous-so\n' > "$EFFECT_STAGED_SO"
 printf 'previous-env\n' > "$EFFECT_ENV_FILE"
-printf '[Plugins]\nplasma-auto-tiler-active-borderEnabled=false\n' > "$CONFIG/kwinrc"
+printf '[Plugins]\nomnitiler-active-borderEnabled=false\n' > "$CONFIG/kwinrc"
 touch "$WORK/state/signal-on-move"
 FAKE_MOVE_SIGNAL_MATCH="$EFFECT_ROOT"
 FAKE_MOVE_SIGNAL=TERM
@@ -1337,9 +1337,9 @@ assert_contains "error: interrupted by SIGTERM; rollback failed"
 
 # effect-remove: a failed rollback operation is reported as rollback failure
 reset_state
-EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
-EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+EFFECT_ROOT="$DATA/omnitiler-native-effect"
+EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/omnitiler-active-border.so"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-omnitiler-native-effect.sh"
 run_script effect-install
 check_exit 0
 touch "$WORK/state/signal-on-move"
@@ -1385,16 +1385,16 @@ TEST_KWIN_DEV_CMAKE_DIR="$WORK/does-not-exist-kwin-dev-dir"
 run_script effect-install
 check_exit 0
 assert_grep_file "-DKWin_DIR=$FAKE_DEV_OUT/lib/cmake/KWin" "$WORK/cmake.log"
-assert_grep_file "-B $DATA/.plasma-auto-tiler-native-effect." "$WORK/cmake.log"
-if grep -E -q "\-B $DATA/\.plasma-auto-tiler-native-effect\.[^ ]*/host-abc123-kwin-6\.7\.5-build" "$WORK/cmake.log"; then
+assert_grep_file "-B $DATA/.omnitiler-native-effect." "$WORK/cmake.log"
+if grep -E -q "\-B $DATA/\.omnitiler-native-effect\.[^ ]*/host-abc123-kwin-6\.7\.5-build" "$WORK/cmake.log"; then
   PASS=$((PASS + 1))
 else
   echo "FAIL: transaction build dir is not identity-keyed (host-abc123-kwin-6.7.5-build)" >&2
   cat "$WORK/cmake.log" >&2
   FAIL=$((FAIL + 1))
 fi
-EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
-assert_file "$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+EFFECT_ROOT="$DATA/omnitiler-native-effect"
+assert_file "$EFFECT_ROOT/kwin/effects/plugins/omnitiler-active-border.so"
 
 # effect-install: bad host provenance fails closed with no staging side effects,
 # preserving builder diagnostics (stderr not discarded).
@@ -1404,7 +1404,7 @@ run_script effect-install
 check_exit 1
 assert_contains "host KWin provenance resolution failed"
 assert_contains "host KWin binary not found"
-assert_not_exists "$DATA/plasma-auto-tiler-native-effect"
+assert_not_exists "$DATA/omnitiler-native-effect"
 assert_not_exists "$CONFIG/kwinrc"
 
 # effect-status: nothing staged, no env script, kwin_wayland not running (the
@@ -1537,7 +1537,7 @@ FAKE_QDBUS_SUPPORTED=true
 FAKE_QDBUS_LOADED=false
 run_script effect-status
 check_exit 0
-assert_contains "[d] discovery: yes - isEffectSupported reports true for plasma-auto-tiler-active-border"
+assert_contains "[d] discovery: yes - isEffectSupported reports true for omnitiler-active-border"
 assert_contains "[e] loaded: no - isEffectLoaded reports false"
 assert_contains "-> effect is supported but not currently loaded; run 'effect-reload' to load it."
 
@@ -1567,7 +1567,7 @@ check_exit 0
 FAKE_QDBUS_SUPPORTED=false
 run_script effect-reload
 check_exit 2
-assert_contains "error: plasma-auto-tiler-active-border is unavailable to KWin (isEffectSupported=false)"
+assert_contains "error: omnitiler-active-border is unavailable to KWin (isEffectSupported=false)"
 assert_contains "plugin load, factory, or ABI failure"
 assert_contains "Run 'effect-status'"
 assert_not_contains "logout/login"
@@ -1616,14 +1616,14 @@ FAKE_QDBUS_SUPPORTED=true
 FAKE_QDBUS_LOADED=true
 run_script effect-reload
 check_exit 0
-assert_contains "reloaded: plasma-auto-tiler-active-border is loaded"
+assert_contains "reloaded: omnitiler-active-border is loaded"
 grep '^qdbus ' "$WORK/tools.log" > "$WORK/qdbus-calls.log"
-assert_grep_file "isEffectSupported plasma-auto-tiler-active-border" "$WORK/qdbus-calls.log"
-assert_grep_file "unloadEffect plasma-auto-tiler-active-border" "$WORK/qdbus-calls.log"
-assert_grep_file "loadEffect plasma-auto-tiler-active-border" "$WORK/qdbus-calls.log"
-assert_grep_file "isEffectLoaded plasma-auto-tiler-active-border" "$WORK/qdbus-calls.log"
+assert_grep_file "isEffectSupported omnitiler-active-border" "$WORK/qdbus-calls.log"
+assert_grep_file "unloadEffect omnitiler-active-border" "$WORK/qdbus-calls.log"
+assert_grep_file "loadEffect omnitiler-active-border" "$WORK/qdbus-calls.log"
+assert_grep_file "isEffectLoaded omnitiler-active-border" "$WORK/qdbus-calls.log"
 unload_line="$(grep -n unloadEffect "$WORK/qdbus-calls.log" | cut -d: -f1)"
-load_line="$(grep -n 'loadEffect plasma-auto-tiler-active-border' "$WORK/qdbus-calls.log" | grep -v unloadEffect | cut -d: -f1)"
+load_line="$(grep -n 'loadEffect omnitiler-active-border' "$WORK/qdbus-calls.log" | grep -v unloadEffect | cut -d: -f1)"
 loaded_check_line="$(grep -n isEffectLoaded "$WORK/qdbus-calls.log" | cut -d: -f1)"
 if [[ "$unload_line" -lt "$load_line" && "$load_line" -lt "$loaded_check_line" ]]; then
   PASS=$((PASS + 1))
@@ -1643,7 +1643,7 @@ check_exit 1
 assert_contains "error: qdbus returned an invalid isEffectLoaded reply"
 assert_file "$EFFECT_STAGED_SO"
 assert_file "$EFFECT_ENV_FILE"
-assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
+assert_grep_file "omnitiler-active-borderEnabled=true" "$CONFIG/kwinrc"
 
 reset_state
 run_script effect-install
@@ -1654,7 +1654,7 @@ check_exit 1
 assert_contains "error: qdbus returned an invalid isEffectLoaded reply"
 assert_file "$EFFECT_STAGED_SO"
 assert_file "$EFFECT_ENV_FILE"
-assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
+assert_grep_file "omnitiler-active-borderEnabled=true" "$CONFIG/kwinrc"
 
 # effect-remove: after effect-install, removes both the staged tree and the env script
 reset_state
@@ -1666,8 +1666,8 @@ assert_contains "removed: $EFFECT_ROOT"
 assert_contains "removed: $EFFECT_ENV_FILE"
 assert_not_exists "$EFFECT_ROOT"
 assert_not_exists "$EFFECT_ENV_FILE"
-assert_contains "removed (kwinrc key): plasma-auto-tiler-active-borderEnabled"
-assert_not_grep_file "^plasma-auto-tiler-active-borderEnabled=" "$CONFIG/kwinrc"
+assert_contains "removed (kwinrc key): omnitiler-active-borderEnabled"
+assert_not_grep_file "^omnitiler-active-borderEnabled=" "$CONFIG/kwinrc"
 
 # effect-remove: clears the complete namespaced native root and only removes
 # this project's native enablement key from shared KWin configuration
@@ -1676,13 +1676,13 @@ run_script effect-install
 check_exit 0
 mkdir -p "$EFFECT_ROOT/extra/deep"
 printf 'stale native namespace content\n' > "$EFFECT_ROOT/extra/deep/stale.so"
-printf '[Plugins]\nplasma-auto-tiler-active-borderEnabled=true\nplasma-auto-tiler-kwinEnabled=true\nunrelatedPluginEnabled=true\n' > "$CONFIG/kwinrc"
+printf '[Plugins]\nomnitiler-active-borderEnabled=true\nomnitiler-kwinEnabled=true\nunrelatedPluginEnabled=true\n' > "$CONFIG/kwinrc"
 run_script effect-remove
 check_exit 0
 assert_not_exists "$EFFECT_ROOT"
 assert_not_exists "$EFFECT_ROOT/extra/deep/stale.so"
-assert_not_grep_file "^plasma-auto-tiler-active-borderEnabled=" "$CONFIG/kwinrc"
-assert_grep_file "plasma-auto-tiler-kwinEnabled=true" "$CONFIG/kwinrc"
+assert_not_grep_file "^omnitiler-active-borderEnabled=" "$CONFIG/kwinrc"
+assert_grep_file "omnitiler-kwinEnabled=true" "$CONFIG/kwinrc"
 assert_grep_file "unrelatedPluginEnabled=true" "$CONFIG/kwinrc"
 
 # effect-remove: a loaded effect is left completely intact rather than
@@ -1698,7 +1698,7 @@ assert_file "$EFFECT_STAGED_SO"
 assert_file "$EFFECT_STAGED_KCM"
 assert_file "$EFFECT_STAGED_SCRIPT_KCM"
 assert_file "$EFFECT_ENV_FILE"
-assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
+assert_grep_file "omnitiler-active-borderEnabled=true" "$CONFIG/kwinrc"
 assert_not_grep_file "loadEffect" "$WORK/tools.log"
 assert_not_grep_file "unloadEffect" "$WORK/tools.log"
 
@@ -1709,12 +1709,12 @@ check_exit 0
 touch "$WORK/state/kwrite-fail"
 run_script effect-remove
 check_exit 1
-assert_contains "error: kwriteconfig6 failed to delete plasma-auto-tiler-active-borderEnabled"
+assert_contains "error: kwriteconfig6 failed to delete omnitiler-active-borderEnabled"
 assert_file "$EFFECT_STAGED_SO"
 assert_file "$EFFECT_STAGED_KCM"
 assert_file "$EFFECT_STAGED_SCRIPT_KCM"
 assert_file "$EFFECT_ENV_FILE"
-assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
+assert_grep_file "omnitiler-active-borderEnabled=true" "$CONFIG/kwinrc"
 
 # effect-remove: migration - also removes the legacy environment.d entry this
 # project used to write, without touching any other file under environment.d/
@@ -1747,19 +1747,19 @@ reset_state
 run_script effect-remove
 check_exit 0
 assert_contains "effect-remove: nothing to do ($EFFECT_ROOT, $EFFECT_ENV_FILE, and $LEGACY_EFFECT_ENV_FILE not present)"
-assert_grep_file "kreadconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-active-borderEnabled" "$WORK/tools.log"
-assert_not_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-active-borderEnabled --delete" "$WORK/tools.log"
+assert_grep_file "kreadconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-active-borderEnabled" "$WORK/tools.log"
+assert_not_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-active-borderEnabled --delete" "$WORK/tools.log"
 
 # effect-remove: a present empty project key is distinguished from an absent key
 reset_state
 mkdir -p "$CONFIG"
-printf '[Plugins]\nplasma-auto-tiler-active-borderEnabled=\nunrelated=true\n' > "$CONFIG/kwinrc"
+printf '[Plugins]\nomnitiler-active-borderEnabled=\nunrelated=true\n' > "$CONFIG/kwinrc"
 run_script effect-remove
 check_exit 0
-assert_contains "removed (kwinrc key): plasma-auto-tiler-active-borderEnabled"
-assert_not_grep_file "^plasma-auto-tiler-active-borderEnabled=" "$CONFIG/kwinrc"
+assert_contains "removed (kwinrc key): omnitiler-active-borderEnabled"
+assert_not_grep_file "^omnitiler-active-borderEnabled=" "$CONFIG/kwinrc"
 assert_grep_file "unrelated=true" "$CONFIG/kwinrc"
-assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-active-borderEnabled --delete" "$WORK/tools.log"
+assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key omnitiler-active-borderEnabled --delete" "$WORK/tools.log"
 
 # setup: full success path (all four stages succeed)
 reset_state
@@ -1771,11 +1771,11 @@ assert_contains "install: ok"
 assert_contains "enable: ok"
 assert_contains "effect-install: ok"
 assert_contains "effect-reload: ok"
-assert_file "$DATA/kwin/scripts/plasma-auto-tiler-kwin/metadata.json"
+assert_file "$DATA/kwin/scripts/omnitiler-kwin/metadata.json"
 assert_grep_file "[Plugins]" "$CONFIG/kwinrc"
-assert_grep_file "plasma-auto-tiler-kwinEnabled=true" "$CONFIG/kwinrc"
+assert_grep_file "omnitiler-kwinEnabled=true" "$CONFIG/kwinrc"
 assert_file "$EFFECT_STAGED_SO"
-assert_grep_file "loadEffect plasma-auto-tiler-active-border" "$WORK/tools.log"
+assert_grep_file "loadEffect omnitiler-active-border" "$WORK/tools.log"
 
 # setup: cargo+rustc toolchain unavailable -> effect stage gracefully skipped,
 # whole command still succeeds (outer cmake is never required; host cmake
@@ -1792,8 +1792,8 @@ assert_contains "effect-install: skipped"
 assert_contains "effect-reload: skipped"
 assert_contains "the KWin-script half above still completed"
 assert_contains "devenv shell --impure"
-assert_file "$DATA/kwin/scripts/plasma-auto-tiler-kwin/metadata.json"
-assert_grep_file "plasma-auto-tiler-kwinEnabled=true" "$CONFIG/kwinrc"
+assert_file "$DATA/kwin/scripts/omnitiler-kwin/metadata.json"
+assert_grep_file "omnitiler-kwinEnabled=true" "$CONFIG/kwinrc"
 assert_not_exists "$EFFECT_STAGED_SO"
 
 # setup: effect-install succeeds but an unsupported effect is reported as a
@@ -1805,7 +1805,7 @@ check_exit 0
 assert_contains "install: ok"
 assert_contains "enable: ok"
 assert_contains "effect-install: ok"
-assert_contains "error: plasma-auto-tiler-active-border is unavailable to KWin (isEffectSupported=false)"
+assert_contains "error: omnitiler-active-border is unavailable to KWin (isEffectSupported=false)"
 assert_contains "effect-reload: failed"
 assert_contains "effect-reload failed for a non-boundary reason"
 assert_not_contains "effect-reload: pending-boundary"
@@ -1831,16 +1831,16 @@ reset_state
 touch "$WORK/state/npm-fail"
 run_script setup
 check_exit 1
-assert_not_exists "$DATA/kwin/scripts/plasma-auto-tiler-kwin"
-assert_not_exists "$DATA/kwin/scripts/plasma-auto-tiler-kwin/metadata.json"
+assert_not_exists "$DATA/kwin/scripts/omnitiler-kwin"
+assert_not_exists "$DATA/kwin/scripts/omnitiler-kwin/metadata.json"
 assert_not_grep_file "cmake" "$WORK/cmake.log"
 assert_not_exists "$CONFIG/kwinrc"
 
 # effect-install: refuses a dev-owned env script and preserves it with no
 # staging or kwinrc side effects (the two paths cannot coexist at the shared path)
 reset_state
-EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
-EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+EFFECT_ROOT="$DATA/omnitiler-native-effect"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-omnitiler-native-effect.sh"
 mkdir -p "$(dirname "$EFFECT_ENV_FILE")"
 printf "export QT_PLUGIN_PATH='/tmp/fake-target/kwin-native-effect-stage'\${QT_PLUGIN_PATH:+:\$QT_PLUGIN_PATH}\n" > "$EFFECT_ENV_FILE"
 cp "$EFFECT_ENV_FILE" "$WORK/dev-owned-env"
@@ -1855,8 +1855,8 @@ assert_count 0 "$(wc -l < "$WORK/cmake.log")" "cmake invocations when dev-owned 
 
 # effect-remove: refuses a dev-owned env script and preserves it
 reset_state
-EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
-EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+EFFECT_ROOT="$DATA/omnitiler-native-effect"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-omnitiler-native-effect.sh"
 mkdir -p "$(dirname "$EFFECT_ENV_FILE")"
 printf "export QT_PLUGIN_PATH='/tmp/fake-target/kwin-native-effect-stage'\${QT_PLUGIN_PATH:+:\$QT_PLUGIN_PATH}\n" > "$EFFECT_ENV_FILE"
 cp "$EFFECT_ENV_FILE" "$WORK/dev-owned-env-remove"
@@ -1867,8 +1867,8 @@ assert_cmp "$WORK/dev-owned-env-remove" "$EFFECT_ENV_FILE"
 
 # effect-status: a dev-owned env script reports stale, never current
 reset_state
-EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
-EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+EFFECT_ROOT="$DATA/omnitiler-native-effect"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-omnitiler-native-effect.sh"
 mkdir -p "$(dirname "$EFFECT_ENV_FILE")"
 printf "export QT_PLUGIN_PATH='/tmp/fake-target/kwin-native-effect-stage'\${QT_PLUGIN_PATH:+:\$QT_PLUGIN_PATH}\n" > "$EFFECT_ENV_FILE"
 run_script effect-status
@@ -1880,7 +1880,7 @@ assert_contains "[b] env script: stale - $EFFECT_ENV_FILE exists but its content
 # dogfood-install.sh's EFFECT_PLUGIN_ID literal must all agree, and
 # EFFECT_CONFIG_KEY must be derived from EFFECT_PLUGIN_ID rather than a second
 # independent literal. Reads real repo files directly with grep/sed.
-EXPECTED_EFFECT_PLUGIN_ID="plasma-auto-tiler-active-border"
+EXPECTED_EFFECT_PLUGIN_ID="omnitiler-active-border"
 NATIVE_EFFECT_METADATA="$KWIN_DIR/native-effect/metadata.json"
 NATIVE_EFFECT_CMAKELISTS="$KWIN_DIR/native-effect/CMakeLists.txt"
 

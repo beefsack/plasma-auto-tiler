@@ -78,12 +78,12 @@ describe("drag press strict parse", () => {
         });
         pull.pullVerdict();
         assert.equal(routed, 0);
-        assert.ok(logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-reply-invalid correlation=none"));
+        assert.ok(logs.some((line) => line === "omnitiler:route-diag:drag-reply-invalid correlation=none"));
     });
 });
 
 describe("drag press thirds classification", () => {
-    // Recorded trace values (plasma-auto-tiler-dev log): drag-27 started
+    // Recorded trace values (omnitiler-dev log): drag-27 started
     // 558,52,970,315 with pointerStart 727,318, which the 64px Started gate
     // reads as single-axis down while KWin moved left and bottom.
     it("classifies recorded drag-27 by thirds while the Started gate reads single-axis", () => {
@@ -251,7 +251,7 @@ function pointerCommands(mocks: PressMocks): Array<Record<string, unknown>> {
 }
 
 describe("drag press end-to-end trace corners", () => {
-    // Exact recorded trace values (plasma-auto-tiler-dev log lines
+    // Exact recorded trace values (omnitiler-dev log lines
     // 273/330/754/802/932): start rect, pointerStart, and finalRect per
     // drag. Without press the Started gate reproduced the logged
     // single-axis miss; the synthetic press reuses the Started pointer.
@@ -357,7 +357,7 @@ describe("drag press end-to-end trace corners", () => {
         const commands = pointerCommands(mocks);
         assert.equal(commands.length, 1);
         assert.deepEqual(commands[0], { op: "pointer-resize", window: "win-a", direction: "down", boundary: 556 });
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-press-fallback correlation=drag-40 source=nearest-pointer"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:route-diag:drag-press-fallback correlation=drag-40 source=nearest-pointer"));
         assert.ok(
             mocks.logs.some((line) => line.includes("correlation=drag-40") && line.includes("grabbed=-+down") && line.includes("source=nearest-pointer") && line.includes("targets=down:556")),
         );
@@ -409,7 +409,7 @@ describe("drag press end-to-end trace corners", () => {
                 .map((payload) => payload["command"] as Record<string, unknown>);
             assert.equal(drops.length, 1);
             assert.deepEqual(drops[0], { op: "drag-drop", window: "win-a", x: cursor.x, y: cursor.y });
-            assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-42 accepted=true"));
+            assert.ok(mocks.logs.some((line) => line === "omnitiler:route-diag:drag-drop-dispatched correlation=drag-42 accepted=true"));
             assert.ok(!mocks.logs.some((line) => line.includes("correlation=drag-42") && line.includes("grabbed=")), "press never classifies a move");
             assert.ok(!mocks.logs.some((line) => line.includes("drag-move-ignored") && line.includes("correlation=drag-42")));
             stop();
@@ -453,7 +453,7 @@ describe("drag press end-to-end trace corners", () => {
             JSON.stringify({ ...verdictBase(final, "drag-43"), press: { x: 727, y: 318, binding: "configured" } }),
         );
         assert.equal(pointerCommands(mocks).length, 0);
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-start-missing correlation=drag-43"));
+        assert.ok(mocks.logs.some((line) => line === "omnitiler:route-diag:drag-start-missing correlation=drag-43"));
         (mocks.oracleCalls[1] as (reply: unknown) => void)(
             JSON.stringify({ ...verdictBase(final, "drag-44"), press: { x: 727, y: 318, binding: "configured" } }),
         );

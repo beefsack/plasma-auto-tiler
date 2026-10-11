@@ -189,7 +189,7 @@ export class TrayPublisher {
     private diag(comp: "tray" | "bridge", event: string, result: string, detail = ""): void {
         try {
             this.environment.log?.(
-                `plasma-auto-tiler:route-diag component=tray stage=${comp} event=${event} outcome=${result}${detail}`,
+                `omnitiler:route-diag component=tray stage=${comp} event=${event} outcome=${result}${detail}`,
             );
         } catch (error) {
             void error;

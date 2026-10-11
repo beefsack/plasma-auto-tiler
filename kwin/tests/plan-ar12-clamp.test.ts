@@ -327,7 +327,7 @@ describe("plan adapter AR12 Ghostty-like client clamp", () => {
                 mocks.logs.some(
                     (line) =>
                         line ===
-                        `plasma-auto-tiler:plan:clamp-accepted correlation=${correlation} window=win-b resource_class=unknown op=reconcile`,
+                        `omnitiler:plan:clamp-accepted correlation=${correlation} window=win-b resource_class=unknown op=reconcile`,
                 ),
                 `cycle ${String(cycle)} logs clamp acceptance`,
             );
@@ -337,7 +337,7 @@ describe("plan adapter AR12 Ghostty-like client clamp", () => {
             );
         }
         assert.ok(
-            !mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"),
+            !mocks.logs.some((line) => line === "omnitiler:plan:reconcile-parked"),
             "explained clamp drift never parks",
         );
         for (const line of mocks.logs.filter((entry) => entry.includes("clamp-accepted"))) {
@@ -380,7 +380,7 @@ describe("plan adapter AR12 Ghostty-like client clamp", () => {
                 mocks.logs.some(
                     (line) =>
                         line ===
-                        `plasma-auto-tiler:plan:clamp-accepted correlation=${correlation} window=win-b resource_class=unknown op=reconcile`,
+                        `omnitiler:plan:clamp-accepted correlation=${correlation} window=win-b resource_class=unknown op=reconcile`,
                 ),
             );
         }
@@ -391,11 +391,11 @@ describe("plan adapter AR12 Ghostty-like client clamp", () => {
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, acceptedCalls, "stable mixed drift accepts without dispatching");
         assert.ok(
-            mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:reconcile-accepted") && line.includes("cause=stable-drift")),
+            mocks.logs.some((line) => line.includes("omnitiler:plan:reconcile-accepted") && line.includes("cause=stable-drift")),
             "genuine drift mixed with a clamp still accepts boundedly",
         );
         assert.ok(
-            !mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"),
+            !mocks.logs.some((line) => line === "omnitiler:plan:reconcile-parked"),
             "no domain-wide park remains",
         );
     });
@@ -474,11 +474,11 @@ describe("plan adapter AR12 overconstrained minimum", () => {
             mocks.logs.some(
                 (line) =>
                     line ===
-                    `plasma-auto-tiler:plan:minimum-placed correlation=${reassertCorr} window=win-a resource_class=unknown op=reconcile rect=0,0,900,800`,
+                    `omnitiler:plan:minimum-placed correlation=${reassertCorr} window=win-a resource_class=unknown op=reconcile rect=0,0,900,800`,
             ),
             "successful reassert logs the actual rect",
         );
-        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"));
+        assert.ok(!mocks.logs.some((line) => line === "omnitiler:plan:reconcile-parked"));
     });
 
     it("places the minimum on a move reply while the feasible member writes its plan", () => {
@@ -508,7 +508,7 @@ describe("plan adapter AR12 overconstrained minimum", () => {
             mocks.logs.some(
                 (line) =>
                     line ===
-                    `plasma-auto-tiler:plan:minimum-placed correlation=${correlation} window=win-a resource_class=unknown op=move rect=0,0,900,800`,
+                    `omnitiler:plan:minimum-placed correlation=${correlation} window=win-a resource_class=unknown op=move rect=0,0,900,800`,
             ),
             "successful placement logs the actual rect",
         );
@@ -536,7 +536,7 @@ describe("plan adapter AR12 membership-skew diagnostics", () => {
             mocks.logs.some(
                 (line) =>
                     line ===
-                    `plasma-auto-tiler:plan:membership-skew correlation=${correlation} op=focus reason=cover-mismatch wanted=1 planned=1 missing=1 extra=1 floating=1 sticky=0 fullscreen=0 maximized=0 retained=unknown retained-wanted=- retained-ids=-`,
+                    `omnitiler:plan:membership-skew correlation=${correlation} op=focus reason=cover-mismatch wanted=1 planned=1 missing=1 extra=1 floating=1 sticky=0 fullscreen=0 maximized=0 retained=unknown retained-wanted=- retained-ids=-`,
             ),
             "summary keeps counts and reports unknown retained evidence",
         );
@@ -544,7 +544,7 @@ describe("plan adapter AR12 membership-skew diagnostics", () => {
             mocks.logs.some(
                 (line) =>
                     line ===
-                    `plasma-auto-tiler:plan:membership-skew-member correlation=${correlation} window=win-a side=missing floating=false sticky=false fullscreen=false maximized=false float-src=none`,
+                    `omnitiler:plan:membership-skew-member correlation=${correlation} window=win-a side=missing floating=false sticky=false fullscreen=false maximized=false float-src=none`,
             ),
             "missing member carries its exact id and observed flags",
         );
@@ -552,7 +552,7 @@ describe("plan adapter AR12 membership-skew diagnostics", () => {
             mocks.logs.some(
                 (line) =>
                     line ===
-                    `plasma-auto-tiler:plan:membership-skew-member correlation=${correlation} window=win-b side=extra floating=true sticky=false fullscreen=false maximized=false float-src=float-set`,
+                    `omnitiler:plan:membership-skew-member correlation=${correlation} window=win-b side=extra floating=true sticky=false fullscreen=false maximized=false float-src=float-set`,
             ),
             "extra floating member names the float-set provenance",
         );
@@ -575,7 +575,7 @@ describe("plan adapter AR12 membership-skew diagnostics", () => {
             mocks.logs.some(
                 (line) =>
                     line ===
-                    `plasma-auto-tiler:plan:membership-skew-member correlation=${correlation} window=win-b side=extra floating=true sticky=true fullscreen=false maximized=false float-src=all-desktops`,
+                    `omnitiler:plan:membership-skew-member correlation=${correlation} window=win-b side=extra floating=true sticky=true fullscreen=false maximized=false float-src=all-desktops`,
             ),
             "sticky extra member names the all-desktops provenance",
         );
@@ -595,7 +595,7 @@ describe("plan adapter AR12 membership-skew diagnostics", () => {
             mocks.logs.some(
                 (line) =>
                     line ===
-                    `plasma-auto-tiler:plan:membership-skew correlation=${correlation} op=focus reason=partial-observation wanted=1 planned=unknown missing=unknown extra=unknown floating=1 sticky=0 fullscreen=0 maximized=0 retained=unknown retained-wanted=- retained-ids=-`,
+                    `omnitiler:plan:membership-skew correlation=${correlation} op=focus reason=partial-observation wanted=1 planned=unknown missing=unknown extra=unknown floating=1 sticky=0 fullscreen=0 maximized=0 retained=unknown retained-wanted=- retained-ids=-`,
             ),
             "no retained evidence means no precise cause is claimed",
         );
@@ -628,7 +628,7 @@ describe("plan adapter AR12 membership-skew diagnostics", () => {
             mocks.logs.some(
                 (line) =>
                     line ===
-                    `plasma-auto-tiler:plan:membership-skew correlation=${correlation} op=focus reason=partial-observation wanted=1 planned=unknown missing=0 extra=1 floating=1 sticky=0 fullscreen=0 maximized=0 retained=known retained-wanted=2 retained-ids=win-a,win-b`,
+                    `omnitiler:plan:membership-skew correlation=${correlation} op=focus reason=partial-observation wanted=1 planned=unknown missing=0 extra=1 floating=1 sticky=0 fullscreen=0 maximized=0 retained=known retained-wanted=2 retained-ids=win-a,win-b`,
             ),
             "applied tiled membership is shown as adapter evidence",
         );
@@ -638,7 +638,7 @@ describe("plan adapter AR12 membership-skew diagnostics", () => {
                     line ===
                     // Sticky and floating flags are applied evidence, not
                     // assertions about current core state.
-                    `plasma-auto-tiler:plan:membership-skew-member correlation=${correlation} window=win-b side=extra floating=false sticky=false fullscreen=false maximized=false float-src=none`,
+                    `omnitiler:plan:membership-skew-member correlation=${correlation} window=win-b side=extra floating=false sticky=false fullscreen=false maximized=false float-src=none`,
             ),
             "extra retained member carries retained flags, not asserted core state",
         );
@@ -666,7 +666,7 @@ describe("plan adapter AR12 membership-skew diagnostics", () => {
             mocks.logs.some(
                 (line) =>
                     line ===
-                    `plasma-auto-tiler:plan:membership-skew correlation=${correlation} op=focus reason=malformed wanted=2 planned=unknown missing=unknown extra=unknown floating=0 sticky=0 fullscreen=0 maximized=0 retained=unknown retained-wanted=- retained-ids=-`,
+                    `omnitiler:plan:membership-skew correlation=${correlation} op=focus reason=malformed wanted=2 planned=unknown missing=unknown extra=unknown floating=0 sticky=0 fullscreen=0 maximized=0 retained=unknown retained-wanted=- retained-ids=-`,
             ),
         );
     });

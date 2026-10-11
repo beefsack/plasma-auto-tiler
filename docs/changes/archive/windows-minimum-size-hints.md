@@ -110,7 +110,7 @@ Status: complete, physically accepted including populated-workspace send,
   dominated by hide/reveal; per-operation query sums peaked at 4ms and 6ms
   in the two separate logs. Successful fast queries do not prove hung-query
   behavior or hard-realtime bounds. Correlations are owner-run-local.
-- Raw logs under `%LOCALAPPDATA%/plasma-auto-tiler/session-1/`:
+- Raw logs under `%LOCALAPPDATA%/omnitiler/session-1/`:
   feasible `run-01dd523b4ed69001.log`; infeasible
   `run-01dd5237d06639d2.log` and `run-01dd5237daa21e61.log`.
 - Read-only independent end check: zero project actors, clean ledger/request
@@ -131,7 +131,7 @@ Status: complete, physically accepted including populated-workspace send,
   Sending into a populated workspace was exercised during physical dogfood.
   This closes the pending ordinary-app send acceptance; automated select
   evidence above remains select evidence, not a substitute for physical send.
-- Dogfood trace: `%LOCALAPPDATA%/plasma-auto-tiler/session-1/`
+- Dogfood trace: `%LOCALAPPDATA%/omnitiler/session-1/`
   `run-01dd52415c2991a6.log`. Its late directional report was independently
   diagnosed as KDE/core-conformant R2c/R3 with feasible minimum-pinned geometry,
   not an overconstraint/refused-tracker failure. See

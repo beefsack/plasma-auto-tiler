@@ -7,7 +7,7 @@
 
 ## Delivered Scope
 
-- Planner emits bounded `plasma-auto-tiler:plan-summary` ingress and egress
+- Planner emits bounded `omnitiler:plan-summary` ingress and egress
   records for authorized `DescribePlan` status/cancel calls. Fixed uncorrelated
   terminal summaries cover busy, closed, oversize, and unauthorized early
   exits without parsing the rejected request. Opt-in trace adds bounded

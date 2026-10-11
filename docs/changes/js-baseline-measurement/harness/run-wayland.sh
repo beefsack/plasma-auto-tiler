@@ -11,8 +11,8 @@ set -euo pipefail
 # full reversal verification.
 #
 # Safety contract (brief unit-D):
-#   - terminal-protection sentinel: --desktopfile plasma-auto-tiler-test
-#     produces resourceClass "plasma-auto-tiler-test", verified distinct from
+#   - terminal-protection sentinel: --desktopfile omnitiler-test
+#     produces resourceClass "omnitiler-test", verified distinct from
 #     every real user window (user's terminal is com.mitchellh.ghostty).
 #   - watchdog (watchdogMaxLifetimeMs) left enabled at default.
 #   - no Q1/frame capture, no PipeWire/ScreenCast portal interaction.
@@ -21,21 +21,21 @@ set -euo pipefail
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RESULTS_DIR="$BASE_DIR/results/variant-b-wayland"
 
-LOG_DIR="/tmp/plasma-auto-tiler"
-TEST_WINDOW_CLASS="plasma-auto-tiler-test"
+LOG_DIR="/tmp/omnitiler"
+TEST_WINDOW_CLASS="omnitiler-test"
 SPAWN_SETTLE_SECONDS="0.5"
 SETTLE_AFTER_SPAWN_SECONDS="2"
 RSS_SETTLE_SECONDS="1"
 SETTLE_AFTER_TEARDOWN_SECONDS="2"
-DBUS_MONITOR_FILTER="type='method_call',interface='com.plasmaAutoTiler.LogSink'"
+DBUS_MONITOR_FILTER="type='method_call',interface='com.omniTiler.LogSink'"
 SINK_FIFO="$LOG_DIR/sink.fifo"
 ENUM_SCRIPT="$BASE_DIR/script/window-enum-probe.js"
-ENUM_PLUGIN="plasma-auto-tiler-window-enum"
+ENUM_PLUGIN="omnitiler-window-enum"
 REQUIRED_TOOLS="konsole dbus-monitor awk kwriteconfig6 kreadconfig6 stdbuf setsid pgrep ps mkfifo qdbus sleep seq xlsclients"
 
 VARIANT="b"
 N=""
-PLUGIN_NAME="plasma-auto-tiler-variant-b"
+PLUGIN_NAME="omnitiler-variant-b"
 SCRIPT_PATH="$BASE_DIR/script/variant-b.js"
 
 usage() {
@@ -44,7 +44,7 @@ Usage: run-wayland.sh -n <count>
 
 Runs one Wayland-native baseline-measurement sweep for Variant B at the given
 window count, using konsole test windows (sentinel resourceClass
-plasma-auto-tiler-test). Writes raw logs + RSS file into
+omnitiler-test). Writes raw logs + RSS file into
 results/variant-b-wayland/.
 
 Options:
@@ -73,7 +73,7 @@ SPOT_FILE="$RESULTS_DIR/tier-$N-spot.txt"
 # awk demux: amplified-* -> amplified log, winenum -> spot file, else ->
 # real-dispatch log. Every line flushed immediately.
 DEMUX_PROGRAM='{
-    if (/interface=com.plasmaAutoTiler.LogSink; member=append/) {
+    if (/interface=com.omniTiler.LogSink; member=append/) {
         getline
         line = $0
         if (line !~ /^[ \t]*string "/) next
@@ -93,7 +93,7 @@ note() { printf '    # %s\n' "$*"; }
 step() { printf '\n[Step %s] %s\n' "$1" "$2"; }
 
 echo "=========================================================================="
-echo "plasma-auto-tiler baseline sweep (Wayland-native clients)"
+echo "omnitiler baseline sweep (Wayland-native clients)"
 echo "  variant:             $VARIANT (plugin $PLUGIN_NAME)"
 echo "  windows (N):         $N"
 echo "  test client:         konsole"

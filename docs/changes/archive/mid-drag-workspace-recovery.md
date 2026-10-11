@@ -6,7 +6,7 @@ Recover normal tiling when a window moves to another workspace while its Meta dr
 
 ## Evidence and approach
 
-- User trace `plasma-auto-tiler-dev.1t4fJa.log`: send follows the mover to workspace 2 at 432-456; the later drop dispatches as cross-output at 939-959 and refuses `unchanged`; follow-up reconciles at 966-970 and 1002-1005 reject `window-out-of-bounds` (`54,586,756,478` versus `0,44,1536,980`).
+- User trace `omnitiler-dev.1t4fJa.log`: send follows the mover to workspace 2 at 432-456; the later drop dispatches as cross-output at 939-959 and refuses `unchanged`; follow-up reconciles at 966-970 and 1002-1005 reject `window-out-of-bounds` (`54,586,756,478` versus `0,44,1536,980`).
 - Suppress stale Started-workspace drops at the KWin adapter, preserving valid cross-output behavior. Remove observation-containment rejection in the protocol for valid native geometry and let existing convergence and plan geometry recover. Keep strict shape/homing and reply validation. Replace tests that pin the removed rejection with behavior tests for repeated convergence and the held-drag workspace transition.
 
 ## Units and acceptance

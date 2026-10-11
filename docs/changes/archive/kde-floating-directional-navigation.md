@@ -90,7 +90,7 @@
    and float F/G with `Meta+G`; place G right of F (different y is fine).
 2. Focus F, press `Meta+Right`: G receives focus, never nearby tile B.
    Focus B, press `Meta+Left`: tile A wins and floats are skipped. Expected
-   local float log: `plasma-auto-tiler:plan:focus-float-applied direction=right`.
+   local float log: `omnitiler:plan:focus-float-applied direction=right`.
 3. Leave only F floating. `Meta+Right` on the single-output test system retains F:
    `focus-float-retained direction=right reason=no-target`. Up/Down misses
    retain as well; no workspace cycle. If using adjacent horizontal outputs,

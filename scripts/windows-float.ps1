@@ -305,7 +305,7 @@ public static class FloatVdm {
 }
 
 function Read-StickyMarkerNative([long]$Hwnd, [string]$Tag) {
-  # Read-only GetPropW for the project sticky marker (PlasmaAutoTilerSticky).
+  # Read-only GetPropW for the project sticky marker (OmniTilerSticky).
   # Returns @{ present; prior_floating } with present=$false for absent/zero/
   # unknown (fail closed). Never writes. Used only as a short live readback.
   $present = $false; $prior = $null; $raw = "unreadable"
@@ -324,7 +324,7 @@ public static class FloatStickyProp {
 "@
     }
     if (-not [FloatStickyProp]::IsWindow([IntPtr]$Hwnd)) { return @{ present = $false; prior_floating = $null; raw = "no-window"; tag = $Tag } }
-    $v = [FloatStickyProp]::GetPropW([IntPtr]$Hwnd, "PlasmaAutoTilerSticky")
+    $v = [FloatStickyProp]::GetPropW([IntPtr]$Hwnd, "OmniTilerSticky")
     $raw = "$($v.ToInt64())"
     $u = [uint64]$v.ToInt64()
     if ($u -eq 1) { $present = $true; $prior = $false }

@@ -3,7 +3,7 @@ set -euo pipefail
 
 # AR13 hermetic tray single-instance/delivery check on a private bus.
 # Exercises the one `tray` command only: first instance acquires
-# org.plasmaautotiler.Tray, a second exits 0 (DoNotQueue taken), the first
+# com.omnitiler.Tray, a second exits 0 (DoNotQueue taken), the first
 # keeps serving, watcher loss and missing watcher stay alive unregistered
 # and re-register on watcher return, and no
 # PID/lock/helper state is ever created. No live KWin, no host mutation.
@@ -41,7 +41,7 @@ DBUS_SESSION_CONFIG="${DBUS_RUN_SESSION%/bin/dbus-run-session}/share/dbus-1/sess
 if [[ -z "$BINARY" ]]; then
   TRAY_OUT="$(nix build "$REPO_ROOT#tray" --no-link --no-update-lock-file --print-out-paths)" \
     || fail "Nix tray package build failed; pass TRAY_05B_BINARY for a worktree binary check"
-  BINARY="$TRAY_OUT/bin/plasma-auto-tiler"
+  BINARY="$TRAY_OUT/bin/omnitiler"
   [[ "$BINARY" == /nix/store/* ]] || fail "Nix tray output is not store-backed: $BINARY"
 fi
 [[ -f "$BINARY" && ! -L "$BINARY" && -x "$BINARY" ]] \
@@ -112,7 +112,7 @@ printf '%s\n' \
   'FIRST_PID=$!' \
   'tray_ready=0' \
   'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
-  '  if has_owner org.plasmaautotiler.Tray; then tray_ready=1; break; fi' \
+  '  if has_owner com.omnitiler.Tray; then tray_ready=1; break; fi' \
   '  if ! kill -0 "$FIRST_PID" 2>/dev/null; then cat "$WORK/endpoint.out" >&2; exit 1; fi' \
   '  sleep 0.01' \
   'done' \
@@ -125,13 +125,13 @@ printf '%s\n' \
   'done' \
   '[[ "$acquired" == 1 ]] || { cat "$WORK/endpoint.out" >&2; exit 1; }' \
   'pass' \
-  '[[ ! -e "$DATA_ROOT/plasma-auto-tiler" ]]' \
+  '[[ ! -e "$DATA_ROOT/omnitiler" ]]' \
   'pass' \
-  '[[ ! -e "$RUNTIME_ROOT/plasma-auto-tiler-managed" ]]' \
+  '[[ ! -e "$RUNTIME_ROOT/omnitiler-managed" ]]' \
   'pass' \
-  '[[ ! -e "$RUNTIME_ROOT/plasma-auto-tiler/tray.pid" ]]' \
+  '[[ ! -e "$RUNTIME_ROOT/omnitiler/tray.pid" ]]' \
   'pass' \
-  '[[ ! -e "$CONFIG_ROOT/autostart/plasma-auto-tiler.desktop" ]]' \
+  '[[ ! -e "$CONFIG_ROOT/autostart/omnitiler.desktop" ]]' \
   'pass' \
   'SECOND_CODE=0' \
   '"$TIMEOUT_BIN" 20 "$tray_binary" tray > "$WORK/second.out" 2>&1 || SECOND_CODE=$?' \
@@ -141,7 +141,7 @@ printf '%s\n' \
   'pass' \
   'kill -0 "$FIRST_PID" 2>/dev/null || { echo "first tray died after second invocation" >&2; exit 1; }' \
   'pass' \
-  'has_owner org.plasmaautotiler.Tray || { echo "tray name lost after second invocation" >&2; exit 1; }' \
+  'has_owner com.omnitiler.Tray || { echo "tray name lost after second invocation" >&2; exit 1; }' \
   'pass' \
   'kill -TERM "$WATCHER_PID"' \
   'WATCHER_PID=""' \
@@ -156,7 +156,7 @@ printf '%s\n' \
   'done' \
   '[[ "$stay_alive" == 1 ]] || { echo "first tray died on watcher loss, expected stay-alive unregistered" >&2; exit 1; }' \
   'pass' \
-  'has_owner org.plasmaautotiler.Tray || { echo "tray name lost on watcher loss" >&2; exit 1; }' \
+  'has_owner com.omnitiler.Tray || { echo "tray name lost on watcher loss" >&2; exit 1; }' \
   'pass' \
   '"$DBUS_TEST_TOOL" echo --session --name=org.kde.StatusNotifierWatcher > "$WORK/watcher2.out" 2>&1 &' \
   'WATCHER_PID=$!' \
@@ -175,21 +175,21 @@ printf '%s\n' \
   'pass' \
   'kill -0 "$FIRST_PID" 2>/dev/null || { echo "first tray died on watcher return" >&2; exit 1; }' \
   'pass' \
-  'has_owner org.plasmaautotiler.Tray || { echo "tray name lost on watcher return" >&2; exit 1; }' \
+  'has_owner com.omnitiler.Tray || { echo "tray name lost on watcher return" >&2; exit 1; }' \
   'pass' \
   'kill -TERM "$FIRST_PID" 2>/dev/null || true' \
   'wait "$FIRST_PID" 2>/dev/null || true' \
   'FIRST_PID=""' \
   'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
-  '  if has_owner org.plasmaautotiler.Tray; then sleep 0.01; else break; fi' \
+  '  if has_owner com.omnitiler.Tray; then sleep 0.01; else break; fi' \
   'done' \
-  '[[ ! -e "$DATA_ROOT/plasma-auto-tiler" ]]' \
+  '[[ ! -e "$DATA_ROOT/omnitiler" ]]' \
   'pass' \
-  '[[ ! -e "$RUNTIME_ROOT/plasma-auto-tiler-managed" ]]' \
+  '[[ ! -e "$RUNTIME_ROOT/omnitiler-managed" ]]' \
   'pass' \
-  '[[ ! -e "$RUNTIME_ROOT/plasma-auto-tiler/tray.pid" ]]' \
+  '[[ ! -e "$RUNTIME_ROOT/omnitiler/tray.pid" ]]' \
   'pass' \
-  '[[ ! -e "$CONFIG_ROOT/autostart/plasma-auto-tiler.desktop" ]]' \
+  '[[ ! -e "$CONFIG_ROOT/autostart/omnitiler.desktop" ]]' \
   'pass' \
   'kill -TERM "$WATCHER_PID" 2>/dev/null || true' \
   'wait "$WATCHER_PID" 2>/dev/null || true' \
@@ -201,7 +201,7 @@ printf '%s\n' \
   'LATE_PID=$!' \
   'late_ready=0' \
   'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
-  '  if has_owner org.plasmaautotiler.Tray; then late_ready=1; break; fi' \
+  '  if has_owner com.omnitiler.Tray; then late_ready=1; break; fi' \
   '  if ! kill -0 "$LATE_PID" 2>/dev/null; then cat "$WORK/no-watcher.out" >&2; exit 1; fi' \
   '  sleep 0.01' \
   'done' \
@@ -240,7 +240,7 @@ printf '%s\n' \
   'pass' \
   'kill -0 "$LATE_PID" 2>/dev/null || { echo "tray died on late watcher return" >&2; exit 1; }' \
   'pass' \
-  'has_owner org.plasmaautotiler.Tray || { echo "tray name lost on late watcher return" >&2; exit 1; }' \
+  'has_owner com.omnitiler.Tray || { echo "tray name lost on late watcher return" >&2; exit 1; }' \
   'pass' \
   'kill -TERM "$LATE_PID" 2>/dev/null || true' \
   'wait "$LATE_PID" 2>/dev/null || true' \

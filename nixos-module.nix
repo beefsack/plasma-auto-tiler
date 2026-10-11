@@ -1,16 +1,16 @@
 { config, lib, kwinScript, nativeEffect, nativeSettings, ... }:
 
 let
-  cfg = config.programs.plasma-auto-tiler;
+  cfg = config.programs.omnitiler;
 in
 {
-  options.programs.plasma-auto-tiler = {
-    enable = lib.mkEnableOption "the Plasma Auto Tiler KWin script";
+  options.programs.omnitiler = {
+    enable = lib.mkEnableOption "the OmniTiler KWin script";
 
     package = lib.mkOption {
       type = lib.types.package;
       default = kwinScript;
-      description = "KWin Script KPackage to install for Plasma Auto Tiler.";
+      description = "KWin Script KPackage to install for OmniTiler.";
     };
   };
 
@@ -21,7 +21,7 @@ in
     # namespaced enablement key. User kwinrc remains independently owned.
     environment.etc."xdg/kwinrc".text = ''
       [Plugins]
-      plasma-auto-tiler-kwinEnabled=true
+      omnitiler-kwinEnabled=true
     '';
 
     environment.pathsToLink = lib.mkAfter [

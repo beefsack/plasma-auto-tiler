@@ -3,7 +3,7 @@
 ## Goal
 
 Fix the user-observed underlay sticking to the higher-revision workspace
-after a workspace switch (`plasma-auto-tiler-dev.l6uNLk.log`).
+after a workspace switch (`omnitiler-dev.l6uNLk.log`).
 Show the current focused domain's immediate group even when that domain has
 a lower retained revision. Preserve active-group single-flight, Meta, native
 focus and visibility gates, and same-script late-setter protection.

@@ -305,8 +305,8 @@ test("emits bounded lifecycle and send-initiation lines only for state changes",
     const state = setupWithLog();
 
     assert.deepEqual(state.lines, [
-        "plasma-auto-tiler:route-diag component=tray stage=tray event=started outcome=ok",
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=0 enabled=true tiled=true defaultTiled=true",
+        "omnitiler:route-diag component=tray stage=tray event=started outcome=ok",
+        "omnitiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=0 enabled=true tiled=true defaultTiled=true",
     ]);
 
     state.heartbeat();
@@ -316,8 +316,8 @@ test("emits bounded lifecycle and send-initiation lines only for state changes",
     state.setEnabled(false);
     state.publisher.notifyEnabledChanged(false);
     assert.deepEqual(state.lines.slice(2), [
-        "plasma-auto-tiler:route-diag component=tray stage=tray event=enabled-changed outcome=ok",
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=1 enabled=false tiled=true defaultTiled=true",
+        "omnitiler:route-diag component=tray stage=tray event=enabled-changed outcome=ok",
+        "omnitiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=1 enabled=false tiled=true defaultTiled=true",
     ]);
 
     state.publisher.notifyEnabledChanged(false);
@@ -325,7 +325,7 @@ test("emits bounded lifecycle and send-initiation lines only for state changes",
 
     state.publisher.dispose();
     assert.deepEqual(state.lines.slice(4), [
-        "plasma-auto-tiler:route-diag component=tray stage=tray event=stopped outcome=ok",
+        "omnitiler:route-diag component=tray stage=tray event=stopped outcome=ok",
     ]);
 
     state.publisher.dispose();
@@ -334,7 +334,7 @@ test("emits bounded lifecycle and send-initiation lines only for state changes",
     for (const line of state.lines) {
         assert.match(
             line,
-            /^plasma-auto-tiler:route-diag component=tray stage=(tray|bridge) event=[a-z-]+ outcome=(ok|failed)( generation=[a-z0-9-]{1,32} revision=-?[0-9]+ enabled=(true|false) tiled=(true|false) defaultTiled=(true|false))?$/,
+            /^omnitiler:route-diag component=tray stage=(tray|bridge) event=[a-z-]+ outcome=(ok|failed)( generation=[a-z0-9-]{1,32} revision=-?[0-9]+ enabled=(true|false) tiled=(true|false) defaultTiled=(true|false))?$/,
         );
     }
     // Join identity lives only on bridge send lines: the lifecycle records
@@ -342,8 +342,8 @@ test("emits bounded lifecycle and send-initiation lines only for state changes",
     // snapshot handed to publishSnapshot (join by equality, never ancestry).
     const bridge = state.lines.filter((line) => line.includes("stage=bridge"));
     assert.deepEqual(bridge, [
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=0 enabled=true tiled=true defaultTiled=true",
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=1 enabled=false tiled=true defaultTiled=true",
+        "omnitiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=0 enabled=true tiled=true defaultTiled=true",
+        "omnitiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=1 enabled=false tiled=true defaultTiled=true",
     ]);
     assert.deepEqual(
         bridge.map((line) => {
@@ -386,8 +386,8 @@ test("send failure emits a bounded refusal without error text", () => {
 
     publisher.start();
     assert.deepEqual(lines, [
-        "plasma-auto-tiler:route-diag component=tray stage=tray event=started outcome=ok",
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-failed outcome=failed generation=first revision=0 enabled=true tiled=true defaultTiled=true",
+        "omnitiler:route-diag component=tray stage=tray event=started outcome=ok",
+        "omnitiler:route-diag component=tray stage=bridge event=send-failed outcome=failed generation=first revision=0 enabled=true tiled=true defaultTiled=true",
     ]);
     for (const line of lines) {
         assert.ok(!line.includes("transport") && !line.includes("secret"));
@@ -441,14 +441,14 @@ function setupFlakyTransport(): {
 test("a heartbeat failure after an initial success becomes visible once", () => {
     const state = setupFlakyTransport();
     assert.deepEqual(state.lines, [
-        "plasma-auto-tiler:route-diag component=tray stage=tray event=started outcome=ok",
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=0 enabled=true tiled=true defaultTiled=true",
+        "omnitiler:route-diag component=tray stage=tray event=started outcome=ok",
+        "omnitiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=0 enabled=true tiled=true defaultTiled=true",
     ]);
 
     state.failNext(true);
     state.heartbeat();
     assert.deepEqual(state.lines.slice(2), [
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-failed outcome=failed generation=first revision=0 enabled=true tiled=true defaultTiled=true",
+        "omnitiler:route-diag component=tray stage=bridge event=send-failed outcome=failed generation=first revision=0 enabled=true tiled=true defaultTiled=true",
     ]);
     assert.equal(state.attempts(), 2);
 });
@@ -474,7 +474,7 @@ test("heartbeat recovery to success is visible, then steady state is silent", ()
     state.failNext(false);
     state.heartbeat();
     assert.deepEqual(state.lines.slice(3), [
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=0 enabled=true tiled=true defaultTiled=true",
+        "omnitiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=0 enabled=true tiled=true defaultTiled=true",
     ]);
 
     state.heartbeat();
@@ -499,7 +499,7 @@ test("a later distinct heartbeat failure is visible again", () => {
     state.failNext(true);
     state.heartbeat();
     assert.deepEqual(state.lines.slice(4), [
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-failed outcome=failed generation=first revision=0 enabled=true tiled=true defaultTiled=true",
+        "omnitiler:route-diag component=tray stage=bridge event=send-failed outcome=failed generation=first revision=0 enabled=true tiled=true defaultTiled=true",
     ]);
     // Identical repeats after the second report stay silent again.
     state.heartbeat();
@@ -520,8 +520,8 @@ test("an unvalidated generation token is omitted from diagnostics, never echoed"
 
     publisher.start();
     assert.deepEqual(lines, [
-        "plasma-auto-tiler:route-diag component=tray stage=tray event=started outcome=ok",
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok revision=0 enabled=true tiled=true defaultTiled=true",
+        "omnitiler:route-diag component=tray stage=tray event=started outcome=ok",
+        "omnitiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok revision=0 enabled=true tiled=true defaultTiled=true",
     ]);
     assert.ok(!lines.join("\n").includes("BAD"));
     assert.ok(!lines.join("\n").includes("injected"));

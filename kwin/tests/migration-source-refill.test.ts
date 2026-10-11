@@ -218,7 +218,7 @@ describe("migration source-refill live setting on Options configChanged", () => 
         }
         assert.ok(
             logs.some((line) =>
-                line === "plasma-auto-tiler:plan:config-reloaded stage=migration-source-refill refill=most-recently-used-workspace"
+                line === "omnitiler:plan:config-reloaded stage=migration-source-refill refill=most-recently-used-workspace"
             ),
         );
         assert.ok(!logs.some((line) => line.includes("restart-required")));

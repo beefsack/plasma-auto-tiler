@@ -163,7 +163,7 @@ fn eligibility_exclusions() {
 
 #[test]
 fn own_settings_window_gate() {
-    let owner_exe = "C:\\Program Files\\plasma-auto-tiler\\tiler-windows.exe";
+    let owner_exe = "C:\\Program Files\\omnitiler\\tiler-windows.exe";
     // Own executable plus the settings class refuses management through the
     // existing dialog skip.
     assert!(is_own_settings_window(
@@ -174,7 +174,7 @@ fn own_settings_window_gate() {
     // Same-executable path spellings still match the exact owner identity.
     assert!(is_own_settings_window(
         OWN_SETTINGS_WINDOW_CLASS,
-        "c:/program files/plasma-auto-tiler/tiler-windows.exe",
+        "c:/program files/omnitiler/tiler-windows.exe",
         owner_exe
     ));
     let mut facts = eligible_facts();

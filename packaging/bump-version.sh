@@ -58,7 +58,7 @@ if [[ -n "$SHA256" ]]; then
   SHA256="$(printf '%s' "$SHA256" | tr 'A-F' 'a-f')"
 fi
 
-SPEC="$REPO_ROOT/packaging/rpm/plasma-auto-tiler.spec"
+SPEC="$REPO_ROOT/packaging/rpm/omnitiler.spec"
 SERVICE="$REPO_ROOT/packaging/obs/_service"
 PKGBUILD="$REPO_ROOT/packaging/arch/PKGBUILD"
 CHANGELOG="$REPO_ROOT/packaging/debian/changelog"
@@ -75,9 +75,9 @@ TAB="$(printf '\t')" || die "could not format tab separator"
 # The PKGBUILD must keep interpolating versioned coordinates instead of
 # pinning them: source URL and the native-effect exact core dependency.
 # The generated .SRCINFO carries the expanded pins and is rewritten below.
-grep -Eq '^source=\("https://github\.com/beefsack/plasma-auto-tiler/releases/download/v\$pkgver/plasma-auto-tiler-\$pkgver\.tar\.gz"\)$' "$PKGBUILD" \
+grep -Eq '^source=\("https://github\.com/beefsack/omnitiler/releases/download/v\$pkgver/omnitiler-\$pkgver\.tar\.gz"\)$' "$PKGBUILD" \
   || die "PKGBUILD source does not interpolate \$pkgver in $PKGBUILD"
-grep -Eq '^[[:space:]]*depends=\("plasma-auto-tiler=\$pkgver-\$pkgrel" kwin\)$' "$PKGBUILD" \
+grep -Eq '^[[:space:]]*depends=\("omnitiler=\$pkgver-\$pkgrel" kwin\)$' "$PKGBUILD" \
   || die "PKGBUILD native depends does not interpolate \$pkgver-\$pkgrel in $PKGBUILD"
 
 replace_version() {
@@ -91,13 +91,13 @@ if [[ "$CURRENT" != "$VERSION" ]]; then
   # RPM spec: Version line only; Source0 already interpolates %{version}.
   replace_version "$SPEC" "^Version:[[:space:]]+$CURRENT\$"
   sed -i -E "s/^Version:[[:space:]]+$CURRENT\$/Version: $VERSION/" "$SPEC"
-  grep -Eq '^Source0:.*releases/download/v%\{version\}/plasma-auto-tiler-%\{version\}\.tar\.gz$' "$SPEC" \
+  grep -Eq '^Source0:.*releases/download/v%\{version\}/omnitiler-%\{version\}\.tar\.gz$' "$SPEC" \
     || die "Source0 does not interpolate %{version} in $SPEC"
   # OBS service: pinned download URL and the verify_file generated name.
-  replace_version "$SERVICE" "releases/download/v$CURRENT/plasma-auto-tiler-$CURRENT\\.tar\\.gz"
-  sed -i -E "s|releases/download/v$CURRENT/plasma-auto-tiler-$CURRENT\\.tar\\.gz|releases/download/v$VERSION/plasma-auto-tiler-$VERSION.tar.gz|" "$SERVICE"
-  replace_version "$SERVICE" "_service:download_url:plasma-auto-tiler-$CURRENT\\.tar\\.gz"
-  sed -i -E "s|_service:download_url:plasma-auto-tiler-$CURRENT\\.tar\\.gz|_service:download_url:plasma-auto-tiler-$VERSION.tar.gz|" "$SERVICE"
+  replace_version "$SERVICE" "releases/download/v$CURRENT/omnitiler-$CURRENT\\.tar\\.gz"
+  sed -i -E "s|releases/download/v$CURRENT/omnitiler-$CURRENT\\.tar\\.gz|releases/download/v$VERSION/omnitiler-$VERSION.tar.gz|" "$SERVICE"
+  replace_version "$SERVICE" "_service:download_url:omnitiler-$CURRENT\\.tar\\.gz"
+  sed -i -E "s|_service:download_url:omnitiler-$CURRENT\\.tar\\.gz|_service:download_url:omnitiler-$VERSION.tar.gz|" "$SERVICE"
   # Without a fresh checksum the service must fail closed, never trust.
   sed -i -E 's|<param name="checksum">[0-9a-f]{64}</param>|<param name="checksum">REPLACE-WITH-RELEASE-SIDECAR-SHA256</param>|' "$SERVICE"
   # Arch: pkgver only; the source URL interpolates $pkgver.
@@ -113,17 +113,17 @@ if [[ "$CURRENT" != "$VERSION" ]]; then
   grep -Eq "^${TAB}sha256sums = SKIP\$" "$SRCINFO" || die ".SRCINFO sha256sums reset failed"
   replace_version "$SRCINFO" "^${TAB}pkgver = $CURRENT\$"
   sed -i -E "s/^${TAB}pkgver = $CURRENT\$/${TAB}pkgver = $VERSION/" "$SRCINFO"
-  replace_version "$SRCINFO" "releases/download/v$CURRENT/plasma-auto-tiler-$CURRENT\\.tar\\.gz"
-  sed -i -E "s|releases/download/v$CURRENT/plasma-auto-tiler-$CURRENT\\.tar\\.gz|releases/download/v$VERSION/plasma-auto-tiler-$VERSION.tar.gz|" "$SRCINFO"
+  replace_version "$SRCINFO" "releases/download/v$CURRENT/omnitiler-$CURRENT\\.tar\\.gz"
+  sed -i -E "s|releases/download/v$CURRENT/omnitiler-$CURRENT\\.tar\\.gz|releases/download/v$VERSION/omnitiler-$VERSION.tar.gz|" "$SRCINFO"
   # Generated .SRCINFO pins the exact core version for the native-effect
   # split package (pkgrel suffix preserved; bump-version does not manage it).
-  replace_version "$SRCINFO" "^${TAB}depends = plasma-auto-tiler=$CURRENT-[0-9][0-9]*\$"
-  sed -i -E "s/^(${TAB}depends = plasma-auto-tiler=)$CURRENT-([0-9][0-9]*)\$/\1$VERSION-\2/" "$SRCINFO"
+  replace_version "$SRCINFO" "^${TAB}depends = omnitiler=$CURRENT-[0-9][0-9]*\$"
+  sed -i -E "s/^(${TAB}depends = omnitiler=)$CURRENT-([0-9][0-9]*)\$/\1$VERSION-\2/" "$SRCINFO"
   # Debian: new top stanza (date stamped now), old stanza kept below.
   {
-    printf 'plasma-auto-tiler (%s-1) unstable; urgency=medium\n\n' "$VERSION"
+    printf 'omnitiler (%s-1) unstable; urgency=medium\n\n' "$VERSION"
     printf '  * Release %s.\n\n' "$VERSION"
-    printf ' -- Plasma Auto Tiler Contributors <noreply@example.com>  %s\n\n' "$(date -R)"
+    printf ' -- OmniTiler Contributors <noreply@example.com>  %s\n\n' "$(date -R)"
     cat "$CHANGELOG"
   } > "$CHANGELOG.new"
   mv -- "$CHANGELOG.new" "$CHANGELOG"
@@ -164,5 +164,5 @@ printf 'packaging version: %s -> %s\n' "$CURRENT" "$VERSION"
 # Every run doubles as a consistency check: the generated native depends
 # pin must track the (possibly just bumped) version. File-wise a
 # same-version run stays a no-op when consistent.
-grep -Eq "^${TAB}depends = plasma-auto-tiler=$VERSION-[0-9][0-9]*\$" "$SRCINFO" \
+grep -Eq "^${TAB}depends = omnitiler=$VERSION-[0-9][0-9]*\$" "$SRCINFO" \
   || die ".SRCINFO native depends pin does not track $VERSION"

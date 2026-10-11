@@ -36,7 +36,7 @@ bridge.
   identity of an exact current-system or `/usr/bin` KWin entrypoint. Other
   same-user basename or Nix-store matches are rejected.
 - Settings is exactly one guarded fixed
-  `kcmshell6 kwin/effects/configs/plasma-auto-tiler-active-border_config`
+  `kcmshell6 kwin/effects/configs/omnitiler-active-border_config`
   action.
 - Packaging and user-local binary lifecycle remain dependencies of live and
   release acceptance; the helper is not required for core tiling.

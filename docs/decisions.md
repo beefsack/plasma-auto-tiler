@@ -76,6 +76,21 @@ platform API behavior.
   They are PROVISIONAL, distinct from the user-approved batch 1; native evidence
   and implementation gaps remain separate.
 
+## Project Name
+
+- User decision 2026-10-11: the project is **OmniTiler**, formerly
+  `plasma-auto-tiler`, reflecting KDE, Windows and later macOS targets.
+- Naming: display and upper CamelCase `OmniTiler`; lower CamelCase `omniTiler`;
+  lowercase IDs, packages, binaries, filenames, snake identifiers, KWin/KPackage
+  IDs, systemd units, Nix attributes/options and shortcut prefixes `omnitiler`;
+  environment variables/macros `OMNITILER_`; reverse-DNS IDs `com.omnitiler.*`
+  and object paths `/com/omnitiler/...`. Preserve functional suffixes. Generic
+  internal crate names remain unchanged. No host-format exceptions are needed.
+- GitHub repository: `github.com/beefsack/omnitiler`. OBS/AUR package names:
+  `omnitiler` and `omnitiler-native-effect`.
+- Pre-release rename: no migrations or compatibility shims; old installed state
+  stops being used. The local checkout directory is not renamed.
+
 ## Development Environment
 
 - User decision 2026-10-03 (dev environments): single root `mise.toml` for
@@ -115,9 +130,9 @@ platform API behavior.
 ## Settings, Tray and First-Run
 
 - User-approved 2026-10-11 (KDE package ownership): distro core package
-  `plasma-auto-tiler` ships both KWin-independent Settings KCMs, providing
+  `omnitiler` ships both KWin-independent Settings KCMs, providing
   tiling plus Settings/Apply/Revert without the optional effect.
-  `plasma-auto-tiler-native-effect` carries only the KWin-ABI-bound effect.
+  `omnitiler-native-effect` carries only the KWin-ABI-bound effect.
   Core means the distro package; no KDE code goes into `crates/tiler-core`.
   Nix exports independent `native-settings` and effect-only `native-effect`;
   the NixOS module installs both alongside the script. Removing the effect
@@ -182,7 +197,7 @@ platform API behavior.
   ("uninstall leaves no changed KDE settings", user 2026-10-10).
 - Windows (user 2026-10-08):
   - Validated version-1 JSON settings in
-    `%LOCALAPPDATA%\plasma-auto-tiler\settings.json`; normal owners read at
+    `%LOCALAPPDATA%\omnitiler\settings.json`; normal owners read at
     startup and poll on the existing pump; explicit normal CLI switches stay
     authoritative per field; malformed live files keep last-good state.
   - Apply validates and atomically saves; Revert discards unsaved edits and
@@ -675,7 +690,7 @@ platform API behavior.
   decided): see Workspaces above.
 - Windows restart intent persistence (user 2026-10-10, handoff item 8,
   option A): on-window `SetProp` markers with the distinctive project prefix,
-  same pattern as `PlasmaAutoTilerSticky`, for intentional-float and
+  same pattern as `OmniTilerSticky`, for intentional-float and
   fixed-window tile-override intent. A marker restores classification only,
   never authorizes writes or recovery ownership; written after native
   success, removed on unfloat/sticky-off/re-float; unreadable means no
@@ -687,7 +702,7 @@ platform API behavior.
   offline and on owned native helpers through two graceful restarts and scope
   switches. Batched hydration precedes tiling; markers grant no write/recovery
   authority. Fixed tile-override marker reserved for item 13/D7.
-  Tentative, pending user review: dotted/versioned `PlasmaAutoTiler.*.v1`
+  Tentative, pending user review: dotted/versioned `OmniTiler.*.v1`
   classification names replace the old sticky name (old markers not hydrated),
   and test-needed exact-owner `workspace --float` / `--sticky` controls reuse
   normal dispatch. Native `GetPropW` NULL cannot distinguish every unreadable
@@ -863,7 +878,7 @@ platform API behavior.
   persist, each holder is re-read immediately before its foreign setter and
   aborts on drift with zero further writes; the persisted union is retained as
   an interruption-safe superset. Minimal durable cleared ID list at
-  `~/.config/plasma-auto-tiler/shortcut-clearedrc` is union-persisted BEFORE
+  `~/.config/omnitiler/shortcut-clearedrc` is union-persisted BEFORE
   clearing and emptied only after successful Revert. Revert restores KDE
   defaults for every non-project ID in the cleared list; project-owned IDs
   stay cleared; absent/duplicate IDs fail closed retaining the list; an empty
@@ -1107,7 +1122,7 @@ platform API behavior.
   - The active-window border is an MVP requirement. Use an experimental,
     disabled-by-default, OpenGL-only native C++ KWin effect
     for the active-window border. Colour, width, outline radius, and gap are
-    configurable; `UseThemeColor` in `Effect-plasma-auto-tiler-active-border`
+    configurable; `UseThemeColor` in `Effect-omnitiler-active-border`
     defaults true, migration-free: enabled retains theme highlight with
     configured fallback, disabled selects configured colour unconditionally.
     The native QWidget KCM controls it through the existing hot-apply/repaint
@@ -1132,9 +1147,9 @@ platform API behavior.
   geometry; acknowledgement emits the observed maximize signal. Requested mode
   is never guessed; no polling, timers, or geometry heuristics).
 - Approved 2026-09-21: the Slice 1 drag oracle is folded into the surviving
-  `plasma-auto-tiler-active-border` effect plugin (one exported effect hosting
+  `omnitiler-active-border` effect plugin (one exported effect hosting
   active border, group overlay, and drag oracle); no second
-  `plasma-auto-tiler-drag-oracle` effect, factory, metadata, or KCM entry remains.
+  `omnitiler-drag-oracle` effect, factory, metadata, or KCM entry remains.
 - The outline never clips, reshapes, or changes window textures. Plasma 6.5+
   decoration-driven rounded corners remain the selected corner solution.
 - The active border retains one effect-owned automatic-lifetime
@@ -1242,7 +1257,7 @@ platform API behavior.
   IDs with engine union bounds through one additional `SetGroupHighlight`
   payload field (no raw ID logging; 64 KiB bound). The approved writable
   bridge is the effect-owned session D-Bus endpoint
-  `org.plasmaautotiler.ActiveBorder` (`SetGroupHighlight`/`ClearGroupHighlight`,
+  `com.omnitiler.ActiveBorder` (`SetGroupHighlight`/`ClearGroupHighlight`,
   not an `/Effects` method; offline contract verified, live unverified).
   The child inherits its window's slide translation; where the extension
   overlaps a non-group window stacked below the anchor it may paint over that
@@ -1394,7 +1409,7 @@ platform API behavior.
   account/project, GitHub-to-OBS token and AUR account. Packaging prep (spec,
   PKGBUILD, OBS service files) may proceed offline before then.
 - Tentative Lead 2026-10-11, pending user review: offline packaging uses
-  `plasma-auto-tiler` for core and `plasma-auto-tiler-native-effect` for the
+  `omnitiler` for core and `omnitiler-native-effect` for the
   effect plus both native KCMs, with recipes under `packaging/`. Release
   archives include the tagged-SHA JS bundle and vendored Rust crates; distro
   builds consume them without Node or network access. User units install
@@ -1434,10 +1449,10 @@ platform API behavior.
 - The native effect is not a portable prebuilt binary; every build targets the
   Nix-managed Plasma/KWin package set used for that build.
 - The NixOS module owns the system KPackage/native-effect packages and writes
-  only `[Plugins] plasma-auto-tiler-kwinEnabled=true` in its immutable global
+  only `[Plugins] omnitiler-kwinEnabled=true` in its immutable global
   KWin profile. It does not enable the native border or mutate shortcuts. Home
   Manager owns user-session delivery: the optional tray systemd user unit
-  running the immutable `plasma-auto-tiler tray` and the on-demand Planner
+  running the immutable `omnitiler tray` and the on-demand Planner
   D-Bus/systemd activation metadata. Neither writes user `kwinrc` authority.
 - Flake source filesets are explicit for the KWin script, native effect/KCM,
   and tray package; build trees, generated artifacts, and unrelated repository
@@ -1453,7 +1468,7 @@ platform API behavior.
   `plasma-workspace/env` script, with robust quoting and exact-content
   ownership only; no `kwinrc` writes and no durable receipt state. The dogfood
   effect path and this dev path share the exact
-  `plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh` path and cannot
+  `plasma-workspace/env/60-omnitiler-native-effect.sh` path and cannot
   coexist there. `just dev`
   preflights both effects before startup, transiently loads only
   invocation-owned effects with KWin owner guards (preserving preloaded ones
@@ -1475,14 +1490,14 @@ platform API behavior.
 ## Linux Planner Activation
 
 - Approved 2026-09-09: Linux/KWin delivery packages the existing
-  `plasma-auto-tiler planner-service` as one session D-Bus service named
-  `org.plasmaautotiler.Planner`. Its immutable package installs the exact
-  D-Bus descriptor with `SystemdService=plasma-auto-tiler-planner.service`;
+  `omnitiler planner-service` as one session D-Bus service named
+  `com.omnitiler.Planner`. Its immutable package installs the exact
+  D-Bus descriptor with `SystemdService=omnitiler-planner.service`;
   Home Manager places that package in the user D-Bus discovery path and owns
   the matching user `Type=dbus` unit with exact `BusName` and immutable
-  `ExecStart=<store>/bin/plasma-auto-tiler planner-service`. It has no shell,
+  `ExecStart=<store>/bin/omnitiler planner-service`. It has no shell,
   autostart target, durable PID/receipt state, or second Planner process mode.
-- `programs.plasma-auto-tiler.planner.enable` defaults true when this Home
+- `programs.omnitiler.planner.enable` defaults true when this Home
   Manager module is imported. The service remains inert until D-Bus activation,
   so the default has no idle Planner process cost. Set it false to omit both
   the descriptor package and user unit.
@@ -1600,7 +1615,7 @@ platform API behavior.
   proves exact source binding and exact restoration; otherwise the route stops
   before mutation. This authorization does not broaden access to non-project
   resources.
-- The unidentified prior `plasma-auto-tiler-advisory-*` runtime-directory
+- The unidentified prior `omnitiler-advisory-*` runtime-directory
   residue is preserved untouched. Do not search for, enumerate, inspect,
   identify heuristically, modify, or delete it. No stale POC2/POC3 harness
   or checkpoint retry is authorized; recovery requires explicit user
@@ -1627,17 +1642,17 @@ platform API behavior.
 - Redact captions, application content, secrets, raw environment, native
   identifiers, raw native IDs, and raw native D-Bus payloads, plus unbounded
   pointer steps. Logging failures never block or change behavior.
-- The shared `plasma-auto-tiler:route-diag` schema identifies component,
+- The shared `omnitiler:route-diag` schema identifies component,
   direction or stage, correlation, authority generation, revision, event/action,
   and outcome within the redaction rule above.
 - `just dev verbose` keeps lifecycle summaries; `just dev trace` opt-in enables
   redacted high-volume per-window, hook, and bounded structural request/reply
   detail, never raw native D-Bus payloads.
 - Shortcut operations emit bounded structured diagnostics on
-  `plasmaautotiler.shortcut` (operation, stage, outcome, allowlisted
+  `omnitiler.shortcut` (operation, stage, outcome, allowlisted
   identity, key images, cleared count/writes only; foreign occupants
   redacted); query with
-  `journalctl --user --no-pager -g "plasmaautotiler.shortcut op="`.
+  `journalctl --user --no-pager -g "omnitiler.shortcut op="`.
   Operational warnings and info are enabled by default with debug-only
   records; logging never affects behavior.
 - The fixed unauthorized reply omits caller-supplied correlation, preserving

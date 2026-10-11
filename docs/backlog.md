@@ -40,7 +40,8 @@ decisions of 2026-09-24 are under
     builds passed. Core Settings ownership approved and delivered 2026-10-11
     ([evidence](changes/archive/release-0.1-core-settings.md)); effect companion
     is effect-only. Remaining: OBS tag-to-stable source/checksum handoff, accounts/provisioning,
-    licensing confirmation, runtime/solver validation. Ubuntu native ECM
+    licensing confirmation, runtime/solver validation. OBS/AUR names are
+    `omnitiler` and `omnitiler-native-effect` (user 2026-10-11). Ubuntu native ECM
     floor (effect only) and neon provisioning remain blocked.
     [Evidence](changes/archive/release-0.1-offline-packaging.md).
   - External NixOS/Home Manager validation (P1 gate).
@@ -59,10 +60,6 @@ decisions of 2026-09-24 are under
   must build against Ubuntu's KWin. Assess whether 6.26 is genuinely needed,
   bundling the needed ECM modules in the source tarball, Kubuntu backports PPA,
   KWin API differences versus 6.7.5, and KDE neon OBS provisioning.
-- Open user decision | Project name | Pre-0.1: `plasma-auto-tiler` no longer
-  describes the cross-platform target. Decide before creating OBS packages or
-  the AUR package; accounts may be created first. Affects package/OBS/AUR names,
-  D-Bus and plugin IDs, and docs.
 - P1 | Licensing | Pre-0.1, user decision pending:
   [research and dependency inventory](research/licensing.md). Run the pending
   license tools and finish native linked-library/closure verification; add the
@@ -122,7 +119,7 @@ decisions of 2026-09-24 are under
   | D22 | verification-only | Removal retains survivor share ratios (`crates/tiler-core/src/cosmic_v1.rs:175-198`, `crates/tiler-core/src/session.rs:2398-2399`); thin reference basis and native reflow pending. |
   | D23 | needs code | Valid minimize omission can collapse/reflow (`kwin/src/plan-adapter-entry.ts:2003,3876`, `crates/tiler-core/src/session/world.rs:850-868`), but no stored old-slot/no-steal restore; sole null-focus can fail closed, so native release/retention still needs proof. |
   | D25 | verification-only | Generic fresh snapshot/rebuild/converge re-observes host membership and provable focus (`kwin/src/plan-adapter-entry.ts:2186-2300`, `crates/tiler-core/src/session/world.rs:746-799`); native orderly restart pending, no layout restore. |
-  | D26 | needs code for full (a); fallback (b) and remaining legs verification-only | Gaps/settings reload exists (`kwin/src/domain-gap.ts:90`); intent cannot cross login/bus/KWin namespace (`crates/plasma-auto-tiler/src/float_intent_store.rs:11,30-34`). List that known limitation under tentative (b); no expansion of approved REQ-RST-01d lifetime. |
+  | D26 | needs code for full (a); fallback (b) and remaining legs verification-only | Gaps/settings reload exists (`kwin/src/domain-gap.ts:90`); intent cannot cross login/bus/KWin namespace (`crates/omnitiler/src/float_intent_store.rs:11,30-34`). List that known limitation under tentative (b); no expansion of approved REQ-RST-01d lifetime. |
   | D27 | needs code | Active-window observation/drag-restore signal is not activation-request handling (`kwin/src/plan-adapter-entry.ts:2274-2296,8802`); request/urgency signal plus guarded switch/focus path absent. |
   | D28 | verification-only | Existing fullscreen-send refusal matches the tentative hold (`kwin/src/workspace-send-adapter.ts:488-490`, `kwin/src/workspace-send-adapter-entry.ts:459-471`); G-D2 native observation pending. |
 
@@ -144,7 +141,7 @@ decisions of 2026-09-24 are under
   Shared core policy settings serve Windows; Windows schema/UI/live wiring
   belongs to handoff item 22, coordinated after shared delivery.
 - P0 | Windows dogfood 2026-10-11 | User live run `tile --user-start --trace`
-  at `7f407ca` (log `%LOCALAPPDATA%\plasma-auto-tiler\session-1\run-01dd5920bbba8256.log`).
+  at `7f407ca` (log `%LOCALAPPDATA%\omnitiler\session-1\run-01dd5920bbba8256.log`).
   Passed: TOEM 2 unimpeded across exclusive/borderless/maximized/windowed
   modes and hide/reveal across a workspace switch. Windows order (user):
   (a) stop blocked by an open first-run preset prompt: stop must cancel the
@@ -1586,7 +1583,7 @@ decisions of 2026-09-24 are under
     restart store [delivered offline](changes/archive/fixed-window-tile-override-restart.md);
     Windows still lacks float persistence and tile overrides remain a gap.
     User decision 2026-10-10 (mechanism, option A): on-window `SetProp`
-    markers, same pattern as `PlasmaAutoTilerSticky`; intentional-float and
+    markers, same pattern as `OmniTilerSticky`; intentional-float and
     fixed-window tile-override markers added. Names carry the distinctive
     project prefix to minimise collision with other processes. A marker
     restores classification only, never authorizes writes or recovery
@@ -1613,7 +1610,7 @@ decisions of 2026-09-24 are under
     - KDE Q3 runtime (2026-10-08 offline delivery): `kwin/src/plan-adapter.ts`
       `startIntentBootstrap` hydrates before planning; the existing Q2
       successful-application point calls `updateSettledIntentFromFlight`.
-      `crates/plasma-auto-tiler/src/float_intent_store.rs` owns the private
+      `crates/omnitiler/src/float_intent_store.rs` owns the private
       runtime membership file; existing Planner1 gains `ReadFloatIntent` /
       `WriteFloatIntent`, with same-UID + current-KWin-owner authorization.
       Bus ID + KWin unique owner fence the namespace. Membership only; no
@@ -2702,7 +2699,7 @@ decisions of 2026-09-24 are under
   complexity must deliver more value than it costs. Phase 1 (shared
   foreground/hidden classifier, refresh classification logs) passed the
   user's live test at `062d707` (2026-09-28, "felt good and minimally
-  janky"; trace `plasma-auto-tiler-dev.uE1S5n.log`). Quiet
+  janky"; trace `omnitiler-dev.uE1S5n.log`). Quiet
   refresh outcomes were ~60% of refresh log lines. Phase 2 (learned limits)
   parked by the user (2026-09-28) after a candidate exceeded the complexity
   rule; preserved on branch `wip/learned-size-limits`; resumes only if the
@@ -2745,7 +2742,7 @@ decisions of 2026-09-24 are under
   [native boundary](decisions.md#engine-architecture-and-convergence)
 - P3 | Stale branches | Twelve stale branches need explicit user
   authorization before deletion.
-  [branches](https://github.com/beefsack/plasma-auto-tiler/branches)
+  [branches](https://github.com/beefsack/omnitiler/branches)
 - P3 | Other compositor validation | bspwm, Hyprland, COSMIC runtime
   validation only; pinned-semantics research is not a substitute.
   [comparison](reference-wm-comparison.md)

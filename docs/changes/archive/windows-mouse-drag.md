@@ -100,7 +100,7 @@
   `target/windows-mouse-drag/20261004-042436-17816`,
   `20261004-042929-29208`, and `20261004-043420-25304`.
 - Lead inspected the latest log
-  `%LOCALAPPDATA%/plasma-auto-tiler/session-1/run-01dd535d6d11b0fe.log`:
+  `%LOCALAPPDATA%/omnitiler/session-1/run-01dd535d6d11b0fe.log`:
   native title drop tick 8 has five writes, six matching native readbacks,
   `drag-drop-applied`, and focused-move underlay show/hide. Later
   `win-drag-initiate`/`win-drag-gate` report `posted` but no Win gesture occurs.

@@ -35,7 +35,7 @@ highlight colour, without changing the current default behavior.
 ## Outcome And Evidence
 
 - Implemented one new bool `UseThemeColor` in
-  `Effect-plasma-auto-tiler-active-border`, default true, migration-free.
+  `Effect-omnitiler-active-border`, default true, migration-free.
 - Enabled retains theme highlight with configured fallback; disabled selects
   configured colour unconditionally.
 - Native QWidget KCM controls it; the existing hot-apply/repaint path applies

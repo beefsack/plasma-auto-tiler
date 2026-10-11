@@ -76,5 +76,5 @@
   verification. Publication/CI result follows in the delivery handover.
 - Pushed `755aab8`; publication rebase preserved concurrent `e6f396d` tentative
   triage work (one mechanical adjacent-row spec conflict, no source conflict).
-  CI [38060844283](https://github.com/beefsack/plasma-auto-tiler/actions/runs/38060844283)
+  CI [38060844283](https://github.com/beefsack/omnitiler/actions/runs/38060844283)
   completed success: windows, rust, kwin, shell, native and macos. No CI repair.

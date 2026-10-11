@@ -31,7 +31,7 @@ payload, release metadata, signing material, updater, or additional files.
 
 ## Delivered Artifact Evidence
 
-The delivered local artifact is `plasma-auto-tiler-kwin.kwinscript`, 69642 bytes,
+The delivered local artifact is `omnitiler-kwin.kwinscript`, 69642 bytes,
 with SHA-256
 `99afa2657f6707c6e19399ff7fd6a7d872baf333a03e495cad471e53f616fd75`. Its
 payload is the exact four-file set above. The build validates installation with

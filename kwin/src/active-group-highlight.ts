@@ -15,9 +15,9 @@
 //
 // Effect endpoint (owned by the active-border effect, never the generic
 // effect bus):
-//   service   org.plasmaautotiler.ActiveBorder
-//   path      /org/plasmaautotiler/ActiveBorder
-//   interface org.plasmaautotiler.ActiveBorder1
+//   service   com.omnitiler.ActiveBorder
+//   path      /com/omnitiler/ActiveBorder
+//   interface com.omnitiler.ActiveBorder1
 //   methods   SetGroupHighlight(QString) / ClearGroupHighlight()
 //
 // Diagnostics are always-on and bounded: one dispatch line per refresh plus
@@ -25,9 +25,9 @@
 
 import { PLAN_CONTRACT_VERSION, PLAN_MAX_REPLY_BYTES, PLAN_MAX_REQUEST_BYTES, planFingerprint } from "./plan-adapter";
 
-export const GROUP_HIGHLIGHT_SERVICE = "org.plasmaautotiler.ActiveBorder";
-export const GROUP_HIGHLIGHT_OBJECT = "/org/plasmaautotiler/ActiveBorder";
-export const GROUP_HIGHLIGHT_INTERFACE = "org.plasmaautotiler.ActiveBorder1";
+export const GROUP_HIGHLIGHT_SERVICE = "com.omnitiler.ActiveBorder";
+export const GROUP_HIGHLIGHT_OBJECT = "/com/omnitiler/ActiveBorder";
+export const GROUP_HIGHLIGHT_INTERFACE = "com.omnitiler.ActiveBorder1";
 export const GROUP_HIGHLIGHT_SET_METHOD = "SetGroupHighlight";
 export const GROUP_HIGHLIGHT_CLEAR_METHOD = "ClearGroupHighlight";
 
@@ -40,7 +40,7 @@ export const ACTIVE_GROUP_MAX_GENERATION_LEN = 64;
 export const ACTIVE_GROUP_MAX_CORRELATION_LEN = 128;
 export const ACTIVE_GROUP_MAX_SEQ = 1000000;
 
-const LOG_PREFIX = "plasma-auto-tiler:group-highlight";
+const LOG_PREFIX = "omnitiler:group-highlight";
 
 const NO_GROUP_REASONS: ReadonlyArray<string> = [
     "no-session",

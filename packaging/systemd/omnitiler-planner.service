@@ -1,0 +1,10 @@
+[Unit]
+Description=OmniTiler Planner (on-demand D-Bus service)
+
+[Service]
+Type=dbus
+BusName=com.omnitiler.Planner
+ExecStart=/usr/bin/omnitiler planner-service
+Restart=no
+StandardOutput=journal
+StandardError=journal

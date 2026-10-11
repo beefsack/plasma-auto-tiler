@@ -296,7 +296,7 @@
     <item>
      <widget class="QGroupBox" name="scriptSettings">
       <property name="title">
-       <string>Plasma Auto Tiler</string>
+       <string>OmniTiler</string>
       </property>
       <layout class="QFormLayout" name="scriptFormLayout">
        <item row="0" column="0">

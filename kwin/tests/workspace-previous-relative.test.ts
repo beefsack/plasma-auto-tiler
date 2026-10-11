@@ -220,19 +220,19 @@ describe("R-WS-08 previous toggle catalog", () => {
         const catalog = workspaceShortcutCatalog();
         assert.equal(catalog.length, 75);
         const byAction = new Map(catalog.map((row) => [row.action, row]));
-        const toggle = byAction.get("plasma-auto-tiler-workspace-previous");
+        const toggle = byAction.get("omnitiler-workspace-previous");
         assert.ok(toggle !== undefined);
         assert.equal(toggle.sequence, "Meta+Ctrl+Tab");
         assert.equal(toggle.kind, "previous");
         const expected: ReadonlyArray<[string, string, -1 | 1]> = [
-            ["plasma-auto-tiler-workspace-prev-h", "Meta+Ctrl+H", -1],
-            ["plasma-auto-tiler-workspace-prev-k", "Meta+Ctrl+K", -1],
-            ["plasma-auto-tiler-workspace-prev-left-arrow", "Meta+Ctrl+Left", -1],
-            ["plasma-auto-tiler-workspace-prev-up-arrow", "Meta+Ctrl+Up", -1],
-            ["plasma-auto-tiler-workspace-next-j", "Meta+Ctrl+J", 1],
-            ["plasma-auto-tiler-workspace-next-l", "Meta+Ctrl+L", 1],
-            ["plasma-auto-tiler-workspace-next-down-arrow", "Meta+Ctrl+Down", 1],
-            ["plasma-auto-tiler-workspace-next-right-arrow", "Meta+Ctrl+Right", 1],
+            ["omnitiler-workspace-prev-h", "Meta+Ctrl+H", -1],
+            ["omnitiler-workspace-prev-k", "Meta+Ctrl+K", -1],
+            ["omnitiler-workspace-prev-left-arrow", "Meta+Ctrl+Left", -1],
+            ["omnitiler-workspace-prev-up-arrow", "Meta+Ctrl+Up", -1],
+            ["omnitiler-workspace-next-j", "Meta+Ctrl+J", 1],
+            ["omnitiler-workspace-next-l", "Meta+Ctrl+L", 1],
+            ["omnitiler-workspace-next-down-arrow", "Meta+Ctrl+Down", 1],
+            ["omnitiler-workspace-next-right-arrow", "Meta+Ctrl+Right", 1],
         ];
         for (const [action, sequence, delta] of expected) {
             const row = byAction.get(action);
@@ -803,15 +803,15 @@ describe("workspace previous and relative entry routing", () => {
         });
         assert.ok(handle !== null);
         const byAction = new Map(shortcuts.map((row) => [row.action, row]));
-        assert.equal(byAction.get("plasma-auto-tiler-workspace-previous")?.sequence, "Meta+Ctrl+Tab");
-        assert.equal(byAction.get("plasma-auto-tiler-workspace-prev-h")?.sequence, "Meta+Ctrl+H");
-        assert.equal(byAction.get("plasma-auto-tiler-workspace-prev-k")?.sequence, "Meta+Ctrl+K");
-        assert.equal(byAction.get("plasma-auto-tiler-workspace-prev-left-arrow")?.sequence, "Meta+Ctrl+Left");
-        assert.equal(byAction.get("plasma-auto-tiler-workspace-prev-up-arrow")?.sequence, "Meta+Ctrl+Up");
-        assert.equal(byAction.get("plasma-auto-tiler-workspace-next-j")?.sequence, "Meta+Ctrl+J");
-        assert.equal(byAction.get("plasma-auto-tiler-workspace-next-l")?.sequence, "Meta+Ctrl+L");
-        assert.equal(byAction.get("plasma-auto-tiler-workspace-next-down-arrow")?.sequence, "Meta+Ctrl+Down");
-        assert.equal(byAction.get("plasma-auto-tiler-workspace-next-right-arrow")?.sequence, "Meta+Ctrl+Right");
+        assert.equal(byAction.get("omnitiler-workspace-previous")?.sequence, "Meta+Ctrl+Tab");
+        assert.equal(byAction.get("omnitiler-workspace-prev-h")?.sequence, "Meta+Ctrl+H");
+        assert.equal(byAction.get("omnitiler-workspace-prev-k")?.sequence, "Meta+Ctrl+K");
+        assert.equal(byAction.get("omnitiler-workspace-prev-left-arrow")?.sequence, "Meta+Ctrl+Left");
+        assert.equal(byAction.get("omnitiler-workspace-prev-up-arrow")?.sequence, "Meta+Ctrl+Up");
+        assert.equal(byAction.get("omnitiler-workspace-next-j")?.sequence, "Meta+Ctrl+J");
+        assert.equal(byAction.get("omnitiler-workspace-next-l")?.sequence, "Meta+Ctrl+L");
+        assert.equal(byAction.get("omnitiler-workspace-next-down-arrow")?.sequence, "Meta+Ctrl+Down");
+        assert.equal(byAction.get("omnitiler-workspace-next-right-arrow")?.sequence, "Meta+Ctrl+Right");
         const fireCurrentChanged = (): void => {
             const sig = world.signals["currentDesktopChanged"] as FakeSignal | undefined;
             assert.ok(sig !== undefined);
@@ -824,21 +824,21 @@ describe("workspace previous and relative entry routing", () => {
             return (world.currentByOutput.get(out) as FakeDesktop).id;
         };
         // Build history through routed selects with signal observations.
-        byAction.get("plasma-auto-tiler-workspace-2")?.callback();
+        byAction.get("omnitiler-workspace-2")?.callback();
         fireCurrentChanged();
         assert.equal(currentId(), "ws-2");
-        byAction.get("plasma-auto-tiler-workspace-1")?.callback();
+        byAction.get("omnitiler-workspace-1")?.callback();
         fireCurrentChanged();
         assert.equal(currentId(), "ws-1");
         // Valid toggle callback returns to ws-2.
-        byAction.get("plasma-auto-tiler-workspace-previous")?.callback();
+        byAction.get("omnitiler-workspace-previous")?.callback();
         assert.equal(currentId(), "ws-2");
         fireCurrentChanged();
         // Valid relative callbacks step the ring.
-        byAction.get("plasma-auto-tiler-workspace-prev-h")?.callback();
+        byAction.get("omnitiler-workspace-prev-h")?.callback();
         fireCurrentChanged();
         assert.equal(currentId(), "ws-1");
-        byAction.get("plasma-auto-tiler-workspace-next-l")?.callback();
+        byAction.get("omnitiler-workspace-next-l")?.callback();
         assert.equal(currentId(), "ws-2");
         // Invalid relative delta fails closed without throwing.
         handle?.requestWorkspaceRelative(0);
@@ -846,8 +846,8 @@ describe("workspace previous and relative entry routing", () => {
         // Stop fence: stale callbacks stay inert.
         handle?.stop();
         const frozen = currentId();
-        byAction.get("plasma-auto-tiler-workspace-previous")?.callback();
-        byAction.get("plasma-auto-tiler-workspace-next-l")?.callback();
+        byAction.get("omnitiler-workspace-previous")?.callback();
+        byAction.get("omnitiler-workspace-next-l")?.callback();
         assert.equal(currentId(), frozen);
         void logs;
     });

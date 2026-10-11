@@ -64,7 +64,7 @@ state or attributing a library fault to a caller without stack evidence.
   recovering the inbound sender, object path, interface, or member. The exact
   target method is therefore not established.
 - `thread apply all bt` has no `QV4`, `QJSValue`, `KWin::Script`, project JIT,
-  or `plasma-auto-tiler-active-border.so` frame. The native effect appears only
+  or `omnitiler-active-border.so` frame. The native effect appears only
   as a loaded, deleted mapping without a build ID. This exonerates the native
   effect under the fault-stack criterion for this core. It also gives no basis
   to implicate the bundled script.
@@ -79,15 +79,15 @@ state or attributing a library fault to a caller without stack evidence.
   script calls only the Planner and Tray services. These source facts exclude a
   repository path matching the inbound malformed call, but cannot identify its
   actual sender.
-- The final project dev log is `plasma-auto-tiler-dev.0L9vAz.log`,
+- The final project dev log is `omnitiler-dev.0L9vAz.log`,
   mtime `18:53:10`; its final two lines are:
 
   ```text
-  [kwin] plasma-auto-tiler:plan:cmd=plan-1-p64 kind=admit windows=1 outcome=rejected
-  [kwin] plasma-auto-tiler:plan:rejected kind=duplicate-window
+  [kwin] omnitiler:plan:cmd=plan-1-p64 kind=admit windows=1 outcome=rejected
+  [kwin] omnitiler:plan:rejected kind=duplicate-window
   ```
 
-  The KWin journal has no `plasma-auto-tiler:plan` line between `18:53:10` and
+  The KWin journal has no `omnitiler:plan` line between `18:53:10` and
   the abort. That `duplicate-window` result is the already-settled benign
   cross-workspace verdict, not an abort precursor.
 - The bounded `19:35-19:41` journal window has no recorded lock, idle, DPMS,
@@ -98,7 +98,7 @@ state or attributing a library fault to a caller without stack evidence.
   journal says `The Wayland connection broke. Did the Wayland compositor die?`
   and starts a new compositor. Their ordering establishes that they did not
   cause KWin's abort.
-- The seven `plasma-auto-tiler-shortcut-reconciler-test`
+- The seven `omnitiler-shortcut-reconciler-test`
   cores at `19:06-19:10` all ran `malformed`, faulted reading `0x18`, and were
   built before the current source and before the on-disk binary replaced them.
   GDB reports every core may not match that binary. The current `malformed`

@@ -387,6 +387,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "omnitiler"
+version = "0.1.0"
+dependencies = [
+ "async-io",
+ "async-lock",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tiler-protocol",
+ "zbus",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -423,19 +436,6 @@ dependencies = [
  "atomic-waker",
  "fastrand",
  "futures-io",
-]
-
-[[package]]
-name = "plasma-auto-tiler"
-version = "0.1.0"
-dependencies = [
- "async-io",
- "async-lock",
- "rustix",
- "serde",
- "serde_json",
- "tiler-protocol",
- "zbus",
 ]
 
 [[package]]

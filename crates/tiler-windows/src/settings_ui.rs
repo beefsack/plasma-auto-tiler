@@ -41,9 +41,9 @@ fn err(msg: impl Into<String>) -> DynError {
 }
 
 /// Native window class for the settings window.
-pub const SETTINGS_WINDOW_CLASS: &str = "PlasmaAutoTilerSettings";
+pub const SETTINGS_WINDOW_CLASS: &str = "OmniTilerSettings";
 /// Window title for the settings window.
-pub const SETTINGS_WINDOW_TITLE: &str = "Plasma Auto-Tiler Settings";
+pub const SETTINGS_WINDOW_TITLE: &str = "OmniTiler Settings";
 
 // Stable control ids for later `SendMessage` automation.
 pub const ID_INNER_GAP: u32 = 101;
@@ -1016,7 +1016,7 @@ fn acquire_settings_singleton() -> Result<Option<SingletonGuard>, DynError> {
         .chars()
         .map(|c| if c == '\\' || c == '/' { '_' } else { c })
         .collect();
-    let name = format!("Local\\PlasmaAutoTilerSettings-{safe}");
+    let name = format!("Local\\OmniTilerSettings-{safe}");
     let name_w = wide(&name);
     let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name_w.as_ptr()) };
     if handle.is_null() {

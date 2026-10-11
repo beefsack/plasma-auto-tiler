@@ -183,9 +183,9 @@ function assertState(state: State, now: number, expected: ExpectedState, freshne
 
 test("tray bridge fixture defines one method and rejects other routes", () => {
   assert.deepEqual(fixture.contract, {
-    service: "org.plasmaautotiler.Tray",
-    object: "/org/plasmaautotiler/Tray",
-    interface: "org.plasmaautotiler.Tray1",
+    service: "com.omnitiler.Tray",
+    object: "/com/omnitiler/Tray",
+    interface: "com.omnitiler.Tray1",
     method: "PublishSnapshot",
     signature: "isibsbb",
     schema: 2,

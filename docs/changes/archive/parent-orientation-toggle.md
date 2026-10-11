@@ -82,7 +82,7 @@
   or format errors, zero normal core dependencies/platform leaks.
 - `nix build --no-link .#checks.x86_64-linux.native-effect-tests .#checks.x86_64-linux.native-effect`:
   both pass. Test-enabled derivation
-  `5181i6dkfypc2mzi3nlxzdbp2jxx17k5-plasma-auto-tiler-native-effect-0.1.0.drv`
+  `5181i6dkfypc2mzi3nlxzdbp2jxx17k5-omnitiler-native-effect-0.1.0.drv`
   log confirms CTest 33/33, including native shortcut-selection scenario with
   Meta+O catalog/identity, no known conflict, quiet preset behavior, observed
   collision, selection-scoped Apply and own-row clearing.

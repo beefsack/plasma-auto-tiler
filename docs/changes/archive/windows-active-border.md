@@ -7,7 +7,7 @@
   low-latency following, diagnostics and owned-process teardown.
 - Practical machine acceptance is complete. Native gates and independent
   live-behavior review pass. Implementation `b5374ce` is pushed; all four jobs
-  in [CI run 37004892347](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37004892347)
+  in [CI run 37004892347](https://github.com/beefsack/omnitiler/actions/runs/37004892347)
   pass. This note is archived and parity queue item 1 is done.
 - Scope: Windows adapter/rendering and necessary scoped proof support only;
   no group underlay implementation or KDE/principles changes.

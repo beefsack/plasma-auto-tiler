@@ -60,11 +60,11 @@ use one shared page implementation and two thin plugin factories.
 | Step (`just dev`) | Expected | Red flag |
 | --- | --- | --- |
 | Open tray Settings, KWin Scripts Configure and Desktop Effects Configure | Each shows border, Shortcuts, gap controls, workspace mode and restart note | Missing group, missing Configure action, clipped/inaccessible controls |
-| With two existing tiled windows, change **inner gap** and Save; then change **outer gap** and Save | Windows re-space after each Save without session restart; `[kwin] plasma-auto-tiler:plan:config-reloaded stage=re-read-queued innerGap=<n> outerGap=<n> applied-unconfirmed`, followed by `[kwin] plasma-auto-tiler:plan:cmd=<id> kind=update-gaps ... outcome=applied` on a successful retained flight | No re-read line, no `update-gaps`, rejection/failure terminal, or unchanged spacing |
+| With two existing tiled windows, change **inner gap** and Save; then change **outer gap** and Save | Windows re-space after each Save without session restart; `[kwin] omnitiler:plan:config-reloaded stage=re-read-queued innerGap=<n> outerGap=<n> applied-unconfirmed`, followed by `[kwin] omnitiler:plan:cmd=<id> kind=update-gaps ... outcome=applied` on a successful retained flight | No re-read line, no `update-gaps`, rejection/failure terminal, or unchanged spacing |
 | Change border color/theme/width/radius/window gap and Save, including with effect disabled | Settings persist without effect; when enabled, visible border changes live | Save blocked by effect absence, lost values, or border requires session restart |
 | Use Apply Shortcuts, Force Apply/Cancel preview as applicable, and Revert | Existing confirmation, explicit writes and status behavior; ordinary Settings Save leaves shortcuts alone | Silent shortcut mutation, Force without preview, Cancel writes |
-| Change workspace mode and Save | Restart note persists; `[kwin] plasma-auto-tiler:plan:config-reloaded stage=restart-required keys=workspaceMode` when KWin observes the config change; runtime mode remains unchanged | Runtime mode changes without restart, note absent |
+| Change workspace mode and Save | Restart note persists; `[kwin] omnitiler:plan:config-reloaded stage=restart-required keys=workspaceMode` when KWin observes the config change; runtime mode remains unchanged | Runtime mode changes without restart, note absent |
 
-KCM `plasmaautotiler.script-config` logs belong to the settings process, not
+KCM `omnitiler.script-config` logs belong to the settings process, not
 the `[kwin]` `just dev` stream; a queued reconfigure is not proof of applied
 geometry. The physical spacing check is required.

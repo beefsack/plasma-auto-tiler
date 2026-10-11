@@ -67,33 +67,33 @@ function schemaEntries(): Record<string, { type: string; defaultValue: string }>
 
 describe("native KCM static contract", () => {
     it("discovers the native effect and installs both KCM plugins in KWin namespaces", () => {
-        assert.equal(nativeMetadata.KPlugin.Id, "plasma-auto-tiler-active-border");
+        assert.equal(nativeMetadata.KPlugin.Id, "omnitiler-active-border");
         assert.equal(nativeMetadata.KPlugin.EnabledByDefault, false);
         assert.equal(
             nativeMetadata["X-KDE-ConfigModule"],
-            "plasma-auto-tiler-active-border_config",
+            "omnitiler-active-border_config",
         );
-        assert.equal(kcmMetadata.KPlugin.Id, "plasma-auto-tiler-active-border_config");
+        assert.equal(kcmMetadata.KPlugin.Id, "omnitiler-active-border_config");
         for (const field of ["Name", "Description", "Icon", "License"] as const) {
             assert.notEqual(kcmMetadata.KPlugin[field], "");
         }
         assert.match(effectFactory, /K_PLUGIN_CLASS_WITH_JSON\(KWin::ActiveBorderConfigModule, "activeborderconfig_module\.json"\)/);
         assert.match(
             cmake,
-            /kcoreaddons_add_plugin\(plasma-auto-tiler-active-border INSTALL_NAMESPACE "kwin\/effects\/plugins"/,
+            /kcoreaddons_add_plugin\(omnitiler-active-border INSTALL_NAMESPACE "kwin\/effects\/plugins"/,
         );
         assert.match(
             cmake,
-            /kcoreaddons_add_plugin\(plasma-auto-tiler-active-border_config INSTALL_NAMESPACE "kwin\/effects\/configs"/,
+            /kcoreaddons_add_plugin\(omnitiler-active-border_config INSTALL_NAMESPACE "kwin\/effects\/configs"/,
         );
         assert.match(cmake, /activeborderconfig_module\.json/);
         assert.match(cmake, /scriptconfig_module\.json/);
         assert.match(
             cmake,
-            /kcoreaddons_add_plugin\(plasma-auto-tiler-kwin_config INSTALL_NAMESPACE "kwin\/scripts\/configs"/,
+            /kcoreaddons_add_plugin\(omnitiler-kwin_config INSTALL_NAMESPACE "kwin\/scripts\/configs"/,
         );
         assert.match(scriptFactory, /K_PLUGIN_CLASS_WITH_JSON\(KWin::ScriptConfigModule, "scriptconfig_module\.json"\)/);
-        assert.equal(scriptKcmMetadata.KPlugin.Id, "plasma-auto-tiler-kwin_config");
+        assert.equal(scriptKcmMetadata.KPlugin.Id, "omnitiler-kwin_config");
         for (const field of ["Name", "Description", "Icon", "License"] as const) {
             assert.notEqual(scriptKcmMetadata.KPlugin[field], "");
         }
@@ -107,7 +107,7 @@ describe("native KCM static contract", () => {
     it("shares one unified page through both existing factories and discovery routes", () => {
         assert.equal(
             scriptMetadata["X-KDE-ConfigModule"],
-            "kwin/scripts/configs/plasma-auto-tiler-kwin_config",
+            "kwin/scripts/configs/omnitiler-kwin_config",
         );
         assert.doesNotMatch(read("metadata.json"), /kcm_kwin4_genericscripted/);
         assert.ok(nativeMetadata["X-KDE-ConfigModule"]);
@@ -123,7 +123,7 @@ describe("native KCM static contract", () => {
         for (const factory of [effectFactory, scriptFactory]) {
             assert.doesNotMatch(factory, /workspaceModeCombo|sameAxisMoveCombo|fixedSizePredicateCombo|migrationSourceRefillCombo|innerGapSpinBox|outerGapSpinBox/);
             assert.doesNotMatch(factory, /requestEffectReconfigure|requestScriptReconfigure/);
-            assert.doesNotMatch(factory, /Script-plasma-auto-tiler-kwin/);
+            assert.doesNotMatch(factory, /Script-omnitiler-kwin/);
         }
         // Single unified sourceset feeds both plugins and every KCM test binary.
         assert.match(cmake, /unifiedsettings_module\.cpp/);
@@ -155,11 +155,11 @@ describe("native KCM static contract", () => {
         assert.match(unified, /QString UnifiedSettingsModule::scriptService\(\)/);
     });
 
-    it("brands the surviving effect Plasma Auto Tiler and keeps exactly one effect plugin", () => {
-        assert.equal(nativeMetadata.KPlugin.Name, "Plasma Auto Tiler");
+    it("brands the surviving effect OmniTiler and keeps exactly one effect plugin", () => {
+        assert.equal(nativeMetadata.KPlugin.Name, "OmniTiler");
         assert.notEqual(nativeMetadata.KPlugin.Description, "");
-        assert.match(nativeMetadata.KPlugin.Description, /Plasma Auto Tiler/);
-        assert.equal(kcmMetadata.KPlugin.Name, "Plasma Auto Tiler");
+        assert.match(nativeMetadata.KPlugin.Description, /OmniTiler/);
+        assert.equal(kcmMetadata.KPlugin.Name, "OmniTiler");
         // Exactly one effect plugin target plus the KCM config target; the
         // standalone drag-oracle effect, factory, metadata, and validation
         // script are gone while the unified effect-ffi Rust target and the
@@ -169,7 +169,7 @@ describe("native KCM static contract", () => {
             1,
         );
         assert.ok(cmake.includes("drag_oracle_ffi.h"));
-        assert.ok(cmake.includes("plasma-auto-tiler-effect-ffi-rs"));
+        assert.ok(cmake.includes("omnitiler-effect-ffi-rs"));
         assert.ok(cmake.includes("native-effect-drag-oracle-rs"));
         for (const residue of [
             "dragoracle.h",
@@ -177,14 +177,14 @@ describe("native KCM static contract", () => {
             "dragoracle-metadata.json",
             "validate-dragoracle.cmake",
             "native-effect-drag-oracle-validation",
-            "kcoreaddons_add_plugin(plasma-auto-tiler-drag-oracle",
+            "kcoreaddons_add_plugin(omnitiler-drag-oracle",
         ]) {
             assert.ok(!cmake.includes(residue), `expected no CMake residue: ${residue}`);
         }
         for (const residue of [
             "DragOracleEffect",
             "dragoracle-metadata.json",
-            "plasma-auto-tiler-drag-oracle",
+            "omnitiler-drag-oracle",
         ]) {
             assert.ok(!effect.includes(residue), `expected no survivor residue: ${residue}`);
         }
@@ -198,7 +198,7 @@ describe("native KCM static contract", () => {
         assert.deepEqual(entries["defaultTiled"], { type: "Bool", defaultValue: "true" });
         const { defaultTiled: _ignored, ...rest } = entries;
         assert.deepEqual(rest, SCRIPT_SETTINGS);
-        assert.match(kcfg, /<group name="Effect-plasma-auto-tiler-active-border">/);
+        assert.match(kcfg, /<group name="Effect-omnitiler-active-border">/);
 
         for (const [key, setting] of Object.entries(SCRIPT_SETTINGS)) {
             if (key === "innerGap" || key === "outerGap" || key === "shortcutProfile") {
@@ -234,13 +234,13 @@ describe("native KCM static contract", () => {
         assert.match(unified, /outerGapSpinBox->setValue\((8|kGapDefault)\)/);
         for (const factory of [effectFactory, scriptFactory]) {
             assert.doesNotMatch(factory, /workspaceModeCombo|shortcutProfileCombo|sameAxisMoveCombo|fixedSizePredicateCombo|migrationSourceRefillCombo|innerGapSpinBox|outerGapSpinBox/);
-            assert.doesNotMatch(factory, /Script-plasma-auto-tiler-kwin/);
+            assert.doesNotMatch(factory, /Script-omnitiler-kwin/);
         }
     });
 
     it("reads and writes supported script settings only through the script config group", () => {
-        assert.equal((unified.match(/Script-plasma-auto-tiler-kwin/g) ?? []).length, 2);
-        assert.doesNotMatch(unified, /Effect-plasma-auto-tiler-kwin/);
+        assert.equal((unified.match(/Script-omnitiler-kwin/g) ?? []).length, 2);
+        assert.doesNotMatch(unified, /Effect-omnitiler-kwin/);
         assert.match(unified, /const QString workspaceMode = group\.readEntry\(QStringLiteral\("workspaceMode"\), QStringLiteral\("per-output-local"\)\)/);
         assert.match(unified, /select\(m_ui\.workspaceModeCombo, workspaceMode, QStringLiteral\("per-output-local"\)\)/);
         assert.match(unified, /readSameAxisMove\(group\)/);
@@ -269,14 +269,14 @@ describe("native KCM static contract", () => {
     });
 
     it("keeps border settings in the native group and hot-applies through the native effect", () => {
-        assert.match(kcfg, /<group name="Effect-plasma-auto-tiler-active-border">/);
+        assert.match(kcfg, /<group name="Effect-omnitiler-active-border">/);
         assert.match(kcfg, /<entry name="UseThemeColor" type="Bool">[\s\S]*?<default>true<\/default>/);
         assert.match(unified, /ActiveBorderConfig::instance\(QStringLiteral\("kwinrc"\)\)/);
         assert.match(unified, /QString UnifiedSettingsModule::effectService\(\)[\s\S]*?QStringLiteral\("org\.kde\.KWin"\)/);
         assert.match(unified, /QString UnifiedSettingsModule::effectPath\(\)[\s\S]*?QStringLiteral\("\/Effects"\)/);
         assert.match(unified, /QString UnifiedSettingsModule::effectInterface\(\)[\s\S]*?QStringLiteral\("org\.kde\.kwin\.Effects"\)/);
         assert.match(unified, /QString UnifiedSettingsModule::effectMethod\(\)[\s\S]*?QStringLiteral\("reconfigureEffect"\)/);
-        assert.match(unified, /QString UnifiedSettingsModule::effectName\(\)[\s\S]*?QStringLiteral\("plasma-auto-tiler-active-border"\)/);
+        assert.match(unified, /QString UnifiedSettingsModule::effectName\(\)[\s\S]*?QStringLiteral\("omnitiler-active-border"\)/);
         assert.match(unified, /QDBusInterface interface\(effectService\(\), effectPath\(\), effectInterface\(\)/);
         assert.match(unified, /interface\.call\(effectMethod\(\), effectName\(\)\)/);
         assert.match(unified, /requestEffectReconfigure\(\)/);
@@ -383,7 +383,7 @@ describe("native KCM static contract", () => {
         assert.match(unified, /startupWritten/);
         assert.doesNotMatch(unified, /"keys=workspaceMode,shortcutProfile"/);
         assert.match(unified, /lcScriptConfig/);
-        assert.match(unified, /plasmaautotiler\.script-config op=/);
+        assert.match(unified, /omnitiler\.script-config op=/);
         assert.match(unified, /logScriptConfig\("save", "persist", "ok"/);
         assert.match(unified, /logScriptConfig\("save", "reconfigure", "sent-unconfirmed"/);
         assert.match(unified, /logScriptConfig\("save", "reconfigure", "failed"/);
@@ -492,7 +492,7 @@ describe("native KCM static contract", () => {
         const nativeByAction = new Map<string, string>();
         const nativeOrder: string[] = [];
         const entryPattern =
-            /QStringLiteral\("(plasma-auto-tiler-[^"]+)"\),\s*(?:SHORTCUT_[A-Z0-9_]+|0),\s*QStringLiteral\("([^"]*)"\)/g;
+            /QStringLiteral\("(omnitiler-[^"]+)"\),\s*(?:SHORTCUT_[A-Z0-9_]+|0),\s*QStringLiteral\("([^"]*)"\)/g;
         for (const match of reconciler.matchAll(entryPattern)) {
             const action = match[1];
             const display = match[2];
@@ -541,36 +541,36 @@ describe("native KCM static contract", () => {
         }
         // Spot-check the 8 bound workspace follow chords, the 8 bound output
         // follow chords, and the unbound stay defaults.
-        assert.equal(nativeByAction.get("plasma-auto-tiler-toggle-orientation"), "Meta+O");
+        assert.equal(nativeByAction.get("omnitiler-toggle-orientation"), "Meta+O");
         for (const [action, sequence] of [
-            ["plasma-auto-tiler-send-prev-h", "Meta+Ctrl+Shift+H"],
-            ["plasma-auto-tiler-send-prev-k", "Meta+Ctrl+Shift+K"],
-            ["plasma-auto-tiler-send-prev-left-arrow", "Meta+Ctrl+Shift+Left"],
-            ["plasma-auto-tiler-send-prev-up-arrow", "Meta+Ctrl+Shift+Up"],
-            ["plasma-auto-tiler-send-next-j", "Meta+Ctrl+Shift+J"],
-            ["plasma-auto-tiler-send-next-l", "Meta+Ctrl+Shift+L"],
-            ["plasma-auto-tiler-send-next-down-arrow", "Meta+Ctrl+Shift+Down"],
-            ["plasma-auto-tiler-send-next-right-arrow", "Meta+Ctrl+Shift+Right"],
-            ["plasma-auto-tiler-send-output-left", "Meta+Ctrl+Alt+H"],
-            ["plasma-auto-tiler-send-output-left-arrow", "Meta+Ctrl+Alt+Left"],
-            ["plasma-auto-tiler-send-output-down", "Meta+Ctrl+Alt+J"],
-            ["plasma-auto-tiler-send-output-down-arrow", "Meta+Ctrl+Alt+Down"],
-            ["plasma-auto-tiler-send-output-up", "Meta+Ctrl+Alt+K"],
-            ["plasma-auto-tiler-send-output-up-arrow", "Meta+Ctrl+Alt+Up"],
-            ["plasma-auto-tiler-send-output-right", "Meta+Ctrl+Alt+L"],
-            ["plasma-auto-tiler-send-output-right-arrow", "Meta+Ctrl+Alt+Right"],
+            ["omnitiler-send-prev-h", "Meta+Ctrl+Shift+H"],
+            ["omnitiler-send-prev-k", "Meta+Ctrl+Shift+K"],
+            ["omnitiler-send-prev-left-arrow", "Meta+Ctrl+Shift+Left"],
+            ["omnitiler-send-prev-up-arrow", "Meta+Ctrl+Shift+Up"],
+            ["omnitiler-send-next-j", "Meta+Ctrl+Shift+J"],
+            ["omnitiler-send-next-l", "Meta+Ctrl+Shift+L"],
+            ["omnitiler-send-next-down-arrow", "Meta+Ctrl+Shift+Down"],
+            ["omnitiler-send-next-right-arrow", "Meta+Ctrl+Shift+Right"],
+            ["omnitiler-send-output-left", "Meta+Ctrl+Alt+H"],
+            ["omnitiler-send-output-left-arrow", "Meta+Ctrl+Alt+Left"],
+            ["omnitiler-send-output-down", "Meta+Ctrl+Alt+J"],
+            ["omnitiler-send-output-down-arrow", "Meta+Ctrl+Alt+Down"],
+            ["omnitiler-send-output-up", "Meta+Ctrl+Alt+K"],
+            ["omnitiler-send-output-up-arrow", "Meta+Ctrl+Alt+Up"],
+            ["omnitiler-send-output-right", "Meta+Ctrl+Alt+L"],
+            ["omnitiler-send-output-right-arrow", "Meta+Ctrl+Alt+Right"],
         ] as const) {
             assert.equal(nativeByAction.get(action), sequence);
         }
         for (const action of [
-            "plasma-auto-tiler-send-output-left-stay",
-            "plasma-auto-tiler-send-output-down-stay",
-            "plasma-auto-tiler-send-output-up-stay",
-            "plasma-auto-tiler-send-output-right-stay",
-            "plasma-auto-tiler-migrate-workspace-left",
-            "plasma-auto-tiler-migrate-workspace-right",
-            "plasma-auto-tiler-migrate-workspace-up",
-            "plasma-auto-tiler-migrate-workspace-down",
+            "omnitiler-send-output-left-stay",
+            "omnitiler-send-output-down-stay",
+            "omnitiler-send-output-up-stay",
+            "omnitiler-send-output-right-stay",
+            "omnitiler-migrate-workspace-left",
+            "omnitiler-migrate-workspace-right",
+            "omnitiler-migrate-workspace-up",
+            "omnitiler-migrate-workspace-down",
         ] as const) {
             assert.equal(nativeByAction.get(action), "");
         }
@@ -598,10 +598,10 @@ describe("native KCM static contract", () => {
         // R-WS-12 migrate rows follow the item-5 output-transfer pattern:
         // unbound, workspace-migrate kind, no known foreign holder.
         for (const action of [
-            "plasma-auto-tiler-migrate-workspace-left",
-            "plasma-auto-tiler-migrate-workspace-right",
-            "plasma-auto-tiler-migrate-workspace-up",
-            "plasma-auto-tiler-migrate-workspace-down",
+            "omnitiler-migrate-workspace-left",
+            "omnitiler-migrate-workspace-right",
+            "omnitiler-migrate-workspace-up",
+            "omnitiler-migrate-workspace-down",
         ] as const) {
             assert.ok(reconciler.includes(action));
         }

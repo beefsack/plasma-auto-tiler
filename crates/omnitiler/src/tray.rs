@@ -16,10 +16,10 @@ use crate::tray_endpoint::{
 
 pub const STATUS_NOTIFIER_ITEM_OBJECT: &str = "/StatusNotifierItem";
 pub const MENU_OBJECT: &str = "/Menu";
-pub const ICON_NAME: &str = "plasma-auto-tiler";
+pub const ICON_NAME: &str = "omnitiler";
 pub const ICON_PIXMAP_WIDTH: i32 = 32;
 pub const ICON_PIXMAP_HEIGHT: i32 = 32;
-pub const TOOLTIP_TITLE: &str = "Plasma Auto Tiler";
+pub const TOOLTIP_TITLE: &str = "OmniTiler";
 const STATUS_NOTIFIER_ITEM_INTERFACE: &str = "org.kde.StatusNotifierItem";
 const DBUS_PROPERTIES_INTERFACE: &str = "org.freedesktop.DBus.Properties";
 const DBUS_MENU_INTERFACE: &str = "com.canonical.dbusmenu";
@@ -27,8 +27,8 @@ const NEW_STATUS_SIGNAL: &str = "NewStatus";
 const NEW_OVERLAY_ICON_SIGNAL: &str = "NewOverlayIcon";
 const PROPERTIES_CHANGED_SIGNAL: &str = "PropertiesChanged";
 const LAYOUT_UPDATED_SIGNAL: &str = "LayoutUpdated";
-const SETTINGS_EXECUTABLE: Option<&str> = option_env!("PLASMA_AUTO_TILER_KCMSHELL6");
-const SETTINGS_MODULE: &str = "kwin/effects/configs/plasma-auto-tiler-active-border_config";
+const SETTINGS_EXECUTABLE: Option<&str> = option_env!("OMNITILER_KCMSHELL6");
+const SETTINGS_MODULE: &str = "kwin/effects/configs/omnitiler-active-border_config";
 
 #[derive(Debug)]
 enum SettingsLaunchError {
@@ -44,7 +44,7 @@ enum SettingsLaunchOutcome {
 
 fn settings_outcome_line(outcome: &str) -> String {
     format!(
-        "plasma-auto-tiler:route-diag component=tray-endpoint stage=settings event=open outcome={outcome}"
+        "omnitiler:route-diag component=tray-endpoint stage=settings event=open outcome={outcome}"
     )
 }
 
@@ -79,7 +79,7 @@ fn settings_command_for(executable: Option<&str>) -> Option<Command> {
 /// Registered by the KWin script with the `Meta+Y` default key sequence
 /// (user decision 2026-10-10); invoked by the tray over KGlobalAccel by
 /// action name, never by a physical key.
-pub const WORKSPACE_TOGGLE_ACTION: &str = "plasma-auto-tiler-toggle-workspace-tiling";
+pub const WORKSPACE_TOGGLE_ACTION: &str = "omnitiler-toggle-workspace-tiling";
 /// KGlobalAccel service/path/interface for shortcut invocation. The tray
 /// resolves the `kwin` component via `getComponent` on `/kglobalaccel`, then
 /// calls `Component.invokeShortcut(action, "default")`. That method returns
@@ -95,7 +95,7 @@ pub const KGLOBALACCEL_INVOKE: &str = "invokeShortcut";
 pub const KGLOBALACCEL_COMPONENT: &str = "kwin";
 pub const KGLOBALACCEL_CONTEXT: &str = "default";
 
-/// Persisted new-workspace default: `kwinrc [Script-plasma-auto-tiler-kwin]
+/// Persisted new-workspace default: `kwinrc [Script-omnitiler-kwin]
 /// defaultTiled`, default true. Written through KConfig-compatible
 /// `kwriteconfig6` (host Plasma runtime tool, no new dependency) and applied
 /// via the existing KWin `org.kde.KWin /KWin reconfigure` route. KWin
@@ -104,12 +104,12 @@ pub const KGLOBALACCEL_CONTEXT: &str = "default";
 /// reply: `sent-unconfirmed` means the send succeeded, not that KWin applied
 /// it. KWin publishes the actual default on the next snapshot after
 /// `configChanged`.
-pub const KWINRC_GROUP: &str = "Script-plasma-auto-tiler-kwin";
+pub const KWINRC_GROUP: &str = "Script-omnitiler-kwin";
 pub const DEFAULT_TILED_KEY: &str = "defaultTiled";
 pub const KWRITECONFIG_EXECUTABLE: &str = "kwriteconfig6";
 /// Nix-baked absolute `kwriteconfig6` for immutable packaging. `None` in dev,
 /// where the `PATH` fallback above is used.
-const KWRITECONFIG_BAKED: Option<&str> = option_env!("PLASMA_AUTO_TILER_KWRITECONFIG6");
+const KWRITECONFIG_BAKED: Option<&str> = option_env!("OMNITILER_KWRITECONFIG6");
 pub const KWIN_RECONFIGURE_SERVICE: &str = "org.kde.KWin";
 pub const KWIN_RECONFIGURE_PATH: &str = "/KWin";
 pub const KWIN_RECONFIGURE_IFACE: &str = "org.kde.KWin";
@@ -131,20 +131,20 @@ pub const OVERLAY_ICON_WARNING: &str = "dialog-warning";
 
 fn toggle_outcome_line(outcome: &str) -> String {
     format!(
-        "plasma-auto-tiler:route-diag component=tray-endpoint stage=toggle event=invoke outcome={outcome}"
+        "omnitiler:route-diag component=tray-endpoint stage=toggle event=invoke outcome={outcome}"
     )
 }
 
 /// Conflict transition record: once per change on success, silent otherwise.
 fn conflict_projected_line(conflict: bool) -> String {
     format!(
-        "plasma-auto-tiler:route-diag component=tray-endpoint stage=projection event=projected outcome=conflict-updated conflict={conflict}"
+        "omnitiler:route-diag component=tray-endpoint stage=projection event=projected outcome=conflict-updated conflict={conflict}"
     )
 }
 
 fn default_outcome_line(stage: &str, outcome: &str, default_tiled: bool) -> String {
     format!(
-        "plasma-auto-tiler:route-diag component=tray-endpoint stage={stage} event=persist outcome={outcome} defaultTiled={default_tiled}"
+        "omnitiler:route-diag component=tray-endpoint stage={stage} event=persist outcome={outcome} defaultTiled={default_tiled}"
     )
 }
 
@@ -181,7 +181,7 @@ fn kwriteconfig_argv_for(executable: &str, default_tiled: bool) -> Vec<String> {
 /// Other owner: `kwin/native-effect/unifiedsettings_module.cpp`.
 pub const WINDOW_CONFLICT_GROUP: &str = "Windows";
 pub const KREADCONFIG_EXECUTABLE: &str = "kreadconfig6";
-const KREADCONFIG_BAKED: Option<&str> = option_env!("PLASMA_AUTO_TILER_KREADCONFIG6");
+const KREADCONFIG_BAKED: Option<&str> = option_env!("OMNITILER_KREADCONFIG6");
 
 fn kreadconfig_executable() -> &'static str {
     KREADCONFIG_BAKED
@@ -729,7 +729,7 @@ impl TrayProjection {
         changed.insert("Status".to_owned(), owned_string(status));
         changed.insert(
             "Title".to_owned(),
-            owned_string(&format!("Plasma Auto Tiler - {label}")),
+            owned_string(&format!("OmniTiler - {label}")),
         );
         changed.insert("IconName".to_owned(), owned_string(ICON_NAME));
         changed.insert(
@@ -776,7 +776,7 @@ impl TrayProjection {
             Some((_, tiled, default_tiled)) => {
                 menu_projected_line(*tiled, *default_tiled)
             }
-            None => "plasma-auto-tiler:route-diag component=tray-endpoint stage=projection event=projected outcome=menu-updated stale=true"
+            None => "omnitiler:route-diag component=tray-endpoint stage=projection event=projected outcome=menu-updated stale=true"
                 .to_string(),
         });
         let conflict_line = conflict_changed.then(|| conflict_projected_line(conflict));
@@ -923,12 +923,12 @@ impl StatusNotifierItem {
 
     #[zbus(property)]
     fn id(&self) -> &'static str {
-        "plasma-auto-tiler"
+        "omnitiler"
     }
 
     #[zbus(property)]
     fn title(&self) -> String {
-        format!("Plasma Auto Tiler - {}", self.projection.status_label())
+        format!("OmniTiler - {}", self.projection.status_label())
     }
 
     #[zbus(property)]
@@ -1687,7 +1687,7 @@ mod tests {
             let projection = projection(enabled, Instant::now());
             assert_eq!(
                 projection.status_notifier_item().title(),
-                format!("Plasma Auto Tiler - {label}")
+                format!("OmniTiler - {label}")
             );
             assert_eq!(projection.status_label(), label);
         }
@@ -1756,7 +1756,7 @@ mod tests {
             assert_eq!(
                 settings_outcome_line(outcome),
                 format!(
-                    "plasma-auto-tiler:route-diag component=tray-endpoint stage=settings event=open outcome={outcome}"
+                    "omnitiler:route-diag component=tray-endpoint stage=settings event=open outcome={outcome}"
                 )
             );
         }
@@ -1834,7 +1834,7 @@ mod tests {
     fn icon_name_is_project_owned_with_valid_pixmap_fallback() {
         let item = projection(Some(true), Instant::now()).status_notifier_item();
         assert_eq!(item.icon_name(), ICON_NAME);
-        assert_eq!(ICON_NAME, "plasma-auto-tiler");
+        assert_eq!(ICON_NAME, "omnitiler");
         let pixmap = item.icon_pixmap();
         assert_eq!(pixmap.len(), 1);
         assert_eq!(pixmap[0].0, ICON_PIXMAP_WIDTH);
@@ -1871,7 +1871,7 @@ mod tests {
             assert_eq!(tooltip.1, icon_pixmap());
             assert!(!tooltip.1.is_empty());
             assert_eq!(tooltip.2, TOOLTIP_TITLE);
-            assert_eq!(tooltip.2, "Plasma Auto Tiler");
+            assert_eq!(tooltip.2, "OmniTiler");
             assert_eq!(tooltip.3, label);
         }
     }
@@ -1891,7 +1891,7 @@ mod tests {
             );
             assert_eq!(
                 changed["Title"].downcast_ref::<String>().ok(),
-                Some(format!("Plasma Auto Tiler - {label}"))
+                Some(format!("OmniTiler - {label}"))
             );
             assert_eq!(
                 changed["IconName"].downcast_ref::<String>().ok(),
@@ -2045,10 +2045,7 @@ mod tests {
             "org.kde.kglobalaccel.Component"
         );
         assert_eq!(KGLOBALACCEL_INVOKE, "invokeShortcut");
-        assert_eq!(
-            WORKSPACE_TOGGLE_ACTION,
-            "plasma-auto-tiler-toggle-workspace-tiling"
-        );
+        assert_eq!(WORKSPACE_TOGGLE_ACTION, "omnitiler-toggle-workspace-tiling");
         assert_eq!(KGLOBALACCEL_COMPONENT, "kwin");
         assert_eq!(KGLOBALACCEL_CONTEXT, "default");
 
@@ -2059,7 +2056,7 @@ mod tests {
                 "--file".to_owned(),
                 "kwinrc".to_owned(),
                 "--group".to_owned(),
-                "Script-plasma-auto-tiler-kwin".to_owned(),
+                "Script-omnitiler-kwin".to_owned(),
                 "--key".to_owned(),
                 "defaultTiled".to_owned(),
                 "true".to_owned(),
@@ -2156,7 +2153,7 @@ mod tests {
         }
         assert_eq!(
             toggle_outcome_line("intent"),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=toggle event=invoke outcome=intent"
+            "omnitiler:route-diag component=tray-endpoint stage=toggle event=invoke outcome=intent"
         );
     }
 

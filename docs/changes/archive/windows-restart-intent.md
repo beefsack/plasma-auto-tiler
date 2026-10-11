@@ -11,10 +11,10 @@
 
 ## Accepted implementation and review
 
-- `PlasmaAutoTiler.Sticky.v1`, `PlasmaAutoTiler.FloatIntent.v1` and reserved
-  `PlasmaAutoTiler.TileOverride.v1` are distinct window-lifetime properties.
+- `OmniTiler.Sticky.v1`, `OmniTiler.FloatIntent.v1` and reserved
+  `OmniTiler.TileOverride.v1` are distinct window-lifetime properties.
   Tentative, pending user review: rename sticky too and ignore the old
-  `PlasmaAutoTilerSticky`; pre-release upgrades do not hydrate that old name.
+  `OmniTilerSticky`; pre-release upgrades do not hydrate that old name.
 - Successful explicit native float/sticky application writes and verifies
   markers through existing held-process/member-tag gates. Settled unfloat and
   sticky-off clear the corresponding markers; sticky-off-to-float repairs
@@ -107,7 +107,7 @@
   (`Preserve Windows float and sticky intent across restart`). Rebase preserved
   concurrent packaging/licensing `0f5e75e`/`8e04a80` without conflict; no Windows
   or shared Rust production changes entered from that rebase.
-- CI [38100860417](https://github.com/beefsack/plasma-auto-tiler/actions/runs/38100860417):
+- CI [38100860417](https://github.com/beefsack/omnitiler/actions/runs/38100860417):
   rust, kwin, shell, native and macos passed; four Windows native hide-classifier
   fixtures failed at the earlier integrity gate. Hosted Windows runs elevated;
   owned invisible windows inherit that integrity. The product correctly refused

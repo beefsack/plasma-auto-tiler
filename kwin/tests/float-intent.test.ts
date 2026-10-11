@@ -2230,7 +2230,7 @@ function frameOf(win: Record<string, unknown>): { x: number; y: number; w: numbe
 }
 
 function toggleFloatShortcut(mocks: EntryMocks): () => void {
-    const toggle = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-toggle-float");
+    const toggle = mocks.shortcuts.find((row) => row.action === "omnitiler-toggle-float");
     assert.ok(toggle !== undefined, "float shortcut registered");
     return toggle.callback;
 }
@@ -2888,7 +2888,7 @@ describe("float-intent through the production entry", () => {
         world.workspace["activeWindow"] = winA;
         const store = new FakeIntentStore();
         const { mocks } = startIntentEntry(world, store, { readMode: "manual" });
-        const move = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-move-workspace-2");
+        const move = mocks.shortcuts.find((row) => row.action === "omnitiler-move-workspace-2");
         assert.ok(move !== undefined, "workspace move shortcut registered");
         const callsBefore = mocks.dbusCalls.length;
         move.callback();

@@ -96,7 +96,7 @@ host-only diagnostic trio layout retry for user observation.
   production action was performed. Awaiting the user's decision to permit one
   exact post-launch bundle-generation invocation or to leave this POC stopped.
 - 2026-09-07 learning-first host resize setup: with production
-  `plasma-auto-tiler-kwin` still unloaded, an observation-only script selected
+  `omnitiler-kwin` still unloaded, an observation-only script selected
   active Ghostty A `{2bed9554-de72-4b29-a627-24cc9190ddb2}` and the only other
   scoped Ghostty B `{8667e61f-974d-42f9-ba16-ce2f4b61aeaa}` (both PID `555222`,
   app ID `com.mitchellh.ghostty`), plus the only scoped normal resizable Kate C

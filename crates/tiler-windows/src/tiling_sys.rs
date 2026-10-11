@@ -445,7 +445,7 @@ fn window_identity(hwnd: HWND, hwnd_u64: u64, me: &ProcessIdentity) -> Option<Ob
     })
 }
 
-/// Owned-helper lifetime tag (`PlasmaAutoTilerLifetime` property). Empty when
+/// Owned-helper lifetime tag (`OmniTilerLifetime` property). Empty when
 /// absent: generic windows never carry it, so proof allowlists requiring a
 /// nonempty tag reject them before any write.
 fn owned_tag(hwnd: HWND) -> String {
@@ -1174,7 +1174,7 @@ struct TileLoop {
     /// addition to the stored member, so a reuse between START and END fails
     /// closed even when HWND/PID/creation still agree. Absent entries fall
     /// back to the stored-member check only. The tag is the member property
-    /// (`PlasmaAutoTilerMember`), never the owned-helper property (which is
+    /// (`OmniTilerMember`), never the owned-helper property (which is
     /// empty for ordinary windows and would refuse every ordinary gesture).
     gesture_start_key: HashMap<u64, crate::workspace::WindowKey>,
     gesture_start_tag: HashMap<u64, Option<String>>,
@@ -3421,13 +3421,13 @@ const FULLSCREEN_STYLE_BITS: u32 = WS_CAPTION | WS_THICKFRAME;
 const FULLSCREEN_MARKER: usize = 0x4653_3131;
 /// Ownership marker property: presence of the exact magic proves a
 /// project-owned fullscreen frame with restoration metadata alongside.
-const FULLSCREEN_PROP: &str = "PlasmaAutoTilerFullscreen";
+const FULLSCREEN_PROP: &str = "OmniTilerFullscreen";
 /// Stored changed style bits plus one (never zero when present, so absence
 /// stays distinguishable from a no-op clear).
-const FULLSCREEN_STYLE_PROP: &str = "PlasmaAutoTilerFullscreenStyle";
+const FULLSCREEN_STYLE_PROP: &str = "OmniTilerFullscreenStyle";
 /// Preexisting maximize state: 1 was normal, 2 was maximized. Absence means
 /// corrupt metadata, never a default.
-const FULLSCREEN_MAX_PROP: &str = "PlasmaAutoTilerFullscreenMax";
+const FULLSCREEN_MAX_PROP: &str = "OmniTilerFullscreenMax";
 
 fn prop_wide(name: &str) -> Vec<u16> {
     name.encode_utf16().chain([0]).collect()
@@ -21485,7 +21485,7 @@ mod restart_adoption_tests {
     use tiler_core::geometry::Rect;
     use tiler_core::session::DomainKey;
 
-    const ADOPT_TEST_CLASS: &str = "PlasmaAutoTilerRestartAdoptTest";
+    const ADOPT_TEST_CLASS: &str = "OmniTilerRestartAdoptTest";
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain([0]).collect()

@@ -57,8 +57,8 @@
 - `nix build --no-link .#checks.x86_64-linux.native-effect-tests .#checks.x86_64-linux.native-effect --print-build-logs`:
   test-enabled native effect/KCM and delivery build pass; hermetic CTest 33/33
   (verified build log via `nix log .#checks.x86_64-linux.native-effect-tests`).
-- `cargo build -p plasma-auto-tiler --offline` then all `scripts/*.test.sh`
-  with `TRAY_05B_BINARY="$PWD/target/debug/plasma-auto-tiler"`: 9 suites pass,
+- `cargo build -p omnitiler --offline` then all `scripts/*.test.sh`
+  with `TRAY_05B_BINARY="$PWD/target/debug/omnitiler"`: 9 suites pass,
   1713 counted assertions plus uncounted build-kpackage contracts. All KWin
   tools are mocked; tray uses a private non-KWin bus.
 - Spec totals remain 74 NORMATIVE / 61 OPEN / 9 PROVISIONAL, 139 scenarios;

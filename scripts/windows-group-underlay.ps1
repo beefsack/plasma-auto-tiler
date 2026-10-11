@@ -269,7 +269,7 @@ function Invoke-GuMock {
   if ("$help" -notmatch "underlay-inspect") { Fail-Gu "mock CLI help missing underlay-inspect" }
   if ("$help" -notmatch "no-group-underlay") { Fail-Gu "mock CLI help missing group-underlay flags" }
   $src = Get-Content -LiteralPath (Join-Path $Repo "scripts\windows-group-underlay.ps1") -Raw
-  foreach ($need in @("Get-UnderlayHwnds", "Wait-UnderlayOutcome", "Get-UnderlayVisibleCountGu", "Get-UnderlayExposedPointsGu", "Assert-UnderlayBlendGu", "PlasmaAutoTilerGroupUnderlay", "underlay-inspect", "0x0082", "0x201E")) {
+  foreach ($need in @("Get-UnderlayHwnds", "Wait-UnderlayOutcome", "Get-UnderlayVisibleCountGu", "Get-UnderlayExposedPointsGu", "Assert-UnderlayBlendGu", "OmniTilerGroupUnderlay", "underlay-inspect", "0x0082", "0x201E")) {
     if ($src -notmatch [regex]::Escape($need)) { Fail-Gu "mock harness missing $need" }
   }
   $tsrc = Get-Content -LiteralPath (Join-Path $Repo "crates\tiler-windows\src\tiling_sys.rs") -Raw
@@ -423,14 +423,14 @@ function Invoke-GuLive {
       if ((Get-UnderlayVisibleCountGu $insp) -eq 0) { Fail-Gu "leg2 underlay-inspect not visible while shown" }
       $orect = @($insp.overlays[0].rect)
       $null = Assert-UnionOuterGu $orect $union 8 "leg2-exact"
-      $uhwnds = @(Get-UnderlayHwnds $ownerPid "PlasmaAutoTilerGroupUnderlay") | Where-Object { $_ -ne 0 }
+      $uhwnds = @(Get-UnderlayHwnds $ownerPid "OmniTilerGroupUnderlay") | Where-Object { $_ -ne 0 }
       if (@($uhwnds).Count -ne 1) { Fail-Gu "leg2 underlay hwnd count $($uhwnds.Count) != 1" }
       $uh = [long]$uhwnds[0]
       $null = Assert-BelowAllGu $uh @([long]$freshA.hwnd, [long]$hB.hwnd) "leg2-z"
       # Below yellow border too when visible.
       $b = Invoke-Native $ownerCopy @("border-inspect") | ConvertFrom-Json
       if ($b.present) {
-        $bhList = @(Get-UnderlayHwnds $ownerPid "PlasmaAutoTilerActiveBorder") | Where-Object { $_ -ne 0 }
+        $bhList = @(Get-UnderlayHwnds $ownerPid "OmniTilerActiveBorder") | Where-Object { $_ -ne 0 }
         if (@($bhList).Count -ge 1) { $null = Assert-BelowAllGu $uh @([long]$bhList[0]) "leg2-z-border" }
       }
       # Default pad-8 keeps exact-outer/z proof only: its mid-pad samples
@@ -790,7 +790,7 @@ function Invoke-GuLive {
       if (($orectC2 -join ",") -ne ($orectC -join ",")) { Fail-Gu "comp outer drifted across toggle" }
       $fgComp2 = [ActiveBorderNative]::GetForegroundWindow().ToInt64()
       if ([uint64]$fgComp2 -ne [uint64]$freshA.hwnd) { Fail-Gu "comp chord stole focus" }
-      $uhC = @(Get-UnderlayHwnds $ownerPid "PlasmaAutoTilerGroupUnderlay") | Where-Object { $_ -ne 0 }
+      $uhC = @(Get-UnderlayHwnds $ownerPid "OmniTilerGroupUnderlay") | Where-Object { $_ -ne 0 }
       if (@($uhC).Count -ne 1) { Fail-Gu "comp underlay hwnd count" }
       $null = Assert-BelowAllGu ([long]$uhC[0]) @([long]$freshA.hwnd, [long]$hB.hwnd) "comp-z"
       $shownC = Read-ScreenPixelsGu $ptsC "comp-shown"
@@ -848,8 +848,8 @@ function Invoke-GuLive {
     $ownerFrozen = $ready3.owner
     $es = Invoke-Native $ownerCopy @("emergency-stop") | ConvertFrom-Json
     Rec-Gu "crash-stop" @{ exited = $es.owner_exited }
-    $leftU = @(Get-UnderlayHwnds $ownerPid "PlasmaAutoTilerGroupUnderlay") | Where-Object { $_ -ne 0 }
-    $leftB = @(Get-UnderlayHwnds $ownerPid "PlasmaAutoTilerActiveBorder") | Where-Object { $_ -ne 0 }
+    $leftU = @(Get-UnderlayHwnds $ownerPid "OmniTilerGroupUnderlay") | Where-Object { $_ -ne 0 }
+    $leftB = @(Get-UnderlayHwnds $ownerPid "OmniTilerActiveBorder") | Where-Object { $_ -ne 0 }
     Rec-Gu "crash-residue" @{ underlay_hwnds = @($leftU).Count; border_hwnds = @($leftB).Count }
     if (@($leftU).Count -ne 0 -or @($leftB).Count -ne 0) { Fail-Gu "crash overlay residue remains" }
     $rs = Invoke-Native $ownerCopy @("restore") | ConvertFrom-Json
@@ -879,8 +879,8 @@ function Invoke-GuLive {
   # no global enumeration, no ledger/stop/workspace residue, SPI raw1/raw35.
   $procs = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $ownerCopy -or $_.Path -eq $helperCopy })
   $lu = @(); $lb = @()
-  try { $lu = @(Get-UnderlayHwnds $ownerPid "PlasmaAutoTilerGroupUnderlay") | Where-Object { $_ -ne 0 } } catch {}
-  try { $lb = @(Get-UnderlayHwnds $ownerPid "PlasmaAutoTilerActiveBorder") | Where-Object { $_ -ne 0 } } catch {}
+  try { $lu = @(Get-UnderlayHwnds $ownerPid "OmniTilerGroupUnderlay") | Where-Object { $_ -ne 0 } } catch {}
+  try { $lb = @(Get-UnderlayHwnds $ownerPid "OmniTilerActiveBorder") | Where-Object { $_ -ne 0 } } catch {}
   $ledgerOk = $true; try { Assert-LedgerClean $ownerCopy } catch { $ledgerOk = $false }
   Rec-Gu "end-audit" @{ actors = @($procs).Count; underlay_hwnds = @($lu).Count; border_hwnds = @($lb).Count; ledger_clean = $ledgerOk }
   if ($null -ne $guErr) {

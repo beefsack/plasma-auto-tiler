@@ -150,6 +150,6 @@
 - Pushed `241cf7b52dacd697528087344060d6db67659107` (`Add Windows keyboard
   resize`). Rebase preserved concurrent `9fdfc29`/`37af573` packaging work
   without conflict; it did not change Windows/core Rust or the live artifact.
-- CI [38077899121](https://github.com/beefsack/plasma-auto-tiler/actions/runs/38077899121)
+- CI [38077899121](https://github.com/beefsack/omnitiler/actions/runs/38077899121)
   completed success: windows, rust, kwin, shell, native and macos. No failed
   jobs or repairs. Final evidence-record publication is documentation only.

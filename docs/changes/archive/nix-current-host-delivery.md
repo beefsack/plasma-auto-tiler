@@ -47,7 +47,7 @@ and optional tray without changing the external consumer repository.
 - Nix-first current-host delivery is selected; the external consumer repository
   is not inspected or modified.
 - The NixOS module owns the script/native-effect system packages and writes
-  only `[Plugins] plasma-auto-tiler-kwinEnabled=true`; it does not enable the
+  only `[Plugins] omnitiler-kwinEnabled=true`; it does not enable the
   native border or mutate shortcuts.
 - The Home Manager module owns only the optional immutable tray XDG autostart
   file, with store-backed `Exec` and `TryExec`, and no activation hook.
@@ -74,8 +74,8 @@ and optional tray without changing the external consumer repository.
   acceptance of KWin identity, config, plugin staging/discovery/load, PID/proc
   state, or restoration.
 - Static repository code and configuration define the persistent key as
-  `[Plugins] plasma-auto-tiler-active-borderEnabled` and the native settings
-  group as `[Effect-plasma-auto-tiler-active-border]`; no live `kwinrc` values
+  `[Plugins] omnitiler-active-borderEnabled` and the native settings
+  group as `[Effect-omnitiler-active-border]`; no live `kwinrc` values
   are claimed by this record.
 - Any future native-effect build must use consumer `hostPkgs` and explicitly
   supply and verify the `kwin` package matching the running KWin, together
@@ -94,9 +94,9 @@ and optional tray without changing the external consumer repository.
 ## Accepted Nix-Only Resolution And Session Activation
 
 - After the user-owned restart, the local shadow path
-  `~/.local/share/kwin/scripts/plasma-auto-tiler-kwin` was absent and default
+  `~/.local/share/kwin/scripts/omnitiler-kwin` was absent and default
   KPackage resolution uniquely selected the active-generation package
-  `plasma-auto-tiler-kwin-0.1.0` (`share/kwin/scripts/plasma-auto-tiler-kwin`).
+  `omnitiler-kwin-0.1.0` (`share/kwin/scripts/omnitiler-kwin`).
   Its `metadata.json` SHA-256 was
   `ceb49666a22cd18afa8ab5381eb997df1608dbcfc1bd8049d45823757474903f` and
   `contents/code/main.js` SHA-256 was
@@ -119,9 +119,9 @@ and optional tray without changing the external consumer repository.
   dogfood action, invoke `lib.mkNativeEffect` with consumer `hostPkgs`,
   explicitly supply and verify the matching running-KWin `kwin` package and
   its `kwin.dev`, verify the output's two exact files
-  `$out/lib/qt-6/plugins/kwin/effects/plugins/plasma-auto-tiler-active-border.so`
+  `$out/lib/qt-6/plugins/kwin/effects/plugins/omnitiler-active-border.so`
   and
-  `$out/lib/qt-6/plugins/kwin/effects/configs/plasma-auto-tiler-active-border_config.so`,
+  `$out/lib/qt-6/plugins/kwin/effects/configs/omnitiler-active-border_config.so`,
   and copy those files into the documented user-local dogfood root with
   preimage and rollback checks. This Nix-output handoff is separate from
   `scripts/dogfood-install.sh`, which does not perform it. Any later host

@@ -314,7 +314,7 @@ describe("toggle-orientation routing and reply validation", () => {
             const adapter = enableAdapter(mocks);
             adapter.requestToggleOrientation();
             assert.equal(mocks.dbusCalls.length, 0);
-            assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:toggle-orient-refused-floating"));
+            assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:toggle-orient-refused-floating"));
         }
         // Floating focused target.
         {
@@ -324,7 +324,7 @@ describe("toggle-orientation routing and reply validation", () => {
             const adapter = enableAdapter(mocks);
             adapter.requestToggleOrientation();
             assert.equal(mocks.dbusCalls.length, 0);
-            assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:toggle-orient-refused-floating"));
+            assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:toggle-orient-refused-floating"));
         }
         // No observation.
         {
@@ -334,7 +334,7 @@ describe("toggle-orientation routing and reply validation", () => {
             const adapter = enableAdapter(mocks);
             adapter.requestToggleOrientation();
             assert.equal(mocks.dbusCalls.length, 0);
-            assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:toggle-orient-refused-observe"));
+            assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:toggle-orient-refused-observe"));
         }
         // Floating workspace domain.
         {
@@ -345,7 +345,7 @@ describe("toggle-orientation routing and reply validation", () => {
             adapter.requestToggleOrientation();
             assert.equal(mocks.dbusCalls.length, 0);
             assert.ok(
-                mocks.logs.some((l) => l === "plasma-auto-tiler:plan:toggle-orient-refused-workspace-floating"),
+                mocks.logs.some((l) => l === "omnitiler:plan:toggle-orient-refused-workspace-floating"),
             );
         }
     });
@@ -355,12 +355,12 @@ describe("toggle-orientation routing and reply validation", () => {
             {
                 name: "focused-fullscreen",
                 observed: (refs) => makeObserved(refs, { fullscreen: { "win-a": true } }),
-                token: "plasma-auto-tiler:plan:toggle-orient-refused-fullscreen",
+                token: "omnitiler:plan:toggle-orient-refused-fullscreen",
             },
             {
                 name: "focused-maximized",
                 observed: (refs) => makeObserved(refs, { maximized: { "win-a": true } }),
-                token: "plasma-auto-tiler:plan:toggle-orient-refused-maximize",
+                token: "omnitiler:plan:toggle-orient-refused-maximize",
             },
         ];
         for (const entry of cases) {
@@ -452,13 +452,13 @@ describe("toggle-orientation routing and reply validation", () => {
         adapter.disable();
         adapter.requestToggleOrientation();
         assert.equal(mocks.dbusCalls.length, 0);
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:toggle-orient-refused-disabled"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:toggle-orient-refused-disabled"));
         assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
         adapter.requestToggleOrientation();
         assert.equal(mocks.dbusCalls.length, 1);
         adapter.requestToggleOrientation();
         assert.equal(mocks.dbusCalls.length, 1);
-        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:busy-refused kind=toggle-orientation"));
+        assert.ok(mocks.logs.some((l) => l === "omnitiler:plan:busy-refused kind=toggle-orientation"));
     });
 });
 
@@ -466,10 +466,10 @@ describe("toggle-orientation shortcut catalog", () => {
     it("registers Meta+O on every profile with the toggle-orientation op", () => {
         for (const profile of ["cosmic", "hyprland", "bspwm", "unknown"]) {
             const catalog = planShortcutCatalog(profile);
-            const row = catalog.find((entry) => entry.action === "plasma-auto-tiler-toggle-orientation");
+            const row = catalog.find((entry) => entry.action === "omnitiler-toggle-orientation");
             assert.ok(row !== undefined, profile);
             assert.deepEqual(row, {
-                action: "plasma-auto-tiler-toggle-orientation",
+                action: "omnitiler-toggle-orientation",
                 text: "Toggle split orientation",
                 sequence: "Meta+O",
                 op: "toggle-orientation",

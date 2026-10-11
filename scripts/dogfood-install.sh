@@ -10,7 +10,7 @@ KCM_UI="$KWIN_DIR/contents/ui/config.ui"
 
 # KPlugin.Id from kwin/metadata.json (fixed project identity). The KWin plugin
 # setting key is KPlugin.Id + "Enabled", verified against KWin source.
-PLUGIN_ID="plasma-auto-tiler-kwin"
+PLUGIN_ID="omnitiler-kwin"
 CONFIG_KEY="${PLUGIN_ID}Enabled"
 
 # KPlugin.Id of the native "active border" effect plugin; matches the D-Bus
@@ -24,14 +24,14 @@ CONFIG_KEY="${PLUGIN_ID}Enabled"
 # kwin/native-effect/validate-metadata.cmake. A future rename that moves one
 # without the others silently breaks EFFECT_CONFIG_KEY below. See the
 # "native-effect plugin ID consistency" test in dogfood-install.test.sh.
-EFFECT_PLUGIN_ID="plasma-auto-tiler-active-border"
+EFFECT_PLUGIN_ID="omnitiler-active-border"
 
 # kwinrc [Plugins] key that persists the native effect's enabled state across
 # session starts, exactly mirroring CONFIG_KEY above for the KWin script.
 # Derived from EFFECT_PLUGIN_ID so there is one place this identifier is
 # spelled out, not two.
 EFFECT_CONFIG_KEY="${EFFECT_PLUGIN_ID}Enabled"
-LEGACY_ORACLE_CONFIG_KEY="plasma-auto-tiler-drag-oracleEnabled"
+LEGACY_ORACLE_CONFIG_KEY="omnitiler-drag-oracleEnabled"
 # Retired standalone Slice 1 drag-oracle effect's kwinrc key. The oracle is
 # folded into EFFECT_PLUGIN_ID; effect-install migrates only the exact legacy
 # value "true" (enable survivor, then set this key false) inside its own
@@ -41,7 +41,7 @@ LEGACY_ORACLE_CONFIG_KEY="plasma-auto-tiler-drag-oracleEnabled"
 # activation path (effect-install/setup) and start a new session. No startup
 # daemon, script, or config sweep migrates this key.
 # Host-matched native builder (scripts/nix-host-kwin-build.sh) owns all
-# KWin CMake resolution. The legacy pinned PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR
+# KWin CMake resolution. The legacy pinned OMNITILER_KWIN_DEV_CMAKE_DIR
 # / DOGFOOD_KWIN_DEV_CMAKE_DIR path never drives or leaks into effect-install.
 BUILDER="$REPO_ROOT/scripts/nix-host-kwin-build.sh"
 
@@ -53,23 +53,23 @@ CONFIG_ROOT="${DOGFOOD_CONFIG_ROOT:-${XDG_CONFIG_HOME:-$HOME/.config}}"
 INSTALL_DIR="$DATA_ROOT/kwin/scripts/$PLUGIN_ID"
 KWINRC="$CONFIG_ROOT/kwinrc"
 
-EFFECT_ROOT="$DATA_ROOT/plasma-auto-tiler-native-effect"
+EFFECT_ROOT="$DATA_ROOT/omnitiler-native-effect"
 EFFECT_SOURCE_DIR="$REPO_ROOT/kwin/native-effect"
 EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/$EFFECT_PLUGIN_ID.so"
-EFFECT_STAGED_KCM="$EFFECT_ROOT/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+EFFECT_STAGED_KCM="$EFFECT_ROOT/kwin/effects/configs/omnitiler-active-border_config.so"
 # Project-owned native script settings KCM (kwin/scripts/configs/
-# plasma-auto-tiler-kwin_config), discovered through the script package
+# omnitiler-kwin_config), discovered through the script package
 # metadata X-KDE-ConfigModule reference. Staged alongside the effect; package
 # install never implies the effect (or any script setting) is enabled.
-EFFECT_STAGED_SCRIPT_KCM="$EFFECT_ROOT/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+EFFECT_STAGED_SCRIPT_KCM="$EFFECT_ROOT/kwin/scripts/configs/omnitiler-kwin_config.so"
 
 # plasma-workspace's own startplasma-wayland sources every *.sh file under
 # this directory into its own process environment before syncing it to the
 # session (see docs/live-kwin-testing.md Native Effect Host Session-Boundary
 # Exception for the mechanism). This supersedes the environment.d entry this
 # project used to write (kept below only so effect-remove can migrate it away).
-EFFECT_ENV_FILE="$CONFIG_ROOT/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
-LEGACY_EFFECT_ENV_FILE="$CONFIG_ROOT/environment.d/60-plasma-auto-tiler-native-effect.conf"
+EFFECT_ENV_FILE="$CONFIG_ROOT/plasma-workspace/env/60-omnitiler-native-effect.sh"
+LEGACY_EFFECT_ENV_FILE="$CONFIG_ROOT/environment.d/60-omnitiler-native-effect.conf"
 
 # Host Plasma runtime prerequisites. Override each *_BIN variable to inject a
 # fake executable for hermetic tests.
@@ -79,20 +79,20 @@ usage() {
   cat <<'EOF'
 usage: dogfood-install.sh <command> [--help]
 
-Package management interface for the plasma-auto-tiler-kwin KWin script.
+Package management interface for the omnitiler-kwin KWin script.
 The generic scripted KCM is retired; the native effect-scoped KCM is the sole
 settings owner through Desktop Effects, with no compatibility or migration
 route.
 
 Commands:
   install    build the kwin bundle and copy the package into
-             $XDG_DATA_HOME/kwin/scripts/plasma-auto-tiler-kwin/ (or
-             $HOME/.local/share/kwin/scripts/plasma-auto-tiler-kwin/ when
+             $XDG_DATA_HOME/kwin/scripts/omnitiler-kwin/ (or
+             $HOME/.local/share/kwin/scripts/omnitiler-kwin/ when
              XDG_DATA_HOME is unset); replaces any existing plugin directory
   uninstall  remove only the installed plugin directory above
-  enable     write [Plugins] plasma-auto-tiler-kwinEnabled=true through
+  enable     write [Plugins] omnitiler-kwinEnabled=true through
              kwriteconfig6 and reconfigure KWin via D-Bus
-  disable    write [Plugins] plasma-auto-tiler-kwinEnabled=false through
+  disable    write [Plugins] omnitiler-kwinEnabled=false through
               kwriteconfig6 and reconfigure KWin via D-Bus
   reload     disable then re-enable the script, reconfiguring KWin after each
               change so it replaces the running in-memory script instance
@@ -104,21 +104,21 @@ Commands:
   effect-install  build the native "active border" effect, its effect-scoped
                    QWidget KCM, and the native script settings KCM,
                    staging them under
-                   $XDG_DATA_HOME/plasma-auto-tiler-native-effect/kwin/
+                   $XDG_DATA_HOME/omnitiler-native-effect/kwin/
                    (effects/plugins/, effects/configs/, and scripts/configs/,
                    or the $HOME/.local/share equivalent
                    when XDG_DATA_HOME is unset); writes a QT_PLUGIN_PATH env script under
                   $XDG_CONFIG_HOME/plasma-workspace/env/ so the staged plugin
                   dir is discovered on next login; also writes
-                  [Plugins] plasma-auto-tiler-active-borderEnabled=true to
+                  [Plugins] omnitiler-active-borderEnabled=true to
                   kwinrc so the effect persists across future session starts
                   once discovered (does not reconfigure KWin or use D-Bus);
                   idempotent. The staging transaction publishes only the
                   survivor effect .so plus both KCMs, so a stale staged
-                  plasma-auto-tiler-drag-oracle.so under the project-owned
+                  omnitiler-drag-oracle.so under the project-owned
                   staging root is eliminated by atomic replacement (external
                   or system plugin paths are never touched). When kwinrc
-                  [Plugins] plasma-auto-tiler-drag-oracleEnabled is exactly
+                  [Plugins] omnitiler-drag-oracleEnabled is exactly
                   "true", effect-install enables the survivor and then sets
                   that legacy key to false; any other legacy value (including
                   absent) is left untouched. No automatic migration happens
@@ -136,7 +136,7 @@ Commands:
                   pass/fail with guidance; read-only, never mutates
   effect-remove   remove the staged effect tree, the plasma-workspace env
                   script, the kwinrc [Plugins]
-                  plasma-auto-tiler-active-borderEnabled key when present, and
+                  omnitiler-active-borderEnabled key when present, and
                    (migration cleanup) any legacy environment.d entry this
                    project wrote previously; refuses to remove a loaded effect
                    and is otherwise transactional
@@ -478,7 +478,7 @@ cmd_effect_install() {
     exit 1
   }
   local install_transaction
-  install_transaction="$(mktemp -d "$DATA_ROOT/.plasma-auto-tiler-native-effect.XXXXXX")" || {
+  install_transaction="$(mktemp -d "$DATA_ROOT/.omnitiler-native-effect.XXXXXX")" || {
     echo "error: could not create native-effect transaction directory under $DATA_ROOT" >&2
     exit 1
   }
@@ -487,7 +487,7 @@ cmd_effect_install() {
   # KWinConfig validated inside `nix develop` during build) before any build.
   # Preserve builder stderr so resolution failure diagnostics are visible.
   local builder_resolve_out=""
-  builder_resolve_out="$(env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN bash "$BUILDER" resolve)" || {
+  builder_resolve_out="$(env -u OMNITILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN bash "$BUILDER" resolve)" || {
     rm -rf -- "$install_transaction"
     echo "error: host KWin provenance resolution failed; refusing native-effect build (no fallback)" >&2
     exit 1
@@ -517,14 +517,14 @@ cmd_effect_install() {
   # never direct cmake, never the legacy pinned KWin dir, never outer cmake).
   # --expected-identity pins the caller resolve to the build resolve; the
   # builder fails closed if the host changed in between.
-  if ! env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN bash "$BUILDER" build --source "$EFFECT_SOURCE_DIR" --build-dir "$install_build_dir" --expected-identity "$host_identity"; then
+  if ! env -u OMNITILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN bash "$BUILDER" build --source "$EFFECT_SOURCE_DIR" --build-dir "$install_build_dir" --expected-identity "$host_identity"; then
     effect_install_abort "host-matched native build failed for $EFFECT_SOURCE_DIR"
   fi
   effect_install_check_signal
 
   local built_so="$install_build_dir/bin/kwin/effects/plugins/$EFFECT_PLUGIN_ID.so"
-  local built_kcm="$install_build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
-  local built_script_kcm="$install_build_dir/bin/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+  local built_kcm="$install_build_dir/bin/kwin/effects/configs/omnitiler-active-border_config.so"
+  local built_script_kcm="$install_build_dir/bin/kwin/scripts/configs/omnitiler-kwin_config.so"
   if [[ ! -f "$built_so" ]]; then
     effect_install_abort "bundle not found after build: $built_so"
   fi
@@ -537,8 +537,8 @@ cmd_effect_install() {
 
   local install_payload_root="$install_payload/root"
   local payload_so="$install_payload_root/kwin/effects/plugins/$EFFECT_PLUGIN_ID.so"
-  local payload_kcm="$install_payload_root/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
-  local payload_script_kcm="$install_payload_root/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+  local payload_kcm="$install_payload_root/kwin/effects/configs/omnitiler-active-border_config.so"
+  local payload_script_kcm="$install_payload_root/kwin/scripts/configs/omnitiler-kwin_config.so"
   if ! install -Dm0644 "$built_so" "$payload_so" || ! install -Dm0644 "$built_kcm" "$payload_kcm" || ! install -Dm0644 "$built_script_kcm" "$payload_script_kcm"; then
     effect_install_abort "could not prepare native-effect staging payload"
   fi
@@ -572,8 +572,8 @@ cmd_effect_install() {
   # the probe above, so set the legacy key false. Any other value (including
   # absent) is left untouched and no other key is deleted. The kwinrc snapshot
   # above restores exact values on rollback. Never touches plugin files.
-  local legacy_oracle_value="__plasma_auto_tiler_key_absent__"
-  legacy_oracle_value="$( "$kreadconfig" --file "$KWINRC" --group Plugins --key "$LEGACY_ORACLE_CONFIG_KEY" --default "__plasma_auto_tiler_key_absent__" )" || {
+  local legacy_oracle_value="__omnitiler_key_absent__"
+  legacy_oracle_value="$( "$kreadconfig" --file "$KWINRC" --group Plugins --key "$LEGACY_ORACLE_CONFIG_KEY" --default "__omnitiler_key_absent__" )" || {
     effect_install_abort "kreadconfig6 failed to read $LEGACY_ORACLE_CONFIG_KEY from $KWINRC"
   }
   effect_install_check_signal
@@ -858,7 +858,7 @@ cmd_effect_status() {
 cmd_effect_remove() {
   require_tool KREADCONFIG6_BIN kreadconfig6
   local kreadconfig="$TOOL"
-  local missing_key_marker="__plasma_auto_tiler_key_absent__"
+  local missing_key_marker="__omnitiler_key_absent__"
   local current_key_value
   current_key_value="$( "$kreadconfig" --file "$KWINRC" --group Plugins --key "$EFFECT_CONFIG_KEY" --default "$missing_key_marker" )" || {
     echo "error: kreadconfig6 failed to read $EFFECT_CONFIG_KEY from $KWINRC" >&2
@@ -920,7 +920,7 @@ cmd_effect_remove() {
     exit 1
   }
   local remove_transaction
-  remove_transaction="$(mktemp -d "$DATA_ROOT/.plasma-auto-tiler-native-effect-remove.XXXXXX")" || {
+  remove_transaction="$(mktemp -d "$DATA_ROOT/.omnitiler-native-effect-remove.XXXXXX")" || {
     echo "error: could not create native-effect removal transaction directory" >&2
     exit 1
   }

@@ -21,9 +21,9 @@ sub-1 ms and are indistinguishable from the measurement floor.
 - Client: `konsole` 26.04.3 (KDE/Qt terminal, the lightest Wayland-native
   KDE client available on this host among konsole/dolphin/kate).
 - Spawn command (exact, per tier): `setsid konsole --separate --desktopfile
-  plasma-auto-tiler-test -e sleep 3600 >/dev/null 2>&1 &`
-- `--desktopfile plasma-auto-tiler-test` overrides the default app_id so the
-  window's `resourceClass` is the sentinel value `plasma-auto-tiler-test`
+  omnitiler-test -e sleep 3600 >/dev/null 2>&1 &`
+- `--desktopfile omnitiler-test` overrides the default app_id so the
+  window's `resourceClass` is the sentinel value `omnitiler-test`
   instead of konsole's default `org.kde.konsole`.
 - `--separate` forces a fresh konsole process per spawn so each spawn is a
   distinct window (avoids konsole's single-instance window reuse).
@@ -48,9 +48,9 @@ Per-tier evidence (`tier-{20,50}-spot.txt`, captured live while N test
 windows were open):
 
 - tier-20: `winenum,count,23` (3 pre-existing real windows + 20 test),
-  20 windows with `class=plasma-auto-tiler-test`, `xlsclients_lines=0`.
+  20 windows with `class=omnitiler-test`, `xlsclients_lines=0`.
 - tier-50: `winenum,count,53` (3 + 50), 50 windows with
-  `class=plasma-auto-tiler-test`, `xlsclients_lines=0`.
+  `class=omnitiler-test`, `xlsclients_lines=0`.
 - `xlsclients` output was empty in both spot files: **zero** X clients on the
   Xwayland display while 20 and 50 konsole windows were open, i.e. no test
   window was proxied through XWayland.
@@ -63,15 +63,15 @@ The one-shot no-mutation window-enumeration probe
 run before any test spawn. It found exactly 3 real windows: two
 `plasmashell` (normal=false, skipped) and one user terminal
 `class=com.mitchellh.ghostty` (the user's real controlling terminal). No
-real konsole window was present, but the sentinel `plasma-auto-tiler-test`
+real konsole window was present, but the sentinel `omnitiler-test`
 is distinct from every real window's class anyway (including the user's
 ghostty terminal and any future konsole defaulting to `org.kde.konsole`), so
 the terminal-protection filter could never act on a real window. The smoke
 test then spawned one konsole with the sentinel `--desktopfile` and re-ran
-the enumeration probe: it reported `class=plasma-auto-tiler-test` (not the
+the enumeration probe: it reported `class=omnitiler-test` (not the
 default), normal=true, managed=true, and did not appear in `xlsclients`.
 After teardown the window was gone from `workspace.windowList()`. Only then
-was `managedResourceClass=plasma-auto-tiler-test` written to kwinrc and the
+was `managedResourceClass=omnitiler-test` written to kwinrc and the
 real sweep run.
 
 ### Harness

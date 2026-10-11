@@ -52,7 +52,7 @@ production behavior through incremental opt-in promotion.
    scripts, Rust model/contract/reconciliation/trace modules and tests, locked
    POC fixtures, and the decision/backlog/change/archive records. Exclude
    secrets, `/run` or `/tmp` runtime evidence, generated bundles
-   `dist/plasma-auto-tiler-kwin.kwinscript*` and
+   `dist/omnitiler-kwin.kwinscript*` and
    `kwin/contents/code/main.js`, unrelated controller/conformance/research/tray
    work, and mode-only script changes unless separately justified.
 2. Stabilize the Rust core module boundaries and portable model: `ids`, snapshots,
@@ -135,11 +135,11 @@ production behavior through incremental opt-in promotion.
 
   Manual journey after commit: integrate both the existing NixOS module and
   the Home Manager module in the consumer configuration, leaving
-  `programs.plasma-auto-tiler.planner.enable` at its default true (or setting
+  `programs.omnitiler.planner.enable` at its default true (or setting
   it explicitly), then rebuild/switch and perform one user session restart in
   safe `Legacy` mode to clear current transient Script ambiguity. Do not start
   Planner manually: select `Rust (development)` for `The engine authority for
-  focus, move, and resize` in the existing Plasma Auto Tiler Desktop Effects
+  focus, move, and resize` in the existing OmniTiler Desktop Effects
   settings and Apply, letting the first selected command request D-Bus
   activation. KCM Apply syncs config then requests KWin reconfigure
   (`org.kde.KWin` `/KWin` `org.kde.KWin` `reconfigure`), so the mode change is
@@ -651,9 +651,9 @@ production behavior through incremental opt-in promotion.
   stabilization.
 - POC cleanup completed 2026-09-07: exact temporary scripts unloaded and
   recorded POC processes were absent. Live source resolution selected
-  the `plasma-auto-tiler-kwin-0.1.0` store package
-  `share/kwin/scripts/plasma-auto-tiler-kwin/contents/code/main.js`;
+  the `omnitiler-kwin-0.1.0` store package
+  `share/kwin/scripts/omnitiler-kwin/contents/code/main.js`;
   `loadScript` returned `2`, `run` succeeded, and
-  `isScriptLoaded("plasma-auto-tiler-kwin")` returned true. This is an
+  `isScriptLoaded("omnitiler-kwin")` returned true. This is an
   operational resume observation, not a new receipt or exact in-memory source
   attribution proof.

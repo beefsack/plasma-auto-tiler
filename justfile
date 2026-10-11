@@ -6,20 +6,20 @@
 # a `result` symlink. All preconditions fail closed loudly.
 #
 # State pointers, never the receipt itself:
-#   $XDG_RUNTIME_DIR/plasma-auto-tiler-dev/planner-pid
-#   $XDG_RUNTIME_DIR/plasma-auto-tiler-dev/planner-exe
-#   $XDG_RUNTIME_DIR/plasma-auto-tiler-dev/controller-receipt-path
+#   $XDG_RUNTIME_DIR/omnitiler-dev/planner-pid
+#   $XDG_RUNTIME_DIR/omnitiler-dev/planner-exe
+#   $XDG_RUNTIME_DIR/omnitiler-dev/controller-receipt-path
 # The controller receipt itself is a per-run file under $XDG_RUNTIME_DIR
-# (plasma-auto-tiler-controller.XXXXXX/ownership), derived dynamically via
+# (omnitiler-controller.XXXXXX/ownership), derived dynamically via
 # mktemp and threaded to start-test.sh through CONTROLLER_OWNERSHIP_FILE.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-export PLASMA_AUTO_TILER_KCMSHELL6 := `command -v kcmshell6 || true`
+export OMNITILER_KCMSHELL6 := `command -v kcmshell6 || true`
 
-plugin_id := "plasma-auto-tiler-kwin"
-planner_bus_name := "org.plasmaautotiler.Planner"
-planner_unit := "plasma-auto-tiler-planner.service"
+plugin_id := "omnitiler-kwin"
+planner_bus_name := "com.omnitiler.Planner"
+planner_unit := "omnitiler-planner.service"
 
 default:
     @just --list
@@ -29,11 +29,11 @@ dev-on:
     #!/usr/bin/env bash
     set -euo pipefail
     REPO_ROOT="{{ justfile_directory() }}"
-    PLUGIN_ID="plasma-auto-tiler-kwin"
-    PLANNER_BUS="org.plasmaautotiler.Planner"
-    BIN="$REPO_ROOT/target/debug/plasma-auto-tiler"
+    PLUGIN_ID="omnitiler-kwin"
+    PLANNER_BUS="com.omnitiler.Planner"
+    BIN="$REPO_ROOT/target/debug/omnitiler"
     RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
-    STATE_DIR="$RUNTIME_DIR/plasma-auto-tiler-dev"
+    STATE_DIR="$RUNTIME_DIR/omnitiler-dev"
     PID_FILE="$STATE_DIR/planner-pid"
     EXE_FILE="$STATE_DIR/planner-exe"
     START_FILE="$STATE_DIR/planner-start"
@@ -128,7 +128,7 @@ dev-on:
       bash "$REPO_ROOT/scripts/dogfood-install.sh" enable >/dev/null 2>&1 || echo "error: rollback: dogfood-install.sh enable failed; packaged script may still be disabled" >&2
       if [[ -n "$ROLLBACK_RECEIPT_DIR" ]]; then
         case "$ROLLBACK_RECEIPT_DIR" in
-          "$RUNTIME_DIR"/plasma-auto-tiler-controller.*)
+          "$RUNTIME_DIR"/omnitiler-controller.*)
             rm -rf -- "$ROLLBACK_RECEIPT_DIR" 2>/dev/null || echo "error: rollback: could not remove own receipt dir $ROLLBACK_RECEIPT_DIR" >&2
             ;;
           *) echo "error: rollback: refusing to remove unexpected receipt dir $ROLLBACK_RECEIPT_DIR" >&2 ;;
@@ -206,7 +206,7 @@ dev-on:
         fi
         if [[ -n "$RECOVERY_RECEIPT_DIR" ]]; then
           case "$RECOVERY_RECEIPT_DIR" in
-            "$RUNTIME_DIR"/plasma-auto-tiler-controller.*)
+            "$RUNTIME_DIR"/omnitiler-controller.*)
               rm -rf -- "$RECOVERY_RECEIPT_DIR" 2>/dev/null || echo "error: recovery rollback: could not remove own receipt dir $RECOVERY_RECEIPT_DIR" >&2
               ;;
             *) echo "error: recovery rollback: refusing to remove unexpected receipt dir $RECOVERY_RECEIPT_DIR" >&2 ;;
@@ -214,7 +214,7 @@ dev-on:
         fi
         return "$orig_rc"
       }
-      RECOVERY_RECEIPT_DIR="$(mktemp -d "$RUNTIME_DIR/plasma-auto-tiler-controller.XXXXXX")" || { echo "error: could not create controller receipt dir" >&2; exit 1; }
+      RECOVERY_RECEIPT_DIR="$(mktemp -d "$RUNTIME_DIR/omnitiler-controller.XXXXXX")" || { echo "error: could not create controller receipt dir" >&2; exit 1; }
       chmod 700 "$RECOVERY_RECEIPT_DIR" || { rmdir -- "$RECOVERY_RECEIPT_DIR"; echo "error: could not secure controller receipt dir" >&2; exit 1; }
       RECOVERY_RECEIPT="$RECOVERY_RECEIPT_DIR/ownership"
       if [[ -e "$RECOVERY_RECEIPT" || -L "$RECOVERY_RECEIPT" ]]; then
@@ -272,14 +272,14 @@ dev-on:
     if busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s "$PLANNER_BUS" >/dev/null 2>&1; then
       OWNER_DETAIL="$(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s "$PLANNER_BUS" 2>&1 || true)"
       echo "error: $PLANNER_BUS is still owned ($OWNER_DETAIL); refusing to start worktree Planner" >&2
-      echo "hint: if the owner is plasma-auto-tiler-planner.service, stop only that unit, re-verify GetNameOwner fails, then re-run. Do not mask units." >&2
+      echo "hint: if the owner is omnitiler-planner.service, stop only that unit, re-verify GetNameOwner fails, then re-run. Do not mask units." >&2
       exit 1
     fi
     # 4. Build. The devenv shell is required only here, and only when outside it.
     if [[ -n "${IN_NIX_SHELL:-}${DEVENV_PROFILE:-}" ]]; then
-      ( cd "$REPO_ROOT" && cargo build -p plasma-auto-tiler ) || { echo "error: cargo build failed" >&2; exit 1; }
+      ( cd "$REPO_ROOT" && cargo build -p omnitiler ) || { echo "error: cargo build failed" >&2; exit 1; }
     else
-      devenv shell --impure -- cargo build -p plasma-auto-tiler || { echo "error: cargo build failed (via devenv shell --impure)" >&2; exit 1; }
+      devenv shell --impure -- cargo build -p omnitiler || { echo "error: cargo build failed (via devenv shell --impure)" >&2; exit 1; }
     fi
     [[ -x "$BIN" ]] || { echo "error: worktree Planner binary missing after build: $BIN" >&2; exit 1; }
     if [[ -e "$REPO_ROOT/result" ]]; then
@@ -287,7 +287,7 @@ dev-on:
       exit 1
     fi
     # 5. Derive the per-run receipt path dynamically under $XDG_RUNTIME_DIR.
-    RECEIPT_DIR="$(mktemp -d "$RUNTIME_DIR/plasma-auto-tiler-controller.XXXXXX")" || { echo "error: could not create controller receipt dir" >&2; exit 1; }
+    RECEIPT_DIR="$(mktemp -d "$RUNTIME_DIR/omnitiler-controller.XXXXXX")" || { echo "error: could not create controller receipt dir" >&2; exit 1; }
     ROLLBACK_RECEIPT_DIR="$RECEIPT_DIR"
     chmod 700 "$RECEIPT_DIR" || { rmdir -- "$RECEIPT_DIR"; echo "error: could not secure controller receipt dir" >&2; exit 1; }
     RECEIPT="$RECEIPT_DIR/ownership"
@@ -298,7 +298,7 @@ dev-on:
     # 6. Launch exactly the worktree Planner, detached. $! is a hint only and
     # never authoritative: setsid may fork when it is a process-group leader,
     # so identity is derived from the D-Bus owner instead.
-    PLANNER_LOG="$(mktemp /tmp/plasma-auto-tiler-planner-dev.XXXXXX.log)" || { echo "error: could not create planner log" >&2; exit 1; }
+    PLANNER_LOG="$(mktemp /tmp/omnitiler-planner-dev.XXXXXX.log)" || { echo "error: could not create planner log" >&2; exit 1; }
     setsid nohup "$BIN" planner-service >"$PLANNER_LOG" 2>&1 </dev/null &
     LAUNCH_PID=$!
     VERIFIED_PID=""
@@ -355,10 +355,10 @@ reload:
     #!/usr/bin/env bash
     set -euo pipefail
     REPO_ROOT="{{ justfile_directory() }}"
-    PLANNER_BUS="org.plasmaautotiler.Planner"
-    BIN="$REPO_ROOT/target/debug/plasma-auto-tiler"
+    PLANNER_BUS="com.omnitiler.Planner"
+    BIN="$REPO_ROOT/target/debug/omnitiler"
     RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
-    STATE_DIR="$RUNTIME_DIR/plasma-auto-tiler-dev"
+    STATE_DIR="$RUNTIME_DIR/omnitiler-dev"
     PID_FILE="$STATE_DIR/planner-pid"
     EXE_FILE="$STATE_DIR/planner-exe"
     START_FILE="$STATE_DIR/planner-start"
@@ -426,9 +426,9 @@ reload:
     OWNER_PID="$(busctl --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "$(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s "$PLANNER_BUS" 2>/dev/null | awk '{print $NF}' | tr -d '\"')" 2>/dev/null | jq -r '.data[0] // empty' 2>/dev/null || true)"
     [[ "$OWNER_PID" == "$OLD_PID" ]] || { echo "error: $PLANNER_BUS owner pid is '${OWNER_PID:-unowned}', expected recorded pid $OLD_PID; refusing swap" >&2; exit 1; }
     if [[ -n "${IN_NIX_SHELL:-}${DEVENV_PROFILE:-}" ]]; then
-      ( cd "$REPO_ROOT" && cargo build -p plasma-auto-tiler ) || { echo "error: cargo build failed; old planner $OLD_PID left running" >&2; exit 1; }
+      ( cd "$REPO_ROOT" && cargo build -p omnitiler ) || { echo "error: cargo build failed; old planner $OLD_PID left running" >&2; exit 1; }
     else
-      devenv shell --impure -- cargo build -p plasma-auto-tiler || { echo "error: cargo build failed (via devenv shell --impure); old planner $OLD_PID left running" >&2; exit 1; }
+      devenv shell --impure -- cargo build -p omnitiler || { echo "error: cargo build failed (via devenv shell --impure); old planner $OLD_PID left running" >&2; exit 1; }
     fi
     [[ -x "$BIN" ]] || { echo "error: worktree Planner binary missing after build: $BIN" >&2; exit 1; }
     # Re-verify identity immediately before terminating (TOCTOU guard).
@@ -443,7 +443,7 @@ reload:
       echo "error: old planner pid $OLD_PID did not exit; refusing to start a second Planner" >&2
       exit 1
     fi
-    PLANNER_LOG="$(mktemp /tmp/plasma-auto-tiler-planner-dev.XXXXXX.log)" || { echo "error: could not create planner log" >&2; exit 1; }
+    PLANNER_LOG="$(mktemp /tmp/omnitiler-planner-dev.XXXXXX.log)" || { echo "error: could not create planner log" >&2; exit 1; }
     setsid nohup "$BIN" planner-service >"$PLANNER_LOG" 2>&1 </dev/null &
     LAUNCH_PID=$!
     NEW_PID=""
@@ -496,11 +496,11 @@ dev-off:
     #!/usr/bin/env bash
     set -euo pipefail
     REPO_ROOT="{{ justfile_directory() }}"
-    PLANNER_BUS="org.plasmaautotiler.Planner"
-    PLUGIN_ID="plasma-auto-tiler-kwin"
-    BIN="$REPO_ROOT/target/debug/plasma-auto-tiler"
+    PLANNER_BUS="com.omnitiler.Planner"
+    PLUGIN_ID="omnitiler-kwin"
+    BIN="$REPO_ROOT/target/debug/omnitiler"
     RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
-    STATE_DIR="$RUNTIME_DIR/plasma-auto-tiler-dev"
+    STATE_DIR="$RUNTIME_DIR/omnitiler-dev"
     PID_FILE="$STATE_DIR/planner-pid"
     EXE_FILE="$STATE_DIR/planner-exe"
     START_FILE="$STATE_DIR/planner-start"
@@ -595,7 +595,7 @@ dev-off:
       if [[ -f "$RECEIPT_PTR" ]]; then
         RECEIPT="$(cat "$RECEIPT_PTR")"
       else
-        mapfile -t CANDIDATES < <(compgen -G "$RUNTIME_DIR/plasma-auto-tiler-controller.*/ownership" || true)
+        mapfile -t CANDIDATES < <(compgen -G "$RUNTIME_DIR/omnitiler-controller.*/ownership" || true)
         LIVE=()
         for c in ${CANDIDATES[@]+"${CANDIDATES[@]}"}; do [[ -f "$c" && ! -L "$c" ]] && LIVE+=("$c"); done
         if [[ "${#LIVE[@]}" -eq 1 ]]; then
@@ -664,7 +664,7 @@ dev-off:
     if [[ -n "$RECEIPT" ]]; then
       PARENT_DIR="$(dirname -- "$RECEIPT")"
       case "$PARENT_DIR" in
-        "$RUNTIME_DIR"/plasma-auto-tiler-controller.*)
+        "$RUNTIME_DIR"/omnitiler-controller.*)
           rmdir -- "$PARENT_DIR" 2>/dev/null || true
           ;;
         *) echo "error: refusing to remove unexpected receipt dir $PARENT_DIR" >&2 ;;
@@ -685,12 +685,12 @@ dev-status:
     #!/usr/bin/env bash
     set -euo pipefail
     REPO_ROOT="{{ justfile_directory() }}"
-    PLUGIN_ID="plasma-auto-tiler-kwin"
-    PLANNER_BUS="org.plasmaautotiler.Planner"
-    PLANNER_UNIT="plasma-auto-tiler-planner.service"
-    BIN="$REPO_ROOT/target/debug/plasma-auto-tiler"
+    PLUGIN_ID="omnitiler-kwin"
+    PLANNER_BUS="com.omnitiler.Planner"
+    PLANNER_UNIT="omnitiler-planner.service"
+    BIN="$REPO_ROOT/target/debug/omnitiler"
     RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
-    STATE_DIR="$RUNTIME_DIR/plasma-auto-tiler-dev"
+    STATE_DIR="$RUNTIME_DIR/omnitiler-dev"
     planner_start_identity() {
       local pid="$1" stat_line stat_pid rest
       local -a fields=()
@@ -751,7 +751,7 @@ dev-status:
       echo "receipt pointer: $RECEIPT"
     fi
     if [[ -z "$RECEIPT" ]]; then
-      mapfile -t CANDIDATES < <(compgen -G "$RUNTIME_DIR/plasma-auto-tiler-controller.*/ownership" || true)
+      mapfile -t CANDIDATES < <(compgen -G "$RUNTIME_DIR/omnitiler-controller.*/ownership" || true)
       LIVE=()
       for c in ${CANDIDATES[@]+"${CANDIDATES[@]}"}; do [[ -f "$c" && ! -L "$c" ]] && LIVE+=("$c"); done
       if [[ "${#LIVE[@]}" -eq 1 ]]; then
@@ -849,10 +849,10 @@ dev mode="":
     set -euo pipefail
     JUSTFILE="{{ justfile() }}"
     RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
-    STATE_DIR="$RUNTIME_DIR/plasma-auto-tiler-dev"
+    STATE_DIR="$RUNTIME_DIR/omnitiler-dev"
     DEV_MODE="{{ mode }}"
     if [[ "$DEV_MODE" == "trace" ]]; then
-      export PLASMA_AUTO_TILER_TRACE=1
+      export OMNITILER_TRACE=1
     elif [[ "$DEV_MODE" == "verbose" ]]; then
       :
     elif [[ -n "$DEV_MODE" ]]; then
@@ -879,9 +879,9 @@ dev mode="":
     # effect state; unsupported/unavailable fails closed with setup +
     # logout/login guidance. Ordinary transport/parse failures fail closed.
     REPO_ROOT="{{ justfile_directory() }}"
-    BIN="$REPO_ROOT/target/debug/plasma-auto-tiler"
+    BIN="$REPO_ROOT/target/debug/omnitiler"
     NATIVE_HELPER="$REPO_ROOT/scripts/dev-native-effect.sh"
-    BORDER_EFFECT="plasma-auto-tiler-active-border"
+    BORDER_EFFECT="omnitiler-active-border"
     NATIVE_PREFLIGHT_OUT=""
     NATIVE_PREFLIGHT_RC=0
     NATIVE_PREFLIGHT_OUT="$(bash "$NATIVE_HELPER" preflight 2>&1)" || NATIVE_PREFLIGHT_RC=$?
@@ -927,7 +927,7 @@ dev mode="":
         exit "$JUST_BUILD_RC"
       fi
     fi
-    echo "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so remains stale until logout/login."
+    echo "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. omnitiler-active-border.so remains stale until logout/login."
     # Transiently load only effects this invocation owns (supported and not
     # preloaded). Preloaded effects are preserved. No persisted enabled
     # config is written. Owner identity (unique owner, pid, start) is pinned
@@ -982,7 +982,7 @@ dev mode="":
     DEV_FIFO="$STATE_DIR/dev-stream"
     PLANNER_STREAM="$STATE_DIR/dev-planner-stream"
     KWIN_STREAM="$STATE_DIR/dev-kwin-stream"
-    TRAY_BUS="org.plasmaautotiler.Tray"
+    TRAY_BUS="com.omnitiler.Tray"
     TRAY_OWNED=0
     TRAY_PID=""
     TRAY_START=""
@@ -1167,7 +1167,7 @@ dev mode="":
       TRAY_OWNED=0
     else
       [[ -x "$BIN" ]] || { echo "error: just dev: worktree binary missing for tray: $BIN" >&2; exit 1; }
-      TRAY_LOG="$(mktemp "$RUNTIME_DIR/plasma-auto-tiler-tray-dev.XXXXXX.log")" || { echo "error: just dev: could not create tray log" >&2; exit 1; }
+      TRAY_LOG="$(mktemp "$RUNTIME_DIR/omnitiler-tray-dev.XXXXXX.log")" || { echo "error: just dev: could not create tray log" >&2; exit 1; }
       setsid nohup "$BIN" tray >"$TRAY_LOG" 2>&1 </dev/null &
       TRAY_LAUNCH_PID=$!
       # Direct-child identity only: $! is a hint (setsid may fork), so
@@ -1265,7 +1265,7 @@ dev mode="":
     fi
     echo "planner log: $PLANNER_LOG"
     echo "kwin pid: $KWIN_PID"
-    DEV_LOG="$(mktemp "$RUNTIME_DIR/plasma-auto-tiler-dev.XXXXXX.log")" || { echo "error: just dev: could not create combined log" >&2; exit 1; }
+    DEV_LOG="$(mktemp "$RUNTIME_DIR/omnitiler-dev.XXXXXX.log")" || { echo "error: just dev: could not create combined log" >&2; exit 1; }
     printf '%s\n' "$DEV_LOG" > "$STATE_DIR/dev-log" || { echo "error: just dev: could not record combined log path" >&2; exit 1; }
     rm -f -- "$DEV_FIFO" "$PLANNER_STREAM" "$KWIN_STREAM" "$TRAY_STREAM" 2>/dev/null || true
     mkfifo -- "$DEV_FIFO" || { echo "error: just dev: could not create stream $DEV_FIFO" >&2; exit 1; }
@@ -1277,7 +1277,7 @@ dev mode="":
     TEE_PID=$!
     tail -n +1 -F "$PLANNER_LOG" 2>/dev/null | sed -u 's/^/[planner] /' >>"$PLANNER_STREAM" &
     TAIL_PID=$!
-    journalctl --user -f _PID="$KWIN_PID" -o cat --no-pager 2>/dev/null | grep --line-buffered -F "plasma-auto-tiler:" | sed -u 's/^/[kwin] /' >>"$KWIN_STREAM" &
+    journalctl --user -f _PID="$KWIN_PID" -o cat --no-pager 2>/dev/null | grep --line-buffered -F "omnitiler:" | sed -u 's/^/[kwin] /' >>"$KWIN_STREAM" &
     JOURNAL_PID=$!
     if [[ "${TRAY_OWNED:-0}" -eq 1 ]]; then
       tail -n +1 -F "$TRAY_LOG" 2>/dev/null | sed -u 's/^/[tray] /' >>"$TRAY_STREAM" &
@@ -1295,11 +1295,11 @@ build-rust:
     #!/usr/bin/env bash
     set -euo pipefail
     REPO_ROOT="{{ justfile_directory() }}"
-    BIN="$REPO_ROOT/target/debug/plasma-auto-tiler"
+    BIN="$REPO_ROOT/target/debug/omnitiler"
     if [[ -n "${IN_NIX_SHELL:-}${DEVENV_PROFILE:-}" ]]; then
-      ( cd "$REPO_ROOT" && cargo build -p plasma-auto-tiler ) || { echo "error: cargo build failed" >&2; exit 1; }
+      ( cd "$REPO_ROOT" && cargo build -p omnitiler ) || { echo "error: cargo build failed" >&2; exit 1; }
     else
-      devenv shell --impure -- cargo build -p plasma-auto-tiler || { echo "error: cargo build failed (via devenv shell --impure)" >&2; exit 1; }
+      devenv shell --impure -- cargo build -p omnitiler || { echo "error: cargo build failed (via devenv shell --impure)" >&2; exit 1; }
     fi
     [[ -x "$BIN" ]] || { echo "error: worktree Planner binary missing after build: $BIN" >&2; exit 1; }
 
@@ -1331,27 +1331,27 @@ build-kwin-script:
     npm --prefix "$KWIN_DIR" run build || { echo "error: npm run build failed for $KWIN_DIR" >&2; exit 1; }
     [[ -f "$BUNDLE" ]] || { echo "error: KWin bundle missing after build: $BUNDLE" >&2; exit 1; }
 
-# Build the native Plasma Auto Tiler effect + KCMs against the exact host KWin derivation dev output via scripts/nix-host-kwin-build.sh and stage all three .so files under target/ for QT_PLUGIN_PATH use. No KWin, D-Bus, loading, config, user/system-path, or live actions (subset build, static only).
+# Build the native OmniTiler effect + KCMs against the exact host KWin derivation dev output via scripts/nix-host-kwin-build.sh and stage all three .so files under target/ for QT_PLUGIN_PATH use. No KWin, D-Bus, loading, config, user/system-path, or live actions (subset build, static only).
 build-native-effect:
     #!/usr/bin/env bash
     set -euo pipefail
     REPO_ROOT="{{ justfile_directory() }}"
     SOURCE_DIR="$REPO_ROOT/kwin/native-effect"
     TARGET_DIR="$REPO_ROOT/target"
-    EFFECT_SO="plasma-auto-tiler-active-border.so"
-    KCM_SO="plasma-auto-tiler-active-border_config.so"
-    SCRIPT_KCM_SO="plasma-auto-tiler-kwin_config.so"
+    EFFECT_SO="omnitiler-active-border.so"
+    KCM_SO="omnitiler-active-border_config.so"
+    SCRIPT_KCM_SO="omnitiler-kwin_config.so"
     BUILDER="$REPO_ROOT/scripts/nix-host-kwin-build.sh"
     [[ -x "$BUILDER" ]] || { echo "error: host-matched builder missing or not executable: $BUILDER" >&2; exit 1; }
     # Read-only provenance first (no realization, metadata only; KWinConfig is
     # validated later inside `nix develop` where Nix has realized the dev
     # output): fails closed on missing/malformed host derivation.
-    RESOLVE_OUT="$(env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN bash "$BUILDER" resolve)" || { echo "error: host KWin provenance resolution failed; refusing native build (no fallback)" >&2; exit 1; }
+    RESOLVE_OUT="$(env -u OMNITILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN bash "$BUILDER" resolve)" || { echo "error: host KWin provenance resolution failed; refusing native build (no fallback)" >&2; exit 1; }
     IDENTITY="$(printf '%s\n' "$RESOLVE_OUT" | sed -n 's/^identity=//p' | head -n 1)"
     [[ "$IDENTITY" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "error: invalid host package identity from builder: '${IDENTITY:-empty}'" >&2; exit 1; }
-    BUILD_DIR="${PLASMA_AUTO_TILER_NATIVE_BUILD:-$REPO_ROOT/target/kwin-native-host-$IDENTITY-build}"
-    STAGE="${PLASMA_AUTO_TILER_NATIVE_STAGE:-$REPO_ROOT/target/kwin-native-effect-stage}"
-    env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN bash "$BUILDER" build --source "$SOURCE_DIR" --build-dir "$BUILD_DIR" --expected-identity "$IDENTITY" || { echo "error: host-matched native build failed for $SOURCE_DIR" >&2; exit 1; }
+    BUILD_DIR="${OMNITILER_NATIVE_BUILD:-$REPO_ROOT/target/kwin-native-host-$IDENTITY-build}"
+    STAGE="${OMNITILER_NATIVE_STAGE:-$REPO_ROOT/target/kwin-native-effect-stage}"
+    env -u OMNITILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN bash "$BUILDER" build --source "$SOURCE_DIR" --build-dir "$BUILD_DIR" --expected-identity "$IDENTITY" || { echo "error: host-matched native build failed for $SOURCE_DIR" >&2; exit 1; }
     BUILT_SO="$BUILD_DIR/bin/kwin/effects/plugins/$EFFECT_SO"
     BUILT_KCM="$BUILD_DIR/bin/kwin/effects/configs/$KCM_SO"
     BUILT_SCRIPT_KCM="$BUILD_DIR/bin/kwin/scripts/configs/$SCRIPT_KCM_SO"
